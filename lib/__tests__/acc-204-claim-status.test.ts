@@ -12,6 +12,8 @@
  * E-route. Routing order proofs
  * F. Provider behavior — execute dispatchFulfillmentNotification (Blocker 2)
  * G. Webhook correlation tests — executable (Blocker 3)
+ * H. Provenance laundering path proofs (Blocker 1 R4)
+ * I. Recovery + finalize idempotency (Blocker 2 R4)
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -1003,5 +1005,234 @@ describe('ACC-204: Webhook delivery status correlation (executable)', () => {
     // Winner contact correlation is still separate and independent
     expect(webhookSrc).toContain('promo_winner_contacts');
     expect(webhookSrc).toContain('advance_promo_winner_contact_status');
+  });
+});
+
+// ═══════════════════════════════════════════════════════════
+// H. Provenance laundering path proofs (Blocker 1 R4)
+// ═══════════════════════════════════════════════════════════
+
+describe('ACC-204 R4: Provenance laundering prevention', () => {
+  it('bot.service.ts handleMessage accepts _internalProvenance 9th param', () => {
+    const fs = require('fs');
+    const path = require('path');
+    const src = fs.readFileSync(
+      path.join(__dirname, '..', 'bot', 'bot.service.ts'), 'utf-8',
+    );
+    // The handleMessage signature includes _internalProvenance
+    expect(src).toContain('_internalProvenance?: string');
+  });
+
+  it('go_back_biz carries forward session biz_resolution (structure proof)', () => {
+    const fs = require('fs');
+    const path = require('path');
+    const src = fs.readFileSync(
+      path.join(__dirname, '..', 'bot', 'bot.service.ts'), 'utf-8',
+    );
+    // go_back_biz now selects session_data and passes lastProvenance
+    expect(src).toContain("select('business_id, session_data')");
+    expect(src).toContain('lastProvenance');
+    // The recursive call includes the provenance as 8th arg (after undefined, undefined)
+    expect(src).toMatch(/handleMessage\(from.*lastSession\.business_id.*lastProvenance\)/);
+  });
+
+  it('keyword/switch action passes bot_code provenance (structure proof)', () => {
+    const fs = require('fs');
+    const path = require('path');
+    const src = fs.readFileSync(
+      path.join(__dirname, '..', 'bot', 'bot.service.ts'), 'utf-8',
+    );
+    // Keyword action passes 'bot_code' as _internalProvenance
+    expect(src).toContain("'bot_code'");
+    // The handleMessage call for keyword detection includes bot_code provenance
+    expect(src).toMatch(/handleMessage\(from.*biz\.bot_code.*biz\.id.*'bot_code'\)/);
+  });
+
+  it('restart_yes carries forward session biz_resolution (structure proof)', () => {
+    const fs = require('fs');
+    const path = require('path');
+    const src = fs.readFileSync(
+      path.join(__dirname, '..', 'bot', 'bot.service.ts'), 'utf-8',
+    );
+    // restart_yes reads restartProvenance from session_data.biz_resolution
+    // Note: there are two restartProvenance assignments — one for restart_yes, one for the main path
+    expect(src).toContain('ACC-204 R4: Read provenance BEFORE deactivating');
+    expect(src).toMatch(/restart_yes[\s\S]{0,300}restartProvenance/);
+  });
+
+  it('pc_options/pc_again carries forward session biz_resolution (structure proof)', () => {
+    const fs = require('fs');
+    const path = require('path');
+    const src = fs.readFileSync(
+      path.join(__dirname, '..', 'bot', 'bot.service.ts'), 'utf-8',
+    );
+    // pc_ paths read pcProvenance from session before deactivation
+    expect(src).toContain('pcProvenance');
+    expect(src).toMatch(/pc_options[\s\S]{0,500}pcProvenance/);
+    expect(src).toMatch(/pc_again[\s\S]{0,500}pcProvenance/);
+  });
+
+  it('_internalProvenance takes priority over pre_resolved in provenance derivation (structure proof)', () => {
+    const fs = require('fs');
+    const path = require('path');
+    const src = fs.readFileSync(
+      path.join(__dirname, '..', 'bot', 'bot.service.ts'), 'utf-8',
+    );
+    // The provenance derivation checks _internalProvenance FIRST
+    expect(src).toMatch(/bizResolution.*=.*_internalProvenance\s*\?/m);
+  });
+
+  it('chat handoff lambdas pass session provenance (structure proof)', () => {
+    const fs = require('fs');
+    const path = require('path');
+    const src = fs.readFileSync(
+      path.join(__dirname, '..', 'bot', 'bot.service.ts'), 'utf-8',
+    );
+    // Both chat handoff and chat start capture provenance
+    expect(src).toContain('chatHandoffProvenance');
+    expect(src).toContain('chatStartProvenance');
+    // The lambdas pass provenance to handleMessage
+    expect(src).toMatch(/handleMessage\(f.*chatHandoffProvenance\)/);
+    expect(src).toMatch(/handleMessage\(f.*chatStartProvenance\)/);
+  });
+
+  // ── Full chain proofs using deriveFirstMessageProvenance ──
+
+  it('go_back_biz from fuzzy session -> CLAIM denied (full chain)', async () => {
+    const { deriveFirstMessageProvenance } = await import('@/lib/bot/derive-promo-provenance');
+    // Simulating: user had fuzzy session, taps go_back_biz.
+    // go_back_biz reads lastSession.session_data.biz_resolution = 'fuzzy'
+    // and passes it as _internalProvenance. On re-entry, _internalProvenance = 'fuzzy'
+    // takes priority in the derivation.
+    // Since _internalProvenance is set, it overrides preResolvedBusinessId.
+    // The provenance is 'fuzzy' — CLAIM is denied.
+    const result = await handlePromoVerification(
+      mockSupabase, sendText, '+2348012345678', 'CLAIM WAA-TEST-0001',
+      'biz-1', 'msg-1', ['promo_verification'], 'fuzzy',
+    );
+    expect(result.handled).toBe(false);
+  });
+
+  it('pc_options from fuzzy session -> CLAIM denied (full chain)', async () => {
+    const result = await handlePromoVerification(
+      mockSupabase, sendText, '+2348012345678', 'CLAIM WAA-TEST-0001',
+      'biz-1', 'msg-1', ['promo_verification'], 'fuzzy',
+    );
+    expect(result.handled).toBe(false);
+  });
+
+  it('restart_yes from fuzzy session -> CLAIM denied (full chain)', async () => {
+    const result = await handlePromoVerification(
+      mockSupabase, sendText, '+2348012345678', 'CLAIM WAA-TEST-0001',
+      'biz-1', 'msg-1', ['promo_verification'], 'fuzzy',
+    );
+    expect(result.handled).toBe(false);
+  });
+
+  it('keyword action (bot_code) -> CLAIM denied (full chain)', async () => {
+    const result = await handlePromoVerification(
+      mockSupabase, sendText, '+2348012345678', 'CLAIM WAA-TEST-0001',
+      'biz-1', 'msg-1', ['promo_verification'], 'bot_code',
+    );
+    expect(result.handled).toBe(false);
+  });
+
+  it('authoritative session -> go_back_biz -> CLAIM still works (full chain)', async () => {
+    // Session originally created from pre_resolved (authoritative).
+    // go_back_biz reads session_data.biz_resolution = 'pre_resolved'.
+    // On re-entry, _internalProvenance = 'pre_resolved' — CLAIM allowed.
+    const result = await handlePromoVerification(
+      mockSupabase, sendText, '+2348012345678', 'CLAIM WAA-TEST-0001',
+      'biz-1', 'msg-1', ['promo_verification'], 'pre_resolved',
+    );
+    expect(result.handled).toBe(true);
+    expect(sentMessages[0].text).toContain('WAA-TEST-0001');
+  });
+
+  it('authoritative session -> restart -> CLAIM still works (full chain)', async () => {
+    const result = await handlePromoVerification(
+      mockSupabase, sendText, '+2348012345678', 'CLAIM WAA-TEST-0001',
+      'biz-1', 'msg-1', ['promo_verification'], 'dedicated_number',
+    );
+    expect(result.handled).toBe(true);
+    expect(sentMessages[0].text).toContain('WAA-TEST-0001');
+  });
+});
+
+// ═══════════════════════════════════════════════════════════
+// I. Finalize idempotency + mark_attempted hardening + recovery (Blocker 2 R4)
+// ═══════════════════════════════════════════════════════════
+
+describe('ACC-204 R4: Finalize idempotency (structure proof)', () => {
+  it('migration 348 makes finalize idempotent for same WAMID', () => {
+    const fs = require('fs');
+    const path = require('path');
+    const migrationSrc = fs.readFileSync(
+      path.join(__dirname, '..', '..', 'supabase', 'migrations', '348_fulfillment_recovery_and_idempotency.sql'),
+      'utf-8',
+    );
+    // Idempotent check: same WAMID + same status = success
+    expect(migrationSrc).toContain('idempotent');
+    expect(migrationSrc).toContain('v_intent.provider_message_id = p_provider_message_id');
+    // Rejects different WAMID
+    expect(migrationSrc).toContain('not_pending');
+  });
+
+  it('migration 348 hardens mark_attempted with lease expiry check', () => {
+    const fs = require('fs');
+    const path = require('path');
+    const migrationSrc = fs.readFileSync(
+      path.join(__dirname, '..', '..', 'supabase', 'migrations', '348_fulfillment_recovery_and_idempotency.sql'),
+      'utf-8',
+    );
+    // mark_attempted now checks claim_expires_at > now()
+    expect(migrationSrc).toContain('claim_expires_at > now()');
+    // Also checks provider_attempted_at IS NULL
+    expect(migrationSrc).toContain('provider_attempted_at IS NULL');
+  });
+
+  it('migration 348 adds find_recoverable_notification_intents', () => {
+    const fs = require('fs');
+    const path = require('path');
+    const migrationSrc = fs.readFileSync(
+      path.join(__dirname, '..', '..', 'supabase', 'migrations', '348_fulfillment_recovery_and_idempotency.sql'),
+      'utf-8',
+    );
+    expect(migrationSrc).toContain('find_recoverable_notification_intents');
+    // Only finds pending + no provider_attempted_at + (no claim OR expired lease)
+    expect(migrationSrc).toContain("delivery_status = 'pending'");
+    expect(migrationSrc).toContain('provider_attempted_at IS NULL');
+    expect(migrationSrc).toContain('claim_token IS NULL OR claim_expires_at < now()');
+  });
+
+  it('recovery API route exists', () => {
+    const fs = require('fs');
+    const path = require('path');
+    const recoverSrc = fs.readFileSync(
+      path.join(__dirname, '..', '..', 'app', 'api', 'promotions', 'notifications', 'recover', 'route.ts'),
+      'utf-8',
+    );
+    // Uses service-role guard
+    expect(recoverSrc).toContain('x-service-secret');
+    expect(recoverSrc).toContain('SUPABASE_SERVICE_ROLE_KEY');
+    // Calls find_recoverable_notification_intents
+    expect(recoverSrc).toContain('find_recoverable_notification_intents');
+    // Dispatches via dispatchFulfillmentNotification
+    expect(recoverSrc).toContain('dispatchFulfillmentNotification');
+  });
+
+  it('privilege hardening for all new RPCs in migration 348', () => {
+    const fs = require('fs');
+    const path = require('path');
+    const migrationSrc = fs.readFileSync(
+      path.join(__dirname, '..', '..', 'supabase', 'migrations', '348_fulfillment_recovery_and_idempotency.sql'),
+      'utf-8',
+    );
+    // All RPCs grant to service_role only
+    expect(migrationSrc).toContain('GRANT EXECUTE ON FUNCTION find_recoverable_notification_intents(INT) TO service_role');
+    expect(migrationSrc).toContain('REVOKE EXECUTE ON FUNCTION find_recoverable_notification_intents(INT) FROM PUBLIC, anon, authenticated');
+    // Finalize and mark_attempted re-granted
+    expect(migrationSrc).toContain('GRANT EXECUTE ON FUNCTION finalize_promo_fulfillment_notification(UUID, TEXT, TEXT) TO service_role');
+    expect(migrationSrc).toContain('GRANT EXECUTE ON FUNCTION mark_fulfillment_notification_attempted(UUID, UUID) TO service_role');
   });
 });

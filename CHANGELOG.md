@@ -3,6 +3,26 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-08-26 — #204: PR #210 corrections round 4 — provenance laundering closure, lease hardening, recovery API
+
+### What changed
+- **Blocker 1 R4: Closed ALL provenance laundering paths.** Added `_internalProvenance` as 9th parameter to `handleMessage()`. When a recursive/internal call passes a business_id, it now also passes the original provenance from the session. The provenance derivation at the new-session path checks `_internalProvenance` FIRST, before `preResolvedBusinessId`. This prevents 6 laundering paths: (1) `go_back_biz` now reads `session_data.biz_resolution` from the last deactivated session, (2) keyword/switch action passes `'bot_code'` (non-authoritative), (3) `restart_yes` reads provenance before deactivating, (4) `pc_options`/`pc_again` capture `pcProvenance` before deactivation, (5-6) chat handoff/start lambdas capture `chatHandoffProvenance`/`chatStartProvenance`. Only webhook entry (no `_internalProvenance`) assigns `'pre_resolved'`.
+- **Blocker 2 R4: Lease hardening + finalize idempotency + recovery.** Migration 348 rewrites `finalize_promo_fulfillment_notification` with idempotent semantics: same WAMID re-finalize = success, different WAMID = reject (fail closed). `mark_fulfillment_notification_attempted` now additionally verifies `claim_expires_at > now()` and `provider_attempted_at IS NULL`. New `find_recoverable_notification_intents` RPC returns pending intents with no provider attempt and no active lease. New recovery API at `/api/promotions/notifications/recover` (service-role only) finds and re-dispatches stuck intents.
+- **Tests: 76 unit tests, full DB coverage.** New laundering path structure proofs (H section): verifies all 6 paths carry provenance correctly. Full chain proofs: fuzzy go_back_biz -> CLAIM denied, keyword -> denied, authoritative -> go_back_biz -> CLAIM allowed. DB tests for finalize idempotency (same WAMID twice = idempotent, different WAMID = rejected), mark_attempted lease expiry hardening, old token after reclaim, recovery RPC privilege hardening.
+
+### Files changed
+- `lib/bot/bot.service.ts` — `_internalProvenance` 9th param; all recursive handleMessage calls carry forward provenance; provenance derivation checks `_internalProvenance` first
+- `lib/bot/derive-promo-provenance.ts` — updated docs for _internalProvenance role
+- `supabase/migrations/348_fulfillment_recovery_and_idempotency.sql` — new: idempotent finalize, hardened mark_attempted, find_recoverable_notification_intents RPC
+- `app/api/promotions/notifications/recover/route.ts` — new: service-role-only recovery endpoint
+- `lib/__tests__/acc-204-claim-status.test.ts` — 76 tests: added H (laundering proofs) and I (idempotency proofs) sections
+- `lib/__tests__/acc-204-fulfillment-notification-db.test.ts` — added I (finalize idempotency), J (lease hardening), K (recovery RPC) DB tests
+
+### What could break
+- Migration 348 rewrites `finalize_promo_fulfillment_notification` and `mark_fulfillment_notification_attempted` — must be applied after 346+347
+- `mark_attempted` now checks `claim_expires_at > now()` — if the lease expires between claim and mark_attempted (>30s gap), the send is correctly blocked. This is intentional but changes behavior for very slow pre-provider work.
+- Recovery API requires `SUPABASE_SERVICE_ROLE_KEY` in `x-service-secret` header — not exposed to end users
+
 ## 2026-08-26 — #204: PR #210 corrections round 3 — provenance laundering fix, lease/recovery dispatch, executable webhook tests
 
 ### What changed

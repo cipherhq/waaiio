@@ -1,14 +1,18 @@
 /**
- * ACC-204 Blocker 1: Derive promo provenance from session context.
+ * ACC-204 Blocker 1 (R4): Derive promo provenance from session context.
  *
  * Encapsulates the exact logic BotService uses to determine the provenance
  * that gets passed to handlePromoVerification. Extracted so the same logic
  * can be tested independently and verified to match production behavior.
  *
  * Rules:
- * - pre_resolved: business was pre-resolved from channel binding → always trusted
+ * - _internalProvenance: Recursive handleMessage calls pass original provenance via 9th param.
+ *   This prevents trust laundering through go_back_biz, restart_yes, pc_options/pc_again,
+ *   keyword switch, and chat handoff re-entry paths.
+ * - pre_resolved: business was pre-resolved from channel binding → always trusted (webhook entry only)
  * - restart: carries forward the ORIGINAL session_data.biz_resolution, NOT 'restart'
  * - active session: reads persisted biz_resolution from session_data
+ * - bot_code: user-initiated keyword match → NOT authoritative
  * - null: no provenance → denied by TRUSTED_PROVENANCES
  */
 

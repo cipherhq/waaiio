@@ -715,4 +715,170 @@ describe.skipIf(!canRun)('ACC-204: Fulfillment Notification Intent (DB)', () => 
       expect(result).toBe('f');
     });
   });
+
+  // ── I. Finalize idempotency (R4) ──
+
+  describe('I. Finalize idempotency', () => {
+    const idempRedemptionId = '00000000-0000-0000-0000-000000204050';
+    const idempCodeId = '00000000-0000-0000-0000-000000204051';
+
+    beforeAll(() => {
+      psql(`
+        INSERT INTO promo_campaign_codes (id, business_id, campaign_id, batch_id, normalized_code_hash, encrypted_code, display_suffix, outcome, prize_id, status)
+        VALUES ('${idempCodeId}', '${testBizId}', '${testCampaignId}', '${testBatchId}', 'hash204idemp', 'enc_204idemp', 'IDMP', 'winner', '${testPrizeId}', 'claimed')
+        ON CONFLICT (id) DO NOTHING;
+
+        INSERT INTO promo_redemptions (id, business_id, campaign_id, promo_code_id, phone_e164, outcome, claim_reference, fulfillment_status, verification_mode, verification_status)
+        VALUES ('${idempRedemptionId}', '${testBizId}', '${testCampaignId}', '${idempCodeId}', '+2348033333333', 'winner', 'WAA-IDEMP-204', 'pending', 'standard', 'phone_verified')
+        ON CONFLICT (id) DO NOTHING;
+
+        SELECT transition_promo_fulfillment(
+          '${testBizId}', '${idempRedemptionId}', 'processing', '${testUserId}', NULL, NULL
+        );
+      `);
+    });
+
+    afterAll(() => {
+      psql(`
+        DELETE FROM promo_fulfillment_notification_intents WHERE redemption_id = '${idempRedemptionId}';
+        DELETE FROM admin_audit_logs WHERE entity_id = '${idempRedemptionId}';
+        DELETE FROM promo_redemptions WHERE id = '${idempRedemptionId}';
+        DELETE FROM promo_campaign_codes WHERE id = '${idempCodeId}';
+      `);
+    });
+
+    it('same WAMID finalize twice -> idempotent success', () => {
+      const intentId = psql(`
+        SELECT id FROM promo_fulfillment_notification_intents
+        WHERE redemption_id = '${idempRedemptionId}' AND to_status = 'processing';
+      `);
+
+      // First finalize
+      const result1 = psqlJson(`
+        SELECT finalize_promo_fulfillment_notification('${intentId}', 'sent', 'wamid.idemp204');
+      `);
+      expect(result1.success).toBe(true);
+
+      // Second finalize with SAME WAMID -> idempotent
+      const result2 = psqlJson(`
+        SELECT finalize_promo_fulfillment_notification('${intentId}', 'sent', 'wamid.idemp204');
+      `);
+      expect(result2.success).toBe(true);
+      expect(result2.reason).toBe('idempotent');
+    });
+
+    it('different WAMID finalize -> rejected', () => {
+      const intentId = psql(`
+        SELECT id FROM promo_fulfillment_notification_intents
+        WHERE redemption_id = '${idempRedemptionId}' AND to_status = 'processing';
+      `);
+
+      // Already finalized with wamid.idemp204, try with different WAMID
+      const result = psqlJson(`
+        SELECT finalize_promo_fulfillment_notification('${intentId}', 'sent', 'wamid.different');
+      `);
+      expect(result.success).toBe(false);
+      expect(result.reason).toBe('not_pending');
+    });
+  });
+
+  // ── J. mark_attempted with expired lease (R4) ──
+
+  describe('J. mark_attempted with lease expiry hardening', () => {
+    const leaseHardenRedemptionId = '00000000-0000-0000-0000-000000204060';
+    const leaseHardenCodeId = '00000000-0000-0000-0000-000000204061';
+
+    beforeAll(() => {
+      psql(`
+        INSERT INTO promo_campaign_codes (id, business_id, campaign_id, batch_id, normalized_code_hash, encrypted_code, display_suffix, outcome, prize_id, status)
+        VALUES ('${leaseHardenCodeId}', '${testBizId}', '${testCampaignId}', '${testBatchId}', 'hash204lhrd', 'enc_204lhrd', 'LHRD', 'winner', '${testPrizeId}', 'claimed')
+        ON CONFLICT (id) DO NOTHING;
+
+        INSERT INTO promo_redemptions (id, business_id, campaign_id, promo_code_id, phone_e164, outcome, claim_reference, fulfillment_status, verification_mode, verification_status)
+        VALUES ('${leaseHardenRedemptionId}', '${testBizId}', '${testCampaignId}', '${leaseHardenCodeId}', '+2348022222222', 'winner', 'WAA-LHRD-204', 'pending', 'standard', 'phone_verified')
+        ON CONFLICT (id) DO NOTHING;
+
+        SELECT transition_promo_fulfillment(
+          '${testBizId}', '${leaseHardenRedemptionId}', 'processing', '${testUserId}', NULL, NULL
+        );
+      `);
+    });
+
+    afterAll(() => {
+      psql(`
+        DELETE FROM promo_fulfillment_notification_intents WHERE redemption_id = '${leaseHardenRedemptionId}';
+        DELETE FROM admin_audit_logs WHERE entity_id = '${leaseHardenRedemptionId}';
+        DELETE FROM promo_redemptions WHERE id = '${leaseHardenRedemptionId}';
+        DELETE FROM promo_campaign_codes WHERE id = '${leaseHardenCodeId}';
+      `);
+    });
+
+    it('expired lease -> mark_attempted fails', () => {
+      const intentId = psql(`
+        SELECT id FROM promo_fulfillment_notification_intents
+        WHERE redemption_id = '${leaseHardenRedemptionId}' AND to_status = 'processing';
+      `);
+
+      // Claim with 1-second lease
+      const claim = psqlJson(`
+        SELECT claim_fulfillment_notification_dispatch('${intentId}', 1);
+      `);
+      expect(claim.claimed).toBe(true);
+      const token = claim.claim_token;
+
+      // Wait for lease to expire
+      psql(`SELECT pg_sleep(2);`);
+
+      // mark_attempted should fail because lease expired
+      const markResult = psqlJson(`
+        SELECT mark_fulfillment_notification_attempted('${intentId}', '${token}');
+      `);
+      expect(markResult.success).toBe(false);
+      expect(markResult.reason).toBe('invalid_claim');
+    });
+
+    it('old token cannot mark_attempted after reclaim', () => {
+      const intentId = psql(`
+        SELECT id FROM promo_fulfillment_notification_intents
+        WHERE redemption_id = '${leaseHardenRedemptionId}' AND to_status = 'processing';
+      `);
+
+      // Reclaim (lease from previous test expired, no provider_attempted_at)
+      const claim2 = psqlJson(`
+        SELECT claim_fulfillment_notification_dispatch('${intentId}');
+      `);
+      expect(claim2.claimed).toBe(true);
+      const newToken = claim2.claim_token;
+
+      // Old (bogus) token should fail
+      const markBogus = psqlJson(`
+        SELECT mark_fulfillment_notification_attempted('${intentId}', '00000000-0000-0000-0000-000000000099');
+      `);
+      expect(markBogus.success).toBe(false);
+
+      // New token should succeed
+      const markNew = psqlJson(`
+        SELECT mark_fulfillment_notification_attempted('${intentId}', '${newToken}');
+      `);
+      expect(markNew.success).toBe(true);
+    });
+  });
+
+  // ── K. Recovery RPC ──
+
+  describe('K. find_recoverable_notification_intents', () => {
+    it('service_role can execute find_recoverable_notification_intents', () => {
+      const result = psql(`
+        SELECT has_function_privilege('service_role', 'find_recoverable_notification_intents(int)', 'EXECUTE');
+      `);
+      expect(result).toBe('t');
+    });
+
+    it('anon cannot execute find_recoverable_notification_intents', () => {
+      const result = psql(`
+        SELECT has_function_privilege('anon', 'find_recoverable_notification_intents(int)', 'EXECUTE');
+      `);
+      expect(result).toBe('f');
+    });
+  });
 });
