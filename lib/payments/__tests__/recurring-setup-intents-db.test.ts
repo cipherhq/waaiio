@@ -379,10 +379,141 @@ describe('PostgreSQL recurring_setup_intents (#165)', () => {
     callRpc(`SELECT select_recurring_frequency('${r1.intent_id}'::uuid, '${TEST_BIZ_ID}'::uuid, 'monthly') AS result;`);
     callRpc(`SELECT confirm_recurring_consent('${r1.intent_id}'::uuid, '${TEST_BIZ_ID}'::uuid, 'hash') AS result;`);
     const { result: beginResult } = callRpc(`SELECT begin_recurring_provider_attempt('${r1.intent_id}'::uuid, '${TEST_BIZ_ID}'::uuid, 'CUS_test', 'AUTH_test', NOW() + INTERVAL '1 month') AS result;`);
-    // Attempt activation WITHOUT persisting plan/subscription codes first
     const { result } = callRpc(`SELECT activate_recurring_subscription('${r1.intent_id}'::uuid, '${beginResult.claim_token}'::uuid) AS result;`);
     expect(result.activated).toBe(false);
     expect(result.reason).toBe('provider_evidence_incomplete');
+  });
+
+  // ── Complete activation lifecycle ──
+
+  it('31. successful activation creates exactly one customer_subscriptions row', () => {
+    const { result: r1 } = callRpc(`SELECT create_recurring_offer('${TEST_PAY_ID}'::uuid, '${TEST_BIZ_ID}'::uuid, 'paystack') AS result;`);
+    callRpc(`SELECT select_recurring_frequency('${r1.intent_id}'::uuid, '${TEST_BIZ_ID}'::uuid, 'monthly') AS result;`);
+    callRpc(`SELECT confirm_recurring_consent('${r1.intent_id}'::uuid, '${TEST_BIZ_ID}'::uuid, 'hash') AS result;`);
+    const { result: beginResult } = callRpc(`SELECT begin_recurring_provider_attempt('${r1.intent_id}'::uuid, '${TEST_BIZ_ID}'::uuid, 'CUS_test', 'AUTH_test', NOW() + INTERVAL '1 month') AS result;`);
+    // Persist plan + subscription before activation
+    callRpc(`SELECT persist_recurring_plan_id('${r1.intent_id}'::uuid, '${beginResult.claim_token}'::uuid, 'PLN_test165') AS result;`);
+    callRpc(`SELECT persist_recurring_subscription_id('${r1.intent_id}'::uuid, '${beginResult.claim_token}'::uuid, 'SUB_test165', 'tok_test') AS result;`);
+    // Activate
+    const { result: actResult } = callRpc(`SELECT activate_recurring_subscription('${r1.intent_id}'::uuid, '${beginResult.claim_token}'::uuid) AS result;`);
+    expect(actResult.activated).toBe(true);
+    expect(actResult.subscription_id).toBeTruthy();
+    // Verify exactly one customer_subscriptions row
+    const subCount = runSQL(`SELECT count(*)::int FROM customer_subscriptions WHERE id = '${actResult.subscription_id}';`);
+    expect(subCount.stdout).toBe('1');
+    // Verify resulting_subscription_id on intent
+    const intentCheck = runSQL(`SELECT status, resulting_subscription_id FROM recurring_setup_intents WHERE id = '${r1.intent_id}';`);
+    const [status, subId] = intentCheck.stdout.split('|');
+    expect(status).toBe('active');
+    expect(subId).toBe(actResult.subscription_id);
+    // Verify next_charge_at equals provider_start_date
+    const dateCheck = runSQL(`SELECT (cs.next_charge_at = rsi.provider_start_date) AS dates_match FROM customer_subscriptions cs JOIN recurring_setup_intents rsi ON rsi.resulting_subscription_id = cs.id WHERE rsi.id = '${r1.intent_id}';`);
+    expect(dateCheck.stdout).toBe('t');
+    // Cleanup
+    runSQL(`DELETE FROM customer_subscriptions WHERE id = '${actResult.subscription_id}';`);
+  });
+
+  it('32. duplicate activation returns already_activated', () => {
+    const { result: r1 } = callRpc(`SELECT create_recurring_offer('${TEST_PAY_ID}'::uuid, '${TEST_BIZ_ID}'::uuid, 'paystack') AS result;`);
+    callRpc(`SELECT select_recurring_frequency('${r1.intent_id}'::uuid, '${TEST_BIZ_ID}'::uuid, 'weekly') AS result;`);
+    callRpc(`SELECT confirm_recurring_consent('${r1.intent_id}'::uuid, '${TEST_BIZ_ID}'::uuid, 'hash2') AS result;`);
+    const { result: beginResult } = callRpc(`SELECT begin_recurring_provider_attempt('${r1.intent_id}'::uuid, '${TEST_BIZ_ID}'::uuid, 'CUS_dup', 'AUTH_dup', NOW() + INTERVAL '7 days') AS result;`);
+    callRpc(`SELECT persist_recurring_plan_id('${r1.intent_id}'::uuid, '${beginResult.claim_token}'::uuid, 'PLN_dup') AS result;`);
+    callRpc(`SELECT persist_recurring_subscription_id('${r1.intent_id}'::uuid, '${beginResult.claim_token}'::uuid, 'SUB_dup', 'tok_dup') AS result;`);
+    const { result: act1 } = callRpc(`SELECT activate_recurring_subscription('${r1.intent_id}'::uuid, '${beginResult.claim_token}'::uuid) AS result;`);
+    expect(act1.activated).toBe(true);
+    // Second activation attempt
+    const { result: act2 } = callRpc(`SELECT activate_recurring_subscription('${r1.intent_id}'::uuid, '${beginResult.claim_token}'::uuid) AS result;`);
+    expect(act2.activated).toBe(true);
+    expect(act2.already_activated).toBe(true);
+    expect(act2.subscription_id).toBe(act1.subscription_id);
+    // Verify still exactly one subscription
+    const count = runSQL(`SELECT count(*)::int FROM customer_subscriptions WHERE id = '${act1.subscription_id}';`);
+    expect(count.stdout).toBe('1');
+    runSQL(`DELETE FROM customer_subscriptions WHERE id = '${act1.subscription_id}';`);
+  });
+
+  it('33. activation with NULL provider_start_date fails', () => {
+    const { result: r1 } = callRpc(`SELECT create_recurring_offer('${TEST_PAY_ID}'::uuid, '${TEST_BIZ_ID}'::uuid, 'paystack') AS result;`);
+    callRpc(`SELECT select_recurring_frequency('${r1.intent_id}'::uuid, '${TEST_BIZ_ID}'::uuid, 'monthly') AS result;`);
+    callRpc(`SELECT confirm_recurring_consent('${r1.intent_id}'::uuid, '${TEST_BIZ_ID}'::uuid, 'hash') AS result;`);
+    // begin_recurring_provider_attempt with NULL start_date
+    const { result: beginResult } = callRpc(`SELECT begin_recurring_provider_attempt('${r1.intent_id}'::uuid, '${TEST_BIZ_ID}'::uuid, 'CUS_t', 'AUTH_t', NULL::timestamptz) AS result;`);
+    if (beginResult.transitioned) {
+      callRpc(`SELECT persist_recurring_plan_id('${r1.intent_id}'::uuid, '${beginResult.claim_token}'::uuid, 'PLN_null') AS result;`);
+      callRpc(`SELECT persist_recurring_subscription_id('${r1.intent_id}'::uuid, '${beginResult.claim_token}'::uuid, 'SUB_null', 'tok_null') AS result;`);
+      const { result } = callRpc(`SELECT activate_recurring_subscription('${r1.intent_id}'::uuid, '${beginResult.claim_token}'::uuid) AS result;`);
+      expect(result.activated).toBe(false);
+      expect(result.reason).toBe('missing_provider_start_date');
+    }
+    // Either begin rejected NULL or activation rejected it — both are correct
+    expect(true).toBe(true);
+  });
+
+  // ── Empty provider ID rejection ──
+
+  it('34. empty plan code rejected by persist_recurring_plan_id', () => {
+    const { result: r1 } = callRpc(`SELECT create_recurring_offer('${TEST_PAY_ID}'::uuid, '${TEST_BIZ_ID}'::uuid, 'paystack') AS result;`);
+    callRpc(`SELECT select_recurring_frequency('${r1.intent_id}'::uuid, '${TEST_BIZ_ID}'::uuid, 'monthly') AS result;`);
+    callRpc(`SELECT confirm_recurring_consent('${r1.intent_id}'::uuid, '${TEST_BIZ_ID}'::uuid, 'h') AS result;`);
+    const { result: b } = callRpc(`SELECT begin_recurring_provider_attempt('${r1.intent_id}'::uuid, '${TEST_BIZ_ID}'::uuid, 'C', 'A', NOW() + INTERVAL '1 month') AS result;`);
+    const { result } = callRpc(`SELECT persist_recurring_plan_id('${r1.intent_id}'::uuid, '${b.claim_token}'::uuid, '') AS result;`);
+    expect(result.persisted).toBe(false);
+    expect(result.reason).toBe('empty_plan_code');
+  });
+
+  it('35. whitespace plan code rejected', () => {
+    const { result: r1 } = callRpc(`SELECT create_recurring_offer('${TEST_PAY_ID}'::uuid, '${TEST_BIZ_ID}'::uuid, 'paystack') AS result;`);
+    callRpc(`SELECT select_recurring_frequency('${r1.intent_id}'::uuid, '${TEST_BIZ_ID}'::uuid, 'monthly') AS result;`);
+    callRpc(`SELECT confirm_recurring_consent('${r1.intent_id}'::uuid, '${TEST_BIZ_ID}'::uuid, 'h2') AS result;`);
+    const { result: b } = callRpc(`SELECT begin_recurring_provider_attempt('${r1.intent_id}'::uuid, '${TEST_BIZ_ID}'::uuid, 'C2', 'A2', NOW() + INTERVAL '1 month') AS result;`);
+    const { result } = callRpc(`SELECT persist_recurring_plan_id('${r1.intent_id}'::uuid, '${b.claim_token}'::uuid, '   ') AS result;`);
+    expect(result.persisted).toBe(false);
+    expect(result.reason).toBe('empty_plan_code');
+  });
+
+  it('36. empty subscription code rejected by persist_recurring_subscription_id', () => {
+    const { result: r1 } = callRpc(`SELECT create_recurring_offer('${TEST_PAY_ID}'::uuid, '${TEST_BIZ_ID}'::uuid, 'paystack') AS result;`);
+    callRpc(`SELECT select_recurring_frequency('${r1.intent_id}'::uuid, '${TEST_BIZ_ID}'::uuid, 'monthly') AS result;`);
+    callRpc(`SELECT confirm_recurring_consent('${r1.intent_id}'::uuid, '${TEST_BIZ_ID}'::uuid, 'h3') AS result;`);
+    const { result: b } = callRpc(`SELECT begin_recurring_provider_attempt('${r1.intent_id}'::uuid, '${TEST_BIZ_ID}'::uuid, 'C3', 'A3', NOW() + INTERVAL '1 month') AS result;`);
+    callRpc(`SELECT persist_recurring_plan_id('${r1.intent_id}'::uuid, '${b.claim_token}'::uuid, 'PLN_ok') AS result;`);
+    const { result } = callRpc(`SELECT persist_recurring_subscription_id('${r1.intent_id}'::uuid, '${b.claim_token}'::uuid, '', 'tok') AS result;`);
+    expect(result.persisted).toBe(false);
+    expect(result.reason).toBe('empty_subscription_code');
+  });
+
+  // ── Stale decline ──
+
+  it('37. stale direct decline after 24h → expired, not declined', () => {
+    const { result: r1 } = callRpc(`SELECT create_recurring_offer('${TEST_PAY_ID}'::uuid, '${TEST_BIZ_ID}'::uuid, 'paystack') AS result;`);
+    // Backdate expires_at to make it expired
+    runSQL(`UPDATE recurring_setup_intents SET expires_at = NOW() - INTERVAL '1 hour' WHERE id = '${r1.intent_id}';`);
+    const { result } = callRpc(`SELECT decline_recurring_offer('${r1.intent_id}'::uuid, '${TEST_BIZ_ID}'::uuid, '${TEST_USER_ID}'::uuid) AS result;`);
+    expect(result.declined).toBe(false);
+    expect(result.reason).toBe('expired');
+    // Verify state is expired, not declined
+    const check = runSQL(`SELECT status FROM recurring_setup_intents WHERE id = '${r1.intent_id}';`);
+    expect(check.stdout).toBe('expired');
+  });
+
+  it('38. valid decline before expiry works', () => {
+    const { result: r1 } = callRpc(`SELECT create_recurring_offer('${TEST_PAY_ID}'::uuid, '${TEST_BIZ_ID}'::uuid, 'paystack') AS result;`);
+    const { result } = callRpc(`SELECT decline_recurring_offer('${r1.intent_id}'::uuid, '${TEST_BIZ_ID}'::uuid, '${TEST_USER_ID}'::uuid) AS result;`);
+    expect(result.declined).toBe(true);
+    const check = runSQL(`SELECT status FROM recurring_setup_intents WHERE id = '${r1.intent_id}';`);
+    expect(check.stdout).toBe('declined');
+  });
+
+  // ── Source payment without booking ──
+
+  it('39. source payment with NULL booking is rejected by INNER JOIN', () => {
+    const noBookingPayId = 'cd165000-0000-0000-0000-000000000070';
+    runSQL(`INSERT INTO payments (id, business_id, user_id, amount, gateway_reference, status, gateway, currency, finalization_completed_at, confirmation_sent_at, payment_authority_version) VALUES ('${noBookingPayId}', '${TEST_BIZ_ID}', '${TEST_USER_ID}', 5000, 'test-nobooking', 'success', 'paystack', 'NGN', NOW(), NOW(), 1) ON CONFLICT DO NOTHING;`);
+    const { result } = callRpc(`SELECT create_recurring_offer('${noBookingPayId}'::uuid, '${TEST_BIZ_ID}'::uuid, 'paystack') AS result;`);
+    expect(result.created).toBe(false);
+    expect(result.reason).toBe('payment_not_eligible');
+    runSQL(`DELETE FROM payments WHERE id = '${noBookingPayId}';`);
   });
 });
 

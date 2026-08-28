@@ -442,6 +442,10 @@ BEGIN
   IF NOT FOUND THEN
     RETURN jsonb_build_object('activated', false, 'reason', 'intent_not_found');
   END IF;
+  -- Idempotent: if already activated, return success regardless of current state
+  IF v_intent.resulting_subscription_id IS NOT NULL THEN
+    RETURN jsonb_build_object('activated', true, 'already_activated', true, 'subscription_id', v_intent.resulting_subscription_id);
+  END IF;
   -- Only provider_attempted accepted. provider_ambiguous is fail-closed
   -- and requires manual/admin resolution (deferred to a future reconciliation worker).
   IF v_intent.status != 'provider_attempted' THEN
@@ -449,10 +453,6 @@ BEGIN
   END IF;
   IF v_intent.claim_token IS NULL OR v_intent.claim_token != p_claim_token THEN
     RETURN jsonb_build_object('activated', false, 'reason', 'token_mismatch');
-  END IF;
-  -- Idempotent: if already has resulting_subscription_id, return success
-  IF v_intent.resulting_subscription_id IS NOT NULL THEN
-    RETURN jsonb_build_object('activated', true, 'already_activated', true, 'subscription_id', v_intent.resulting_subscription_id);
   END IF;
 
   -- Consume persisted provider evidence — do NOT accept caller-supplied values
@@ -585,7 +585,7 @@ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE
   v_intent RECORD;
 BEGIN
-  SELECT id, status, business_id, user_id FROM public.recurring_setup_intents
+  SELECT id, status, business_id, user_id, expires_at FROM public.recurring_setup_intents
   WHERE id = p_intent_id FOR UPDATE INTO v_intent;
 
   IF NOT FOUND THEN
@@ -594,9 +594,14 @@ BEGIN
   IF v_intent.business_id != p_business_id THEN
     RETURN jsonb_build_object('declined', false, 'reason', 'tenant_mismatch');
   END IF;
-  -- Fix 2: authorize the declining user
   IF v_intent.user_id != p_user_id THEN
     RETURN jsonb_build_object('declined', false, 'reason', 'user_mismatch');
+  END IF;
+  -- Expiry check: stale pre-provider intent → expire rather than decline
+  IF v_intent.expires_at < NOW() THEN
+    UPDATE public.recurring_setup_intents SET status = 'expired', updated_at = NOW()
+    WHERE id = p_intent_id AND status IN ('offered', 'frequency_selected');
+    RETURN jsonb_build_object('declined', false, 'reason', 'expired');
   END IF;
   IF v_intent.status NOT IN ('offered', 'frequency_selected') THEN
     RETURN jsonb_build_object('declined', false, 'reason', 'invalid_state_' || v_intent.status);

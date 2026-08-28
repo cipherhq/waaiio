@@ -2193,9 +2193,15 @@ export class BotService {
             });
             const result = declineResult as Record<string, unknown> | null;
             if (declineErr || !result?.declined) {
-              const reason = result?.reason || declineErr?.message || 'unknown';
-              if (reason === 'user_mismatch') {
+              const reason = String(result?.reason || declineErr?.message || 'unknown');
+              if (reason === 'expired') {
+                await this.sendText(from, 'This recurring offer has expired. Your payment is already confirmed.');
+              } else if (reason === 'user_mismatch') {
                 await this.sendText(from, 'This offer is for a different account.');
+              } else if (reason === 'tenant_mismatch') {
+                await this.sendText(from, 'Unable to process this request.');
+              } else if (reason?.startsWith('invalid_state_')) {
+                await this.sendText(from, 'This offer is no longer available.');
               } else {
                 await this.sendText(from, 'Could not decline the offer. Please try again.');
               }

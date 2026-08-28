@@ -28,8 +28,17 @@ const CURRENCY_TO_COUNTRY: Record<string, string> = {
   'XOF': 'CI',
 };
 
-function currencyToCountryCode(currency: string): CountryCode {
-  return (CURRENCY_TO_COUNTRY[currency] || 'NG') as CountryCode;
+function currencyToCountryCode(currency: string): CountryCode | null {
+  const cc = CURRENCY_TO_COUNTRY[currency];
+  if (!cc) return null; // fail closed: unknown currency must not default to NG
+  return cc as CountryCode;
+}
+
+/** Format currency, failing closed on unsupported ISO codes */
+function safeFormatCurrency(amount: number, currency: string): string | null {
+  const cc = currencyToCountryCode(currency);
+  if (!cc) return null;
+  return formatCurrency(amount, cc);
 }
 
 interface RecurringIntent {
@@ -157,7 +166,7 @@ async function handleFrequencySelection(
 
   if (!frequency) {
     // Send frequency selection buttons
-    const formattedAmount = formatCurrency(intent.amount, currencyToCountryCode(intent.currency));
+    const formattedAmount = safeFormatCurrency(intent.amount, intent.currency) || `${intent.amount} ${intent.currency}`;
     if (sender) {
       const phoneTo = phone.startsWith('+') ? phone.slice(1) : phone;
       await sender.sendButtons({
@@ -209,7 +218,7 @@ async function showConsentPrompt(
     .single();
 
   const businessName = business?.name || 'Business';
-  const formattedAmount = formatCurrency(intent.amount, currencyToCountryCode(intent.currency));
+  const formattedAmount = safeFormatCurrency(intent.amount, intent.currency) || `${intent.amount} ${intent.currency}`;
   const consentMessage = `By accepting, you authorize ${businessName} to charge your card ${formattedAmount} ${frequency}. You can cancel anytime by messaging "cancel subscription".`;
 
   if (sender) {
@@ -274,7 +283,7 @@ async function handleConsentConfirmation(
     .single();
 
   const businessName = business?.name || 'Business';
-  const formattedAmount = formatCurrency(intent.amount, currencyToCountryCode(intent.currency));
+  const formattedAmount = safeFormatCurrency(intent.amount, intent.currency) || `${intent.amount} ${intent.currency}`;
   const consentText = `By accepting, you authorize ${businessName} to charge your card ${formattedAmount} ${intent.frequency}. You can cancel anytime by messaging "cancel subscription".`;
   const consentHash = createHash('sha256').update(consentText).digest('hex');
 
@@ -563,7 +572,7 @@ export async function executePaystackRecurringSetup(
 
   // Success!
   const frequencyLabel = intent.frequency === 'weekly' ? 'every week' : 'every month';
-  const formattedAmount = formatCurrency(intent.amount, currencyToCountryCode(intent.currency));
+  const formattedAmount = safeFormatCurrency(intent.amount, intent.currency) || `${intent.amount} ${intent.currency}`;
   await sendSetupMessage(sender, phone,
     `\u2705 *Recurring Payment Active!*\n\nYou will be charged ${formattedAmount} ${frequencyLabel}.\n\nType *cancel subscription* anytime to stop.`);
   logger.info(`${logPrefix} Recurring subscription activated successfully`);
