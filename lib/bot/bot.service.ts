@@ -2167,6 +2167,84 @@ export class BotService {
       }
     }
 
+    // ── #165: Recurring setup/decline button interceptor ──
+    // Handles recurring_setup:{intentId}, recurring_decline:{intentId},
+    // recurring_freq:{frequency}:{intentId}, recurring_consent:{action}:{intentId}
+    if (messageType === 'button' && session.business_id && (
+      text.startsWith('recurring_setup:') || text.startsWith('recurring_decline:') ||
+      text.startsWith('recurring_freq:') || text.startsWith('recurring_consent:')
+    )) {
+      try {
+        const parts = text.split(':');
+
+        if (text.startsWith('recurring_decline:')) {
+          // Decline: pass user_id to RPC for authorization check
+          const intentId = parts[1];
+          if (intentId) {
+            if (!session.user_id) {
+              await this.sendText(from, 'Unable to verify your identity.');
+              return;
+            }
+
+            const { data: declineResult, error: declineErr } = await this.supabase.rpc('decline_recurring_offer', {
+              p_intent_id: intentId,
+              p_business_id: session.business_id,
+              p_user_id: session.user_id,
+            });
+            const result = declineResult as Record<string, unknown> | null;
+            if (declineErr || !result?.declined) {
+              const reason = String(result?.reason || declineErr?.message || 'unknown');
+              if (reason === 'expired') {
+                await this.sendText(from, 'This recurring offer has expired. Your payment is already confirmed.');
+              } else if (reason === 'user_mismatch') {
+                await this.sendText(from, 'This offer is for a different account.');
+              } else if (reason === 'tenant_mismatch') {
+                await this.sendText(from, 'Unable to process this request.');
+              } else if (reason?.startsWith('invalid_state_')) {
+                await this.sendText(from, 'This offer is no longer available.');
+              } else {
+                await this.sendText(from, 'Could not decline the offer. Please try again.');
+              }
+              return;
+            }
+            await this.sendText(from, 'No problem! Your payment is confirmed.');
+            return;
+          }
+        } else {
+          // Setup, frequency selection, or consent confirmation
+          // Extract intent ID (always the last colon-separated part)
+          const intentId = parts[parts.length - 1];
+          if (intentId) {
+            const { handleRecurringSetupInteraction } = await import('@/lib/payments/recurring-setup');
+
+            // Resolve sender for CTA buttons
+            let resolvedSender: import('@/lib/channels/message-sender').MessageSender | null = null;
+            try {
+              const { ChannelResolver } = await import('@/lib/channels/channel-resolver');
+              const resolver = new ChannelResolver(this.supabase);
+              const resolved = await resolver.resolveByBusinessId(session.business_id!);
+              if (resolved) resolvedSender = resolved.sender;
+            } catch { /* non-critical */ }
+
+            const result = await handleRecurringSetupInteraction(
+              this.supabase, intentId, session.business_id!,
+              session.user_id, from, text, resolvedSender,
+            );
+
+            if (result.handled) {
+              if (result.message) {
+                await this.sendText(from, result.message);
+              }
+              return;
+            }
+          }
+        }
+      } catch (recurringErr) {
+        logger.error('[BOT] Recurring setup interceptor error (non-fatal):', recurringErr);
+        // Fall through to normal flow
+      }
+    }
+
     // ── Unified keyword matching (replaces detectIntent + old keyword + quick reply checks) ──
     // Only fire on non-free-text steps
     const isFreeTextStepForKeywords = isChatMode || ['collect_name', 'collect_other_name', 'collect_email', 'special_requests', 'review_text', 'enter_amount', 'collect_address', 'queue_collect_name', 'select_business_suggestion', 'enter_referral_code', 'collect_pickup_address', 'collect_dropoff_address', 'collect_package_description', 'collect_venue', 'enter_promo_code', 'save_card_pin', 'verify_card_pin'].includes(step);

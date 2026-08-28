@@ -1114,6 +1114,16 @@ export async function sendProactiveConfirmation(
     if (!finalizeResult.ok) {
       return { status: 'retryable_failed', retryable: true, reason: 'confirmation_finalize_failed' };
     }
+
+    // #165: Post-finalization recurring offer (separate lifecycle, non-blocking)
+    try {
+      const { checkAndOfferRecurring } = await import('@/lib/payments/recurring-offer');
+      await checkAndOfferRecurring(supabase, payment, businessId, resolved?.sender || null, customerPhone || null, logPrefix);
+    } catch (recurringErr) {
+      // NEVER affects payment finalization
+      logSafeError(logPrefix, 'recurring-offer', recurringErr);
+    }
+
     return { status: 'completed' };
 
   } catch (err) {
