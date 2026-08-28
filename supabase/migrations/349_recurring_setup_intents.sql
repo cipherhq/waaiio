@@ -131,19 +131,19 @@ BEGIN
   END IF;
 
   -- Load authoritative values from source payment and its associated booking
-  -- Fix 4: enforce gateway match, flow_type, and cross-business booking validation
+  -- Booking MUST exist with flow_type='payment' (Payment/Giving context required)
   SELECT p.amount, p.currency, p.user_id, b.service_id
   INTO v_amount, v_currency, v_user_id, v_service_id
   FROM public.payments p
-  LEFT JOIN public.bookings b ON b.id = p.booking_id
+  INNER JOIN public.bookings b ON b.id = p.booking_id
   WHERE p.id = p_source_payment_id
     AND p.business_id = p_business_id
     AND p.gateway = p_provider                              -- gateway match
     AND p.status = 'success'
     AND p.finalization_completed_at IS NOT NULL
     AND p.confirmation_sent_at IS NOT NULL
-    AND (b.flow_type = 'payment' OR b.id IS NULL)           -- Giving/Payment or no booking
-    AND (b.business_id = p_business_id OR b.id IS NULL);    -- booking tenant match
+    AND b.flow_type = 'payment'                             -- canonical Payment/Giving booking
+    AND b.business_id = p_business_id;                      -- booking tenant match
 
   IF NOT FOUND THEN
     RETURN jsonb_build_object('created', false, 'reason', 'payment_not_eligible');
@@ -348,6 +348,11 @@ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE
   v_intent RECORD;
 BEGIN
+  -- Reject empty/whitespace plan codes
+  IF p_plan_code IS NULL OR TRIM(p_plan_code) = '' THEN
+    RETURN jsonb_build_object('persisted', false, 'reason', 'empty_plan_code');
+  END IF;
+
   SELECT id, status, claim_token FROM public.recurring_setup_intents
   WHERE id = p_intent_id FOR UPDATE INTO v_intent;
 
@@ -386,6 +391,11 @@ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE
   v_intent RECORD;
 BEGIN
+  -- Reject empty/whitespace subscription codes
+  IF p_subscription_code IS NULL OR TRIM(p_subscription_code) = '' THEN
+    RETURN jsonb_build_object('persisted', false, 'reason', 'empty_subscription_code');
+  END IF;
+
   SELECT id, status, claim_token FROM public.recurring_setup_intents
   WHERE id = p_intent_id FOR UPDATE INTO v_intent;
 
@@ -419,8 +429,7 @@ $$;
 
 CREATE OR REPLACE FUNCTION activate_recurring_subscription(
   p_intent_id UUID,
-  p_claim_token UUID,
-  p_next_charge_at TIMESTAMPTZ
+  p_claim_token UUID
 ) RETURNS JSONB
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE
@@ -446,9 +455,18 @@ BEGIN
     RETURN jsonb_build_object('activated', true, 'already_activated', true, 'subscription_id', v_intent.resulting_subscription_id);
   END IF;
 
-  -- Fix 3: consume persisted provider evidence — do NOT accept caller-supplied values
+  -- Consume persisted provider evidence — do NOT accept caller-supplied values
   IF v_intent.provider_plan_id IS NULL OR v_intent.provider_subscription_id IS NULL THEN
     RETURN jsonb_build_object('activated', false, 'reason', 'provider_evidence_incomplete');
+  END IF;
+  -- Reject empty/whitespace provider identifiers (defense-in-depth)
+  IF TRIM(v_intent.provider_plan_id) = '' OR TRIM(v_intent.provider_subscription_id) = '' THEN
+    RETURN jsonb_build_object('activated', false, 'reason', 'empty_provider_identifiers');
+  END IF;
+
+  -- provider_start_date must be set (recorded in begin_recurring_provider_attempt)
+  IF v_intent.provider_start_date IS NULL THEN
+    RETURN jsonb_build_object('activated', false, 'reason', 'missing_provider_start_date');
   END IF;
 
   -- Create customer_subscriptions row using persisted provider evidence
@@ -464,7 +482,7 @@ BEGIN
     v_intent.amount, v_intent.currency, v_intent.frequency,
     'active', v_intent.provider, v_intent.provider_subscription_id, v_intent.provider_plan_id,
     v_intent.provider_customer_code, v_intent.provider_authorization_code,
-    NULL, NULL, p_next_charge_at,
+    NULL, NULL, v_intent.provider_start_date,
     (SELECT guest_phone FROM public.bookings WHERE payment_id = v_intent.source_payment_id LIMIT 1),
     'whatsapp',
     jsonb_build_object('source_payment_id', v_intent.source_payment_id, 'setup_intent_id', v_intent.id, 'email_token', v_intent.provider_email_token)
@@ -623,7 +641,7 @@ DO $$ BEGIN
   REVOKE ALL ON FUNCTION begin_recurring_provider_attempt(UUID, UUID, TEXT, TEXT, TIMESTAMPTZ) FROM PUBLIC;
   REVOKE ALL ON FUNCTION persist_recurring_plan_id(UUID, UUID, TEXT) FROM PUBLIC;
   REVOKE ALL ON FUNCTION persist_recurring_subscription_id(UUID, UUID, TEXT, TEXT) FROM PUBLIC;
-  REVOKE ALL ON FUNCTION activate_recurring_subscription(UUID, UUID, TIMESTAMPTZ) FROM PUBLIC;
+  REVOKE ALL ON FUNCTION activate_recurring_subscription(UUID, UUID) FROM PUBLIC;
   REVOKE ALL ON FUNCTION mark_recurring_ambiguous(UUID, UUID, TEXT) FROM PUBLIC;
   REVOKE ALL ON FUNCTION fail_recurring_setup(UUID, UUID, TEXT) FROM PUBLIC;
   REVOKE ALL ON FUNCTION decline_recurring_offer(UUID, UUID, UUID) FROM PUBLIC;
@@ -635,7 +653,7 @@ DO $$ BEGIN
   EXECUTE 'REVOKE ALL ON FUNCTION begin_recurring_provider_attempt(UUID, UUID, TEXT, TEXT, TIMESTAMPTZ) FROM anon';
   EXECUTE 'REVOKE ALL ON FUNCTION persist_recurring_plan_id(UUID, UUID, TEXT) FROM anon';
   EXECUTE 'REVOKE ALL ON FUNCTION persist_recurring_subscription_id(UUID, UUID, TEXT, TEXT) FROM anon';
-  EXECUTE 'REVOKE ALL ON FUNCTION activate_recurring_subscription(UUID, UUID, TIMESTAMPTZ) FROM anon';
+  EXECUTE 'REVOKE ALL ON FUNCTION activate_recurring_subscription(UUID, UUID) FROM anon';
   EXECUTE 'REVOKE ALL ON FUNCTION mark_recurring_ambiguous(UUID, UUID, TEXT) FROM anon';
   EXECUTE 'REVOKE ALL ON FUNCTION fail_recurring_setup(UUID, UUID, TEXT) FROM anon';
   EXECUTE 'REVOKE ALL ON FUNCTION decline_recurring_offer(UUID, UUID, UUID) FROM anon';
@@ -647,7 +665,7 @@ DO $$ BEGIN
   EXECUTE 'REVOKE ALL ON FUNCTION begin_recurring_provider_attempt(UUID, UUID, TEXT, TEXT, TIMESTAMPTZ) FROM authenticated';
   EXECUTE 'REVOKE ALL ON FUNCTION persist_recurring_plan_id(UUID, UUID, TEXT) FROM authenticated';
   EXECUTE 'REVOKE ALL ON FUNCTION persist_recurring_subscription_id(UUID, UUID, TEXT, TEXT) FROM authenticated';
-  EXECUTE 'REVOKE ALL ON FUNCTION activate_recurring_subscription(UUID, UUID, TIMESTAMPTZ) FROM authenticated';
+  EXECUTE 'REVOKE ALL ON FUNCTION activate_recurring_subscription(UUID, UUID) FROM authenticated';
   EXECUTE 'REVOKE ALL ON FUNCTION mark_recurring_ambiguous(UUID, UUID, TEXT) FROM authenticated';
   EXECUTE 'REVOKE ALL ON FUNCTION fail_recurring_setup(UUID, UUID, TEXT) FROM authenticated';
   EXECUTE 'REVOKE ALL ON FUNCTION decline_recurring_offer(UUID, UUID, UUID) FROM authenticated';
@@ -660,7 +678,7 @@ DO $$ BEGIN
   EXECUTE 'GRANT EXECUTE ON FUNCTION begin_recurring_provider_attempt(UUID, UUID, TEXT, TEXT, TIMESTAMPTZ) TO service_role';
   EXECUTE 'GRANT EXECUTE ON FUNCTION persist_recurring_plan_id(UUID, UUID, TEXT) TO service_role';
   EXECUTE 'GRANT EXECUTE ON FUNCTION persist_recurring_subscription_id(UUID, UUID, TEXT, TEXT) TO service_role';
-  EXECUTE 'GRANT EXECUTE ON FUNCTION activate_recurring_subscription(UUID, UUID, TIMESTAMPTZ) TO service_role';
+  EXECUTE 'GRANT EXECUTE ON FUNCTION activate_recurring_subscription(UUID, UUID) TO service_role';
   EXECUTE 'GRANT EXECUTE ON FUNCTION mark_recurring_ambiguous(UUID, UUID, TEXT) TO service_role';
   EXECUTE 'GRANT EXECUTE ON FUNCTION fail_recurring_setup(UUID, UUID, TEXT) TO service_role';
   EXECUTE 'GRANT EXECUTE ON FUNCTION decline_recurring_offer(UUID, UUID, UUID) TO service_role';

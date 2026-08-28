@@ -14,7 +14,23 @@ import { createHash } from 'crypto';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { MessageSender } from '@/lib/channels/message-sender';
 import { logger } from '@/lib/logger';
-import { formatCurrency, getCurrencyCode, type CountryCode } from '@/lib/constants';
+import { formatCurrency, type CountryCode } from '@/lib/constants';
+
+/** Map ISO currency codes to country codes for formatCurrency. */
+const CURRENCY_TO_COUNTRY: Record<string, string> = {
+  'NGN': 'NG',
+  'GHS': 'GH',
+  'USD': 'US',
+  'GBP': 'GB',
+  'CAD': 'CA',
+  'KES': 'KE',
+  'ZAR': 'ZA',
+  'XOF': 'CI',
+};
+
+function currencyToCountryCode(currency: string): CountryCode {
+  return (CURRENCY_TO_COUNTRY[currency] || 'NG') as CountryCode;
+}
 
 interface RecurringIntent {
   id: string;
@@ -141,7 +157,7 @@ async function handleFrequencySelection(
 
   if (!frequency) {
     // Send frequency selection buttons
-    const formattedAmount = formatCurrency(intent.amount, intent.currency as CountryCode);
+    const formattedAmount = formatCurrency(intent.amount, currencyToCountryCode(intent.currency));
     if (sender) {
       const phoneTo = phone.startsWith('+') ? phone.slice(1) : phone;
       await sender.sendButtons({
@@ -193,7 +209,7 @@ async function showConsentPrompt(
     .single();
 
   const businessName = business?.name || 'Business';
-  const formattedAmount = formatCurrency(intent.amount, intent.currency as CountryCode);
+  const formattedAmount = formatCurrency(intent.amount, currencyToCountryCode(intent.currency));
   const consentMessage = `By accepting, you authorize ${businessName} to charge your card ${formattedAmount} ${frequency}. You can cancel anytime by messaging "cancel subscription".`;
 
   if (sender) {
@@ -258,7 +274,7 @@ async function handleConsentConfirmation(
     .single();
 
   const businessName = business?.name || 'Business';
-  const formattedAmount = formatCurrency(intent.amount, intent.currency as CountryCode);
+  const formattedAmount = formatCurrency(intent.amount, currencyToCountryCode(intent.currency));
   const consentText = `By accepting, you authorize ${businessName} to charge your card ${formattedAmount} ${intent.frequency}. You can cancel anytime by messaging "cancel subscription".`;
   const consentHash = createHash('sha256').update(consentText).digest('hex');
 
@@ -526,11 +542,10 @@ export async function executePaystackRecurringSetup(
   }
 
   // ── Activate: provider_attempted → active ──
-  // Fix 3: simplified signature — reads provider evidence from persisted intent row
+  // Reads provider_start_date from persisted intent row — no caller-supplied next_charge_at
   const { data: activateResult, error: activateErr } = await supabase.rpc('activate_recurring_subscription', {
     p_intent_id: intent.id,
     p_claim_token: claimToken,
-    p_next_charge_at: startDate.toISOString(),
   });
 
   if (activateErr || !(activateResult as Record<string, unknown>)?.activated) {
@@ -548,7 +563,7 @@ export async function executePaystackRecurringSetup(
 
   // Success!
   const frequencyLabel = intent.frequency === 'weekly' ? 'every week' : 'every month';
-  const formattedAmount = formatCurrency(intent.amount, intent.currency as CountryCode);
+  const formattedAmount = formatCurrency(intent.amount, currencyToCountryCode(intent.currency));
   await sendSetupMessage(sender, phone,
     `\u2705 *Recurring Payment Active!*\n\nYou will be charged ${formattedAmount} ${frequencyLabel}.\n\nType *cancel subscription* anytime to stop.`);
   logger.info(`${logPrefix} Recurring subscription activated successfully`);

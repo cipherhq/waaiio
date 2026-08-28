@@ -55,6 +55,7 @@ describe('PostgreSQL recurring_setup_intents (#165)', () => {
     runSQL(`
       DELETE FROM recurring_setup_intents WHERE business_id = '${TEST_BIZ_ID}';
       DELETE FROM payments WHERE business_id = '${TEST_BIZ_ID}';
+      DELETE FROM bookings WHERE business_id = '${TEST_BIZ_ID}';
       DELETE FROM businesses WHERE id = '${TEST_BIZ_ID}';
       DELETE FROM profiles WHERE id = '${TEST_OWNER_ID}';
       ALTER TABLE auth.users DISABLE TRIGGER ALL;
@@ -74,11 +75,21 @@ describe('PostgreSQL recurring_setup_intents (#165)', () => {
       ON CONFLICT DO NOTHING;
     `);
     if (biz.exitCode !== 0) throw new Error(`Business insert failed: ${biz.stderr}`);
-    // Two test payments (success + finalized + user_id set for RPC authority derivation)
-    for (const pid of [TEST_PAY_ID, TEST_PAY_ID2]) {
+    // Two test bookings + payments (canonical Payment/Giving context required by INNER JOIN)
+    const TEST_BOOKING_IDS = ['cd165000-0000-0000-0000-000000000010', 'cd165000-0000-0000-0000-000000000011'];
+    for (let i = 0; i < 2; i++) {
+      const pid = [TEST_PAY_ID, TEST_PAY_ID2][i];
+      const bid = TEST_BOOKING_IDS[i];
+      // Create booking first (flow_type='payment' for Giving/Payment context)
       runSQL(`
-        INSERT INTO payments (id, business_id, user_id, amount, gateway_reference, status, gateway, currency, finalization_completed_at, confirmation_sent_at, payment_authority_version)
-        VALUES ('${pid}', '${TEST_BIZ_ID}', '${TEST_USER_ID}', 10000, 'test-165-ref-${pid}', 'success', 'paystack', 'NGN', NOW(), NOW(), 1)
+        INSERT INTO bookings (id, business_id, user_id, reference_code, status, flow_type, guest_phone, channel, date, time, party_size)
+        VALUES ('${bid}', '${TEST_BIZ_ID}', '${TEST_USER_ID}', 'WA-GV-${i}', 'confirmed', 'payment', '+2340000165', 'whatsapp', '2026-08-28', '10:00', 1)
+        ON CONFLICT DO NOTHING;
+      `);
+      // Create payment linked to booking
+      runSQL(`
+        INSERT INTO payments (id, business_id, user_id, booking_id, amount, gateway_reference, status, gateway, currency, finalization_completed_at, confirmation_sent_at, payment_authority_version)
+        VALUES ('${pid}', '${TEST_BIZ_ID}', '${TEST_USER_ID}', '${bid}', 10000, 'test-165-ref-${pid}', 'success', 'paystack', 'NGN', NOW(), NOW(), 1)
         ON CONFLICT DO NOTHING;
       `);
     }
@@ -88,6 +99,7 @@ describe('PostgreSQL recurring_setup_intents (#165)', () => {
     runSQL(`
       DELETE FROM recurring_setup_intents WHERE business_id = '${TEST_BIZ_ID}';
       DELETE FROM payments WHERE business_id = '${TEST_BIZ_ID}';
+      DELETE FROM bookings WHERE business_id = '${TEST_BIZ_ID}';
       DELETE FROM businesses WHERE id = '${TEST_BIZ_ID}';
       DELETE FROM profiles WHERE id = '${TEST_OWNER_ID}';
       ALTER TABLE auth.users DISABLE TRIGGER ALL;
@@ -329,7 +341,7 @@ describe('PostgreSQL recurring_setup_intents (#165)', () => {
     // Create a second business
     runSQL(`INSERT INTO businesses (id, owner_id, name, slug, address, city, phone) VALUES ('${crossBizId}', '${TEST_OWNER_ID}', 'Cross Biz', 'cross-biz', '2 Cross St', 'Accra', '+2330000001') ON CONFLICT DO NOTHING;`);
     // Create a booking belonging to a different business
-    runSQL(`INSERT INTO bookings (id, business_id, flow_type, guest_name, guest_phone, status) VALUES ('${crossBizBookId}', '${crossBizId}', 'payment', 'Cross Guest', '+2340000001', 'confirmed') ON CONFLICT DO NOTHING;`);
+    runSQL(`INSERT INTO bookings (id, business_id, user_id, reference_code, flow_type, guest_name, guest_phone, status, date, time, party_size) VALUES ('${crossBizBookId}', '${crossBizId}', '${TEST_USER_ID}', 'WA-CR-1', 'payment', 'Cross Guest', '+2340000001', 'confirmed', '2026-08-28', '10:00', 1) ON CONFLICT DO NOTHING;`);
     // Create a payment linked to that cross-business booking
     runSQL(`INSERT INTO payments (id, business_id, user_id, booking_id, amount, gateway_reference, status, gateway, currency, finalization_completed_at, confirmation_sent_at, payment_authority_version) VALUES ('${crossBizPayId}', '${TEST_BIZ_ID}', '${TEST_USER_ID}', '${crossBizBookId}', 5000, 'test-cross-ref', 'success', 'paystack', 'NGN', NOW(), NOW(), 1) ON CONFLICT DO NOTHING;`);
     const { result } = callRpc(`SELECT create_recurring_offer('${crossBizPayId}'::uuid, '${TEST_BIZ_ID}'::uuid, 'paystack') AS result;`);
@@ -344,7 +356,7 @@ describe('PostgreSQL recurring_setup_intents (#165)', () => {
     const nonPayFlowPayId = 'cd165000-0000-0000-0000-000000000054';
     const nonPayFlowBookId = 'cd165000-0000-0000-0000-000000000055';
     // Create a booking with non-payment flow_type
-    runSQL(`INSERT INTO bookings (id, business_id, flow_type, guest_name, guest_phone, status) VALUES ('${nonPayFlowBookId}', '${TEST_BIZ_ID}', 'appointment', 'Appt Guest', '+2340000002', 'confirmed') ON CONFLICT DO NOTHING;`);
+    runSQL(`INSERT INTO bookings (id, business_id, user_id, reference_code, flow_type, guest_name, guest_phone, status, date, time, party_size) VALUES ('${nonPayFlowBookId}', '${TEST_BIZ_ID}', '${TEST_USER_ID}', 'WA-AP-1', 'appointment', 'Appt Guest', '+2340000002', 'confirmed', '2026-08-28', '10:00', 1) ON CONFLICT DO NOTHING;`);
     runSQL(`INSERT INTO payments (id, business_id, user_id, booking_id, amount, gateway_reference, status, gateway, currency, finalization_completed_at, confirmation_sent_at, payment_authority_version) VALUES ('${nonPayFlowPayId}', '${TEST_BIZ_ID}', '${TEST_USER_ID}', '${nonPayFlowBookId}', 5000, 'test-appt-ref', 'success', 'paystack', 'NGN', NOW(), NOW(), 1) ON CONFLICT DO NOTHING;`);
     const { result } = callRpc(`SELECT create_recurring_offer('${nonPayFlowPayId}'::uuid, '${TEST_BIZ_ID}'::uuid, 'paystack') AS result;`);
     expect(result.created).toBe(false);
@@ -368,7 +380,7 @@ describe('PostgreSQL recurring_setup_intents (#165)', () => {
     callRpc(`SELECT confirm_recurring_consent('${r1.intent_id}'::uuid, '${TEST_BIZ_ID}'::uuid, 'hash') AS result;`);
     const { result: beginResult } = callRpc(`SELECT begin_recurring_provider_attempt('${r1.intent_id}'::uuid, '${TEST_BIZ_ID}'::uuid, 'CUS_test', 'AUTH_test', NOW() + INTERVAL '1 month') AS result;`);
     // Attempt activation WITHOUT persisting plan/subscription codes first
-    const { result } = callRpc(`SELECT activate_recurring_subscription('${r1.intent_id}'::uuid, '${beginResult.claim_token}'::uuid, NOW() + INTERVAL '1 month') AS result;`);
+    const { result } = callRpc(`SELECT activate_recurring_subscription('${r1.intent_id}'::uuid, '${beginResult.claim_token}'::uuid) AS result;`);
     expect(result.activated).toBe(false);
     expect(result.reason).toBe('provider_evidence_incomplete');
   });
