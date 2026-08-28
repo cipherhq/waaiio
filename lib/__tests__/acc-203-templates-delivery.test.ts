@@ -199,10 +199,10 @@ describe('OTP Send: v2 template with dynamic params', () => {
     const json = await res.json();
     expect(json.sent).toBe(true);
 
-    // Verify sendTemplate was called with v2 name and 4 params
+    // Verify sendTemplate was called with v2 name and exact positional params
     expect(mockSendTemplateFn).toHaveBeenCalledWith(expect.objectContaining({
       templateName: 'promo_pickup_verification_v2',
-      templateParams: expect.arrayContaining(['Test Business', 'Gold Prize', '123456', '10']),
+      templateParams: ['Test Business', 'Gold Prize', '123456', '10'],
     }));
   });
 
@@ -381,11 +381,18 @@ describe('Contact Winner', () => {
     return POST(req);
   }
 
-  it('owner -> send with template succeeds', async () => {
+  it('owner -> send with template succeeds with exact positional params', async () => {
+    mockSendTemplateFn.mockClear();
     const res = await callContact();
     expect(res.status).toBe(200);
     const json = await res.json();
     expect(json.sent).toBe(true);
+
+    // Pin exact positional template contract — fails if params are reordered
+    expect(mockSendTemplateFn).toHaveBeenCalledWith(expect.objectContaining({
+      templateName: 'promo_winner_status_v1',
+      templateParams: ['Test Biz', 'Summer Promo', 'Gold Prize', 'WAA-TEST-0001'],
+    }));
   });
 
   it('manager -> send with template succeeds', async () => {

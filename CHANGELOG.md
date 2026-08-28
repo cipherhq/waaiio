@@ -3,6 +3,27 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-08-26 — #211: Promo WhatsApp template provisioning (code prep)
+
+### What changed
+- **Generic provisioner:** Added 3 new templates to `WAAIIO_TEMPLATES`: `promo_pickup_verification_v2` (4 params with business name), `promo_winner_status_v1` (claim reference notification), `promo_fulfillment_status_v1` (status update notification). Legacy v1 retained.
+- **Capability provisioner:** Added same 3 templates to `REQUIRED_TEMPLATES.promo_verification` (now 4 templates total).
+- **Language-aware existence check:** Generic provisioner now matches `name + language` instead of name-only, preventing wrong-language templates from suppressing en_US provisioning.
+- **Template readiness:** Added `promo_fulfillment_status_v1` to template-status endpoint response.
+- **OTP send error handling:** Wrapped `getTemplates()` in try/catch — failure now returns 503 before issuing any verification.
+- **Exports:** `WAAIIO_TEMPLATES` and `REQUIRED_TEMPLATES` exported for test access.
+
+### Files changed
+- `lib/channels/provision-templates.ts` — 3 new templates, language-aware check, export
+- `app/api/whatsapp/templates/provision/route.ts` — 3 new templates in promo_verification, export
+- `app/api/promotions/template-status/route.ts` — fulfillment template added to readiness response
+- `app/api/promotions/verification/send/route.ts` — getTemplates try/catch guard
+- `lib/__tests__/acc-211-template-provisioning.test.ts` — 12 contract tests (provisioner A/B parity, language check, readiness, error handling)
+
+### What could break
+- `WAAIIO_TEMPLATES` and `REQUIRED_TEMPLATES` are now exported — any code importing these will get the expanded arrays
+- Generic provisioner language check is stricter — previously a same-name template in any language would cause a skip
+
 ## 2026-08-26 — #204: PR #210 corrections round 6 — claim token enforcement, WAMID durability pushback, recovery selection tests
 
 ### What changed

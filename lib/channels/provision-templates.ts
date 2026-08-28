@@ -1,4 +1,5 @@
 import { logger } from '@/lib/logger';
+import { PROMO_TEMPLATE_CONTRACTS } from '@/lib/promotions/template-contracts';
 
 const API_VERSION = process.env.META_GRAPH_API_VERSION || 'v22.0';
 
@@ -21,7 +22,7 @@ interface TemplateDefinition {
   }>;
 }
 
-const WAAIIO_TEMPLATES: TemplateDefinition[] = [
+export const WAAIIO_TEMPLATES: TemplateDefinition[] = [
   {
     name: 'booking_confirmation',
     category: 'UTILITY',
@@ -87,6 +88,9 @@ const WAAIIO_TEMPLATES: TemplateDefinition[] = [
       { type: 'BODY', text: 'Your {{1}} pickup verification code is {{2}}.\nIt expires in {{3}} minutes.\nOnly share this code with staff when collecting your prize.', example: { body_text: [['Prize', '123456', '10']] } },
     ],
   },
+  PROMO_TEMPLATE_CONTRACTS.promo_pickup_verification_v2,
+  PROMO_TEMPLATE_CONTRACTS.promo_winner_status_v1,
+  PROMO_TEMPLATE_CONTRACTS.promo_fulfillment_status_v1,
 ];
 
 /**
@@ -106,12 +110,15 @@ export async function provisionTemplates(
     try {
       // Check if template already exists
       const checkRes = await fetch(
-        `https://graph.facebook.com/${API_VERSION}/${wabaId}/message_templates?name=${template.name}&fields=name,status`,
+        `https://graph.facebook.com/${API_VERSION}/${wabaId}/message_templates?name=${template.name}&fields=name,status,language`,
         { headers: { Authorization: `Bearer ${accessToken}` } }
       );
       const checkData = await checkRes.json();
 
-      if (checkData.data?.length > 0) {
+      const alreadyExists = (checkData.data || []).some(
+        (t: { name: string; language?: string }) => t.name === template.name && t.language === template.language,
+      );
+      if (alreadyExists) {
         skipped++;
         continue;
       }

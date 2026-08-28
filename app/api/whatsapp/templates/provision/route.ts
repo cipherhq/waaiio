@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { MetaCloudService } from '@/lib/channels/meta-cloud';
 import { CAPABILITIES } from '@/lib/capabilities/types';
+import { PROMO_TEMPLATE_CONTRACTS } from '@/lib/promotions/template-contracts';
 import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
 
@@ -219,6 +220,9 @@ const REQUIRED_TEMPLATES: Record<string, TemplateDef[]> = {
         },
       ],
     },
+    PROMO_TEMPLATE_CONTRACTS.promo_pickup_verification_v2,
+    PROMO_TEMPLATE_CONTRACTS.promo_winner_status_v1,
+    PROMO_TEMPLATE_CONTRACTS.promo_fulfillment_status_v1,
   ],
 };
 

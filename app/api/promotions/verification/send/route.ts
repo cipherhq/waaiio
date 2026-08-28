@@ -94,7 +94,14 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Template management not available on this channel' }, { status: 503 });
   }
 
-  const templates = await resolved.cloud.getTemplates();
+  let templates;
+  try {
+    templates = await resolved.cloud.getTemplates();
+  } catch (err) {
+    logger.error('[PROMO-PICKUP] Template readiness check failed:', err);
+    return NextResponse.json({ error: 'Template readiness check unavailable' }, { status: 503 });
+  }
+
   const v2Template = (templates.data || []).find(
     (t: { name: string; language: string; status?: string }) => t.name === 'promo_pickup_verification_v2' && t.language === 'en_US'
   );
