@@ -3,6 +3,86 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-08-29 — #214: CI fix — column-level REVOKE + runtime auth context (refs #215)
+
+### What changed
+1. **Migration 353 — column-level REVOKE on protected columns:** Added explicit `REVOKE UPDATE (role, id, created_at)` on profiles from PUBLIC/anon/authenticated. `REVOKE ALL ON TABLE` only removes TABLE-level privileges per PostgreSQL spec — stale or inherited column-level grants survive independently. The explicit column-level revoke ensures these are cleared in all PostgreSQL environments (CI PG15 showed column-level UPDATE on role even after table-level REVOKE).
+2. **AUTH-001 runtime test fix:** The runtime denial test now overrides `auth.uid()` to match the test user's UUID before attempting the UPDATE as `authenticated`. Previously, RLS silently filtered the row (auth.uid() didn't match), the trigger never fired, and the only possible denial path was column-level privilege — which was fragile across PG versions. Now the test proves EITHER column-level denial OR trigger denial.
+3. **AUTH-001 first_name UPDATE test:** Changed to positive assertion (`expect(r.exitCode).toBe(0)`) since auth.uid() now matches the test user. Proves authenticated CAN update approved columns.
+4. **Cleanup restores auth.uid():** Restores the CI auth.uid() stub after runtime tests to prevent interference with downstream test steps.
+
+### Files changed
+- `supabase/migrations/353_auth001_profiles_role_hardening.sql` — added column-level REVOKE
+- `lib/__tests__/auth001-profiles-role-hardening-db.test.ts` — fixed runtime tests
+
+5. **Root cause:** `p1-appointment-closure.test.ts` runs `GRANT INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO authenticated` against the shared `waaiio_test` database (step 33). This re-grants table-level UPDATE on profiles, undoing migration 353's column-level restriction by the time step 58 (AUTH-001) runs.
+6. **Convergence test:** AUTH-001 test now re-applies the migration 353 privilege section as its first step, proving the migration is convergent from any starting state.
+
+### What could break
+- Nothing — the column-level REVOKE is idempotent and only removes privileges that shouldn't exist
+- The auth.uid() override is scoped to runtime tests and restored in cleanup
+
+---
+
+## 2026-08-29 — #214: Security consolidation round (refs #215, #216, #217, #218)
+
+### What changed
+1. **Migration 353 — AUTH-001 convergence:** Idempotent forward migration that restores profiles.role escalation protections missed on staging (migration 247 number collision). Drops permissive FOR ALL policy, restricts column-level UPDATE privileges, installs BEFORE UPDATE/INSERT triggers, rewrites is_admin()/is_admin_or_support() to use auth.users.raw_app_meta_data. Convergence-safe for both staging (missing) and production (already has).
+2. **Migration 354 — Atomic no-show RPC:** `mark_booking_no_show(uuid, text)` handles status transition + slot release in a single transaction. Derives staff/location from trusted booking row. Package sessions intentionally NOT released on no-show. service_role only.
+3. **Migration 351 consolidation:** Absorbed migration 352 content (release_booking_slot ACL was already in 351). Updated verification block to include release_booking_slot. Removed redundant migration 352.
+4. **No-show atomicity:** `/api/bookings/[id]/status` no_show action now uses atomic RPC instead of separate status update + browser release-slot call. Slot release is server-side and atomic.
+5. **Dashboard cleanup:** Booking cancellations and no-shows both route through the atomic API. Removed redundant `/api/bookings/release-slot` calls from reservations dashboard.
+6. **Removed /api/bookings/release-slot:** Zero legitimate callers remain after cancel/no-show corrections. Dead privileged surface removed.
+7. **Real PostgreSQL tests:** AUTH-001 privilege/trigger/function tests, ticket purchase ACL + cross-event validation tests, release_booking_slot + mark_booking_no_show ACL tests.
+
+### Files changed
+- `supabase/migrations/351_security_definer_acl_hardening.sql` — updated comments + verification block
+- `supabase/migrations/352_revoke_release_booking_slot_from_authenticated.sql` — REMOVED (content in 351)
+- `supabase/migrations/353_auth001_profiles_role_hardening.sql` — NEW
+- `supabase/migrations/354_mark_booking_no_show_atomic.sql` — NEW
+- `app/api/bookings/[id]/status/route.ts` — no_show uses atomic RPC
+- `app/dashboard/reservations/page.tsx` — removed redundant release-slot calls, no_show routes through API
+- `app/api/bookings/release-slot/route.ts` — REMOVED (zero callers)
+- `lib/__tests__/auth001-profiles-role-hardening-db.test.ts` — NEW
+- `lib/__tests__/ticket-purchase-security-db.test.ts` — NEW
+- `lib/__tests__/migration-351-acl-hardening-db.test.ts` — added release_booking_slot + mark_booking_no_show coverage
+- `.github/workflows/ci.yml` — added AUTH-001 + ticket purchase test steps
+
+### What could break
+- No-show action now requires routing through `/api/bookings/[id]/status` API (direct browser DB update no longer releases slots)
+- Any code calling release_booking_slot via authenticated role will be denied
+- The `/api/bookings/release-slot` route no longer exists — cached browser code would get 404
+
+### Follow-ups tracked separately
+- #216 — Bot My Bookings object-level authorization (IDOR fix)
+- #217 — Complete platform-role authority migration (is_support + 30+ inline RLS)
+- #218 — Production migration reconciliation before production E2E
+
+## 2026-08-26 — #214: Security — release_booking_slot server route + purchase_tickets_atomic trust boundary
+
+### What changed (3 fixes)
+1. **Fix 1 — Server API for release_booking_slot (NEW route + migration 352):** Created `/api/bookings/release-slot/route.ts` that authenticates the user, verifies business ownership via `businesses.owner_id`, loads booking data from DB (trusted), and calls `release_booking_slot` via service_role. Updated `app/dashboard/reservations/page.tsx` to call the API instead of the direct RPC. Migration 352 revokes `authenticated` role access from the function.
+2. **Fix 2 — Ticket type cross-event validation (events/purchase/route.ts):** Added `event_id` validation when a `ticketTypeId` is provided. Previously, a user could supply a ticket type from a different (cheaper) event to get a lower price applied. Now the route fetches `event_id` from `event_ticket_types` and rejects if it doesn't match the target event.
+3. **Fix 3 — Migration 352 (ACL):** `release_booking_slot` revoked from PUBLIC, anon, authenticated. Only service_role can invoke.
+
+### Files changed
+- `app/api/bookings/release-slot/route.ts` (NEW) — Fix 1
+- `app/dashboard/reservations/page.tsx` — Fix 1 (replaced direct RPC with fetch)
+- `app/api/events/purchase/route.ts` — Fix 2 (ticket type event_id validation)
+- `supabase/migrations/352_revoke_release_booking_slot_from_authenticated.sql` (NEW) — Fix 3
+
+### What could break
+- If any other code path calls `release_booking_slot` via authenticated role (not service_role), it will be denied. Grep found no other callers besides the reservations page.
+- The RPC signature for `release_booking_slot(uuid, date, time, uuid, uuid)` must match migration 193's altered signature. Verified it does.
+
+### Audit notes — purchase_tickets_atomic
+- Price is derived server-side from DB (event.price or event_ticket_types.price) — NOT from request body. Correct.
+- `p_total_amount` = `unitPrice * quantity` computed server-side. Correct.
+- Event is loaded with `.eq('status', 'published')` and future date filter. Correct.
+- Capacity is protected by `FOR UPDATE` row lock in the RPC. Correct.
+- OTP token verification ensures email identity. Correct.
+- The only gap was cross-event ticket type manipulation — now fixed.
+
 ## 2026-08-26 — #213: PR review blockers for #165 recurring payment continuation
 
 ### What changed (7 fixes)

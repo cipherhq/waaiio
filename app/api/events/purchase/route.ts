@@ -98,12 +98,17 @@ export async function POST(request: NextRequest) {
   if (ticketTypeId) {
     const { data: tt } = await supabase
       .from('event_ticket_types')
-      .select('id, price, total_tickets, tickets_sold, is_active')
+      .select('id, price, total_tickets, tickets_sold, is_active, event_id')
       .eq('id', ticketTypeId)
       .single();
 
     if (!tt || !tt.is_active) {
       return NextResponse.json({ error: 'Ticket type not found or unavailable' }, { status: 404 });
+    }
+
+    // Verify ticket type belongs to this event (prevents cross-event price manipulation)
+    if (tt.event_id !== event.id) {
+      return NextResponse.json({ error: 'Ticket type does not belong to this event' }, { status: 400 });
     }
 
     const ttAvailable = tt.total_tickets - tt.tickets_sold;

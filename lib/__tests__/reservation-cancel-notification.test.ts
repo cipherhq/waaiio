@@ -234,8 +234,8 @@ describe('Dashboard reservation cancellation integration', () => {
     const fs = await import('fs');
     const source = fs.readFileSync('app/dashboard/reservations/page.tsx', 'utf-8');
 
-    // Booking cancellation uses the atomic API path
+    // Booking cancellation and no-show route through the atomic API path
     expect(source).toContain("fetch(`/api/bookings/${id}/status`");
-    expect(source).toContain("action: 'cancel'");
+    expect(source).toContain("'cancel' : 'no_show'");
   });
 });

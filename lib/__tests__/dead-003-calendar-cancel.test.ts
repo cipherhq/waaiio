@@ -373,10 +373,10 @@ describe('Migration 309: cancel_booking_with_release includes slot release (DEAD
 describe('Reservations page booking cancel uses canonical API (DEAD-003)', () => {
   const reservationsSource = readFileSync('app/dashboard/reservations/page.tsx', 'utf-8');
 
-  // Test 12: Reservations booking cancellation uses canonical API
-  it('routes booking cancellations through /api/bookings/[id]/status', () => {
+  // Test 12: Reservations booking cancellation and no-show use canonical API
+  it('routes booking cancellations and no-shows through /api/bookings/[id]/status', () => {
     expect(reservationsSource).toContain("/api/bookings/${id}/status");
-    expect(reservationsSource).toContain("action: 'cancel'");
+    expect(reservationsSource).toContain("'cancel' : 'no_show'");
   });
 
   it('checks for non-reservation before using canonical API', () => {
