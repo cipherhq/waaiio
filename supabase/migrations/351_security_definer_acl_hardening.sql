@@ -1,13 +1,13 @@
 -- Migration 351: SECURITY DEFINER ACL Hardening
 --
--- Revokes anon/authenticated EXECUTE from 28 server-only SECURITY DEFINER
--- functions that were incorrectly exposed via Supabase default privileges.
+-- Revokes anon/authenticated EXECUTE from 27 server-only SECURITY DEFINER
+-- functions unconditionally, plus 1 conditionally (if present).
 --
 -- P0: Financial/payment state mutation (7 signatures)
 -- P1: Admin capability + inventory + booking mutation (12 signatures)
 -- P2: Usage/metric counter manipulation (8 signatures, including 2 increment_ai_usage overloads)
--- P3: Helper functions only called from within SECURITY DEFINER triggers (1 signature)
--- Total: 28 signatures
+-- P3: Trigger helper _is_service_role (conditional — not in repository migrations)
+-- Total: 27 unconditional + 1 conditional = 28 max
 --
 -- All 28 functions are called exclusively from server-side code
 -- (service client / cron / webhook handlers / trigger internals).
@@ -134,14 +134,22 @@ GRANT EXECUTE ON FUNCTION public.book_with_package_atomic(uuid, uuid, uuid, uuid
 -- P3: Helper functions only called from within SECURITY DEFINER triggers
 -- ═══════════════════════════════════════════════════════
 
--- _is_service_role(): read-only helper called only from enforce_payout_accounts_insert/update
--- Those are SECURITY DEFINER owned by postgres — nested calls execute as postgres.
--- No direct application callers. anon/authenticated EXECUTE is unnecessary.
-REVOKE ALL ON FUNCTION public._is_service_role() FROM PUBLIC;
-REVOKE ALL ON FUNCTION public._is_service_role() FROM anon;
-REVOKE ALL ON FUNCTION public._is_service_role() FROM authenticated;
-GRANT EXECUTE ON FUNCTION public._is_service_role() TO service_role;
--- postgres retains EXECUTE as owner (implicit) — triggers still work
+-- _is_service_role(): read-only helper called only from enforce_payout_accounts_insert/update.
+-- This function exists on staging/production but is NOT defined in repository migrations
+-- (it's a Supabase-managed or manually-created function).
+-- Conditional REVOKE: only applies if the function exists.
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON p.pronamespace = n.oid
+             WHERE n.nspname = 'public' AND p.proname = '_is_service_role') THEN
+    EXECUTE 'REVOKE ALL ON FUNCTION public._is_service_role() FROM PUBLIC';
+    EXECUTE 'REVOKE ALL ON FUNCTION public._is_service_role() FROM anon';
+    EXECUTE 'REVOKE ALL ON FUNCTION public._is_service_role() FROM authenticated';
+    EXECUTE 'GRANT EXECUTE ON FUNCTION public._is_service_role() TO service_role';
+    RAISE NOTICE 'Migration 351: _is_service_role() ACL hardened';
+  ELSE
+    RAISE NOTICE 'Migration 351: _is_service_role() not found — skipping (not in repository migrations)';
+  END IF;
+END $$;
 
 -- ═══════════════════════════════════════════════════════
 -- P2: Usage / Metric Counter Manipulation
