@@ -39,12 +39,12 @@ describe.skipIf(!canRun)('#219 notification_type enum — PostgreSQL evidence', 
   const insertedIds: string[] = [];
 
   beforeAll(() => {
-    // Create a minimal business for FK reference
+    // Create a minimal business for FK reference (include all NOT NULL columns)
     testBusinessId = psql(`
-      INSERT INTO businesses (id, name, slug, owner_id, category)
+      INSERT INTO businesses (id, name, slug, owner_id, category, address)
       VALUES (gen_random_uuid(), 'test-219-enum', 'test-219-enum-' || gen_random_uuid()::text,
               (SELECT id FROM profiles LIMIT 1),
-              'other')
+              'other', 'Test Address')
       RETURNING id;
     `);
   });
