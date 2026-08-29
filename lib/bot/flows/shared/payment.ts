@@ -28,6 +28,10 @@ export async function initializePayment(
     campaignId?: string;
     /** Donor name for campaign donations */
     donorName?: string;
+    /** #219: Exact inbound WhatsApp channel ID for post-payment confirmation routing */
+    inboundChannelId?: string;
+    /** #219: Interaction origin — determines confirmation delivery behavior */
+    confirmationOrigin?: 'whatsapp' | 'web';
   },
 ): Promise<{ url: string; reference: string } | null> {
   try {
@@ -95,6 +99,13 @@ export async function initializePayment(
           const checkoutUrl = meta.checkout_url as string | undefined;
           if (checkoutUrl && existingPayment.gateway_reference) {
             logger.info('[PAYMENT] Reusing existing pending payment for ' + entityCol + '=' + entityId);
+            // #219: Update channel context on reuse — customer may be retrying from a different channel
+            if (opts.inboundChannelId || opts.confirmationOrigin) {
+              const reuseMeta = { ...meta };
+              if (opts.inboundChannelId) reuseMeta._inbound_channel_id = opts.inboundChannelId;
+              if (opts.confirmationOrigin) reuseMeta._confirmation_origin = opts.confirmationOrigin;
+              await supabase.from('payments').update({ metadata: reuseMeta }).eq('id', existingPayment.id);
+            }
             const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
             const shortRef = existingPayment.gateway_reference.slice(-8);
             return { url: `${appUrl}/api/pay?ref=${shortRef}`, reference: existingPayment.gateway_reference };
@@ -346,6 +357,9 @@ export async function initializePayment(
       {
         const existingMeta = (paymentRecord.metadata || {}) as Record<string, unknown>;
         existingMeta.checkout_url = result.url;
+        // #219: Persist inbound channel + confirmation origin for post-payment delivery
+        if (opts.inboundChannelId) existingMeta._inbound_channel_id = opts.inboundChannelId;
+        if (opts.confirmationOrigin) existingMeta._confirmation_origin = opts.confirmationOrigin;
         // Persist exact payment origin + connection identity for Payment Authority verification
         existingMeta.payment_origin = isByo ? 'byo' : (connectAccountId || squareAccessToken || stripeAccountId) ? 'connect' : 'platform';
         if (providerConnectionId) existingMeta.provider_connection_id = providerConnectionId;

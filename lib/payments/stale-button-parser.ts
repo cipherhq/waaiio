@@ -1,23 +1,28 @@
 /**
- * #197: Canonical strict parser for stale "I've Paid" machine postback IDs.
+ * #197/#219: Canonical strict parser for stale "I've Paid" machine postback IDs.
  *
  * Recognized shapes (messageType MUST be 'button'):
- *   i_paid                    → generic, no reference
- *   i_paid_online             → generic, no reference
- *   i_paid:<order-ref>        → reference-bearing (ref must be non-empty)
- *   i_paid_online:<order-ref> → reference-bearing (ref must be non-empty)
+ *   i_paid                       → generic, no reference
+ *   i_paid_online                → generic, no reference
+ *   i_paid:<order-ref>           → legacy order-reference-bearing (ref must be non-empty)
+ *   i_paid_online:<order-ref>    → legacy order-reference-bearing (ref must be non-empty)
+ *   i_paid_ref:<gateway-ref>     → #219 payment-specific locator (ref must be non-empty)
  *
- * Malformed/empty ref forms (e.g., "i_paid:", "i_paid_online:") fail closed.
+ * Malformed/empty ref forms (e.g., "i_paid:", "i_paid_ref:") fail closed.
  * Free text "paid"/"done" is NEVER matched by this parser.
  */
 
 export interface StaleButtonParseResult {
   /** Whether this is a recognized stale payment machine postback */
   isStalePaymentButton: boolean;
-  /** Whether the postback carries an order reference */
+  /** Whether the postback carries a legacy order reference */
   hasReference: boolean;
   /** The extracted order reference (non-empty), or null */
   reference: string | null;
+  /** #219: Whether the postback carries a payment-specific gateway reference */
+  hasPaymentReference: boolean;
+  /** #219: The extracted gateway reference (non-empty), or null */
+  paymentReference: string | null;
 }
 
 /**
@@ -32,7 +37,10 @@ export function parseStalePaymentButton(
   messageType: string,
   currentStep: string,
 ): StaleButtonParseResult {
-  const NOT_MATCHED: StaleButtonParseResult = { isStalePaymentButton: false, hasReference: false, reference: null };
+  const NOT_MATCHED: StaleButtonParseResult = {
+    isStalePaymentButton: false, hasReference: false, reference: null,
+    hasPaymentReference: false, paymentReference: null,
+  };
 
   // ONLY machine button postbacks — never free text
   if (messageType !== 'button') return NOT_MATCHED;
@@ -46,16 +54,23 @@ export function parseStalePaymentButton(
 
   // Generic forms (exact match)
   if (text === 'i_paid' || text === 'i_paid_online') {
-    return { isStalePaymentButton: true, hasReference: false, reference: null };
+    return { isStalePaymentButton: true, hasReference: false, reference: null, hasPaymentReference: false, paymentReference: null };
   }
 
-  // Reference-bearing forms — strict parsing
+  // #219: Payment-specific locator — i_paid_ref:<gateway-reference>
+  if (text.startsWith('i_paid_ref:')) {
+    const ref = text.slice('i_paid_ref:'.length);
+    if (!ref || !ref.trim()) return NOT_MATCHED;
+    return { isStalePaymentButton: true, hasReference: false, reference: null, hasPaymentReference: true, paymentReference: ref };
+  }
+
+  // Legacy order-reference-bearing forms — strict parsing
   for (const prefix of ['i_paid:', 'i_paid_online:']) {
     if (text.startsWith(prefix)) {
       const ref = text.slice(prefix.length);
       // Malformed/empty ref → fail closed
       if (!ref || !ref.trim()) return NOT_MATCHED;
-      return { isStalePaymentButton: true, hasReference: true, reference: ref };
+      return { isStalePaymentButton: true, hasReference: true, reference: ref, hasPaymentReference: false, paymentReference: null };
     }
   }
 

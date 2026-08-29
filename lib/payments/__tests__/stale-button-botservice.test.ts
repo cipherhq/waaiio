@@ -54,6 +54,10 @@ vi.mock('@/lib/payments/stale-payment-recovery', () => ({
     recoverByRefCalls.push({ ref });
     return { type: 'confirmed', message: '✅ Payment Confirmed!', referenceCode: ref, amount: 121000, countryCode: 'NG' };
   }),
+  recoverByPaymentReference: vi.fn().mockImplementation(async (_ctx: unknown, ref: string) => {
+    recoverByRefCalls.push({ ref });
+    return { type: 'confirmed', message: '✅ Payment Confirmed!', referenceCode: ref, amount: 121000, countryCode: 'NG' };
+  }),
   recoverGeneric: vi.fn().mockImplementation(async () => {
     recoverGenericCalls.push({});
     return { type: 'confirmed', message: '✅ Payment Confirmed!', referenceCode: 'WA-OR-0001', amount: 121000, countryCode: 'NG' };

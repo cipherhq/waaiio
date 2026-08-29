@@ -2716,6 +2716,8 @@ export const orderingFlow: FlowDefinition = {
             countryCode: cc,
             gatewayOverride: ctx.business?.payment_gateway || null,
             businessId: ctx.business?.id,
+            inboundChannelId: ctx.session.session_data._inbound_channel_id as string | undefined,
+            confirmationOrigin: 'whatsapp' as const,
           });
 
           // Check if business qualifies for direct bank transfer option
@@ -2728,21 +2730,6 @@ export const orderingFlow: FlowDefinition = {
 
           if (paymentResult) {
             d.payment_reference = paymentResult.reference;
-
-            // #197: Persist inbound channel ID in payment metadata for durable channel resolution
-            const inboundChId = ctx.session.session_data._inbound_channel_id as string | undefined;
-            if (inboundChId && paymentResult.reference) {
-              const { data: payRec } = await ctx.supabase
-                .from('payments')
-                .select('id, metadata')
-                .eq('gateway_reference', paymentResult.reference)
-                .maybeSingle();
-              if (payRec) {
-                const meta = (payRec.metadata || {}) as Record<string, unknown>;
-                meta._inbound_channel_id = inboundChId;
-                await ctx.supabase.from('payments').update({ metadata: meta }).eq('id', payRec.id);
-              }
-            }
 
             if (bankAccount) {
               // Dual-option: online + bank transfer
