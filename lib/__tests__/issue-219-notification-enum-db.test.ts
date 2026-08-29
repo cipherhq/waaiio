@@ -2,14 +2,17 @@
  * #219: Notification enum PostgreSQL evidence
  *
  * Proves against the real migrated schema that:
- * A. 'payment' is a valid notification_type enum value (INSERT succeeds)
- * B. 'payment_received' is NOT a valid value (INSERT fails with 22P02)
- * C. 'donation' is NOT a valid value (INSERT fails with 22P02)
+ * A. 'payment' is a valid notification_type enum value (cast succeeds)
+ * B. 'payment_received' is NOT a valid value (cast fails with 22P02)
+ * C. 'donation' is NOT a valid value (cast fails with 22P02)
+ *
+ * Uses direct enum casting rather than table INSERTs to avoid
+ * needing FK dependencies (businesses, etc.).
  *
  * Requires TEST_DATABASE_URL environment variable.
  * Skips gracefully in local dev if no DB connection.
  */
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { execSync } from 'child_process';
 
 const dbUrl = process.env.TEST_DATABASE_URL || '';
@@ -35,56 +38,21 @@ function psqlMayFail(sql: string): { ok: boolean; output: string } {
 }
 
 describe.skipIf(!canRun)('#219 notification_type enum — PostgreSQL evidence', () => {
-  let testBusinessId: string;
-  const insertedIds: string[] = [];
 
-  beforeAll(() => {
-    // Create a minimal business for FK reference (include all NOT NULL columns)
-    testBusinessId = psql(`
-      INSERT INTO businesses (id, name, slug, owner_id, category, address)
-      VALUES (gen_random_uuid(), 'test-219-enum', 'test-219-enum-' || gen_random_uuid()::text,
-              (SELECT id FROM profiles LIMIT 1),
-              'other', 'Test Address')
-      RETURNING id;
-    `);
+  it('A. payment is a valid notification_type enum value', () => {
+    // Direct enum cast — succeeds if and only if the value is in the enum
+    const result = psql("SELECT 'payment'::notification_type;");
+    expect(result).toBe('payment');
   });
 
-  afterAll(() => {
-    // Clean up test data
-    for (const id of insertedIds) {
-      psql(`DELETE FROM notifications WHERE id = '${id}';`);
-    }
-    if (testBusinessId) {
-      psql(`DELETE FROM businesses WHERE id = '${testBusinessId}';`);
-    }
-  });
-
-  it('A. INSERT with type=payment succeeds', () => {
-    const id = psql(`
-      INSERT INTO notifications (business_id, type, channel, body, status)
-      VALUES ('${testBusinessId}', 'payment', 'whatsapp', '#219 test: valid enum', 'delivered')
-      RETURNING id;
-    `);
-    expect(id).toBeTruthy();
-    insertedIds.push(id);
-  });
-
-  it('B. INSERT with type=payment_received fails (22P02)', () => {
-    const result = psqlMayFail(`
-      INSERT INTO notifications (business_id, type, channel, body, status)
-      VALUES ('${testBusinessId}', 'payment_received', 'whatsapp', '#219 test: invalid enum', 'delivered')
-      RETURNING id;
-    `);
+  it('B. payment_received is NOT a valid notification_type value (22P02)', () => {
+    const result = psqlMayFail("SELECT 'payment_received'::notification_type;");
     expect(result.ok).toBe(false);
     expect(result.output).toContain('22P02');
   });
 
-  it('C. INSERT with type=donation fails (22P02)', () => {
-    const result = psqlMayFail(`
-      INSERT INTO notifications (business_id, type, channel, body, status)
-      VALUES ('${testBusinessId}', 'donation', 'whatsapp', '#219 test: invalid enum', 'delivered')
-      RETURNING id;
-    `);
+  it('C. donation is NOT a valid notification_type value (22P02)', () => {
+    const result = psqlMayFail("SELECT 'donation'::notification_type;");
     expect(result.ok).toBe(false);
     expect(result.output).toContain('22P02');
   });
