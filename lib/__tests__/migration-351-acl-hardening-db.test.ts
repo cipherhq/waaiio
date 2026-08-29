@@ -106,10 +106,26 @@ describe('Migration 351 ACL hardening', () => {
     });
   }
 
+  // P1: Admin/inventory — authenticated denied
+  for (const fn of P1_FUNCTIONS) {
+    it(`P1: authenticated CANNOT execute ${fn.name}`, () => {
+      const r = runSQL(`SELECT has_function_privilege('authenticated', '${fn.sig}', 'EXECUTE') AS p;`);
+      expect(r.stdout).toBe('f');
+    });
+  }
+
   // P2: Usage counters — anon denied
   for (const fn of P2_FUNCTIONS) {
     it(`P2: anon CANNOT execute ${fn.name}`, () => {
       const r = runSQL(`SELECT has_function_privilege('anon', '${fn.sig}', 'EXECUTE') AS p;`);
+      expect(r.stdout).toBe('f');
+    });
+  }
+
+  // P2: Usage counters — authenticated denied
+  for (const fn of P2_FUNCTIONS) {
+    it(`P2: authenticated CANNOT execute ${fn.name}`, () => {
+      const r = runSQL(`SELECT has_function_privilege('authenticated', '${fn.sig}', 'EXECUTE') AS p;`);
       expect(r.stdout).toBe('f');
     });
   }
@@ -122,7 +138,7 @@ describe('Migration 351 ACL hardening', () => {
     });
   }
 
-  // Runtime denial proof: anon SET ROLE + direct call
+  // Runtime denial proofs (4 total: 2 anon, 2 authenticated)
   it('runtime: anon cannot call claim_payment_finalization', () => {
     const r = runSQL(
       "SELECT claim_payment_finalization('00000000-0000-0000-0000-000000000000'::uuid);",
@@ -154,6 +170,15 @@ describe('Migration 351 ACL hardening', () => {
     const r = runSQL(
       "SELECT decrement_stock('00000000-0000-0000-0000-000000000000'::uuid, 1);",
       'anon'
+    );
+    expect(r.exitCode).not.toBe(0);
+    expect(r.stderr).toContain('permission denied');
+  });
+
+  it('runtime: authenticated cannot call configure_business_capabilities', () => {
+    const r = runSQL(
+      "SELECT configure_business_capabilities('00000000-0000-0000-0000-000000000000'::uuid, ARRAY['test']::text[], ARRAY[0]::integer[], 'free', NOW(), 'active', ARRAY[]::text[], ARRAY[]::text[]);",
+      'authenticated'
     );
     expect(r.exitCode).not.toBe(0);
     expect(r.stderr).toContain('permission denied');

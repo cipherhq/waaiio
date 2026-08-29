@@ -3,9 +3,10 @@
 -- Revokes anon/authenticated EXECUTE from 22 server-only SECURITY DEFINER
 -- functions that were incorrectly exposed via Supabase default privileges.
 --
--- P0: Financial/payment state mutation (7 functions)
--- P1: Admin capability + inventory mutation (6 functions)
--- P2: Usage/metric counter manipulation (9 functions, 1 has 2 overloads = 10 signatures)
+-- P0: Financial/payment state mutation (7 signatures)
+-- P1: Admin capability + inventory mutation (6 signatures)
+-- P2: Usage/metric counter manipulation (8 signatures, including 2 increment_ai_usage overloads)
+-- Total: 21 signatures
 --
 -- All 22 functions are called exclusively from server-side code
 -- (service client / cron / webhook handlers). Zero browser callers.
