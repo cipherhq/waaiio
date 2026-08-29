@@ -354,7 +354,7 @@ describe('sendTicketsAfterPurchase caller audit', () => {
     // Paid I've Paid path now uses verifyAndReconcilePayment → Authority handles ticket state.
     // No manual paidTicketResult inspection in the bot flow.
     const src = readSrc('../bot/flows/ticketing.flow.ts');
-    const ivePaid = src.split("text === 'i_paid'")[1] || '';
+    const ivePaid = src.split("ivePaidResult.recognized")[1] || '';
     expect(ivePaid).toContain('verifyAndReconcilePayment');
     expect(ivePaid).not.toContain('paidTicketResult');
   });
@@ -437,7 +437,7 @@ describe('Confirmation finalization result honored', () => {
 describe('Paid I\'ve Paid convergence (replaces legacy dedup path)', () => {
   it('paid I\'ve Paid path uses canonical authority (no manual dedup/ticket logic)', () => {
     const src = readSrc('../bot/flows/ticketing.flow.ts');
-    const ivePaid = src.split("text === 'i_paid'")[1]?.split("Payment not yet received")[0] || '';
+    const ivePaid = src.split("ivePaidResult.recognized")[1]?.split("Payment not yet received")[0] || '';
     // Must use verifyAndReconcilePayment, not manual dedupResult/paidTicketResult
     expect(ivePaid).toContain('verifyAndReconcilePayment');
     expect(ivePaid).not.toContain('dedupResult');

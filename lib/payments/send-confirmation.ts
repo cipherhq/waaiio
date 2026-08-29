@@ -460,29 +460,52 @@ export async function sendProactiveConfirmation(
     const { ChannelResolver } = await import('@/lib/channels/channel-resolver');
     const resolver = new ChannelResolver(supabase);
 
-    // Prefer the channel the customer was chatting on (same-business only, #197)
+    // #219: Resolve channel using _confirmation_origin + _inbound_channel_id jointly.
+    // WhatsApp origin + missing channel = skip customer send (no business-country fallback).
+    // Non-WhatsApp origin or legacy = existing resolveByBusinessId fallback.
     let resolved = null;
     let inboundChId: string | undefined;
+    let confirmationOrigin: string | undefined;
+    let whatsappOriginMissingChannel = false;
 
     // Only look up WhatsApp sessions if we have a customer phone
     if (customerPhone) {
-      // 1. Try durable channel from payment metadata (persisted at initializePayment time)
+      // 1. Try durable channel + origin from payment metadata (persisted at initializePayment time)
       const { data: payChMeta } = await supabase.from('payments').select('metadata').eq('id', payment.id).single();
-      inboundChId = (payChMeta?.metadata as Record<string, unknown>)?._inbound_channel_id as string | undefined;
+      const payMeta = (payChMeta?.metadata || {}) as Record<string, unknown>;
+      inboundChId = payMeta._inbound_channel_id as string | undefined;
+      confirmationOrigin = payMeta._confirmation_origin as string | undefined;
 
-      // 2. Fallback: same-business session channel only (no cross-business #197)
-      if (!inboundChId) {
+      // 2. Fallback: same-business session channel — ONLY for legacy/non-WhatsApp origin (#219)
+      // WhatsApp-originated payments must use their durable _inbound_channel_id only.
+      // Borrowing a later/different session channel recreates the channel-drift defect.
+      if (!inboundChId && confirmationOrigin !== 'whatsapp') {
         const { data: bizSession } = await supabase
           .from('bot_sessions').select('session_data')
           .eq('whatsapp_number', customerPhone).eq('business_id', businessId)
           .order('created_at', { ascending: false }).limit(1).maybeSingle();
         inboundChId = (bizSession?.session_data as Record<string, unknown>)?._inbound_channel_id as string | undefined;
       }
-      // Cross-business session fallback REMOVED (#197) — never borrow another business's channel
     }
 
-    if (inboundChId) resolved = await resolver.resolveByChannelId(inboundChId);
-    if (!resolved) resolved = await resolver.resolveByBusinessId(businessId);
+    if (inboundChId) {
+      resolved = await resolver.resolveByChannelId(inboundChId);
+      if (!resolved) {
+        // Channel was deactivated since payment initialization
+        logger.warn(`${logPrefix} Inbound channel ${inboundChId} no longer active for payment ${payment.id}`);
+      }
+    }
+    if (!resolved) {
+      if (confirmationOrigin === 'whatsapp') {
+        // #219: WhatsApp-originated payment lost its channel context — do NOT silently
+        // fall back to business-country shared channel. Skip customer WhatsApp send.
+        whatsappOriginMissingChannel = true;
+        logger.warn(`${logPrefix} Customer WhatsApp send skipped — no origin channel for WhatsApp-originated payment ${payment.id}`);
+      } else {
+        // Non-WhatsApp origin or legacy (no _confirmation_origin) — existing fallback
+        resolved = await resolver.resolveByBusinessId(businessId);
+      }
+    }
 
     // ── Customer WhatsApp delivery via delivery-attempt authority (#197) ──
     // The delivery-attempt table owns ONLY the customer WhatsApp send effect.
@@ -693,7 +716,7 @@ export async function sendProactiveConfirmation(
             const { error: notifErr } = await supabase.from('notifications').insert({
               business_id: businessId,
               booking_id: payment.booking_id,
-              type: 'payment_received',
+              type: 'payment',
               channel: 'whatsapp',
               body: `Payment received: ${svc?.name || 'Payment'} ${referenceCode}. Amount: ${formatCurrency(payment.amount, countryCode)}`,
               status: 'delivered',
@@ -798,7 +821,7 @@ export async function sendProactiveConfirmation(
         const { createNotification } = await import('@/lib/bot/flows/shared/notifications');
         createNotification(supabase, {
           businessId,
-          type: 'donation',
+          type: 'payment',
           channel: 'whatsapp',
           body: `New donation of ${formatCurrency(payment.amount, countryCode)} for ${campaignTitle}${donation?.donor_name ? ` from ${donation.donor_name}` : ''}. Ref: ${donation?.reference_code || referenceCode}`,
         }).catch(err => logSafeError(logPrefix, 'campaign-in-app-notification', err));
@@ -1105,6 +1128,14 @@ export async function sendProactiveConfirmation(
     }
 
     // ── 10. Finalize: mark confirmation as successfully completed ──
+    // #219: WhatsApp-origin missing channel — do NOT finalize (would falsely set confirmation_sent_at).
+    // Release the claim so a later retry (after channel context is repaired) can succeed.
+    if (whatsappOriginMissingChannel) {
+      logger.warn(`${logPrefix} WhatsApp-origin missing channel — releasing claim for retry, not finalizing`);
+      await releaseConfirmationClaim(supabase, payment.id, claimToken, logPrefix);
+      return { status: 'retryable_failed', retryable: true, reason: 'whatsapp_origin_missing_channel' };
+    }
+
     // For ticketing bookings, only finalize if ticket inventory + rows are complete.
     if (!ticketStateComplete) {
       logger.warn(`${logPrefix} Ticket state incomplete — not finalizing confirmation claim`);

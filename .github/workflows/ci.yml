@@ -1307,6 +1307,33 @@ jobs:
           fi
           echo "✅ ACC-204 DB tests passed with zero skips."
 
+      - name: "#219 notification_type enum DB tests"
+        if: hashFiles('lib/__tests__/issue-219-notification-enum-db.test.ts') != ''
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+        run: |
+          set -e
+          export TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/waaiio_test
+          echo "Running #219 notification enum DB tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/issue-219-notification-enum-db.test.ts 2>&1)
+          EXIT_CODE=$?
+          set -e
+          echo "$OUTPUT"
+          if [ $EXIT_CODE -ne 0 ]; then
+            echo "❌ #219 notification enum DB tests failed with exit code $EXIT_CODE"
+            exit 1
+          fi
+          SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '\d+ skipped' | grep -oP '\d+' || echo "0")
+          if [ "$SKIP_COUNT" != "0" ] && [ "$SKIP_COUNT" != "" ]; then
+            echo "❌ #219 notification enum DB tests had $SKIP_COUNT skipped tests. All must execute."
+            exit 1
+          fi
+          echo "✅ #219 notification enum DB tests passed with zero skips."
+
       - name: P1-CLASS-1 class session booking authority DB tests
         if: hashFiles('lib/__tests__/p1-class-session-booking.test.ts') != ''
         env:

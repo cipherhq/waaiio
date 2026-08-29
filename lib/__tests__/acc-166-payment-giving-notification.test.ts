@@ -211,7 +211,7 @@ describe('ACC-166: Payment/Giving notification semantics', () => {
     const { sendProactiveConfirmation } = await import('../payments/send-confirmation');
     await sendProactiveConfirmation(s, pay as any);
     expect(notifInserts).toHaveLength(1);
-    expect(notifInserts[0]).toMatchObject({ business_id: 'b1', type: 'payment_received' });
+    expect(notifInserts[0]).toMatchObject({ business_id: 'b1', type: 'payment' });
   });
 
   it('5. Payment + no resolved → in-app row contains booking_id', async () => {
@@ -260,7 +260,7 @@ describe('ACC-166: Payment/Giving notification semantics', () => {
     const { sendProactiveConfirmation } = await import('../payments/send-confirmation');
     await sendProactiveConfirmation(s, { ...pay, amount: 75 } as any);
     expect(notifInserts[0]).toMatchObject({
-      business_id: 'b1', booking_id: 'bk1', type: 'payment_received',
+      business_id: 'b1', booking_id: 'bk1', type: 'payment',
       channel: 'whatsapp', status: 'delivered',
     });
     expect(notifInserts[0].body).toContain('Offering');

@@ -985,9 +985,50 @@ export class BotService {
         : (restartProvenance as BizResolution) || null;
       logger.debug('[BOT] preResolvedBusinessId:', preResolvedBusinessId, '_internalProvenance:', _internalProvenance);
 
-      // Determine the country of the shared number being messaged (for country scoping)
+      // ── #219 Block A: ALWAYS resolve inbound channel identity from destinationPhone ──
+      // Channel identity (which WhatsApp number the customer messaged) is independent of
+      // business routing. This must run even when businessId is already known from a
+      // restart/returning-customer path, so post-payment confirmation can use the exact
+      // originating channel instead of falling back to business-country resolution.
       let sharedNumberCountry: string | null = null;
       let inboundChannelId: string | null = null;
+      if (destinationPhone) {
+        const { data: inboundChannel } = await this.supabase
+          .from('whatsapp_channels')
+          .select('id, country_code, channel_type, business_id')
+          .eq('phone_number_id', destinationPhone)
+          .eq('is_active', true)
+          .maybeSingle();
+        if (inboundChannel) {
+          inboundChannelId = inboundChannel.id;
+          if (inboundChannel.channel_type === 'shared') {
+            sharedNumberCountry = inboundChannel.country_code;
+            logger.debug('[BOT] Shared number country:', sharedNumberCountry, 'channel:', inboundChannelId);
+          } else if (inboundChannel.channel_type === 'dedicated' && inboundChannel.business_id) {
+            // Source-aware dedicated-channel conflict resolution (#219)
+            if (businessId && businessId !== inboundChannel.business_id) {
+              if (bizResolution === 'pre_resolved') {
+                // preResolvedBusinessId conflicts with dedicated channel — system integrity error.
+                // Both come from the same webhook channel resolution; this should never happen.
+                // Fail closed: terminate without creating any session or customer interaction.
+                logger.error('[BOT] INTEGRITY: preResolved/dedicated channel business conflict — terminating', {
+                  preResolved: businessId, channelBiz: inboundChannel.business_id, channelId: inboundChannel.id,
+                });
+                return;
+              }
+              // Stale restart business vs current dedicated channel — dedicated channel is stronger authority.
+              // Discard the stale restart binding and route to the dedicated channel's business.
+              logger.info('[BOT] Restart/dedicated channel conflict — dedicated channel wins', {
+                staleRestart: businessId, channelBiz: inboundChannel.business_id, channelId: inboundChannel.id,
+              });
+              businessId = inboundChannel.business_id;
+              bizResolution = 'dedicated_number';
+            }
+          }
+        }
+      }
+
+      // ── #219 Block B: Resolve business from destinationPhone only if not already known ──
       if (!businessId && destinationPhone) {
         // Check if this is a dedicated number for a specific business
         const { data: biz } = await this.supabase
@@ -1001,27 +1042,17 @@ export class BotService {
 
         // If not a dedicated business number, check if it's a shared channel
         if (!businessId) {
-          const { data: channel } = await this.supabase
-            .from('whatsapp_channels')
-            .select('id, country_code, channel_type')
-            .eq('phone_number_id', destinationPhone)
-            .eq('channel_type', 'shared')
-            .eq('is_active', true)
-            .maybeSingle();
-          if (channel) {
-            sharedNumberCountry = channel.country_code;
-            inboundChannelId = channel.id;
-            logger.debug('[BOT] Shared number country:', sharedNumberCountry, 'channel:', inboundChannelId);
+          // Channel already resolved in Block A — just need country for scoping
+          if (!sharedNumberCountry) {
+            const { data: channel } = await this.supabase
+              .from('whatsapp_channels')
+              .select('country_code')
+              .eq('phone_number_id', destinationPhone)
+              .eq('channel_type', 'shared')
+              .eq('is_active', true)
+              .maybeSingle();
+            if (channel) sharedNumberCountry = channel.country_code;
           }
-        } else {
-          // Dedicated number — find the channel ID
-          const { data: dedChannel } = await this.supabase
-            .from('whatsapp_channels')
-            .select('id')
-            .eq('phone_number_id', destinationPhone)
-            .eq('is_active', true)
-            .maybeSingle();
-          if (dedChannel) inboundChannelId = dedChannel.id;
         }
       }
 
@@ -2109,7 +2140,7 @@ export class BotService {
 
     if (staleButton.isStalePaymentButton) {
       try {
-        const { recoverByOrderReference, recoverGeneric } = await import('@/lib/payments/stale-payment-recovery');
+        const { recoverByOrderReference, recoverByPaymentReference, recoverGeneric } = await import('@/lib/payments/stale-payment-recovery');
 
         // Determine country code for formatting
         const { data: recBiz } = await this.supabase.from('businesses')
@@ -2125,7 +2156,11 @@ export class BotService {
         };
 
         let result;
-        if (staleButton.hasReference && staleButton.reference) {
+        if (staleButton.hasPaymentReference && staleButton.paymentReference) {
+          // #219: Payment-specific locator — exact payment lookup
+          result = await recoverByPaymentReference(recoveryCtx, staleButton.paymentReference);
+        } else if (staleButton.hasReference && staleButton.reference) {
+          // Legacy: order-reference locator — backwards compatible
           result = await recoverByOrderReference(recoveryCtx, staleButton.reference);
         } else {
           result = await recoverGeneric(recoveryCtx);
@@ -2141,23 +2176,18 @@ export class BotService {
             return;
 
           case 'disambiguation': {
-            // Render bounded button list with i_paid:<ref> IDs
-            const buttons = result.orders.slice(0, 3).map(o => ({
-              id: `i_paid:${o.referenceCode}`,
-              title: o.referenceCode,
+            // #219: Render payment-specific locator buttons using current sender
+            const candidates = result.candidates.slice(0, 3);
+            const buttons = candidates.map(c => ({
+              id: `i_paid_ref:${c.gatewayReference}`,
+              title: c.referenceCode.slice(0, 20),
             }));
-            const { ChannelResolver } = await import('@/lib/channels/channel-resolver');
-            const resolver = new ChannelResolver(this.supabase);
-            const resolved = await resolver.resolveByBusinessId(session.business_id!);
-            if (resolved) {
-              await resolved.sender.sendButtons({
-                to: from,
-                body: result.message,
-                buttons,
-              });
-            } else {
-              await this.sendText(from, result.message);
-            }
+            // Use this.messageSender (bound to inbound channel) — not resolveByBusinessId (#219)
+            await this.messageSender.sendButtons({
+              to: from,
+              body: result.message,
+              buttons,
+            });
             return;
           }
         }

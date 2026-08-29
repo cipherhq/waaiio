@@ -408,7 +408,7 @@ function readPaymentFlow(): string {
 describe('Source guards: no legacy writers', () => {
   it('I\'ve Paid section has no legacy financial effects', () => {
     const src = readPaymentFlow();
-    const section = src.split("text === 'i_paid'")[1]?.split("Payment not yet received")[0] || '';
+    const section = src.split("ivePaidResult.recognized")[1]?.split("Payment not yet received")[0] || '';
     expect(section).toContain('verifyAndReconcilePayment');
     expect(section).not.toContain('total_spent');
     expect(section).not.toContain('recordPlatformFee');

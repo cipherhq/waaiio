@@ -15,7 +15,7 @@ describe('Scheduling: I\'ve Paid converges through Payment Authority', () => {
     const fs = require('fs');
     const src = fs.readFileSync('lib/bot/flows/scheduling.flow.ts', 'utf-8');
     // Full I've Paid section including both completed and processing branches
-    const ivePaidSection = src.split("text === 'i_paid'")[1]?.split("Payment not yet received")[0] || '';
+    const ivePaidSection = src.split("ivePaidResult.recognized")[1]?.split("Payment not yet received")[0] || '';
     expect(ivePaidSection).toContain('verifyAndReconcilePayment');
     expect(ivePaidSection).toContain("recovery.outcome === 'completed'");
     expect(ivePaidSection).toContain("recovery.outcome === 'processing'");
@@ -24,7 +24,7 @@ describe('Scheduling: I\'ve Paid converges through Payment Authority', () => {
   it('does not independently update booking status after authority', () => {
     const fs = require('fs');
     const src = fs.readFileSync('lib/bot/flows/scheduling.flow.ts', 'utf-8');
-    const ivePaidSection = src.split("text === 'i_paid'")[1]?.split("'payment_confirmed'")[0] || '';
+    const ivePaidSection = src.split("ivePaidResult.recognized")[1]?.split("'payment_confirmed'")[0] || '';
     expect(ivePaidSection).not.toContain("update({ status: 'confirmed'");
     expect(ivePaidSection).not.toContain('recordPlatformFee');
     expect(ivePaidSection).not.toContain('handlePostCompletion');
@@ -57,7 +57,7 @@ describe('Ticketing: I\'ve Paid converges through Payment Authority', () => {
     const fs = require('fs');
     const src = fs.readFileSync('lib/bot/flows/ticketing.flow.ts', 'utf-8');
     // Use the handler entry to split, not button definitions
-    const ivePaidSection = src.split("text === 'i_paid'")[1]?.split("'payment_confirmed'")[0] || '';
+    const ivePaidSection = src.split("ivePaidResult.recognized")[1]?.split("'payment_confirmed'")[0] || '';
     expect(ivePaidSection).toContain('verifyAndReconcilePayment');
     expect(ivePaidSection).toContain("recovery.outcome === 'completed'");
   });
@@ -65,7 +65,7 @@ describe('Ticketing: I\'ve Paid converges through Payment Authority', () => {
   it('does not independently run legacy manual effects after authority', () => {
     const fs = require('fs');
     const src = fs.readFileSync('lib/bot/flows/ticketing.flow.ts', 'utf-8');
-    const ivePaidSection = src.split("text === 'i_paid'")[1]?.split("'payment_confirmed'")[0] || '';
+    const ivePaidSection = src.split("ivePaidResult.recognized")[1]?.split("'payment_confirmed'")[0] || '';
     expect(ivePaidSection).not.toContain('finalize_free_ticket_booking');
     expect(ivePaidSection).not.toContain('sendTicketsAfterPurchase');
     expect(ivePaidSection).not.toContain('recordPlatformFee');
@@ -291,14 +291,14 @@ describe('Confirmed lifecycle gaps are recorded (not fixed in this PR)', () => {
   it('scheduling staff notification NOT in canonical paid path', () => {
     const fs = require('fs');
     const src = fs.readFileSync('lib/bot/flows/scheduling.flow.ts', 'utf-8');
-    const ivePaidSection = src.split("text === 'i_paid'")[1]?.split("'payment_confirmed'")[0] || '';
+    const ivePaidSection = src.split("ivePaidResult.recognized")[1]?.split("'payment_confirmed'")[0] || '';
     expect(ivePaidSection).not.toContain('notifyStaffNewBooking');
   });
 
   it('ticketing sale-specific notification NOT in canonical paid path', () => {
     const fs = require('fs');
     const src = fs.readFileSync('lib/bot/flows/ticketing.flow.ts', 'utf-8');
-    const ivePaidSection = src.split("text === 'i_paid'")[1]?.split("'payment_confirmed'")[0] || '';
+    const ivePaidSection = src.split("ivePaidResult.recognized")[1]?.split("'payment_confirmed'")[0] || '';
     expect(ivePaidSection).not.toContain('notifyOwnerNewTicketSale');
     expect(ivePaidSection).not.toContain("type: 'ticket_sale'");
   });

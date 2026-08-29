@@ -14,7 +14,8 @@ import { formatCurrency, getLocale, getCurrencyCode, type CountryCode } from '@/
 import type { SubscriptionTier } from '@/lib/constants';
 import { checkTierLimit } from '@/lib/tier-limits';
 import { analyzeReceipt, receiptMatchesExpected } from '@/lib/bot/receipt-ocr';
-import { checkBankTransferEligibility, createPendingTransfer, formatBankTransferBlock, BANK_ONLY_BUTTONS, DUAL_OPTION_BUTTONS } from './shared/bank-transfer';
+import { parseIvePaidInput, isIvePaidInput } from '@/lib/bot/flows/shared/ive-paid-input';
+import { checkBankTransferEligibility, createPendingTransfer, formatBankTransferBlock, BANK_ONLY_BUTTONS } from './shared/bank-transfer';
 
 export const ticketingFlow: FlowDefinition = {
   type: 'ticketing',
@@ -597,6 +598,8 @@ export const ticketingFlow: FlowDefinition = {
             countryCode: (ctx.business?.country_code || 'NG') as CountryCode,
             gatewayOverride: ctx.business?.payment_gateway || null,
             businessId: ctx.business?.id,
+            inboundChannelId: ctx.session.session_data._inbound_channel_id as string | undefined,
+            confirmationOrigin: 'whatsapp' as const,
           });
 
           // Check if business qualifies for direct bank transfer
@@ -653,7 +656,11 @@ export const ticketingFlow: FlowDefinition = {
                 {
                   type: 'buttons',
                   body: "After paying, tap below:",
-                  buttons: [...DUAL_OPTION_BUTTONS],
+                  buttons: [
+                      { id: d.payment_reference ? `i_paid_ref:${d.payment_reference}` : 'i_paid_online', title: "I've Paid Online" },
+                      { id: 'sent_transfer', title: "I've Sent Transfer" },
+                      { id: 'go_back', title: 'Cancel' },
+                    ],
                 },
               ];
             }
@@ -673,7 +680,7 @@ export const ticketingFlow: FlowDefinition = {
                 type: 'buttons',
                 body: "Your confirmation will arrive automatically after payment. If it doesn't, tap below:",
                 buttons: [
-                  { id: 'i_paid', title: "I've Paid" },
+                  { id: d.payment_reference ? `i_paid_ref:${d.payment_reference}` : 'i_paid', title: "I've Paid" },
                   { id: 'retry_payment', title: 'Get New Link' },
                   { id: 'go_back', title: 'Cancel' },
                 ],
@@ -829,19 +836,20 @@ export const ticketingFlow: FlowDefinition = {
       acceptsMedia: true,
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
         const d = ctx.session.session_data;
+        const pRef = d.payment_reference as string | undefined;
         if (d.bank_transfer_offered) {
           return [{
             type: 'buttons',
             body: "Complete your payment using the link or bank transfer above.\n\nTap below after paying:",
             buttons: [
-              { id: 'i_paid_online', title: "I've Paid Online" },
+              { id: pRef ? `i_paid_ref:${pRef}` : 'i_paid_online', title: "I've Paid Online" },
               { id: 'sent_transfer', title: "I've Sent Transfer" },
               { id: 'go_back', title: 'Cancel' },
             ],
           }];
         }
         const buttons: Array<{ id: string; title: string }> = [
-          { id: 'i_paid', title: "I've Paid" },
+          { id: pRef ? `i_paid_ref:${pRef}` : 'i_paid', title: "I've Paid" },
         ];
         if (!d._payment_retry_blocked) {
           buttons.push({ id: 'retry_payment', title: 'Get New Link' });
@@ -987,7 +995,7 @@ export const ticketingFlow: FlowDefinition = {
         }
 
         // ── Text proof after tapping "I've Sent Transfer" ──
-        if (d._awaiting_transfer_proof && text && !['i_paid', 'i_paid_online', 'paid', 'done', 'check'].includes(text)) {
+        if (d._awaiting_transfer_proof && text && !isIvePaidInput(text)) {
           await ctx.supabase
             .from('pending_transfers')
             .update({ proof_type: 'text', proof_text: input.trim() })
@@ -1001,8 +1009,26 @@ export const ticketingFlow: FlowDefinition = {
           return { valid: true, data: { _action: 'transfer_proof_sent' } };
         }
 
-        if (text === 'i_paid' || text === 'i_paid_online' || text === 'paid' || text === 'done') {
+        const ivePaidResult = parseIvePaidInput(text);
+        if (ivePaidResult.recognized) {
           const ref = ctx.session.session_data.payment_reference as string;
+
+          // #219: If locator doesn't match active session reference, route through
+          // recoverByPaymentReference — do NOT substitute the active session's reference.
+          if (ivePaidResult.paymentRef && ref && ivePaidResult.paymentRef !== ref) {
+            const { recoverByPaymentReference } = await import('@/lib/payments/stale-payment-recovery');
+            const { data: recBiz } = await ctx.supabase.from('businesses')
+              .select('country_code').eq('id', ctx.session.business_id).single();
+            const cc = (recBiz?.country_code || 'NG') as import('@/lib/constants').CountryCode;
+            const recoveryResult = await recoverByPaymentReference(
+              { supabase: ctx.supabase, businessId: ctx.session.business_id!, userId: ctx.session.user_id || null, phone: ctx.from, countryCode: cc },
+              ivePaidResult.paymentRef,
+            );
+            await ctx.sender.sendText({ to: ctx.from, text: recoveryResult.message });
+            // #219: Keep active session at current step — do not end Payment B because of old Payment A button
+            return { valid: false };
+          }
+
           if (!ref) return { valid: true, data: { _action: 'cancel' } };
 
           // Converge through canonical Payment Authority — same path as webhooks.

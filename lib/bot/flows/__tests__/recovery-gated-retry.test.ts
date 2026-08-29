@@ -155,7 +155,8 @@ describe('Prompt gating: _payment_retry_blocked', () => {
     const msgs = await step.prompt(ctx);
     const buttons = msgs[0].type === 'buttons' ? (msgs[0] as { buttons: Array<{ id: string }> }).buttons : [];
     expect(buttons.map(b => b.id)).not.toContain('retry_payment');
-    expect(buttons.map(b => b.id)).toContain('i_paid');
+    // Button ID is now i_paid_ref:<ref> when payment_reference is set (#219)
+    expect(buttons.some(b => b.id === 'i_paid' || b.id.startsWith('i_paid_ref:'))).toBe(true);
   });
 
   it('Payment: not blocked → includes retry_payment button', async () => {
