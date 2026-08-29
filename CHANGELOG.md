@@ -3,6 +3,31 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-08-26 — #214: Security — release_booking_slot server route + purchase_tickets_atomic trust boundary
+
+### What changed (3 fixes)
+1. **Fix 1 — Server API for release_booking_slot (NEW route + migration 352):** Created `/api/bookings/release-slot/route.ts` that authenticates the user, verifies business ownership via `businesses.owner_id`, loads booking data from DB (trusted), and calls `release_booking_slot` via service_role. Updated `app/dashboard/reservations/page.tsx` to call the API instead of the direct RPC. Migration 352 revokes `authenticated` role access from the function.
+2. **Fix 2 — Ticket type cross-event validation (events/purchase/route.ts):** Added `event_id` validation when a `ticketTypeId` is provided. Previously, a user could supply a ticket type from a different (cheaper) event to get a lower price applied. Now the route fetches `event_id` from `event_ticket_types` and rejects if it doesn't match the target event.
+3. **Fix 3 — Migration 352 (ACL):** `release_booking_slot` revoked from PUBLIC, anon, authenticated. Only service_role can invoke.
+
+### Files changed
+- `app/api/bookings/release-slot/route.ts` (NEW) — Fix 1
+- `app/dashboard/reservations/page.tsx` — Fix 1 (replaced direct RPC with fetch)
+- `app/api/events/purchase/route.ts` — Fix 2 (ticket type event_id validation)
+- `supabase/migrations/352_revoke_release_booking_slot_from_authenticated.sql` (NEW) — Fix 3
+
+### What could break
+- If any other code path calls `release_booking_slot` via authenticated role (not service_role), it will be denied. Grep found no other callers besides the reservations page.
+- The RPC signature for `release_booking_slot(uuid, date, time, uuid, uuid)` must match migration 193's altered signature. Verified it does.
+
+### Audit notes — purchase_tickets_atomic
+- Price is derived server-side from DB (event.price or event_ticket_types.price) — NOT from request body. Correct.
+- `p_total_amount` = `unitPrice * quantity` computed server-side. Correct.
+- Event is loaded with `.eq('status', 'published')` and future date filter. Correct.
+- Capacity is protected by `FOR UPDATE` row lock in the RPC. Correct.
+- OTP token verification ensures email identity. Correct.
+- The only gap was cross-event ticket type manipulation — now fixed.
+
 ## 2026-08-26 — #213: PR review blockers for #165 recurring payment continuation
 
 ### What changed (7 fixes)

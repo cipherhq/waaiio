@@ -579,11 +579,10 @@ export default function BookingsPage() {
       const booking = bookings.find(b => b.id === id);
       if (booking) {
         try {
-          await supabase.rpc('release_booking_slot', {
-            p_business_id: business.id,
-            p_date: booking.date,
-            p_start_time: booking.time,
-            p_staff_id: booking.staff_id || null,
+          await fetch('/api/bookings/release-slot', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ bookingId: booking.id }),
           });
         } catch { /* Non-critical if slot doesn't exist */ }
 
