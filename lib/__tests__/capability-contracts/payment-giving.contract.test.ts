@@ -2,8 +2,9 @@
  * Payment/Giving Capability Contract — Issue #219
  * https://github.com/cipherhq/waaiio/issues/219
  *
- * This file encodes the frozen behavioral invariants for the Payment/Giving
- * capability as certified through production E2E testing.
+ * This file encodes the frozen candidate/acceptance behavioral invariants for
+ * the Payment/Giving capability, pending production E2E certification.
+ * Becomes certified only after merge/deploy and owner's successful production retest.
  *
  * BEHAVIORAL LOCK RULE:
  * "Locked" does not mean the implementation can never change. It means the

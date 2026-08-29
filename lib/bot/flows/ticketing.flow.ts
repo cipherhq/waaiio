@@ -15,7 +15,7 @@ import type { SubscriptionTier } from '@/lib/constants';
 import { checkTierLimit } from '@/lib/tier-limits';
 import { analyzeReceipt, receiptMatchesExpected } from '@/lib/bot/receipt-ocr';
 import { parseIvePaidInput, isIvePaidInput } from '@/lib/bot/flows/shared/ive-paid-input';
-import { checkBankTransferEligibility, createPendingTransfer, formatBankTransferBlock, BANK_ONLY_BUTTONS, DUAL_OPTION_BUTTONS } from './shared/bank-transfer';
+import { checkBankTransferEligibility, createPendingTransfer, formatBankTransferBlock, BANK_ONLY_BUTTONS } from './shared/bank-transfer';
 
 export const ticketingFlow: FlowDefinition = {
   type: 'ticketing',
@@ -656,7 +656,11 @@ export const ticketingFlow: FlowDefinition = {
                 {
                   type: 'buttons',
                   body: "After paying, tap below:",
-                  buttons: [...DUAL_OPTION_BUTTONS],
+                  buttons: [
+                      { id: d.payment_reference ? `i_paid_ref:${d.payment_reference}` : 'i_paid_online', title: "I've Paid Online" },
+                      { id: 'sent_transfer', title: "I've Sent Transfer" },
+                      { id: 'go_back', title: 'Cancel' },
+                    ],
                 },
               ];
             }
@@ -1021,7 +1025,8 @@ export const ticketingFlow: FlowDefinition = {
               ivePaidResult.paymentRef,
             );
             await ctx.sender.sendText({ to: ctx.from, text: recoveryResult.message });
-            return { valid: true, data: { _action: 'already_confirmed' } };
+            // #219: Keep active session at current step — do not end Payment B because of old Payment A button
+            return { valid: false };
           }
 
           if (!ref) return { valid: true, data: { _action: 'cancel' } };

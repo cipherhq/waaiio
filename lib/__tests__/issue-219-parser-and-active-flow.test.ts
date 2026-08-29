@@ -141,4 +141,41 @@ describe('payment.flow.ts await_payment validate — mismatched locator branchin
     // This ensures the recovery lookup targets the correct payment.
     expect(ivePaidResult.paymentRef).not.toBe(sessionPaymentReference);
   });
+
+  it('g. Mismatched locator keeps active session — returns { valid: false } not already_confirmed', () => {
+    /**
+     * CTO review blocker: When ivePaidResult.paymentRef !== ref (active session ref),
+     * the validate function must return { valid: false } to keep the active session
+     * at the current step. It must NOT return { valid: true, data: { _action: 'already_confirmed' } }
+     * which would end the active session.
+     *
+     * Source verification: payment.flow.ts line ~790:
+     *   if (ivePaidResult.paymentRef && ref && ivePaidResult.paymentRef !== ref) {
+     *     ...
+     *     return { valid: false };   // <-- keeps active session alive
+     *   }
+     */
+    const fs = require('fs');
+    const paymentFlowSrc = fs.readFileSync('lib/bot/flows/payment.flow.ts', 'utf-8');
+
+    // Find the mismatch block
+    const mismatchIdx = paymentFlowSrc.indexOf('ivePaidResult.paymentRef !== ref');
+    expect(mismatchIdx).toBeGreaterThan(-1);
+
+    // Find the closing brace of the mismatch if-block by looking for
+    // `return { valid: false };` followed by the closing `}` of the if-block.
+    // The mismatch block ends at the next `}` after the return statement.
+    const returnIdx = paymentFlowSrc.indexOf('return { valid: false };', mismatchIdx);
+    expect(returnIdx).toBeGreaterThan(mismatchIdx);
+
+    // Extract only the mismatch if-block (from condition to its return)
+    const mismatchBlock = paymentFlowSrc.slice(mismatchIdx, returnIdx + 'return { valid: false };'.length);
+
+    // Verify the return is { valid: false } — keeps the active session alive
+    expect(mismatchBlock).toContain('return { valid: false }');
+
+    // The mismatch block must NOT contain already_confirmed
+    // (already_confirmed would end the active session, which is wrong)
+    expect(mismatchBlock).not.toContain('already_confirmed');
+  });
 });

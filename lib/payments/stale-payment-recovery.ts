@@ -22,7 +22,7 @@ import { safeLogErrorContext } from '@/lib/errors';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 
 /** #219: Payment purpose resolved from entity FKs */
-type PaymentPurpose = 'order' | 'payment' | 'appointment' | 'ticket' | 'reservation' | 'invoice' | 'donation' | 'unknown';
+type PaymentPurpose = 'order' | 'payment' | 'giving' | 'appointment' | 'ticket' | 'reservation' | 'invoice' | 'donation' | 'unknown';
 
 export type StaleRecoveryOutcome =
   | { type: 'confirmed'; referenceCode: string; amount: number; countryCode: CountryCode; message: string }
@@ -46,6 +46,7 @@ function purposeLabel(purpose: PaymentPurpose): string {
   switch (purpose) {
     case 'order': return 'order';
     case 'payment': return 'payment';
+    case 'giving': return 'giving';
     case 'appointment': return 'appointment';
     case 'ticket': return 'ticket purchase';
     case 'reservation': return 'reservation';
@@ -59,6 +60,7 @@ function purposeTips(purpose: PaymentPurpose): string {
   switch (purpose) {
     case 'order': return '💡 Type *my orders* to track, *receipt* for your receipt, or *Hi* to order again.';
     case 'payment': return '💡 Type *my bookings* to view your payments, or *receipt* for your receipt.';
+    case 'giving': return '💡 Type *my giving* to see your giving history, or *receipt* for your receipt.';
     case 'appointment': return '💡 Type *my bookings* to view your appointments, or *receipt* for your receipt.';
     case 'ticket': return '💡 Type *my tickets* to view your tickets, or *receipt* for your receipt.';
     case 'reservation': return '💡 Type *my bookings* to view your reservations, or *receipt* for your receipt.';
@@ -72,16 +74,21 @@ function purposeTips(purpose: PaymentPurpose): string {
 
 async function resolvePaymentPurpose(
   supabase: SupabaseClient,
-  payment: { order_id?: string | null; booking_id?: string | null; invoice_id?: string | null; campaign_id?: string | null; reservation_id?: string | null },
+  payment: { id: string; order_id?: string | null; booking_id?: string | null; invoice_id?: string | null; campaign_id?: string | null; reservation_id?: string | null },
 ): Promise<{ purpose: PaymentPurpose; referenceCode: string; phone: string | null }> {
   if (payment.order_id) {
     const { data: order } = await supabase.from('orders').select('reference_code, delivery_phone').eq('id', payment.order_id).maybeSingle();
     return { purpose: 'order', referenceCode: order?.reference_code || '', phone: order?.delivery_phone || null };
   }
   if (payment.booking_id) {
-    const { data: booking } = await supabase.from('bookings').select('reference_code, flow_type, guest_phone').eq('id', payment.booking_id).maybeSingle();
+    const { data: booking } = await supabase.from('bookings').select('reference_code, flow_type, guest_phone, services(service_type)').eq('id', payment.booking_id).maybeSingle();
     const ft = booking?.flow_type || '';
-    const purpose: PaymentPurpose = ft === 'ticketing' ? 'ticket' : ft === 'scheduling' || ft === 'appointment' ? 'appointment' : 'payment';
+    const svc = booking?.services as unknown as { service_type?: string } | null;
+    let purpose: PaymentPurpose;
+    if (ft === 'ticketing') purpose = 'ticket';
+    else if (ft === 'scheduling' || ft === 'appointment') purpose = 'appointment';
+    else if (ft === 'payment' && svc?.service_type === 'giving') purpose = 'giving';
+    else purpose = 'payment';
     return { purpose, referenceCode: booking?.reference_code || '', phone: booking?.guest_phone || null };
   }
   if (payment.reservation_id) {
@@ -95,7 +102,7 @@ async function resolvePaymentPurpose(
   if (payment.campaign_id) {
     const { data: donation } = await supabase.from('campaign_donations')
       .select('reference_code, donor_phone')
-      .eq('payment_id', payment.order_id || '') // fallback — campaign donations link by payment_id
+      .eq('payment_id', payment.id)
       .maybeSingle();
     return { purpose: 'donation', referenceCode: donation?.reference_code || '', phone: donation?.donor_phone || null };
   }
@@ -147,8 +154,12 @@ export async function recoverByPaymentReference(
         logger.warn(`${logPrefix} Phone mismatch for payment ${payment.id}`);
         return { type: 'not_found', message: 'No payment found. Please contact support if you believe you have paid.' };
       }
+    } else {
+      // #219: Fail closed — locator is never authorization.
+      // Neither durable user_id nor subject phone can bind this payment to the customer.
+      logger.warn(`${logPrefix} Cannot prove identity for payment ${payment.id} — no user_id and no subject phone`);
+      return { type: 'not_found', message: 'No payment found. Please contact support if you believe you have paid.' };
     }
-    // No phone on entity and no user_id — allow (legacy, fail-open for genuinely identity-less)
   }
 
   // Resolve purpose for copy
@@ -194,7 +205,9 @@ export async function recoverByPaymentReference(
     }
 
     case 'failed':
-      return { type: 'not_found', message: `Your ${purposeLabel(purpose)} payment did not succeed. Please try again or contact support.` };
+      // #219: No implicit fresh-charge encouragement — local 'failed' does not prove
+      // the customer was not charged. Direct to support only.
+      return { type: 'not_found', message: `Your ${purposeLabel(purpose)} payment could not be confirmed. Please contact the business or support for assistance.` };
 
     case 'refunded':
       return { type: 'not_found', message: `Your ${purposeLabel(purpose)} payment for *${ref}* was refunded.` };

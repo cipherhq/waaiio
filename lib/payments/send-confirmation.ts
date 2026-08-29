@@ -476,15 +476,16 @@ export async function sendProactiveConfirmation(
       inboundChId = payMeta._inbound_channel_id as string | undefined;
       confirmationOrigin = payMeta._confirmation_origin as string | undefined;
 
-      // 2. Fallback: same-business session channel only (no cross-business #197)
-      if (!inboundChId) {
+      // 2. Fallback: same-business session channel — ONLY for legacy/non-WhatsApp origin (#219)
+      // WhatsApp-originated payments must use their durable _inbound_channel_id only.
+      // Borrowing a later/different session channel recreates the channel-drift defect.
+      if (!inboundChId && confirmationOrigin !== 'whatsapp') {
         const { data: bizSession } = await supabase
           .from('bot_sessions').select('session_data')
           .eq('whatsapp_number', customerPhone).eq('business_id', businessId)
           .order('created_at', { ascending: false }).limit(1).maybeSingle();
         inboundChId = (bizSession?.session_data as Record<string, unknown>)?._inbound_channel_id as string | undefined;
       }
-      // Cross-business session fallback REMOVED (#197) — never borrow another business's channel
     }
 
     if (inboundChId) {

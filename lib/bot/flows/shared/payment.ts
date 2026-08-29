@@ -99,12 +99,18 @@ export async function initializePayment(
           const checkoutUrl = meta.checkout_url as string | undefined;
           if (checkoutUrl && existingPayment.gateway_reference) {
             logger.info('[PAYMENT] Reusing existing pending payment for ' + entityCol + '=' + entityId);
-            // #219: Update channel context on reuse — customer may be retrying from a different channel
+            // #219: Update channel context on reuse — customer may be retrying from a different channel.
+            // For WhatsApp-originated reuse, channel persistence is required — fail closed if write fails.
             if (opts.inboundChannelId || opts.confirmationOrigin) {
               const reuseMeta = { ...meta };
               if (opts.inboundChannelId) reuseMeta._inbound_channel_id = opts.inboundChannelId;
               if (opts.confirmationOrigin) reuseMeta._confirmation_origin = opts.confirmationOrigin;
-              await supabase.from('payments').update({ metadata: reuseMeta }).eq('id', existingPayment.id);
+              const { error: reuseUpdateErr } = await supabase.from('payments').update({ metadata: reuseMeta }).eq('id', existingPayment.id);
+              if (reuseUpdateErr && opts.confirmationOrigin === 'whatsapp') {
+                logger.withContext({ op: 'payment.reuse-channel-persist', ...safeLogErrorContext(reuseUpdateErr) })
+                  .error('[PAYMENT] WhatsApp channel persistence failed on checkout reuse — blocking');
+                return null;
+              }
             }
             const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
             const shortRef = existingPayment.gateway_reference.slice(-8);

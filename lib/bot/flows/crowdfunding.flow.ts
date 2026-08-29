@@ -2,7 +2,7 @@ import type { FlowDefinition, FlowStepConfig, FlowContext, PromptMessage, Valida
 import { formatCurrency, getCurrencyCode, type CountryCode } from '@/lib/constants';
 import { analyzeReceipt, receiptMatchesExpected } from '@/lib/bot/receipt-ocr';
 import { parseIvePaidInput, isIvePaidInput } from '@/lib/bot/flows/shared/ive-paid-input';
-import { checkBankTransferEligibility, createPendingTransfer, formatBankTransferBlock, BANK_ONLY_BUTTONS, DUAL_OPTION_BUTTONS } from './shared/bank-transfer';
+import { checkBankTransferEligibility, createPendingTransfer, formatBankTransferBlock, BANK_ONLY_BUTTONS } from './shared/bank-transfer';
 import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
 import { notifyOwnerNewDonation } from './shared/notify-owner';
@@ -526,7 +526,11 @@ const donationPaymentStep: FlowStepConfig = {
         {
           type: 'buttons',
           body: "After paying, tap below:",
-          buttons: [...DUAL_OPTION_BUTTONS],
+          buttons: [
+            { id: sd.payment_reference ? `i_paid_ref:${sd.payment_reference}` : 'i_paid_online', title: "I've Paid Online" },
+            { id: 'sent_transfer', title: "I've Sent Transfer" },
+            { id: 'go_back', title: 'Cancel' },
+          ],
         },
       ];
     }
@@ -741,7 +745,8 @@ const awaitDonationPaymentStep: FlowStepConfig = {
           ivePaidResult.paymentRef,
         );
         await ctx.sender.sendText({ to: ctx.from, text: recoveryResult.message });
-        return { valid: true, data: { _action: 'already_confirmed' } };
+        // #219: Keep active session at current step — do not end Payment B because of old Payment A button
+        return { valid: false };
       }
 
       if (!ref) return { valid: false, errorMessage: "We couldn't verify your donation. If you've already paid, please contact the organization." };

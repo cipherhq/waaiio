@@ -9,7 +9,7 @@ import { createNotification } from './shared/notifications';
 import { getAuthorization, createPlan as createPaystackPlan, createSubscription as createPaystackSubscription } from '@/lib/payments/paystack-recurring';
 import { createRecurringCheckout } from '@/lib/payments/stripe-recurring';
 import { getCardToken } from '@/lib/payments/flutterwave-recurring';
-import { checkBankTransferEligibility, createPendingTransfer, formatBankTransferBlock, BANK_ONLY_BUTTONS, DUAL_OPTION_BUTTONS } from './shared/bank-transfer';
+import { checkBankTransferEligibility, createPendingTransfer, formatBankTransferBlock, BANK_ONLY_BUTTONS } from './shared/bank-transfer';
 import { parseIvePaidInput, isIvePaidInput } from '@/lib/bot/flows/shared/ive-paid-input';
 import { analyzeReceipt, receiptMatchesExpected } from '@/lib/bot/receipt-ocr';
 import { logger } from '@/lib/logger';
@@ -427,7 +427,11 @@ export const paymentFlow: FlowDefinition = {
               {
                 type: 'buttons',
                 body: 'Tap below after paying:',
-                buttons: [...DUAL_OPTION_BUTTONS],
+                buttons: [
+                    { id: d.payment_reference ? `i_paid_ref:${d.payment_reference}` : 'i_paid_online', title: "I've Paid Online" },
+                    { id: 'sent_transfer', title: "I've Sent Transfer" },
+                    { id: 'go_back', title: 'Cancel' },
+                  ],
               },
             ];
           }
@@ -782,7 +786,8 @@ export const paymentFlow: FlowDefinition = {
               ivePaidResult.paymentRef,
             );
             await ctx.sender.sendText({ to: ctx.from, text: recoveryResult.message });
-            return { valid: true, data: { _action: 'already_confirmed' } };
+            // #219: Keep active session at current step — do not end Payment B because of old Payment A button
+            return { valid: false };
           }
 
           if (!ref) return { valid: true, data: { _action: 'cancel' } };

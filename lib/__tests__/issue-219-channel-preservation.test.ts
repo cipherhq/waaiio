@@ -325,6 +325,37 @@ describe('#219 sendProactiveConfirmation channel resolution', () => {
     );
   });
 
+  it('e. WhatsApp origin does NOT borrow session channel — source structural test', () => {
+    // #219: The session fallback lookup must ONLY run when confirmationOrigin !== 'whatsapp'.
+    // This prevents WhatsApp-originated payments from borrowing a later/different session channel.
+    // Verify the guard condition in source: `if (!inboundChId && confirmationOrigin !== 'whatsapp')`
+    expect(sendConfirmationCode).toContain("!inboundChId && confirmationOrigin !== 'whatsapp'");
+
+    // Verify the inverse: when confirmationOrigin === 'whatsapp' and no channel, it sets
+    // a flag to skip customer send, rather than falling back to session channel.
+    expect(sendConfirmationCode).toContain("confirmationOrigin === 'whatsapp'");
+    expect(sendConfirmationCode).toContain('no origin channel for WhatsApp-originated payment');
+  });
+
+  it('f. Pending-payment reuse metadata write error → fail-closed (returns null) for WhatsApp origin', async () => {
+    // When confirmationOrigin is 'whatsapp' and the metadata update fails,
+    // initializePayment must return null (fail-closed) to prevent a payment
+    // from losing its channel context.
+
+    // We verify this by reading the source structure of shared/payment.ts
+    // The code block: if (reuseUpdateErr && opts.confirmationOrigin === 'whatsapp') { ... return null; }
+    expect(sharedPaymentCode).toContain("reuseUpdateErr && opts.confirmationOrigin === 'whatsapp'");
+    expect(sharedPaymentCode).toContain('WhatsApp channel persistence failed on checkout reuse');
+
+    // The return null is in the same block — verify the fail-closed behavior
+    // by checking that the error path returns null (not the checkout URL)
+    const failClosedIdx = sharedPaymentCode.indexOf("WhatsApp channel persistence failed on checkout reuse");
+    const returnNullIdx = sharedPaymentCode.indexOf('return null;', failClosedIdx);
+    // return null must appear within a few lines of the error log
+    expect(returnNullIdx).toBeGreaterThan(failClosedIdx);
+    expect(returnNullIdx - failClosedIdx).toBeLessThan(200);
+  });
+
   it('10. Legacy/web fallback — no _confirmation_origin → resolveByBusinessId called', async () => {
     // No _confirmation_origin or 'web' origin → use resolveByBusinessId as fallback
     const mockSender = { sendText: vi.fn().mockResolvedValue(true) };

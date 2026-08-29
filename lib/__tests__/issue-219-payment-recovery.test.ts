@@ -27,9 +27,7 @@ vi.mock('@/lib/errors', () => ({ safeLogErrorContext: () => ({}) }));
 
 // ── Helpers ──
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function chainable(overrides: Record<string, any> = {}): Record<string, any> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const c: Record<string, any> = {};
   ['select', 'insert', 'update', 'delete', 'eq', 'neq', 'or', 'in', 'is', 'not', 'gte', 'lte', 'order', 'limit'].forEach(
     m => c[m] = vi.fn().mockReturnValue(c),
@@ -125,7 +123,6 @@ describe('recoverByPaymentReference — payment-specific locator', () => {
       return chainable();
     });
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const result = await recoverByPaymentReference({ ...BASE_CTX, supabase: mockSupa as any }, 'gw-ref-1');
 
     expect(result.type).toBe('confirmed');
@@ -160,7 +157,6 @@ describe('recoverByPaymentReference — payment-specific locator', () => {
       return chainable();
     });
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const result = await recoverByPaymentReference({ ...BASE_CTX, supabase: mockSupa as any }, 'gw-ref-1');
 
     expect(result.type).toBe('confirmed');
@@ -193,7 +189,6 @@ describe('recoverByPaymentReference — payment-specific locator', () => {
       return chainable();
     });
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const result = await recoverByPaymentReference({ ...BASE_CTX, supabase: mockSupa as any }, 'gw-ref-1');
 
     expect(result.type).toBe('not_found');
@@ -226,7 +221,6 @@ describe('recoverByPaymentReference — payment-specific locator', () => {
       return chainable();
     });
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const result = await recoverByPaymentReference({ ...BASE_CTX, supabase: mockSupa as any }, 'gw-ref-1');
 
     expect(result.type).toBe('error');
@@ -256,11 +250,10 @@ describe('recoverByPaymentReference — payment-specific locator', () => {
       return chainable();
     });
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const result = await recoverByPaymentReference({ ...BASE_CTX, supabase: mockSupa as any }, 'gw-ref-1');
 
     expect(result.type).toBe('not_found');
-    expect(result.message).toContain('did not succeed');
+    expect(result.message).toContain('could not be confirmed');
     expect(mockReconcile).not.toHaveBeenCalled();
   });
 
@@ -284,7 +277,6 @@ describe('recoverByPaymentReference — payment-specific locator', () => {
       return chainable();
     });
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const result = await recoverByPaymentReference({ ...BASE_CTX, supabase: mockSupa as any }, 'gw-ref-1');
 
     expect(result.type).toBe('not_found');
@@ -306,7 +298,6 @@ describe('recoverByPaymentReference — payment-specific locator', () => {
       return chainable();
     });
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const result = await recoverByPaymentReference({ ...BASE_CTX, supabase: mockSupa as any }, 'gw-ref-1');
 
     expect(result.type).toBe('not_found');
@@ -327,7 +318,6 @@ describe('recoverByPaymentReference — payment-specific locator', () => {
       return chainable();
     });
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const result = await recoverByPaymentReference({ ...BASE_CTX, supabase: mockSupa as any }, 'gw-ref-cross-biz');
 
     expect(result.type).toBe('not_found');
@@ -377,7 +367,6 @@ describe('recoverGeneric — payment-first generic recovery', () => {
       return chainable();
     });
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const result = await recoverGeneric({ ...BASE_CTX, supabase: mockSupa as any });
 
     expect(result.type).toBe('confirmed');
@@ -412,7 +401,6 @@ describe('recoverGeneric — payment-first generic recovery', () => {
       return chainable();
     });
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const result = await recoverGeneric({ ...BASE_CTX, supabase: mockSupa as any });
 
     expect(result.type).toBe('disambiguation');
@@ -451,7 +439,6 @@ describe('recoverGeneric — payment-first generic recovery', () => {
       return chainable();
     });
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const result = await recoverGeneric({ ...BASE_CTX, supabase: mockSupa as any });
 
     expect(result.type).toBe('disambiguation');
@@ -507,7 +494,6 @@ describe('recoverGeneric — payment-first generic recovery', () => {
       return chainable();
     });
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const result = await recoverGeneric({ ...BASE_CTX, supabase: mockSupa as any });
 
     expect(result.type).toBe('disambiguation');
@@ -538,7 +524,6 @@ describe('recoverGeneric — payment-first generic recovery', () => {
       return chainable();
     });
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const result = await recoverByPaymentReference({ ...BASE_CTX, supabase: mockSupa as any }, 'gw-ref-1');
 
     expect(result.type).toBe('confirmed');
@@ -570,7 +555,6 @@ describe('recoverGeneric — payment-first generic recovery', () => {
       return chainable();
     });
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await recoverGeneric({ ...BASE_CTX, supabase: mockSupa as any });
 
     expect(mockReconcile).not.toHaveBeenCalled();
@@ -602,7 +586,6 @@ describe('recoverGeneric — payment-first generic recovery', () => {
       lifecycle: null,
       acknowledgeSuccess: false,
     });
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const notPaidResult = await recoverByPaymentReference({ ...BASE_CTX, supabase: makeSupaForPending() as any }, 'gw-ref-1');
 
     vi.clearAllMocks();
@@ -613,7 +596,6 @@ describe('recoverGeneric — payment-first generic recovery', () => {
       lifecycle: null,
       acknowledgeSuccess: false,
     });
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const errorResult = await recoverByPaymentReference({ ...BASE_CTX, supabase: makeSupaForPending() as any }, 'gw-ref-1');
 
     // They must produce different outcome types
@@ -661,7 +643,6 @@ describe('recoverByOrderReference — legacy compatibility', () => {
       return chainable();
     });
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const result = await recoverByOrderReference({ ...BASE_CTX, supabase: mockSupa as any }, 'ORD-001');
 
     expect(result.type).toBe('confirmed');
@@ -691,7 +672,6 @@ describe('recoverByOrderReference — legacy compatibility', () => {
       return chainable();
     });
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const result = await recoverGeneric({ ...BASE_CTX, supabase: mockSupa as any });
 
     expect(result.type).toBe('confirmed');
@@ -753,7 +733,6 @@ describe('Safety invariants — no financial charge on recovery', () => {
       return chainable();
     });
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await recoverByPaymentReference({ ...BASE_CTX, supabase: mockSupa as any }, 'gw-ref-1');
 
     // reconcilePayment is the gateway to provider calls — must not be invoked for success
@@ -781,5 +760,158 @@ describe('Safety invariants — no financial charge on recovery', () => {
     expect(importLines).not.toContain('chargeCard');
     // reconcilePayment is only dynamically imported inside pending branches, not top-level
     expect(importLines).not.toContain("from './reconcile'");
+  });
+});
+
+// ═══════════════════════════════════════════════════════════
+// F. CTO REVIEW BLOCKERS — BEHAVIORAL HARDENING (32-35)
+// ═══════════════════════════════════════════════════════════
+
+describe('CTO review blockers — behavioral hardening', () => {
+  beforeEach(() => { vi.clearAllMocks(); });
+
+  // Test 32: Identity fail-closed — null user_id + null entity phone → not_found, reconcile NOT called
+  it('identity fail-closed: null user_id + null entity phone → not_found, reconcile NOT called', async () => {
+    const { recoverByPaymentReference } = await loadModule();
+    // Payment has user_id: null — forces phone-based identity path
+    const payment = makePayment({ status: 'success', user_id: null, booking_id: null, order_id: null, campaign_id: null, invoice_id: null, reservation_id: null });
+
+    const mockSupa = createMockSupabase((table) => {
+      if (table === 'payments') {
+        const c = chainable();
+        c.maybeSingle = vi.fn().mockResolvedValue({ data: payment, error: null });
+        return c;
+      }
+      return chainable();
+    });
+
+    const result = await recoverByPaymentReference({ ...BASE_CTX, userId: null, supabase: mockSupa as any }, 'gw-ref-1');
+
+    // Must fail closed — no user_id and resolvePaymentPurpose returns phone: null for unknown purpose
+    expect(result.type).toBe('not_found');
+    // reconcilePayment must NOT be called — identity could not be proven
+    expect(mockReconcile).not.toHaveBeenCalled();
+  });
+
+  // Test 33: Campaign donation uses the payment's own ID (not order_id) for campaign_donations query
+  it('campaign donation queries campaign_donations with payment.id, not order_id', async () => {
+    const { recoverByPaymentReference } = await loadModule();
+    const payment = makePayment({
+      id: 'pay-donation-1',
+      status: 'success',
+      user_id: 'user-1',
+      campaign_id: 'camp-1',
+      booking_id: null,
+      order_id: null,
+      invoice_id: null,
+      reservation_id: null,
+    });
+
+    // Track what arguments .eq receives on campaign_donations chain
+    const eqArgs: Array<[string, string]> = [];
+    const mockSupa = createMockSupabase((table) => {
+      if (table === 'payments') {
+        const c = chainable();
+        c.maybeSingle = vi.fn().mockResolvedValue({ data: payment, error: null });
+        return c;
+      }
+      if (table === 'campaign_donations') {
+        const c = chainable();
+        c.eq = vi.fn((...args: unknown[]) => {
+          eqArgs.push([args[0] as string, args[1] as string]);
+          return c;
+        });
+        c.maybeSingle = vi.fn().mockResolvedValue({
+          data: { reference_code: 'DON-TEST', donor_phone: '+12345678901' },
+          error: null,
+        });
+        return c;
+      }
+      return chainable();
+    });
+
+    await recoverByPaymentReference({ ...BASE_CTX, supabase: mockSupa as any }, 'gw-ref-1');
+
+    // Verify that campaign_donations was queried with payment_id = payment.id ('pay-donation-1')
+    const paymentIdEq = eqArgs.find(([col]) => col === 'payment_id');
+    expect(paymentIdEq).toBeDefined();
+    expect(paymentIdEq![1]).toBe('pay-donation-1');
+  });
+
+  // Test 34: Failed payment copy does NOT encourage retry — says "contact" instead
+  it('failed payment copy does not encourage retry — says "contact" instead', async () => {
+    const { recoverByPaymentReference } = await loadModule();
+    const payment = makePayment({ status: 'failed' });
+    const booking = makeBooking();
+
+    const mockSupa = createMockSupabase((table) => {
+      if (table === 'payments') {
+        const c = chainable();
+        c.maybeSingle = vi.fn().mockResolvedValue({ data: payment, error: null });
+        return c;
+      }
+      if (table === 'bookings') {
+        const c = chainable();
+        c.maybeSingle = vi.fn().mockResolvedValue({ data: booking, error: null });
+        return c;
+      }
+      return chainable();
+    });
+
+    const result = await recoverByPaymentReference({ ...BASE_CTX, supabase: mockSupa as any }, 'gw-ref-1');
+
+    expect(result.type).toBe('not_found');
+    // Must NOT contain retry/re-charge encouragement
+    expect(result.message.toLowerCase()).not.toContain('try again');
+    expect(result.message.toLowerCase()).not.toContain('get a new');
+    expect(result.message.toLowerCase()).not.toContain('pay again');
+    expect(result.message.toLowerCase()).not.toContain('new payment');
+    // Must direct to contact/support
+    expect(result.message.toLowerCase()).toContain('contact');
+  });
+
+  // Test 35: Giving vs generic Payment purpose — purpose-appropriate copy
+  it('giving vs generic payment purpose — purpose-appropriate copy', async () => {
+    const { recoverByPaymentReference } = await loadModule();
+
+    // Helper to run recovery with a specific booking
+    async function recoverWithBooking(booking: Record<string, unknown>) {
+      const payment = makePayment({ status: 'success', booking_id: 'bk-test', order_id: null });
+      const mockSupa = createMockSupabase((table) => {
+        if (table === 'payments') {
+          const c = chainable();
+          c.maybeSingle = vi.fn().mockResolvedValue({ data: payment, error: null });
+          return c;
+        }
+        if (table === 'bookings') {
+          const c = chainable();
+          c.maybeSingle = vi.fn().mockResolvedValue({ data: booking, error: null });
+          return c;
+        }
+        return chainable();
+      });
+      return recoverByPaymentReference({ ...BASE_CTX, supabase: mockSupa as any }, 'gw-ref-1');
+    }
+
+    // Case A: flow_type='payment' + service_type='giving' → copy contains "giving"
+    const givingResult = await recoverWithBooking({
+      reference_code: 'GIV-TEST',
+      flow_type: 'payment',
+      guest_phone: '+12345678901',
+      services: { service_type: 'giving' },
+    });
+    expect(givingResult.type).toBe('confirmed');
+    expect(givingResult.message.toLowerCase()).toContain('giving');
+
+    // Case B: flow_type='payment' + service_type='booking' → copy says "payment" not "giving"
+    const paymentResult = await recoverWithBooking({
+      reference_code: 'PAY-TEST',
+      flow_type: 'payment',
+      guest_phone: '+12345678901',
+      services: { service_type: 'booking' },
+    });
+    expect(paymentResult.type).toBe('confirmed');
+    expect(paymentResult.message.toLowerCase()).toContain('payment');
+    expect(paymentResult.message.toLowerCase()).not.toContain('giving');
   });
 });
