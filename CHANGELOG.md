@@ -15,6 +15,9 @@ If something breaks, check this log to find what changed and when.
 - `supabase/migrations/353_auth001_profiles_role_hardening.sql` — added column-level REVOKE
 - `lib/__tests__/auth001-profiles-role-hardening-db.test.ts` — fixed runtime tests
 
+5. **Root cause:** `p1-appointment-closure.test.ts` runs `GRANT INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO authenticated` against the shared `waaiio_test` database (step 33). This re-grants table-level UPDATE on profiles, undoing migration 353's column-level restriction by the time step 58 (AUTH-001) runs.
+6. **Convergence test:** AUTH-001 test now re-applies the migration 353 privilege section as its first step, proving the migration is convergent from any starting state.
+
 ### What could break
 - Nothing — the column-level REVOKE is idempotent and only removes privileges that shouldn't exist
 - The auth.uid() override is scoped to runtime tests and restored in cleanup

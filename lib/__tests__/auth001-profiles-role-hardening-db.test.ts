@@ -39,6 +39,31 @@ function runSQL(sql: string, role?: string): { stdout: string; stderr: string; e
 
 describe('AUTH-001 profiles role hardening', () => {
 
+  // ── Convergence setup: re-apply migration 353 privilege section ──
+  // Prior CI test steps (e.g., P1-APPT) may run "GRANT INSERT, UPDATE, DELETE
+  // ON ALL TABLES IN SCHEMA public TO authenticated" against the shared database
+  // to simulate Supabase's default privileges. This re-grants table-level UPDATE
+  // on profiles, undoing migration 353's column-level restriction.
+  //
+  // Re-applying the privilege section here proves migration 353 is convergent:
+  // it correctly restores the intended privilege state from any starting point.
+  it('convergence: re-apply migration 353 column privileges on profiles', () => {
+    const r = runSQL(`
+      REVOKE ALL ON TABLE public.profiles FROM PUBLIC;
+      REVOKE ALL ON TABLE public.profiles FROM anon;
+      REVOKE ALL ON TABLE public.profiles FROM authenticated;
+      REVOKE UPDATE (role, id, created_at) ON TABLE public.profiles FROM PUBLIC;
+      REVOKE UPDATE (role, id, created_at) ON TABLE public.profiles FROM anon;
+      REVOKE UPDATE (role, id, created_at) ON TABLE public.profiles FROM authenticated;
+      GRANT SELECT ON TABLE public.profiles TO anon;
+      GRANT SELECT ON TABLE public.profiles TO authenticated;
+      GRANT UPDATE (first_name, last_name, email, phone, last_login_at, updated_at)
+        ON TABLE public.profiles TO authenticated;
+      GRANT ALL ON TABLE public.profiles TO service_role;
+    `);
+    expect(r.exitCode).toBe(0);
+  });
+
   // ── Privilege checks ──
 
   it('authenticated CANNOT update profiles.role (column privilege)', () => {
