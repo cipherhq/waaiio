@@ -1128,6 +1128,14 @@ export async function sendProactiveConfirmation(
     }
 
     // ── 10. Finalize: mark confirmation as successfully completed ──
+    // #219: WhatsApp-origin missing channel — do NOT finalize (would falsely set confirmation_sent_at).
+    // Release the claim so a later retry (after channel context is repaired) can succeed.
+    if (whatsappOriginMissingChannel) {
+      logger.warn(`${logPrefix} WhatsApp-origin missing channel — releasing claim for retry, not finalizing`);
+      await releaseConfirmationClaim(supabase, payment.id, claimToken, logPrefix);
+      return { status: 'retryable_failed', retryable: true, reason: 'whatsapp_origin_missing_channel' };
+    }
+
     // For ticketing bookings, only finalize if ticket inventory + rows are complete.
     if (!ticketStateComplete) {
       logger.warn(`${logPrefix} Ticket state incomplete — not finalizing confirmation claim`);

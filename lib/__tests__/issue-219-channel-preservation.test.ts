@@ -158,6 +158,34 @@ describe('#219 initializePayment channel propagation', () => {
     // Verify the update is written to the DB
     expect(sharedPaymentCode).toContain("from('payments').update({ metadata: reuseMeta })");
   });
+
+  it('7b. WhatsApp-origin without inboundChannelId → initializePayment returns null (fail-closed)', () => {
+    // #219 CTO blocker 1: confirmationOrigin='whatsapp' with no inboundChannelId
+    // must fail closed BEFORE provider initialization.
+    expect(sharedPaymentCode).toContain(
+      "opts.confirmationOrigin === 'whatsapp' && !opts.inboundChannelId"
+    );
+    // The guard must return null (no checkout URL, no provider call)
+    const guardIdx = sharedPaymentCode.indexOf("opts.confirmationOrigin === 'whatsapp' && !opts.inboundChannelId");
+    const returnIdx = sharedPaymentCode.indexOf('return null;', guardIdx);
+    expect(returnIdx).toBeGreaterThan(guardIdx);
+    expect(returnIdx - guardIdx).toBeLessThan(200);
+  });
+
+  it('7c. WhatsApp-origin without inboundChannelId → behavioral initializePayment test', async () => {
+    // Actually call initializePayment with whatsapp origin but no channel
+    const { initializePayment } = await import('../bot/flows/shared/payment');
+    const result = await initializePayment({} as any, {
+      userId: 'user-1',
+      amount: 100,
+      referenceCode: 'WA-TEST-001',
+      businessName: 'Test Biz',
+      phone: '+2341234567890',
+      confirmationOrigin: 'whatsapp',
+      // inboundChannelId intentionally omitted
+    });
+    expect(result).toBeNull();
+  });
 });
 
 // ── Test 8-10: sendProactiveConfirmation channel resolution ──
@@ -287,15 +315,16 @@ describe('#219 sendProactiveConfirmation channel resolution', () => {
     expect(mockResolveByBusinessId).not.toHaveBeenCalled();
   });
 
-  it('9. Missing-channel fail-safe — whatsapp origin + no channel = skip customer send', async () => {
+  it('9. Missing-channel fail-safe — whatsapp origin + no channel = skip customer send, no finalization', async () => {
     // _confirmation_origin: 'whatsapp' + missing _inbound_channel_id
     // → customer WhatsApp send skipped, resolveByBusinessId NOT called
+    // → claim RELEASED (not finalized) — confirmation_sent_at NOT set
 
     const s = buildMock(
       {
         claim_payment_confirmation: CLAIM_OK,
         renew_payment_confirmation_claim: RENEW_OK,
-        finalize_payment_confirmation: FIN_OK,
+        release_payment_confirmation: { released: true },
       },
       {
         payments: (c) => {
@@ -308,7 +337,7 @@ describe('#219 sendProactiveConfirmation channel resolution', () => {
     );
 
     const { sendProactiveConfirmation } = await import('../payments/send-confirmation');
-    await sendProactiveConfirmation(s, {
+    const result = await sendProactiveConfirmation(s, {
       id: 'p-ch',
       amount: 100,
       booking_id: 'bk-ch',
@@ -318,11 +347,57 @@ describe('#219 sendProactiveConfirmation channel resolution', () => {
 
     // WhatsApp origin + no channel → resolveByBusinessId must NOT be called (fail-safe)
     expect(mockResolveByBusinessId).not.toHaveBeenCalled();
+    // Claim released, not finalized — confirmation_sent_at NOT set
+    expect(result.status).toBe('retryable_failed');
+    expect((result as { reason?: string }).reason).toBe('whatsapp_origin_missing_channel');
+  });
 
-    // Verify this behavior is codified in the source
-    expect(sendConfirmationCode).toContain(
-      'no origin channel for WhatsApp-originated payment',
+  it('9b. WhatsApp-origin payment with newer session channel — behavioral non-borrowing', async () => {
+    // Scenario: payment has _confirmation_origin='whatsapp' + no _inbound_channel_id.
+    // A newer same-business bot session exists with a DIFFERENT channel (ch-newer).
+    // The confirmation must NOT use ch-newer, must NOT call resolveByChannelId for it,
+    // must NOT use resolveByBusinessId, and must NOT customer-send.
+
+    const s = buildMock(
+      {
+        claim_payment_confirmation: CLAIM_OK,
+        renew_payment_confirmation_claim: RENEW_OK,
+        // #219: Missing channel should release claim, not finalize
+        release_payment_confirmation: { released: true },
+      },
+      {
+        payments: (c) => {
+          c.single = vi.fn().mockResolvedValue({
+            data: { metadata: { _confirmation_origin: 'whatsapp' } }, // no _inbound_channel_id
+            error: null,
+          });
+        },
+        bot_sessions: (c) => {
+          // A newer session exists with a different channel — MUST NOT be borrowed
+          c.maybeSingle = vi.fn().mockResolvedValue({
+            data: { session_data: { _inbound_channel_id: 'ch-newer-SHOULD-NOT-USE' } },
+            error: null,
+          });
+        },
+      },
     );
+
+    const { sendProactiveConfirmation } = await import('../payments/send-confirmation');
+    const result = await sendProactiveConfirmation(s, {
+      id: 'p-noborrow',
+      amount: 100,
+      booking_id: 'bk-noborrow',
+      invoice_id: null,
+      campaign_id: null,
+    });
+
+    // ch-newer must NOT be used via resolveByChannelId
+    expect(mockResolveByChannelId).not.toHaveBeenCalledWith('ch-newer-SHOULD-NOT-USE');
+    // Business-country fallback must NOT be called
+    expect(mockResolveByBusinessId).not.toHaveBeenCalled();
+    // Result should be retryable (not completed — customer send was skipped)
+    expect(result.status).toBe('retryable_failed');
+    expect((result as { reason?: string }).reason).toBe('whatsapp_origin_missing_channel');
   });
 
   it('e. WhatsApp origin does NOT borrow session channel — source structural test', () => {

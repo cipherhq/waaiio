@@ -35,6 +35,14 @@ export async function initializePayment(
   },
 ): Promise<{ url: string; reference: string } | null> {
   try {
+    // #219: WhatsApp-originated payment MUST have a proven current origin channel
+    // before checkout is returned. Without it, post-payment confirmation cannot
+    // reach the customer on the correct WhatsApp number.
+    if (opts.confirmationOrigin === 'whatsapp' && !opts.inboundChannelId) {
+      logger.warn('[PAYMENT] WhatsApp-origin payment blocked — no current inbound channel');
+      return null;
+    }
+
     const countryCode = opts.countryCode || 'NG';
 
     // Per-business gateway override takes priority
