@@ -218,7 +218,8 @@ describe('AUTH-001 profiles role hardening', () => {
   // ── Runtime denial proofs ──
 
   it('runtime: authenticated cannot UPDATE profiles.role', () => {
-    // First ensure a test profile exists
+    // Set up test data and override auth.uid() to match the test user.
+    // This must run as postgres (superuser) since authenticated can't modify auth schema.
     runSQL(`
       INSERT INTO auth.users (id, email, raw_app_meta_data)
       VALUES ('11111111-1111-1111-1111-111111111111', 'auth001test@test.local', '{}')
@@ -226,27 +227,36 @@ describe('AUTH-001 profiles role hardening', () => {
       INSERT INTO public.profiles (id, role)
       VALUES ('11111111-1111-1111-1111-111111111111', 'restaurant_owner')
       ON CONFLICT (id) DO NOTHING;
+      CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS
+      $fn$ SELECT '11111111-1111-1111-1111-111111111111'::UUID $fn$
+      LANGUAGE SQL STABLE;
     `);
 
+    // Now attempt the UPDATE as authenticated.
+    // auth.uid() returns the matching UUID, so RLS passes.
+    // The UPDATE must be denied by either column-level privilege or trigger.
     const r = runSQL(
       "UPDATE public.profiles SET role = 'admin' WHERE id = '11111111-1111-1111-1111-111111111111';",
       'authenticated'
     );
     expect(r.exitCode).not.toBe(0);
-    expect(r.stderr.toLowerCase()).toContain('permission denied');
+    // Accept either column-privilege denial ("permission denied") or
+    // trigger denial ("Unauthorized: profile role cannot be changed")
+    const stderr = r.stderr.toLowerCase();
+    expect(
+      stderr.includes('permission denied') || stderr.includes('unauthorized')
+    ).toBe(true);
   });
 
-  it('runtime: authenticated CAN UPDATE profiles.first_name (no column privilege error)', () => {
+  it('runtime: authenticated CAN UPDATE profiles.first_name (allowed column)', () => {
+    // auth.uid() was overridden in the previous test to return the test user's UUID.
+    // RLS now passes, and first_name is in the approved UPDATE column list.
     const r = runSQL(
       "UPDATE public.profiles SET first_name = 'TestName' WHERE id = '11111111-1111-1111-1111-111111111111';",
       'authenticated'
     );
-    // RLS may block (auth.uid() won't match in CI), but column privilege should allow
-    // Column privilege error contains "permission denied for relation"
-    // RLS silently updates 0 rows (exit code 0)
-    if (r.exitCode !== 0) {
-      expect(r.stderr.toLowerCase()).not.toMatch(/permission denied for (table|relation)/);
-    }
+    // Should succeed: column privilege allows it, RLS allows it, no trigger blocks it.
+    expect(r.exitCode).toBe(0);
   });
 
   // ── Convergence proof: migration is idempotent ──
@@ -279,6 +289,10 @@ describe('AUTH-001 profiles role hardening', () => {
     runSQL(`
       DELETE FROM public.profiles WHERE id = '11111111-1111-1111-1111-111111111111';
       DELETE FROM auth.users WHERE id = '11111111-1111-1111-1111-111111111111';
+      -- Restore auth.uid() to the CI default (was overridden for runtime tests)
+      CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS
+      $fn$ SELECT '00000000-0000-0000-0000-000000000000'::UUID $fn$
+      LANGUAGE SQL STABLE;
     `);
     expect(true).toBe(true);
   });

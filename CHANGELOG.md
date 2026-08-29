@@ -3,6 +3,24 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-08-29 — #214: CI fix — column-level REVOKE + runtime auth context (refs #215)
+
+### What changed
+1. **Migration 353 — column-level REVOKE on protected columns:** Added explicit `REVOKE UPDATE (role, id, created_at)` on profiles from PUBLIC/anon/authenticated. `REVOKE ALL ON TABLE` only removes TABLE-level privileges per PostgreSQL spec — stale or inherited column-level grants survive independently. The explicit column-level revoke ensures these are cleared in all PostgreSQL environments (CI PG15 showed column-level UPDATE on role even after table-level REVOKE).
+2. **AUTH-001 runtime test fix:** The runtime denial test now overrides `auth.uid()` to match the test user's UUID before attempting the UPDATE as `authenticated`. Previously, RLS silently filtered the row (auth.uid() didn't match), the trigger never fired, and the only possible denial path was column-level privilege — which was fragile across PG versions. Now the test proves EITHER column-level denial OR trigger denial.
+3. **AUTH-001 first_name UPDATE test:** Changed to positive assertion (`expect(r.exitCode).toBe(0)`) since auth.uid() now matches the test user. Proves authenticated CAN update approved columns.
+4. **Cleanup restores auth.uid():** Restores the CI auth.uid() stub after runtime tests to prevent interference with downstream test steps.
+
+### Files changed
+- `supabase/migrations/353_auth001_profiles_role_hardening.sql` — added column-level REVOKE
+- `lib/__tests__/auth001-profiles-role-hardening-db.test.ts` — fixed runtime tests
+
+### What could break
+- Nothing — the column-level REVOKE is idempotent and only removes privileges that shouldn't exist
+- The auth.uid() override is scoped to runtime tests and restored in cleanup
+
+---
+
 ## 2026-08-29 — #214: Security consolidation round (refs #215, #216, #217, #218)
 
 ### What changed

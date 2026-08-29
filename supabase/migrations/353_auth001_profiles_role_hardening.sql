@@ -54,6 +54,15 @@ CREATE POLICY "profiles_update_own"
 REVOKE ALL ON TABLE public.profiles FROM PUBLIC;
 REVOKE ALL ON TABLE public.profiles FROM anon;
 REVOKE ALL ON TABLE public.profiles FROM authenticated;
+
+-- Explicitly revoke column-level UPDATE on protected columns.
+-- REVOKE ALL ON TABLE only removes TABLE-level privileges; column-level grants
+-- survive independently (per PostgreSQL spec). This ensures any stale or inherited
+-- column-level UPDATE grants on protected columns are removed.
+REVOKE UPDATE (role, id, created_at) ON TABLE public.profiles FROM PUBLIC;
+REVOKE UPDATE (role, id, created_at) ON TABLE public.profiles FROM anon;
+REVOKE UPDATE (role, id, created_at) ON TABLE public.profiles FROM authenticated;
+
 GRANT SELECT ON TABLE public.profiles TO anon;
 GRANT SELECT ON TABLE public.profiles TO authenticated;
 GRANT UPDATE (first_name, last_name, email, phone, last_login_at, updated_at)
