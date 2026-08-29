@@ -46,11 +46,15 @@ CREATE POLICY "profiles_update_own"
 -- B. Column-level least privilege for authenticated users
 -- ══════════════════════════════════════════════════════════
 
--- Revoke broad table privileges from authenticated, grant only what's needed.
+-- Revoke broad table privileges from PUBLIC and authenticated, grant only what's needed.
 -- Approved UPDATE fields: first_name, last_name, email, phone, last_login_at, updated_at.
 -- NOT approved: role, id, created_at.
 -- No INSERT grant — profiles created by trusted trigger only.
+-- Must revoke from PUBLIC first — authenticated inherits PUBLIC privileges.
+REVOKE ALL ON TABLE public.profiles FROM PUBLIC;
+REVOKE ALL ON TABLE public.profiles FROM anon;
 REVOKE ALL ON TABLE public.profiles FROM authenticated;
+GRANT SELECT ON TABLE public.profiles TO anon;
 GRANT SELECT ON TABLE public.profiles TO authenticated;
 GRANT UPDATE (first_name, last_name, email, phone, last_login_at, updated_at)
   ON TABLE public.profiles TO authenticated;

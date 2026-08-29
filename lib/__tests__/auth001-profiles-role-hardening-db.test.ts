@@ -233,18 +233,19 @@ describe('AUTH-001 profiles role hardening', () => {
       'authenticated'
     );
     expect(r.exitCode).not.toBe(0);
-    expect(r.stderr).toContain('permission denied');
+    expect(r.stderr.toLowerCase()).toContain('permission denied');
   });
 
-  it('runtime: authenticated CAN UPDATE profiles.first_name', () => {
+  it('runtime: authenticated CAN UPDATE profiles.first_name (no column privilege error)', () => {
     const r = runSQL(
       "UPDATE public.profiles SET first_name = 'TestName' WHERE id = '11111111-1111-1111-1111-111111111111';",
       'authenticated'
     );
-    // This may fail due to RLS (auth.uid() won't match), but should NOT fail due to column privilege
-    // Column privilege errors say "permission denied for table", RLS silently updates 0 rows
+    // RLS may block (auth.uid() won't match in CI), but column privilege should allow
+    // Column privilege error contains "permission denied for relation"
+    // RLS silently updates 0 rows (exit code 0)
     if (r.exitCode !== 0) {
-      expect(r.stderr).not.toContain('permission denied for table');
+      expect(r.stderr.toLowerCase()).not.toMatch(/permission denied for (table|relation)/);
     }
   });
 
