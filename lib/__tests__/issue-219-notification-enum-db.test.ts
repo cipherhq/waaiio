@@ -45,15 +45,16 @@ describe.skipIf(!canRun)('#219 notification_type enum — PostgreSQL evidence', 
     expect(result).toBe('payment');
   });
 
-  it('B. payment_received is NOT a valid notification_type value (22P02)', () => {
+  it('B. payment_received is NOT a valid notification_type value', () => {
     const result = psqlMayFail("SELECT 'payment_received'::notification_type;");
     expect(result.ok).toBe(false);
-    expect(result.output).toContain('22P02');
+    // PostgreSQL rejects with "invalid input value for enum" (SQLSTATE 22P02)
+    expect(result.output).toMatch(/invalid input value for enum|22P02/);
   });
 
-  it('C. donation is NOT a valid notification_type value (22P02)', () => {
+  it('C. donation is NOT a valid notification_type value', () => {
     const result = psqlMayFail("SELECT 'donation'::notification_type;");
     expect(result.ok).toBe(false);
-    expect(result.output).toContain('22P02');
+    expect(result.output).toMatch(/invalid input value for enum|22P02/);
   });
 });
