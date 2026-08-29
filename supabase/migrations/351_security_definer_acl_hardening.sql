@@ -1,18 +1,23 @@
 -- Migration 351: SECURITY DEFINER ACL Hardening
 --
--- Revokes anon/authenticated EXECUTE from 22 server-only SECURITY DEFINER
+-- Revokes anon/authenticated EXECUTE from 28 server-only SECURITY DEFINER
 -- functions that were incorrectly exposed via Supabase default privileges.
 --
 -- P0: Financial/payment state mutation (7 signatures)
--- P1: Admin capability + inventory mutation (6 signatures)
+-- P1: Admin capability + inventory + booking mutation (12 signatures)
 -- P2: Usage/metric counter manipulation (8 signatures, including 2 increment_ai_usage overloads)
--- Total: 21 signatures
+-- P3: Helper functions only called from within SECURITY DEFINER triggers (1 signature)
+-- Total: 28 signatures
 --
--- All 22 functions are called exclusively from server-side code
--- (service client / cron / webhook handlers). Zero browser callers.
+-- All 28 functions are called exclusively from server-side code
+-- (service client / cron / webhook handlers / trigger internals).
 --
--- Trigger functions, dashboard-facing RPCs, and public-facing RPCs
--- are intentionally EXCLUDED from this hardening.
+-- Trigger functions that are DIRECTLY invoked by PostgreSQL triggers
+-- are intentionally EXCLUDED (they must retain grants for trigger execution).
+--
+-- release_booking_slot remains authenticated-accessible because it has
+-- a legitimate browser caller (dashboard/reservations). This is a known
+-- risk requiring a follow-up to route through a server API.
 
 -- ═══════════════════════════════════════════════════════
 -- P0: Financial / Payment / Recurring State Authorities
@@ -94,6 +99,49 @@ REVOKE ALL ON FUNCTION public.reset_low_stock_alerts() FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.reset_low_stock_alerts() FROM anon;
 REVOKE ALL ON FUNCTION public.reset_low_stock_alerts() FROM authenticated;
 GRANT EXECUTE ON FUNCTION public.reset_low_stock_alerts() TO service_role;
+
+-- Ticket purchase (server API route via service client — no auth.uid() check)
+REVOKE ALL ON FUNCTION public.purchase_tickets_atomic(uuid, uuid, uuid, integer, uuid, text, text, text, integer, text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.purchase_tickets_atomic(uuid, uuid, uuid, integer, uuid, text, text, text, integer, text) FROM anon;
+REVOKE ALL ON FUNCTION public.purchase_tickets_atomic(uuid, uuid, uuid, integer, uuid, text, text, text, integer, text) FROM authenticated;
+GRANT EXECUTE ON FUNCTION public.purchase_tickets_atomic(uuid, uuid, uuid, integer, uuid, text, text, text, integer, text) TO service_role;
+
+-- Booking slot reservation (bot flow via service client — caller-controlled capacity)
+REVOKE ALL ON FUNCTION public.reserve_booking_slot(uuid, date, time, time, uuid, uuid, integer) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.reserve_booking_slot(uuid, date, time, time, uuid, uuid, integer) FROM anon;
+REVOKE ALL ON FUNCTION public.reserve_booking_slot(uuid, date, time, time, uuid, uuid, integer) FROM authenticated;
+GRANT EXECUTE ON FUNCTION public.reserve_booking_slot(uuid, date, time, time, uuid, uuid, integer) TO service_role;
+
+-- Booking cancellation (bot handler + API route via service client — no ownership check)
+REVOKE ALL ON FUNCTION public.cancel_booking_with_release(uuid, text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.cancel_booking_with_release(uuid, text) FROM anon;
+REVOKE ALL ON FUNCTION public.cancel_booking_with_release(uuid, text) FROM authenticated;
+GRANT EXECUTE ON FUNCTION public.cancel_booking_with_release(uuid, text) TO service_role;
+
+-- Package session release (no app callers found — defensive hardening)
+REVOKE ALL ON FUNCTION public.release_package_session(uuid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.release_package_session(uuid) FROM anon;
+REVOKE ALL ON FUNCTION public.release_package_session(uuid) FROM authenticated;
+GRANT EXECUTE ON FUNCTION public.release_package_session(uuid) TO service_role;
+
+-- Package booking (bot flow via service client)
+REVOKE ALL ON FUNCTION public.book_with_package_atomic(uuid, uuid, uuid, uuid, date, text, integer, integer, text, integer, text, text, text, text, text, text, text, date, jsonb, uuid, integer, text, uuid, uuid, integer, integer, uuid, uuid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.book_with_package_atomic(uuid, uuid, uuid, uuid, date, text, integer, integer, text, integer, text, text, text, text, text, text, text, date, jsonb, uuid, integer, text, uuid, uuid, integer, integer, uuid, uuid) FROM anon;
+REVOKE ALL ON FUNCTION public.book_with_package_atomic(uuid, uuid, uuid, uuid, date, text, integer, integer, text, integer, text, text, text, text, text, text, text, date, jsonb, uuid, integer, text, uuid, uuid, integer, integer, uuid, uuid) FROM authenticated;
+GRANT EXECUTE ON FUNCTION public.book_with_package_atomic(uuid, uuid, uuid, uuid, date, text, integer, integer, text, integer, text, text, text, text, text, text, text, date, jsonb, uuid, integer, text, uuid, uuid, integer, integer, uuid, uuid) TO service_role;
+
+-- ═══════════════════════════════════════════════════════
+-- P3: Helper functions only called from within SECURITY DEFINER triggers
+-- ═══════════════════════════════════════════════════════
+
+-- _is_service_role(): read-only helper called only from enforce_payout_accounts_insert/update
+-- Those are SECURITY DEFINER owned by postgres — nested calls execute as postgres.
+-- No direct application callers. anon/authenticated EXECUTE is unnecessary.
+REVOKE ALL ON FUNCTION public._is_service_role() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public._is_service_role() FROM anon;
+REVOKE ALL ON FUNCTION public._is_service_role() FROM authenticated;
+GRANT EXECUTE ON FUNCTION public._is_service_role() TO service_role;
+-- postgres retains EXECUTE as owner (implicit) — triggers still work
 
 -- ═══════════════════════════════════════════════════════
 -- P2: Usage / Metric Counter Manipulation

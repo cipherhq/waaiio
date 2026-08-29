@@ -49,6 +49,15 @@ const P1_FUNCTIONS = [
   { name: 'decrement_stock', sig: 'decrement_stock(uuid, integer)' },
   { name: 'decrement_variant_stock', sig: 'decrement_variant_stock(uuid, integer)' },
   { name: 'reset_low_stock_alerts', sig: 'reset_low_stock_alerts()' },
+  { name: 'purchase_tickets_atomic', sig: 'purchase_tickets_atomic(uuid, uuid, uuid, integer, uuid, text, text, text, integer, text)' },
+  { name: 'reserve_booking_slot', sig: 'reserve_booking_slot(uuid, date, time, time, uuid, uuid, integer)' },
+  { name: 'cancel_booking_with_release', sig: 'cancel_booking_with_release(uuid, text)' },
+  { name: 'release_package_session', sig: 'release_package_session(uuid)' },
+  { name: 'book_with_package_atomic', sig: 'book_with_package_atomic(uuid, uuid, uuid, uuid, date, text, integer, integer, text, integer, text, text, text, text, text, text, text, date, jsonb, uuid, integer, text, uuid, uuid, integer, integer, uuid, uuid)' },
+];
+
+const P3_FUNCTIONS = [
+  { name: '_is_service_role', sig: '_is_service_role()' },
 ];
 
 const P2_FUNCTIONS = [
@@ -62,7 +71,7 @@ const P2_FUNCTIONS = [
   { name: 'increment_promo_usage', sig: 'increment_promo_usage(uuid)' },
 ];
 
-const ALL_FUNCTIONS = [...P0_FUNCTIONS, ...P1_FUNCTIONS, ...P2_FUNCTIONS];
+const ALL_FUNCTIONS = [...P0_FUNCTIONS, ...P1_FUNCTIONS, ...P2_FUNCTIONS, ...P3_FUNCTIONS];
 
 describe('Migration 351 ACL hardening', () => {
 
@@ -138,7 +147,31 @@ describe('Migration 351 ACL hardening', () => {
     });
   }
 
-  // Runtime denial proofs (4 total: 2 anon, 2 authenticated)
+  // P3: Helper — anon denied
+  for (const fn of P3_FUNCTIONS) {
+    it(`P3: anon CANNOT execute ${fn.name}`, () => {
+      const r = runSQL(`SELECT has_function_privilege('anon', '${fn.sig}', 'EXECUTE') AS p;`);
+      expect(r.stdout).toBe('f');
+    });
+  }
+
+  // P3: Helper — authenticated denied
+  for (const fn of P3_FUNCTIONS) {
+    it(`P3: authenticated CANNOT execute ${fn.name}`, () => {
+      const r = runSQL(`SELECT has_function_privilege('authenticated', '${fn.sig}', 'EXECUTE') AS p;`);
+      expect(r.stdout).toBe('f');
+    });
+  }
+
+  // P3: Helper — service_role allowed
+  for (const fn of P3_FUNCTIONS) {
+    it(`P3: service_role CAN execute ${fn.name}`, () => {
+      const r = runSQL(`SELECT has_function_privilege('service_role', '${fn.sig}', 'EXECUTE') AS p;`);
+      expect(r.stdout).toBe('t');
+    });
+  }
+
+  // Runtime denial proofs
   it('runtime: anon cannot call claim_payment_finalization', () => {
     const r = runSQL(
       "SELECT claim_payment_finalization('00000000-0000-0000-0000-000000000000'::uuid);",
