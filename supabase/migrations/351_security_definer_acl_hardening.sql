@@ -15,9 +15,9 @@
 -- Trigger functions that are DIRECTLY invoked by PostgreSQL triggers
 -- are intentionally EXCLUDED (they must retain grants for trigger execution).
 --
--- release_booking_slot remains authenticated-accessible because it has
--- a legitimate browser caller (dashboard/reservations). This is a known
--- risk requiring a follow-up to route through a server API.
+-- release_booking_slot is now routed through /api/bookings/release-slot
+-- which authenticates the user, verifies business ownership, and calls
+-- the RPC via service_role. Direct authenticated access is revoked.
 
 -- ═══════════════════════════════════════════════════════
 -- P0: Financial / Payment / Recurring State Authorities
@@ -130,6 +130,12 @@ REVOKE ALL ON FUNCTION public.book_with_package_atomic(uuid, uuid, uuid, uuid, d
 REVOKE ALL ON FUNCTION public.book_with_package_atomic(uuid, uuid, uuid, uuid, date, text, integer, integer, text, integer, text, text, text, text, text, text, text, date, jsonb, uuid, integer, text, uuid, uuid, integer, integer, uuid, uuid) FROM authenticated;
 GRANT EXECUTE ON FUNCTION public.book_with_package_atomic(uuid, uuid, uuid, uuid, date, text, integer, integer, text, integer, text, text, text, text, text, text, text, date, jsonb, uuid, integer, text, uuid, uuid, integer, integer, uuid, uuid) TO service_role;
 
+-- Slot release (routed through /api/bookings/release-slot or atomic RPCs)
+REVOKE ALL ON FUNCTION public.release_booking_slot(uuid, date, time, uuid, uuid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.release_booking_slot(uuid, date, time, uuid, uuid) FROM anon;
+REVOKE ALL ON FUNCTION public.release_booking_slot(uuid, date, time, uuid, uuid) FROM authenticated;
+GRANT EXECUTE ON FUNCTION public.release_booking_slot(uuid, date, time, uuid, uuid) TO service_role;
+
 -- ═══════════════════════════════════════════════════════
 -- P3: Helper functions only called from within SECURITY DEFINER triggers
 -- ═══════════════════════════════════════════════════════
@@ -215,7 +221,7 @@ DECLARE
   v_svc BOOLEAN;
   v_errors TEXT[] := '{}';
 BEGIN
-  -- P0 checks
+  -- P0 + P1 spot checks
   FOR v_fn, v_sig IN VALUES
     ('claim_payment_finalization', 'claim_payment_finalization(uuid)'),
     ('complete_payment_finalization', 'complete_payment_finalization(uuid, uuid)'),
@@ -223,7 +229,8 @@ BEGIN
     ('finalize_token_recurring_charge', 'finalize_token_recurring_charge(text, uuid, numeric, text, text, text)'),
     ('claim_recurring_billing_cycle', 'claim_recurring_billing_cycle(uuid)'),
     ('record_flutterwave_definitive_failure', 'record_flutterwave_definitive_failure(uuid, text)'),
-    ('cancel_flutterwave_after_failures', 'cancel_flutterwave_after_failures(uuid)')
+    ('cancel_flutterwave_after_failures', 'cancel_flutterwave_after_failures(uuid)'),
+    ('release_booking_slot', 'release_booking_slot(uuid, date, time, uuid, uuid)')
   LOOP
     v_anon := has_function_privilege('anon', v_sig, 'EXECUTE');
     v_auth := has_function_privilege('authenticated', v_sig, 'EXECUTE');

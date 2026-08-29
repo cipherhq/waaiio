@@ -1,8 +1,8 @@
 /**
  * Migration 351: SECURITY DEFINER ACL Hardening Tests
  *
- * Proves all 22 targeted functions are denied to anon/authenticated
- * and allowed for service_role.
+ * Proves all targeted SECURITY DEFINER functions are denied to
+ * anon/authenticated and allowed for service_role.
  */
 import { describe, it, expect, beforeAll } from 'vitest';
 import { execSync } from 'child_process';
@@ -54,6 +54,7 @@ const P1_FUNCTIONS = [
   { name: 'cancel_booking_with_release', sig: 'cancel_booking_with_release(uuid, text)' },
   { name: 'release_package_session', sig: 'release_package_session(uuid)' },
   { name: 'book_with_package_atomic', sig: 'book_with_package_atomic(uuid, uuid, uuid, uuid, date, text, integer, integer, text, integer, text, text, text, text, text, text, text, date, jsonb, uuid, integer, text, uuid, uuid, integer, integer, uuid, uuid)' },
+  { name: 'release_booking_slot', sig: 'release_booking_slot(uuid, date, time, uuid, uuid)' },
 ];
 
 // P3: _is_service_role — only exists on staging/production (not in repository migrations)
@@ -202,6 +203,49 @@ describe('Migration 351 ACL hardening', () => {
   it('runtime: authenticated cannot call configure_business_capabilities', () => {
     const r = runSQL(
       "SELECT configure_business_capabilities('00000000-0000-0000-0000-000000000000'::uuid, ARRAY['test']::text[], ARRAY[0]::integer[], 'free', NOW(), 'active', ARRAY[]::text[], ARRAY[]::text[]);",
+      'authenticated'
+    );
+    expect(r.exitCode).not.toBe(0);
+    expect(r.stderr).toContain('permission denied');
+  });
+
+  it('runtime: authenticated cannot call release_booking_slot', () => {
+    const r = runSQL(
+      "SELECT release_booking_slot('00000000-0000-0000-0000-000000000000'::uuid, '2026-01-01'::date, '10:00'::time, '00000000-0000-0000-0000-000000000000'::uuid, '00000000-0000-0000-0000-000000000000'::uuid);",
+      'authenticated'
+    );
+    expect(r.exitCode).not.toBe(0);
+    expect(r.stderr).toContain('permission denied');
+  });
+
+  // mark_booking_no_show ACL tests (from migration 354)
+  it('mark_booking_no_show: anon CANNOT execute', () => {
+    const r = runSQL("SELECT has_function_privilege('anon', 'mark_booking_no_show(uuid, text)', 'EXECUTE') AS p;");
+    expect(r.stdout).toBe('f');
+  });
+
+  it('mark_booking_no_show: authenticated CANNOT execute', () => {
+    const r = runSQL("SELECT has_function_privilege('authenticated', 'mark_booking_no_show(uuid, text)', 'EXECUTE') AS p;");
+    expect(r.stdout).toBe('f');
+  });
+
+  it('mark_booking_no_show: service_role CAN execute', () => {
+    const r = runSQL("SELECT has_function_privilege('service_role', 'mark_booking_no_show(uuid, text)', 'EXECUTE') AS p;");
+    expect(r.stdout).toBe('t');
+  });
+
+  it('runtime: anon cannot call mark_booking_no_show', () => {
+    const r = runSQL(
+      "SELECT mark_booking_no_show('00000000-0000-0000-0000-000000000000'::uuid, 'test');",
+      'anon'
+    );
+    expect(r.exitCode).not.toBe(0);
+    expect(r.stderr).toContain('permission denied');
+  });
+
+  it('runtime: authenticated cannot call mark_booking_no_show', () => {
+    const r = runSQL(
+      "SELECT mark_booking_no_show('00000000-0000-0000-0000-000000000000'::uuid, 'test');",
       'authenticated'
     );
     expect(r.exitCode).not.toBe(0);

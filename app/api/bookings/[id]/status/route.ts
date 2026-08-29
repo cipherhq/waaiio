@@ -117,11 +117,24 @@ export async function PATCH(
       if (booking.no_show_at) {
         return NextResponse.json({ error: 'Already marked as no-show' }, { status: 400 });
       }
-      updateData.no_show_at = now;
-      updateData.no_show_reason = reason || null;
-      updateData.status = 'no_show';
 
-      // Increment no-show count on customer profile
+      // Atomic no-show: status + slot release in a single transaction
+      const { data: noShowResult, error: noShowError } = await service
+        .rpc('mark_booking_no_show', {
+          p_booking_id: id,
+          p_reason: reason || null,
+        });
+
+      if (noShowError) {
+        logger.error('[BOOKING-STATUS] Atomic no-show error:', noShowError);
+        return NextResponse.json({ error: 'Failed to mark no-show' }, { status: 500 });
+      }
+
+      if (!noShowResult?.marked) {
+        return NextResponse.json({ error: noShowResult?.reason || 'No-show failed' }, { status: 400 });
+      }
+
+      // Increment no-show count on customer profile (application-layer concern)
       if (booking.guest_phone) {
         const phone = booking.guest_phone.startsWith('+') ? booking.guest_phone : `+${booking.guest_phone}`;
         const { data: profile } = await service
@@ -150,6 +163,39 @@ export async function PATCH(
           'Please contact us to reschedule. Type *Hi* to book again.',
         ].filter(Boolean).join('\n');
       }
+
+      // Auto-notify waitlisted customers when a no-show frees a slot
+      if (biz?.metadata?.waitlist_auto_notify !== false) {
+        try {
+          await notifyWaitlistOnSlotOpen({
+            supabase: service,
+            businessId: booking.business_id,
+            businessName: biz?.name || 'the business',
+            date: booking.date,
+            serviceId: booking.service_id,
+          });
+        } catch (err) {
+          logger.error('[BOOKING-STATUS] Waitlist auto-notify error:', err);
+        }
+      }
+
+      // Send WhatsApp notification (non-blocking)
+      if (customerMessage && booking.guest_phone) {
+        try {
+          const resolver = new ChannelResolver(service);
+          const resolved = await resolver.resolveByBusinessId(booking.business_id);
+          if (resolved) {
+            const phone = booking.guest_phone.startsWith('+')
+              ? booking.guest_phone.slice(1)
+              : booking.guest_phone;
+            await resolved.sender.sendText({ to: phone, text: customerMessage });
+          }
+        } catch (err) {
+          logger.error('[BOOKING-STATUS] No-show notification error:', err);
+        }
+      }
+
+      return NextResponse.json({ success: true, action, slot_released: noShowResult.slot_released });
     } else if (action === 'cancel') {
       // Atomic cancellation + package session release via RPC
       if (!['pending', 'confirmed'].includes(booking.status)) {
@@ -210,7 +256,7 @@ export async function PATCH(
       return NextResponse.json({ success: true, action, session_released: cancelResult.session_released });
     }
 
-    // Update booking (for non-cancel actions — cancel uses atomic RPC above)
+    // Update booking (for check_in/check_out only — cancel and no_show use atomic RPCs above)
     const { error: updateError } = await service
       .from('bookings')
       .update(updateData)
@@ -221,22 +267,7 @@ export async function PATCH(
       return NextResponse.json({ error: 'Failed to update booking' }, { status: 500 });
     }
 
-    // Auto-notify waitlisted customers when a no-show frees a slot
-    if (action === 'no_show' && biz?.metadata?.waitlist_auto_notify !== false) {
-      try {
-        await notifyWaitlistOnSlotOpen({
-          supabase: service,
-          businessId: booking.business_id,
-          businessName: biz?.name || 'the business',
-          date: booking.date,
-          serviceId: booking.service_id,
-        });
-      } catch (err) {
-        logger.error('[BOOKING-STATUS] Waitlist auto-notify error:', err);
-      }
-    }
-
-    // Send WhatsApp notification to customer (non-blocking)
+    // Send WhatsApp notification to customer (non-blocking, check_in/check_out only)
     if (customerMessage && booking.guest_phone) {
       try {
         const resolver = new ChannelResolver(service);

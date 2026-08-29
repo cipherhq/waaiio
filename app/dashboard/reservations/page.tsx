@@ -522,29 +522,29 @@ export default function BookingsPage() {
       if (newStatus === 'completed') extra.completed_at = now;
     }
 
-    // For booking cancellations, use the atomic API (handles package session release)
-    if (newStatus === 'cancelled' && !isThisReservation) {
+    // For booking cancellations and no-shows, use the atomic API
+    // (cancel handles package session release; no-show handles slot release)
+    if ((newStatus === 'cancelled' || newStatus === 'no_show') && !isThisReservation) {
+      const action = newStatus === 'cancelled' ? 'cancel' : 'no_show';
       try {
         const res = await fetch(`/api/bookings/${id}/status`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'cancel' }),
+          body: JSON.stringify({ action }),
         });
         if (!res.ok) {
           const err = await res.json().catch(() => ({}));
-          console.error('[DASHBOARD] Cancel API error:', err);
-          // Cancellation failed — refresh UI without emitting downstream notifications
+          console.error(`[DASHBOARD] ${action} API error:`, err);
           fetchBookings();
           return;
         }
       } catch {
-        // Network error — cancellation did not succeed, refresh and return
         fetchBookings();
         return;
       }
 
       // Only notify staff AFTER confirmed cancellation success
-      if (booking?.staff_id) {
+      if (newStatus === 'cancelled' && booking?.staff_id) {
         fetch('/api/bookings/notify-staff-cancel', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -574,53 +574,17 @@ export default function BookingsPage() {
       }).catch(() => {});
     }
 
-    // Release booking slot on cancel/no_show so the time becomes available again
-    if (newStatus === 'cancelled' || newStatus === 'no_show') {
-      const booking = bookings.find(b => b.id === id);
-      if (booking) {
-        try {
-          await fetch('/api/bookings/release-slot', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ bookingId: booking.id }),
-          });
-        } catch { /* Non-critical if slot doesn't exist */ }
-
-        // Notify guest via domain-specific cancellation endpoint (non-blocking)
-        if (newStatus === 'cancelled' && booking.guest_phone && booking._isReservation) {
-          fetch('/api/reservations/notify-cancel', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              reservationId: booking.id,
-              businessId: business.id,
-            }),
-          }).catch(() => {});
-        }
-
-        // Notify assigned staff member about cancellation (non-blocking)
-        if (newStatus === 'cancelled' && booking.staff_id && !booking._isReservation) {
-          fetch('/api/bookings/notify-staff-cancel', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              bookingId: booking.id,
-              businessId: business.id,
-            }),
-          }).catch(() => {});
-        }
-
-        // Notify next waitlist customer (non-blocking)
-        if (newStatus === 'cancelled') {
-          fetch('/api/waitlist/notify', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              business_id: business.id,
-              service_id: booking.service_id || null,
-            }),
-          }).catch(() => {});
-        }
+    // Reservation-specific notifications (bookings route through atomic API above)
+    if (isThisReservation && newStatus === 'cancelled') {
+      if (booking?.guest_phone) {
+        fetch('/api/reservations/notify-cancel', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            reservationId: id,
+            businessId: business.id,
+          }),
+        }).catch(() => {});
       }
     }
 

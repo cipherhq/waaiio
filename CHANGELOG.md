@@ -3,6 +3,40 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-08-29 — #214: Security consolidation round (refs #215, #216, #217, #218)
+
+### What changed
+1. **Migration 353 — AUTH-001 convergence:** Idempotent forward migration that restores profiles.role escalation protections missed on staging (migration 247 number collision). Drops permissive FOR ALL policy, restricts column-level UPDATE privileges, installs BEFORE UPDATE/INSERT triggers, rewrites is_admin()/is_admin_or_support() to use auth.users.raw_app_meta_data. Convergence-safe for both staging (missing) and production (already has).
+2. **Migration 354 — Atomic no-show RPC:** `mark_booking_no_show(uuid, text)` handles status transition + slot release in a single transaction. Derives staff/location from trusted booking row. Package sessions intentionally NOT released on no-show. service_role only.
+3. **Migration 351 consolidation:** Absorbed migration 352 content (release_booking_slot ACL was already in 351). Updated verification block to include release_booking_slot. Removed redundant migration 352.
+4. **No-show atomicity:** `/api/bookings/[id]/status` no_show action now uses atomic RPC instead of separate status update + browser release-slot call. Slot release is server-side and atomic.
+5. **Dashboard cleanup:** Booking cancellations and no-shows both route through the atomic API. Removed redundant `/api/bookings/release-slot` calls from reservations dashboard.
+6. **Removed /api/bookings/release-slot:** Zero legitimate callers remain after cancel/no-show corrections. Dead privileged surface removed.
+7. **Real PostgreSQL tests:** AUTH-001 privilege/trigger/function tests, ticket purchase ACL + cross-event validation tests, release_booking_slot + mark_booking_no_show ACL tests.
+
+### Files changed
+- `supabase/migrations/351_security_definer_acl_hardening.sql` — updated comments + verification block
+- `supabase/migrations/352_revoke_release_booking_slot_from_authenticated.sql` — REMOVED (content in 351)
+- `supabase/migrations/353_auth001_profiles_role_hardening.sql` — NEW
+- `supabase/migrations/354_mark_booking_no_show_atomic.sql` — NEW
+- `app/api/bookings/[id]/status/route.ts` — no_show uses atomic RPC
+- `app/dashboard/reservations/page.tsx` — removed redundant release-slot calls, no_show routes through API
+- `app/api/bookings/release-slot/route.ts` — REMOVED (zero callers)
+- `lib/__tests__/auth001-profiles-role-hardening-db.test.ts` — NEW
+- `lib/__tests__/ticket-purchase-security-db.test.ts` — NEW
+- `lib/__tests__/migration-351-acl-hardening-db.test.ts` — added release_booking_slot + mark_booking_no_show coverage
+- `.github/workflows/ci.yml` — added AUTH-001 + ticket purchase test steps
+
+### What could break
+- No-show action now requires routing through `/api/bookings/[id]/status` API (direct browser DB update no longer releases slots)
+- Any code calling release_booking_slot via authenticated role will be denied
+- The `/api/bookings/release-slot` route no longer exists — cached browser code would get 404
+
+### Follow-ups tracked separately
+- #216 — Bot My Bookings object-level authorization (IDOR fix)
+- #217 — Complete platform-role authority migration (is_support + 30+ inline RLS)
+- #218 — Production migration reconciliation before production E2E
+
 ## 2026-08-26 — #214: Security — release_booking_slot server route + purchase_tickets_atomic trust boundary
 
 ### What changed (3 fixes)
