@@ -76,8 +76,8 @@ describe('#232 Refund convergence PostgreSQL', () => {
       INSERT INTO public.businesses (id, owner_id, name, slug, category, address, city, phone, status, subscription_tier, country_code)
       VALUES ('${BIZ}', '${OWNER}', 'RefundTestBiz', 'refund-test-232', 'church', '1 St', 'Lagos', '+2340000232', 'active', 'growth', 'NG');
 
-      INSERT INTO public.services (id, business_id, name, service_type, billing_type, is_active, price, duration_minutes, deposit_amount)
-      VALUES ('${SERVICE}', '${BIZ}', 'Ref Giving', 'giving', 'recurring', true, 10000, 0, 0);
+      INSERT INTO public.services (id, business_id, name, service_type, billing_type, recurring_interval, is_active, price, duration_minutes, deposit_amount)
+      VALUES ('${SERVICE}', '${BIZ}', 'Ref Giving', 'giving', 'recurring', 'monthly', true, 10000, 0, 0);
 
       INSERT INTO public.bookings (id, reference_code, business_id, user_id, service_id, flow_type, guest_name, guest_phone, date, time, party_size, channel, status, total_amount, created_at)
       VALUES ('${BOOKING}', 'WA-RF-001', '${BIZ}', '${CUSTOMER}', '${SERVICE}', 'payment', 'RefCust', '+2340000232', CURRENT_DATE, '10:00', 1, 'whatsapp', 'confirmed', 10000, now());
