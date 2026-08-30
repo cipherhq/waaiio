@@ -142,7 +142,8 @@ BEGIN
       AND b.user_id IS NOT NULL
     LEFT JOIN public.customer_profiles cp_p
       ON cp_p.business_id = b.business_id AND cp_p.phone = b.guest_phone
-      AND b.user_id IS NULL  -- phone fallback only for legacy bookings without durable identity
+      AND b.user_id IS NULL       -- source must be legacy (no durable identity)
+      AND cp_p.user_id IS NULL    -- target must also be unlinked (not owned by another user)
     WHERE b.business_id = p_business_id
 
     UNION ALL
@@ -166,7 +167,8 @@ BEGIN
       AND o.user_id IS NOT NULL
     LEFT JOIN public.customer_profiles cp_p
       ON cp_p.business_id = o.business_id AND cp_p.phone = o.delivery_phone
-      AND o.user_id IS NULL  -- phone fallback only for legacy rows without durable identity
+      AND o.user_id IS NULL       -- source must be legacy (no durable identity)
+      AND cp_p.user_id IS NULL    -- target must also be unlinked (not owned by another user)
     WHERE o.business_id = p_business_id
       AND o.deleted_at IS NULL
 

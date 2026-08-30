@@ -419,6 +419,106 @@ describe('PostgreSQL Customer360/Financials (#225/#226)', () => {
     }
   });
 
+  // ── Legacy source + linked profile phone fallback regression ──
+
+  it('legacy booking (user_id NULL) does NOT attribute to a linked profile via phone', () => {
+    // Source booking has user_id IS NULL (legacy), phone matches a customer_profiles
+    // row that has a non-null user_id belonging to a different durable user.
+    // The fallback must NOT attribute that durable customer's name.
+    const LINKED_USER = 'c2250000-0000-0000-0000-000000000088';
+    const LINKED_CP = 'c2250000-0000-0000-0000-000000000089';
+    const LEGACY_BK = 'c2250000-0000-0000-0000-00000000008a';
+    const LEGACY_PHONE = '+2348777777777';
+    try {
+      runSQL(`
+        INSERT INTO auth.users (id, email, raw_app_meta_data, raw_user_meta_data, aud, role, instance_id, created_at, updated_at)
+        VALUES ('${LINKED_USER}', 'linked-226@test.local', '{"provider":"email"}', '{}', 'authenticated', 'authenticated', '00000000-0000-0000-0000-000000000000', now(), now());
+        INSERT INTO public.profiles (id, first_name, last_name, email, role)
+        VALUES ('${LINKED_USER}', 'Linked', 'DurableUser', 'linked-226@test.local', 'user');
+        INSERT INTO public.customer_profiles (id, business_id, phone, name, user_id)
+        VALUES ('${LINKED_CP}', '${BIZ_A}', '${LEGACY_PHONE}', 'Linked DurableUser', '${LINKED_USER}');
+        INSERT INTO public.bookings (id, reference_code, business_id, user_id, flow_type, guest_name, guest_phone, date, status, total_amount, created_at)
+        VALUES ('${LEGACY_BK}', 'WA-PY-LGCY', '${BIZ_A}', NULL, 'payment', 'Legacy Guest', '${LEGACY_PHONE}', CURRENT_DATE, 'confirmed', 3333, now());
+      `);
+
+      const result = runSQL(`
+        SELECT customer_name FROM public.get_business_transactions('${BIZ_A}')
+        WHERE reference_code = 'WA-PY-LGCY';
+      `);
+      // Must NOT show 'Linked DurableUser' (that profile is owned by a different durable user)
+      expect(result).not.toContain('Linked DurableUser');
+      // Should show guest_name 'Legacy Guest' from the booking itself
+      expect(result).toContain('Legacy Guest');
+    } finally {
+      runSQL(`
+        DELETE FROM public.bookings WHERE id = '${LEGACY_BK}';
+        DELETE FROM public.customer_profiles WHERE id = '${LINKED_CP}';
+        DELETE FROM public.profiles WHERE id = '${LINKED_USER}';
+        DELETE FROM auth.users WHERE id = '${LINKED_USER}';
+      `);
+    }
+  });
+
+  it('legacy order (user_id NULL) does NOT attribute to a linked profile via phone', () => {
+    const LINKED_USER2 = 'c2250000-0000-0000-0000-00000000008b';
+    const LINKED_CP2 = 'c2250000-0000-0000-0000-00000000008c';
+    const LEGACY_ORD = 'c2250000-0000-0000-0000-00000000008d';
+    const LEGACY_PHONE2 = '+2348666666666';
+    try {
+      runSQL(`
+        INSERT INTO auth.users (id, email, raw_app_meta_data, raw_user_meta_data, aud, role, instance_id, created_at, updated_at)
+        VALUES ('${LINKED_USER2}', 'linked2-226@test.local', '{"provider":"email"}', '{}', 'authenticated', 'authenticated', '00000000-0000-0000-0000-000000000000', now(), now());
+        INSERT INTO public.profiles (id, first_name, last_name, email, role)
+        VALUES ('${LINKED_USER2}', 'Linked2', 'OrderUser', 'linked2-226@test.local', 'user');
+        INSERT INTO public.customer_profiles (id, business_id, phone, name, user_id)
+        VALUES ('${LINKED_CP2}', '${BIZ_A}', '${LEGACY_PHONE2}', 'Linked2 OrderUser', '${LINKED_USER2}');
+        INSERT INTO public.orders (id, reference_code, business_id, user_id, delivery_phone, status, total_amount, created_at)
+        VALUES ('${LEGACY_ORD}', 'WA-OR-LGCY', '${BIZ_A}', NULL, '${LEGACY_PHONE2}', 'confirmed', 4444, now());
+      `);
+
+      const result = runSQL(`
+        SELECT customer_name FROM public.get_business_transactions('${BIZ_A}')
+        WHERE reference_code = 'WA-OR-LGCY';
+      `);
+      // Must NOT show 'Linked2 OrderUser' (profile is owned by a different durable user)
+      expect(result).not.toContain('Linked2 OrderUser');
+    } finally {
+      runSQL(`
+        DELETE FROM public.orders WHERE id = '${LEGACY_ORD}';
+        DELETE FROM public.customer_profiles WHERE id = '${LINKED_CP2}';
+        DELETE FROM public.profiles WHERE id = '${LINKED_USER2}';
+        DELETE FROM auth.users WHERE id = '${LINKED_USER2}';
+      `);
+    }
+  });
+
+  it('legacy booking CAN attribute to an unlinked legacy profile via phone', () => {
+    // Bounded phone fallback: source user_id IS NULL, profile user_id IS NULL = OK
+    const UNLINKED_CP = 'c2250000-0000-0000-0000-00000000008e';
+    const LEGACY_BK2 = 'c2250000-0000-0000-0000-00000000008f';
+    const LEGACY_PHONE3 = '+2348555555555';
+    try {
+      runSQL(`
+        INSERT INTO public.customer_profiles (id, business_id, phone, name, user_id)
+        VALUES ('${UNLINKED_CP}', '${BIZ_A}', '${LEGACY_PHONE3}', 'Unlinked Legacy', NULL);
+        INSERT INTO public.bookings (id, reference_code, business_id, user_id, flow_type, guest_phone, date, status, total_amount, created_at)
+        VALUES ('${LEGACY_BK2}', 'WA-PY-LGC2', '${BIZ_A}', NULL, 'payment', '${LEGACY_PHONE3}', CURRENT_DATE, 'confirmed', 5555, now());
+      `);
+
+      const result = runSQL(`
+        SELECT customer_name FROM public.get_business_transactions('${BIZ_A}')
+        WHERE reference_code = 'WA-PY-LGC2';
+      `);
+      // Unlinked profile IS a valid phone fallback target
+      expect(result).toContain('Unlinked Legacy');
+    } finally {
+      runSQL(`
+        DELETE FROM public.bookings WHERE id = '${LEGACY_BK2}';
+        DELETE FROM public.customer_profiles WHERE id = '${UNLINKED_CP}';
+      `);
+    }
+  });
+
   // ── Backfill collision regression (#225 blocker 3) ──
 
   it('backfill leaves ambiguous/colliding profiles unlinked when two phones map to same user', () => {
