@@ -118,7 +118,7 @@ BEGIN
     SELECT
       b.id AS txn_id,
       'booking'::TEXT AS txn_type,
-      COALESCE(b.flow_type, 'booking')::TEXT AS flow_type,
+      COALESCE(b.flow_type::TEXT, 'booking') AS flow_type,
       b.reference_code::TEXT,
       CASE
         WHEN b.flow_type = 'payment' AND s.service_type = 'giving'
@@ -253,7 +253,7 @@ BEGIN
           THEN 'Ticket' || E' \u2014 ' || COALESCE(s.name, b.reference_code)
         WHEN b.flow_type = 'scheduling'
           THEN 'Booking' || E' \u2014 ' || COALESCE(s.name, b.reference_code)
-        ELSE COALESCE(initcap(b.flow_type), 'Booking') || E' \u2014 ' || COALESCE(s.name, b.reference_code)
+        ELSE COALESCE(initcap(b.flow_type::TEXT), 'Booking') || E' \u2014 ' || COALESCE(s.name, b.reference_code)
       END::TEXT AS purpose,
       COALESCE(b.total_amount, b.deposit_amount, 0)::BIGINT AS amount,
       'NGN'::TEXT AS currency,
