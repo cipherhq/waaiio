@@ -186,6 +186,48 @@ REVOKE ALL ON FUNCTION public.claim_refund_dispatch(UUID) FROM PUBLIC, anon, aut
 GRANT EXECUTE ON FUNCTION public.claim_refund_dispatch(UUID) TO service_role;
 
 
+-- 4b. Tier-1 crash recovery: re-claim a provider_ambiguous attempt for idempotent replay.
+-- Only transitions provider_ambiguous → pending (re-dispatch) when the dispatched_at
+-- is within the provider's replay-safe window. Caller must verify gateway tier.
+
+CREATE OR REPLACE FUNCTION public.recover_ambiguous_refund(p_refund_id UUID)
+RETURNS JSONB
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = ''
+AS $$
+DECLARE
+  v_refund RECORD;
+BEGIN
+  SELECT r.* INTO v_refund
+  FROM public.refunds r
+  WHERE r.id = p_refund_id
+  FOR UPDATE;
+
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('recovered', false, 'reason', 'refund_not_found');
+  END IF;
+
+  IF v_refund.status != 'provider_ambiguous' THEN
+    RETURN jsonb_build_object('recovered', false, 'reason', 'not_ambiguous', 'current_status', v_refund.status);
+  END IF;
+
+  -- Verify within replay-safe window (24h for Stripe/Square/PayPal)
+  IF v_refund.dispatched_at IS NULL OR v_refund.dispatched_at < now() - INTERVAL '23 hours' THEN
+    RETURN jsonb_build_object('recovered', false, 'reason', 'replay_window_expired');
+  END IF;
+
+  -- Reset to pending with dispatched_at cleared for re-claim
+  UPDATE public.refunds
+  SET status = 'pending', dispatched_at = NULL
+  WHERE id = p_refund_id;
+
+  RETURN jsonb_build_object('recovered', true, 'refund_id', p_refund_id);
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.recover_ambiguous_refund(UUID) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.recover_ambiguous_refund(UUID) TO service_role;
+
+
 -- 5. Exactly-once finalization RPC
 -- Atomically finalizes a provider-successful refund: updates payment aggregate,
 -- booking/reservation deposit, platform fee, and transitions refund to 'success'.
@@ -276,15 +318,19 @@ BEGIN
         v_fee_entity_col
       ) USING v_fee_entity_val;
     ELSE
-      -- Partial refund: reduce fee proportionally
+      -- Partial refund: derive fee reduction from ORIGINAL rate, not current reduced fee.
+      -- fee_reduction = (fee_percentage/100 * refund_amount) + (fee_flat * refund_amount / transaction_amount)
+      -- This prevents compounding errors on sequential partial refunds.
       EXECUTE format(
-        'SELECT id, fee_total, transaction_amount FROM public.platform_fees WHERE %I = $1 AND refunded_at IS NULL LIMIT 1',
+        'SELECT id, fee_total, fee_percentage, fee_flat, transaction_amount FROM public.platform_fees WHERE %I = $1 AND refunded_at IS NULL LIMIT 1',
         v_fee_entity_col
       ) INTO v_fee USING v_fee_entity_val;
 
       IF v_fee IS NOT NULL AND v_fee.transaction_amount > 0 THEN
-        v_refund_ratio := v_refund.amount / v_fee.transaction_amount;
-        v_fee_reduction := ROUND(v_fee.fee_total * v_refund_ratio * 100) / 100;
+        v_fee_reduction := ROUND(
+          (v_fee.fee_percentage / 100.0 * v_refund.amount)
+          + (v_fee.fee_flat::NUMERIC * v_refund.amount / v_fee.transaction_amount)
+        );
         UPDATE public.platform_fees
         SET fee_total = GREATEST(0, fee_total - v_fee_reduction)
         WHERE id = v_fee.id;
@@ -292,27 +338,24 @@ BEGIN
     END IF;
   END IF;
 
-  -- Create payout adjustment if payout already sent
-  BEGIN
-    DECLARE v_paid_payout RECORD;
-    BEGIN
-      SELECT bp.id INTO v_paid_payout
-      FROM public.business_payouts bp
-      WHERE bp.business_id = v_refund.business_id
-        AND bp.status = 'paid'
-        AND bp.period_end >= v_payment.created_at
-      LIMIT 1;
-
-      IF FOUND THEN
-        INSERT INTO public.payout_adjustments (business_id, payout_id, amount, reason, payment_id)
-        VALUES (v_refund.business_id, v_paid_payout.id, -v_refund.amount,
-                'Refund for payment ' || v_payment.gateway_reference, v_refund.payment_id);
-      END IF;
-    END;
-  EXCEPTION WHEN OTHERS THEN
-    -- Non-blocking: payout adjustment is best-effort
-    NULL;
-  END;
+  -- Create payout adjustment if payout already sent (part of atomic transaction — no swallowed exceptions)
+  PERFORM (
+    SELECT 1 FROM public.business_payouts bp
+    WHERE bp.business_id = v_refund.business_id
+      AND bp.status = 'paid'
+      AND bp.period_end >= v_payment.created_at
+    LIMIT 1
+  );
+  IF FOUND THEN
+    INSERT INTO public.payout_adjustments (business_id, payout_id, amount, reason, payment_id)
+    SELECT v_refund.business_id, bp.id, -v_refund.amount,
+           'Refund for payment ' || v_payment.gateway_reference, v_refund.payment_id
+    FROM public.business_payouts bp
+    WHERE bp.business_id = v_refund.business_id
+      AND bp.status = 'paid'
+      AND bp.period_end >= v_payment.created_at
+    LIMIT 1;
+  END IF;
 
   -- Terminal transition
   UPDATE public.refunds
