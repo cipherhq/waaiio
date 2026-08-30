@@ -93,10 +93,10 @@ describe('PostgreSQL Customer360/Financials (#225/#226)', () => {
       INSERT INTO public.customer_profiles (id, business_id, phone, name, user_id)
       VALUES ('${CP_A}', '${BIZ_A}', '${CUSTOMER_PHONE}', 'Babajide Ace', '${CUSTOMER_USER}');
 
-      INSERT INTO public.bookings (id, reference_code, business_id, user_id, service_id, flow_type, guest_name, guest_phone, date, status, total_amount, created_at)
+      INSERT INTO public.bookings (id, reference_code, business_id, user_id, service_id, flow_type, guest_name, guest_phone, date, time, party_size, channel, status, total_amount, created_at)
       VALUES
-        ('${BOOKING_GIVING}', 'WA-PY-T001', '${BIZ_A}', '${CUSTOMER_USER}', '${SERVICE_GIVING}', 'payment', 'Babajide Ace', '${CUSTOMER_PHONE}', CURRENT_DATE, 'confirmed', 10000, now() - interval '1 hour'),
-        ('${BOOKING_SCHED}', 'WA-BK-T001', '${BIZ_A}', '${CUSTOMER_USER}', '${SERVICE_SCHED}', 'scheduling', 'Babajide Ace', '${CUSTOMER_PHONE}', CURRENT_DATE, 'completed', 5000, now() - interval '2 hours');
+        ('${BOOKING_GIVING}', 'WA-PY-T001', '${BIZ_A}', '${CUSTOMER_USER}', '${SERVICE_GIVING}', 'payment', 'Babajide Ace', '${CUSTOMER_PHONE}', CURRENT_DATE, '10:00', 1, 'whatsapp', 'confirmed', 10000, now() - interval '1 hour'),
+        ('${BOOKING_SCHED}', 'WA-BK-T001', '${BIZ_A}', '${CUSTOMER_USER}', '${SERVICE_SCHED}', 'scheduling', 'Babajide Ace', '${CUSTOMER_PHONE}', CURRENT_DATE, '10:00', 1, 'whatsapp', 'completed', 5000, now() - interval '2 hours');
 
       INSERT INTO public.orders (id, reference_code, business_id, user_id, delivery_phone, status, total_amount, created_at)
       VALUES ('${ORDER_1}', 'WA-OR-T001', '${BIZ_A}', '${CUSTOMER_USER}', '${CUSTOMER_PHONE}', 'confirmed', 12000, now() - interval '3 hours');
@@ -301,8 +301,8 @@ describe('PostgreSQL Customer360/Financials (#225/#226)', () => {
         ALTER TABLE auth.users ENABLE TRIGGER ALL;
         INSERT INTO public.profiles (id, first_name, last_name, email)
         VALUES ('${OTHER_USER}', 'Other', 'Person', 'other-225@test.local');
-        INSERT INTO public.bookings (id, reference_code, business_id, user_id, flow_type, guest_name, guest_phone, date, status, total_amount, created_at)
-        VALUES ('${OTHER_BOOKING}', 'WA-PY-OTHER', '${BIZ_A}', '${OTHER_USER}', 'payment', 'Other Person', '${CUSTOMER_PHONE}', CURRENT_DATE, 'confirmed', 99999, now());
+        INSERT INTO public.bookings (id, reference_code, business_id, user_id, flow_type, guest_name, guest_phone, date, time, party_size, channel, status, total_amount, created_at)
+        VALUES ('${OTHER_BOOKING}', 'WA-PY-OTHER', '${BIZ_A}', '${OTHER_USER}', 'payment', 'Other Person', '${CUSTOMER_PHONE}', CURRENT_DATE, '10:00', 1, 'whatsapp', 'confirmed', 99999, now());
       `);
 
       // Customer A's history should NOT include OTHER_USER's booking
@@ -330,8 +330,8 @@ describe('PostgreSQL Customer360/Financials (#225/#226)', () => {
       runSQL(`
         INSERT INTO public.services (id, business_id, name, service_type, billing_type, is_active, price, duration_minutes, deposit_amount)
         VALUES ('${ONE_TIME_SVC}', '${BIZ_A}', 'One-Time Giving', 'giving', 'one_time', true, 5000, 0, 0);
-        INSERT INTO public.bookings (id, reference_code, business_id, user_id, service_id, flow_type, guest_name, guest_phone, date, status, total_amount, created_at)
-        VALUES ('${ONE_TIME_BK}', 'WA-PY-OT01', '${BIZ_A}', '${CUSTOMER_USER}', '${ONE_TIME_SVC}', 'payment', 'Test', '${CUSTOMER_PHONE}', CURRENT_DATE, 'confirmed', 5000, now());
+        INSERT INTO public.bookings (id, reference_code, business_id, user_id, service_id, flow_type, guest_name, guest_phone, date, time, party_size, channel, status, total_amount, created_at)
+        VALUES ('${ONE_TIME_BK}', 'WA-PY-OT01', '${BIZ_A}', '${CUSTOMER_USER}', '${ONE_TIME_SVC}', 'payment', 'Test', '${CUSTOMER_PHONE}', CURRENT_DATE, '10:00', 1, 'whatsapp', 'confirmed', 5000, now());
         INSERT INTO public.payments (id, booking_id, user_id, business_id, amount, currency, gateway_reference, gateway, status, finalization_completed_at, confirmation_sent_at, paid_at, created_at)
         VALUES ('${ONE_TIME_PAY}', '${ONE_TIME_BK}', '${CUSTOMER_USER}', '${BIZ_A}', 5000, 'NGN', 'WA-PY-OT01-PAY', 'paystack', 'success', now(), now(), now(), now());
       `);
@@ -356,8 +356,8 @@ describe('PostgreSQL Customer360/Financials (#225/#226)', () => {
       runSQL(`
         INSERT INTO public.services (id, business_id, name, service_type, billing_type, recurring_interval, is_active, price, duration_minutes, deposit_amount)
         VALUES ('${NON_GIVING_SVC}', '${BIZ_A}', 'Recurring Scheduling', 'scheduling', 'recurring', 'monthly', true, 5000, 30, 0);
-        INSERT INTO public.bookings (id, reference_code, business_id, user_id, service_id, flow_type, guest_name, guest_phone, date, status, total_amount, created_at)
-        VALUES ('${NON_GIVING_BK}', 'WA-PY-NG01', '${BIZ_A}', '${CUSTOMER_USER}', '${NON_GIVING_SVC}', 'payment', 'Test', '${CUSTOMER_PHONE}', CURRENT_DATE, 'confirmed', 5000, now());
+        INSERT INTO public.bookings (id, reference_code, business_id, user_id, service_id, flow_type, guest_name, guest_phone, date, time, party_size, channel, status, total_amount, created_at)
+        VALUES ('${NON_GIVING_BK}', 'WA-PY-NG01', '${BIZ_A}', '${CUSTOMER_USER}', '${NON_GIVING_SVC}', 'payment', 'Test', '${CUSTOMER_PHONE}', CURRENT_DATE, '10:00', 1, 'whatsapp', 'confirmed', 5000, now());
         INSERT INTO public.payments (id, booking_id, user_id, business_id, amount, currency, gateway_reference, gateway, status, finalization_completed_at, confirmation_sent_at, paid_at, created_at)
         VALUES ('${NON_GIVING_PAY}', '${NON_GIVING_BK}', '${CUSTOMER_USER}', '${BIZ_A}', 5000, 'NGN', 'WA-PY-NG01-PAY', 'paystack', 'success', now(), now(), now(), now());
       `);
@@ -395,8 +395,8 @@ describe('PostgreSQL Customer360/Financials (#225/#226)', () => {
       // Create a booking by CUSTOMER_USER but with OTHER_CP's phone
       // (shared/reused phone scenario)
       runSQL(`
-        INSERT INTO public.bookings (id, reference_code, business_id, user_id, flow_type, guest_name, guest_phone, date, status, total_amount, created_at)
-        VALUES ('${SHARED_BOOKING}', 'WA-PY-XATTR', '${BIZ_A}', '${CUSTOMER_USER}', 'payment', 'Babajide Ace', '+2349999999999', CURRENT_DATE, 'confirmed', 7777, now());
+        INSERT INTO public.bookings (id, reference_code, business_id, user_id, flow_type, guest_name, guest_phone, date, time, party_size, channel, status, total_amount, created_at)
+        VALUES ('${SHARED_BOOKING}', 'WA-PY-XATTR', '${BIZ_A}', '${CUSTOMER_USER}', 'payment', 'Babajide Ace', '+2349999999999', CURRENT_DATE, '10:00', 1, 'whatsapp', 'confirmed', 7777, now());
       `);
 
       // The booking has user_id=CUSTOMER_USER but guest_phone matches OTHER_CP
@@ -438,8 +438,8 @@ describe('PostgreSQL Customer360/Financials (#225/#226)', () => {
         VALUES ('${LINKED_USER}', 'Linked', 'DurableUser', 'linked-226@test.local');
         INSERT INTO public.customer_profiles (id, business_id, phone, name, user_id)
         VALUES ('${LINKED_CP}', '${BIZ_A}', '${LEGACY_PHONE}', 'Linked DurableUser', '${LINKED_USER}');
-        INSERT INTO public.bookings (id, reference_code, business_id, user_id, flow_type, guest_name, guest_phone, date, status, total_amount, created_at)
-        VALUES ('${LEGACY_BK}', 'WA-PY-LGCY', '${BIZ_A}', NULL, 'payment', 'Legacy Guest', '${LEGACY_PHONE}', CURRENT_DATE, 'confirmed', 3333, now());
+        INSERT INTO public.bookings (id, reference_code, business_id, user_id, flow_type, guest_name, guest_phone, date, time, party_size, channel, status, total_amount, created_at)
+        VALUES ('${LEGACY_BK}', 'WA-PY-LGCY', '${BIZ_A}', NULL, 'payment', 'Legacy Guest', '${LEGACY_PHONE}', CURRENT_DATE, '10:00', 1, 'whatsapp', 'confirmed', 3333, now());
       `);
 
       const result = runSQL(`
@@ -503,8 +503,8 @@ describe('PostgreSQL Customer360/Financials (#225/#226)', () => {
       runSQL(`
         INSERT INTO public.customer_profiles (id, business_id, phone, name, user_id)
         VALUES ('${UNLINKED_CP}', '${BIZ_A}', '${LEGACY_PHONE3}', 'Unlinked Legacy', NULL);
-        INSERT INTO public.bookings (id, reference_code, business_id, user_id, flow_type, guest_phone, date, status, total_amount, created_at)
-        VALUES ('${LEGACY_BK2}', 'WA-PY-LGC2', '${BIZ_A}', NULL, 'payment', '${LEGACY_PHONE3}', CURRENT_DATE, 'confirmed', 5555, now());
+        INSERT INTO public.bookings (id, reference_code, business_id, user_id, flow_type, guest_phone, date, time, party_size, channel, status, total_amount, created_at)
+        VALUES ('${LEGACY_BK2}', 'WA-PY-LGC2', '${BIZ_A}', NULL, 'payment', '${LEGACY_PHONE3}', CURRENT_DATE, '10:00', 1, 'whatsapp', 'confirmed', 5555, now());
       `);
 
       const result = runSQL(`
@@ -544,10 +544,10 @@ describe('PostgreSQL Customer360/Financials (#225/#226)', () => {
         VALUES
           ('${CP_PHONE1}', '${BIZ_A}', '+2341111111111', 'Dual Phone Old', NULL),
           ('${CP_PHONE2}', '${BIZ_A}', '+2342222222222', 'Dual Phone New', NULL);
-        INSERT INTO public.bookings (id, reference_code, business_id, user_id, flow_type, guest_phone, date, status, total_amount, created_at)
+        INSERT INTO public.bookings (id, reference_code, business_id, user_id, flow_type, guest_phone, date, time, party_size, channel, status, total_amount, created_at)
         VALUES
-          ('${BK1}', 'WA-DUAL-1', '${BIZ_A}', '${DUAL_USER}', 'payment', '+2341111111111', CURRENT_DATE, 'confirmed', 1000, now()),
-          ('${BK2}', 'WA-DUAL-2', '${BIZ_A}', '${DUAL_USER}', 'payment', '+2342222222222', CURRENT_DATE, 'confirmed', 2000, now());
+          ('${BK1}', 'WA-DUAL-1', '${BIZ_A}', '${DUAL_USER}', 'payment', '+2341111111111', CURRENT_DATE, '10:00', 1, 'whatsapp', 'confirmed', 1000, now()),
+          ('${BK2}', 'WA-DUAL-2', '${BIZ_A}', '${DUAL_USER}', 'payment', '+2342222222222', CURRENT_DATE, '10:00', 1, 'whatsapp', 'confirmed', 2000, now());
       `);
 
       // Re-run the backfill CTE for these test rows
@@ -612,8 +612,8 @@ describe('PostgreSQL Customer360/Financials (#225/#226)', () => {
       runSQL(`
         INSERT INTO public.services (id, business_id, name, service_type, billing_type, recurring_interval, is_active, price, duration_minutes, deposit_amount)
         VALUES ('${INACTIVE_SVC}', '${BIZ_A}', 'Inactive Giving', 'giving', 'recurring', 'monthly', false, 5000, 0, 0);
-        INSERT INTO public.bookings (id, reference_code, business_id, user_id, service_id, flow_type, guest_name, guest_phone, date, status, total_amount, created_at)
-        VALUES ('${INACTIVE_BK}', 'WA-PY-IN01', '${BIZ_A}', '${CUSTOMER_USER}', '${INACTIVE_SVC}', 'payment', 'Test', '${CUSTOMER_PHONE}', CURRENT_DATE, 'confirmed', 5000, now());
+        INSERT INTO public.bookings (id, reference_code, business_id, user_id, service_id, flow_type, guest_name, guest_phone, date, time, party_size, channel, status, total_amount, created_at)
+        VALUES ('${INACTIVE_BK}', 'WA-PY-IN01', '${BIZ_A}', '${CUSTOMER_USER}', '${INACTIVE_SVC}', 'payment', 'Test', '${CUSTOMER_PHONE}', CURRENT_DATE, '10:00', 1, 'whatsapp', 'confirmed', 5000, now());
         INSERT INTO public.payments (id, booking_id, user_id, business_id, amount, currency, gateway_reference, gateway, status, finalization_completed_at, confirmation_sent_at, paid_at, created_at)
         VALUES ('${INACTIVE_PAY}', '${INACTIVE_BK}', '${CUSTOMER_USER}', '${BIZ_A}', 5000, 'NGN', 'WA-PY-IN01-PAY', 'paystack', 'success', now(), now(), now(), now());
       `);
