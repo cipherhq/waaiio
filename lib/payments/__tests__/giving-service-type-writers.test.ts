@@ -125,10 +125,16 @@ describe('#167 executable writer: AI Setup service creation', () => {
 // ── Structural guards: pages call extracted builders ──
 
 describe('#167 structural guard: pages call extracted builders', () => {
-  it('Giving page imports and calls buildGivingServicePayload', () => {
-    const src = readSource('app/dashboard/giving/page.tsx');
+  it('Giving save API route imports and calls buildGivingServicePayload', () => {
+    // #224: Giving saves now go through server-authoritative API route
+    const src = readSource('app/api/giving/save/route.ts');
     expect(src).toContain("from '@/lib/services/payload-builders'");
     expect(src).toContain('buildGivingServicePayload');
+  });
+
+  it('Giving page delegates saves to /api/giving/save', () => {
+    const src = readSource('app/dashboard/giving/page.tsx');
+    expect(src).toContain('/api/giving/save');
   });
 
   it('Services page imports and calls buildServicePayload', () => {

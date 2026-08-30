@@ -6,7 +6,7 @@ import { createClient } from '@/lib/supabase/client';
 import { PageHeader } from '@/components/dashboard/PageHeader';
 import { PAGE_TOOLTIPS } from '@/lib/tooltips';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
-import { buildGivingServicePayload } from '@/lib/services/payload-builders';
+
 
 interface GivingCategory {
   id: string;
@@ -74,18 +74,28 @@ export default function GivingPage() {
   const handleSave = async () => {
     if (!name.trim()) return;
     setSaving(true);
-    const supabase = createClient();
-    const payload = buildGivingServicePayload({
-      businessId: business.id, name, description, fixedAmount, price, isRecurring, interval,
-    });
 
-    if (formId) {
-      const { error } = await supabase.from('services').update(payload).eq('id', formId);
-      if (error) { alert('Failed to save. Please try again.'); setSaving(false); return; }
-    } else {
-      const maxOrder = categories.length > 0 ? Math.max(...categories.map(c => c.sort_order)) + 1 : 0;
-      const { error } = await supabase.from('services').insert({ ...payload, sort_order: maxOrder });
-      if (error) { alert('Failed to save. Please try again.'); setSaving(false); return; }
+    try {
+      const res = await fetch('/api/giving/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          businessId: business.id,
+          serviceId: formId || undefined,
+          name, description, fixedAmount, price, isRecurring, interval,
+        }),
+      });
+
+      const result = await res.json();
+      if (!res.ok || !result.success) {
+        alert(result.message || 'Failed to save. Please try again.');
+        setSaving(false);
+        return;
+      }
+    } catch {
+      alert('Failed to save. Please try again.');
+      setSaving(false);
+      return;
     }
 
     resetForm();
