@@ -415,17 +415,15 @@ describe('#224 LAYER 2: real PostgreSQL write/no-write regression', () => {
   });
 
   it('update scoped to service_type=giving rejects scheduling service', () => {
-    const result = runSQL(`
+    runSQL(`
       UPDATE public.services SET
         name = 'Hijacked', billing_type = 'recurring', recurring_interval = 'monthly'
       WHERE id = '${PG_SCHED}'
         AND business_id = '${PG_BIZ}'
         AND service_type = 'giving'
-        AND deleted_at IS NULL
-      RETURNING id;
+        AND deleted_at IS NULL;
     `);
-    expect(result).toBe(''); // zero rows
-
+    // Service unchanged — scheduling service not matched by giving filter
     const after = runSQL(`SELECT name, service_type FROM public.services WHERE id = '${PG_SCHED}';`);
     expect(after).toContain('PG Haircut');
     expect(after).toContain('scheduling');
@@ -458,20 +456,21 @@ describe('#224 LAYER 2: real PostgreSQL write/no-write regression', () => {
   it('soft-deleted giving service is not updatable', () => {
     runSQL(`UPDATE public.services SET deleted_at = now() WHERE id = '${PG_GIVING}';`);
 
-    const result = runSQL(`
+    runSQL(`
       UPDATE public.services SET name = 'Deleted Edit'
-      WHERE id = '${PG_GIVING}' AND business_id = '${PG_BIZ}' AND service_type = 'giving' AND deleted_at IS NULL
-      RETURNING id;
+      WHERE id = '${PG_GIVING}' AND business_id = '${PG_BIZ}' AND service_type = 'giving' AND deleted_at IS NULL;
     `);
-    expect(result).toBe('');
-
+    // Name unchanged — deleted_at IS NULL filter excluded it
     const after = runSQL(`SELECT name FROM public.services WHERE id = '${PG_GIVING}';`);
-    expect(after).toBe('PG Tithe');
+    expect(after).toContain('PG Tithe');
 
     runSQL(`UPDATE public.services SET deleted_at = NULL WHERE id = '${PG_GIVING}';`);
   });
 
   it('one-time Giving update succeeds', () => {
+    // Ensure clean state: non-deleted, original name
+    runSQL(`UPDATE public.services SET deleted_at = NULL, name = 'PG Tithe', billing_type = 'one_time', recurring_interval = NULL WHERE id = '${PG_GIVING}';`);
+
     runSQL(`
       UPDATE public.services SET name = 'PG Offering', billing_type = 'one_time', recurring_interval = NULL
       WHERE id = '${PG_GIVING}' AND business_id = '${PG_BIZ}' AND service_type = 'giving' AND deleted_at IS NULL;
@@ -484,12 +483,13 @@ describe('#224 LAYER 2: real PostgreSQL write/no-write regression', () => {
   });
 
   it('wrong business_id returns zero rows', () => {
-    const result = runSQL(`
+    runSQL(`
       UPDATE public.services SET name = 'Wrong Biz'
-      WHERE id = '${PG_GIVING}' AND business_id = '00000000-0000-0000-0000-000000000000' AND service_type = 'giving' AND deleted_at IS NULL
-      RETURNING id;
+      WHERE id = '${PG_GIVING}' AND business_id = '00000000-0000-0000-0000-000000000000' AND service_type = 'giving' AND deleted_at IS NULL;
     `);
-    expect(result).toBe('');
+    // Name unchanged — wrong business_id
+    const after = runSQL(`SELECT name FROM public.services WHERE id = '${PG_GIVING}';`);
+    expect(after).toContain('PG Tithe');
   });
 });
 
