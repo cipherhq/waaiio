@@ -488,6 +488,55 @@ describe('PostgreSQL Customer360/Financials (#225/#226)', () => {
     }
   });
 
+  it('226-FIN-2c-pay8: payment.status=refunded with full refund row = $0 net', () => {
+    // Tests the refunded payment status path: payment transitions success→refunded
+    // after a full refund. CASE includes 'refunded' in settlement, refund row subtracts it.
+    const RFND_BK = 'c2250000-0000-0000-0000-0000000000f2';
+    const RFND_PAY = 'c2250000-0000-0000-0000-0000000000f3';
+    const RFND_REF = 'c2250000-0000-0000-0000-0000000000f4';
+    try {
+      const before = parseInt(runSQL(`SELECT booking_revenue FROM public.get_business_revenue_totals('${BIZ_A}');`), 10);
+
+      runSQL(`INSERT INTO public.bookings (id, reference_code, business_id, user_id, flow_type, guest_name, guest_phone, date, time, party_size, channel, status, total_amount, created_at) VALUES ('${RFND_BK}', 'WA-PY-RFST', '${BIZ_A}', '${CUSTOMER_USER}', 'payment', 'Test', '${CUSTOMER_PHONE}', CURRENT_DATE, '10:00', 1, 'whatsapp', 'confirmed', 35000, now());`);
+      // Payment with status='refunded' (post-full-refund state)
+      runSQL(`INSERT INTO public.payments (id, booking_id, user_id, business_id, amount, currency, gateway_reference, status, paid_at, created_at) VALUES ('${RFND_PAY}', '${RFND_BK}', '${CUSTOMER_USER}', '${BIZ_A}', 35000, 'NGN', 'WA-PY-RFST-PAY', 'refunded', now(), now());`);
+      // Completed full refund
+      runSQL(`INSERT INTO public.refunds (id, payment_id, business_id, amount, status, refund_type) VALUES ('${RFND_REF}', '${RFND_PAY}', '${BIZ_A}', 35000, 'success', 'full');`);
+
+      const after = parseInt(runSQL(`SELECT booking_revenue FROM public.get_business_revenue_totals('${BIZ_A}');`), 10);
+      // Net = 35000 (settlement) - 35000 (refund) = $0
+      expect(after).toBe(before);
+    } finally {
+      runSQL(`DELETE FROM public.refunds WHERE id = '${RFND_REF}';`);
+      runSQL(`DELETE FROM public.payments WHERE id = '${RFND_PAY}';`);
+      runSQL(`DELETE FROM public.bookings WHERE id = '${RFND_BK}';`);
+    }
+  });
+
+  it('226-FIN-2c-pay9: payment.status=refunded with partial refund = net settlement', () => {
+    // Partial refund where payment status transitions to 'refunded' mid-process
+    const PRFND_BK = 'c2250000-0000-0000-0000-0000000000f5';
+    const PRFND_PAY = 'c2250000-0000-0000-0000-0000000000f6';
+    const PRFND_REF = 'c2250000-0000-0000-0000-0000000000f7';
+    try {
+      const before = parseInt(runSQL(`SELECT booking_revenue FROM public.get_business_revenue_totals('${BIZ_A}');`), 10);
+
+      runSQL(`INSERT INTO public.bookings (id, reference_code, business_id, user_id, flow_type, guest_name, guest_phone, date, time, party_size, channel, status, total_amount, created_at) VALUES ('${PRFND_BK}', 'WA-PY-PRST', '${BIZ_A}', '${CUSTOMER_USER}', 'payment', 'Test', '${CUSTOMER_PHONE}', CURRENT_DATE, '10:00', 1, 'whatsapp', 'confirmed', 50000, now());`);
+      // Payment with status='refunded' but only partially refunded
+      runSQL(`INSERT INTO public.payments (id, booking_id, user_id, business_id, amount, currency, gateway_reference, status, paid_at, created_at) VALUES ('${PRFND_PAY}', '${PRFND_BK}', '${CUSTOMER_USER}', '${BIZ_A}', 50000, 'NGN', 'WA-PY-PRST-PAY', 'refunded', now(), now());`);
+      // Partial refund of 20000
+      runSQL(`INSERT INTO public.refunds (id, payment_id, business_id, amount, status, refund_type) VALUES ('${PRFND_REF}', '${PRFND_PAY}', '${BIZ_A}', 20000, 'success', 'partial');`);
+
+      const after = parseInt(runSQL(`SELECT booking_revenue FROM public.get_business_revenue_totals('${BIZ_A}');`), 10);
+      // Net = 50000 (settlement) - 20000 (partial refund) = 30000
+      expect(after).toBe(before + 30000);
+    } finally {
+      runSQL(`DELETE FROM public.refunds WHERE id = '${PRFND_REF}';`);
+      runSQL(`DELETE FROM public.payments WHERE id = '${PRFND_PAY}';`);
+      runSQL(`DELETE FROM public.bookings WHERE id = '${PRFND_BK}';`);
+    }
+  });
+
   it('226-FIN-2d: no double-counting across booking/order/invoice sources with total_revenue', () => {
     // Prove structural disjointness + aggregate correctness
     const INV_ID = 'c2250000-0000-0000-0000-0000000000d5';
