@@ -285,11 +285,11 @@ describe('PostgreSQL Customer360/Financials (#225/#226)', () => {
       const beforeRaw = runSQL(`SELECT booking_revenue FROM public.get_business_revenue_totals('${BIZ_A}');`);
       const beforeNum = parseInt(beforeRaw, 10);
 
-      // Bulk insert 501 bookings via generate_series
+      // Bulk insert 501 bookings via generate_series with random UUIDs
       runSQL(`
         INSERT INTO public.bookings (id, reference_code, business_id, user_id, flow_type, guest_name, guest_phone, date, time, party_size, channel, status, total_amount, created_at)
         SELECT
-          ('c2250000-0000-0000-0000-' || lpad(n::text, 12, '0'))::uuid,
+          gen_random_uuid(),
           'WA-FIN-' || n,
           '${BIZ_A}', '${CUSTOMER_USER}', 'payment', 'Bulk', '${CUSTOMER_PHONE}',
           CURRENT_DATE, '10:00', 1, 'whatsapp', 'confirmed', 100, now()
