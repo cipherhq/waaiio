@@ -29,6 +29,9 @@ ALTER TABLE public.payments
 
 
 -- 2. Refund execution ledger
+-- Migration 034 may have already created this table with a simpler schema.
+-- We use CREATE TABLE IF NOT EXISTS for fresh installs, then ALTER to
+-- add/update columns and constraints for both fresh and existing.
 
 CREATE TABLE IF NOT EXISTS public.refunds (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -36,21 +39,48 @@ CREATE TABLE IF NOT EXISTS public.refunds (
   business_id UUID NOT NULL REFERENCES public.businesses(id) ON DELETE CASCADE,
   amount NUMERIC(12,2) NOT NULL CHECK (amount > 0),
   reason TEXT,
-  status TEXT NOT NULL DEFAULT 'pending'
-    CHECK (status IN ('pending', 'provider_ambiguous', 'provider_success_unfinalized', 'success', 'failed')),
+  status TEXT NOT NULL DEFAULT 'pending',
   gateway TEXT,
   gateway_refund_reference TEXT,
   gateway_response JSONB,
-  refund_type TEXT NOT NULL DEFAULT 'full'
-    CHECK (refund_type IN ('full', 'partial')),
+  refund_type TEXT NOT NULL DEFAULT 'full',
   is_direct_split BOOLEAN NOT NULL DEFAULT FALSE,
   initiated_by UUID,
-  initiated_by_role TEXT NOT NULL DEFAULT 'business'
-    CHECK (initiated_by_role IN ('business', 'admin')),
-  dispatched_at TIMESTAMPTZ,
-  finalized_at TIMESTAMPTZ,
+  initiated_by_role TEXT NOT NULL DEFAULT 'business',
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Add new columns for the 5-state model (safe for existing tables)
+ALTER TABLE public.refunds ADD COLUMN IF NOT EXISTS dispatched_at TIMESTAMPTZ;
+ALTER TABLE public.refunds ADD COLUMN IF NOT EXISTS finalized_at TIMESTAMPTZ;
+
+-- Update status CHECK constraint to support 5-state model
+-- Drop old constraint (may not exist on fresh install — safe to ignore)
+DO $$ BEGIN
+  ALTER TABLE public.refunds DROP CONSTRAINT IF EXISTS refunds_status_check;
+EXCEPTION WHEN undefined_object THEN NULL;
+END $$;
+
+ALTER TABLE public.refunds ADD CONSTRAINT refunds_status_check
+  CHECK (status IN ('pending', 'provider_ambiguous', 'provider_success_unfinalized', 'success', 'failed'));
+
+-- Ensure refund_type CHECK exists
+DO $$ BEGIN
+  ALTER TABLE public.refunds DROP CONSTRAINT IF EXISTS refunds_refund_type_check;
+EXCEPTION WHEN undefined_object THEN NULL;
+END $$;
+
+ALTER TABLE public.refunds ADD CONSTRAINT refunds_refund_type_check
+  CHECK (refund_type IN ('full', 'partial'));
+
+-- Ensure initiated_by_role CHECK exists
+DO $$ BEGIN
+  ALTER TABLE public.refunds DROP CONSTRAINT IF EXISTS refunds_initiated_by_role_check;
+EXCEPTION WHEN undefined_object THEN NULL;
+END $$;
+
+ALTER TABLE public.refunds ADD CONSTRAINT refunds_initiated_by_role_check
+  CHECK (initiated_by_role IN ('business', 'admin'));
 
 -- Indexes
 CREATE INDEX IF NOT EXISTS idx_refunds_payment_id ON public.refunds(payment_id);
@@ -63,8 +93,16 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_refunds_active_execution
 
 
 -- 3. RLS — hardened per AUTH-001 (is_admin, not profiles.role)
+-- Drop legacy policies from migration 034 if they exist
 
 ALTER TABLE public.refunds ENABLE ROW LEVEL SECURITY;
+
+DO $$ BEGIN DROP POLICY IF EXISTS "Business owners see own refunds" ON public.refunds; EXCEPTION WHEN undefined_object THEN NULL; END $$;
+DO $$ BEGIN DROP POLICY IF EXISTS "Business owners insert own refunds" ON public.refunds; EXCEPTION WHEN undefined_object THEN NULL; END $$;
+DO $$ BEGIN DROP POLICY IF EXISTS "Business owners update own refunds" ON public.refunds; EXCEPTION WHEN undefined_object THEN NULL; END $$;
+DO $$ BEGIN DROP POLICY IF EXISTS "Admins see all refunds" ON public.refunds; EXCEPTION WHEN undefined_object THEN NULL; END $$;
+DO $$ BEGIN DROP POLICY IF EXISTS "Admins insert any refund" ON public.refunds; EXCEPTION WHEN undefined_object THEN NULL; END $$;
+DO $$ BEGIN DROP POLICY IF EXISTS "Admins update any refund" ON public.refunds; EXCEPTION WHEN undefined_object THEN NULL; END $$;
 
 -- Business owners: SELECT only their own refund records
 DO $$ BEGIN

@@ -142,8 +142,15 @@ describe('#232 Refund convergence PostgreSQL', () => {
   });
 
   it('refunds status CHECK allows 5-state model', () => {
+    const statusMap: Record<string, string> = {
+      pending: 'c2320000-0000-0000-0000-0000000ff001',
+      provider_ambiguous: 'c2320000-0000-0000-0000-0000000ff002',
+      provider_success_unfinalized: 'c2320000-0000-0000-0000-0000000ff003',
+      success: 'c2320000-0000-0000-0000-0000000ff004',
+      failed: 'c2320000-0000-0000-0000-0000000ff005',
+    };
     for (const status of ['pending', 'provider_ambiguous', 'provider_success_unfinalized', 'success', 'failed']) {
-      const REFID = `c2320000-0000-0000-0000-00000000ff0${status.length}`;
+      const REFID = statusMap[status];
       runSQLSafe(`DELETE FROM public.refunds WHERE id = '${REFID}';`);
       const r = runSQLSafe(`
         INSERT INTO public.refunds (id, payment_id, business_id, amount, status, refund_type)
