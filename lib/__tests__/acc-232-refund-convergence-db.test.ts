@@ -399,77 +399,57 @@ describe('#232 Refund convergence PostgreSQL', () => {
 
   // ── Production-shaped convergence proof ──
 
-  it('production-shaped convergence: drop refunds + payment cols, re-apply 355 SQL', () => {
-    // Simulate exact production drift: no refunds table, no payment refund columns.
-    // Then re-apply the convergence SQL from migration 355.
+  it('production-shaped convergence: execute actual migration files 355 then 356', () => {
+    // Create exact production-drift shape: no refunds table, no payment refund columns.
+    // Then execute the ACTUAL migration files with ON_ERROR_STOP.
+    const path = require('path');
+    const mig355 = path.resolve(__dirname, '../../supabase/migrations/355_refund_convergence.sql');
+    const mig356 = path.resolve(__dirname, '../../supabase/migrations/356_customer360_financial_projection.sql');
+
     try {
-      // Drop refunds table (and its policies/indexes)
+      // Drop to production-drift shape
       runSQL(`DROP TABLE IF EXISTS public.refunds CASCADE;`);
-      // Drop payment refund columns
       runSQL(`ALTER TABLE public.payments DROP COLUMN IF EXISTS refund_amount;`);
       runSQL(`ALTER TABLE public.payments DROP COLUMN IF EXISTS refund_reason;`);
       runSQL(`ALTER TABLE public.payments DROP COLUMN IF EXISTS refunded_by;`);
       runSQL(`ALTER TABLE public.payments DROP COLUMN IF EXISTS refunded_at;`);
+      // Drop functions that 355 creates (so CREATE OR REPLACE works cleanly)
+      runSQLSafe(`DROP FUNCTION IF EXISTS public.claim_refund_dispatch(UUID);`);
+      runSQLSafe(`DROP FUNCTION IF EXISTS public.recover_ambiguous_refund(UUID);`);
+      runSQLSafe(`DROP FUNCTION IF EXISTS public.finalize_refund_execution(UUID);`);
 
-      // Verify production shape: no refunds table
-      const noTable = runSQL(`SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'refunds';`);
-      expect(noTable).toBe('0');
+      // Verify production shape
+      expect(runSQL(`SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'refunds';`)).toBe('0');
+      expect(runSQL(`SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'payments' AND column_name = 'refund_amount';`)).toBe('0');
 
-      // Verify no payment refund columns
-      const noCols = runSQL(`SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'payments' AND column_name = 'refund_amount';`);
-      expect(noCols).toBe('0');
+      // Execute actual migration 355
+      execSync(`psql "${dbUrl}" -v ON_ERROR_STOP=1 -f "${mig355}"`, { encoding: 'utf-8', timeout: 30000 });
 
-      // Re-apply convergence SQL (the key parts of migration 355)
-      runSQL(`
-        ALTER TABLE public.payments ADD COLUMN IF NOT EXISTS refund_amount NUMERIC(12,2) DEFAULT 0;
-        ALTER TABLE public.payments ADD COLUMN IF NOT EXISTS refund_reason TEXT;
-        ALTER TABLE public.payments ADD COLUMN IF NOT EXISTS refunded_by UUID;
-        ALTER TABLE public.payments ADD COLUMN IF NOT EXISTS refunded_at TIMESTAMPTZ;
+      // Verify 355 postconditions
+      expect(runSQL(`SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'refunds';`)).toBe('1');
+      expect(runSQL(`SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'refunds' AND column_name = 'dispatched_at';`)).toBe('dispatched_at');
+      expect(runSQL(`SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'payments' AND column_name = 'refund_amount';`)).toBe('1');
 
-        CREATE TABLE IF NOT EXISTS public.refunds (
-          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-          payment_id UUID NOT NULL REFERENCES public.payments(id) ON DELETE CASCADE,
-          business_id UUID NOT NULL REFERENCES public.businesses(id) ON DELETE CASCADE,
-          amount NUMERIC(12,2) NOT NULL CHECK (amount > 0),
-          reason TEXT,
-          status TEXT NOT NULL DEFAULT 'pending',
-          gateway TEXT,
-          gateway_refund_reference TEXT,
-          gateway_response JSONB,
-          refund_type TEXT NOT NULL DEFAULT 'full',
-          is_direct_split BOOLEAN NOT NULL DEFAULT FALSE,
-          initiated_by UUID,
-          initiated_by_role TEXT NOT NULL DEFAULT 'business',
-          created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-        );
-        ALTER TABLE public.refunds ADD COLUMN IF NOT EXISTS dispatched_at TIMESTAMPTZ;
-        ALTER TABLE public.refunds ADD COLUMN IF NOT EXISTS finalized_at TIMESTAMPTZ;
-      `);
+      // Verify RPCs exist
+      expect(runSQL(`SELECT COUNT(*) FROM pg_proc WHERE proname = 'claim_refund_dispatch';`)).toBe('1');
+      expect(runSQL(`SELECT COUNT(*) FROM pg_proc WHERE proname = 'finalize_refund_execution';`)).toBe('1');
+      expect(runSQL(`SELECT COUNT(*) FROM pg_proc WHERE proname = 'recover_ambiguous_refund';`)).toBe('1');
 
-      // Verify postconditions: table exists with convergence columns
-      const hasTable = runSQL(`SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'refunds';`);
-      expect(hasTable).toBe('1');
+      // Verify RLS enabled
+      expect(runSQL(`SELECT relrowsecurity FROM pg_class WHERE relname = 'refunds';`)).toBe('t');
 
-      const hasCols = runSQL(`SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'refunds' AND column_name IN ('dispatched_at', 'finalized_at') ORDER BY column_name;`);
-      expect(hasCols).toContain('dispatched_at');
-      expect(hasCols).toContain('finalized_at');
+      // Verify grants: authenticated can SELECT but not INSERT
+      expect(runSQL(`SELECT has_table_privilege('authenticated', 'public.refunds', 'SELECT');`)).toBe('t');
+      expect(runSQL(`SELECT has_table_privilege('authenticated', 'public.refunds', 'INSERT');`)).toBe('f');
 
-      const hasPayCols = runSQL(`SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'payments' AND column_name = 'refund_amount';`);
-      expect(hasPayCols).toBe('1');
-    } finally {
-      // Restore full schema by re-applying the CHECK, indexes, RLS, RPCs
-      // (the real migration does this — here we just need the table back for other tests)
-      runSQLSafe(`
-        ALTER TABLE public.refunds DROP CONSTRAINT IF EXISTS refunds_status_check;
-        ALTER TABLE public.refunds ADD CONSTRAINT refunds_status_check CHECK (status IN ('pending', 'provider_ambiguous', 'provider_success_unfinalized', 'success', 'failed'));
-        CREATE UNIQUE INDEX IF NOT EXISTS idx_refunds_active_execution ON public.refunds(payment_id) WHERE status IN ('pending', 'provider_ambiguous', 'provider_success_unfinalized');
-        CREATE INDEX IF NOT EXISTS idx_refunds_payment_id ON public.refunds(payment_id);
-        CREATE INDEX IF NOT EXISTS idx_refunds_business_id ON public.refunds(business_id);
-        ALTER TABLE public.refunds ENABLE ROW LEVEL SECURITY;
-        REVOKE ALL ON TABLE public.refunds FROM PUBLIC, anon;
-        GRANT SELECT ON TABLE public.refunds TO authenticated;
-        GRANT ALL ON TABLE public.refunds TO service_role;
-      `);
+      // Execute actual migration 356 (depends on 355's refunds table)
+      execSync(`psql "${dbUrl}" -v ON_ERROR_STOP=1 -f "${mig356}"`, { encoding: 'utf-8', timeout: 30000 });
+
+      // Verify 356 postconditions (Customer360 RPCs exist)
+      expect(runSQL(`SELECT COUNT(*) FROM pg_proc WHERE proname = 'get_business_transactions';`)).toBe('1');
+      expect(runSQL(`SELECT COUNT(*) FROM pg_proc WHERE proname = 'get_business_revenue_totals';`)).toBe('1');
+    } catch (err: any) {
+      throw new Error(`Migration execution failed: ${err.stderr || err.message}`);
     }
   });
 
@@ -581,6 +561,17 @@ describe('#232 Refund convergence PostgreSQL', () => {
     try {
       runSQL(`INSERT INTO public.refunds (id, payment_id, business_id, amount, status, gateway, refund_type, dispatched_at) VALUES ('${REF}', '${PAYMENT}', '${BIZ}', 5000, 'provider_ambiguous', 'flutterwave', 'partial', now());`);
 
+      const result = runSQL(`SELECT recover_ambiguous_refund('${REF}');`);
+      expect(result).toContain('gateway_not_replay_safe');
+    } finally {
+      runSQL(`DELETE FROM public.refunds WHERE id = '${REF}';`);
+    }
+  });
+
+  it('recover_ambiguous_refund hard-denies Square (unproven replay window)', () => {
+    const REF = 'c2320000-0000-0000-0000-000000000234';
+    try {
+      runSQL(`INSERT INTO public.refunds (id, payment_id, business_id, amount, status, gateway, refund_type, dispatched_at) VALUES ('${REF}', '${PAYMENT}', '${BIZ}', 5000, 'provider_ambiguous', 'square', 'partial', now());`);
       const result = runSQL(`SELECT recover_ambiguous_refund('${REF}');`);
       expect(result).toContain('gateway_not_replay_safe');
     } finally {

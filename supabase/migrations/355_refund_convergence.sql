@@ -211,8 +211,12 @@ BEGIN
   END IF;
 
   -- DB-enforced Tier-1 gateway check: only proven-idempotent gateways can be replayed.
-  -- Paystack, Flutterwave, and any unknown gateway are hard-denied.
-  IF v_refund.gateway IS NULL OR v_refund.gateway NOT IN ('stripe', 'square', 'paypal') THEN
+  -- Stripe: documented 24h idempotency retention for /refunds endpoint.
+  -- PayPal: documented PayPal-Request-Id retention for refund captures.
+  -- Square: NOT proven — square.com docs do not guarantee idempotency_key retention
+  --   duration for refund endpoints. Treated as reconciliation-only.
+  -- Paystack, Flutterwave, Square, and any unknown gateway are hard-denied.
+  IF v_refund.gateway IS NULL OR v_refund.gateway NOT IN ('stripe', 'paypal') THEN
     RETURN jsonb_build_object('recovered', false, 'reason', 'gateway_not_replay_safe', 'gateway', v_refund.gateway);
   END IF;
 
