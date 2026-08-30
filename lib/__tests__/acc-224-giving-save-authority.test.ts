@@ -390,8 +390,9 @@ describe('#224 LAYER 2: real PostgreSQL write/no-write regression', () => {
       DELETE FROM public.profiles WHERE id = '${PG_OWNER}';
       DELETE FROM auth.users WHERE id = '${PG_OWNER}';
 
-      INSERT INTO auth.users (id, email, raw_app_meta_data, raw_user_meta_data, aud, role, instance_id, created_at, updated_at)
-      VALUES ('${PG_OWNER}', 'owner-224pg@test.local', '{"provider":"email"}', '{}', 'authenticated', 'authenticated', '00000000-0000-0000-0000-000000000000', now(), now());
+      ALTER TABLE auth.users DISABLE TRIGGER ALL;
+      INSERT INTO auth.users (id) VALUES ('${PG_OWNER}') ON CONFLICT DO NOTHING;
+      ALTER TABLE auth.users ENABLE TRIGGER ALL;
       INSERT INTO public.profiles (id, first_name, last_name, email, role)
       VALUES ('${PG_OWNER}', 'PGOwner', 'Test', 'owner-224pg@test.local', 'user');
       INSERT INTO public.businesses (id, owner_id, name, slug, category, address, city, phone, status, subscription_tier, recurring_enabled, country_code)

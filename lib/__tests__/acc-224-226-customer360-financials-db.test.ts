@@ -70,11 +70,9 @@ describe('PostgreSQL Customer360/Financials (#225/#226)', () => {
 
     // Create test users + businesses
     runSQL(`
-      INSERT INTO auth.users (id, email, raw_app_meta_data, raw_user_meta_data, aud, role, instance_id, created_at, updated_at)
-      VALUES
-        ('${OWNER_A}', 'owner-a-225@test.local', '{"provider":"email"}', '{}', 'authenticated', 'authenticated', '00000000-0000-0000-0000-000000000000', now(), now()),
-        ('${OWNER_B}', 'owner-b-225@test.local', '{"provider":"email"}', '{}', 'authenticated', 'authenticated', '00000000-0000-0000-0000-000000000000', now(), now()),
-        ('${CUSTOMER_USER}', 'customer-225@test.local', '{"provider":"email"}', '{}', 'authenticated', 'authenticated', '00000000-0000-0000-0000-000000000000', now(), now());
+      ALTER TABLE auth.users DISABLE TRIGGER ALL;
+      INSERT INTO auth.users (id) VALUES ('${OWNER_A}'), ('${OWNER_B}'), ('${CUSTOMER_USER}') ON CONFLICT DO NOTHING;
+      ALTER TABLE auth.users ENABLE TRIGGER ALL;
 
       INSERT INTO public.profiles (id, first_name, last_name, email, role)
       VALUES
@@ -298,8 +296,9 @@ describe('PostgreSQL Customer360/Financials (#225/#226)', () => {
     try {
       // Create another user with the SAME phone but different user_id
       runSQL(`
-        INSERT INTO auth.users (id, email, raw_app_meta_data, raw_user_meta_data, aud, role, instance_id, created_at, updated_at)
-        VALUES ('${OTHER_USER}', 'other-225@test.local', '{"provider":"email"}', '{}', 'authenticated', 'authenticated', '00000000-0000-0000-0000-000000000000', now(), now());
+        ALTER TABLE auth.users DISABLE TRIGGER ALL;
+        INSERT INTO auth.users (id) VALUES ('${OTHER_USER}') ON CONFLICT DO NOTHING;
+        ALTER TABLE auth.users ENABLE TRIGGER ALL;
         INSERT INTO public.profiles (id, first_name, last_name, email, role)
         VALUES ('${OTHER_USER}', 'Other', 'Person', 'other-225@test.local', 'user');
         INSERT INTO public.bookings (id, reference_code, business_id, user_id, flow_type, guest_name, guest_phone, date, status, total_amount, created_at)
@@ -384,8 +383,9 @@ describe('PostgreSQL Customer360/Financials (#225/#226)', () => {
     try {
       // Create another user + customer_profiles with SAME phone but different user_id
       runSQL(`
-        INSERT INTO auth.users (id, email, raw_app_meta_data, raw_user_meta_data, aud, role, instance_id, created_at, updated_at)
-        VALUES ('${OTHER_USER}', 'other-226@test.local', '{"provider":"email"}', '{}', 'authenticated', 'authenticated', '00000000-0000-0000-0000-000000000000', now(), now());
+        ALTER TABLE auth.users DISABLE TRIGGER ALL;
+        INSERT INTO auth.users (id) VALUES ('${OTHER_USER}') ON CONFLICT DO NOTHING;
+        ALTER TABLE auth.users ENABLE TRIGGER ALL;
         INSERT INTO public.profiles (id, first_name, last_name, email, role)
         VALUES ('${OTHER_USER}', 'Other', 'User226', 'other-226@test.local', 'user');
         INSERT INTO public.customer_profiles (id, business_id, phone, name, user_id)
@@ -431,8 +431,9 @@ describe('PostgreSQL Customer360/Financials (#225/#226)', () => {
     const LEGACY_PHONE = '+2348777777777';
     try {
       runSQL(`
-        INSERT INTO auth.users (id, email, raw_app_meta_data, raw_user_meta_data, aud, role, instance_id, created_at, updated_at)
-        VALUES ('${LINKED_USER}', 'linked-226@test.local', '{"provider":"email"}', '{}', 'authenticated', 'authenticated', '00000000-0000-0000-0000-000000000000', now(), now());
+        ALTER TABLE auth.users DISABLE TRIGGER ALL;
+        INSERT INTO auth.users (id) VALUES ('${LINKED_USER}') ON CONFLICT DO NOTHING;
+        ALTER TABLE auth.users ENABLE TRIGGER ALL;
         INSERT INTO public.profiles (id, first_name, last_name, email, role)
         VALUES ('${LINKED_USER}', 'Linked', 'DurableUser', 'linked-226@test.local', 'user');
         INSERT INTO public.customer_profiles (id, business_id, phone, name, user_id)
@@ -466,8 +467,9 @@ describe('PostgreSQL Customer360/Financials (#225/#226)', () => {
     const LEGACY_PHONE2 = '+2348666666666';
     try {
       runSQL(`
-        INSERT INTO auth.users (id, email, raw_app_meta_data, raw_user_meta_data, aud, role, instance_id, created_at, updated_at)
-        VALUES ('${LINKED_USER2}', 'linked2-226@test.local', '{"provider":"email"}', '{}', 'authenticated', 'authenticated', '00000000-0000-0000-0000-000000000000', now(), now());
+        ALTER TABLE auth.users DISABLE TRIGGER ALL;
+        INSERT INTO auth.users (id) VALUES ('${LINKED_USER2}') ON CONFLICT DO NOTHING;
+        ALTER TABLE auth.users ENABLE TRIGGER ALL;
         INSERT INTO public.profiles (id, first_name, last_name, email, role)
         VALUES ('${LINKED_USER2}', 'Linked2', 'OrderUser', 'linked2-226@test.local', 'user');
         INSERT INTO public.customer_profiles (id, business_id, phone, name, user_id)
@@ -533,8 +535,9 @@ describe('PostgreSQL Customer360/Financials (#225/#226)', () => {
     const BK2 = 'c2250000-0000-0000-0000-000000000087';
     try {
       runSQL(`
-        INSERT INTO auth.users (id, email, raw_app_meta_data, raw_user_meta_data, aud, role, instance_id, created_at, updated_at)
-        VALUES ('${DUAL_USER}', 'dual-225@test.local', '{"provider":"email"}', '{}', 'authenticated', 'authenticated', '00000000-0000-0000-0000-000000000000', now(), now());
+        ALTER TABLE auth.users DISABLE TRIGGER ALL;
+        INSERT INTO auth.users (id) VALUES ('${DUAL_USER}') ON CONFLICT DO NOTHING;
+        ALTER TABLE auth.users ENABLE TRIGGER ALL;
         INSERT INTO public.profiles (id, first_name, last_name, email, role)
         VALUES ('${DUAL_USER}', 'Dual', 'Phone', 'dual-225@test.local', 'user');
         INSERT INTO public.customer_profiles (id, business_id, phone, name, user_id)
