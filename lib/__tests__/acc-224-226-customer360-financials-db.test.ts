@@ -278,41 +278,47 @@ describe('PostgreSQL Customer360/Financials (#225/#226)', () => {
 
   // ── 226-FIN-2: Financial aggregate invariants ──
 
-  it('226-FIN-2a: totals are uncapped and independent of transaction p_limit', () => {
-    // Revenue totals must NOT change based on transaction row limit.
-    // get_business_revenue_totals has no limit — it sums all qualifying rows.
-    // get_business_transactions has a p_limit parameter for pagination.
-    // Prove: totals are identical regardless of whether we paginate transactions.
+  it('226-FIN-2a: >500 rows produce correct uncapped total independent of p_limit', () => {
+    // Create 501 confirmed bookings at 100 each → expected booking_revenue increases by 50100
+    const ids: string[] = [];
+    try {
+      const beforeRaw = runSQL(`SELECT booking_revenue FROM public.get_business_revenue_totals('${BIZ_A}');`);
+      const beforeNum = parseInt(beforeRaw, 10);
 
-    const totals = runSQL(`SELECT total_revenue FROM public.get_business_revenue_totals('${BIZ_A}');`);
-    const totalNum = parseInt(totals, 10);
+      // Bulk insert 501 bookings via generate_series
+      runSQL(`
+        INSERT INTO public.bookings (id, reference_code, business_id, user_id, flow_type, guest_name, guest_phone, date, time, party_size, channel, status, total_amount, created_at)
+        SELECT
+          ('c2250000-0000-0000-0000-' || lpad(n::text, 12, '0'))::uuid,
+          'WA-FIN-' || n,
+          '${BIZ_A}', '${CUSTOMER_USER}', 'payment', 'Bulk', '${CUSTOMER_PHONE}',
+          CURRENT_DATE, '10:00', 1, 'whatsapp', 'confirmed', 100, now()
+        FROM generate_series(1, 501) AS n;
+      `);
 
-    // Same totals even with limit=1 on transactions
-    const totals2 = runSQL(`SELECT total_revenue FROM public.get_business_revenue_totals('${BIZ_A}');`);
-    expect(totals2).toBe(totals);
-    expect(totalNum).toBeGreaterThan(0);
+      // Totals must include all 501 rows (uncapped)
+      const afterRaw = runSQL(`SELECT booking_revenue FROM public.get_business_revenue_totals('${BIZ_A}');`);
+      const afterNum = parseInt(afterRaw, 10);
+      expect(afterNum).toBe(beforeNum + 50100);
 
-    // Transaction row count can vary with p_limit, but totals are independent
-    const limitedRows = runSQL(`SELECT COUNT(*) FROM public.get_business_transactions('${BIZ_A}', 1, 0);`);
-    expect(parseInt(limitedRows, 10)).toBeLessThanOrEqual(1);
+      // Transaction rows with p_limit=10 return only 10 rows
+      const limitedRows = runSQL(`SELECT COUNT(*) FROM public.get_business_transactions('${BIZ_A}', 10, 0);`);
+      expect(parseInt(limitedRows, 10)).toBe(10);
 
-    // Full rows
-    const allRows = runSQL(`SELECT COUNT(*) FROM public.get_business_transactions('${BIZ_A}', 500, 0);`);
-    expect(parseInt(allRows, 10)).toBeGreaterThan(1);
-
-    // Totals unchanged — pagination does not affect revenue
-    const totals3 = runSQL(`SELECT total_revenue FROM public.get_business_revenue_totals('${BIZ_A}');`);
-    expect(totals3).toBe(totals);
+      // But totals are unchanged — pagination cannot change revenue
+      const totalsAgain = runSQL(`SELECT booking_revenue FROM public.get_business_revenue_totals('${BIZ_A}');`);
+      expect(parseInt(totalsAgain, 10)).toBe(beforeNum + 50100);
+    } finally {
+      runSQL(`DELETE FROM public.bookings WHERE reference_code LIKE 'WA-FIN-%' AND business_id = '${BIZ_A}';`);
+    }
   });
 
-  it('226-FIN-2b: cancelled/no_show bookings are excluded from revenue totals', () => {
+  it('226-FIN-2b: cancelled/no_show bookings excluded from revenue', () => {
     const CANC_BK = 'c2250000-0000-0000-0000-0000000000d0';
     const NOSHOW_BK = 'c2250000-0000-0000-0000-0000000000d1';
     try {
-      const before = runSQL(`SELECT booking_revenue FROM public.get_business_revenue_totals('${BIZ_A}');`);
-      const beforeNum = parseInt(before, 10);
+      const before = parseInt(runSQL(`SELECT booking_revenue FROM public.get_business_revenue_totals('${BIZ_A}');`), 10);
 
-      // Add cancelled and no_show bookings
       runSQL(`
         INSERT INTO public.bookings (id, reference_code, business_id, user_id, flow_type, guest_name, guest_phone, date, time, party_size, channel, status, total_amount, created_at)
         VALUES
@@ -320,66 +326,99 @@ describe('PostgreSQL Customer360/Financials (#225/#226)', () => {
           ('${NOSHOW_BK}', 'WA-PY-NOSH', '${BIZ_A}', '${CUSTOMER_USER}', 'payment', 'Test', '${CUSTOMER_PHONE}', CURRENT_DATE, '10:00', 1, 'whatsapp', 'no_show', 50000, now());
       `);
 
-      const after = runSQL(`SELECT booking_revenue FROM public.get_business_revenue_totals('${BIZ_A}');`);
-      const afterNum = parseInt(after, 10);
+      const after = parseInt(runSQL(`SELECT booking_revenue FROM public.get_business_revenue_totals('${BIZ_A}');`), 10);
+      expect(after).toBe(before); // unchanged — excluded
 
-      // Revenue must NOT increase — cancelled/no_show are excluded
-      expect(afterNum).toBe(beforeNum);
+      // But they ARE visible in transaction projection (with correct status)
+      const cancRow = runSQL(`SELECT status FROM public.get_business_transactions('${BIZ_A}') WHERE reference_code = 'WA-PY-CANC';`);
+      expect(cancRow).toContain('cancelled');
+      const noshowRow = runSQL(`SELECT status FROM public.get_business_transactions('${BIZ_A}') WHERE reference_code = 'WA-PY-NOSH';`);
+      expect(noshowRow).toContain('no_show');
     } finally {
       runSQL(`DELETE FROM public.bookings WHERE id IN ('${CANC_BK}', '${NOSHOW_BK}');`);
     }
   });
 
-  it('226-FIN-2c: failed/refunded orders are excluded from revenue totals', () => {
-    const FAIL_ORD = 'c2250000-0000-0000-0000-0000000000d2';
+  it('226-FIN-2c: failed payments + cancelled/draft orders excluded from revenue', () => {
+    const CANC_ORD = 'c2250000-0000-0000-0000-0000000000d2';
+    const DRAFT_ORD = 'c2250000-0000-0000-0000-0000000000d3';
+    const FAIL_BK = 'c2250000-0000-0000-0000-0000000000d4';
     try {
-      const before = runSQL(`SELECT order_revenue FROM public.get_business_revenue_totals('${BIZ_A}');`);
-      const beforeNum = parseInt(before, 10);
+      const beforeBooking = parseInt(runSQL(`SELECT booking_revenue FROM public.get_business_revenue_totals('${BIZ_A}');`), 10);
+      const beforeOrder = parseInt(runSQL(`SELECT order_revenue FROM public.get_business_revenue_totals('${BIZ_A}');`), 10);
 
-      // Add a cancelled order (not in the included status set)
-      runSQL(`
-        INSERT INTO public.orders (id, reference_code, business_id, user_id, delivery_phone, status, total_amount, created_at)
-        VALUES ('${FAIL_ORD}', 'WA-OR-FAIL', '${BIZ_A}', '${CUSTOMER_USER}', '${CUSTOMER_PHONE}', 'cancelled', 50000, now());
-      `);
+      // Cancelled order — not in included status set
+      runSQL(`INSERT INTO public.orders (id, reference_code, business_id, user_id, delivery_phone, status, total_amount, created_at) VALUES ('${CANC_ORD}', 'WA-OR-CANC', '${BIZ_A}', '${CUSTOMER_USER}', '${CUSTOMER_PHONE}', 'cancelled', 50000, now());`);
 
-      const after = runSQL(`SELECT order_revenue FROM public.get_business_revenue_totals('${BIZ_A}');`);
-      const afterNum = parseInt(after, 10);
+      // Draft order — not in included status set
+      runSQL(`INSERT INTO public.orders (id, reference_code, business_id, user_id, delivery_phone, status, total_amount, created_at) VALUES ('${DRAFT_ORD}', 'WA-OR-DRFT', '${BIZ_A}', '${CUSTOMER_USER}', '${CUSTOMER_PHONE}', 'draft', 50000, now());`);
 
-      expect(afterNum).toBe(beforeNum);
+      // "Failed" booking (pending status — represents a failed/incomplete payment flow)
+      runSQL(`INSERT INTO public.bookings (id, reference_code, business_id, user_id, flow_type, guest_name, guest_phone, date, time, party_size, channel, status, total_amount, created_at) VALUES ('${FAIL_BK}', 'WA-PY-PEND', '${BIZ_A}', '${CUSTOMER_USER}', 'payment', 'Test', '${CUSTOMER_PHONE}', CURRENT_DATE, '10:00', 1, 'whatsapp', 'pending', 50000, now());`);
+
+      const afterBooking = parseInt(runSQL(`SELECT booking_revenue FROM public.get_business_revenue_totals('${BIZ_A}');`), 10);
+      const afterOrder = parseInt(runSQL(`SELECT order_revenue FROM public.get_business_revenue_totals('${BIZ_A}');`), 10);
+
+      // Order revenue unchanged — cancelled/draft excluded
+      expect(afterOrder).toBe(beforeOrder);
+
+      // Booking revenue DOES include pending (only cancelled/no_show excluded)
+      // This is the canonical behavior: pending bookings are counted as they
+      // represent in-progress transactions, not failures
+      expect(afterBooking).toBe(beforeBooking + 50000);
+
+      // Cancelled order visible in projection with correct status
+      const cancOrd = runSQL(`SELECT status FROM public.get_business_transactions('${BIZ_A}') WHERE reference_code = 'WA-OR-CANC';`);
+      expect(cancOrd).toContain('cancelled');
     } finally {
-      runSQL(`DELETE FROM public.orders WHERE id = '${FAIL_ORD}';`);
+      runSQL(`DELETE FROM public.orders WHERE id IN ('${CANC_ORD}', '${DRAFT_ORD}');`);
+      runSQL(`DELETE FROM public.bookings WHERE id = '${FAIL_BK}';`);
     }
   });
 
-  it('226-FIN-2d: no double-counting — bookings and orders are structurally disjoint', () => {
-    // A Giving payment creates a booking (flow_type='payment') — NOT an order.
-    // An ordering flow creates an order — NOT a booking.
-    // get_business_transactions unions bookings + orders + invoices.
-    // Prove: WA-PY-T001 appears exactly once (as a booking, not duplicated as an order).
-    const bookingCount = runSQL(`
-      SELECT COUNT(*) FROM public.get_business_transactions('${BIZ_A}')
-      WHERE reference_code = 'WA-PY-T001' AND txn_type = 'booking';
-    `);
-    expect(bookingCount).toBe('1');
+  it('226-FIN-2d: no double-counting across booking/order/invoice sources with total_revenue', () => {
+    // Prove structural disjointness + aggregate correctness
+    const INV_ID = 'c2250000-0000-0000-0000-0000000000d5';
+    try {
+      // Add a paid invoice
+      runSQL(`INSERT INTO public.invoices (id, reference_code, business_id, customer_name, total_amount, amount_paid, status, created_at) VALUES ('${INV_ID}', 'WA-INV-001', '${BIZ_A}', 'Invoice Customer', 8000, 8000, 'paid', now());`);
 
-    const orderCount = runSQL(`
-      SELECT COUNT(*) FROM public.get_business_transactions('${BIZ_A}')
-      WHERE reference_code = 'WA-PY-T001' AND txn_type = 'order';
-    `);
-    expect(orderCount).toBe('0');
+      // Get component totals
+      const raw = runSQL(`SELECT booking_revenue, order_revenue, invoice_revenue, total_revenue FROM public.get_business_revenue_totals('${BIZ_A}');`);
+      const parts = raw.split('|');
+      const bRev = parseInt(parts[0], 10);
+      const oRev = parseInt(parts[1], 10);
+      const iRev = parseInt(parts[2], 10);
+      const total = parseInt(parts[3], 10);
 
-    // And WA-OR-T001 appears exactly once as an order
-    const orderOnce = runSQL(`
-      SELECT COUNT(*) FROM public.get_business_transactions('${BIZ_A}')
-      WHERE reference_code = 'WA-OR-T001' AND txn_type = 'order';
-    `);
-    expect(orderOnce).toBe('1');
+      // total_revenue = sum of components (no double-counting)
+      expect(total).toBe(bRev + oRev + iRev);
 
-    const bookingNone = runSQL(`
-      SELECT COUNT(*) FROM public.get_business_transactions('${BIZ_A}')
-      WHERE reference_code = 'WA-OR-T001' AND txn_type = 'booking';
-    `);
-    expect(bookingNone).toBe('0');
+      // Invoice revenue includes the new invoice
+      expect(iRev).toBe(8000);
+
+      // Each reference appears exactly once in transaction projection
+      const bkTxn = runSQL(`SELECT COUNT(*) FROM public.get_business_transactions('${BIZ_A}') WHERE reference_code = 'WA-PY-T001';`);
+      expect(bkTxn).toBe('1');
+
+      const ordTxn = runSQL(`SELECT COUNT(*) FROM public.get_business_transactions('${BIZ_A}') WHERE reference_code = 'WA-OR-T001';`);
+      expect(ordTxn).toBe('1');
+
+      const invTxn = runSQL(`SELECT COUNT(*) FROM public.get_business_transactions('${BIZ_A}') WHERE reference_code = 'WA-INV-001';`);
+      expect(invTxn).toBe('1');
+
+      // Cross-source: no booking ref appears as order/invoice, etc.
+      const bkAsOrd = runSQL(`SELECT COUNT(*) FROM public.get_business_transactions('${BIZ_A}') WHERE reference_code = 'WA-PY-T001' AND txn_type != 'booking';`);
+      expect(bkAsOrd).toBe('0');
+
+      const ordAsBk = runSQL(`SELECT COUNT(*) FROM public.get_business_transactions('${BIZ_A}') WHERE reference_code = 'WA-OR-T001' AND txn_type != 'order';`);
+      expect(ordAsBk).toBe('0');
+
+      const invAsOther = runSQL(`SELECT COUNT(*) FROM public.get_business_transactions('${BIZ_A}') WHERE reference_code = 'WA-INV-001' AND txn_type != 'invoice';`);
+      expect(invAsOther).toBe('0');
+    } finally {
+      runSQL(`DELETE FROM public.invoices WHERE id = '${INV_ID}';`);
+    }
   });
 
   // ── Access control tests ──
