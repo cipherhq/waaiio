@@ -529,17 +529,10 @@ describe('PostgreSQL recurring_setup_intents (#165)', () => {
 
   // ── Generic service_id IS NULL duplicate-active-subscription protection ──
 
-  it('40. RPC rejects offer when active NULL-service subscription exists', () => {
-    // Create an active customer_subscription with service_id=NULL for this user+business
-    const subId = 'cd165000-0000-0000-0000-000000000080';
-    runSQL(`
-      INSERT INTO customer_subscriptions (id, business_id, user_id, service_id, amount, currency, frequency, status, gateway, customer_phone, setup_channel)
-      VALUES ('${subId}', '${TEST_BIZ_ID}', '${TEST_USER_ID}', NULL, 10000, 'NGN', 'monthly', 'active', 'paystack', '+2340000165', 'whatsapp')
-      ON CONFLICT DO NOTHING;
-    `);
-
-    // Try to create an offer from a payment whose booking also has service_id=NULL
-    // First create a booking with NULL service_id
+  it('40. RPC rejects NULL-service booking before reaching subscription check (#224)', () => {
+    // After #224 defense-in-depth: bookings without service_id are rejected
+    // with 'no_service' before the subscription check is reached.
+    // NULL service_id cannot represent a valid recurring Giving category.
     const nullSvcBookId = 'cd165000-0000-0000-0000-000000000081';
     const nullSvcPayId = 'cd165000-0000-0000-0000-000000000082';
     runSQL(`INSERT INTO bookings (id, business_id, user_id, reference_code, status, flow_type, guest_phone, channel, date, time, party_size) VALUES ('${nullSvcBookId}', '${TEST_BIZ_ID}', '${TEST_USER_ID}', 'WA-GV-NS1', 'confirmed', 'payment', '+2340000165', 'whatsapp', '2026-08-28', '10:00', 1) ON CONFLICT DO NOTHING;`);
@@ -547,12 +540,11 @@ describe('PostgreSQL recurring_setup_intents (#165)', () => {
 
     const { result } = callRpc(`SELECT create_recurring_offer('${nullSvcPayId}'::uuid, '${TEST_BIZ_ID}'::uuid, 'paystack') AS result;`);
     expect(result.created).toBe(false);
-    expect(result.reason).toBe('active_subscription_exists');
+    expect(result.reason).toBe('no_service');
 
     // Cleanup
     runSQL(`DELETE FROM payments WHERE id = '${nullSvcPayId}';`);
     runSQL(`DELETE FROM bookings WHERE id = '${nullSvcBookId}';`);
-    runSQL(`DELETE FROM customer_subscriptions WHERE id = '${subId}';`);
   });
 
   it('41. RPC rejects offer when active service-specific subscription exists', () => {

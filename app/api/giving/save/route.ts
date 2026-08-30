@@ -118,15 +118,23 @@ export async function POST(request: NextRequest) {
 
   // Create or update
   if (serviceId) {
-    // Update — verify the service belongs to this business
-    const { error } = await supabase
+    // Update — target must be an existing non-deleted Giving service in this business.
+    // Prevents rewriting a non-Giving service into a Giving service via this endpoint.
+    const { data: updated, error } = await supabase
       .from('services')
       .update(payload)
       .eq('id', serviceId)
-      .eq('business_id', businessId);
+      .eq('business_id', businessId)
+      .eq('service_type', 'giving')
+      .is('deleted_at', null)
+      .select('id')
+      .maybeSingle();
 
     if (error) {
       return NextResponse.json({ success: false, reason: 'update_failed', message: error.message }, { status: 500 });
+    }
+    if (!updated) {
+      return NextResponse.json({ success: false, reason: 'service_not_found', message: 'Target service not found or is not a Giving category.' }, { status: 404 });
     }
   } else {
     // Create — find max sort_order
