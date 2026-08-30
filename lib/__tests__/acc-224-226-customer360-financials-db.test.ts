@@ -74,11 +74,11 @@ describe('PostgreSQL Customer360/Financials (#225/#226)', () => {
       INSERT INTO auth.users (id) VALUES ('${OWNER_A}'), ('${OWNER_B}'), ('${CUSTOMER_USER}') ON CONFLICT DO NOTHING;
       ALTER TABLE auth.users ENABLE TRIGGER ALL;
 
-      INSERT INTO public.profiles (id, first_name, last_name, email, role)
+      INSERT INTO public.profiles (id, first_name, last_name, email)
       VALUES
-        ('${OWNER_A}', 'OwnerA', 'Test', 'owner-a-225@test.local', 'user'),
-        ('${OWNER_B}', 'OwnerB', 'Test', 'owner-b-225@test.local', 'user'),
-        ('${CUSTOMER_USER}', 'Babajide', 'Ace', 'customer-225@test.local', 'user');
+        ('${OWNER_A}', 'OwnerA', 'Test', 'owner-a-225@test.local'),
+        ('${OWNER_B}', 'OwnerB', 'Test', 'owner-b-225@test.local'),
+        ('${CUSTOMER_USER}', 'Babajide', 'Ace', 'customer-225@test.local');
 
       INSERT INTO public.businesses (id, owner_id, name, slug, category, address, city, phone, status, subscription_tier, country_code)
       VALUES
@@ -299,8 +299,8 @@ describe('PostgreSQL Customer360/Financials (#225/#226)', () => {
         ALTER TABLE auth.users DISABLE TRIGGER ALL;
         INSERT INTO auth.users (id) VALUES ('${OTHER_USER}') ON CONFLICT DO NOTHING;
         ALTER TABLE auth.users ENABLE TRIGGER ALL;
-        INSERT INTO public.profiles (id, first_name, last_name, email, role)
-        VALUES ('${OTHER_USER}', 'Other', 'Person', 'other-225@test.local', 'user');
+        INSERT INTO public.profiles (id, first_name, last_name, email)
+        VALUES ('${OTHER_USER}', 'Other', 'Person', 'other-225@test.local');
         INSERT INTO public.bookings (id, reference_code, business_id, user_id, flow_type, guest_name, guest_phone, date, status, total_amount, created_at)
         VALUES ('${OTHER_BOOKING}', 'WA-PY-OTHER', '${BIZ_A}', '${OTHER_USER}', 'payment', 'Other Person', '${CUSTOMER_PHONE}', CURRENT_DATE, 'confirmed', 99999, now());
       `);
@@ -386,8 +386,8 @@ describe('PostgreSQL Customer360/Financials (#225/#226)', () => {
         ALTER TABLE auth.users DISABLE TRIGGER ALL;
         INSERT INTO auth.users (id) VALUES ('${OTHER_USER}') ON CONFLICT DO NOTHING;
         ALTER TABLE auth.users ENABLE TRIGGER ALL;
-        INSERT INTO public.profiles (id, first_name, last_name, email, role)
-        VALUES ('${OTHER_USER}', 'Other', 'User226', 'other-226@test.local', 'user');
+        INSERT INTO public.profiles (id, first_name, last_name, email)
+        VALUES ('${OTHER_USER}', 'Other', 'User226', 'other-226@test.local');
         INSERT INTO public.customer_profiles (id, business_id, phone, name, user_id)
         VALUES ('${OTHER_CP}', '${BIZ_A}', '+2349999999999', 'Other User226', '${OTHER_USER}');
       `);
@@ -434,8 +434,8 @@ describe('PostgreSQL Customer360/Financials (#225/#226)', () => {
         ALTER TABLE auth.users DISABLE TRIGGER ALL;
         INSERT INTO auth.users (id) VALUES ('${LINKED_USER}') ON CONFLICT DO NOTHING;
         ALTER TABLE auth.users ENABLE TRIGGER ALL;
-        INSERT INTO public.profiles (id, first_name, last_name, email, role)
-        VALUES ('${LINKED_USER}', 'Linked', 'DurableUser', 'linked-226@test.local', 'user');
+        INSERT INTO public.profiles (id, first_name, last_name, email)
+        VALUES ('${LINKED_USER}', 'Linked', 'DurableUser', 'linked-226@test.local');
         INSERT INTO public.customer_profiles (id, business_id, phone, name, user_id)
         VALUES ('${LINKED_CP}', '${BIZ_A}', '${LEGACY_PHONE}', 'Linked DurableUser', '${LINKED_USER}');
         INSERT INTO public.bookings (id, reference_code, business_id, user_id, flow_type, guest_name, guest_phone, date, status, total_amount, created_at)
@@ -470,8 +470,8 @@ describe('PostgreSQL Customer360/Financials (#225/#226)', () => {
         ALTER TABLE auth.users DISABLE TRIGGER ALL;
         INSERT INTO auth.users (id) VALUES ('${LINKED_USER2}') ON CONFLICT DO NOTHING;
         ALTER TABLE auth.users ENABLE TRIGGER ALL;
-        INSERT INTO public.profiles (id, first_name, last_name, email, role)
-        VALUES ('${LINKED_USER2}', 'Linked2', 'OrderUser', 'linked2-226@test.local', 'user');
+        INSERT INTO public.profiles (id, first_name, last_name, email)
+        VALUES ('${LINKED_USER2}', 'Linked2', 'OrderUser', 'linked2-226@test.local');
         INSERT INTO public.customer_profiles (id, business_id, phone, name, user_id)
         VALUES ('${LINKED_CP2}', '${BIZ_A}', '${LEGACY_PHONE2}', 'Linked2 OrderUser', '${LINKED_USER2}');
         INSERT INTO public.orders (id, reference_code, business_id, user_id, delivery_phone, status, total_amount, created_at)
@@ -538,8 +538,8 @@ describe('PostgreSQL Customer360/Financials (#225/#226)', () => {
         ALTER TABLE auth.users DISABLE TRIGGER ALL;
         INSERT INTO auth.users (id) VALUES ('${DUAL_USER}') ON CONFLICT DO NOTHING;
         ALTER TABLE auth.users ENABLE TRIGGER ALL;
-        INSERT INTO public.profiles (id, first_name, last_name, email, role)
-        VALUES ('${DUAL_USER}', 'Dual', 'Phone', 'dual-225@test.local', 'user');
+        INSERT INTO public.profiles (id, first_name, last_name, email)
+        VALUES ('${DUAL_USER}', 'Dual', 'Phone', 'dual-225@test.local');
         INSERT INTO public.customer_profiles (id, business_id, phone, name, user_id)
         VALUES
           ('${CP_PHONE1}', '${BIZ_A}', '+2341111111111', 'Dual Phone Old', NULL),

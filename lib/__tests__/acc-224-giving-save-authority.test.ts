@@ -393,8 +393,8 @@ describe('#224 LAYER 2: real PostgreSQL write/no-write regression', () => {
       ALTER TABLE auth.users DISABLE TRIGGER ALL;
       INSERT INTO auth.users (id) VALUES ('${PG_OWNER}') ON CONFLICT DO NOTHING;
       ALTER TABLE auth.users ENABLE TRIGGER ALL;
-      INSERT INTO public.profiles (id, first_name, last_name, email, role)
-      VALUES ('${PG_OWNER}', 'PGOwner', 'Test', 'owner-224pg@test.local', 'user');
+      INSERT INTO public.profiles (id, first_name, last_name, email)
+      VALUES ('${PG_OWNER}', 'PGOwner', 'Test', 'owner-224pg@test.local');
       INSERT INTO public.businesses (id, owner_id, name, slug, category, address, city, phone, status, subscription_tier, recurring_enabled, country_code)
       VALUES ('${PG_BIZ}', '${PG_OWNER}', 'PG Church', 'pg-church-224', 'church', '1 PG St', 'Lagos', '+2340000224', 'active', 'growth', false, 'NG');
       INSERT INTO public.services (id, business_id, name, service_type, billing_type, is_active, price, duration_minutes, deposit_amount, sort_order)
