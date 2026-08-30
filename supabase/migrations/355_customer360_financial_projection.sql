@@ -342,10 +342,41 @@ BEGIN
     RETURN;
   END IF;
 
-  SELECT COALESCE(SUM(COALESCE(b.total_amount, b.deposit_amount, 0)), 0)::BIGINT INTO v_booking
-  FROM public.bookings b
-  WHERE b.business_id = p_business_id
-    AND b.status NOT IN ('cancelled', 'no_show');
+  -- Booking revenue: payment-aware net settlement.
+  -- Payment-backed bookings: only count successful payments, minus completed refunds.
+  -- Non-payment bookings: use booking total_amount/deposit_amount (scheduling, etc.).
+  -- Deduplication: DISTINCT ON (booking_id) picks the successful payment when
+  -- multiple attempts exist (failed → retry → success).
+  SELECT COALESCE(SUM(net_amount), 0)::BIGINT INTO v_booking
+  FROM (
+    -- Payment-backed bookings: net = settled - completed_refunds
+    SELECT DISTINCT ON (p.booking_id)
+      GREATEST(
+        CASE WHEN p.status = 'success' THEN p.amount ELSE 0 END
+        - COALESCE((
+          SELECT SUM(r.amount) FROM public.refunds r
+          WHERE r.payment_id = p.id AND r.status = 'success'
+        ), 0),
+        0
+      ) AS net_amount
+    FROM public.payments p
+    JOIN public.bookings b ON b.id = p.booking_id
+    WHERE p.business_id = p_business_id
+      AND p.booking_id IS NOT NULL
+      AND b.status NOT IN ('cancelled', 'no_show')
+    ORDER BY p.booking_id, (p.status = 'success') DESC, p.created_at DESC
+
+    UNION ALL
+
+    -- Non-payment bookings: no linked payment row
+    SELECT COALESCE(b.total_amount, b.deposit_amount, 0) AS net_amount
+    FROM public.bookings b
+    WHERE b.business_id = p_business_id
+      AND b.status NOT IN ('cancelled', 'no_show')
+      AND NOT EXISTS (
+        SELECT 1 FROM public.payments p WHERE p.booking_id = b.id
+      )
+  ) sub;
 
   SELECT COALESCE(SUM(COALESCE(o.total_amount, 0)), 0)::BIGINT INTO v_order
   FROM public.orders o

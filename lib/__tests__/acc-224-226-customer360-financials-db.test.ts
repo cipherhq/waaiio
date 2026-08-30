@@ -339,40 +339,152 @@ describe('PostgreSQL Customer360/Financials (#225/#226)', () => {
     }
   });
 
-  it('226-FIN-2c: failed payments + cancelled/draft orders excluded from revenue', () => {
+  it('226-FIN-2c: cancelled/draft orders excluded from revenue', () => {
     const CANC_ORD = 'c2250000-0000-0000-0000-0000000000d2';
     const DRAFT_ORD = 'c2250000-0000-0000-0000-0000000000d3';
-    const FAIL_BK = 'c2250000-0000-0000-0000-0000000000d4';
     try {
-      const beforeBooking = parseInt(runSQL(`SELECT booking_revenue FROM public.get_business_revenue_totals('${BIZ_A}');`), 10);
       const beforeOrder = parseInt(runSQL(`SELECT order_revenue FROM public.get_business_revenue_totals('${BIZ_A}');`), 10);
 
-      // Cancelled order — not in included status set
       runSQL(`INSERT INTO public.orders (id, reference_code, business_id, user_id, delivery_phone, status, total_amount, created_at) VALUES ('${CANC_ORD}', 'WA-OR-CANC', '${BIZ_A}', '${CUSTOMER_USER}', '${CUSTOMER_PHONE}', 'cancelled', 50000, now());`);
-
-      // Draft order — not in included status set
       runSQL(`INSERT INTO public.orders (id, reference_code, business_id, user_id, delivery_phone, status, total_amount, created_at) VALUES ('${DRAFT_ORD}', 'WA-OR-DRFT', '${BIZ_A}', '${CUSTOMER_USER}', '${CUSTOMER_PHONE}', 'draft', 50000, now());`);
 
-      // "Failed" booking (pending status — represents a failed/incomplete payment flow)
-      runSQL(`INSERT INTO public.bookings (id, reference_code, business_id, user_id, flow_type, guest_name, guest_phone, date, time, party_size, channel, status, total_amount, created_at) VALUES ('${FAIL_BK}', 'WA-PY-PEND', '${BIZ_A}', '${CUSTOMER_USER}', 'payment', 'Test', '${CUSTOMER_PHONE}', CURRENT_DATE, '10:00', 1, 'whatsapp', 'pending', 50000, now());`);
-
-      const afterBooking = parseInt(runSQL(`SELECT booking_revenue FROM public.get_business_revenue_totals('${BIZ_A}');`), 10);
       const afterOrder = parseInt(runSQL(`SELECT order_revenue FROM public.get_business_revenue_totals('${BIZ_A}');`), 10);
-
-      // Order revenue unchanged — cancelled/draft excluded
       expect(afterOrder).toBe(beforeOrder);
 
-      // Booking revenue DOES include pending (only cancelled/no_show excluded)
-      // This is the canonical behavior: pending bookings are counted as they
-      // represent in-progress transactions, not failures
-      expect(afterBooking).toBe(beforeBooking + 50000);
-
-      // Cancelled order visible in projection with correct status
       const cancOrd = runSQL(`SELECT status FROM public.get_business_transactions('${BIZ_A}') WHERE reference_code = 'WA-OR-CANC';`);
       expect(cancOrd).toContain('cancelled');
     } finally {
       runSQL(`DELETE FROM public.orders WHERE id IN ('${CANC_ORD}', '${DRAFT_ORD}');`);
+    }
+  });
+
+  // ── 226-FIN-2c payment-aware net settlement ──
+
+  it('226-FIN-2c-pay1: successful payment counts settled amount as revenue', () => {
+    // The fixture BOOKING_GIVING has PAYMENT_GIVING (status=success, amount=10000)
+    // Revenue should include this payment's amount
+    const rev = parseInt(runSQL(`SELECT booking_revenue FROM public.get_business_revenue_totals('${BIZ_A}');`), 10);
+    expect(rev).toBeGreaterThanOrEqual(10000);
+  });
+
+  it('226-FIN-2c-pay2: pending payment contributes $0 revenue', () => {
+    const PEND_BK = 'c2250000-0000-0000-0000-0000000000e0';
+    const PEND_PAY = 'c2250000-0000-0000-0000-0000000000e1';
+    try {
+      const before = parseInt(runSQL(`SELECT booking_revenue FROM public.get_business_revenue_totals('${BIZ_A}');`), 10);
+
+      runSQL(`INSERT INTO public.bookings (id, reference_code, business_id, user_id, flow_type, guest_name, guest_phone, date, time, party_size, channel, status, total_amount, created_at) VALUES ('${PEND_BK}', 'WA-PY-PEND', '${BIZ_A}', '${CUSTOMER_USER}', 'payment', 'Test', '${CUSTOMER_PHONE}', CURRENT_DATE, '10:00', 1, 'whatsapp', 'pending', 50000, now());`);
+      runSQL(`INSERT INTO public.payments (id, booking_id, user_id, business_id, amount, currency, gateway_reference, status, created_at) VALUES ('${PEND_PAY}', '${PEND_BK}', '${CUSTOMER_USER}', '${BIZ_A}', 50000, 'NGN', 'WA-PY-PEND-PAY', 'pending', now());`);
+
+      const after = parseInt(runSQL(`SELECT booking_revenue FROM public.get_business_revenue_totals('${BIZ_A}');`), 10);
+      expect(after).toBe(before); // $0 from pending payment
+    } finally {
+      runSQL(`DELETE FROM public.payments WHERE id = '${PEND_PAY}';`);
+      runSQL(`DELETE FROM public.bookings WHERE id = '${PEND_BK}';`);
+    }
+  });
+
+  it('226-FIN-2c-pay3: failed payment contributes $0 revenue', () => {
+    const FAIL_BK = 'c2250000-0000-0000-0000-0000000000e2';
+    const FAIL_PAY = 'c2250000-0000-0000-0000-0000000000e3';
+    try {
+      const before = parseInt(runSQL(`SELECT booking_revenue FROM public.get_business_revenue_totals('${BIZ_A}');`), 10);
+
+      runSQL(`INSERT INTO public.bookings (id, reference_code, business_id, user_id, flow_type, guest_name, guest_phone, date, time, party_size, channel, status, total_amount, created_at) VALUES ('${FAIL_BK}', 'WA-PY-FAIL', '${BIZ_A}', '${CUSTOMER_USER}', 'payment', 'Test', '${CUSTOMER_PHONE}', CURRENT_DATE, '10:00', 1, 'whatsapp', 'confirmed', 50000, now());`);
+      runSQL(`INSERT INTO public.payments (id, booking_id, user_id, business_id, amount, currency, gateway_reference, status, created_at) VALUES ('${FAIL_PAY}', '${FAIL_BK}', '${CUSTOMER_USER}', '${BIZ_A}', 50000, 'NGN', 'WA-PY-FAIL-PAY', 'failed', now());`);
+
+      const after = parseInt(runSQL(`SELECT booking_revenue FROM public.get_business_revenue_totals('${BIZ_A}');`), 10);
+      expect(after).toBe(before); // $0 from failed payment
+    } finally {
+      runSQL(`DELETE FROM public.payments WHERE id = '${FAIL_PAY}';`);
       runSQL(`DELETE FROM public.bookings WHERE id = '${FAIL_BK}';`);
+    }
+  });
+
+  it('226-FIN-2c-pay4: failed then successful retry counts once', () => {
+    const RETRY_BK = 'c2250000-0000-0000-0000-0000000000e4';
+    const RETRY_FAIL = 'c2250000-0000-0000-0000-0000000000e5';
+    const RETRY_OK = 'c2250000-0000-0000-0000-0000000000e6';
+    try {
+      const before = parseInt(runSQL(`SELECT booking_revenue FROM public.get_business_revenue_totals('${BIZ_A}');`), 10);
+
+      runSQL(`INSERT INTO public.bookings (id, reference_code, business_id, user_id, flow_type, guest_name, guest_phone, date, time, party_size, channel, status, total_amount, created_at) VALUES ('${RETRY_BK}', 'WA-PY-RTRY', '${BIZ_A}', '${CUSTOMER_USER}', 'payment', 'Test', '${CUSTOMER_PHONE}', CURRENT_DATE, '10:00', 1, 'whatsapp', 'confirmed', 20000, now());`);
+      // First attempt: failed
+      runSQL(`INSERT INTO public.payments (id, booking_id, user_id, business_id, amount, currency, gateway_reference, status, created_at) VALUES ('${RETRY_FAIL}', '${RETRY_BK}', '${CUSTOMER_USER}', '${BIZ_A}', 20000, 'NGN', 'WA-PY-RTRY-F', 'failed', now() - interval '1 minute');`);
+      // Second attempt: success
+      runSQL(`INSERT INTO public.payments (id, booking_id, user_id, business_id, amount, currency, gateway_reference, status, created_at) VALUES ('${RETRY_OK}', '${RETRY_BK}', '${CUSTOMER_USER}', '${BIZ_A}', 20000, 'NGN', 'WA-PY-RTRY-S', 'success', now());`);
+
+      const after = parseInt(runSQL(`SELECT booking_revenue FROM public.get_business_revenue_totals('${BIZ_A}');`), 10);
+      expect(after).toBe(before + 20000); // counted once from successful payment
+    } finally {
+      runSQL(`DELETE FROM public.payments WHERE id IN ('${RETRY_FAIL}', '${RETRY_OK}');`);
+      runSQL(`DELETE FROM public.bookings WHERE id = '${RETRY_BK}';`);
+    }
+  });
+
+  it('226-FIN-2c-pay5: full completed refund = $0 net revenue', () => {
+    const REF_BK = 'c2250000-0000-0000-0000-0000000000e7';
+    const REF_PAY = 'c2250000-0000-0000-0000-0000000000e8';
+    const REF_ID = 'c2250000-0000-0000-0000-0000000000e9';
+    try {
+      const before = parseInt(runSQL(`SELECT booking_revenue FROM public.get_business_revenue_totals('${BIZ_A}');`), 10);
+
+      runSQL(`INSERT INTO public.bookings (id, reference_code, business_id, user_id, flow_type, guest_name, guest_phone, date, time, party_size, channel, status, total_amount, created_at) VALUES ('${REF_BK}', 'WA-PY-RFND', '${BIZ_A}', '${CUSTOMER_USER}', 'payment', 'Test', '${CUSTOMER_PHONE}', CURRENT_DATE, '10:00', 1, 'whatsapp', 'confirmed', 30000, now());`);
+      runSQL(`INSERT INTO public.payments (id, booking_id, user_id, business_id, amount, currency, gateway_reference, status, paid_at, created_at) VALUES ('${REF_PAY}', '${REF_BK}', '${CUSTOMER_USER}', '${BIZ_A}', 30000, 'NGN', 'WA-PY-RFND-PAY', 'success', now(), now());`);
+      // Full refund — completed
+      runSQL(`INSERT INTO public.refunds (id, payment_id, business_id, amount, status, refund_type) VALUES ('${REF_ID}', '${REF_PAY}', '${BIZ_A}', 30000, 'success', 'full');`);
+
+      const after = parseInt(runSQL(`SELECT booking_revenue FROM public.get_business_revenue_totals('${BIZ_A}');`), 10);
+      expect(after).toBe(before); // $0 net — full refund cancels settlement
+    } finally {
+      runSQL(`DELETE FROM public.refunds WHERE id = '${REF_ID}';`);
+      runSQL(`DELETE FROM public.payments WHERE id = '${REF_PAY}';`);
+      runSQL(`DELETE FROM public.bookings WHERE id = '${REF_BK}';`);
+    }
+  });
+
+  it('226-FIN-2c-pay6: partial completed refund = settled minus refunded', () => {
+    const PREF_BK = 'c2250000-0000-0000-0000-0000000000ea';
+    const PREF_PAY = 'c2250000-0000-0000-0000-0000000000eb';
+    const PREF_ID = 'c2250000-0000-0000-0000-0000000000ec';
+    try {
+      const before = parseInt(runSQL(`SELECT booking_revenue FROM public.get_business_revenue_totals('${BIZ_A}');`), 10);
+
+      runSQL(`INSERT INTO public.bookings (id, reference_code, business_id, user_id, flow_type, guest_name, guest_phone, date, time, party_size, channel, status, total_amount, created_at) VALUES ('${PREF_BK}', 'WA-PY-PREF', '${BIZ_A}', '${CUSTOMER_USER}', 'payment', 'Test', '${CUSTOMER_PHONE}', CURRENT_DATE, '10:00', 1, 'whatsapp', 'confirmed', 40000, now());`);
+      runSQL(`INSERT INTO public.payments (id, booking_id, user_id, business_id, amount, currency, gateway_reference, status, paid_at, created_at) VALUES ('${PREF_PAY}', '${PREF_BK}', '${CUSTOMER_USER}', '${BIZ_A}', 40000, 'NGN', 'WA-PY-PREF-PAY', 'success', now(), now());`);
+      // Partial refund — 15000 of 40000
+      runSQL(`INSERT INTO public.refunds (id, payment_id, business_id, amount, status, refund_type) VALUES ('${PREF_ID}', '${PREF_PAY}', '${BIZ_A}', 15000, 'success', 'partial');`);
+
+      const after = parseInt(runSQL(`SELECT booking_revenue FROM public.get_business_revenue_totals('${BIZ_A}');`), 10);
+      expect(after).toBe(before + 25000); // 40000 - 15000 = 25000 net
+    } finally {
+      runSQL(`DELETE FROM public.refunds WHERE id = '${PREF_ID}';`);
+      runSQL(`DELETE FROM public.payments WHERE id = '${PREF_PAY}';`);
+      runSQL(`DELETE FROM public.bookings WHERE id = '${PREF_BK}';`);
+    }
+  });
+
+  it('226-FIN-2c-pay7: pending/failed refund does NOT reduce revenue', () => {
+    const URFND_BK = 'c2250000-0000-0000-0000-0000000000ed';
+    const URFND_PAY = 'c2250000-0000-0000-0000-0000000000ee';
+    const URFND_PEND = 'c2250000-0000-0000-0000-0000000000ef';
+    const URFND_FAIL = 'c2250000-0000-0000-0000-0000000000f1';
+    try {
+      const before = parseInt(runSQL(`SELECT booking_revenue FROM public.get_business_revenue_totals('${BIZ_A}');`), 10);
+
+      runSQL(`INSERT INTO public.bookings (id, reference_code, business_id, user_id, flow_type, guest_name, guest_phone, date, time, party_size, channel, status, total_amount, created_at) VALUES ('${URFND_BK}', 'WA-PY-URFD', '${BIZ_A}', '${CUSTOMER_USER}', 'payment', 'Test', '${CUSTOMER_PHONE}', CURRENT_DATE, '10:00', 1, 'whatsapp', 'confirmed', 25000, now());`);
+      runSQL(`INSERT INTO public.payments (id, booking_id, user_id, business_id, amount, currency, gateway_reference, status, paid_at, created_at) VALUES ('${URFND_PAY}', '${URFND_BK}', '${CUSTOMER_USER}', '${BIZ_A}', 25000, 'NGN', 'WA-PY-URFD-PAY', 'success', now(), now());`);
+      // Pending refund — should NOT reduce revenue
+      runSQL(`INSERT INTO public.refunds (id, payment_id, business_id, amount, status, refund_type) VALUES ('${URFND_PEND}', '${URFND_PAY}', '${BIZ_A}', 25000, 'pending', 'full');`);
+      // Failed refund — should NOT reduce revenue
+      runSQL(`INSERT INTO public.refunds (id, payment_id, business_id, amount, status, refund_type) VALUES ('${URFND_FAIL}', '${URFND_PAY}', '${BIZ_A}', 25000, 'failed', 'full');`);
+
+      const after = parseInt(runSQL(`SELECT booking_revenue FROM public.get_business_revenue_totals('${BIZ_A}');`), 10);
+      expect(after).toBe(before + 25000); // full settled amount — pending/failed refunds ignored
+    } finally {
+      runSQL(`DELETE FROM public.refunds WHERE id IN ('${URFND_PEND}', '${URFND_FAIL}');`);
+      runSQL(`DELETE FROM public.payments WHERE id = '${URFND_PAY}';`);
+      runSQL(`DELETE FROM public.bookings WHERE id = '${URFND_BK}';`);
     }
   });
 
