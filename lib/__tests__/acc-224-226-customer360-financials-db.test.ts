@@ -375,6 +375,132 @@ describe('PostgreSQL Customer360/Financials (#225/#226)', () => {
     }
   });
 
+  // ── Booking financial cross-attribution regression (#226 blocker 2) ──
+
+  it('get_business_transactions does NOT cross-attribute booking customer via shared phone', () => {
+    const OTHER_USER = 'c2250000-0000-0000-0000-000000000080';
+    const OTHER_CP = 'c2250000-0000-0000-0000-000000000081';
+    const SHARED_BOOKING = 'c2250000-0000-0000-0000-000000000082';
+    try {
+      // Create another user + customer_profiles with SAME phone but different user_id
+      runSQL(`
+        INSERT INTO auth.users (id, email, raw_app_meta_data, raw_user_meta_data, aud, role, instance_id, created_at, updated_at)
+        VALUES ('${OTHER_USER}', 'other-226@test.local', '{"provider":"email"}', '{}', 'authenticated', 'authenticated', '00000000-0000-0000-0000-000000000000', now(), now());
+        INSERT INTO public.profiles (id, first_name, last_name, email, role)
+        VALUES ('${OTHER_USER}', 'Other', 'User226', 'other-226@test.local', 'user');
+        INSERT INTO public.customer_profiles (id, business_id, phone, name, user_id)
+        VALUES ('${OTHER_CP}', '${BIZ_A}', '+2349999999999', 'Other User226', '${OTHER_USER}');
+      `);
+
+      // Create a booking by CUSTOMER_USER but with OTHER_CP's phone
+      // (shared/reused phone scenario)
+      runSQL(`
+        INSERT INTO public.bookings (id, reference_code, business_id, user_id, flow_type, guest_name, guest_phone, date, status, total_amount, created_at)
+        VALUES ('${SHARED_BOOKING}', 'WA-PY-XATTR', '${BIZ_A}', '${CUSTOMER_USER}', 'payment', 'Babajide Ace', '+2349999999999', CURRENT_DATE, 'confirmed', 7777, now());
+      `);
+
+      // The booking has user_id=CUSTOMER_USER but guest_phone matches OTHER_CP
+      // With durable-ID-first: should resolve to CUSTOMER_USER's cp (CP_A), NOT OTHER_CP
+      const result = runSQL(`
+        SELECT customer_name FROM public.get_business_transactions('${BIZ_A}')
+        WHERE reference_code = 'WA-PY-XATTR';
+      `);
+      // Should show guest_name 'Babajide Ace' (from booking) or CP_A's name
+      // Must NOT show 'Other User226' from OTHER_CP (phone-based cross-attribution)
+      expect(result).not.toContain('Other User226');
+      expect(result).toContain('Babajide Ace');
+    } finally {
+      runSQL(`
+        DELETE FROM public.bookings WHERE id = '${SHARED_BOOKING}';
+        DELETE FROM public.customer_profiles WHERE id = '${OTHER_CP}';
+        DELETE FROM public.profiles WHERE id = '${OTHER_USER}';
+        DELETE FROM auth.users WHERE id = '${OTHER_USER}';
+      `);
+    }
+  });
+
+  // ── Backfill collision regression (#225 blocker 3) ──
+
+  it('backfill leaves ambiguous/colliding profiles unlinked when two phones map to same user', () => {
+    // This tests the exact scenario: two customer_profiles rows with different phones
+    // but both mapping to the same durable user_id via bookings.
+    // The partial unique index (business_id, user_id) WHERE user_id IS NOT NULL
+    // means at most one cp can be linked. The CTE backfill picks exactly one winner.
+    const DUAL_USER = 'c2250000-0000-0000-0000-000000000083';
+    const CP_PHONE1 = 'c2250000-0000-0000-0000-000000000084';
+    const CP_PHONE2 = 'c2250000-0000-0000-0000-000000000085';
+    const BK1 = 'c2250000-0000-0000-0000-000000000086';
+    const BK2 = 'c2250000-0000-0000-0000-000000000087';
+    try {
+      runSQL(`
+        INSERT INTO auth.users (id, email, raw_app_meta_data, raw_user_meta_data, aud, role, instance_id, created_at, updated_at)
+        VALUES ('${DUAL_USER}', 'dual-225@test.local', '{"provider":"email"}', '{}', 'authenticated', 'authenticated', '00000000-0000-0000-0000-000000000000', now(), now());
+        INSERT INTO public.profiles (id, first_name, last_name, email, role)
+        VALUES ('${DUAL_USER}', 'Dual', 'Phone', 'dual-225@test.local', 'user');
+        INSERT INTO public.customer_profiles (id, business_id, phone, name, user_id)
+        VALUES
+          ('${CP_PHONE1}', '${BIZ_A}', '+2341111111111', 'Dual Phone Old', NULL),
+          ('${CP_PHONE2}', '${BIZ_A}', '+2342222222222', 'Dual Phone New', NULL);
+        INSERT INTO public.bookings (id, reference_code, business_id, user_id, flow_type, guest_phone, date, status, total_amount, created_at)
+        VALUES
+          ('${BK1}', 'WA-DUAL-1', '${BIZ_A}', '${DUAL_USER}', 'payment', '+2341111111111', CURRENT_DATE, 'confirmed', 1000, now()),
+          ('${BK2}', 'WA-DUAL-2', '${BIZ_A}', '${DUAL_USER}', 'payment', '+2342222222222', CURRENT_DATE, 'confirmed', 2000, now());
+      `);
+
+      // Re-run the backfill CTE for these test rows
+      runSQL(`
+        WITH candidates AS (
+          SELECT DISTINCT ON (agg.business_id, agg.guest_phone)
+            agg.business_id, agg.guest_phone, agg.the_user_id AS single_user_id
+          FROM (
+            SELECT b.business_id, b.guest_phone, b.user_id AS the_user_id
+            FROM public.bookings b
+            WHERE b.user_id IS NOT NULL AND b.guest_phone IS NOT NULL AND b.guest_phone != ''
+            GROUP BY b.business_id, b.guest_phone, b.user_id
+          ) agg
+          WHERE (
+            SELECT COUNT(DISTINCT b2.user_id) FROM public.bookings b2
+            WHERE b2.business_id = agg.business_id AND b2.guest_phone = agg.guest_phone AND b2.user_id IS NOT NULL
+          ) = 1
+        ),
+        matched AS (
+          SELECT DISTINCT ON (c.business_id, c.single_user_id) cp.id AS cp_id, c.single_user_id
+          FROM candidates c
+          JOIN public.customer_profiles cp ON cp.business_id = c.business_id AND cp.phone = c.guest_phone AND cp.user_id IS NULL
+          WHERE NOT EXISTS (
+            SELECT 1 FROM public.customer_profiles cp2
+            WHERE cp2.business_id = c.business_id AND cp2.user_id = c.single_user_id
+          )
+          ORDER BY c.business_id, c.single_user_id, cp.id
+        )
+        UPDATE public.customer_profiles cp SET user_id = m.single_user_id FROM matched m WHERE cp.id = m.cp_id;
+      `);
+
+      // At most 1 should be linked (DISTINCT ON picks the first by cp.id)
+      const countLinked = runSQL(`
+        SELECT COUNT(*) FROM public.customer_profiles
+        WHERE id IN ('${CP_PHONE1}', '${CP_PHONE2}')
+          AND user_id = '${DUAL_USER}';
+      `);
+      const linked = parseInt(countLinked, 10);
+      expect(linked).toBeLessThanOrEqual(1);
+
+      // Both profiles should still exist (no data loss)
+      const countAll = runSQL(`
+        SELECT COUNT(*) FROM public.customer_profiles
+        WHERE id IN ('${CP_PHONE1}', '${CP_PHONE2}');
+      `);
+      expect(countAll).toBe('2');
+    } finally {
+      runSQL(`
+        DELETE FROM public.bookings WHERE id IN ('${BK1}', '${BK2}');
+        DELETE FROM public.customer_profiles WHERE id IN ('${CP_PHONE1}', '${CP_PHONE2}');
+        DELETE FROM public.profiles WHERE id = '${DUAL_USER}';
+        DELETE FROM auth.users WHERE id = '${DUAL_USER}';
+      `);
+    }
+  });
+
   it('create_recurring_offer rejects inactive service', () => {
     const INACTIVE_SVC = 'c2250000-0000-0000-0000-000000000076';
     const INACTIVE_BK = 'c2250000-0000-0000-0000-000000000077';

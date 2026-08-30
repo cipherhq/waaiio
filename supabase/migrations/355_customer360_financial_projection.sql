@@ -25,17 +25,17 @@ CREATE INDEX IF NOT EXISTS idx_customer_profiles_user_id
 -- Only set user_id when ALL bookings for the same (business_id, guest_phone)
 -- resolve to exactly one user_id. Ambiguous/conflicting mappings stay NULL.
 
--- Backfill uses a subquery that:
+-- Backfill strategy:
 --   a) avoids MIN(uuid) which does not exist in all PostgreSQL versions;
---   b) only selects (business_id, guest_phone) pairs with exactly one distinct user_id;
---   c) skips any customer_profiles row where setting user_id would violate the
---      partial unique index (business_id, user_id) — i.e. another cp row in the
---      same business already has that user_id. This preserves all legacy rows.
+--   b) only considers (business_id, guest_phone) pairs with exactly one distinct user_id;
+--   c) globally collision-safe: when multiple initially-unlinked customer_profiles rows
+--      (different phones) resolve to the same (business_id, user_id), only the first
+--      candidate (by cp.id) is linked. Others are left unlinked to preserve history
+--      and avoid partial unique index violation.
+--   d) also skips if another cp row already has that user_id (pre-existing linkage).
 
-UPDATE public.customer_profiles cp
-SET user_id = sub.single_user_id
-FROM (
-  -- Find (business_id, guest_phone) pairs with exactly one distinct user_id
+WITH candidates AS (
+  -- Step 1: find unambiguous phone→user_id mappings from bookings
   SELECT DISTINCT ON (agg.business_id, agg.guest_phone)
     agg.business_id, agg.guest_phone, agg.the_user_id AS single_user_id
   FROM (
@@ -46,7 +46,6 @@ FROM (
       AND b.guest_phone != ''
     GROUP BY b.business_id, b.guest_phone, b.user_id
   ) agg
-  -- Only keep groups where there is exactly one distinct user_id for the phone
   WHERE (
     SELECT COUNT(DISTINCT b2.user_id)
     FROM public.bookings b2
@@ -54,17 +53,30 @@ FROM (
       AND b2.guest_phone = agg.guest_phone
       AND b2.user_id IS NOT NULL
   ) = 1
-) sub
-WHERE cp.business_id = sub.business_id
-  AND cp.phone = sub.guest_phone
-  AND cp.user_id IS NULL
-  -- Collision guard: skip if another cp row in the same business already has this user_id
-  AND NOT EXISTS (
+),
+matched AS (
+  -- Step 2: match candidates to customer_profiles rows, then pick exactly
+  -- one winner per (business_id, single_user_id) to prevent partial unique
+  -- index collision when multiple phones map to the same durable user
+  SELECT DISTINCT ON (c.business_id, c.single_user_id)
+    cp.id AS cp_id, c.single_user_id
+  FROM candidates c
+  JOIN public.customer_profiles cp
+    ON cp.business_id = c.business_id
+    AND cp.phone = c.guest_phone
+    AND cp.user_id IS NULL
+  -- Skip if another cp row in same business already has this user_id
+  WHERE NOT EXISTS (
     SELECT 1 FROM public.customer_profiles cp2
-    WHERE cp2.business_id = cp.business_id
-      AND cp2.user_id = sub.single_user_id
-      AND cp2.id != cp.id
-  );
+    WHERE cp2.business_id = c.business_id
+      AND cp2.user_id = c.single_user_id
+  )
+  ORDER BY c.business_id, c.single_user_id, cp.id  -- deterministic: first by id wins
+)
+UPDATE public.customer_profiles cp
+SET user_id = m.single_user_id
+FROM matched m
+WHERE cp.id = m.cp_id;
 
 
 -- 3. get_business_transactions()
@@ -100,7 +112,9 @@ BEGIN
 
   RETURN QUERY
   (
-    -- Bookings: join services for purpose, guest_name + customer_profiles for customer
+    -- Bookings: join services for purpose, resolve customer from guest_name
+    -- or customer_profiles with durable-ID-first (phone fallback only when
+    -- source booking user_id IS NULL)
     SELECT
       b.id AS txn_id,
       'booking'::TEXT AS txn_type,
@@ -117,14 +131,18 @@ BEGIN
           THEN 'Reservation' || E' \u2014 ' || b.reference_code
         ELSE 'Booking' || E' \u2014 ' || COALESCE(s.name, b.reference_code)
       END::TEXT AS purpose,
-      COALESCE(b.guest_name, cp.name)::TEXT AS customer_name,
+      COALESCE(b.guest_name, cp_u.name, cp_p.name)::TEXT AS customer_name,
       COALESCE(b.total_amount, b.deposit_amount, 0)::BIGINT AS amount,
       b.status::TEXT,
       b.created_at AS event_date
     FROM public.bookings b
     LEFT JOIN public.services s ON s.id = b.service_id
-    LEFT JOIN public.customer_profiles cp
-      ON cp.business_id = b.business_id AND cp.phone = b.guest_phone
+    LEFT JOIN public.customer_profiles cp_u
+      ON cp_u.business_id = b.business_id AND cp_u.user_id = b.user_id
+      AND b.user_id IS NOT NULL
+    LEFT JOIN public.customer_profiles cp_p
+      ON cp_p.business_id = b.business_id AND cp_p.phone = b.guest_phone
+      AND b.user_id IS NULL  -- phone fallback only for legacy bookings without durable identity
     WHERE b.business_id = p_business_id
 
     UNION ALL
