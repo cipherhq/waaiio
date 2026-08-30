@@ -317,6 +317,7 @@ export class PayPalGateway implements PaymentGateway {
       }
       return {
         success: true,
+        outcome: 'terminal_success' as const,
         gatewayRefundReference: `mock_refund_paypal_${Date.now()}`,
         gatewayResponse: { mock: true },
       };
@@ -329,7 +330,7 @@ export class PayPalGateway implements PaymentGateway {
       const captureId = purchaseUnits[0]?.payments?.captures?.[0]?.id;
 
       if (!captureId) {
-        return { success: false, errorMessage: 'Could not find PayPal capture ID for refund' };
+        return { success: false, outcome: 'terminal_failure' as const, errorMessage: 'Could not find PayPal capture ID for refund' };
       }
 
       const refundBody: Record<string, unknown> = {};
@@ -345,24 +346,68 @@ export class PayPalGateway implements PaymentGateway {
 
       const refundData = await paypalRequest(`/v2/payments/captures/${encodeURIComponent(captureId)}/refund`, refundBody, 'POST', opts.idempotencyKey);
 
-      if (refundData.id && refundData.status === 'COMPLETED') {
+      const providerStatus = (refundData.status as string) || 'unknown';
+      const providerRefundId = refundData.id as string | undefined;
+
+      if (providerRefundId && providerStatus === 'COMPLETED') {
         return {
           success: true,
-          gatewayRefundReference: refundData.id as string,
+          outcome: 'terminal_success' as const,
+          providerRefundId,
+          providerStatus,
+          gatewayRefundReference: providerRefundId,
           gatewayResponse: refundData,
         };
       }
 
+      if (providerRefundId && providerStatus === 'PENDING') {
+        return {
+          success: false,
+          outcome: 'provider_pending' as const,
+          providerRefundId,
+          providerStatus,
+          gatewayRefundReference: providerRefundId,
+          gatewayResponse: refundData,
+        };
+      }
+
+      // Explicit failure or unrecognized with ID
+      if (providerRefundId) {
+        return {
+          success: false,
+          outcome: (providerStatus === 'CANCELLED') ? 'terminal_failure' as const : 'transport_unknown' as const,
+          providerRefundId,
+          providerStatus,
+          errorMessage: (refundData.message as string) || 'PayPal refund not completed',
+          gatewayResponse: refundData,
+        };
+      }
+
+      // No ID = transport_unknown (conservative)
       return {
         success: false,
+        outcome: 'transport_unknown' as const,
         errorMessage: (refundData.message as string) || 'PayPal refund failed',
         gatewayResponse: refundData,
       };
     } catch (error) {
       return {
         success: false,
+        outcome: 'transport_unknown' as const,
         errorMessage: `PayPal refund error: ${(error as Error).message}`,
       };
     }
+  }
+
+  async queryRefundStatus(refundReference: string): Promise<import('./types').RefundStatusResult> {
+    const data = await paypalGet(`/v2/payments/refunds/${encodeURIComponent(refundReference)}`);
+    const status = (data.status as string) || 'unknown';
+    return {
+      providerStatus: status,
+      outcome: status === 'COMPLETED' ? 'terminal_success'
+        : status === 'CANCELLED' ? 'terminal_failure'
+        : 'provider_pending',
+      providerRefundId: data.id as string,
+    };
   }
 }

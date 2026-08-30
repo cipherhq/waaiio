@@ -260,6 +260,7 @@ export class SquareGateway implements PaymentGateway {
       }
       return {
         success: true,
+        outcome: 'terminal_success' as const,
         gatewayRefundReference: `mock_refund_square_${Date.now()}`,
         gatewayResponse: { mock: true },
       };
@@ -303,21 +304,45 @@ export class SquareGateway implements PaymentGateway {
 
       const refund = result.refund as Record<string, unknown> | undefined;
       if (refund?.id) {
+        // Square lifecycle: PENDING, COMPLETED, FAILED, REJECTED
+        const providerStatus = (refund.status as string) || 'unknown';
+        const outcome = providerStatus === 'COMPLETED' ? 'terminal_success' as const
+          : (providerStatus === 'FAILED' || providerStatus === 'REJECTED') ? 'terminal_failure' as const
+          : 'provider_pending' as const; // PENDING or unknown
         return {
-          success: true,
+          success: outcome === 'terminal_success',
+          outcome,
+          providerRefundId: refund.id as string,
+          providerStatus,
           gatewayRefundReference: refund.id as string,
           gatewayResponse: result,
         };
       }
 
-      // Check for errors in the response
-      const errors = result.errors as Array<{ detail?: string }> | undefined;
-      const errorMsg = errors?.[0]?.detail || 'Square refund failed';
-      logger.error('[SQUARE] Refund failed:', safeProviderError(result));
-      return { success: false, errorMessage: errorMsg, gatewayResponse: result };
+      const errors = result.errors as Array<{ detail?: string; code?: string }> | undefined;
+      if (errors?.length) {
+        const errorMsg = errors[0]?.detail || 'Square refund failed';
+        logger.error('[SQUARE] Refund failed:', safeProviderError(result));
+        return { success: false, outcome: 'terminal_failure' as const, errorMessage: errorMsg, gatewayResponse: result };
+      }
+      // No refund ID and no explicit error = unknown
+      return { success: false, outcome: 'transport_unknown' as const, errorMessage: 'Square refund: unexpected response', gatewayResponse: result };
     } catch (error) {
       logger.withContext({ op: 'square.refund', ...safeLogErrorContext(error) }).error('[SQUARE] Refund error');
-      return { success: false, errorMessage: (error as Error).message };
+      return { success: false, outcome: 'transport_unknown' as const, errorMessage: (error as Error).message };
     }
+  }
+
+  async queryRefundStatus(refundReference: string): Promise<import('./types').RefundStatusResult> {
+    const data = await squareRequest(`/v2/refunds/${encodeURIComponent(refundReference)}`, {});
+    const refund = data.refund as Record<string, unknown> | undefined;
+    const status = (refund?.status as string) || 'unknown';
+    return {
+      providerStatus: status,
+      outcome: status === 'COMPLETED' ? 'terminal_success'
+        : (status === 'FAILED' || status === 'REJECTED') ? 'terminal_failure'
+        : 'provider_pending',
+      providerRefundId: refund?.id as string,
+    };
   }
 }

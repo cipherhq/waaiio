@@ -141,23 +141,21 @@ describe('#232 Refund convergence PostgreSQL', () => {
     expect(cols).toContain('refunded_by');
   });
 
-  it('refunds status CHECK allows 5-state model', () => {
-    // Use different payment IDs to avoid partial unique index collision
-    // (only terminal states can coexist for the same payment)
+  it('refunds status CHECK allows 6-state model', () => {
     const statusMap: Record<string, { id: string; payId: string }> = {
       pending: { id: 'c2320000-0000-0000-0000-0000000ff001', payId: 'c2320000-0000-0000-0000-0000000ff011' },
+      provider_pending: { id: 'c2320000-0000-0000-0000-0000000ff006', payId: 'c2320000-0000-0000-0000-0000000ff016' },
       provider_ambiguous: { id: 'c2320000-0000-0000-0000-0000000ff002', payId: 'c2320000-0000-0000-0000-0000000ff012' },
       provider_success_unfinalized: { id: 'c2320000-0000-0000-0000-0000000ff003', payId: 'c2320000-0000-0000-0000-0000000ff013' },
       success: { id: 'c2320000-0000-0000-0000-0000000ff004', payId: PAYMENT },
       failed: { id: 'c2320000-0000-0000-0000-0000000ff005', payId: PAYMENT },
     };
-    // Create dummy payments for non-terminal statuses (to satisfy FK)
-    for (const s of ['pending', 'provider_ambiguous', 'provider_success_unfinalized']) {
+    for (const s of ['pending', 'provider_pending', 'provider_ambiguous', 'provider_success_unfinalized']) {
       const payId = statusMap[s].payId;
       runSQLSafe(`INSERT INTO public.payments (id, user_id, business_id, amount, currency, gateway_reference, status, created_at) VALUES ('${payId}', '${CUSTOMER}', '${BIZ}', 100, 'NGN', 'test-chk-${s}', 'success', now()) ON CONFLICT DO NOTHING;`);
     }
 
-    for (const status of ['pending', 'provider_ambiguous', 'provider_success_unfinalized', 'success', 'failed']) {
+    for (const status of ['pending', 'provider_pending', 'provider_ambiguous', 'provider_success_unfinalized', 'success', 'failed']) {
       const { id: REFID, payId } = statusMap[status];
       runSQLSafe(`DELETE FROM public.refunds WHERE id = '${REFID}';`);
       const r = runSQLSafe(`
@@ -169,7 +167,7 @@ describe('#232 Refund convergence PostgreSQL', () => {
     }
 
     // Clean up dummy payments
-    for (const s of ['pending', 'provider_ambiguous', 'provider_success_unfinalized']) {
+    for (const s of ['pending', 'provider_pending', 'provider_ambiguous', 'provider_success_unfinalized']) {
       runSQLSafe(`DELETE FROM public.payments WHERE id = '${statusMap[s].payId}';`);
     }
   });

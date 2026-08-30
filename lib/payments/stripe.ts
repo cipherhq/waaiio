@@ -239,6 +239,7 @@ export class StripeGateway implements PaymentGateway {
       }
       return {
         success: true,
+        outcome: 'terminal_success' as const,
         gatewayRefundReference: `mock_refund_stripe_${Date.now()}`,
         gatewayResponse: { mock: true },
       };
@@ -251,7 +252,7 @@ export class StripeGateway implements PaymentGateway {
         const session = await stripeGet(`/checkout/sessions/${encodeURIComponent(opts.gatewayReference)}`);
         paymentIntent = session.payment_intent as string;
         if (!paymentIntent) {
-          return { success: false, errorMessage: 'Could not resolve checkout session to payment intent' };
+          return { success: false, outcome: 'terminal_failure' as const, errorMessage: 'Could not resolve checkout session to payment intent' };
         }
       }
 
@@ -269,24 +270,57 @@ export class StripeGateway implements PaymentGateway {
       const data = await stripeRequest('/refunds', refundParams, refundIdempotencyKey);
 
       if (data.id) {
+        // Stripe Refund lifecycle: pending, requires_action, succeeded, failed, canceled
+        const providerStatus = (data.status as string) || 'unknown';
+        const outcome = providerStatus === 'succeeded' ? 'terminal_success' as const
+          : (providerStatus === 'failed' || providerStatus === 'canceled') ? 'terminal_failure' as const
+          : 'provider_pending' as const; // pending, requires_action, or unknown
         return {
-          success: true,
+          success: outcome === 'terminal_success',
+          outcome,
+          providerRefundId: data.id as string,
+          providerStatus,
           gatewayRefundReference: data.id as string,
           gatewayResponse: data,
         };
       }
 
+      // No refund ID — check if this is an explicit API error or unknown
       const error = data.error as Record<string, unknown> | undefined;
+      if (error?.type || error?.code) {
+        // Explicit Stripe error = terminal failure
+        return {
+          success: false,
+          outcome: 'terminal_failure' as const,
+          errorMessage: (error?.message as string) || 'Stripe refund failed',
+          gatewayResponse: data,
+        };
+      }
+      // No ID and no explicit error = transport_unknown (conservative)
       return {
         success: false,
-        errorMessage: (error?.message as string) || 'Stripe refund failed',
+        outcome: 'transport_unknown' as const,
+        errorMessage: 'Stripe refund: unexpected response shape',
         gatewayResponse: data,
       };
     } catch (error) {
       return {
         success: false,
+        outcome: 'transport_unknown' as const,
         errorMessage: `Stripe refund error: ${normalizeError(error).message}`,
       };
     }
+  }
+
+  async queryRefundStatus(refundReference: string): Promise<import('./types').RefundStatusResult> {
+    const data = await stripeRequest(`/refunds/${encodeURIComponent(refundReference)}`, {}, undefined);
+    const status = (data.status as string) || 'unknown';
+    return {
+      providerStatus: status,
+      outcome: status === 'succeeded' ? 'terminal_success'
+        : (status === 'failed' || status === 'canceled') ? 'terminal_failure'
+        : 'provider_pending',
+      providerRefundId: data.id as string,
+    };
   }
 }
