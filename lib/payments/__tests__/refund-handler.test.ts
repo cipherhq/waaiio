@@ -1,8 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-// Mock the factory before importing
+// Mock the factory and service client before importing
 vi.mock('../factory', () => ({
   getPaymentGatewayByName: vi.fn(),
+}));
+
+// Mock service client — the handler uses it for execution-ledger writes
+const mockServiceClient: Record<string, unknown> = {};
+vi.mock('@/lib/supabase/service', () => ({
+  createServiceClient: vi.fn(() => mockServiceClient),
 }));
 
 import { processRefund } from '../refund-handler';
@@ -79,6 +85,46 @@ describe('processRefund', () => {
     mockGetGateway.mockReturnValue({
       refundPayment: vi.fn().mockResolvedValue({ success: true, gatewayRefundReference: 'gw-ref-1' }),
     });
+
+    // Set up service client mock for execution-ledger writes
+    const makeServiceChain = () => {
+      const chain: Record<string, unknown> = {};
+      const handler: ProxyHandler<Record<string, unknown>> = {
+        get(_target, prop) {
+          if (prop === 'then') return undefined;
+          if (prop === 'single') return vi.fn().mockResolvedValue({ data: { id: 'refund-1' }, error: null });
+          if (prop === 'maybeSingle') return vi.fn().mockResolvedValue({ data: null, error: null });
+          return vi.fn().mockReturnValue(new Proxy(chain, handler));
+        },
+      };
+      return new Proxy(chain, handler);
+    };
+
+    // Service client: from() for refunds reads/writes
+    (mockServiceClient as Record<string, unknown>).from = vi.fn().mockReturnValue({
+      select: vi.fn().mockReturnValue({
+        eq: vi.fn().mockReturnValue({
+          eq: vi.fn().mockResolvedValue({ data: [], error: null }),  // ledger query returns empty
+          single: vi.fn().mockResolvedValue({ data: null, error: null }),
+          maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+        }),
+        single: vi.fn().mockResolvedValue({ data: null, error: null }),
+        maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+      }),
+      insert: vi.fn().mockReturnValue({ select: vi.fn().mockReturnValue({ single: vi.fn().mockResolvedValue({ data: { id: 'refund-1' }, error: null }) }) }),
+      update: vi.fn().mockReturnValue(makeServiceChain()),
+    });
+
+    // Service client: rpc() for claim + finalize
+    (mockServiceClient as Record<string, unknown>).rpc = vi.fn().mockImplementation((name: string) => {
+      if (name === 'claim_refund_dispatch') {
+        return Promise.resolve({ data: [{ claimed: true, refund_id: 'refund-1', payment_id: 'pay-1', amount: 5000, gateway: 'paystack', gateway_reference: 'ref-1', refund_type: 'full', is_direct_split: false }], error: null });
+      }
+      if (name === 'finalize_refund_execution') {
+        return Promise.resolve({ data: { finalized: true, fully_refunded: false }, error: null });
+      }
+      return Promise.resolve({ data: null, error: null });
+    });
   });
 
   it('returns error when payment is not found', async () => {
@@ -132,11 +178,22 @@ describe('processRefund', () => {
       },
     });
 
+    // Override service client to return existing 3000 in ledger
+    (mockServiceClient as Record<string, unknown>).from = vi.fn().mockReturnValue({
+      select: vi.fn().mockReturnValue({
+        eq: vi.fn().mockReturnValue({
+          eq: vi.fn().mockResolvedValue({ data: [{ amount: 3000 }], error: null }),
+        }),
+      }),
+      insert: vi.fn().mockReturnValue({ select: vi.fn().mockReturnValue({ single: vi.fn().mockResolvedValue({ data: { id: 'refund-1' }, error: null }) }) }),
+      update: vi.fn().mockReturnValue({ eq: vi.fn().mockResolvedValue({ data: null, error: null }) }),
+    });
+
     const result = await processRefund({
       supabase: supabase as any,
       paymentId: 'pay-1',
       businessId: 'biz-1',
-      amount: 3000, // Only 2000 remaining
+      amount: 3000, // Only 2000 remaining (5000 - 3000 from ledger)
       initiatedBy: 'admin-1',
       initiatedByRole: 'admin',
     });
@@ -327,7 +384,7 @@ describe('processRefund', () => {
 
     expect(result.success).toBe(false);
     expect(result.errorMessage).toContain('Insufficient balance');
-    expect(result.refundId).toBe('refund-4');
+    expect(result.refundId).toBe('refund-1'); // from service client mock
   });
 
   it('allows refund on already-partially-refunded payment', async () => {

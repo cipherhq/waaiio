@@ -61,6 +61,8 @@ export interface RefundPaymentOpts {
   byoSecretKey?: string;
   /** Paystack Connect account ID */
   connectAccountId?: string;
+  /** Attempt-scoped stable idempotency key (refunds.id). Used as provider request key. */
+  idempotencyKey?: string;
 }
 
 export interface RefundResult {

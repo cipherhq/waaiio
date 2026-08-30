@@ -1,11 +1,28 @@
+/**
+ * Refund execution handler (#232).
+ *
+ * State model: pending → (claim_dispatch) → provider call →
+ *   provider_success_unfinalized → (finalize_refund_execution) → success
+ *   provider_ambiguous (Tier 2 unknown outcome)
+ *   failed (provider confirmed failure)
+ *
+ * Execution writes use service_role client (trusted boundary).
+ * Finalization is atomic via PostgreSQL RPC.
+ * Provider idempotency key = refunds.id (attempt-scoped).
+ */
+
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { createServiceClient } from '@/lib/supabase/service';
 import { getPaymentGatewayByName } from './factory';
 import type { PaymentGatewayName } from '@/lib/constants';
 import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
 
+// Gateways with proven provider-side idempotent replay via stable request key
+const TIER1_GATEWAYS = new Set<string>(['stripe', 'square', 'paypal']);
+
 interface ProcessRefundOpts {
-  supabase: SupabaseClient;
+  supabase: SupabaseClient; // authenticated client for reads/validation
   paymentId: string;
   businessId: string;
   amount: number;
@@ -23,24 +40,9 @@ interface ProcessRefundResult {
 
 export async function processRefund(opts: ProcessRefundOpts): Promise<ProcessRefundResult> {
   const { supabase, paymentId, businessId, amount, reason, initiatedBy, initiatedByRole } = opts;
+  const service = createServiceClient();
 
-  // Idempotency guard: reject if a refund is already in-progress (pending) for this payment.
-  // This prevents double-processing when the user clicks the refund button twice.
-  // Completed (success) refunds are fine — they are already reflected in payment.refund_amount
-  // and the remaining-amount check below handles them correctly for partial refunds.
-  const { data: pendingRefund } = await supabase
-    .from('refunds')
-    .select('id')
-    .eq('payment_id', paymentId)
-    .eq('status', 'pending')
-    .limit(1)
-    .maybeSingle();
-
-  if (pendingRefund) {
-    return { success: false, errorMessage: 'A refund for this payment is already being processed' };
-  }
-
-  // 1. Load payment record
+  // ── 1. Load payment record (authenticated client — respects RLS) ──
   const { data: payment, error: paymentErr } = await supabase
     .from('payments')
     .select('id, amount, currency, refund_amount, status, gateway, gateway_reference, booking_id, invoice_id, campaign_id, order_id, reservation_id, business_id, metadata')
@@ -51,14 +53,22 @@ export async function processRefund(opts: ProcessRefundOpts): Promise<ProcessRef
     return { success: false, errorMessage: 'Payment not found' };
   }
 
-  // 2. Validate payment is refundable
+  // ── 2. Validate payment is refundable ──
   if (payment.status !== 'success' && payment.status !== 'refunded') {
     return { success: false, errorMessage: `Payment status "${payment.status}" is not refundable` };
   }
 
-  const existingRefund = Number(payment.refund_amount || 0);
+  // Over-refund guard: compute remaining from execution ledger (authoritative),
+  // not just payments.refund_amount (derived cache)
+  const { data: completedRefunds } = await service
+    .from('refunds')
+    .select('amount')
+    .eq('payment_id', paymentId)
+    .eq('status', 'success');
+
+  const ledgerRefunded = (completedRefunds || []).reduce((s, r) => s + Number(r.amount), 0);
   const paymentAmount = Number(payment.amount);
-  const remaining = paymentAmount - existingRefund;
+  const remaining = paymentAmount - ledgerRefunded;
 
   if (amount <= 0) {
     return { success: false, errorMessage: 'Refund amount must be greater than 0' };
@@ -68,12 +78,12 @@ export async function processRefund(opts: ProcessRefundOpts): Promise<ProcessRef
     return { success: false, errorMessage: `Refund amount (${amount}) exceeds remaining refundable amount (${remaining})` };
   }
 
-  // 3. Cross-validate businessId matches the payment's actual business
+  // ── 3. Cross-validate businessId ──
   if (payment.business_id && payment.business_id !== businessId) {
     return { success: false, errorMessage: 'Business ID does not match the payment record' };
   }
 
-  // 4. Check if business uses direct_split payout mode
+  // ── 4. Check payout mode ──
   const { data: business } = await supabase
     .from('businesses')
     .select('payout_mode')
@@ -81,12 +91,11 @@ export async function processRefund(opts: ProcessRefundOpts): Promise<ProcessRef
     .single();
 
   const isDirectSplit = business?.payout_mode === 'direct_split';
-
-  // 4. Determine refund type
   const refundType = amount >= remaining ? 'full' : 'partial';
 
-  // 5. Create refund record as pending
-  const { data: refundRecord, error: insertErr } = await supabase
+  // ── 5. Create refund record (service_role — execution ledger write) ──
+  // The partial unique index on non-terminal states prevents concurrent inserts
+  const { data: refundRecord, error: insertErr } = await service
     .from('refunds')
     .insert({
       payment_id: paymentId,
@@ -104,43 +113,89 @@ export async function processRefund(opts: ProcessRefundOpts): Promise<ProcessRef
     .single();
 
   if (insertErr || !refundRecord) {
+    // Partial unique index violation = another non-terminal refund exists
+    if (insertErr?.code === '23505') {
+      return { success: false, errorMessage: 'A refund for this payment is already being processed' };
+    }
     return { success: false, errorMessage: 'Failed to create refund record' };
   }
 
-  // 6. Process refund based on payout mode
+  // ── 6. Atomic dispatch claim ──
+  const { data: claimResult } = await service.rpc('claim_refund_dispatch', {
+    p_refund_id: refundRecord.id,
+  });
+
+  const claim = (claimResult as Array<Record<string, unknown>>)?.[0];
+  if (!claim?.claimed) {
+    return { success: false, errorMessage: 'Failed to claim refund for dispatch' };
+  }
+
+  // ── 7. Process refund ──
   if (isDirectSplit) {
-    // Direct split: record-only, business returns funds manually
-    await supabase
+    // Direct split: record-only, skip provider, go straight to finalization
+    await service
       .from('refunds')
-      .update({ status: 'success' })
+      .update({ status: 'provider_success_unfinalized', gateway_refund_reference: 'direct_split' })
       .eq('id', refundRecord.id);
   } else {
     // Platform managed: call gateway refund API
     const gatewayName = (payment.gateway || 'paystack') as PaymentGatewayName;
     const gateway = getPaymentGatewayByName(gatewayName);
-
     const metadata = payment.metadata as Record<string, unknown> | null;
+    const isTier1 = TIER1_GATEWAYS.has(gatewayName);
 
-    const result = await gateway.refundPayment({
-      gatewayReference: payment.gateway_reference,
-      amount: refundType === 'full' && existingRefund === 0 ? undefined : amount,
-      currency: (payment.currency as string) || 'NGN',
-      reason,
-      connectAccountId: (metadata?.connect_account_id as string) || undefined,
-      byoSecretKey: (metadata?.byo_secret_key as string) || undefined,
-    });
+    let result;
+    try {
+      result = await gateway.refundPayment({
+        gatewayReference: payment.gateway_reference,
+        amount: refundType === 'full' && ledgerRefunded === 0 ? undefined : amount,
+        currency: (payment.currency as string) || 'NGN',
+        reason,
+        connectAccountId: (metadata?.connect_account_id as string) || undefined,
+        byoSecretKey: (metadata?.byo_secret_key as string) || undefined,
+        idempotencyKey: refundRecord.id, // attempt-scoped stable key
+      });
+    } catch (err) {
+      // Transport/timeout error — outcome unknown
+      if (!isTier1) {
+        // Tier 2: fail closed to reconciliation
+        await service
+          .from('refunds')
+          .update({ status: 'provider_ambiguous', gateway_response: { error: String(err) } })
+          .eq('id', refundRecord.id);
+        return {
+          success: false,
+          refundId: refundRecord.id,
+          isDirectSplit,
+          errorMessage: 'Refund outcome unknown — requires manual reconciliation',
+        };
+      }
+      // Tier 1: the idempotency key makes it safe to mark ambiguous and retry later
+      await service
+        .from('refunds')
+        .update({ status: 'provider_ambiguous', gateway_response: { error: String(err) } })
+        .eq('id', refundRecord.id);
+      return {
+        success: false,
+        refundId: refundRecord.id,
+        isDirectSplit,
+        errorMessage: 'Refund outcome unknown — safe to retry with same attempt key',
+      };
+    }
 
     if (result.success) {
-      await supabase
+      // Provider confirmed success — mark as unfinalized with reference
+      await service
         .from('refunds')
         .update({
-          status: 'success',
+          status: 'provider_success_unfinalized',
           gateway_refund_reference: result.gatewayRefundReference || null,
           gateway_response: result.gatewayResponse || null,
         })
         .eq('id', refundRecord.id);
     } else {
-      await supabase
+      // Provider confirmed failure
+      await service
         .from('refunds')
         .update({
           status: 'failed',
@@ -157,97 +212,31 @@ export async function processRefund(opts: ProcessRefundOpts): Promise<ProcessRef
     }
   }
 
-  // 7. Update payment record
-  const newRefundAmount = existingRefund + amount;
-  const isFullyRefunded = newRefundAmount >= paymentAmount;
+  // ── 8. Atomic finalization via RPC ──
+  const { data: finalizeResult, error: finalizeErr } = await service.rpc('finalize_refund_execution', {
+    p_refund_id: refundRecord.id,
+  });
 
-  await supabase
-    .from('payments')
-    .update({
-      refund_amount: newRefundAmount,
-      refund_reason: reason || null,
-      refunded_at: new Date().toISOString(),
-      refunded_by: initiatedBy,
-      ...(isFullyRefunded && { status: 'refunded' }),
-    })
-    .eq('id', paymentId);
-
-  // 8. If fully refunded and has a booking/reservation, update deposit_status
-  if (isFullyRefunded && payment.booking_id) {
-    await supabase
-      .from('bookings')
-      .update({ deposit_status: 'refunded' })
-      .eq('id', payment.booking_id);
+  if (finalizeErr) {
+    logger.withContext({ op: 'refund.finalize', ...safeLogErrorContext(finalizeErr) })
+      .error(`[REFUND] Finalization RPC failed for refund ${refundRecord.id}`);
+    // Refund stays provider_success_unfinalized — can be retried
+    return {
+      success: false,
+      refundId: refundRecord.id,
+      isDirectSplit,
+      errorMessage: 'Refund processed at gateway but local finalization failed — will be retried',
+    };
   }
 
-  if (isFullyRefunded && payment.reservation_id) {
-    await supabase
-      .from('reservations')
-      .update({ deposit_status: 'refunded' })
-      .eq('id', payment.reservation_id);
-  }
-
-  // 9. Reverse platform fee on refund (full or partial)
-  const feeEntityCol = payment.booking_id ? 'booking_id' : payment.invoice_id ? 'invoice_id' : payment.campaign_id ? 'campaign_id' : payment.order_id ? 'order_id' : payment.reservation_id ? 'reservation_id' : null;
-  const feeEntityVal = payment.booking_id || payment.invoice_id || payment.campaign_id || payment.order_id || payment.reservation_id;
-  if (feeEntityCol && feeEntityVal) {
-    if (isFullyRefunded) {
-      // Full refund — mark fee as refunded entirely
-      await supabase
-        .from('platform_fees')
-        .update({ refunded_at: new Date().toISOString() })
-        .eq(feeEntityCol, feeEntityVal)
-        .is('refunded_at', null);
-    } else {
-      // Partial refund — reduce fee proportionally
-      const { data: fee } = await supabase
-        .from('platform_fees')
-        .select('id, fee_total, transaction_amount')
-        .eq(feeEntityCol, feeEntityVal)
-        .is('refunded_at', null)
-        .maybeSingle();
-      if (fee && fee.transaction_amount > 0) {
-        const refundRatio = amount / fee.transaction_amount;
-        const feeReduction = Math.round(fee.fee_total * refundRatio * 100) / 100;
-        await supabase
-          .from('platform_fees')
-          .update({ fee_total: Math.max(0, fee.fee_total - feeReduction) })
-          .eq('id', fee.id);
-      }
-    }
-  }
-
-  // 10. Check if a payout was already sent for this payment's period — if so, create adjustment
-  try {
-    const { data: payment2 } = await supabase
-      .from('payments')
-      .select('created_at')
-      .eq('id', paymentId)
-      .single();
-
-    if (payment2) {
-      const { data: paidPayout } = await supabase
-        .from('business_payouts')
-        .select('id')
-        .eq('business_id', businessId)
-        .eq('status', 'paid')
-        .gte('period_end', payment2.created_at)
-        .maybeSingle();
-
-      if (paidPayout) {
-        // Payout already sent — create adjustment record for next payout
-        await supabase.from('payout_adjustments').insert({
-          business_id: businessId,
-          payout_id: paidPayout.id,
-          amount: -amount, // negative = deduction from next payout
-          reason: `Refund for payment ${payment.gateway_reference}`,
-          payment_id: paymentId,
-        });
-      }
-    }
-  } catch (adjError) {
-    // Non-blocking — log but don't fail the refund
-    logger.withContext({ op: 'refund.payout-adjustment', ...safeLogErrorContext(adjError) }).error('[REFUND] Failed to create payout adjustment');
+  const finResult = finalizeResult as Record<string, unknown>;
+  if (!finResult?.finalized) {
+    return {
+      success: false,
+      refundId: refundRecord.id,
+      isDirectSplit,
+      errorMessage: `Finalization returned: ${finResult?.reason || 'unknown'}`,
+    };
   }
 
   return {

@@ -286,7 +286,7 @@ export class SquareGateway implements PaymentGateway {
       }
 
       const refundBody: Record<string, unknown> = {
-        idempotency_key: randomUUID(),
+        idempotency_key: opts.idempotencyKey || randomUUID(),
         payment_id: paymentId,
         reason: opts.reason || 'Refund requested',
       };

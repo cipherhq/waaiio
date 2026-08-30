@@ -265,7 +265,7 @@ export class StripeGateway implements PaymentGateway {
         refundParams.reason = 'requested_by_customer';
       }
 
-      const refundIdempotencyKey = `refund_${opts.gatewayReference}_${opts.amount ?? 'full'}`;
+      const refundIdempotencyKey = opts.idempotencyKey || `refund_${opts.gatewayReference}_${opts.amount ?? 'full'}`;
       const data = await stripeRequest('/refunds', refundParams, refundIdempotencyKey);
 
       if (data.id) {

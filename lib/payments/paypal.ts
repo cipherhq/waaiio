@@ -46,14 +46,14 @@ async function getAccessToken(): Promise<string> {
   return cachedToken.token;
 }
 
-async function paypalRequest(path: string, body: Record<string, unknown>, method = 'POST'): Promise<Record<string, unknown>> {
+async function paypalRequest(path: string, body: Record<string, unknown>, method = 'POST', requestId?: string): Promise<Record<string, unknown>> {
   const token = await getAccessToken();
   const response = await fetch(`${getPayPalBaseUrl()}${path}`, {
     method,
     headers: {
       Authorization: `Bearer ${token}`,
       'Content-Type': 'application/json',
-      'PayPal-Request-Id': randomUUID(),
+      'PayPal-Request-Id': requestId || randomUUID(),
     },
     ...(method !== 'GET' ? { body: JSON.stringify(body) } : {}),
     signal: AbortSignal.timeout(15000),
@@ -343,7 +343,7 @@ export class PayPalGateway implements PaymentGateway {
         refundBody.note_to_payer = opts.reason.slice(0, 255);
       }
 
-      const refundData = await paypalRequest(`/v2/payments/captures/${encodeURIComponent(captureId)}/refund`, refundBody);
+      const refundData = await paypalRequest(`/v2/payments/captures/${encodeURIComponent(captureId)}/refund`, refundBody, 'POST', opts.idempotencyKey);
 
       if (refundData.id && refundData.status === 'COMPLETED') {
         return {
