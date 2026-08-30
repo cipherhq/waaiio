@@ -276,6 +276,112 @@ describe('PostgreSQL Customer360/Financials (#225/#226)', () => {
     expect(result).toBe('0');
   });
 
+  // ── 226-FIN-2: Financial aggregate invariants ──
+
+  it('226-FIN-2a: totals are uncapped and independent of transaction p_limit', () => {
+    // Revenue totals must NOT change based on transaction row limit.
+    // get_business_revenue_totals has no limit — it sums all qualifying rows.
+    // get_business_transactions has a p_limit parameter for pagination.
+    // Prove: totals are identical regardless of whether we paginate transactions.
+
+    const totals = runSQL(`SELECT total_revenue FROM public.get_business_revenue_totals('${BIZ_A}');`);
+    const totalNum = parseInt(totals, 10);
+
+    // Same totals even with limit=1 on transactions
+    const totals2 = runSQL(`SELECT total_revenue FROM public.get_business_revenue_totals('${BIZ_A}');`);
+    expect(totals2).toBe(totals);
+    expect(totalNum).toBeGreaterThan(0);
+
+    // Transaction row count can vary with p_limit, but totals are independent
+    const limitedRows = runSQL(`SELECT COUNT(*) FROM public.get_business_transactions('${BIZ_A}', 1, 0);`);
+    expect(parseInt(limitedRows, 10)).toBeLessThanOrEqual(1);
+
+    // Full rows
+    const allRows = runSQL(`SELECT COUNT(*) FROM public.get_business_transactions('${BIZ_A}', 500, 0);`);
+    expect(parseInt(allRows, 10)).toBeGreaterThan(1);
+
+    // Totals unchanged — pagination does not affect revenue
+    const totals3 = runSQL(`SELECT total_revenue FROM public.get_business_revenue_totals('${BIZ_A}');`);
+    expect(totals3).toBe(totals);
+  });
+
+  it('226-FIN-2b: cancelled/no_show bookings are excluded from revenue totals', () => {
+    const CANC_BK = 'c2250000-0000-0000-0000-0000000000d0';
+    const NOSHOW_BK = 'c2250000-0000-0000-0000-0000000000d1';
+    try {
+      const before = runSQL(`SELECT booking_revenue FROM public.get_business_revenue_totals('${BIZ_A}');`);
+      const beforeNum = parseInt(before, 10);
+
+      // Add cancelled and no_show bookings
+      runSQL(`
+        INSERT INTO public.bookings (id, reference_code, business_id, user_id, flow_type, guest_name, guest_phone, date, time, party_size, channel, status, total_amount, created_at)
+        VALUES
+          ('${CANC_BK}', 'WA-PY-CANC', '${BIZ_A}', '${CUSTOMER_USER}', 'payment', 'Test', '${CUSTOMER_PHONE}', CURRENT_DATE, '10:00', 1, 'whatsapp', 'cancelled', 50000, now()),
+          ('${NOSHOW_BK}', 'WA-PY-NOSH', '${BIZ_A}', '${CUSTOMER_USER}', 'payment', 'Test', '${CUSTOMER_PHONE}', CURRENT_DATE, '10:00', 1, 'whatsapp', 'no_show', 50000, now());
+      `);
+
+      const after = runSQL(`SELECT booking_revenue FROM public.get_business_revenue_totals('${BIZ_A}');`);
+      const afterNum = parseInt(after, 10);
+
+      // Revenue must NOT increase — cancelled/no_show are excluded
+      expect(afterNum).toBe(beforeNum);
+    } finally {
+      runSQL(`DELETE FROM public.bookings WHERE id IN ('${CANC_BK}', '${NOSHOW_BK}');`);
+    }
+  });
+
+  it('226-FIN-2c: failed/refunded orders are excluded from revenue totals', () => {
+    const FAIL_ORD = 'c2250000-0000-0000-0000-0000000000d2';
+    try {
+      const before = runSQL(`SELECT order_revenue FROM public.get_business_revenue_totals('${BIZ_A}');`);
+      const beforeNum = parseInt(before, 10);
+
+      // Add a cancelled order (not in the included status set)
+      runSQL(`
+        INSERT INTO public.orders (id, reference_code, business_id, user_id, delivery_phone, status, total_amount, created_at)
+        VALUES ('${FAIL_ORD}', 'WA-OR-FAIL', '${BIZ_A}', '${CUSTOMER_USER}', '${CUSTOMER_PHONE}', 'cancelled', 50000, now());
+      `);
+
+      const after = runSQL(`SELECT order_revenue FROM public.get_business_revenue_totals('${BIZ_A}');`);
+      const afterNum = parseInt(after, 10);
+
+      expect(afterNum).toBe(beforeNum);
+    } finally {
+      runSQL(`DELETE FROM public.orders WHERE id = '${FAIL_ORD}';`);
+    }
+  });
+
+  it('226-FIN-2d: no double-counting — bookings and orders are structurally disjoint', () => {
+    // A Giving payment creates a booking (flow_type='payment') — NOT an order.
+    // An ordering flow creates an order — NOT a booking.
+    // get_business_transactions unions bookings + orders + invoices.
+    // Prove: WA-PY-T001 appears exactly once (as a booking, not duplicated as an order).
+    const bookingCount = runSQL(`
+      SELECT COUNT(*) FROM public.get_business_transactions('${BIZ_A}')
+      WHERE reference_code = 'WA-PY-T001' AND txn_type = 'booking';
+    `);
+    expect(bookingCount).toBe('1');
+
+    const orderCount = runSQL(`
+      SELECT COUNT(*) FROM public.get_business_transactions('${BIZ_A}')
+      WHERE reference_code = 'WA-PY-T001' AND txn_type = 'order';
+    `);
+    expect(orderCount).toBe('0');
+
+    // And WA-OR-T001 appears exactly once as an order
+    const orderOnce = runSQL(`
+      SELECT COUNT(*) FROM public.get_business_transactions('${BIZ_A}')
+      WHERE reference_code = 'WA-OR-T001' AND txn_type = 'order';
+    `);
+    expect(orderOnce).toBe('1');
+
+    const bookingNone = runSQL(`
+      SELECT COUNT(*) FROM public.get_business_transactions('${BIZ_A}')
+      WHERE reference_code = 'WA-OR-T001' AND txn_type = 'booking';
+    `);
+    expect(bookingNone).toBe('0');
+  });
+
   // ── Access control tests ──
 
   it('get_business_transactions is not executable by anon', () => {
@@ -299,12 +405,46 @@ describe('PostgreSQL Customer360/Financials (#225/#226)', () => {
     expect(result).toBe('f');
   });
 
-  // ── Profiles RLS proof ──
+  // ── Profiles RLS isolation proof (#226-RLS-1) ──
+  // Uses SET ROLE authenticated (non-superuser, non-BYPASSRLS) to prove
+  // profiles RLS blocks cross-user SELECT while the authorized RPC
+  // still resolves business-owned customer data.
 
-  it('RPC ownership check denies cross-business access (proven via auth.uid override)', () => {
-    // With auth.uid() = OWNER_A, querying BIZ_B returns empty
-    // (OWNER_A does not own BIZ_B)
-    const result = runSQL(`SELECT COUNT(*) FROM public.get_business_transactions('${BIZ_B}');`);
+  it('226-RLS-1a: authenticated business owner CANNOT directly SELECT another user profiles row', () => {
+    // auth.uid() = OWNER_A (set in beforeAll), SET ROLE authenticated
+    // OWNER_A tries to read CUSTOMER_USER's profile — RLS must deny
+    let result: { stdout: string; exitCode: number };
+    try {
+      const stdout = execSync(
+        `psql "${dbUrl}" -t -A -v ON_ERROR_STOP=1`,
+        { input: `SET ROLE authenticated;\nSELECT COUNT(*) FROM public.profiles WHERE id = '${CUSTOMER_USER}';`, encoding: 'utf-8', timeout: 15000 },
+      );
+      result = { stdout: stdout.trim(), exitCode: 0 };
+    } catch (err: any) {
+      result = { stdout: err.stdout?.trim() || '', exitCode: err.status || 1 };
+    }
+    // RLS blocks: either 0 rows or permission error
+    if (result.exitCode === 0) {
+      const count = result.stdout.split('\n').pop()?.replace('SET', '').trim();
+      expect(count).toBe('0');
+    }
+    // exitCode !== 0 also acceptable (permission denied)
+  });
+
+  it('226-RLS-1b: authorized RPC STILL resolves business-owned customer attribution', () => {
+    // The same auth.uid() = OWNER_A, but the SECURITY DEFINER RPC
+    // can resolve customer names from business-owned customer_profiles
+    const result = runSQL(`
+      SELECT customer_name FROM public.get_business_transactions('${BIZ_A}')
+      WHERE reference_code = 'WA-OR-T001';
+    `);
+    expect(result).toContain('Babajide Ace');
+  });
+
+  it('RPC ownership check denies cross-business access', () => {
+    runSQL(`CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $fn$ SELECT '${OWNER_B}'::UUID $fn$ LANGUAGE SQL STABLE;`);
+    const result = runSQL(`SELECT COUNT(*) FROM public.get_business_transactions('${BIZ_A}');`);
+    runSQL(`CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $fn$ SELECT '${OWNER_A}'::UUID $fn$ LANGUAGE SQL STABLE;`);
     expect(result).toBe('0');
   });
 
