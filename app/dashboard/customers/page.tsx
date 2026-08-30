@@ -28,25 +28,17 @@ interface CustomerProfile {
   last_seen_at: string | null;
   tags: string[] | null;
   notes: string | null;
-  lifetime_value: number | null;
-  churn_risk: number | null;
-  customer_segment: string | null;
 }
 
-interface BookingRecord {
-  id: string;
-  date: string;
+interface HistoryRecord {
+  history_type: string;
+  subject_id: string;
+  reference_code: string;
+  purpose: string;
+  amount: number;
+  currency: string;
   status: string;
-  deposit_amount: number | null;
-  guest_name: string | null;
-  service_type: string | null;
-}
-
-interface OrderRecord {
-  id: string;
-  created_at: string;
-  status: string;
-  total_amount: number | null;
+  event_date: string;
 }
 
 interface LoyaltyRecord {
@@ -132,8 +124,7 @@ export default function CustomersPage() {
   // Detail panel
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
-  const [bookings, setBookings] = useState<BookingRecord[]>([]);
-  const [orders, setOrders] = useState<OrderRecord[]>([]);
+  const [history, setHistory] = useState<HistoryRecord[]>([]);
   const [loyalty, setLoyalty] = useState<LoyaltyRecord | null>(null);
   const [feedback, setFeedback] = useState<FeedbackRecord[]>([]);
 
@@ -249,25 +240,13 @@ export default function CustomersPage() {
     const phone = customer.phone;
 
     // Fetch related data in parallel
-    const [bookingsRes, ordersRes, loyaltyRes, feedbackRes] = await Promise.all([
-      phone
-        ? supabase
-            .from('bookings')
-            .select('id, date, status, deposit_amount, guest_name, service_type')
-            .eq('business_id', business.id)
-            .eq('guest_phone', phone)
-            .order('date', { ascending: false })
-            .limit(10)
-        : Promise.resolve({ data: [] }),
-      phone
-        ? supabase
-            .from('orders')
-            .select('id, created_at, status, total_amount')
-            .eq('business_id', business.id)
-            .eq('customer_phone', phone)
-            .order('created_at', { ascending: false })
-            .limit(10)
-        : Promise.resolve({ data: [] }),
+    // Use get_customer_history RPC for unified, tenant-safe history (#225)
+    const [historyRes, loyaltyRes, feedbackRes] = await Promise.all([
+      supabase.rpc('get_customer_history', {
+        p_business_id: business.id,
+        p_customer_profile_id: customer.id,
+        p_limit: 50,
+      }),
       phone
         ? supabase
             .from('loyalty_points')
@@ -287,8 +266,7 @@ export default function CustomersPage() {
         : Promise.resolve({ data: [] }),
     ]);
 
-    setBookings((bookingsRes.data as BookingRecord[]) || []);
-    setOrders((ordersRes.data as OrderRecord[]) || []);
+    setHistory((historyRes.data as HistoryRecord[]) || []);
     setLoyalty((loyaltyRes.data as LoyaltyRecord | null) || null);
     setFeedback((feedbackRes.data as FeedbackRecord[]) || []);
     setDetailLoading(false);
@@ -577,7 +555,7 @@ export default function CustomersPage() {
                 <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">{isGiving ? 'Total Given' : 'Total Spent'}</th>
                 <th scope="col" className="hidden lg:table-cell px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Avg Rating</th>
                 <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Last Seen</th>
-                <th scope="col" className="hidden sm:table-cell px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Segment</th>
+                {/* Segment header hidden until intelligence calculation is implemented (#225) */}
                 <th scope="col" className="hidden lg:table-cell px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Tags</th>
               </tr>
             </thead>
@@ -639,22 +617,7 @@ export default function CustomersPage() {
                     {relativeTime(c.last_seen_at)}
                   </td>
 
-                  {/* Segment */}
-                  <td className="hidden sm:table-cell px-4 py-3">
-                    {c.customer_segment ? (
-                      <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${
-                        c.customer_segment === 'loyal' ? 'bg-green-50 text-green-700' :
-                        c.customer_segment === 'returning' ? 'bg-blue-50 text-blue-700' :
-                        c.customer_segment === 'at_risk' ? 'bg-yellow-50 text-yellow-700' :
-                        c.customer_segment === 'churned' ? 'bg-red-50 text-red-700' :
-                        'bg-gray-50 text-gray-600'
-                      }`}>
-                        {c.customer_segment === 'at_risk' ? 'At Risk' : c.customer_segment.charAt(0).toUpperCase() + c.customer_segment.slice(1)}
-                      </span>
-                    ) : (
-                      <span className="text-xs text-gray-300 dark:text-gray-500">&mdash;</span>
-                    )}
-                  </td>
+                  {/* Segment — hidden until intelligence calculation is implemented (#225) */}
 
                   {/* Tags */}
                   <td className="hidden lg:table-cell px-4 py-3">
@@ -962,40 +925,7 @@ export default function CustomersPage() {
                     </div>
                   </div>
 
-                  {/* Customer Intelligence */}
-                  {(selected.lifetime_value || selected.churn_risk != null || selected.customer_segment) && (
-                    <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-3">
-                      <div className="rounded-lg bg-brand-50 p-3">
-                        <p className="text-xs text-brand">Lifetime Value</p>
-                        <p className="mt-1 text-lg font-bold text-brand">
-                          {selected.lifetime_value ? formatCurrency(selected.lifetime_value, cc) : '\u2014'}
-                        </p>
-                      </div>
-                      <div className={`rounded-lg p-3 ${
-                        (selected.churn_risk || 0) >= 50 ? 'bg-red-50' :
-                        (selected.churn_risk || 0) >= 20 ? 'bg-yellow-50' : 'bg-green-50'
-                      }`}>
-                        <p className={`text-xs ${
-                          (selected.churn_risk || 0) >= 50 ? 'text-red-600' :
-                          (selected.churn_risk || 0) >= 20 ? 'text-yellow-600' : 'text-green-600'
-                        }`}>Churn Risk</p>
-                        <p className={`mt-1 text-lg font-bold ${
-                          (selected.churn_risk || 0) >= 50 ? 'text-red-700' :
-                          (selected.churn_risk || 0) >= 20 ? 'text-yellow-700' : 'text-green-700'
-                        }`}>
-                          {selected.churn_risk != null ? `${selected.churn_risk}%` : '\u2014'}
-                        </p>
-                      </div>
-                      <div className="rounded-lg bg-gray-50 dark:bg-gray-800/50 p-3">
-                        <p className="text-xs text-gray-500 dark:text-gray-400">Segment</p>
-                        <p className="mt-1 text-sm font-bold text-gray-900 dark:text-gray-100">
-                          {selected.customer_segment
-                            ? selected.customer_segment === 'at_risk' ? 'At Risk' : selected.customer_segment.charAt(0).toUpperCase() + selected.customer_segment.slice(1)
-                            : '\u2014'}
-                        </p>
-                      </div>
-                    </div>
-                  )}
+                  {/* Customer Intelligence — hidden when never calculated (#225) */}
 
                   {/* Loyalty Points */}
                   {loyalty && (
@@ -1024,88 +954,44 @@ export default function CustomersPage() {
                     </div>
                   )}
 
-                  {/* Booking / Giving History */}
+                  {/* Transaction History (unified via get_customer_history RPC) */}
                   <div className="mt-6">
-                    <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">History</h3>
-                    {bookings.length === 0 ? (
+                    <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Transaction History</h3>
+                    {history.length === 0 ? (
                       <p className="mt-2 text-xs text-gray-400 dark:text-gray-500">No records found.</p>
                     ) : (
                       <div className="mt-2 space-y-2">
-                        {bookings.map((b) => (
+                        {history.map((h) => (
                           <div
-                            key={b.id}
+                            key={`${h.history_type}-${h.subject_id}`}
                             className="flex items-center justify-between rounded-lg border border-gray-100 dark:border-gray-700 px-3 py-2"
                           >
                             <div className="min-w-0">
                               <p className="truncate text-sm font-medium text-gray-900 dark:text-gray-100">
-                                {b.service_type || 'Booking'}
-                              </p>
-                              <p className="text-xs text-gray-400 dark:text-gray-500">{b.date}</p>
-                            </div>
-                            <div className="ml-3 flex shrink-0 items-center gap-2">
-                              {b.deposit_amount != null && b.deposit_amount > 0 && (
-                                <span className="text-xs font-medium text-gray-600 dark:text-gray-400">
-                                  {formatCurrency(b.deposit_amount, cc)}
-                                </span>
-                              )}
-                              <span
-                                className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${
-                                  b.status === 'completed'
-                                    ? 'bg-green-50 text-green-700'
-                                    : b.status === 'cancelled'
-                                      ? 'bg-red-50 text-red-700'
-                                      : 'bg-yellow-50 text-yellow-700'
-                                }`}
-                              >
-                                {b.status}
-                              </span>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Order History */}
-                  <div className="mt-6">
-                    <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Order History</h3>
-                    {orders.length === 0 ? (
-                      <p className="mt-2 text-xs text-gray-400 dark:text-gray-500">No orders found.</p>
-                    ) : (
-                      <div className="mt-2 space-y-2">
-                        {orders.map((o) => (
-                          <div
-                            key={o.id}
-                            className="flex items-center justify-between rounded-lg border border-gray-100 dark:border-gray-700 px-3 py-2"
-                          >
-                            <div className="min-w-0">
-                              <p className="truncate text-sm font-medium text-gray-900 dark:text-gray-100">
-                                Order
+                                {h.purpose}
                               </p>
                               <p className="text-xs text-gray-400 dark:text-gray-500">
-                                {new Date(o.created_at).toLocaleDateString(getLocale((business.country_code || 'NG') as CountryCode), {
-                                  day: 'numeric',
-                                  month: 'short',
-                                  year: 'numeric',
+                                {h.reference_code} · {new Date(h.event_date).toLocaleDateString(getLocale(cc), {
+                                  day: 'numeric', month: 'short', year: 'numeric',
                                 })}
                               </p>
                             </div>
                             <div className="ml-3 flex shrink-0 items-center gap-2">
-                              {o.total_amount != null && o.total_amount > 0 && (
+                              {h.amount > 0 && (
                                 <span className="text-xs font-medium text-gray-600 dark:text-gray-400">
-                                  {formatCurrency(o.total_amount, cc)}
+                                  {formatCurrency(h.amount, cc)}
                                 </span>
                               )}
                               <span
                                 className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${
-                                  o.status === 'completed' || o.status === 'delivered'
+                                  h.status === 'completed' || h.status === 'delivered' || h.status === 'success' || h.status === 'paid'
                                     ? 'bg-green-50 text-green-700'
-                                    : o.status === 'cancelled'
+                                    : h.status === 'cancelled' || h.status === 'failed' || h.status === 'refunded'
                                       ? 'bg-red-50 text-red-700'
                                       : 'bg-yellow-50 text-yellow-700'
                                 }`}
                               >
-                                {o.status}
+                                {h.status}
                               </span>
                             </div>
                           </div>

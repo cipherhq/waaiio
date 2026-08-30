@@ -8,35 +8,16 @@ import { useCategoryConfig } from '@/hooks/useCategoryConfig';
 import { CsvExportButton } from '@/components/dashboard/CsvExportButton';
 import { PageHelp } from '@/components/dashboard/PageHelp';
 
-interface BookingRow {
-  id: string;
+interface TransactionRow {
+  txn_id: string;
+  txn_type: string;
   flow_type: string;
   reference_code: string;
-  guest_name: string | null;
-  total_amount: number;
-  deposit_amount: number;
+  purpose: string;
+  customer_name: string | null;
+  amount: number;
   status: string;
-  created_at: string;
-}
-
-interface OrderRow {
-  id: string;
-  reference_code: string;
-  total_amount: number;
-  status: string;
-  created_at: string;
-  user: { first_name: string | null; last_name: string | null } | null;
-}
-
-interface InvoiceRow {
-  id: string;
-  reference_code: string;
-  customer_name: string;
-  total_amount: number;
-  amount_paid: number;
-  status: string;
-  created_at: string;
-  paid_at: string | null;
+  event_date: string;
 }
 
 interface Transaction {
@@ -52,6 +33,7 @@ interface Transaction {
 
 const flowTypeStyles: Record<string, string> = {
   payment: 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300',
+  giving: 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300',
   booking: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300',
   order: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300',
   ordering: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300',
@@ -69,9 +51,7 @@ export default function FinancialsPage() {
   const isGiving = labels.quantityLabel === 'amount';
 
   const [loading, setLoading] = useState(true);
-  const [bookings, setBookings] = useState<BookingRow[]>([]);
-  const [orders, setOrders] = useState<OrderRow[]>([]);
-  const [invoices, setInvoices] = useState<InvoiceRow[]>([]);
+  const [txnRows, setTxnRows] = useState<TransactionRow[]>([]);
   const [platformFees, setPlatformFees] = useState(0);
   const [pendingPayouts, setPendingPayouts] = useState(0);
   const [typeFilter, setTypeFilter] = useState('all');
@@ -86,30 +66,27 @@ export default function FinancialsPage() {
   const [platformPct, setPlatformPct] = useState<number | null>(null);
   const isDirectSplit = business.payout_mode === 'direct_split';
 
+  // Server-side revenue totals (same inclusion semantics as rows, no row-cap)
+  const [bookingRevenue, setBookingRevenue] = useState(0);
+  const [orderRevenue, setOrderRevenue] = useState(0);
+  const [invoiceRevenue, setInvoiceRevenue] = useState(0);
+  const [totalRevenue, setTotalRevenue] = useState(0);
+
   useEffect(() => {
     async function load() {
       const supabase = createClient();
 
-      const [bookingsRes, ordersRes, invoicesRes, feesRes, payoutsRes, payoutAccountRes, refundsRes] = await Promise.all([
-        supabase
-          .from('bookings')
-          .select('id, flow_type, reference_code, guest_name, total_amount, deposit_amount, status, created_at')
-          .eq('business_id', business.id)
-          .order('created_at', { ascending: false })
-          .limit(500),
-        supabase
-          .from('orders')
-          .select('id, reference_code, total_amount, status, created_at, user:profiles!orders_user_id_fkey(first_name, last_name)')
-          .eq('business_id', business.id)
-          .is('deleted_at', null)
-          .order('created_at', { ascending: false })
-          .limit(500),
-        supabase
-          .from('invoices')
-          .select('id, reference_code, customer_name, total_amount, amount_paid, status, created_at, paid_at')
-          .eq('business_id', business.id)
-          .order('created_at', { ascending: false })
-          .limit(500),
+      const [txnRes, totalsRes, feesRes, payoutsRes, payoutAccountRes, refundsRes] = await Promise.all([
+        // Unified transaction projection via RPC (#226)
+        supabase.rpc('get_business_transactions', {
+          p_business_id: business.id,
+          p_limit: 500,
+          p_offset: 0,
+        }),
+        // Authoritative server-side totals (#226)
+        supabase.rpc('get_business_revenue_totals', {
+          p_business_id: business.id,
+        }),
         supabase
           .from('platform_fees')
           .select('fee_total')
@@ -136,9 +113,17 @@ export default function FinancialsPage() {
           .eq('status', 'success'),
       ]);
 
-      setBookings(bookingsRes.data || []);
-      setOrders((ordersRes.data as OrderRow[] | null) || []);
-      setInvoices(invoicesRes.data || []);
+      setTxnRows((txnRes.data as TransactionRow[]) || []);
+
+      // Set server-side totals
+      const totals = (totalsRes.data as Array<{ booking_revenue: number; order_revenue: number; invoice_revenue: number; total_revenue: number }>) || [];
+      if (totals.length > 0) {
+        setBookingRevenue(Number(totals[0].booking_revenue || 0));
+        setOrderRevenue(Number(totals[0].order_revenue || 0));
+        setInvoiceRevenue(Number(totals[0].invoice_revenue || 0));
+        setTotalRevenue(Number(totals[0].total_revenue || 0));
+      }
+
       if (isDirectSplit) {
         setPlatformPct(payoutAccountRes.data?.platform_percentage ?? 2.5);
       } else {
@@ -151,90 +136,24 @@ export default function FinancialsPage() {
     load();
   }, [business.id, isDirectSplit]);
 
-  // Revenue from all sources: bookings + orders + invoices
-  const bookingRevenue = useMemo(() =>
-    bookings
-      .filter(b => b.status !== 'cancelled' && b.status !== 'no_show')
-      .reduce((s, b) => s + Number(b.total_amount || b.deposit_amount || 0), 0),
-  [bookings]);
-
-  const orderRevenue = useMemo(() =>
-    orders
-      .filter(o => ['confirmed', 'processing', 'ready', 'shipped', 'delivered'].includes(o.status))
-      .reduce((s, o) => s + Number(o.total_amount || 0), 0),
-  [orders]);
-
-  const invoiceRevenue = useMemo(() =>
-    invoices
-      .filter(inv => inv.status === 'paid')
-      .reduce((s, inv) => s + Number(inv.amount_paid || inv.total_amount || 0), 0),
-  [invoices]);
-
-  const totalRevenue = bookingRevenue + orderRevenue + invoiceRevenue;
-
   const effectiveFees = isDirectSplit && platformPct !== null
     ? Math.round(totalRevenue * (platformPct / 100))
     : platformFees;
   const netEarnings = totalRevenue - effectiveFees - totalRefunds;
 
-  // Build unified transactions from bookings
-  const flowTypeLabel = (ft: string): string => {
-    switch (ft) {
-      case 'payment': return 'Payment';
-      case 'scheduling': return 'Booking';
-      case 'ordering': return 'Order';
-      case 'ticketing': return 'Ticket';
-      case 'reservation': return 'Reservation';
-      case 'invoice': return 'Invoice';
-      default: return 'Booking';
-    }
-  };
-
+  // Map RPC rows to Transaction interface
   const transactions = useMemo(() => {
-    const bookingTxns: Transaction[] = bookings.map((b) => {
-      const ft = b.flow_type || 'booking';
-      return {
-        id: b.id,
-        date: b.created_at,
-        type: ft,
-        description: `${flowTypeLabel(ft)} - ${b.reference_code}`,
-        customer: b.guest_name || '\u2014',
-        amount: Number(b.total_amount || b.deposit_amount || 0),
-        status: b.status,
-        reference: b.reference_code,
-      };
-    });
-
-    const orderTxns: Transaction[] = orders.map((o) => {
-      const name = o.user
-        ? [o.user.first_name, o.user.last_name].filter(Boolean).join(' ') || '\u2014'
-        : '\u2014';
-      return {
-        id: o.id,
-        date: o.created_at,
-        type: 'ordering',
-        description: `Order - ${o.reference_code}`,
-        customer: name,
-        amount: Number(o.total_amount || 0),
-        status: o.status,
-        reference: o.reference_code,
-      };
-    });
-
-    const invoiceTxns: Transaction[] = invoices.map((inv) => ({
-      id: inv.id,
-      date: inv.paid_at || inv.created_at,
-      type: 'invoice',
-      description: `Invoice - ${inv.reference_code}`,
-      customer: inv.customer_name || '\u2014',
-      amount: Number(inv.amount_paid || inv.total_amount || 0),
-      status: inv.status,
-      reference: inv.reference_code,
+    return txnRows.map((row): Transaction => ({
+      id: row.txn_id,
+      date: row.event_date,
+      type: row.flow_type || row.txn_type,
+      description: row.purpose,
+      customer: row.customer_name || '\u2014',
+      amount: Number(row.amount || 0),
+      status: row.status,
+      reference: row.reference_code,
     }));
-
-    return [...bookingTxns, ...orderTxns, ...invoiceTxns]
-      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-  }, [bookings, orders, invoices]);
+  }, [txnRows]);
 
   // Filtered transactions
   const filtered = useMemo(() => {
@@ -259,13 +178,11 @@ export default function FinancialsPage() {
 
   // Unique flow types for dynamic filter options
   const availableTypes = useMemo(() => {
-    const types = new Set(bookings.map(b => b.flow_type || 'booking'));
-    if (orders.length > 0) types.add('ordering');
-    if (invoices.length > 0) types.add('invoice');
+    const types = new Set(txnRows.map(r => r.flow_type || r.txn_type));
     return Array.from(types);
-  }, [bookings, orders, invoices]);
+  }, [txnRows]);
 
-  // Monthly revenue for chart (last 6 months) — includes all transaction sources
+  // Monthly revenue for chart (last 6 months) — from transaction rows
   const monthlyRevenue = useMemo(() => {
     const months: { label: string; amount: number }[] = [];
     const now = new Date();
@@ -274,22 +191,20 @@ export default function FinancialsPage() {
       const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
       const label = d.toLocaleDateString(getLocale((business.country_code || 'NG') as CountryCode), { month: 'short' });
 
-      const bAmt = bookings
-        .filter(b => b.status !== 'cancelled' && b.status !== 'no_show' && b.created_at.startsWith(key))
-        .reduce((s, b) => s + Number(b.total_amount || b.deposit_amount || 0), 0);
+      const amt = txnRows
+        .filter(r => {
+          if (!r.event_date?.startsWith(key)) return false;
+          if (r.status === 'cancelled' || r.status === 'no_show' || r.status === 'failed') return false;
+          if (r.txn_type === 'order' && !['confirmed', 'processing', 'ready', 'shipped', 'delivered'].includes(r.status)) return false;
+          if (r.txn_type === 'invoice' && r.status !== 'paid') return false;
+          return true;
+        })
+        .reduce((s, r) => s + Number(r.amount || 0), 0);
 
-      const oAmt = orders
-        .filter(o => ['confirmed', 'processing', 'ready', 'shipped', 'delivered'].includes(o.status) && o.created_at.startsWith(key))
-        .reduce((s, o) => s + Number(o.total_amount || 0), 0);
-
-      const iAmt = invoices
-        .filter(inv => inv.status === 'paid' && (inv.paid_at || inv.created_at).startsWith(key))
-        .reduce((s, inv) => s + Number(inv.amount_paid || inv.total_amount || 0), 0);
-
-      months.push({ label, amount: bAmt + oAmt + iAmt });
+      months.push({ label, amount: amt });
     }
     return months;
-  }, [bookings, orders, invoices]);
+  }, [txnRows]);
 
   const maxMonthly = Math.max(...monthlyRevenue.map(m => m.amount), 1);
 

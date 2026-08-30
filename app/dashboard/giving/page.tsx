@@ -40,6 +40,17 @@ export default function GivingPage() {
 
   const cc = (business.country_code || 'NG') as CountryCode;
 
+  // Recurring eligibility: business must have recurring_enabled + effective recurring capability
+  const recurringEligible = business.recurring_enabled && business.capabilities.includes('recurring');
+  const recurringBlocked = !recurringEligible;
+  const recurringBlockReason = !business.capabilities.includes('recurring')
+    ? (business.selectedCapabilities?.includes('recurring')
+      ? 'Recurring is paused due to your current plan. Upgrade to activate.'
+      : 'Enable the Recurring capability in Settings > Capabilities first.')
+    : !business.recurring_enabled
+      ? 'Enable Recurring Payments in Settings > Payments first.'
+      : '';
+
   const fetchCategories = useCallback(async () => {
     const supabase = createClient();
     const { data } = await supabase
@@ -89,7 +100,7 @@ export default function GivingPage() {
     setDescription(cat.description || '');
     setFixedAmount(!cat.price_is_variable);
     setPrice(cat.price);
-    setIsRecurring(cat.billing_type === 'recurring');
+    setIsRecurring(cat.billing_type === 'recurring' && recurringEligible);
     setInterval((cat.recurring_interval as 'weekly' | 'monthly') || 'monthly');
     setView('edit');
   };
@@ -142,11 +153,17 @@ export default function GivingPage() {
           </div>
 
           <div>
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input type="checkbox" checked={isRecurring} onChange={e => setIsRecurring(e.target.checked)} className="rounded" />
+            <label className={`flex items-center gap-2 ${recurringBlocked ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'}`}>
+              <input type="checkbox" checked={isRecurring}
+                onChange={e => { if (!recurringBlocked) setIsRecurring(e.target.checked); }}
+                disabled={recurringBlocked}
+                className="rounded" />
               <span className="text-sm text-gray-700 dark:text-gray-300">Recurring (auto-charge members on schedule)</span>
             </label>
-            {isRecurring && (
+            {recurringBlocked && (
+              <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">{recurringBlockReason}</p>
+            )}
+            {isRecurring && !recurringBlocked && (
               <select value={interval} onChange={e => setInterval(e.target.value as 'weekly' | 'monthly')}
                 className="mt-2 rounded-lg border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100">
                 <option value="weekly">Weekly</option>
@@ -199,6 +216,11 @@ export default function GivingPage() {
                   {cat.price_is_variable ? 'Members choose amount' : formatCurrency(cat.price, cc)}
                   {cat.billing_type === 'recurring' && ` · Recurring ${cat.recurring_interval}`}
                 </p>
+                {cat.billing_type === 'recurring' && recurringBlocked && cat.is_active && (
+                  <p className="text-xs text-amber-600 dark:text-amber-400 mt-0.5">
+                    Recurring is configured but not active. {recurringBlockReason}
+                  </p>
+                )}
                 {cat.description && <p className="text-xs text-gray-400 mt-0.5">{cat.description}</p>}
               </div>
               <div className="flex items-center gap-3">
