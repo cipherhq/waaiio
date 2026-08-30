@@ -122,12 +122,8 @@ DO $$ BEGIN
   END IF;
 END $$;
 
--- Service role: full access (trusted execution path)
-DO $$ BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'refunds' AND policyname = 'refunds_service_all') THEN
-    CREATE POLICY "refunds_service_all" ON public.refunds FOR ALL USING (true) WITH CHECK (true);
-  END IF;
-END $$;
+-- Service role bypasses RLS by default — no explicit policy needed.
+-- The GRANT ALL to service_role below provides full access.
 
 -- Grants: authenticated can only SELECT; service_role can do everything
 REVOKE ALL ON TABLE public.refunds FROM PUBLIC, anon;
