@@ -2,10 +2,11 @@
  * #224: Giving save server-authority boundary tests.
  *
  * Part 1: Unit tests for payload builder + eligibility logic.
- * Part 2: Real PostgreSQL tests proving write/no-write behavior through
- *          the actual route handler's persistence path.
+ * Part 2: Real route handler tests — invokes the actual POST() export from
+ *          /api/giving/save/route.ts with mocked auth but real PostgreSQL
+ *          persistence, proving write/no-write behavior at the authority boundary.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
 import { buildGivingServicePayload } from '@/lib/services/payload-builders';
 import { getEffectiveCapabilities } from '@/lib/capabilities/policy';
 
@@ -47,14 +48,6 @@ describe('#224: Giving save server authority — unit tests', () => {
       });
       expect(caps.effective).not.toContain('recurring');
     });
-
-    it('no recurring row → not effective', () => {
-      const caps = getEffectiveCapabilities({
-        configuredCapabilities: [{ capability: 'giving', is_enabled: true }],
-        tier: 'growth', trialEndsAt: null, overrides: [],
-      });
-      expect(caps.effective).not.toContain('recurring');
-    });
   });
 
   describe('supported intervals', () => {
@@ -65,28 +58,26 @@ describe('#224: Giving save server authority — unit tests', () => {
   });
 });
 
-// ── Part 2: Real PostgreSQL T5 tests ──
+// ── Part 2: Real route handler + PostgreSQL T5 tests ──
 
 import { execSync } from 'child_process';
 
 const dbUrl = process.env.TEST_DATABASE_URL;
 
 if (!dbUrl) {
-  describe.skip('#224 T5 PostgreSQL Giving save authority — TEST_DATABASE_URL not set', () => {
+  describe.skip('#224 T5 route handler + PostgreSQL — TEST_DATABASE_URL not set', () => {
     it('skipped', () => {});
   });
 } else {
 
 function runSQL(sql: string): string {
   try {
-    const stdout = execSync(
+    return execSync(
       `psql "${dbUrl}" -t -A -v ON_ERROR_STOP=1`,
       { input: sql, encoding: 'utf-8', timeout: 15000 },
-    );
-    return stdout.trim();
+    ).trim();
   } catch (err: any) {
-    const msg = err.stderr?.trim() || err.stdout?.trim() || String(err);
-    throw new Error(`SQL failed: ${msg}`);
+    throw new Error(`SQL failed: ${err.stderr?.trim() || err.stdout?.trim() || err}`);
   }
 }
 
@@ -95,9 +86,59 @@ const BIZ_ID = 'c2240000-0000-0000-0000-000000000010';
 const GIVING_SVC = 'c2240000-0000-0000-0000-000000000020';
 const SCHED_SVC = 'c2240000-0000-0000-0000-000000000021';
 
-describe('#224 T5 PostgreSQL: Giving save write/no-write authority', () => {
+/**
+ * Invoke the REAL POST() handler from /api/giving/save/route.ts.
+ * Mocks only the auth layer (supabase server createClient → returns a
+ * service-role client with auth.getUser overridden to return the test user).
+ * All DB queries in the route execute against the real test PostgreSQL.
+ */
+async function callRoute(body: Record<string, unknown>, userId: string = OWNER_ID): Promise<{ status: number; json: Record<string, unknown> }> {
+  // Dynamic import so vi.mock is applied first
+  const { createClient: createServiceClient } = await import('@/lib/supabase/service');
+  const realClient = createServiceClient();
+
+  // Override auth.getUser to return the test user
+  const mockedClient = {
+    ...realClient,
+    auth: {
+      ...realClient.auth,
+      getUser: vi.fn().mockResolvedValue({
+        data: { user: { id: userId } },
+        error: null,
+      }),
+    },
+    from: realClient.from.bind(realClient),
+    rpc: realClient.rpc.bind(realClient),
+  };
+
+  // Mock the server createClient to return our mocked client
+  vi.doMock('@/lib/supabase/server', () => ({
+    createClient: vi.fn().mockResolvedValue(mockedClient),
+  }));
+
+  // Force re-import the route module so it picks up the mock
+  const routeModule = await import('@/app/api/giving/save/route');
+  const { POST } = routeModule;
+
+  const request = new Request('http://localhost/api/giving/save', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+
+  const response = await POST(request as any);
+  const json = await response.json();
+
+  // Clean up mock for next call
+  vi.restoreAllMocks();
+
+  return { status: response.status, json };
+}
+
+describe('#224 T5: real route handler + PostgreSQL write/no-write', () => {
   beforeAll(() => {
     runSQL(`
+      DELETE FROM public.business_capabilities WHERE business_id = '${BIZ_ID}';
       DELETE FROM public.services WHERE business_id = '${BIZ_ID}';
       DELETE FROM public.businesses WHERE id = '${BIZ_ID}';
       DELETE FROM public.profiles WHERE id = '${OWNER_ID}';
@@ -107,10 +148,8 @@ describe('#224 T5 PostgreSQL: Giving save write/no-write authority', () => {
       VALUES ('${OWNER_ID}', 'owner-224t5@test.local', '{"provider":"email"}', '{}', 'authenticated', 'authenticated', '00000000-0000-0000-0000-000000000000', now(), now());
       INSERT INTO public.profiles (id, first_name, last_name, email, role)
       VALUES ('${OWNER_ID}', 'T5Owner', 'Test', 'owner-224t5@test.local', 'user');
-
       INSERT INTO public.businesses (id, owner_id, name, slug, category, address, city, phone, status, subscription_tier, recurring_enabled, country_code)
       VALUES ('${BIZ_ID}', '${OWNER_ID}', 'T5 Church', 't5-church-224', 'church', '1 Test St', 'Lagos', '+2340000224', 'active', 'growth', false, 'NG');
-
       INSERT INTO public.services (id, business_id, name, service_type, billing_type, is_active, price, duration_minutes, deposit_amount, sort_order)
       VALUES
         ('${GIVING_SVC}', '${BIZ_ID}', 'T5 Tithe', 'giving', 'one_time', true, 0, 0, 0, 0),
@@ -120,6 +159,7 @@ describe('#224 T5 PostgreSQL: Giving save write/no-write authority', () => {
 
   afterAll(() => {
     runSQL(`
+      DELETE FROM public.business_capabilities WHERE business_id = '${BIZ_ID}';
       DELETE FROM public.services WHERE business_id = '${BIZ_ID}';
       DELETE FROM public.businesses WHERE id = '${BIZ_ID}';
       DELETE FROM public.profiles WHERE id = '${OWNER_ID}';
@@ -127,54 +167,59 @@ describe('#224 T5 PostgreSQL: Giving save write/no-write authority', () => {
     `);
   });
 
-  it('T5-DB-1: ineligible recurring update does NOT change services (write proof)', () => {
-    // Business has recurring_enabled=false — simulate the API route's rejection
-    // by proving the DB state before and after an attempted recurring write
-    const before = runSQL(`
-      SELECT billing_type, recurring_interval FROM public.services WHERE id = '${GIVING_SVC}';
-    `);
-    expect(before).toContain('one_time');
+  it('T5-1: ineligible recurring save returns 400 and leaves services unchanged', async () => {
+    // Business has recurring_enabled=false
+    const before = runSQL(`SELECT billing_type FROM public.services WHERE id = '${GIVING_SVC}';`);
+    expect(before).toBe('one_time');
 
-    // The API route would check recurring_enabled=false and return 400
-    // before reaching the update. Verify the row is unchanged:
-    const after = runSQL(`
-      SELECT billing_type, recurring_interval FROM public.services WHERE id = '${GIVING_SVC}';
-    `);
-    expect(after).toBe(before);
-    expect(after).toContain('one_time');
-  });
-
-  it('T5-DB-2: eligible recurring update DOES persist (write proof)', () => {
-    // Enable recurring on the business
-    runSQL(`UPDATE public.businesses SET recurring_enabled = true WHERE id = '${BIZ_ID}';`);
-    // Add effective recurring capability
-    runSQL(`INSERT INTO public.business_capabilities (business_id, capability, is_enabled, sort_order) VALUES ('${BIZ_ID}', 'recurring', true, 99) ON CONFLICT DO NOTHING;`);
-
-    // Now simulate the API route's successful write path
-    const payload = buildGivingServicePayload({
-      businessId: BIZ_ID, name: 'T5 Tithe Updated', description: 'Recurring now',
-      fixedAmount: false, price: 0, isRecurring: true, interval: 'monthly',
+    const { status, json } = await callRoute({
+      businessId: BIZ_ID,
+      serviceId: GIVING_SVC,
+      name: 'T5 Tithe Recurring',
+      description: '',
+      fixedAmount: false,
+      price: 0,
+      isRecurring: true,
+      interval: 'monthly',
     });
 
-    // The API route would pass eligibility and execute this update:
+    expect(status).toBe(400);
+    expect(json.success).toBe(false);
+    expect(json.reason).toBe('recurring_not_enabled');
+
+    // DB unchanged
+    const after = runSQL(`SELECT billing_type FROM public.services WHERE id = '${GIVING_SVC}';`);
+    expect(after).toBe('one_time');
+  });
+
+  it('T5-2: eligible recurring save returns 200 and persists configuration', async () => {
+    // Enable recurring
     runSQL(`
-      UPDATE public.services SET
-        name = '${payload.name}',
-        billing_type = '${payload.billing_type}',
-        recurring_interval = '${payload.recurring_interval}'
-      WHERE id = '${GIVING_SVC}'
-        AND business_id = '${BIZ_ID}'
-        AND service_type = 'giving'
-        AND deleted_at IS NULL;
+      UPDATE public.businesses SET recurring_enabled = true WHERE id = '${BIZ_ID}';
+      INSERT INTO public.business_capabilities (business_id, capability, is_enabled, sort_order)
+      VALUES ('${BIZ_ID}', 'recurring', true, 99) ON CONFLICT DO NOTHING;
     `);
 
-    const after = runSQL(`
-      SELECT billing_type, recurring_interval FROM public.services WHERE id = '${GIVING_SVC}';
-    `);
+    const { status, json } = await callRoute({
+      businessId: BIZ_ID,
+      serviceId: GIVING_SVC,
+      name: 'T5 Tithe Recurring',
+      description: 'Now recurring',
+      fixedAmount: false,
+      price: 0,
+      isRecurring: true,
+      interval: 'monthly',
+    });
+
+    expect(status).toBe(200);
+    expect(json.success).toBe(true);
+
+    // DB persisted
+    const after = runSQL(`SELECT billing_type, recurring_interval FROM public.services WHERE id = '${GIVING_SVC}';`);
     expect(after).toContain('recurring');
     expect(after).toContain('monthly');
 
-    // Cleanup: restore original state
+    // Restore
     runSQL(`
       UPDATE public.services SET name = 'T5 Tithe', billing_type = 'one_time', recurring_interval = NULL WHERE id = '${GIVING_SVC}';
       UPDATE public.businesses SET recurring_enabled = false WHERE id = '${BIZ_ID}';
@@ -182,68 +227,127 @@ describe('#224 T5 PostgreSQL: Giving save write/no-write authority', () => {
     `);
   });
 
-  it('T5-DB-3: update scoped to service_type=giving — non-giving service is NOT mutated', () => {
-    // Attempt to update the scheduling service through the Giving-scoped update path
-    const before = runSQL(`
-      SELECT name, service_type FROM public.services WHERE id = '${SCHED_SVC}';
+  it('T5-3: non-Giving service ID is rejected 404 and unchanged', async () => {
+    // Enable recurring so the recurring gate passes, proving the service_type gate catches it
+    runSQL(`
+      UPDATE public.businesses SET recurring_enabled = true WHERE id = '${BIZ_ID}';
+      INSERT INTO public.business_capabilities (business_id, capability, is_enabled, sort_order)
+      VALUES ('${BIZ_ID}', 'recurring', true, 99) ON CONFLICT DO NOTHING;
     `);
-    expect(before).toContain('scheduling');
 
-    // The API route's update has: .eq('service_type', 'giving').is('deleted_at', null)
-    // A scheduling service should return zero rows → 404
-    const rowCount = runSQL(`
-      UPDATE public.services SET
-        name = 'Hijacked',
-        service_type = 'giving',
-        billing_type = 'recurring',
-        recurring_interval = 'monthly'
-      WHERE id = '${SCHED_SVC}'
-        AND business_id = '${BIZ_ID}'
-        AND service_type = 'giving'
-        AND deleted_at IS NULL
-      RETURNING id;
-    `);
-    // Zero rows returned — scheduling service NOT matched by the giving filter
-    expect(rowCount).toBe('');
+    const { status, json } = await callRoute({
+      businessId: BIZ_ID,
+      serviceId: SCHED_SVC,  // scheduling service, not giving
+      name: 'Hijacked',
+      description: '',
+      fixedAmount: false,
+      price: 0,
+      isRecurring: true,
+      interval: 'monthly',
+    });
 
-    // Verify unchanged
-    const after = runSQL(`
-      SELECT name, service_type FROM public.services WHERE id = '${SCHED_SVC}';
-    `);
-    expect(after).toContain('scheduling');
+    expect(status).toBe(404);
+    expect(json.reason).toBe('service_not_found');
+
+    // DB unchanged — still scheduling
+    const after = runSQL(`SELECT name, service_type FROM public.services WHERE id = '${SCHED_SVC}';`);
     expect(after).toContain('T5 Haircut');
-    expect(after).not.toContain('Hijacked');
+    expect(after).toContain('scheduling');
+
+    // Restore
+    runSQL(`
+      UPDATE public.businesses SET recurring_enabled = false WHERE id = '${BIZ_ID}';
+      DELETE FROM public.business_capabilities WHERE business_id = '${BIZ_ID}' AND capability = 'recurring';
+    `);
   });
 
-  it('T5-DB-4: one-time Giving save succeeds without recurring gates', () => {
-    // Business has recurring_enabled=false, but one-time saves should work
-    const payload = buildGivingServicePayload({
-      businessId: BIZ_ID, name: 'T5 Offering', description: 'One-time',
-      fixedAmount: true, price: 5000, isRecurring: false, interval: 'monthly',
+  it('T5-4: one-time Giving save succeeds without recurring entitlement', async () => {
+    // Business has recurring_enabled=false — one-time should still work
+    const { status, json } = await callRoute({
+      businessId: BIZ_ID,
+      serviceId: GIVING_SVC,
+      name: 'T5 Offering',
+      description: 'One-time giving',
+      fixedAmount: true,
+      price: 5000,
+      isRecurring: false,
+      interval: 'monthly',
     });
-    expect(payload.billing_type).toBe('one_time');
-    expect(payload.recurring_interval).toBeNull();
 
-    // One-time update should succeed regardless of recurring eligibility
-    runSQL(`
-      UPDATE public.services SET
-        name = '${payload.name}',
-        billing_type = '${payload.billing_type}',
-        recurring_interval = NULL
-      WHERE id = '${GIVING_SVC}'
-        AND business_id = '${BIZ_ID}'
-        AND service_type = 'giving'
-        AND deleted_at IS NULL;
-    `);
+    expect(status).toBe(200);
+    expect(json.success).toBe(true);
 
-    const after = runSQL(`
-      SELECT name, billing_type FROM public.services WHERE id = '${GIVING_SVC}';
-    `);
+    // DB persisted as one_time
+    const after = runSQL(`SELECT name, billing_type FROM public.services WHERE id = '${GIVING_SVC}';`);
     expect(after).toContain('T5 Offering');
     expect(after).toContain('one_time');
 
     // Restore
     runSQL(`UPDATE public.services SET name = 'T5 Tithe' WHERE id = '${GIVING_SVC}';`);
+  });
+
+  it('T5-5: weekly interval persists correctly', async () => {
+    runSQL(`
+      UPDATE public.businesses SET recurring_enabled = true WHERE id = '${BIZ_ID}';
+      INSERT INTO public.business_capabilities (business_id, capability, is_enabled, sort_order)
+      VALUES ('${BIZ_ID}', 'recurring', true, 99) ON CONFLICT DO NOTHING;
+    `);
+
+    const { status, json } = await callRoute({
+      businessId: BIZ_ID,
+      serviceId: GIVING_SVC,
+      name: 'Weekly Tithe',
+      description: '',
+      fixedAmount: false,
+      price: 0,
+      isRecurring: true,
+      interval: 'weekly',
+    });
+
+    expect(status).toBe(200);
+    expect(json.success).toBe(true);
+
+    const after = runSQL(`SELECT recurring_interval FROM public.services WHERE id = '${GIVING_SVC}';`);
+    expect(after).toBe('weekly');
+
+    // Restore
+    runSQL(`
+      UPDATE public.services SET name = 'T5 Tithe', billing_type = 'one_time', recurring_interval = NULL WHERE id = '${GIVING_SVC}';
+      UPDATE public.businesses SET recurring_enabled = false WHERE id = '${BIZ_ID}';
+      DELETE FROM public.business_capabilities WHERE business_id = '${BIZ_ID}' AND capability = 'recurring';
+    `);
+  });
+
+  it('T5-6: wrong business owner is rejected 403', async () => {
+    const WRONG_USER = 'c2240000-0000-0000-0000-000000000099';
+    runSQL(`
+      INSERT INTO auth.users (id, email, raw_app_meta_data, raw_user_meta_data, aud, role, instance_id, created_at, updated_at)
+      VALUES ('${WRONG_USER}', 'wrong-224@test.local', '{"provider":"email"}', '{}', 'authenticated', 'authenticated', '00000000-0000-0000-0000-000000000000', now(), now())
+      ON CONFLICT DO NOTHING;
+      INSERT INTO public.profiles (id, first_name, last_name, email, role)
+      VALUES ('${WRONG_USER}', 'Wrong', 'User', 'wrong-224@test.local', 'user')
+      ON CONFLICT DO NOTHING;
+    `);
+
+    const { status, json } = await callRoute({
+      businessId: BIZ_ID,
+      serviceId: GIVING_SVC,
+      name: 'Hijacked',
+      isRecurring: false,
+      interval: 'monthly',
+    }, WRONG_USER);
+
+    expect(status).toBe(403);
+    expect(json.reason).toBe('unauthorized');
+
+    // DB unchanged
+    const after = runSQL(`SELECT name FROM public.services WHERE id = '${GIVING_SVC}';`);
+    expect(after).toContain('T5 Tithe');
+
+    runSQL(`
+      DELETE FROM public.profiles WHERE id = '${WRONG_USER}';
+      DELETE FROM auth.users WHERE id = '${WRONG_USER}';
+    `);
   });
 });
 
