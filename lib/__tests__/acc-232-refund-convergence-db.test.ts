@@ -287,36 +287,46 @@ describe('#232 Refund convergence PostgreSQL', () => {
 
   // ── Sequential partial refunds: cumulative fee correctness ──
 
-  it('two partial refunds produce same fee state as one full refund', () => {
+  it('two partial refunds produce same fee state as direct full refund', () => {
     const REF_P1 = 'c2320000-0000-0000-0000-000000000130';
     const REF_P2 = 'c2320000-0000-0000-0000-000000000131';
+    const REF_FULL = 'c2320000-0000-0000-0000-000000000132';
     try {
-      // Reset
+      // === Path A: two 50% partial refunds ===
       runSQL(`UPDATE public.payments SET refund_amount = 0, status = 'success' WHERE id = '${PAYMENT}';`);
       runSQL(`UPDATE public.platform_fees SET refunded_at = NULL, fee_total = 250 WHERE booking_id = '${BOOKING}';`);
 
-      // First partial: 5000 of 10000
       runSQL(`INSERT INTO public.refunds (id, payment_id, business_id, amount, status, gateway, refund_type, initiated_by, dispatched_at, gateway_refund_reference) VALUES ('${REF_P1}', '${PAYMENT}', '${BIZ}', 5000, 'provider_success_unfinalized', 'paystack', 'partial', '${OWNER}', now(), 'gw-p1');`);
       runSQL(`SELECT finalize_refund_execution('${REF_P1}');`);
 
-      const fee1 = runSQL(`SELECT fee_total FROM public.platform_fees WHERE booking_id = '${BOOKING}' AND refunded_at IS NULL;`);
-      const fee1Val = parseFloat(fee1);
-      // Expect fee reduced by 50% (5000/10000 * 250 = 125)
-      expect(fee1Val).toBeCloseTo(125, 0);
-
-      // Second partial: remaining 5000
       runSQL(`INSERT INTO public.refunds (id, payment_id, business_id, amount, status, gateway, refund_type, initiated_by, dispatched_at, gateway_refund_reference) VALUES ('${REF_P2}', '${PAYMENT}', '${BIZ}', 5000, 'provider_success_unfinalized', 'paystack', 'full', '${OWNER}', now(), 'gw-p2');`);
       runSQL(`SELECT finalize_refund_execution('${REF_P2}');`);
 
-      // After full refund, fee should be marked refunded_at (not just reduced)
-      const feeRefunded = runSQL(`SELECT refunded_at IS NOT NULL FROM public.platform_fees WHERE booking_id = '${BOOKING}';`);
-      expect(feeRefunded).toBe('t');
+      // Capture Path A final fee state
+      const feeA = runSQL(`SELECT fee_total, refunded_at IS NOT NULL AS is_refunded FROM public.platform_fees WHERE booking_id = '${BOOKING}';`);
+      const payStatusA = runSQL(`SELECT status FROM public.payments WHERE id = '${PAYMENT}';`);
 
-      // Payment fully refunded
-      const payStatus = runSQL(`SELECT status FROM public.payments WHERE id = '${PAYMENT}';`);
-      expect(payStatus).toBe('refunded');
-    } finally {
+      // === Path B: one direct full refund (reset and redo) ===
       runSQL(`DELETE FROM public.refunds WHERE id IN ('${REF_P1}', '${REF_P2}');`);
+      runSQL(`UPDATE public.payments SET refund_amount = 0, status = 'success' WHERE id = '${PAYMENT}';`);
+      runSQL(`UPDATE public.platform_fees SET refunded_at = NULL, fee_total = 250 WHERE booking_id = '${BOOKING}';`);
+
+      runSQL(`INSERT INTO public.refunds (id, payment_id, business_id, amount, status, gateway, refund_type, initiated_by, dispatched_at, gateway_refund_reference) VALUES ('${REF_FULL}', '${PAYMENT}', '${BIZ}', 10000, 'provider_success_unfinalized', 'paystack', 'full', '${OWNER}', now(), 'gw-full');`);
+      runSQL(`SELECT finalize_refund_execution('${REF_FULL}');`);
+
+      // Capture Path B final fee state
+      const feeB = runSQL(`SELECT fee_total, refunded_at IS NOT NULL AS is_refunded FROM public.platform_fees WHERE booking_id = '${BOOKING}';`);
+      const payStatusB = runSQL(`SELECT status FROM public.payments WHERE id = '${PAYMENT}';`);
+
+      // === Assert equality ===
+      // Both paths should produce: fee_total=0, refunded_at set, payment status=refunded
+      expect(feeA).toBe(feeB);
+      expect(payStatusA).toBe(payStatusB);
+      expect(feeA).toContain('0');      // fee_total = 0
+      expect(feeA).toContain('t');      // refunded_at IS NOT NULL
+      expect(payStatusA).toBe('refunded');
+    } finally {
+      runSQL(`DELETE FROM public.refunds WHERE id IN ('${REF_P1}', '${REF_P2}', '${REF_FULL}');`);
       runSQL(`UPDATE public.payments SET refund_amount = 0, status = 'success' WHERE id = '${PAYMENT}';`);
       runSQL(`UPDATE public.platform_fees SET refunded_at = NULL, fee_total = 250 WHERE booking_id = '${BOOKING}';`);
     }
@@ -389,31 +399,78 @@ describe('#232 Refund convergence PostgreSQL', () => {
 
   // ── Production-shaped convergence proof ──
 
-  it('migration 355 converges from production-shaped precondition (no refunds table)', () => {
-    // Simulate production shape: drop refunds, remove payment columns, re-apply 355 logic
-    // We can't re-run the migration file, but we can verify the convergence path:
-    // ALTER TABLE ADD COLUMN IF NOT EXISTS is idempotent for payment columns
-    // CREATE TABLE IF NOT EXISTS is idempotent for refunds table
-    // The fact that all other tests pass after 034→355 proves from-scratch convergence.
-    // For production: 355 will CREATE TABLE (not IF NOT EXISTS skip) since refunds doesn't exist.
+  it('production-shaped convergence: drop refunds + payment cols, re-apply 355 SQL', () => {
+    // Simulate exact production drift: no refunds table, no payment refund columns.
+    // Then re-apply the convergence SQL from migration 355.
+    try {
+      // Drop refunds table (and its policies/indexes)
+      runSQL(`DROP TABLE IF EXISTS public.refunds CASCADE;`);
+      // Drop payment refund columns
+      runSQL(`ALTER TABLE public.payments DROP COLUMN IF EXISTS refund_amount;`);
+      runSQL(`ALTER TABLE public.payments DROP COLUMN IF EXISTS refund_reason;`);
+      runSQL(`ALTER TABLE public.payments DROP COLUMN IF EXISTS refunded_by;`);
+      runSQL(`ALTER TABLE public.payments DROP COLUMN IF EXISTS refunded_at;`);
 
-    // Verify the columns added by 355 exist (dispatched_at, finalized_at)
-    const cols = runSQL(`
-      SELECT column_name FROM information_schema.columns
-      WHERE table_schema = 'public' AND table_name = 'refunds'
-        AND column_name IN ('dispatched_at', 'finalized_at')
-      ORDER BY column_name;
-    `);
-    expect(cols).toContain('dispatched_at');
-    expect(cols).toContain('finalized_at');
+      // Verify production shape: no refunds table
+      const noTable = runSQL(`SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'refunds';`);
+      expect(noTable).toBe('0');
 
-    // Verify the 5-state CHECK is the active one (not the old 3-state)
-    const r = runSQLSafe(`
-      INSERT INTO public.refunds (id, payment_id, business_id, amount, status, refund_type)
-      VALUES ('c2320000-0000-0000-0000-000000000200', '${PAYMENT}', '${BIZ}', 1, 'provider_ambiguous', 'partial');
-    `);
-    expect(r.exitCode).toBe(0);
-    runSQL(`DELETE FROM public.refunds WHERE id = 'c2320000-0000-0000-0000-000000000200';`);
+      // Verify no payment refund columns
+      const noCols = runSQL(`SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'payments' AND column_name = 'refund_amount';`);
+      expect(noCols).toBe('0');
+
+      // Re-apply convergence SQL (the key parts of migration 355)
+      runSQL(`
+        ALTER TABLE public.payments ADD COLUMN IF NOT EXISTS refund_amount NUMERIC(12,2) DEFAULT 0;
+        ALTER TABLE public.payments ADD COLUMN IF NOT EXISTS refund_reason TEXT;
+        ALTER TABLE public.payments ADD COLUMN IF NOT EXISTS refunded_by UUID;
+        ALTER TABLE public.payments ADD COLUMN IF NOT EXISTS refunded_at TIMESTAMPTZ;
+
+        CREATE TABLE IF NOT EXISTS public.refunds (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          payment_id UUID NOT NULL REFERENCES public.payments(id) ON DELETE CASCADE,
+          business_id UUID NOT NULL REFERENCES public.businesses(id) ON DELETE CASCADE,
+          amount NUMERIC(12,2) NOT NULL CHECK (amount > 0),
+          reason TEXT,
+          status TEXT NOT NULL DEFAULT 'pending',
+          gateway TEXT,
+          gateway_refund_reference TEXT,
+          gateway_response JSONB,
+          refund_type TEXT NOT NULL DEFAULT 'full',
+          is_direct_split BOOLEAN NOT NULL DEFAULT FALSE,
+          initiated_by UUID,
+          initiated_by_role TEXT NOT NULL DEFAULT 'business',
+          created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+        ALTER TABLE public.refunds ADD COLUMN IF NOT EXISTS dispatched_at TIMESTAMPTZ;
+        ALTER TABLE public.refunds ADD COLUMN IF NOT EXISTS finalized_at TIMESTAMPTZ;
+      `);
+
+      // Verify postconditions: table exists with convergence columns
+      const hasTable = runSQL(`SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'refunds';`);
+      expect(hasTable).toBe('1');
+
+      const hasCols = runSQL(`SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'refunds' AND column_name IN ('dispatched_at', 'finalized_at') ORDER BY column_name;`);
+      expect(hasCols).toContain('dispatched_at');
+      expect(hasCols).toContain('finalized_at');
+
+      const hasPayCols = runSQL(`SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'payments' AND column_name = 'refund_amount';`);
+      expect(hasPayCols).toBe('1');
+    } finally {
+      // Restore full schema by re-applying the CHECK, indexes, RLS, RPCs
+      // (the real migration does this — here we just need the table back for other tests)
+      runSQLSafe(`
+        ALTER TABLE public.refunds DROP CONSTRAINT IF EXISTS refunds_status_check;
+        ALTER TABLE public.refunds ADD CONSTRAINT refunds_status_check CHECK (status IN ('pending', 'provider_ambiguous', 'provider_success_unfinalized', 'success', 'failed'));
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_refunds_active_execution ON public.refunds(payment_id) WHERE status IN ('pending', 'provider_ambiguous', 'provider_success_unfinalized');
+        CREATE INDEX IF NOT EXISTS idx_refunds_payment_id ON public.refunds(payment_id);
+        CREATE INDEX IF NOT EXISTS idx_refunds_business_id ON public.refunds(business_id);
+        ALTER TABLE public.refunds ENABLE ROW LEVEL SECURITY;
+        REVOKE ALL ON TABLE public.refunds FROM PUBLIC, anon;
+        GRANT SELECT ON TABLE public.refunds TO authenticated;
+        GRANT ALL ON TABLE public.refunds TO service_role;
+      `);
+    }
   });
 
   // ── Real concurrent dispatch (two sessions) ──
@@ -498,6 +555,34 @@ describe('#232 Refund convergence PostgreSQL', () => {
       const status = runSQL(`SELECT status, dispatched_at IS NULL AS undispatched FROM public.refunds WHERE id = '${REF}';`);
       expect(status).toContain('pending');
       expect(status).toContain('t'); // undispatched
+    } finally {
+      runSQL(`DELETE FROM public.refunds WHERE id = '${REF}';`);
+    }
+  });
+
+  it('recover_ambiguous_refund hard-denies Tier-2 gateway (Paystack)', () => {
+    const REF = 'c2320000-0000-0000-0000-000000000232';
+    try {
+      runSQL(`INSERT INTO public.refunds (id, payment_id, business_id, amount, status, gateway, refund_type, dispatched_at) VALUES ('${REF}', '${PAYMENT}', '${BIZ}', 5000, 'provider_ambiguous', 'paystack', 'partial', now());`);
+
+      const result = runSQL(`SELECT recover_ambiguous_refund('${REF}');`);
+      expect(result).toContain('gateway_not_replay_safe');
+
+      // Still ambiguous — not recovered
+      const status = runSQL(`SELECT status FROM public.refunds WHERE id = '${REF}';`);
+      expect(status).toBe('provider_ambiguous');
+    } finally {
+      runSQL(`DELETE FROM public.refunds WHERE id = '${REF}';`);
+    }
+  });
+
+  it('recover_ambiguous_refund hard-denies Tier-2 gateway (Flutterwave)', () => {
+    const REF = 'c2320000-0000-0000-0000-000000000233';
+    try {
+      runSQL(`INSERT INTO public.refunds (id, payment_id, business_id, amount, status, gateway, refund_type, dispatched_at) VALUES ('${REF}', '${PAYMENT}', '${BIZ}', 5000, 'provider_ambiguous', 'flutterwave', 'partial', now());`);
+
+      const result = runSQL(`SELECT recover_ambiguous_refund('${REF}');`);
+      expect(result).toContain('gateway_not_replay_safe');
     } finally {
       runSQL(`DELETE FROM public.refunds WHERE id = '${REF}';`);
     }

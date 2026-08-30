@@ -115,6 +115,28 @@ export async function processRefund(opts: ProcessRefundOpts): Promise<ProcessRef
   if (insertErr || !refundRecord) {
     // Partial unique index violation = another non-terminal refund exists
     if (insertErr?.code === '23505') {
+      // Check if the existing non-terminal refund is a Tier-1 ambiguous that can be recovered
+      const { data: existingRefund } = await service
+        .from('refunds')
+        .select('id, status, gateway')
+        .eq('payment_id', paymentId)
+        .in('status', ['pending', 'provider_ambiguous', 'provider_success_unfinalized'])
+        .limit(1)
+        .maybeSingle();
+
+      if (existingRefund?.status === 'provider_ambiguous' && TIER1_GATEWAYS.has(existingRefund.gateway || '')) {
+        // Attempt Tier-1 recovery via RPC (DB enforces gateway + window)
+        const { data: recoveryResult } = await service.rpc('recover_ambiguous_refund', {
+          p_refund_id: existingRefund.id,
+        });
+        const recovery = recoveryResult as Record<string, unknown>;
+        if (recovery?.recovered) {
+          // Recovered — the same attempt can be re-dispatched. Return the existing ID.
+          // The caller should retry the full flow.
+          return { success: false, refundId: existingRefund.id, errorMessage: 'Recovered ambiguous attempt — please retry' };
+        }
+      }
+
       return { success: false, errorMessage: 'A refund for this payment is already being processed' };
     }
     return { success: false, errorMessage: 'Failed to create refund record' };
@@ -133,10 +155,13 @@ export async function processRefund(opts: ProcessRefundOpts): Promise<ProcessRef
   // ── 7. Process refund ──
   if (isDirectSplit) {
     // Direct split: record-only, skip provider, go straight to finalization
-    await service
+    const { error: dsErr } = await service
       .from('refunds')
       .update({ status: 'provider_success_unfinalized', gateway_refund_reference: 'direct_split' })
       .eq('id', refundRecord.id);
+    if (dsErr) {
+      return { success: false, refundId: refundRecord.id, isDirectSplit, errorMessage: 'Failed to record direct split refund state' };
+    }
   } else {
     // Platform managed: call gateway refund API
     const gatewayName = (payment.gateway || 'paystack') as PaymentGatewayName;
@@ -184,8 +209,11 @@ export async function processRefund(opts: ProcessRefundOpts): Promise<ProcessRef
     }
 
     if (result.success) {
-      // Provider confirmed success — mark as unfinalized with reference
-      await service
+      // Provider confirmed success — durably record reference before finalization.
+      // If this DB write fails, the provider refund happened but we can't prove it locally.
+      // The attempt stays dispatched (pending + dispatched_at set) and can be recovered
+      // via the same idempotency key for Tier-1 gateways.
+      const { error: durabilityErr } = await service
         .from('refunds')
         .update({
           status: 'provider_success_unfinalized',
@@ -193,6 +221,20 @@ export async function processRefund(opts: ProcessRefundOpts): Promise<ProcessRef
           gateway_response: result.gatewayResponse || null,
         })
         .eq('id', refundRecord.id);
+
+      if (durabilityErr) {
+        // Provider succeeded but we can't durably record it.
+        // Mark ambiguous — do NOT proceed to finalization without durable proof.
+        logger.withContext({ op: 'refund.durability-write', refundId: refundRecord.id })
+          .error(`[REFUND] Provider success but durability write failed: ${durabilityErr.message}`);
+        // The attempt identity (refundRecord.id) is preserved. Tier-1 gateways can replay safely.
+        return {
+          success: false,
+          refundId: refundRecord.id,
+          isDirectSplit,
+          errorMessage: 'Provider refund succeeded but local state update failed — will be recovered',
+        };
+      }
     } else {
       // Provider confirmed failure
       await service

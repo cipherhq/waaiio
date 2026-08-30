@@ -210,6 +210,12 @@ BEGIN
     RETURN jsonb_build_object('recovered', false, 'reason', 'not_ambiguous', 'current_status', v_refund.status);
   END IF;
 
+  -- DB-enforced Tier-1 gateway check: only proven-idempotent gateways can be replayed.
+  -- Paystack, Flutterwave, and any unknown gateway are hard-denied.
+  IF v_refund.gateway IS NULL OR v_refund.gateway NOT IN ('stripe', 'square', 'paypal') THEN
+    RETURN jsonb_build_object('recovered', false, 'reason', 'gateway_not_replay_safe', 'gateway', v_refund.gateway);
+  END IF;
+
   -- Verify within replay-safe window (24h for Stripe/Square/PayPal)
   IF v_refund.dispatched_at IS NULL OR v_refund.dispatched_at < now() - INTERVAL '23 hours' THEN
     RETURN jsonb_build_object('recovered', false, 'reason', 'replay_window_expired');
@@ -312,9 +318,9 @@ BEGIN
 
   IF v_fee_entity_col IS NOT NULL AND v_fee_entity_val IS NOT NULL THEN
     IF v_is_fully_refunded THEN
-      -- Full refund: mark fee as refunded
+      -- Full refund: zero fee_total AND mark refunded_at (canonical terminal state)
       EXECUTE format(
-        'UPDATE public.platform_fees SET refunded_at = now() WHERE %I = $1 AND refunded_at IS NULL',
+        'UPDATE public.platform_fees SET fee_total = 0, refunded_at = now() WHERE %I = $1 AND refunded_at IS NULL',
         v_fee_entity_col
       ) USING v_fee_entity_val;
     ELSE
