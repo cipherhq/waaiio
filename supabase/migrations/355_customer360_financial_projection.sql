@@ -127,8 +127,6 @@ BEGIN
           THEN 'Payment' || E' \u2014 ' || b.reference_code
         WHEN b.flow_type = 'ticketing'
           THEN 'Ticket' || E' \u2014 ' || COALESCE(s.name, b.reference_code)
-        WHEN b.flow_type = 'reservation'
-          THEN 'Reservation' || E' \u2014 ' || b.reference_code
         ELSE 'Booking' || E' \u2014 ' || COALESCE(s.name, b.reference_code)
       END::TEXT AS purpose,
       COALESCE(b.guest_name, cp_u.name, cp_p.name)::TEXT AS customer_name,

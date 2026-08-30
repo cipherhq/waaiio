@@ -200,6 +200,25 @@ describe('PostgreSQL Customer360/Financials (#225/#226)', () => {
     expect(result).toBe('0');
   });
 
+  // ── flow_type enum branch coverage ──
+
+  it('get_business_transactions handles ticketing flow_type', () => {
+    const TK_BK = 'c2250000-0000-0000-0000-0000000000f0';
+    try {
+      runSQL(`INSERT INTO public.bookings (id, reference_code, business_id, user_id, flow_type, guest_name, guest_phone, date, time, party_size, channel, status, total_amount, created_at) VALUES ('${TK_BK}', 'WA-TK-T001', '${BIZ_A}', '${CUSTOMER_USER}', 'ticketing', 'Ticket Buyer', '${CUSTOMER_PHONE}', CURRENT_DATE, '10:00', 1, 'whatsapp', 'confirmed', 2000, now());`);
+      const result = runSQL(`SELECT purpose FROM public.get_business_transactions('${BIZ_A}') WHERE reference_code = 'WA-TK-T001';`);
+      expect(result).toContain('Ticket');
+    } finally {
+      runSQL(`DELETE FROM public.bookings WHERE id = '${TK_BK}';`);
+    }
+  });
+
+  it('get_business_transactions handles ordering flow_type via orders table', () => {
+    // Ordering flow creates orders, not bookings — covered by existing WA-OR-T001 test
+    const result = runSQL(`SELECT flow_type FROM public.get_business_transactions('${BIZ_A}') WHERE reference_code = 'WA-OR-T001';`);
+    expect(result).toContain('ordering');
+  });
+
   // ── get_customer_history tests ──
 
   it('get_customer_history includes Giving booking with purpose', () => {
