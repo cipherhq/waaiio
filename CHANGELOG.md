@@ -3,6 +3,42 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-08-30 — #224/#225/#226: Recurring eligibility, Customer 360, Financial projection
+
+### What changed
+
+**#224 — Recurring Giving eligibility (4-gate invariant):**
+1. `lib/payments/recurring-offer.ts` — replaced `getEnabledCapabilities()` with `getEffectiveCapabilities()` (policy-aware: tier/trial/overrides). Previously a free-tier business with a raw `is_enabled=true` row could pass the gate.
+2. Added service billing_type check: `services.billing_type='recurring' AND recurring_interval IS NOT NULL`. Previously a one-time Giving service could receive a recurring prompt if the business had recurring enabled globally.
+3. Removed `bot_sessions` phone-lookup channel fallback in `sendRecurringOfferCTA()`. Now fails closed when no exact transaction sender is available, preventing the channel drift class #219 fixed.
+4. `app/dashboard/giving/page.tsx` — added recurring eligibility validation. Checkbox disabled when business lacks `recurring_enabled` or effective `recurring` capability. Shows actionable remediation message. Surfaces inconsistent state on existing misconfigured categories.
+
+**#225 — Customer 360 (broken queries + unified history):**
+1. Migration 355 — added `customer_profiles.user_id` column with partial unique index and deterministic backfill from bookings.
+2. Migration 355 — `get_customer_history()` SECURITY DEFINER RPC: unified per-customer history (bookings + orders + standalone payments) with purpose resolution ("Giving — Biazo Conference"), user_id-first identity, phone fallback, deduplication (booking-linked payments excluded).
+3. `app/dashboard/customers/page.tsx` — replaced broken `bookings.service_type` query (42703) and `orders.customer_phone` query (42703) with single `get_customer_history` RPC call.
+4. Removed orphaned intelligence display (lifetime_value, churn_risk, customer_segment) — these fields are never calculated and were showing misleading defaults. Segment column also hidden from list table.
+
+**#226 — Financial projection (attribution + totals):**
+1. Migration 355 — `get_business_transactions()` SECURITY DEFINER RPC: purpose-aware transactions with customer attribution via business-owned `customer_profiles` instead of profiles RLS join. Resolves order customers by user_id (primary) or delivery_phone (fallback).
+2. Migration 355 — `get_business_revenue_totals()` RPC: authoritative server-side revenue totals with same inclusion semantics as rows. Page size cannot change revenue.
+3. `app/dashboard/financials/page.tsx` — replaced 3-table client queries + profiles join with RPC calls. Removed 500-row-capped client-side revenue calculation. Purpose now shows "Giving — Biazo Conference" instead of generic "Payment".
+4. All RPCs have: `SECURITY DEFINER`, `SET search_path = ''`, `auth.uid()` ownership check, `REVOKE` from PUBLIC/anon, `GRANT` to authenticated/service_role only.
+
+### Files changed
+- `supabase/migrations/355_customer360_financial_projection.sql` — new migration
+- `lib/payments/recurring-offer.ts` — 4-gate eligibility + channel fail-closed
+- `app/dashboard/giving/page.tsx` — recurring validation + inconsistent state
+- `app/dashboard/customers/page.tsx` — unified history via RPC, intelligence hidden
+- `app/dashboard/financials/page.tsx` — RPC-based transactions + server-side totals
+- `lib/payments/__tests__/recurring-eligibility.test.ts` — new tests
+- `lib/__tests__/acc-224-226-customer360-financials-db.test.ts` — new DB tests
+
+### Could break
+- Businesses with `billing_type='recurring'` on Giving categories but missing `recurring_enabled=true` or `recurring` capability will see a warning on their dashboard and the bot will not offer recurring setup. This is intentional — the previous behavior was silently broken.
+- Customer detail page now shows unified "Transaction History" instead of separate "History" and "Order History" tabs. Data comes from the RPC, which uses user_id-first identity with phone fallback.
+- Financials page revenue totals now come from server-side RPC instead of client-side 500-row-capped calculation. Totals may differ from previous display for businesses with >500 transactions.
+
 ## 2026-08-29 — #214: CI fix — column-level REVOKE + runtime auth context (refs #215)
 
 ### What changed

@@ -12,7 +12,8 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { MessageSender } from '@/lib/channels/message-sender';
 import { logger } from '@/lib/logger';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
-import { getEnabledCapabilities } from '@/lib/capabilities/service';
+import { getConfiguredCapabilities } from '@/lib/capabilities/service';
+import { getEffectiveCapabilities } from '@/lib/capabilities/policy';
 
 interface PaymentForRecurring {
   id: string;
@@ -56,7 +57,7 @@ export async function checkAndOfferRecurring(
     const cardAuth = meta._card_authorization as Record<string, unknown> | undefined;
     if (!cardAuth?.reusable) return;
 
-    // ── 2. Check booking flow_type (must be 'payment' for Giving/Payment flows) ──
+    // ── 2. Check booking flow_type + service billing_type ──
     const { data: booking } = await supabase
       .from('bookings')
       .select('flow_type, service_id, business_id')
@@ -65,18 +66,57 @@ export async function checkAndOfferRecurring(
 
     if (!booking || booking.flow_type !== 'payment') return;
 
+    // Gate: service must be explicitly configured as recurring with a valid interval
+    if (!booking.service_id) return;
+    const { data: service } = await supabase
+      .from('services')
+      .select('billing_type, recurring_interval, service_type, is_active')
+      .eq('id', booking.service_id)
+      .single();
+
+    if (!service) return;
+    if (service.billing_type !== 'recurring' || !service.recurring_interval) {
+      logger.info(`${logPrefix} Recurring offer skipped — service billing_type=${service.billing_type}, not recurring`);
+      return;
+    }
+    // Service must be a Giving category, active, same business, and supported interval
+    if (service.service_type !== 'giving') {
+      logger.info(`${logPrefix} Recurring offer skipped — service_type=${service.service_type}, not giving`);
+      return;
+    }
+    if (!service.is_active) {
+      logger.info(`${logPrefix} Recurring offer skipped — service is inactive`);
+      return;
+    }
+    if (service.recurring_interval !== 'weekly' && service.recurring_interval !== 'monthly') {
+      logger.info(`${logPrefix} Recurring offer skipped — unsupported interval=${service.recurring_interval}`);
+      return;
+    }
+
     // ── 3. Check business eligibility ──
     const { data: business } = await supabase
       .from('businesses')
-      .select('id, name, recurring_enabled, country_code')
+      .select('id, name, recurring_enabled, country_code, subscription_tier, trial_ends_at, capability_overrides')
       .eq('id', businessId)
       .single();
 
     if (!business?.recurring_enabled) return;
 
-    // Check recurring capability is enabled
-    const enabledCaps = await getEnabledCapabilities(supabase, businessId);
-    if (!enabledCaps.includes('recurring')) return;
+    // Check recurring capability is effective (policy-aware: tier + trial + overrides)
+    const configResult = await getConfiguredCapabilities(supabase, businessId);
+    if (!configResult.ok) return;
+
+    const effectiveCaps = getEffectiveCapabilities({
+      configuredCapabilities: configResult.rows,
+      tier: business.subscription_tier || 'free',
+      trialEndsAt: business.trial_ends_at || null,
+      overrides: (business.capability_overrides as string[]) || [],
+    });
+
+    if (!effectiveCaps.effective.includes('recurring')) {
+      logger.info(`${logPrefix} Recurring offer skipped — recurring not in effective capabilities`);
+      return;
+    }
 
     // ── 4. Check no existing active subscription for this user+business+service ──
     const phoneP = customerPhone.startsWith('+') ? customerPhone : `+${customerPhone}`;
@@ -171,30 +211,10 @@ async function sendRecurringOfferCTA(
   logPrefix: string,
 ): Promise<void> {
   if (!sender) {
-    // No sender available — try resolving channel
-    try {
-      const { ChannelResolver } = await import('@/lib/channels/channel-resolver');
-      const resolver = new ChannelResolver(supabase);
-      // Look up session to get inbound channel
-      const { data: session } = await supabase
-        .from('bot_sessions')
-        .select('session_data')
-        .eq('whatsapp_number', customerPhone)
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-
-      const inboundChId = (session?.session_data as Record<string, unknown> | null)?._inbound_channel_id as string | undefined;
-      let resolved = inboundChId ? await resolver.resolveByChannelId(inboundChId) : null;
-      if (!resolved) {
-        // Need business_id to resolve by business
-        return; // Can't send without a channel
-      }
-      sender = resolved.sender;
-    } catch {
-      logger.warn(`${logPrefix} Recurring offer: no sender and channel resolution failed`);
-      return;
-    }
+    // Fail closed: exact source-payment channel is required (#224/#219).
+    // No bot_sessions or business-country fallback — prevents channel drift.
+    logger.warn(`${logPrefix} Recurring offer CTA skipped — no exact transaction sender available`);
+    return;
   }
 
   const phone = customerPhone.startsWith('+') ? customerPhone.slice(1) : customerPhone;

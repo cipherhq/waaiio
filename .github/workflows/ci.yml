@@ -1907,6 +1907,70 @@ jobs:
           fi
           echo "✅ Ticket purchase security tests complete — zero skips, zero failures."
 
+      - name: Migration 355 Customer360/Financials tests
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/waaiio_test
+        run: |
+          echo "Running migration 355 Customer360/Financials DB tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/acc-224-226-customer360-financials-db.test.ts 2>&1)
+          TEST_EXIT=$?
+          set -e
+          echo "$OUTPUT"
+          if [ "$TEST_EXIT" -ne 0 ]; then
+            echo "❌ Migration 355 DB tests exited with code $TEST_EXIT."
+            exit "$TEST_EXIT"
+          fi
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ Migration 355 DB tests had $SKIP_COUNT skipped tests. All must execute."
+              exit 1
+            fi
+          fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then
+            echo "❌ No migration 355 DB tests passed. Something is wrong."
+            exit 1
+          fi
+          echo "✅ Migration 355 Customer360/Financials tests complete — zero skips, zero failures."
+
+      - name: "#224 Giving save authority boundary tests"
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/waaiio_test
+        run: |
+          echo "Running #224 Giving save authority tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/acc-224-giving-save-authority.test.ts 2>&1)
+          TEST_EXIT=$?
+          set -e
+          echo "$OUTPUT"
+          if [ "$TEST_EXIT" -ne 0 ]; then
+            echo "❌ #224 Giving save authority tests exited with code $TEST_EXIT."
+            exit "$TEST_EXIT"
+          fi
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ #224 Giving save authority tests had $SKIP_COUNT skipped tests. All must execute."
+              exit 1
+            fi
+          fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then
+            echo "❌ No #224 Giving save authority tests passed. Something is wrong."
+            exit 1
+          fi
+          echo "✅ #224 Giving save authority tests complete — zero skips, zero failures."
+
   # ── Engineering Governance ──
   governance:
     name: Engineering governance

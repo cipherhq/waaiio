@@ -80,7 +80,7 @@ describe('PostgreSQL recurring_setup_intents (#165)', () => {
     `);
     if (biz.exitCode !== 0) throw new Error(`Business insert failed: ${biz.stderr}`);
     // Create test service
-    runSQL(`INSERT INTO services (id, business_id, name, service_type) VALUES ('${TEST_SERVICE_ID}', '${TEST_BIZ_ID}', 'Test Giving', 'giving') ON CONFLICT DO NOTHING;`);
+    runSQL(`INSERT INTO services (id, business_id, name, service_type, billing_type, recurring_interval, is_active) VALUES ('${TEST_SERVICE_ID}', '${TEST_BIZ_ID}', 'Test Giving', 'giving', 'recurring', 'monthly', true) ON CONFLICT DO NOTHING;`);
     // Two test bookings + payments (canonical Payment/Giving context required by INNER JOIN)
     const TEST_BOOKING_IDS = ['cd165000-0000-0000-0000-000000000010', 'cd165000-0000-0000-0000-000000000011'];
     for (let i = 0; i < 2; i++) {
@@ -529,17 +529,10 @@ describe('PostgreSQL recurring_setup_intents (#165)', () => {
 
   // ── Generic service_id IS NULL duplicate-active-subscription protection ──
 
-  it('40. RPC rejects offer when active NULL-service subscription exists', () => {
-    // Create an active customer_subscription with service_id=NULL for this user+business
-    const subId = 'cd165000-0000-0000-0000-000000000080';
-    runSQL(`
-      INSERT INTO customer_subscriptions (id, business_id, user_id, service_id, amount, currency, frequency, status, gateway, customer_phone, setup_channel)
-      VALUES ('${subId}', '${TEST_BIZ_ID}', '${TEST_USER_ID}', NULL, 10000, 'NGN', 'monthly', 'active', 'paystack', '+2340000165', 'whatsapp')
-      ON CONFLICT DO NOTHING;
-    `);
-
-    // Try to create an offer from a payment whose booking also has service_id=NULL
-    // First create a booking with NULL service_id
+  it('40. RPC rejects NULL-service booking before reaching subscription check (#224)', () => {
+    // After #224 defense-in-depth: bookings without service_id are rejected
+    // with 'no_service' before the subscription check is reached.
+    // NULL service_id cannot represent a valid recurring Giving category.
     const nullSvcBookId = 'cd165000-0000-0000-0000-000000000081';
     const nullSvcPayId = 'cd165000-0000-0000-0000-000000000082';
     runSQL(`INSERT INTO bookings (id, business_id, user_id, reference_code, status, flow_type, guest_phone, channel, date, time, party_size) VALUES ('${nullSvcBookId}', '${TEST_BIZ_ID}', '${TEST_USER_ID}', 'WA-GV-NS1', 'confirmed', 'payment', '+2340000165', 'whatsapp', '2026-08-28', '10:00', 1) ON CONFLICT DO NOTHING;`);
@@ -547,12 +540,11 @@ describe('PostgreSQL recurring_setup_intents (#165)', () => {
 
     const { result } = callRpc(`SELECT create_recurring_offer('${nullSvcPayId}'::uuid, '${TEST_BIZ_ID}'::uuid, 'paystack') AS result;`);
     expect(result.created).toBe(false);
-    expect(result.reason).toBe('active_subscription_exists');
+    expect(result.reason).toBe('no_service');
 
     // Cleanup
     runSQL(`DELETE FROM payments WHERE id = '${nullSvcPayId}';`);
     runSQL(`DELETE FROM bookings WHERE id = '${nullSvcBookId}';`);
-    runSQL(`DELETE FROM customer_subscriptions WHERE id = '${subId}';`);
   });
 
   it('41. RPC rejects offer when active service-specific subscription exists', () => {
@@ -667,40 +659,21 @@ describe('PostgreSQL recurring_setup_intents (#165)', () => {
     runSQL(`DELETE FROM bookings WHERE id IN ('${BOOK_A}', '${BOOK_B}');`);
   }, 20000);
 
-  it('45. NULL service_id scope serialization works identically', async () => {
-    // Same as test 44 but with NULL service_id (Generic Payment)
+  it('45. NULL service_id is rejected by defense-in-depth (#224)', () => {
+    // After #224: bookings without service_id are rejected at RPC level
+    // (recurring offers require an explicit Giving service with billing_type='recurring')
     const PAY_C = 'cd165000-0000-0000-0000-000000000094';
-    const PAY_D = 'cd165000-0000-0000-0000-000000000095';
     const BOOK_C = 'cd165000-0000-0000-0000-000000000096';
-    const BOOK_D = 'cd165000-0000-0000-0000-000000000097';
 
-    // Bookings WITHOUT service_id
-    for (const [pid, bid, ref] of [[PAY_C, BOOK_C, 'WA-GV-C'], [PAY_D, BOOK_D, 'WA-GV-D']]) {
-      runSQL(`INSERT INTO bookings (id, business_id, user_id, reference_code, status, flow_type, guest_phone, channel, date, time, party_size) VALUES ('${bid}', '${TEST_BIZ_ID}', '${TEST_USER_ID}', '${ref}', 'confirmed', 'payment', '+2340000165', 'whatsapp', '2026-08-28', '10:00', 1) ON CONFLICT DO NOTHING;`);
-      runSQL(`INSERT INTO payments (id, business_id, user_id, booking_id, amount, gateway_reference, status, gateway, currency, finalization_completed_at, confirmation_sent_at, payment_authority_version) VALUES ('${pid}', '${TEST_BIZ_ID}', '${TEST_USER_ID}', '${bid}', 10000, 'test-null-${pid}', 'success', 'paystack', 'NGN', NOW(), NOW(), 1) ON CONFLICT DO NOTHING;`);
-    }
+    runSQL(`INSERT INTO bookings (id, business_id, user_id, reference_code, status, flow_type, guest_phone, channel, date, time, party_size) VALUES ('${BOOK_C}', '${TEST_BIZ_ID}', '${TEST_USER_ID}', 'WA-GV-C', 'confirmed', 'payment', '+2340000165', 'whatsapp', '2026-08-28', '10:00', 1) ON CONFLICT DO NOTHING;`);
+    runSQL(`INSERT INTO payments (id, business_id, user_id, booking_id, amount, gateway_reference, status, gateway, currency, finalization_completed_at, confirmation_sent_at, payment_authority_version) VALUES ('${PAY_C}', '${TEST_BIZ_ID}', '${TEST_USER_ID}', '${BOOK_C}', 10000, 'test-null-${PAY_C}', 'success', 'paystack', 'NGN', NOW(), NOW(), 1) ON CONFLICT DO NOTHING;`);
 
     const { result: offerC } = callRpc(`SELECT create_recurring_offer('${PAY_C}'::uuid, '${TEST_BIZ_ID}'::uuid, 'paystack') AS result;`);
-    const { result: offerD } = callRpc(`SELECT create_recurring_offer('${PAY_D}'::uuid, '${TEST_BIZ_ID}'::uuid, 'paystack') AS result;`);
-    expect(offerC.created).toBe(true);
-    expect(offerD.created).toBe(true);
+    expect(offerC.created).toBe(false);
+    expect(offerC.reason).toBe('no_service');
 
-    for (const intentId of [offerC.intent_id, offerD.intent_id]) {
-      callRpc(`SELECT select_recurring_frequency('${intentId}'::uuid, '${TEST_BIZ_ID}'::uuid, 'weekly') AS result;`);
-      callRpc(`SELECT confirm_recurring_consent('${intentId}'::uuid, '${TEST_BIZ_ID}'::uuid, 'hash_null') AS result;`);
-    }
-
-    // Sequential test (advisory lock serializes — second sees first's committed state)
-    const { result: rC } = callRpc(`SELECT begin_recurring_provider_attempt('${offerC.intent_id}'::uuid, '${TEST_BIZ_ID}'::uuid, 'CUS_C', 'AUTH_C', NOW() + INTERVAL '7 days') AS result;`);
-    const { result: rD } = callRpc(`SELECT begin_recurring_provider_attempt('${offerD.intent_id}'::uuid, '${TEST_BIZ_ID}'::uuid, 'CUS_D', 'AUTH_D', NOW() + INTERVAL '7 days') AS result;`);
-
-    // First wins, second blocked by competing_provider_attempt
-    expect(rC.transitioned).toBe(true);
-    expect(rD.transitioned).toBe(false);
-    expect(rD.reason).toBe('competing_provider_attempt');
-
-    runSQL(`DELETE FROM payments WHERE id IN ('${PAY_C}', '${PAY_D}');`);
-    runSQL(`DELETE FROM bookings WHERE id IN ('${BOOK_C}', '${BOOK_D}');`);
+    runSQL(`DELETE FROM payments WHERE id = '${PAY_C}';`);
+    runSQL(`DELETE FROM bookings WHERE id = '${BOOK_C}';`);
   });
 
   it('46. different service scope is NOT blocked', () => {
@@ -714,7 +687,7 @@ describe('PostgreSQL recurring_setup_intents (#165)', () => {
     const diffSvcId = 'cd165000-0000-0000-0000-000000000098';
     const diffBookId = 'cd165000-0000-0000-0000-000000000099';
     const diffPayId = 'cd165000-0000-0000-0000-0000000000a0';
-    runSQL(`INSERT INTO services (id, business_id, name) VALUES ('${diffSvcId}', '${TEST_BIZ_ID}', 'Diff Svc') ON CONFLICT DO NOTHING;`);
+    runSQL(`INSERT INTO services (id, business_id, name, service_type, billing_type, recurring_interval, is_active) VALUES ('${diffSvcId}', '${TEST_BIZ_ID}', 'Diff Svc', 'giving', 'recurring', 'weekly', true) ON CONFLICT DO NOTHING;`);
     runSQL(`INSERT INTO bookings (id, business_id, user_id, service_id, reference_code, status, flow_type, guest_phone, channel, date, time, party_size) VALUES ('${diffBookId}', '${TEST_BIZ_ID}', '${TEST_USER_ID}', '${diffSvcId}', 'WA-GV-DS', 'confirmed', 'payment', '+2340000165', 'whatsapp', '2026-08-28', '10:00', 1) ON CONFLICT DO NOTHING;`);
     runSQL(`INSERT INTO payments (id, business_id, user_id, booking_id, amount, gateway_reference, status, gateway, currency, finalization_completed_at, confirmation_sent_at, payment_authority_version) VALUES ('${diffPayId}', '${TEST_BIZ_ID}', '${TEST_USER_ID}', '${diffBookId}', 5000, 'test-diff-svc', 'success', 'paystack', 'NGN', NOW(), NOW(), 1) ON CONFLICT DO NOTHING;`);
 
