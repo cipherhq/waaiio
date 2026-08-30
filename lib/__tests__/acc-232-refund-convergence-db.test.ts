@@ -376,7 +376,7 @@ describe('#232 Refund convergence PostgreSQL', () => {
   // ── Function access control ──
 
   it('claim_refund_dispatch not executable by authenticated', () => {
-    const result = runSQL(`SELECT has_function_privilege('authenticated', 'public.claim_refund_dispatch(uuid)', 'EXECUTE');`);
+    const result = runSQL(`SELECT has_function_privilege('authenticated', 'public.claim_refund_dispatch(uuid,uuid)', 'EXECUTE');`);
     expect(result).toBe('f');
   });
 
@@ -386,7 +386,7 @@ describe('#232 Refund convergence PostgreSQL', () => {
   });
 
   it('claim_refund_dispatch executable by service_role', () => {
-    const result = runSQL(`SELECT has_function_privilege('service_role', 'public.claim_refund_dispatch(uuid)', 'EXECUTE');`);
+    const result = runSQL(`SELECT has_function_privilege('service_role', 'public.claim_refund_dispatch(uuid,uuid)', 'EXECUTE');`);
     expect(result).toBe('t');
   });
 
@@ -412,7 +412,7 @@ describe('#232 Refund convergence PostgreSQL', () => {
       runSQL(`ALTER TABLE public.payments DROP COLUMN IF EXISTS refunded_by;`);
       runSQL(`ALTER TABLE public.payments DROP COLUMN IF EXISTS refunded_at;`);
       // Drop functions that 355 creates (so CREATE OR REPLACE works cleanly)
-      runSQLSafe(`DROP FUNCTION IF EXISTS public.claim_refund_dispatch(UUID);`);
+      runSQLSafe(`DROP FUNCTION IF EXISTS public.claim_refund_dispatch(UUID, UUID);`);
       runSQLSafe(`DROP FUNCTION IF EXISTS public.recover_ambiguous_refund(UUID);`);
       runSQLSafe(`DROP FUNCTION IF EXISTS public.finalize_refund_execution(UUID);`);
 
