@@ -104,29 +104,54 @@ describe('#224: recurring eligibility gates', () => {
     });
   });
 
-  describe('service billing_type gate', () => {
-    it('one-time service must NOT receive recurring offer', () => {
-      // This test documents the invariant: billing_type='one_time' → no recurring
-      const service = { billing_type: 'one_time', recurring_interval: null };
-      expect(service.billing_type !== 'recurring' || !service.recurring_interval).toBe(true);
+  describe('complete service predicate', () => {
+    // Encodes the full invariant enforced at application + DB level
+    function isServiceEligible(service: {
+      billing_type: string;
+      recurring_interval: string | null;
+      service_type: string;
+      is_active: boolean;
+    }): boolean {
+      return (
+        service.billing_type === 'recurring' &&
+        !!service.recurring_interval &&
+        (service.recurring_interval === 'weekly' || service.recurring_interval === 'monthly') &&
+        service.service_type === 'giving' &&
+        service.is_active
+      );
+    }
+
+    it('recurring giving service with monthly interval passes', () => {
+      expect(isServiceEligible({ billing_type: 'recurring', recurring_interval: 'monthly', service_type: 'giving', is_active: true })).toBe(true);
     });
 
-    it('recurring service with interval passes gate', () => {
-      const service = { billing_type: 'recurring', recurring_interval: 'monthly' };
-      expect(service.billing_type === 'recurring' && !!service.recurring_interval).toBe(true);
+    it('recurring giving service with weekly interval passes', () => {
+      expect(isServiceEligible({ billing_type: 'recurring', recurring_interval: 'weekly', service_type: 'giving', is_active: true })).toBe(true);
     });
 
-    it('recurring service without interval fails gate', () => {
-      const service = { billing_type: 'recurring', recurring_interval: null };
-      expect(service.billing_type === 'recurring' && !!service.recurring_interval).toBe(false);
+    it('one-time service fails', () => {
+      expect(isServiceEligible({ billing_type: 'one_time', recurring_interval: null, service_type: 'giving', is_active: true })).toBe(false);
+    });
+
+    it('recurring service without interval fails', () => {
+      expect(isServiceEligible({ billing_type: 'recurring', recurring_interval: null, service_type: 'giving', is_active: true })).toBe(false);
+    });
+
+    it('non-giving service type fails', () => {
+      expect(isServiceEligible({ billing_type: 'recurring', recurring_interval: 'monthly', service_type: 'scheduling', is_active: true })).toBe(false);
+    });
+
+    it('inactive service fails', () => {
+      expect(isServiceEligible({ billing_type: 'recurring', recurring_interval: 'monthly', service_type: 'giving', is_active: false })).toBe(false);
+    });
+
+    it('unsupported interval (yearly) fails', () => {
+      expect(isServiceEligible({ billing_type: 'recurring', recurring_interval: 'yearly', service_type: 'giving', is_active: true })).toBe(false);
     });
   });
 
   describe('channel fail-closed', () => {
     it('documents that sendRecurringOfferCTA returns early when sender is null', () => {
-      // The implementation returns immediately when sender is null.
-      // No bot_sessions lookup, no business-country fallback.
-      // This test documents the invariant; actual behavior tested by reading the source.
       const sender = null;
       const shouldSend = sender !== null;
       expect(shouldSend).toBe(false);

@@ -278,7 +278,7 @@ describe('PostgreSQL Customer360/Financials (#225/#226)', () => {
     expect(result).toBe('f');
   });
 
-  // ── Profiles RLS proof: business owner cannot read customer profiles table ──
+  // ── Profiles RLS proof ──
 
   it('profiles RLS blocks cross-user SELECT (the exact #226 root cause)', () => {
     const result = runSQL(`
@@ -288,6 +288,117 @@ describe('PostgreSQL Customer360/Financials (#225/#226)', () => {
     `);
     const count = result.split('\n').pop()?.trim();
     expect(count).toBe('0');
+  });
+
+  // ── Durable-ID-first attribution: same phone, different user ──
+
+  it('get_customer_history does NOT cross-attribute rows with same phone but different user_id', () => {
+    const OTHER_USER = 'c2250000-0000-0000-0000-000000000099';
+    const OTHER_BOOKING = 'c2250000-0000-0000-0000-000000000098';
+    try {
+      // Create another user with the SAME phone but different user_id
+      runSQL(`
+        INSERT INTO auth.users (id, email, raw_app_meta_data, raw_user_meta_data, aud, role, instance_id, created_at, updated_at)
+        VALUES ('${OTHER_USER}', 'other-225@test.local', '{"provider":"email"}', '{}', 'authenticated', 'authenticated', '00000000-0000-0000-0000-000000000000', now(), now());
+        INSERT INTO public.profiles (id, first_name, last_name, email, role)
+        VALUES ('${OTHER_USER}', 'Other', 'Person', 'other-225@test.local', 'user');
+        INSERT INTO public.bookings (id, reference_code, business_id, user_id, flow_type, guest_name, guest_phone, date, status, total_amount, created_at)
+        VALUES ('${OTHER_BOOKING}', 'WA-PY-OTHER', '${BIZ_A}', '${OTHER_USER}', 'payment', 'Other Person', '${CUSTOMER_PHONE}', CURRENT_DATE, 'confirmed', 99999, now());
+      `);
+
+      // Customer A's history should NOT include OTHER_USER's booking
+      // (because OTHER_USER's booking has user_id set, so phone fallback is disabled)
+      const result = runSQL(`
+        SELECT reference_code FROM public.get_customer_history('${BIZ_A}', '${CP_A}');
+      `);
+      expect(result).not.toContain('WA-PY-OTHER');
+    } finally {
+      runSQL(`
+        DELETE FROM public.bookings WHERE id = '${OTHER_BOOKING}';
+        DELETE FROM public.profiles WHERE id = '${OTHER_USER}';
+        DELETE FROM auth.users WHERE id = '${OTHER_USER}';
+      `);
+    }
+  });
+
+  // ── create_recurring_offer defense-in-depth (#224) ──
+
+  it('create_recurring_offer rejects one-time service', () => {
+    const ONE_TIME_SVC = 'c2250000-0000-0000-0000-000000000070';
+    const ONE_TIME_BK = 'c2250000-0000-0000-0000-000000000071';
+    const ONE_TIME_PAY = 'c2250000-0000-0000-0000-000000000072';
+    try {
+      runSQL(`
+        INSERT INTO public.services (id, business_id, name, service_type, billing_type, is_active, price, duration_minutes, deposit_amount)
+        VALUES ('${ONE_TIME_SVC}', '${BIZ_A}', 'One-Time Giving', 'giving', 'one_time', true, 5000, 0, 0);
+        INSERT INTO public.bookings (id, reference_code, business_id, user_id, service_id, flow_type, guest_name, guest_phone, date, status, total_amount, created_at)
+        VALUES ('${ONE_TIME_BK}', 'WA-PY-OT01', '${BIZ_A}', '${CUSTOMER_USER}', '${ONE_TIME_SVC}', 'payment', 'Test', '${CUSTOMER_PHONE}', CURRENT_DATE, 'confirmed', 5000, now());
+        INSERT INTO public.payments (id, booking_id, user_id, business_id, amount, currency, gateway_reference, gateway, status, finalization_completed_at, confirmation_sent_at, paid_at, created_at)
+        VALUES ('${ONE_TIME_PAY}', '${ONE_TIME_BK}', '${CUSTOMER_USER}', '${BIZ_A}', 5000, 'NGN', 'WA-PY-OT01-PAY', 'paystack', 'success', now(), now(), now(), now());
+      `);
+      const result = runSQL(`
+        SELECT create_recurring_offer('${ONE_TIME_PAY}', '${BIZ_A}', 'paystack');
+      `);
+      expect(result).toContain('service_not_recurring');
+    } finally {
+      runSQL(`
+        DELETE FROM public.payments WHERE id = '${ONE_TIME_PAY}';
+        DELETE FROM public.bookings WHERE id = '${ONE_TIME_BK}';
+        DELETE FROM public.services WHERE id = '${ONE_TIME_SVC}';
+      `);
+    }
+  });
+
+  it('create_recurring_offer rejects non-giving service', () => {
+    const NON_GIVING_SVC = 'c2250000-0000-0000-0000-000000000073';
+    const NON_GIVING_BK = 'c2250000-0000-0000-0000-000000000074';
+    const NON_GIVING_PAY = 'c2250000-0000-0000-0000-000000000075';
+    try {
+      runSQL(`
+        INSERT INTO public.services (id, business_id, name, service_type, billing_type, recurring_interval, is_active, price, duration_minutes, deposit_amount)
+        VALUES ('${NON_GIVING_SVC}', '${BIZ_A}', 'Recurring Scheduling', 'scheduling', 'recurring', 'monthly', true, 5000, 30, 0);
+        INSERT INTO public.bookings (id, reference_code, business_id, user_id, service_id, flow_type, guest_name, guest_phone, date, status, total_amount, created_at)
+        VALUES ('${NON_GIVING_BK}', 'WA-PY-NG01', '${BIZ_A}', '${CUSTOMER_USER}', '${NON_GIVING_SVC}', 'payment', 'Test', '${CUSTOMER_PHONE}', CURRENT_DATE, 'confirmed', 5000, now());
+        INSERT INTO public.payments (id, booking_id, user_id, business_id, amount, currency, gateway_reference, gateway, status, finalization_completed_at, confirmation_sent_at, paid_at, created_at)
+        VALUES ('${NON_GIVING_PAY}', '${NON_GIVING_BK}', '${CUSTOMER_USER}', '${BIZ_A}', 5000, 'NGN', 'WA-PY-NG01-PAY', 'paystack', 'success', now(), now(), now(), now());
+      `);
+      const result = runSQL(`
+        SELECT create_recurring_offer('${NON_GIVING_PAY}', '${BIZ_A}', 'paystack');
+      `);
+      expect(result).toContain('service_not_giving');
+    } finally {
+      runSQL(`
+        DELETE FROM public.payments WHERE id = '${NON_GIVING_PAY}';
+        DELETE FROM public.bookings WHERE id = '${NON_GIVING_BK}';
+        DELETE FROM public.services WHERE id = '${NON_GIVING_SVC}';
+      `);
+    }
+  });
+
+  it('create_recurring_offer rejects inactive service', () => {
+    const INACTIVE_SVC = 'c2250000-0000-0000-0000-000000000076';
+    const INACTIVE_BK = 'c2250000-0000-0000-0000-000000000077';
+    const INACTIVE_PAY = 'c2250000-0000-0000-0000-000000000078';
+    try {
+      runSQL(`
+        INSERT INTO public.services (id, business_id, name, service_type, billing_type, recurring_interval, is_active, price, duration_minutes, deposit_amount)
+        VALUES ('${INACTIVE_SVC}', '${BIZ_A}', 'Inactive Giving', 'giving', 'recurring', 'monthly', false, 5000, 0, 0);
+        INSERT INTO public.bookings (id, reference_code, business_id, user_id, service_id, flow_type, guest_name, guest_phone, date, status, total_amount, created_at)
+        VALUES ('${INACTIVE_BK}', 'WA-PY-IN01', '${BIZ_A}', '${CUSTOMER_USER}', '${INACTIVE_SVC}', 'payment', 'Test', '${CUSTOMER_PHONE}', CURRENT_DATE, 'confirmed', 5000, now());
+        INSERT INTO public.payments (id, booking_id, user_id, business_id, amount, currency, gateway_reference, gateway, status, finalization_completed_at, confirmation_sent_at, paid_at, created_at)
+        VALUES ('${INACTIVE_PAY}', '${INACTIVE_BK}', '${CUSTOMER_USER}', '${BIZ_A}', 5000, 'NGN', 'WA-PY-IN01-PAY', 'paystack', 'success', now(), now(), now(), now());
+      `);
+      const result = runSQL(`
+        SELECT create_recurring_offer('${INACTIVE_PAY}', '${BIZ_A}', 'paystack');
+      `);
+      expect(result).toContain('service_inactive');
+    } finally {
+      runSQL(`
+        DELETE FROM public.payments WHERE id = '${INACTIVE_PAY}';
+        DELETE FROM public.bookings WHERE id = '${INACTIVE_BK}';
+        DELETE FROM public.services WHERE id = '${INACTIVE_SVC}';
+      `);
+    }
   });
 });
 

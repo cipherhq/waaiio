@@ -25,20 +25,46 @@ CREATE INDEX IF NOT EXISTS idx_customer_profiles_user_id
 -- Only set user_id when ALL bookings for the same (business_id, guest_phone)
 -- resolve to exactly one user_id. Ambiguous/conflicting mappings stay NULL.
 
+-- Backfill uses a subquery that:
+--   a) avoids MIN(uuid) which does not exist in all PostgreSQL versions;
+--   b) only selects (business_id, guest_phone) pairs with exactly one distinct user_id;
+--   c) skips any customer_profiles row where setting user_id would violate the
+--      partial unique index (business_id, user_id) — i.e. another cp row in the
+--      same business already has that user_id. This preserves all legacy rows.
+
 UPDATE public.customer_profiles cp
 SET user_id = sub.single_user_id
 FROM (
-  SELECT b.business_id, b.guest_phone, MIN(b.user_id) AS single_user_id
-  FROM public.bookings b
-  WHERE b.user_id IS NOT NULL
-    AND b.guest_phone IS NOT NULL
-    AND b.guest_phone != ''
-  GROUP BY b.business_id, b.guest_phone
-  HAVING COUNT(DISTINCT b.user_id) = 1
+  -- Find (business_id, guest_phone) pairs with exactly one distinct user_id
+  SELECT DISTINCT ON (agg.business_id, agg.guest_phone)
+    agg.business_id, agg.guest_phone, agg.the_user_id AS single_user_id
+  FROM (
+    SELECT b.business_id, b.guest_phone, b.user_id AS the_user_id
+    FROM public.bookings b
+    WHERE b.user_id IS NOT NULL
+      AND b.guest_phone IS NOT NULL
+      AND b.guest_phone != ''
+    GROUP BY b.business_id, b.guest_phone, b.user_id
+  ) agg
+  -- Only keep groups where there is exactly one distinct user_id for the phone
+  WHERE (
+    SELECT COUNT(DISTINCT b2.user_id)
+    FROM public.bookings b2
+    WHERE b2.business_id = agg.business_id
+      AND b2.guest_phone = agg.guest_phone
+      AND b2.user_id IS NOT NULL
+  ) = 1
 ) sub
 WHERE cp.business_id = sub.business_id
   AND cp.phone = sub.guest_phone
-  AND cp.user_id IS NULL;
+  AND cp.user_id IS NULL
+  -- Collision guard: skip if another cp row in the same business already has this user_id
+  AND NOT EXISTS (
+    SELECT 1 FROM public.customer_profiles cp2
+    WHERE cp2.business_id = cp.business_id
+      AND cp2.user_id = sub.single_user_id
+      AND cp2.id != cp.id
+  );
 
 
 -- 3. get_business_transactions()
@@ -104,7 +130,8 @@ BEGIN
     UNION ALL
 
     -- Orders: resolve customer from customer_profiles by user_id (primary)
-    -- or delivery_phone (fallback). Never from profiles RLS.
+    -- or delivery_phone (fallback ONLY when source order has no user_id).
+    -- Never from profiles RLS.
     SELECT
       o.id AS txn_id,
       'order'::TEXT AS txn_type,
@@ -118,10 +145,10 @@ BEGIN
     FROM public.orders o
     LEFT JOIN public.customer_profiles cp_u
       ON cp_u.business_id = o.business_id AND cp_u.user_id = o.user_id
-      AND cp_u.user_id IS NOT NULL
+      AND o.user_id IS NOT NULL
     LEFT JOIN public.customer_profiles cp_p
       ON cp_p.business_id = o.business_id AND cp_p.phone = o.delivery_phone
-      AND cp_u.id IS NULL
+      AND o.user_id IS NULL  -- phone fallback only for legacy rows without durable identity
     WHERE o.business_id = p_business_id
       AND o.deleted_at IS NULL
 
@@ -191,7 +218,8 @@ BEGIN
 
   RETURN QUERY
   (
-    -- Bookings: match by user_id (primary) OR guest_phone (fallback)
+    -- Bookings: durable user_id primary; phone fallback ONLY for legacy rows
+    -- where source booking has no user_id (prevents cross-attribution on shared phones)
     SELECT
       'booking'::TEXT AS history_type,
       b.id AS subject_id,
@@ -216,12 +244,12 @@ BEGIN
     WHERE b.business_id = p_business_id
       AND (
         (v_user_id IS NOT NULL AND b.user_id = v_user_id)
-        OR (v_phone IS NOT NULL AND b.guest_phone = v_phone)
+        OR (v_phone IS NOT NULL AND b.user_id IS NULL AND b.guest_phone = v_phone)
       )
 
     UNION ALL
 
-    -- Orders: match by user_id (primary) OR delivery_phone (fallback)
+    -- Orders: durable user_id primary; phone fallback ONLY for legacy rows
     SELECT
       'order'::TEXT AS history_type,
       o.id AS subject_id,
@@ -236,7 +264,7 @@ BEGIN
       AND o.deleted_at IS NULL
       AND (
         (v_user_id IS NOT NULL AND o.user_id = v_user_id)
-        OR (v_phone IS NOT NULL AND o.delivery_phone = v_phone)
+        OR (v_phone IS NOT NULL AND o.user_id IS NULL AND o.delivery_phone = v_phone)
       )
 
     UNION ALL
@@ -331,3 +359,133 @@ GRANT EXECUTE ON FUNCTION public.get_business_revenue_totals(UUID) TO authentica
 
 REVOKE ALL ON FUNCTION public.get_customer_history(UUID, UUID, INTEGER) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.get_customer_history(UUID, UUID, INTEGER) TO authenticated, service_role;
+
+
+-- 7. Defense-in-depth: harden create_recurring_offer RPC (#224)
+-- Add service-level validation so bypassing application checks cannot create
+-- an invalid recurring offer for a one-time, inactive, or non-Giving service.
+
+CREATE OR REPLACE FUNCTION public.create_recurring_offer(
+  p_source_payment_id UUID,
+  p_business_id UUID,
+  p_provider TEXT
+) RETURNS JSONB
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_intent RECORD;
+  v_new_id UUID;
+  v_amount INTEGER;
+  v_currency VARCHAR(3);
+  v_user_id UUID;
+  v_service_id UUID;
+  v_service RECORD;
+BEGIN
+  -- Validate provider
+  IF p_provider != 'paystack' THEN
+    RETURN jsonb_build_object('created', false, 'reason', 'unsupported_provider');
+  END IF;
+
+  -- Load authoritative values from source payment and its associated booking
+  SELECT p.amount, p.currency, p.user_id, b.service_id
+  INTO v_amount, v_currency, v_user_id, v_service_id
+  FROM public.payments p
+  INNER JOIN public.bookings b ON b.id = p.booking_id
+  WHERE p.id = p_source_payment_id
+    AND p.business_id = p_business_id
+    AND p.gateway = p_provider
+    AND p.status = 'success'
+    AND p.finalization_completed_at IS NOT NULL
+    AND p.confirmation_sent_at IS NOT NULL
+    AND b.flow_type = 'payment'
+    AND b.business_id = p_business_id;
+
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('created', false, 'reason', 'payment_not_eligible');
+  END IF;
+
+  IF v_user_id IS NULL THEN
+    RETURN jsonb_build_object('created', false, 'reason', 'payment_missing_user');
+  END IF;
+
+  -- Defense-in-depth: validate the source service (#224)
+  IF v_service_id IS NULL THEN
+    RETURN jsonb_build_object('created', false, 'reason', 'no_service');
+  END IF;
+
+  SELECT s.billing_type, s.recurring_interval, s.service_type, s.is_active, s.business_id
+  INTO v_service
+  FROM public.services s
+  WHERE s.id = v_service_id;
+
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('created', false, 'reason', 'service_not_found');
+  END IF;
+
+  -- Service must belong to the same business
+  IF v_service.business_id != p_business_id THEN
+    RETURN jsonb_build_object('created', false, 'reason', 'service_wrong_business');
+  END IF;
+
+  -- Service must be a Giving category
+  IF v_service.service_type != 'giving' THEN
+    RETURN jsonb_build_object('created', false, 'reason', 'service_not_giving');
+  END IF;
+
+  -- Service must be active
+  IF NOT v_service.is_active THEN
+    RETURN jsonb_build_object('created', false, 'reason', 'service_inactive');
+  END IF;
+
+  -- Service must be configured as recurring with a supported interval
+  IF v_service.billing_type != 'recurring' OR v_service.recurring_interval IS NULL THEN
+    RETURN jsonb_build_object('created', false, 'reason', 'service_not_recurring');
+  END IF;
+
+  IF v_service.recurring_interval NOT IN ('weekly', 'monthly') THEN
+    RETURN jsonb_build_object('created', false, 'reason', 'unsupported_interval');
+  END IF;
+
+  -- Check for existing active subscription
+  IF v_service_id IS NOT NULL THEN
+    PERFORM id FROM public.customer_subscriptions
+    WHERE business_id = p_business_id AND user_id = v_user_id
+      AND service_id = v_service_id AND status = 'active';
+  ELSE
+    PERFORM id FROM public.customer_subscriptions
+    WHERE business_id = p_business_id AND user_id = v_user_id
+      AND service_id IS NULL AND status = 'active';
+  END IF;
+
+  IF FOUND THEN
+    RETURN jsonb_build_object('created', false, 'reason', 'active_subscription_exists');
+  END IF;
+
+  -- Idempotent insert
+  INSERT INTO public.recurring_setup_intents (
+    source_payment_id, business_id, user_id, service_id,
+    amount, currency, provider
+  ) VALUES (
+    p_source_payment_id, p_business_id, v_user_id, v_service_id,
+    v_amount, v_currency, p_provider
+  )
+  ON CONFLICT (source_payment_id) DO NOTHING
+  RETURNING id INTO v_new_id;
+
+  IF v_new_id IS NOT NULL THEN
+    RETURN jsonb_build_object('created', true, 'intent_id', v_new_id);
+  END IF;
+
+  -- Existing intent — return its current state
+  SELECT id, status, expires_at INTO v_intent
+  FROM public.recurring_setup_intents
+  WHERE source_payment_id = p_source_payment_id;
+
+  RETURN jsonb_build_object(
+    'created', false,
+    'reason', 'already_exists',
+    'intent_id', v_intent.id,
+    'status', v_intent.status,
+    'expired', v_intent.expires_at < NOW()
+  );
+END;
+$$;

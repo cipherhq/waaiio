@@ -79,6 +79,19 @@ export async function checkAndOfferRecurring(
       logger.info(`${logPrefix} Recurring offer skipped — service billing_type=${service.billing_type}, not recurring`);
       return;
     }
+    // Service must be a Giving category, active, same business, and supported interval
+    if (service.service_type !== 'giving') {
+      logger.info(`${logPrefix} Recurring offer skipped — service_type=${service.service_type}, not giving`);
+      return;
+    }
+    if (!service.is_active) {
+      logger.info(`${logPrefix} Recurring offer skipped — service is inactive`);
+      return;
+    }
+    if (service.recurring_interval !== 'weekly' && service.recurring_interval !== 'monthly') {
+      logger.info(`${logPrefix} Recurring offer skipped — unsupported interval=${service.recurring_interval}`);
+      return;
+    }
 
     // ── 3. Check business eligibility ──
     const { data: business } = await supabase
