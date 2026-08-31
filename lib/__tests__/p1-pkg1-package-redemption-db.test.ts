@@ -306,7 +306,7 @@ describe.skipIf(!dbUrl)('P1-PKG-1: Atomic package booking + release', () => {
     expect(booking.success).toBe(true);
     expect(psql(`SELECT sessions_used FROM package_enrollments WHERE id = '${ENR}';`)).toBe('1');
 
-    const cancel = psqlJson(`SELECT cancel_booking_with_release('${booking.booking_id}'::uuid, 'guest', '${USR}'::uuid);`);
+    const cancel = psqlJson(`SELECT cancel_booking_with_release('${booking.booking_id}'::uuid, 'guest'::text, '${USR}'::uuid);`);
     expect(cancel.cancelled).toBe(true);
     expect(cancel.session_released).toBe(true);
 
@@ -325,7 +325,7 @@ describe.skipIf(!dbUrl)('P1-PKG-1: Atomic package booking + release', () => {
     const booking = psqlJson(bookPkg());
     // Complete the booking first
     psql(`UPDATE bookings SET status = 'completed' WHERE id = '${booking.booking_id}';`);
-    const cancel = psqlJson(`SELECT cancel_booking_with_release('${booking.booking_id}'::uuid, 'guest', '${USR}'::uuid);`);
+    const cancel = psqlJson(`SELECT cancel_booking_with_release('${booking.booking_id}'::uuid, 'guest'::text, '${USR}'::uuid);`);
     expect(cancel.cancelled).toBe(false);
     expect(cancel.reason).toBe('not_cancellable');
   });
@@ -356,7 +356,7 @@ describe.skipIf(!dbUrl)('P1-PKG-1: Atomic package booking + release', () => {
     reset(10, 0);
     // Insert a plain booking (no package redemption)
     psql(`INSERT INTO bookings (id, business_id, user_id, status, date, time) VALUES ('77aaaaaa-0000-0000-0000-000000000001', '${BIZ}', '${USR}', 'confirmed', '2026-09-01', '15:00');`);
-    const cancel = psqlJson(`SELECT cancel_booking_with_release('77aaaaaa-0000-0000-0000-000000000001'::uuid, 'business', '${USR}'::uuid);`);
+    const cancel = psqlJson(`SELECT cancel_booking_with_release('77aaaaaa-0000-0000-0000-000000000001'::uuid, 'business'::text, '${USR}'::uuid);`);
     expect(cancel.cancelled).toBe(true);
     expect(cancel.session_released).toBe(false);
   });

@@ -104,7 +104,7 @@ describe('#216 Object-level authorization: cancel_booking_with_release', () => {
   it('1. mismatched p_expected_user_id -> denial, booking status unchanged', () => {
     // Attacker tries to cancel victim's booking
     const result = runSQLJson(
-      `SELECT cancel_booking_with_release('${BOOKING}'::uuid, 'guest', '${ATTACKER}'::uuid);`
+      `SELECT cancel_booking_with_release('${BOOKING}'::uuid, 'guest'::text, '${ATTACKER}'::uuid);`
     );
 
     expect(result.cancelled).toBe(false);
@@ -120,7 +120,7 @@ describe('#216 Object-level authorization: cancel_booking_with_release', () => {
     runSQL(`UPDATE public.bookings SET status = 'confirmed', cancelled_at = NULL, cancelled_by = NULL WHERE id = '${BOOKING}';`);
 
     const result = runSQLJson(
-      `SELECT cancel_booking_with_release('${BOOKING}'::uuid, 'guest', '${VICTIM}'::uuid);`
+      `SELECT cancel_booking_with_release('${BOOKING}'::uuid, 'guest'::text, '${VICTIM}'::uuid);`
     );
 
     expect(result.cancelled).toBe(true);
@@ -135,7 +135,7 @@ describe('#216 Object-level authorization: cancel_booking_with_release', () => {
     runSQL(`UPDATE public.bookings SET status = 'confirmed', cancelled_at = NULL, cancelled_by = NULL WHERE id = '${BOOKING}';`);
 
     const result = runSQLJson(
-      `SELECT cancel_booking_with_release('${BOOKING}'::uuid, 'guest', NULL::uuid);`
+      `SELECT cancel_booking_with_release('${BOOKING}'::uuid, 'guest'::text, NULL::uuid);`
     );
 
     expect(result.cancelled).toBe(false);
