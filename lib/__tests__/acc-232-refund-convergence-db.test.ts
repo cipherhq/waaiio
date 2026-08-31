@@ -636,7 +636,7 @@ describe('#232 Refund convergence PostgreSQL', () => {
     }
   });
 
-  it('concurrent lease takeover after crash cannot create two dispatch permissions', async () => {
+  it('concurrent lease takeover after crash: exactly one winner, winner token claims, loser token rejected', async () => {
     const REF = 'c2320000-0000-0000-0000-000000000251';
     try {
       // Create pending+dispatched+stale-token (crashed recovery state)
@@ -654,15 +654,90 @@ describe('#232 Refund convergence PostgreSQL', () => {
         execAsync(`psql "${dbUrl}" -t -A -v ON_ERROR_STOP=1 -c "${sql}"`, { timeout: 10000 }),
       ]);
 
-      // Exactly one wins recovery
+      // Exactly one wins recovery (not zero, not two)
       const won1 = r1.stdout.includes('"recovered" : true') || r1.stdout.includes('"recovered": true');
       const won2 = r2.stdout.includes('"recovered" : true') || r2.stdout.includes('"recovered": true');
       const winners = [won1, won2].filter(Boolean);
-      expect(winners.length).toBeLessThanOrEqual(1);
+      expect(winners.length).toBe(1);
+
+      // Extract the winning recovery token
+      const winnerOutput = won1 ? r1.stdout : r2.stdout;
+      const tokenMatch = winnerOutput.match(/"recovery_token"\s*:\s*"([0-9a-f-]+)"/);
+      expect(tokenMatch).not.toBeNull();
+      const winnerToken = tokenMatch![1];
+
+      // Winner token can claim dispatch (exactly one dispatch permission)
+      const claimWinner = runSQL(`SELECT claimed FROM claim_refund_dispatch('${REF}'::uuid, '${winnerToken}'::uuid);`);
+      expect(claimWinner).toBe('t');
+
+      // Fabricate a stale/loser token and prove it CANNOT claim
+      const staleToken = '00000000-0000-0000-0000-ffffffffffff';
+      const claimLoser = runSQL(`SELECT claimed FROM claim_refund_dispatch('${REF}'::uuid, '${staleToken}'::uuid);`);
+      expect(claimLoser).toBe('f');
+
+      // Same refund ID — no replacement row created
+      const rowCount = runSQL(`SELECT COUNT(*) FROM public.refunds WHERE id = '${REF}';`);
+      expect(rowCount).toBe('1');
     } finally {
       runSQL(`DELETE FROM public.refunds WHERE id = '${REF}';`);
     }
   }, 15000);
+
+  // ── Replay window anchored to first dispatch, not refreshed by recovery ──
+
+  it('recovery/replay near window end does NOT refresh eligibility — expired first-dispatch is denied', () => {
+    const REF = 'c2320000-0000-0000-0000-000000000260';
+    try {
+      // Simulate: first dispatch was 23.5 hours ago (outside 23h replay window).
+      // A recovery claim happened 1 hour ago (would be "recent" if dispatched_at was refreshed).
+      // Since claim_refund_dispatch no longer refreshes dispatched_at, the replay window
+      // remains anchored to the first dispatch and should be EXPIRED.
+      runSQL(`INSERT INTO public.refunds (id, payment_id, business_id, amount, status, gateway, refund_type, dispatched_at)
+        VALUES ('${REF}', '${PAYMENT}', '${BIZ}', 5000, 'pending', 'stripe', 'partial', now() - interval '23 hours 30 minutes');`);
+
+      // Attempt recovery — should be denied because dispatched_at is outside the 23h window
+      const recResult = runSQL(`SELECT recover_interrupted_dispatch('${REF}');`);
+      expect(recResult).toContain('replay_window_expired');
+      expect(recResult).not.toContain('"recovered" : true');
+      expect(recResult).not.toContain('"recovered": true');
+
+      // Also test ambiguous path with expired first dispatch
+      runSQL(`UPDATE public.refunds SET status = 'provider_ambiguous' WHERE id = '${REF}';`);
+      const ambResult = runSQL(`SELECT recover_ambiguous_refund('${REF}');`);
+      expect(ambResult).toContain('replay_window_expired');
+    } finally {
+      runSQL(`DELETE FROM public.refunds WHERE id = '${REF}';`);
+    }
+  });
+
+  it('token-bound claim preserves original dispatched_at (does not refresh replay clock)', () => {
+    const REF = 'c2320000-0000-0000-0000-000000000261';
+    try {
+      // Create a refund dispatched 20 hours ago (within 23h window)
+      runSQL(`INSERT INTO public.refunds (id, payment_id, business_id, amount, status, gateway, refund_type, dispatched_at)
+        VALUES ('${REF}', '${PAYMENT}', '${BIZ}', 5000, 'provider_ambiguous', 'stripe', 'partial', now() - interval '20 hours');`);
+
+      // Recover: acquires token, sets status=pending, preserves dispatched_at
+      const recResult = runSQL(`SELECT recover_ambiguous_refund('${REF}');`);
+      expect(recResult).toContain('"recovered" : true');
+
+      // Capture original dispatched_at before claim
+      const dispatchedBefore = runSQL(`SELECT dispatched_at FROM public.refunds WHERE id = '${REF}';`);
+
+      // Extract token and claim
+      const tokenMatch = recResult.match(/"recovery_token"\s*:\s*"([^"]+)"/);
+      expect(tokenMatch).not.toBeNull();
+      const token = tokenMatch![1];
+      const claimResult = runSQL(`SELECT claimed FROM claim_refund_dispatch('${REF}'::uuid, '${token}'::uuid);`);
+      expect(claimResult).toBe('t');
+
+      // dispatched_at must NOT have changed (replay clock not refreshed)
+      const dispatchedAfter = runSQL(`SELECT dispatched_at FROM public.refunds WHERE id = '${REF}';`);
+      expect(dispatchedAfter).toBe(dispatchedBefore);
+    } finally {
+      runSQL(`DELETE FROM public.refunds WHERE id = '${REF}';`);
+    }
+  });
 
   // ── 25% + 25% partial fee regression (blocker 5) ──
 

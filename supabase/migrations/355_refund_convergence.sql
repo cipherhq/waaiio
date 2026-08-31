@@ -106,9 +106,13 @@ AS $$
 DECLARE v_refund RECORD;
 BEGIN
   IF p_recovery_token IS NOT NULL THEN
-    -- Token-bound claim: only the holder of the active recovery token can dispatch
+    -- Token-bound claim: only the holder of the active recovery token can dispatch.
+    -- PRESERVE dispatched_at: the replay-safety window is anchored to the FIRST
+    -- provider dispatch, never refreshed by recovery/replay claims. This prevents
+    -- repeated recoveries from extending eligibility beyond the provider's idempotency
+    -- window (e.g., Stripe's 24h key pruning).
     UPDATE public.refunds r
-    SET dispatched_at = now(), recovery_token = NULL, recovery_claimed_at = NULL
+    SET recovery_token = NULL, recovery_claimed_at = NULL
     WHERE r.id = p_refund_id AND r.status = 'pending' AND r.recovery_token = p_recovery_token
     RETURNING r.id, r.payment_id, r.amount, r.gateway, r.refund_type, r.is_direct_split, r.connect_account_id, r.provider_connection_id
     INTO v_refund;
