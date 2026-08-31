@@ -313,13 +313,14 @@ export class StripeGateway implements PaymentGateway {
   }
 
   async queryRefundStatus(refundReference: string): Promise<import('./types').RefundStatusResult> {
-    const data = await stripeRequest(`/refunds/${encodeURIComponent(refundReference)}`, {}, undefined);
+    const data = await stripeGet(`/refunds/${encodeURIComponent(refundReference)}`);
     const status = (data.status as string) || 'unknown';
     return {
       providerStatus: status,
       outcome: status === 'succeeded' ? 'terminal_success'
         : (status === 'failed' || status === 'canceled') ? 'terminal_failure'
-        : 'provider_pending',
+        : (status === 'pending' || status === 'requires_action') ? 'provider_pending'
+        : 'transport_unknown', // unknown/unrecognized status → conservative
       providerRefundId: data.id as string,
     };
   }

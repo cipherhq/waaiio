@@ -168,10 +168,25 @@ async function reconcileAndFinalize(
     if (!gateway.queryRefundStatus) {
       return { success: false, refundId, isDirectSplit, errorMessage: 'Gateway does not support refund status query' };
     }
-    const metadata = payment.metadata as Record<string, unknown> | null;
+    // Resolve credential from the persisted provider_connection_id (same as original dispatch)
+    let byoSecretKey: string | undefined;
+    let connectAccountId: string | undefined;
+    const providerConnId = existing.provider_connection_id as string | undefined;
+    if (providerConnId) {
+      const { data: cred } = await service
+        .from('business_payment_credentials')
+        .select('secret_key, connect_account_id')
+        .eq('id', providerConnId).eq('is_active', true).maybeSingle();
+      if (!cred) {
+        return { success: false, refundId, isDirectSplit, errorMessage: 'Payment credential not found for reconciliation' };
+      }
+      if (cred.secret_key) byoSecretKey = cred.secret_key;
+      if (cred.connect_account_id) connectAccountId = cred.connect_account_id;
+    }
+
     const statusResult = await gateway.queryRefundStatus(existing.provider_refund_id as string, {
-      byoSecretKey: undefined, // resolved at runtime if needed
-      connectAccountId: (metadata?.connect_account_id as string) || undefined,
+      byoSecretKey,
+      connectAccountId,
     });
 
     if (statusResult.outcome === 'terminal_success') {
@@ -225,19 +240,26 @@ async function dispatchAndFinalize(
     const gatewayName = (refRow.gateway || 'paystack') as PaymentGatewayName;
     const gateway = getPaymentGatewayByName(gatewayName);
 
-    // Resolve BYO credential from trusted boundary if needed
+    // Resolve BYO credential from trusted boundary (business_payment_credentials)
     let byoSecretKey: string | undefined;
+    let connectAccountId: string | undefined = refRow.connect_account_id || undefined;
     if (refRow.provider_connection_id) {
-      const { data: cred } = await service.from('payout_accounts').select('secret_key').eq('id', refRow.provider_connection_id).eq('is_active', true).maybeSingle();
-      if (!cred?.secret_key) {
-        // Credential missing/deactivated — fail closed
+      const { data: cred } = await service
+        .from('business_payment_credentials')
+        .select('secret_key, connect_account_id, connection_type')
+        .eq('id', refRow.provider_connection_id)
+        .eq('is_active', true)
+        .maybeSingle();
+      if (!cred) {
+        // Credential missing/deactivated — fail closed to reconciliation
         const { error: ambErr } = await service.from('refunds')
           .update({ status: 'provider_ambiguous', gateway_response: { error: 'credential_not_found' } })
           .eq('id', refundId);
         if (ambErr) logger.error(`[REFUND] Credential missing AND state write failed: ${refundId}`);
-        return { success: false, refundId, isDirectSplit, errorMessage: 'BYO credential not found — requires reconciliation' };
+        return { success: false, refundId, isDirectSplit, errorMessage: 'Payment credential not found or deactivated — requires reconciliation' };
       }
-      byoSecretKey = cred.secret_key;
+      if (cred.secret_key) byoSecretKey = cred.secret_key;
+      if (cred.connect_account_id) connectAccountId = cred.connect_account_id;
     }
 
     const result = await gateway.refundPayment({
@@ -245,22 +267,28 @@ async function dispatchAndFinalize(
       amount: refRow.refund_type === 'full' ? undefined : Number(refRow.amount),
       currency: ((payment.currency as string) || 'NGN'),
       reason: refRow.reason || undefined,
-      connectAccountId: refRow.connect_account_id || undefined,
+      connectAccountId,
       byoSecretKey,
       idempotencyKey: refundId,
     });
 
-    // Persist provider refund ID + status regardless of outcome
+    // Persist provider refund ID + status — FAIL-SAFE: if this write fails,
+    // the row stays pending+dispatched; Tier-1 can safely re-dispatch, Tier-2 requires reconciliation.
     if (result.providerRefundId || result.providerStatus) {
-      await service.from('refunds').update({
+      const { error: refPersistErr } = await service.from('refunds').update({
         provider_refund_id: result.providerRefundId || null,
         provider_status: result.providerStatus || null,
         gateway_refund_reference: result.gatewayRefundReference || result.providerRefundId || null,
         gateway_response: result.gatewayResponse || null,
       }).eq('id', refundId);
+      if (refPersistErr) {
+        logger.error(`[REFUND] Provider reference persistence failed for ${refundId}: ${refPersistErr.message}`);
+        // FAIL-SAFE: do not continue with state transition — reference needed for reconciliation
+        return { success: false, refundId, isDirectSplit, errorMessage: 'Provider reference persistence failed — requires recovery' };
+      }
     }
 
-    // Outcome-based state transition
+    // Outcome-based state transition — every write is checked
     const outcome: RefundOutcome = result.outcome;
 
     if (outcome === 'terminal_success') {
@@ -273,18 +301,30 @@ async function dispatchAndFinalize(
     } else if (outcome === 'terminal_failure') {
       const { error: failErr } = await service.from('refunds')
         .update({ status: 'failed' }).eq('id', refundId);
-      if (failErr) logger.error(`[REFUND] Failed state write failed: ${refundId}`);
+      if (failErr) {
+        logger.error(`[REFUND] Failed state write failed: ${refundId}`);
+        // FAIL-SAFE: row stays pending+dispatched; reconciliation required
+        return { success: false, refundId, isDirectSplit, errorMessage: 'Provider failure confirmed but state persistence failed — requires recovery' };
+      }
       return { success: false, refundId, isDirectSplit, errorMessage: result.errorMessage || 'Gateway refund failed' };
     } else if (outcome === 'provider_pending') {
       const { error: pendErr } = await service.from('refunds')
         .update({ status: 'provider_pending' }).eq('id', refundId);
-      if (pendErr) logger.error(`[REFUND] Provider pending state write failed: ${refundId}`);
+      if (pendErr) {
+        logger.error(`[REFUND] Provider pending state write failed: ${refundId}`);
+        // FAIL-SAFE: row stays pending+dispatched; reconciliation required
+        return { success: false, refundId, isDirectSplit, errorMessage: 'Provider accepted but state persistence failed — requires recovery' };
+      }
       return { success: false, refundId, isDirectSplit, errorMessage: 'Refund accepted by provider — awaiting completion' };
     } else {
       // transport_unknown → provider_ambiguous
       const { error: ambErr } = await service.from('refunds')
         .update({ status: 'provider_ambiguous' }).eq('id', refundId);
-      if (ambErr) logger.error(`[REFUND] Ambiguous state write failed: ${refundId}`);
+      if (ambErr) {
+        logger.error(`[REFUND] Ambiguous state write failed: ${refundId}`);
+        // FAIL-SAFE: row stays pending+dispatched; reconciliation required
+        return { success: false, refundId, isDirectSplit, errorMessage: 'Outcome unknown and state persistence failed — requires recovery' };
+      }
       return { success: false, refundId, isDirectSplit, errorMessage: 'Refund outcome unknown' };
     }
   }

@@ -334,14 +334,15 @@ export class SquareGateway implements PaymentGateway {
   }
 
   async queryRefundStatus(refundReference: string): Promise<import('./types').RefundStatusResult> {
-    const data = await squareRequest(`/v2/refunds/${encodeURIComponent(refundReference)}`, {});
+    const data = await squareGet(`/v2/refunds/${encodeURIComponent(refundReference)}`);
     const refund = data.refund as Record<string, unknown> | undefined;
     const status = (refund?.status as string) || 'unknown';
     return {
       providerStatus: status,
       outcome: status === 'COMPLETED' ? 'terminal_success'
         : (status === 'FAILED' || status === 'REJECTED') ? 'terminal_failure'
-        : 'provider_pending',
+        : status === 'PENDING' ? 'provider_pending'
+        : 'transport_unknown', // unknown/unrecognized status → conservative
       providerRefundId: refund?.id as string,
     };
   }
