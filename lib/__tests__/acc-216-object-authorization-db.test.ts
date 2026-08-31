@@ -36,13 +36,17 @@ function runSQL(sql: string): string {
   }
 }
 
-/** Run SQL as service_role (the actual privileged execution boundary). */
+/** Run SQL as service_role (the actual privileged execution boundary).
+ *  Uses -tAXq flags matching the proven working pattern from other CI DB tests. */
 function runAsServiceRole(sql: string): string {
   try {
     return execSync(
-      `psql "${dbUrl}" -t -A -q -v ON_ERROR_STOP=1`,
+      `psql "${dbUrl}" -tAXq -v ON_ERROR_STOP=1`,
       { input: `SET ROLE service_role;\n${sql}\nRESET ROLE;`, encoding: 'utf-8', timeout: 15000 },
-    ).split('\n').filter(l => l.trim() !== '' && l.trim() !== 'SET' && l.trim() !== 'RESET').join('\n').trim();
+    ).toString().split('\n').filter(l => {
+      const t = l.trim();
+      return t !== '' && !/^(SET|RESET)$/i.test(t);
+    }).join('\n').trim();
   } catch (err: any) {
     throw new Error(`SQL (service_role) failed: ${err.stderr?.trim() || err.stdout?.trim() || err}`);
   }
@@ -177,6 +181,20 @@ describe('#216 Object-level authorization: cancel_booking_with_release', () => {
       DELETE FROM auth.users WHERE id IN ('${OWNER}', '${VICTIM}', '${ATTACKER}');
       ALTER TABLE auth.users ENABLE TRIGGER ALL;
     `);
+  });
+
+  it('0. pre-flight: service_role can SET ROLE and function privilege is granted', () => {
+    // Verify privilege exists in catalog
+    const priv = runSQL(`SELECT has_function_privilege('service_role', 'public.cancel_booking_with_release(uuid, text, uuid)', 'EXECUTE');`);
+    expect(priv).toBe('t');
+
+    // Verify SET ROLE works and we can query as service_role
+    const whoami = runAsServiceRole(`SELECT current_user;`);
+    expect(whoami).toBe('service_role');
+
+    // Verify function exists with correct arg types
+    const funcExists = runSQL(`SELECT proname FROM pg_proc WHERE proname = 'cancel_booking_with_release' AND pronargs = 3;`);
+    expect(funcExists).toBe('cancel_booking_with_release');
   });
 
   it('1. mismatched owner under service_role: denial + ALL state unchanged', () => {
