@@ -206,10 +206,13 @@ BEGIN
     RETURN jsonb_build_object('recovered', false, 'reason', 'replay_window_expired');
   END IF;
 
-  -- Reset to pending + acquire recovery lease for token-bound re-dispatch
+  -- Reset to pending + acquire recovery lease for token-bound re-dispatch.
+  -- PRESERVE dispatched_at so that if a crash occurs between this commit and
+  -- the subsequent claim, the row enters the 'pending + dispatched_at IS NOT NULL'
+  -- state which recover_interrupted_dispatch() can reclaim.
   v_token := gen_random_uuid();
   UPDATE public.refunds
-  SET status = 'pending', dispatched_at = NULL, recovery_token = v_token, recovery_claimed_at = now()
+  SET status = 'pending', recovery_token = v_token, recovery_claimed_at = now()
   WHERE id = p_refund_id;
 
   RETURN jsonb_build_object('recovered', true, 'recovery_token', v_token, 'refund_id', p_refund_id);

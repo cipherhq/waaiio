@@ -529,10 +529,10 @@ describe('#232 Refund convergence PostgreSQL', () => {
       const result = runSQL(`SELECT recover_ambiguous_refund('${REF}');`);
       expect(result).toContain('true');
 
-      // Refund is back to pending + undispatched
-      const status = runSQL(`SELECT status, dispatched_at IS NULL AS undispatched FROM public.refunds WHERE id = '${REF}';`);
+      // Refund is back to pending with dispatched_at PRESERVED (for crash recovery)
+      const status = runSQL(`SELECT status, dispatched_at IS NOT NULL AS has_dispatch, recovery_token IS NOT NULL AS has_token FROM public.refunds WHERE id = '${REF}';`);
       expect(status).toContain('pending');
-      expect(status).toContain('t'); // undispatched
+      expect(status).toContain('t'); // dispatched_at preserved + recovery_token set
     } finally {
       runSQL(`DELETE FROM public.refunds WHERE id = '${REF}';`);
     }
@@ -593,6 +593,76 @@ describe('#232 Refund convergence PostgreSQL', () => {
       runSQL(`DELETE FROM public.refunds WHERE id = '${REF}';`);
     }
   });
+
+  // ── Crash between ambiguous recovery and dispatch claim ──
+
+  it('ambiguous recovery preserves dispatched_at so interrupted-dispatch can reclaim after crash', () => {
+    const REF = 'c2320000-0000-0000-0000-000000000250';
+    try {
+      // Create Tier-1 ambiguous refund
+      runSQL(`INSERT INTO public.refunds (id, payment_id, business_id, amount, status, gateway, refund_type, dispatched_at) VALUES ('${REF}', '${PAYMENT}', '${BIZ}', 5000, 'provider_ambiguous', 'stripe', 'partial', now());`);
+
+      // Step 1: recover_ambiguous_refund commits (simulating pre-crash state)
+      const recResult = runSQL(`SELECT recover_ambiguous_refund('${REF}');`);
+      expect(recResult).toContain('true');
+
+      // Verify: row is now pending + dispatched_at preserved + recovery_token set
+      const state = runSQL(`SELECT status, dispatched_at IS NOT NULL AS has_dispatch, recovery_token IS NOT NULL AS has_token FROM public.refunds WHERE id = '${REF}';`);
+      expect(state).toContain('pending');
+      expect(state).toContain('t'); // dispatched_at preserved
+
+      // Step 2: Simulate crash — claim never executes. Now a later attempt arrives.
+      // Clear the stale recovery lease (simulate 5+ min expiry by backdating)
+      runSQL(`UPDATE public.refunds SET recovery_claimed_at = now() - interval '6 minutes' WHERE id = '${REF}';`);
+
+      // Step 3: recover_interrupted_dispatch can now reclaim
+      const recoverResult = runSQL(`SELECT recover_interrupted_dispatch('${REF}');`);
+      expect(recoverResult).toContain('true');
+
+      // Step 4: claim_refund_dispatch with the new recovery token succeeds
+      // Extract the token from the recovery result
+      const tokenMatch = recoverResult.match(/"recovery_token"\s*:\s*"([^"]+)"/);
+      expect(tokenMatch).not.toBeNull();
+      const token = tokenMatch![1];
+
+      const claimResult = runSQL(`SELECT claimed FROM public.claim_refund_dispatch('${REF}'::uuid, '${token}'::uuid);`);
+      expect(claimResult).toBe('t');
+
+      // Same refund ID — no replacement row created
+      const rowCount = runSQL(`SELECT COUNT(*) FROM public.refunds WHERE payment_id = '${PAYMENT}' AND status != 'success' AND status != 'failed';`);
+      expect(rowCount).toBe('1'); // exactly one non-terminal row
+    } finally {
+      runSQL(`DELETE FROM public.refunds WHERE id = '${REF}';`);
+    }
+  });
+
+  it('concurrent lease takeover after crash cannot create two dispatch permissions', async () => {
+    const REF = 'c2320000-0000-0000-0000-000000000251';
+    try {
+      // Create pending+dispatched+stale-token (crashed recovery state)
+      runSQL(`INSERT INTO public.refunds (id, payment_id, business_id, amount, status, gateway, refund_type, dispatched_at, recovery_token, recovery_claimed_at)
+        VALUES ('${REF}', '${PAYMENT}', '${BIZ}', 5000, 'pending', 'stripe', 'partial', now(), gen_random_uuid(), now() - interval '6 minutes');`);
+
+      const { exec } = await import('child_process');
+      const { promisify } = await import('util');
+      const execAsync = promisify(exec);
+
+      // Two concurrent recovery attempts
+      const sql = `SELECT recover_interrupted_dispatch('${REF}'::uuid);`;
+      const [r1, r2] = await Promise.all([
+        execAsync(`psql "${dbUrl}" -t -A -v ON_ERROR_STOP=1 -c "${sql}"`, { timeout: 10000 }),
+        execAsync(`psql "${dbUrl}" -t -A -v ON_ERROR_STOP=1 -c "${sql}"`, { timeout: 10000 }),
+      ]);
+
+      // Exactly one wins recovery
+      const won1 = r1.stdout.includes('"recovered" : true') || r1.stdout.includes('"recovered": true');
+      const won2 = r2.stdout.includes('"recovered" : true') || r2.stdout.includes('"recovered": true');
+      const winners = [won1, won2].filter(Boolean);
+      expect(winners.length).toBeLessThanOrEqual(1);
+    } finally {
+      runSQL(`DELETE FROM public.refunds WHERE id = '${REF}';`);
+    }
+  }, 15000);
 
   // ── 25% + 25% partial fee regression (blocker 5) ──
 
