@@ -9,6 +9,11 @@
 -- The legacy 2-arg overload (uuid, text) is dropped to prevent
 -- any caller from bypassing the ownership check.
 
+-- Extend cancelled_by enum to include values used by bot ('guest') and dashboard ('business')
+-- The original enum ('diner', 'restaurant', 'system') predates the bookings rename.
+ALTER TYPE cancelled_by ADD VALUE IF NOT EXISTS 'guest';
+ALTER TYPE cancelled_by ADD VALUE IF NOT EXISTS 'business';
+
 -- Drop legacy 2-arg overload so no caller can bypass the owner check
 DROP FUNCTION IF EXISTS public.cancel_booking_with_release(UUID);
 DROP FUNCTION IF EXISTS public.cancel_booking_with_release(UUID, TEXT);
