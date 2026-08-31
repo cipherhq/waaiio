@@ -1982,6 +1982,25 @@ jobs:
           # 1. Create fresh isolated DB
           psql -c "DROP DATABASE IF EXISTS waaiio_test_convergence;" || true
           psql -c "CREATE DATABASE waaiio_test_convergence;"
+          # 1b. Apply auth/role/storage stubs (same as main CI DB setup)
+          psql -d waaiio_test_convergence -q -v ON_ERROR_STOP=1 <<'EOSQL'
+          CREATE SCHEMA IF NOT EXISTS auth;
+          CREATE SCHEMA IF NOT EXISTS extensions;
+          CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+          CREATE EXTENSION IF NOT EXISTS pgcrypto SCHEMA extensions;
+          CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $$ SELECT '00000000-0000-0000-0000-000000000000'::UUID; $$ LANGUAGE SQL STABLE;
+          CREATE OR REPLACE FUNCTION auth.role() RETURNS TEXT AS $$ SELECT 'authenticated'::TEXT; $$ LANGUAGE SQL STABLE;
+          CREATE TABLE IF NOT EXISTS auth.users (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), email TEXT, raw_app_meta_data JSONB DEFAULT '{}');
+          DO $$ BEGIN CREATE ROLE service_role; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+          DO $$ BEGIN CREATE ROLE authenticated; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+          DO $$ BEGIN CREATE ROLE anon; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+          DO $$ BEGIN CREATE PUBLICATION supabase_realtime; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+          CREATE SCHEMA IF NOT EXISTS storage;
+          CREATE TABLE IF NOT EXISTS storage.buckets (id TEXT PRIMARY KEY, name TEXT, public BOOLEAN DEFAULT FALSE);
+          CREATE TABLE IF NOT EXISTS storage.objects (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), bucket_id TEXT REFERENCES storage.buckets(id), name TEXT, owner UUID);
+          ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY;
+          EOSQL
+          echo "✅ Auth/role stubs applied"
           # 2. Apply migrations 001-354 (production baseline)
           for f in supabase/migrations/*.sql; do
             NUM=$(basename "$f" | grep -oP '^\d+' || echo "999")
