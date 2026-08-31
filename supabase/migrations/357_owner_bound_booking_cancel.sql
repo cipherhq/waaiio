@@ -56,7 +56,7 @@ BEGIN
 
   -- Cancel the booking
   UPDATE bookings
-  SET status = 'cancelled', cancelled_at = NOW(), cancelled_by = p_cancelled_by
+  SET status = 'cancelled', cancelled_at = NOW(), cancelled_by = p_cancelled_by::cancelled_by
   WHERE id = p_booking_id AND status IN ('pending', 'confirmed');
 
   -- Release any active package redemption atomically
