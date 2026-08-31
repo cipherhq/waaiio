@@ -112,7 +112,7 @@ describe('Canonical cancel API (DEAD-003)', () => {
 
   // Test 1 + 3: cancel calls RPC, package session released
   it('calls cancel_booking_with_release and returns session_released', async () => {
-    setupBooking({ id: 'b-1', status: 'confirmed', reference_code: 'REF-001', guest_phone: '+2348000' });
+    setupBooking({ id: 'b-1', status: 'confirmed', reference_code: 'REF-001', guest_phone: '+2348000', user_id: 'customer-1' });
     mockServiceRpc.mockResolvedValue({ data: { cancelled: true, session_released: true }, error: null });
 
     const res = await PATCH(makeRequest('b-1', { action: 'cancel' }), { params: Promise.resolve({ id: 'b-1' }) });
@@ -124,12 +124,13 @@ describe('Canonical cancel API (DEAD-003)', () => {
     expect(mockServiceRpc).toHaveBeenCalledWith('cancel_booking_with_release', {
       p_booking_id: 'b-1',
       p_cancelled_by: 'business',
+      p_expected_user_id: 'customer-1',
     });
   });
 
   // Test 4: non-package returns session_released: false
   it('returns session_released: false for non-package booking', async () => {
-    setupBooking({ id: 'b-2', status: 'pending', reference_code: 'REF-002', guest_phone: '+2348001' });
+    setupBooking({ id: 'b-2', status: 'pending', reference_code: 'REF-002', guest_phone: '+2348001', user_id: 'customer-2' });
     mockServiceRpc.mockResolvedValue({ data: { cancelled: true, session_released: false }, error: null });
 
     const res = await PATCH(makeRequest('b-2', { action: 'cancel' }), { params: Promise.resolve({ id: 'b-2' }) });

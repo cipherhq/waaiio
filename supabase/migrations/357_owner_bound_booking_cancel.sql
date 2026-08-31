@@ -1,17 +1,23 @@
 -- Migration 357: Owner-bound booking cancellation
 --
--- Adds p_expected_user_id parameter to cancel_booking_with_release.
--- The RPC now verifies that the booking's user_id matches the caller's
--- user_id before proceeding with cancellation. This prevents a user
--- from cancelling another user's booking via a forged UUID postback.
+-- Replaces cancel_booking_with_release with a version that REQUIRES
+-- p_expected_user_id (no default). The RPC verifies the booking's
+-- user_id matches the caller's expected user_id before cancelling.
+-- This prevents a user from cancelling another user's booking via
+-- a forged UUID postback.
 --
--- Backward-compatible: p_expected_user_id defaults to NULL, which
--- skips the ownership check (preserving behavior for admin/cron callers).
+-- The legacy 2-arg overload (uuid, text) is dropped to prevent
+-- any caller from bypassing the ownership check.
 
+-- Drop legacy 2-arg overload so no caller can bypass the owner check
+DROP FUNCTION IF EXISTS public.cancel_booking_with_release(UUID);
+DROP FUNCTION IF EXISTS public.cancel_booking_with_release(UUID, TEXT);
+
+-- Create the new 3-arg version with REQUIRED p_expected_user_id
 CREATE OR REPLACE FUNCTION cancel_booking_with_release(
   p_booking_id uuid,
-  p_cancelled_by text DEFAULT 'guest',
-  p_expected_user_id uuid DEFAULT NULL
+  p_cancelled_by text,
+  p_expected_user_id uuid
 ) RETURNS JSONB
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE
@@ -19,6 +25,11 @@ DECLARE
   v_redemption RECORD;
   v_session_released boolean := false;
 BEGIN
+  -- Belt-and-suspenders: reject NULL expected user_id even though the param is NOT NULL
+  IF p_expected_user_id IS NULL THEN
+    RETURN jsonb_build_object('cancelled', false, 'reason', 'not_owner');
+  END IF;
+
   -- Lock the booking (fetch all fields needed for slot release + ownership check)
   SELECT id, status, user_id, business_id, date, time, staff_id, location_id
   INTO v_booking FROM bookings
@@ -28,8 +39,8 @@ BEGIN
     RETURN jsonb_build_object('cancelled', false, 'reason', 'not_found');
   END IF;
 
-  -- Ownership check: if caller supplied an expected user_id, verify it matches
-  IF p_expected_user_id IS NOT NULL AND v_booking.user_id IS DISTINCT FROM p_expected_user_id THEN
+  -- Ownership check: expected user_id must match booking's user_id
+  IF v_booking.user_id IS DISTINCT FROM p_expected_user_id THEN
     RETURN jsonb_build_object('cancelled', false, 'reason', 'not_owner');
   END IF;
 

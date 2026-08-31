@@ -203,19 +203,21 @@ export async function handleMyBookings(
       // Cancel the reservation — include phone ownership predicate in the UPDATE itself
       const phoneP = from.startsWith('+') ? from : `+${from}`;
       const phoneN = from.startsWith('+') ? from.slice(1) : from;
-      await supabase
+      const { data: updatedRows } = await supabase
         .from('reservations')
         .update({ status: 'cancelled', cancelled_at: new Date().toISOString(), cancelled_by: 'guest' })
         .eq('id', reservationId)
         .or(`guest_phone.eq.${sanitizeFilterValue(phoneP)},guest_phone.eq.${sanitizeFilterValue(phoneN)}`)
-        .in('status', ['pending', 'confirmed']);
+        .in('status', ['pending', 'confirmed'])
+        .select('id, deposit_status, business_id, reference_code, deposit_amount, total_amount');
 
-      // Check if deposit was paid — if so, notify business owner for refund approval
-      const { data: cancelledRes } = await supabase
-        .from('reservations')
-        .select('deposit_status, business_id, reference_code, deposit_amount, total_amount')
-        .eq('id', reservationId)
-        .single();
+      // If zero rows matched, the reservation doesn't belong to this user or is not cancellable — bail out
+      const cancelledRes = updatedRows?.[0];
+      if (!cancelledRes) {
+        await sendText(from, 'Reservation not found or cannot be cancelled.');
+        await supabase.rpc('deactivate_session_atomic', { p_session_id: session.id });
+        return;
+      }
 
       if (cancelledRes?.deposit_status === 'paid') {
         // Find the payment record and create a refund request notification for the business owner

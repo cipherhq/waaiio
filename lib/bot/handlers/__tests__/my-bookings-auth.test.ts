@@ -427,9 +427,13 @@ describe('#216: Object-level authorization — My Bookings', () => {
       const migrationPath = require('path').resolve(__dirname, '../../../../supabase/migrations/357_owner_bound_booking_cancel.sql');
       const sql = fs.readFileSync(migrationPath, 'utf-8');
 
-      expect(sql).toContain('p_expected_user_id uuid DEFAULT NULL');
+      expect(sql).toContain('p_expected_user_id uuid');
+      expect(sql).not.toContain('DEFAULT NULL');
       expect(sql).toContain('IS DISTINCT FROM p_expected_user_id');
       expect(sql).toContain("'not_owner'");
+      // Verify legacy overloads are dropped
+      expect(sql).toContain('DROP FUNCTION IF EXISTS public.cancel_booking_with_release(UUID)');
+      expect(sql).toContain('DROP FUNCTION IF EXISTS public.cancel_booking_with_release(UUID, TEXT)');
     });
   });
 });

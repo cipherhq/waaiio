@@ -26,14 +26,21 @@ If something breaks, check this log to find what changed and when.
   - Reservation postback: `.or(guest_phone.eq...)` phone ownership check on detail and cancel UPDATE
   - All postback UUIDs (booking_, ticket_, reservation_) now have ownership verified BEFORE storing in session_data
   - Renamed `_session` to `session` in `handleViewTicket` and `handleViewReservation` (now used)
+  - **BLOCKER 1 fix:** Reservation cancel now uses UPDATE...RETURNING (`.select()` on update). If zero rows matched (forged UUID / wrong phone), immediately returns "Reservation not found" and bails. No follow-up ID-only read that could load victim data.
 - `lib/bot/handlers/my-orders.ts` — Added `.eq('user_id', session.user_id!)` to `handleOrderDetail` query and ownership check before storing order UUID in session_data
-- `supabase/migrations/357_owner_bound_booking_cancel.sql` — Added `p_expected_user_id UUID` parameter to `cancel_booking_with_release` RPC with ownership verification (returns `not_owner` if mismatch). Backward-compatible (defaults to NULL).
+- `supabase/migrations/357_owner_bound_booking_cancel.sql` — **BLOCKER 3 fix:** `p_expected_user_id` is now REQUIRED (no DEFAULT NULL). Legacy 1-arg and 2-arg overloads explicitly DROPped. Belt-and-suspenders NULL check inside function body.
+- `app/api/bookings/[id]/status/route.ts` — Dashboard cancel now passes `p_expected_user_id: booking.user_id` to the RPC (required after removing defaults).
+- `lib/__tests__/acc-216-object-authorization-db.test.ts` — **BLOCKER 2 fix:** 5 real PostgreSQL tests proving: mismatched user_id denial, correct user_id success, NULL user_id denial, legacy 1-arg overload gone, legacy 2-arg overload gone.
+- `.github/workflows/ci.yml` — Added CI step for #216 object authorization DB tests.
 - `lib/bot/handlers/__tests__/my-bookings-auth.test.ts` — 12 tests proving cross-user rejection for bookings, tickets, reservations, orders, and RPC
 - `lib/__tests__/p1-pkg1-bot-cancellation.test.ts` — Updated Supabase mock to support chained `.eq()` calls (required by new ownership predicates)
+- `lib/__tests__/dead-003-calendar-cancel.test.ts` — Updated cancel RPC assertions to include `p_expected_user_id`.
+- `lib/__tests__/p1-pkg1-package-redemption-db.test.ts` — Updated all `cancel_booking_with_release` calls to 3-arg version.
+- `lib/__tests__/migration-351-acl-hardening-db.test.ts` — Updated function signature to `(uuid, text, uuid)`.
 
 ### Could break
-- Any code calling `cancel_booking_with_release` without the new `p_expected_user_id` parameter will still work (defaults to NULL, skipping ownership check). Admin/cron callers are unaffected.
-- Dashboard calendar cancel (`/api/bookings/cancel`) calls the RPC from server-side without `p_expected_user_id` — this is correct since dashboard verifies business ownership via `authenticateRequest`.
+- Any code calling `cancel_booking_with_release` without `p_expected_user_id` will now ERROR (function not found). All callers updated: bot handler passes `session.user_id`, dashboard API passes `booking.user_id`.
+- The legacy 2-arg `(uuid, text)` overload is dropped. Cron/admin callers must now pass the booking's user_id.
 
 ## 2026-08-31 — #232: Replay window anchor + concurrent recovery proof
 
