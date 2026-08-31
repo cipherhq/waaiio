@@ -10,6 +10,7 @@ import * as path from 'path';
 
 const MIGRATION_154 = path.resolve('supabase/migrations/154_service_packages.sql');
 const MIGRATION_308 = path.resolve('supabase/migrations/308_package_redemption.sql');
+const MIGRATION_357 = path.resolve('supabase/migrations/357_owner_bound_booking_cancel.sql');
 const dbUrl = process.env.TEST_DATABASE_URL;
 
 function psql(sql: string): string {
@@ -152,11 +153,18 @@ describe.skipIf(!dbUrl)('P1-PKG-1: Atomic package booking + release', () => {
       END $$;
     `);
     execSync(`psql "${dbUrl}" -tAXq -v ON_ERROR_STOP=1 -f "${MIGRATION_308}"`, { encoding: 'utf-8', timeout: 15000 });
+    // Stub booking_slots table (referenced by migration 357's cancel_booking_with_release)
+    psql(`CREATE TABLE IF NOT EXISTS booking_slots (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      business_id UUID, date DATE, start_time TIME,
+      staff_id UUID, location_id UUID, current_bookings INT DEFAULT 0
+    );`);
+    execSync(`psql "${dbUrl}" -tAXq -v ON_ERROR_STOP=1 -f "${MIGRATION_357}"`, { encoding: 'utf-8', timeout: 15000 });
   });
 
   afterAll(() => {
     if (!dbUrl) return;
-    psql(`DROP TABLE IF EXISTS package_redemptions, package_enrollments, service_packages, bookings, payments, businesses CASCADE;`);
+    psql(`DROP TABLE IF EXISTS package_redemptions, package_enrollments, service_packages, booking_slots, bookings, payments, businesses CASCADE;`);
   });
 
   function reset(sessionsTotal = 10, sessionsUsed = 0) {
