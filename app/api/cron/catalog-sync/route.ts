@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { verifyCronAuth } from '@/lib/cron-auth';
-import { CatalogService, getCurrencyForCountry } from '@/lib/channels/catalog';
+import { CatalogService, getCurrencyForCountry, assertDedicatedCatalogAccess } from '@/lib/channels/catalog';
 import { logger } from '@/lib/logger';
 
 /**
@@ -9,7 +9,7 @@ import { logger } from '@/lib/logger';
  *
  * Periodic re-sync of WhatsApp product catalogs.
  * Runs every 6 hours to keep catalog data (prices, stock, availability) in sync.
- * Only processes businesses with active catalogs and active WhatsApp channels.
+ * Only processes businesses with active catalogs and dedicated WhatsApp channels.
  */
 export async function GET(request: NextRequest) {
   const authError = verifyCronAuth(request);
@@ -26,20 +26,34 @@ export async function GET(request: NextRequest) {
 
   let synced = 0;
   let failed = 0;
+  let skipped = 0;
 
   for (const biz of businesses || []) {
     try {
-      // Get channel credentials
+      // Safety guard: only dedicated channels may sync catalogs
+      const guardError = await assertDedicatedCatalogAccess(supabase, biz.id);
+      if (guardError) {
+        logger.info('[CATALOG CRON] Skipping business — shared/no dedicated channel', {
+          businessId: biz.id,
+          businessName: biz.name,
+          reason: guardError,
+        });
+        skipped++;
+        continue;
+      }
+
+      // Get dedicated channel credentials (guard already verified it exists)
       const { data: channel } = await supabase
         .from('whatsapp_channels')
         .select('meta_access_token, waba_id')
         .eq('business_id', biz.id)
+        .eq('channel_type', 'dedicated')
         .eq('provider', 'meta_cloud')
         .eq('is_active', true)
         .maybeSingle();
 
-      const accessToken = channel?.meta_access_token || process.env.META_CLOUD_ACCESS_TOKEN;
-      const wabaId = channel?.waba_id || process.env.META_CLOUD_WABA_ID;
+      const accessToken = channel?.meta_access_token;
+      const wabaId = channel?.waba_id;
       if (!accessToken || !wabaId) continue;
 
       // Get active products
@@ -95,6 +109,7 @@ export async function GET(request: NextRequest) {
   return NextResponse.json({
     synced,
     failed,
+    skipped,
     total: (businesses || []).length,
   });
 }

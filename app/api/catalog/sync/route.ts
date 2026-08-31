@@ -1,14 +1,14 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
-import { CatalogService, getCurrencyForCountry } from '@/lib/channels/catalog';
+import { CatalogService, getCurrencyForCountry, assertDedicatedCatalogAccess } from '@/lib/channels/catalog';
 import { logger } from '@/lib/logger';
 
 /**
  * POST /api/catalog/sync
  *
  * Syncs a business's products to their WhatsApp catalog.
- * Requires business to have a Meta Cloud channel with WABA ID.
+ * Requires business to have a dedicated Meta Cloud channel with WABA ID.
  */
 export async function POST(request: NextRequest) {
   const supabase = await createClient();
@@ -27,18 +27,25 @@ export async function POST(request: NextRequest) {
     .single();
   if (!biz) return NextResponse.json({ error: 'Business not found' }, { status: 404 });
 
-  // Get WhatsApp channel for this business
+  // Safety guard: only dedicated channels may sync catalogs
   const service = createServiceClient();
+  const guardError = await assertDedicatedCatalogAccess(service, business_id);
+  if (guardError) {
+    return NextResponse.json({ error: guardError }, { status: 403 });
+  }
+
+  // Get WhatsApp channel credentials (guard already verified dedicated channel exists)
   const { data: channel } = await service
     .from('whatsapp_channels')
     .select('meta_access_token, waba_id')
     .eq('business_id', business_id)
+    .eq('channel_type', 'dedicated')
     .eq('provider', 'meta_cloud')
     .eq('is_active', true)
     .maybeSingle();
 
-  const accessToken = channel?.meta_access_token || process.env.META_CLOUD_ACCESS_TOKEN;
-  const wabaId = channel?.waba_id || process.env.META_CLOUD_WABA_ID;
+  const accessToken = channel?.meta_access_token;
+  const wabaId = channel?.waba_id;
 
   if (!accessToken || !wabaId) {
     return NextResponse.json({ error: 'No WhatsApp channel configured. Connect your WhatsApp number first.' }, { status: 400 });

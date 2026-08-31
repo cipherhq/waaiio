@@ -3,6 +3,24 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-08-30 — #249: Catalog safety guard — shared-WABA fail-closed
+
+### What changed
+- **New guard function:** `assertDedicatedCatalogAccess()` in `lib/channels/catalog.ts` — checks that a business has a dedicated WhatsApp channel (channel_type='dedicated') before allowing any catalog sync. Shared channels, no-channel, and platform WABA all return a deterministic error.
+- **Manual sync route:** `app/api/catalog/sync/route.ts` — guard is called before any Meta API interaction. Removed env var fallback for access token/WABA ID (only dedicated channel credentials are used). Returns 403 for shared-WABA businesses.
+- **Cron sync route:** `app/api/cron/catalog-sync/route.ts` — guard is called per-business before sync. Shared-WABA businesses are skipped with a logged reason. Response now includes `skipped` count.
+- **Tests:** 14 tests in `lib/channels/__tests__/catalog-safety.test.ts` covering: shared/no-channel blocked, dedicated allowed, platform WABA blocked, guard-before-service ordering, no env var fallback, cross-business isolation.
+
+### Files changed
+- `lib/channels/catalog.ts` (added `assertDedicatedCatalogAccess()`)
+- `app/api/catalog/sync/route.ts` (guard + removed env var fallback)
+- `app/api/cron/catalog-sync/route.ts` (guard + skipped count)
+- `lib/channels/__tests__/catalog-safety.test.ts` (new — 14 tests)
+- `CHANGELOG.md` (this entry)
+
+### Could break
+- Businesses currently using shared WABAs for catalog sync will now get a 403 error on manual sync and be skipped by the cron. This is intentional — shared WABA catalog writes were unsafe and could corrupt other businesses' catalog data.
+
 ## 2026-08-30 — #246: CTO blocker corrections — UI lifecycle, PATCH validation, behavioral tests
 
 ### What changed
