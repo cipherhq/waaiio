@@ -3,37 +3,29 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
-## 2026-08-30 — #249: Behavioral route/cron handler tests for catalog safety
+## 2026-08-30 — #245: Refund state truth-contract — 6-state domain vocabulary
 
 ### What changed
-- **New behavioral test file:** `app/api/catalog/__tests__/catalog-safety-behavioral.test.ts` — 8 tests that invoke the actual POST (manual sync) and GET (cron) route handlers with mocked Supabase/CatalogService dependencies.
-- Tests verify: shared-WABA business blocked with 403, no-channel fail-closed, platform-WABA masquerade blocked, dedicated channel allowed (CatalogService instantiated), cross-business isolation (ownership check blocks before guard), cron skips shared businesses and continues to dedicated ones, guard/query failure fails closed.
-- Key assertion pattern: `MockCatalogServiceTracker` is never called for blocked businesses, confirming zero Meta API interaction.
+- **RefundState type:** Replaced 4-state (`success|pending|ambiguous|failed`) with canonical 6-state domain vocabulary: `pending`, `provider_pending`, `provider_ambiguous`, `provider_success_unfinalized`, `success`, `failed`. Each state maps truthfully to durable `refunds.status` at that execution point.
+- **refund-handler.ts:** Every return path in `processRefund()`, `resumeExistingRefund()`, `finalizeOnly()`, `reconcileAndFinalize()`, `dispatchAndFinalize()` now sets `state` matching the actual durable execution state. Key corrections: no-queryRefundStatus returns `provider_pending` (not `failed`), credential failure returns `provider_pending` (not `failed`), dispatch claim loser returns `pending` (not `failed`), provider success + finalization failure returns `provider_success_unfinalized` (not `failed`/`ambiguous`).
+- **API route:** Passes `result.state` directly to JSON response — no server-side classifier. Exports `RefundResponseState` type alias for consumers.
+- **RefundModal:** Maps all 6 domain states to distinct UI presentations (green success, amber pending/provider_pending/provider_ambiguous/provider_success_unfinalized, red failed). No error-text parsing.
+- **Orders page:** Fixed payment query to use `order_id` column (not `metadata` contains) and `.in('status', ['success', 'refunded'])`. Added guard states for "Fully refunded" vs "No payment recorded".
+- **Reservations page:** Added refund amount check so "Fully refunded" shows instead of hiding the refund button only when `refund_amount` is null.
+- **Behavioral tests:** 35+ tests covering 6-state vocabulary accuracy, API route passthrough, modal mapping, orders page guards, and structural assertions on every return path.
 
 ### Files changed
-- `app/api/catalog/__tests__/catalog-safety-behavioral.test.ts` (new — 8 behavioral tests)
+- `lib/payments/refund-handler.ts` (6-state RefundState type, state on every return path)
+- `app/api/payments/refund/route.ts` (pass domain state through, export type)
+- `components/dashboard/RefundModal.tsx` (6-state UI mapping with result feedback)
+- `app/dashboard/orders/page.tsx` (payment query fix, refund guard states)
+- `app/dashboard/reservations/page.tsx` (refund amount guard)
+- `app/dashboard/orders/__tests__/refund-ux.test.ts` (behavioral tests)
 - `CHANGELOG.md` (this entry)
 
 ### Could break
-- Nothing — test-only change.
-
-## 2026-08-30 — #249: Catalog safety guard — shared-WABA fail-closed
-
-### What changed
-- **New guard function:** `assertDedicatedCatalogAccess()` in `lib/channels/catalog.ts` — checks that a business has a dedicated WhatsApp channel (channel_type='dedicated') before allowing any catalog sync. Shared channels, no-channel, and platform WABA all return a deterministic error.
-- **Manual sync route:** `app/api/catalog/sync/route.ts` — guard is called before any Meta API interaction. Removed env var fallback for access token/WABA ID (only dedicated channel credentials are used). Returns 403 for shared-WABA businesses.
-- **Cron sync route:** `app/api/cron/catalog-sync/route.ts` — guard is called per-business before sync. Shared-WABA businesses are skipped with a logged reason. Response now includes `skipped` count.
-- **Tests:** 14 tests in `lib/channels/__tests__/catalog-safety.test.ts` covering: shared/no-channel blocked, dedicated allowed, platform WABA blocked, guard-before-service ordering, no env var fallback, cross-business isolation.
-
-### Files changed
-- `lib/channels/catalog.ts` (added `assertDedicatedCatalogAccess()`)
-- `app/api/catalog/sync/route.ts` (guard + removed env var fallback)
-- `app/api/cron/catalog-sync/route.ts` (guard + skipped count)
-- `lib/channels/__tests__/catalog-safety.test.ts` (new — 14 tests)
-- `CHANGELOG.md` (this entry)
-
-### Could break
-- Businesses currently using shared WABAs for catalog sync will now get a 403 error on manual sync and be skipped by the cron. This is intentional — shared WABA catalog writes were unsafe and could corrupt other businesses' catalog data.
+- Any consumer that type-checked against the old 4-state `RefundState` union (only existed on the UX branch, not main)
+- Frontend code that parsed error text to determine refund state (this was the bug being fixed)
 
 ## 2026-08-30 — #246: CTO blocker corrections — UI lifecycle, PATCH validation, behavioral tests
 

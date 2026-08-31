@@ -33,6 +33,15 @@ export function RefundModal({
   const [reason, setReason] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [resultState, setResultState] = useState<
+    | { type: 'success' }
+    | { type: 'pending' }
+    | { type: 'provider_pending' }
+    | { type: 'provider_ambiguous' }
+    | { type: 'provider_success_unfinalized' }
+    | { type: 'failed'; message: string }
+    | null
+  >(null);
 
   if (!open) return null;
 
@@ -49,6 +58,7 @@ export function RefundModal({
 
     setLoading(true);
     setError('');
+    setResultState(null);
 
     try {
       const res = await fetch('/api/payments/refund', {
@@ -64,16 +74,27 @@ export function RefundModal({
 
       const data = await res.json();
 
-      if (!res.ok) {
-        setError(data.error || 'Refund failed');
-        setLoading(false);
+      if (res.ok && data.success) {
+        setResultState({ type: 'success' });
+        onSuccess();
         return;
       }
 
-      onSuccess();
-      onClose();
+      // Map the 6-state domain vocabulary to UI presentation
+      const state = data.state as string | undefined;
+      if (state === 'pending') {
+        setResultState({ type: 'pending' });
+      } else if (state === 'provider_pending') {
+        setResultState({ type: 'provider_pending' });
+      } else if (state === 'provider_ambiguous') {
+        setResultState({ type: 'provider_ambiguous' });
+      } else if (state === 'provider_success_unfinalized') {
+        setResultState({ type: 'provider_success_unfinalized' });
+      } else {
+        setResultState({ type: 'failed', message: data.error || 'Refund failed' });
+      }
     } catch {
-      setError('Network error — please try again');
+      setResultState({ type: 'failed', message: 'Network error — please try again' });
     } finally {
       setLoading(false);
     }
@@ -162,8 +183,45 @@ export function RefundModal({
             />
           </div>
 
-          {/* Error */}
-          {error && (
+          {/* Result state feedback */}
+          {resultState?.type === 'success' && (
+            <div className="rounded-lg border border-green-200 bg-green-50 p-3 text-sm text-green-800">
+              <p className="font-medium">Refund processed successfully</p>
+            </div>
+          )}
+          {resultState?.type === 'pending' && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+              <p className="font-medium">Refund is being processed</p>
+              <p className="mt-0.5 text-amber-700">Another process may be handling this refund. Please check back shortly.</p>
+            </div>
+          )}
+          {resultState?.type === 'provider_pending' && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+              <p className="font-medium">Refund pending at provider</p>
+              <p className="mt-0.5 text-amber-700">The payment provider has accepted the refund. It will be reconciled automatically.</p>
+            </div>
+          )}
+          {resultState?.type === 'provider_ambiguous' && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+              <p className="font-medium">Refund status uncertain</p>
+              <p className="mt-0.5 text-amber-700">The refund outcome could not be confirmed. It will be reconciled automatically.</p>
+            </div>
+          )}
+          {resultState?.type === 'provider_success_unfinalized' && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+              <p className="font-medium">Provider confirmed refund</p>
+              <p className="mt-0.5 text-amber-700">The provider confirmed the refund but local finalization is incomplete. It will be retried automatically.</p>
+            </div>
+          )}
+          {resultState?.type === 'failed' && (
+            <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+              <p className="font-medium">Refund failed</p>
+              <p className="mt-0.5">{resultState.message}</p>
+            </div>
+          )}
+
+          {/* Validation error (pre-submit) */}
+          {error && !resultState && (
             <p className="text-sm text-red-600">{error}</p>
           )}
 
@@ -174,15 +232,17 @@ export function RefundModal({
               disabled={loading}
               className="flex-1 rounded-xl border border-gray-300 px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
             >
-              Cancel
+              {resultState ? 'Close' : 'Cancel'}
             </button>
-            <button
-              onClick={handleSubmit}
-              disabled={loading}
-              className="flex-1 rounded-xl bg-red-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-50"
-            >
-              {loading ? 'Processing...' : 'Confirm Refund'}
-            </button>
+            {!resultState && (
+              <button
+                onClick={handleSubmit}
+                disabled={loading}
+                className="flex-1 rounded-xl bg-red-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-50"
+              >
+                {loading ? 'Processing...' : 'Confirm Refund'}
+              </button>
+            )}
           </div>
         </div>
       </div>
