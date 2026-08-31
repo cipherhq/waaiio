@@ -33,6 +33,20 @@ function chain(terminalData: unknown = null, arrayData: unknown[] = []) {
   return new Proxy(p, h);
 }
 
+function errorChain(error: Record<string, unknown>) {
+  const result = { data: null, error };
+  const p: Record<string, unknown> = {};
+  const h: ProxyHandler<Record<string, unknown>> = {
+    get(_, prop) {
+      if (prop === 'then') return (r: (v: unknown) => void) => Promise.resolve(result).then(r);
+      if (prop === 'single') return vi.fn().mockResolvedValue(result);
+      if (prop === 'maybeSingle') return vi.fn().mockResolvedValue(result);
+      return vi.fn().mockReturnValue(new Proxy(p, h));
+    },
+  };
+  return new Proxy(p, h);
+}
+
 // Track provider call count
 let providerCallCount = 0;
 let lastProviderIdempotencyKey: string | undefined;
@@ -48,6 +62,7 @@ function setupMocks(opts: {
   credential?: Record<string, unknown> | null;
   claimResult?: unknown[];
   rpcResults?: Record<string, unknown>;
+  refundUpdateError?: Record<string, unknown> | null;
 }) {
   providerCallCount = 0;
   lastProviderIdempotencyKey = undefined;
@@ -81,7 +96,7 @@ function setupMocks(opts: {
             ),
           }),
         }),
-        update: vi.fn().mockReturnValue(chain(null)),
+        update: vi.fn().mockReturnValue(opts.refundUpdateError ? errorChain(opts.refundUpdateError) : chain(null)),
       };
     }
     if (table === 'business_payment_credentials') {
@@ -233,5 +248,54 @@ describe('processRefund', () => {
     const { supabase } = setupMocks({});
     await processRefund({ supabase: supabase as any, paymentId: 'p', businessId: 'biz-1', amount: 5000, initiatedBy: 'u', initiatedByRole: 'admin' });
     expect(lastProviderIdempotencyKey).toBe('refund-1');
+  });
+
+  // ── Resume: Tier-1 interrupted → token-bound recovery + re-dispatch ──
+
+  it('Tier-1 interrupted recovery dispatches with recovery token (same attempt)', async () => {
+    const { supabase } = setupMocks({
+      insertError: { code: '23505' },
+      existingNonTerminal: { id: 'ref-int-t1', status: 'pending', gateway: 'stripe', dispatched_at: new Date().toISOString(), provider_connection_id: null, connect_account_id: null },
+    });
+    const r = await processRefund({ supabase: supabase as any, paymentId: 'p', businessId: 'biz-1', amount: 5000, initiatedBy: 'u', initiatedByRole: 'admin' });
+    const rpcCalls = (mockServiceClient as Record<string, unknown>).rpc as ReturnType<typeof vi.fn>;
+    // Must call recover_interrupted_dispatch
+    const recoverCall = rpcCalls.mock.calls.find((c: unknown[]) => c[0] === 'recover_interrupted_dispatch');
+    expect(recoverCall).toBeDefined();
+    // Then claim_refund_dispatch with the recovery token
+    const claimCall = rpcCalls.mock.calls.find((c: unknown[]) => c[0] === 'claim_refund_dispatch');
+    expect(claimCall).toBeDefined();
+    expect(claimCall?.[1]?.p_recovery_token).toBe('tok-2');
+    // Exactly one provider dispatch (same attempt, not a new one)
+    expect(providerCallCount).toBe(1);
+  });
+
+  // ── Post-dispatch persistence failure → recovery-required, no replacement ──
+
+  it('post-dispatch persistence failure returns recovery-required without replacement attempt', async () => {
+    const { supabase, mockRefundPayment } = setupMocks({
+      refundUpdateError: { message: 'DB write failed', code: '42000' },
+    });
+    const r = await processRefund({ supabase: supabase as any, paymentId: 'p', businessId: 'biz-1', amount: 5000, initiatedBy: 'u', initiatedByRole: 'admin' });
+    expect(r.success).toBe(false);
+    expect(r.errorMessage).toContain('persistence failed');
+    // Only one provider call — no replacement attempt
+    expect(providerCallCount).toBe(1);
+  });
+
+  // ── BYO credential identity honored on reconciliation ──
+
+  it('reconciliation uses persisted BYO provider credential identity', async () => {
+    const { supabase, mockQueryStatus } = setupMocks({
+      insertError: { code: '23505' },
+      existingNonTerminal: { id: 'ref-byo', status: 'provider_pending', gateway: 'stripe', dispatched_at: new Date().toISOString(), provider_refund_id: 'prov-byo', provider_connection_id: 'cred-123', connect_account_id: null },
+      credential: { secret_key: 'test-byo-key-mock', connect_account_id: 'acct_byo' },
+    });
+    const r = await processRefund({ supabase: supabase as any, paymentId: 'p', businessId: 'biz-1', amount: 5000, initiatedBy: 'u', initiatedByRole: 'admin' });
+    // queryRefundStatus must use the persisted BYO credential
+    expect(mockQueryStatus).toHaveBeenCalledWith('prov-byo', {
+      byoSecretKey: 'test-byo-key-mock',
+      connectAccountId: 'acct_byo',
+    });
   });
 });
