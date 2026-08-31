@@ -141,6 +141,17 @@ export async function handleMyOrders(
   // Handle order selection
   if (input.startsWith('order_')) {
     const orderId = input.replace('order_', '');
+    // Ownership check BEFORE storing UUID in session_data
+    const { data: ownedOrder } = await supabase
+      .from('orders')
+      .select('id')
+      .eq('id', orderId)
+      .eq('user_id', session.user_id!)
+      .maybeSingle();
+    if (!ownedOrder) {
+      await sendText(from, 'Order not found. Type *my orders* to see your orders.');
+      return;
+    }
     session.session_data.selected_order_id = orderId;
     session.current_step = 'order_detail';
     await supabase.from('bot_sessions').update({
@@ -179,6 +190,7 @@ export async function handleOrderDetail(
     .from('orders')
     .select('id, reference_code, status, total_amount, created_at, shipping_cost, delivery_address, tracking_number, shipping_carrier, updated_at, businesses (name, country_code)')
     .eq('id', orderId)
+    .eq('user_id', session.user_id!)
     .single();
 
   if (!order) {

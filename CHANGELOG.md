@@ -17,6 +17,24 @@ If something breaks, check this log to find what changed and when.
 ### Could break
 - Nothing — docs-only change. No product code, migrations, or runtime behavior modified.
 
+## 2026-08-30 — #216: Object-level authorization security fix for My Bookings / My Orders
+
+### What changed
+- `lib/bot/handlers/my-bookings.ts` — Added ownership predicates to all 9 vulnerable query paths:
+  - Booking postback: `.eq('user_id', session.user_id!)` on detail, cancel pre-fetch, reschedule fetch
+  - Ticket postback: `.or(guest_phone.eq...)` phone ownership check on detail view
+  - Reservation postback: `.or(guest_phone.eq...)` phone ownership check on detail and cancel UPDATE
+  - All postback UUIDs (booking_, ticket_, reservation_) now have ownership verified BEFORE storing in session_data
+  - Renamed `_session` to `session` in `handleViewTicket` and `handleViewReservation` (now used)
+- `lib/bot/handlers/my-orders.ts` — Added `.eq('user_id', session.user_id!)` to `handleOrderDetail` query and ownership check before storing order UUID in session_data
+- `supabase/migrations/357_owner_bound_booking_cancel.sql` — Added `p_expected_user_id UUID` parameter to `cancel_booking_with_release` RPC with ownership verification (returns `not_owner` if mismatch). Backward-compatible (defaults to NULL).
+- `lib/bot/handlers/__tests__/my-bookings-auth.test.ts` — 12 tests proving cross-user rejection for bookings, tickets, reservations, orders, and RPC
+- `lib/__tests__/p1-pkg1-bot-cancellation.test.ts` — Updated Supabase mock to support chained `.eq()` calls (required by new ownership predicates)
+
+### Could break
+- Any code calling `cancel_booking_with_release` without the new `p_expected_user_id` parameter will still work (defaults to NULL, skipping ownership check). Admin/cron callers are unaffected.
+- Dashboard calendar cancel (`/api/bookings/cancel`) calls the RPC from server-side without `p_expected_user_id` — this is correct since dashboard verifies business ownership via `authenticateRequest`.
+
 ## 2026-08-31 — #232: Replay window anchor + concurrent recovery proof
 
 ### What changed
