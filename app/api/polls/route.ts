@@ -1,5 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { createServiceClient } from '@/lib/supabase/service';
+import { requireCapability } from '@/lib/capabilities/api-guard';
 import { logger } from '@/lib/logger';
 
 export async function GET(request: NextRequest) {
@@ -39,15 +41,32 @@ export async function POST(request: NextRequest) {
     closes_at?: string;
   };
 
-  if (!business_id || !question || !options?.length || options.length < 2) {
+  if (!business_id || !question?.trim() || !options?.length || options.length < 2) {
     return NextResponse.json({ error: 'Need business_id, question, and at least 2 options' }, { status: 400 });
   }
   if (options.length > 10) {
     return NextResponse.json({ error: 'Maximum 10 options' }, { status: 400 });
   }
+  // Reject empty option strings
+  const cleanedOptions = options.map((o: string) => (typeof o === 'string' ? o.trim() : ''));
+  if (cleanedOptions.some((o: string) => !o)) {
+    return NextResponse.json({ error: 'Options must not contain empty strings' }, { status: 400 });
+  }
+  // Reject duplicates (case-insensitive)
+  const lowerOptions = cleanedOptions.map((o: string) => o.toLowerCase());
+  if (new Set(lowerOptions).size !== lowerOptions.length) {
+    return NextResponse.json({ error: 'Options must not contain duplicates' }, { status: 400 });
+  }
 
   const { data: biz } = await supabase.from('businesses').select('id').eq('id', business_id).eq('owner_id', user.id).single();
   if (!biz) return NextResponse.json({ error: 'Business not found' }, { status: 404 });
+
+  // ── Capability enforcement: poll/create_new ──
+  const service = createServiceClient();
+  const guard = await requireCapability(supabase, service, {
+    businessId: business_id, userId: user.id, capability: 'poll', action: 'create_new',
+  });
+  if (!guard.allowed) return NextResponse.json(guard.denial, { status: guard.status });
 
   const { data: poll, error } = await supabase
     .from('polls')
