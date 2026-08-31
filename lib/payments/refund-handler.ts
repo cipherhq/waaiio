@@ -100,7 +100,7 @@ async function resumeExistingRefund(
 ): Promise<ProcessRefundResult> {
   const { data: existing } = await service
     .from('refunds')
-    .select('id, status, gateway, dispatched_at, amount, provider_refund_id, recovery_token')
+    .select('id, status, gateway, dispatched_at, amount, provider_refund_id, recovery_token, provider_connection_id, connect_account_id')
     .eq('payment_id', paymentId)
     .in('status', ['pending', 'provider_pending', 'provider_ambiguous', 'provider_success_unfinalized'])
     .limit(1).maybeSingle();
@@ -190,11 +190,19 @@ async function reconcileAndFinalize(
     });
 
     if (statusResult.outcome === 'terminal_success') {
-      await service.rpc('reconcile_pending_refund', { p_refund_id: refundId, p_provider_status: statusResult.providerStatus, p_terminal_outcome: 'terminal_success' });
+      const { error: recErr } = await service.rpc('reconcile_pending_refund', { p_refund_id: refundId, p_provider_status: statusResult.providerStatus, p_terminal_outcome: 'terminal_success' });
+      if (recErr) {
+        logger.error(`[REFUND] Reconciliation persistence failed for terminal success ${refundId}: ${recErr.message}`);
+        return { success: false, refundId, isDirectSplit, errorMessage: 'Reconciliation persistence failed — refund remains pending, safe to retry' };
+      }
       return finalizeOnly(service, refundId, isDirectSplit);
     }
     if (statusResult.outcome === 'terminal_failure') {
-      await service.rpc('reconcile_pending_refund', { p_refund_id: refundId, p_provider_status: statusResult.providerStatus, p_terminal_outcome: 'terminal_failure' });
+      const { error: recErr } = await service.rpc('reconcile_pending_refund', { p_refund_id: refundId, p_provider_status: statusResult.providerStatus, p_terminal_outcome: 'terminal_failure' });
+      if (recErr) {
+        logger.error(`[REFUND] Reconciliation persistence failed for terminal failure ${refundId}: ${recErr.message}`);
+        return { success: false, refundId, isDirectSplit, errorMessage: 'Reconciliation persistence failed — refund remains pending, safe to retry' };
+      }
       return { success: false, refundId, isDirectSplit, errorMessage: 'Provider confirmed refund failure' };
     }
     // Still pending — no mutation
