@@ -719,7 +719,7 @@ describe('#232 Refund convergence PostgreSQL', () => {
 
       // Recover: acquires token, sets status=pending, preserves dispatched_at
       const recResult = runSQL(`SELECT recover_ambiguous_refund('${REF}');`);
-      expect(recResult).toContain('"recovered" : true');
+      expect(recResult.includes('"recovered": true') || recResult.includes('"recovered" : true')).toBe(true);
 
       // Capture original dispatched_at before claim
       const dispatchedBefore = runSQL(`SELECT dispatched_at FROM public.refunds WHERE id = '${REF}';`);
