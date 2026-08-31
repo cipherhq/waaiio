@@ -1907,7 +1907,7 @@ jobs:
           fi
           echo "✅ Ticket purchase security tests complete — zero skips, zero failures."
 
-      - name: Migration 355 Customer360/Financials tests
+      - name: Migration 356 Customer360/Financials tests
         env:
           PGHOST: localhost
           PGPORT: 5432
@@ -1916,28 +1916,169 @@ jobs:
           PGDATABASE: waaiio_test
           TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/waaiio_test
         run: |
-          echo "Running migration 355 Customer360/Financials DB tests..."
+          echo "Running migration 356 Customer360/Financials DB tests..."
           set +e
           OUTPUT=$(npx vitest run lib/__tests__/acc-224-226-customer360-financials-db.test.ts 2>&1)
           TEST_EXIT=$?
           set -e
           echo "$OUTPUT"
           if [ "$TEST_EXIT" -ne 0 ]; then
-            echo "❌ Migration 355 DB tests exited with code $TEST_EXIT."
+            echo "❌ Migration 356 DB tests exited with code $TEST_EXIT."
             exit "$TEST_EXIT"
           fi
           if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
             SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
             if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
-              echo "❌ Migration 355 DB tests had $SKIP_COUNT skipped tests. All must execute."
+              echo "❌ Migration 356 DB tests had $SKIP_COUNT skipped tests. All must execute."
               exit 1
             fi
           fi
           if ! echo "$OUTPUT" | grep -q "passed"; then
-            echo "❌ No migration 355 DB tests passed. Something is wrong."
+            echo "❌ No migration 356 DB tests passed. Something is wrong."
             exit 1
           fi
-          echo "✅ Migration 355 Customer360/Financials tests complete — zero skips, zero failures."
+          echo "✅ Migration 356 Customer360/Financials tests complete — zero skips, zero failures."
+
+      - name: Migration 355 refund convergence tests
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/waaiio_test
+        run: |
+          echo "Running migration 355 refund convergence tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/acc-232-refund-convergence-db.test.ts 2>&1)
+          TEST_EXIT=$?
+          set -e
+          echo "$OUTPUT"
+          if [ "$TEST_EXIT" -ne 0 ]; then
+            echo "❌ Migration 355 refund convergence tests exited with code $TEST_EXIT."
+            exit "$TEST_EXIT"
+          fi
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ Migration 355 refund convergence tests had $SKIP_COUNT skipped tests. All must execute."
+              exit 1
+            fi
+          fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then
+            echo "❌ No migration 355 refund convergence tests passed. Something is wrong."
+            exit 1
+          fi
+          echo "✅ Migration 355 refund convergence tests complete — zero skips, zero failures."
+
+      - name: "Production-shaped 355→356 convergence proof"
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+        run: |
+          echo "Building dedicated production-shaped convergence database..."
+          # 1. Create fresh isolated DB
+          psql -c "DROP DATABASE IF EXISTS waaiio_test_convergence;" || true
+          psql -c "CREATE DATABASE waaiio_test_convergence;"
+          # 1b. Apply auth/role/storage stubs (same as main CI DB setup)
+          psql -d waaiio_test_convergence -q -v ON_ERROR_STOP=1 <<'EOSQL'
+          CREATE SCHEMA IF NOT EXISTS auth;
+          CREATE SCHEMA IF NOT EXISTS extensions;
+          CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+          CREATE EXTENSION IF NOT EXISTS pgcrypto SCHEMA extensions;
+          CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $$ SELECT '00000000-0000-0000-0000-000000000000'::UUID; $$ LANGUAGE SQL STABLE;
+          CREATE OR REPLACE FUNCTION auth.role() RETURNS TEXT AS $$ SELECT 'authenticated'::TEXT; $$ LANGUAGE SQL STABLE;
+          CREATE TABLE IF NOT EXISTS auth.users (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), email TEXT, raw_app_meta_data JSONB DEFAULT '{}');
+          DO $$ BEGIN CREATE ROLE service_role; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+          DO $$ BEGIN CREATE ROLE authenticated; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+          DO $$ BEGIN CREATE ROLE anon; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+          DO $$ BEGIN CREATE PUBLICATION supabase_realtime; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+          CREATE SCHEMA IF NOT EXISTS storage;
+          CREATE TABLE IF NOT EXISTS storage.buckets (id TEXT PRIMARY KEY, name TEXT, public BOOLEAN DEFAULT FALSE);
+          CREATE TABLE IF NOT EXISTS storage.objects (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), bucket_id TEXT REFERENCES storage.buckets(id), name TEXT, owner UUID);
+          ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY;
+          EOSQL
+          echo "✅ Auth/role stubs applied"
+          # 2. Apply migrations 001-354 (production baseline) — fail-closed
+          BASELINE_FAIL=0
+          for f in supabase/migrations/*.sql; do
+            NUM=$(basename "$f" | grep -oP '^\d+' || echo "999")
+            if [ "$NUM" -le "354" ]; then
+              if ! psql -d waaiio_test_convergence -v ON_ERROR_STOP=1 -f "$f" 2>&1; then
+                echo "⚠️  Migration $(basename $f) failed — checking if critical..."
+                # Some migrations have CI-only incompatibilities (e.g., cron, vault).
+                # Critical tables (businesses, payments, bookings, services, profiles) must exist.
+                if echo "$f" | grep -qP '(001|002|003|010|021|034|108)_'; then
+                  echo "❌ CRITICAL baseline migration failed: $(basename $f)"
+                  BASELINE_FAIL=1
+                fi
+              fi
+            fi
+          done
+          if [ "$BASELINE_FAIL" -eq 1 ]; then
+            echo "❌ Critical baseline migration failed. Cannot proceed."
+            exit 1
+          fi
+          # Validate critical tables exist
+          psql -d waaiio_test_convergence -v ON_ERROR_STOP=1 -c "
+            DO \$\$ BEGIN
+              ASSERT (SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public' AND table_name='businesses') = 1, 'businesses table missing';
+              ASSERT (SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public' AND table_name='payments') = 1, 'payments table missing';
+              ASSERT (SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public' AND table_name='bookings') = 1, 'bookings table missing';
+              ASSERT (SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public' AND table_name='profiles') = 1, 'profiles table missing';
+            END \$\$;
+          "
+          echo "✅ Applied baseline through 354 — critical tables verified"
+          # 3. Model production drift: remove 034's effective objects
+          psql -d waaiio_test_convergence -v ON_ERROR_STOP=1 -c "
+            DROP TABLE IF EXISTS public.refunds CASCADE;
+            ALTER TABLE public.payments DROP COLUMN IF EXISTS refund_amount;
+            ALTER TABLE public.payments DROP COLUMN IF EXISTS refund_reason;
+            ALTER TABLE public.payments DROP COLUMN IF EXISTS refunded_by;
+            ALTER TABLE public.payments DROP COLUMN IF EXISTS refunded_at;
+          " 2>&1
+          echo "✅ Modeled production drift (034 objects removed)"
+          # 4. Execute actual 355 + 356 with ON_ERROR_STOP
+          echo "Applying 355_refund_convergence.sql..."
+          psql -d waaiio_test_convergence -v ON_ERROR_STOP=1 -f supabase/migrations/355_refund_convergence.sql
+          echo "✅ Migration 355 applied"
+          echo "Applying 356_customer360_financial_projection.sql..."
+          psql -d waaiio_test_convergence -v ON_ERROR_STOP=1 -f supabase/migrations/356_customer360_financial_projection.sql
+          echo "✅ Migration 356 applied"
+          # 5. Verify postconditions with fail-closed ASSERT
+          echo "Verifying postconditions..."
+          psql -d waaiio_test_convergence -v ON_ERROR_STOP=1 -c "
+            DO \$\$ BEGIN
+              -- Refund table + convergence columns
+              ASSERT (SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public' AND table_name='refunds') = 1, 'refunds table missing';
+              ASSERT (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='refunds' AND column_name='dispatched_at') = 1, 'dispatched_at missing';
+              ASSERT (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='refunds' AND column_name='provider_refund_id') = 1, 'provider_refund_id missing';
+              ASSERT (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='refunds' AND column_name='recovery_token') = 1, 'recovery_token missing';
+              ASSERT (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='refunds' AND column_name='provider_connection_id') = 1, 'provider_connection_id missing';
+              -- Payment refund columns
+              ASSERT (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='payments' AND column_name='refund_amount') = 1, 'refund_amount missing';
+              ASSERT (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='payments' AND column_name='refunded_at') = 1, 'refunded_at missing';
+              -- 355 RPCs
+              ASSERT (SELECT COUNT(*) FROM pg_proc WHERE proname='claim_refund_dispatch') >= 1, 'claim_refund_dispatch missing';
+              ASSERT (SELECT COUNT(*) FROM pg_proc WHERE proname='finalize_refund_execution') >= 1, 'finalize_refund_execution missing';
+              ASSERT (SELECT COUNT(*) FROM pg_proc WHERE proname='recover_interrupted_dispatch') >= 1, 'recover_interrupted_dispatch missing';
+              ASSERT (SELECT COUNT(*) FROM pg_proc WHERE proname='reconcile_pending_refund') >= 1, 'reconcile_pending_refund missing';
+              ASSERT (SELECT COUNT(*) FROM pg_proc WHERE proname='recover_ambiguous_refund') >= 1, 'recover_ambiguous_refund missing';
+              -- 356 RPCs
+              ASSERT (SELECT COUNT(*) FROM pg_proc WHERE proname='get_business_transactions') >= 1, 'get_business_transactions missing';
+              ASSERT (SELECT COUNT(*) FROM pg_proc WHERE proname='get_business_revenue_totals') >= 1, 'get_business_revenue_totals missing';
+              -- RLS enabled
+              ASSERT (SELECT relrowsecurity FROM pg_class WHERE relname='refunds'), 'refunds RLS not enabled';
+              -- Grants: authenticated cannot INSERT
+              ASSERT NOT (SELECT has_table_privilege('authenticated', 'public.refunds', 'INSERT')), 'authenticated should not have INSERT on refunds';
+            END \$\$;
+          "
+          echo "✅ All postconditions verified (fail-closed assertions)"
+          # 6. Cleanup
+          psql -c "DROP DATABASE IF EXISTS waaiio_test_convergence;"
+          echo "✅ Production-shaped convergence proof complete"
 
       - name: "#224 Giving save authority boundary tests"
         env:

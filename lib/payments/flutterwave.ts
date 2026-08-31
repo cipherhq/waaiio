@@ -238,6 +238,7 @@ export class FlutterwaveGateway implements PaymentGateway {
       }
       return {
         success: true,
+        outcome: 'terminal_success' as const,
         gatewayRefundReference: `mock_refund_flw_${Date.now()}`,
         gatewayResponse: { mock: true },
       };
@@ -254,6 +255,7 @@ export class FlutterwaveGateway implements PaymentGateway {
       if (verifyData.status !== 'success' || !verifyData.data?.id) {
         return {
           success: false,
+          outcome: 'terminal_failure' as const,
           errorMessage: 'Could not resolve Flutterwave transaction reference',
           gatewayResponse: verifyData,
         };
@@ -281,24 +283,59 @@ export class FlutterwaveGateway implements PaymentGateway {
 
       const refundData = await refundRes.json();
 
+      // Flutterwave lifecycle: new → pending → succeeded | failed
+      // API response status:'success' means request accepted, NOT refund completed
+      const providerRefundId = refundData.data?.id?.toString();
       if (refundData.status === 'success') {
         return {
-          success: true,
-          gatewayRefundReference: refundData.data?.id?.toString(),
+          success: false, // conservative: accepted ≠ completed
+          outcome: 'provider_pending' as const,
+          providerRefundId,
+          providerStatus: 'pending',
+          gatewayRefundReference: providerRefundId,
           gatewayResponse: refundData.data,
+        };
+      }
+
+      // Explicit API error
+      if (refundData.status === 'error' || refundData.message) {
+        return {
+          success: false,
+          outcome: 'terminal_failure' as const,
+          errorMessage: refundData.message || 'Flutterwave refund failed',
+          gatewayResponse: refundData,
         };
       }
 
       return {
         success: false,
-        errorMessage: refundData.message || 'Flutterwave refund failed',
+        outcome: 'transport_unknown' as const,
+        errorMessage: 'Flutterwave refund: unexpected response',
         gatewayResponse: refundData,
       };
     } catch (error) {
       return {
         success: false,
+        outcome: 'transport_unknown' as const,
         errorMessage: `Flutterwave refund error: ${normalizeError(error).message}`,
       };
     }
+  }
+
+  async queryRefundStatus(refundReference: string, queryOpts?: { byoSecretKey?: string }): Promise<import('./types').RefundStatusResult> {
+    const secretKey = queryOpts?.byoSecretKey || flutterwaveSecretKey;
+    const response = await fetch(`https://api.flutterwave.com/v3/refunds/${encodeURIComponent(refundReference)}`, {
+      headers: { Authorization: `Bearer ${secretKey}` },
+      signal: AbortSignal.timeout(15000),
+    });
+    const data = await response.json();
+    const status = (data.data?.status as string) || 'unknown';
+    return {
+      providerStatus: status,
+      outcome: status === 'succeeded' ? 'terminal_success'
+        : status === 'failed' ? 'terminal_failure'
+        : 'provider_pending',
+      providerRefundId: data.data?.id?.toString(),
+    };
   }
 }

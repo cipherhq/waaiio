@@ -1,8 +1,30 @@
+/**
+ * Refund execution handler (#232).
+ *
+ * 6-state model: pending → provider_pending | provider_ambiguous
+ *                         → provider_success_unfinalized → success
+ *                         → failed
+ *
+ * Provider outcome classification drives state transitions:
+ *   terminal_success → provider_success_unfinalized → finalize
+ *   terminal_failure → failed
+ *   provider_pending → provider_pending (await reconciliation)
+ *   transport_unknown → provider_ambiguous
+ *
+ * Token-bound recovery for interrupted Tier-1 dispatches.
+ * Service_role for all execution-ledger writes.
+ */
+
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { createServiceClient } from '@/lib/supabase/service';
 import { getPaymentGatewayByName } from './factory';
 import type { PaymentGatewayName } from '@/lib/constants';
+import type { RefundOutcome } from './types';
 import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
+
+// Tier-1: proven provider-side idempotent replay (Stripe 24h, PayPal documented)
+const TIER1_GATEWAYS = new Set<string>(['stripe', 'paypal']);
 
 interface ProcessRefundOpts {
   supabase: SupabaseClient;
@@ -23,236 +45,304 @@ interface ProcessRefundResult {
 
 export async function processRefund(opts: ProcessRefundOpts): Promise<ProcessRefundResult> {
   const { supabase, paymentId, businessId, amount, reason, initiatedBy, initiatedByRole } = opts;
+  const service = createServiceClient();
 
-  // Idempotency guard: reject if a refund is already in-progress (pending) for this payment.
-  // This prevents double-processing when the user clicks the refund button twice.
-  // Completed (success) refunds are fine — they are already reflected in payment.refund_amount
-  // and the remaining-amount check below handles them correctly for partial refunds.
-  const { data: pendingRefund } = await supabase
-    .from('refunds')
-    .select('id')
-    .eq('payment_id', paymentId)
-    .eq('status', 'pending')
-    .limit(1)
-    .maybeSingle();
-
-  if (pendingRefund) {
-    return { success: false, errorMessage: 'A refund for this payment is already being processed' };
-  }
-
-  // 1. Load payment record
+  // ── 1. Load + validate payment ──
   const { data: payment, error: paymentErr } = await supabase
     .from('payments')
     .select('id, amount, currency, refund_amount, status, gateway, gateway_reference, booking_id, invoice_id, campaign_id, order_id, reservation_id, business_id, metadata')
     .eq('id', paymentId)
     .single();
-
-  if (paymentErr || !payment) {
-    return { success: false, errorMessage: 'Payment not found' };
-  }
-
-  // 2. Validate payment is refundable
-  if (payment.status !== 'success' && payment.status !== 'refunded') {
+  if (paymentErr || !payment) return { success: false, errorMessage: 'Payment not found' };
+  if (payment.status !== 'success' && payment.status !== 'refunded')
     return { success: false, errorMessage: `Payment status "${payment.status}" is not refundable` };
-  }
 
-  const existingRefund = Number(payment.refund_amount || 0);
+  const { data: completedRefunds } = await service.from('refunds').select('amount').eq('payment_id', paymentId).eq('status', 'success');
+  const ledgerRefunded = (completedRefunds || []).reduce((s, r) => s + Number(r.amount), 0);
   const paymentAmount = Number(payment.amount);
-  const remaining = paymentAmount - existingRefund;
+  const remaining = paymentAmount - ledgerRefunded;
 
-  if (amount <= 0) {
-    return { success: false, errorMessage: 'Refund amount must be greater than 0' };
-  }
+  if (amount <= 0) return { success: false, errorMessage: 'Refund amount must be greater than 0' };
+  if (amount > remaining) return { success: false, errorMessage: `Refund amount (${amount}) exceeds remaining refundable amount (${remaining})` };
+  if (payment.business_id && payment.business_id !== businessId) return { success: false, errorMessage: 'Business ID does not match the payment record' };
 
-  if (amount > remaining) {
-    return { success: false, errorMessage: `Refund amount (${amount}) exceeds remaining refundable amount (${remaining})` };
-  }
-
-  // 3. Cross-validate businessId matches the payment's actual business
-  if (payment.business_id && payment.business_id !== businessId) {
-    return { success: false, errorMessage: 'Business ID does not match the payment record' };
-  }
-
-  // 4. Check if business uses direct_split payout mode
-  const { data: business } = await supabase
-    .from('businesses')
-    .select('payout_mode')
-    .eq('id', businessId)
-    .single();
-
+  const { data: business } = await supabase.from('businesses').select('payout_mode').eq('id', businessId).single();
   const isDirectSplit = business?.payout_mode === 'direct_split';
-
-  // 4. Determine refund type
   const refundType = amount >= remaining ? 'full' : 'partial';
+  const metadata = payment.metadata as Record<string, unknown> | null;
 
-  // 5. Create refund record as pending
-  const { data: refundRecord, error: insertErr } = await supabase
+  // ── 2. Create or resume refund record ──
+  const { data: refundRecord, error: insertErr } = await service
     .from('refunds')
     .insert({
-      payment_id: paymentId,
-      business_id: businessId,
-      amount,
-      reason: reason || null,
-      status: 'pending',
-      gateway: payment.gateway,
-      refund_type: refundType,
-      is_direct_split: isDirectSplit,
-      initiated_by: initiatedBy,
-      initiated_by_role: initiatedByRole,
+      payment_id: paymentId, business_id: businessId, amount, reason: reason || null,
+      status: 'pending', gateway: payment.gateway, refund_type: refundType,
+      is_direct_split: isDirectSplit, initiated_by: initiatedBy, initiated_by_role: initiatedByRole,
+      connect_account_id: (metadata?.connect_account_id as string) || null,
+      provider_connection_id: (metadata?.provider_connection_id as string) || null,
     })
     .select('id')
     .single();
 
-  if (insertErr || !refundRecord) {
-    return { success: false, errorMessage: 'Failed to create refund record' };
+  if (insertErr?.code === '23505') {
+    return resumeExistingRefund(service, paymentId, payment, isDirectSplit);
+  }
+  if (insertErr || !refundRecord) return { success: false, errorMessage: 'Failed to create refund record' };
+
+  // ── 3. Dispatch ──
+  return dispatchAndFinalize(service, refundRecord.id, null, payment, isDirectSplit);
+}
+
+/** Resume an existing non-terminal refund. */
+async function resumeExistingRefund(
+  service: ReturnType<typeof createServiceClient>,
+  paymentId: string, payment: Record<string, unknown>, isDirectSplit: boolean,
+): Promise<ProcessRefundResult> {
+  const { data: existing } = await service
+    .from('refunds')
+    .select('id, status, gateway, dispatched_at, amount, provider_refund_id, recovery_token, provider_connection_id, connect_account_id')
+    .eq('payment_id', paymentId)
+    .in('status', ['pending', 'provider_pending', 'provider_ambiguous', 'provider_success_unfinalized'])
+    .limit(1).maybeSingle();
+
+  if (!existing) return { success: false, errorMessage: 'A refund for this payment is already being processed' };
+  const isTier1 = TIER1_GATEWAYS.has(existing.gateway || '');
+
+  // provider_success_unfinalized → finalize locally, NO provider call
+  if (existing.status === 'provider_success_unfinalized') {
+    return finalizeOnly(service, existing.id, isDirectSplit);
   }
 
-  // 6. Process refund based on payout mode
-  if (isDirectSplit) {
-    // Direct split: record-only, business returns funds manually
-    await supabase
-      .from('refunds')
-      .update({ status: 'success' })
-      .eq('id', refundRecord.id);
-  } else {
-    // Platform managed: call gateway refund API
-    const gatewayName = (payment.gateway || 'paystack') as PaymentGatewayName;
-    const gateway = getPaymentGatewayByName(gatewayName);
+  // provider_pending → attempt reconciliation via provider query
+  if (existing.status === 'provider_pending' && existing.provider_refund_id) {
+    return reconcileAndFinalize(service, existing, payment, isDirectSplit);
+  }
 
-    const metadata = payment.metadata as Record<string, unknown> | null;
+  // provider_ambiguous → Tier-1 recover+re-dispatch; Tier-2 fail closed
+  if (existing.status === 'provider_ambiguous') {
+    if (!isTier1) return { success: false, refundId: existing.id, isDirectSplit, errorMessage: 'Refund outcome unknown — requires manual reconciliation (non-replay-safe gateway)' };
+    const { data: recResult } = await service.rpc('recover_ambiguous_refund', { p_refund_id: existing.id });
+    const rec = recResult as Record<string, unknown>;
+    if (!rec?.recovered) return { success: false, refundId: existing.id, isDirectSplit, errorMessage: `Recovery failed: ${rec?.reason || 'unknown'}` };
+    return dispatchAndFinalize(service, existing.id, rec.recovery_token as string, payment, isDirectSplit);
+  }
 
-    const result = await gateway.refundPayment({
-      gatewayReference: payment.gateway_reference,
-      amount: refundType === 'full' && existingRefund === 0 ? undefined : amount,
-      currency: (payment.currency as string) || 'NGN',
-      reason,
-      connectAccountId: (metadata?.connect_account_id as string) || undefined,
-      byoSecretKey: (metadata?.byo_secret_key as string) || undefined,
+  // pending + dispatched (interrupted) → Tier-1 token-bound recovery; Tier-2 → ambiguous
+  if (existing.status === 'pending' && existing.dispatched_at) {
+    if (isTier1) {
+      const { data: recResult } = await service.rpc('recover_interrupted_dispatch', { p_refund_id: existing.id });
+      const rec = recResult as Record<string, unknown>;
+      if (!rec?.recovered) return { success: false, refundId: existing.id, isDirectSplit, errorMessage: `Interrupted recovery failed: ${rec?.reason || 'unknown'}` };
+      return dispatchAndFinalize(service, existing.id, rec.recovery_token as string, payment, isDirectSplit);
+    }
+    // Tier-2: mark ambiguous
+    await service.from('refunds').update({ status: 'provider_ambiguous', gateway_response: { error: 'interrupted_dispatch_tier2' } }).eq('id', existing.id);
+    return { success: false, refundId: existing.id, isDirectSplit, errorMessage: 'Interrupted refund — requires manual reconciliation' };
+  }
+
+  // pending + undispatched → dispatch normally
+  if (existing.status === 'pending' && !existing.dispatched_at) {
+    return dispatchAndFinalize(service, existing.id, null, payment, isDirectSplit);
+  }
+
+  return { success: false, errorMessage: 'A refund for this payment is already being processed' };
+}
+
+/** Finalize a provider_success_unfinalized refund without calling the provider. */
+async function finalizeOnly(service: ReturnType<typeof createServiceClient>, refundId: string, isDirectSplit: boolean): Promise<ProcessRefundResult> {
+  const { data: finResult, error: finErr } = await service.rpc('finalize_refund_execution', { p_refund_id: refundId });
+  if (finErr) return { success: false, refundId, isDirectSplit, errorMessage: 'Re-finalization failed' };
+  const fr = finResult as Record<string, unknown>;
+  return { success: !!fr?.finalized, refundId, isDirectSplit };
+}
+
+/** Reconcile a provider_pending refund by querying the provider, then finalize if terminal. */
+async function reconcileAndFinalize(
+  service: ReturnType<typeof createServiceClient>,
+  existing: Record<string, unknown>, payment: Record<string, unknown>, isDirectSplit: boolean,
+): Promise<ProcessRefundResult> {
+  const refundId = existing.id as string;
+  try {
+    const gatewayName = (existing.gateway as string) || 'paystack';
+    const gateway = getPaymentGatewayByName(gatewayName as PaymentGatewayName);
+    if (!gateway.queryRefundStatus) {
+      return { success: false, refundId, isDirectSplit, errorMessage: 'Gateway does not support refund status query' };
+    }
+    // Resolve credential from the persisted provider_connection_id (same as original dispatch)
+    let byoSecretKey: string | undefined;
+    let connectAccountId: string | undefined;
+    const providerConnId = existing.provider_connection_id as string | undefined;
+    if (providerConnId) {
+      const { data: cred } = await service
+        .from('business_payment_credentials')
+        .select('secret_key, connect_account_id')
+        .eq('id', providerConnId).eq('is_active', true).maybeSingle();
+      if (!cred) {
+        return { success: false, refundId, isDirectSplit, errorMessage: 'Payment credential not found for reconciliation' };
+      }
+      if (cred.secret_key) byoSecretKey = cred.secret_key;
+      if (cred.connect_account_id) connectAccountId = cred.connect_account_id;
+    }
+
+    const statusResult = await gateway.queryRefundStatus(existing.provider_refund_id as string, {
+      byoSecretKey,
+      connectAccountId,
     });
 
-    if (result.success) {
-      await supabase
-        .from('refunds')
-        .update({
-          status: 'success',
-          gateway_refund_reference: result.gatewayRefundReference || null,
-          gateway_response: result.gatewayResponse || null,
-        })
-        .eq('id', refundRecord.id);
-    } else {
-      await supabase
-        .from('refunds')
-        .update({
-          status: 'failed',
-          gateway_response: result.gatewayResponse || { error: result.errorMessage },
-        })
-        .eq('id', refundRecord.id);
-
-      return {
-        success: false,
-        refundId: refundRecord.id,
-        isDirectSplit,
-        errorMessage: result.errorMessage || 'Gateway refund failed',
-      };
+    if (statusResult.outcome === 'terminal_success') {
+      const { error: recErr } = await service.rpc('reconcile_pending_refund', { p_refund_id: refundId, p_provider_status: statusResult.providerStatus, p_terminal_outcome: 'terminal_success' });
+      if (recErr) {
+        logger.error(`[REFUND] Reconciliation persistence failed for terminal success ${refundId}: ${recErr.message}`);
+        return { success: false, refundId, isDirectSplit, errorMessage: 'Reconciliation persistence failed — refund remains pending, safe to retry' };
+      }
+      return finalizeOnly(service, refundId, isDirectSplit);
     }
+    if (statusResult.outcome === 'terminal_failure') {
+      const { error: recErr } = await service.rpc('reconcile_pending_refund', { p_refund_id: refundId, p_provider_status: statusResult.providerStatus, p_terminal_outcome: 'terminal_failure' });
+      if (recErr) {
+        logger.error(`[REFUND] Reconciliation persistence failed for terminal failure ${refundId}: ${recErr.message}`);
+        return { success: false, refundId, isDirectSplit, errorMessage: 'Reconciliation persistence failed — refund remains pending, safe to retry' };
+      }
+      return { success: false, refundId, isDirectSplit, errorMessage: 'Provider confirmed refund failure' };
+    }
+    // Still pending — no mutation
+    return { success: false, refundId, isDirectSplit, errorMessage: 'Refund still pending at provider' };
+  } catch (err) {
+    // Query transport failure — remain provider_pending, no mutation
+    logger.warn(`[REFUND] Reconciliation query failed for ${refundId}: ${err}`);
+    return { success: false, refundId, isDirectSplit, errorMessage: 'Reconciliation query failed — refund remains pending' };
+  }
+}
+
+/** Dispatch a refund attempt and finalize on terminal success. */
+async function dispatchAndFinalize(
+  service: ReturnType<typeof createServiceClient>,
+  refundId: string, recoveryToken: string | null,
+  payment: Record<string, unknown>, isDirectSplit: boolean,
+): Promise<ProcessRefundResult> {
+  // Atomic dispatch claim (token-bound if recovering)
+  const { data: claimResult } = await service.rpc('claim_refund_dispatch', {
+    p_refund_id: refundId,
+    p_recovery_token: recoveryToken || null,
+  });
+  const claim = (claimResult as Array<Record<string, unknown>>)?.[0];
+  if (!claim?.claimed) {
+    // Check if it reached a resumable state while we tried to claim
+    const { data: cur } = await service.from('refunds').select('status').eq('id', refundId).single();
+    if (cur?.status === 'provider_success_unfinalized') return finalizeOnly(service, refundId, isDirectSplit);
+    return { success: false, refundId, errorMessage: 'Failed to claim refund for dispatch' };
   }
 
-  // 7. Update payment record
-  const newRefundAmount = existingRefund + amount;
-  const isFullyRefunded = newRefundAmount >= paymentAmount;
+  // Read immutable request parameters from the refund row
+  const { data: refRow } = await service
+    .from('refunds').select('amount, gateway, refund_type, reason, connect_account_id, provider_connection_id, is_direct_split')
+    .eq('id', refundId).single();
+  if (!refRow) return { success: false, refundId, errorMessage: 'Refund row not found after claim' };
 
-  await supabase
-    .from('payments')
-    .update({
-      refund_amount: newRefundAmount,
-      refund_reason: reason || null,
-      refunded_at: new Date().toISOString(),
-      refunded_by: initiatedBy,
-      ...(isFullyRefunded && { status: 'refunded' }),
-    })
-    .eq('id', paymentId);
+  if (refRow.is_direct_split) {
+    const { error: dsErr } = await service.from('refunds')
+      .update({ status: 'provider_success_unfinalized', gateway_refund_reference: 'direct_split', provider_status: 'direct_split' })
+      .eq('id', refundId);
+    if (dsErr) return { success: false, refundId, isDirectSplit: true, errorMessage: 'Failed to record direct split state' };
+  } else {
+    const gatewayName = (refRow.gateway || 'paystack') as PaymentGatewayName;
+    const gateway = getPaymentGatewayByName(gatewayName);
 
-  // 8. If fully refunded and has a booking/reservation, update deposit_status
-  if (isFullyRefunded && payment.booking_id) {
-    await supabase
-      .from('bookings')
-      .update({ deposit_status: 'refunded' })
-      .eq('id', payment.booking_id);
-  }
-
-  if (isFullyRefunded && payment.reservation_id) {
-    await supabase
-      .from('reservations')
-      .update({ deposit_status: 'refunded' })
-      .eq('id', payment.reservation_id);
-  }
-
-  // 9. Reverse platform fee on refund (full or partial)
-  const feeEntityCol = payment.booking_id ? 'booking_id' : payment.invoice_id ? 'invoice_id' : payment.campaign_id ? 'campaign_id' : payment.order_id ? 'order_id' : payment.reservation_id ? 'reservation_id' : null;
-  const feeEntityVal = payment.booking_id || payment.invoice_id || payment.campaign_id || payment.order_id || payment.reservation_id;
-  if (feeEntityCol && feeEntityVal) {
-    if (isFullyRefunded) {
-      // Full refund — mark fee as refunded entirely
-      await supabase
-        .from('platform_fees')
-        .update({ refunded_at: new Date().toISOString() })
-        .eq(feeEntityCol, feeEntityVal)
-        .is('refunded_at', null);
-    } else {
-      // Partial refund — reduce fee proportionally
-      const { data: fee } = await supabase
-        .from('platform_fees')
-        .select('id, fee_total, transaction_amount')
-        .eq(feeEntityCol, feeEntityVal)
-        .is('refunded_at', null)
+    // Resolve BYO credential from trusted boundary (business_payment_credentials)
+    let byoSecretKey: string | undefined;
+    let connectAccountId: string | undefined = refRow.connect_account_id || undefined;
+    if (refRow.provider_connection_id) {
+      const { data: cred } = await service
+        .from('business_payment_credentials')
+        .select('secret_key, connect_account_id, connection_type')
+        .eq('id', refRow.provider_connection_id)
+        .eq('is_active', true)
         .maybeSingle();
-      if (fee && fee.transaction_amount > 0) {
-        const refundRatio = amount / fee.transaction_amount;
-        const feeReduction = Math.round(fee.fee_total * refundRatio * 100) / 100;
-        await supabase
-          .from('platform_fees')
-          .update({ fee_total: Math.max(0, fee.fee_total - feeReduction) })
-          .eq('id', fee.id);
+      if (!cred) {
+        // Credential missing/deactivated — fail closed to reconciliation
+        const { error: ambErr } = await service.from('refunds')
+          .update({ status: 'provider_ambiguous', gateway_response: { error: 'credential_not_found' } })
+          .eq('id', refundId);
+        if (ambErr) logger.error(`[REFUND] Credential missing AND state write failed: ${refundId}`);
+        return { success: false, refundId, isDirectSplit, errorMessage: 'Payment credential not found or deactivated — requires reconciliation' };
+      }
+      if (cred.secret_key) byoSecretKey = cred.secret_key;
+      if (cred.connect_account_id) connectAccountId = cred.connect_account_id;
+    }
+
+    const result = await gateway.refundPayment({
+      gatewayReference: payment.gateway_reference as string,
+      amount: refRow.refund_type === 'full' ? undefined : Number(refRow.amount),
+      currency: ((payment.currency as string) || 'NGN'),
+      reason: refRow.reason || undefined,
+      connectAccountId,
+      byoSecretKey,
+      idempotencyKey: refundId,
+    });
+
+    // Persist provider refund ID + status — FAIL-SAFE: if this write fails,
+    // the row stays pending+dispatched; Tier-1 can safely re-dispatch, Tier-2 requires reconciliation.
+    if (result.providerRefundId || result.providerStatus) {
+      const { error: refPersistErr } = await service.from('refunds').update({
+        provider_refund_id: result.providerRefundId || null,
+        provider_status: result.providerStatus || null,
+        gateway_refund_reference: result.gatewayRefundReference || result.providerRefundId || null,
+        gateway_response: result.gatewayResponse || null,
+      }).eq('id', refundId);
+      if (refPersistErr) {
+        logger.error(`[REFUND] Provider reference persistence failed for ${refundId}: ${refPersistErr.message}`);
+        // FAIL-SAFE: do not continue with state transition — reference needed for reconciliation
+        return { success: false, refundId, isDirectSplit, errorMessage: 'Provider reference persistence failed — requires recovery' };
       }
     }
-  }
 
-  // 10. Check if a payout was already sent for this payment's period — if so, create adjustment
-  try {
-    const { data: payment2 } = await supabase
-      .from('payments')
-      .select('created_at')
-      .eq('id', paymentId)
-      .single();
+    // Outcome-based state transition — every write is checked
+    const outcome: RefundOutcome = result.outcome;
 
-    if (payment2) {
-      const { data: paidPayout } = await supabase
-        .from('business_payouts')
-        .select('id')
-        .eq('business_id', businessId)
-        .eq('status', 'paid')
-        .gte('period_end', payment2.created_at)
-        .maybeSingle();
-
-      if (paidPayout) {
-        // Payout already sent — create adjustment record for next payout
-        await supabase.from('payout_adjustments').insert({
-          business_id: businessId,
-          payout_id: paidPayout.id,
-          amount: -amount, // negative = deduction from next payout
-          reason: `Refund for payment ${payment.gateway_reference}`,
-          payment_id: paymentId,
-        });
+    if (outcome === 'terminal_success') {
+      const { error: durErr } = await service.from('refunds')
+        .update({ status: 'provider_success_unfinalized' }).eq('id', refundId);
+      if (durErr) {
+        logger.error(`[REFUND] Provider success but durability write failed: ${refundId}`);
+        return { success: false, refundId, isDirectSplit, errorMessage: 'Provider refund succeeded but state update failed — will be recovered' };
       }
+    } else if (outcome === 'terminal_failure') {
+      const { error: failErr } = await service.from('refunds')
+        .update({ status: 'failed' }).eq('id', refundId);
+      if (failErr) {
+        logger.error(`[REFUND] Failed state write failed: ${refundId}`);
+        // FAIL-SAFE: row stays pending+dispatched; reconciliation required
+        return { success: false, refundId, isDirectSplit, errorMessage: 'Provider failure confirmed but state persistence failed — requires recovery' };
+      }
+      return { success: false, refundId, isDirectSplit, errorMessage: result.errorMessage || 'Gateway refund failed' };
+    } else if (outcome === 'provider_pending') {
+      const { error: pendErr } = await service.from('refunds')
+        .update({ status: 'provider_pending' }).eq('id', refundId);
+      if (pendErr) {
+        logger.error(`[REFUND] Provider pending state write failed: ${refundId}`);
+        // FAIL-SAFE: row stays pending+dispatched; reconciliation required
+        return { success: false, refundId, isDirectSplit, errorMessage: 'Provider accepted but state persistence failed — requires recovery' };
+      }
+      return { success: false, refundId, isDirectSplit, errorMessage: 'Refund accepted by provider — awaiting completion' };
+    } else {
+      // transport_unknown → provider_ambiguous
+      const { error: ambErr } = await service.from('refunds')
+        .update({ status: 'provider_ambiguous' }).eq('id', refundId);
+      if (ambErr) {
+        logger.error(`[REFUND] Ambiguous state write failed: ${refundId}`);
+        // FAIL-SAFE: row stays pending+dispatched; reconciliation required
+        return { success: false, refundId, isDirectSplit, errorMessage: 'Outcome unknown and state persistence failed — requires recovery' };
+      }
+      return { success: false, refundId, isDirectSplit, errorMessage: 'Refund outcome unknown' };
     }
-  } catch (adjError) {
-    // Non-blocking — log but don't fail the refund
-    logger.withContext({ op: 'refund.payout-adjustment', ...safeLogErrorContext(adjError) }).error('[REFUND] Failed to create payout adjustment');
   }
 
-  return {
-    success: true,
-    refundId: refundRecord.id,
-    isDirectSplit,
-  };
+  // ── Finalize ──
+  const { data: finalizeResult, error: finalizeErr } = await service.rpc('finalize_refund_execution', { p_refund_id: refundId });
+  if (finalizeErr) {
+    logger.withContext({ op: 'refund.finalize', ...safeLogErrorContext(finalizeErr) }).error(`[REFUND] Finalization RPC failed for ${refundId}`);
+    return { success: false, refundId, isDirectSplit, errorMessage: 'Refund processed but finalization failed — will be retried' };
+  }
+  const finResult = finalizeResult as Record<string, unknown>;
+  return { success: !!finResult?.finalized, refundId, isDirectSplit };
 }

@@ -3,6 +3,33 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-08-31 — #232: Replay window anchor + concurrent recovery proof
+
+### What changed
+- `supabase/migrations/355_refund_convergence.sql` — `claim_refund_dispatch` token-bound branch no longer sets `dispatched_at = now()`. Replay-safety window now immutably anchored to first provider dispatch. Prevents repeated recoveries from extending eligibility beyond Stripe's 24h idempotency key pruning.
+- `lib/__tests__/acc-232-refund-convergence-db.test.ts` — 3 new tests:
+  1. Expired first-dispatch (23.5h) denies recovery on both interrupted and ambiguous paths
+  2. Token-bound claim preserves original `dispatched_at` (clock not refreshed)
+  3. Concurrent takeover: exactly 1 winner (not ≤1), winner token claims dispatch, stale token rejected
+
+### Could break
+- If any code path relied on `dispatched_at` being refreshed by recovery claims to re-check "recency" of provider dispatch, it would now see the original timestamp. This is correct — the provider's idempotency key is tied to the original request window.
+
+## 2026-08-31 — #232: Refund handler test coverage — 3 CTO-required runtime proofs
+
+### What changed
+- `lib/payments/__tests__/refund-handler.test.ts` — added `errorChain` helper for persistence-failure mocking + 3 new tests:
+  1. Tier-1 interrupted recovery: proves recovery token flows from `recover_interrupted_dispatch` → `claim_refund_dispatch`, exactly 1 provider dispatch
+  2. Post-dispatch persistence failure: provider reference write fails → returns "requires recovery", exactly 1 provider call (no replacement attempt)
+  3. BYO credential identity on reconciliation: `provider_pending` refund with `provider_connection_id` → `queryRefundStatus` called with persisted credential
+- Total: 12 handler tests, zero skips (was 9)
+
+### Files changed
+- `lib/payments/__tests__/refund-handler.test.ts`
+
+### Could break
+- Nothing — test-only change. No handler logic modified.
+
 ## 2026-08-30 — #224/#225/#226: Recurring eligibility, Customer 360, Financial projection
 
 ### What changed

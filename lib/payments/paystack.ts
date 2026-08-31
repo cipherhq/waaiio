@@ -239,6 +239,7 @@ export class PaystackGateway implements PaymentGateway {
       }
       return {
         success: true,
+        outcome: 'terminal_success' as const,
         gatewayRefundReference: `mock_refund_ps_${Date.now()}`,
         gatewayResponse: { mock: true },
       };
@@ -270,23 +271,53 @@ export class PaystackGateway implements PaymentGateway {
       const data = await response.json();
 
       if (data.status === true) {
+        const refundData = data.data as Record<string, unknown> | undefined;
+        const providerRefundId = refundData?.id?.toString() || (refundData?.transaction as Record<string, unknown>)?.reference?.toString();
+        const providerStatus = (refundData?.status as string) || 'unknown';
+        // Paystack lifecycle: pending → processing → processed | failed
+        const outcome = providerStatus === 'processed' ? 'terminal_success' as const
+          : providerStatus === 'failed' ? 'terminal_failure' as const
+          : 'provider_pending' as const; // pending, processing, or unknown = conservative
         return {
-          success: true,
-          gatewayRefundReference: data.data?.transaction?.reference || data.data?.id?.toString(),
+          success: outcome === 'terminal_success',
+          outcome,
+          providerRefundId,
+          providerStatus,
+          gatewayRefundReference: providerRefundId,
           gatewayResponse: data.data,
         };
       }
 
+      // Explicit API rejection (status !== true with a response)
       return {
         success: false,
+        outcome: 'terminal_failure' as const,
         errorMessage: data.message || 'Paystack refund failed',
         gatewayResponse: data,
       };
     } catch (error) {
       return {
         success: false,
+        outcome: 'transport_unknown' as const,
         errorMessage: `Paystack refund error: ${normalizeError(error).message}`,
       };
     }
+  }
+
+  async queryRefundStatus(refundReference: string, queryOpts?: { byoSecretKey?: string }): Promise<import('./types').RefundStatusResult> {
+    const secretKey = queryOpts?.byoSecretKey || paystackSecretKey;
+    const response = await fetch(`https://api.paystack.co/refund/${encodeURIComponent(refundReference)}`, {
+      headers: { Authorization: `Bearer ${secretKey}` },
+      signal: AbortSignal.timeout(15000),
+    });
+    const data = await response.json();
+    const status = (data.data?.status as string) || 'unknown';
+    return {
+      providerStatus: status,
+      outcome: status === 'processed' ? 'terminal_success'
+        : status === 'failed' ? 'terminal_failure'
+        : 'provider_pending',
+      providerRefundId: data.data?.id?.toString(),
+    };
   }
 }

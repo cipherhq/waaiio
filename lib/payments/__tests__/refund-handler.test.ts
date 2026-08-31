@@ -1,8 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-// Mock the factory before importing
 vi.mock('../factory', () => ({
   getPaymentGatewayByName: vi.fn(),
+}));
+
+const mockServiceClient: Record<string, unknown> = {};
+vi.mock('@/lib/supabase/service', () => ({
+  createServiceClient: vi.fn(() => mockServiceClient),
 }));
 
 import { processRefund } from '../refund-handler';
@@ -10,361 +14,288 @@ import { getPaymentGatewayByName } from '../factory';
 
 const mockGetGateway = getPaymentGatewayByName as ReturnType<typeof vi.fn>;
 
-// ── Mock Supabase Builder ──
-
-interface MockTableConfig {
-  selectResult?: { data: unknown; error: unknown };
-  maybeSingleResult?: { data: unknown; error: unknown };
-  updateResult?: { data: unknown; error: unknown };
-  insertResult?: { data: unknown; error: unknown };
+// ── Flexible mock builder ──
+// Returns a chainable proxy where every method returns a thenable proxy.
+// Terminal methods (.single, .maybeSingle) resolve to configured data.
+// Awaiting the chain directly resolves to the array result.
+function chain(terminalData: unknown = null, arrayData: unknown[] = []) {
+  const result = { data: terminalData, error: null };
+  const arrayResult = { data: arrayData, error: null };
+  const p: Record<string, unknown> = {};
+  const h: ProxyHandler<Record<string, unknown>> = {
+    get(_, prop) {
+      if (prop === 'then') return (r: (v: unknown) => void) => Promise.resolve(arrayResult).then(r);
+      if (prop === 'single') return vi.fn().mockResolvedValue(result);
+      if (prop === 'maybeSingle') return vi.fn().mockResolvedValue(result);
+      return vi.fn().mockReturnValue(new Proxy(p, h));
+    },
+  };
+  return new Proxy(p, h);
 }
 
-function createMockSupabase(tableConfigs: Record<string, MockTableConfig> = {}) {
-  const calls: Record<string, { update: ReturnType<typeof vi.fn>; insert: ReturnType<typeof vi.fn> }> = {};
-
-  // Build a chainable terminal object that supports arbitrary chaining
-  // and resolves to the configured result at terminal methods (single/maybeSingle)
-  function makeChainable(result: { data: unknown; error: unknown }) {
-    const chain: Record<string, unknown> = {};
-    const handler: ProxyHandler<Record<string, unknown>> = {
-      get(_target, prop) {
-        if (prop === 'then') return undefined; // not a thenable
-        if (prop === 'single') return vi.fn().mockResolvedValue(result);
-        if (prop === 'maybeSingle') return vi.fn().mockResolvedValue(result);
-        // All other methods return the proxy for chaining
-        return vi.fn().mockReturnValue(new Proxy(chain, handler));
-      },
-    };
-    return new Proxy(chain, handler);
-  }
-
-  return {
-    from: vi.fn((table: string) => {
-      const config = tableConfigs[table] || {};
-      const updateFn = vi.fn().mockReturnValue({
-        eq: vi.fn().mockReturnValue({
-          is: vi.fn().mockResolvedValue(config.updateResult || { data: null, error: null }),
-        }),
-      });
-      const insertFn = vi.fn().mockReturnValue({
-        select: vi.fn().mockReturnValue({
-          single: vi.fn().mockResolvedValue(config.insertResult || { data: { id: 'refund-1' }, error: null }),
-        }),
-      });
-
-      // Use Proxy-based chaining for select to handle arbitrary .eq().eq().limit().maybeSingle() chains
-      const selectResult = config.selectResult || { data: null, error: null };
-      const maybeSingleResult = config.maybeSingleResult || { data: null, error: null };
-      const selectFn = vi.fn().mockReturnValue(
-        makeChainable(selectResult),
-      );
-
-      if (!calls[table]) {
-        calls[table] = { update: updateFn, insert: insertFn };
-      }
-
-      return {
-        select: selectFn,
-        update: updateFn,
-        insert: insertFn,
-      };
-    }),
-    _calls: calls,
+function errorChain(error: Record<string, unknown>) {
+  const result = { data: null, error };
+  const p: Record<string, unknown> = {};
+  const h: ProxyHandler<Record<string, unknown>> = {
+    get(_, prop) {
+      if (prop === 'then') return (r: (v: unknown) => void) => Promise.resolve(result).then(r);
+      if (prop === 'single') return vi.fn().mockResolvedValue(result);
+      if (prop === 'maybeSingle') return vi.fn().mockResolvedValue(result);
+      return vi.fn().mockReturnValue(new Proxy(p, h));
+    },
   };
+  return new Proxy(p, h);
+}
+
+// Track provider call count
+let providerCallCount = 0;
+let lastProviderIdempotencyKey: string | undefined;
+
+function setupMocks(opts: {
+  payment?: Record<string, unknown>;
+  business?: Record<string, unknown>;
+  ledgerRefunds?: unknown[];
+  existingNonTerminal?: Record<string, unknown> | null;
+  refundRow?: Record<string, unknown>;
+  gatewayOutcome?: Record<string, unknown>;
+  insertError?: { code: string } | null;
+  credential?: Record<string, unknown> | null;
+  claimResult?: unknown[];
+  rpcResults?: Record<string, unknown>;
+  refundUpdateError?: Record<string, unknown> | null;
+}) {
+  providerCallCount = 0;
+  lastProviderIdempotencyKey = undefined;
+
+  const defaultPayment = { id: 'pay-1', amount: 5000, currency: 'NGN', refund_amount: 0, status: 'success', gateway: 'paystack', gateway_reference: 'ref-1', booking_id: null, metadata: null, business_id: 'biz-1' };
+  const defaultRefundRow = { id: 'refund-1', amount: 5000, gateway: 'paystack', refund_type: 'full', reason: null, connect_account_id: null, provider_connection_id: null, is_direct_split: false };
+
+  // Authenticated supabase (for payment/business reads)
+  const supabase = {
+    from: vi.fn().mockImplementation((table: string) => {
+      if (table === 'payments') return chain(opts.payment !== undefined ? opts.payment : defaultPayment);
+      if (table === 'businesses') return chain(opts.business || { payout_mode: 'platform_managed' });
+      return chain(null);
+    }),
+  };
+
+  // Service client
+  (mockServiceClient as Record<string, unknown>).from = vi.fn().mockImplementation((table: string) => {
+    if (table === 'refunds') {
+      return {
+        select: vi.fn().mockReturnValue(
+          chain(
+            opts.existingNonTerminal !== undefined ? opts.existingNonTerminal : opts.refundRow || defaultRefundRow,
+            opts.ledgerRefunds || [],
+          )
+        ),
+        insert: vi.fn().mockReturnValue({
+          select: vi.fn().mockReturnValue({
+            single: vi.fn().mockResolvedValue(
+              opts.insertError ? { data: null, error: opts.insertError } : { data: { id: 'refund-1' }, error: null }
+            ),
+          }),
+        }),
+        update: vi.fn().mockReturnValue(opts.refundUpdateError ? errorChain(opts.refundUpdateError) : chain(null)),
+      };
+    }
+    if (table === 'business_payment_credentials') {
+      return chain(opts.credential !== undefined ? opts.credential : null);
+    }
+    return chain(null);
+  });
+
+  (mockServiceClient as Record<string, unknown>).rpc = vi.fn().mockImplementation((name: string) => {
+    if (opts.rpcResults?.[name] !== undefined) {
+      return Promise.resolve({ data: opts.rpcResults[name], error: null });
+    }
+    if (name === 'claim_refund_dispatch') {
+      return Promise.resolve({ data: opts.claimResult || [{ claimed: true }], error: null });
+    }
+    if (name === 'finalize_refund_execution') {
+      return Promise.resolve({ data: { finalized: true, fully_refunded: false }, error: null });
+    }
+    if (name === 'recover_ambiguous_refund') {
+      return Promise.resolve({ data: { recovered: true, recovery_token: 'tok-1' }, error: null });
+    }
+    if (name === 'recover_interrupted_dispatch') {
+      return Promise.resolve({ data: { recovered: true, recovery_token: 'tok-2' }, error: null });
+    }
+    if (name === 'reconcile_pending_refund') {
+      return Promise.resolve({ data: { reconciled: true, next_action: 'finalize' }, error: null });
+    }
+    return Promise.resolve({ data: null, error: null });
+  });
+
+  const mockRefundPayment = vi.fn().mockImplementation((callOpts: Record<string, unknown>) => {
+    providerCallCount++;
+    lastProviderIdempotencyKey = callOpts.idempotencyKey as string;
+    return Promise.resolve(opts.gatewayOutcome || {
+      success: true, outcome: 'terminal_success',
+      providerRefundId: 'prov-1', providerStatus: 'succeeded',
+      gatewayRefundReference: 'gw-ref-1',
+    });
+  });
+
+  const mockQueryStatus = vi.fn().mockResolvedValue({
+    providerStatus: 'succeeded', outcome: 'terminal_success', providerRefundId: 'prov-1',
+  });
+
+  mockGetGateway.mockReturnValue({
+    refundPayment: mockRefundPayment,
+    queryRefundStatus: mockQueryStatus,
+  });
+
+  return { supabase, mockRefundPayment, mockQueryStatus };
 }
 
 describe('processRefund', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mockGetGateway.mockReturnValue({
-      refundPayment: vi.fn().mockResolvedValue({ success: true, gatewayRefundReference: 'gw-ref-1' }),
-    });
+  beforeEach(() => { vi.clearAllMocks(); });
+
+  // ── Validation tests ──
+
+  it('returns error when payment not found', async () => {
+    const { supabase } = setupMocks({ payment: null as any });
+    const r = await processRefund({ supabase: supabase as any, paymentId: 'p', businessId: 'biz-1', amount: 1000, initiatedBy: 'u', initiatedByRole: 'admin' });
+    expect(r.success).toBe(false);
+    expect(r.errorMessage).toBe('Payment not found');
   });
 
-  it('returns error when payment is not found', async () => {
-    const supabase = createMockSupabase({
-      payments: { selectResult: { data: null, error: { message: 'not found' } } },
-    });
-
-    const result = await processRefund({
-      supabase: supabase as any,
-      paymentId: 'pay-1',
-      businessId: 'biz-1',
-      amount: 1000,
-      initiatedBy: 'admin-1',
-      initiatedByRole: 'admin',
-    });
-
-    expect(result.success).toBe(false);
-    expect(result.errorMessage).toBe('Payment not found');
+  it('rejects non-refundable payment status', async () => {
+    const { supabase } = setupMocks({ payment: { id: 'p', amount: 5000, status: 'pending', gateway: 'paystack', gateway_reference: 'r' } });
+    const r = await processRefund({ supabase: supabase as any, paymentId: 'p', businessId: 'biz-1', amount: 1000, initiatedBy: 'u', initiatedByRole: 'admin' });
+    expect(r.success).toBe(false);
+    expect(r.errorMessage).toContain('not refundable');
   });
 
-  it('rejects refund on non-refundable payment status', async () => {
-    const supabase = createMockSupabase({
-      payments: {
-        selectResult: {
-          data: { id: 'pay-1', amount: 5000, refund_amount: 0, status: 'pending', gateway: 'paystack', gateway_reference: 'ref-1' },
-          error: null,
-        },
-      },
-    });
-
-    const result = await processRefund({
-      supabase: supabase as any,
-      paymentId: 'pay-1',
-      businessId: 'biz-1',
-      amount: 5000,
-      initiatedBy: 'admin-1',
-      initiatedByRole: 'admin',
-    });
-
-    expect(result.success).toBe(false);
-    expect(result.errorMessage).toContain('not refundable');
+  it('rejects amount exceeding remaining', async () => {
+    const { supabase } = setupMocks({ ledgerRefunds: [{ amount: 4000 }] });
+    const r = await processRefund({ supabase: supabase as any, paymentId: 'p', businessId: 'biz-1', amount: 2000, initiatedBy: 'u', initiatedByRole: 'admin' });
+    expect(r.success).toBe(false);
+    expect(r.errorMessage).toContain('exceeds remaining');
   });
 
-  it('rejects refund amount exceeding remaining refundable', async () => {
-    const supabase = createMockSupabase({
-      payments: {
-        selectResult: {
-          data: { id: 'pay-1', amount: 5000, refund_amount: 3000, status: 'success', gateway: 'paystack', gateway_reference: 'ref-1' },
-          error: null,
-        },
-      },
+  // ── Resume: provider_success_unfinalized → finalize locally (0 provider calls) ──
+
+  it('provider_success_unfinalized resumes with local finalization only', async () => {
+    const { supabase, mockRefundPayment } = setupMocks({
+      insertError: { code: '23505' },
+      existingNonTerminal: { id: 'ref-existing', status: 'provider_success_unfinalized', gateway: 'paystack', dispatched_at: new Date().toISOString(), provider_connection_id: null },
     });
-
-    const result = await processRefund({
-      supabase: supabase as any,
-      paymentId: 'pay-1',
-      businessId: 'biz-1',
-      amount: 3000, // Only 2000 remaining
-      initiatedBy: 'admin-1',
-      initiatedByRole: 'admin',
-    });
-
-    expect(result.success).toBe(false);
-    expect(result.errorMessage).toContain('exceeds remaining');
-  });
-
-  it('rejects zero or negative refund amount', async () => {
-    const supabase = createMockSupabase({
-      payments: {
-        selectResult: {
-          data: { id: 'pay-1', amount: 5000, refund_amount: 0, status: 'success', gateway: 'paystack', gateway_reference: 'ref-1' },
-          error: null,
-        },
-      },
-    });
-
-    const result = await processRefund({
-      supabase: supabase as any,
-      paymentId: 'pay-1',
-      businessId: 'biz-1',
-      amount: 0,
-      initiatedBy: 'admin-1',
-      initiatedByRole: 'admin',
-    });
-
-    expect(result.success).toBe(false);
-    expect(result.errorMessage).toContain('greater than 0');
-  });
-
-  it('processes full refund via gateway and updates payment to refunded', async () => {
-    const mockRefundPayment = vi.fn().mockResolvedValue({
-      success: true,
-      gatewayRefundReference: 'gw-ref-1',
-      gatewayResponse: { status: 'reversed' },
-    });
-    mockGetGateway.mockReturnValue({ refundPayment: mockRefundPayment });
-
-    const supabase = createMockSupabase({
-      payments: {
-        selectResult: {
-          data: {
-            id: 'pay-1', amount: 5000, refund_amount: 0, status: 'success',
-            gateway: 'paystack', gateway_reference: 'ref-1', booking_id: 'book-1', metadata: null,
-          },
-          error: null,
-        },
-      },
-      businesses: {
-        selectResult: { data: { payout_mode: 'platform_managed' }, error: null },
-      },
-      refunds: {
-        insertResult: { data: { id: 'refund-1' }, error: null },
-      },
-    });
-
-    const result = await processRefund({
-      supabase: supabase as any,
-      paymentId: 'pay-1',
-      businessId: 'biz-1',
-      amount: 5000,
-      reason: 'Customer request',
-      initiatedBy: 'admin-1',
-      initiatedByRole: 'admin',
-    });
-
-    expect(result.success).toBe(true);
-    expect(result.refundId).toBe('refund-1');
-    expect(mockRefundPayment).toHaveBeenCalledWith(
-      expect.objectContaining({
-        gatewayReference: 'ref-1',
-        amount: undefined, // Full refund with no prior partial = undefined
-      }),
-    );
-  });
-
-  it('processes partial refund without changing payment status', async () => {
-    const mockRefundPayment = vi.fn().mockResolvedValue({ success: true });
-    mockGetGateway.mockReturnValue({ refundPayment: mockRefundPayment });
-
-    const supabase = createMockSupabase({
-      payments: {
-        selectResult: {
-          data: {
-            id: 'pay-1', amount: 5000, refund_amount: 0, status: 'success',
-            gateway: 'paystack', gateway_reference: 'ref-1', booking_id: null, metadata: null,
-          },
-          error: null,
-        },
-      },
-      businesses: {
-        selectResult: { data: { payout_mode: 'platform_managed' }, error: null },
-      },
-      refunds: {
-        insertResult: { data: { id: 'refund-2' }, error: null },
-      },
-    });
-
-    const result = await processRefund({
-      supabase: supabase as any,
-      paymentId: 'pay-1',
-      businessId: 'biz-1',
-      amount: 2000, // Partial: 2000 of 5000
-      initiatedBy: 'admin-1',
-      initiatedByRole: 'admin',
-    });
-
-    expect(result.success).toBe(true);
-    // For partial refund, amount should be explicitly passed
-    expect(mockRefundPayment).toHaveBeenCalledWith(
-      expect.objectContaining({ amount: 2000 }),
-    );
-  });
-
-  it('handles direct_split refund (record-only, no gateway call)', async () => {
-    const mockRefundPayment = vi.fn();
-    mockGetGateway.mockReturnValue({ refundPayment: mockRefundPayment });
-
-    const supabase = createMockSupabase({
-      payments: {
-        selectResult: {
-          data: {
-            id: 'pay-1', amount: 5000, refund_amount: 0, status: 'success',
-            gateway: 'paystack', gateway_reference: 'ref-1', booking_id: null, metadata: null,
-          },
-          error: null,
-        },
-      },
-      businesses: {
-        selectResult: { data: { payout_mode: 'direct_split' }, error: null },
-      },
-      refunds: {
-        insertResult: { data: { id: 'refund-3' }, error: null },
-      },
-    });
-
-    const result = await processRefund({
-      supabase: supabase as any,
-      paymentId: 'pay-1',
-      businessId: 'biz-1',
-      amount: 5000,
-      initiatedBy: 'admin-1',
-      initiatedByRole: 'admin',
-    });
-
-    expect(result.success).toBe(true);
-    expect(result.isDirectSplit).toBe(true);
-    // Gateway refund should NOT be called for direct_split
+    const r = await processRefund({ supabase: supabase as any, paymentId: 'p', businessId: 'biz-1', amount: 5000, initiatedBy: 'u', initiatedByRole: 'admin' });
+    expect(r.success).toBe(true);
+    expect(r.refundId).toBe('ref-existing');
+    expect(providerCallCount).toBe(0); // NO provider call
     expect(mockRefundPayment).not.toHaveBeenCalled();
   });
 
-  it('returns failure when gateway refund fails', async () => {
-    mockGetGateway.mockReturnValue({
-      refundPayment: vi.fn().mockResolvedValue({
-        success: false,
-        errorMessage: 'Insufficient balance',
-        gatewayResponse: { error: 'Insufficient balance' },
-      }),
-    });
+  // ── Resume: provider_pending → reconciliation (GET query, no dispatch) ──
 
-    const supabase = createMockSupabase({
-      payments: {
-        selectResult: {
-          data: {
-            id: 'pay-1', amount: 5000, refund_amount: 0, status: 'success',
-            gateway: 'paystack', gateway_reference: 'ref-1', booking_id: null, metadata: null,
-          },
-          error: null,
-        },
-      },
-      businesses: {
-        selectResult: { data: { payout_mode: 'platform_managed' }, error: null },
-      },
-      refunds: {
-        insertResult: { data: { id: 'refund-4' }, error: null },
-      },
+  it('provider_pending resumes with reconciliation query only', async () => {
+    const { supabase, mockRefundPayment, mockQueryStatus } = setupMocks({
+      insertError: { code: '23505' },
+      existingNonTerminal: { id: 'ref-pending', status: 'provider_pending', gateway: 'paystack', dispatched_at: new Date().toISOString(), provider_refund_id: 'prov-123', provider_connection_id: null },
     });
-
-    const result = await processRefund({
-      supabase: supabase as any,
-      paymentId: 'pay-1',
-      businessId: 'biz-1',
-      amount: 5000,
-      initiatedBy: 'admin-1',
-      initiatedByRole: 'admin',
-    });
-
-    expect(result.success).toBe(false);
-    expect(result.errorMessage).toContain('Insufficient balance');
-    expect(result.refundId).toBe('refund-4');
+    const r = await processRefund({ supabase: supabase as any, paymentId: 'p', businessId: 'biz-1', amount: 5000, initiatedBy: 'u', initiatedByRole: 'admin' });
+    expect(r.success).toBe(true); // reconciliation found terminal_success → finalized
+    expect(mockRefundPayment).not.toHaveBeenCalled(); // NO new dispatch
+    expect(mockQueryStatus).toHaveBeenCalled(); // GET reconciliation
   });
 
-  it('allows refund on already-partially-refunded payment', async () => {
-    const mockRefundPayment = vi.fn().mockResolvedValue({ success: true });
-    mockGetGateway.mockReturnValue({ refundPayment: mockRefundPayment });
+  // ── Resume: Tier-2 ambiguous → fail closed ──
 
-    const supabase = createMockSupabase({
-      payments: {
-        selectResult: {
-          data: {
-            id: 'pay-1', amount: 5000, refund_amount: 2000, status: 'success',
-            gateway: 'paystack', gateway_reference: 'ref-1', booking_id: null, metadata: null,
-          },
-          error: null,
-        },
-      },
-      businesses: {
-        selectResult: { data: { payout_mode: 'platform_managed' }, error: null },
-      },
-      refunds: {
-        insertResult: { data: { id: 'refund-5' }, error: null },
-      },
+  it('Tier-2 ambiguous cannot auto-replay', async () => {
+    const { supabase, mockRefundPayment } = setupMocks({
+      insertError: { code: '23505' },
+      existingNonTerminal: { id: 'ref-amb', status: 'provider_ambiguous', gateway: 'paystack', dispatched_at: new Date().toISOString(), provider_connection_id: null },
     });
+    const r = await processRefund({ supabase: supabase as any, paymentId: 'p', businessId: 'biz-1', amount: 5000, initiatedBy: 'u', initiatedByRole: 'admin' });
+    expect(r.success).toBe(false);
+    expect(r.errorMessage).toContain('reconciliation');
+    expect(mockRefundPayment).not.toHaveBeenCalled();
+  });
 
-    const result = await processRefund({
-      supabase: supabase as any,
-      paymentId: 'pay-1',
-      businessId: 'biz-1',
-      amount: 3000, // Remaining 3000
-      initiatedBy: 'admin-1',
-      initiatedByRole: 'admin',
+  // ── Resume: Tier-2 interrupted → fail closed ──
+
+  it('Tier-2 interrupted dispatch cannot auto-replay', async () => {
+    const { supabase, mockRefundPayment } = setupMocks({
+      insertError: { code: '23505' },
+      existingNonTerminal: { id: 'ref-int', status: 'pending', gateway: 'paystack', dispatched_at: new Date().toISOString(), provider_connection_id: null },
     });
+    const r = await processRefund({ supabase: supabase as any, paymentId: 'p', businessId: 'biz-1', amount: 5000, initiatedBy: 'u', initiatedByRole: 'admin' });
+    expect(r.success).toBe(false);
+    expect(mockRefundPayment).not.toHaveBeenCalled();
+  });
 
-    expect(result.success).toBe(true);
-    // Should pass explicit amount since there are prior partial refunds
-    expect(mockRefundPayment).toHaveBeenCalledWith(
-      expect.objectContaining({ amount: 3000 }),
-    );
+  // ── Resume: Tier-1 ambiguous → same-attempt recovery ──
+
+  it('Tier-1 ambiguous recovery reuses same refund ID', async () => {
+    const { supabase } = setupMocks({
+      insertError: { code: '23505' },
+      existingNonTerminal: { id: 'ref-amb-t1', status: 'provider_ambiguous', gateway: 'stripe', dispatched_at: new Date().toISOString(), provider_connection_id: null },
+    });
+    const r = await processRefund({ supabase: supabase as any, paymentId: 'p', businessId: 'biz-1', amount: 5000, initiatedBy: 'u', initiatedByRole: 'admin' });
+    // Recovery token passed to claim_refund_dispatch
+    const rpcCalls = (mockServiceClient as Record<string, unknown>).rpc as ReturnType<typeof vi.fn>;
+    const claimCall = rpcCalls.mock.calls.find((c: unknown[]) => c[0] === 'claim_refund_dispatch');
+    expect(claimCall).toBeDefined();
+    expect(claimCall?.[1]?.p_recovery_token).toBe('tok-1'); // recovery token from RPC
+  });
+
+  // ── New attempt: uses refund ID as idempotency key ──
+
+  it('new attempt uses refund row ID as provider idempotency key', async () => {
+    const { supabase } = setupMocks({});
+    await processRefund({ supabase: supabase as any, paymentId: 'p', businessId: 'biz-1', amount: 5000, initiatedBy: 'u', initiatedByRole: 'admin' });
+    expect(lastProviderIdempotencyKey).toBe('refund-1');
+  });
+
+  // ── Resume: Tier-1 interrupted → token-bound recovery + re-dispatch ──
+
+  it('Tier-1 interrupted recovery dispatches with recovery token (same attempt)', async () => {
+    const { supabase } = setupMocks({
+      insertError: { code: '23505' },
+      existingNonTerminal: { id: 'ref-int-t1', status: 'pending', gateway: 'stripe', dispatched_at: new Date().toISOString(), provider_connection_id: null, connect_account_id: null },
+    });
+    const r = await processRefund({ supabase: supabase as any, paymentId: 'p', businessId: 'biz-1', amount: 5000, initiatedBy: 'u', initiatedByRole: 'admin' });
+    const rpcCalls = (mockServiceClient as Record<string, unknown>).rpc as ReturnType<typeof vi.fn>;
+    // Must call recover_interrupted_dispatch
+    const recoverCall = rpcCalls.mock.calls.find((c: unknown[]) => c[0] === 'recover_interrupted_dispatch');
+    expect(recoverCall).toBeDefined();
+    // Then claim_refund_dispatch with the recovery token
+    const claimCall = rpcCalls.mock.calls.find((c: unknown[]) => c[0] === 'claim_refund_dispatch');
+    expect(claimCall).toBeDefined();
+    expect(claimCall?.[1]?.p_recovery_token).toBe('tok-2');
+    // Exactly one provider dispatch (same attempt, not a new one)
+    expect(providerCallCount).toBe(1);
+  });
+
+  // ── Post-dispatch persistence failure → recovery-required, no replacement ──
+
+  it('post-dispatch persistence failure returns recovery-required without replacement attempt', async () => {
+    const { supabase, mockRefundPayment } = setupMocks({
+      refundUpdateError: { message: 'DB write failed', code: '42000' },
+    });
+    const r = await processRefund({ supabase: supabase as any, paymentId: 'p', businessId: 'biz-1', amount: 5000, initiatedBy: 'u', initiatedByRole: 'admin' });
+    expect(r.success).toBe(false);
+    expect(r.errorMessage).toContain('persistence failed');
+    // Only one provider call — no replacement attempt
+    expect(providerCallCount).toBe(1);
+  });
+
+  // ── BYO credential identity honored on reconciliation ──
+
+  it('reconciliation uses persisted BYO provider credential identity', async () => {
+    const { supabase, mockQueryStatus } = setupMocks({
+      insertError: { code: '23505' },
+      existingNonTerminal: { id: 'ref-byo', status: 'provider_pending', gateway: 'stripe', dispatched_at: new Date().toISOString(), provider_refund_id: 'prov-byo', provider_connection_id: 'cred-123', connect_account_id: null },
+      credential: { secret_key: 'test-byo-key-mock', connect_account_id: 'acct_byo' },
+    });
+    const r = await processRefund({ supabase: supabase as any, paymentId: 'p', businessId: 'biz-1', amount: 5000, initiatedBy: 'u', initiatedByRole: 'admin' });
+    // queryRefundStatus must use the persisted BYO credential
+    expect(mockQueryStatus).toHaveBeenCalledWith('prov-byo', {
+      byoSecretKey: 'test-byo-key-mock',
+      connectAccountId: 'acct_byo',
+    });
   });
 });

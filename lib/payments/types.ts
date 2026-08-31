@@ -61,13 +61,34 @@ export interface RefundPaymentOpts {
   byoSecretKey?: string;
   /** Paystack Connect account ID */
   connectAccountId?: string;
+  /** Attempt-scoped stable idempotency key (refunds.id). Used as provider request key. */
+  idempotencyKey?: string;
 }
+
+/** Explicit refund outcome classification (#232). */
+export type RefundOutcome =
+  | 'terminal_success'     // provider confirmed completion
+  | 'terminal_failure'     // provider confirmed rejection
+  | 'provider_pending'     // provider accepted but not terminal
+  | 'transport_unknown';   // network error, timeout, unparseable — outcome unknown
 
 export interface RefundResult {
   success: boolean;
+  /** Explicit outcome classification. Adapters MUST set this. */
+  outcome: RefundOutcome;
+  /** Provider's refund identifier (persisted regardless of terminal state). */
+  providerRefundId?: string;
+  /** Provider's raw refund lifecycle status string. */
+  providerStatus?: string;
   gatewayRefundReference?: string;
   gatewayResponse?: Record<string, unknown>;
   errorMessage?: string;
+}
+
+export interface RefundStatusResult {
+  providerStatus: string;
+  outcome: RefundOutcome;
+  providerRefundId?: string;
 }
 
 export interface PaymentGateway {
@@ -75,4 +96,6 @@ export interface PaymentGateway {
   initializePayment(opts: InitPaymentOpts): Promise<InitPaymentResult | null>;
   verifyPayment(supabase: SupabaseClient, reference: string, byoSecretKey?: string): Promise<boolean>;
   refundPayment(opts: RefundPaymentOpts): Promise<RefundResult>;
+  /** Query the provider for the current status of a refund by its provider-side ID. */
+  queryRefundStatus?(refundReference: string, opts?: { byoSecretKey?: string; connectAccountId?: string }): Promise<RefundStatusResult>;
 }
