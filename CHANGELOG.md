@@ -3,6 +3,26 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-08-30 — #227: WhatsApp list truncation UX fix
+
+### What changed
+- `lib/bot/utils/truncate.ts` — added `buildListItem()` helper that reserves description space for material detail (price, frequency) first, then uses remaining capacity for name. Prevents long service names from pushing economic info off-screen. `truncTitle()` made Unicode-safe to avoid splitting surrogate pairs at truncation boundary.
+- `lib/bot/flows/payment.flow.ts` — recurring service list items now use `buildListItem()` instead of raw string concatenation. Long service names get truncated title + price in description.
+- `lib/bot/flows/scheduling.flow.ts` — add-on list items now use `buildListItem()` instead of `truncTitle()` on the combined string. Price detail preserved in description when name is long.
+- `lib/bot/flows/crowdfunding.flow.ts` — campaign titles now truncated via `buildListItem()`. Previously raw titles could exceed WhatsApp's 24-char limit.
+- `lib/bot/utils/__tests__/truncate.test.ts` — tests covering helper, Unicode safety, and flow-level list item production for all 3 affected flows.
+
+### Files changed
+- `lib/bot/utils/truncate.ts` (updated)
+- `lib/bot/flows/payment.flow.ts` (updated)
+- `lib/bot/flows/scheduling.flow.ts` (updated)
+- `lib/bot/flows/crowdfunding.flow.ts` (updated)
+- `lib/bot/utils/__tests__/truncate.test.ts` (new)
+- `CHANGELOG.md` (this entry)
+
+### Could break
+- If any downstream code relied on the exact title string format from these 3 list producers (e.g., parsing "name — price" from the title), it would now see a truncated title or the detail moved to description. Postback IDs are unchanged so validation/selection logic is unaffected.
+
 ## 2026-08-30 — #220: Engineering Standing Operating Order
 
 ### What changed

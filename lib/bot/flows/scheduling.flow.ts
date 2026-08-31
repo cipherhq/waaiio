@@ -5,7 +5,7 @@ import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
 import { createWhatsAppUser, findUserByPhone } from './shared/user';
 import { initializePayment } from './shared/payment';
-import { truncTitle } from '../utils/truncate';
+import { truncTitle, buildListItem } from '../utils/truncate';
 import { getSavedPaymentMethod, chargeSavedCard } from '@/lib/payments/charge-saved';
 import { createNotification } from './shared/notifications';
 import { getConfirmationMessage } from './shared/templates';
@@ -1359,8 +1359,9 @@ export const schedulingFlow: FlowDefinition = {
         const addons = ctx.session.session_data._available_addons as Array<{ id: string; name: string; price: number; is_required: boolean }>;
         const cc = (ctx.business?.country_code || 'NG') as CountryCode;
         const optional = addons.filter(a => !a.is_required);
-        const items = optional.map(a => ({
-          title: truncTitle(`${a.name} — ${formatCurrency(a.price, cc)}`, 24),
+        const items = optional.map(a => buildListItem({
+          name: a.name,
+          detail: formatCurrency(a.price, cc),
           postbackText: a.id,
         }));
         items.push({ title: 'No add-ons', postbackText: 'skip_addons' });
