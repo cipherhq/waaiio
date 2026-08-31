@@ -3,6 +3,20 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-08-30 — #249: Behavioral route/cron handler tests for catalog safety
+
+### What changed
+- **New behavioral test file:** `app/api/catalog/__tests__/catalog-safety-behavioral.test.ts` — 8 tests that invoke the actual POST (manual sync) and GET (cron) route handlers with mocked Supabase/CatalogService dependencies.
+- Tests verify: shared-WABA business blocked with 403, no-channel fail-closed, platform-WABA masquerade blocked, dedicated channel allowed (CatalogService instantiated), cross-business isolation (ownership check blocks before guard), cron skips shared businesses and continues to dedicated ones, guard/query failure fails closed.
+- Key assertion pattern: `MockCatalogServiceTracker` is never called for blocked businesses, confirming zero Meta API interaction.
+
+### Files changed
+- `app/api/catalog/__tests__/catalog-safety-behavioral.test.ts` (new — 8 behavioral tests)
+- `CHANGELOG.md` (this entry)
+
+### Could break
+- Nothing — test-only change.
+
 ## 2026-08-30 — #249: Catalog safety guard — shared-WABA fail-closed
 
 ### What changed
