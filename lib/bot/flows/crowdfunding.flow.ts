@@ -12,6 +12,7 @@ import { checkTierLimit } from '@/lib/tier-limits';
 // Stage 2 (processSuccessfulPayment) and Stage 3 (sendProactiveConfirmation) now own these effects
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 import { getPoweredByFooter } from '@/lib/whitelabel';
+import { buildListItem } from '../utils/truncate';
 import { isToggleColumnMissing } from '@/lib/utils/campaign-column-fallback';
 
 const EXPANDED_CAMPAIGN_SELECT = 'id, title, description, goal_amount, raised_amount, donor_count, end_date, allow_after_end_date, allow_after_goal_met' as const;
@@ -95,10 +96,10 @@ const selectCampaignStep: FlowStepConfig = {
         const progress = c.goal_amount > 0
           ? Math.round((c.raised_amount / c.goal_amount) * 100)
           : 0;
+        const desc = `${formatCurrency(c.raised_amount, country)} raised (${progress}%) - ${c.donor_count} donors`;
         return {
-          title: c.title,
-          description: `${formatCurrency(c.raised_amount, country)} raised (${progress}%) - ${c.donor_count} donors`,
-          postbackText: `campaign_${c.id}`,
+          ...buildListItem({ name: c.title, postbackText: `campaign_${c.id}` }),
+          description: desc.slice(0, 72),
         };
       }),
     }];
