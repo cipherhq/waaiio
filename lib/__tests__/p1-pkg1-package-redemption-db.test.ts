@@ -153,12 +153,15 @@ describe.skipIf(!dbUrl)('P1-PKG-1: Atomic package booking + release', () => {
       END $$;
     `);
     execSync(`psql "${dbUrl}" -tAXq -v ON_ERROR_STOP=1 -f "${MIGRATION_308}"`, { encoding: 'utf-8', timeout: 15000 });
-    // Stub booking_slots table (referenced by migration 357's cancel_booking_with_release)
-    psql(`CREATE TABLE IF NOT EXISTS booking_slots (
-      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      business_id UUID, date DATE, start_time TIME,
-      staff_id UUID, location_id UUID, current_bookings INT DEFAULT 0
-    );`);
+    // Stub booking_slots table and cancelled_by enum (referenced by migration 357)
+    psql(`
+      CREATE TABLE IF NOT EXISTS booking_slots (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        business_id UUID, date DATE, start_time TIME,
+        staff_id UUID, location_id UUID, current_bookings INT DEFAULT 0
+      );
+      DO $$ BEGIN CREATE TYPE cancelled_by AS ENUM ('diner', 'restaurant', 'system'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+    `);
     execSync(`psql "${dbUrl}" -tAXq -v ON_ERROR_STOP=1 -f "${MIGRATION_357}"`, { encoding: 'utf-8', timeout: 15000 });
   });
 
