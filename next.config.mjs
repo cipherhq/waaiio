@@ -16,11 +16,30 @@ const nextConfig = {
     ],
   },
   experimental: {
+    serverComponentsExternalPackages: ['pdfkit'],
     outputFileTracingIncludes: {
+      // Direct PDF generator imports
+      '/api/receipts/generate': ['./node_modules/pdfkit/js/data/**/*'],
+      '/api/invoices/send': ['./node_modules/pdfkit/js/data/**/*'],
+      '/api/invoices/pdf/[id]': ['./node_modules/pdfkit/js/data/**/*'],
+      '/api/contracts/submit': ['./node_modules/pdfkit/js/data/**/*'],
+      // WhatsApp webhook → bot flows → post-completion/send-tickets → PDF
       '/api/webhook/meta-cloud': ['./node_modules/pdfkit/js/data/**/*'],
       '/api/webhook/whatsapp': ['./node_modules/pdfkit/js/data/**/*'],
-      '/api/receipts/generate': ['./node_modules/pdfkit/js/data/**/*'],
-      '/api/webhooks/route': ['./node_modules/pdfkit/js/data/**/*'],
+      // Dashboard routes → post-completion → receipt PDF
+      '/api/bookings/[id]/status': ['./node_modules/pdfkit/js/data/**/*'],
+      '/api/integrations/external-booking': ['./node_modules/pdfkit/js/data/**/*'],
+      '/api/queue/call-next': ['./node_modules/pdfkit/js/data/**/*'],
+      '/api/queue/update': ['./node_modules/pdfkit/js/data/**/*'],
+      // Payment webhooks → send-confirmation → post-completion/send-tickets → PDF
+      '/api/webhooks/flutterwave': ['./node_modules/pdfkit/js/data/**/*'],
+      '/api/payments/paypal-webhook': ['./node_modules/pdfkit/js/data/**/*'],
+      '/api/payments/square-webhook': ['./node_modules/pdfkit/js/data/**/*'],
+      '/api/payments/webhook': ['./node_modules/pdfkit/js/data/**/*'],
+      '/api/payments/stripe-webhook': ['./node_modules/pdfkit/js/data/**/*'],
+      // Cron jobs → send-confirmation → PDF
+      '/api/cron/payment-reconciliation': ['./node_modules/pdfkit/js/data/**/*'],
+      '/api/cron/retry-failed-charges': ['./node_modules/pdfkit/js/data/**/*'],
     },
   },
   async headers() {

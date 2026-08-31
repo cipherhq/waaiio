@@ -3,6 +3,21 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-08-30 — #222: PDFKit externalization fix for Vercel ENOENT
+
+### What changed
+- `next.config.mjs` — Added `pdfkit` to `experimental.serverComponentsExternalPackages` so webpack emits `require("pdfkit")` instead of inlining pdfkit source. This fixes `ENOENT` errors on Vercel where `__dirname` resolved to `.next/server/chunks/data/` instead of `node_modules/pdfkit/js/data/` for `.afm` font files.
+- `next.config.mjs` — Audited and expanded `outputFileTracingIncludes` from 4 routes (including 1 stale `/api/webhooks/route` that doesn't exist) to 17 routes that actually reach PDFKit through direct imports or transitive chains (bot flows, send-confirmation, post-completion, send-tickets, cron jobs).
+- `lib/pdf/__tests__/pdfkit-font-loading.test.ts` — New runtime test that exercises `Helvetica-Bold` and `Helvetica` font loading, the exact call path that fails on Vercel when pdfkit is bundled.
+
+### Files changed
+- `next.config.mjs` (updated)
+- `lib/pdf/__tests__/pdfkit-font-loading.test.ts` (new)
+- `CHANGELOG.md` (this entry)
+
+### Could break
+- Nothing — externalization only changes how webpack treats pdfkit (external require vs inline). The `outputFileTracingIncludes` entries are additive. fontkit was investigated and does NOT use `__dirname`, so it was not externalized.
+
 ## 2026-08-30 — #220: Engineering Standing Operating Order
 
 ### What changed
