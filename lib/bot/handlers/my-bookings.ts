@@ -120,6 +120,17 @@ export async function handleMyBookings(
 
   if (input.startsWith('booking_')) {
     const bookingId = input.replace('booking_', '');
+    // Ownership check BEFORE storing UUID in session_data
+    const { data: ownedBooking } = await supabase
+      .from('bookings')
+      .select('id')
+      .eq('id', bookingId)
+      .eq('user_id', session.user_id!)
+      .maybeSingle();
+    if (!ownedBooking) {
+      await sendText(from, 'Booking not found. Send *my bookings* to try again.');
+      return;
+    }
     session.session_data.selected_booking_id = bookingId;
     await supabase.from('bot_sessions').update({
       current_step: 'modify_booking',
@@ -131,12 +142,38 @@ export async function handleMyBookings(
 
   if (input.startsWith('ticket_')) {
     const ticketId = input.replace('ticket_', '');
+    // Ownership check BEFORE viewing — ticket belongs to sender's phone
+    const phoneP = from.startsWith('+') ? from : `+${from}`;
+    const phoneN = from.startsWith('+') ? from.slice(1) : from;
+    const { data: ownedTicket } = await supabase
+      .from('event_tickets')
+      .select('id')
+      .eq('id', ticketId)
+      .or(`guest_phone.eq.${sanitizeFilterValue(phoneP)},guest_phone.eq.${sanitizeFilterValue(phoneN)}`)
+      .maybeSingle();
+    if (!ownedTicket) {
+      await sendText(from, 'Ticket not found. Send *my bookings* to try again.');
+      return;
+    }
     await handleViewTicket(supabase, messageSender, sendText, session, from, ticketId);
     return;
   }
 
   if (input.startsWith('reservation_')) {
     const reservationId = input.replace('reservation_', '');
+    // Ownership check BEFORE viewing — reservation belongs to sender's phone
+    const phoneP = from.startsWith('+') ? from : `+${from}`;
+    const phoneN = from.startsWith('+') ? from.slice(1) : from;
+    const { data: ownedReservation } = await supabase
+      .from('reservations')
+      .select('id')
+      .eq('id', reservationId)
+      .or(`guest_phone.eq.${sanitizeFilterValue(phoneP)},guest_phone.eq.${sanitizeFilterValue(phoneN)}`)
+      .maybeSingle();
+    if (!ownedReservation) {
+      await sendText(from, 'Reservation not found. Send *my bookings* to try again.');
+      return;
+    }
     await handleViewReservation(supabase, messageSender, sendText, session, from, reservationId);
     return;
   }
@@ -163,19 +200,24 @@ export async function handleMyBookings(
   if (input === 'cancel_reservation') {
     const reservationId = session.session_data.selected_reservation_id as string;
     if (reservationId) {
-      // Cancel the reservation
-      await supabase
+      // Cancel the reservation — include phone ownership predicate in the UPDATE itself
+      const phoneP = from.startsWith('+') ? from : `+${from}`;
+      const phoneN = from.startsWith('+') ? from.slice(1) : from;
+      const { data: updatedRows } = await supabase
         .from('reservations')
         .update({ status: 'cancelled', cancelled_at: new Date().toISOString(), cancelled_by: 'guest' })
         .eq('id', reservationId)
-        .in('status', ['pending', 'confirmed']);
+        .or(`guest_phone.eq.${sanitizeFilterValue(phoneP)},guest_phone.eq.${sanitizeFilterValue(phoneN)}`)
+        .in('status', ['pending', 'confirmed'])
+        .select('id, deposit_status, business_id, reference_code, deposit_amount, total_amount');
 
-      // Check if deposit was paid — if so, notify business owner for refund approval
-      const { data: cancelledRes } = await supabase
-        .from('reservations')
-        .select('deposit_status, business_id, reference_code, deposit_amount, total_amount')
-        .eq('id', reservationId)
-        .single();
+      // If zero rows matched, the reservation doesn't belong to this user or is not cancellable — bail out
+      const cancelledRes = updatedRows?.[0];
+      if (!cancelledRes) {
+        await sendText(from, 'Reservation not found or cannot be cancelled.');
+        await supabase.rpc('deactivate_session_atomic', { p_session_id: session.id });
+        return;
+      }
 
       if (cancelledRes?.deposit_status === 'paid') {
         // Find the payment record and create a refund request notification for the business owner
@@ -232,14 +274,18 @@ export async function handleViewTicket(
   supabase: SupabaseClient,
   messageSender: MessageSender,
   sendText: (to: string, text: string) => Promise<void>,
-  _session: BotSession,
+  session: BotSession,
   from: string,
   ticketId: string,
 ): Promise<void> {
+  // Ownership predicate: ticket must belong to sender's phone
+  const phoneP = from.startsWith('+') ? from : `+${from}`;
+  const phoneN = from.startsWith('+') ? from.slice(1) : from;
   const { data: ticket } = await supabase
     .from('event_tickets')
     .select('id, ticket_code, guest_name, status, scanned_at, created_at, event:events!event_id(name, date, time, venue)')
     .eq('id', ticketId)
+    .or(`guest_phone.eq.${sanitizeFilterValue(phoneP)},guest_phone.eq.${sanitizeFilterValue(phoneN)}`)
     .single();
 
   if (!ticket) {
@@ -279,14 +325,18 @@ export async function handleViewReservation(
   supabase: SupabaseClient,
   messageSender: MessageSender,
   sendText: (to: string, text: string) => Promise<void>,
-  _session: BotSession,
+  session: BotSession,
   from: string,
   reservationId: string,
 ): Promise<void> {
+  // Ownership predicate: reservation must belong to sender's phone
+  const phoneP = from.startsWith('+') ? from : `+${from}`;
+  const phoneN = from.startsWith('+') ? from.slice(1) : from;
   const { data: reservation } = await supabase
     .from('reservations')
     .select('id, check_in, check_out, reference_code, guest_name, guests, total_amount, status, businesses:business_id(name, country_code)')
     .eq('id', reservationId)
+    .or(`guest_phone.eq.${sanitizeFilterValue(phoneP)},guest_phone.eq.${sanitizeFilterValue(phoneN)}`)
     .single();
 
   if (!reservation) {
@@ -323,8 +373,8 @@ export async function handleViewReservation(
 
   // Store selected reservation ID for follow-up actions
   await supabase.from('bot_sessions')
-    .update({ session_data: { ..._session.session_data, selected_reservation_id: reservationId } })
-    .eq('id', _session.id);
+    .update({ session_data: { ...session.session_data, selected_reservation_id: reservationId } })
+    .eq('id', session.id);
 
   // Show cancel option only for cancellable reservations
   const canCancel = ['pending', 'confirmed'].includes(reservation.status);
@@ -367,6 +417,7 @@ export async function handleModifyBooking(
       .from('bookings')
       .select('id, date, time, party_size, reference_code, business_id, businesses (name)')
       .eq('id', bookingId)
+      .eq('user_id', session.user_id!)
       .single();
 
     if (!booking) {
@@ -419,6 +470,7 @@ export async function handleModifyBooking(
       .from('bookings')
       .select('id, staff_id, guest_name, date, time, reference_code, business_id, service_id, status, services:service_id(name)')
       .eq('id', bookingId)
+      .eq('user_id', session.user_id!)
       .single();
 
     // Only allow cancelling bookings that are pending or confirmed
@@ -432,6 +484,7 @@ export async function handleModifyBooking(
     const { data: cancelResult, error: cancelError } = await supabase.rpc('cancel_booking_with_release', {
       p_booking_id: bookingId,
       p_cancelled_by: 'guest',
+      p_expected_user_id: session.user_id!,
     });
 
     if (cancelError || !cancelResult?.cancelled) {
@@ -478,6 +531,7 @@ export async function handleModifyBooking(
       .from('bookings')
       .select('id, business_id, service_id, party_size, services (id, name, price, deposit_amount)')
       .eq('id', bookingId)
+      .eq('user_id', session.user_id!)
       .single();
 
     if (!booking || !booking.business_id) {

@@ -63,16 +63,22 @@ function buildSupabaseMock(opts: {
     services: { name: 'Haircut' },
   };
 
+  // Chainable query mock: .eq() returns itself so .eq('id', x).eq('user_id', y).single() works
+  function chainableQuery(data: unknown) {
+    const chain: Record<string, unknown> = {};
+    chain.eq = vi.fn().mockReturnValue(chain);
+    chain.in = vi.fn().mockReturnValue(chain);
+    chain.single = vi.fn().mockResolvedValue({ data, error: null });
+    chain.maybeSingle = vi.fn().mockResolvedValue({ data, error: null });
+    return chain;
+  }
+
   return {
     supabase: {
       from: vi.fn().mockImplementation((table: string) => {
         if (table === 'bookings') {
           return {
-            select: vi.fn().mockReturnValue({
-              eq: vi.fn().mockReturnValue({
-                single: vi.fn().mockResolvedValue({ data: bookingData, error: null }),
-              }),
-            }),
+            select: vi.fn().mockReturnValue(chainableQuery(bookingData)),
             update: mockBookingUpdate,
           };
         }
@@ -80,11 +86,7 @@ function buildSupabaseMock(opts: {
           return { update: vi.fn().mockReturnValue({ eq: vi.fn().mockResolvedValue({ error: null }) }) };
         }
         return {
-          select: vi.fn().mockReturnValue({
-            eq: vi.fn().mockReturnValue({
-              single: vi.fn().mockResolvedValue({ data: null, error: null }),
-            }),
-          }),
+          select: vi.fn().mockReturnValue(chainableQuery(null)),
         };
       }),
       rpc: mockRpc,

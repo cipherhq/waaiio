@@ -41,7 +41,7 @@ export async function PATCH(
     // Verify booking exists and user owns the business
     const { data: booking } = await service
       .from('bookings')
-      .select('id, business_id, service_id, guest_phone, guest_name, reference_code, date, time, status, checked_in_at, checked_out_at, no_show_at, businesses(name, country_code, owner_id, metadata)')
+      .select('id, business_id, service_id, user_id, guest_phone, guest_name, reference_code, date, time, status, checked_in_at, checked_out_at, no_show_at, businesses(name, country_code, owner_id, metadata)')
       .eq('id', id)
       .single();
 
@@ -206,6 +206,7 @@ export async function PATCH(
         .rpc('cancel_booking_with_release', {
           p_booking_id: id,
           p_cancelled_by: 'business',
+          p_expected_user_id: (booking as any).user_id,
         });
 
       if (cancelError) {

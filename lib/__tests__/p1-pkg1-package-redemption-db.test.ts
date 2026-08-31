@@ -10,6 +10,7 @@ import * as path from 'path';
 
 const MIGRATION_154 = path.resolve('supabase/migrations/154_service_packages.sql');
 const MIGRATION_308 = path.resolve('supabase/migrations/308_package_redemption.sql');
+const MIGRATION_357 = path.resolve('supabase/migrations/357_owner_bound_booking_cancel.sql');
 const dbUrl = process.env.TEST_DATABASE_URL;
 
 function psql(sql: string): string {
@@ -152,11 +153,21 @@ describe.skipIf(!dbUrl)('P1-PKG-1: Atomic package booking + release', () => {
       END $$;
     `);
     execSync(`psql "${dbUrl}" -tAXq -v ON_ERROR_STOP=1 -f "${MIGRATION_308}"`, { encoding: 'utf-8', timeout: 15000 });
+    // Stub booking_slots table and cancelled_by enum (referenced by migration 357)
+    psql(`
+      CREATE TABLE IF NOT EXISTS booking_slots (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        business_id UUID, date DATE, start_time TIME,
+        staff_id UUID, location_id UUID, current_bookings INT DEFAULT 0
+      );
+      DO $$ BEGIN CREATE TYPE cancelled_by AS ENUM ('diner', 'restaurant', 'system'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+    `);
+    execSync(`psql "${dbUrl}" -tAXq -v ON_ERROR_STOP=1 -f "${MIGRATION_357}"`, { encoding: 'utf-8', timeout: 15000 });
   });
 
   afterAll(() => {
     if (!dbUrl) return;
-    psql(`DROP TABLE IF EXISTS package_redemptions, package_enrollments, service_packages, bookings, payments, businesses CASCADE;`);
+    psql(`DROP TABLE IF EXISTS package_redemptions, package_enrollments, service_packages, booking_slots, bookings, payments, businesses CASCADE;`);
   });
 
   function reset(sessionsTotal = 10, sessionsUsed = 0) {
@@ -306,7 +317,7 @@ describe.skipIf(!dbUrl)('P1-PKG-1: Atomic package booking + release', () => {
     expect(booking.success).toBe(true);
     expect(psql(`SELECT sessions_used FROM package_enrollments WHERE id = '${ENR}';`)).toBe('1');
 
-    const cancel = psqlJson(`SELECT cancel_booking_with_release('${booking.booking_id}'::uuid, 'guest');`);
+    const cancel = psqlJson(`SELECT cancel_booking_with_release('${booking.booking_id}'::uuid, 'guest'::text, '${USR}'::uuid);`);
     expect(cancel.cancelled).toBe(true);
     expect(cancel.session_released).toBe(true);
 
@@ -325,7 +336,7 @@ describe.skipIf(!dbUrl)('P1-PKG-1: Atomic package booking + release', () => {
     const booking = psqlJson(bookPkg());
     // Complete the booking first
     psql(`UPDATE bookings SET status = 'completed' WHERE id = '${booking.booking_id}';`);
-    const cancel = psqlJson(`SELECT cancel_booking_with_release('${booking.booking_id}'::uuid);`);
+    const cancel = psqlJson(`SELECT cancel_booking_with_release('${booking.booking_id}'::uuid, 'guest'::text, '${USR}'::uuid);`);
     expect(cancel.cancelled).toBe(false);
     expect(cancel.reason).toBe('not_cancellable');
   });
@@ -355,8 +366,8 @@ describe.skipIf(!dbUrl)('P1-PKG-1: Atomic package booking + release', () => {
   it('18. cancel booking without package — no session release needed', () => {
     reset(10, 0);
     // Insert a plain booking (no package redemption)
-    psql(`INSERT INTO bookings (id, business_id, status, date, time) VALUES ('77aaaaaa-0000-0000-0000-000000000001', '${BIZ}', 'confirmed', '2026-09-01', '15:00');`);
-    const cancel = psqlJson(`SELECT cancel_booking_with_release('77aaaaaa-0000-0000-0000-000000000001'::uuid, 'business');`);
+    psql(`INSERT INTO bookings (id, business_id, user_id, status, date, time) VALUES ('77aaaaaa-0000-0000-0000-000000000001', '${BIZ}', '${USR}', 'confirmed', '2026-09-01', '15:00');`);
+    const cancel = psqlJson(`SELECT cancel_booking_with_release('77aaaaaa-0000-0000-0000-000000000001'::uuid, 'business'::text, '${USR}'::uuid);`);
     expect(cancel.cancelled).toBe(true);
     expect(cancel.session_released).toBe(false);
   });
