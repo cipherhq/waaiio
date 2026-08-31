@@ -3,6 +3,21 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-08-30 — #230: Payment Success Exact-Origin Return to WhatsApp
+
+### What changed
+- `app/payment-success/page.tsx` — WhatsApp-origin payments now resolve the Return to WhatsApp phone from `payments.metadata._inbound_channel_id` (exact origin channel) instead of business-level channel lookup. Fail-closed: if exact-origin resolution fails (inactive channel, missing metadata, cross-tenant mismatch), shows "Please return to your WhatsApp conversation manually" instead of silently falling back to another number. Legacy/non-WhatsApp-origin payments use the existing fallback chain unchanged. Payment select queries now include `metadata` field.
+- `app/payment-success/__tests__/payment-success-origin.test.ts` (new) — 27 tests covering: structural assertions on metadata fetch, exact-origin resolution, fail-closed behavior, cross-tenant guard, legacy path preservation, security (no phone from query params), and behavioral tests for all 10 scenarios (NG/UK/US shared, dedicated, cross-country, inactive, missing, legacy, non-WhatsApp, forged cross-business).
+
+### Files changed
+- `app/payment-success/page.tsx` (modified)
+- `app/payment-success/__tests__/payment-success-origin.test.ts` (new)
+- `CHANGELOG.md` (this entry)
+
+### Could break
+- If a WhatsApp-origin payment has `_confirmation_origin='whatsapp'` but no `_inbound_channel_id` persisted, the Return to WhatsApp button will not render (fail-closed). This is intentional — the metadata is persisted by `lib/bot/flows/shared/payment.ts` since #219.
+- Non-WhatsApp-origin payments are unaffected (legacy path preserved verbatim).
+
 ## 2026-08-30 — #220: Engineering Standing Operating Order
 
 ### What changed

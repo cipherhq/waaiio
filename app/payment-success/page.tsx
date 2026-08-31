@@ -23,6 +23,9 @@ export default async function PaymentSuccessPage({
   let ticketCodes: string[] = [];
   let hasPhone = false;
   let subscriptionTier = 'free';
+  // #230: Track whether this was a WhatsApp-origin payment so we can fail closed
+  // if exact-origin resolution fails (no silent fallback to another number)
+  let isWhatsAppOrigin = false;
 
   // Verify payment and trigger WhatsApp confirmation automatically
   if (params.ref) {
@@ -31,7 +34,7 @@ export default async function PaymentSuccessPage({
       // ref can be gateway_reference (cs_test_xxx) OR booking reference_code (WA-BK-3218)
       let payment = (await supabase
         .from('payments')
-        .select('id, status, amount, booking_id, invoice_id, campaign_id, order_id, reservation_id, business_id, businesses(phone, name, country_code, subscription_tier)')
+        .select('id, status, amount, booking_id, invoice_id, campaign_id, order_id, reservation_id, business_id, metadata, businesses(phone, name, country_code, subscription_tier)')
         .eq('gateway_reference', params.ref)
         .order('created_at', { ascending: false }).limit(1).maybeSingle()).data;
 
@@ -45,7 +48,7 @@ export default async function PaymentSuccessPage({
         if (booking) {
           payment = (await supabase
             .from('payments')
-            .select('id, status, amount, booking_id, invoice_id, campaign_id, order_id, reservation_id, business_id, businesses(phone, name, country_code, subscription_tier)')
+            .select('id, status, amount, booking_id, invoice_id, campaign_id, order_id, reservation_id, business_id, metadata, businesses(phone, name, country_code, subscription_tier)')
             .eq('booking_id', booking.id)
             .order('created_at', { ascending: false }).limit(1).maybeSingle()).data;
         }
@@ -55,33 +58,58 @@ export default async function PaymentSuccessPage({
         const biz = payment.businesses as unknown as { phone: string; name: string; country_code?: string; subscription_tier?: string } | null;
         if (biz?.subscription_tier) subscriptionTier = biz.subscription_tier;
 
-        // Get the WhatsApp channel number (not the owner's personal phone)
-        if (payment.business_id) {
-          // Try assigned channel first, then dedicated, then shared
-          const { data: bizFull } = await supabase
-            .from('businesses')
-            .select('assigned_channel_id, whatsapp_channel_id')
-            .eq('id', payment.business_id)
-            .single();
+        // #230: Check payment metadata for exact WhatsApp origin
+        const paymentMeta = payment.metadata as Record<string, unknown> | null;
+        isWhatsAppOrigin = paymentMeta?._confirmation_origin === 'whatsapp';
+        const inboundChannelId = paymentMeta?._inbound_channel_id as string | undefined;
 
-          const channelId = bizFull?.assigned_channel_id || bizFull?.whatsapp_channel_id;
-          if (channelId) {
-            const { data: ch } = await supabase.from('whatsapp_channels').select('phone_number').eq('id', channelId).maybeSingle();
-            if (ch?.phone_number) businessPhone = ch.phone_number;
+        if (isWhatsAppOrigin && inboundChannelId) {
+          // Resolve exact origin channel — server-side only, never from browser/query input
+          const { data: originChannel } = await supabase
+            .from('whatsapp_channels')
+            .select('phone_number, is_active, business_id')
+            .eq('id', inboundChannelId)
+            .maybeSingle();
+
+          if (
+            originChannel?.is_active &&
+            originChannel.phone_number &&
+            // Security: verify channel belongs to same business (prevent cross-tenant disclosure)
+            (!payment.business_id || originChannel.business_id === payment.business_id || originChannel.business_id === null)
+          ) {
+            businessPhone = originChannel.phone_number;
           }
-          if (!businessPhone) {
-            const { data: dedicated } = await supabase.from('whatsapp_channels').select('phone_number')
-              .eq('business_id', payment.business_id).eq('channel_type', 'dedicated').eq('is_active', true).maybeSingle();
-            if (dedicated?.phone_number) businessPhone = dedicated.phone_number;
+          // If resolution fails, businessPhone stays undefined → fail closed below
+        } else if (!isWhatsAppOrigin) {
+          // Legacy/non-WhatsApp origin: existing business-level channel resolution
+          if (payment.business_id) {
+            // Try assigned channel first, then dedicated, then shared
+            const { data: bizFull } = await supabase
+              .from('businesses')
+              .select('assigned_channel_id, whatsapp_channel_id')
+              .eq('id', payment.business_id)
+              .single();
+
+            const channelId = bizFull?.assigned_channel_id || bizFull?.whatsapp_channel_id;
+            if (channelId) {
+              const { data: ch } = await supabase.from('whatsapp_channels').select('phone_number').eq('id', channelId).maybeSingle();
+              if (ch?.phone_number) businessPhone = ch.phone_number;
+            }
+            if (!businessPhone) {
+              const { data: dedicated } = await supabase.from('whatsapp_channels').select('phone_number')
+                .eq('business_id', payment.business_id).eq('channel_type', 'dedicated').eq('is_active', true).maybeSingle();
+              if (dedicated?.phone_number) businessPhone = dedicated.phone_number;
+            }
+            if (!businessPhone) {
+              const cc = biz?.country_code || 'US';
+              const { data: shared } = await supabase.from('whatsapp_channels').select('phone_number')
+                .eq('channel_type', 'shared').eq('country_code', cc).eq('is_active', true).limit(1).maybeSingle();
+              if (shared?.phone_number) businessPhone = shared.phone_number;
+            }
           }
-          if (!businessPhone) {
-            const cc = biz?.country_code || 'US';
-            const { data: shared } = await supabase.from('whatsapp_channels').select('phone_number')
-              .eq('channel_type', 'shared').eq('country_code', cc).eq('is_active', true).limit(1).maybeSingle();
-            if (shared?.phone_number) businessPhone = shared.phone_number;
-          }
+          if (!businessPhone) businessPhone = biz?.phone || undefined;
         }
-        if (!businessPhone) businessPhone = biz?.phone || undefined;
+        // WhatsApp origin with missing _inbound_channel_id → businessPhone stays undefined → fail closed
 
         // ── Canonical Payment Authority: server-side reconciliation ──
         // Browser redirect alone is NOT proof of payment.
@@ -163,7 +191,14 @@ export default async function PaymentSuccessPage({
           </a>
         )}
         {/* Show "Return to WhatsApp" only for WhatsApp channel or web channel with phone */}
-        {(!isWebChannel || hasPhone) && <ReturnToWhatsApp phone={businessPhone} />}
+        {/* #230: WhatsApp-origin payments fail closed — no fallback to platform number */}
+        {isWhatsAppOrigin && !businessPhone ? (
+          <p className="mt-6 text-sm text-gray-500">
+            Please return to your WhatsApp conversation manually.
+          </p>
+        ) : (
+          (!isWebChannel || hasPhone) && <ReturnToWhatsApp phone={businessPhone} />
+        )}
         {!isWhiteLabel(subscriptionTier) && (
           <p className="mt-4 text-xs text-gray-400">Powered by Waaiio</p>
         )}
