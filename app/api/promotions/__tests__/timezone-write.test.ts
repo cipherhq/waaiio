@@ -9,7 +9,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
-import { naiveToUtc, isValidTimezone, convertDatetimePair } from '@/lib/promotions/timezone';
+import { naiveToUtc, isValidTimezone, convertDatetimePair, parseZonedTimestamp } from '@/lib/promotions/timezone';
 import { renderPromoEntryMessage, type PromoEntryCampaign } from '@/lib/promotions/entry';
 
 // ══════════════════════════════════════════════════════════
@@ -181,6 +181,24 @@ describe('naiveToUtc — unit', () => {
     }
   });
 
+  it('Australia/Lord_Howe fall-back (±30min DST) → earlier UTC selected', () => {
+    // Australia/Lord_Howe transitions from LHDT (UTC+11) to LHST (UTC+10:30).
+    // In 2024, clocks fall back on the first Sunday in April (April 7).
+    // At 2:00 AM LHDT, clocks go back to 1:30 AM LHST.
+    // So 1:30 AM is ambiguous: could be LHDT (UTC+11) or LHST (UTC+10:30).
+    // LHDT: UTC = 01:30 - 11:00 = 14:30 previous day (April 6)
+    // LHST: UTC = 01:30 - 10:30 = 15:00 previous day (April 6)
+    // Policy: pick EARLIER UTC = 14:30
+    const result = naiveToUtc('2024-04-07T01:30', 'Australia/Lord_Howe');
+    expect(result.success).toBe(true);
+    if (result.success) {
+      const utc = new Date(result.utcIso);
+      expect(utc.getUTCHours()).toBe(14);
+      expect(utc.getUTCMinutes()).toBe(30);
+      expect(utc.getUTCDate()).toBe(6); // previous day in UTC
+    }
+  });
+
   it('malformed date: month=13 → rejected', () => {
     const result = naiveToUtc('2024-13-15T14:00', 'America/New_York');
     expect(result.success).toBe(false);
@@ -213,27 +231,50 @@ describe('naiveToUtc — unit', () => {
     }
   });
 
-  it('already-zoned timestamp with Z → rejected', () => {
+  it('already-zoned timestamp with Z → preserved as absolute instant', () => {
     const result = naiveToUtc('2024-10-30T22:59:00Z', 'Africa/Lagos');
-    expect(result.success).toBe(false);
-    if (!result.success) {
-      expect(result.error).toContain('already contains a timezone offset');
+    expect(result.success).toBe(true);
+    if (result.success) {
+      const utc = new Date(result.utcIso);
+      // Z means UTC — preserved exactly, NOT shifted through Lagos timezone
+      expect(utc.getUTCHours()).toBe(22);
+      expect(utc.getUTCMinutes()).toBe(59);
+      expect(utc.getUTCDate()).toBe(30);
     }
   });
 
-  it('already-zoned timestamp with +05:00 → rejected', () => {
-    const result = naiveToUtc('2024-10-30T22:59:00+05:00', 'Africa/Lagos');
-    expect(result.success).toBe(false);
-    if (!result.success) {
-      expect(result.error).toContain('already contains a timezone offset');
+  it('already-zoned timestamp with +05:30 → preserved as absolute instant', () => {
+    const result = naiveToUtc('2024-10-30T22:59:00+05:30', 'Africa/Lagos');
+    expect(result.success).toBe(true);
+    if (result.success) {
+      const utc = new Date(result.utcIso);
+      // +05:30 means UTC = 22:59 - 5:30 = 17:29 UTC
+      expect(utc.getUTCHours()).toBe(17);
+      expect(utc.getUTCMinutes()).toBe(29);
     }
   });
 
-  it('already-zoned timestamp with -05:00 → rejected', () => {
+  it('already-zoned timestamp with -03:00 → preserved as absolute instant', () => {
+    const result = naiveToUtc('2024-10-30T22:59:00-03:00', 'America/New_York');
+    expect(result.success).toBe(true);
+    if (result.success) {
+      const utc = new Date(result.utcIso);
+      // -03:00 means UTC = 22:59 + 3:00 = 01:59 next day
+      expect(utc.getUTCHours()).toBe(1);
+      expect(utc.getUTCMinutes()).toBe(59);
+      expect(utc.getUTCDate()).toBe(31);
+    }
+  });
+
+  it('already-zoned timestamp with -05:00 → preserved as absolute instant', () => {
     const result = naiveToUtc('2024-10-30T22:59:00-05:00', 'America/New_York');
-    expect(result.success).toBe(false);
-    if (!result.success) {
-      expect(result.error).toContain('already contains a timezone offset');
+    expect(result.success).toBe(true);
+    if (result.success) {
+      const utc = new Date(result.utcIso);
+      // -05:00 means UTC = 22:59 + 5:00 = 03:59 next day
+      expect(utc.getUTCHours()).toBe(3);
+      expect(utc.getUTCMinutes()).toBe(59);
+      expect(utc.getUTCDate()).toBe(31);
     }
   });
 
@@ -300,6 +341,42 @@ describe('isValidTimezone', () => {
     expect(isValidTimezone('Invalid/Zone')).toBe(false);
     expect(isValidTimezone('WEST')).toBe(false);
     expect(isValidTimezone('')).toBe(false);
+  });
+});
+
+describe('parseZonedTimestamp — unit', () => {
+  it('parses Z suffix correctly', () => {
+    const result = parseZonedTimestamp('2024-10-30T22:59:00Z');
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.utcIso).toBe('2024-10-30T22:59:00.000Z');
+    }
+  });
+
+  it('parses +05:30 offset correctly', () => {
+    const result = parseZonedTimestamp('2024-10-30T22:59:00+05:30');
+    expect(result.success).toBe(true);
+    if (result.success) {
+      const utc = new Date(result.utcIso);
+      expect(utc.getUTCHours()).toBe(17);
+      expect(utc.getUTCMinutes()).toBe(29);
+    }
+  });
+
+  it('parses -03:00 offset correctly', () => {
+    const result = parseZonedTimestamp('2024-10-30T22:59:00-03:00');
+    expect(result.success).toBe(true);
+    if (result.success) {
+      const utc = new Date(result.utcIso);
+      expect(utc.getUTCHours()).toBe(1);
+      expect(utc.getUTCMinutes()).toBe(59);
+      expect(utc.getUTCDate()).toBe(31);
+    }
+  });
+
+  it('rejects malformed input', () => {
+    const result = parseZonedTimestamp('not-a-date');
+    expect(result.success).toBe(false);
   });
 });
 
@@ -503,28 +580,55 @@ describe('POST /api/promotions/create — timezone handling', () => {
     expect(body.error).toContain('Invalid day');
   });
 
-  it('already-zoned timestamp with Z → 400 rejected', async () => {
+  it('already-zoned timestamp with Z → preserved as-is (not double-shifted)', async () => {
+    let insertedData: Record<string, unknown> | undefined;
+    mockServiceFrom.mockImplementation((table: string) => {
+      if (table === 'promo_campaigns') {
+        const chain = chainable({ data: { id: 'camp-new' }, error: null });
+        chain.insert = vi.fn().mockImplementation((data: Record<string, unknown>) => {
+          insertedData = data;
+          return chainable({ data: { id: 'camp-new' }, error: null });
+        });
+        return chain;
+      }
+      return chainable({ data: [{ id: 'p1' }], error: null });
+    });
+
     const req = makeRequest('POST', '/api/promotions/create', minimalCampaignBody({
       start_at: '2024-10-30T22:59:00Z',
       timezone: 'Africa/Lagos',
     }));
 
     const res = await POST(req);
-    expect(res.status).toBe(400);
-    const body = await res.json();
-    expect(body.error).toContain('already contains a timezone offset');
+    expect(res.status).toBe(201);
+    // Z = UTC — preserved exactly, NOT shifted through Lagos
+    expect(insertedData!.start_at).toBe('2024-10-30T22:59:00.000Z');
   });
 
-  it('already-zoned timestamp with +05:00 → 400 rejected', async () => {
+  it('already-zoned timestamp with +05:30 → preserved as-is', async () => {
+    let insertedData: Record<string, unknown> | undefined;
+    mockServiceFrom.mockImplementation((table: string) => {
+      if (table === 'promo_campaigns') {
+        const chain = chainable({ data: { id: 'camp-new' }, error: null });
+        chain.insert = vi.fn().mockImplementation((data: Record<string, unknown>) => {
+          insertedData = data;
+          return chainable({ data: { id: 'camp-new' }, error: null });
+        });
+        return chain;
+      }
+      return chainable({ data: [{ id: 'p1' }], error: null });
+    });
+
     const req = makeRequest('POST', '/api/promotions/create', minimalCampaignBody({
-      end_at: '2024-10-30T22:59:00+05:00',
+      end_at: '2024-10-30T22:59:00+05:30',
       timezone: 'Asia/Kolkata',
     }));
 
     const res = await POST(req);
-    expect(res.status).toBe(400);
-    const body = await res.json();
-    expect(body.error).toContain('already contains a timezone offset');
+    expect(res.status).toBe(201);
+    // +05:30 → UTC = 22:59 - 5:30 = 17:29 UTC
+    expect(new Date(insertedData!.end_at as string).getUTCHours()).toBe(17);
+    expect(new Date(insertedData!.end_at as string).getUTCMinutes()).toBe(29);
   });
 
   it('both start_at and end_at boundaries tested in single create', async () => {
@@ -713,15 +817,28 @@ describe('PUT /api/promotions/update — timezone handling', () => {
     expect(body.error).toContain('Invalid month');
   });
 
-  it('already-zoned timestamp in update → 400 rejected', async () => {
+  it('already-zoned timestamp in update → preserved as absolute instant', async () => {
+    let updatedData: Record<string, unknown> | undefined;
+    mockServiceFrom.mockImplementation((table: string) => {
+      if (table === 'promo_campaigns') {
+        const fetchChain = chainable({ data: EXISTING_CAMPAIGN, error: null });
+        fetchChain.update = vi.fn().mockImplementation((data: Record<string, unknown>) => {
+          updatedData = data;
+          return chainable({ data: { ...EXISTING_CAMPAIGN, ...data }, error: null });
+        });
+        return fetchChain;
+      }
+      return chainable({ data: null, error: null });
+    });
+
     const req = makeRequest('PUT', '/api/promotions/update', updateBody({
       endAt: '2024-10-30T22:59:00Z',
     }));
 
     const res = await PUT(req);
-    expect(res.status).toBe(400);
-    const body = await res.json();
-    expect(body.error).toContain('already contains a timezone offset');
+    expect(res.status).toBe(200);
+    // Z = UTC, preserved exactly
+    expect(updatedData!.end_at).toBe('2024-10-30T22:59:00.000Z');
   });
 
   it('both start_at and end_at updated in single PUT', async () => {

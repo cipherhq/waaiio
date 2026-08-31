@@ -1,11 +1,16 @@
 /**
  * Timezone conversion utilities for promo campaign datetime handling.
  *
- * Converts naive datetime-local strings (from the dashboard) into correct
- * UTC TIMESTAMPTZ by interpreting them in the campaign's IANA timezone.
+ * Handles three input categories:
+ * 1. Naive datetime-local (e.g., "2024-10-30T23:59") + IANA timezone → interpret & convert to UTC
+ * 2. Already-zoned ISO 8601 (e.g., "2024-10-30T22:59:00Z" or "+05:30") → preserve absolute instant
+ * 3. Malformed → reject
  *
  * Uses Node's built-in Intl.DateTimeFormat — no external dependencies.
  */
+
+/** Regex for ISO 8601 with timezone offset (Z or ±HH:MM) at end of string */
+const ZONED_ISO_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?([+-]\d{2}:\d{2}|Z)$/;
 
 /**
  * Validate that a string is a valid IANA timezone identifier.
@@ -84,46 +89,66 @@ export interface TimezoneConversionError {
 }
 
 /**
- * Convert a naive datetime string (from datetime-local input) to a UTC ISO string,
- * interpreting the naive datetime as local time in the given IANA timezone.
+ * Parse an already-zoned ISO 8601 timestamp into a UTC ISO string.
+ * Accepts formats like "2024-10-30T22:59:00Z" or "2024-10-30T22:59:00+05:30".
+ * Does NOT re-interpret through campaign timezone — preserves the absolute instant.
  *
- * @param naiveDatetime - A datetime string like "2024-10-30T23:59" (no timezone suffix)
- * @param timezone - An IANA timezone like "Africa/Lagos"
+ * @returns TimezoneConversionResult with the UTC instant, or error if malformed
+ */
+export function parseZonedTimestamp(
+  input: string,
+): TimezoneConversionResult | TimezoneConversionError {
+  const parsed = new Date(input);
+  if (isNaN(parsed.getTime())) {
+    return {
+      success: false,
+      error: `Malformed zoned timestamp: "${input}". Could not parse as valid date.`,
+    };
+  }
+  return { success: true, utcIso: parsed.toISOString() };
+}
+
+/**
+ * Convert a datetime string to a UTC ISO string. Handles both naive and zoned inputs:
+ *
+ * - Naive ("2024-10-30T23:59") → interpret in the given IANA timezone → convert to UTC
+ * - Zoned ("2024-10-30T22:59:00Z", "2024-10-30T22:59:00+05:30") → parse as absolute instant,
+ *   preserve/normalize to UTC, do NOT double-shift through campaign timezone
+ * - Malformed → reject
+ *
+ * @param datetime - A datetime string (naive or zoned)
+ * @param timezone - An IANA timezone like "Africa/Lagos" (used only for naive inputs)
  * @returns UTC ISO string or error
  *
- * BLOCKER 2 fix: Rejects already-zoned timestamps (Z, +HH:MM, -HH:MM suffix).
- * BLOCKER 2 fix: Validates calendar values (month 1-12, day valid for month/year, etc.).
- * BLOCKER 1 fix: Detects DST fall-back ambiguity by probing TWO candidate offsets.
- *
- * DST handling:
+ * DST handling (naive inputs only):
  * - Spring-forward gap (nonexistent local time): rejected with error
  * - Fall-back ambiguity (two valid UTC instants): picks EARLIER UTC (= larger offset,
  *   i.e., pre-transition / DST offset). This is the conservative choice —
  *   campaigns end sooner, promotions start earlier.
+ *
+ * Ambiguity detection uses wide probing (±24 hours from the naive-as-UTC reference)
+ * to catch transitions of ANY size — including ±30min (Australia/Lord_Howe),
+ * ±45min (Pacific/Chatham), and standard ±60min DST.
  */
 export function naiveToUtc(
-  naiveDatetime: string,
+  datetime: string,
   timezone: string,
 ): TimezoneConversionResult | TimezoneConversionError {
   if (!isValidTimezone(timezone)) {
     return { success: false, error: `Invalid timezone: ${timezone}` };
   }
 
-  // ── BLOCKER 2: Reject already-zoned timestamps ──
-  // If the input contains Z, +HH:MM, or -HH:MM after the time portion, it's
-  // already an absolute timestamp. Reinterpreting it would double-shift.
-  if (/[Zz]/.test(naiveDatetime) || /[+-]\d{2}:\d{2}/.test(naiveDatetime)) {
-    return {
-      success: false,
-      error: `Datetime "${naiveDatetime}" already contains a timezone offset (Z or +/-HH:MM). ` +
-        'Provide a naive datetime without timezone suffix (e.g., "2024-10-30T23:59").',
-    };
+  // ── BLOCKER 2: Already-zoned timestamps → preserve as absolute instant ──
+  // If the input matches ISO 8601 with Z or ±HH:MM suffix, parse it directly.
+  // Do NOT re-interpret through the campaign timezone — that would double-shift.
+  if (ZONED_ISO_RE.test(datetime)) {
+    return parseZonedTimestamp(datetime);
   }
 
-  // ── BLOCKER 2: End-anchored regex — strict format ──
-  const match = naiveDatetime.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/);
+  // ── Naive datetime: strict format validation ──
+  const match = datetime.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/);
   if (!match) {
-    return { success: false, error: `Invalid datetime format: ${naiveDatetime}. Expected YYYY-MM-DDTHH:mm or YYYY-MM-DDTHH:mm:ss` };
+    return { success: false, error: `Invalid datetime format: ${datetime}. Expected YYYY-MM-DDTHH:mm or YYYY-MM-DDTHH:mm:ss` };
   }
 
   const [, yearStr, monthStr, dayStr, hourStr, minuteStr, secondStr] = match;
@@ -134,7 +159,7 @@ export function naiveToUtc(
   const minute = parseInt(minuteStr, 10);
   const second = secondStr ? parseInt(secondStr, 10) : 0;
 
-  // ── BLOCKER 2: Strict calendar validation ──
+  // ── Strict calendar validation ──
   if (monthRaw < 1 || monthRaw > 12) {
     return { success: false, error: `Invalid month: ${monthRaw}. Must be 1-12.` };
   }
@@ -154,28 +179,21 @@ export function naiveToUtc(
 
   const month = monthRaw - 1; // JS months are 0-based
 
-  // ── BLOCKER 1: Detect ambiguity by probing multiple candidate offsets ──
-  // For any local time, the offset might differ depending on which "occurrence"
-  // we're in (before or after a DST transition). We probe three reference points:
-  //   1. The naive time itself (treated as UTC for offset lookup)
-  //   2. One hour before
-  //   3. One hour after
-  // If any of these produce different offsets that both round-trip to the same
-  // local time, the input is ambiguous (fall-back).
+  // ── BLOCKER 1: Detect ambiguity by probing a wide range of candidate offsets ──
+  // Probe at multiple points spanning ±24 hours from the naive-as-UTC reference.
+  // This catches transitions of ANY size — not just ±60min.
+  // Australia/Lord_Howe has ±30min DST. Pacific/Chatham has ±45min.
+  // By probing at 30-minute intervals across ±24h, we discover every distinct
+  // offset the timezone uses in the vicinity of this local time.
 
   const naiveAsUtc = Date.UTC(year, month, day, hour, minute, second);
-  const ONE_HOUR = 3600000;
+  const THIRTY_MIN = 1800000;
 
-  // Collect distinct offsets from nearby probes
-  const probePoints = [
-    new Date(naiveAsUtc - ONE_HOUR),
-    new Date(naiveAsUtc),
-    new Date(naiveAsUtc + ONE_HOUR),
-  ];
-
+  // Collect distinct offsets from probes spanning ±24h at 30-min intervals
   const offsets = new Set<number>();
-  for (const probe of probePoints) {
-    offsets.add(getTimezoneOffsetMinutes(probe, timezone));
+  for (let delta = -48; delta <= 48; delta++) {
+    const probeMs = naiveAsUtc + delta * THIRTY_MIN;
+    offsets.add(getTimezoneOffsetMinutes(new Date(probeMs), timezone));
   }
 
   // For each distinct offset, compute the candidate UTC and check round-trip
@@ -206,7 +224,7 @@ export function naiveToUtc(
     // No offset produces a valid round-trip → spring-forward gap
     return {
       success: false,
-      error: `The time ${naiveDatetime} does not exist in timezone ${timezone} (DST spring-forward gap)`,
+      error: `The time ${datetime} does not exist in timezone ${timezone} (DST spring-forward gap)`,
     };
   }
 
@@ -225,10 +243,13 @@ export function naiveToUtc(
 
 /**
  * Shared conversion for route handlers. Converts a start_at and/or end_at
- * naive datetime pair through naiveToUtc using the given timezone.
+ * datetime pair through naiveToUtc using the given timezone.
  *
  * Both create and update routes call this EXACT same function to ensure
  * identical conversion semantics.
+ *
+ * Handles both naive and zoned inputs — zoned inputs are preserved as-is,
+ * naive inputs are interpreted in the given timezone.
  *
  * @returns Resolved start/end values, or an error string prefixed with the field name.
  */

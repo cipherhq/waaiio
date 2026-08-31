@@ -68,6 +68,21 @@ If something breaks, check this log to find what changed and when.
 - Any consumer that type-checked against the old 4-state `RefundState` union (only existed on the UX branch, not main)
 - Frontend code that parsed error text to determine refund state (this was the bug being fixed)
 
+## 2026-08-30 — #248: Fix 2 CTO blockers — general IANA zone ambiguity + zoned timestamp preservation
+
+### What changed
+- **BLOCKER 1 (All IANA zones):** `naiveToUtc()` now probes +/-24 hours at 30-minute intervals (97 probe points) instead of just +/-1 hour (3 probe points). This discovers every distinct UTC offset a timezone uses around the target time, catching non-standard transitions like Australia/Lord_Howe (+/-30min DST) and Pacific/Chatham (+/-45min). The round-trip verification and "pick earliest UTC" policy remain unchanged.
+- **BLOCKER 2 (Zoned timestamp preservation):** Already-zoned timestamps (`Z`, `+HH:MM`, `-HH:MM`) are now parsed as absolute instants and returned as normalized UTC -- NOT double-shifted through the campaign timezone. Previously these were rejected with 400. New exported function `parseZonedTimestamp()` handles this path. Malformed inputs still rejected.
+- **New tests:** Australia/Lord_Howe fall-back (+/-30min DST), explicit `+05:30` preservation, explicit `-03:00` preservation, `parseZonedTimestamp` unit tests. Updated all route-level tests: zoned timestamps now return 200/201 with preserved UTC, not 400.
+
+### Files changed
+- `lib/promotions/timezone.ts` -- wider probe range, `parseZonedTimestamp()`, zoned input preservation
+- `app/api/promotions/__tests__/timezone-write.test.ts` -- updated + new tests (53 total)
+- `CHANGELOG.md` (this entry)
+
+### Could break
+- Any caller relying on zoned timestamps being rejected (400) will now get them accepted and preserved. This is the intended behavior per CTO spec.
+
 ## 2026-08-30 — #248: Fix 3 CTO blockers — DST ambiguity, parser strictness, route behavioral tests
 
 ### What changed
