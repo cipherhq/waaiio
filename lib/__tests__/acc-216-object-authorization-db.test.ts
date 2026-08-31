@@ -38,7 +38,14 @@ function runSQL(sql: string): string {
 
 /** Run SQL as service_role (the actual privileged execution boundary). */
 function runAsServiceRole(sql: string): string {
-  return runSQL(`SET ROLE service_role;\n${sql}\nRESET ROLE;`);
+  try {
+    return execSync(
+      `psql "${dbUrl}" -t -A -q -v ON_ERROR_STOP=1`,
+      { input: `SET ROLE service_role;\n${sql}\nRESET ROLE;`, encoding: 'utf-8', timeout: 15000 },
+    ).split('\n').filter(l => l.trim() !== '' && l.trim() !== 'SET' && l.trim() !== 'RESET').join('\n').trim();
+  } catch (err: any) {
+    throw new Error(`SQL (service_role) failed: ${err.stderr?.trim() || err.stdout?.trim() || err}`);
+  }
 }
 
 function runSQLSafe(sql: string): { stdout: string; exitCode: number } {
