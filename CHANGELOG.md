@@ -3,6 +3,21 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-08-31 — #232: Refund handler test coverage — 3 CTO-required runtime proofs
+
+### What changed
+- `lib/payments/__tests__/refund-handler.test.ts` — added `errorChain` helper for persistence-failure mocking + 3 new tests:
+  1. Tier-1 interrupted recovery: proves recovery token flows from `recover_interrupted_dispatch` → `claim_refund_dispatch`, exactly 1 provider dispatch
+  2. Post-dispatch persistence failure: provider reference write fails → returns "requires recovery", exactly 1 provider call (no replacement attempt)
+  3. BYO credential identity on reconciliation: `provider_pending` refund with `provider_connection_id` → `queryRefundStatus` called with persisted credential
+- Total: 12 handler tests, zero skips (was 9)
+
+### Files changed
+- `lib/payments/__tests__/refund-handler.test.ts`
+
+### Could break
+- Nothing — test-only change. No handler logic modified.
+
 ## 2026-08-30 — #224/#225/#226: Recurring eligibility, Customer 360, Financial projection
 
 ### What changed
