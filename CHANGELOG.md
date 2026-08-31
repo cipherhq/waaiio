@@ -3,6 +3,20 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-08-30 — #220: Engineering Standing Operating Order
+
+### What changed
+- Created `WAAIIO_ENGINEERING_OPERATING_ORDER.md` — canonical governance document for engineering roles, evidence hierarchy, standard change process, GitHub-first review protocol, failure escalation gate, dependency-aware delta review/checkpoint model, production capability certification, behavioral lock, restart resilience, new-chat bootstrap, and release safety invariants. Consolidated from issue #220 body plus 3 governance addenda (failure escalation gate, updated failure escalation gate, GitHub-first review/chat-minimal mode).
+- Updated `CLAUDE.md` — added cross-reference to the Operating Order as the canonical governance document. Added compact "Startup-Critical Non-Negotiables" summary (evidence hierarchy, stop/escalation behavior, exact-SHA review, no unauthorized merge/deploy/production mutation, GitHub-first). Existing Golden Rules and technical reference sections preserved unchanged.
+
+### Files changed
+- `WAAIIO_ENGINEERING_OPERATING_ORDER.md` (new)
+- `CLAUDE.md` (updated governance header)
+- `CHANGELOG.md` (this entry)
+
+### Could break
+- Nothing — docs-only change. No product code, migrations, or runtime behavior modified.
+
 ## 2026-08-31 — #232: Replay window anchor + concurrent recovery proof
 
 ### What changed
