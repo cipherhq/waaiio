@@ -1,6 +1,20 @@
 # Waaiio — WhatsApp Business Automation Platform
 
-## Golden Rules — READ FIRST
+## Governance — READ FIRST
+
+**Canonical governance document:** [`WAAIIO_ENGINEERING_OPERATING_ORDER.md`](./WAAIIO_ENGINEERING_OPERATING_ORDER.md)
+
+Read and follow the Operating Order before any substantive work. It defines roles, evidence hierarchy, the standard change process, review/checkpoint protocol, failure escalation, production certification, and release safety invariants.
+
+### Startup-Critical Non-Negotiables (compact summary — Operating Order is authoritative)
+
+1. **Evidence hierarchy.** Repository/database/runtime/executable-test evidence beats handoff claims, assumptions, PR descriptions, documentation alone, source-string tests, and green CI alone.
+2. **Stop/escalation behavior.** When stuck or encountering unexpected failures, post BLOCKED or FAILED -- CTO HELP REQUESTED with exact evidence to the GitHub issue/PR and stop. Do not auto-correct speculatively. Do not loop.
+3. **Exact-SHA review.** No merge without ChatGPT exact-SHA review plus explicit Owner authorization. Handoff prose alone never creates a checkpoint.
+4. **No unauthorized merge/deploy/production mutation.** Deployment and production/database mutation are separate authorization phases. Testing authorization is not merge/deploy authorization.
+5. **GitHub-first.** Substantive audits, evidence, and handoffs go to GitHub issues/PRs, not chat. Chat is for short status and owner decisions only.
+
+## Golden Rules
 
 1. **Understand before changing.** Read every file you plan to modify. Trace how it connects to other files. Understand what depends on it. Never edit blind.
 2. **Trace the full lifecycle.** Before writing code that hooks into a system (flow steps, executors, webhooks, session handlers), read what happens BEFORE your code runs AND what happens AFTER. Don't just read the function you're modifying — read the caller. If you write a `validate()`, read what the executor does with the return value. If you return `null` from `next()`, check if that triggers deactivation. The bug is always in the part you didn't read.
@@ -24,19 +38,19 @@
    - Run `npm run test` to check for test failures
    - **Simulate every user click/tap** by tracing the actual code path line by line — follow every if/else branch, verify variables, confirm routing
    - For bot changes: trace from `handleMessage()` through escape hatches, keyword matching, executor, validate(), next() — confirm the response is correct
-   - For payment changes: trace from webhook → processSuccessfulPayment → recordPlatformFee → sendProactiveConfirmation — confirm the full chain
+   - For payment changes: trace from webhook -> processSuccessfulPayment -> recordPlatformFee -> sendProactiveConfirmation — confirm the full chain
    - For API changes: verify auth, validation, DB query, response format
    - Never say "done" based on build passing alone. A build passing means it compiles. It does NOT mean it works.
    - **If you can't verify a path works by reading the code, say so** — don't assume it works
 9. **Check the final state, not just the creation.** When auditing DB schema, RLS policies, or config — don't just grep the migration that created it. Check ALL subsequent migrations that may have altered, dropped, or replaced it. Migration 020 may create a permissive policy, but migration 023 may have already fixed it. The truth is the cumulative result, not any single file.
 10. **Dependencies map.** Key dependency chains to be aware of:
-    - `CapabilityId` type → used in: types.ts, sidebar, onboarding, capability-selection flow, dashboard provider, admin panel businesses page
-    - `whatsapp_channels` table → used by: channel-resolver, webhook handler, dashboard page, settings page, admin channels page, onboarding
-    - `businesses` table → used by: nearly everything — bot service, all dashboard pages, all API routes, admin panel
-    - `bot_sessions.session_data` → shared state across all flow steps — changing a key name breaks the flow
-    - Payment flows → webhook handlers → platform_fees → financials — changing payment structure cascades through revenue tracking
-    - CHECK constraints on DB columns → if code writes a value the constraint doesn't allow, the insert silently fails or errors
-    - Flow executor lifecycle: `validate()` → merge data → `next()` → `advanceToStep()` or `deactivateSession()` — returning null from next() kills the session
+    - `CapabilityId` type -> used in: types.ts, sidebar, onboarding, capability-selection flow, dashboard provider, admin panel businesses page
+    - `whatsapp_channels` table -> used by: channel-resolver, webhook handler, dashboard page, settings page, admin channels page, onboarding
+    - `businesses` table -> used by: nearly everything — bot service, all dashboard pages, all API routes, admin panel
+    - `bot_sessions.session_data` -> shared state across all flow steps — changing a key name breaks the flow
+    - Payment flows -> webhook handlers -> platform_fees -> financials — changing payment structure cascades through revenue tracking
+    - CHECK constraints on DB columns -> if code writes a value the constraint doesn't allow, the insert silently fails or errors
+    - Flow executor lifecycle: `validate()` -> merge data -> `next()` -> `advanceToStep()` or `deactivateSession()` — returning null from next() kills the session
 11. **DRY — flag repetition.** If you see the same pattern in 3+ places, it should be a shared function. Flag it even if the user didn't ask.
 12. **Engineered enough.** Not under-engineered (fragile, hacky) and not over-engineered (premature abstraction, unnecessary complexity). Handle edge cases thoughtfully.
 13. **Explicit over clever.** Simple readable code beats clever one-liners. Name things clearly. Comment the "why" not the "what."
