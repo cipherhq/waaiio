@@ -3,6 +3,27 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-08-30 — #246: Polls activation — fix tier gate + capability guards + tests
+
+### What changed
+- **Fix 1:** Removed contradictory free-tier page gate from `app/dashboard/polls/page.tsx`. The `poll` capability is already set to `'free'` tier in `shared/capabilities.ts`, so the `isGated = tier === 'free'` check was blocking free-tier users who should have access.
+- **Fix 2:** Added `requireCapability` enforcement to `POST /api/polls` (create_new), `PATCH /api/polls/[id]` (manage_existing), and `DELETE /api/polls/[id]` (manage_existing). The send route already had this guard.
+- **Fix 3:** Added server-side status validation to PATCH route: only `draft`, `active`, `closed` are valid statuses; only `draft->active` and `active->closed` transitions are allowed; activation requires a non-empty question and 2-10 options.
+- **Fix 4:** Removed unreachable auto-activate code from `app/api/polls/[id]/send/route.ts` (lines after the 400 return for non-active polls).
+- **Tests:** Added 24 tests in `app/api/polls/__tests__/polls-api.test.ts` covering all four fixes.
+
+### Files changed
+- `app/dashboard/polls/page.tsx` (removed isGated block)
+- `app/api/polls/route.ts` (added capability guard to POST)
+- `app/api/polls/[id]/route.ts` (added capability guard + status validation to PATCH/DELETE)
+- `app/api/polls/[id]/send/route.ts` (removed dead auto-activate code)
+- `app/api/polls/__tests__/polls-api.test.ts` (new — 24 tests)
+- `CHANGELOG.md` (this entry)
+
+### Could break
+- Any frontend code that relied on the auto-activate-on-send behavior (sending a draft poll would previously auto-activate it). Now polls must be explicitly activated before sending.
+- Businesses without `poll` capability configured will now get 403 on create/update/delete (was previously unguarded).
+
 ## 2026-08-30 — #220: Engineering Standing Operating Order
 
 ### What changed

@@ -129,10 +129,5 @@ export async function POST(request: NextRequest, { params }: Params) {
     }
   }
 
-  // Activate poll if draft
-  if (poll.status === 'draft') {
-    await supabase.from('polls').update({ status: 'active' }).eq('id', pollId);
-  }
-
   return NextResponse.json({ sent, failed, total: phones.length });
 }

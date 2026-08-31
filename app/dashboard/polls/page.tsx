@@ -55,9 +55,6 @@ export default function PollsPage() {
   const [sending, setSending] = useState(false);
   const [sendResult, setSendResult] = useState<{ sent: number; failed: number } | null>(null);
 
-  const tier = business.subscription_tier || 'free';
-  const isGated = tier === 'free';
-
   const fetchPolls = useCallback(async () => {
     setLoading(true);
     const res = await fetch(`/api/polls?business_id=${business.id}`);
@@ -65,7 +62,7 @@ export default function PollsPage() {
     setLoading(false);
   }, [business.id]);
 
-  useEffect(() => { if (!isGated) fetchPolls(); else setLoading(false); }, [fetchPolls, isGated]);
+  useEffect(() => { fetchPolls(); }, [fetchPolls]);
 
   const loadResults = async (poll: Poll) => {
     setSelected(poll); setView('results');
@@ -119,20 +116,6 @@ export default function PollsPage() {
     if (res.ok) { setSendResult(await res.json()); fetchPolls(); }
     setSending(false);
   };
-
-  if (isGated) {
-    return (
-      <div className="space-y-6">
-        <PageHeader title="Polls" tooltip={PAGE_TOOLTIPS.polls} />
-        <div className="rounded-lg border border-gray-200 bg-white p-12 text-center dark:border-gray-700 dark:bg-gray-800">
-          <div className="text-4xl mb-4">🗳️</div>
-          <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100 mb-2">Polls available on Pro plan</h2>
-          <p className="text-gray-500 dark:text-gray-400 mb-4">Create quick polls and let customers vote via WhatsApp.</p>
-          <a href="/dashboard/settings" className="inline-flex items-center px-4 py-2 bg-black text-white rounded-lg hover:bg-gray-800 text-sm font-medium">Upgrade Plan</a>
-        </div>
-      </div>
-    );
-  }
 
   // Results view
   if (view === 'results' && selected) {
