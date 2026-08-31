@@ -5,6 +5,7 @@ import { createServiceClient } from '@/lib/supabase/service';
 import { requireCapability } from '@/lib/capabilities/api-guard';
 import type { PromoPrizeType } from '@/lib/promotions/types';
 import { validatePrefix, validateGeneratedEntropy } from '@/lib/promotions/normalize';
+import { naiveToUtc, isValidTimezone } from '@/lib/promotions/timezone';
 
 interface PrizeInput {
   name: string;
@@ -250,6 +251,34 @@ export async function POST(request: NextRequest) {
     }
   }
 
+  // ── Timezone-aware datetime conversion ──
+  // Dashboard sends naive datetime-local values (e.g. "2024-10-30T23:59").
+  // When a timezone is provided, interpret the naive datetime as local time
+  // in that timezone and convert to UTC for correct TIMESTAMPTZ storage.
+  const effectiveTimezone = timezone || 'UTC';
+  if (timezone && !isValidTimezone(timezone)) {
+    return NextResponse.json({ error: `Invalid timezone: ${timezone}` }, { status: 400 });
+  }
+
+  let resolvedStartAt: string | null = start_at || null;
+  let resolvedEndAt: string | null = end_at || null;
+
+  if (start_at && timezone) {
+    const result = naiveToUtc(start_at, timezone);
+    if (!result.success) {
+      return NextResponse.json({ error: `start_at: ${result.error}` }, { status: 400 });
+    }
+    resolvedStartAt = result.utcIso;
+  }
+
+  if (end_at && timezone) {
+    const result = naiveToUtc(end_at, timezone);
+    if (!result.success) {
+      return NextResponse.json({ error: `end_at: ${result.error}` }, { status: 400 });
+    }
+    resolvedEndAt = result.utcIso;
+  }
+
   // Insert campaign
   const { data: campaign, error: campaignError } = await service
     .from('promo_campaigns')
@@ -258,9 +287,9 @@ export async function POST(request: NextRequest) {
       name: name.trim(),
       description: (description as string | undefined)?.trim() || null,
       status: 'draft',
-      start_at: start_at || null,
-      end_at: end_at || null,
-      timezone: timezone || 'UTC',
+      start_at: resolvedStartAt,
+      end_at: resolvedEndAt,
+      timezone: effectiveTimezone,
       code_entry_mode: effectiveMode,
       keyword: keyword?.trim().toUpperCase() || null,
       accept_bare_codes: derivedBare,

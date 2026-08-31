@@ -248,7 +248,7 @@ describe('ACC-181: Menu visibility', () => {
 describe('ACC-181: Shared entry helper', () => {
   it('renderPromoEntryMessage formats single campaign', async () => {
     const { renderPromoEntryMessage } = await import('@/lib/promotions/entry');
-    const msg = renderPromoEntryMessage([{ id: '1', name: 'TROPHY Promo', keyword: 'TROPHY', code_entry_mode: 'keyword', accept_bare_codes: false }]);
+    const msg = renderPromoEntryMessage([{ id: '1', name: 'TROPHY Promo', keyword: 'TROPHY', code_entry_mode: 'keyword', accept_bare_codes: false, code_format: null }]);
     expect(msg).toContain('TROPHY Promo');
     expect(msg).toContain('TROPHY <your code>');
   });
@@ -256,8 +256,8 @@ describe('ACC-181: Shared entry helper', () => {
   it('renderPromoEntryMessage formats multiple campaigns', async () => {
     const { renderPromoEntryMessage } = await import('@/lib/promotions/entry');
     const msg = renderPromoEntryMessage([
-      { id: '1', name: 'TROPHY', keyword: 'TROPHY', code_entry_mode: 'keyword', accept_bare_codes: false },
-      { id: '2', name: 'SCRATCH', keyword: null, code_entry_mode: 'bare_code', accept_bare_codes: true },
+      { id: '1', name: 'TROPHY', keyword: 'TROPHY', code_entry_mode: 'keyword', accept_bare_codes: false, code_format: null },
+      { id: '2', name: 'SCRATCH', keyword: null, code_entry_mode: 'bare_code', accept_bare_codes: true, code_format: null },
     ]);
     expect(msg).toContain('Active Promotions');
     expect(msg).toContain('TROPHY');
