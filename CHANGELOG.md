@@ -3,6 +3,18 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-08-31 — #232: Replay window anchor + concurrent recovery proof
+
+### What changed
+- `supabase/migrations/355_refund_convergence.sql` — `claim_refund_dispatch` token-bound branch no longer sets `dispatched_at = now()`. Replay-safety window now immutably anchored to first provider dispatch. Prevents repeated recoveries from extending eligibility beyond Stripe's 24h idempotency key pruning.
+- `lib/__tests__/acc-232-refund-convergence-db.test.ts` — 3 new tests:
+  1. Expired first-dispatch (23.5h) denies recovery on both interrupted and ambiguous paths
+  2. Token-bound claim preserves original `dispatched_at` (clock not refreshed)
+  3. Concurrent takeover: exactly 1 winner (not ≤1), winner token claims dispatch, stale token rejected
+
+### Could break
+- If any code path relied on `dispatched_at` being refreshed by recovery claims to re-check "recency" of provider dispatch, it would now see the original timestamp. This is correct — the provider's idempotency key is tied to the original request window.
+
 ## 2026-08-31 — #232: Refund handler test coverage — 3 CTO-required runtime proofs
 
 ### What changed
