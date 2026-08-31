@@ -8,7 +8,7 @@ import {
   type PromoCampaignStatus,
 } from '@/lib/promotions/types';
 import { validatePrefix, validateGeneratedEntropy } from '@/lib/promotions/normalize';
-import { naiveToUtc, isValidTimezone } from '@/lib/promotions/timezone';
+import { isValidTimezone, convertDatetimePair } from '@/lib/promotions/timezone';
 
 /**
  * Fields that cannot be changed once a campaign has redemptions (integrity-locked).
@@ -292,27 +292,25 @@ export async function PUT(request: NextRequest) {
       updates.timezone = String(body.timezone);
     }
 
-    if ('startAt' in body) {
-      if (body.startAt && updateTimezone !== 'UTC') {
-        const result = naiveToUtc(String(body.startAt), updateTimezone);
-        if (!result.success) {
-          return NextResponse.json({ error: `startAt: ${result.error}` }, { status: 400 });
-        }
-        updates.start_at = result.utcIso;
-      } else {
-        updates.start_at = body.startAt || null;
-      }
-    }
+    // Use shared convertDatetimePair — EXACT same conversion as create route
+    if ('startAt' in body || 'endAt' in body) {
+      const startVal = 'startAt' in body ? (body.startAt ? String(body.startAt) : null) : undefined;
+      const endVal = 'endAt' in body ? (body.endAt ? String(body.endAt) : null) : undefined;
 
-    if ('endAt' in body) {
-      if (body.endAt && updateTimezone !== 'UTC') {
-        const result = naiveToUtc(String(body.endAt), updateTimezone);
-        if (!result.success) {
-          return NextResponse.json({ error: `endAt: ${result.error}` }, { status: 400 });
-        }
-        updates.end_at = result.utcIso;
-      } else {
-        updates.end_at = body.endAt || null;
+      // Only convert non-null values through the timezone converter
+      const dtResult = convertDatetimePair(
+        startVal ?? undefined,
+        endVal ?? undefined,
+        updateTimezone,
+      );
+      if (!dtResult.success) {
+        return NextResponse.json({ error: dtResult.error }, { status: 400 });
+      }
+      if ('startAt' in body) {
+        updates.start_at = dtResult.resolvedStartAt;
+      }
+      if ('endAt' in body) {
+        updates.end_at = dtResult.resolvedEndAt;
       }
     }
     if ('codeFormat' in body && body.codeFormat) updates.code_format = String(body.codeFormat);

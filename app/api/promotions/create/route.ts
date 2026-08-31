@@ -5,7 +5,7 @@ import { createServiceClient } from '@/lib/supabase/service';
 import { requireCapability } from '@/lib/capabilities/api-guard';
 import type { PromoPrizeType } from '@/lib/promotions/types';
 import { validatePrefix, validateGeneratedEntropy } from '@/lib/promotions/normalize';
-import { naiveToUtc, isValidTimezone } from '@/lib/promotions/timezone';
+import { isValidTimezone, convertDatetimePair } from '@/lib/promotions/timezone';
 
 interface PrizeInput {
   name: string;
@@ -260,24 +260,15 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: `Invalid timezone: ${timezone}` }, { status: 400 });
   }
 
-  let resolvedStartAt: string | null = start_at || null;
-  let resolvedEndAt: string | null = end_at || null;
-
-  if (start_at && timezone) {
-    const result = naiveToUtc(start_at, timezone);
-    if (!result.success) {
-      return NextResponse.json({ error: `start_at: ${result.error}` }, { status: 400 });
-    }
-    resolvedStartAt = result.utcIso;
+  const dtResult = convertDatetimePair(
+    start_at as string | undefined,
+    end_at as string | undefined,
+    effectiveTimezone,
+  );
+  if (!dtResult.success) {
+    return NextResponse.json({ error: dtResult.error }, { status: 400 });
   }
-
-  if (end_at && timezone) {
-    const result = naiveToUtc(end_at, timezone);
-    if (!result.success) {
-      return NextResponse.json({ error: `end_at: ${result.error}` }, { status: 400 });
-    }
-    resolvedEndAt = result.utcIso;
-  }
+  const { resolvedStartAt, resolvedEndAt } = dtResult;
 
   // Insert campaign
   const { data: campaign, error: campaignError } = await service

@@ -68,6 +68,25 @@ If something breaks, check this log to find what changed and when.
 - Any consumer that type-checked against the old 4-state `RefundState` union (only existed on the UX branch, not main)
 - Frontend code that parsed error text to determine refund state (this was the bug being fixed)
 
+## 2026-08-30 — #248: Fix 3 CTO blockers — DST ambiguity, parser strictness, route behavioral tests
+
+### What changed
+- **BLOCKER 1 (DST fall-back ambiguity):** `naiveToUtc()` now probes THREE candidate UTC offsets (-1h, 0, +1h) and checks which ones round-trip. When TWO valid UTC instants exist for the same local time (fall-back), picks the EARLIER UTC (= larger offset / DST side). Previously only tested one offset and could silently pick the wrong occurrence.
+- **BLOCKER 2 (Parser accepts zoned timestamps):** Regex is now end-anchored (`$`). Inputs with `Z`, `+HH:MM`, or `-HH:MM` suffixes are rejected before conversion to prevent double-shift. Calendar values are strictly validated: month 1-12, day valid for month/year (including leap years), hours 0-23, minutes 0-59, seconds 0-59. Previously `2024-13-15` or `2024-10-30T22:59:00Z` would silently pass.
+- **BLOCKER 3 (Route-level behavioral tests):** 47 tests total — unit tests for `naiveToUtc`, `convertDatetimePair`, plus behavioral tests calling actual POST and PUT route handlers with mock Supabase. Covers: Africa/Lagos, America/New_York (standard + daylight), spring-forward rejection, fall-back determinism, Europe/London fall-back, month=13 rejection, day=32 rejection, Feb 30 rejection, hour=25 rejection, already-zoned Z/+/-offset rejection, both start_at+end_at boundaries, timezone-only update, and create/update conversion parity.
+- **Shared conversion function:** Added `convertDatetimePair()` used by BOTH create and update routes, ensuring identical semantics. Update route previously had inline conversion with different field name handling.
+
+### Files changed
+- `lib/promotions/timezone.ts` (rewritten — DST probe, strict validation, `convertDatetimePair()`)
+- `app/api/promotions/create/route.ts` (uses `convertDatetimePair`)
+- `app/api/promotions/update/route.ts` (uses `convertDatetimePair`)
+- `app/api/promotions/__tests__/timezone-write.test.ts` (rewritten — 47 behavioral tests)
+- `CHANGELOG.md` (this entry)
+
+### Could break
+- Any caller sending already-zoned timestamps (e.g., `...Z`) to create/update with a timezone will now get 400. Previously these were silently double-shifted.
+- Any caller sending invalid calendar values (month 13, day 32) will now get 400. Previously `Date.UTC()` rolled them over silently.
+
 ## 2026-08-30 — #248: Instant Win F1 timezone + F4 claim format
 
 ### What changed
