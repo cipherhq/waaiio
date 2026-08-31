@@ -3,6 +3,24 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-08-30 — #246: CTO blocker corrections — UI lifecycle, PATCH validation, behavioral tests
+
+### What changed
+- **Correction 1 (UI lifecycle):** Dashboard polls page now only shows "Activate" for `draft` polls and "Close" for `active` polls. Closed polls have no status-change action (previously showed "Activate" which the backend would reject). Delete is hidden for active polls.
+- **Correction 2 (PATCH validation):** PATCH route now validates option integrity before persisting: rejects empty strings, case-insensitive duplicates, and enforces 2-10 count. Active polls cannot have question removed or options reduced below 2. POST route also validates empty strings and duplicates.
+- **Correction 3 (behavioral tests):** Replaced 24 source-inspection tests with 43 behavioral tests that call actual route handlers (POST, PATCH, DELETE, send) with mock Supabase. Tests cover auth, ownership, capability guards, all status transitions, option validation, vote deduplication flow, and poll rendering format.
+
+### Files changed
+- `app/dashboard/polls/page.tsx` (status-aware action buttons, error display)
+- `app/api/polls/[id]/route.ts` (option validation: empty, duplicates, active poll guards)
+- `app/api/polls/route.ts` (option validation: empty, duplicates)
+- `app/api/polls/__tests__/polls-api.test.ts` (rewritten — 43 behavioral tests)
+- `CHANGELOG.md` (this entry)
+
+### Could break
+- Frontend code that relied on "Activate" button for closed polls (never worked anyway — backend rejected it)
+- PATCH requests that previously persisted empty or duplicate options now get 400
+
 ## 2026-08-30 — #246: Polls activation — fix tier gate + capability guards + tests
 
 ### What changed

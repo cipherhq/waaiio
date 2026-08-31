@@ -95,8 +95,14 @@ export default function PollsPage() {
   };
 
   const toggleStatus = async (poll: Poll) => {
-    const newStatus = poll.status === 'active' ? 'closed' : 'active';
-    await fetch(`/api/polls/${poll.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: newStatus }) });
+    // Only draft -> active and active -> closed are valid transitions
+    if (poll.status === 'draft') {
+      const res = await fetch(`/api/polls/${poll.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'active' }) });
+      if (!res.ok) { const d = await res.json(); setError(d.error || 'Activation failed'); }
+    } else if (poll.status === 'active') {
+      await fetch(`/api/polls/${poll.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'closed' }) });
+    }
+    // closed polls have no valid transitions — do nothing
     fetchPolls();
   };
 
@@ -261,6 +267,8 @@ export default function PollsPage() {
         </div>
       </div>
 
+      {error && <p className="text-sm text-red-600 bg-red-50 dark:bg-red-900/20 px-4 py-2 rounded-lg">{error}</p>}
+
       {loading ? (
         <div className="text-center py-12 text-gray-500">Loading...</div>
       ) : polls.length === 0 ? (
@@ -296,9 +304,14 @@ export default function PollsPage() {
                   <td className="px-4 py-3 text-right">
                     <div className="flex items-center justify-end gap-2">
                       {p.status === 'active' && <button onClick={() => loadContacts(p)} className="text-xs text-blue-600 font-medium">Send</button>}
-                      <button onClick={() => toggleStatus(p)} className="text-xs text-gray-500">{p.status === 'active' ? 'Close' : 'Activate'}</button>
+                      {p.status === 'draft' && (
+                        <button onClick={() => toggleStatus(p)} className="text-xs text-green-600 font-medium">Activate</button>
+                      )}
+                      {p.status === 'active' && (
+                        <button onClick={() => toggleStatus(p)} className="text-xs text-gray-500">Close</button>
+                      )}
                       <button onClick={() => loadResults(p)} className="text-xs text-gray-500">Results</button>
-                      <button onClick={() => deletePoll(p.id)} className="text-xs text-red-500">Delete</button>
+                      {p.status !== 'active' && <button onClick={() => deletePoll(p.id)} className="text-xs text-red-500">Delete</button>}
                     </div>
                   </td>
                 </tr>

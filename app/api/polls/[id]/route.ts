@@ -28,6 +28,40 @@ export async function PATCH(request: NextRequest, { params }: Params) {
   const body = await request.json();
   const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
 
+  // ── Validate question if provided ──
+  if (body.question !== undefined) {
+    if (typeof body.question !== 'string' || !body.question.trim()) {
+      return NextResponse.json({ error: 'Question must be a non-empty string' }, { status: 400 });
+    }
+    updates.question = body.question.trim();
+  }
+
+  // ── Validate options if provided ──
+  if (body.options !== undefined) {
+    if (!Array.isArray(body.options)) {
+      return NextResponse.json({ error: 'Options must be an array' }, { status: 400 });
+    }
+    // Reject empty strings
+    const cleaned = body.options.map((o: unknown) => typeof o === 'string' ? o.trim() : '');
+    const hasEmpty = cleaned.some((o: string) => !o);
+    if (hasEmpty) {
+      return NextResponse.json({ error: 'Options must not contain empty strings' }, { status: 400 });
+    }
+    // Reject duplicates (case-insensitive)
+    const lower = cleaned.map((o: string) => o.toLowerCase());
+    const unique = new Set(lower);
+    if (unique.size !== lower.length) {
+      return NextResponse.json({ error: 'Options must not contain duplicates' }, { status: 400 });
+    }
+    if (cleaned.length < 2) {
+      return NextResponse.json({ error: 'Poll must have at least 2 options' }, { status: 400 });
+    }
+    if (cleaned.length > 10) {
+      return NextResponse.json({ error: 'Poll must have at most 10 options' }, { status: 400 });
+    }
+    updates.options = cleaned;
+  }
+
   // ── Status validation ──
   const VALID_STATUSES = ['draft', 'active', 'closed'] as const;
   const VALID_TRANSITIONS: Record<string, string[]> = {
@@ -47,23 +81,33 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     }
     // Before activation: poll must have a question and 2-10 options
     if (body.status === 'active') {
-      const pollOptions = (body.options || poll.options) as string[] | null;
-      const pollQuestion = body.question || poll.question;
-      if (!pollQuestion || !pollQuestion.trim()) {
+      const effectiveQuestion = (updates.question as string) || poll.question;
+      const effectiveOptions = (updates.options as string[]) || (poll.options as string[] | null);
+      if (!effectiveQuestion || !effectiveQuestion.trim()) {
         return NextResponse.json({ error: 'Poll must have a question before activation' }, { status: 400 });
       }
-      if (!pollOptions || pollOptions.length < 2) {
+      if (!effectiveOptions || effectiveOptions.length < 2) {
         return NextResponse.json({ error: 'Poll must have at least 2 options before activation' }, { status: 400 });
       }
-      if (pollOptions.length > 10) {
+      if (effectiveOptions.length > 10) {
         return NextResponse.json({ error: 'Poll must have at most 10 options' }, { status: 400 });
       }
     }
     updates.status = body.status;
   }
 
-  if (body.question) updates.question = body.question;
-  if (body.options) updates.options = body.options;
+  // ── Guard active polls: don't allow saving invalid question/options ──
+  if (poll.status === 'active' && !body.status) {
+    const effectiveQuestion = (updates.question as string) || poll.question;
+    const effectiveOptions = (updates.options as string[]) || (poll.options as string[] | null);
+    if (!effectiveQuestion || !effectiveQuestion.trim()) {
+      return NextResponse.json({ error: 'Cannot remove question from an active poll' }, { status: 400 });
+    }
+    if (!effectiveOptions || effectiveOptions.length < 2) {
+      return NextResponse.json({ error: 'Active poll must maintain at least 2 options' }, { status: 400 });
+    }
+  }
+
   if (body.closes_at !== undefined) updates.closes_at = body.closes_at;
 
   const { data, error } = await supabase.from('polls').update(updates).eq('id', id).select().single();
