@@ -373,6 +373,18 @@ export class FlowExecutor {
           if (!langSaved) return;
           await this.sendText(from, 'Switched to English. ✅');
         } else {
+          // Validate target language against entitlement + certification before persisting
+          const { CERTIFIED_LANGUAGES } = await import('@/lib/bot/language-policy');
+          if (!entitlement.translationAllowed
+              || !entitlement.allowedLanguages.includes(targetLang)
+              || !CERTIFIED_LANGUAGES.includes(targetLang)) {
+            const langName = getLanguageName(targetLang);
+            await this.sendText(from, `${langName} is not available for this business right now.`);
+            // Re-prompt current step without changing language
+            const retryMsgs = await step.prompt(ctx);
+            await this.sendMessages(from, retryMsgs, session, translationCtx);
+            return;
+          }
           session.session_data._detected_language = targetLang;
           const langSaved = await this.casUpdateSession(session, {
             current_step: session.current_step,
