@@ -7,7 +7,49 @@
  * Docs: https://developers.facebook.com/docs/commerce-platform/catalog
  */
 
+import type { SupabaseClient } from '@supabase/supabase-js';
 import { logger } from '@/lib/logger';
+
+/**
+ * Safety guard: catalog sync is only allowed for businesses with a dedicated
+ * WhatsApp channel. Shared/platform WABAs must never be mutated by a single
+ * business's product catalog — doing so would overwrite catalog data for all
+ * businesses sharing that WABA.
+ *
+ * Fail-closed: any ambiguity (no channel, shared channel, platform WABA)
+ * returns an error string. Only an explicit dedicated channel returns null.
+ */
+export async function assertDedicatedCatalogAccess(
+  supabase: SupabaseClient,
+  businessId: string
+): Promise<string | null> {
+  const { data: channel } = await supabase
+    .from('whatsapp_channels')
+    .select('id, channel_type, business_id, waba_id')
+    .eq('business_id', businessId)
+    .eq('channel_type', 'dedicated')
+    .eq('provider', 'meta_cloud')
+    .eq('is_active', true)
+    .maybeSingle();
+
+  if (!channel) {
+    logger.warn('[CATALOG GUARD] Blocked catalog sync — no dedicated channel', { businessId });
+    return 'Catalog sync requires a dedicated WhatsApp channel';
+  }
+
+  // Extra safety: even if channel_type is 'dedicated', reject if waba_id
+  // matches the platform's shared WABA (should never happen, but fail closed)
+  const platformWabaId = process.env.META_CLOUD_WABA_ID;
+  if (platformWabaId && channel.waba_id === platformWabaId) {
+    logger.warn('[CATALOG GUARD] Blocked catalog sync — dedicated channel uses platform WABA', {
+      businessId,
+      channelId: channel.id,
+    });
+    return 'Catalog sync requires a dedicated WhatsApp channel';
+  }
+
+  return null; // Access granted
+}
 
 interface CatalogProduct {
   retailer_id: string; // Must match product ID in Waaiio DB
