@@ -68,6 +68,20 @@ If something breaks, check this log to find what changed and when.
 - Any consumer that type-checked against the old 4-state `RefundState` union (only existed on the UX branch, not main)
 - Frontend code that parsed error text to determine refund state (this was the bug being fixed)
 
+## 2026-08-31 — #248: UTC timezone validation bypass fix
+
+### What changed
+- **convertDatetimePair():** Removed `timezone !== 'UTC'` bypass. All inputs now go through `naiveToUtc()` regardless of timezone, ensuring consistent validation and normalization. Previously, UTC timezone inputs skipped all validation -- `2024-13-01T00:00` with UTC timezone passed through unchecked.
+- **7 new unit tests** for UTC timezone: naive validation, month-13 rejection, day-32 rejection, Z timestamp acceptance, +offset acceptance, trailing junk rejection, both start_at+end_at validated.
+
+### Files changed
+- `lib/promotions/timezone.ts` (convertDatetimePair UTC bypass removed)
+- `app/api/promotions/__tests__/timezone-write.test.ts` (7 new UTC tests, 1 updated)
+- `CHANGELOG.md` (this entry)
+
+### Could break
+- UTC timezone inputs are now normalized through naiveToUtc (output format changes from raw string to ISO). All route tests updated.
+
 ## 2026-08-31 — #248: Strict zoned-ISO parsing boundary — fractional seconds + calendar validation
 
 ### What changed

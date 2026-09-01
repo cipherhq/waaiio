@@ -515,12 +515,67 @@ describe('convertDatetimePair', () => {
     }
   });
 
-  it('passes through with UTC timezone', () => {
+  it('UTC timezone: validates and normalizes naive datetime', () => {
     const result = convertDatetimePair('2024-10-30T23:59', null, 'UTC');
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.resolvedStartAt).toBe('2024-10-30T23:59');
+      // Now normalized through naiveToUtc — gets ISO string format
+      const utc = new Date(result.resolvedStartAt!);
+      expect(utc.getUTCHours()).toBe(23);
+      expect(utc.getUTCMinutes()).toBe(59);
+      expect(utc.getUTCDate()).toBe(30);
       expect(result.resolvedEndAt).toBeNull();
+    }
+  });
+
+  it('UTC timezone: rejects malformed calendar (month 13)', () => {
+    const result = convertDatetimePair('2024-13-01T00:00', null, 'UTC');
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toContain('start_at');
+      expect(result.error).toContain('Invalid month');
+    }
+  });
+
+  it('UTC timezone: rejects malformed day 32', () => {
+    const result = convertDatetimePair(null, '2024-01-32T00:00', 'UTC');
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toContain('end_at');
+      expect(result.error).toContain('Invalid day');
+    }
+  });
+
+  it('UTC timezone: accepts zoned Z timestamp and normalizes', () => {
+    const result = convertDatetimePair('2024-10-30T22:59:00Z', null, 'UTC');
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.resolvedStartAt).toBe('2024-10-30T22:59:00.000Z');
+    }
+  });
+
+  it('UTC timezone: accepts explicit +offset and normalizes', () => {
+    const result = convertDatetimePair('2024-10-30T22:59:00+05:30', null, 'UTC');
+    expect(result.success).toBe(true);
+    if (result.success) {
+      const utc = new Date(result.resolvedStartAt!);
+      // +05:30 → UTC = 22:59 - 5:30 = 17:29
+      expect(utc.getUTCHours()).toBe(17);
+      expect(utc.getUTCMinutes()).toBe(29);
+    }
+  });
+
+  it('UTC timezone: rejects trailing junk', () => {
+    const result = convertDatetimePair('2024-01-15T12:00junk', null, 'UTC');
+    expect(result.success).toBe(false);
+  });
+
+  it('UTC timezone: both start_at and end_at validated', () => {
+    // valid start, invalid end
+    const result = convertDatetimePair('2024-01-15T12:00', '2024-13-01T00:00', 'UTC');
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toContain('end_at');
     }
   });
 

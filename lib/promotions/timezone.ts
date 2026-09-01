@@ -292,7 +292,11 @@ export function convertDatetimePair(
   let resolvedStartAt: string | null = startAt || null;
   let resolvedEndAt: string | null = endAt || null;
 
-  if (startAt && timezone !== 'UTC') {
+  // Always validate and normalize — even for UTC timezone.
+  // naiveToUtc handles both naive and zoned inputs correctly:
+  // - naive + UTC → validates calendar and returns as UTC
+  // - zoned (Z/±offset) → validates and preserves absolute instant
+  if (startAt) {
     const result = naiveToUtc(startAt, timezone);
     if (!result.success) {
       return { success: false, error: `start_at: ${result.error}` };
@@ -300,7 +304,7 @@ export function convertDatetimePair(
     resolvedStartAt = result.utcIso;
   }
 
-  if (endAt && timezone !== 'UTC') {
+  if (endAt) {
     const result = naiveToUtc(endAt, timezone);
     if (!result.success) {
       return { success: false, error: `end_at: ${result.error}` };
