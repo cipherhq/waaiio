@@ -13,7 +13,6 @@ vi.mock('@/lib/bot/translate', () => ({
   translateBotResponse: vi.fn(async (t: string) => t),
   detectLanguage: vi.fn(async () => 'en'),
   getLanguageName: vi.fn(() => 'English'),
-  setTranslationContext: vi.fn(),
 }));
 vi.mock('@/lib/bot/handlers/global-queries', () => ({
   handleGlobalQuery: vi.fn(async (opts: { session: unknown }) => ({ handled: false, session: opts.session })),

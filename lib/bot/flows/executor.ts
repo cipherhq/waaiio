@@ -1,7 +1,8 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import * as Sentry from '@sentry/nextjs';
 import type { MessageSender } from '@/lib/channels/message-sender';
-import { translateBotResponse } from '@/lib/bot/translate';
+import { translateBotResponse, type TranslationContext } from '@/lib/bot/translate';
+import { getEffectiveLanguages, loadBusinessLanguages } from '@/lib/bot/language-policy';
 import type { StandaloneService } from '@/lib/bot/standalone.service';
 import type { BotIntelligenceService } from '@/lib/bot/bot-intelligence';
 import type { FlowContext, PromptMessage } from './types';
@@ -122,10 +123,23 @@ export class FlowExecutor {
       }
     }
 
+    // Resolve language entitlement once per execute() — before any translation call.
+    // Must precede step-not-found error path which also needs translation.
+    const configuredLangs = session.business_id
+      ? await loadBusinessLanguages(this.supabase, session.business_id)
+      : null;
+    const tier = business?.subscription_tier || 'free';
+    const entitlement = getEffectiveLanguages(tier, configuredLangs);
+    const translationCtx: TranslationContext = {
+      entitlement,
+      businessId: session.business_id || '',
+      supabase: this.supabase,
+    };
+
     if (!step) {
       Sentry.captureMessage('Flow step not found', { level: 'warning', extra: { stepId, flowType, sessionId: session.id } });
       let errMsg = 'Something went wrong on our end. Send *Hi* to start over.';
-      errMsg = await this.maybeTranslate(errMsg, session);
+      errMsg = await this.maybeTranslate(errMsg, session, translationCtx);
       if (!session.conversation_log) session.conversation_log = [];
       session.conversation_log.push({ role: 'bot', content: errMsg, timestamp: new Date().toISOString() });
       if (!await this.persistConversationLog(session, session.conversation_log)) return;
@@ -182,7 +196,8 @@ export class FlowExecutor {
     }
 
     // Build flow context (no DB calls — synchronous)
-    const lang = (session.session_data._lang as string) || '';
+    // ctx.t reads _detected_language at call time so a mid-execute language switch
+    // (e.g. "switch to french") is immediately reflected in the re-prompt.
     const ctx: FlowContext = {
       supabase: this.supabase,
       sender: this.sender,
@@ -193,7 +208,10 @@ export class FlowExecutor {
       business,
       mediaUrl,
       mediaType,
-      t: (text: string) => translateBotResponse(text, lang),
+      t: (text: string) => {
+        const currentLang = (session.session_data._detected_language as string) || '';
+        return translateBotResponse(text, currentLang, translationCtx);
+      },
       currentCanonical, // CAS-004: ephemeral, not persisted
     };
 
@@ -205,7 +223,7 @@ export class FlowExecutor {
     if (shouldSkip) {
       const nextStepId = await step.next(ctx);
       if (nextStepId) {
-        await this.advanceToStep(session, nextStepId, from, ctx);
+        await this.advanceToStep(session, nextStepId, from, ctx, translationCtx);
       } else {
         await this.deactivateSession(session.id);
       }
@@ -246,7 +264,7 @@ export class FlowExecutor {
         });
         if (!promptSaved) return; // stale — another worker already advanced
         _fmark('cas_persist');
-        await this.sendMessages(from, messages, session);
+        await this.sendMessages(from, messages, session, translationCtx);
         _fmark('meta_send');
       }
       logger.info('[EXECUTOR-PERF] timings_ms', _ftimings);
@@ -286,11 +304,11 @@ export class FlowExecutor {
           const prevMessages = await prevStepDef.prompt(ctx);
           this.logPromptMessages(session, prevMessages);
           if (!await this.persistConversationLog(session, session.conversation_log)) return;
-          await this.sendMessages(from, prevMessages, session);
+          await this.sendMessages(from, prevMessages, session, translationCtx);
         }
         return;
       } else {
-        const noBackMsg = await this.maybeTranslate('You\'re at the beginning. Type *menu* to see the main menu.', session);
+        const noBackMsg = await this.maybeTranslate('You\'re at the beginning. Type *menu* to see the main menu.', session, translationCtx);
         session.conversation_log.push({ role: 'bot', content: noBackMsg, timestamp: new Date().toISOString() });
         if (!await this.persistConversationLog(session, session.conversation_log)) return;
         await this.sendText(from, noBackMsg);
@@ -313,7 +331,7 @@ export class FlowExecutor {
           .eq('reference_code', transferRef as string)
           .eq('status', 'pending');
       }
-      const cancelMsg = await this.maybeTranslate('Cancelled. Send *Hi* to start over.', session);
+      const cancelMsg = await this.maybeTranslate('Cancelled. Send *Hi* to start over.', session, translationCtx);
       session.conversation_log.push({ role: 'bot', content: cancelMsg, timestamp: new Date().toISOString() });
       if (!await this.persistConversationLog(session, session.conversation_log)) return;
       await this.deactivateSession(session.id);
@@ -331,7 +349,7 @@ export class FlowExecutor {
           .eq('reference_code', transferRef as string)
           .eq('status', 'pending');
       }
-      const restartMsg = await this.maybeTranslate('No problem! Send *Hi* to start over.', session);
+      const restartMsg = await this.maybeTranslate('No problem! Send *Hi* to start over.', session, translationCtx);
       session.conversation_log.push({ role: 'bot', content: restartMsg, timestamp: new Date().toISOString() });
       if (!await this.persistConversationLog(session, session.conversation_log)) return;
       await this.deactivateSession(session.id);
@@ -359,19 +377,31 @@ export class FlowExecutor {
           if (!langSaved) return;
           await this.sendText(from, 'Switched to English. ✅');
         } else {
+          // Validate target language against entitlement + certification before persisting
+          const { CERTIFIED_LANGUAGES } = await import('@/lib/bot/language-policy');
+          if (!entitlement.translationAllowed
+              || !entitlement.allowedLanguages.includes(targetLang)
+              || !CERTIFIED_LANGUAGES.includes(targetLang)) {
+            const langName = getLanguageName(targetLang);
+            await this.sendText(from, `${langName} is not available for this business right now.`);
+            // Re-prompt current step without changing language
+            const retryMsgs = await step.prompt(ctx);
+            await this.sendMessages(from, retryMsgs, session, translationCtx);
+            return;
+          }
           session.session_data._detected_language = targetLang;
           const langSaved = await this.casUpdateSession(session, {
             current_step: session.current_step,
             session_data: session.session_data,
           });
           if (!langSaved) return;
-          const { translateBotResponse } = await import('@/lib/bot/translate');
-          const msg = await translateBotResponse(`Switched to ${getLanguageName(targetLang)}. ✅`, targetLang);
+          const { translateBotResponse: translateFn } = await import('@/lib/bot/translate');
+          const msg = await translateFn(`Switched to ${getLanguageName(targetLang)}. ✅`, targetLang, translationCtx);
           await this.sendText(from, msg);
         }
         // Re-prompt current step in new language
         const retryMsgs = await step.prompt(ctx);
-        await this.sendMessages(from, retryMsgs, session);
+        await this.sendMessages(from, retryMsgs, session, translationCtx);
         return;
       }
     }
@@ -413,6 +443,7 @@ export class FlowExecutor {
           const failMsg = await this.maybeTranslate(
             "Sorry, I couldn't connect you to a team member right now. Please try again in a moment, or type *menu* to continue with the assistant.",
             session,
+            translationCtx,
           );
           session.conversation_log.push({ role: 'bot', content: failMsg, timestamp: new Date().toISOString() });
           if (!await this.persistConversationLog(session, session.conversation_log || [])) return;
@@ -426,6 +457,7 @@ export class FlowExecutor {
         const unavailableMsg = await this.maybeTranslate(
           `Live chat isn't available for *${business.name}* right now.\n\nYou can continue with the assistant — type *menu* to see what's available.`,
           session,
+          translationCtx,
         );
         session.conversation_log.push({ role: 'bot', content: unavailableMsg, timestamp: new Date().toISOString() });
         if (!await this.persistConversationLog(session, session.conversation_log || [])) return;
@@ -444,8 +476,9 @@ export class FlowExecutor {
       const mediaHint = await this.maybeTranslate(
         'Please reply with text. Photos and voice notes aren\'t supported at this step.',
         session,
+        translationCtx,
       );
-      const cancelHint = await this.maybeTranslate('Type *back* to go back, *menu* to restart, or *exit* to leave.', session);
+      const cancelHint = await this.maybeTranslate('Type *back* to go back, *menu* to restart, or *exit* to leave.', session, translationCtx);
       const errText = `${mediaHint}\n\n_${cancelHint}_`;
       session.conversation_log.push({ role: 'bot', content: errText, timestamp: new Date().toISOString() });
       // Re-send interactive prompts so user gets fresh clickable options
@@ -456,7 +489,7 @@ export class FlowExecutor {
       if (!await this.persistConversationLog(session, session.conversation_log)) return;
       await this.sendText(from, errText);
       if (retryMessages.some(m => m.type === 'buttons' || m.type === 'list')) {
-        await this.sendMessages(from, retryMessages);
+        await this.sendMessages(from, retryMessages, undefined, translationCtx);
       }
       return;
     }
@@ -519,8 +552,8 @@ export class FlowExecutor {
       // CAS-005: Build complete conversation_log BEFORE CAS persistence
       let errText = '';
       if (result.errorMessage) {
-        const translatedError = await this.maybeTranslate(result.errorMessage, session);
-        const cancelHint = await this.maybeTranslate('Type *back* to go back, *menu* to restart, or *exit* to leave.', session);
+        const translatedError = await this.maybeTranslate(result.errorMessage, session, translationCtx);
+        const cancelHint = await this.maybeTranslate('Type *back* to go back, *menu* to restart, or *exit* to leave.', session, translationCtx);
         errText = `${translatedError}\n\n_${cancelHint}_`;
         session.conversation_log.push({ role: 'bot', content: errText, timestamp: new Date().toISOString() });
       }
@@ -544,7 +577,7 @@ export class FlowExecutor {
 
       // Send responses AFTER successful persistence
       if (errText) await this.sendText(from, errText);
-      if (hasInteractive) await this.sendMessages(from, retryMessages);
+      if (hasInteractive) await this.sendMessages(from, retryMessages, undefined, translationCtx);
       return;
     }
 
@@ -575,7 +608,7 @@ export class FlowExecutor {
     _fmark('step_next');
 
     if (nextStepId) {
-      await this.advanceToStep(session, nextStepId, from, ctx);
+      await this.advanceToStep(session, nextStepId, from, ctx, translationCtx);
       _fmark('advance_done');
       logger.info('[EXECUTOR-PERF] timings_ms', _ftimings);
     } else {
@@ -595,7 +628,7 @@ export class FlowExecutor {
       const isPaymentPending = hasPaymentRef && !isPaymentConfirmed;
 
       if (!isCancellation && !isPaymentPending && session.business_id) {
-        await this.showPostCompletionMenu(from, session, ctx);
+        await this.showPostCompletionMenu(from, session, ctx, translationCtx);
         logDropoff(this.supabase, { businessId: session.business_id || undefined, flowType, stepId, reason: 'completed', capability: sd.active_capability as string });
       } else {
         await this.deactivateSession(session.id);
@@ -609,6 +642,7 @@ export class FlowExecutor {
     nextStepId: string,
     from: string,
     ctx: FlowContext,
+    tCtx: TranslationContext,
   ): Promise<void> {
     session.current_step = nextStepId;
     const advanceSaved = await this.casUpdateSession(session, {
@@ -652,7 +686,7 @@ export class FlowExecutor {
     if (shouldSkipNext) {
       const afterNext = await nextStep.next(ctx);
       if (afterNext) {
-        await this.advanceToStep(session, afterNext, from, ctx);
+        await this.advanceToStep(session, afterNext, from, ctx, tCtx);
       } else {
         await this.deactivateSession(session.id);
       }
@@ -663,7 +697,7 @@ export class FlowExecutor {
     if (nextOverride?.action === 'custom' && nextOverride.customPrompt) {
       if (!session.conversation_log) session.conversation_log = [];
       this.trackStepHistory(session, nextStepId);
-      const translatedCustom = await this.maybeTranslate(nextOverride.customPrompt, session);
+      const translatedCustom = await this.maybeTranslate(nextOverride.customPrompt, session, tCtx);
       session.conversation_log.push({ role: 'bot', content: translatedCustom, timestamp: new Date().toISOString() });
       if (!await this.persistConversationLog(session, session.conversation_log)) return;
       await this.sendText(from, translatedCustom);
@@ -681,7 +715,7 @@ export class FlowExecutor {
         session.current_step = advNap;
       }
       if (!await this.persistConversationLog(session, session.conversation_log || [])) return;
-      await this.sendMessages(from, messages);
+      await this.sendMessages(from, messages, undefined, tCtx);
     }
   }
 
@@ -699,7 +733,7 @@ export class FlowExecutor {
     }
   }
 
-  private async sendMessages(to: string, messages: PromptMessage[], session?: { session_data: Record<string, unknown> }): Promise<void> {
+  private async sendMessages(to: string, messages: PromptMessage[], session: { session_data: Record<string, unknown> } | undefined, tCtx: TranslationContext): Promise<void> {
     if (messages.length === 0) return;
 
     // Inject navigation footer on interactive messages (buttons/list) if not already set
@@ -717,7 +751,7 @@ export class FlowExecutor {
 
     for (let i = 0; i < messages.length; i++) {
       try {
-        const msg = shouldTranslate ? await this.translateMessage(messages[i], lang!) : messages[i];
+        const msg = shouldTranslate ? await this.translateMessage(messages[i], lang!, tCtx) : messages[i];
         await this.sendSingleMessage(to, msg);
         // Sequential sends preserve ordering — no artificial delay needed
       } catch (err) {
@@ -730,35 +764,35 @@ export class FlowExecutor {
   }
 
   /** Translate a single prompt message — text, body, button labels, list items */
-  private async translateMessage(msg: PromptMessage, lang: string): Promise<PromptMessage> {
+  private async translateMessage(msg: PromptMessage, lang: string, tCtx: TranslationContext): Promise<PromptMessage> {
     switch (msg.type) {
       case 'text':
-        return { ...msg, text: await translateBotResponse(msg.text, lang) };
+        return { ...msg, text: await translateBotResponse(msg.text, lang, tCtx) };
       case 'buttons':
         return {
           ...msg,
-          body: await translateBotResponse(msg.body, lang),
+          body: await translateBotResponse(msg.body, lang, tCtx),
           footer: msg.footer, // Don't translate — commands are English-only
           buttons: await Promise.all(msg.buttons.map(async b => ({
             ...b,
-            title: await translateBotResponse(b.title, lang),
+            title: await translateBotResponse(b.title, lang, tCtx),
           }))),
         };
       case 'list':
         return {
           ...msg,
-          body: await translateBotResponse(msg.body, lang),
+          body: await translateBotResponse(msg.body, lang, tCtx),
           footer: msg.footer, // Don't translate — commands are English-only
           items: await Promise.all(msg.items.map(async item => ({
             ...item,
-            description: item.description ? await translateBotResponse(item.description, lang) : item.description,
+            description: item.description ? await translateBotResponse(item.description, lang, tCtx) : item.description,
             // Keep title as-is for service/product names — business entered them
           }))),
         };
       case 'image':
         return {
           ...msg,
-          caption: msg.caption ? await translateBotResponse(msg.caption, lang) : msg.caption,
+          caption: msg.caption ? await translateBotResponse(msg.caption, lang, tCtx) : msg.caption,
         };
       default:
         return msg;
@@ -800,10 +834,11 @@ export class FlowExecutor {
   private async maybeTranslate(
     text: string,
     session: { session_data: Record<string, unknown> },
+    tCtx: TranslationContext,
   ): Promise<string> {
     const lang = session.session_data._detected_language as string | undefined;
     if (!lang || lang === 'en') return text;
-    return translateBotResponse(text, lang);
+    return translateBotResponse(text, lang, tCtx);
   }
 
   /** Extract text from prompt messages and append to session's conversation_log */
@@ -859,10 +894,11 @@ export class FlowExecutor {
     from: string,
     session: { id: string; session_data: Record<string, unknown>; business_id: string | null; version: number },
     ctx: FlowContext,
+    tCtx: TranslationContext,
   ): Promise<void> {
     const cap = (session.session_data.active_capability as string) || '';
     const flowType = ctx.business?.flow_type || 'scheduling';
-    const lang = (session.session_data._lang as string) || '';
+    const lang = (session.session_data._detected_language as string) || '';
 
     // Contextual buttons based on what the customer just did
     let buttons: Array<{ id: string; title: string }>;
@@ -901,7 +937,7 @@ export class FlowExecutor {
     }
 
     const body = lang
-      ? await translateBotResponse('What would you like to do next?', lang)
+      ? await translateBotResponse('What would you like to do next?', lang, tCtx)
       : 'What would you like to do next?';
 
     // Keep session alive on post_completion step so buttons work

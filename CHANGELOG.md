@@ -12,6 +12,20 @@ If something breaks, check this log to find what changed and when.
 - **What could break:** Admin panel direct DML on commercial keys will fail (intentionally — must use RPC). Any future code writing commercial platform_settings keys directly will be rejected by trigger. Non-commercial and ephemeral keys (`otp:*`, etc.) are unaffected.
 - **Refs:** #255, #250
 
+## 2026-08-31 — #274 (Slice A of #271): Localization safety boundary
+
+### What changed
+- **Removed module-global race condition in translate.ts**: `_currentBusinessId`, `_currentSupabase`, and `setTranslationContext()` eliminated. Translation context is now passed per-call via a `TranslationContext` object.
+- **Added entitlement check at translation boundary**: `translateBotResponse()` now requires a `TranslationContext` with `LanguageEntitlement`. Translation is fail-closed if `translationAllowed` is false or language is not in `allowedLanguages`. Free-tier businesses will no longer trigger paid Claude translation calls.
+- **Unified language key**: All references to the dead `session_data._lang` key replaced with `_detected_language` (the canonical key set by bot.service.ts and the language confirmation handler). Affected: executor.ts `t()` helper, `showPostCompletionMenu`, `sendLocalizedText`.
+- **Language switch entitlement gate**: Explicit "switch to X" validates translationAllowed + allowedLanguages + CERTIFIED_LANGUAGES before persisting `_detected_language`.
+- **ctx.t reads current language at call time**: The flow context `t()` helper reads `session.session_data._detected_language` dynamically instead of capturing a stale value at `execute()` entry.
+
+### Could break
+- Any code that imports `setTranslationContext` from `translate.ts` will fail to compile (intentional — the function is removed).
+- Any code that calls `translateBotResponse` without a `TranslationContext` will fail to compile (intentional — `ctx` is required).
+- The `_lang` session_data key is no longer read anywhere.
+
 ## 2026-08-31 — #245: readDurableRefundState fail-safe to provider_ambiguous
 
 ### What changed

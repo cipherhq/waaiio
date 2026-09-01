@@ -13,7 +13,8 @@ import { getEffectiveCapabilities as resolveEffectiveCaps } from '@/lib/capabili
 import { getCategoryLabels } from '@/lib/categoryConfig';
 import type { CapabilityId } from '@/lib/capabilities/types';
 import { parseSmartIntent, parseSmartIntentHybrid, matchServiceFromKeywords, buildAcknowledgment } from './smart-intent';
-import { translateBotResponse, detectLanguage, getLanguageName, setTranslationContext } from './translate';
+import { translateBotResponse, detectLanguage, getLanguageName, type TranslationContext } from './translate';
+import { getEffectiveLanguages, loadBusinessLanguages } from './language-policy';
 import { loadPlatformSettings } from '@/lib/platformSettings';
 import { checkAIFeature, isLanguageAllowed } from './ai-tier-guard';
 import { getCustomerHistory, buildReturnGreeting } from './customer-intelligence';
@@ -1597,7 +1598,13 @@ export class BotService {
                 : isGivingRebook ? 'Give Again' : `${actionWord} Again`;
 
               const lang = session.session_data._detected_language as string | undefined;
-              const translatedBody = lang ? await translateBotResponse(promptText, lang) : promptText;
+              // Build translation context from canonical result or business tier
+              const newSessionTCtx: TranslationContext = {
+                entitlement: canonicalResult?.languageEntitlement || getEffectiveLanguages(business!.subscription_tier),
+                businessId: businessId!,
+                supabase: this.supabase,
+              };
+              const translatedBody = lang ? await translateBotResponse(promptText, lang, newSessionTCtx) : promptText;
 
               await this.messageSender.sendButtons({
                 to: from,
@@ -1626,7 +1633,12 @@ export class BotService {
               );
               if (returnMsg) {
                 const lang = session.session_data._detected_language as string | undefined;
-                await this.sendText(from, lang ? await translateBotResponse(returnMsg, lang) : returnMsg);
+                const returnTCtx: TranslationContext = {
+                  entitlement: canonicalResult?.languageEntitlement || getEffectiveLanguages(business!.subscription_tier),
+                  businessId: businessId!,
+                  supabase: this.supabase,
+                };
+                await this.sendText(from, lang ? await translateBotResponse(returnMsg, lang, returnTCtx) : returnMsg);
               }
             }
           }
@@ -1741,7 +1753,12 @@ export class BotService {
               );
               if (ack) {
                 const lang = session.session_data._detected_language as string | undefined;
-                const translatedAck = lang ? await translateBotResponse(ack, lang) : ack;
+                const ackTCtx: TranslationContext = {
+                  entitlement: canonicalResult.languageEntitlement,
+                  businessId: businessId!,
+                  supabase: this.supabase,
+                };
+                const translatedAck = lang ? await translateBotResponse(ack, lang, ackTCtx) : ack;
                 await this.sendText(from, translatedAck);
               }
             }
@@ -1876,12 +1893,34 @@ export class BotService {
       delete updatedData._pending_language;
 
       if (text === 'lang_yes') {
+        // Re-validate entitlement + certification before persisting — policy may have
+        // changed since the confirmation was offered (tier downgrade, config change, etc.)
+        let langConfirmTier = 'free';
+        if (session.business_id) {
+          const { data: langBiz } = await this.supabase.from('businesses').select('subscription_tier').eq('id', session.business_id).single();
+          langConfirmTier = langBiz?.subscription_tier || 'free';
+        }
+        const confirmEntitlement = await this.buildTranslationContext(session.business_id, langConfirmTier);
+        const { CERTIFIED_LANGUAGES: certLangsConfirm } = await import('./language-policy');
+
+        if (!confirmEntitlement.entitlement.translationAllowed
+            || !confirmEntitlement.entitlement.allowedLanguages.includes(pendingLang)
+            || !certLangsConfirm.includes(pendingLang)) {
+          // Language no longer entitled/certified — reject without persisting
+          const langName = getLanguageName(pendingLang);
+          await this.supabase.from('bot_sessions')
+            .update({ session_data: updatedData })
+            .eq('id', session.id);
+          await this.sendText(from, `${langName} is no longer available for this business.`);
+          return;
+        }
+
         updatedData._detected_language = pendingLang;
         const langName = getLanguageName(pendingLang);
         await this.supabase.from('bot_sessions')
           .update({ session_data: updatedData })
           .eq('id', session.id);
-        const confirmMsg = await translateBotResponse(`Great! I'll respond in ${langName} from now on.`, pendingLang);
+        const confirmMsg = await translateBotResponse(`Great! I'll respond in ${langName} from now on.`, pendingLang, confirmEntitlement);
         await this.sendText(from, confirmMsg);
       } else {
         await this.supabase.from('bot_sessions')
@@ -2736,9 +2775,6 @@ export class BotService {
       );
     }
 
-    // Set translation context for AI usage tracking
-    setTranslationContext(session.business_id || null, this.supabase);
-
     _bmark('flow_exec_start');
     await this.flowExecutor.execute(from, text, session as unknown as BotSession, business, mediaUrl, messageType, resumedCanonical || undefined);
     _bmark('flow_exec_done');
@@ -2878,10 +2914,19 @@ export class BotService {
   }
 
   /** Send text with auto-translation based on session language */
-  private async sendLocalizedText(to: string, text: string, session: { session_data: Record<string, unknown> } | null): Promise<void> {
-    const lang = (session?.session_data?._lang as string) || '';
-    const translated = lang ? await translateBotResponse(text, lang) : text;
+  private async sendLocalizedText(to: string, text: string, session: { session_data: Record<string, unknown> } | null, tCtx: TranslationContext): Promise<void> {
+    const lang = (session?.session_data?._detected_language as string) || '';
+    const translated = lang ? await translateBotResponse(text, lang, tCtx) : text;
     return sendBotText(this.messageSender, to, translated);
+  }
+
+  /** Build TranslationContext for a business — resolves entitlement from tier + configured languages */
+  private async buildTranslationContext(businessId: string | null, tier: string): Promise<TranslationContext> {
+    const configuredLangs = businessId
+      ? await loadBusinessLanguages(this.supabase, businessId)
+      : null;
+    const entitlement = getEffectiveLanguages(tier, configuredLangs);
+    return { entitlement, businessId: businessId || '', supabase: this.supabase };
   }
 
   private async forwardToBusinessOwner(
