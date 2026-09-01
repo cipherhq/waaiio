@@ -77,10 +77,12 @@ describe('#244 Confirm route — resend safety verification', () => {
     expect(source).toContain("purpose === 'resend'");
   });
 
-  it('confirm route blocks resend when create intent is in dispatched/indeterminate', () => {
-    expect(source).toContain('dispatched');
-    expect(source).toContain('indeterminate');
-    expect(source).toContain('nonTerminalStates');
+  it('confirm route blocks resend when create intent is not terminal-known', () => {
+    // Only terminal-known states (sent/delivered/read) allow a separate resend
+    expect(source).toContain('terminalKnownStates');
+    expect(source).toContain("'sent'");
+    expect(source).toContain("'delivered'");
+    expect(source).toContain("'read'");
   });
 
   it('confirm route uses singleAttemptWhatsAppSend (not sendOrEmail)', () => {

@@ -439,16 +439,15 @@ describe('#244 confirm route — resend safety', () => {
     expect(data.reason).not.toBe('create_intent_unresolved');
   });
 
-  it('allows resend when create intent is failed (terminal)', async () => {
+  it('blocks resend when create intent is failed (reclaimable, not terminal-known)', async () => {
+    // 'failed' is reclaimable via claim_booking_confirmation — operator should retry
+    // the original create intent, not create a separate resend
     mockServiceFrom.mockImplementation((table: string) => {
       if (table === 'booking_confirmation_intents') {
         return buildChain({ data: { id: INTENT_ID, status: 'failed' } });
       }
       if (table === 'businesses') {
         return buildChain({ data: { id: BIZ_ID, name: 'Test Biz', country_code: 'NG', owner_id: USER_ID } });
-      }
-      if (table === 'bookings') {
-        return buildChain({ data: { reference_code: 'REF123', date: '2027-01-15', time: '10:00', service: { name: 'Haircut' }, appointment: null } });
       }
       return buildChain({ data: null });
     });
@@ -459,11 +458,37 @@ describe('#244 confirm route — resend safety', () => {
       purpose: 'resend',
     }));
 
+    expect(response.status).toBe(409);
     const data = await response.json();
-    expect(data.reason).not.toBe('create_intent_unresolved');
+    expect(data.reason).toBe('create_intent_unresolved');
+    expect(data.create_intent_status).toBe('failed');
   });
 
-  it('allows resend when no create intent exists', async () => {
+  it('blocks resend when create intent is pending (reclaimable)', async () => {
+    mockServiceFrom.mockImplementation((table: string) => {
+      if (table === 'booking_confirmation_intents') {
+        return buildChain({ data: { id: INTENT_ID, status: 'pending' } });
+      }
+      if (table === 'businesses') {
+        return buildChain({ data: { id: BIZ_ID, name: 'Test Biz', country_code: 'NG', owner_id: USER_ID } });
+      }
+      return buildChain({ data: null });
+    });
+
+    const response = await confirmPOST(makeConfirmRequest({
+      bookingId: BOOKING_ID,
+      businessId: BIZ_ID,
+      purpose: 'resend',
+    }));
+
+    expect(response.status).toBe(409);
+    const data = await response.json();
+    expect(data.reason).toBe('create_intent_unresolved');
+    expect(data.create_intent_status).toBe('pending');
+  });
+
+  it('uses create purpose when no create intent exists (even if purpose=resend)', async () => {
+    // When no create intent exists, the route should use purpose='create' instead of resend
     mockServiceFrom.mockImplementation((table: string) => {
       if (table === 'booking_confirmation_intents') {
         return buildChain({ data: null }); // No intent found
@@ -484,6 +509,7 @@ describe('#244 confirm route — resend safety', () => {
     }));
 
     const data = await response.json();
+    // Should NOT be blocked — falls through to create intent instead of resend
     expect(data.reason).not.toBe('create_intent_unresolved');
   });
 

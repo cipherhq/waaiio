@@ -215,11 +215,14 @@ export async function POST(request: NextRequest) {
     const booking = { id: slotResult.booking_id, reference_code: slotResult.reference_code };
 
     // ── Durable confirmation dispatch via intent lifecycle ──
-    // If sendConfirmation is true, we dispatch through the full
-    // claim → preflight → dispatch-barrier → single-attempt → outcome pipeline.
     // Booking creation succeeds regardless of notification outcome.
-    let notificationOutcome: 'sent' | 'failed' | 'indeterminate' | 'skipped' = 'skipped';
+    // WhatsApp and email are independent — email does not depend on WA channel.
+    let notificationOutcome: 'sent' | 'failed' | 'indeterminate' | 'preflight_failed' | 'skipped' = 'skipped';
     let whatsappSent = false;
+
+    const dateLabel = new Date(date + 'T00:00').toLocaleDateString('en-GB', {
+      weekday: 'long', day: 'numeric', month: 'long',
+    });
 
     if (sendConfirmation && customerPhone) {
       try {
@@ -233,7 +236,6 @@ export async function POST(request: NextRequest) {
 
         if (claimError || !claimResult?.claimed) {
           logger.warn('[MANUAL BOOKING] Intent claim failed:', claimError || claimResult);
-          // Booking still succeeds — notification can be retried later
           notificationOutcome = 'failed';
         } else {
           const intentId = claimResult.intent_id;
@@ -243,42 +245,23 @@ export async function POST(request: NextRequest) {
           const resolver = new ChannelResolver(serviceClient);
           const resolved = await resolver.resolveByBusinessId(businessId);
 
-          if (!resolved || !resolved.cloud) {
-            // No WhatsApp channel — record as pre-dispatch failure (reclaimable)
-            await serviceClient.rpc('record_booking_confirmation_outcome', {
-              p_intent_id: intentId,
-              p_claim_token: claimToken,
-              p_outcome: 'failed',
-              p_error_message: 'no_whatsapp_channel_available',
-            });
-            notificationOutcome = 'failed';
+          if (!resolved?.cloud) {
+            // No WhatsApp channel — intent stays in claiming (reclaimable after lease)
+            logger.warn('[MANUAL BOOKING] No WhatsApp channel, intent stays reclaimable');
+            notificationOutcome = 'preflight_failed';
           } else {
             const phone = customerPhone.startsWith('+') ? customerPhone.slice(1) : customerPhone;
-            const dateLabel = new Date(date + 'T00:00').toLocaleDateString('en-GB', {
-              weekday: 'long',
-              day: 'numeric',
-              month: 'long',
-            });
             const messageText = [
-              '*Booking Confirmed!*',
-              '',
-              `${biz.name}`,
-              `${itemName}`,
-              `${dateLabel}`,
-              `${time}`,
-              `Ref: *${booking.reference_code}*`,
-              '',
-              'See you there!',
+              '*Booking Confirmed!*', '',
+              `${biz.name}`, `${itemName}`, `${dateLabel}`, `${time}`,
+              `Ref: *${booking.reference_code}*`, '', 'See you there!',
             ].join('\n');
 
             // Step 3: Mark dispatched — irreversible barrier
-            // After this point, any failure is indeterminate (message may have been sent)
             const { data: dispatchResult, error: dispatchError } = await serviceClient
               .rpc('mark_booking_confirmation_dispatched', {
-                p_intent_id: intentId,
-                p_claim_token: claimToken,
-                p_channel: 'whatsapp',
-                p_template_name: 'booking_confirmation_text',
+                p_intent_id: intentId, p_claim_token: claimToken,
+                p_channel: 'whatsapp', p_template_name: 'booking_confirmation_text',
               });
 
             if (dispatchError || !dispatchResult?.dispatched) {
@@ -286,76 +269,60 @@ export async function POST(request: NextRequest) {
               notificationOutcome = 'failed';
             } else {
               // Step 4: Exactly ONE provider API call — no retry, no fallback
-              const sendResult = await singleAttemptWhatsAppSend(
-                resolved.cloud,
-                phone,
-                messageText,
-              );
+              const sendResult = await singleAttemptWhatsAppSend(resolved.cloud, phone, messageText);
 
-              // Step 5: Record outcome based on provider response
               if (sendResult.outcome === 'sent') {
                 await serviceClient.rpc('record_booking_confirmation_outcome', {
-                  p_intent_id: intentId,
-                  p_claim_token: claimToken,
-                  p_outcome: 'sent',
-                  p_provider_message_id: sendResult.providerMessageId,
+                  p_intent_id: intentId, p_claim_token: claimToken,
+                  p_outcome: 'sent', p_provider_message_id: sendResult.providerMessageId,
                 });
                 whatsappSent = true;
                 notificationOutcome = 'sent';
-              } else if (sendResult.outcome === 'unknown') {
-                // Ambiguous provider outcome — don't know if message was sent
+              } else {
                 await serviceClient.rpc('record_booking_confirmation_outcome', {
-                  p_intent_id: intentId,
-                  p_claim_token: claimToken,
+                  p_intent_id: intentId, p_claim_token: claimToken,
                   p_outcome: 'indeterminate',
                   p_error_message: sendResult.error || 'ambiguous_provider_outcome',
                 });
-                notificationOutcome = 'indeterminate';
-              } else {
-                // 'failed' after dispatch barrier = indeterminate per DB contract
-                // But singleAttemptWhatsAppSend only returns 'failed' for definitive 4xx
-                // errors where we know the message was NOT sent. However, the DB RPC
-                // enforces that post-dispatch failures must use 'indeterminate'.
-                // A 4xx after dispatch is actually safe — Meta rejected it definitively.
-                // We record as indeterminate to satisfy the DB constraint, but log the detail.
-                await serviceClient.rpc('record_booking_confirmation_outcome', {
-                  p_intent_id: intentId,
-                  p_claim_token: claimToken,
-                  p_outcome: 'indeterminate',
-                  p_error_message: `post_dispatch_4xx: ${sendResult.error}`,
-                });
-                notificationOutcome = 'failed';
-              }
-
-              // Best-effort email alongside (independent of WhatsApp intent lifecycle)
-              try {
-                const emailAddr = customerEmail || await findCustomerEmail(serviceClient, customerPhone, businessId);
-                if (emailAddr) {
-                  await sendEmail({
-                    to: emailAddr,
-                    subject: `Booking Confirmed - ${biz.name}`,
-                    html: businessNotificationEmail({
-                      businessName: biz.name,
-                      title: 'Booking Confirmed',
-                      message: `Your booking at ${biz.name} has been confirmed.`,
-                      details: {
-                        [appointmentId ? 'Appointment' : 'Service']: itemName,
-                        'Date': dateLabel,
-                        'Time': time,
-                        'Reference': booking.reference_code,
-                      },
-                    }).html,
-                  });
-                }
-              } catch (emailErr) {
-                logger.warn('[MANUAL BOOKING] Email send failed (non-critical):', emailErr);
+                notificationOutcome = sendResult.outcome === 'unknown' ? 'indeterminate' : 'failed';
               }
             }
           }
         }
       } catch (err) {
-        logger.error('[MANUAL BOOKING] Notification error:', err);
+        logger.error('[MANUAL BOOKING] WhatsApp notification error:', err);
         notificationOutcome = 'failed';
+      }
+    }
+
+    // ── Email confirmation — independent of WhatsApp ──
+    // Attempted regardless of WhatsApp channel availability or outcome.
+    // Email success does NOT change the WhatsApp intent state.
+    let emailOutcome: 'sent' | 'failed' | 'not_attempted' = 'not_attempted';
+    if (sendConfirmation) {
+      try {
+        const emailAddr = customerEmail || (customerPhone ? await findCustomerEmail(serviceClient, customerPhone, businessId) : null);
+        if (emailAddr) {
+          await sendEmail({
+            to: emailAddr,
+            subject: `Booking Confirmed - ${biz.name}`,
+            html: businessNotificationEmail({
+              businessName: biz.name,
+              title: 'Booking Confirmed',
+              message: `Your booking at ${biz.name} has been confirmed.`,
+              details: {
+                [appointmentId ? 'Appointment' : 'Service']: itemName,
+                'Date': dateLabel,
+                'Time': time,
+                'Reference': booking.reference_code,
+              },
+            }).html,
+          });
+          emailOutcome = 'sent';
+        }
+      } catch (emailErr) {
+        logger.warn('[MANUAL BOOKING] Email send failed (non-critical):', emailErr);
+        emailOutcome = 'failed';
       }
     }
 

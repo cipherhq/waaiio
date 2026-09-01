@@ -59,10 +59,14 @@ export async function POST(request: NextRequest) {
     }
 
     // ── Resend safety gate ──
-    // Before allowing purpose='resend', check the 'create' intent status.
-    // If the original create intent is in a non-terminal state (dispatched,
-    // indeterminate, claiming), block the resend — we can't safely send again
-    // when we don't know if the first message was delivered.
+    // A separate 'resend' intent is only safe after the original 'create' delivery
+    // is terminal-known (sent/delivered/read). All other states are either reclaimable
+    // (pending, failed) or unresolved (claiming, dispatched, indeterminate) — creating
+    // a separate resend would risk two logical intents for the same confirmation.
+    //
+    // If no create intent exists, use purpose='create' instead of treating absence
+    // as resend eligibility.
+    let effectivePurpose = purpose;
     if (purpose === 'resend') {
       const { data: createIntent } = await serviceClient
         .from('booking_confirmation_intents')
@@ -71,27 +75,34 @@ export async function POST(request: NextRequest) {
         .eq('purpose', 'create')
         .maybeSingle();
 
-      if (createIntent) {
-        const nonTerminalStates = ['claiming', 'dispatched', 'indeterminate'];
-        if (nonTerminalStates.includes(createIntent.status)) {
+      if (!createIntent) {
+        // No create intent exists — use 'create' purpose, not resend
+        effectivePurpose = 'create';
+      } else {
+        const terminalKnownStates = ['sent', 'delivered', 'read'];
+        if (!terminalKnownStates.includes(createIntent.status)) {
+          // Create intent is not terminal-known — block resend.
+          // For pending/failed: retry the original create intent instead.
+          // For claiming/dispatched/indeterminate: must resolve first.
           return NextResponse.json({
             success: false,
             reason: 'create_intent_unresolved',
             create_intent_status: createIntent.status,
             message: `Cannot resend: the original confirmation is in '${createIntent.status}' state. ` +
-              'Resolve the original intent before resending.',
+              (createIntent.status === 'pending' || createIntent.status === 'failed'
+                ? 'Retry the original confirmation instead of creating a new resend.'
+                : 'Resolve the original intent before resending.'),
           }, { status: 409 });
         }
+        // Terminal-known (sent/delivered/read) — safe to create a deliberate resend
       }
-      // If create intent doesn't exist or is in a terminal state (sent, delivered,
-      // read, failed, pending), resend is allowed.
     }
 
     // Step 1: Claim the confirmation intent
     const { data: claimResult, error: claimError } = await serviceClient
       .rpc('claim_booking_confirmation', {
         p_booking_id: bookingId,
-        p_purpose: purpose,
+        p_purpose: effectivePurpose,
         p_business_id: businessId,
       });
 
@@ -113,27 +124,7 @@ export async function POST(request: NextRequest) {
     const guestPhone = claimResult.guest_phone;
     const guestEmail = claimResult.guest_email;
 
-    // Step 2: Resolve channel and do all preflight BEFORE dispatch barrier
-    const resolver = new ChannelResolver(serviceClient);
-    const resolved = await resolver.resolveByBusinessId(businessId);
-
-    if (!resolved || !resolved.cloud) {
-      // No WhatsApp channel available — record as pre-dispatch failure (reclaimable)
-      await serviceClient.rpc('record_booking_confirmation_outcome', {
-        p_intent_id: intentId,
-        p_claim_token: claimToken,
-        p_outcome: 'failed',
-        p_error_message: 'no_whatsapp_channel_available',
-      });
-
-      return NextResponse.json({
-        success: false,
-        reason: 'no_channel',
-        intent_id: intentId,
-      }, { status: 422 });
-    }
-
-    // Fetch booking details for the message
+    // Fetch booking details (shared by both WhatsApp and email)
     const { data: bookingData } = await serviceClient
       .from('bookings')
       .select(`
@@ -144,113 +135,74 @@ export async function POST(request: NextRequest) {
       .eq('id', bookingId)
       .single();
 
-    if (!bookingData) {
-      await serviceClient.rpc('record_booking_confirmation_outcome', {
-        p_intent_id: intentId,
-        p_claim_token: claimToken,
-        p_outcome: 'failed',
-        p_error_message: 'booking_data_not_found',
-      });
-      return NextResponse.json({ error: 'Booking data not found' }, { status: 404 });
-    }
+    const itemName = bookingData
+      ? (bookingData.service as any)?.name || (bookingData.appointment as any)?.name || 'Booking'
+      : 'Booking';
+    const dateLabel = bookingData
+      ? new Date(bookingData.date + 'T00:00').toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' })
+      : '';
 
-    const itemName = (bookingData.service as any)?.name || (bookingData.appointment as any)?.name || 'Booking';
+    // ── WhatsApp confirmation via durable intent lifecycle ──
+    let waOutcome: 'sent' | 'indeterminate' | 'preflight_failed' = 'preflight_failed';
 
-    if (!guestPhone) {
-      await serviceClient.rpc('record_booking_confirmation_outcome', {
-        p_intent_id: intentId,
-        p_claim_token: claimToken,
-        p_outcome: 'failed',
-        p_error_message: 'no_phone_number',
-      });
-      return NextResponse.json({
-        success: false,
-        reason: 'no_contact_method',
-        intent_id: intentId,
-      }, { status: 422 });
-    }
+    const resolver = new ChannelResolver(serviceClient);
+    const resolved = await resolver.resolveByBusinessId(businessId);
 
-    // Step 3: Mark dispatched — this is the irreversible barrier
-    // All preflight is done. After this, any failure is indeterminate.
-    const { data: dispatchResult, error: dispatchError } = await serviceClient
-      .rpc('mark_booking_confirmation_dispatched', {
-        p_intent_id: intentId,
-        p_claim_token: claimToken,
-        p_channel: 'whatsapp',
-        p_template_name: 'booking_confirmation_text',
-      });
-
-    if (dispatchError || !dispatchResult?.dispatched) {
-      logger.error('[BOOKING CONFIRM] Dispatch barrier failed:', dispatchError || dispatchResult);
-      return NextResponse.json({
-        success: false,
-        reason: 'dispatch_failed',
-        intent_id: intentId,
-      }, { status: 500 });
-    }
-
-    // Step 4: Exactly ONE provider API call — no retry, no fallback
-    const phone = guestPhone.startsWith('+') ? guestPhone.slice(1) : guestPhone;
-    const dateLabel = new Date(bookingData.date + 'T00:00').toLocaleDateString('en-GB', {
-      weekday: 'long',
-      day: 'numeric',
-      month: 'long',
-    });
-    const messageText = [
-      '*Booking Confirmed!*',
-      '',
-      `${biz.name}`,
-      `${itemName}`,
-      `${dateLabel}`,
-      `${bookingData.time}`,
-      `Ref: *${bookingData.reference_code}*`,
-      '',
-      'See you there!',
-    ].join('\n');
-
-    const sendResult = await singleAttemptWhatsAppSend(
-      resolved.cloud,
-      phone,
-      messageText,
-    );
-
-    // Step 5: Record outcome based on exact provider response
-    let outcome: 'sent' | 'indeterminate';
-
-    if (sendResult.outcome === 'sent') {
-      await serviceClient.rpc('record_booking_confirmation_outcome', {
-        p_intent_id: intentId,
-        p_claim_token: claimToken,
-        p_outcome: 'sent',
-        p_provider_message_id: sendResult.providerMessageId,
-      });
-      outcome = 'sent';
-    } else if (sendResult.outcome === 'unknown') {
-      // Ambiguous provider outcome — message may or may not have been sent
-      await serviceClient.rpc('record_booking_confirmation_outcome', {
-        p_intent_id: intentId,
-        p_claim_token: claimToken,
-        p_outcome: 'indeterminate',
-        p_error_message: sendResult.error || 'ambiguous_provider_outcome',
-      });
-      outcome = 'indeterminate';
+    if (!resolved?.cloud || !guestPhone || !bookingData) {
+      // WhatsApp preflight failure — intent stays in 'claiming' (reclaimable after lease expiry).
+      // Do NOT call record_booking_confirmation_outcome — intent is not yet dispatched.
+      const reason = !resolved?.cloud ? 'no_whatsapp_channel' : !guestPhone ? 'no_phone' : 'no_booking_data';
+      logger.warn(`[BOOKING CONFIRM] WhatsApp preflight failed: ${reason}`);
+      // waOutcome stays 'preflight_failed'
     } else {
-      // 'failed' after dispatch barrier — per DB contract, post-dispatch failure
-      // must be recorded as indeterminate (even though 4xx is definitive, the
-      // DB enforces this constraint for safety)
-      await serviceClient.rpc('record_booking_confirmation_outcome', {
-        p_intent_id: intentId,
-        p_claim_token: claimToken,
-        p_outcome: 'indeterminate',
-        p_error_message: `post_dispatch_4xx: ${sendResult.error}`,
-      });
-      outcome = 'indeterminate';
+      // All WhatsApp preflight passed — proceed through dispatch barrier
+      const { data: dispatchResult, error: dispatchError } = await serviceClient
+        .rpc('mark_booking_confirmation_dispatched', {
+          p_intent_id: intentId,
+          p_claim_token: claimToken,
+          p_channel: 'whatsapp',
+          p_template_name: 'booking_confirmation_text',
+        });
+
+      if (dispatchError || !dispatchResult?.dispatched) {
+        logger.error('[BOOKING CONFIRM] Dispatch barrier failed:', dispatchError || dispatchResult);
+        // waOutcome stays 'preflight_failed'
+      } else {
+        // Exactly ONE provider API call — no retry, no fallback
+        const phone = guestPhone.startsWith('+') ? guestPhone.slice(1) : guestPhone;
+        const messageText = [
+          '*Booking Confirmed!*', '',
+          `${biz.name}`, `${itemName}`, `${dateLabel}`, `${bookingData.time}`,
+          `Ref: *${bookingData.reference_code}*`, '', 'See you there!',
+        ].join('\n');
+
+        const sendResult = await singleAttemptWhatsAppSend(resolved.cloud, phone, messageText);
+
+        if (sendResult.outcome === 'sent') {
+          await serviceClient.rpc('record_booking_confirmation_outcome', {
+            p_intent_id: intentId, p_claim_token: claimToken,
+            p_outcome: 'sent', p_provider_message_id: sendResult.providerMessageId,
+          });
+          waOutcome = 'sent';
+        } else {
+          // Unknown or failed after dispatch → indeterminate
+          await serviceClient.rpc('record_booking_confirmation_outcome', {
+            p_intent_id: intentId, p_claim_token: claimToken,
+            p_outcome: 'indeterminate',
+            p_error_message: sendResult.error || 'ambiguous_provider_outcome',
+          });
+          waOutcome = 'indeterminate';
+        }
+      }
     }
 
-    // Best-effort email alongside (independent of WhatsApp intent lifecycle)
+    // ── Email confirmation — independent of WhatsApp ──
+    // Attempted regardless of WhatsApp channel availability or outcome.
+    // Email success does NOT change the WhatsApp intent state.
+    let emailOutcome: 'sent' | 'failed' | 'not_attempted' = 'not_attempted';
     try {
       const emailAddr = guestEmail || (guestPhone ? await findCustomerEmail(serviceClient, guestPhone, businessId) : null);
-      if (emailAddr) {
+      if (emailAddr && bookingData) {
         await sendEmail({
           to: emailAddr,
           subject: `Booking Confirmed - ${biz.name}`,
@@ -266,16 +218,19 @@ export async function POST(request: NextRequest) {
             },
           }).html,
         });
+        emailOutcome = 'sent';
       }
     } catch (emailErr) {
       logger.warn('[BOOKING CONFIRM] Email send failed (non-critical):', emailErr);
+      emailOutcome = 'failed';
     }
 
     return NextResponse.json({
-      success: outcome === 'sent',
+      success: waOutcome === 'sent',
       intent_id: intentId,
       channel: 'whatsapp',
-      outcome,
+      outcome: waOutcome,
+      email: emailOutcome,
     });
   } catch (err) {
     logger.error('[BOOKING CONFIRM] Unexpected error:', err);
