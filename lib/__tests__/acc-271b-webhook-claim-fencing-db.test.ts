@@ -159,16 +159,19 @@ describe('Slice B — webhook claim/reclaim/fencing (real PostgreSQL)', () => {
 
   it('ACL: anon cannot claim', () => {
     const eid = uniqueEventId();
-    const { exitCode, stderr } = callRpc(`SELECT public.claim_webhook_event('${eid}', 'meta_cloud', 'message');`, 'anon');
-    expect(exitCode).not.toBe(0);
-    expect(stderr).toMatch(/permission denied/i);
+    const r = runSQL(`SET ROLE anon;\nSELECT public.claim_webhook_event('${eid}', 'meta_cloud', 'message');`);
+    expect(r.exitCode).not.toBe(0);
+    // Permission denied may be in stderr or stdout depending on psql version
+    const output = `${r.stderr} ${r.stdout}`;
+    expect(output).toMatch(/permission denied/i);
   });
 
   it('ACL: authenticated cannot claim', () => {
     const eid = uniqueEventId();
-    const { exitCode, stderr } = callRpc(`SELECT public.claim_webhook_event('${eid}', 'meta_cloud', 'message');`, 'authenticated');
-    expect(exitCode).not.toBe(0);
-    expect(stderr).toMatch(/permission denied/i);
+    const r = runSQL(`SET ROLE authenticated;\nSELECT public.claim_webhook_event('${eid}', 'meta_cloud', 'message');`);
+    expect(r.exitCode).not.toBe(0);
+    const output = `${r.stderr} ${r.stdout}`;
+    expect(output).toMatch(/permission denied/i);
   });
 
   // ── Deterministic overlap proofs ──
