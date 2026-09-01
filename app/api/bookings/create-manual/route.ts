@@ -3,8 +3,10 @@ import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { requireAnyCapability } from '@/lib/capabilities/api-guard';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
-import { sendOrEmail, findCustomerEmail } from '@/lib/channels/send-or-email';
+import { singleAttemptWhatsAppSend } from '@/lib/channels/single-attempt-send';
+import { findCustomerEmail } from '@/lib/channels/send-or-email';
 import { businessNotificationEmail } from '@/lib/email/templates';
+import { sendEmail } from '@/lib/email/client';
 import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 import { logger } from '@/lib/logger';
 
@@ -160,9 +162,6 @@ export async function POST(request: NextRequest) {
     }
 
     // ── Resolve customer identity (bookings.user_id = customer, not operator) ──
-    // Uses the canonical createWhatsAppUser helper: finds existing profile by
-    // phone/email, or creates a new auth user + profile. Same mechanism used by
-    // the bot scheduling flow and public booking route.
     const { createWhatsAppUser } = await import('@/lib/bot/flows/shared/user');
     const nameParts = customerName.trim().split(/\s+/);
     const firstName = nameParts[0] || customerName;
@@ -215,71 +214,134 @@ export async function POST(request: NextRequest) {
 
     const booking = { id: slotResult.booking_id, reference_code: slotResult.reference_code };
 
-    // Send confirmation via WhatsApp (with email fallback) if requested
+    // ── Durable confirmation dispatch via intent lifecycle ──
+    // Booking creation succeeds regardless of notification outcome.
+    // WhatsApp and email are independent — email does not depend on WA channel.
+    let notificationOutcome: 'sent' | 'failed' | 'indeterminate' | 'preflight_failed' | 'skipped' = 'skipped';
     let whatsappSent = false;
+
+    const dateLabel = new Date(date + 'T00:00').toLocaleDateString('en-GB', {
+      weekday: 'long', day: 'numeric', month: 'long',
+    });
+
     if (sendConfirmation && customerPhone) {
       try {
-        const resolver = new ChannelResolver(serviceClient);
-        const resolved = await resolver.resolveByBusinessId(businessId);
-        if (resolved) {
-          const phone = customerPhone.startsWith('+') ? customerPhone.slice(1) : customerPhone;
-          const dateLabel = new Date(date + 'T00:00').toLocaleDateString('en-GB', {
-            weekday: 'long',
-            day: 'numeric',
-            month: 'long',
+        // Step 1: Claim the durable confirmation intent (creates + claims atomically)
+        const { data: claimResult, error: claimError } = await serviceClient
+          .rpc('claim_booking_confirmation', {
+            p_booking_id: booking.id,
+            p_purpose: 'create',
+            p_business_id: businessId,
           });
-          const messageText = [
-            '*Booking Confirmed!*',
-            '',
-            `${biz.name}`,
-            `${itemName}`,
-            `${dateLabel}`,
-            `${time}`,
-            `Ref: *${booking.reference_code}*`,
-            '',
-            'See you there!',
-          ].join('\n');
 
-          // Use provided email or look up from customer profile
-          const emailAddr = customerEmail || await findCustomerEmail(serviceClient, customerPhone, businessId);
+        if (claimError || !claimResult?.claimed) {
+          logger.warn('[MANUAL BOOKING] Intent claim failed:', claimError || claimResult);
+          notificationOutcome = 'failed';
+        } else {
+          const intentId = claimResult.intent_id;
+          const claimToken = claimResult.claim_token;
 
-          const result = await sendOrEmail({
-            supabase: serviceClient,
-            sender: resolved.sender,
-            to: phone,
-            text: messageText,
-            businessName: biz.name,
-            alwaysEmail: true,
-            email: emailAddr ? {
-              address: emailAddr,
-              subject: `Booking Confirmed - ${biz.name}`,
-              html: businessNotificationEmail({
-                businessName: biz.name,
-                title: 'Booking Confirmed',
-                message: `Your booking at ${biz.name} has been confirmed.`,
-                details: {
-                  [appointmentId ? 'Appointment' : 'Service']: itemName,
-                  'Date': dateLabel,
-                  'Time': time,
-                  'Reference': booking.reference_code,
-                },
-              }).html,
-            } : null,
-          });
-          whatsappSent = result.whatsapp === 'sent';
+          // Step 2: All preflight BEFORE the dispatch barrier
+          const resolver = new ChannelResolver(serviceClient);
+          const resolved = await resolver.resolveByBusinessId(businessId);
+
+          if (!resolved?.cloud) {
+            // No WhatsApp channel — intent stays in claiming (reclaimable after lease)
+            logger.warn('[MANUAL BOOKING] No WhatsApp channel, intent stays reclaimable');
+            notificationOutcome = 'preflight_failed';
+          } else {
+            const phone = customerPhone.startsWith('+') ? customerPhone.slice(1) : customerPhone;
+            const messageText = [
+              '*Booking Confirmed!*', '',
+              `${biz.name}`, `${itemName}`, `${dateLabel}`, `${time}`,
+              `Ref: *${booking.reference_code}*`, '', 'See you there!',
+            ].join('\n');
+
+            // Step 3: Mark dispatched — irreversible barrier
+            const { data: dispatchResult, error: dispatchError } = await serviceClient
+              .rpc('mark_booking_confirmation_dispatched', {
+                p_intent_id: intentId, p_claim_token: claimToken,
+                p_channel: 'whatsapp', p_template_name: 'booking_confirmation_text',
+              });
+
+            if (dispatchError || !dispatchResult?.dispatched) {
+              logger.error('[MANUAL BOOKING] Dispatch barrier failed:', dispatchError || dispatchResult);
+              notificationOutcome = 'failed';
+            } else {
+              // Step 4: Exactly ONE provider API call — no retry, no fallback
+              const sendResult = await singleAttemptWhatsAppSend(resolved.cloud, phone, messageText);
+
+              // Step 5: Record outcome — persistence must positively succeed
+              const durableOutcome = sendResult.outcome === 'sent' ? 'sent' : 'indeterminate';
+              const { data: outcomeData, error: outcomeError } = await serviceClient.rpc('record_booking_confirmation_outcome', {
+                p_intent_id: intentId, p_claim_token: claimToken,
+                p_outcome: durableOutcome,
+                p_provider_message_id: sendResult.providerMessageId,
+                p_error_message: sendResult.outcome !== 'sent' ? (sendResult.error || 'ambiguous_provider_outcome') : null,
+              });
+
+              const persisted = !outcomeError && (outcomeData as Record<string, unknown>)?.recorded === true;
+              if (!persisted) {
+                // Persistence not confirmed — durable row remains dispatched/unknown
+                logger.error('[MANUAL BOOKING] Outcome persistence not confirmed:', outcomeError ?? outcomeData);
+                notificationOutcome = 'indeterminate';
+              } else if (sendResult.outcome === 'sent') {
+                whatsappSent = true;
+                notificationOutcome = 'sent';
+              } else {
+                // Durable state is 'indeterminate' — return must agree
+                notificationOutcome = 'indeterminate';
+              }
+            }
+          }
         }
       } catch (err) {
-        logger.error('[MANUAL BOOKING] Notification error:', err);
+        logger.error('[MANUAL BOOKING] WhatsApp notification error:', err);
+        notificationOutcome = 'failed';
       }
     }
 
-    // Update customer profile (non-blocking)
+    // ── Email confirmation — independent of WhatsApp ──
+    // Attempted regardless of WhatsApp channel availability or outcome.
+    // Email success does NOT change the WhatsApp intent state.
+    let emailOutcome: 'sent' | 'failed' | 'not_attempted' = 'not_attempted';
+    if (sendConfirmation) {
+      try {
+        const emailAddr = customerEmail || (customerPhone ? await findCustomerEmail(serviceClient, customerPhone, businessId) : null);
+        if (emailAddr) {
+          await sendEmail({
+            to: emailAddr,
+            subject: `Booking Confirmed - ${biz.name}`,
+            html: businessNotificationEmail({
+              businessName: biz.name,
+              title: 'Booking Confirmed',
+              message: `Your booking at ${biz.name} has been confirmed.`,
+              details: {
+                [appointmentId ? 'Appointment' : 'Service']: itemName,
+                'Date': dateLabel,
+                'Time': time,
+                'Reference': booking.reference_code,
+              },
+            }).html,
+          });
+          emailOutcome = 'sent';
+        }
+      } catch (emailErr) {
+        logger.warn('[MANUAL BOOKING] Email send failed (non-critical):', emailErr);
+        emailOutcome = 'failed';
+      }
+    }
+
+    // Update customer profile (non-blocking).
+    // Manual bookings pass p_booking_amount: 0 — no payment has occurred,
+    // so we must NOT inflate customer total_spent/LTV. Spend is only
+    // recorded when an actual payment is processed (#244).
     try {
       await serviceClient.rpc('upsert_customer_profile', {
         p_business_id: businessId,
         p_phone: customerPhone,
         p_name: customerName,
-        p_booking_amount: itemPrice,
+        p_booking_amount: 0,
         p_is_booking: true,
         p_is_order: false,
       });
@@ -292,6 +354,7 @@ export async function POST(request: NextRequest) {
       booking_id: booking.id,
       reference_code: booking.reference_code,
       whatsapp_sent: whatsappSent,
+      notification_outcome: notificationOutcome,
     });
   } catch (err) {
     logger.error('[MANUAL BOOKING] Unexpected error:', err);
