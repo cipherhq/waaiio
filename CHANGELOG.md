@@ -3,6 +3,21 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-09-01 — #247: Preflight failure persistence — no fake claim_token=NULL
+
+### What changed
+- **Preflight failure handling:** Removed invalid `record_tracking_notification_outcome(p_claim_token=NULL)` call on preflight failure. The RPC requires a matching claim token + `status='dispatched'`, neither of which exist pre-claim. Notification now stays in `pending` (retryable) and returns typed `preflight_failed` status.
+- Tests updated to assert `preflight_failed` status and verify notification row remains in retryable pre-dispatch state.
+
+### Files changed
+- `app/api/orders/[id]/tracking/route.ts` (preflight failure returns `preflight_failed`, no invalid RPC call)
+- `app/api/orders/[id]/tracking/__tests__/dispatch-boundary.test.ts` (updated preflight failure assertions)
+- `app/api/orders/[id]/tracking/__tests__/tracking-edit.test.ts` (updated mock setup + assertion)
+- `CHANGELOG.md` (this entry)
+
+### Could break
+- API consumers expecting `notification.status === 'failed'` for preflight failures now receive `'preflight_failed'`. Both are non-success.
+
 ## 2026-08-31 — #247: Notification dispatch/recovery boundary correction
 
 ### What changed

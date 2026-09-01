@@ -104,7 +104,7 @@ export async function PATCH(
     }
 
     // ── Notification dispatch (fire-and-forget relative to tracking edit) ──
-    let notificationStatus: 'not_requested' | 'sent' | 'failed' | 'indeterminate' =
+    let notificationStatus: 'not_requested' | 'sent' | 'failed' | 'indeterminate' | 'preflight_failed' =
       'not_requested';
     let providerMessageId: string | undefined;
 
@@ -246,7 +246,7 @@ async function dispatchTrackingNotification(
   notificationId: string,
   carrier: string | null,
   trackingNumber: string | null,
-): Promise<'sent' | 'failed' | 'indeterminate'> {
+): Promise<'sent' | 'failed' | 'indeterminate' | 'preflight_failed'> {
   try {
     // ── Step 1: ALL preflight BEFORE any claim/dispatch ──
     const preflight = await performNotificationPreflight(
@@ -258,16 +258,13 @@ async function dispatchTrackingNotification(
     );
 
     if ('error' in preflight) {
-      // Deterministic preflight failure — record as failed, safely retryable
-      logger.warn('[TRACKING-NOTIF] Preflight failed:', preflight.error);
-      await service.rpc('record_tracking_notification_outcome', {
-        p_notification_id: notificationId,
-        p_claim_token: null,
-        p_outcome: 'failed',
-        p_provider_message_id: null,
-        p_error_message: `Preflight: ${preflight.error}`,
-      });
-      return 'failed';
+      // Deterministic preflight failure — notification row stays in 'pending' (retryable).
+      // Do NOT call record_tracking_notification_outcome here: the RPC requires a matching
+      // claim_token + status='dispatched', neither of which exist pre-claim.
+      // The pending state is the correct durable representation — a later retry can
+      // claim and dispatch successfully once the preflight issue is resolved.
+      logger.warn('[TRACKING-NOTIF] Preflight failed, notification remains pending:', preflight.error);
+      return 'preflight_failed';
     }
 
     const { phone, message, referenceCode, sender } = preflight.data;

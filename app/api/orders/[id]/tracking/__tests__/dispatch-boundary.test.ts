@@ -175,10 +175,10 @@ function setupFullNotificationScenario(opts: {
     },
   ];
 
-  // Preflight outcome RPC (for preflight failure recording)
+  // Preflight failure: no RPC calls after update_order_tracking — notification stays pending.
+  // Only proceed to claim/dispatch/outcome RPCs if preflight data is available.
   if (!hasPhone || !hasChannel) {
-    // record_tracking_notification_outcome for preflight failure
-    rpcCalls.push({ data: { success: true }, error: null });
+    // No additional RPCs — preflight_failed, notification remains in 'pending'
   } else {
     // claim
     if (claimBehavior === 'success') {
@@ -373,7 +373,7 @@ describe('Dispatch boundary — provider call counts', () => {
     );
   });
 
-  it('deterministic preflight failure (no phone): ZERO provider calls, safely retryable', async () => {
+  it('deterministic preflight failure (no phone): ZERO provider calls, notification stays pending', async () => {
     setupFullNotificationScenario({ templateBehavior: 'success', hasPhone: false });
 
     const req = makeRequest({
@@ -387,14 +387,15 @@ describe('Dispatch boundary — provider call counts', () => {
 
     expect(res.status).toBe(200);
     expect(body.success).toBe(true);
-    expect(body.notification.status).toBe('failed');
+    // Notification row stays in 'pending' — no claim/dispatch occurred, safely retryable
+    expect(body.notification.status).toBe('preflight_failed');
     // ZERO provider calls — failed before dispatch barrier
     expect(providerCallCount).toBe(0);
     expect(mockSendTemplate).not.toHaveBeenCalled();
     expect(mockSendText).not.toHaveBeenCalled();
   });
 
-  it('deterministic preflight failure (no channel): ZERO provider calls', async () => {
+  it('deterministic preflight failure (no channel): ZERO provider calls, notification stays pending', async () => {
     setupFullNotificationScenario({ templateBehavior: 'success', hasChannel: false });
 
     const req = makeRequest({
@@ -408,7 +409,8 @@ describe('Dispatch boundary — provider call counts', () => {
 
     expect(res.status).toBe(200);
     expect(body.success).toBe(true);
-    expect(body.notification.status).toBe('failed');
+    // Notification row stays in 'pending' — safely retryable
+    expect(body.notification.status).toBe('preflight_failed');
     expect(providerCallCount).toBe(0);
     expect(mockSendTemplate).not.toHaveBeenCalled();
     expect(mockSendText).not.toHaveBeenCalled();

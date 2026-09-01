@@ -215,17 +215,12 @@ describe('PATCH /api/orders/[id]/tracking', () => {
     const claimToken = 'claim-token-1';
 
     // Sequence: update_order_tracking → preflight DB lookups → preflight outcome RPC (no channel)
-    // Preflight happens BEFORE claim. With no channel resolver, preflight fails
-    // and records outcome directly (no claim/dispatch needed).
+    // Preflight happens BEFORE claim. With no channel resolver, preflight fails.
+    // No claim/dispatch/record_outcome RPCs are called — notification stays in 'pending'.
     mockServiceRpc
       .mockResolvedValueOnce({
         // update_order_tracking
         data: { success: true, no_op: false, revision: 1, notification_id: notifId, shipped_at: '2026-08-30T12:00:00Z' },
-        error: null,
-      })
-      .mockResolvedValueOnce({
-        // record_tracking_notification_outcome (preflight failed: no channel)
-        data: { success: true },
         error: null,
       });
 
@@ -249,8 +244,8 @@ describe('PATCH /api/orders/[id]/tracking', () => {
     const body = await res.json();
     expect(body.success).toBe(true);
     expect(body.revision).toBe(1);
-    // Notification failed (no channel) — tracking edit still succeeded
-    expect(body.notification.status).toBe('failed');
+    // Notification preflight failed (no channel) — stays pending, tracking edit still succeeded
+    expect(body.notification.status).toBe('preflight_failed');
   });
 
   it('notification failure does not affect tracking success', async () => {
