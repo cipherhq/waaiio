@@ -5,37 +5,37 @@ describe('Webhook inbound event state machine', () => {
   const metaWebhook = readFileSync('app/api/webhook/meta-cloud/route.ts', 'utf-8');
 
   describe('Meta webhook', () => {
-    it('inserts new events as processing, not completed', () => {
-      expect(metaWebhook).toContain("status: 'processing'");
-      // Must NOT contain the old pattern of inserting as completed
+    it('uses atomic claim RPC instead of SELECT→UPDATE', () => {
+      expect(metaWebhook).toContain("claim_webhook_event");
+      // Must NOT contain the old non-atomic pattern
       expect(metaWebhook).not.toContain("ignoreDuplicates: true");
     });
 
-    it('skips completed events', () => {
-      expect(metaWebhook).toContain("status === 'completed'");
+    it('skips unclaimed events', () => {
+      expect(metaWebhook).toContain("!claimResult?.claimed");
     });
 
-    it('marks successful processing as completed', () => {
-      expect(metaWebhook).toContain("status: 'completed'");
-      expect(metaWebhook).toContain("completed_at");
+    it('uses fenced completion with claim token', () => {
+      expect(metaWebhook).toContain("complete_webhook_event");
+      expect(metaWebhook).toContain("p_claim_token: claimToken");
     });
 
-    it('marks failed processing as failed with error', () => {
-      expect(metaWebhook).toContain("status: 'failed'");
-      expect(metaWebhook).toContain("last_error");
+    it('uses fenced failure with claim token and error', () => {
+      expect(metaWebhook).toContain("fail_webhook_event");
+      expect(metaWebhook).toContain("p_error:");
     });
 
-    it('allows retry of failed events', () => {
-      // Failed events should be re-claimable
-      expect(metaWebhook).toContain("'failed'");
-      // Should increment attempts
-      expect(metaWebhook).toContain("attempts");
+    it('allows retry of failed events via RPC', () => {
+      // Failed events are re-claimable through claim_webhook_event RPC
+      expect(metaWebhook).toContain("claim_webhook_event");
+      expect(metaWebhook).toContain("p_event_type");
     });
 
-    it('recovers stale processing events (crashed worker)', () => {
-      // Events stuck in 'processing' for >60s should be retryable
-      expect(metaWebhook).toContain("60_000");
-      expect(metaWebhook).toContain("stale");
+    it('has side-effect deadline before bot processing', () => {
+      // Side-effect deadline at 50s prevents late customer-visible side effects
+      expect(metaWebhook).toContain("SIDE_EFFECT_DEADLINE_MS");
+      expect(metaWebhook).toContain("50_000");
+      expect(metaWebhook).toContain("side_effect_deadline_exceeded");
     });
 
     it('wraps all processing in per-message try/catch', () => {

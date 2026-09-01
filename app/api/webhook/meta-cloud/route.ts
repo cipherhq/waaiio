@@ -561,69 +561,25 @@ export async function POST(request: NextRequest) {
           const source = msg.from;
           const msgLog = log.withContext({ from: source });
 
-          // Durable inbound event — store before processing
+          // Durable inbound event — atomic claim via RPC (#271 Slice B)
           const metaMsgId = msg.id;
           if (metaMsgId) {
             const eventId = `meta-${metaMsgId}`;
 
-            // Atomically insert or fetch existing event
-            const { data: existing } = await supabase
-              .from('processed_webhook_events')
-              .select('id, status, attempts')
-              .eq('event_id', eventId)
-              .maybeSingle();
+            // Atomic claim: INSERT-or-reclaim with FOR UPDATE serialization
+            const whMsgType: string = msg['type'] || 'message';
+            const { data: claimResult, error: claimError } = await supabase.rpc('claim_webhook_event', {
+              p_event_id: eventId,
+              p_gateway: 'meta_cloud',
+              p_event_type: whMsgType,
+            });
 
-            if (existing) {
-              if (existing.status === 'completed') {
-                msgLog.debug('[META-WEBHOOK] Already completed, skipping:', metaMsgId);
-                continue;
-              }
-              if (existing.status === 'processing') {
-                // Check if stale (>60s = likely crashed worker)
-                const { data: staleCheck } = await supabase
-                  .from('processed_webhook_events')
-                  .select('id')
-                  .eq('event_id', eventId)
-                  .eq('status', 'processing')
-                  .lt('last_attempted_at', new Date(Date.now() - 60_000).toISOString())
-                  .maybeSingle();
-
-                if (!staleCheck) {
-                  msgLog.debug('[META-WEBHOOK] Currently processing, skipping:', metaMsgId);
-                  continue;
-                }
-                // Stale — allow retry
-              }
-              // Failed or stale — retry: update to processing
-              await supabase
-                .from('processed_webhook_events')
-                .update({
-                  status: 'processing',
-                  attempts: (existing.attempts || 0) + 1,
-                  last_attempted_at: new Date().toISOString(),
-                })
-                .eq('event_id', eventId);
-            } else {
-              // New event — insert as processing
-              const { error: insertErr } = await supabase
-                .from('processed_webhook_events')
-                .insert({
-                  event_id: eventId,
-                  gateway: 'meta_cloud',
-                  event_type: msg.type || 'message',
-                  status: 'processing',
-                  attempts: 1,
-                  first_received_at: new Date().toISOString(),
-                  last_attempted_at: new Date().toISOString(),
-                });
-
-              if (insertErr) {
-                // Unique constraint = another worker beat us
-                msgLog.debug('[META-WEBHOOK] Event claimed by another worker:', metaMsgId);
-                continue;
-              }
+            if (claimError || !claimResult?.claimed) {
+              msgLog.debug('[META-WEBHOOK] Event not claimed:', metaMsgId, claimResult?.reason || claimError?.message);
+              continue;
             }
 
+            const claimToken = claimResult.claim_token;
             mark('idempotency_claimed');
             // Process the message — wrap in try/catch for state updates
             try {
@@ -633,11 +589,11 @@ export async function POST(request: NextRequest) {
               // the conversational ordering flow — both work independently.
               if (msg.type === 'order' && msg.order?.product_items?.length) {
                 await handleCatalogOrder(supabase, resolved, msg, source, msgLog);
-                // Mark completed after successful processing
-                await supabase
-                  .from('processed_webhook_events')
-                  .update({ status: 'completed', completed_at: new Date().toISOString() })
-                  .eq('event_id', eventId);
+                // Fenced completion — only succeeds if we still hold the claim
+                await supabase.rpc('complete_webhook_event', {
+                  p_event_id: eventId,
+                  p_claim_token: claimToken,
+                });
                 continue; // Skip normal bot processing for order messages
               }
 
@@ -745,20 +701,20 @@ export async function POST(request: NextRequest) {
                     text: "I can't process images or files yet. Please reply with text instead.\n\nType *Hi* to start over, *menu* to see options, or *cancel* to exit.",
                   });
                 } catch { /* ignore send failure */ }
-                // Mark completed — we handled it (sent guidance reply)
-                await supabase
-                  .from('processed_webhook_events')
-                  .update({ status: 'completed', completed_at: new Date().toISOString() })
-                  .eq('event_id', eventId);
+                // Fenced completion — we handled it (sent guidance reply)
+                await supabase.rpc('complete_webhook_event', {
+                  p_event_id: eventId,
+                  p_claim_token: claimToken,
+                });
                 continue;
               }
 
               if (!source || (!text && !mediaUrl)) {
-                // Mark completed — nothing to process
-                await supabase
-                  .from('processed_webhook_events')
-                  .update({ status: 'completed', completed_at: new Date().toISOString() })
-                  .eq('event_id', eventId);
+                // Fenced completion — nothing to process
+                await supabase.rpc('complete_webhook_event', {
+                  p_event_id: eventId,
+                  p_claim_token: claimToken,
+                });
                 continue;
               }
 
@@ -767,6 +723,20 @@ export async function POST(request: NextRequest) {
               // Mark message as read immediately (blue ticks — shows business is active)
               if (resolved.cloud && msg.id) {
                 resolved.cloud.markAsRead(msg.id).catch(() => {});
+              }
+
+              // Side-effect deadline: skip bot processing if we're too close to maxDuration (60s)
+              // Leaves 10s buffer for graceful failure handling
+              const SIDE_EFFECT_DEADLINE_MS = 50_000;
+              const elapsedMs = Date.now() - t0;
+              if (elapsedMs >= SIDE_EFFECT_DEADLINE_MS) {
+                msgLog.warn('[META-WEBHOOK] Side-effect deadline exceeded, skipping bot processing:', metaMsgId);
+                await supabase.rpc('fail_webhook_event', {
+                  p_event_id: eventId,
+                  p_claim_token: claimToken,
+                  p_error: 'side_effect_deadline_exceeded',
+                });
+                continue;
               }
 
               const standalone = new StandaloneService(supabase);
@@ -778,24 +748,21 @@ export async function POST(request: NextRequest) {
               mark('bot_complete');
               msgLog.debug('[META-WEBHOOK] bot.handleMessage completed for ...', source.slice(-4));
 
-              // Mark completed after successful processing
-              await supabase
-                .from('processed_webhook_events')
-                .update({ status: 'completed', completed_at: new Date().toISOString() })
-                .eq('event_id', eventId);
+              // Fenced completion — only succeeds if we still hold the claim
+              await supabase.rpc('complete_webhook_event', {
+                p_event_id: eventId,
+                p_claim_token: claimToken,
+              });
               mark('msg_complete');
               log.info('[META-WEBHOOK-PERF] timings_ms', timings);
             } catch (processingErr) {
-              // Mark failed — allows retry on next delivery
+              // Fenced failure — allows retry on next delivery
               msgLog.error('[META-WEBHOOK] Processing failed:', processingErr);
-              await supabase
-                .from('processed_webhook_events')
-                .update({
-                  status: 'failed',
-                  last_error: String(processingErr).slice(0, 500),
-                  last_attempted_at: new Date().toISOString(),
-                })
-                .eq('event_id', eventId);
+              await supabase.rpc('fail_webhook_event', {
+                p_event_id: eventId,
+                p_claim_token: claimToken,
+                p_error: String(processingErr).slice(0, 500),
+              });
               // Try to send error message to user so they know something went wrong
               try {
                 await resolved.sender.sendText({

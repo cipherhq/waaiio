@@ -355,12 +355,15 @@ describe('Webhook deduplication', () => {
     expect(migration).toContain('status');
   });
 
-  it('webhook handler checks event status before processing', async () => {
+  it('webhook handler uses atomic claim RPC for deduplication', async () => {
     const webhookSource = readFileSync(resolve(ROOT, 'app/api/webhook/meta-cloud/route.ts'), 'utf-8');
-    // Must check for 'completed' status to skip duplicates
-    expect(webhookSource).toContain("status === 'completed'");
-    // Must INSERT new events with status='processing'
-    expect(webhookSource).toContain("'processing'");
+    // Must use atomic claim_webhook_event RPC (not SELECT→UPDATE)
+    expect(webhookSource).toContain("claim_webhook_event");
+    // Must check claimed result to skip duplicates
+    expect(webhookSource).toContain("!claimResult?.claimed");
+    // Must use fenced completion/failure with claim token
+    expect(webhookSource).toContain("complete_webhook_event");
+    expect(webhookSource).toContain("fail_webhook_event");
   });
 });
 
