@@ -2,6 +2,17 @@ import Anthropic from '@anthropic-ai/sdk';
 import { isFeatureEnabledServer, FLAGS } from '@/lib/posthog/flags';
 import { checkRateLimit } from '@/lib/rate-limit';
 import { logger } from '@/lib/logger';
+import type { LanguageEntitlement } from './language-policy';
+
+/**
+ * Translation context — replaces module-global mutable state.
+ * Passed per-call to eliminate cross-request contamination.
+ */
+export interface TranslationContext {
+  entitlement: LanguageEntitlement;
+  businessId: string;
+  supabase: unknown; // SupabaseClient — kept as unknown to avoid circular deps
+}
 
 const SUPPORTED_LANGUAGES: Record<string, string> = {
   en: 'English',
@@ -27,22 +38,18 @@ function getClient(): Anthropic {
 /**
  * Translate a bot response to the user's detected language.
  * Returns the original text if language is English or unsupported.
- * Falls back to original text on any error.
+ * Falls back to original text on any error (fail-closed).
  */
-// Track translation calls per business (set by the bot before calling translate)
-let _currentBusinessId: string | null = null;
-let _currentSupabase: unknown = null;
-
-/** Set the business context for AI usage tracking. Call before translateBotResponse. */
-export function setTranslationContext(businessId: string | null, supabase: unknown): void {
-  _currentBusinessId = businessId;
-  _currentSupabase = supabase;
-}
-
 export async function translateBotResponse(
   text: string,
   language: string,
+  ctx?: TranslationContext,
 ): Promise<string> {
+  // Entitlement check — fail-closed: no context or not allowed → return original
+  if (ctx && (!ctx.entitlement.translationAllowed || !ctx.entitlement.allowedLanguages.includes(language))) {
+    return text;
+  }
+
   // No translation needed for English or unknown languages
   if (!language || language === 'en' || !SUPPORTED_LANGUAGES[language]) {
     return text;
@@ -104,9 +111,9 @@ export async function translateBotResponse(
     cache.set(cacheKey, { text: translatedTemplate, expiry: Date.now() + CACHE_TTL });
 
     // Track AI usage for this business (non-blocking)
-    if (_currentBusinessId && _currentSupabase) {
+    if (ctx?.businessId && ctx.supabase) {
       const { incrementAIUsage } = await import('@/lib/bot/ai-tier-guard');
-      incrementAIUsage(_currentSupabase as any, _currentBusinessId, 'translation').catch(err => logger.warn('[TRANSLATE] Failed to increment AI usage:', err));
+      incrementAIUsage(ctx.supabase as any, ctx.businessId, 'translation').catch(err => logger.warn('[TRANSLATE] Failed to increment AI usage:', err));
     }
 
     // Re-insert original values into translated text

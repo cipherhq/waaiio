@@ -25,7 +25,6 @@ vi.mock('@/lib/bot/translate', () => ({
   translateBotResponse: vi.fn(async (text: string) => text),
   detectLanguage: vi.fn(async () => 'en'),
   getLanguageName: vi.fn(() => 'English'),
-  setTranslationContext: vi.fn(),
 }));
 // handleGlobalQuery must preserve the session reference — return { handled: false, session: <passed session> }
 vi.mock('@/lib/bot/handlers/global-queries', () => ({
