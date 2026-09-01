@@ -68,6 +68,33 @@ If something breaks, check this log to find what changed and when.
 - Any consumer that type-checked against the old 4-state `RefundState` union (only existed on the UX branch, not main)
 - Frontend code that parsed error text to determine refund state (this was the bug being fixed)
 
+## 2026-08-30 — #248: Instant Win F1 timezone + F4 claim format
+
+### What changed
+- **F1: Timezone write-boundary correction** — Dashboard promo create/update was storing naive `datetime-local` values directly to TIMESTAMPTZ columns, ignoring the `timezone` column. Now when a timezone is provided, naive datetimes are interpreted as local time in that timezone and converted to correct UTC before storage.
+  - `lib/promotions/timezone.ts` (new) — `naiveToUtc()` and `isValidTimezone()` utilities using Node's built-in `Intl.DateTimeFormat`
+  - `app/api/promotions/create/route.ts` — Added timezone conversion for `start_at`/`end_at` before insert
+  - `app/api/promotions/update/route.ts` — Added timezone conversion for `startAt`/`endAt` before update, resolves timezone from body or existing campaign
+  - DST spring-forward gaps rejected with clear error; fall-back ambiguity uses earlier offset (conservative)
+  - No timezone provided or UTC → backward compatible passthrough
+
+- **F4: Claim-format guidance** — `code_format` column (already on `promo_campaigns`) is now surfaced in the bot entry message.
+  - `lib/promotions/entry.ts` — Added `code_format` to `PromoEntryCampaign` interface, updated DB query, added format hint to `renderPromoEntryMessage()`
+  - `lib/bot/__tests__/acc-181-promo-menu-dispatch.test.ts` — Updated test objects to include `code_format: null`
+
+### Files changed
+- `lib/promotions/timezone.ts` (new)
+- `app/api/promotions/create/route.ts` (modified)
+- `app/api/promotions/update/route.ts` (modified)
+- `lib/promotions/entry.ts` (modified)
+- `lib/bot/__tests__/acc-181-promo-menu-dispatch.test.ts` (modified)
+- `app/api/promotions/__tests__/timezone-write.test.ts` (new — 13 tests)
+- `CHANGELOG.md` (this entry)
+
+### Could break
+- If a caller of `renderPromoEntryMessage` constructs `PromoEntryCampaign` objects without `code_format`, TypeScript will error. All existing callers use DB query results which include the column.
+- Campaigns with timezone set will now store different UTC values than before. Existing campaigns are NOT retroactively shifted — only new creates/updates are affected.
+
 ## 2026-08-30 — #246: CTO blocker corrections — UI lifecycle, PATCH validation, behavioral tests
 
 ### What changed

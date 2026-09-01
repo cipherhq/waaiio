@@ -129,19 +129,26 @@ describe.skipIf(!canRun)('Config Versioning DB Tests (#255 C-1)', () => {
 
       -- In Supabase, service_role bypasses RLS. Simulate this for vanilla PG:
       ALTER TABLE public.platform_settings FORCE ROW LEVEL SECURITY;
-      -- service_role can bypass RLS via a permissive policy
+    `);
+    // service_role RLS bypass policy (skip if already exists — e.g. CI with full migrations)
+    psqlMayFail(`
       CREATE POLICY service_role_bypass ON public.platform_settings FOR ALL TO service_role USING (true) WITH CHECK (true);
     `);
 
-    // Apply migration 359
-    const migrationSql = readFileSync('supabase/migrations/359_config_versioning.sql', 'utf-8');
-    psql(migrationSql);
+    // Apply migration 359 if not already applied (CI applies all migrations first)
+    const alreadyApplied = psqlMayFail("SELECT 1 FROM pg_proc WHERE proname = 'save_commercial_config' LIMIT 1;");
+    if (!alreadyApplied.includes('1')) {
+      const migrationSql = readFileSync('supabase/migrations/359_config_versioning.sql', 'utf-8');
+      psql(migrationSql);
+    }
 
-    // Grant permissions on platform_config_versions for test roles
-    psql(`
+    // Grant permissions on platform_config_versions for test roles (idempotent)
+    psqlMayFail(`
       GRANT SELECT, INSERT, UPDATE, DELETE ON public.platform_config_versions TO service_role;
       GRANT SELECT ON public.platform_config_versions TO authenticated;
-      -- service_role bypass for platform_config_versions (Supabase equivalent)
+    `);
+    // service_role bypass for platform_config_versions (Supabase equivalent, skip if exists)
+    psqlMayFail(`
       CREATE POLICY service_role_bypass_versions ON public.platform_config_versions FOR ALL TO service_role USING (true) WITH CHECK (true);
     `);
 
