@@ -397,6 +397,14 @@ export default function PlatformSettings() {
     return edits[key] !== undefined;
   }
 
+  // Commercial config keys — must use save_commercial_config() RPC
+  const COMMERCIAL_KEYS = new Set([
+    'pricing_tiers', 'trial_days', 'broadcast_limits', 'conversation_limits',
+    'default_platform_fee_percent', 'annual_discount_percentage',
+    'payout_cooling_period_days', 'minimum_payout', 'payout_verification_limits',
+    'transfer_expiry_hours', 'minimum_bank_transfer',
+  ]);
+
   // Save a single setting
   async function handleSave(key: string) {
     setSavingKey(key);
@@ -411,16 +419,25 @@ export default function PlatformSettings() {
         parsedValue = raw;
       }
 
-      const { error } = await adminDb
-        .from('platform_settings')
-        .update({
-          value: parsedValue,
-          updated_by: userId,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('key', key);
-
-      if (error) throw error;
+      if (COMMERCIAL_KEYS.has(key)) {
+        // Commercial keys: use the atomic versioned save RPC
+        const { error } = await adminDb.rpc('save_commercial_config', {
+          p_key: key,
+          p_value: parsedValue,
+        });
+        if (error) throw error;
+      } else {
+        // Non-commercial keys: direct update (unchanged)
+        const { error } = await adminDb
+          .from('platform_settings')
+          .update({
+            value: parsedValue,
+            updated_by: userId,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('key', key);
+        if (error) throw error;
+      }
 
       await logAudit({
         action: 'update_platform_setting',
@@ -456,17 +473,28 @@ export default function PlatformSettings() {
         parsedValue = newValue;
       }
 
-      const { error } = await adminDb
-        .from('platform_settings')
-        .insert({
-          key: newKey.trim(),
-          value: parsedValue,
-          description: newDescription.trim() || null,
-          updated_by: userId,
-          updated_at: new Date().toISOString(),
+      const trimmedKey = newKey.trim();
+      if (COMMERCIAL_KEYS.has(trimmedKey)) {
+        // Commercial keys: use the atomic versioned save RPC
+        const { error } = await adminDb.rpc('save_commercial_config', {
+          p_key: trimmedKey,
+          p_value: parsedValue,
+          p_description: newDescription.trim() || null,
         });
-
-      if (error) throw error;
+        if (error) throw error;
+      } else {
+        // Non-commercial keys: direct insert (unchanged)
+        const { error } = await adminDb
+          .from('platform_settings')
+          .insert({
+            key: trimmedKey,
+            value: parsedValue,
+            description: newDescription.trim() || null,
+            updated_by: userId,
+            updated_at: new Date().toISOString(),
+          });
+        if (error) throw error;
+      }
 
       await logAudit({
         action: 'create_platform_setting',
@@ -494,6 +522,10 @@ export default function PlatformSettings() {
 
   // Delete setting
   async function handleDelete(key: string) {
+    if (COMMERCIAL_KEYS.has(key)) {
+      alert('Commercial config keys cannot be deleted. They are protected by the config versioning system.');
+      return;
+    }
     if (!confirm(`Are you sure you want to delete the setting "${key}"? This action cannot be undone.`)) return;
 
     setDeleting(key);

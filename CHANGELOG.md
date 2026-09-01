@@ -3,6 +3,15 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+### feat(255): commercial config versioning — immutable platform_config_versions (C-1)
+
+- **Date:** 2026-09-01
+- **Migration 359:** `359_config_versioning.sql` — creates `platform_config_versions` table with immutable append-only enforcement, DB-enforced commercial key guard on `platform_settings`, serialized `save_commercial_config()` SECURITY DEFINER function, deterministic `get_effective_config()` resolution, and bootstrap from observed DB state.
+- **Admin UI:** `admin/src/pages/PlatformSettings.tsx` — commercial key saves (11 keys) now routed through `save_commercial_config()` RPC instead of direct DML. Commercial key deletion blocked at UI level.
+- **Tests:** `lib/__tests__/config-versioning-db.test.ts` — 27 executable PostgreSQL proofs covering write-authority enforcement, key-rename guard, non-commercial isolation, immutability, bootstrap, resolution, concurrency, security/ACL.
+- **What could break:** Admin panel direct DML on commercial keys will fail (intentionally — must use RPC). Any future code writing commercial platform_settings keys directly will be rejected by trigger. Non-commercial and ephemeral keys (`otp:*`, etc.) are unaffected.
+- **Refs:** #255, #250
+
 ## 2026-08-31 — #245: readDurableRefundState fail-safe to provider_ambiguous
 
 ### What changed
