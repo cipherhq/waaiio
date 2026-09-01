@@ -48,24 +48,34 @@ function createDeadlineGuardedSender(
   inner: import('@/lib/channels/message-sender').MessageSender,
   startTime: number,
 ): import('@/lib/channels/message-sender').MessageSender {
-  function guardedCall<T>(fn: () => Promise<T>): Promise<T> {
+  const deadlineCheck = () => {
     if (Date.now() - startTime >= SIDE_EFFECT_DEADLINE_MS) {
-      return Promise.reject(new DeadlineExceededError());
+      throw new DeadlineExceededError();
     }
+  };
+
+  // Set the per-attempt guard on MetaCloudSender so every provider attempt
+  // (including retries within withRetry) checks the deadline. This covers
+  // ALL MessageSender methods — sendList, sendButtons, sendImage, etc.
+  if ('beforeEachAttempt' in inner) {
+    (inner as import('@/lib/channels/message-sender').MetaCloudSender).beforeEachAttempt = deadlineCheck;
+  }
+
+  // The outer wrapper also checks before entering the send method at all,
+  // providing a fast-path rejection before any retry logic starts.
+  function guardedCall<T>(fn: () => Promise<T>): Promise<T> {
+    deadlineCheck();
     return fn();
   }
 
-  // All sends through the guarded sender use noRetry: true to prevent provider
-  // retry loops from crossing the deadline boundary. In a deadline-critical webhook
-  // context, exactly-one-attempt is the correct behavior (Slice B binding requirement).
   return {
-    sendText: (msg) => guardedCall(() => inner.sendText({ ...msg, noRetry: true })),
+    sendText: (msg) => guardedCall(() => inner.sendText(msg)),
     sendList: (msg) => guardedCall(() => inner.sendList(msg)),
     sendButtons: (msg) => guardedCall(() => inner.sendButtons(msg)),
     sendImage: (msg) => guardedCall(() => inner.sendImage(msg)),
     sendDocument: (msg) => guardedCall(() => inner.sendDocument(msg)),
     sendAudio: (msg) => guardedCall(() => inner.sendAudio(msg)),
-    sendTemplate: inner.sendTemplate ? (msg) => guardedCall(() => inner.sendTemplate!({ ...msg, noRetry: true })) : undefined,
+    sendTemplate: inner.sendTemplate ? (msg) => guardedCall(() => inner.sendTemplate!(msg)) : undefined,
     sendFlow: inner.sendFlow ? (msg) => guardedCall(() => inner.sendFlow!(msg)) : undefined,
     sendReaction: inner.sendReaction ? (msg) => guardedCall(() => inner.sendReaction!(msg)) : undefined,
     sendLocation: inner.sendLocation ? (msg) => guardedCall(() => inner.sendLocation!(msg)) : undefined,
@@ -87,10 +97,9 @@ async function handleCatalogOrder(
   source: string,
   msgLog: ReturnType<typeof logger.withContext>,
   /** Deadline-guarded sender — all customer-visible sends must go through this */
-  sender?: import('@/lib/channels/message-sender').MessageSender,
+  sender: import('@/lib/channels/message-sender').MessageSender,
 ) {
-  // Use the guarded sender if provided, otherwise fall back to resolved.sender
-  const outbound = sender || resolved.sender;
+  const outbound = sender;
   const orderData = msg.order;
   if (!orderData?.product_items?.length) return;
 

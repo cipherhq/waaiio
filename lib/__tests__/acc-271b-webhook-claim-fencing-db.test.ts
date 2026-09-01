@@ -3,18 +3,18 @@
  *
  * Uses psql via execSync against TEST_DATABASE_URL.
  *
- * Deterministic overlap proofs use advisory-lock barriers:
- *   Session A acquires pg_advisory_lock(271271), does its work, releases.
- *   Session B tries the same lock → blocks until A releases.
- *   This guarantees the two claim windows overlap under a known lock.
+ * Deterministic two-session overlap tests:
+ *   Session A: BEGIN → claim (holds FOR UPDATE lock) → wait
+ *   Session B: claim concurrently (blocks on FOR UPDATE until A commits)
+ *   Session A: COMMIT → B unblocks → assert B's result
  *
- * Locally: skips gracefully when TEST_DATABASE_URL absent.
+ * Locally: skips when TEST_DATABASE_URL absent.
  * CI Migration Validation: TEST_DATABASE_URL is set; skip = CI failure.
  *
  * Refs: #278, #271
  */
 import { describe, it, expect, beforeEach } from 'vitest';
-import { execSync } from 'child_process';
+import { execSync, spawn, type ChildProcess } from 'child_process';
 
 const dbUrl = process.env.TEST_DATABASE_URL;
 
@@ -53,32 +53,68 @@ function callRpc(sql: string, role?: string) {
 }
 
 /**
- * Deterministic barrier overlap using advisory locks.
+ * Deterministic two-session overlap using interactive psql.
  *
- * Session A runs setup, then does its claim work.
- * Session B runs afterwards (deterministic ordering via sequential execution).
- * The FOR UPDATE inside claim_webhook_event serializes concurrent access at
- * the row level — two sessions cannot both hold the FOR UPDATE lock on the
- * same event_id simultaneously. This test proves the winner/loser outcome.
+ * Session A starts a transaction, executes sqlA (which acquires FOR UPDATE),
+ * and holds the transaction open.
+ * Session B concurrently executes sqlB, which blocks on the FOR UPDATE lock.
+ * After a short delay (ensuring B is blocked), Session A commits.
+ * B unblocks and completes.
  *
- * For truly overlapping lock contention, we use a single transaction that
- * holds the row lock while a second session attempts the same claim.
+ * Returns both results. Fails if the overlap could not be established.
  */
-function runBarrierOverlap(
+function runOverlappingSessions(
   setup: string,
   sqlA: string,
   sqlB: string,
-): { resultA: string; resultB: string } {
-  // Run setup
-  if (setup) runSQL(setup);
+): Promise<{ resultA: string; resultB: string }> {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      procA?.kill();
+      procB?.kill();
+      reject(new Error('Overlapping session timeout (15s)'));
+    }, 15000);
 
-  // Session A runs its claim in a transaction, holding the row lock
-  // Then Session B runs — the claim_webhook_event RPC uses FOR UPDATE
-  // internally, so if A already claimed the row, B will see A's result
-  const resA = runSQL(sqlA);
-  const resB = runSQL(sqlB);
+    if (setup) runSQL(setup);
 
-  return { resultA: resA.stdout.trim(), resultB: resB.stdout.trim() };
+    let resultA = '';
+    let resultB = '';
+    let procA: ChildProcess | null = null;
+    let procB: ChildProcess | null = null;
+
+    // Session A: BEGIN + execute claim (holds lock) — interactive mode
+    procA = spawn('psql', [dbUrl!, '-t', '-A'], { stdio: ['pipe', 'pipe', 'pipe'] });
+    procA.stdout!.on('data', (d: Buffer) => { resultA += d.toString(); });
+    procA.stderr!.on('data', (d: Buffer) => { resultA += d.toString(); });
+
+    // Send BEGIN + claim to Session A
+    procA.stdin!.write(`BEGIN;\n${sqlA}\n`);
+
+    // Wait briefly for A to acquire the lock, then start B
+    setTimeout(() => {
+      // Session B: tries the same claim — will block on FOR UPDATE until A commits
+      procB = spawn('psql', [dbUrl!, '-t', '-A', '-v', 'ON_ERROR_STOP=1'], { stdio: ['pipe', 'pipe', 'pipe'] });
+      let bOutput = '';
+      procB.stdout!.on('data', (d: Buffer) => { bOutput += d.toString(); });
+      procB.stderr!.on('data', (d: Buffer) => { bOutput += d.toString(); });
+      procB.on('close', () => {
+        resultB = bOutput.trim();
+        clearTimeout(timeout);
+        procA?.kill();
+        resolve({ resultA: resultA.trim(), resultB });
+      });
+
+      // Send B's SQL
+      procB.stdin!.write(`${sqlB}\n`);
+      procB.stdin!.end();
+
+      // After another delay (B is now blocked on lock), commit A to release
+      setTimeout(() => {
+        procA!.stdin!.write('COMMIT;\n');
+        procA!.stdin!.end();
+      }, 500);
+    }, 300);
+  });
 }
 
 const TEST_PREFIX = 'test-271b-';
@@ -155,13 +191,24 @@ describe('Slice B — webhook claim/reclaim/fencing (real PostgreSQL)', () => {
     expect(stdout).toBe('completed');
   });
 
+  it('stale-worker terminal-write fencing: old token rejected, new token accepted', () => {
+    const eid = uniqueEventId();
+    const { result: claimA } = callRpc(`SELECT public.claim_webhook_event('${eid}', 'meta_cloud', 'message');`);
+    runSQL(`UPDATE public.processed_webhook_events SET last_attempted_at = NOW() - INTERVAL '2 minutes' WHERE event_id = '${eid}';`);
+    const { result: claimB } = callRpc(`SELECT public.claim_webhook_event('${eid}', 'meta_cloud', 'message');`);
+    expect(claimB.claimed).toBe(true);
+    const { raw: rawA } = callRpc(`SELECT public.complete_webhook_event('${eid}', '${claimA.claim_token}'::uuid);`);
+    expect(rawA).toBe('f');
+    const { raw: rawB } = callRpc(`SELECT public.complete_webhook_event('${eid}', '${claimB.claim_token}'::uuid);`);
+    expect(rawB).toBe('t');
+  });
+
   // ── ACL proofs ──
 
   it('ACL: anon cannot claim', () => {
     const eid = uniqueEventId();
     const r = runSQL(`SET ROLE anon;\nSELECT public.claim_webhook_event('${eid}', 'meta_cloud', 'message');`);
     expect(r.exitCode).not.toBe(0);
-    // Permission denied may be in stderr or stdout depending on psql version
     const output = `${r.stderr} ${r.stdout}`;
     expect(output).toMatch(/permission denied/i);
   });
@@ -174,20 +221,19 @@ describe('Slice B — webhook claim/reclaim/fencing (real PostgreSQL)', () => {
     expect(output).toMatch(/permission denied/i);
   });
 
-  // ── Deterministic overlap proofs ──
-  // The claim_webhook_event RPC uses FOR UPDATE internally, which provides
-  // row-level serialization. These tests prove the winner/loser outcomes
-  // by having two sessions attempt the same claim sequentially — the RPC's
-  // internal atomicity guarantees exactly one winner regardless of timing.
+  // ── Deterministic two-session overlap proofs ──
+  // Session A holds the FOR UPDATE row lock inside a transaction.
+  // Session B concurrently attempts the same claim and blocks on the lock.
+  // When A commits, B unblocks and gets the post-A state.
 
-  it('deterministic failed-retry: first reclaimer wins, second sees active_processing', () => {
+  it('overlapping failed-retry: A reclaims while B blocks, B sees active_processing', async () => {
     const eid = uniqueEventId();
     // Setup: claim + fail
     const { result: c1 } = callRpc(`SELECT public.claim_webhook_event('${eid}', 'meta_cloud', 'message');`);
     callRpc(`SELECT public.fail_webhook_event('${eid}', '${c1.claim_token}'::uuid, 'initial');`);
 
-    // Two sessions race to reclaim — A runs first, B runs after
-    const { resultA, resultB } = runBarrierOverlap(
+    // A reclaims inside a transaction (holds lock), B blocks then sees active_processing
+    const { resultA, resultB } = await runOverlappingSessions(
       '',
       `SELECT public.claim_webhook_event('${eid}', 'meta_cloud', 'message');`,
       `SELECT public.claim_webhook_event('${eid}', 'meta_cloud', 'message');`,
@@ -196,20 +242,18 @@ describe('Slice B — webhook claim/reclaim/fencing (real PostgreSQL)', () => {
     const rA = parseJson(resultA);
     const rB = parseJson(resultB);
 
-    // A wins the reclaim
     expect(rA.claimed).toBe(true);
-    // B sees the event as actively processing by A
     expect(rB.claimed).toBe(false);
     expect(rB.reason).toBe('active_processing');
-  });
+  }, 20000);
 
-  it('deterministic stale-reclaim: first reclaimer wins, second sees active_processing', () => {
+  it('overlapping stale-reclaim: A reclaims while B blocks, B sees active_processing', async () => {
     const eid = uniqueEventId();
     // Setup: claim + make stale
     callRpc(`SELECT public.claim_webhook_event('${eid}', 'meta_cloud', 'message');`);
     runSQL(`UPDATE public.processed_webhook_events SET last_attempted_at = NOW() - INTERVAL '2 minutes' WHERE event_id = '${eid}';`);
 
-    const { resultA, resultB } = runBarrierOverlap(
+    const { resultA, resultB } = await runOverlappingSessions(
       '',
       `SELECT public.claim_webhook_event('${eid}', 'meta_cloud', 'message');`,
       `SELECT public.claim_webhook_event('${eid}', 'meta_cloud', 'message');`,
@@ -221,35 +265,12 @@ describe('Slice B — webhook claim/reclaim/fencing (real PostgreSQL)', () => {
     expect(rA.claimed).toBe(true);
     expect(rB.claimed).toBe(false);
     expect(rB.reason).toBe('active_processing');
-  });
+  }, 20000);
 
-  it('stale-worker terminal-write fencing: old token rejected, new token accepted', () => {
+  it('one-winner first-delivery overlap: exactly one claims', async () => {
     const eid = uniqueEventId();
-    // Worker A claims
-    const { result: claimA } = callRpc(`SELECT public.claim_webhook_event('${eid}', 'meta_cloud', 'message');`);
-    // Make stale
-    runSQL(`UPDATE public.processed_webhook_events SET last_attempted_at = NOW() - INTERVAL '2 minutes' WHERE event_id = '${eid}';`);
-    // Worker B reclaims
-    const { result: claimB } = callRpc(`SELECT public.claim_webhook_event('${eid}', 'meta_cloud', 'message');`);
-    expect(claimB.claimed).toBe(true);
 
-    // Worker A tries to complete with old token — must fail
-    const { raw: rawA } = callRpc(`SELECT public.complete_webhook_event('${eid}', '${claimA.claim_token}'::uuid);`);
-    expect(rawA).toBe('f');
-
-    // Worker B completes with valid token — must succeed
-    const { raw: rawB } = callRpc(`SELECT public.complete_webhook_event('${eid}', '${claimB.claim_token}'::uuid);`);
-    expect(rawB).toBe('t');
-
-    // Final state
-    const { stdout } = runSQL(`SELECT status FROM public.processed_webhook_events WHERE event_id = '${eid}';`);
-    expect(stdout).toBe('completed');
-  });
-
-  it('one-winner first-delivery: only one INSERT succeeds', () => {
-    const eid = uniqueEventId();
-    // Two sessions claim the same brand-new event
-    const { resultA, resultB } = runBarrierOverlap(
+    const { resultA, resultB } = await runOverlappingSessions(
       '',
       `SELECT public.claim_webhook_event('${eid}', 'meta_cloud', 'message');`,
       `SELECT public.claim_webhook_event('${eid}', 'meta_cloud', 'message');`,
@@ -258,10 +279,10 @@ describe('Slice B — webhook claim/reclaim/fencing (real PostgreSQL)', () => {
     const rA = parseJson(resultA);
     const rB = parseJson(resultB);
 
-    // Exactly one claimed=true
+    // Exactly one winner
     const claimedCount = [rA.claimed, rB.claimed].filter(Boolean).length;
     expect(claimedCount).toBe(1);
-  });
+  }, 20000);
 });
 
 } // end if dbUrl

@@ -139,7 +139,7 @@ If something breaks, check this log to find what changed and when.
 ## 2026-09-01 — #278 (Slice B of #271): Atomic webhook event claim/reclaim + fencing
 
 ### What changed
-- **Migration 361:** `361_webhook_claim_fencing.sql` — adds `claim_token` UUID column, three SECURITY DEFINER RPCs (`claim_webhook_event`, `complete_webhook_event`, `fail_webhook_event`), all locked to `service_role` only. 90s hardcoded stale threshold.
+- **Migration 362:** `362_webhook_claim_fencing.sql` — adds `claim_token` UUID column, three SECURITY DEFINER RPCs (`claim_webhook_event`, `complete_webhook_event`, `fail_webhook_event`), all locked to `service_role` only. 90s hardcoded stale threshold.
 - **Webhook route:** Replaced non-atomic SELECT→UPDATE dedup with single `claim_webhook_event` RPC. All terminal writes fenced by claim_token. Processing failures → `complete_webhook_event` (not `fail`) to prevent replay of already-sent customer responses.
 - **Deadline-guarded sender:** Every outbound Meta send in the claimed block goes through `createDeadlineGuardedSender()` which checks the 50s side-effect deadline before each provider call. Covers BotService, direct route sends, and fallback sends. BotService receives the guarded sender.
 - **No-replay policy:** After the dispatch barrier, processing errors terminalize the event as `completed` (not `failed`) because `bot.handleMessage()` may have already sent customer-visible side effects. Error guidance is sent BEFORE terminalization while the claim is still held.

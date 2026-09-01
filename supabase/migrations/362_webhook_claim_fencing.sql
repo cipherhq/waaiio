@@ -1,5 +1,5 @@
 -- ═══════════════════════════════════════════════════════
--- Migration 361: Webhook Claim Fencing
+-- Migration 362: Webhook Claim Fencing
 -- ═══════════════════════════════════════════════════════
 -- Replaces the non-atomic SELECT→UPDATE dedup in the Meta webhook
 -- handler with PostgreSQL-level atomic claims via RPCs.

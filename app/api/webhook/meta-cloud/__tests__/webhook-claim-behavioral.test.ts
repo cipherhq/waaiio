@@ -188,22 +188,43 @@ describe('Slice B — processing failure → completed (no replay)', () => {
     expect(rawSenderInClaimed).toBe(0);
   });
 
-  it('guarded sender injects noRetry: true to prevent provider retries crossing deadline', async () => {
+  it('deadline guard sets beforeEachAttempt on MetaCloudSender for per-retry enforcement', async () => {
     const { readFileSync } = await import('fs');
     const { resolve } = await import('path');
     const routeSrc = readFileSync(resolve(__dirname, '../route.ts'), 'utf-8');
 
-    // The guarded sender must inject noRetry: true for sendText and sendTemplate
     const guardedSenderDef = routeSrc.slice(
       routeSrc.indexOf('function createDeadlineGuardedSender'),
       routeSrc.indexOf('function createDeadlineGuardedSender') + 2000,
     );
-    expect(guardedSenderDef).toContain('noRetry: true');
-    // sendText with noRetry
-    expect(guardedSenderDef).toMatch(/sendText.*noRetry:\s*true/s);
+    // Must set beforeEachAttempt on the inner sender for per-retry guard
+    expect(guardedSenderDef).toContain('beforeEachAttempt');
+    expect(guardedSenderDef).toContain('deadlineCheck');
   });
 
-  it('handleCatalogOrder receives the guarded sender', async () => {
+  it('withRetry calls beforeEachAttempt before every provider attempt', async () => {
+    const { readFileSync } = await import('fs');
+    const { resolve } = await import('path');
+    const senderSrc = readFileSync(resolve(__dirname, '../../../../../lib/channels/message-sender.ts'), 'utf-8');
+
+    // withRetry must accept and call beforeEachAttempt
+    expect(senderSrc).toContain('beforeEachAttempt');
+    // Must be called inside the retry loop before fn()
+    const withRetryFn = senderSrc.slice(
+      senderSrc.indexOf('async function withRetry'),
+      senderSrc.indexOf('async function withRetry') + 1000,
+    );
+    expect(withRetryFn).toContain('if (beforeEachAttempt) beforeEachAttempt()');
+
+    // Every withRetry call in MetaCloudSender must pass this.beforeEachAttempt
+    const senderClass = senderSrc.slice(senderSrc.indexOf('class MetaCloudSender'));
+    const withRetryCalls = senderClass.match(/withRetry\(/g) || [];
+    const guardedCalls = senderClass.match(/this\.beforeEachAttempt/g) || [];
+    // Every withRetry call must pass the guard
+    expect(guardedCalls.length).toBeGreaterThanOrEqual(withRetryCalls.length);
+  });
+
+  it('handleCatalogOrder sender parameter is required (fail-closed)', async () => {
     const { readFileSync } = await import('fs');
     const { resolve } = await import('path');
     const routeSrc = readFileSync(resolve(__dirname, '../route.ts'), 'utf-8');
@@ -211,16 +232,15 @@ describe('Slice B — processing failure → completed (no replay)', () => {
     // The call site must pass guardedSender to handleCatalogOrder
     expect(routeSrc).toContain('handleCatalogOrder(supabase, resolved, msg, source, msgLog, guardedSender)');
 
-    // handleCatalogOrder must use the passed sender (outbound), not resolved.sender
+    // handleCatalogOrder sender parameter must be required (not optional)
     const fnBody = routeSrc.slice(
       routeSrc.indexOf('async function handleCatalogOrder'),
       routeSrc.indexOf('async function handleCatalogOrder') + 5000,
     );
-    // Must have the sender parameter
-    expect(fnBody).toContain('sender?:');
-    // Must use outbound variable (not resolved.sender for sends)
-    expect(fnBody).toContain('const outbound = sender || resolved.sender');
-    // All sendText calls in the function must use outbound
+    // Must have required sender parameter (no ?)
+    expect(fnBody).toContain('sender: import');
+    expect(fnBody).not.toContain('sender?:');
+    // Must use outbound for sends
     const sendTexts = fnBody.match(/await\s+(outbound|resolved\.sender)\.sendText/g) || [];
     const rawSenderSends = sendTexts.filter(s => s.includes('resolved.sender'));
     expect(rawSenderSends.length).toBe(0);
