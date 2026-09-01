@@ -280,7 +280,7 @@ export async function POST(request: NextRequest) {
                 p_error_message: sendResult.outcome !== 'sent' ? (sendResult.error || 'ambiguous_provider_outcome') : null,
               });
 
-              const persisted = !outcomeError && (outcomeData as Record<string, unknown>)?.success === true;
+              const persisted = !outcomeError && (outcomeData as Record<string, unknown>)?.recorded === true;
               if (!persisted) {
                 // Persistence not confirmed — durable row remains dispatched/unknown
                 logger.error('[MANUAL BOOKING] Outcome persistence not confirmed:', outcomeError ?? outcomeData);
