@@ -273,18 +273,34 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Update customer profile (non-blocking)
+    // Update customer profile (non-blocking).
+    // Manual bookings pass p_booking_amount: 0 — no payment has occurred,
+    // so we must NOT inflate customer total_spent/LTV. Spend is only
+    // recorded when an actual payment is processed (#244).
     try {
       await serviceClient.rpc('upsert_customer_profile', {
         p_business_id: businessId,
         p_phone: customerPhone,
         p_name: customerName,
-        p_booking_amount: itemPrice,
+        p_booking_amount: 0,
         p_is_booking: true,
         p_is_order: false,
       });
     } catch {
       // Non-critical
+    }
+
+    // Create durable booking confirmation intent (non-blocking).
+    // This creates the intent row for later dispatch via /api/bookings/confirm.
+    // If the caller requested sendConfirmation, we also dispatch inline below.
+    try {
+      await serviceClient.rpc('claim_booking_confirmation', {
+        p_booking_id: booking.id,
+        p_purpose: 'create',
+        p_business_id: businessId,
+      });
+    } catch {
+      // Non-critical: intent creation failure should not fail the booking
     }
 
     return NextResponse.json({
