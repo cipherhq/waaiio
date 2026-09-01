@@ -3,6 +3,42 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-08-31 — #247: Notification dispatch/recovery boundary correction
+
+### What changed
+- **Dispatch barrier restructure:** `app/api/orders/[id]/tracking/route.ts` — ALL preflight work (order DB lookup, phone validation, business name lookup, channel resolution, message construction) now completes BEFORE crossing the durable dispatch barrier. Previously, preflight DB lookups happened AFTER dispatch, meaning the barrier was crossed before all local work was complete.
+- **Single-attempt provider send:** After the dispatch barrier, exactly ONE provider API call is made with `noRetry: true`. No automatic retry on network errors, no template-to-text fallback on ambiguous template outcomes. Ambiguous outcomes (network error, 5xx, timeout) are persisted as `indeterminate` requiring reconciliation.
+- **noRetry support for sendText:** `lib/channels/message-sender.ts` — Added `noRetry` option to the `sendText` interface and `MetaCloudSender.sendText()` implementation, matching the existing `sendTemplate` support. When `noRetry: true`, bypasses the `withRetry` wrapper to prevent duplicate Meta POSTs.
+- **Preflight failure recording:** Deterministic preflight failures (no phone, no channel, order lookup failure) now record outcome as `failed` via `record_tracking_notification_outcome` RPC without claiming or dispatching, making them safely retryable.
+- **Behavioral dispatch-boundary tests:** `app/api/orders/[id]/tracking/__tests__/dispatch-boundary.test.ts` — 8 tests proving provider-call counts: successful send (1 call), network error (1 call + indeterminate), definitive template failure (1 call + no text fallback), text-only send (1 call + noRetry), no-phone preflight failure (0 calls), no-channel preflight failure (0 calls), concurrent worker claim denial (0 additional calls), new revision independently dispatchable.
+- **Existing test fixes:** Updated `tracking-edit.test.ts` mock setup to use `vi.hoisted()` and `mockReset()` per-mock to avoid vitest hoisting/queue-leak issues. Updated notification test expectations to reflect preflight-before-claim ordering.
+
+### Key invariants preserved
+- tracking_revision incremented under FOR UPDATE lock (no COUNT(*)+1)
+- tracking_mutation + audit_log + notification_intent commit atomically
+- shipped_at preserved after first shipment
+- Notification identity = (order_id, tracking_revision)
+- Post-dispatch unknown: recorded as indeterminate, NOT blind resend
+- Notification failure does NOT roll back tracking edit
+
+### Key invariants added
+- Dispatch barrier is crossed ONLY after all local/non-provider preflight is complete
+- At most ONE provider send attempt per logical revision after dispatch
+- No template-to-text fallback after ambiguous template outcome
+- Retrying same revision after dispatched/indeterminate produces zero additional calls
+
+### Files changed
+- `app/api/orders/[id]/tracking/route.ts` (modified — restructured notification dispatch)
+- `lib/channels/message-sender.ts` (modified — added noRetry to sendText interface + impl)
+- `app/api/orders/[id]/tracking/__tests__/tracking-edit.test.ts` (modified — mock setup fixes)
+- `app/api/orders/[id]/tracking/__tests__/dispatch-boundary.test.ts` (new — 8 behavioral tests)
+- `CHANGELOG.md` (this entry)
+
+### Could break
+- If any other code uses `sendTrackingWhatsApp` or `dispatchTrackingNotification` directly — these are file-private functions, so no external callers exist.
+- The `sendText` interface change adds an optional `noRetry` field — fully backwards-compatible (existing callers don't pass it, get retry behavior unchanged).
+- Normal messaging elsewhere in the codebase is NOT affected — only the tracking notification path uses `noRetry: true`.
+
 ## 2026-08-31 — #247: Editable order tracking with durable notification (Phase 1)
 
 ### What changed

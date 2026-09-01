@@ -40,7 +40,7 @@ async function withRetry<T>(fn: () => Promise<T>, retries = 2, delay = 1000): Pr
 }
 
 export interface MessageSender {
-  sendText(msg: { to: string; text: string }): Promise<{ success?: boolean; messageId?: string }>;
+  sendText(msg: { to: string; text: string; noRetry?: boolean }): Promise<{ success?: boolean; messageId?: string }>;
   sendList(msg: {
     to: string;
     title: string;
@@ -126,8 +126,9 @@ export interface MessageSender {
 export class MetaCloudSender implements MessageSender {
   constructor(private readonly cloud: MetaCloudService) {}
 
-  async sendText(msg: { to: string; text: string }) {
-    const result = await withRetry(() => this.cloud.sendText({ to: msg.to, text: msg.text }));
+  async sendText(msg: { to: string; text: string; noRetry?: boolean }) {
+    const textCall = () => this.cloud.sendText({ to: msg.to, text: msg.text });
+    const result = msg.noRetry ? await textCall() : await withRetry(textCall);
     return { success: true, messageId: result.messageId };
   }
 

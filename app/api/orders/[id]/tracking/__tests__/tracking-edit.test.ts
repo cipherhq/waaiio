@@ -8,11 +8,26 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
 
-// ── Mock state ──
-const mockGetUser = vi.fn();
-const mockRpc = vi.fn();
-const mockServiceFrom = vi.fn();
-const mockServiceRpc = vi.fn();
+// ── Hoisted mocks (survive vi.mock hoisting) ──
+const {
+  mockGetUser,
+  mockServiceFrom,
+  mockServiceRpc,
+  mockRequireCapability,
+  mockRateLimitResponseAsync,
+  mockGetRateLimitKey,
+  mockResolveByBusinessId,
+  MockChannelResolverImpl,
+} = vi.hoisted(() => ({
+  mockGetUser: vi.fn(),
+  mockServiceFrom: vi.fn(),
+  mockServiceRpc: vi.fn(),
+  mockRequireCapability: vi.fn(),
+  mockRateLimitResponseAsync: vi.fn(),
+  mockGetRateLimitKey: vi.fn(),
+  mockResolveByBusinessId: vi.fn(),
+  MockChannelResolverImpl: vi.fn(),
+}));
 
 // ── Mock Supabase server client ──
 vi.mock('@/lib/supabase/server', () => ({
@@ -32,15 +47,14 @@ vi.mock('@/lib/supabase/service', () => ({
 }));
 
 // ── Mock capability guard ──
-const mockRequireCapability = vi.fn().mockResolvedValue({ allowed: true });
 vi.mock('@/lib/capabilities/api-guard', () => ({
   requireCapability: (...args: unknown[]) => mockRequireCapability(...args),
 }));
 
 // ── Mock rate limiter ──
 vi.mock('@/lib/rate-limit', () => ({
-  rateLimitResponseAsync: vi.fn().mockResolvedValue(null),
-  getRateLimitKey: vi.fn().mockReturnValue('test-key'),
+  rateLimitResponseAsync: (...args: unknown[]) => mockRateLimitResponseAsync(...args),
+  getRateLimitKey: (...args: unknown[]) => mockGetRateLimitKey(...args),
 }));
 
 // ── Mock logger ──
@@ -48,11 +62,9 @@ vi.mock('@/lib/logger', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
-// ── Mock ChannelResolver (prevent WhatsApp sends) ──
+// ── Mock ChannelResolver ──
 vi.mock('@/lib/channels/channel-resolver', () => ({
-  ChannelResolver: vi.fn().mockImplementation(() => ({
-    resolveByBusinessId: vi.fn().mockResolvedValue(null),
-  })),
+  ChannelResolver: MockChannelResolverImpl,
 }));
 
 // ── Helpers ──
@@ -81,9 +93,19 @@ function chainable(result: { data: unknown; error: unknown }) {
 }
 
 beforeEach(() => {
-  vi.clearAllMocks();
+  mockGetUser.mockReset();
+  mockServiceRpc.mockReset();
+  mockServiceFrom.mockReset();
+  mockResolveByBusinessId.mockReset();
+  // Re-set defaults
   mockGetUser.mockResolvedValue({ data: { user: USER } });
   mockRequireCapability.mockResolvedValue({ allowed: true });
+  mockRateLimitResponseAsync.mockResolvedValue(null);
+  mockGetRateLimitKey.mockReturnValue('test-key');
+  mockResolveByBusinessId.mockResolvedValue(null);
+  MockChannelResolverImpl.mockImplementation(function (this: Record<string, unknown>) {
+    this.resolveByBusinessId = (...args: unknown[]) => mockResolveByBusinessId(...args);
+  });
 });
 
 // ── Import the handler under test ──
@@ -192,7 +214,9 @@ describe('PATCH /api/orders/[id]/tracking', () => {
     const notifId = 'notif-1';
     const claimToken = 'claim-token-1';
 
-    // Sequence of RPC calls: update_order_tracking → claim → dispatch → outcome
+    // Sequence: update_order_tracking → preflight DB lookups → preflight outcome RPC (no channel)
+    // Preflight happens BEFORE claim. With no channel resolver, preflight fails
+    // and records outcome directly (no claim/dispatch needed).
     mockServiceRpc
       .mockResolvedValueOnce({
         // update_order_tracking
@@ -200,22 +224,12 @@ describe('PATCH /api/orders/[id]/tracking', () => {
         error: null,
       })
       .mockResolvedValueOnce({
-        // claim_tracking_notification
-        data: { success: true, claim_token: claimToken },
-        error: null,
-      })
-      .mockResolvedValueOnce({
-        // mark_tracking_notification_dispatched
+        // record_tracking_notification_outcome (preflight failed: no channel)
         data: { success: true },
-        error: null,
-      })
-      .mockResolvedValueOnce({
-        // record_tracking_notification_outcome (sendTrackingWhatsApp will fail since no channel resolver)
-        data: { success: true, outcome: 'failed' },
         error: null,
       });
 
-    // Mock service.from for order + business lookups in sendTrackingWhatsApp
+    // Mock service.from for order + business lookups in preflight
     mockServiceFrom
       .mockReturnValueOnce(
         chainable({ data: { reference_code: 'ORD-001', delivery_phone: '+2341234567890' }, error: null }),
@@ -235,24 +249,41 @@ describe('PATCH /api/orders/[id]/tracking', () => {
     const body = await res.json();
     expect(body.success).toBe(true);
     expect(body.revision).toBe(1);
-    // Notification failed or indeterminate (no channel) — tracking edit still succeeded
-    expect(['failed', 'indeterminate']).toContain(body.notification.status);
+    // Notification failed (no channel) — tracking edit still succeeded
+    expect(body.notification.status).toBe('failed');
   });
 
   it('notification failure does not affect tracking success', async () => {
     const notifId = 'notif-2';
 
-    // update_order_tracking succeeds, but claim fails
+    // Provide a channel so preflight passes and we reach the claim step
+    mockResolveByBusinessId.mockResolvedValueOnce({
+      sender: {
+        sendTemplate: vi.fn().mockResolvedValue({ success: true, messageId: 'wamid-1' }),
+        sendText: vi.fn().mockResolvedValue({ success: true, messageId: 'wamid-2' }),
+      },
+    });
+
+    // update_order_tracking succeeds. Preflight succeeds but claim fails.
     mockServiceRpc
       .mockResolvedValueOnce({
         data: { success: true, no_op: false, revision: 3, notification_id: notifId, shipped_at: '2026-08-30T12:00:00Z' },
         error: null,
       })
       .mockResolvedValueOnce({
-        // claim fails
+        // claim fails (after preflight succeeds)
         data: { success: false, error: 'not_claimable', current_status: 'claiming' },
         error: null,
       });
+
+    // Preflight DB lookups (needed before claim now)
+    mockServiceFrom
+      .mockReturnValueOnce(
+        chainable({ data: { reference_code: 'ORD-001', delivery_phone: '+2341234567890' }, error: null }),
+      )
+      .mockReturnValueOnce(
+        chainable({ data: { name: 'Test Biz' }, error: null }),
+      );
 
     const req = makeRequest({
       businessId: BIZ_ID,
@@ -266,7 +297,7 @@ describe('PATCH /api/orders/[id]/tracking', () => {
     // Tracking edit committed successfully
     expect(body.success).toBe(true);
     expect(body.revision).toBe(3);
-    // Notification failed, but that's fine
+    // Notification failed (claim denied), but tracking edit is unaffected
     expect(body.notification.status).toBe('failed');
   });
 });

@@ -139,104 +139,52 @@ export async function PATCH(
 }
 
 /**
- * Dispatches a tracking notification through the claim/dispatch/send/outcome
- * lifecycle. Notification failure does NOT roll back the tracking edit.
+ * Preflight data needed before crossing the dispatch barrier.
+ * All DB lookups, phone validation, channel resolution, and message
+ * construction happen here — before any provider API call.
  */
-async function dispatchTrackingNotification(
-  service: ReturnType<typeof createServiceClient>,
-  orderId: string,
-  businessId: string,
-  notificationId: string,
-  carrier: string | null,
-  trackingNumber: string | null,
-): Promise<'sent' | 'failed' | 'indeterminate'> {
-  try {
-    // 1. Claim the notification
-    const { data: claimResult, error: claimError } = await service.rpc(
-      'claim_tracking_notification',
-      { p_notification_id: notificationId, p_business_id: businessId },
-    );
-
-    if (claimError || !(claimResult as { success: boolean })?.success) {
-      logger.warn('[TRACKING-NOTIF] Claim failed:', claimError ?? claimResult);
-      return 'failed';
-    }
-
-    const claimToken = (claimResult as { claim_token: string }).claim_token;
-
-    // 2. Mark dispatched (barrier — after this, no blind resend)
-    const { data: dispatchResult, error: dispatchError } = await service.rpc(
-      'mark_tracking_notification_dispatched',
-      { p_notification_id: notificationId, p_claim_token: claimToken },
-    );
-
-    if (dispatchError || !(dispatchResult as { success: boolean })?.success) {
-      logger.warn('[TRACKING-NOTIF] Dispatch barrier failed:', dispatchError ?? dispatchResult);
-      return 'failed';
-    }
-
-    // 3. Send WhatsApp message
-    let outcome: 'sent' | 'failed' | 'indeterminate' = 'indeterminate';
-    let providerMessageId: string | null = null;
-    let errorMessage: string | null = null;
-
-    try {
-      const sendResult = await sendTrackingWhatsApp(
-        service,
-        orderId,
-        businessId,
-        carrier,
-        trackingNumber,
-      );
-      if (sendResult.success) {
-        outcome = 'sent';
-        providerMessageId = sendResult.messageId ?? null;
-      } else {
-        outcome = 'failed';
-        errorMessage = 'WhatsApp send returned failure';
-      }
-    } catch (err) {
-      // Post-dispatch unknown: record as indeterminate, NOT blind resend
-      outcome = 'indeterminate';
-      errorMessage = err instanceof Error ? err.message : String(err);
-      logger.error('[TRACKING-NOTIF] Send error (post-dispatch):', err);
-    }
-
-    // 4. Record outcome
-    await service.rpc('record_tracking_notification_outcome', {
-      p_notification_id: notificationId,
-      p_claim_token: claimToken,
-      p_outcome: outcome,
-      p_provider_message_id: providerMessageId,
-      p_error_message: errorMessage,
-    });
-
-    return outcome;
-  } catch (err) {
-    logger.error('[TRACKING-NOTIF] Lifecycle error:', err);
-    return 'failed';
-  }
+interface NotificationPreflight {
+  phone: string;
+  message: string;
+  referenceCode: string;
+  sender: {
+    sendTemplate?: (msg: {
+      to: string;
+      templateName: string;
+      templateParams: string[];
+      noRetry?: boolean;
+    }) => Promise<{ success?: boolean; messageId?: string }>;
+    sendText: (msg: {
+      to: string;
+      text: string;
+      noRetry?: boolean;
+    }) => Promise<{ success?: boolean; messageId?: string }>;
+  };
 }
 
 /**
- * Sends the tracking notification via WhatsApp.
+ * Performs all non-provider preflight work for a tracking notification.
+ * Returns null if any preflight step fails (safely retryable).
  */
-async function sendTrackingWhatsApp(
+async function performNotificationPreflight(
   service: ReturnType<typeof createServiceClient>,
   orderId: string,
   businessId: string,
   carrier: string | null,
   trackingNumber: string | null,
-): Promise<{ success: boolean; messageId?: string }> {
-  // Fetch order details (reference_code, delivery_phone)
+): Promise<{ data: NotificationPreflight } | { error: string }> {
+  // Fetch order details
   const { data: order, error: orderError } = await service
     .from('orders')
     .select('reference_code, delivery_phone')
     .eq('id', orderId)
     .single();
 
-  if (orderError || !order?.delivery_phone) {
-    return { success: false };
+  if (orderError || !order?.reference_code) {
+    return { error: 'Order lookup failed' };
+  }
+  if (!order.delivery_phone) {
+    return { error: 'No delivery phone on order' };
   }
 
   // Fetch business name
@@ -251,13 +199,16 @@ async function sendTrackingWhatsApp(
   const resolver = new ChannelResolver(service);
   const resolved = await resolver.resolveByBusinessId(businessId);
   if (!resolved?.sender) {
-    logger.warn('[TRACKING-NOTIF] No messaging channel for business', businessId);
-    return { success: false };
+    return { error: `No messaging channel for business ${businessId}` };
   }
 
   const phone = order.delivery_phone.startsWith('+')
     ? order.delivery_phone.slice(1)
     : order.delivery_phone;
+
+  if (!phone || phone.length < 7) {
+    return { error: 'Invalid delivery phone number' };
+  }
 
   let message = `Your order *${order.reference_code}* from *${bizName}* has updated tracking!`;
   if (carrier) {
@@ -267,27 +218,143 @@ async function sendTrackingWhatsApp(
     message += `\nTracking: ${trackingNumber}`;
   }
 
-  // Try template first (works outside 24h window)
-  let sent = false;
-  let messageId: string | undefined;
-  if (resolved.sender.sendTemplate) {
-    try {
-      const tmplResult = await resolved.sender.sendTemplate({
-        to: phone,
-        templateName: 'order_status_update',
-        templateParams: [order.reference_code, 'shipped'],
-      });
-      sent = tmplResult.success !== false;
-      messageId = tmplResult.messageId;
-    } catch {
-      /* template failed, fall back to text */
-    }
-  }
-  if (!sent) {
-    const textResult = await resolved.sender.sendText({ to: phone, text: message });
-    messageId = textResult.messageId;
-    sent = true;
-  }
+  return {
+    data: {
+      phone,
+      message,
+      referenceCode: order.reference_code,
+      sender: resolved.sender,
+    },
+  };
+}
 
-  return { success: sent, messageId };
+/**
+ * Dispatches a tracking notification through the claim/dispatch/send/outcome
+ * lifecycle. Notification failure does NOT roll back the tracking edit.
+ *
+ * Dispatch barrier contract:
+ * - ALL preflight (DB lookups, phone validation, channel resolution, message
+ *   construction) completes BEFORE crossing the barrier
+ * - After the barrier, exactly ONE provider API call is made (no retry, no fallback)
+ * - Ambiguous outcomes (network error, 5xx) -> indeterminate, NOT blind resend
+ * - Retrying the same revision after dispatched/indeterminate -> zero additional calls
+ */
+async function dispatchTrackingNotification(
+  service: ReturnType<typeof createServiceClient>,
+  orderId: string,
+  businessId: string,
+  notificationId: string,
+  carrier: string | null,
+  trackingNumber: string | null,
+): Promise<'sent' | 'failed' | 'indeterminate'> {
+  try {
+    // ── Step 1: ALL preflight BEFORE any claim/dispatch ──
+    const preflight = await performNotificationPreflight(
+      service,
+      orderId,
+      businessId,
+      carrier,
+      trackingNumber,
+    );
+
+    if ('error' in preflight) {
+      // Deterministic preflight failure — record as failed, safely retryable
+      logger.warn('[TRACKING-NOTIF] Preflight failed:', preflight.error);
+      await service.rpc('record_tracking_notification_outcome', {
+        p_notification_id: notificationId,
+        p_claim_token: null,
+        p_outcome: 'failed',
+        p_provider_message_id: null,
+        p_error_message: `Preflight: ${preflight.error}`,
+      });
+      return 'failed';
+    }
+
+    const { phone, message, referenceCode, sender } = preflight.data;
+
+    // ── Step 2: Claim the notification ──
+    const { data: claimResult, error: claimError } = await service.rpc(
+      'claim_tracking_notification',
+      { p_notification_id: notificationId, p_business_id: businessId },
+    );
+
+    if (claimError || !(claimResult as { success: boolean })?.success) {
+      logger.warn('[TRACKING-NOTIF] Claim failed:', claimError ?? claimResult);
+      return 'failed';
+    }
+
+    const claimToken = (claimResult as { claim_token: string }).claim_token;
+
+    // ── Step 3: Mark dispatched — THIS IS THE DURABLE DISPATCH BARRIER ──
+    // After this point: at most ONE provider call, no retry, no fallback
+    const { data: dispatchResult, error: dispatchError } = await service.rpc(
+      'mark_tracking_notification_dispatched',
+      { p_notification_id: notificationId, p_claim_token: claimToken },
+    );
+
+    if (dispatchError || !(dispatchResult as { success: boolean })?.success) {
+      logger.warn('[TRACKING-NOTIF] Dispatch barrier failed:', dispatchError ?? dispatchResult);
+      return 'failed';
+    }
+
+    // ── Step 4: Exactly ONE provider API call (no retry, no fallback) ──
+    let outcome: 'sent' | 'failed' | 'indeterminate' = 'indeterminate';
+    let providerMessageId: string | null = null;
+    let errorMessage: string | null = null;
+
+    try {
+      // Attempt template send if available — with noRetry to prevent duplicate POSTs
+      if (sender.sendTemplate) {
+        const tmplResult = await sender.sendTemplate({
+          to: phone,
+          templateName: 'order_status_update',
+          templateParams: [referenceCode, 'shipped'],
+          noRetry: true,
+        });
+        if (tmplResult.success !== false) {
+          outcome = 'sent';
+          providerMessageId = tmplResult.messageId ?? null;
+        } else {
+          // Template returned definitive failure (no messageId, success=false)
+          // Do NOT fall back to text — the template outcome is known
+          outcome = 'failed';
+          errorMessage = 'Template send returned failure';
+        }
+      } else {
+        // No template support — single-attempt text send
+        const textResult = await sender.sendText({
+          to: phone,
+          text: message,
+          noRetry: true,
+        });
+        if (textResult.success !== false) {
+          outcome = 'sent';
+          providerMessageId = textResult.messageId ?? null;
+        } else {
+          outcome = 'failed';
+          errorMessage = 'Text send returned failure';
+        }
+      }
+    } catch (err) {
+      // Post-dispatch unknown (network error, 5xx, timeout):
+      // Record as indeterminate — NO automatic retry, NO text fallback
+      outcome = 'indeterminate';
+      errorMessage = err instanceof Error ? err.message : String(err);
+      logger.error('[TRACKING-NOTIF] Send error (post-dispatch, single attempt):', err);
+    }
+
+    // ── Step 5: Record outcome ──
+    await service.rpc('record_tracking_notification_outcome', {
+      p_notification_id: notificationId,
+      p_claim_token: claimToken,
+      p_outcome: outcome,
+      p_provider_message_id: providerMessageId,
+      p_error_message: errorMessage,
+    });
+
+    return outcome;
+  } catch (err) {
+    logger.error('[TRACKING-NOTIF] Lifecycle error:', err);
+    return 'failed';
+  }
 }
