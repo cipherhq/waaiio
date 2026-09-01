@@ -146,6 +146,21 @@ If something breaks, check this log to find what changed and when.
 - The new `tracking_revision` column defaults to 0, so existing orders are unaffected.
 - If any code does `SELECT *` on orders and destructures strictly, the new column could cause issues — but this is unlikely with TypeScript.
 
+## 2026-09-01 — #278 (Slice B of #271): Atomic webhook event claim/reclaim + fencing
+
+### What changed
+- **Migration 362:** `362_webhook_claim_fencing.sql` — adds `claim_token` UUID column, three SECURITY DEFINER RPCs (`claim_webhook_event`, `complete_webhook_event`, `fail_webhook_event`), all locked to `service_role` only. 90s hardcoded stale threshold.
+- **Webhook route:** Replaced non-atomic SELECT→UPDATE dedup with single `claim_webhook_event` RPC. All terminal writes fenced by claim_token. Processing failures → `complete_webhook_event` (not `fail`) to prevent replay of already-sent customer responses.
+- **Deadline-guarded sender:** Every outbound Meta send in the claimed block goes through `createDeadlineGuardedSender()` which checks the 50s side-effect deadline before each provider call. Covers BotService, direct route sends, and fallback sends. BotService receives the guarded sender.
+- **No-replay policy:** After the dispatch barrier, processing errors terminalize the event as `completed` (not `failed`) because `bot.handleMessage()` may have already sent customer-visible side effects. Error guidance is sent BEFORE terminalization while the claim is still held.
+- **Concurrent PG proofs:** Real overlapping psql sessions for failed-retry, stale-reclaim, first-delivery, and terminal-write fencing.
+- **Runtime behavioral tests:** Deadline guard blocks sends past 50s for all send methods, error fallback uses guarded sender, BotService receives guarded sender.
+
+### Could break
+- The stale threshold changed from 60s (app-level) to 90s (DB-level in RPC).
+- Processing errors now terminalize as `completed` rather than `failed`, meaning a failed bot.handleMessage no longer allows automatic retry of the same inbound message.
+- Refs: #278, #271
+
 ### feat(255): commercial config versioning — immutable platform_config_versions (C-1)
 
 - **Date:** 2026-09-01

@@ -27,6 +27,63 @@ import type { CountryCode, PaymentGatewayName } from '@/lib/constants';
 // Allow up to 60s for bot processing on Vercel Pro
 export const maxDuration = 60;
 
+/** Side-effect deadline: 50s leaves 10s buffer before maxDuration. */
+const SIDE_EFFECT_DEADLINE_MS = 50_000;
+
+/**
+ * Error thrown when a send is attempted past the side-effect deadline.
+ * The worker must stop emitting customer-visible side effects.
+ */
+class DeadlineExceededError extends Error {
+  constructor() { super('Side-effect deadline exceeded — send suppressed'); this.name = 'DeadlineExceededError'; }
+}
+
+/**
+ * Wrap a MessageSender so every outbound send checks the request-scoped
+ * deadline before attempting the provider call. This covers BotService sends,
+ * direct route sends, and any retry attempts — no send can escape after the
+ * deadline. markAsRead is excluded (not customer-visible content).
+ */
+function createDeadlineGuardedSender(
+  inner: import('@/lib/channels/message-sender').MessageSender,
+  startTime: number,
+): import('@/lib/channels/message-sender').MessageSender {
+  const deadlineCheck = () => {
+    if (Date.now() - startTime >= SIDE_EFFECT_DEADLINE_MS) {
+      throw new DeadlineExceededError();
+    }
+  };
+
+  // Set the per-attempt guard on MetaCloudSender so every provider attempt
+  // (including retries within withRetry) checks the deadline. This covers
+  // ALL MessageSender methods — sendList, sendButtons, sendImage, etc.
+  if ('beforeEachAttempt' in inner) {
+    (inner as import('@/lib/channels/message-sender').MetaCloudSender).beforeEachAttempt = deadlineCheck;
+  }
+
+  // The outer wrapper also checks before entering the send method at all,
+  // providing a fast-path rejection before any retry logic starts.
+  function guardedCall<T>(fn: () => Promise<T>): Promise<T> {
+    deadlineCheck();
+    return fn();
+  }
+
+  return {
+    sendText: (msg) => guardedCall(() => inner.sendText(msg)),
+    sendList: (msg) => guardedCall(() => inner.sendList(msg)),
+    sendButtons: (msg) => guardedCall(() => inner.sendButtons(msg)),
+    sendImage: (msg) => guardedCall(() => inner.sendImage(msg)),
+    sendDocument: (msg) => guardedCall(() => inner.sendDocument(msg)),
+    sendAudio: (msg) => guardedCall(() => inner.sendAudio(msg)),
+    sendTemplate: inner.sendTemplate ? (msg) => guardedCall(() => inner.sendTemplate!(msg)) : undefined,
+    sendFlow: inner.sendFlow ? (msg) => guardedCall(() => inner.sendFlow!(msg)) : undefined,
+    sendReaction: inner.sendReaction ? (msg) => guardedCall(() => inner.sendReaction!(msg)) : undefined,
+    sendLocation: inner.sendLocation ? (msg) => guardedCall(() => inner.sendLocation!(msg)) : undefined,
+    sendProduct: inner.sendProduct ? (msg) => guardedCall(() => inner.sendProduct!(msg)) : undefined,
+    sendProductList: inner.sendProductList ? (msg) => guardedCall(() => inner.sendProductList!(msg)) : undefined,
+  };
+}
+
 /**
  * Handle a WhatsApp Catalog order message.
  * When a customer browses the native WhatsApp product catalog and submits an order,
@@ -39,7 +96,10 @@ async function handleCatalogOrder(
   msg: { order?: { catalog_id: string; text?: string; product_items: Array<{ product_retailer_id: string; quantity: number; item_price: number; currency: string }> }; id?: string },
   source: string,
   msgLog: ReturnType<typeof logger.withContext>,
+  /** Deadline-guarded sender — all customer-visible sends must go through this */
+  sender: import('@/lib/channels/message-sender').MessageSender,
 ) {
+  const outbound = sender;
   const orderData = msg.order;
   if (!orderData?.product_items?.length) return;
 
@@ -57,7 +117,7 @@ async function handleCatalogOrder(
   if (!biz || biz.status !== 'active') {
     msgLog.error('[META-WEBHOOK] No active business found for catalog:', catalogId);
     try {
-      await resolved.sender.sendText({
+      await outbound.sendText({
         to: source,
         text: 'Sorry, this catalog is currently unavailable. Please try again later.',
       });
@@ -71,7 +131,7 @@ async function handleCatalogOrder(
   if (!userId) {
     msgLog.error('[META-WEBHOOK] Failed to create/find user for catalog order');
     try {
-      await resolved.sender.sendText({
+      await outbound.sendText({
         to: source,
         text: 'Something went wrong on our end. Please try again.',
       });
@@ -93,7 +153,7 @@ async function handleCatalogOrder(
   if (rpcError) {
     msgLog.error('[META-ORDER] Atomic order failed:', rpcError.message);
     try {
-      await resolved.sender.sendText({
+      await outbound.sendText({
         to: source,
         text: 'Something went wrong on our end creating your order. Please try again.',
       });
@@ -112,7 +172,7 @@ async function handleCatalogOrder(
         ? `Sorry, the following items are out of stock: ${outOfStock.join(', ')}`
         : 'Sorry, none of the selected products are available right now.';
       try {
-        await resolved.sender.sendText({ to: source, text: noItemsMsg });
+        await outbound.sendText({ to: source, text: noItemsMsg });
       } catch { /* ignore */ }
       return;
     }
@@ -198,7 +258,7 @@ async function handleCatalogOrder(
   ].filter(Boolean).join('\n');
 
   try {
-    await resolved.sender.sendText({ to: source, text: confirmationMsg });
+    await outbound.sendText({ to: source, text: confirmationMsg });
   } catch (sendErr) {
     msgLog.error('[META-WEBHOOK] Failed to send catalog order confirmation:', sendErr);
   }
@@ -556,74 +616,33 @@ export async function POST(request: NextRequest) {
         }
 
         const preResolvedBusinessId = resolved.channel.business_id || undefined;
+        // Wrap the sender with a deadline guard — every outbound Meta send checks
+        // the request-scoped deadline before attempting the provider call.
+        const guardedSender = createDeadlineGuardedSender(resolved.sender, t0);
 
         for (const msg of messages) {
           const source = msg.from;
           const msgLog = log.withContext({ from: source });
 
-          // Durable inbound event — store before processing
+          // Durable inbound event — atomic claim via RPC (#271 Slice B)
           const metaMsgId = msg.id;
           if (metaMsgId) {
             const eventId = `meta-${metaMsgId}`;
 
-            // Atomically insert or fetch existing event
-            const { data: existing } = await supabase
-              .from('processed_webhook_events')
-              .select('id, status, attempts')
-              .eq('event_id', eventId)
-              .maybeSingle();
+            // Atomic claim: INSERT-or-reclaim with FOR UPDATE serialization
+            const whMsgType: string = msg['type'] || 'message';
+            const { data: claimResult, error: claimError } = await supabase.rpc('claim_webhook_event', {
+              p_event_id: eventId,
+              p_gateway: 'meta_cloud',
+              p_event_type: whMsgType,
+            });
 
-            if (existing) {
-              if (existing.status === 'completed') {
-                msgLog.debug('[META-WEBHOOK] Already completed, skipping:', metaMsgId);
-                continue;
-              }
-              if (existing.status === 'processing') {
-                // Check if stale (>60s = likely crashed worker)
-                const { data: staleCheck } = await supabase
-                  .from('processed_webhook_events')
-                  .select('id')
-                  .eq('event_id', eventId)
-                  .eq('status', 'processing')
-                  .lt('last_attempted_at', new Date(Date.now() - 60_000).toISOString())
-                  .maybeSingle();
-
-                if (!staleCheck) {
-                  msgLog.debug('[META-WEBHOOK] Currently processing, skipping:', metaMsgId);
-                  continue;
-                }
-                // Stale — allow retry
-              }
-              // Failed or stale — retry: update to processing
-              await supabase
-                .from('processed_webhook_events')
-                .update({
-                  status: 'processing',
-                  attempts: (existing.attempts || 0) + 1,
-                  last_attempted_at: new Date().toISOString(),
-                })
-                .eq('event_id', eventId);
-            } else {
-              // New event — insert as processing
-              const { error: insertErr } = await supabase
-                .from('processed_webhook_events')
-                .insert({
-                  event_id: eventId,
-                  gateway: 'meta_cloud',
-                  event_type: msg.type || 'message',
-                  status: 'processing',
-                  attempts: 1,
-                  first_received_at: new Date().toISOString(),
-                  last_attempted_at: new Date().toISOString(),
-                });
-
-              if (insertErr) {
-                // Unique constraint = another worker beat us
-                msgLog.debug('[META-WEBHOOK] Event claimed by another worker:', metaMsgId);
-                continue;
-              }
+            if (claimError || !claimResult?.claimed) {
+              msgLog.debug('[META-WEBHOOK] Event not claimed:', metaMsgId, claimResult?.reason || claimError?.message);
+              continue;
             }
 
+            const claimToken = claimResult.claim_token;
             mark('idempotency_claimed');
             // Process the message — wrap in try/catch for state updates
             try {
@@ -632,12 +651,12 @@ export async function POST(request: NextRequest) {
               // Meta sends a message with type === 'order'. This is a parallel path to
               // the conversational ordering flow — both work independently.
               if (msg.type === 'order' && msg.order?.product_items?.length) {
-                await handleCatalogOrder(supabase, resolved, msg, source, msgLog);
-                // Mark completed after successful processing
-                await supabase
-                  .from('processed_webhook_events')
-                  .update({ status: 'completed', completed_at: new Date().toISOString() })
-                  .eq('event_id', eventId);
+                await handleCatalogOrder(supabase, resolved, msg, source, msgLog, guardedSender);
+                // Fenced completion — only succeeds if we still hold the claim
+                await supabase.rpc('complete_webhook_event', {
+                  p_event_id: eventId,
+                  p_claim_token: claimToken,
+                });
                 continue; // Skip normal bot processing for order messages
               }
 
@@ -724,7 +743,7 @@ export async function POST(request: NextRequest) {
                       } else {
                         // Free tier: tell customer to type instead
                         try {
-                          await resolved.sender.sendText({ to: source, text: getVoiceNotSupportedMessage() });
+                          await guardedSender.sendText({ to: source, text: getVoiceNotSupportedMessage() });
                         } catch { /* ignore */ }
                       }
                     }
@@ -740,25 +759,25 @@ export async function POST(request: NextRequest) {
               const msgAny = msg as Record<string, unknown>;
               if (!text && !mediaUrl && source && (msg.image || msgAny.video || msgAny.sticker || msgAny.document || msgAny.location)) {
                 try {
-                  await resolved.sender.sendText({
+                  await guardedSender.sendText({
                     to: source,
                     text: "I can't process images or files yet. Please reply with text instead.\n\nType *Hi* to start over, *menu* to see options, or *cancel* to exit.",
                   });
                 } catch { /* ignore send failure */ }
-                // Mark completed — we handled it (sent guidance reply)
-                await supabase
-                  .from('processed_webhook_events')
-                  .update({ status: 'completed', completed_at: new Date().toISOString() })
-                  .eq('event_id', eventId);
+                // Fenced completion — we handled it (sent guidance reply)
+                await supabase.rpc('complete_webhook_event', {
+                  p_event_id: eventId,
+                  p_claim_token: claimToken,
+                });
                 continue;
               }
 
               if (!source || (!text && !mediaUrl)) {
-                // Mark completed — nothing to process
-                await supabase
-                  .from('processed_webhook_events')
-                  .update({ status: 'completed', completed_at: new Date().toISOString() })
-                  .eq('event_id', eventId);
+                // Fenced completion — nothing to process
+                await supabase.rpc('complete_webhook_event', {
+                  p_event_id: eventId,
+                  p_claim_token: claimToken,
+                });
                 continue;
               }
 
@@ -769,8 +788,20 @@ export async function POST(request: NextRequest) {
                 resolved.cloud.markAsRead(msg.id).catch(() => {});
               }
 
+              // Fast-path deadline check: skip BotService creation if already past deadline.
+              // The guardedSender enforces the deadline on every individual send attempt,
+              // but this avoids unnecessary work when the deadline is already exceeded.
+              if (Date.now() - t0 >= SIDE_EFFECT_DEADLINE_MS) {
+                msgLog.warn('[META-WEBHOOK] Side-effect deadline exceeded before bot entry:', metaMsgId);
+                await supabase.rpc('complete_webhook_event', {
+                  p_event_id: eventId,
+                  p_claim_token: claimToken,
+                });
+                continue;
+              }
+
               const standalone = new StandaloneService(supabase);
-              const bot = new BotService(supabase, resolved.sender, standalone, intelligenceSvc);
+              const bot = new BotService(supabase, guardedSender, standalone, intelligenceSvc);
 
               mark('bot_enter');
               msgLog.debug('[META-WEBHOOK] Calling bot.handleMessage for ...', source.slice(-4), 'preResolvedBiz:', preResolvedBusinessId);
@@ -778,33 +809,40 @@ export async function POST(request: NextRequest) {
               mark('bot_complete');
               msgLog.debug('[META-WEBHOOK] bot.handleMessage completed for ...', source.slice(-4));
 
-              // Mark completed after successful processing
-              await supabase
-                .from('processed_webhook_events')
-                .update({ status: 'completed', completed_at: new Date().toISOString() })
-                .eq('event_id', eventId);
+              // Fenced completion — only succeeds if we still hold the claim
+              await supabase.rpc('complete_webhook_event', {
+                p_event_id: eventId,
+                p_claim_token: claimToken,
+              });
               mark('msg_complete');
               log.info('[META-WEBHOOK-PERF] timings_ms', timings);
             } catch (processingErr) {
-              // Mark failed — allows retry on next delivery
-              msgLog.error('[META-WEBHOOK] Processing failed:', processingErr);
-              await supabase
-                .from('processed_webhook_events')
-                .update({
-                  status: 'failed',
-                  last_error: String(processingErr).slice(0, 500),
-                  last_attempted_at: new Date().toISOString(),
-                })
-                .eq('event_id', eventId);
-              // Try to send error message to user so they know something went wrong
+              // After the dispatch barrier, bot.handleMessage() may have already sent
+              // one or more outbound customer messages before throwing. Marking the event
+              // 'failed' would allow retry/reclaim, which would replay those already-sent
+              // messages — creating duplicate customer responses.
+              //
+              // Safe policy: terminalize the event as 'completed' (not 'failed') after any
+              // processing attempt that crossed the dispatch barrier. The customer may have
+              // received a partial response, but they will not receive duplicate responses
+              // from a retry. The error is logged for operational visibility.
+              msgLog.error('[META-WEBHOOK] Processing failed (event will be completed to prevent replay):', processingErr);
+
+              // Try to send error guidance BEFORE terminalizing, while we still hold the claim
               try {
-                await resolved.sender.sendText({
+                await guardedSender.sendText({
                   to: source,
                   text: 'Sorry, we encountered an error processing your message. Please try again.',
                 });
               } catch (fallbackErr) {
                 msgLog.error('[META-WEBHOOK] Fallback error message also failed:', fallbackErr);
               }
+
+              // Terminalize as completed — prevents retry/replay of already-sent side effects
+              await supabase.rpc('complete_webhook_event', {
+                p_event_id: eventId,
+                p_claim_token: claimToken,
+              });
               // Don't rethrow — continue processing other messages in the batch
             }
             continue; // Move to next message

@@ -10,13 +10,23 @@ import { isCircuitOpen, recordSuccess, recordFailure, CircuitBreakerOpenError } 
 
 const CIRCUIT_KEY = 'meta-cloud';
 
-async function withRetry<T>(fn: () => Promise<T>, retries = 2, delay = 1000): Promise<T> {
+async function withRetry<T>(
+  fn: () => Promise<T>,
+  retries = 2,
+  delay = 1000,
+  /** Optional guard called before each attempt (including retries).
+   *  Throw to abort the retry loop — e.g. deadline-exceeded. */
+  beforeEachAttempt?: () => void,
+): Promise<T> {
   // Check circuit breaker before attempting any call
   if (isCircuitOpen(CIRCUIT_KEY)) {
     throw new CircuitBreakerOpenError(CIRCUIT_KEY);
   }
 
   for (let i = 0; i <= retries; i++) {
+    // Deadline/ownership guard — checked before each provider attempt
+    if (beforeEachAttempt) beforeEachAttempt();
+
     try {
       const result = await fn();
       recordSuccess(CIRCUIT_KEY);
@@ -124,11 +134,14 @@ export interface MessageSender {
  * so it conforms to the unified MessageSender interface.
  */
 export class MetaCloudSender implements MessageSender {
+  /** Optional per-attempt guard (e.g. deadline check) — called before each provider attempt including retries. */
+  beforeEachAttempt?: () => void;
+
   constructor(private readonly cloud: MetaCloudService) {}
 
   async sendText(msg: { to: string; text: string; noRetry?: boolean }) {
     const textCall = () => this.cloud.sendText({ to: msg.to, text: msg.text });
-    const result = msg.noRetry ? await textCall() : await withRetry(textCall);
+    const result = msg.noRetry ? await textCall() : await withRetry(textCall, 2, 1000, this.beforeEachAttempt);
     return { success: true, messageId: result.messageId };
   }
 
@@ -174,7 +187,7 @@ export class MetaCloudSender implements MessageSender {
       footerText: msg.footer ? msg.footer.slice(0, 60) : undefined,
       buttonText: truncatedButtonLabel,
       sections,
-    }));
+    }), 2, 1000, this.beforeEachAttempt);
     return { success: true, messageId: result.messageId };
   }
 
@@ -190,7 +203,7 @@ export class MetaCloudSender implements MessageSender {
       bodyText: msg.body.slice(0, 1024),
       footerText: msg.footer ? msg.footer.slice(0, 60) : undefined,
       buttons: msg.buttons.map(b => ({ id: b.id, title: b.title.slice(0, 20) })),
-    }));
+    }), 2, 1000, this.beforeEachAttempt);
     return { success: true, messageId: result.messageId };
   }
 
@@ -203,7 +216,7 @@ export class MetaCloudSender implements MessageSender {
       to: msg.to,
       imageUrl: msg.imageUrl,
       caption: msg.caption,
-    }));
+    }), 2, 1000, this.beforeEachAttempt);
     return { success: true, messageId: result.messageId };
   }
 
@@ -218,7 +231,7 @@ export class MetaCloudSender implements MessageSender {
       documentUrl: msg.documentUrl,
       filename: msg.filename,
       caption: msg.caption,
-    }));
+    }), 2, 1000, this.beforeEachAttempt);
     return { success: true, messageId: result.messageId };
   }
 
@@ -229,7 +242,7 @@ export class MetaCloudSender implements MessageSender {
     const result = await withRetry(() => this.cloud.sendAudio({
       to: msg.to,
       audioUrl: msg.audioUrl,
-    }));
+    }), 2, 1000, this.beforeEachAttempt);
     return { success: true, messageId: result.messageId };
   }
 
@@ -263,7 +276,7 @@ export class MetaCloudSender implements MessageSender {
       templateName: msg.templateName,
       components,
     });
-    const result = msg.noRetry ? await templateCall() : await withRetry(templateCall);
+    const result = msg.noRetry ? await templateCall() : await withRetry(templateCall, 2, 1000, this.beforeEachAttempt);
     return { success: true, messageId: result.messageId };
   }
 
@@ -276,17 +289,17 @@ export class MetaCloudSender implements MessageSender {
     flowToken?: string;
     data?: Record<string, unknown>;
   }) {
-    const result = await withRetry(() => this.cloud.sendFlow(msg));
+    const result = await withRetry(() => this.cloud.sendFlow(msg), 2, 1000, this.beforeEachAttempt);
     return { success: true, messageId: result.messageId };
   }
 
   async sendReaction(msg: { to: string; messageId: string; emoji: string }) {
-    const result = await withRetry(() => this.cloud.sendReaction(msg));
+    const result = await withRetry(() => this.cloud.sendReaction(msg), 2, 1000, this.beforeEachAttempt);
     return { success: true, messageId: result.messageId };
   }
 
   async sendLocation(msg: { to: string; latitude: number; longitude: number; name?: string; address?: string }) {
-    const result = await withRetry(() => this.cloud.sendLocation(msg));
+    const result = await withRetry(() => this.cloud.sendLocation(msg), 2, 1000, this.beforeEachAttempt);
     return { success: true, messageId: result.messageId };
   }
 
@@ -303,7 +316,7 @@ export class MetaCloudSender implements MessageSender {
       productId: msg.productRetailerId,
       body: msg.body,
       footer: msg.footer,
-    }));
+    }), 2, 1000, this.beforeEachAttempt);
     return { success: true, messageId: result.messageId };
   }
 
@@ -325,7 +338,7 @@ export class MetaCloudSender implements MessageSender {
         title: s.title,
         productIds: s.productRetailerIds,
       })),
-    }));
+    }), 2, 1000, this.beforeEachAttempt);
     return { success: true, messageId: result.messageId };
   }
 }
