@@ -49,7 +49,9 @@ CREATE TRIGGER trg_config_versions_no_delete
 CREATE OR REPLACE FUNCTION public.guard_config_version_insert()
 RETURNS TRIGGER AS $$
 BEGIN
-  IF current_user NOT IN ('postgres', 'supabase_admin') THEN
+  -- Allow superuser roles (postgres in Supabase, any superuser in dev/CI)
+  -- and the SECURITY DEFINER function (which runs as its owner = superuser)
+  IF NOT (SELECT rolsuper FROM pg_roles WHERE rolname = current_user) THEN
     RAISE EXCEPTION 'platform_config_versions INSERT must occur via save_commercial_config() or migration';
   END IF;
   RETURN NEW;
@@ -89,7 +91,7 @@ BEGIN
   END IF;
 
   IF v_touches_commercial
-     AND current_user NOT IN ('postgres', 'supabase_admin') THEN
+     AND NOT (SELECT rolsuper FROM pg_roles WHERE rolname = current_user) THEN
     RAISE EXCEPTION 'Commercial platform settings must be modified via save_commercial_config()';
   END IF;
 

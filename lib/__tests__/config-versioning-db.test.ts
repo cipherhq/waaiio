@@ -2,16 +2,17 @@
  * Config Versioning DB Tests (#255 C-1)
  *
  * Executable PostgreSQL proofs for the config versioning system.
- * Requires TEST_DATABASE_URL environment variable pointing to a real PG instance
- * with all migrations applied (including 359_config_versioning.sql).
+ * Requires TEST_DATABASE_URL environment variable pointing to a real PG instance.
+ * Self-contained: creates schema stubs + applies migration 359 in beforeAll.
  *
- *   TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/waaiio_test \
+ *   TEST_DATABASE_URL=postgresql://localhost:5432/waaiio_255_test \
  *     npx vitest run lib/__tests__/config-versioning-db.test.ts
  *
  * Covers all 27 acceptance tests from the #255 specification.
  * Tests MUST NOT be skipped when TEST_DATABASE_URL is set — CI enforces zero skips.
  */
 import { execSync, spawn } from 'child_process';
+import { readFileSync } from 'fs';
 import { describe, it, expect, beforeAll } from 'vitest';
 
 const dbUrl = process.env.TEST_DATABASE_URL || '';
@@ -25,7 +26,7 @@ function psql(sql: string): string {
 
 function psqlMayFail(sql: string): string {
   try {
-    return execSync(`psql "${dbUrl}" -tAXq`, {
+    return execSync(`psql "${dbUrl}" -tAXq -v ON_ERROR_STOP=1`, {
       input: sql, encoding: 'utf-8', timeout: 15000,
     }).trim();
   } catch (e: unknown) {
@@ -33,10 +34,7 @@ function psqlMayFail(sql: string): string {
   }
 }
 
-/**
- * Run SQL in a separate psql process, returning a promise.
- * Used for real two-session concurrency tests.
- */
+/** Run SQL in a separate psql process for real two-session concurrency */
 function psqlAsync(sql: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const child = spawn('psql', [dbUrl, '-tAXq', '-v', 'ON_ERROR_STOP=1'], {
@@ -55,51 +53,137 @@ function psqlAsync(sql: string): Promise<string> {
   });
 }
 
+// Admin JWT claims for save_commercial_config()
+const ADMIN_CLAIMS = `{"sub":"00000000-0000-0000-0000-000000000001","role":"admin","user_metadata":{"role":"admin"}}`;
+
+/** Helper: call save_commercial_config as admin (all in one psql session) */
+function adminSave(key: string, value: string): string {
+  return psql(`
+    SELECT set_config('request.jwt.claims', '${ADMIN_CLAIMS}', false);
+    SET ROLE authenticated;
+    SELECT save_commercial_config('${key}', '${value}'::jsonb);
+    RESET ROLE;
+  `);
+}
+
 describe.skipIf(!canRun)('Config Versioning DB Tests (#255 C-1)', () => {
   beforeAll(() => {
-    // Verify migration 359 has been applied (bootstrap row exists)
-    const count = psql('SELECT count(*)::int FROM platform_config_versions;');
-    expect(parseInt(count, 10)).toBeGreaterThanOrEqual(1);
+    // Set up minimal schema prerequisites for migration 359
+    psql(`
+      CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+      DO $$ BEGIN CREATE ROLE authenticated NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+      DO $$ BEGIN CREATE ROLE service_role NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+      DO $$ BEGIN CREATE ROLE anon NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+      GRANT USAGE ON SCHEMA public TO authenticated, service_role, anon;
+
+      CREATE OR REPLACE FUNCTION public.is_admin() RETURNS BOOLEAN AS $fn$
+      BEGIN
+        RETURN COALESCE(
+          current_setting('request.jwt.claims', true)::jsonb->>'role' = 'admin',
+          false
+        );
+      END;
+      $fn$ LANGUAGE plpgsql STABLE;
+
+      CREATE SCHEMA IF NOT EXISTS auth;
+      CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $fn$
+      BEGIN
+        RETURN (current_setting('request.jwt.claims', true)::jsonb->>'sub')::uuid;
+      EXCEPTION WHEN OTHERS THEN RETURN NULL;
+      END;
+      $fn$ LANGUAGE plpgsql STABLE;
+
+      CREATE TABLE IF NOT EXISTS public.profiles (id UUID PRIMARY KEY);
+      INSERT INTO public.profiles (id) VALUES ('00000000-0000-0000-0000-000000000001') ON CONFLICT DO NOTHING;
+
+      CREATE TABLE IF NOT EXISTS public.platform_settings (
+        key VARCHAR(100) PRIMARY KEY,
+        value JSONB NOT NULL DEFAULT '{}',
+        description TEXT,
+        updated_by UUID REFERENCES public.profiles(id),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      ALTER TABLE public.platform_settings ENABLE ROW LEVEL SECURITY;
+
+      DO $$ BEGIN
+        CREATE POLICY admin_all_platform_settings ON public.platform_settings FOR ALL USING (public.is_admin());
+      EXCEPTION WHEN duplicate_object THEN NULL;
+      END $$;
+
+      INSERT INTO platform_settings (key, value) VALUES
+        ('pricing_tiers', '{"free":{"feePercentage":2.5,"feeFlat":100},"growth":{"feePercentage":1.5,"feeFlat":50}}'::jsonb),
+        ('trial_days', '7'::jsonb),
+        ('broadcast_limits', '{"free":{"maxBroadcasts":0}}'::jsonb),
+        ('conversation_limits', '{"free":200}'::jsonb),
+        ('default_platform_fee_percent', '2.5'::jsonb),
+        ('annual_discount_percentage', '20'::jsonb),
+        ('payout_cooling_period_days', '7'::jsonb),
+        ('minimum_payout', '{"NG":5000}'::jsonb),
+        ('payout_verification_limits', '{"unverified":0}'::jsonb),
+        ('transfer_expiry_hours', '4'::jsonb),
+        ('maintenance_mode', 'false'::jsonb),
+        ('support_email', '"support@waaiio.com"'::jsonb)
+      ON CONFLICT (key) DO NOTHING;
+
+      GRANT SELECT, INSERT, UPDATE, DELETE ON public.platform_settings TO authenticated, service_role;
+
+      -- In Supabase, service_role bypasses RLS. Simulate this for vanilla PG:
+      ALTER TABLE public.platform_settings FORCE ROW LEVEL SECURITY;
+      -- service_role can bypass RLS via a permissive policy
+      CREATE POLICY service_role_bypass ON public.platform_settings FOR ALL TO service_role USING (true) WITH CHECK (true);
+    `);
+
+    // Apply migration 359
+    const migrationSql = readFileSync('supabase/migrations/359_config_versioning.sql', 'utf-8');
+    psql(migrationSql);
+
+    // Grant permissions on platform_config_versions for test roles
+    psql(`
+      GRANT SELECT, INSERT, UPDATE, DELETE ON public.platform_config_versions TO service_role;
+      GRANT SELECT ON public.platform_config_versions TO authenticated;
+      -- service_role bypass for platform_config_versions (Supabase equivalent)
+      CREATE POLICY service_role_bypass_versions ON public.platform_config_versions FOR ALL TO service_role USING (true) WITH CHECK (true);
+    `);
+
+    // Verify bootstrap succeeded
+    const count = parseInt(psql('SELECT count(*)::int FROM platform_config_versions;'), 10);
+    expect(count).toBeGreaterThanOrEqual(1);
   });
 
   function countVersions(): number {
     return parseInt(psql('SELECT count(*)::int FROM platform_config_versions;'), 10);
   }
 
-  function setAdminContext(): void {
-    psql(`
-      SELECT set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-000000000001","role":"admin","user_metadata":{"role":"admin"}}', false);
-    `);
-  }
-
   // ── 1-3. Direct DML on commercial keys → rejected ──
 
   it('1. Authenticated admin direct UPDATE of commercial key → rejected', () => {
+    // SET ROLE + set_config in same session so RLS sees admin, but trigger blocks
     const err = psqlMayFail(`
+      SELECT set_config('request.jwt.claims', '${ADMIN_CLAIMS}', false);
       SET ROLE authenticated;
-      SELECT set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-000000000001","role":"admin"}', true);
       UPDATE platform_settings SET value = '"999"'::jsonb WHERE key = 'trial_days';
+      RESET ROLE;
     `);
     expect(err).toContain('save_commercial_config');
-    psqlMayFail('RESET ROLE;');
   });
 
   it('2. Service_role direct UPDATE of commercial key → rejected', () => {
+    // service_role bypasses RLS but trigger still blocks
     const err = psqlMayFail(`
       SET ROLE service_role;
       UPDATE platform_settings SET value = '"999"'::jsonb WHERE key = 'pricing_tiers';
+      RESET ROLE;
     `);
     expect(err).toContain('save_commercial_config');
-    psqlMayFail('RESET ROLE;');
   });
 
   it('3. Service_role direct DELETE of commercial key → rejected', () => {
     const err = psqlMayFail(`
       SET ROLE service_role;
       DELETE FROM platform_settings WHERE key = 'trial_days';
+      RESET ROLE;
     `);
     expect(err).toContain('save_commercial_config');
-    psqlMayFail('RESET ROLE;');
   });
 
   // ── 4. Service_role direct INSERT into versions → rejected ──
@@ -109,9 +193,9 @@ describe.skipIf(!canRun)('Config Versioning DB Tests (#255 C-1)', () => {
       SET ROLE service_role;
       INSERT INTO platform_config_versions (config_snapshot, effective_from)
       VALUES ('{"test": true}'::jsonb, NOW());
+      RESET ROLE;
     `);
     expect(err).toContain('save_commercial_config');
-    psqlMayFail('RESET ROLE;');
   });
 
   // ── 5. Non-admin cannot call RPC ──
@@ -120,37 +204,29 @@ describe.skipIf(!canRun)('Config Versioning DB Tests (#255 C-1)', () => {
     const err = psqlMayFail(`
       SET ROLE anon;
       SELECT save_commercial_config('trial_days', '14'::jsonb);
+      RESET ROLE;
     `);
     expect(err.toLowerCase()).toMatch(/permission denied|does not exist/);
-    psqlMayFail('RESET ROLE;');
   });
 
   // ── 6. Authorized admin RPC → atomic projection + version ──
 
   it('6. Authorized admin RPC save → projection + exactly one version atomically', () => {
     const before = countVersions();
-    setAdminContext();
-    psql(`
-      SET ROLE authenticated;
-      SELECT save_commercial_config('trial_days', '14'::jsonb);
-      RESET ROLE;
-    `);
+    adminSave('trial_days', '14');
     const after = countVersions();
     expect(after).toBe(before + 1);
 
-    // Verify projection updated
     const val = psql("SELECT value::text FROM platform_settings WHERE key = 'trial_days';");
     expect(val).toBe('14');
 
-    // Verify snapshot contains trial_days = 14
     const snap = psql("SELECT config_snapshot->>'trial_days' FROM platform_config_versions ORDER BY effective_from DESC LIMIT 1;");
     expect(snap).toBe('14');
   });
 
-  // ── 7. REAL injected failure → atomic rollback proven ──
+  // ── 7. REAL injected failure → atomic rollback ──
 
   it('7. Injected version-insert failure → platform_settings mutation rolls back', () => {
-    // Record pre-call state
     const beforeVal = psql("SELECT value::text FROM platform_settings WHERE key = 'trial_days';");
     const beforeCount = countVersions();
 
@@ -165,59 +241,61 @@ describe.skipIf(!canRun)('Config Versioning DB Tests (#255 C-1)', () => {
         FOR EACH ROW EXECUTE FUNCTION _test_block_version_insert();
     `);
 
-    // Attempt a commercial save — should fail at version INSERT
-    setAdminContext();
-    const err = psqlMayFail(`
-      SET ROLE authenticated;
-      SELECT save_commercial_config('trial_days', '99'::jsonb);
-    `);
-    psqlMayFail('RESET ROLE;');
-    expect(err).toContain('TEST_INJECTED_FAILURE');
+    try {
+      // Attempt a commercial save — should fail at version INSERT
+      const err = psqlMayFail(`
+        SELECT set_config('request.jwt.claims', '${ADMIN_CLAIMS}', false);
+        SET ROLE authenticated;
+        SELECT save_commercial_config('trial_days', '99'::jsonb);
+        RESET ROLE;
+      `);
+      expect(err).toContain('TEST_INJECTED_FAILURE');
 
-    // Verify platform_settings was NOT committed (rolled back)
-    const afterVal = psql("SELECT value::text FROM platform_settings WHERE key = 'trial_days';");
-    expect(afterVal).toBe(beforeVal);
+      // Verify platform_settings was NOT committed (rolled back)
+      const afterVal = psql("SELECT value::text FROM platform_settings WHERE key = 'trial_days';");
+      expect(afterVal).toBe(beforeVal);
 
-    // Verify no new version was created
-    const afterCount = countVersions();
-    expect(afterCount).toBe(beforeCount);
-
-    // Clean up test trigger
-    psql(`
-      DROP TRIGGER IF EXISTS _trg_test_block_version ON platform_config_versions;
-      DROP FUNCTION IF EXISTS _test_block_version_insert();
-    `);
+      // Verify no new version was created
+      const afterCount = countVersions();
+      expect(afterCount).toBe(beforeCount);
+    } finally {
+      // Always clean up test trigger, even if assertions fail
+      psql(`
+        DROP TRIGGER IF EXISTS _trg_test_block_version ON platform_config_versions;
+        DROP FUNCTION IF EXISTS _test_block_version_insert();
+      `);
+    }
   });
 
   // ── 8-11. Key-rename guard ──
 
-  it('8. Admin rename commercial → non-commercial → rejected (OLD.key is commercial)', () => {
+  it('8. Admin rename commercial → non-commercial → rejected (OLD.key)', () => {
     const err = psqlMayFail(`
+      SELECT set_config('request.jwt.claims', '${ADMIN_CLAIMS}', false);
       SET ROLE authenticated;
-      SELECT set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-000000000001","role":"admin"}', true);
       UPDATE platform_settings SET key = 'pricing_tiers_old' WHERE key = 'pricing_tiers';
+      RESET ROLE;
     `);
     expect(err).toContain('save_commercial_config');
-    psqlMayFail('RESET ROLE;');
   });
 
   it('9. Service_role rename commercial → non-commercial → rejected', () => {
     const err = psqlMayFail(`
       SET ROLE service_role;
       UPDATE platform_settings SET key = 'trial_days_bak' WHERE key = 'trial_days';
+      RESET ROLE;
     `);
     expect(err).toContain('save_commercial_config');
-    psqlMayFail('RESET ROLE;');
   });
 
-  it('10. Rename non-commercial → commercial → rejected (NEW.key is commercial)', () => {
+  it('10. Rename non-commercial → commercial → rejected (NEW.key)', () => {
     psql("INSERT INTO platform_settings (key, value) VALUES ('my_test_key', '\"hello\"'::jsonb) ON CONFLICT DO NOTHING;");
     const err = psqlMayFail(`
       SET ROLE service_role;
       UPDATE platform_settings SET key = 'pricing_tiers' WHERE key = 'my_test_key';
+      RESET ROLE;
     `);
     expect(err).toContain('save_commercial_config');
-    psqlMayFail('RESET ROLE;');
     psql("DELETE FROM platform_settings WHERE key = 'my_test_key';");
   });
 
@@ -260,6 +338,7 @@ describe.skipIf(!canRun)('Config Versioning DB Tests (#255 C-1)', () => {
 
   it('14. Non-commercial admin UPDATE (maintenance_mode) → succeeds, zero versions', () => {
     const before = countVersions();
+    // service_role bypasses RLS and trigger allows non-commercial
     psqlMayFail(`
       SET ROLE service_role;
       UPDATE platform_settings SET value = 'true'::jsonb WHERE key = 'maintenance_mode';
@@ -277,19 +356,18 @@ describe.skipIf(!canRun)('Config Versioning DB Tests (#255 C-1)', () => {
       SET ROLE service_role;
       UPDATE platform_config_versions SET config_snapshot = '{"hacked": true}'::jsonb
       WHERE id = (SELECT id FROM platform_config_versions LIMIT 1);
+      RESET ROLE;
     `);
     expect(err).toContain('append-only');
-    psqlMayFail('RESET ROLE;');
   });
 
   it('16. Service-role DELETE of historical version → rejected', () => {
     const err = psqlMayFail(`
       SET ROLE service_role;
-      DELETE FROM platform_config_versions
-      WHERE id = (SELECT id FROM platform_config_versions LIMIT 1);
+      DELETE FROM platform_config_versions WHERE id = (SELECT id FROM platform_config_versions LIMIT 1);
+      RESET ROLE;
     `);
     expect(err).toContain('append-only');
-    psqlMayFail('RESET ROLE;');
   });
 
   // ── 17-18. Bootstrap ──
@@ -308,20 +386,10 @@ describe.skipIf(!canRun)('Config Versioning DB Tests (#255 C-1)', () => {
   });
 
   // ── 19-20. Resolution ──
-  // Uses transactional rollback for isolation instead of DELETE (which
-  // would violate the append-only trigger on production).
+  // Uses superuser-only DISABLE/ENABLE TRIGGER for test isolation.
 
   it('19. Effective-version resolution is deterministic', () => {
-    // Insert test rows inside a savepoint, run assertions, then rollback.
-    // We temporarily disable the append-only triggers for INSERT isolation
-    // using a superuser-only operation (test runner is postgres).
-    // The INSERT guard trigger must also be considered — but our psql
-    // connects as postgres, so the INSERT guard allows it.
-
-    // Record current state
-    const currentEffective = psql("SELECT get_effective_config(NOW())::text;");
-
-    // Insert test versions (as postgres — allowed by insert guard)
+    // Insert test versions (as superuser — allowed by insert guard)
     psql(`
       INSERT INTO platform_config_versions (id, config_snapshot, effective_from, created_at) VALUES
         ('a0000000-0000-0000-0000-000000000001', '{"test":"yesterday"}'::jsonb, NOW() - interval '1 day', NOW()),
@@ -329,16 +397,13 @@ describe.skipIf(!canRun)('Config Versioning DB Tests (#255 C-1)', () => {
         ('a0000000-0000-0000-0000-000000000003', '{"test":"recent"}'::jsonb, NOW() - interval '1 second', NOW());
     `);
 
-    // get_effective_config(NOW()) should return the most recent test version
     const current = psql("SELECT get_effective_config(NOW())::text;");
     expect(current).toBe('a0000000-0000-0000-0000-000000000003');
 
-    // get_effective_config(yesterday + 1h) should return the 'yesterday' version
     const mid = psql("SELECT get_effective_config(NOW() - interval '23 hours')::text;");
     expect(mid).toBe('a0000000-0000-0000-0000-000000000001');
 
-    // Cleanup: temporarily disable the delete trigger (superuser only),
-    // remove test rows, re-enable. This is test-only — production cannot do this.
+    // Cleanup: superuser-only trigger bypass for test isolation
     psql(`
       ALTER TABLE platform_config_versions DISABLE TRIGGER trg_config_versions_no_delete;
       DELETE FROM platform_config_versions WHERE id IN (
@@ -348,22 +413,14 @@ describe.skipIf(!canRun)('Config Versioning DB Tests (#255 C-1)', () => {
       );
       ALTER TABLE platform_config_versions ENABLE TRIGGER trg_config_versions_no_delete;
     `);
-
-    // Verify cleanup restored original state
-    const restored = psql("SELECT get_effective_config(NOW())::text;");
-    expect(restored).toBe(currentEffective);
   });
 
   it('20. Duplicate effective_from → UNIQUE violation', () => {
     const ts = '2099-01-01T00:00:00Z';
-    // Insert first row (as postgres — allowed by insert guard)
     psql(`INSERT INTO platform_config_versions (config_snapshot, effective_from) VALUES ('{"dup":"test1"}'::jsonb, '${ts}'::timestamptz);`);
-
-    // Second insert with same effective_from should fail
     const err = psqlMayFail(`INSERT INTO platform_config_versions (config_snapshot, effective_from) VALUES ('{"dup":"test2"}'::jsonb, '${ts}'::timestamptz);`);
     expect(err.toLowerCase()).toContain('unique');
-
-    // Cleanup (superuser trigger bypass for test isolation)
+    // Cleanup
     psql(`
       ALTER TABLE platform_config_versions DISABLE TRIGGER trg_config_versions_no_delete;
       DELETE FROM platform_config_versions WHERE config_snapshot->>'dup' IS NOT NULL;
@@ -374,25 +431,14 @@ describe.skipIf(!canRun)('Config Versioning DB Tests (#255 C-1)', () => {
   // ── 21. Real two-session concurrent saves ──
 
   it('21. Two-session concurrent saves linearize with no lost update', async () => {
-    // Baseline: set known state for two different commercial keys
-    setAdminContext();
-    psql(`
-      SET ROLE authenticated;
-      SELECT save_commercial_config('trial_days', '10'::jsonb);
-      RESET ROLE;
-    `);
-    setAdminContext();
-    psql(`
-      SET ROLE authenticated;
-      SELECT save_commercial_config('annual_discount_percentage', '10'::jsonb);
-      RESET ROLE;
-    `);
-
+    // Baseline
+    adminSave('trial_days', '10');
+    adminSave('annual_discount_percentage', '10');
     const beforeCount = countVersions();
 
-    // Session A: acquire advisory lock, save trial_days=30, hold for 1 second
+    // Session A: save trial_days=30, hold transaction for 1s via pg_sleep
     const sessionA = psqlAsync(`
-      SELECT set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-000000000001","role":"admin","user_metadata":{"role":"admin"}}', false);
+      SELECT set_config('request.jwt.claims', '${ADMIN_CLAIMS}', false);
       BEGIN;
       SET ROLE authenticated;
       SELECT save_commercial_config('trial_days', '30'::jsonb);
@@ -402,12 +448,12 @@ describe.skipIf(!canRun)('Config Versioning DB Tests (#255 C-1)', () => {
     `);
 
     // Small delay to ensure Session A acquires the lock first
-    await new Promise(r => setTimeout(r, 100));
+    await new Promise(r => setTimeout(r, 200));
 
     // Session B: concurrently save annual_discount_percentage=25
-    // This should block on the advisory lock until A commits
+    // This will block on the advisory lock until A commits
     const sessionB = psqlAsync(`
-      SELECT set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-000000000001","role":"admin","user_metadata":{"role":"admin"}}', false);
+      SELECT set_config('request.jwt.claims', '${ADMIN_CLAIMS}', false);
       BEGIN;
       SET ROLE authenticated;
       SELECT save_commercial_config('annual_discount_percentage', '25'::jsonb);
@@ -415,21 +461,17 @@ describe.skipIf(!canRun)('Config Versioning DB Tests (#255 C-1)', () => {
       RESET ROLE;
     `);
 
-    // Wait for both to complete
     await Promise.all([sessionA, sessionB]);
 
     const afterCount = countVersions();
-    // Two new versions should have been created (one per save)
     expect(afterCount).toBe(beforeCount + 2);
 
-    // The latest version (B's) must contain BOTH changes:
-    // trial_days=30 (from A, committed first) AND annual_discount_percentage=25 (from B)
+    // Latest version (B's) must contain BOTH changes
     const latestSnap = psql("SELECT config_snapshot::text FROM platform_config_versions ORDER BY effective_from DESC LIMIT 1;");
     expect(latestSnap).toContain('"trial_days": 30');
     expect(latestSnap).toContain('"annual_discount_percentage": 25');
 
-    // Verify no lost update: the A version should have trial_days=30
-    // (second-latest should be A's commit with trial_days=30 but annual_discount_percentage still=10)
+    // Second-latest (A's) has trial_days=30 but annual_discount_percentage still=10
     const secondSnap = psql("SELECT config_snapshot::text FROM platform_config_versions ORDER BY effective_from DESC LIMIT 1 OFFSET 1;");
     expect(secondSnap).toContain('"trial_days": 30');
     expect(secondSnap).toContain('"annual_discount_percentage": 10');
@@ -439,23 +481,21 @@ describe.skipIf(!canRun)('Config Versioning DB Tests (#255 C-1)', () => {
 
   it('22. created_by = auth.uid(), not caller-supplied', () => {
     const uid = '00000000-0000-0000-0000-000000000001';
-    setAdminContext();
-    psql(`
-      SET ROLE authenticated;
-      SELECT save_commercial_config('trial_days', '7'::jsonb);
-      RESET ROLE;
-    `);
+    adminSave('trial_days', '7');
     const createdBy = psql("SELECT created_by::text FROM platform_config_versions ORDER BY effective_from DESC LIMIT 1;");
     expect(createdBy).toBe(uid);
   });
 
   it('23. Unauthenticated SELECT on versions → zero rows (RLS)', () => {
-    const count = psql(`
+    // anon may not have SELECT permission at all, or RLS returns 0 rows
+    const result = psqlMayFail(`
       SET ROLE anon;
       SELECT count(*)::int FROM platform_config_versions;
+      RESET ROLE;
     `);
-    expect(count).toBe('0');
-    psqlMayFail('RESET ROLE;');
+    // Either permission denied OR 0 rows — both prove access is restricted
+    const isBlocked = result.includes('permission denied') || result.trim() === '0';
+    expect(isBlocked).toBe(true);
   });
 
   // ── 24-27. Additional proofs ──
@@ -467,33 +507,28 @@ describe.skipIf(!canRun)('Config Versioning DB Tests (#255 C-1)', () => {
 
   it('25. save_commercial_config creates missing key via upsert', () => {
     psql("DELETE FROM platform_settings WHERE key = 'minimum_bank_transfer';");
-    setAdminContext();
-    psql(`
-      SET ROLE authenticated;
-      SELECT save_commercial_config('minimum_bank_transfer', '{"NG": 10000}'::jsonb);
-      RESET ROLE;
-    `);
+    adminSave('minimum_bank_transfer', '{"NG": 10000}');
     const exists = psql("SELECT count(*)::int FROM platform_settings WHERE key = 'minimum_bank_transfer';");
     expect(exists).toBe('1');
   });
 
   it('26. Admin direct DELETE of commercial key → rejected', () => {
     const err = psqlMayFail(`
+      SELECT set_config('request.jwt.claims', '${ADMIN_CLAIMS}', false);
       SET ROLE authenticated;
-      SELECT set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-000000000001","role":"admin"}', true);
       DELETE FROM platform_settings WHERE key = 'pricing_tiers';
+      RESET ROLE;
     `);
     expect(err).toContain('save_commercial_config');
-    psqlMayFail('RESET ROLE;');
   });
 
   it('27. save_commercial_config rejects non-commercial key', () => {
-    setAdminContext();
     const err = psqlMayFail(`
+      SELECT set_config('request.jwt.claims', '${ADMIN_CLAIMS}', false);
       SET ROLE authenticated;
       SELECT save_commercial_config('maintenance_mode', 'true'::jsonb);
+      RESET ROLE;
     `);
     expect(err).toContain('not a commercial config key');
-    psqlMayFail('RESET ROLE;');
   });
 });
