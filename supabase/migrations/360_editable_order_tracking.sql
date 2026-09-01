@@ -1,4 +1,4 @@
--- 358: Editable order tracking with durable notification intent
+-- 360: Editable order tracking with durable notification intent
 -- Issue #247 Phase 1
 --
 -- Adds: tracking_revision column, order_tracking_notifications table,

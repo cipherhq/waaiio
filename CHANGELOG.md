@@ -82,7 +82,7 @@ If something breaks, check this log to find what changed and when.
 ## 2026-08-31 — #247: Editable order tracking with durable notification (Phase 1)
 
 ### What changed
-- **Migration 358:** Added `tracking_revision` column to `orders` table (integer, default 0). Created `order_tracking_notifications` table for durable notification intents with claim/dispatch/outcome lifecycle. Created four SECURITY DEFINER RPCs: `update_order_tracking` (atomic tracking mutation + audit log + notification intent), `claim_tracking_notification`, `mark_tracking_notification_dispatched`, `record_tracking_notification_outcome`. All RPCs use `SET search_path = ''` and fully-qualified `public.` references. All granted to `service_role` only.
+- **Migration 360:** Added `tracking_revision` column to `orders` table (integer, default 0). Created `order_tracking_notifications` table for durable notification intents with claim/dispatch/outcome lifecycle. Created four SECURITY DEFINER RPCs: `update_order_tracking` (atomic tracking mutation + audit log + notification intent), `claim_tracking_notification`, `mark_tracking_notification_dispatched`, `record_tracking_notification_outcome`. All RPCs use `SET search_path = ''` and fully-qualified `public.` references. All granted to `service_role` only.
 - **New API route:** `PATCH /api/orders/[id]/tracking` — authenticates user, enforces `ordering/manage_existing` capability, calls `update_order_tracking` RPC atomically, then dispatches notification through claim/dispatch/send/outcome lifecycle. Notification failure does NOT roll back the committed tracking edit.
 - **DB tests:** `lib/__tests__/acc-247-editable-tracking-db.test.ts` — 11 tests against real migrated schema covering: concurrent edits, serialized edits with distinct revisions, no-op detection, shipped_at preservation, cross-business denial, revision monotonicity, notification lifecycle, draft/cancelled rejection, no-op with pending notification.
 - **API tests:** `app/api/orders/[id]/tracking/__tests__/tracking-edit.test.ts` — 11 tests covering auth, capability guard, RPC error mapping, no-op, material change, notification dispatch, and notification failure isolation.
@@ -97,7 +97,7 @@ If something breaks, check this log to find what changed and when.
 - Notification failure does NOT roll back tracking edit
 
 ### Files changed
-- `supabase/migrations/358_editable_order_tracking.sql` (new)
+- `supabase/migrations/360_editable_order_tracking.sql` (new)
 - `app/api/orders/[id]/tracking/route.ts` (new)
 - `lib/__tests__/acc-247-editable-tracking-db.test.ts` (new)
 - `app/api/orders/[id]/tracking/__tests__/tracking-edit.test.ts` (new)
