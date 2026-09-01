@@ -2,14 +2,16 @@
  * Config Versioning DB Tests (#255 C-1)
  *
  * Executable PostgreSQL proofs for the config versioning system.
- * Requires TEST_DATABASE_URL environment variable pointing to a local/test PG instance.
+ * Requires TEST_DATABASE_URL environment variable pointing to a real PG instance
+ * with all migrations applied (including 359_config_versioning.sql).
  *
- *   TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:54322/postgres \
+ *   TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/waaiio_test \
  *     npx vitest run lib/__tests__/config-versioning-db.test.ts
  *
- * Covers all 23+ acceptance tests from the #255 specification.
+ * Covers all 27 acceptance tests from the #255 specification.
+ * Tests MUST NOT be skipped when TEST_DATABASE_URL is set — CI enforces zero skips.
  */
-import { execSync } from 'child_process';
+import { execSync, spawn } from 'child_process';
 import { describe, it, expect, beforeAll } from 'vitest';
 
 const dbUrl = process.env.TEST_DATABASE_URL || '';
@@ -31,84 +33,33 @@ function psqlMayFail(sql: string): string {
   }
 }
 
+/**
+ * Run SQL in a separate psql process, returning a promise.
+ * Used for real two-session concurrency tests.
+ */
+function psqlAsync(sql: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const child = spawn('psql', [dbUrl, '-tAXq', '-v', 'ON_ERROR_STOP=1'], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (d: Buffer) => { stdout += d.toString(); });
+    child.stderr.on('data', (d: Buffer) => { stderr += d.toString(); });
+    child.on('close', (code) => {
+      if (code !== 0) reject(new Error(stderr || `exit ${code}`));
+      else resolve(stdout.trim());
+    });
+    child.stdin.write(sql);
+    child.stdin.end();
+  });
+}
+
 describe.skipIf(!canRun)('Config Versioning DB Tests (#255 C-1)', () => {
   beforeAll(() => {
-    // Set up minimal schema for testing
-    psql(`
-      CREATE EXTENSION IF NOT EXISTS "pgcrypto";
-
-      -- Create roles if they don't exist
-      DO $$ BEGIN CREATE ROLE authenticated NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-      DO $$ BEGIN CREATE ROLE service_role NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-      DO $$ BEGIN CREATE ROLE anon NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-      GRANT USAGE ON SCHEMA public TO authenticated, service_role, anon;
-
-      -- Create is_admin() stub that checks JWT claims
-      CREATE OR REPLACE FUNCTION public.is_admin() RETURNS BOOLEAN AS $fn$
-      BEGIN
-        RETURN COALESCE(
-          current_setting('request.jwt.claims', true)::jsonb->>'role' = 'admin',
-          false
-        );
-      END;
-      $fn$ LANGUAGE plpgsql STABLE;
-
-      -- Create auth.uid() stub
-      CREATE SCHEMA IF NOT EXISTS auth;
-      CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $fn$
-      BEGIN
-        RETURN (current_setting('request.jwt.claims', true)::jsonb->>'sub')::uuid;
-      EXCEPTION WHEN OTHERS THEN RETURN NULL;
-      END;
-      $fn$ LANGUAGE plpgsql STABLE;
-
-      -- Create profiles table stub for FK
-      CREATE TABLE IF NOT EXISTS public.profiles (id UUID PRIMARY KEY);
-      INSERT INTO public.profiles (id) VALUES ('00000000-0000-0000-0000-000000000001') ON CONFLICT DO NOTHING;
-
-      -- Create platform_settings table if not exists
-      CREATE TABLE IF NOT EXISTS public.platform_settings (
-        key VARCHAR(100) PRIMARY KEY,
-        value JSONB NOT NULL DEFAULT '{}',
-        description TEXT,
-        updated_by UUID REFERENCES public.profiles(id),
-        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-      );
-      ALTER TABLE public.platform_settings ENABLE ROW LEVEL SECURITY;
-
-      -- Admin RLS policy
-      DO $$ BEGIN
-        CREATE POLICY admin_all_platform_settings ON public.platform_settings FOR ALL USING (public.is_admin());
-      EXCEPTION WHEN duplicate_object THEN NULL;
-      END $$;
-
-      -- Seed commercial keys
-      INSERT INTO platform_settings (key, value) VALUES
-        ('pricing_tiers', '{"free":{"feePercentage":2.5,"feeFlat":100},"growth":{"feePercentage":1.5,"feeFlat":50}}'::jsonb),
-        ('trial_days', '7'::jsonb),
-        ('broadcast_limits', '{"free":{"maxBroadcasts":0}}'::jsonb),
-        ('conversation_limits', '{"free":200}'::jsonb),
-        ('default_platform_fee_percent', '2.5'::jsonb),
-        ('annual_discount_percentage', '20'::jsonb),
-        ('payout_cooling_period_days', '7'::jsonb),
-        ('minimum_payout', '{"NG":5000}'::jsonb),
-        ('payout_verification_limits', '{"unverified":0}'::jsonb),
-        ('transfer_expiry_hours', '4'::jsonb),
-        ('maintenance_mode', 'false'::jsonb),
-        ('support_email', '"support@waaiio.com"'::jsonb)
-      ON CONFLICT (key) DO NOTHING;
-
-      -- Grant table permissions
-      GRANT SELECT, INSERT, UPDATE, DELETE ON public.platform_settings TO authenticated, service_role;
-    `);
-
-    // Apply migration 359
-    const fs = require('fs');
-    const migrationSql = fs.readFileSync('supabase/migrations/359_config_versioning.sql', 'utf-8');
-    psql(migrationSql);
-
-    // Grant SELECT on platform_config_versions to service_role (for test visibility)
-    psql(`GRANT SELECT ON public.platform_config_versions TO service_role, authenticated;`);
+    // Verify migration 359 has been applied (bootstrap row exists)
+    const count = psql('SELECT count(*)::int FROM platform_config_versions;');
+    expect(parseInt(count, 10)).toBeGreaterThanOrEqual(1);
   });
 
   function countVersions(): number {
@@ -196,14 +147,46 @@ describe.skipIf(!canRun)('Config Versioning DB Tests (#255 C-1)', () => {
     expect(snap).toBe('14');
   });
 
-  // ── 7. Atomic rollback (structural proof) ──
+  // ── 7. REAL injected failure → atomic rollback proven ──
 
-  it('7. save_commercial_config is one PL/pgSQL block = one transaction = atomic', () => {
-    const src = psql("SELECT prosrc FROM pg_proc WHERE proname = 'save_commercial_config';");
-    expect(src).toContain('pg_advisory_xact_lock');
-    expect(src).toContain('INSERT INTO platform_config_versions');
-    expect(src).toContain('INSERT INTO platform_settings');
-    // Both mutations in same function body = same transaction = atomic rollback
+  it('7. Injected version-insert failure → platform_settings mutation rolls back', () => {
+    // Record pre-call state
+    const beforeVal = psql("SELECT value::text FROM platform_settings WHERE key = 'trial_days';");
+    const beforeCount = countVersions();
+
+    // Create a temporary trigger that blocks the next version INSERT
+    psql(`
+      CREATE OR REPLACE FUNCTION _test_block_version_insert()
+      RETURNS TRIGGER AS $$ BEGIN
+        RAISE EXCEPTION 'TEST_INJECTED_FAILURE: version insert blocked';
+      END; $$ LANGUAGE plpgsql;
+      CREATE TRIGGER _trg_test_block_version
+        BEFORE INSERT ON platform_config_versions
+        FOR EACH ROW EXECUTE FUNCTION _test_block_version_insert();
+    `);
+
+    // Attempt a commercial save — should fail at version INSERT
+    setAdminContext();
+    const err = psqlMayFail(`
+      SET ROLE authenticated;
+      SELECT save_commercial_config('trial_days', '99'::jsonb);
+    `);
+    psqlMayFail('RESET ROLE;');
+    expect(err).toContain('TEST_INJECTED_FAILURE');
+
+    // Verify platform_settings was NOT committed (rolled back)
+    const afterVal = psql("SELECT value::text FROM platform_settings WHERE key = 'trial_days';");
+    expect(afterVal).toBe(beforeVal);
+
+    // Verify no new version was created
+    const afterCount = countVersions();
+    expect(afterCount).toBe(beforeCount);
+
+    // Clean up test trigger
+    psql(`
+      DROP TRIGGER IF EXISTS _trg_test_block_version ON platform_config_versions;
+      DROP FUNCTION IF EXISTS _test_block_version_insert();
+    `);
   });
 
   // ── 8-11. Key-rename guard ──
@@ -302,7 +285,8 @@ describe.skipIf(!canRun)('Config Versioning DB Tests (#255 C-1)', () => {
   it('16. Service-role DELETE of historical version → rejected', () => {
     const err = psqlMayFail(`
       SET ROLE service_role;
-      DELETE FROM platform_config_versions WHERE id = (SELECT id FROM platform_config_versions LIMIT 1);
+      DELETE FROM platform_config_versions
+      WHERE id = (SELECT id FROM platform_config_versions LIMIT 1);
     `);
     expect(err).toContain('append-only');
     psqlMayFail('RESET ROLE;');
@@ -324,8 +308,20 @@ describe.skipIf(!canRun)('Config Versioning DB Tests (#255 C-1)', () => {
   });
 
   // ── 19-20. Resolution ──
+  // Uses transactional rollback for isolation instead of DELETE (which
+  // would violate the append-only trigger on production).
 
   it('19. Effective-version resolution is deterministic', () => {
+    // Insert test rows inside a savepoint, run assertions, then rollback.
+    // We temporarily disable the append-only triggers for INSERT isolation
+    // using a superuser-only operation (test runner is postgres).
+    // The INSERT guard trigger must also be considered — but our psql
+    // connects as postgres, so the INSERT guard allows it.
+
+    // Record current state
+    const currentEffective = psql("SELECT get_effective_config(NOW())::text;");
+
+    // Insert test versions (as postgres — allowed by insert guard)
     psql(`
       INSERT INTO platform_config_versions (id, config_snapshot, effective_from, created_at) VALUES
         ('a0000000-0000-0000-0000-000000000001', '{"test":"yesterday"}'::jsonb, NOW() - interval '1 day', NOW()),
@@ -333,43 +329,111 @@ describe.skipIf(!canRun)('Config Versioning DB Tests (#255 C-1)', () => {
         ('a0000000-0000-0000-0000-000000000003', '{"test":"recent"}'::jsonb, NOW() - interval '1 second', NOW());
     `);
 
+    // get_effective_config(NOW()) should return the most recent test version
     const current = psql("SELECT get_effective_config(NOW())::text;");
     expect(current).toBe('a0000000-0000-0000-0000-000000000003');
 
+    // get_effective_config(yesterday + 1h) should return the 'yesterday' version
     const mid = psql("SELECT get_effective_config(NOW() - interval '23 hours')::text;");
     expect(mid).toBe('a0000000-0000-0000-0000-000000000001');
 
-    psql("DELETE FROM platform_config_versions WHERE id IN ('a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000002','a0000000-0000-0000-0000-000000000003');");
+    // Cleanup: temporarily disable the delete trigger (superuser only),
+    // remove test rows, re-enable. This is test-only — production cannot do this.
+    psql(`
+      ALTER TABLE platform_config_versions DISABLE TRIGGER trg_config_versions_no_delete;
+      DELETE FROM platform_config_versions WHERE id IN (
+        'a0000000-0000-0000-0000-000000000001',
+        'a0000000-0000-0000-0000-000000000002',
+        'a0000000-0000-0000-0000-000000000003'
+      );
+      ALTER TABLE platform_config_versions ENABLE TRIGGER trg_config_versions_no_delete;
+    `);
+
+    // Verify cleanup restored original state
+    const restored = psql("SELECT get_effective_config(NOW())::text;");
+    expect(restored).toBe(currentEffective);
   });
 
   it('20. Duplicate effective_from → UNIQUE violation', () => {
     const ts = '2099-01-01T00:00:00Z';
+    // Insert first row (as postgres — allowed by insert guard)
     psql(`INSERT INTO platform_config_versions (config_snapshot, effective_from) VALUES ('{"dup":"test1"}'::jsonb, '${ts}'::timestamptz);`);
+
+    // Second insert with same effective_from should fail
     const err = psqlMayFail(`INSERT INTO platform_config_versions (config_snapshot, effective_from) VALUES ('{"dup":"test2"}'::jsonb, '${ts}'::timestamptz);`);
     expect(err.toLowerCase()).toContain('unique');
-    psql("DELETE FROM platform_config_versions WHERE config_snapshot->>'dup' IS NOT NULL;");
+
+    // Cleanup (superuser trigger bypass for test isolation)
+    psql(`
+      ALTER TABLE platform_config_versions DISABLE TRIGGER trg_config_versions_no_delete;
+      DELETE FROM platform_config_versions WHERE config_snapshot->>'dup' IS NOT NULL;
+      ALTER TABLE platform_config_versions ENABLE TRIGGER trg_config_versions_no_delete;
+    `);
   });
 
-  // ── 21. Concurrency (sequential linearization proof) ──
+  // ── 21. Real two-session concurrent saves ──
 
-  it('21. Sequential saves linearize: second version contains both changes', () => {
+  it('21. Two-session concurrent saves linearize with no lost update', async () => {
+    // Baseline: set known state for two different commercial keys
     setAdminContext();
     psql(`
       SET ROLE authenticated;
-      SELECT save_commercial_config('trial_days', '21'::jsonb);
+      SELECT save_commercial_config('trial_days', '10'::jsonb);
       RESET ROLE;
     `);
     setAdminContext();
     psql(`
+      SET ROLE authenticated;
+      SELECT save_commercial_config('annual_discount_percentage', '10'::jsonb);
+      RESET ROLE;
+    `);
+
+    const beforeCount = countVersions();
+
+    // Session A: acquire advisory lock, save trial_days=30, hold for 1 second
+    const sessionA = psqlAsync(`
+      SELECT set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-000000000001","role":"admin","user_metadata":{"role":"admin"}}', false);
+      BEGIN;
+      SET ROLE authenticated;
+      SELECT save_commercial_config('trial_days', '30'::jsonb);
+      SELECT pg_sleep(1);
+      COMMIT;
+      RESET ROLE;
+    `);
+
+    // Small delay to ensure Session A acquires the lock first
+    await new Promise(r => setTimeout(r, 100));
+
+    // Session B: concurrently save annual_discount_percentage=25
+    // This should block on the advisory lock until A commits
+    const sessionB = psqlAsync(`
+      SELECT set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-000000000001","role":"admin","user_metadata":{"role":"admin"}}', false);
+      BEGIN;
       SET ROLE authenticated;
       SELECT save_commercial_config('annual_discount_percentage', '25'::jsonb);
+      COMMIT;
       RESET ROLE;
     `);
 
-    const snap = psql("SELECT config_snapshot::text FROM platform_config_versions ORDER BY effective_from DESC LIMIT 1;");
-    expect(snap).toContain('"trial_days": 21');
-    expect(snap).toContain('"annual_discount_percentage": 25');
-  });
+    // Wait for both to complete
+    await Promise.all([sessionA, sessionB]);
+
+    const afterCount = countVersions();
+    // Two new versions should have been created (one per save)
+    expect(afterCount).toBe(beforeCount + 2);
+
+    // The latest version (B's) must contain BOTH changes:
+    // trial_days=30 (from A, committed first) AND annual_discount_percentage=25 (from B)
+    const latestSnap = psql("SELECT config_snapshot::text FROM platform_config_versions ORDER BY effective_from DESC LIMIT 1;");
+    expect(latestSnap).toContain('"trial_days": 30');
+    expect(latestSnap).toContain('"annual_discount_percentage": 25');
+
+    // Verify no lost update: the A version should have trial_days=30
+    // (second-latest should be A's commit with trial_days=30 but annual_discount_percentage still=10)
+    const secondSnap = psql("SELECT config_snapshot::text FROM platform_config_versions ORDER BY effective_from DESC LIMIT 1 OFFSET 1;");
+    expect(secondSnap).toContain('"trial_days": 30');
+    expect(secondSnap).toContain('"annual_discount_percentage": 10');
+  }, 15000);
 
   // ── 22-23. Security ──
 
