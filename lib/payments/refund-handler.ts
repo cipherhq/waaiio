@@ -23,6 +23,12 @@ import type { RefundOutcome } from './types';
 import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
 
+// Valid durable refund states stored in the database
+const VALID_REFUND_STATES = new Set<RefundState>([
+  'pending', 'provider_pending', 'provider_ambiguous',
+  'provider_success_unfinalized', 'success', 'failed',
+]);
+
 // Tier-1: proven provider-side idempotent replay (Stripe 24h, PayPal documented)
 const TIER1_GATEWAYS = new Set<string>(['stripe', 'paypal']);
 
@@ -36,11 +42,57 @@ interface ProcessRefundOpts {
   initiatedByRole: 'business' | 'admin';
 }
 
-interface ProcessRefundResult {
+/**
+ * Canonical 6-state refund domain vocabulary.
+ * Each state maps to the durable refunds.status or pre-dispatch condition:
+ *   pending                       — refund row exists but not yet dispatched / claim loser
+ *   provider_pending              — provider accepted, awaiting settlement
+ *   provider_ambiguous            — outcome unknown (transport error, persistence failure)
+ *   provider_success_unfinalized  — provider confirmed success, local finalization incomplete
+ *   success                       — fully finalized
+ *   failed                        — terminal failure (validation or provider)
+ */
+export type RefundState =
+  | 'pending'
+  | 'provider_pending'
+  | 'provider_ambiguous'
+  | 'provider_success_unfinalized'
+  | 'success'
+  | 'failed';
+
+export interface ProcessRefundResult {
   success: boolean;
   refundId?: string;
   isDirectSplit?: boolean;
   errorMessage?: string;
+  state: RefundState;
+}
+
+/**
+ * Read the durable refund status from the database.
+ * Used to ensure API responses reflect the actual persisted state,
+ * not the code branch that was executing when a failure occurred.
+ *
+ * SAFETY: If the durable state cannot be established (DB error, missing row,
+ * unknown status), fail safe to 'provider_ambiguous' — never terminal 'failed'.
+ * An unknown state after provider dispatch may still have succeeded;
+ * representing it as 'failed' would be a false terminal claim.
+ */
+export async function readDurableRefundState(
+  service: ReturnType<typeof createServiceClient>,
+  refundId: string,
+): Promise<RefundState> {
+  try {
+    const { data, error } = await service.from('refunds').select('status').eq('id', refundId).single();
+    if (error || !data) return 'provider_ambiguous';
+    const status = data.status as string | undefined;
+    if (status && VALID_REFUND_STATES.has(status as RefundState)) return status as RefundState;
+    // Unrecognized status value in DB → ambiguous, not failed
+    return 'provider_ambiguous';
+  } catch {
+    // DB query exception → ambiguous, not failed
+    return 'provider_ambiguous';
+  }
 }
 
 export async function processRefund(opts: ProcessRefundOpts): Promise<ProcessRefundResult> {
@@ -53,18 +105,18 @@ export async function processRefund(opts: ProcessRefundOpts): Promise<ProcessRef
     .select('id, amount, currency, refund_amount, status, gateway, gateway_reference, booking_id, invoice_id, campaign_id, order_id, reservation_id, business_id, metadata')
     .eq('id', paymentId)
     .single();
-  if (paymentErr || !payment) return { success: false, errorMessage: 'Payment not found' };
+  if (paymentErr || !payment) return { success: false, errorMessage: 'Payment not found', state: 'failed' };
   if (payment.status !== 'success' && payment.status !== 'refunded')
-    return { success: false, errorMessage: `Payment status "${payment.status}" is not refundable` };
+    return { success: false, errorMessage: `Payment status "${payment.status}" is not refundable`, state: 'failed' };
 
   const { data: completedRefunds } = await service.from('refunds').select('amount').eq('payment_id', paymentId).eq('status', 'success');
   const ledgerRefunded = (completedRefunds || []).reduce((s, r) => s + Number(r.amount), 0);
   const paymentAmount = Number(payment.amount);
   const remaining = paymentAmount - ledgerRefunded;
 
-  if (amount <= 0) return { success: false, errorMessage: 'Refund amount must be greater than 0' };
-  if (amount > remaining) return { success: false, errorMessage: `Refund amount (${amount}) exceeds remaining refundable amount (${remaining})` };
-  if (payment.business_id && payment.business_id !== businessId) return { success: false, errorMessage: 'Business ID does not match the payment record' };
+  if (amount <= 0) return { success: false, errorMessage: 'Refund amount must be greater than 0', state: 'failed' };
+  if (amount > remaining) return { success: false, errorMessage: `Refund amount (${amount}) exceeds remaining refundable amount (${remaining})`, state: 'failed' };
+  if (payment.business_id && payment.business_id !== businessId) return { success: false, errorMessage: 'Business ID does not match the payment record', state: 'failed' };
 
   const { data: business } = await supabase.from('businesses').select('payout_mode').eq('id', businessId).single();
   const isDirectSplit = business?.payout_mode === 'direct_split';
@@ -87,7 +139,7 @@ export async function processRefund(opts: ProcessRefundOpts): Promise<ProcessRef
   if (insertErr?.code === '23505') {
     return resumeExistingRefund(service, paymentId, payment, isDirectSplit);
   }
-  if (insertErr || !refundRecord) return { success: false, errorMessage: 'Failed to create refund record' };
+  if (insertErr || !refundRecord) return { success: false, errorMessage: 'Failed to create refund record', state: 'failed' };
 
   // ── 3. Dispatch ──
   return dispatchAndFinalize(service, refundRecord.id, null, payment, isDirectSplit);
@@ -105,7 +157,7 @@ async function resumeExistingRefund(
     .in('status', ['pending', 'provider_pending', 'provider_ambiguous', 'provider_success_unfinalized'])
     .limit(1).maybeSingle();
 
-  if (!existing) return { success: false, errorMessage: 'A refund for this payment is already being processed' };
+  if (!existing) return { success: false, errorMessage: 'A refund for this payment is already being processed', state: 'failed' };
   const isTier1 = TIER1_GATEWAYS.has(existing.gateway || '');
 
   // provider_success_unfinalized → finalize locally, NO provider call
@@ -120,10 +172,10 @@ async function resumeExistingRefund(
 
   // provider_ambiguous → Tier-1 recover+re-dispatch; Tier-2 fail closed
   if (existing.status === 'provider_ambiguous') {
-    if (!isTier1) return { success: false, refundId: existing.id, isDirectSplit, errorMessage: 'Refund outcome unknown — requires manual reconciliation (non-replay-safe gateway)' };
+    if (!isTier1) return { success: false, refundId: existing.id, isDirectSplit, errorMessage: 'Refund outcome unknown — requires manual reconciliation (non-replay-safe gateway)', state: 'provider_ambiguous' };
     const { data: recResult } = await service.rpc('recover_ambiguous_refund', { p_refund_id: existing.id });
     const rec = recResult as Record<string, unknown>;
-    if (!rec?.recovered) return { success: false, refundId: existing.id, isDirectSplit, errorMessage: `Recovery failed: ${rec?.reason || 'unknown'}` };
+    if (!rec?.recovered) return { success: false, refundId: existing.id, isDirectSplit, errorMessage: `Recovery failed: ${rec?.reason || 'unknown'}`, state: 'provider_ambiguous' };
     return dispatchAndFinalize(service, existing.id, rec.recovery_token as string, payment, isDirectSplit);
   }
 
@@ -132,12 +184,12 @@ async function resumeExistingRefund(
     if (isTier1) {
       const { data: recResult } = await service.rpc('recover_interrupted_dispatch', { p_refund_id: existing.id });
       const rec = recResult as Record<string, unknown>;
-      if (!rec?.recovered) return { success: false, refundId: existing.id, isDirectSplit, errorMessage: `Interrupted recovery failed: ${rec?.reason || 'unknown'}` };
+      if (!rec?.recovered) return { success: false, refundId: existing.id, isDirectSplit, errorMessage: `Interrupted recovery failed: ${rec?.reason || 'unknown'}`, state: 'provider_ambiguous' };
       return dispatchAndFinalize(service, existing.id, rec.recovery_token as string, payment, isDirectSplit);
     }
     // Tier-2: mark ambiguous
     await service.from('refunds').update({ status: 'provider_ambiguous', gateway_response: { error: 'interrupted_dispatch_tier2' } }).eq('id', existing.id);
-    return { success: false, refundId: existing.id, isDirectSplit, errorMessage: 'Interrupted refund — requires manual reconciliation' };
+    return { success: false, refundId: existing.id, isDirectSplit, errorMessage: 'Interrupted refund — requires manual reconciliation', state: 'provider_ambiguous' };
   }
 
   // pending + undispatched → dispatch normally
@@ -145,15 +197,19 @@ async function resumeExistingRefund(
     return dispatchAndFinalize(service, existing.id, null, payment, isDirectSplit);
   }
 
-  return { success: false, errorMessage: 'A refund for this payment is already being processed' };
+  // Catchall: return the actual durable state, not 'failed'
+  // e.g. provider_pending without provider_refund_id — still provider_pending, not failed
+  const durableState = (VALID_REFUND_STATES.has(existing.status as RefundState) ? existing.status : 'failed') as RefundState;
+  return { success: false, refundId: existing.id, isDirectSplit, errorMessage: 'A refund for this payment is already being processed', state: durableState };
 }
 
 /** Finalize a provider_success_unfinalized refund without calling the provider. */
 async function finalizeOnly(service: ReturnType<typeof createServiceClient>, refundId: string, isDirectSplit: boolean): Promise<ProcessRefundResult> {
   const { data: finResult, error: finErr } = await service.rpc('finalize_refund_execution', { p_refund_id: refundId });
-  if (finErr) return { success: false, refundId, isDirectSplit, errorMessage: 'Re-finalization failed' };
+  if (finErr) return { success: false, refundId, isDirectSplit, errorMessage: 'Re-finalization failed', state: 'provider_success_unfinalized' };
   const fr = finResult as Record<string, unknown>;
-  return { success: !!fr?.finalized, refundId, isDirectSplit };
+  const finalized = !!fr?.finalized;
+  return { success: finalized, refundId, isDirectSplit, state: finalized ? 'success' : 'provider_success_unfinalized' };
 }
 
 /** Reconcile a provider_pending refund by querying the provider, then finalize if terminal. */
@@ -166,7 +222,7 @@ async function reconcileAndFinalize(
     const gatewayName = (existing.gateway as string) || 'paystack';
     const gateway = getPaymentGatewayByName(gatewayName as PaymentGatewayName);
     if (!gateway.queryRefundStatus) {
-      return { success: false, refundId, isDirectSplit, errorMessage: 'Gateway does not support refund status query' };
+      return { success: false, refundId, isDirectSplit, errorMessage: 'Gateway does not support refund status query', state: 'provider_pending' };
     }
     // Resolve credential from the persisted provider_connection_id (same as original dispatch)
     let byoSecretKey: string | undefined;
@@ -178,7 +234,7 @@ async function reconcileAndFinalize(
         .select('secret_key, connect_account_id')
         .eq('id', providerConnId).eq('is_active', true).maybeSingle();
       if (!cred) {
-        return { success: false, refundId, isDirectSplit, errorMessage: 'Payment credential not found for reconciliation' };
+        return { success: false, refundId, isDirectSplit, errorMessage: 'Payment credential not found for reconciliation', state: 'provider_pending' };
       }
       if (cred.secret_key) byoSecretKey = cred.secret_key;
       if (cred.connect_account_id) connectAccountId = cred.connect_account_id;
@@ -193,7 +249,7 @@ async function reconcileAndFinalize(
       const { error: recErr } = await service.rpc('reconcile_pending_refund', { p_refund_id: refundId, p_provider_status: statusResult.providerStatus, p_terminal_outcome: 'terminal_success' });
       if (recErr) {
         logger.error(`[REFUND] Reconciliation persistence failed for terminal success ${refundId}: ${recErr.message}`);
-        return { success: false, refundId, isDirectSplit, errorMessage: 'Reconciliation persistence failed — refund remains pending, safe to retry' };
+        return { success: false, refundId, isDirectSplit, errorMessage: 'Reconciliation persistence failed — refund remains pending, safe to retry', state: 'provider_pending' };
       }
       return finalizeOnly(service, refundId, isDirectSplit);
     }
@@ -201,16 +257,16 @@ async function reconcileAndFinalize(
       const { error: recErr } = await service.rpc('reconcile_pending_refund', { p_refund_id: refundId, p_provider_status: statusResult.providerStatus, p_terminal_outcome: 'terminal_failure' });
       if (recErr) {
         logger.error(`[REFUND] Reconciliation persistence failed for terminal failure ${refundId}: ${recErr.message}`);
-        return { success: false, refundId, isDirectSplit, errorMessage: 'Reconciliation persistence failed — refund remains pending, safe to retry' };
+        return { success: false, refundId, isDirectSplit, errorMessage: 'Reconciliation persistence failed — refund remains pending, safe to retry', state: 'provider_pending' };
       }
-      return { success: false, refundId, isDirectSplit, errorMessage: 'Provider confirmed refund failure' };
+      return { success: false, refundId, isDirectSplit, errorMessage: 'Provider confirmed refund failure', state: 'failed' };
     }
     // Still pending — no mutation
-    return { success: false, refundId, isDirectSplit, errorMessage: 'Refund still pending at provider' };
+    return { success: false, refundId, isDirectSplit, errorMessage: 'Refund still pending at provider', state: 'provider_pending' };
   } catch (err) {
     // Query transport failure — remain provider_pending, no mutation
     logger.warn(`[REFUND] Reconciliation query failed for ${refundId}: ${err}`);
-    return { success: false, refundId, isDirectSplit, errorMessage: 'Reconciliation query failed — refund remains pending' };
+    return { success: false, refundId, isDirectSplit, errorMessage: 'Reconciliation query failed — refund remains pending', state: 'provider_pending' };
   }
 }
 
@@ -227,23 +283,23 @@ async function dispatchAndFinalize(
   });
   const claim = (claimResult as Array<Record<string, unknown>>)?.[0];
   if (!claim?.claimed) {
-    // Check if it reached a resumable state while we tried to claim
-    const { data: cur } = await service.from('refunds').select('status').eq('id', refundId).single();
-    if (cur?.status === 'provider_success_unfinalized') return finalizeOnly(service, refundId, isDirectSplit);
-    return { success: false, refundId, errorMessage: 'Failed to claim refund for dispatch' };
+    // Read the actual durable state — another caller may have advanced it
+    const durableState = await readDurableRefundState(service, refundId);
+    if (durableState === 'provider_success_unfinalized') return finalizeOnly(service, refundId, isDirectSplit);
+    return { success: false, refundId, errorMessage: 'Failed to claim refund for dispatch', state: durableState };
   }
 
   // Read immutable request parameters from the refund row
   const { data: refRow } = await service
     .from('refunds').select('amount, gateway, refund_type, reason, connect_account_id, provider_connection_id, is_direct_split')
     .eq('id', refundId).single();
-  if (!refRow) return { success: false, refundId, errorMessage: 'Refund row not found after claim' };
+  if (!refRow) return { success: false, refundId, errorMessage: 'Refund row not found after claim', state: 'failed' };
 
   if (refRow.is_direct_split) {
     const { error: dsErr } = await service.from('refunds')
       .update({ status: 'provider_success_unfinalized', gateway_refund_reference: 'direct_split', provider_status: 'direct_split' })
       .eq('id', refundId);
-    if (dsErr) return { success: false, refundId, isDirectSplit: true, errorMessage: 'Failed to record direct split state' };
+    if (dsErr) return { success: false, refundId, isDirectSplit: true, errorMessage: 'Failed to record direct split state', state: 'failed' };
   } else {
     const gatewayName = (refRow.gateway || 'paystack') as PaymentGatewayName;
     const gateway = getPaymentGatewayByName(gatewayName);
@@ -264,7 +320,7 @@ async function dispatchAndFinalize(
           .update({ status: 'provider_ambiguous', gateway_response: { error: 'credential_not_found' } })
           .eq('id', refundId);
         if (ambErr) logger.error(`[REFUND] Credential missing AND state write failed: ${refundId}`);
-        return { success: false, refundId, isDirectSplit, errorMessage: 'Payment credential not found or deactivated — requires reconciliation' };
+        return { success: false, refundId, isDirectSplit, errorMessage: 'Payment credential not found or deactivated — requires reconciliation', state: 'provider_ambiguous' };
       }
       if (cred.secret_key) byoSecretKey = cred.secret_key;
       if (cred.connect_account_id) connectAccountId = cred.connect_account_id;
@@ -292,7 +348,7 @@ async function dispatchAndFinalize(
       if (refPersistErr) {
         logger.error(`[REFUND] Provider reference persistence failed for ${refundId}: ${refPersistErr.message}`);
         // FAIL-SAFE: do not continue with state transition — reference needed for reconciliation
-        return { success: false, refundId, isDirectSplit, errorMessage: 'Provider reference persistence failed — requires recovery' };
+        return { success: false, refundId, isDirectSplit, errorMessage: 'Provider reference persistence failed — requires recovery', state: 'provider_ambiguous' };
       }
     }
 
@@ -304,7 +360,9 @@ async function dispatchAndFinalize(
         .update({ status: 'provider_success_unfinalized' }).eq('id', refundId);
       if (durErr) {
         logger.error(`[REFUND] Provider success but durability write failed: ${refundId}`);
-        return { success: false, refundId, isDirectSplit, errorMessage: 'Provider refund succeeded but state update failed — will be recovered' };
+        // Return the actual durable state — the write failed, so DB is still pending+dispatched
+        const durableState = await readDurableRefundState(service, refundId);
+        return { success: false, refundId, isDirectSplit, errorMessage: 'Provider refund succeeded but state update failed — will be recovered', state: durableState };
       }
     } else if (outcome === 'terminal_failure') {
       const { error: failErr } = await service.from('refunds')
@@ -312,18 +370,18 @@ async function dispatchAndFinalize(
       if (failErr) {
         logger.error(`[REFUND] Failed state write failed: ${refundId}`);
         // FAIL-SAFE: row stays pending+dispatched; reconciliation required
-        return { success: false, refundId, isDirectSplit, errorMessage: 'Provider failure confirmed but state persistence failed — requires recovery' };
+        return { success: false, refundId, isDirectSplit, errorMessage: 'Provider failure confirmed but state persistence failed — requires recovery', state: 'provider_ambiguous' };
       }
-      return { success: false, refundId, isDirectSplit, errorMessage: result.errorMessage || 'Gateway refund failed' };
+      return { success: false, refundId, isDirectSplit, errorMessage: result.errorMessage || 'Gateway refund failed', state: 'failed' };
     } else if (outcome === 'provider_pending') {
       const { error: pendErr } = await service.from('refunds')
         .update({ status: 'provider_pending' }).eq('id', refundId);
       if (pendErr) {
         logger.error(`[REFUND] Provider pending state write failed: ${refundId}`);
         // FAIL-SAFE: row stays pending+dispatched; reconciliation required
-        return { success: false, refundId, isDirectSplit, errorMessage: 'Provider accepted but state persistence failed — requires recovery' };
+        return { success: false, refundId, isDirectSplit, errorMessage: 'Provider accepted but state persistence failed — requires recovery', state: 'provider_ambiguous' };
       }
-      return { success: false, refundId, isDirectSplit, errorMessage: 'Refund accepted by provider — awaiting completion' };
+      return { success: false, refundId, isDirectSplit, errorMessage: 'Refund accepted by provider — awaiting completion', state: 'provider_pending' };
     } else {
       // transport_unknown → provider_ambiguous
       const { error: ambErr } = await service.from('refunds')
@@ -331,9 +389,9 @@ async function dispatchAndFinalize(
       if (ambErr) {
         logger.error(`[REFUND] Ambiguous state write failed: ${refundId}`);
         // FAIL-SAFE: row stays pending+dispatched; reconciliation required
-        return { success: false, refundId, isDirectSplit, errorMessage: 'Outcome unknown and state persistence failed — requires recovery' };
+        return { success: false, refundId, isDirectSplit, errorMessage: 'Outcome unknown and state persistence failed — requires recovery', state: 'provider_ambiguous' };
       }
-      return { success: false, refundId, isDirectSplit, errorMessage: 'Refund outcome unknown' };
+      return { success: false, refundId, isDirectSplit, errorMessage: 'Refund outcome unknown', state: 'provider_ambiguous' };
     }
   }
 
@@ -341,8 +399,11 @@ async function dispatchAndFinalize(
   const { data: finalizeResult, error: finalizeErr } = await service.rpc('finalize_refund_execution', { p_refund_id: refundId });
   if (finalizeErr) {
     logger.withContext({ op: 'refund.finalize', ...safeLogErrorContext(finalizeErr) }).error(`[REFUND] Finalization RPC failed for ${refundId}`);
-    return { success: false, refundId, isDirectSplit, errorMessage: 'Refund processed but finalization failed — will be retried' };
+    return { success: false, refundId, isDirectSplit, errorMessage: 'Refund processed but finalization failed — will be retried', state: 'provider_success_unfinalized' };
   }
   const finResult = finalizeResult as Record<string, unknown>;
-  return { success: !!finResult?.finalized, refundId, isDirectSplit };
+  const finalized = !!finResult?.finalized;
+  // If finalization didn't complete, return the durable state (provider_success_unfinalized)
+  // — never downgrade to 'failed', which is for true terminal failures only
+  return { success: finalized, refundId, isDirectSplit, state: finalized ? 'success' : 'provider_success_unfinalized' };
 }

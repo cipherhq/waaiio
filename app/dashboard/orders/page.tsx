@@ -118,25 +118,43 @@ export default function OrdersPage() {
   // Refund state
   const [refundModalOpen, setRefundModalOpen] = useState(false);
   const [refundPayment, setRefundPayment] = useState<{ id: string; amount: number; refund_amount: number; currency: string } | null>(null);
+  const [refundDisabledReason, setRefundDisabledReason] = useState<string | null>(null);
+  const [loadingRefund, setLoadingRefund] = useState(false);
 
   async function openRefundForOrder(orderId: string) {
+    setLoadingRefund(true);
+    setRefundDisabledReason(null);
     const supabase = createClient();
     const { data: payment } = await supabase
       .from('payments')
       .select('id, amount, refund_amount, currency, status')
       .eq('business_id', business.id)
-      .contains('metadata', { order_id: orderId })
-      .eq('status', 'success')
+      .eq('order_id', orderId)
+      .in('status', ['success', 'refunded'])
       .maybeSingle();
-    if (payment) {
-      setRefundPayment({
-        id: payment.id,
-        amount: Number(payment.amount),
-        refund_amount: Number(payment.refund_amount || 0),
-        currency: payment.currency || 'NGN',
-      });
-      setRefundModalOpen(true);
+    setLoadingRefund(false);
+    if (!payment) {
+      setRefundDisabledReason('No payment recorded');
+      return;
     }
+    // A payment with status='refunded' is always fully refunded
+    if (payment.status === 'refunded') {
+      setRefundDisabledReason('Fully refunded');
+      return;
+    }
+    // status='success' — check remaining refundable amount
+    const refundable = Number(payment.amount) - Number(payment.refund_amount || 0);
+    if (refundable <= 0) {
+      setRefundDisabledReason('Fully refunded');
+      return;
+    }
+    setRefundPayment({
+      id: payment.id,
+      amount: Number(payment.amount),
+      refund_amount: Number(payment.refund_amount || 0),
+      currency: payment.currency || 'NGN',
+    });
+    setRefundModalOpen(true);
   }
 
   async function fetchOrders() {
@@ -465,12 +483,27 @@ export default function OrdersPage() {
               <p className="mt-1 text-xs text-gray-500">
                 Issue a full or partial refund for this order
               </p>
-              <button
-                onClick={() => openRefundForOrder(selectedOrder.id)}
-                className="mt-3 w-full rounded-lg border border-red-200 px-4 py-2 text-sm font-medium text-red-600 hover:bg-red-50"
-              >
-                Refund
-              </button>
+              {refundDisabledReason === 'Fully refunded' ? (
+                <p className="mt-3 w-full rounded-lg border border-green-200 bg-green-50 px-4 py-2 text-center text-sm font-medium text-green-600">
+                  Fully refunded
+                </p>
+              ) : refundDisabledReason === 'No payment recorded' ? (
+                <p className="mt-3 w-full rounded-lg border border-gray-200 bg-gray-50 px-4 py-2 text-center text-sm font-medium text-gray-400">
+                  No payment recorded
+                </p>
+              ) : refundDisabledReason ? (
+                <p className="mt-3 w-full rounded-lg border border-gray-200 bg-gray-50 px-4 py-2 text-center text-sm font-medium text-gray-400">
+                  {refundDisabledReason}
+                </p>
+              ) : (
+                <button
+                  onClick={() => openRefundForOrder(selectedOrder.id)}
+                  disabled={loadingRefund}
+                  className="mt-3 w-full rounded-lg border border-red-200 px-4 py-2 text-sm font-medium text-red-600 hover:bg-red-50 disabled:opacity-50"
+                >
+                  {loadingRefund ? 'Checking...' : 'Refund'}
+                </button>
+              )}
             </div>
 
             {selectedOrder.notes && (
@@ -693,7 +726,7 @@ export default function OrdersPage() {
                 <input type="checkbox" checked={selectedIds.has(order.id)} onChange={() => toggleSelect(order.id)} className="h-4 w-4 rounded border-gray-300" />
               </div>
               <button
-                onClick={() => setSelectedOrder(order)}
+                onClick={() => { setSelectedOrder(order); setRefundDisabledReason(null); }}
                 className="flex flex-1 items-center justify-between p-4 pl-0 text-left"
               >
               <div className="flex items-center gap-4 min-w-0">

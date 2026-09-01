@@ -1380,11 +1380,25 @@ export default function BookingsPage() {
                     {requestingBalance ? 'Sending...' : `Request Balance (${formatCurrency((selected.total_amount || 0) - (selected.deposit_amount || 0), (business.country_code || 'NG') as CountryCode)})`}
                   </button>
                 )}
-                {selected.payment_id && selected.deposit_status === 'paid' && !selected.refund_amount && (
-                  <button onClick={() => openRefundModal(selected)}
-                    className="mt-3 rounded-lg border border-red-200 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50">
-                    Issue Refund
-                  </button>
+                {selected.payment_id && selected.deposit_status === 'paid' && (
+                  (() => {
+                    const totalAmt = Number(selected.total_amount || selected.deposit_amount || 0);
+                    const refunded = Number(selected.refund_amount || 0);
+                    const remaining = totalAmt - refunded;
+                    if (remaining <= 0) {
+                      return (
+                        <p className="mt-3 rounded-lg border border-gray-200 bg-gray-50 px-3 py-1.5 text-center text-xs font-medium text-gray-400">
+                          Fully refunded
+                        </p>
+                      );
+                    }
+                    return (
+                      <button onClick={() => openRefundModal(selected)}
+                        className="mt-3 rounded-lg border border-red-200 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50">
+                        Issue Refund
+                      </button>
+                    );
+                  })()
                 )}
               </div>
 

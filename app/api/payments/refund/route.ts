@@ -3,8 +3,12 @@ import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { requireCapability } from '@/lib/capabilities/api-guard';
 import { processRefund } from '@/lib/payments/refund-handler';
+import type { RefundState } from '@/lib/payments/refund-handler';
 import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
+
+/** Re-export for consumers that need the domain type. */
+export type RefundResponseState = RefundState;
 
 export async function POST(request: NextRequest) {
   try {
@@ -69,13 +73,18 @@ export async function POST(request: NextRequest) {
     });
 
     if (!result.success) {
-      return NextResponse.json({ error: result.errorMessage }, { status: 400 });
+      return NextResponse.json({
+        error: result.errorMessage,
+        state: result.state,
+        refundId: result.refundId,
+      }, { status: 400 });
     }
 
     return NextResponse.json({
       success: true,
       refundId: result.refundId,
       isDirectSplit: result.isDirectSplit,
+      state: result.state,
     });
   } catch (error) {
     logger.withContext({
