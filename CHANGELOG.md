@@ -3,6 +3,15 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+### feat(255): commercial config versioning — immutable platform_config_versions (C-1)
+
+- **Date:** 2026-09-01
+- **Migration 359:** `359_config_versioning.sql` — creates `platform_config_versions` table with immutable append-only enforcement, DB-enforced commercial key guard on `platform_settings`, serialized `save_commercial_config()` SECURITY DEFINER function, deterministic `get_effective_config()` resolution, and bootstrap from observed DB state.
+- **Admin UI:** `admin/src/pages/PlatformSettings.tsx` — commercial key saves (11 keys) now routed through `save_commercial_config()` RPC instead of direct DML. Commercial key deletion blocked at UI level.
+- **Tests:** `lib/__tests__/config-versioning-db.test.ts` — 27 executable PostgreSQL proofs covering write-authority enforcement, key-rename guard, non-commercial isolation, immutability, bootstrap, resolution, concurrency, security/ACL.
+- **What could break:** Admin panel direct DML on commercial keys will fail (intentionally — must use RPC). Any future code writing commercial platform_settings keys directly will be rejected by trigger. Non-commercial and ephemeral keys (`otp:*`, etc.) are unaffected.
+- **Refs:** #255, #250
+
 ## 2026-08-31 — #245: readDurableRefundState fail-safe to provider_ambiguous
 
 ### What changed
@@ -58,6 +67,33 @@ If something breaks, check this log to find what changed and when.
 ### Could break
 - Any consumer that type-checked against the old 4-state `RefundState` union (only existed on the UX branch, not main)
 - Frontend code that parsed error text to determine refund state (this was the bug being fixed)
+
+## 2026-08-30 — #248: Instant Win F1 timezone + F4 claim format
+
+### What changed
+- **F1: Timezone write-boundary correction** — Dashboard promo create/update was storing naive `datetime-local` values directly to TIMESTAMPTZ columns, ignoring the `timezone` column. Now when a timezone is provided, naive datetimes are interpreted as local time in that timezone and converted to correct UTC before storage.
+  - `lib/promotions/timezone.ts` (new) — `naiveToUtc()` and `isValidTimezone()` utilities using Node's built-in `Intl.DateTimeFormat`
+  - `app/api/promotions/create/route.ts` — Added timezone conversion for `start_at`/`end_at` before insert
+  - `app/api/promotions/update/route.ts` — Added timezone conversion for `startAt`/`endAt` before update, resolves timezone from body or existing campaign
+  - DST spring-forward gaps rejected with clear error; fall-back ambiguity uses earlier offset (conservative)
+  - No timezone provided or UTC → backward compatible passthrough
+
+- **F4: Claim-format guidance** — `code_format` column (already on `promo_campaigns`) is now surfaced in the bot entry message.
+  - `lib/promotions/entry.ts` — Added `code_format` to `PromoEntryCampaign` interface, updated DB query, added format hint to `renderPromoEntryMessage()`
+  - `lib/bot/__tests__/acc-181-promo-menu-dispatch.test.ts` — Updated test objects to include `code_format: null`
+
+### Files changed
+- `lib/promotions/timezone.ts` (new)
+- `app/api/promotions/create/route.ts` (modified)
+- `app/api/promotions/update/route.ts` (modified)
+- `lib/promotions/entry.ts` (modified)
+- `lib/bot/__tests__/acc-181-promo-menu-dispatch.test.ts` (modified)
+- `app/api/promotions/__tests__/timezone-write.test.ts` (new — 13 tests)
+- `CHANGELOG.md` (this entry)
+
+### Could break
+- If a caller of `renderPromoEntryMessage` constructs `PromoEntryCampaign` objects without `code_format`, TypeScript will error. All existing callers use DB query results which include the column.
+- Campaigns with timezone set will now store different UTC values than before. Existing campaigns are NOT retroactively shifted — only new creates/updates are affected.
 
 ## 2026-08-30 — #246: CTO blocker corrections — UI lifecycle, PATCH validation, behavioral tests
 
