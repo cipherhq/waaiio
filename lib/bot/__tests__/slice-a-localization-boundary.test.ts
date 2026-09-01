@@ -369,7 +369,7 @@ describe('Slice A — real FlowExecutor language-switch + outbound behavior', ()
     expect(mockCreate).not.toHaveBeenCalled();
   });
 
-  it('successful "switch to french" when entitled+certified => persists _detected_language, translated confirmation, re-prompt uses new language', async () => {
+  it('successful "switch to french" when entitled+certified => persists _detected_language, translated confirmation, re-prompt via ctx.t uses new language', async () => {
     // Configure: French is certified and entitled for this test
     mockCertifiedLanguages.length = 0;
     mockCertifiedLanguages.push('en', 'fr');
@@ -379,9 +379,27 @@ describe('Slice A — real FlowExecutor language-switch + outbound behavior', ()
       translationAllowed: true,
     });
 
+    // Replace the default test step with one whose prompt calls ctx.t()
+    // This proves ctx.t observes the post-switch language, not the stale pre-switch value
+    const ctxTStep = {
+      prompt: vi.fn(async (ctx: { t: (s: string) => Promise<string> }) => {
+        const translated = await ctx.t('Pick a date:');
+        return [{ type: 'text' as const, text: translated }];
+      }),
+      validate: vi.fn(async () => ({ valid: true })),
+      next: vi.fn(async () => null),
+      skipIf: undefined,
+    };
+    mockGetFlowStep.mockReturnValue(ctxTStep);
+
     const session = createTestSession();
-    // Mock Anthropic for: (1) "Switched to French. ✅" confirmation, (2) "Pick a date:" re-prompt
+    // Mock Anthropic responses:
+    // (1) "Switched to French. ✅" confirmation text
+    // (2) "Pick a date:" → "Choisissez une date :" via ctx.t in the re-prompt
+    // (3) sendMessages re-translates the already-French prompt (by-design double-pass;
+    //     in production the cache would absorb this, but in tests each mock is consumed once)
     setupAnthropicResponse('Passage au français. ✅');
+    setupAnthropicResponse('Choisissez une date :');
     setupAnthropicResponse('Choisissez une date :');
 
     await executor.execute('+2348001234567', 'switch to french', session, {
@@ -404,11 +422,20 @@ describe('Slice A — real FlowExecutor language-switch + outbound behavior', ()
     const msgs = sender.getMessages();
     expect(msgs.some(m => m.type === 'text' && m.text?.includes('Passage au français'))).toBe(true);
 
-    // Re-prompt must have been called (step.prompt invoked)
-    expect(testStep.prompt).toHaveBeenCalled();
+    // The re-prompt must have been called via ctx.t and the French translation consumed
+    expect(ctxTStep.prompt).toHaveBeenCalled();
 
-    // Anthropic must have been called (for translation)
-    expect(mockCreate).toHaveBeenCalled();
+    // Anthropic must have been called at least twice:
+    // (1) confirmation "Switched to French. ✅"
+    // (2) ctx.t('Pick a date:') inside step.prompt
+    // (3) sendMessages also translates the prompt output (by-design double-pass)
+    expect(mockCreate.mock.calls.length).toBeGreaterThanOrEqual(2);
+
+    // The re-prompt message must be the French translation, not the English original
+    // This proves ctx.t read _detected_language='fr' (not the stale pre-switch '')
+    expect(msgs.some(m => m.type === 'text' && m.text === 'Choisissez une date :')).toBe(true);
+    // The English original must NOT appear in any sent text message
+    expect(msgs.some(m => m.type === 'text' && m.text === 'Pick a date:')).toBe(false);
 
     // Restore defaults for subsequent tests
     mockCertifiedLanguages.length = 0;
