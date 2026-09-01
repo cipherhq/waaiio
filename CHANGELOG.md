@@ -3,30 +3,36 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
-### feat(255): commercial config versioning — immutable platform_config_versions (C-1)
-
-- **Date:** 2026-09-01
-- **Migration 359:** `359_config_versioning.sql` — creates `platform_config_versions` table with immutable append-only enforcement, DB-enforced commercial key guard on `platform_settings`, serialized `save_commercial_config()` SECURITY DEFINER function, deterministic `get_effective_config()` resolution, and bootstrap from observed DB state.
-- **Admin UI:** `admin/src/pages/PlatformSettings.tsx` — commercial key saves (11 keys) now routed through `save_commercial_config()` RPC instead of direct DML. Commercial key deletion blocked at UI level.
-- **Tests:** `lib/__tests__/config-versioning-db.test.ts` — 27 executable PostgreSQL proofs covering write-authority enforcement, key-rename guard, non-commercial isolation, immutability, bootstrap, resolution, concurrency, security/ACL.
-- **What could break:** Admin panel direct DML on commercial keys will fail (intentionally — must use RPC). Any future code writing commercial platform_settings keys directly will be rejected by trigger. Non-commercial and ephemeral keys (`otp:*`, etc.) are unaffected.
-- **Refs:** #255, #250
-
-## 2026-08-31 — #274 (Slice A of #271): Localization safety boundary
+## 2026-08-31 — #247: Editable order tracking with durable notification (Phase 1)
 
 ### What changed
-- **Removed module-global race condition in translate.ts**: `_currentBusinessId`, `_currentSupabase`, and `setTranslationContext()` eliminated. Translation context is now passed per-call via a `TranslationContext` object.
-- **Added entitlement check at translation boundary**: `translateBotResponse()` now requires a `TranslationContext` with `LanguageEntitlement`. Translation is fail-closed if `translationAllowed` is false or language is not in `allowedLanguages`. Free-tier businesses will no longer trigger paid Claude translation calls.
-- **Unified language key**: All references to the dead `session_data._lang` key replaced with `_detected_language` (the canonical key set by bot.service.ts and the language confirmation handler). Affected: executor.ts `t()` helper, `showPostCompletionMenu`, `sendLocalizedText`.
-- **Language switch entitlement gate**: Explicit "switch to X" validates translationAllowed + allowedLanguages + CERTIFIED_LANGUAGES before persisting `_detected_language`.
-- **ctx.t reads current language at call time**: The flow context `t()` helper reads `session.session_data._detected_language` dynamically instead of capturing a stale value at `execute()` entry.
+- **Migration 358:** Added `tracking_revision` column to `orders` table (integer, default 0). Created `order_tracking_notifications` table for durable notification intents with claim/dispatch/outcome lifecycle. Created four SECURITY DEFINER RPCs: `update_order_tracking` (atomic tracking mutation + audit log + notification intent), `claim_tracking_notification`, `mark_tracking_notification_dispatched`, `record_tracking_notification_outcome`. All RPCs use `SET search_path = ''` and fully-qualified `public.` references. All granted to `service_role` only.
+- **New API route:** `PATCH /api/orders/[id]/tracking` — authenticates user, enforces `ordering/manage_existing` capability, calls `update_order_tracking` RPC atomically, then dispatches notification through claim/dispatch/send/outcome lifecycle. Notification failure does NOT roll back the committed tracking edit.
+- **DB tests:** `lib/__tests__/acc-247-editable-tracking-db.test.ts` — 11 tests against real migrated schema covering: concurrent edits, serialized edits with distinct revisions, no-op detection, shipped_at preservation, cross-business denial, revision monotonicity, notification lifecycle, draft/cancelled rejection, no-op with pending notification.
+- **API tests:** `app/api/orders/[id]/tracking/__tests__/tracking-edit.test.ts` — 11 tests covering auth, capability guard, RPC error mapping, no-op, material change, notification dispatch, and notification failure isolation.
+
+### Key invariants
+- tracking_revision incremented under FOR UPDATE lock (no COUNT(*)+1)
+- tracking_mutation + audit_log + notification_intent commit atomically
+- shipped_at preserved after first shipment
+- Notification identity = (order_id, tracking_revision)
+- Pre-dispatch: reclaimable after 2-minute lease expiry
+- Post-dispatch unknown: recorded as indeterminate, NOT blind resend
+- Notification failure does NOT roll back tracking edit
+
+### Files changed
+- `supabase/migrations/358_editable_order_tracking.sql` (new)
+- `app/api/orders/[id]/tracking/route.ts` (new)
+- `lib/__tests__/acc-247-editable-tracking-db.test.ts` (new)
+- `app/api/orders/[id]/tracking/__tests__/tracking-edit.test.ts` (new)
+- `CHANGELOG.md` (this entry)
 
 ### Could break
-- Any code that imports `setTranslationContext` from `translate.ts` will fail to compile (intentional — the function is removed).
-- Any code that calls `translateBotResponse` without a `TranslationContext` will fail to compile (intentional — `ctx` is required).
-- The `_lang` session_data key is no longer read anywhere.
+- The existing `POST /api/orders/tracking` route is unchanged — no regression to existing tracking flow.
+- The new `tracking_revision` column defaults to 0, so existing orders are unaffected.
+- If any code does `SELECT *` on orders and destructures strictly, the new column could cause issues — but this is unlikely with TypeScript.
 
-## 2026-08-31 — #245: readDurableRefundState fail-safe to provider_ambiguous
+## 2026-08-30 — #249: Behavioral route/cron handler tests for catalog safety
 
 ### What changed
 - **readDurableRefundState():** Now fails safe to `provider_ambiguous` instead of terminal `failed` when the durable state cannot be established (DB error, missing row, unknown status, thrown exception). An unknown state after provider dispatch may still have succeeded — representing it as `failed` would be a false terminal claim.
@@ -81,96 +87,6 @@ If something breaks, check this log to find what changed and when.
 ### Could break
 - Any consumer that type-checked against the old 4-state `RefundState` union (only existed on the UX branch, not main)
 - Frontend code that parsed error text to determine refund state (this was the bug being fixed)
-
-## 2026-08-31 — #248: UTC timezone validation bypass fix
-
-### What changed
-- **convertDatetimePair():** Removed `timezone !== 'UTC'` bypass. All inputs now go through `naiveToUtc()` regardless of timezone, ensuring consistent validation and normalization. Previously, UTC timezone inputs skipped all validation -- `2024-13-01T00:00` with UTC timezone passed through unchecked.
-- **7 new unit tests** for UTC timezone: naive validation, month-13 rejection, day-32 rejection, Z timestamp acceptance, +offset acceptance, trailing junk rejection, both start_at+end_at validated.
-
-### Files changed
-- `lib/promotions/timezone.ts` (convertDatetimePair UTC bypass removed)
-- `app/api/promotions/__tests__/timezone-write.test.ts` (7 new UTC tests, 1 updated)
-- `CHANGELOG.md` (this entry)
-
-### Could break
-- UTC timezone inputs are now normalized through naiveToUtc (output format changes from raw string to ISO). All route tests updated.
-
-## 2026-08-31 — #248: Strict zoned-ISO parsing boundary — fractional seconds + calendar validation
-
-### What changed
-- **ZONED_ISO_RE regex:** Updated to support fractional seconds (`2024-10-30T22:59:59.123Z`). Previously these fell through to the naive parser and were rejected.
-- **parseZonedTimestamp():** Added strict calendar validation (month 1-12, day valid for month/year with leap-year support, hour 0-23, minute 0-59, second 0-59) BEFORE `Date` parsing. Previously `Date.parse()` would silently roll over invalid dates (month 13 -> Jan next year, day 32 -> 1st next month). Now rejected with explicit error messages.
-- **Tests:** 17 new tests across unit and route-level suites covering: fractional seconds with Z/+offset/-offset, month 13 rejection (no rollover), day 32 rejection, Feb 30 rejection, hour 25 rejection, Feb 29 non-leap rejection, Feb 29 leap acceptance, trailing junk rejection, and create/update parity for these cases.
-
-### Files changed
-- `lib/promotions/timezone.ts` (regex + parseZonedTimestamp calendar validation)
-- `app/api/promotions/__tests__/timezone-write.test.ts` (17 new tests)
-- `CHANGELOG.md` (this entry)
-
-### Could break
-- Nothing -- all changes are strictness improvements that reject previously-silently-invalid inputs.
-
-## 2026-08-30 — #248: Fix 2 CTO blockers — general IANA zone ambiguity + zoned timestamp preservation
-
-### What changed
-- **BLOCKER 1 (All IANA zones):** `naiveToUtc()` now probes +/-24 hours at 30-minute intervals (97 probe points) instead of just +/-1 hour (3 probe points). This discovers every distinct UTC offset a timezone uses around the target time, catching non-standard transitions like Australia/Lord_Howe (+/-30min DST) and Pacific/Chatham (+/-45min). The round-trip verification and "pick earliest UTC" policy remain unchanged.
-- **BLOCKER 2 (Zoned timestamp preservation):** Already-zoned timestamps (`Z`, `+HH:MM`, `-HH:MM`) are now parsed as absolute instants and returned as normalized UTC -- NOT double-shifted through the campaign timezone. Previously these were rejected with 400. New exported function `parseZonedTimestamp()` handles this path. Malformed inputs still rejected.
-- **New tests:** Australia/Lord_Howe fall-back (+/-30min DST), explicit `+05:30` preservation, explicit `-03:00` preservation, `parseZonedTimestamp` unit tests. Updated all route-level tests: zoned timestamps now return 200/201 with preserved UTC, not 400.
-
-### Files changed
-- `lib/promotions/timezone.ts` -- wider probe range, `parseZonedTimestamp()`, zoned input preservation
-- `app/api/promotions/__tests__/timezone-write.test.ts` -- updated + new tests (53 total)
-- `CHANGELOG.md` (this entry)
-
-### Could break
-- Any caller relying on zoned timestamps being rejected (400) will now get them accepted and preserved. This is the intended behavior per CTO spec.
-
-## 2026-08-30 — #248: Fix 3 CTO blockers — DST ambiguity, parser strictness, route behavioral tests
-
-### What changed
-- **BLOCKER 1 (DST fall-back ambiguity):** `naiveToUtc()` now probes THREE candidate UTC offsets (-1h, 0, +1h) and checks which ones round-trip. When TWO valid UTC instants exist for the same local time (fall-back), picks the EARLIER UTC (= larger offset / DST side). Previously only tested one offset and could silently pick the wrong occurrence.
-- **BLOCKER 2 (Parser accepts zoned timestamps):** Regex is now end-anchored (`$`). Inputs with `Z`, `+HH:MM`, or `-HH:MM` suffixes are rejected before conversion to prevent double-shift. Calendar values are strictly validated: month 1-12, day valid for month/year (including leap years), hours 0-23, minutes 0-59, seconds 0-59. Previously `2024-13-15` or `2024-10-30T22:59:00Z` would silently pass.
-- **BLOCKER 3 (Route-level behavioral tests):** 47 tests total — unit tests for `naiveToUtc`, `convertDatetimePair`, plus behavioral tests calling actual POST and PUT route handlers with mock Supabase. Covers: Africa/Lagos, America/New_York (standard + daylight), spring-forward rejection, fall-back determinism, Europe/London fall-back, month=13 rejection, day=32 rejection, Feb 30 rejection, hour=25 rejection, already-zoned Z/+/-offset rejection, both start_at+end_at boundaries, timezone-only update, and create/update conversion parity.
-- **Shared conversion function:** Added `convertDatetimePair()` used by BOTH create and update routes, ensuring identical semantics. Update route previously had inline conversion with different field name handling.
-
-### Files changed
-- `lib/promotions/timezone.ts` (rewritten — DST probe, strict validation, `convertDatetimePair()`)
-- `app/api/promotions/create/route.ts` (uses `convertDatetimePair`)
-- `app/api/promotions/update/route.ts` (uses `convertDatetimePair`)
-- `app/api/promotions/__tests__/timezone-write.test.ts` (rewritten — 47 behavioral tests)
-- `CHANGELOG.md` (this entry)
-
-### Could break
-- Any caller sending already-zoned timestamps (e.g., `...Z`) to create/update with a timezone will now get 400. Previously these were silently double-shifted.
-- Any caller sending invalid calendar values (month 13, day 32) will now get 400. Previously `Date.UTC()` rolled them over silently.
-
-## 2026-08-30 — #248: Instant Win F1 timezone + F4 claim format
-
-### What changed
-- **F1: Timezone write-boundary correction** — Dashboard promo create/update was storing naive `datetime-local` values directly to TIMESTAMPTZ columns, ignoring the `timezone` column. Now when a timezone is provided, naive datetimes are interpreted as local time in that timezone and converted to correct UTC before storage.
-  - `lib/promotions/timezone.ts` (new) — `naiveToUtc()` and `isValidTimezone()` utilities using Node's built-in `Intl.DateTimeFormat`
-  - `app/api/promotions/create/route.ts` — Added timezone conversion for `start_at`/`end_at` before insert
-  - `app/api/promotions/update/route.ts` — Added timezone conversion for `startAt`/`endAt` before update, resolves timezone from body or existing campaign
-  - DST spring-forward gaps rejected with clear error; fall-back ambiguity uses earlier offset (conservative)
-  - No timezone provided or UTC → backward compatible passthrough
-
-- **F4: Claim-format guidance** — `code_format` column (already on `promo_campaigns`) is now surfaced in the bot entry message.
-  - `lib/promotions/entry.ts` — Added `code_format` to `PromoEntryCampaign` interface, updated DB query, added format hint to `renderPromoEntryMessage()`
-  - `lib/bot/__tests__/acc-181-promo-menu-dispatch.test.ts` — Updated test objects to include `code_format: null`
-
-### Files changed
-- `lib/promotions/timezone.ts` (new)
-- `app/api/promotions/create/route.ts` (modified)
-- `app/api/promotions/update/route.ts` (modified)
-- `lib/promotions/entry.ts` (modified)
-- `lib/bot/__tests__/acc-181-promo-menu-dispatch.test.ts` (modified)
-- `app/api/promotions/__tests__/timezone-write.test.ts` (new — 13 tests)
-- `CHANGELOG.md` (this entry)
-
-### Could break
-- If a caller of `renderPromoEntryMessage` constructs `PromoEntryCampaign` objects without `code_format`, TypeScript will error. All existing callers use DB query results which include the column.
-- Campaigns with timezone set will now store different UTC values than before. Existing campaigns are NOT retroactively shifted — only new creates/updates are affected.
 
 ## 2026-08-30 — #246: CTO blocker corrections — UI lifecycle, PATCH validation, behavioral tests
 
