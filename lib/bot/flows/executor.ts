@@ -196,7 +196,8 @@ export class FlowExecutor {
     }
 
     // Build flow context (no DB calls — synchronous)
-    const lang = (session.session_data._detected_language as string) || '';
+    // ctx.t reads _detected_language at call time so a mid-execute language switch
+    // (e.g. "switch to french") is immediately reflected in the re-prompt.
     const ctx: FlowContext = {
       supabase: this.supabase,
       sender: this.sender,
@@ -207,7 +208,10 @@ export class FlowExecutor {
       business,
       mediaUrl,
       mediaType,
-      t: (text: string) => translateBotResponse(text, lang, translationCtx),
+      t: (text: string) => {
+        const currentLang = (session.session_data._detected_language as string) || '';
+        return translateBotResponse(text, currentLang, translationCtx);
+      },
       currentCanonical, // CAS-004: ephemeral, not persisted
     };
 

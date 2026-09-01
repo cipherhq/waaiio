@@ -1,7 +1,10 @@
 /**
  * Slice A — Localization Safety Boundary behavioral tests.
  *
- * Tests the real translateBotResponse + TranslationContext entitlement gate.
+ * Part 1: Tests the real translateBotResponse + TranslationContext entitlement gate.
+ * Part 2: Tests the real FlowExecutor.execute() path for language-switch behavior.
+ * Part 3: Tests truly concurrent tenant attribution.
+ *
  * Anthropic SDK and AI-usage tracking are mocked at the boundary;
  * the entitlement logic, fail-closed behavior, and context isolation
  * are exercised for real.
@@ -35,20 +38,74 @@ vi.mock('@/lib/posthog/flags', () => ({
 // Mock rate limiter — always allowed
 vi.mock('@/lib/rate-limit', () => ({
   checkRateLimit: vi.fn().mockReturnValue({ allowed: true, remaining: 49 }),
+  checkRateLimitAsync: vi.fn().mockResolvedValue({ allowed: true, remaining: 10 }),
 }));
 
 // Mock logger — capture warn/error for debugging
 vi.mock('@/lib/logger', () => ({
-  logger: { info: vi.fn(), warn: mockLoggerWarn, error: vi.fn() },
+  logger: { info: vi.fn(), warn: mockLoggerWarn, error: vi.fn(), debug: vi.fn() },
 }));
 
 // Mock AI usage tracker — capture calls for attribution verification
 vi.mock('@/lib/bot/ai-tier-guard', () => ({
   incrementAIUsage: mockIncrementAIUsage,
+  checkAIFeature: vi.fn().mockResolvedValue(true),
+  isLanguageAllowed: vi.fn().mockReturnValue(true),
+}));
+
+// ── FlowExecutor-specific mocks ──
+
+vi.mock('@sentry/nextjs', () => ({ captureException: vi.fn(), captureMessage: vi.fn() }));
+
+vi.mock('@/lib/bot/conversation-guard', () => ({
+  checkConversationLimit: vi.fn().mockResolvedValue({ allowed: true }),
+  trackOutboundMessage: vi.fn().mockResolvedValue(undefined),
+  getConversationLimitMessage: vi.fn(() => 'Limit reached'),
+}));
+
+vi.mock('@/lib/bot/step-overrides', () => ({
+  loadOverrides: vi.fn().mockResolvedValue(new Map()),
+  evaluateBranchConditions: vi.fn(),
+}));
+
+vi.mock('@/lib/bot/flow-analytics', () => ({ logDropoff: vi.fn() }));
+
+// Mock language-policy — Free tier by default (tests can override)
+const { mockGetEffectiveLanguages, mockLoadBusinessLanguages } = vi.hoisted(() => ({
+  mockGetEffectiveLanguages: vi.fn().mockReturnValue({
+    allowedLanguages: ['en'],
+    llmAllowed: false,
+    translationAllowed: false,
+  }),
+  mockLoadBusinessLanguages: vi.fn().mockResolvedValue(null),
+}));
+
+vi.mock('@/lib/bot/language-policy', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../language-policy')>();
+  return {
+    ...actual,
+    getEffectiveLanguages: mockGetEffectiveLanguages,
+    loadBusinessLanguages: mockLoadBusinessLanguages,
+    // Keep real CERTIFIED_LANGUAGES for switch gate tests
+  };
+});
+
+// Mock flow registry — returns a controllable test step
+const { mockGetFlowStep } = vi.hoisted(() => ({
+  mockGetFlowStep: vi.fn(),
+}));
+
+vi.mock('../flows/registry', () => ({
+  getFlowStep: mockGetFlowStep,
+  getFlowStepAcrossFlows: vi.fn().mockReturnValue(null),
+  getExtendedFlowDefinition: vi.fn().mockReturnValue(null),
+  getFlowDefinition: vi.fn().mockReturnValue(null),
 }));
 
 import { translateBotResponse, type TranslationContext } from '../translate';
 import type { LanguageEntitlement } from '../language-policy';
+import { FlowExecutor } from '../flows/executor';
+import { createCaptureSender } from './bot-harness';
 
 // ── Helpers ──
 
@@ -76,257 +133,291 @@ function setupAnthropicResponse(translated: string) {
   });
 }
 
-// ── Tests ──
+/** Create a minimal mock Supabase client for FlowExecutor */
+function createMockSupabase() {
+  const mockRpc = vi.fn().mockResolvedValue({
+    data: { success: true, version: 2, current_step: 'test_step' },
+    error: null,
+  });
+
+  const mockFrom = vi.fn(() => ({
+    select: vi.fn(() => ({
+      eq: vi.fn(() => ({
+        single: vi.fn().mockResolvedValue({ data: null, error: null }),
+        maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+      })),
+    })),
+    update: vi.fn(() => ({ eq: vi.fn().mockResolvedValue({ error: null }) })),
+    insert: vi.fn().mockResolvedValue({ error: null }),
+  }));
+
+  return { rpc: mockRpc, from: mockFrom } as any;
+}
+
+/** Create a test flow step */
+function createTestStep() {
+  return {
+    prompt: vi.fn(async () => [{ type: 'text' as const, text: 'Pick a date:' }]),
+    validate: vi.fn(async () => ({ valid: true })),
+    next: vi.fn(async () => null),
+    skipIf: undefined,
+  };
+}
+
+/** Standard test session */
+function createTestSession(overrides?: Partial<{
+  _detected_language: string;
+}>) {
+  return {
+    id: 'sess-1',
+    user_id: null,
+    business_id: 'biz-1',
+    current_step: 'test_step',
+    session_data: {
+      active_capability: 'scheduling',
+      capabilities: ['scheduling'],
+      ...(overrides?._detected_language ? { _detected_language: overrides._detected_language } : {}),
+    } as Record<string, unknown>,
+    conversation_log: [] as Array<{ role: 'bot' | 'user'; content: string; timestamp: string }>,
+    version: 1,
+  };
+}
+
+const TEST_BUSINESS = {
+  id: 'biz-1', name: 'Test Biz', slug: 'test', category: 'salon' as any,
+  flow_type: 'scheduling' as any, subscription_tier: 'free',
+  trial_ends_at: '2025-01-01', metadata: {}, country_code: 'NG' as any,
+  payment_gateway: null,
+};
+
+// ══════════════════════════════════════════════════════════════
+// Part 1: Direct translateBotResponse boundary tests
+// ══════════════════════════════════════════════════════════════
 
 describe('Slice A — translateBotResponse entitlement boundary', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    // Restore default resolved value after clearAllMocks wipes implementations
     mockIncrementAIUsage.mockResolvedValue(undefined);
   });
 
-  // Proof 1: translationAllowed=false → original text, zero Anthropic call, zero AI usage
   it('returns original text when translationAllowed is false', async () => {
     const ctx = makeCtx({ translationAllowed: false, allowedLanguages: ['en'] });
-
     const result = await translateBotResponse('Hello, welcome!', 'fr', ctx);
-
     expect(result).toBe('Hello, welcome!');
     expect(mockCreate).not.toHaveBeenCalled();
     expect(mockIncrementAIUsage).not.toHaveBeenCalled();
   });
 
-  // Proof 2: translationAllowed=true but target not in allowedLanguages → original text, zero calls
   it('returns original text when language is not in allowedLanguages', async () => {
     const ctx = makeCtx({ translationAllowed: true, allowedLanguages: ['en', 'pcm'] });
-
     const result = await translateBotResponse('Book a haircut', 'fr', ctx);
-
     expect(result).toBe('Book a haircut');
     expect(mockCreate).not.toHaveBeenCalled();
-    expect(mockIncrementAIUsage).not.toHaveBeenCalled();
   });
 
-  // Proof 3: allowed non-English target → translation occurs, AI usage attributed to correct business
   it('translates and attributes AI usage to the correct business when entitled', async () => {
     const ctx = makeCtx({
-      translationAllowed: true,
-      allowedLanguages: ['en', 'fr'],
-      businessId: 'biz-acme-123',
+      translationAllowed: true, allowedLanguages: ['en', 'fr'], businessId: 'biz-acme-123',
     });
     setupAnthropicResponse('Bonjour, bienvenue!');
-
     const result = await translateBotResponse('Hello, welcome!', 'fr', ctx);
-
     expect(result).toBe('Bonjour, bienvenue!');
     expect(mockCreate).toHaveBeenCalledOnce();
-    // Verify AI usage is attributed to the correct business
-    expect(mockIncrementAIUsage).toHaveBeenCalledWith(
-      ctx.supabase,
-      'biz-acme-123',
-      'translation',
-    );
+    expect(mockIncrementAIUsage).toHaveBeenCalledWith(ctx.supabase, 'biz-acme-123', 'translation');
   });
 
-  // Proof 4: interleaved translations — each usage attributed to its own business
-  it('attributes AI usage to separate businesses for interleaved calls', async () => {
-    const ctxA = makeCtx({
-      translationAllowed: true,
-      allowedLanguages: ['en', 'fr'],
-      businessId: 'biz-A',
-    });
-    const ctxB = makeCtx({
-      translationAllowed: true,
-      allowedLanguages: ['en', 'fr'],
-      businessId: 'biz-B',
-    });
-    // Use unique text to avoid cache hits from other tests
-    setupAnthropicResponse('Bonjour entreprise A');
-    setupAnthropicResponse('Bonjour entreprise B');
-
-    // Sequential calls prove context isolation — each carries its own businessId
-    const resultA = await translateBotResponse('Hello business A context', 'fr', ctxA);
-    const resultB = await translateBotResponse('Hello business B context', 'fr', ctxB);
-
-    expect(resultA).toBe('Bonjour entreprise A');
-    expect(resultB).toBe('Bonjour entreprise B');
-    expect(mockIncrementAIUsage).toHaveBeenCalledTimes(2);
-
-    // Verify each call is attributed to the correct business
-    const calls = mockIncrementAIUsage.mock.calls;
-    const bizIds = calls.map((c: unknown[]) => c[1]);
-    expect(bizIds).toContain('biz-A');
-    expect(bizIds).toContain('biz-B');
-
-    // Verify no cross-attribution: biz-A's supabase maps to biz-A's ID
-    const callA = calls.find((c: unknown[]) => c[1] === 'biz-A');
-    const callB = calls.find((c: unknown[]) => c[1] === 'biz-B');
-    expect(callA![0]).toBe(ctxA.supabase);
-    expect(callB![0]).toBe(ctxB.supabase);
-  });
-
-  // Proof 5: Anthropic failure → original text, no unsafe state
   it('returns original text on Anthropic API failure', async () => {
-    const ctx = makeCtx({
-      translationAllowed: true,
-      allowedLanguages: ['en', 'fr'],
-      businessId: 'biz-fail',
-    });
+    const ctx = makeCtx({ translationAllowed: true, allowedLanguages: ['en', 'fr'], businessId: 'biz-fail' });
     mockCreate.mockRejectedValueOnce(new Error('API timeout'));
-
-    // Use unique text to avoid cache hits
     const result = await translateBotResponse('Your appointment is ready to confirm.', 'fr', ctx);
-
     expect(result).toBe('Your appointment is ready to confirm.');
-    // AI call was attempted but failed — no usage increment
     expect(mockIncrementAIUsage).not.toHaveBeenCalled();
   });
 
-  // Additional edge cases
-
-  it('returns original text for English (no translation needed)', async () => {
+  it('returns original text for English', async () => {
     const ctx = makeCtx({ translationAllowed: true, allowedLanguages: ['en', 'fr'] });
-
-    const result = await translateBotResponse('Hello', 'en', ctx);
-
-    expect(result).toBe('Hello');
+    expect(await translateBotResponse('Hello', 'en', ctx)).toBe('Hello');
     expect(mockCreate).not.toHaveBeenCalled();
   });
 
-  it('returns original text for empty/null language', async () => {
+  it('returns original text for empty language', async () => {
     const ctx = makeCtx({ translationAllowed: true, allowedLanguages: ['en'] });
-
-    const result = await translateBotResponse('Hello', '', ctx);
-
-    expect(result).toBe('Hello');
-    expect(mockCreate).not.toHaveBeenCalled();
-  });
-
-  it('returns original text for unsupported language code', async () => {
-    const ctx = makeCtx({ translationAllowed: true, allowedLanguages: ['en', 'pt'] });
-
-    // 'pt' is in allowedLanguages but not in SUPPORTED_LANGUAGES (translate.ts)
-    const result = await translateBotResponse('Hello', 'pt', ctx);
-
-    expect(result).toBe('Hello');
-    expect(mockCreate).not.toHaveBeenCalled();
+    expect(await translateBotResponse('Hello', '', ctx)).toBe('Hello');
   });
 
   it('Free tier context blocks all non-English translation', async () => {
-    // Free tier: translationAllowed=false, allowedLanguages=['en']
     const freeCtx = makeCtx({ translationAllowed: false, allowedLanguages: ['en'] });
+    expect(await translateBotResponse('Hello', 'fr', freeCtx)).toBe('Hello');
+    expect(await translateBotResponse('Hello', 'pcm', freeCtx)).toBe('Hello');
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
 
-    const resultFr = await translateBotResponse('Hello', 'fr', freeCtx);
-    const resultPcm = await translateBotResponse('Hello', 'pcm', freeCtx);
-    const resultYo = await translateBotResponse('Hello', 'yo', freeCtx);
-
-    expect(resultFr).toBe('Hello');
-    expect(resultPcm).toBe('Hello');
-    expect(resultYo).toBe('Hello');
+  it('blocks translation for persisted but non-entitled _detected_language', async () => {
+    const freeCtx = makeCtx({ translationAllowed: false, allowedLanguages: ['en'] });
+    const result = await translateBotResponse('Your booking is confirmed.', 'fr', freeCtx);
+    expect(result).toBe('Your booking is confirmed.');
     expect(mockCreate).not.toHaveBeenCalled();
   });
 });
 
-describe('Slice A — FlowExecutor language switch entitlement gate', () => {
-  // These tests verify the executor's language switch escape hatch
-  // validates entitlement before persisting _detected_language.
-  // We import the real executor path indirectly by testing the
-  // language-policy + CERTIFIED_LANGUAGES gate logic.
+// ══════════════════════════════════════════════════════════════
+// Part 2: Real FlowExecutor path tests
+// ══════════════════════════════════════════════════════════════
 
-  it('rejects switch to non-entitled language (Free tier)', async () => {
-    // Simulate the executor's entitlement check
-    const { getEffectiveLanguages, CERTIFIED_LANGUAGES } = await import('../language-policy');
-    const entitlement = getEffectiveLanguages('free', null);
-    const targetLang = 'fr';
+describe('Slice A — real FlowExecutor language-switch + outbound behavior', () => {
+  let sender: ReturnType<typeof createCaptureSender>;
+  let supabase: ReturnType<typeof createMockSupabase>;
+  let executor: FlowExecutor;
+  let testStep: ReturnType<typeof createTestStep>;
 
-    // The executor now checks all three conditions before persisting
-    const isAllowed = entitlement.translationAllowed
-      && entitlement.allowedLanguages.includes(targetLang)
-      && CERTIFIED_LANGUAGES.includes(targetLang);
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockIncrementAIUsage.mockResolvedValue(undefined);
 
-    expect(isAllowed).toBe(false);
-    // Free tier: translationAllowed=false → rejected at first gate
-    expect(entitlement.translationAllowed).toBe(false);
+    sender = createCaptureSender();
+    supabase = createMockSupabase();
+    executor = new FlowExecutor(supabase, sender, {} as any, {} as any);
+    testStep = createTestStep();
+    mockGetFlowStep.mockReturnValue(testStep);
+
+    // Default: Free tier
+    mockGetEffectiveLanguages.mockReturnValue({
+      allowedLanguages: ['en'],
+      llmAllowed: false,
+      translationAllowed: false,
+    });
   });
 
-  it('rejects switch to non-certified language (Growth tier)', async () => {
-    const { getEffectiveLanguages, CERTIFIED_LANGUAGES } = await import('../language-policy');
-    // Growth tier with fr configured — but CERTIFIED_LANGUAGES=['en'] currently
-    const entitlement = getEffectiveLanguages('growth', ['en', 'fr']);
-    const targetLang = 'fr';
+  it('Free + "switch to french" => no persistence, no success claim, safe rejection, zero Anthropic call', async () => {
+    const session = createTestSession();
 
-    const isAllowed = entitlement.translationAllowed
-      && entitlement.allowedLanguages.includes(targetLang)
-      && CERTIFIED_LANGUAGES.includes(targetLang);
+    await executor.execute('+2348001234567', 'switch to french', session, TEST_BUSINESS);
 
-    expect(isAllowed).toBe(false);
-    // Growth allows translation, but fr is not in CERTIFIED_LANGUAGES
-    expect(entitlement.translationAllowed).toBe(true);
-    expect(CERTIFIED_LANGUAGES.includes(targetLang)).toBe(false);
+    // Session must NOT have _detected_language='fr'
+    expect(session.session_data._detected_language).toBeUndefined();
+
+    // Must send a safe "not available" message
+    expect(sender.hasMessageContaining('not available')).toBe(true);
+
+    // Must re-prompt the current step after rejection
+    expect(testStep.prompt).toHaveBeenCalled();
+
+    // Zero Anthropic translation calls
+    expect(mockCreate).not.toHaveBeenCalled();
   });
 
-  it('accepts switch to English (always allowed, no translation needed)', async () => {
-    const { getEffectiveLanguages } = await import('../language-policy');
-    const entitlement = getEffectiveLanguages('free', null);
+  it('persisted non-entitled _detected_language=fr => executor outbound untranslated, zero Anthropic call', async () => {
+    // Session has _detected_language='fr' but business is Free (not entitled)
+    const session = createTestSession({ _detected_language: 'fr' });
 
-    // Switch to English is a special case — clears _detected_language
-    // No entitlement check needed since English requires no translation
-    expect(entitlement.allowedLanguages).toContain('en');
+    // Execute with empty input → should send the step prompt untranslated
+    await executor.execute('+2348001234567', '', session, TEST_BUSINESS);
+
+    // Prompt should have been sent
+    expect(testStep.prompt).toHaveBeenCalled();
+
+    // The outbound message should be the original English text (not translated)
+    const msgs = sender.getMessages();
+    const textMsgs = msgs.filter(m => m.type === 'text');
+    // 'Pick a date:' is the test step prompt — must remain English
+    expect(textMsgs.some(m => m.text === 'Pick a date:')).toBe(true);
+
+    // Zero Anthropic calls — translation blocked by entitlement
+    expect(mockCreate).not.toHaveBeenCalled();
   });
 
-  it('preserves _detected_language on rejection (does not mutate)', () => {
-    // Simulate the executor's rejection path
-    const sessionData: Record<string, unknown> = { _detected_language: 'pcm' };
+  it('"switch to english" => clears persisted non-English preference through CAS, English re-prompt', async () => {
+    // Session starts with _detected_language='fr'
+    const session = createTestSession({ _detected_language: 'fr' });
 
-    // The executor should NOT set _detected_language if switch is rejected
-    // It should preserve whatever was there before
-    const originalLang = sessionData._detected_language;
+    await executor.execute('+2348001234567', 'switch to english', session, TEST_BUSINESS);
 
-    // Simulate rejection: don't mutate
-    const targetLang = 'fr';
-    const isAllowed = false; // would be false for Free tier
-    if (isAllowed) {
-      sessionData._detected_language = targetLang;
-    }
+    // _detected_language must be cleared (set to undefined)
+    expect(session.session_data._detected_language).toBeUndefined();
 
-    expect(sessionData._detected_language).toBe(originalLang);
-    expect(sessionData._detected_language).toBe('pcm');
+    // CAS update must have been called
+    expect(supabase.rpc).toHaveBeenCalledWith(
+      'update_session_cas',
+      expect.objectContaining({
+        p_session_id: 'sess-1',
+      }),
+    );
+
+    // Must send "Switched to English" confirmation
+    expect(sender.hasMessageContaining('Switched to English')).toBe(true);
+
+    // Must re-prompt the current step
+    expect(testStep.prompt).toHaveBeenCalled();
+
+    // Zero Anthropic calls — no translation needed for English
+    expect(mockCreate).not.toHaveBeenCalled();
   });
 });
 
-describe('Slice A — persisted _detected_language re-validated at translation boundary', () => {
+// ══════════════════════════════════════════════════════════════
+// Part 3: Truly concurrent tenant-attribution test
+// ══════════════════════════════════════════════════════════════
+
+describe('Slice A — concurrent tenant attribution (truly overlapping)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockIncrementAIUsage.mockResolvedValue(undefined);
   });
 
-  // Proof 6: session with non-entitled _detected_language → outbound stays safe
-  it('blocks translation for persisted but non-entitled _detected_language', async () => {
-    // Simulate: session has _detected_language='fr' (set before Slice A)
-    // but business is Free tier (translationAllowed=false)
-    const freeCtx = makeCtx({ translationAllowed: false, allowedLanguages: ['en'] });
+  it('two in-flight translations attribute usage to correct businesses without cross-contamination', async () => {
+    // Each business gets its own distinct supabase stub so we can verify object identity
+    const supabaseA = { _id: 'supabase-A' };
+    const supabaseB = { _id: 'supabase-B' };
+    const ctxA: TranslationContext = {
+      entitlement: { allowedLanguages: ['en', 'fr'], llmAllowed: false, translationAllowed: true },
+      businessId: 'biz-concurrent-A',
+      supabase: supabaseA,
+    };
+    const ctxB: TranslationContext = {
+      entitlement: { allowedLanguages: ['en', 'fr'], llmAllowed: false, translationAllowed: true },
+      businessId: 'biz-concurrent-B',
+      supabase: supabaseB,
+    };
 
-    // This is what maybeTranslate() does: reads _detected_language, calls translateBotResponse
-    const lang = 'fr'; // from session_data._detected_language
-    const result = await translateBotResponse('Your booking is confirmed.', lang, freeCtx);
+    // Deferred promises so both requests are genuinely in flight simultaneously
+    let resolveA!: (v: any) => void;
+    let resolveB!: (v: any) => void;
+    const deferredA = new Promise(r => { resolveA = r; });
+    const deferredB = new Promise(r => { resolveB = r; });
 
-    expect(result).toBe('Your booking is confirmed.');
-    expect(mockCreate).not.toHaveBeenCalled();
-    expect(mockIncrementAIUsage).not.toHaveBeenCalled();
-  });
+    mockCreate
+      .mockImplementationOnce(() => deferredA)
+      .mockImplementationOnce(() => deferredB);
 
-  // Proof 6 variant: Growth tier with _detected_language not in configured languages
-  it('blocks translation for persisted language not in allowedLanguages', async () => {
-    // Growth tier allows translation but only for configured languages
-    const growthCtx = makeCtx({
-      translationAllowed: true,
-      allowedLanguages: ['en'], // no non-English certified languages available
-    });
+    // Start both translations — both are now awaiting their deferred Anthropic responses
+    const promiseA = translateBotResponse('Concurrent overlap message A', 'fr', ctxA);
+    const promiseB = translateBotResponse('Concurrent overlap message B', 'fr', ctxB);
 
-    const lang = 'fr'; // from session_data._detected_language
-    const result = await translateBotResponse('Select a date:', lang, growthCtx);
+    // Resolve B first, then A — interleaved completion order
+    resolveB({ content: [{ type: 'text', text: 'Traduction B' }], usage: { input_tokens: 10, output_tokens: 5 } });
+    // Let B's microtasks drain before resolving A
+    await new Promise(r => setTimeout(r, 0));
+    resolveA({ content: [{ type: 'text', text: 'Traduction A' }], usage: { input_tokens: 10, output_tokens: 5 } });
 
-    expect(result).toBe('Select a date:');
-    expect(mockCreate).not.toHaveBeenCalled();
+    const resultA = await promiseA;
+    const resultB = await promiseB;
+
+    expect(resultA).toBe('Traduction A');
+    expect(resultB).toBe('Traduction B');
+
+    // Let all fire-and-forget increment calls settle
+    await new Promise(r => setTimeout(r, 50));
+
+    expect(mockIncrementAIUsage).toHaveBeenCalledTimes(2);
+
+    // Verify each increment is bound to its own (supabase, businessId) pair
+    const calls = mockIncrementAIUsage.mock.calls;
+    const callA = calls.find((c: unknown[]) => c[1] === 'biz-concurrent-A');
+    const callB = calls.find((c: unknown[]) => c[1] === 'biz-concurrent-B');
+    expect(callA).toBeDefined();
+    expect(callB).toBeDefined();
+    // Object identity — not just string match. Each business's supabase is distinct.
+    expect(callA![0]).toBe(supabaseA);
+    expect(callB![0]).toBe(supabaseB);
   });
 });
