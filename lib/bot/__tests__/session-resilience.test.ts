@@ -361,9 +361,10 @@ describe('Webhook deduplication', () => {
     expect(webhookSource).toContain("claim_webhook_event");
     // Must check claimed result to skip duplicates
     expect(webhookSource).toContain("!claimResult?.claimed");
-    // Must use fenced completion/failure with claim token
+    // Must use fenced completion with claim token (processing errors also complete
+    // to prevent duplicate customer response replay)
     expect(webhookSource).toContain("complete_webhook_event");
-    expect(webhookSource).toContain("fail_webhook_event");
+    expect(webhookSource).toContain("p_claim_token: claimToken");
   });
 });
 

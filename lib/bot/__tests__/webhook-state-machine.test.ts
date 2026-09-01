@@ -20,9 +20,12 @@ describe('Webhook inbound event state machine', () => {
       expect(metaWebhook).toContain("p_claim_token: claimToken");
     });
 
-    it('uses fenced failure with claim token and error', () => {
-      expect(metaWebhook).toContain("fail_webhook_event");
-      expect(metaWebhook).toContain("p_error:");
+    it('processing errors terminalize as completed to prevent duplicate replay', () => {
+      // After dispatch, processing errors complete (not fail) the event
+      // because bot.handleMessage may have already sent customer-visible side effects.
+      // Marking failed would allow retry/replay of those sends.
+      expect(metaWebhook).toContain("complete_webhook_event");
+      expect(metaWebhook).toContain("prevents retry/replay");
     });
 
     it('allows retry of failed events via RPC', () => {
@@ -31,11 +34,13 @@ describe('Webhook inbound event state machine', () => {
       expect(metaWebhook).toContain("p_event_type");
     });
 
-    it('has side-effect deadline before bot processing', () => {
-      // Side-effect deadline at 50s prevents late customer-visible side effects
+    it('has deadline-guarded sender + fast-path deadline check', () => {
+      // Deadline guard wraps every outbound send with a 50s check
+      expect(metaWebhook).toContain("createDeadlineGuardedSender");
       expect(metaWebhook).toContain("SIDE_EFFECT_DEADLINE_MS");
       expect(metaWebhook).toContain("50_000");
-      expect(metaWebhook).toContain("side_effect_deadline_exceeded");
+      // BotService receives the guarded sender
+      expect(metaWebhook).toContain("guardedSender");
     });
 
     it('wraps all processing in per-message try/catch', () => {

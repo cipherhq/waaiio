@@ -31,17 +31,6 @@ If something breaks, check this log to find what changed and when.
 - **LTV fix:** `p_booking_amount: 0` — manual bookings no longer inflate customer `total_spent`/LTV.
 - **No synthetic payment:** No payment row created at manual booking time.
 - **Confirmation route:** `POST /api/bookings/confirm` — durable claim/dispatch/outcome lifecycle.
-
-### Files changed
-- `supabase/migrations/361_booking_confirmation_intents.sql`
-- `app/api/bookings/create-manual/route.ts`
-- `app/api/bookings/confirm/route.ts`
-- `lib/channels/single-attempt-send.ts`
-- `lib/__tests__/acc-244-booking-confirmation-intent-db.test.ts`
-- `lib/__tests__/acc-244-manual-booking-spend.test.ts`
-- `app/api/bookings/__tests__/durable-confirmation-behavioral.test.ts`
-
-
 ## 2026-09-01 — #247: Outcome persistence — require positive data.success
 
 ### What changed
@@ -147,22 +136,19 @@ If something breaks, check this log to find what changed and when.
 - The new `tracking_revision` column defaults to 0, so existing orders are unaffected.
 - If any code does `SELECT *` on orders and destructures strictly, the new column could cause issues — but this is unlikely with TypeScript.
 
-## 2026-08-31 — #278 (Slice B of #271): Atomic webhook event claim/reclaim + fencing
+## 2026-09-01 — #278 (Slice B of #271): Atomic webhook event claim/reclaim + fencing
 
 ### What changed
-- **Migration 361:** `361_webhook_claim_fencing.sql` — adds `claim_token` UUID column to `processed_webhook_events`. Creates three SECURITY DEFINER RPCs: `claim_webhook_event` (atomic INSERT-or-reclaim with FOR UPDATE), `complete_webhook_event` (fenced completion requiring matching claim_token), `fail_webhook_event` (fenced failure requiring matching claim_token). All three RPCs locked to `service_role` only. Stale threshold hardcoded at 90 seconds.
-- **Webhook route:** `app/api/webhook/meta-cloud/route.ts` — replaced non-atomic SELECT→UPDATE dedup (lines 564-625) with single `claim_webhook_event` RPC call. All five terminal status writes (3 completed, 1 failed, 1 catch block) replaced with fenced `complete_webhook_event` / `fail_webhook_event` RPCs using `claimToken`. Added side-effect deadline check (50s) before `bot.handleMessage()` — skips processing and calls `fail_webhook_event` if elapsed time exceeds threshold.
-- **Tests:** `lib/__tests__/acc-271b-webhook-claim-fencing-db.test.ts` — 10 real PostgreSQL proofs (first claim, duplicate, completed cannot reclaim, failed can reclaim, wrong token rejected, correct token completes, stale reclaim fencing, ACL for anon/authenticated). `app/api/webhook/meta-cloud/__tests__/webhook-claim-behavioral.test.ts` — 5 behavioral tests (claimed processed once, unclaimed skipped, error calls fail, deadline exceeded, exactly one bot call).
-
-### Files changed
-- `supabase/migrations/361_webhook_claim_fencing.sql` (new)
-- `app/api/webhook/meta-cloud/route.ts` (modified — dedup block replaced)
-- `lib/__tests__/acc-271b-webhook-claim-fencing-db.test.ts` (new)
-- `app/api/webhook/meta-cloud/__tests__/webhook-claim-behavioral.test.ts` (new)
+- **Migration 361:** `361_webhook_claim_fencing.sql` — adds `claim_token` UUID column, three SECURITY DEFINER RPCs (`claim_webhook_event`, `complete_webhook_event`, `fail_webhook_event`), all locked to `service_role` only. 90s hardcoded stale threshold.
+- **Webhook route:** Replaced non-atomic SELECT→UPDATE dedup with single `claim_webhook_event` RPC. All terminal writes fenced by claim_token. Processing failures → `complete_webhook_event` (not `fail`) to prevent replay of already-sent customer responses.
+- **Deadline-guarded sender:** Every outbound Meta send in the claimed block goes through `createDeadlineGuardedSender()` which checks the 50s side-effect deadline before each provider call. Covers BotService, direct route sends, and fallback sends. BotService receives the guarded sender.
+- **No-replay policy:** After the dispatch barrier, processing errors terminalize the event as `completed` (not `failed`) because `bot.handleMessage()` may have already sent customer-visible side effects. Error guidance is sent BEFORE terminalization while the claim is still held.
+- **Concurrent PG proofs:** Real overlapping psql sessions for failed-retry, stale-reclaim, first-delivery, and terminal-write fencing.
+- **Runtime behavioral tests:** Deadline guard blocks sends past 50s for all send methods, error fallback uses guarded sender, BotService receives guarded sender.
 
 ### Could break
-- Any code that directly writes to `processed_webhook_events.status` without going through the RPCs will still work but won't benefit from claim fencing. The RPCs are additive — existing rows without `claim_token` are unaffected.
-- The stale threshold changed from 60s (app-level) to 90s (DB-level in RPC). This means a crashed worker's event will take 30s longer to become reclaimable.
+- The stale threshold changed from 60s (app-level) to 90s (DB-level in RPC).
+- Processing errors now terminalize as `completed` rather than `failed`, meaning a failed bot.handleMessage no longer allows automatic retry of the same inbound message.
 - Refs: #278, #271
 
 ### feat(255): commercial config versioning — immutable platform_config_versions (C-1)

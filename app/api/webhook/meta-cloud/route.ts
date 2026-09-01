@@ -27,6 +27,50 @@ import type { CountryCode, PaymentGatewayName } from '@/lib/constants';
 // Allow up to 60s for bot processing on Vercel Pro
 export const maxDuration = 60;
 
+/** Side-effect deadline: 50s leaves 10s buffer before maxDuration. */
+const SIDE_EFFECT_DEADLINE_MS = 50_000;
+
+/**
+ * Error thrown when a send is attempted past the side-effect deadline.
+ * The worker must stop emitting customer-visible side effects.
+ */
+class DeadlineExceededError extends Error {
+  constructor() { super('Side-effect deadline exceeded — send suppressed'); this.name = 'DeadlineExceededError'; }
+}
+
+/**
+ * Wrap a MessageSender so every outbound send checks the request-scoped
+ * deadline before attempting the provider call. This covers BotService sends,
+ * direct route sends, and any retry attempts — no send can escape after the
+ * deadline. markAsRead is excluded (not customer-visible content).
+ */
+function createDeadlineGuardedSender(
+  inner: import('@/lib/channels/message-sender').MessageSender,
+  startTime: number,
+): import('@/lib/channels/message-sender').MessageSender {
+  function guardedCall<T>(fn: () => Promise<T>): Promise<T> {
+    if (Date.now() - startTime >= SIDE_EFFECT_DEADLINE_MS) {
+      return Promise.reject(new DeadlineExceededError());
+    }
+    return fn();
+  }
+
+  return {
+    sendText: (msg) => guardedCall(() => inner.sendText(msg)),
+    sendList: (msg) => guardedCall(() => inner.sendList(msg)),
+    sendButtons: (msg) => guardedCall(() => inner.sendButtons(msg)),
+    sendImage: (msg) => guardedCall(() => inner.sendImage(msg)),
+    sendDocument: (msg) => guardedCall(() => inner.sendDocument(msg)),
+    sendAudio: (msg) => guardedCall(() => inner.sendAudio(msg)),
+    sendTemplate: inner.sendTemplate ? (msg) => guardedCall(() => inner.sendTemplate!(msg)) : undefined,
+    sendFlow: inner.sendFlow ? (msg) => guardedCall(() => inner.sendFlow!(msg)) : undefined,
+    sendReaction: inner.sendReaction ? (msg) => guardedCall(() => inner.sendReaction!(msg)) : undefined,
+    sendLocation: inner.sendLocation ? (msg) => guardedCall(() => inner.sendLocation!(msg)) : undefined,
+    sendProduct: inner.sendProduct ? (msg) => guardedCall(() => inner.sendProduct!(msg)) : undefined,
+    sendProductList: inner.sendProductList ? (msg) => guardedCall(() => inner.sendProductList!(msg)) : undefined,
+  };
+}
+
 /**
  * Handle a WhatsApp Catalog order message.
  * When a customer browses the native WhatsApp product catalog and submits an order,
@@ -556,6 +600,9 @@ export async function POST(request: NextRequest) {
         }
 
         const preResolvedBusinessId = resolved.channel.business_id || undefined;
+        // Wrap the sender with a deadline guard — every outbound Meta send checks
+        // the request-scoped deadline before attempting the provider call.
+        const guardedSender = createDeadlineGuardedSender(resolved.sender, t0);
 
         for (const msg of messages) {
           const source = msg.from;
@@ -680,7 +727,7 @@ export async function POST(request: NextRequest) {
                       } else {
                         // Free tier: tell customer to type instead
                         try {
-                          await resolved.sender.sendText({ to: source, text: getVoiceNotSupportedMessage() });
+                          await guardedSender.sendText({ to: source, text: getVoiceNotSupportedMessage() });
                         } catch { /* ignore */ }
                       }
                     }
@@ -696,7 +743,7 @@ export async function POST(request: NextRequest) {
               const msgAny = msg as Record<string, unknown>;
               if (!text && !mediaUrl && source && (msg.image || msgAny.video || msgAny.sticker || msgAny.document || msgAny.location)) {
                 try {
-                  await resolved.sender.sendText({
+                  await guardedSender.sendText({
                     to: source,
                     text: "I can't process images or files yet. Please reply with text instead.\n\nType *Hi* to start over, *menu* to see options, or *cancel* to exit.",
                   });
@@ -725,22 +772,20 @@ export async function POST(request: NextRequest) {
                 resolved.cloud.markAsRead(msg.id).catch(() => {});
               }
 
-              // Side-effect deadline: skip bot processing if we're too close to maxDuration (60s)
-              // Leaves 10s buffer for graceful failure handling
-              const SIDE_EFFECT_DEADLINE_MS = 50_000;
-              const elapsedMs = Date.now() - t0;
-              if (elapsedMs >= SIDE_EFFECT_DEADLINE_MS) {
-                msgLog.warn('[META-WEBHOOK] Side-effect deadline exceeded, skipping bot processing:', metaMsgId);
-                await supabase.rpc('fail_webhook_event', {
+              // Fast-path deadline check: skip BotService creation if already past deadline.
+              // The guardedSender enforces the deadline on every individual send attempt,
+              // but this avoids unnecessary work when the deadline is already exceeded.
+              if (Date.now() - t0 >= SIDE_EFFECT_DEADLINE_MS) {
+                msgLog.warn('[META-WEBHOOK] Side-effect deadline exceeded before bot entry:', metaMsgId);
+                await supabase.rpc('complete_webhook_event', {
                   p_event_id: eventId,
                   p_claim_token: claimToken,
-                  p_error: 'side_effect_deadline_exceeded',
                 });
                 continue;
               }
 
               const standalone = new StandaloneService(supabase);
-              const bot = new BotService(supabase, resolved.sender, standalone, intelligenceSvc);
+              const bot = new BotService(supabase, guardedSender, standalone, intelligenceSvc);
 
               mark('bot_enter');
               msgLog.debug('[META-WEBHOOK] Calling bot.handleMessage for ...', source.slice(-4), 'preResolvedBiz:', preResolvedBusinessId);
@@ -756,22 +801,32 @@ export async function POST(request: NextRequest) {
               mark('msg_complete');
               log.info('[META-WEBHOOK-PERF] timings_ms', timings);
             } catch (processingErr) {
-              // Fenced failure — allows retry on next delivery
-              msgLog.error('[META-WEBHOOK] Processing failed:', processingErr);
-              await supabase.rpc('fail_webhook_event', {
-                p_event_id: eventId,
-                p_claim_token: claimToken,
-                p_error: String(processingErr).slice(0, 500),
-              });
-              // Try to send error message to user so they know something went wrong
+              // After the dispatch barrier, bot.handleMessage() may have already sent
+              // one or more outbound customer messages before throwing. Marking the event
+              // 'failed' would allow retry/reclaim, which would replay those already-sent
+              // messages — creating duplicate customer responses.
+              //
+              // Safe policy: terminalize the event as 'completed' (not 'failed') after any
+              // processing attempt that crossed the dispatch barrier. The customer may have
+              // received a partial response, but they will not receive duplicate responses
+              // from a retry. The error is logged for operational visibility.
+              msgLog.error('[META-WEBHOOK] Processing failed (event will be completed to prevent replay):', processingErr);
+
+              // Try to send error guidance BEFORE terminalizing, while we still hold the claim
               try {
-                await resolved.sender.sendText({
+                await guardedSender.sendText({
                   to: source,
                   text: 'Sorry, we encountered an error processing your message. Please try again.',
                 });
               } catch (fallbackErr) {
                 msgLog.error('[META-WEBHOOK] Fallback error message also failed:', fallbackErr);
               }
+
+              // Terminalize as completed — prevents retry/replay of already-sent side effects
+              await supabase.rpc('complete_webhook_event', {
+                p_event_id: eventId,
+                p_claim_token: claimToken,
+              });
               // Don't rethrow — continue processing other messages in the batch
             }
             continue; // Move to next message
