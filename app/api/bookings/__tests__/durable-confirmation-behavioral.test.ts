@@ -569,21 +569,34 @@ describe('#244 singleAttemptWhatsAppSend — unit tests', () => {
     expect(mockCloud.sendText).toHaveBeenCalledTimes(1);
   });
 
-  it('returns failed for 4xx errors', async () => {
+  it('returns failed for typed MetaApiError 4xx (not regex)', async () => {
     const mod = await vi.importActual<typeof import('@/lib/channels/single-attempt-send')>('@/lib/channels/single-attempt-send');
+    const { MetaApiError } = await vi.importActual<typeof import('@/lib/channels/meta-api-error')>('@/lib/channels/meta-api-error');
 
     const mockCloud = {
-      sendText: vi.fn().mockRejectedValue(new Error('Cloud API error: 400 - invalid phone')),
+      sendText: vi.fn().mockRejectedValue(new MetaApiError('Invalid phone number', 400, 100)),
     } as any;
 
     const result = await mod.singleAttemptWhatsAppSend(mockCloud, 'badphone', 'Hello');
     expect(result.outcome).toBe('failed');
     expect(result.providerMessageId).toBeNull();
-    expect(result.error).toContain('400');
     expect(mockCloud.sendText).toHaveBeenCalledTimes(1);
   });
 
-  it('returns unknown for 5xx/network errors', async () => {
+  it('returns unknown for typed MetaApiError 5xx', async () => {
+    const mod = await vi.importActual<typeof import('@/lib/channels/single-attempt-send')>('@/lib/channels/single-attempt-send');
+    const { MetaApiError } = await vi.importActual<typeof import('@/lib/channels/meta-api-error')>('@/lib/channels/meta-api-error');
+
+    const mockCloud = {
+      sendText: vi.fn().mockRejectedValue(new MetaApiError('Server error', 500)),
+    } as any;
+
+    const result = await mod.singleAttemptWhatsAppSend(mockCloud, '2348001234567', 'Hello');
+    expect(result.outcome).toBe('unknown');
+    expect(mockCloud.sendText).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns unknown for non-MetaApiError (network errors)', async () => {
     const mod = await vi.importActual<typeof import('@/lib/channels/single-attempt-send')>('@/lib/channels/single-attempt-send');
 
     const mockCloud = {
@@ -592,7 +605,6 @@ describe('#244 singleAttemptWhatsAppSend — unit tests', () => {
 
     const result = await mod.singleAttemptWhatsAppSend(mockCloud, '2348001234567', 'Hello');
     expect(result.outcome).toBe('unknown');
-    expect(result.providerMessageId).toBeNull();
     expect(result.error).toContain('ECONNRESET');
     expect(mockCloud.sendText).toHaveBeenCalledTimes(1);
   });

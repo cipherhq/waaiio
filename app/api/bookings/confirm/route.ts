@@ -178,20 +178,22 @@ export async function POST(request: NextRequest) {
 
         const sendResult = await singleAttemptWhatsAppSend(resolved.cloud, phone, messageText);
 
-        if (sendResult.outcome === 'sent') {
-          await serviceClient.rpc('record_booking_confirmation_outcome', {
-            p_intent_id: intentId, p_claim_token: claimToken,
-            p_outcome: 'sent', p_provider_message_id: sendResult.providerMessageId,
-          });
-          waOutcome = 'sent';
-        } else {
-          // Unknown or failed after dispatch → indeterminate
-          await serviceClient.rpc('record_booking_confirmation_outcome', {
-            p_intent_id: intentId, p_claim_token: claimToken,
-            p_outcome: 'indeterminate',
-            p_error_message: sendResult.error || 'ambiguous_provider_outcome',
-          });
+        // Record outcome — persistence must succeed for truthful reporting
+        const durableOutcome = sendResult.outcome === 'sent' ? 'sent' : 'indeterminate';
+        const { error: outcomeError } = await serviceClient.rpc('record_booking_confirmation_outcome', {
+          p_intent_id: intentId, p_claim_token: claimToken,
+          p_outcome: durableOutcome,
+          p_provider_message_id: sendResult.providerMessageId,
+          p_error_message: sendResult.outcome !== 'sent' ? (sendResult.error || 'ambiguous_provider_outcome') : null,
+        });
+
+        if (outcomeError) {
+          // Persistence failed — durable row remains dispatched/unknown
+          logger.error('[BOOKING CONFIRM] Outcome persistence failed:', outcomeError);
           waOutcome = 'indeterminate';
+        } else {
+          // Returned state matches durable state
+          waOutcome = durableOutcome as 'sent' | 'indeterminate';
         }
       }
     }

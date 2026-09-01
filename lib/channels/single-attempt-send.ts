@@ -12,6 +12,7 @@
  * - `unknown`: Network/timeout/server error — message may or may not have been sent
  */
 import type { MetaCloudService } from './meta-cloud';
+import { MetaApiError } from './meta-api-error';
 import { logger } from '@/lib/logger';
 
 export type SingleAttemptOutcome = 'sent' | 'failed' | 'unknown';
@@ -41,10 +42,10 @@ export async function singleAttemptWhatsAppSend(
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err);
 
-    // 4xx errors are definitive client errors — the message was NOT sent.
-    // Safe to record as 'failed' and allow retry via intent reclaim.
-    const is4xx = /\b4\d{2}\b/.test(errMsg);
-    if (is4xx) {
+    // Use typed MetaApiError with httpStatus — not error-message regex.
+    // 4xx = definitive provider rejection (message was NOT sent).
+    // 5xx/network/timeout = ambiguous (message may or may not have been sent).
+    if (err instanceof MetaApiError && err.httpStatus >= 400 && err.httpStatus < 500) {
       logger.warn('[SINGLE_ATTEMPT] WhatsApp 4xx (definitive failure):', errMsg);
       return {
         outcome: 'failed',
@@ -53,8 +54,8 @@ export async function singleAttemptWhatsAppSend(
       };
     }
 
-    // 5xx, network errors, timeouts — we don't know if the message was sent.
-    // The provider may have accepted it before the response was lost.
+    // 5xx, network errors, timeouts, non-MetaApiError exceptions —
+    // we don't know if the message was sent.
     logger.error('[SINGLE_ATTEMPT] WhatsApp ambiguous error (unknown outcome):', errMsg);
     return {
       outcome: 'unknown',

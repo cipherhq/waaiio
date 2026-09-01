@@ -271,20 +271,25 @@ export async function POST(request: NextRequest) {
               // Step 4: Exactly ONE provider API call — no retry, no fallback
               const sendResult = await singleAttemptWhatsAppSend(resolved.cloud, phone, messageText);
 
-              if (sendResult.outcome === 'sent') {
-                await serviceClient.rpc('record_booking_confirmation_outcome', {
-                  p_intent_id: intentId, p_claim_token: claimToken,
-                  p_outcome: 'sent', p_provider_message_id: sendResult.providerMessageId,
-                });
+              // Step 5: Record outcome — persistence must succeed for truthful reporting
+              const durableOutcome = sendResult.outcome === 'sent' ? 'sent' : 'indeterminate';
+              const { error: outcomeError } = await serviceClient.rpc('record_booking_confirmation_outcome', {
+                p_intent_id: intentId, p_claim_token: claimToken,
+                p_outcome: durableOutcome,
+                p_provider_message_id: sendResult.providerMessageId,
+                p_error_message: sendResult.outcome !== 'sent' ? (sendResult.error || 'ambiguous_provider_outcome') : null,
+              });
+
+              if (outcomeError) {
+                // Persistence failed — durable row remains dispatched/unknown
+                logger.error('[MANUAL BOOKING] Outcome persistence failed:', outcomeError);
+                notificationOutcome = 'indeterminate';
+              } else if (sendResult.outcome === 'sent') {
                 whatsappSent = true;
                 notificationOutcome = 'sent';
               } else {
-                await serviceClient.rpc('record_booking_confirmation_outcome', {
-                  p_intent_id: intentId, p_claim_token: claimToken,
-                  p_outcome: 'indeterminate',
-                  p_error_message: sendResult.error || 'ambiguous_provider_outcome',
-                });
-                notificationOutcome = sendResult.outcome === 'unknown' ? 'indeterminate' : 'failed';
+                // Durable state is 'indeterminate' — return must agree
+                notificationOutcome = 'indeterminate';
               }
             }
           }
