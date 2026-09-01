@@ -2899,7 +2899,7 @@ export class BotService {
   }
 
   /** Send text with auto-translation based on session language */
-  private async sendLocalizedText(to: string, text: string, session: { session_data: Record<string, unknown> } | null, tCtx?: TranslationContext): Promise<void> {
+  private async sendLocalizedText(to: string, text: string, session: { session_data: Record<string, unknown> } | null, tCtx: TranslationContext): Promise<void> {
     const lang = (session?.session_data?._detected_language as string) || '';
     const translated = lang ? await translateBotResponse(text, lang, tCtx) : text;
     return sendBotText(this.messageSender, to, translated);

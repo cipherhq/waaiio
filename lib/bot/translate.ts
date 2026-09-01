@@ -43,10 +43,10 @@ function getClient(): Anthropic {
 export async function translateBotResponse(
   text: string,
   language: string,
-  ctx?: TranslationContext,
+  ctx: TranslationContext,
 ): Promise<string> {
-  // Entitlement check — fail-closed: no context or not allowed → return original
-  if (ctx && (!ctx.entitlement.translationAllowed || !ctx.entitlement.allowedLanguages.includes(language))) {
+  // Entitlement check — fail-closed: not allowed → return original text
+  if (!ctx.entitlement.translationAllowed || !ctx.entitlement.allowedLanguages.includes(language)) {
     return text;
   }
 
@@ -111,7 +111,7 @@ export async function translateBotResponse(
     cache.set(cacheKey, { text: translatedTemplate, expiry: Date.now() + CACHE_TTL });
 
     // Track AI usage for this business (non-blocking)
-    if (ctx?.businessId && ctx.supabase) {
+    if (ctx.businessId && ctx.supabase) {
       const { incrementAIUsage } = await import('@/lib/bot/ai-tier-guard');
       incrementAIUsage(ctx.supabase as any, ctx.businessId, 'translation').catch(err => logger.warn('[TRANSLATE] Failed to increment AI usage:', err));
     }

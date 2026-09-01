@@ -123,10 +123,23 @@ export class FlowExecutor {
       }
     }
 
+    // Resolve language entitlement once per execute() — before any translation call.
+    // Must precede step-not-found error path which also needs translation.
+    const configuredLangs = session.business_id
+      ? await loadBusinessLanguages(this.supabase, session.business_id)
+      : null;
+    const tier = business?.subscription_tier || 'free';
+    const entitlement = getEffectiveLanguages(tier, configuredLangs);
+    const translationCtx: TranslationContext = {
+      entitlement,
+      businessId: session.business_id || '',
+      supabase: this.supabase,
+    };
+
     if (!step) {
       Sentry.captureMessage('Flow step not found', { level: 'warning', extra: { stepId, flowType, sessionId: session.id } });
       let errMsg = 'Something went wrong on our end. Send *Hi* to start over.';
-      errMsg = await this.maybeTranslate(errMsg, session);
+      errMsg = await this.maybeTranslate(errMsg, session, translationCtx);
       if (!session.conversation_log) session.conversation_log = [];
       session.conversation_log.push({ role: 'bot', content: errMsg, timestamp: new Date().toISOString() });
       if (!await this.persistConversationLog(session, session.conversation_log)) return;
@@ -181,18 +194,6 @@ export class FlowExecutor {
       await this.sendText(from, getConversationLimitMessage());
       return;
     }
-
-    // Resolve language entitlement once per execute() — eliminates module-global race
-    const configuredLangs = session.business_id
-      ? await loadBusinessLanguages(this.supabase, session.business_id)
-      : null;
-    const tier = business?.subscription_tier || 'free';
-    const entitlement = getEffectiveLanguages(tier, configuredLangs);
-    const translationCtx: TranslationContext = {
-      entitlement,
-      businessId: session.business_id || '',
-      supabase: this.supabase,
-    };
 
     // Build flow context (no DB calls — synchronous)
     const lang = (session.session_data._detected_language as string) || '';
@@ -625,7 +626,7 @@ export class FlowExecutor {
     nextStepId: string,
     from: string,
     ctx: FlowContext,
-    tCtx?: TranslationContext,
+    tCtx: TranslationContext,
   ): Promise<void> {
     session.current_step = nextStepId;
     const advanceSaved = await this.casUpdateSession(session, {
@@ -716,7 +717,7 @@ export class FlowExecutor {
     }
   }
 
-  private async sendMessages(to: string, messages: PromptMessage[], session?: { session_data: Record<string, unknown> }, tCtx?: TranslationContext): Promise<void> {
+  private async sendMessages(to: string, messages: PromptMessage[], session: { session_data: Record<string, unknown> } | undefined, tCtx: TranslationContext): Promise<void> {
     if (messages.length === 0) return;
 
     // Inject navigation footer on interactive messages (buttons/list) if not already set
@@ -747,7 +748,7 @@ export class FlowExecutor {
   }
 
   /** Translate a single prompt message — text, body, button labels, list items */
-  private async translateMessage(msg: PromptMessage, lang: string, tCtx?: TranslationContext): Promise<PromptMessage> {
+  private async translateMessage(msg: PromptMessage, lang: string, tCtx: TranslationContext): Promise<PromptMessage> {
     switch (msg.type) {
       case 'text':
         return { ...msg, text: await translateBotResponse(msg.text, lang, tCtx) };
@@ -817,7 +818,7 @@ export class FlowExecutor {
   private async maybeTranslate(
     text: string,
     session: { session_data: Record<string, unknown> },
-    tCtx?: TranslationContext,
+    tCtx: TranslationContext,
   ): Promise<string> {
     const lang = session.session_data._detected_language as string | undefined;
     if (!lang || lang === 'en') return text;
@@ -877,7 +878,7 @@ export class FlowExecutor {
     from: string,
     session: { id: string; session_data: Record<string, unknown>; business_id: string | null; version: number },
     ctx: FlowContext,
-    tCtx?: TranslationContext,
+    tCtx: TranslationContext,
   ): Promise<void> {
     const cap = (session.session_data.active_capability as string) || '';
     const flowType = ctx.business?.flow_type || 'scheduling';
