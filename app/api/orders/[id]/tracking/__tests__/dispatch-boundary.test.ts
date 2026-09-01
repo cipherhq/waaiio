@@ -114,6 +114,7 @@ function setupFullNotificationScenario(opts: {
   templateBehavior: 'success' | 'failure' | 'throw' | 'no_template';
   claimBehavior?: 'success' | 'fail';
   dispatchBehavior?: 'success' | 'fail';
+  outcomePersistBehavior?: 'success' | 'fail';
   hasPhone?: boolean;
   hasChannel?: boolean;
 }) {
@@ -121,6 +122,7 @@ function setupFullNotificationScenario(opts: {
     templateBehavior,
     claimBehavior = 'success',
     dispatchBehavior = 'success',
+    outcomePersistBehavior = 'success',
     hasPhone = true,
     hasChannel = true,
   } = opts;
@@ -229,7 +231,11 @@ function setupFullNotificationScenario(opts: {
     }
 
     // record_tracking_notification_outcome
-    rpcCalls.push({ data: { success: true }, error: null });
+    if (outcomePersistBehavior === 'success') {
+      rpcCalls.push({ data: { success: true }, error: null });
+    } else {
+      rpcCalls.push({ data: null, error: { message: 'DB write failed', code: 'PGRST' } });
+    }
   }
 
   mockServiceRpc.mockReset();
@@ -525,5 +531,53 @@ describe('Dispatch boundary — provider call counts', () => {
     // New revision independently sent its own notification
     expect(providerCallCount).toBe(1);
     expect(mockSendTemplate).toHaveBeenCalledTimes(1);
+  });
+
+  it('provider success + outcome persistence failure: ONE call, returns indeterminate', async () => {
+    // Provider returns a WAMID, but record_tracking_notification_outcome RPC fails.
+    // Route must return indeterminate (not sent) since durable row remains dispatched.
+    setupFullNotificationScenario({
+      templateBehavior: 'success',
+      outcomePersistBehavior: 'fail',
+    });
+
+    const req = makeRequest({
+      businessId: BIZ_ID,
+      carrier: 'DHL',
+      trackingNumber: 'DHL123',
+      notifyCustomer: true,
+    });
+    const res = await PATCH(req, { params: Promise.resolve({ id: ORDER_ID }) });
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.success).toBe(true);
+    // Exactly one provider call — message may have been sent
+    expect(providerCallCount).toBe(1);
+    // But outcome persistence failed, so cannot report 'sent'
+    expect(body.notification.status).toBe('indeterminate');
+  });
+
+  it('provider exception + outcome persistence failure: ONE call, returns indeterminate', async () => {
+    // Provider throws (ambiguous outcome), AND outcome persistence also fails.
+    // Route must still return indeterminate and not retry.
+    setupFullNotificationScenario({
+      templateBehavior: 'throw',
+      outcomePersistBehavior: 'fail',
+    });
+
+    const req = makeRequest({
+      businessId: BIZ_ID,
+      carrier: 'DHL',
+      trackingNumber: 'DHL123',
+      notifyCustomer: true,
+    });
+    const res = await PATCH(req, { params: Promise.resolve({ id: ORDER_ID }) });
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.success).toBe(true);
+    expect(providerCallCount).toBe(1);
+    expect(body.notification.status).toBe('indeterminate');
   });
 });

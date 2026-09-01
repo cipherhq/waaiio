@@ -3,6 +3,20 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-09-01 — #247: Outcome persistence truth — check RPC result after dispatch
+
+### What changed
+- **Outcome persistence check:** `record_tracking_notification_outcome` RPC result is now inspected. If persistence fails after dispatch, route surfaces `indeterminate` instead of falsely reporting `sent`/`failed`. Durable row remains `dispatched` (fail-closed against resend).
+- **2 new behavioral tests:** provider success + outcome-write failure → one provider call, returns indeterminate. Provider exception + outcome-write failure → one provider call, returns indeterminate.
+
+### Files changed
+- `app/api/orders/[id]/tracking/route.ts` (check outcomeError, return indeterminate on failure)
+- `app/api/orders/[id]/tracking/__tests__/dispatch-boundary.test.ts` (2 new tests + outcomePersistBehavior option)
+- `CHANGELOG.md` (this entry)
+
+### Could break
+- Nothing — only changes the reported status when an outcome write fails (previously silently lost).
+
 ## 2026-09-01 — #247: Preflight failure persistence — no fake claim_token=NULL
 
 ### What changed
