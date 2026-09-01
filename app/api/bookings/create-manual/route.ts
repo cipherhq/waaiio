@@ -271,18 +271,19 @@ export async function POST(request: NextRequest) {
               // Step 4: Exactly ONE provider API call — no retry, no fallback
               const sendResult = await singleAttemptWhatsAppSend(resolved.cloud, phone, messageText);
 
-              // Step 5: Record outcome — persistence must succeed for truthful reporting
+              // Step 5: Record outcome — persistence must positively succeed
               const durableOutcome = sendResult.outcome === 'sent' ? 'sent' : 'indeterminate';
-              const { error: outcomeError } = await serviceClient.rpc('record_booking_confirmation_outcome', {
+              const { data: outcomeData, error: outcomeError } = await serviceClient.rpc('record_booking_confirmation_outcome', {
                 p_intent_id: intentId, p_claim_token: claimToken,
                 p_outcome: durableOutcome,
                 p_provider_message_id: sendResult.providerMessageId,
                 p_error_message: sendResult.outcome !== 'sent' ? (sendResult.error || 'ambiguous_provider_outcome') : null,
               });
 
-              if (outcomeError) {
-                // Persistence failed — durable row remains dispatched/unknown
-                logger.error('[MANUAL BOOKING] Outcome persistence failed:', outcomeError);
+              const persisted = !outcomeError && (outcomeData as Record<string, unknown>)?.success === true;
+              if (!persisted) {
+                // Persistence not confirmed — durable row remains dispatched/unknown
+                logger.error('[MANUAL BOOKING] Outcome persistence not confirmed:', outcomeError ?? outcomeData);
                 notificationOutcome = 'indeterminate';
               } else if (sendResult.outcome === 'sent') {
                 whatsappSent = true;
