@@ -55,14 +55,17 @@ function createDeadlineGuardedSender(
     return fn();
   }
 
+  // All sends through the guarded sender use noRetry: true to prevent provider
+  // retry loops from crossing the deadline boundary. In a deadline-critical webhook
+  // context, exactly-one-attempt is the correct behavior (Slice B binding requirement).
   return {
-    sendText: (msg) => guardedCall(() => inner.sendText(msg)),
+    sendText: (msg) => guardedCall(() => inner.sendText({ ...msg, noRetry: true })),
     sendList: (msg) => guardedCall(() => inner.sendList(msg)),
     sendButtons: (msg) => guardedCall(() => inner.sendButtons(msg)),
     sendImage: (msg) => guardedCall(() => inner.sendImage(msg)),
     sendDocument: (msg) => guardedCall(() => inner.sendDocument(msg)),
     sendAudio: (msg) => guardedCall(() => inner.sendAudio(msg)),
-    sendTemplate: inner.sendTemplate ? (msg) => guardedCall(() => inner.sendTemplate!(msg)) : undefined,
+    sendTemplate: inner.sendTemplate ? (msg) => guardedCall(() => inner.sendTemplate!({ ...msg, noRetry: true })) : undefined,
     sendFlow: inner.sendFlow ? (msg) => guardedCall(() => inner.sendFlow!(msg)) : undefined,
     sendReaction: inner.sendReaction ? (msg) => guardedCall(() => inner.sendReaction!(msg)) : undefined,
     sendLocation: inner.sendLocation ? (msg) => guardedCall(() => inner.sendLocation!(msg)) : undefined,
@@ -83,7 +86,11 @@ async function handleCatalogOrder(
   msg: { order?: { catalog_id: string; text?: string; product_items: Array<{ product_retailer_id: string; quantity: number; item_price: number; currency: string }> }; id?: string },
   source: string,
   msgLog: ReturnType<typeof logger.withContext>,
+  /** Deadline-guarded sender — all customer-visible sends must go through this */
+  sender?: import('@/lib/channels/message-sender').MessageSender,
 ) {
+  // Use the guarded sender if provided, otherwise fall back to resolved.sender
+  const outbound = sender || resolved.sender;
   const orderData = msg.order;
   if (!orderData?.product_items?.length) return;
 
@@ -101,7 +108,7 @@ async function handleCatalogOrder(
   if (!biz || biz.status !== 'active') {
     msgLog.error('[META-WEBHOOK] No active business found for catalog:', catalogId);
     try {
-      await resolved.sender.sendText({
+      await outbound.sendText({
         to: source,
         text: 'Sorry, this catalog is currently unavailable. Please try again later.',
       });
@@ -115,7 +122,7 @@ async function handleCatalogOrder(
   if (!userId) {
     msgLog.error('[META-WEBHOOK] Failed to create/find user for catalog order');
     try {
-      await resolved.sender.sendText({
+      await outbound.sendText({
         to: source,
         text: 'Something went wrong on our end. Please try again.',
       });
@@ -137,7 +144,7 @@ async function handleCatalogOrder(
   if (rpcError) {
     msgLog.error('[META-ORDER] Atomic order failed:', rpcError.message);
     try {
-      await resolved.sender.sendText({
+      await outbound.sendText({
         to: source,
         text: 'Something went wrong on our end creating your order. Please try again.',
       });
@@ -156,7 +163,7 @@ async function handleCatalogOrder(
         ? `Sorry, the following items are out of stock: ${outOfStock.join(', ')}`
         : 'Sorry, none of the selected products are available right now.';
       try {
-        await resolved.sender.sendText({ to: source, text: noItemsMsg });
+        await outbound.sendText({ to: source, text: noItemsMsg });
       } catch { /* ignore */ }
       return;
     }
@@ -242,7 +249,7 @@ async function handleCatalogOrder(
   ].filter(Boolean).join('\n');
 
   try {
-    await resolved.sender.sendText({ to: source, text: confirmationMsg });
+    await outbound.sendText({ to: source, text: confirmationMsg });
   } catch (sendErr) {
     msgLog.error('[META-WEBHOOK] Failed to send catalog order confirmation:', sendErr);
   }
@@ -635,7 +642,7 @@ export async function POST(request: NextRequest) {
               // Meta sends a message with type === 'order'. This is a parallel path to
               // the conversational ordering flow — both work independently.
               if (msg.type === 'order' && msg.order?.product_items?.length) {
-                await handleCatalogOrder(supabase, resolved, msg, source, msgLog);
+                await handleCatalogOrder(supabase, resolved, msg, source, msgLog, guardedSender);
                 // Fenced completion — only succeeds if we still hold the claim
                 await supabase.rpc('complete_webhook_event', {
                   p_event_id: eventId,

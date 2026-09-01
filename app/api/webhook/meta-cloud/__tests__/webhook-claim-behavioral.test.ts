@@ -187,4 +187,42 @@ describe('Slice B — processing failure → completed (no replay)', () => {
     const rawSenderInClaimed = (claimedBlock.match(/resolved\.sender\.send/g) || []).length;
     expect(rawSenderInClaimed).toBe(0);
   });
+
+  it('guarded sender injects noRetry: true to prevent provider retries crossing deadline', async () => {
+    const { readFileSync } = await import('fs');
+    const { resolve } = await import('path');
+    const routeSrc = readFileSync(resolve(__dirname, '../route.ts'), 'utf-8');
+
+    // The guarded sender must inject noRetry: true for sendText and sendTemplate
+    const guardedSenderDef = routeSrc.slice(
+      routeSrc.indexOf('function createDeadlineGuardedSender'),
+      routeSrc.indexOf('function createDeadlineGuardedSender') + 2000,
+    );
+    expect(guardedSenderDef).toContain('noRetry: true');
+    // sendText with noRetry
+    expect(guardedSenderDef).toMatch(/sendText.*noRetry:\s*true/s);
+  });
+
+  it('handleCatalogOrder receives the guarded sender', async () => {
+    const { readFileSync } = await import('fs');
+    const { resolve } = await import('path');
+    const routeSrc = readFileSync(resolve(__dirname, '../route.ts'), 'utf-8');
+
+    // The call site must pass guardedSender to handleCatalogOrder
+    expect(routeSrc).toContain('handleCatalogOrder(supabase, resolved, msg, source, msgLog, guardedSender)');
+
+    // handleCatalogOrder must use the passed sender (outbound), not resolved.sender
+    const fnBody = routeSrc.slice(
+      routeSrc.indexOf('async function handleCatalogOrder'),
+      routeSrc.indexOf('async function handleCatalogOrder') + 5000,
+    );
+    // Must have the sender parameter
+    expect(fnBody).toContain('sender?:');
+    // Must use outbound variable (not resolved.sender for sends)
+    expect(fnBody).toContain('const outbound = sender || resolved.sender');
+    // All sendText calls in the function must use outbound
+    const sendTexts = fnBody.match(/await\s+(outbound|resolved\.sender)\.sendText/g) || [];
+    const rawSenderSends = sendTexts.filter(s => s.includes('resolved.sender'));
+    expect(rawSenderSends.length).toBe(0);
+  });
 });
