@@ -31,6 +31,16 @@ If something breaks, check this log to find what changed and when.
 - **LTV fix:** `p_booking_amount: 0` — manual bookings no longer inflate customer `total_spent`/LTV.
 - **No synthetic payment:** No payment row created at manual booking time.
 - **Confirmation route:** `POST /api/bookings/confirm` — durable claim/dispatch/outcome lifecycle.
+
+### Files changed
+- `supabase/migrations/361_booking_confirmation_intents.sql`
+- `app/api/bookings/create-manual/route.ts`
+- `app/api/bookings/confirm/route.ts`
+- `lib/channels/single-attempt-send.ts`
+- `lib/__tests__/acc-244-booking-confirmation-intent-db.test.ts`
+- `lib/__tests__/acc-244-manual-booking-spend.test.ts`
+- `app/api/bookings/__tests__/durable-confirmation-behavioral.test.ts`
+
 ## 2026-09-01 — #247: Outcome persistence — require positive data.success
 
 ### What changed

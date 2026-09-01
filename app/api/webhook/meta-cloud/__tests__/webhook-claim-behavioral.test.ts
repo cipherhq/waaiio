@@ -21,6 +21,14 @@ vi.mock('@sentry/nextjs', () => ({ captureException: vi.fn(), captureMessage: vi
 
 import type { MessageSender } from '@/lib/channels/message-sender';
 
+// Mock circuit breaker (used by withRetry inside MetaCloudSender)
+vi.mock('@/lib/circuit-breaker', () => ({
+  isCircuitOpen: vi.fn(() => false),
+  recordSuccess: vi.fn(),
+  recordFailure: vi.fn(),
+  CircuitBreakerOpenError: class extends Error { constructor(k: string) { super(k); } },
+}));
+
 describe('Slice B — deadline-guarded sender', () => {
   // Import the guarded sender creator dynamically since it's defined in the route file.
   // We test the pattern directly by reimplementing the same logic.
@@ -244,5 +252,83 @@ describe('Slice B — processing failure → completed (no replay)', () => {
     const sendTexts = fnBody.match(/await\s+(outbound|resolved\.sender)\.sendText/g) || [];
     const rawSenderSends = sendTexts.filter(s => s.includes('resolved.sender'));
     expect(rawSenderSends.length).toBe(0);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════
+// Real MetaCloudSender retry-boundary test
+// ══════════════════════════════════════════════════════════════
+
+describe('Slice B — real MetaCloudSender.withRetry deadline enforcement', () => {
+  it('sendButtons: attempt 1 before deadline fails retryably, attempt 2 after deadline suppressed by beforeEachAttempt', async () => {
+    // Import the REAL MetaCloudSender (not a copy)
+    const { MetaCloudSender } = await import('@/lib/channels/message-sender');
+
+    // Track provider API calls
+    let providerCallCount = 0;
+
+    // Mock MetaCloudService — sendButtons throws a 5xx (retryable) error on first call
+    const mockCloud = {
+      sendButtons: vi.fn(async () => {
+        providerCallCount++;
+        // Simulate 5xx server error — retryable, not a 4xx
+        throw new Error('Cloud API error: 500 Internal Server Error');
+      }),
+    } as any;
+
+    const sender = new MetaCloudSender(mockCloud);
+
+    // Simulate: request started 49.5s ago — just before the 50s deadline
+    const SIDE_EFFECT_DEADLINE_MS = 50_000;
+    let fakeNow = Date.now();
+    const requestStart = fakeNow - 49_500; // 49.5s elapsed
+
+    // Install the per-attempt deadline guard (same as production route does).
+    // Reads Date.now() to get current time (which triggers the mock time advance).
+    sender.beforeEachAttempt = () => {
+      const now = Date.now(); // triggers mock time advance after first provider call
+      if (now - requestStart >= SIDE_EFFECT_DEADLINE_MS) {
+        throw new Error('Side-effect deadline exceeded');
+      }
+    };
+
+    // The first attempt will pass the guard (49.5s < 50s), call the provider,
+    // and throw a 5xx. withRetry will then sleep for the delay period.
+    // We advance fakeNow past the deadline before the second attempt.
+
+    // Override Date.now for the retry delay — advance time past deadline
+    const origDateNow = Date.now;
+    let dateNowCallCount = 0;
+    vi.spyOn(Date, 'now').mockImplementation(() => {
+      dateNowCallCount++;
+      // After the first provider call + delay, advance time past deadline
+      if (providerCallCount >= 1) {
+        fakeNow = requestStart + 51_000; // 51s elapsed — past deadline
+      }
+      return fakeNow;
+    });
+
+    // Call sendButtons — should throw after attempt 1 fails and attempt 2 is blocked
+    try {
+      await sender.sendButtons({
+        to: '+2348001234567',
+        body: 'Pick an option:',
+        buttons: [{ id: 'opt1', title: 'Option 1' }],
+      });
+      // Should not reach here
+      expect(true).toBe(false);
+    } catch (err) {
+      // The error should be the deadline exceeded (from beforeEachAttempt on attempt 2)
+      // OR the original 5xx if retries exhausted — but with our guard, attempt 2 is blocked
+      expect(err).toBeDefined();
+    }
+
+    // Restore Date.now
+    vi.restoreAllMocks();
+
+    // THE KEY PROOF: provider was called exactly ONCE
+    // Attempt 1 happened (before deadline), attempt 2 was suppressed by beforeEachAttempt
+    expect(providerCallCount).toBe(1);
+    expect(mockCloud.sendButtons).toHaveBeenCalledTimes(1);
   });
 });
