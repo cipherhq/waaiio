@@ -17,6 +17,7 @@ export interface PromoEntryCampaign {
   keyword: string | null;
   code_entry_mode: string;
   accept_bare_codes: boolean;
+  code_format: string | null;
 }
 
 /**
@@ -27,7 +28,7 @@ export async function getActivePromoEntryCampaigns(businessId: string): Promise<
   const supabase = createServiceClient();
   const { data } = await supabase
     .from('promo_campaigns')
-    .select('id, name, keyword, code_entry_mode, accept_bare_codes')
+    .select('id, name, keyword, code_entry_mode, accept_bare_codes, code_format')
     .eq('business_id', businessId)
     .eq('status', 'active')
     .order('created_at', { ascending: false })
@@ -49,6 +50,15 @@ export async function hasActivePromoCampaigns(businessId: string): Promise<boole
 }
 
 /**
+ * Build a format hint line from the code_format column.
+ * Only shown when code_format is populated and not the bare default.
+ */
+function formatHint(codeFormat: string | null): string {
+  if (!codeFormat) return '';
+  return `\n📝 Code format: *${codeFormat}*`;
+}
+
+/**
  * Render the Instant Win entry message for one or multiple active campaigns.
  */
 export function renderPromoEntryMessage(campaigns: PromoEntryCampaign[]): string {
@@ -57,11 +67,13 @@ export function renderPromoEntryMessage(campaigns: PromoEntryCampaign[]): string
     const instruction = c.keyword
       ? `Send: *${c.keyword} <your code>*`
       : 'Send your promo code now:';
-    return `🎰 *${c.name}*\n\n${instruction}`;
+    const hint = formatHint(c.code_format);
+    return `🎰 *${c.name}*\n\n${instruction}${hint}`;
   }
   const lines = campaigns.map(c => {
-    if (c.keyword) return `• *${c.name}*: Send *${c.keyword} <code>*`;
-    return `• *${c.name}*: Send your code directly`;
+    const hint = c.code_format ? ` (format: ${c.code_format})` : '';
+    if (c.keyword) return `• *${c.name}*: Send *${c.keyword} <code>*${hint}`;
+    return `• *${c.name}*: Send your code directly${hint}`;
   });
   return `🎰 *Active Promotions*\n\n${lines.join('\n')}\n\nSend your code to check if you've won!`;
 }

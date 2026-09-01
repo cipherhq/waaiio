@@ -8,6 +8,7 @@ import {
   type PromoCampaignStatus,
 } from '@/lib/promotions/types';
 import { validatePrefix, validateGeneratedEntropy } from '@/lib/promotions/normalize';
+import { isValidTimezone, convertDatetimePair } from '@/lib/promotions/timezone';
 
 /**
  * Fields that cannot be changed once a campaign has redemptions (integrity-locked).
@@ -278,9 +279,40 @@ export async function PUT(request: NextRequest) {
   // Non-integrity-locked updatable fields (only if not locked)
   // Note: routing fields (codeEntryMode, keyword, acceptBareCodes) handled above via RPC
   if (!campaign.integrity_locked) {
-    if ('startAt' in body) updates.start_at = body.startAt || null;
-    if ('endAt' in body) updates.end_at = body.endAt || null;
-    if ('timezone' in body && body.timezone) updates.timezone = String(body.timezone);
+    // ── Timezone-aware datetime conversion ──
+    // Resolve timezone: explicit update > existing campaign value > UTC
+    const updateTimezone = ('timezone' in body && body.timezone)
+      ? String(body.timezone)
+      : (campaign.timezone as string) || 'UTC';
+
+    if ('timezone' in body && body.timezone) {
+      if (!isValidTimezone(String(body.timezone))) {
+        return NextResponse.json({ error: `Invalid timezone: ${body.timezone}` }, { status: 400 });
+      }
+      updates.timezone = String(body.timezone);
+    }
+
+    // Use shared convertDatetimePair — EXACT same conversion as create route
+    if ('startAt' in body || 'endAt' in body) {
+      const startVal = 'startAt' in body ? (body.startAt ? String(body.startAt) : null) : undefined;
+      const endVal = 'endAt' in body ? (body.endAt ? String(body.endAt) : null) : undefined;
+
+      // Only convert non-null values through the timezone converter
+      const dtResult = convertDatetimePair(
+        startVal ?? undefined,
+        endVal ?? undefined,
+        updateTimezone,
+      );
+      if (!dtResult.success) {
+        return NextResponse.json({ error: dtResult.error }, { status: 400 });
+      }
+      if ('startAt' in body) {
+        updates.start_at = dtResult.resolvedStartAt;
+      }
+      if ('endAt' in body) {
+        updates.end_at = dtResult.resolvedEndAt;
+      }
+    }
     if ('codeFormat' in body && body.codeFormat) updates.code_format = String(body.codeFormat);
     if ('codeLength' in body && body.codeLength) updates.code_length = Number(body.codeLength);
     if ('codePrefix' in body) {

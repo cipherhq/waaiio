@@ -68,6 +68,69 @@ If something breaks, check this log to find what changed and when.
 - Any consumer that type-checked against the old 4-state `RefundState` union (only existed on the UX branch, not main)
 - Frontend code that parsed error text to determine refund state (this was the bug being fixed)
 
+## 2026-08-31 — #248: UTC timezone validation bypass fix
+
+### What changed
+- **convertDatetimePair():** Removed `timezone !== 'UTC'` bypass. All inputs now go through `naiveToUtc()` regardless of timezone, ensuring consistent validation and normalization. Previously, UTC timezone inputs skipped all validation -- `2024-13-01T00:00` with UTC timezone passed through unchecked.
+- **7 new unit tests** for UTC timezone: naive validation, month-13 rejection, day-32 rejection, Z timestamp acceptance, +offset acceptance, trailing junk rejection, both start_at+end_at validated.
+
+### Files changed
+- `lib/promotions/timezone.ts` (convertDatetimePair UTC bypass removed)
+- `app/api/promotions/__tests__/timezone-write.test.ts` (7 new UTC tests, 1 updated)
+- `CHANGELOG.md` (this entry)
+
+### Could break
+- UTC timezone inputs are now normalized through naiveToUtc (output format changes from raw string to ISO). All route tests updated.
+
+## 2026-08-31 — #248: Strict zoned-ISO parsing boundary — fractional seconds + calendar validation
+
+### What changed
+- **ZONED_ISO_RE regex:** Updated to support fractional seconds (`2024-10-30T22:59:59.123Z`). Previously these fell through to the naive parser and were rejected.
+- **parseZonedTimestamp():** Added strict calendar validation (month 1-12, day valid for month/year with leap-year support, hour 0-23, minute 0-59, second 0-59) BEFORE `Date` parsing. Previously `Date.parse()` would silently roll over invalid dates (month 13 -> Jan next year, day 32 -> 1st next month). Now rejected with explicit error messages.
+- **Tests:** 17 new tests across unit and route-level suites covering: fractional seconds with Z/+offset/-offset, month 13 rejection (no rollover), day 32 rejection, Feb 30 rejection, hour 25 rejection, Feb 29 non-leap rejection, Feb 29 leap acceptance, trailing junk rejection, and create/update parity for these cases.
+
+### Files changed
+- `lib/promotions/timezone.ts` (regex + parseZonedTimestamp calendar validation)
+- `app/api/promotions/__tests__/timezone-write.test.ts` (17 new tests)
+- `CHANGELOG.md` (this entry)
+
+### Could break
+- Nothing -- all changes are strictness improvements that reject previously-silently-invalid inputs.
+
+## 2026-08-30 — #248: Fix 2 CTO blockers — general IANA zone ambiguity + zoned timestamp preservation
+
+### What changed
+- **BLOCKER 1 (All IANA zones):** `naiveToUtc()` now probes +/-24 hours at 30-minute intervals (97 probe points) instead of just +/-1 hour (3 probe points). This discovers every distinct UTC offset a timezone uses around the target time, catching non-standard transitions like Australia/Lord_Howe (+/-30min DST) and Pacific/Chatham (+/-45min). The round-trip verification and "pick earliest UTC" policy remain unchanged.
+- **BLOCKER 2 (Zoned timestamp preservation):** Already-zoned timestamps (`Z`, `+HH:MM`, `-HH:MM`) are now parsed as absolute instants and returned as normalized UTC -- NOT double-shifted through the campaign timezone. Previously these were rejected with 400. New exported function `parseZonedTimestamp()` handles this path. Malformed inputs still rejected.
+- **New tests:** Australia/Lord_Howe fall-back (+/-30min DST), explicit `+05:30` preservation, explicit `-03:00` preservation, `parseZonedTimestamp` unit tests. Updated all route-level tests: zoned timestamps now return 200/201 with preserved UTC, not 400.
+
+### Files changed
+- `lib/promotions/timezone.ts` -- wider probe range, `parseZonedTimestamp()`, zoned input preservation
+- `app/api/promotions/__tests__/timezone-write.test.ts` -- updated + new tests (53 total)
+- `CHANGELOG.md` (this entry)
+
+### Could break
+- Any caller relying on zoned timestamps being rejected (400) will now get them accepted and preserved. This is the intended behavior per CTO spec.
+
+## 2026-08-30 — #248: Fix 3 CTO blockers — DST ambiguity, parser strictness, route behavioral tests
+
+### What changed
+- **BLOCKER 1 (DST fall-back ambiguity):** `naiveToUtc()` now probes THREE candidate UTC offsets (-1h, 0, +1h) and checks which ones round-trip. When TWO valid UTC instants exist for the same local time (fall-back), picks the EARLIER UTC (= larger offset / DST side). Previously only tested one offset and could silently pick the wrong occurrence.
+- **BLOCKER 2 (Parser accepts zoned timestamps):** Regex is now end-anchored (`$`). Inputs with `Z`, `+HH:MM`, or `-HH:MM` suffixes are rejected before conversion to prevent double-shift. Calendar values are strictly validated: month 1-12, day valid for month/year (including leap years), hours 0-23, minutes 0-59, seconds 0-59. Previously `2024-13-15` or `2024-10-30T22:59:00Z` would silently pass.
+- **BLOCKER 3 (Route-level behavioral tests):** 47 tests total — unit tests for `naiveToUtc`, `convertDatetimePair`, plus behavioral tests calling actual POST and PUT route handlers with mock Supabase. Covers: Africa/Lagos, America/New_York (standard + daylight), spring-forward rejection, fall-back determinism, Europe/London fall-back, month=13 rejection, day=32 rejection, Feb 30 rejection, hour=25 rejection, already-zoned Z/+/-offset rejection, both start_at+end_at boundaries, timezone-only update, and create/update conversion parity.
+- **Shared conversion function:** Added `convertDatetimePair()` used by BOTH create and update routes, ensuring identical semantics. Update route previously had inline conversion with different field name handling.
+
+### Files changed
+- `lib/promotions/timezone.ts` (rewritten — DST probe, strict validation, `convertDatetimePair()`)
+- `app/api/promotions/create/route.ts` (uses `convertDatetimePair`)
+- `app/api/promotions/update/route.ts` (uses `convertDatetimePair`)
+- `app/api/promotions/__tests__/timezone-write.test.ts` (rewritten — 47 behavioral tests)
+- `CHANGELOG.md` (this entry)
+
+### Could break
+- Any caller sending already-zoned timestamps (e.g., `...Z`) to create/update with a timezone will now get 400. Previously these were silently double-shifted.
+- Any caller sending invalid calendar values (month 13, day 32) will now get 400. Previously `Date.UTC()` rolled them over silently.
+
 ## 2026-08-30 — #248: Instant Win F1 timezone + F4 claim format
 
 ### What changed
