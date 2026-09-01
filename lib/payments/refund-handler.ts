@@ -72,15 +72,27 @@ export interface ProcessRefundResult {
  * Read the durable refund status from the database.
  * Used to ensure API responses reflect the actual persisted state,
  * not the code branch that was executing when a failure occurred.
+ *
+ * SAFETY: If the durable state cannot be established (DB error, missing row,
+ * unknown status), fail safe to 'provider_ambiguous' — never terminal 'failed'.
+ * An unknown state after provider dispatch may still have succeeded;
+ * representing it as 'failed' would be a false terminal claim.
  */
-async function readDurableRefundState(
+export async function readDurableRefundState(
   service: ReturnType<typeof createServiceClient>,
   refundId: string,
 ): Promise<RefundState> {
-  const { data } = await service.from('refunds').select('status').eq('id', refundId).single();
-  const status = data?.status as string | undefined;
-  if (status && VALID_REFUND_STATES.has(status as RefundState)) return status as RefundState;
-  return 'failed'; // defensive: unknown/missing → failed
+  try {
+    const { data, error } = await service.from('refunds').select('status').eq('id', refundId).single();
+    if (error || !data) return 'provider_ambiguous';
+    const status = data.status as string | undefined;
+    if (status && VALID_REFUND_STATES.has(status as RefundState)) return status as RefundState;
+    // Unrecognized status value in DB → ambiguous, not failed
+    return 'provider_ambiguous';
+  } catch {
+    // DB query exception → ambiguous, not failed
+    return 'provider_ambiguous';
+  }
 }
 
 export async function processRefund(opts: ProcessRefundOpts): Promise<ProcessRefundResult> {

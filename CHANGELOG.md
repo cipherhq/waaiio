@@ -3,6 +3,20 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-08-31 — #245: readDurableRefundState fail-safe to provider_ambiguous
+
+### What changed
+- **readDurableRefundState():** Now fails safe to `provider_ambiguous` instead of terminal `failed` when the durable state cannot be established (DB error, missing row, unknown status, thrown exception). An unknown state after provider dispatch may still have succeeded — representing it as `failed` would be a false terminal claim.
+- **10 behavioral tests added** exercising readDurableRefundState directly: DB query error, row missing, unknown status, thrown exception → all return `provider_ambiguous`; explicit failed/provider_success_unfinalized/provider_pending/provider_ambiguous/pending/success → accurately returned.
+
+### Files changed
+- `lib/payments/refund-handler.ts` (readDurableRefundState fail-safe + exported for testing)
+- `app/dashboard/orders/__tests__/refund-ux.test.ts` (10 behavioral tests + 1 structural guard)
+- `CHANGELOG.md` (this entry)
+
+### Could break
+- Nothing — only changes the fallback from a false terminal claim to a safe non-terminal state.
+
 ## 2026-08-31 — #245: Refund domain-state truth correction — durable state reads
 
 ### What changed

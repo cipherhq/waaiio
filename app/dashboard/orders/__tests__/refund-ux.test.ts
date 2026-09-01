@@ -11,6 +11,7 @@
  */
 import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
 import type { RefundState, ProcessRefundResult } from '@/lib/payments/refund-handler';
+import { readDurableRefundState } from '@/lib/payments/refund-handler';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -905,10 +906,103 @@ describe('refund-handler: 6-state truth-contract', () => {
     expect(REFUND_HANDLER).toContain('VALID_REFUND_STATES');
   });
 
+  it('readDurableRefundState fails safe to provider_ambiguous, never terminal failed', () => {
+    // When durable state cannot be established, must return non-terminal state
+    expect(REFUND_HANDLER).not.toContain("return 'failed'; // defensive");
+    // Must return provider_ambiguous for error/missing/unknown cases
+    expect(REFUND_HANDLER).toContain("return 'provider_ambiguous';");
+    // Must catch exceptions
+    expect(REFUND_HANDLER).toContain("} catch {");
+  });
+
   it('dispatchAndFinalize returns provider_success_unfinalized when finalization incomplete (not failed)', () => {
     // Both finalizeOnly and dispatchAndFinalize finalization paths must use
     // provider_success_unfinalized, never 'failed', for incomplete finalization
     const matches = REFUND_HANDLER.match(/state: finalized \? 'success' : 'provider_success_unfinalized'/g) || [];
     expect(matches.length).toBeGreaterThanOrEqual(2); // finalizeOnly + dispatchAndFinalize
+  });
+});
+
+// ===============================================================
+// 6. readDurableRefundState: fail-safe behavioral tests
+// ===============================================================
+
+describe('readDurableRefundState: fail-safe behavior', () => {
+  function mockService(result: { data: unknown; error: unknown }) {
+    const chain: Record<string, unknown> = {};
+    chain.from = vi.fn().mockReturnValue(chain);
+    chain.select = vi.fn().mockReturnValue(chain);
+    chain.eq = vi.fn().mockReturnValue(chain);
+    chain.single = vi.fn().mockResolvedValue(result);
+    return chain;
+  }
+
+  function throwingService() {
+    const chain: Record<string, unknown> = {};
+    chain.from = vi.fn().mockReturnValue(chain);
+    chain.select = vi.fn().mockReturnValue(chain);
+    chain.eq = vi.fn().mockReturnValue(chain);
+    chain.single = vi.fn().mockRejectedValue(new Error('connection lost'));
+    return chain;
+  }
+
+  it('DB query error → provider_ambiguous (not failed)', async () => {
+    const svc = mockService({ data: null, error: { message: 'connection error' } });
+    const result = await readDurableRefundState(svc as never, 'ref-1');
+    expect(result).toBe('provider_ambiguous');
+  });
+
+  it('row missing (no data) → provider_ambiguous (not failed)', async () => {
+    const svc = mockService({ data: null, error: null });
+    const result = await readDurableRefundState(svc as never, 'ref-nonexistent');
+    expect(result).toBe('provider_ambiguous');
+  });
+
+  it('unknown/unrecognized stored status → provider_ambiguous (not failed)', async () => {
+    const svc = mockService({ data: { status: 'some_future_status' }, error: null });
+    const result = await readDurableRefundState(svc as never, 'ref-1');
+    expect(result).toBe('provider_ambiguous');
+  });
+
+  it('DB exception (thrown error) → provider_ambiguous (not failed)', async () => {
+    const svc = throwingService();
+    const result = await readDurableRefundState(svc as never, 'ref-1');
+    expect(result).toBe('provider_ambiguous');
+  });
+
+  it('explicit failed in DB → accurately returns failed', async () => {
+    const svc = mockService({ data: { status: 'failed' }, error: null });
+    const result = await readDurableRefundState(svc as never, 'ref-1');
+    expect(result).toBe('failed');
+  });
+
+  it('provider_success_unfinalized in DB → accurately returned', async () => {
+    const svc = mockService({ data: { status: 'provider_success_unfinalized' }, error: null });
+    const result = await readDurableRefundState(svc as never, 'ref-1');
+    expect(result).toBe('provider_success_unfinalized');
+  });
+
+  it('provider_pending in DB → accurately returned', async () => {
+    const svc = mockService({ data: { status: 'provider_pending' }, error: null });
+    const result = await readDurableRefundState(svc as never, 'ref-1');
+    expect(result).toBe('provider_pending');
+  });
+
+  it('provider_ambiguous in DB → accurately returned', async () => {
+    const svc = mockService({ data: { status: 'provider_ambiguous' }, error: null });
+    const result = await readDurableRefundState(svc as never, 'ref-1');
+    expect(result).toBe('provider_ambiguous');
+  });
+
+  it('pending in DB → accurately returned', async () => {
+    const svc = mockService({ data: { status: 'pending' }, error: null });
+    const result = await readDurableRefundState(svc as never, 'ref-1');
+    expect(result).toBe('pending');
+  });
+
+  it('success in DB → accurately returned', async () => {
+    const svc = mockService({ data: { status: 'success' }, error: null });
+    const result = await readDurableRefundState(svc as never, 'ref-1');
+    expect(result).toBe('success');
   });
 });
