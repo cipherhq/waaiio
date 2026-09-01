@@ -9,8 +9,9 @@
  * Uses Node's built-in Intl.DateTimeFormat — no external dependencies.
  */
 
-/** Regex for ISO 8601 with timezone offset (Z or ±HH:MM) at end of string */
-const ZONED_ISO_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?([+-]\d{2}:\d{2}|Z)$/;
+/** Regex for ISO 8601 with timezone offset (Z or ±HH:MM) at end of string.
+ *  Supports optional seconds and optional fractional seconds. */
+const ZONED_ISO_RE = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d+))?)?([+-]\d{2}:\d{2}|Z)$/;
 
 /**
  * Validate that a string is a valid IANA timezone identifier.
@@ -98,12 +99,40 @@ export interface TimezoneConversionError {
 export function parseZonedTimestamp(
   input: string,
 ): TimezoneConversionResult | TimezoneConversionError {
+  // Strict calendar validation before Date parsing to prevent rollover
+  // (e.g., month 13 → Jan next year, day 32 → 1st next month)
+  const match = input.match(ZONED_ISO_RE);
+  if (!match) {
+    return { success: false, error: `Malformed zoned timestamp: "${input}". Expected ISO 8601 with Z or ±HH:MM offset.` };
+  }
+  const [, yearStr, monthStr, dayStr, hourStr, minuteStr, secondStr] = match;
+  const year = parseInt(yearStr, 10);
+  const month = parseInt(monthStr, 10);
+  const day = parseInt(dayStr, 10);
+  const hour = parseInt(hourStr, 10);
+  const minute = parseInt(minuteStr, 10);
+  const second = secondStr ? parseInt(secondStr, 10) : 0;
+
+  if (month < 1 || month > 12) {
+    return { success: false, error: `Invalid month: ${month}. Must be 1-12.` };
+  }
+  const maxDay = daysInMonth(year, month);
+  if (day < 1 || day > maxDay) {
+    return { success: false, error: `Invalid day: ${day} for ${year}-${monthStr}. Max is ${maxDay}.` };
+  }
+  if (hour < 0 || hour > 23) {
+    return { success: false, error: `Invalid hour: ${hour}. Must be 0-23.` };
+  }
+  if (minute < 0 || minute > 59) {
+    return { success: false, error: `Invalid minute: ${minute}. Must be 0-59.` };
+  }
+  if (second < 0 || second > 59) {
+    return { success: false, error: `Invalid second: ${second}. Must be 0-59.` };
+  }
+
   const parsed = new Date(input);
   if (isNaN(parsed.getTime())) {
-    return {
-      success: false,
-      error: `Malformed zoned timestamp: "${input}". Could not parse as valid date.`,
-    };
+    return { success: false, error: `Malformed zoned timestamp: "${input}". Could not parse as valid date.` };
   }
   return { success: true, utcIso: parsed.toISOString() };
 }

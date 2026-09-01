@@ -326,6 +326,42 @@ describe('naiveToUtc — unit', () => {
       expect(result.error).toContain('Invalid day');
     }
   });
+
+  it('zoned timestamp with fractional seconds + Z → preserved', () => {
+    const result = naiveToUtc('2024-10-30T22:59:59.123Z', 'Africa/Lagos');
+    expect(result.success).toBe(true);
+    if (result.success) {
+      const utc = new Date(result.utcIso);
+      expect(utc.getUTCHours()).toBe(22);
+      expect(utc.getUTCSeconds()).toBe(59);
+      expect(utc.getUTCMilliseconds()).toBe(123);
+    }
+  });
+
+  it('zoned timestamp with fractional seconds + negative offset → preserved', () => {
+    const result = naiveToUtc('2024-10-30T22:59:59.456-05:00', 'America/New_York');
+    expect(result.success).toBe(true);
+    if (result.success) {
+      const utc = new Date(result.utcIso);
+      // -05:00 → UTC = 22:59 + 5:00 = 03:59 next day
+      expect(utc.getUTCHours()).toBe(3);
+      expect(utc.getUTCMinutes()).toBe(59);
+      expect(utc.getUTCSeconds()).toBe(59);
+    }
+  });
+
+  it('zoned timestamp with month 13 → rejected (no Date rollover)', () => {
+    const result = naiveToUtc('2024-13-01T00:00:00Z', 'Africa/Lagos');
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toContain('Invalid month');
+    }
+  });
+
+  it('zoned timestamp with trailing junk → rejected', () => {
+    const result = naiveToUtc('2024-01-15T12:00:00Zjunk', 'Africa/Lagos');
+    expect(result.success).toBe(false);
+  });
 });
 
 describe('isValidTimezone', () => {
@@ -377,6 +413,95 @@ describe('parseZonedTimestamp — unit', () => {
   it('rejects malformed input', () => {
     const result = parseZonedTimestamp('not-a-date');
     expect(result.success).toBe(false);
+  });
+
+  it('accepts fractional seconds with Z', () => {
+    const result = parseZonedTimestamp('2024-10-30T22:59:59.123Z');
+    expect(result.success).toBe(true);
+    if (result.success) {
+      const utc = new Date(result.utcIso);
+      expect(utc.getUTCHours()).toBe(22);
+      expect(utc.getUTCMinutes()).toBe(59);
+      expect(utc.getUTCSeconds()).toBe(59);
+      expect(utc.getUTCMilliseconds()).toBe(123);
+    }
+  });
+
+  it('accepts fractional seconds with positive offset', () => {
+    const result = parseZonedTimestamp('2024-10-30T22:59:59.500+05:30');
+    expect(result.success).toBe(true);
+    if (result.success) {
+      const utc = new Date(result.utcIso);
+      // 22:59:59.500 +05:30 = 17:29:59.500 UTC
+      expect(utc.getUTCHours()).toBe(17);
+      expect(utc.getUTCMinutes()).toBe(29);
+      expect(utc.getUTCSeconds()).toBe(59);
+      expect(utc.getUTCMilliseconds()).toBe(500);
+    }
+  });
+
+  it('accepts fractional seconds with negative offset', () => {
+    const result = parseZonedTimestamp('2024-10-30T22:59:59.999-03:00');
+    expect(result.success).toBe(true);
+    if (result.success) {
+      const utc = new Date(result.utcIso);
+      expect(utc.getUTCHours()).toBe(1);
+      expect(utc.getUTCMinutes()).toBe(59);
+      expect(utc.getUTCSeconds()).toBe(59);
+    }
+  });
+
+  it('rejects zoned timestamp with month 13 (no rollover)', () => {
+    const result = parseZonedTimestamp('2024-13-01T00:00:00Z');
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toContain('Invalid month');
+    }
+  });
+
+  it('rejects zoned timestamp with day 32 (no rollover)', () => {
+    const result = parseZonedTimestamp('2024-01-32T00:00:00Z');
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toContain('Invalid day');
+    }
+  });
+
+  it('rejects zoned timestamp with Feb 30 (no rollover)', () => {
+    const result = parseZonedTimestamp('2024-02-30T00:00:00Z');
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toContain('Invalid day');
+    }
+  });
+
+  it('rejects zoned timestamp with hour 25', () => {
+    const result = parseZonedTimestamp('2024-01-15T25:00:00Z');
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toContain('Invalid hour');
+    }
+  });
+
+  it('rejects zoned timestamp with trailing junk', () => {
+    const result = parseZonedTimestamp('2024-01-15T12:00:00Zjunk');
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects zoned timestamp with Feb 29 on non-leap year', () => {
+    const result = parseZonedTimestamp('2023-02-29T12:00:00Z');
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toContain('Invalid day');
+    }
+  });
+
+  it('accepts zoned timestamp with Feb 29 on leap year', () => {
+    const result = parseZonedTimestamp('2024-02-29T12:00:00Z');
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(new Date(result.utcIso).getUTCDate()).toBe(29);
+    }
   });
 });
 
@@ -660,6 +785,55 @@ describe('POST /api/promotions/create — timezone handling', () => {
     expect(endUtc.getUTCHours()).toBe(3);    // 23:59 + 4 = 03:59 next day
     expect(endUtc.getUTCDate()).toBe(1);     // Aug 1
   });
+
+  it('fractional-second zoned timestamp → preserved', async () => {
+    let insertedData: Record<string, unknown> | undefined;
+    mockServiceFrom.mockImplementation((table: string) => {
+      if (table === 'promo_campaigns') {
+        const chain = chainable({ data: { id: 'camp-new' }, error: null });
+        chain.insert = vi.fn().mockImplementation((data: Record<string, unknown>) => {
+          insertedData = data;
+          return chainable({ data: { id: 'camp-new' }, error: null });
+        });
+        return chain;
+      }
+      return chainable({ data: [{ id: 'p1' }], error: null });
+    });
+
+    const req = makeRequest('POST', '/api/promotions/create', minimalCampaignBody({
+      start_at: '2024-10-30T22:59:59.123Z',
+      timezone: 'Africa/Lagos',
+    }));
+
+    const res = await POST(req);
+    expect(res.status).toBe(201);
+    const utc = new Date(insertedData!.start_at as string);
+    expect(utc.getUTCHours()).toBe(22);
+    expect(utc.getUTCSeconds()).toBe(59);
+    expect(utc.getUTCMilliseconds()).toBe(123);
+  });
+
+  it('zoned timestamp with month 13 → rejected (no Date rollover)', async () => {
+    const req = makeRequest('POST', '/api/promotions/create', minimalCampaignBody({
+      start_at: '2024-13-01T00:00:00Z',
+      timezone: 'Africa/Lagos',
+    }));
+
+    const res = await POST(req);
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toContain('Invalid month');
+  });
+
+  it('zoned timestamp with trailing junk → rejected', async () => {
+    const req = makeRequest('POST', '/api/promotions/create', minimalCampaignBody({
+      start_at: '2024-01-15T12:00:00Zjunk',
+      timezone: 'Africa/Lagos',
+    }));
+
+    const res = await POST(req);
+    expect(res.status).toBe(400);
+  });
 });
 
 // ══════════════════════════════════════════════════════════
@@ -867,6 +1041,42 @@ describe('PUT /api/promotions/update — timezone handling', () => {
     const endUtc = new Date(updatedData!.end_at as string);
     expect(startUtc.getUTCHours()).toBe(13); // 09:00 EDT + 4
     expect(endUtc.getUTCHours()).toBe(3);    // 23:59 EDT + 4 = 03:59 next day
+  });
+
+  it('fractional-second zoned timestamp in update → preserved', async () => {
+    let updatedData: Record<string, unknown> | undefined;
+    mockServiceFrom.mockImplementation((table: string) => {
+      if (table === 'promo_campaigns') {
+        const fetchChain = chainable({ data: EXISTING_CAMPAIGN, error: null });
+        fetchChain.update = vi.fn().mockImplementation((data: Record<string, unknown>) => {
+          updatedData = data;
+          return chainable({ data: { ...EXISTING_CAMPAIGN, ...data }, error: null });
+        });
+        return fetchChain;
+      }
+      return chainable({ data: null, error: null });
+    });
+
+    const req = makeRequest('PUT', '/api/promotions/update', updateBody({
+      startAt: '2024-10-30T22:59:59.456Z',
+    }));
+
+    const res = await PUT(req);
+    expect(res.status).toBe(200);
+    const utc = new Date(updatedData!.start_at as string);
+    expect(utc.getUTCHours()).toBe(22);
+    expect(utc.getUTCSeconds()).toBe(59);
+  });
+
+  it('zoned timestamp with month 13 in update → rejected', async () => {
+    const req = makeRequest('PUT', '/api/promotions/update', updateBody({
+      startAt: '2024-13-01T00:00:00Z',
+    }));
+
+    const res = await PUT(req);
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toContain('Invalid month');
   });
 });
 

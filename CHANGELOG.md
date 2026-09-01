@@ -68,6 +68,21 @@ If something breaks, check this log to find what changed and when.
 - Any consumer that type-checked against the old 4-state `RefundState` union (only existed on the UX branch, not main)
 - Frontend code that parsed error text to determine refund state (this was the bug being fixed)
 
+## 2026-08-31 — #248: Strict zoned-ISO parsing boundary — fractional seconds + calendar validation
+
+### What changed
+- **ZONED_ISO_RE regex:** Updated to support fractional seconds (`2024-10-30T22:59:59.123Z`). Previously these fell through to the naive parser and were rejected.
+- **parseZonedTimestamp():** Added strict calendar validation (month 1-12, day valid for month/year with leap-year support, hour 0-23, minute 0-59, second 0-59) BEFORE `Date` parsing. Previously `Date.parse()` would silently roll over invalid dates (month 13 -> Jan next year, day 32 -> 1st next month). Now rejected with explicit error messages.
+- **Tests:** 17 new tests across unit and route-level suites covering: fractional seconds with Z/+offset/-offset, month 13 rejection (no rollover), day 32 rejection, Feb 30 rejection, hour 25 rejection, Feb 29 non-leap rejection, Feb 29 leap acceptance, trailing junk rejection, and create/update parity for these cases.
+
+### Files changed
+- `lib/promotions/timezone.ts` (regex + parseZonedTimestamp calendar validation)
+- `app/api/promotions/__tests__/timezone-write.test.ts` (17 new tests)
+- `CHANGELOG.md` (this entry)
+
+### Could break
+- Nothing -- all changes are strictness improvements that reject previously-silently-invalid inputs.
+
 ## 2026-08-30 — #248: Fix 2 CTO blockers — general IANA zone ambiguity + zoned timestamp preservation
 
 ### What changed
