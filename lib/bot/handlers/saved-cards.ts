@@ -206,7 +206,14 @@ export async function handleCardPinStep(
 
   if (!auth?.authorization_code || !businessId) {
     await sendText(from, 'Something went wrong. Please type *save card* again.');
-    await supabase.from('bot_sessions').update({ current_step: 'select_capability', session_data: {} }).eq('id', session.id);
+    const { data: casPinResult } = await supabase.rpc('update_session_cas', {
+      p_session_id: session.id,
+      p_expected_version: session.version ?? 0,
+      p_current_step: 'select_capability',
+      p_session_data: {},
+    });
+    if (casPinResult?.success) session.version = casPinResult.version;
+    // CAS failure here is acceptable — error message already sent, session reset is best-effort
     return;
   }
 

@@ -132,10 +132,14 @@ export async function handleMyBookings(
       return;
     }
     session.session_data.selected_booking_id = bookingId;
-    await supabase.from('bot_sessions').update({
-      current_step: 'modify_booking',
-      session_data: session.session_data,
-    }).eq('id', session.id);
+    const { data: casBookingResult } = await supabase.rpc('update_session_cas', {
+      p_session_id: session.id,
+      p_expected_version: session.version ?? 0,
+      p_current_step: 'modify_booking',
+      p_session_data: session.session_data,
+    });
+    if (!casBookingResult?.success) return; // CAS loser — silent exit
+    session.version = casBookingResult.version;
     await handleModifyBooking(supabase, messageSender, sendText, flowExecutor, session, from, '');
     return;
   }
@@ -578,12 +582,15 @@ export async function handleModifyBooking(
       .eq('business_id', biz.id)
       .eq('is_active', false);
 
-    await supabase.from('bot_sessions').update({
-      current_step: 'select_date',
-      session_data: sessionData,
-      business_id: biz.id,
-    }).eq('id', session.id);
-
+    const { data: casRebookResult } = await supabase.rpc('update_session_cas', {
+      p_session_id: session.id,
+      p_expected_version: session.version ?? 0,
+      p_current_step: 'select_date',
+      p_session_data: sessionData,
+      p_business_id: biz.id,
+    });
+    if (!casRebookResult?.success) return; // CAS loser — silent exit
+    session.version = casRebookResult.version;
     session.session_data = sessionData;
     session.current_step = 'select_date';
     session.business_id = biz.id;

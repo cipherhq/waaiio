@@ -2061,10 +2061,14 @@ export class BotService {
       // Initialize step history so "back"/"cancel" works correctly
       session.session_data._step_history = ['select_capability', firstStep];
 
-      await this.supabase.from('bot_sessions').update({
-        session_data: session.session_data,
-        current_step: firstStep,
-      }).eq('id', session.id);
+      const { data: casResult } = await this.supabase.rpc('update_session_cas', {
+        p_session_id: session.id,
+        p_expected_version: session.version ?? 0,
+        p_current_step: firstStep,
+        p_session_data: session.session_data,
+      });
+      if (!casResult?.success) return; // CAS loser — silent exit
+      session.version = casResult.version;
 
       const business = session.business_id
         ? (await this.supabase.from('businesses').select('*').eq('id', session.business_id).single()).data
@@ -2087,10 +2091,14 @@ export class BotService {
         // Greeting already stored — will be used by capability selection
       }
       session.current_step = 'select_capability';
-      await this.supabase.from('bot_sessions').update({
-        session_data: session.session_data,
-        current_step: 'select_capability',
-      }).eq('id', session.id);
+      const { data: casMenuResult } = await this.supabase.rpc('update_session_cas', {
+        p_session_id: session.id,
+        p_expected_version: session.version ?? 0,
+        p_current_step: 'select_capability',
+        p_session_data: session.session_data,
+      });
+      if (!casMenuResult?.success) return; // CAS loser — silent exit
+      session.version = casMenuResult.version;
       // Execute the flow to show the capability menu
       const bizForMenu = session.business_id
         ? (await this.supabase.from('businesses').select('*').eq('id', session.business_id).single()).data
@@ -2624,10 +2632,14 @@ export class BotService {
               session.session_data || {},
               correction,
             );
-            await this.supabase
-              .from('bot_sessions')
-              .update({ session_data: updatedData })
-              .eq('id', session.id);
+            const { data: casCorrResult } = await this.supabase.rpc('update_session_cas', {
+              p_session_id: session.id,
+              p_expected_version: session.version ?? 0,
+              p_current_step: session.current_step,
+              p_session_data: updatedData,
+            });
+            if (!casCorrResult?.success) return; // CAS loser — silent exit
+            session.version = casCorrResult.version;
             await this.sendText(
               from,
               `Got it! Changed ${correction.field} to ${String(correction.newValue)}.`,

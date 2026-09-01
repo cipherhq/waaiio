@@ -10,6 +10,33 @@ If something breaks, check this log to find what changed and when.
 - **Runtime:** `lib/channels/send-guard.ts` — `assertMessagingAllowed()` checked at every business-scoped Meta /messages egress. Fail-closed on DB error, missing row, NULL, or ambiguous identity.
 - **Refs:** #256, #250
 
+## 2026-08-31 — #271 Slice C: Full Active-Session CAS Remediation
+
+### What changed
+- **Migration 364:** Extended `update_session_cas` RPC with optional `p_business_id` parameter for atomic business_id + step + session_data transitions (rebook-after-cancel path).
+- **bot.service.ts:** Converted 3 bare `.update()` calls to CAS: quick-rebook (L2066), browse-menu fallback (L2092), correction mutation (L2631). CAS loser = silent exit, no customer message.
+- **my-bookings.ts:** Converted 2 bare `.update()` calls to CAS: booking selection (L135) and rebook-after-cancel with `p_business_id` (L581).
+- **my-orders.ts:** Converted 1 bare `.update()` call to CAS: order selection (L157).
+- **refund-request.ts:** Converted 2 bare `.update()` calls to CAS: payment-map write (7a, L137) and reason-step write (7b, L170). 7a's returned version feeds 7b.
+- **saved-cards.ts:** Converted 1 bare `.update()` call to CAS: PIN-failure reset (L209). Error message sent before CAS (best-effort reset).
+- **Tests:** Unit tests for all 9 CAS paths (success + failure). DB tests for CAS business_id extension, version conflict, and ACL.
+- **CI:** Added Migration 364 DB test step to `.github/workflows/ci.yml`.
+
+### What could break
+- If `update_session_cas` RPC is not deployed (migration 364 not applied), the new `p_business_id` parameter will cause a PostgreSQL error. The existing 6-parameter overload from migration 236 is replaced by the 7-parameter version.
+- Handlers that previously raced silently will now have the losing worker exit without sending a message. This is the desired behavior — the winning worker handles the customer.
+
+### Files changed
+- `supabase/migrations/364_cas_business_id.sql` (new)
+- `lib/bot/bot.service.ts`
+- `lib/bot/handlers/my-bookings.ts`
+- `lib/bot/handlers/my-orders.ts`
+- `lib/bot/handlers/refund-request.ts`
+- `lib/bot/handlers/saved-cards.ts`
+- `lib/bot/__tests__/slice-c-cas-remediation.test.ts` (new)
+- `lib/__tests__/acc-271c-cas-business-id-db.test.ts` (new)
+- `.github/workflows/ci.yml`
+
 ## 2026-09-01 — #244: Outcome persistence + typed MetaApiError + #255 cleanup
 
 ### What changed

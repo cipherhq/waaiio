@@ -154,10 +154,14 @@ export async function handleMyOrders(
     }
     session.session_data.selected_order_id = orderId;
     session.current_step = 'order_detail';
-    await supabase.from('bot_sessions').update({
-      current_step: 'order_detail',
-      session_data: session.session_data,
-    }).eq('id', session.id);
+    const { data: casOrderResult } = await supabase.rpc('update_session_cas', {
+      p_session_id: session.id,
+      p_expected_version: session.version ?? 0,
+      p_current_step: 'order_detail',
+      p_session_data: session.session_data,
+    });
+    if (!casOrderResult?.success) return; // CAS loser — silent exit
+    session.version = casOrderResult.version;
     await handleOrderDetail(supabase, messageSender, sendText, session, from, orderId);
     return;
   }
