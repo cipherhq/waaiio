@@ -1,5 +1,5 @@
 -- ═══════════════════════════════════════════════════════════════════════════════
--- 358: Booking Confirmation Intents — Durable notification intent table + RPCs
+-- 361: Booking Confirmation Intents — Durable notification intent table + RPCs
 --
 -- Phase 1 of manual booking fix (#244).
 --

@@ -3,6 +3,43 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-09-01 — #244: Outcome persistence + typed MetaApiError + #255 cleanup
+
+### What changed
+- **Outcome persistence check:** Both create-manual and confirm routes now require `data.success === true` from `record_booking_confirmation_outcome` RPC. Transport error, missing response, or `data.success !== true` surfaces as `indeterminate`.
+- **Typed MetaApiError:** `singleAttemptWhatsAppSend()` uses `instanceof MetaApiError` + `httpStatus` (not regex) to distinguish 4xx (definitive) from 5xx/network (ambiguous).
+- **Durable/returned state agreement:** Both routes compute `durableOutcome` and return only what was actually persisted.
+- **Removed #255 contamination:** Surgically removed accidental cross-terminal commit from #244 branch.
+
+## 2026-09-01 — #244: Resend safety gate + email independence
+
+### What changed
+- **Resend gate:** Only terminal-known create intent states (`sent`/`delivered`/`read`) allow `purpose='resend'`. Reclaimable states (`pending`/`failed`) and unresolved states (`claiming`/`dispatched`/`indeterminate`) block resend. No create intent → uses `purpose='create'`.
+- **Email independence:** Email attempted regardless of WhatsApp channel availability or outcome. Email success does not change WhatsApp intent state.
+
+## 2026-08-31 — #244: Durable intent authority + single-attempt send
+
+### What changed
+- **Durable intent is authority:** Removed old direct `sendOrEmail()` path. When `sendConfirmation=true`, creates durable intent via `claim_booking_confirmation` → preflight → dispatch barrier → single-attempt send → outcome.
+- **Single-attempt provider send:** `lib/channels/single-attempt-send.ts` — one HTTP call, no retry, returns `sent/failed/unknown`.
+- **Booking success independent of notification:** Booking creation always succeeds regardless of notification outcome.
+
+## 2026-08-31 — #244: Manual Booking Phase 1 — Durable Confirmation Intent
+
+### What changed
+- **Migration 361:** `booking_confirmation_intents` table with `UNIQUE(booking_id, purpose)`. Four SECURITY DEFINER RPCs with `SET search_path=''`, service_role-only grants.
+- **LTV fix:** `p_booking_amount: 0` — manual bookings no longer inflate customer `total_spent`/LTV.
+- **No synthetic payment:** No payment row created at manual booking time.
+- **Confirmation route:** `POST /api/bookings/confirm` — durable claim/dispatch/outcome lifecycle.
+
+### Files changed
+- `supabase/migrations/361_booking_confirmation_intents.sql`
+- `app/api/bookings/create-manual/route.ts`
+- `app/api/bookings/confirm/route.ts`
+- `lib/channels/single-attempt-send.ts`
+- `lib/__tests__/acc-244-booking-confirmation-intent-db.test.ts`
+- `lib/__tests__/acc-244-manual-booking-spend.test.ts`
+- `app/api/bookings/__tests__/durable-confirmation-behavioral.test.ts`
 
 ## 2026-09-01 — #247: Outcome persistence — require positive data.success
 
