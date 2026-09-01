@@ -340,8 +340,8 @@ async function dispatchTrackingNotification(
       logger.error('[TRACKING-NOTIF] Send error (post-dispatch, single attempt):', err);
     }
 
-    // ── Step 5: Record outcome — persistence must succeed for truthful reporting ──
-    const { error: outcomeError } = await service.rpc('record_tracking_notification_outcome', {
+    // ── Step 5: Record outcome — persistence must positively succeed for truthful reporting ──
+    const { data: outcomeData, error: outcomeError } = await service.rpc('record_tracking_notification_outcome', {
       p_notification_id: notificationId,
       p_claim_token: claimToken,
       p_outcome: outcome,
@@ -349,10 +349,14 @@ async function dispatchTrackingNotification(
       p_error_message: errorMessage,
     });
 
-    if (outcomeError) {
-      // Outcome persistence failed — durable row remains dispatched/unknown.
+    // Require both: no transport error AND positive data.success === true.
+    // The SECURITY DEFINER RPC may return {success: false} for a rejected
+    // state/claim transition without producing a transport error.
+    const persisted = !outcomeError && (outcomeData as Record<string, unknown>)?.success === true;
+    if (!persisted) {
+      // Outcome not durably committed — row remains dispatched/unknown.
       // Cannot truthfully report 'sent' or 'failed'; surface indeterminate.
-      logger.error('[TRACKING-NOTIF] Outcome persistence failed, returning indeterminate:', outcomeError);
+      logger.error('[TRACKING-NOTIF] Outcome persistence not confirmed, returning indeterminate:', outcomeError ?? outcomeData);
       return 'indeterminate';
     }
 

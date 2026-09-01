@@ -3,6 +3,17 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-09-01 — #247: Outcome persistence — require positive data.success
+
+### What changed
+- **Full RPC contract check:** Now inspects both `data` and `error` from `record_tracking_notification_outcome`. Requires `data.success === true` — transport error, missing/malformed response, or `data.success !== true` all surface as `indeterminate`. Never returns `sent` or terminal `failed` unless the outcome was positively persisted.
+- **2 new behavioral tests:** provider success + RPC `{success:false}` → one provider call, returns indeterminate. Provider ambiguity + RPC `{success:false}` → one provider call, returns indeterminate.
+
+### Files changed
+- `app/api/orders/[id]/tracking/route.ts` (check data.success === true)
+- `app/api/orders/[id]/tracking/__tests__/dispatch-boundary.test.ts` (2 new tests + rpc_reject option)
+- `CHANGELOG.md` (this entry)
+
 ## 2026-09-01 — #247: Outcome persistence truth — check RPC result after dispatch
 
 ### What changed

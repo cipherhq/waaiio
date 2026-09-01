@@ -114,7 +114,7 @@ function setupFullNotificationScenario(opts: {
   templateBehavior: 'success' | 'failure' | 'throw' | 'no_template';
   claimBehavior?: 'success' | 'fail';
   dispatchBehavior?: 'success' | 'fail';
-  outcomePersistBehavior?: 'success' | 'fail';
+  outcomePersistBehavior?: 'success' | 'fail' | 'rpc_reject';
   hasPhone?: boolean;
   hasChannel?: boolean;
 }) {
@@ -233,7 +233,11 @@ function setupFullNotificationScenario(opts: {
     // record_tracking_notification_outcome
     if (outcomePersistBehavior === 'success') {
       rpcCalls.push({ data: { success: true }, error: null });
+    } else if (outcomePersistBehavior === 'rpc_reject') {
+      // RPC returns normally but with {success: false} (e.g. claim/state mismatch)
+      rpcCalls.push({ data: { success: false, reason: 'invalid_state' }, error: null });
     } else {
+      // Transport-level error
       rpcCalls.push({ data: null, error: { message: 'DB write failed', code: 'PGRST' } });
     }
   }
@@ -564,6 +568,52 @@ describe('Dispatch boundary — provider call counts', () => {
     setupFullNotificationScenario({
       templateBehavior: 'throw',
       outcomePersistBehavior: 'fail',
+    });
+
+    const req = makeRequest({
+      businessId: BIZ_ID,
+      carrier: 'DHL',
+      trackingNumber: 'DHL123',
+      notifyCustomer: true,
+    });
+    const res = await PATCH(req, { params: Promise.resolve({ id: ORDER_ID }) });
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.success).toBe(true);
+    expect(providerCallCount).toBe(1);
+    expect(body.notification.status).toBe('indeterminate');
+  });
+
+  it('provider success + RPC {success:false}: ONE call, returns indeterminate (not sent)', async () => {
+    // Provider returns a WAMID, but RPC returns {success: false} (state/claim mismatch).
+    // Route must surface indeterminate — cannot report 'sent' without positive persistence.
+    setupFullNotificationScenario({
+      templateBehavior: 'success',
+      outcomePersistBehavior: 'rpc_reject',
+    });
+
+    const req = makeRequest({
+      businessId: BIZ_ID,
+      carrier: 'DHL',
+      trackingNumber: 'DHL123',
+      notifyCustomer: true,
+    });
+    const res = await PATCH(req, { params: Promise.resolve({ id: ORDER_ID }) });
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.success).toBe(true);
+    expect(providerCallCount).toBe(1);
+    expect(body.notification.status).toBe('indeterminate');
+  });
+
+  it('provider ambiguity + RPC {success:false}: ONE call, returns indeterminate', async () => {
+    // Provider throws (ambiguous), AND RPC returns {success: false}.
+    // Route must return indeterminate with no retry/fallback.
+    setupFullNotificationScenario({
+      templateBehavior: 'throw',
+      outcomePersistBehavior: 'rpc_reject',
     });
 
     const req = makeRequest({
