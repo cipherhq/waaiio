@@ -23,6 +23,12 @@ import type { RefundOutcome } from './types';
 import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
 
+// Valid durable refund states stored in the database
+const VALID_REFUND_STATES = new Set<RefundState>([
+  'pending', 'provider_pending', 'provider_ambiguous',
+  'provider_success_unfinalized', 'success', 'failed',
+]);
+
 // Tier-1: proven provider-side idempotent replay (Stripe 24h, PayPal documented)
 const TIER1_GATEWAYS = new Set<string>(['stripe', 'paypal']);
 
@@ -60,6 +66,21 @@ export interface ProcessRefundResult {
   isDirectSplit?: boolean;
   errorMessage?: string;
   state: RefundState;
+}
+
+/**
+ * Read the durable refund status from the database.
+ * Used to ensure API responses reflect the actual persisted state,
+ * not the code branch that was executing when a failure occurred.
+ */
+async function readDurableRefundState(
+  service: ReturnType<typeof createServiceClient>,
+  refundId: string,
+): Promise<RefundState> {
+  const { data } = await service.from('refunds').select('status').eq('id', refundId).single();
+  const status = data?.status as string | undefined;
+  if (status && VALID_REFUND_STATES.has(status as RefundState)) return status as RefundState;
+  return 'failed'; // defensive: unknown/missing → failed
 }
 
 export async function processRefund(opts: ProcessRefundOpts): Promise<ProcessRefundResult> {
@@ -164,7 +185,10 @@ async function resumeExistingRefund(
     return dispatchAndFinalize(service, existing.id, null, payment, isDirectSplit);
   }
 
-  return { success: false, errorMessage: 'A refund for this payment is already being processed', state: 'failed' };
+  // Catchall: return the actual durable state, not 'failed'
+  // e.g. provider_pending without provider_refund_id — still provider_pending, not failed
+  const durableState = (VALID_REFUND_STATES.has(existing.status as RefundState) ? existing.status : 'failed') as RefundState;
+  return { success: false, refundId: existing.id, isDirectSplit, errorMessage: 'A refund for this payment is already being processed', state: durableState };
 }
 
 /** Finalize a provider_success_unfinalized refund without calling the provider. */
@@ -247,10 +271,10 @@ async function dispatchAndFinalize(
   });
   const claim = (claimResult as Array<Record<string, unknown>>)?.[0];
   if (!claim?.claimed) {
-    // Check if it reached a resumable state while we tried to claim
-    const { data: cur } = await service.from('refunds').select('status').eq('id', refundId).single();
-    if (cur?.status === 'provider_success_unfinalized') return finalizeOnly(service, refundId, isDirectSplit);
-    return { success: false, refundId, errorMessage: 'Failed to claim refund for dispatch', state: 'pending' };
+    // Read the actual durable state — another caller may have advanced it
+    const durableState = await readDurableRefundState(service, refundId);
+    if (durableState === 'provider_success_unfinalized') return finalizeOnly(service, refundId, isDirectSplit);
+    return { success: false, refundId, errorMessage: 'Failed to claim refund for dispatch', state: durableState };
   }
 
   // Read immutable request parameters from the refund row
@@ -324,7 +348,9 @@ async function dispatchAndFinalize(
         .update({ status: 'provider_success_unfinalized' }).eq('id', refundId);
       if (durErr) {
         logger.error(`[REFUND] Provider success but durability write failed: ${refundId}`);
-        return { success: false, refundId, isDirectSplit, errorMessage: 'Provider refund succeeded but state update failed — will be recovered', state: 'provider_success_unfinalized' };
+        // Return the actual durable state — the write failed, so DB is still pending+dispatched
+        const durableState = await readDurableRefundState(service, refundId);
+        return { success: false, refundId, isDirectSplit, errorMessage: 'Provider refund succeeded but state update failed — will be recovered', state: durableState };
       }
     } else if (outcome === 'terminal_failure') {
       const { error: failErr } = await service.from('refunds')
@@ -365,5 +391,7 @@ async function dispatchAndFinalize(
   }
   const finResult = finalizeResult as Record<string, unknown>;
   const finalized = !!finResult?.finalized;
-  return { success: finalized, refundId, isDirectSplit, state: finalized ? 'success' : 'failed' };
+  // If finalization didn't complete, return the durable state (provider_success_unfinalized)
+  // — never downgrade to 'failed', which is for true terminal failures only
+  return { success: finalized, refundId, isDirectSplit, state: finalized ? 'success' : 'provider_success_unfinalized' };
 }

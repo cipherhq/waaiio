@@ -3,6 +3,24 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-08-31 — #245: Refund domain-state truth correction — durable state reads
+
+### What changed
+- **refund-handler.ts:** Added `readDurableRefundState()` helper that reads actual persisted `refunds.status` from the database. Three return paths now use durable DB reads instead of branch-inferred state:
+  1. **Dispatch claim loser:** returns actual DB state (e.g. `provider_pending`, `provider_success_unfinalized`) instead of hardcoded `'pending'`
+  2. **Provider success + durability write failure:** returns actual DB state instead of aspirational `'provider_success_unfinalized'` when the write to that state failed
+  3. **`resumeExistingRefund` catchall:** returns persisted `existing.status` instead of `'failed'` (e.g. `provider_pending` without `provider_refund_id` now correctly returns `provider_pending`)
+- **dispatchAndFinalize finalization path:** returns `provider_success_unfinalized` when finalization incomplete (was incorrectly returning `'failed'`)
+- **Behavioral tests:** 6 new `processRefund()` execution tests covering all 6 durable outcomes: success after finalization, terminal provider failure, provider_success_unfinalized on finalization failure, provider_ambiguous on transport error, provider_pending on provider acceptance, and resumed attempts returning durable state.
+
+### Files changed
+- `lib/payments/refund-handler.ts` (durable state reads, finalization path fix)
+- `app/dashboard/orders/__tests__/refund-ux.test.ts` (6 behavioral outcome tests, updated structural assertions)
+- `CHANGELOG.md` (this entry)
+
+### Could break
+- Nothing — all existing behavior preserved. The changes correct state misreporting on failure/recovery paths.
+
 ## 2026-08-30 — #245: Refund state truth-contract — 6-state domain vocabulary
 
 ### What changed
