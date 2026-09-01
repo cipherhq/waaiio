@@ -1893,19 +1893,34 @@ export class BotService {
       delete updatedData._pending_language;
 
       if (text === 'lang_yes') {
-        updatedData._detected_language = pendingLang;
-        const langName = getLanguageName(pendingLang);
-        await this.supabase.from('bot_sessions')
-          .update({ session_data: updatedData })
-          .eq('id', session.id);
-        // Build translation context — resolve tier from business record
+        // Re-validate entitlement + certification before persisting — policy may have
+        // changed since the confirmation was offered (tier downgrade, config change, etc.)
         let langConfirmTier = 'free';
         if (session.business_id) {
           const { data: langBiz } = await this.supabase.from('businesses').select('subscription_tier').eq('id', session.business_id).single();
           langConfirmTier = langBiz?.subscription_tier || 'free';
         }
-        const langConfirmTCtx = await this.buildTranslationContext(session.business_id, langConfirmTier);
-        const confirmMsg = await translateBotResponse(`Great! I'll respond in ${langName} from now on.`, pendingLang, langConfirmTCtx);
+        const confirmEntitlement = await this.buildTranslationContext(session.business_id, langConfirmTier);
+        const { CERTIFIED_LANGUAGES: certLangsConfirm } = await import('./language-policy');
+
+        if (!confirmEntitlement.entitlement.translationAllowed
+            || !confirmEntitlement.entitlement.allowedLanguages.includes(pendingLang)
+            || !certLangsConfirm.includes(pendingLang)) {
+          // Language no longer entitled/certified — reject without persisting
+          const langName = getLanguageName(pendingLang);
+          await this.supabase.from('bot_sessions')
+            .update({ session_data: updatedData })
+            .eq('id', session.id);
+          await this.sendText(from, `${langName} is no longer available for this business.`);
+          return;
+        }
+
+        updatedData._detected_language = pendingLang;
+        const langName = getLanguageName(pendingLang);
+        await this.supabase.from('bot_sessions')
+          .update({ session_data: updatedData })
+          .eq('id', session.id);
+        const confirmMsg = await translateBotResponse(`Great! I'll respond in ${langName} from now on.`, pendingLang, confirmEntitlement);
         await this.sendText(from, confirmMsg);
       } else {
         await this.supabase.from('bot_sessions')

@@ -42,8 +42,9 @@ vi.mock('@/lib/rate-limit', () => ({
 }));
 
 // Mock logger — capture warn/error for debugging
+const { mockLoggerError } = vi.hoisted(() => ({ mockLoggerError: vi.fn() }));
 vi.mock('@/lib/logger', () => ({
-  logger: { info: vi.fn(), warn: mockLoggerWarn, error: vi.fn(), debug: vi.fn() },
+  logger: { info: vi.fn(), warn: mockLoggerWarn, error: mockLoggerError, debug: vi.fn() },
 }));
 
 // Mock AI usage tracker — capture calls for attribution verification
@@ -70,14 +71,55 @@ vi.mock('@/lib/bot/step-overrides', () => ({
 
 vi.mock('@/lib/bot/flow-analytics', () => ({ logDropoff: vi.fn() }));
 
+// ── BotService-specific mocks (for lang_yes stale-policy test) ──
+vi.mock('@/lib/platformSettings', () => ({
+  loadPlatformSettings: vi.fn().mockResolvedValue({ bot_rate_limit_per_minute: 30 }),
+}));
+vi.mock('@/lib/bot/keyword-service', () => ({
+  loadBotCustomConfig: vi.fn().mockResolvedValue({ welcome_buttons: [], quick_replies: [], default_reply: null }),
+  matchQuickReply: vi.fn(() => null),
+  loadUnifiedKeywords: vi.fn().mockResolvedValue([]),
+  matchUnifiedKeyword: vi.fn(() => null),
+}));
+vi.mock('@/lib/bot/handlers/escape-hatches', () => ({
+  HOME_PATTERN: /^home$/i,
+  handleEscapeHatch: vi.fn().mockResolvedValue({ handled: false }),
+}));
+vi.mock('@/lib/bot/handlers/global-queries', () => ({
+  handleGlobalQuery: vi.fn(async (opts: { session: unknown }) => ({ handled: false, session: opts.session })),
+  isOrdersQuery: vi.fn(() => false),
+}));
+vi.mock('@/lib/bot/confidence-policy', () => ({
+  loadConversationConfig: vi.fn().mockResolvedValue({
+    aiEnabled: false, autoRouteThreshold: 0.85, clarificationThreshold: 0.60,
+    fallbackBehavior: 'menu', faqEnabled: true, knowledgeEnabled: true,
+    assistantName: 'Assistant', tone: 'friendly',
+  }),
+}));
+vi.mock('@/lib/bot/automation/rules-engine', () => ({ evaluateRules: vi.fn().mockResolvedValue(undefined) }));
+
+// Mock bot-helpers — control getActiveSession return per-test
+const { mockGetActiveSession } = vi.hoisted(() => ({
+  mockGetActiveSession: vi.fn().mockResolvedValue(null),
+}));
+vi.mock('@/lib/bot/bot-helpers', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../bot-helpers')>();
+  return {
+    ...actual,
+    getActiveSession: mockGetActiveSession,
+  };
+});
+
 // Mock language-policy — Free tier by default (tests can override)
-const { mockGetEffectiveLanguages, mockLoadBusinessLanguages } = vi.hoisted(() => ({
+const { mockGetEffectiveLanguages, mockLoadBusinessLanguages, mockCertifiedLanguages } = vi.hoisted(() => ({
   mockGetEffectiveLanguages: vi.fn().mockReturnValue({
     allowedLanguages: ['en'],
     llmAllowed: false,
     translationAllowed: false,
   }),
   mockLoadBusinessLanguages: vi.fn().mockResolvedValue(null),
+  // Default: English only. Tests can override via mockCertifiedLanguages.length = 0; mockCertifiedLanguages.push('en', 'fr');
+  mockCertifiedLanguages: ['en'] as string[],
 }));
 
 vi.mock('@/lib/bot/language-policy', async (importOriginal) => {
@@ -86,7 +128,7 @@ vi.mock('@/lib/bot/language-policy', async (importOriginal) => {
     ...actual,
     getEffectiveLanguages: mockGetEffectiveLanguages,
     loadBusinessLanguages: mockLoadBusinessLanguages,
-    // Keep real CERTIFIED_LANGUAGES for switch gate tests
+    get CERTIFIED_LANGUAGES() { return mockCertifiedLanguages; },
   };
 });
 
@@ -105,6 +147,7 @@ vi.mock('../flows/registry', () => ({
 import { translateBotResponse, type TranslationContext } from '../translate';
 import type { LanguageEntitlement } from '../language-policy';
 import { FlowExecutor } from '../flows/executor';
+import { BotService } from '../bot.service';
 import { createCaptureSender } from './bot-harness';
 
 // ── Helpers ──
@@ -326,6 +369,52 @@ describe('Slice A — real FlowExecutor language-switch + outbound behavior', ()
     expect(mockCreate).not.toHaveBeenCalled();
   });
 
+  it('successful "switch to french" when entitled+certified => persists _detected_language, translated confirmation, re-prompt uses new language', async () => {
+    // Configure: French is certified and entitled for this test
+    mockCertifiedLanguages.length = 0;
+    mockCertifiedLanguages.push('en', 'fr');
+    mockGetEffectiveLanguages.mockReturnValue({
+      allowedLanguages: ['en', 'fr'],
+      llmAllowed: true,
+      translationAllowed: true,
+    });
+
+    const session = createTestSession();
+    // Mock Anthropic for: (1) "Switched to French. ✅" confirmation, (2) "Pick a date:" re-prompt
+    setupAnthropicResponse('Passage au français. ✅');
+    setupAnthropicResponse('Choisissez une date :');
+
+    await executor.execute('+2348001234567', 'switch to french', session, {
+      ...TEST_BUSINESS,
+      subscription_tier: 'growth',
+    });
+
+    // _detected_language must be persisted as 'fr'
+    expect(session.session_data._detected_language).toBe('fr');
+
+    // CAS update must have been called to persist the language change
+    expect(supabase.rpc).toHaveBeenCalledWith(
+      'update_session_cas',
+      expect.objectContaining({
+        p_session_id: 'sess-1',
+      }),
+    );
+
+    // Must send translated confirmation
+    const msgs = sender.getMessages();
+    expect(msgs.some(m => m.type === 'text' && m.text?.includes('Passage au français'))).toBe(true);
+
+    // Re-prompt must have been called (step.prompt invoked)
+    expect(testStep.prompt).toHaveBeenCalled();
+
+    // Anthropic must have been called (for translation)
+    expect(mockCreate).toHaveBeenCalled();
+
+    // Restore defaults for subsequent tests
+    mockCertifiedLanguages.length = 0;
+    mockCertifiedLanguages.push('en');
+  });
+
   it('"switch to english" => clears persisted non-English preference through CAS, English re-prompt', async () => {
     // Session starts with _detected_language='fr'
     const session = createTestSession({ _detected_language: 'fr' });
@@ -419,5 +508,156 @@ describe('Slice A — concurrent tenant attribution (truly overlapping)', () => 
     // Object identity — not just string match. Each business's supabase is distinct.
     expect(callA![0]).toBe(supabaseA);
     expect(callB![0]).toBe(supabaseB);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════
+// Part 4: BotService lang_yes stale-policy revalidation
+// ══════════════════════════════════════════════════════════════
+
+describe('Slice A — BotService lang_yes stale-policy revalidation', () => {
+  /** Create a Supabase mock where the resumed session has _pending_language set */
+  function createBotServiceSupabase(pendingLang: string) {
+    const updateTracker: Array<{ table: string; data: unknown }> = [];
+
+    function makeChain(resolveData: unknown = null) {
+      const chain: Record<string, any> = {};
+      for (const m of ['select','insert','update','upsert','delete','eq','neq','or','in','is','not','ilike','like','gte','lte','gt','lt','order','limit','range','filter','match','contains','containedBy'])
+        chain[m] = vi.fn().mockReturnValue(chain);
+      chain.single = vi.fn().mockResolvedValue({ data: resolveData, error: resolveData ? null : { message: 'not found' } });
+      chain.maybeSingle = vi.fn().mockResolvedValue({ data: resolveData, error: null });
+      return chain;
+    }
+
+    const activeSession = {
+      id: 'sess-lang-1',
+      user_id: null,
+      business_id: 'biz-lang-1',
+      current_step: 'select_date',
+      is_active: true,
+      whatsapp_number: '+2348001234567',
+      session_data: {
+        active_capability: 'scheduling',
+        capabilities: ['scheduling'],
+        _pending_language: pendingLang,
+        business_name: 'Test Salon',
+      },
+      conversation_log: [],
+      version: 1,
+      expires_at: new Date(Date.now() + 86400000).toISOString(),
+      last_active_at: new Date().toISOString(),
+    };
+
+    const business = {
+      id: 'biz-lang-1', name: 'Test Salon', slug: 'test-salon',
+      category: 'salon', flow_type: 'scheduling', subscription_tier: 'free',
+      trial_ends_at: '2025-01-01', metadata: {}, country_code: 'NG',
+      owner_id: 'owner-1', payment_gateway: null, status: 'active',
+      is_whitelabel: false, operating_hours: null,
+    };
+
+    return {
+      supabase: {
+        from: vi.fn((table: string) => {
+          if (table === 'bot_sessions') {
+            const chain = makeChain(activeSession);
+            const origUpdate = chain.update;
+            chain.update = vi.fn((data: unknown) => {
+              updateTracker.push({ table: 'bot_sessions', data });
+              return origUpdate(data);
+            });
+            chain.delete = vi.fn().mockReturnValue(chain);
+            return chain;
+          }
+          if (table === 'businesses') return makeChain(business);
+          if (table === 'business_capabilities') {
+            const d = Promise.resolve({ data: [{ capability: 'scheduling', is_enabled: true, sort_order: 0 }], error: null });
+            const c: Record<string, any> = {};
+            for (const m of ['select','eq','order']) c[m] = () => c;
+            c.then = d.then.bind(d); c.catch = d.catch.bind(d);
+            return c;
+          }
+          if (table === 'ai_conversation_config') return makeChain(null);
+          if (table === 'platform_settings') return makeChain({ value: false });
+          if (table === 'profiles') return makeChain({ id: 'profile-1' });
+          return makeChain();
+        }),
+        rpc: vi.fn().mockResolvedValue({ data: { success: true, version: 2, current_step: 'select_date' }, error: null }),
+        storage: { from: vi.fn(() => ({ upload: vi.fn(), createSignedUrl: vi.fn(), getPublicUrl: vi.fn() })) },
+      } as any,
+      updateTracker,
+      activeSession,
+    };
+  }
+
+  function createMockStandalone() {
+    return {
+      loadWhatsAppConfigBundle: vi.fn().mockResolvedValue({ templates: { greeting: 'Welcome!' }, welcome_buttons: [], auto_reply_enabled: false, business_hours: null, alias: null }),
+      checkTierLimitsFromBusiness: vi.fn().mockResolvedValue({ allowed: true, isWhitelabel: false }),
+      fillTemplate: vi.fn((t: string) => t), getBotAlias: vi.fn().mockResolvedValue(null),
+    } as any;
+  }
+
+  function createMockIntelligence() {
+    return {
+      isTimedOut: vi.fn(() => ({ timedOut: false, remaining: 0 })),
+      containsProfanity: vi.fn(() => false),
+      recordProfanity: vi.fn(() => ({ timeout: false, warn: false })),
+      resetAbuse: vi.fn(),
+      getHelpText: vi.fn(() => 'Help'), getPersonaGreeting: vi.fn((_a: string, n: string) => `Hi from ${n}`),
+      getContextualHelp: vi.fn(() => 'Help'),
+    } as any;
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockIncrementAIUsage.mockResolvedValue(undefined);
+    // Default: Free tier (no translation, English only)
+    mockGetEffectiveLanguages.mockReturnValue({
+      allowedLanguages: ['en'],
+      llmAllowed: false,
+      translationAllowed: false,
+    });
+    mockCertifiedLanguages.length = 0;
+    mockCertifiedLanguages.push('en');
+  });
+
+  it('lang_yes with stale pending language (no longer entitled) => rejects, does not persist _detected_language', async () => {
+    // Scenario: French was offered as _pending_language when the business was Growth,
+    // but the business has since downgraded to Free tier.
+    // mockGetEffectiveLanguages already returns Free (translationAllowed=false).
+    const { supabase, updateTracker, activeSession } = createBotServiceSupabase('fr');
+
+    // Return this session when getActiveSession is called
+    mockGetActiveSession.mockResolvedValue(activeSession);
+
+    const sender = createCaptureSender();
+    const botService = new BotService(supabase, sender, createMockStandalone(), createMockIntelligence());
+
+    await botService.handleMessage('+2348001234567', 'lang_yes', 'text');
+
+    // _detected_language must NOT be set to 'fr' in the session update
+    const sessionUpdates = updateTracker.filter(u => u.table === 'bot_sessions');
+    const hasUnauthorizedLang = sessionUpdates.some(u => {
+      const sd = (u.data as any)?.session_data;
+      return sd && sd._detected_language === 'fr';
+    });
+    expect(hasUnauthorizedLang).toBe(false);
+
+    // Must send a "no longer available" message
+    expect(sender.hasMessageContaining('no longer available')).toBe(true);
+
+    // Must NOT send the success confirmation "I'll respond in French"
+    expect(sender.hasMessageContaining("I'll respond in")).toBe(false);
+
+    // Zero Anthropic translation calls
+    expect(mockCreate).not.toHaveBeenCalled();
+
+    // _pending_language must be cleared (cleaned up regardless of acceptance/rejection)
+    const lastUpdate = sessionUpdates[sessionUpdates.length - 1];
+    if (lastUpdate) {
+      const sd = (lastUpdate.data as any)?.session_data;
+      expect(sd?._pending_language).toBeUndefined();
+    }
   });
 });
