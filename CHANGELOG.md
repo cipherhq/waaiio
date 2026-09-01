@@ -3,6 +3,112 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+
+## 2026-09-01 — #247: Outcome persistence — require positive data.success
+
+### What changed
+- **Full RPC contract check:** Now inspects both `data` and `error` from `record_tracking_notification_outcome`. Requires `data.success === true` — transport error, missing/malformed response, or `data.success !== true` all surface as `indeterminate`. Never returns `sent` or terminal `failed` unless the outcome was positively persisted.
+- **2 new behavioral tests:** provider success + RPC `{success:false}` → one provider call, returns indeterminate. Provider ambiguity + RPC `{success:false}` → one provider call, returns indeterminate.
+
+### Files changed
+- `app/api/orders/[id]/tracking/route.ts` (check data.success === true)
+- `app/api/orders/[id]/tracking/__tests__/dispatch-boundary.test.ts` (2 new tests + rpc_reject option)
+- `CHANGELOG.md` (this entry)
+
+## 2026-09-01 — #247: Outcome persistence truth — check RPC result after dispatch
+
+### What changed
+- **Outcome persistence check:** `record_tracking_notification_outcome` RPC result is now inspected. If persistence fails after dispatch, route surfaces `indeterminate` instead of falsely reporting `sent`/`failed`. Durable row remains `dispatched` (fail-closed against resend).
+- **2 new behavioral tests:** provider success + outcome-write failure → one provider call, returns indeterminate. Provider exception + outcome-write failure → one provider call, returns indeterminate.
+
+### Files changed
+- `app/api/orders/[id]/tracking/route.ts` (check outcomeError, return indeterminate on failure)
+- `app/api/orders/[id]/tracking/__tests__/dispatch-boundary.test.ts` (2 new tests + outcomePersistBehavior option)
+- `CHANGELOG.md` (this entry)
+
+### Could break
+- Nothing — only changes the reported status when an outcome write fails (previously silently lost).
+
+## 2026-09-01 — #247: Preflight failure persistence — no fake claim_token=NULL
+
+### What changed
+- **Preflight failure handling:** Removed invalid `record_tracking_notification_outcome(p_claim_token=NULL)` call on preflight failure. The RPC requires a matching claim token + `status='dispatched'`, neither of which exist pre-claim. Notification now stays in `pending` (retryable) and returns typed `preflight_failed` status.
+- Tests updated to assert `preflight_failed` status and verify notification row remains in retryable pre-dispatch state.
+
+### Files changed
+- `app/api/orders/[id]/tracking/route.ts` (preflight failure returns `preflight_failed`, no invalid RPC call)
+- `app/api/orders/[id]/tracking/__tests__/dispatch-boundary.test.ts` (updated preflight failure assertions)
+- `app/api/orders/[id]/tracking/__tests__/tracking-edit.test.ts` (updated mock setup + assertion)
+- `CHANGELOG.md` (this entry)
+
+### Could break
+- API consumers expecting `notification.status === 'failed'` for preflight failures now receive `'preflight_failed'`. Both are non-success.
+
+## 2026-08-31 — #247: Notification dispatch/recovery boundary correction
+
+### What changed
+- **Dispatch barrier restructure:** `app/api/orders/[id]/tracking/route.ts` — ALL preflight work (order DB lookup, phone validation, business name lookup, channel resolution, message construction) now completes BEFORE crossing the durable dispatch barrier. Previously, preflight DB lookups happened AFTER dispatch, meaning the barrier was crossed before all local work was complete.
+- **Single-attempt provider send:** After the dispatch barrier, exactly ONE provider API call is made with `noRetry: true`. No automatic retry on network errors, no template-to-text fallback on ambiguous template outcomes. Ambiguous outcomes (network error, 5xx, timeout) are persisted as `indeterminate` requiring reconciliation.
+- **noRetry support for sendText:** `lib/channels/message-sender.ts` — Added `noRetry` option to the `sendText` interface and `MetaCloudSender.sendText()` implementation, matching the existing `sendTemplate` support. When `noRetry: true`, bypasses the `withRetry` wrapper to prevent duplicate Meta POSTs.
+- **Preflight failure recording:** Deterministic preflight failures (no phone, no channel, order lookup failure) now record outcome as `failed` via `record_tracking_notification_outcome` RPC without claiming or dispatching, making them safely retryable.
+- **Behavioral dispatch-boundary tests:** `app/api/orders/[id]/tracking/__tests__/dispatch-boundary.test.ts` — 8 tests proving provider-call counts: successful send (1 call), network error (1 call + indeterminate), definitive template failure (1 call + no text fallback), text-only send (1 call + noRetry), no-phone preflight failure (0 calls), no-channel preflight failure (0 calls), concurrent worker claim denial (0 additional calls), new revision independently dispatchable.
+- **Existing test fixes:** Updated `tracking-edit.test.ts` mock setup to use `vi.hoisted()` and `mockReset()` per-mock to avoid vitest hoisting/queue-leak issues. Updated notification test expectations to reflect preflight-before-claim ordering.
+
+### Key invariants preserved
+- tracking_revision incremented under FOR UPDATE lock (no COUNT(*)+1)
+- tracking_mutation + audit_log + notification_intent commit atomically
+- shipped_at preserved after first shipment
+- Notification identity = (order_id, tracking_revision)
+- Post-dispatch unknown: recorded as indeterminate, NOT blind resend
+- Notification failure does NOT roll back tracking edit
+
+### Key invariants added
+- Dispatch barrier is crossed ONLY after all local/non-provider preflight is complete
+- At most ONE provider send attempt per logical revision after dispatch
+- No template-to-text fallback after ambiguous template outcome
+- Retrying same revision after dispatched/indeterminate produces zero additional calls
+
+### Files changed
+- `app/api/orders/[id]/tracking/route.ts` (modified — restructured notification dispatch)
+- `lib/channels/message-sender.ts` (modified — added noRetry to sendText interface + impl)
+- `app/api/orders/[id]/tracking/__tests__/tracking-edit.test.ts` (modified — mock setup fixes)
+- `app/api/orders/[id]/tracking/__tests__/dispatch-boundary.test.ts` (new — 8 behavioral tests)
+- `CHANGELOG.md` (this entry)
+
+### Could break
+- If any other code uses `sendTrackingWhatsApp` or `dispatchTrackingNotification` directly — these are file-private functions, so no external callers exist.
+- The `sendText` interface change adds an optional `noRetry` field — fully backwards-compatible (existing callers don't pass it, get retry behavior unchanged).
+- Normal messaging elsewhere in the codebase is NOT affected — only the tracking notification path uses `noRetry: true`.
+
+## 2026-08-31 — #247: Editable order tracking with durable notification (Phase 1)
+
+### What changed
+- **Migration 360:** Added `tracking_revision` column to `orders` table (integer, default 0). Created `order_tracking_notifications` table for durable notification intents with claim/dispatch/outcome lifecycle. Created four SECURITY DEFINER RPCs: `update_order_tracking` (atomic tracking mutation + audit log + notification intent), `claim_tracking_notification`, `mark_tracking_notification_dispatched`, `record_tracking_notification_outcome`. All RPCs use `SET search_path = ''` and fully-qualified `public.` references. All granted to `service_role` only.
+- **New API route:** `PATCH /api/orders/[id]/tracking` — authenticates user, enforces `ordering/manage_existing` capability, calls `update_order_tracking` RPC atomically, then dispatches notification through claim/dispatch/send/outcome lifecycle. Notification failure does NOT roll back the committed tracking edit.
+- **DB tests:** `lib/__tests__/acc-247-editable-tracking-db.test.ts` — 11 tests against real migrated schema covering: concurrent edits, serialized edits with distinct revisions, no-op detection, shipped_at preservation, cross-business denial, revision monotonicity, notification lifecycle, draft/cancelled rejection, no-op with pending notification.
+- **API tests:** `app/api/orders/[id]/tracking/__tests__/tracking-edit.test.ts` — 11 tests covering auth, capability guard, RPC error mapping, no-op, material change, notification dispatch, and notification failure isolation.
+
+### Key invariants
+- tracking_revision incremented under FOR UPDATE lock (no COUNT(*)+1)
+- tracking_mutation + audit_log + notification_intent commit atomically
+- shipped_at preserved after first shipment
+- Notification identity = (order_id, tracking_revision)
+- Pre-dispatch: reclaimable after 2-minute lease expiry
+- Post-dispatch unknown: recorded as indeterminate, NOT blind resend
+- Notification failure does NOT roll back tracking edit
+
+### Files changed
+- `supabase/migrations/360_editable_order_tracking.sql` (new)
+- `app/api/orders/[id]/tracking/route.ts` (new)
+- `lib/__tests__/acc-247-editable-tracking-db.test.ts` (new)
+- `app/api/orders/[id]/tracking/__tests__/tracking-edit.test.ts` (new)
+- `CHANGELOG.md` (this entry)
+
+### Could break
+- The existing `POST /api/orders/tracking` route is unchanged — no regression to existing tracking flow.
+- The new `tracking_revision` column defaults to 0, so existing orders are unaffected.
+- If any code does `SELECT *` on orders and destructures strictly, the new column could cause issues — but this is unlikely with TypeScript.
+
 ### feat(255): commercial config versioning — immutable platform_config_versions (C-1)
 
 - **Date:** 2026-09-01
