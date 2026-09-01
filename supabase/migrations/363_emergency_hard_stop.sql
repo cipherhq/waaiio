@@ -47,14 +47,30 @@ CREATE TRIGGER trg_suspension_audit_no_delete
   EXECUTE FUNCTION public.prevent_suspension_audit_mutation();
 
 -- ── 3. Column-protection trigger on businesses ──
--- Prevents any non-superuser from modifying messaging_suspended directly.
--- Preserves owners' ability to update all other columns.
+-- Allows messaging_suspended mutation only by the trusted DB-owner role
+-- (the role that owns toggle_messaging_suspension — typically postgres or
+-- supabase_admin depending on the hosting environment).
+-- Application roles (authenticated, service_role, anon) are always blocked.
+-- This is production-compatible: Supabase project postgres is non-superuser
+-- but owns all SECURITY DEFINER application functions.
 
 CREATE OR REPLACE FUNCTION public.guard_messaging_suspended()
 RETURNS TRIGGER AS $$
+DECLARE
+  v_trusted_owner TEXT;
 BEGIN
   IF NEW.messaging_suspended IS DISTINCT FROM OLD.messaging_suspended THEN
-    IF NOT (SELECT rolsuper FROM pg_roles WHERE rolname = current_user) THEN
+    -- The trusted boundary is the owner of toggle_messaging_suspension().
+    -- Only that role (the DB migration owner) may mutate this column.
+    SELECT r.rolname INTO v_trusted_owner
+      FROM pg_proc p
+      JOIN pg_namespace n ON p.pronamespace = n.oid
+      JOIN pg_roles r ON p.proowner = r.oid
+     WHERE n.nspname = 'public'
+       AND p.proname = 'toggle_messaging_suspension'
+     LIMIT 1;
+
+    IF v_trusted_owner IS NULL OR current_user != v_trusted_owner THEN
       RAISE EXCEPTION 'messaging_suspended can only be modified via toggle_messaging_suspension()';
     END IF;
   END IF;

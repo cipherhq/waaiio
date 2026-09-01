@@ -341,4 +341,94 @@ describe.skipIf(!canRun)('Emergency Hard-Stop DB Tests (#256 S-1)', () => {
     `);
     expect(err).toContain('Business not found');
   });
+
+  // ── Production-shaped: non-superuser function owner ──
+
+  it('15. Production-shaped: non-superuser DB-owner can toggle via SECURITY DEFINER', () => {
+    // Simulate production Supabase: create a non-superuser role that owns
+    // the toggle function (like project postgres which is NOT superuser).
+    // The guard allows mutation from the function owner, not from superuser.
+    psqlMayFail(`
+      DO $$ BEGIN CREATE ROLE _test_db_owner NOLOGIN NOSUPERUSER; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+      GRANT USAGE ON SCHEMA public TO _test_db_owner;
+      GRANT ALL ON public.businesses TO _test_db_owner;
+      GRANT ALL ON public.messaging_suspension_audit TO _test_db_owner;
+    `);
+
+    // Re-create toggle function owned by the non-superuser role
+    psql(`
+      ALTER FUNCTION public.toggle_messaging_suspension(UUID, BOOLEAN, TEXT) OWNER TO _test_db_owner;
+    `);
+
+    // Re-create guard function owned by same role (matches production: same owner for both)
+    psql(`
+      ALTER FUNCTION public.guard_messaging_suspended() OWNER TO _test_db_owner;
+    `);
+
+    // Admin toggle via the non-superuser-owned SECURITY DEFINER function should succeed
+    const result = psql(`
+      SELECT set_config('request.jwt.claims', '${ADMIN_CLAIMS}', false);
+      SET ROLE authenticated;
+      SELECT toggle_messaging_suspension('${BIZ_ID}'::uuid, true, 'Non-superuser owner test');
+      RESET ROLE;
+    `);
+    expect(result).toContain('"success": true');
+    expect(result).toContain('"changed": true');
+
+    const state = psql(`SELECT messaging_suspended FROM businesses WHERE id = '${BIZ_ID}';`);
+    expect(state).toBe('t');
+
+    // Resume
+    psql(`
+      SELECT set_config('request.jwt.claims', '${ADMIN_CLAIMS}', false);
+      SET ROLE authenticated;
+      SELECT toggle_messaging_suspension('${BIZ_ID}'::uuid, false, 'Resume');
+      RESET ROLE;
+    `);
+
+    // Restore ownership to current user for remaining tests
+    psqlMayFail(`
+      ALTER FUNCTION public.toggle_messaging_suspension(UUID, BOOLEAN, TEXT) OWNER TO CURRENT_USER;
+      ALTER FUNCTION public.guard_messaging_suspended() OWNER TO CURRENT_USER;
+    `);
+  });
+
+  it('16. Production-shaped: authenticated direct mutation still rejected with non-superuser owner', () => {
+    // Even with non-superuser function owner, direct mutation by app roles must be blocked
+    psqlMayFail(`
+      ALTER FUNCTION public.toggle_messaging_suspension(UUID, BOOLEAN, TEXT) OWNER TO _test_db_owner;
+      ALTER FUNCTION public.guard_messaging_suspended() OWNER TO _test_db_owner;
+    `);
+
+    const err = psqlMayFail(`
+      SELECT set_config('request.jwt.claims', '${OWNER_CLAIMS}', false);
+      SET ROLE authenticated;
+      UPDATE businesses SET messaging_suspended = true WHERE id = '${BIZ_ID}';
+      RESET ROLE;
+    `);
+    expect(err).toContain('toggle_messaging_suspension');
+
+    // service_role direct mutation also rejected
+    const svcErr = psqlMayFail(`
+      SET ROLE service_role;
+      UPDATE businesses SET messaging_suspended = true WHERE id = '${BIZ_ID}';
+      RESET ROLE;
+    `);
+    expect(svcErr).toContain('toggle_messaging_suspension');
+
+    // anon direct mutation also rejected
+    const anonErr = psqlMayFail(`
+      SET ROLE anon;
+      UPDATE businesses SET messaging_suspended = true WHERE id = '${BIZ_ID}';
+      RESET ROLE;
+    `);
+    // anon may get permission denied before reaching the trigger, either is acceptable
+    expect(anonErr.toLowerCase()).toMatch(/toggle_messaging_suspension|permission denied/);
+
+    // Restore ownership
+    psqlMayFail(`
+      ALTER FUNCTION public.toggle_messaging_suspension(UUID, BOOLEAN, TEXT) OWNER TO CURRENT_USER;
+      ALTER FUNCTION public.guard_messaging_suspended() OWNER TO CURRENT_USER;
+    `);
+  });
 });
