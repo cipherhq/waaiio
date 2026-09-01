@@ -396,19 +396,26 @@ describe.skipIf(!canRun)('Config Versioning DB Tests (#255 C-1)', () => {
   // Uses superuser-only DISABLE/ENABLE TRIGGER for test isolation.
 
   it('19. Effective-version resolution is deterministic', () => {
-    // Insert test versions (as superuser — allowed by insert guard)
+    // Use specific past timestamps to avoid interference from versions
+    // created by other tests. Query by exact timestamp, not NOW().
     psql(`
       INSERT INTO platform_config_versions (id, config_snapshot, effective_from, created_at) VALUES
-        ('a0000000-0000-0000-0000-000000000001', '{"test":"yesterday"}'::jsonb, NOW() - interval '1 day', NOW()),
-        ('a0000000-0000-0000-0000-000000000002', '{"test":"hour_ago"}'::jsonb, NOW() - interval '1 hour', NOW()),
-        ('a0000000-0000-0000-0000-000000000003', '{"test":"recent"}'::jsonb, NOW() - interval '1 second', NOW());
+        ('a0000000-0000-0000-0000-000000000001', '{"test":"old"}'::jsonb, '2020-01-01T00:00:00Z'::timestamptz, NOW()),
+        ('a0000000-0000-0000-0000-000000000002', '{"test":"mid"}'::jsonb, '2020-06-01T00:00:00Z'::timestamptz, NOW()),
+        ('a0000000-0000-0000-0000-000000000003', '{"test":"recent"}'::jsonb, '2020-12-01T00:00:00Z'::timestamptz, NOW());
     `);
 
-    const current = psql("SELECT get_effective_config(NOW())::text;");
-    expect(current).toBe('a0000000-0000-0000-0000-000000000003');
+    // Query at 2020-12-15 → returns t3 (2020-12-01)
+    const latest = psql("SELECT get_effective_config('2020-12-15T00:00:00Z'::timestamptz)::text;");
+    expect(latest).toBe('a0000000-0000-0000-0000-000000000003');
 
-    const mid = psql("SELECT get_effective_config(NOW() - interval '23 hours')::text;");
-    expect(mid).toBe('a0000000-0000-0000-0000-000000000001');
+    // Query at 2020-03-01 → returns t1 (2020-01-01)
+    const early = psql("SELECT get_effective_config('2020-03-01T00:00:00Z'::timestamptz)::text;");
+    expect(early).toBe('a0000000-0000-0000-0000-000000000001');
+
+    // Query at 2020-08-01 → returns t2 (2020-06-01)
+    const mid = psql("SELECT get_effective_config('2020-08-01T00:00:00Z'::timestamptz)::text;");
+    expect(mid).toBe('a0000000-0000-0000-0000-000000000002');
 
     // Cleanup: superuser-only trigger bypass for test isolation
     psql(`
