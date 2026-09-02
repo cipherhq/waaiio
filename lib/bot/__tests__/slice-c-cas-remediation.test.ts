@@ -568,54 +568,71 @@ describe('refund-request: real two-turn 7a→7b proof (Finding 3)', () => {
     expect(sendText2).toHaveBeenCalledWith('+2341234567890', expect.stringContaining('reason'));
   });
 
-  it('stale Turn 2: version_conflict on 7b → zero sends, store row unchanged at winner version', async () => {
+  it('stale Turn 2: version_conflict on 7b → zero sends, shared row unchanged at winner state', async () => {
     const { handleRefundRequest } = await import('../handlers/refund-request');
 
-    // ── SETUP: shared store at post-7a state (version 6) ──
-    // The store represents the DB row after Turn 1 (7a) succeeded and wrote refund_payments.
-    // This mirrors the shared store from the success test above.
-    const store: {
-      version: number;
-      session_data: Record<string, unknown>;
-      current_step: string;
-    } = {
+    // ── ONE SHARED DURABLE ROW: both winner and stale worker operate on this ──
+    // Starts at post-7a state (version 6), then winner advances it to version 7.
+    const sharedRow = {
       version: 6,
+      business_id: 'biz-1',
+      session_data: {
+        refund_payments: {
+          refund_1: { id: 'pay-1', amount: 5000, currency: 'NGN', refundAmount: 0, businessId: 'biz-1', bookingId: 'bk-1' },
+        },
+      } as Record<string, unknown>,
+      current_step: 'refund_select',
+    };
+
+    // ── WINNER executes first: advances sharedRow to version 7 ──
+    sharedRow.version = 7;
+    sharedRow.session_data = { ...sharedRow.session_data, refund_selected: 'refund_1' };
+    sharedRow.current_step = 'refund_reason';
+
+    // Snapshot the complete winner tuple for post-stale comparison
+    const winnerSnapshot = {
+      version: sharedRow.version,
+      business_id: sharedRow.business_id,
+      current_step: sharedRow.current_step,
+      session_data: { ...sharedRow.session_data },
+    };
+
+    // ── STALE WORKER: loaded the row at version 6 (before winner wrote) ──
+    const session2Stale = makeSession({
+      version: 6,                        // stale — behind the winner
+      current_step: 'refund_select',     // stale — winner already moved to refund_reason
       session_data: {
         refund_payments: {
           refund_1: { id: 'pay-1', amount: 5000, currency: 'NGN', refundAmount: 0, businessId: 'biz-1', bookingId: 'bk-1' },
         },
       },
-      current_step: 'refund_select',
-    };
-
-    // ── WINNER: another concurrent worker already advanced the store to version 7 ──
-    // Winner changed current_step to 'refund_reason' and set refund_selected.
-    const winnerStore: {
-      version: number;
-      session_data: Record<string, unknown>;
-      current_step: string;
-    } = {
-      version: 7,
-      session_data: {
-        ...store.session_data,
-        refund_selected: 'refund_1',
-      },
-      current_step: 'refund_reason',
-    };
-
-    // ── STALE WORKER: constructs session from pre-winner store state (version 6) ──
-    const session2Stale = makeSession({
-      version: store.version,         // 6 — what stale worker loaded before winner wrote
-      current_step: store.current_step,
-      session_data: { ...store.session_data },
     });
 
-    // Stale worker's 7b CAS returns version_conflict (winner already at version 7)
-    const rpcStale = vi.fn().mockResolvedValue({ data: { success: false, reason: 'version_conflict' }, error: null });
-    const supabaseStale = {
-      rpc: rpcStale,
-      from: vi.fn(() => ({ select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis() })),
-    } as any;
+    // CAS mock: compares p_expected_version against sharedRow.version (genuine version check)
+    const allMutations: Array<{ table: string; op: string; args: unknown[] }> = [];
+    const rpcStale = vi.fn().mockImplementation((_rpcName: string, params: Record<string, unknown>) => {
+      if (_rpcName === 'update_session_cas') {
+        const expectedVersion = params.p_expected_version as number;
+        if (expectedVersion !== sharedRow.version) {
+          // Version mismatch → conflict (stale worker expected 6, sharedRow is at 7)
+          return Promise.resolve({ data: { success: false, reason: 'version_conflict' }, error: null });
+        }
+        // Would succeed — mutate the shared row (shouldn't reach here for stale worker)
+        sharedRow.version++;
+        sharedRow.current_step = params.p_current_step as string;
+        sharedRow.session_data = params.p_session_data as Record<string, unknown>;
+        return Promise.resolve({ data: { success: true, version: sharedRow.version }, error: null });
+      }
+      return Promise.resolve({ data: null, error: null });
+    });
+    const fromSpy = vi.fn().mockImplementation(() => {
+      const chain: Record<string, any> = {};
+      for (const m of ['select', 'eq', 'update', 'delete', 'insert']) chain[m] = vi.fn().mockReturnValue(chain);
+      chain.single = vi.fn().mockResolvedValue({ data: null, error: null });
+      chain.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
+      return chain;
+    });
+    const supabaseStale = { rpc: rpcStale, from: fromSpy } as any;
     const sendTextStale = makeSendText();
     const messageSenderStale = makeMessageSender() as any;
 
@@ -626,20 +643,21 @@ describe('refund-request: real two-turn 7a→7b proof (Finding 3)', () => {
     expect(messageSenderStale.sendButtons).not.toHaveBeenCalled();
     expect(messageSenderStale.sendList).not.toHaveBeenCalled();
 
-    // Assert 2: zero secondary writes — only the failed CAS RPC was called, no further mutations
-    const rpcCalls = rpcStale.mock.calls;
-    const casCalls = rpcCalls.filter((c: any[]) => c[0] === 'update_session_cas');
-    expect(casCalls).toHaveLength(1); // only the one failed CAS, no retry/fallback write
+    // Assert 2: only one CAS RPC call, no retry/fallback/secondary writes
+    const casCalls = rpcStale.mock.calls.filter((c: any[]) => c[0] === 'update_session_cas');
+    expect(casCalls).toHaveLength(1);
+    // No bot_sessions mutations via .from()
+    const sessionMutations = fromSpy.mock.calls.filter((c: any[]) => c[0] === 'bot_sessions');
+    expect(sessionMutations).toHaveLength(0);
 
-    // Assert 3: session.version unchanged — stale worker stays at version 6, not adopted from conflict
+    // Assert 3: stale worker's session object unchanged at version 6
     expect(session2Stale.version).toBe(6);
 
-    // Assert 4: winner's store row unchanged — version still 7, still has winner's refund_selected
-    // (The stale worker's failed CAS does not mutate the store — DB atomicity guarantees this.
-    //  We verify the winner store state is consistent with what the winner wrote.)
-    expect(winnerStore.version).toBe(7);
-    expect(winnerStore.session_data).toHaveProperty('refund_selected', 'refund_1');
-    expect(winnerStore.current_step).toBe('refund_reason');
+    // Assert 4: shared row is EXACTLY the winner's tuple — stale CAS did NOT mutate it
+    expect(sharedRow.version).toBe(winnerSnapshot.version);
+    expect(sharedRow.business_id).toBe(winnerSnapshot.business_id);
+    expect(sharedRow.current_step).toBe(winnerSnapshot.current_step);
+    expect(sharedRow.session_data).toEqual(winnerSnapshot.session_data);
   });
 });
 
@@ -1318,7 +1336,7 @@ describe('BotService runtime: quick_rebook CAS (Finding 3)', () => {
     expect(msgs.length).toBeGreaterThan(0);
   });
 
-  it('CAS conflict → silent return, no message dispatched, winner store state unchanged', async () => {
+  it('CAS conflict → silent return, no message, no continuation, no secondary mutation', async () => {
     const session = {
       id: 'sess-qrebook-002',
       whatsapp_number: BS_PHONE,
@@ -1340,43 +1358,59 @@ describe('BotService runtime: quick_rebook CAS (Finding 3)', () => {
       version: 7,
     };
 
-    // Model a winner session: another worker already advanced to version 9 with select_date
-    const winnerStore = {
+    // ── SHARED SESSION MODEL: winner already advanced this row ──
+    const sharedSession = {
       version: 9,
+      business_id: 'biz-cas',
       current_step: 'select_date',
       session_data: { ...session.session_data, _rebook_winner: true },
     };
+    const winnerSnapshot = { ...sharedSession, session_data: { ...sharedSession.session_data } };
 
     const { supabase, standalone, intelligence, rpcSpy } = makeBotServiceMocks({
       session,
       casResponse: { success: false, reason: 'version_conflict' },
     });
 
+    // Track all bot_sessions mutations via from()
+    const sessionMutations: string[] = [];
+    const origFrom = supabase.from;
+    supabase.from = vi.fn().mockImplementation((table: string) => {
+      const chain = origFrom(table);
+      if (table === 'bot_sessions') {
+        for (const op of ['update', 'delete', 'insert']) {
+          const origOp = chain[op];
+          chain[op] = vi.fn().mockImplementation((...args: any[]) => {
+            sessionMutations.push(op);
+            return origOp(...args);
+          });
+        }
+      }
+      return chain;
+    });
+
     const sender = createCaptureSender();
     const bot = new BotService(supabase, sender, standalone, intelligence);
     await bot.handleMessage(BS_PHONE, 'quick_rebook', 'button', undefined, 'biz-cas');
 
-    // The quick_rebook CAS was called (2nd update_session_cas call) with select_date
+    // CAS ordering: refresh succeeded (version 8), rebook CAS conflicted
     const casCalls = rpcSpy.mock.calls.filter((c: any[]) => c[0] === 'update_session_cas');
-    expect(casCalls.length).toBeGreaterThanOrEqual(2);
-    // 2nd CAS is quick_rebook — must use p_expected_version = 8 (post-CAP-001 refresh version)
+    expect(casCalls.length).toBe(2); // exactly refresh + failed target CAS
     expect(casCalls[1][1]).toMatchObject({
       p_current_step: 'select_date',
-      p_expected_version: 8, // CAP-001 refresh returned initialVersion+1 = 8
+      p_expected_version: 8,
     });
-    // Silent exit on conflict — no WhatsApp message sent to customer
+
+    // Zero messages — silent loser, no continuation ran
     expect(sender.getMessages()).toHaveLength(0);
-    // Version adoption is proved via the call chain (p_expected_version: 8 in casCalls[1])
-    // BotService creates an internal session copy so the test's session.version is not mutated
 
-    // Zero secondary bot_sessions writes after the conflict: only the 2 CAS calls exist (refresh + failed)
-    // No FlowExecutor/handler continuation occurred — no third CAS call
-    const allCasCallsAfterConflict = rpcSpy.mock.calls.filter((c: any[]) => c[0] === 'update_session_cas');
-    expect(allCasCallsAfterConflict).toHaveLength(2); // only refresh + failed target CAS
+    // Zero direct bot_sessions mutations after the losing CAS (no update/delete/insert)
+    expect(sessionMutations).toHaveLength(0);
 
-    // Winner store state unchanged — the failed CAS did not mutate the winner's row
-    expect(winnerStore.version).toBe(9);
-    expect(winnerStore.current_step).toBe('select_date');
+    // Shared session model unchanged — loser CAS did not mutate the winner's row
+    expect(sharedSession.version).toBe(winnerSnapshot.version);
+    expect(sharedSession.current_step).toBe(winnerSnapshot.current_step);
+    expect(sharedSession.session_data).toEqual(winnerSnapshot.session_data);
   });
 
   it('CAS RPC transport error → throws (fail-closed, no message before throw)', async () => {
@@ -1500,7 +1534,7 @@ describe('BotService runtime: browse_menu CAS (Finding 4)', () => {
     // BotService creates an internal session copy — version adoption proved via the call chain above
   });
 
-  it('CAS conflict → silent return, no message dispatched, winner store state unchanged', async () => {
+  it('CAS conflict → silent return, no message, no continuation, no secondary mutation', async () => {
     const session = {
       id: 'sess-browse-002',
       whatsapp_number: BS_PHONE,
@@ -1520,16 +1554,35 @@ describe('BotService runtime: browse_menu CAS (Finding 4)', () => {
       version: 4,
     };
 
-    // Model a winner session: another concurrent worker already wrote at version 6
-    const winnerStore = {
+    // ── SHARED SESSION MODEL: winner already advanced this row ──
+    const sharedSession = {
       version: 6,
+      business_id: 'biz-cas',
       current_step: 'select_capability',
       session_data: { ...session.session_data, _browse_winner: true },
     };
+    const winnerSnapshot = { ...sharedSession, session_data: { ...sharedSession.session_data } };
 
     const { supabase, standalone, intelligence, rpcSpy } = makeBotServiceMocks({
       session,
       casResponse: { success: false, reason: 'version_conflict' },
+    });
+
+    // Track bot_sessions mutations
+    const sessionMutations: string[] = [];
+    const origFrom = supabase.from;
+    supabase.from = vi.fn().mockImplementation((table: string) => {
+      const chain = origFrom(table);
+      if (table === 'bot_sessions') {
+        for (const op of ['update', 'delete', 'insert']) {
+          const origOp = chain[op];
+          chain[op] = vi.fn().mockImplementation((...args: any[]) => {
+            sessionMutations.push(op);
+            return origOp(...args);
+          });
+        }
+      }
+      return chain;
     });
 
     const sender = createCaptureSender();
@@ -1537,25 +1590,19 @@ describe('BotService runtime: browse_menu CAS (Finding 4)', () => {
     await bot.handleMessage(BS_PHONE, 'browse_menu', 'button', undefined, 'biz-cas');
 
     const casCalls = rpcSpy.mock.calls.filter((c: any[]) => c[0] === 'update_session_cas');
-    expect(casCalls.length).toBeGreaterThanOrEqual(2);
-    // 2nd CAS is browse_menu — must use p_expected_version = 5 (post-CAP-001 refresh version)
+    expect(casCalls).toHaveLength(2); // exactly refresh + failed target CAS
     expect(casCalls[1][1]).toMatchObject({
       p_current_step: 'select_capability',
-      p_expected_version: 5, // CAP-001 refresh returned initialVersion+1 = 5
+      p_expected_version: 5,
     });
-    // Silent exit on conflict — no WhatsApp message sent
+    // Zero messages — silent loser, no continuation
     expect(sender.getMessages()).toHaveLength(0);
-    // BotService creates an internal session copy — no session.version mutation on the test reference
-    // Version non-adoption is proved: conflict response does NOT feed into subsequent RPC calls
-
-    // Zero secondary bot_sessions writes after the conflict: only 2 CAS calls (refresh + failed browse_menu)
-    // No FlowExecutor/capability-selection continuation occurred
-    const allCasAfterConflict = rpcSpy.mock.calls.filter((c: any[]) => c[0] === 'update_session_cas');
-    expect(allCasAfterConflict).toHaveLength(2); // refresh + failed target only
-
-    // Winner store state unchanged — the stale worker's failed CAS did not mutate the winner row
-    expect(winnerStore.version).toBe(6);
-    expect(winnerStore.current_step).toBe('select_capability');
+    // Zero direct bot_sessions mutations
+    expect(sessionMutations).toHaveLength(0);
+    // Shared session model unchanged
+    expect(sharedSession.version).toBe(winnerSnapshot.version);
+    expect(sharedSession.current_step).toBe(winnerSnapshot.current_step);
+    expect(sharedSession.session_data).toEqual(winnerSnapshot.session_data);
   });
 
   it('CAS RPC transport error → throws (fail-closed)', async () => {
@@ -1718,7 +1765,7 @@ describe('BotService runtime: apply_correction CAS (Finding 5)', () => {
     expect(hasConfirmation).toBe(true);
   });
 
-  it('CAS conflict → silent return, no sendText called, winner store state unchanged', async () => {
+  it('CAS conflict → silent return, no message, no continuation, no secondary mutation', async () => {
     vi.mocked(loadConversationConfig).mockResolvedValue({
       aiEnabled: true, autoRouteThreshold: 0.85, clarificationThreshold: 0.60,
       fallbackBehavior: 'menu', faqEnabled: false, knowledgeEnabled: false,
@@ -1757,41 +1804,55 @@ describe('BotService runtime: apply_correction CAS (Finding 5)', () => {
       version: 3,
     };
 
+    // ── SHARED SESSION MODEL: winner already applied the correction ──
+    const sharedSession = {
+      version: 5,
+      business_id: 'biz-cas',
+      current_step: 'select_time',
+      session_data: { ...session.session_data, date: 'Friday' },
+    };
+    const winnerSnapshot = { ...sharedSession, session_data: { ...sharedSession.session_data } };
+
     const { supabase, standalone, intelligence, rpcSpy } = makeBotServiceMocks({
       session,
       casResponse: { success: false, reason: 'version_conflict' },
+    });
+
+    // Track bot_sessions mutations
+    const sessionMutations: string[] = [];
+    const origFrom = supabase.from;
+    supabase.from = vi.fn().mockImplementation((table: string) => {
+      const chain = origFrom(table);
+      if (table === 'bot_sessions') {
+        for (const op of ['update', 'delete', 'insert']) {
+          const origOp = chain[op];
+          chain[op] = vi.fn().mockImplementation((...args: any[]) => {
+            sessionMutations.push(op);
+            return origOp(...args);
+          });
+        }
+      }
+      return chain;
     });
 
     const sender = createCaptureSender();
     const bot = new BotService(supabase, sender, standalone, intelligence);
     await bot.handleMessage(BS_PHONE, 'actually change the date to Friday', 'text', undefined, 'biz-cas');
 
-    // The correction CAS must have been called (2nd update_session_cas call)
     const casCalls = rpcSpy.mock.calls.filter((c: any[]) => c[0] === 'update_session_cas');
-    expect(casCalls.length).toBeGreaterThanOrEqual(2);
-    // 2nd CAS is correction — must use p_expected_version = 4 (post-CAP-001 refresh version)
+    expect(casCalls).toHaveLength(2); // exactly refresh + failed correction CAS
     expect(casCalls[1][1]).toMatchObject({
       p_current_step: 'select_time',
-      p_expected_version: 4, // CAP-001 refresh returned initialVersion+1 = 3+1 = 4
+      p_expected_version: 4,
     });
-    // Silent exit on conflict — no confirmation message sent
+    // Zero messages — silent loser, no continuation
     expect(sender.getMessages()).toHaveLength(0);
-    // BotService creates an internal session copy — no session.version mutation on the test reference
-    // Version non-adoption is proved: conflict response does NOT feed into subsequent RPC calls
-
-    // Zero secondary bot_sessions writes after the conflict: only 2 CAS calls (refresh + failed correction)
-    const allCasAfterConflict = rpcSpy.mock.calls.filter((c: any[]) => c[0] === 'update_session_cas');
-    expect(allCasAfterConflict).toHaveLength(2); // refresh + failed target only
-
-    // Model a winner: another concurrent session already applied the correction at version 5
-    // (the stale worker's failed CAS did not mutate this winner state)
-    const winnerStore = {
-      version: 5,
-      current_step: 'select_time',
-      session_data: { date: 'Friday' }, // winner applied the correction
-    };
-    expect(winnerStore.version).toBe(5);
-    expect(winnerStore.session_data.date).toBe('Friday'); // winner's correction persisted
+    // Zero direct bot_sessions mutations
+    expect(sessionMutations).toHaveLength(0);
+    // Shared session model unchanged — winner's correction persisted
+    expect(sharedSession.version).toBe(winnerSnapshot.version);
+    expect(sharedSession.current_step).toBe(winnerSnapshot.current_step);
+    expect(sharedSession.session_data).toEqual(winnerSnapshot.session_data);
   });
 
   it('CAS RPC transport error → throws (fail-closed)', async () => {
@@ -1983,20 +2044,25 @@ describe('BotService CAS result types (Finding 3)', () => {
       const msgs = sender.getMessages();
       const allText = msgs.map(m => (m as any).text || '').join(' ').toLowerCase();
 
+      const { captureException } = await import('@sentry/nextjs');
+
       if (tc.expectSilent) {
-        // version_conflict → silent loser: exactly zero messages
+        // version_conflict → silent loser: exactly zero messages, zero continuation
         expect(msgs).toHaveLength(0);
+        // No Sentry error boundary for version_conflict (expected operational path)
       } else {
         // session_not_found / unknown / malformed / transport error →
-        // BotService top-level catch sends the exact generic recovery message:
-        // "Something went wrong on our end. Send *Hi* to start over."
+        // BotService top-level catch sends the exact generic recovery message
         expect(msgs.length).toBeGreaterThan(0);
         const recoveryText = msgs.map(m => (m as any).text || '').join(' ');
-        expect(recoveryText).toContain('Something went wrong');
+        // Exact recovery text — not a partial match
+        expect(recoveryText).toBe('Something went wrong on our end. Send *Hi* to start over.');
         // Must NOT contain success-path continuation content
         expect(recoveryText).not.toContain('select a date');
         expect(recoveryText).not.toContain('pick a date');
         expect(recoveryText).not.toContain('Got it');
+        // Error boundary signal: Sentry.captureException was called for the CAS failure
+        expect(captureException).toHaveBeenCalled();
       }
     });
   }

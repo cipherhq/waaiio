@@ -1,4 +1,4 @@
--- Migration 363: Extend update_session_cas with optional p_business_id
+-- Migration 364: Extend update_session_cas with optional p_business_id
 --
 -- Replaces the 6-arg overload (migration 236) with a single 7-arg authority
 -- that includes p_business_id UUID DEFAULT NULL.
