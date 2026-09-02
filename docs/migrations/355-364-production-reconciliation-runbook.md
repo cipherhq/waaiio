@@ -171,12 +171,14 @@ curl -s -X POST "https://api.supabase.com/v1/projects/${SUPABASE_REF}/database/q
 |--------------|-------------|---------------|-------|--------|
 | 200 | Present | Present | **Committed** | Proceed to next migration |
 | 200 | Absent | Absent | **Not committed** (unexpected) | STOP — post evidence |
-| Non-200 (SQL error) | Absent | Absent | **Rolled back** | Fix root cause, retry |
+| Non-200 (confirmed SQL error) | Absent | Absent | **Rolled back** (confirmed) | Fix root cause, retry after postconditions confirm no committed state |
 | Ambiguous (timeout/5xx) | Present | Present | **Committed** | Proceed |
-| Ambiguous (timeout/5xx) | Absent | Absent | **Rolled back** | Fix root cause, retry |
-| Any | Present | Absent (or vice versa) | **Split state** | STOP — manual investigation required |
-
-If postconditions show split state (ledger present but objects absent, or vice versa), STOP immediately and post exact evidence to Issue #218. Do not retry.
+| Ambiguous (timeout/5xx) | Absent | Absent | **UNKNOWN** | DO NOT RETRY — STOP for provider/connection reconciliation |
+| Ambiguous (timeout/5xx) | Present | Absent (or vice versa) | **UNKNOWN (split)** | DO NOT RETRY — STOP — manual investigation required |
+For any ambiguous transport outcome (timeout, proxy 5xx, client disconnect), the only
+safe conclusion is **Committed** when both ledger and all migration objects are confirmed
+present. All other ambiguous outcomes are **UNKNOWN** — do not retry, do not proceed.
+Post exact evidence to Issue #218 and wait for provider/connection reconciliation.
 
 ## Application Order
 
