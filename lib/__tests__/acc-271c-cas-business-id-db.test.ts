@@ -300,7 +300,7 @@ describe('#271c CAS business_id PostgreSQL', () => {
         'execute'
       )::text;
     `);
-    expect(result).toBe('t');
+    expect(result).toMatch(/^(t|true)$/);
   });
 
   it('ACL: anon does NOT have EXECUTE privilege on update_session_cas', () => {
@@ -313,7 +313,7 @@ describe('#271c CAS business_id PostgreSQL', () => {
         'execute'
       )::text;
     `);
-    expect(result).toBe('f');
+    expect(result).toMatch(/^(f|false)$/);
   });
 
   it('ACL: authenticated does NOT have EXECUTE privilege on update_session_cas', () => {
@@ -326,7 +326,7 @@ describe('#271c CAS business_id PostgreSQL', () => {
         'execute'
       )::text;
     `);
-    expect(result).toBe('f');
+    expect(result).toMatch(/^(f|false)$/);
   });
 
   it('6-arg call resolves to 7-arg function (p_business_id defaults to NULL)', () => {
