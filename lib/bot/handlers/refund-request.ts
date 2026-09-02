@@ -134,12 +134,16 @@ async function handleRefundSelect(
     }
 
     // Save payment map to session (CAS 7a)
-    const { data: cas7a } = await supabase.rpc('update_session_cas', {
+    const { data: cas7a, error: cas7aError } = await supabase.rpc('update_session_cas', {
       p_session_id: session.id,
       p_expected_version: session.version ?? 0,
       p_current_step: session.current_step,
       p_session_data: { ...session.session_data, refund_payments: paymentMap },
     });
+    if (cas7aError) {
+      logger.error('[REFUND_REQUEST] CAS 7a RPC error:', cas7aError.message);
+      throw cas7aError;
+    }
     if (!cas7a?.success) return; // CAS loser — silent exit
     session.version = cas7a.version;
 
@@ -172,7 +176,7 @@ async function handleRefundSelect(
   const selected = paymentMap[input];
 
   // Store selected payment and move to reason step (CAS 7b — uses version from 7a)
-  const { data: cas7b } = await supabase.rpc('update_session_cas', {
+  const { data: cas7b, error: cas7bError } = await supabase.rpc('update_session_cas', {
     p_session_id: session.id,
     p_expected_version: session.version, // from 7a's returned version
     p_current_step: 'refund_reason',
@@ -181,6 +185,10 @@ async function handleRefundSelect(
       refund_selected: selected,
     },
   });
+  if (cas7bError) {
+    logger.error('[REFUND_REQUEST] CAS 7b RPC error:', cas7bError.message);
+    throw cas7bError;
+  }
   if (!cas7b?.success) return; // CAS loser — silent exit
   session.version = cas7b.version;
 

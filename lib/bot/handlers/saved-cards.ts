@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { BotSession } from '../bot-types';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
+import { logger } from '@/lib/logger';
 
 /**
  * Handle "save card" command — finds the most recent payment authorization
@@ -205,15 +206,23 @@ export async function handleCardPinStep(
   const phoneP = from.startsWith('+') ? from : `+${from}`;
 
   if (!auth?.authorization_code || !businessId) {
-    await sendText(from, 'Something went wrong. Please type *save card* again.');
-    const { data: casPinResult } = await supabase.rpc('update_session_cas', {
+    // 1. Execute CAS first — before sending anything
+    const { data: casPinResult, error: casPinError } = await supabase.rpc('update_session_cas', {
       p_session_id: session.id,
       p_expected_version: session.version ?? 0,
       p_current_step: 'select_capability',
       p_session_data: {},
     });
-    if (casPinResult?.success) session.version = casPinResult.version;
-    // CAS failure here is acceptable — error message already sent, session reset is best-effort
+    // 2. RPC transport error — throw so the outer error boundary handles it
+    if (casPinError) {
+      logger.error('[SAVED_CARDS] PIN-failure reset CAS RPC error:', casPinError.message);
+      throw casPinError;
+    }
+    // 3. CAS conflict — another message won the race; silent exit, ZERO sends
+    if (!casPinResult?.success) return;
+    // 4. CAS won — update local version then send the recovery message
+    session.version = casPinResult.version;
+    await sendText(from, 'Something went wrong. Please type *save card* again.');
     return;
   }
 

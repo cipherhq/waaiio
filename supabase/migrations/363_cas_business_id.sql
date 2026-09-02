@@ -1,8 +1,23 @@
 -- Migration 363: Extend update_session_cas with optional p_business_id
--- Allows atomic business_id + current_step + session_data transition
--- for the rebook-after-cancel path (Slice C, #271).
+--
+-- Replaces the 6-arg overload (migration 236) with a single 7-arg authority
+-- that includes p_business_id UUID DEFAULT NULL.
+--
+-- When p_business_id IS NULL (default): preserves existing business_id.
+-- When non-null: atomically updates business_id with the session transition.
+--
+-- Existing callers that pass 6 args continue to work because the 7th
+-- parameter has a DEFAULT value. There is exactly one function authority
+-- after this migration.
+--
+-- Refs: #281, #271
 
-CREATE OR REPLACE FUNCTION update_session_cas(
+-- 1. Drop the old 6-arg overload so we don't leave two competing authorities.
+--    The new 7-arg version with DEFAULT NULL handles all existing call patterns.
+DROP FUNCTION IF EXISTS public.update_session_cas(UUID, BIGINT, TEXT, JSONB, JSONB, TEXT[]);
+
+-- 2. Create the single canonical update_session_cas with p_business_id
+CREATE OR REPLACE FUNCTION public.update_session_cas(
   p_session_id UUID,
   p_expected_version BIGINT,
   p_current_step TEXT,
@@ -52,8 +67,8 @@ BEGIN
 END;
 $$;
 
--- Preserve existing grants
-REVOKE ALL ON FUNCTION update_session_cas(UUID, BIGINT, TEXT, JSONB, JSONB, TEXT[], UUID) FROM PUBLIC;
-REVOKE ALL ON FUNCTION update_session_cas(UUID, BIGINT, TEXT, JSONB, JSONB, TEXT[], UUID) FROM anon;
-REVOKE ALL ON FUNCTION update_session_cas(UUID, BIGINT, TEXT, JSONB, JSONB, TEXT[], UUID) FROM authenticated;
-GRANT EXECUTE ON FUNCTION update_session_cas(UUID, BIGINT, TEXT, JSONB, JSONB, TEXT[], UUID) TO service_role;
+-- 3. Lock down the single canonical signature — service_role only
+REVOKE ALL ON FUNCTION public.update_session_cas(UUID, BIGINT, TEXT, JSONB, JSONB, TEXT[], UUID) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.update_session_cas(UUID, BIGINT, TEXT, JSONB, JSONB, TEXT[], UUID) FROM anon;
+REVOKE ALL ON FUNCTION public.update_session_cas(UUID, BIGINT, TEXT, JSONB, JSONB, TEXT[], UUID) FROM authenticated;
+GRANT EXECUTE ON FUNCTION public.update_session_cas(UUID, BIGINT, TEXT, JSONB, JSONB, TEXT[], UUID) TO service_role;

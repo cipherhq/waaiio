@@ -2061,12 +2061,16 @@ export class BotService {
       // Initialize step history so "back"/"cancel" works correctly
       session.session_data._step_history = ['select_capability', firstStep];
 
-      const { data: casResult } = await this.supabase.rpc('update_session_cas', {
+      const { data: casResult, error: casResultError } = await this.supabase.rpc('update_session_cas', {
         p_session_id: session.id,
         p_expected_version: session.version ?? 0,
         p_current_step: firstStep,
         p_session_data: session.session_data,
       });
+      if (casResultError) {
+        logger.error('[QUICK_REBOOK] CAS RPC error:', casResultError.message);
+        throw casResultError;
+      }
       if (!casResult?.success) return; // CAS loser — silent exit
       session.version = casResult.version;
 
@@ -2091,12 +2095,16 @@ export class BotService {
         // Greeting already stored — will be used by capability selection
       }
       session.current_step = 'select_capability';
-      const { data: casMenuResult } = await this.supabase.rpc('update_session_cas', {
+      const { data: casMenuResult, error: casMenuError } = await this.supabase.rpc('update_session_cas', {
         p_session_id: session.id,
         p_expected_version: session.version ?? 0,
         p_current_step: 'select_capability',
         p_session_data: session.session_data,
       });
+      if (casMenuError) {
+        logger.error('[BROWSE_MENU] CAS RPC error:', casMenuError.message);
+        throw casMenuError;
+      }
       if (!casMenuResult?.success) return; // CAS loser — silent exit
       session.version = casMenuResult.version;
       // Execute the flow to show the capability menu
@@ -2632,12 +2640,16 @@ export class BotService {
               session.session_data || {},
               correction,
             );
-            const { data: casCorrResult } = await this.supabase.rpc('update_session_cas', {
+            const { data: casCorrResult, error: casCorrError } = await this.supabase.rpc('update_session_cas', {
               p_session_id: session.id,
               p_expected_version: session.version ?? 0,
               p_current_step: session.current_step,
               p_session_data: updatedData,
             });
+            if (casCorrError) {
+              logger.error('[CORRECTION] CAS RPC error:', casCorrError.message);
+              throw casCorrError;
+            }
             if (!casCorrResult?.success) return; // CAS loser — silent exit
             session.version = casCorrResult.version;
             await this.sendText(

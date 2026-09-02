@@ -3,6 +3,7 @@ import type { MessageSender } from '@/lib/channels/message-sender';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
 import { truncTitle } from '../utils/truncate';
 import type { BotSession } from '../bot-types';
+import { logger } from '@/lib/logger';
 
 // ── Pure helpers ─────────────────────────────────────────
 
@@ -154,12 +155,16 @@ export async function handleMyOrders(
     }
     session.session_data.selected_order_id = orderId;
     session.current_step = 'order_detail';
-    const { data: casOrderResult } = await supabase.rpc('update_session_cas', {
+    const { data: casOrderResult, error: casOrderError } = await supabase.rpc('update_session_cas', {
       p_session_id: session.id,
       p_expected_version: session.version ?? 0,
       p_current_step: 'order_detail',
       p_session_data: session.session_data,
     });
+    if (casOrderError) {
+      logger.error('[MY_ORDERS] order-selection CAS RPC error:', casOrderError.message);
+      throw casOrderError;
+    }
     if (!casOrderResult?.success) return; // CAS loser — silent exit
     session.version = casOrderResult.version;
     await handleOrderDetail(supabase, messageSender, sendText, session, from, orderId);

@@ -3,31 +3,22 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
-### feat(256): emergency messaging hard-stop — per-business suspension (S-1)
-
-- **Date:** 2026-09-01
-- **Migration 363:** `363_emergency_hard_stop.sql` — `businesses.messaging_suspended` column, column-protection trigger, `toggle_messaging_suspension()` SECURITY DEFINER RPC with atomic audit, `messaging_suspension_audit` append-only table.
-- **Runtime:** `lib/channels/send-guard.ts` — `assertMessagingAllowed()` checked at every business-scoped Meta /messages egress. Fail-closed on DB error, missing row, NULL, or ambiguous identity.
-- **Refs:** #256, #250
-
-## 2026-08-31 — #271 Slice C: Full Active-Session CAS Remediation
+## 2026-09-02 — #271 Slice C: Full Active-Session CAS Remediation
 
 ### What changed
-- **Migration 364:** Extended `update_session_cas` RPC with optional `p_business_id` parameter for atomic business_id + step + session_data transitions (rebook-after-cancel path).
-- **bot.service.ts:** Converted 3 bare `.update()` calls to CAS: quick-rebook (L2066), browse-menu fallback (L2092), correction mutation (L2631). CAS loser = silent exit, no customer message.
-- **my-bookings.ts:** Converted 2 bare `.update()` calls to CAS: booking selection (L135) and rebook-after-cancel with `p_business_id` (L581).
-- **my-orders.ts:** Converted 1 bare `.update()` call to CAS: order selection (L157).
-- **refund-request.ts:** Converted 2 bare `.update()` calls to CAS: payment-map write (7a, L137) and reason-step write (7b, L170). 7a's returned version feeds 7b.
-- **saved-cards.ts:** Converted 1 bare `.update()` call to CAS: PIN-failure reset (L209). Error message sent before CAS (best-effort reset).
-- **Tests:** Unit tests for all 9 CAS paths (success + failure). DB tests for CAS business_id extension, version conflict, and ACL.
-- **CI:** Added Migration 364 DB test step to `.github/workflows/ci.yml`.
+- **Migration 363:** Drops the old 6-arg `update_session_cas` overload (migration 236) and replaces it with a single 7-arg authority including `p_business_id UUID DEFAULT NULL`. Existing callers passing 6 args continue to work via the default parameter. `pg_proc` audit proves exactly one function signature exists.
+- **9 bare `.update()` calls converted to CAS:** quick-rebook, browse-menu fallback, correction mutation (bot.service.ts); booking selection, rebook-after-cancel with `p_business_id` (my-bookings.ts); order selection (my-orders.ts); payment-map 7a + reason-step 7b with version chain (refund-request.ts); PIN-failure reset (saved-cards.ts).
+- **CAS loser = silent exit:** Every converted path exits with zero customer messages, zero secondary mutations on CAS conflict. PIN-failure reset sends recovery message only AFTER CAS success.
+- **RPC error ≠ CAS conflict:** Every caller destructures both `{ data, error }`. RPC/transport errors throw (propagating to existing operational error boundaries). Only `{ success: false, reason: 'version_conflict' }` gets the silent CAS-loser path.
+- **Refund 7a→7b:** 7a and 7b are separate customer turns. Each uses the freshly loaded session version. Tests model the two-turn reload.
+- **Rebook-after-cancel:** `business_id`, `current_step`, `session_data` transition atomically in one CAS via `p_business_id`. Real PostgreSQL proof shows stale CAS changes none of the fields.
 
 ### What could break
-- If `update_session_cas` RPC is not deployed (migration 364 not applied), the new `p_business_id` parameter will cause a PostgreSQL error. The existing 6-parameter overload from migration 236 is replaced by the 7-parameter version.
-- Handlers that previously raced silently will now have the losing worker exit without sending a message. This is the desired behavior — the winning worker handles the customer.
+- Migration 363 replaces the 6-arg `update_session_cas` with a 7-arg version. The old overload is dropped. Existing callers passing 6 args resolve correctly via DEFAULT NULL.
+- Handlers that previously raced silently will now have the losing worker exit without sending a message. This is the desired behavior.
 
 ### Files changed
-- `supabase/migrations/364_cas_business_id.sql` (new)
+- `supabase/migrations/363_cas_business_id.sql` (new)
 - `lib/bot/bot.service.ts`
 - `lib/bot/handlers/my-bookings.ts`
 - `lib/bot/handlers/my-orders.ts`

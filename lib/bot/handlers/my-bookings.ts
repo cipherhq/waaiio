@@ -132,12 +132,16 @@ export async function handleMyBookings(
       return;
     }
     session.session_data.selected_booking_id = bookingId;
-    const { data: casBookingResult } = await supabase.rpc('update_session_cas', {
+    const { data: casBookingResult, error: casBookingError } = await supabase.rpc('update_session_cas', {
       p_session_id: session.id,
       p_expected_version: session.version ?? 0,
       p_current_step: 'modify_booking',
       p_session_data: session.session_data,
     });
+    if (casBookingError) {
+      logger.error('[MY_BOOKINGS] booking-selection CAS RPC error:', casBookingError.message);
+      throw casBookingError;
+    }
     if (!casBookingResult?.success) return; // CAS loser — silent exit
     session.version = casBookingResult.version;
     await handleModifyBooking(supabase, messageSender, sendText, flowExecutor, session, from, '');
@@ -582,13 +586,17 @@ export async function handleModifyBooking(
       .eq('business_id', biz.id)
       .eq('is_active', false);
 
-    const { data: casRebookResult } = await supabase.rpc('update_session_cas', {
+    const { data: casRebookResult, error: casRebookError } = await supabase.rpc('update_session_cas', {
       p_session_id: session.id,
       p_expected_version: session.version ?? 0,
       p_current_step: 'select_date',
       p_session_data: sessionData,
       p_business_id: biz.id,
     });
+    if (casRebookError) {
+      logger.error('[MY_BOOKINGS] rebook-after-cancel CAS RPC error:', casRebookError.message);
+      throw casRebookError;
+    }
     if (!casRebookResult?.success) return; // CAS loser — silent exit
     session.version = casRebookResult.version;
     session.session_data = sessionData;
