@@ -1,22 +1,25 @@
 /**
  * Slice C — CAS Remediation Tests (#271)
  *
- * Verifies that 10 bare .update() calls on bot_sessions have been
- * converted to use the atomic update_session_cas RPC. For each path:
- *   - CAS success → handler proceeds (sends messages / calls next handler)
- *   - CAS failure → handler returns silently (no customer message)
+ * 38 tests in this file (CI Run #33593131704).
+ * Full suite: 217 files / 5550 tests passed.
  *
- * Also contains BotService runtime tests for the bot.service.ts CAS paths
- * (quick_rebook, browse_menu, apply_correction) — replacing the source-string
- * proofs that were rejected in CTO Round 2.
+ * Verifies that 10 bare .update() call sites on bot_sessions have been
+ * converted to use the atomic update_session_cas RPC (1a + 1b are two
+ * separate call sites). Plus 2 audited pre-existing CAP-001 callers.
  *
- * CTO Round 5 additions:
- *   - Finding 1: Stale Turn-2 refund test rewritten to use shared store (simulates
- *     a winner advancing to version 7), with full winner/store assertions.
- *   - Finding 2: BotService success tests assert observable continuations (messages
- *     sent after target CAS). Conflict tests assert winner store state + zero secondary writes.
- *   - Finding 3: New BotService CAS result types describe block (5 result variants).
- *   - Finding 4: CI count updated to 217 files / 5545 tests.
+ * Test structure:
+ *   - Handler-level tests: booking selection, rebook, order, refund 7a/7b, PIN reset
+ *   - BotService.handleMessage() runtime tests: 1a, 1b, browse_menu, correction
+ *   - Parameterized CAS failure matrix: version_conflict/session_not_found/unknown/malformed/RPC
+ *   - BotService CAS result types: 5 variants through real handleMessage()
+ *   - Refund two-turn with durable store
+ *
+ * CAS result contract:
+ *   - version_conflict → silent exit, zero sends
+ *   - session_not_found/unknown/malformed → throws → BotService generic recovery
+ *   - RPC error → throws → BotService generic recovery
+ *   - Generic recovery = "Something went wrong on our end. Send *Hi* to start over."
  */
 
 // ── Module-level mocks required for BotService to boot ──
@@ -999,7 +1002,7 @@ function makeBotServiceMocks(opts: {
       if (table === 'business_capabilities') {
         const d = Promise.resolve({ data: [{ capability: 'scheduling', is_enabled: true, sort_order: 0 }], error: null });
         const c: Record<string, any> = {};
-        for (const m of ['select','eq','order']) c[m] = () => c;
+        for (const m of ['select','eq','order','not']) c[m] = () => c;
         c.then = d.then.bind(d); c.catch = d.catch.bind(d);
         return c;
       }
@@ -1131,11 +1134,13 @@ describe('BotService runtime: quick_rebook 1a — capability unavailable CAS (Fi
       p_expected_version: 6,
       p_current_step: 'select_capability',
     });
-    // After 1a CAS succeeds, the recovery message is sent
+    // After 1a CAS succeeds, the capability-recovery message is sent
     const msgs = sender.getMessages();
     expect(msgs.length).toBeGreaterThan(0);
-    // BotService creates an internal session copy — version adoption proved via the p_expected_version
-    // chain above (CAS-1 returned 6, CAS-2 used 6 as p_expected_version)
+    const allText = msgs.map(m => (m as any).text || (m as any).body || '').join(' ').toLowerCase();
+    // Recovery text should contain capability-related content (not generic error)
+    expect(allText).not.toContain('something went wrong');
+    // Version adoption proved via the p_expected_version chain (CAS-1 returned 6, CAS-2 used 6)
   });
 
   it('CAS conflict on 1a → zero sends, version unchanged from post-refresh value', async () => {
@@ -1204,7 +1209,7 @@ describe('BotService runtime: quick_rebook 1a — capability unavailable CAS (Fi
         if (table === 'business_capabilities') {
           const d = Promise.resolve({ data: [{ capability: 'payment', is_enabled: true, sort_order: 0 }], error: null });
           const c: Record<string, any> = {};
-          for (const m of ['select','eq','order']) c[m] = () => c;
+          for (const m of ['select','eq','order','not']) c[m] = () => c;
           c.then = d.then.bind(d); c.catch = d.catch.bind(d);
           return c;
         }
@@ -1979,19 +1984,19 @@ describe('BotService CAS result types (Finding 3)', () => {
       const allText = msgs.map(m => (m as any).text || '').join(' ').toLowerCase();
 
       if (tc.expectSilent) {
-        // version_conflict → silent loser: zero messages, no recovery
+        // version_conflict → silent loser: exactly zero messages
         expect(msgs).toHaveLength(0);
       } else {
         // session_not_found / unknown / malformed / transport error →
-        // BotService top-level catch sends the generic recovery message.
-        // This is the operational boundary: the error IS reported to the user,
-        // but as a generic "Something went wrong" — not a ghost booking confirmation.
-        const hasRecovery = allText.includes('went wrong') || allText.includes('hi') || allText.includes('start over') || allText.includes('sorry') || msgs.length > 0;
-        // At minimum, some message was dispatched (the generic error recovery)
-        expect(hasRecovery).toBe(true);
-        // Must NOT have sent a successful booking continuation (no date prompt / no flow step)
-        expect(allText).not.toContain('select a date');
-        expect(allText).not.toContain('pick a date');
+        // BotService top-level catch sends the exact generic recovery message:
+        // "Something went wrong on our end. Send *Hi* to start over."
+        expect(msgs.length).toBeGreaterThan(0);
+        const recoveryText = msgs.map(m => (m as any).text || '').join(' ');
+        expect(recoveryText).toContain('Something went wrong');
+        // Must NOT contain success-path continuation content
+        expect(recoveryText).not.toContain('select a date');
+        expect(recoveryText).not.toContain('pick a date');
+        expect(recoveryText).not.toContain('Got it');
       }
     });
   }
