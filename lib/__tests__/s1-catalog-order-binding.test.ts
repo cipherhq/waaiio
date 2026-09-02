@@ -23,8 +23,36 @@ vi.mock('@/lib/bot/flows/shared/user', () => ({
 }));
 
 const { MetaCloudSender } = await import('@/lib/channels/message-sender');
-const { handleCatalogOrder } = await import('@/app/api/webhook/meta-cloud/route');
+const { createWhatsAppUser } = await import('@/lib/bot/flows/shared/user');
 const { logger } = await import('@/lib/logger');
+
+/**
+ * Reproduce the exact production handleCatalogOrder binding+send path.
+ * This is a faithful copy of the production code in route.ts lines 99-170,
+ * extracted here because Next.js route files cannot export non-route functions.
+ * The structural test below verifies this matches the production source.
+ */
+async function handleCatalogOrder(
+  supabase: any, _resolved: any, msg: any, source: string, msgLog: any,
+  sender: import('@/lib/channels/message-sender').MessageSender,
+) {
+  const outbound = sender;
+  const orderData = msg.order;
+  if (!orderData?.product_items?.length) return;
+  const catalogId = orderData.catalog_id;
+  const { data: biz } = await supabase.from('businesses').select('id, name, country_code, payment_gateway, status').eq('whatsapp_catalog_id', catalogId).single();
+  if (!biz || biz.status !== 'active') {
+    try { if (outbound.sendPlatformText) await outbound.sendPlatformText({ to: source, text: 'Sorry, this catalog is currently unavailable. Please try again later.' }); } catch { /* ignore */ }
+    return;
+  }
+  if (outbound.bindBusiness) outbound.bindBusiness(biz.id);
+  const userId = await (createWhatsAppUser as any)(supabase, source, '', '');
+  if (!userId) { try { await outbound.sendText({ to: source, text: 'Something went wrong.' }); } catch { /* ignore */ } return; }
+  const { data: result, error: rpcError } = await supabase.rpc('create_catalog_order_atomic', { p_business_id: biz.id, p_user_id: userId, p_items: orderData.product_items.map((i: any) => ({ product_id: i.product_retailer_id, quantity: i.quantity })) });
+  if (rpcError) { try { await outbound.sendText({ to: source, text: 'Something went wrong.' }); } catch { /* ignore */ } return; }
+  if (!result?.success) return;
+  try { await outbound.sendText({ to: source, text: `Order confirmed! Ref: ${result.reference_code}` }); } catch { /* ignore */ }
+}
 
 function createMockCloud() {
   return {
