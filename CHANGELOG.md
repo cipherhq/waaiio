@@ -7,11 +7,12 @@ If something breaks, check this log to find what changed and when.
 
 ### What changed
 - **Migration 363:** Drops the old 6-arg `update_session_cas` overload (migration 236) and replaces it with a single 7-arg authority including `p_business_id UUID DEFAULT NULL`. Existing callers passing 6 args continue to work via the default parameter. `pg_proc` audit proves exactly one function signature exists.
-- **9 bare `.update()` calls converted to CAS:** quick-rebook, browse-menu fallback, correction mutation (bot.service.ts); booking selection, rebook-after-cancel with `p_business_id` (my-bookings.ts); order selection (my-orders.ts); payment-map 7a + reason-step 7b with version chain (refund-request.ts); PIN-failure reset (saved-cards.ts).
-- **CAS loser = silent exit:** Every converted path exits with zero customer messages, zero secondary mutations on CAS conflict. PIN-failure reset sends recovery message only AFTER CAS success.
-- **RPC error ≠ CAS conflict:** Every caller destructures both `{ data, error }`. RPC/transport errors throw (propagating to existing operational error boundaries). Only `{ success: false, reason: 'version_conflict' }` gets the silent CAS-loser path.
-- **Refund 7a→7b:** 7a and 7b are separate customer turns. Each uses the freshly loaded session version. Tests model the two-turn reload.
-- **Rebook-after-cancel:** `business_id`, `current_step`, `session_data` transition atomically in one CAS via `p_business_id`. Real PostgreSQL proof shows stale CAS changes none of the fields.
+- **10 bare `.update()` calls converted to CAS:** quick-rebook 1a (capability-unavailable) + 1b (confirm), browse-menu fallback, correction mutation (bot.service.ts); booking selection, rebook-after-cancel with `p_business_id` (my-bookings.ts); order selection (my-orders.ts); payment-map 7a + reason-step 7b (refund-request.ts); PIN-failure reset (saved-cards.ts).
+- **Pre-existing CAP-001 CAS callers audited:** Lines 700/714 in bot.service.ts now destructure `{ data, error }` and check `reason === 'version_conflict'` explicitly.
+- **CAS result contract:** `version_conflict` → silent exit. `session_not_found` / unknown / malformed → throws to operational error boundary. RPC transport errors → throws.
+- **Rebook pre-CAS delete moved after CAS:** Inactive-session cleanup runs only after CAS wins. Stale loser performs zero persistent mutations.
+- **Refund 7a→7b:** Separate customer turns. Turn 1 persists N+1, Turn 2 reloads at N+1. Executable two-turn proof.
+- **Rebook-after-cancel:** business_id + current_step + session_data in one atomic CAS. PG proof: stale CAS leaves complete session_data unchanged (full JSONB equality).
 
 ### What could break
 - Migration 363 replaces the 6-arg `update_session_cas` with a 7-arg version. The old overload is dropped. Existing callers passing 6 args resolve correctly via DEFAULT NULL.

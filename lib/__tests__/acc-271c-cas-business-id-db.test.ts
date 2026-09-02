@@ -186,19 +186,23 @@ describe('#271c CAS business_id PostgreSQL', () => {
     expect(rebook).toBe('true');
   });
 
-  it('rebook: stale expected_version leaves all columns unchanged', () => {
-    // Fetch current state
+  it('rebook: stale expected_version leaves all columns unchanged — session_data exact string equality (Finding 4)', () => {
+    // Fetch current state including session_data as text for exact equality comparison
     const snapshot = runSQL(`
-      SELECT business_id, current_step, version FROM public.bot_sessions WHERE id = '${SESSION_ID}';
+      SELECT business_id, current_step, version, session_data::text
+      FROM public.bot_sessions WHERE id = '${SESSION_ID}';
     `);
-    const [bizBefore, stepBefore, verBefore] = snapshot.split('|');
+    const parts = snapshot.split('|');
+    const [bizBefore, stepBefore, verBefore] = parts;
+    // session_data::text is everything after the 3rd pipe
+    const sessionDataBefore = parts.slice(3).join('|');
 
     // Pass a stale expected_version to trigger conflict
     const staleVersion = Number(verBefore) - 1;
     const result = runSQL(`
       SELECT update_session_cas(
         '${SESSION_ID}'::UUID, ${staleVersion}::BIGINT,
-        'inject_step', '{"injected": true}'::JSONB,
+        'inject_step', '{"injected": true, "extra_key": "should_not_appear"}'::JSONB,
         NULL::JSONB, NULL::TEXT[],
         '${BIZ_B}'::UUID
       );
@@ -207,19 +211,23 @@ describe('#271c CAS business_id PostgreSQL', () => {
     expect(parsed.success).toBe(false);
     expect(parsed.reason).toBe('version_conflict');
 
-    // Row must be entirely unchanged — business_id, current_step, version, AND session_data
+    // Row must be entirely unchanged — including exact session_data bytes
     const after = runSQL(`
-      SELECT business_id, current_step, version,
-             (session_data->>'injected') IS NULL AS no_injected_key
+      SELECT business_id, current_step, version, session_data::text
       FROM public.bot_sessions WHERE id = '${SESSION_ID}';
     `);
-    // Verify core columns match the pre-conflict snapshot
-    const [bizAfter, stepAfter, verAfter] = after.split('|');
+    const afterParts = after.split('|');
+    const [bizAfter, stepAfter, verAfter] = afterParts;
+    const sessionDataAfter = afterParts.slice(3).join('|');
+
     expect(bizAfter).toBe(bizBefore);
     expect(stepAfter).toBe(stepBefore);
     expect(verAfter).toBe(verBefore);
-    // session_data must not have been mutated (no 'injected' key written)
-    expect(after).toContain('t'); // no_injected_key = true
+    // session_data must not have been mutated — exact text equality, not just key presence check
+    expect(sessionDataAfter).toBe(sessionDataBefore);
+    // Redundant sanity check: the injected key must not appear
+    expect(sessionDataAfter).not.toContain('injected');
+    expect(sessionDataAfter).not.toContain('should_not_appear');
   });
 
   // ── pg_proc signature audit (Finding 3) ───────────────────────────────────
@@ -245,6 +253,100 @@ describe('#271c CAS business_id PostgreSQL', () => {
         AND p.proname = 'update_session_cas';
     `);
     expect(argCount).toBe('7');
+  });
+
+  // ── Catalog/ACL/resolution proof (Task 5 / Finding 5) ────────────────────
+
+  it('update_session_cas argument names and types (catalog proof)', () => {
+    // Verifies the function has the exact 7-arg signature we expect
+    const args = runSQL(`
+      SELECT pg_get_function_arguments(oid)
+      FROM pg_proc
+      WHERE proname = 'update_session_cas'
+        AND pronamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'public');
+    `);
+    // Expected: p_session_id uuid, p_expected_version bigint, p_current_step text,
+    //           p_session_data jsonb, p_conversation_log jsonb, p_step_history text[],
+    //           p_business_id uuid
+    expect(args).toContain('p_session_id');
+    expect(args).toContain('p_expected_version');
+    expect(args).toContain('p_current_step');
+    expect(args).toContain('p_session_data');
+    expect(args).toContain('p_business_id');
+    expect(args).toContain('uuid');
+    expect(args).toContain('bigint');
+    expect(args).toContain('jsonb');
+  });
+
+  it('update_session_cas has 3 parameters with defaults (p_conversation_log, p_step_history, p_business_id)', () => {
+    // Only p_conversation_log, p_step_history, and p_business_id have defaults (DEFAULT NULL)
+    const defaultCount = runSQL(`
+      SELECT pronargdefaults::text
+      FROM pg_proc
+      WHERE proname = 'update_session_cas'
+        AND pronamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'public');
+    `);
+    // pronargdefaults is the number of parameters that have defaults
+    expect(Number(defaultCount)).toBe(3);
+  });
+
+  it('ACL: service_role has EXECUTE privilege on update_session_cas', () => {
+    const result = runSQL(`
+      SELECT has_function_privilege(
+        'service_role',
+        (SELECT oid FROM pg_proc
+         WHERE proname = 'update_session_cas'
+           AND pronamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'public')),
+        'execute'
+      )::text;
+    `);
+    expect(result).toBe('t');
+  });
+
+  it('ACL: anon does NOT have EXECUTE privilege on update_session_cas', () => {
+    const result = runSQL(`
+      SELECT has_function_privilege(
+        'anon',
+        (SELECT oid FROM pg_proc
+         WHERE proname = 'update_session_cas'
+           AND pronamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'public')),
+        'execute'
+      )::text;
+    `);
+    expect(result).toBe('f');
+  });
+
+  it('ACL: authenticated does NOT have EXECUTE privilege on update_session_cas', () => {
+    const result = runSQL(`
+      SELECT has_function_privilege(
+        'authenticated',
+        (SELECT oid FROM pg_proc
+         WHERE proname = 'update_session_cas'
+           AND pronamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'public')),
+        'execute'
+      )::text;
+    `);
+    expect(result).toBe('f');
+  });
+
+  it('6-arg call resolves to 7-arg function (p_business_id defaults to NULL)', () => {
+    // Calling with 6 explicit args (omitting p_business_id) should succeed
+    // and resolve to the 7-arg function via the default — not error with "wrong overload"
+    // We use a non-existent session UUID so we get session_not_found, proving the function resolved.
+    const result = runSQL(`
+      SELECT update_session_cas(
+        '00000000-0000-0000-0000-000000000000'::uuid,
+        0::bigint,
+        'test_step',
+        '{}'::jsonb,
+        NULL::jsonb,
+        NULL::text[]
+      );
+    `);
+    const parsed = JSON.parse(result);
+    // session_not_found → the function resolved correctly (7-arg with NULL p_business_id)
+    expect(parsed.success).toBe(false);
+    expect(parsed.reason).toBe('session_not_found');
   });
 });
 

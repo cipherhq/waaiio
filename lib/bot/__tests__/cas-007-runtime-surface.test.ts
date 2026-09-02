@@ -171,12 +171,14 @@ describe('CAS-007 STRUCTURAL: runtime surface wiring', () => {
     const source = readFileSync(resolve(ROOT, 'lib/bot/bot.service.ts'), 'utf-8');
     expect(source).toContain('policyResult.effective.includes(activeCap');
     expect(source).toContain('clearRejectedTransactionalState');
-    expect(source).toContain("if (!casResult?.success) return");
+    // CAS with version_conflict distinction (Slice C)
+    expect(source).toContain("casCapResult?.reason === 'version_conflict'");
   });
 
   it('13. Point A capability refresh uses CAS', () => {
     const source = readFileSync(resolve(ROOT, 'lib/bot/bot.service.ts'), 'utf-8');
-    expect(source).toContain("if (!refreshCas?.success) return");
+    // CAS with version_conflict distinction (Slice C)
+    expect(source).toContain("refreshCas?.reason === 'version_conflict'");
   });
 
   it('14. Point A fail-closed on policy read failure (all non-MANAGE_EXISTING)', () => {
