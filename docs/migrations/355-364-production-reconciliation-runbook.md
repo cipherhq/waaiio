@@ -1,4 +1,4 @@
-# Migration 355-363 Production Reconciliation Runbook
+# Migration 355-364 Production Reconciliation Runbook
 
 **All production steps require separate CTO/owner authorization.**
 
@@ -6,7 +6,7 @@
 - Last correct tracking: `354`
 - Migration 355 SQL: **applied** (schema objects present)
 - Migration 355 tracking: **INCORRECT** — recorded as `20260902052231`
-- 356-363: **not applied**; 358 intentionally absent
+- 356-364: **not applied**; 358 intentionally absent
 
 ## Pre-Repair Verification
 ```sql
@@ -42,7 +42,7 @@ Before applying, verify the exact pending set:
 ```bash
 supabase migration list --linked
 ```
-Expected pending: **356, 357, 359, 360, 361, 362, 363** (exactly 7).
+Expected pending: **356, 357, 359, 360, 361, 362, 363, 364** (exactly 8).
 If ANY other migration appears pending, STOP.
 
 Then verify with dry-run:
@@ -62,10 +62,10 @@ supabase db push --linked
 ### 1. Migration history completeness
 ```sql
 SELECT version FROM supabase_migrations.schema_migrations
-WHERE version ~ '^\d+$' AND version::int BETWEEN 355 AND 363
+WHERE version ~ '^\d+$' AND version::int BETWEEN 355 AND 364
 ORDER BY version::int;
 ```
-Expected: 355, 356, 357, 359, 360, 361, 362, 363 (exactly 8 rows; 358 intentionally absent).
+Expected: 355, 356, 357, 359, 360, 361, 362, 363, 364 (exactly 9 rows; 358 intentionally absent).
 
 No stale timestamp entries remain:
 ```sql
@@ -166,11 +166,13 @@ WHERE p.pronamespace = 'public'::regnamespace
     -- 363: hard-stop
     'prevent_suspension_audit_mutation',
     'guard_messaging_suspended',
-    'toggle_messaging_suspension'
+    'toggle_messaging_suspension',
+    -- 364: CAS business_id extension
+    'update_session_cas'
   )
 ORDER BY p.proname;
 ```
-Expected: 29 functions (5 from 355 + 4 from 356 + 1 from 357 + 5 from 359 + 4 from 360 + 4 from 361 + 3 from 362 + 3 from 363). All RPCs that mutate state must show `security_definer = true`. Trigger helpers (`prevent_*`, `guard_*`) do not require SECURITY DEFINER.
+Expected: 30 functions (5 from 355 + 4 from 356 + 1 from 357 + 5 from 359 + 4 from 360 + 4 from 361 + 3 from 362 + 3 from 363 + 1 from 364). All RPCs that mutate state must show `security_definer = true`. Trigger helpers (`prevent_*`, `guard_*`) do not require SECURITY DEFINER. Migration 364 replaces the 6-arg `update_session_cas` with a 7-arg version (`pronargs = 7`).
 
 ### 5. RLS enabled on new tables
 ```sql
@@ -271,11 +273,19 @@ WHERE p.pronamespace = 'public'::regnamespace
     'claim_webhook_event',
     'complete_webhook_event',
     'fail_webhook_event',
-    'cancel_booking_with_release'
+    'cancel_booking_with_release',
+    'update_session_cas'
   )
 ORDER BY p.proname;
 ```
 Expected: all show `auth_can_execute = false`, `service_can_execute = true`.
+
+### 9b. Migration 364 signature verification
+```sql
+SELECT proname, pronargs FROM pg_proc
+WHERE pronamespace = 'public'::regnamespace AND proname = 'update_session_cas';
+```
+Expected: 1 row, `pronargs = 7` (the 7-arg version with `p_business_id UUID DEFAULT NULL`).
 
 ### 10. Advisors / lint
 ```bash
