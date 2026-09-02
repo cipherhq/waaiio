@@ -1,8 +1,8 @@
 /**
  * Slice C — CAS Remediation Tests (#271)
  *
- * 38 tests in this file (CI Run #33593131704).
- * Full suite: 217 files / 5550 tests passed.
+ * 38 tests in this file.
+ * Full suite: 223 files / 5702 tests passed (CI run #33662774189).
  *
  * Verifies that 10 bare .update() call sites on bot_sessions have been
  * converted to use the atomic update_session_cas RPC (1a + 1b are two
@@ -568,11 +568,10 @@ describe('refund-request: real two-turn 7a→7b proof (Finding 3)', () => {
     expect(sendText2).toHaveBeenCalledWith('+2341234567890', expect.stringContaining('reason'));
   });
 
-  it('stale Turn 2: version_conflict on 7b → zero sends, shared row unchanged at winner state', async () => {
+  it('stale Turn 2: winner CAS advances shared row, stale CAS conflicts, zero sends, row unchanged', async () => {
     const { handleRefundRequest } = await import('../handlers/refund-request');
 
-    // ── ONE SHARED DURABLE ROW: both winner and stale worker operate on this ──
-    // Starts at post-7a state (version 6), then winner advances it to version 7.
+    // ── ONE SHARED DURABLE ROW: both winner and stale operate on this via CAS ──
     const sharedRow = {
       version: 6,
       business_id: 'biz-1',
@@ -584,12 +583,44 @@ describe('refund-request: real two-turn 7a→7b proof (Finding 3)', () => {
       current_step: 'refund_select',
     };
 
-    // ── WINNER executes first: advances sharedRow to version 7 ──
-    sharedRow.version = 7;
-    sharedRow.session_data = { ...sharedRow.session_data, refund_selected: 'refund_1' };
-    sharedRow.current_step = 'refund_reason';
+    // ── CAS authority: both winner and stale use this same mock ──
+    function makeSharedCasRpc() {
+      return vi.fn().mockImplementation((_rpcName: string, params: Record<string, unknown>) => {
+        if (_rpcName === 'update_session_cas') {
+          const expectedVersion = params.p_expected_version as number;
+          if (expectedVersion !== sharedRow.version) {
+            return Promise.resolve({ data: { success: false, reason: 'version_conflict' }, error: null });
+          }
+          sharedRow.version++;
+          sharedRow.current_step = params.p_current_step as string;
+          sharedRow.session_data = params.p_session_data as Record<string, unknown>;
+          return Promise.resolve({ data: { success: true, version: sharedRow.version }, error: null });
+        }
+        return Promise.resolve({ data: null, error: null });
+      });
+    }
 
-    // Snapshot the complete winner tuple for post-stale comparison
+    // ── WINNER Turn 2: executes handleRefundRequest → CAS advances row 6→7 ──
+    const rpcWinner = makeSharedCasRpc();
+    const supabaseWinner = {
+      rpc: rpcWinner,
+      from: vi.fn(() => ({ select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis() })),
+    } as any;
+    const sessionWinner = makeSession({
+      version: 6, current_step: 'refund_select',
+      session_data: { ...sharedRow.session_data },
+    });
+    const sendTextWinner = makeSendText();
+    const messageSenderWinner = makeMessageSender() as any;
+
+    await handleRefundRequest(supabaseWinner, messageSenderWinner, sendTextWinner, sessionWinner as any, '+2341234567890', 'refund_1');
+
+    // Winner CAS succeeded — row advanced
+    expect(sharedRow.version).toBe(7);
+    expect(sharedRow.current_step).toBe('refund_reason');
+    expect(sendTextWinner).toHaveBeenCalled(); // winner sent the reason prompt
+
+    // Snapshot the winner state for post-stale comparison
     const winnerSnapshot = {
       version: sharedRow.version,
       business_id: sharedRow.business_id,
@@ -597,34 +628,8 @@ describe('refund-request: real two-turn 7a→7b proof (Finding 3)', () => {
       session_data: { ...sharedRow.session_data },
     };
 
-    // ── STALE WORKER: loaded the row at version 6 (before winner wrote) ──
-    const session2Stale = makeSession({
-      version: 6,                        // stale — behind the winner
-      current_step: 'refund_select',     // stale — winner already moved to refund_reason
-      session_data: {
-        refund_payments: {
-          refund_1: { id: 'pay-1', amount: 5000, currency: 'NGN', refundAmount: 0, businessId: 'biz-1', bookingId: 'bk-1' },
-        },
-      },
-    });
-
-    // CAS mock: compares p_expected_version against sharedRow.version (genuine version check)
-    const allMutations: Array<{ table: string; op: string; args: unknown[] }> = [];
-    const rpcStale = vi.fn().mockImplementation((_rpcName: string, params: Record<string, unknown>) => {
-      if (_rpcName === 'update_session_cas') {
-        const expectedVersion = params.p_expected_version as number;
-        if (expectedVersion !== sharedRow.version) {
-          // Version mismatch → conflict (stale worker expected 6, sharedRow is at 7)
-          return Promise.resolve({ data: { success: false, reason: 'version_conflict' }, error: null });
-        }
-        // Would succeed — mutate the shared row (shouldn't reach here for stale worker)
-        sharedRow.version++;
-        sharedRow.current_step = params.p_current_step as string;
-        sharedRow.session_data = params.p_session_data as Record<string, unknown>;
-        return Promise.resolve({ data: { success: true, version: sharedRow.version }, error: null });
-      }
-      return Promise.resolve({ data: null, error: null });
-    });
+    // ── STALE Turn 2: loaded the row at version 6 (before winner wrote) ──
+    const rpcStale = makeSharedCasRpc();
     const fromSpy = vi.fn().mockImplementation(() => {
       const chain: Record<string, any> = {};
       for (const m of ['select', 'eq', 'update', 'delete', 'insert']) chain[m] = vi.fn().mockReturnValue(chain);
@@ -635,6 +640,14 @@ describe('refund-request: real two-turn 7a→7b proof (Finding 3)', () => {
     const supabaseStale = { rpc: rpcStale, from: fromSpy } as any;
     const sendTextStale = makeSendText();
     const messageSenderStale = makeMessageSender() as any;
+    const session2Stale = makeSession({
+      version: 6, current_step: 'refund_select',
+      session_data: {
+        refund_payments: {
+          refund_1: { id: 'pay-1', amount: 5000, currency: 'NGN', refundAmount: 0, businessId: 'biz-1', bookingId: 'bk-1' },
+        },
+      },
+    });
 
     await handleRefundRequest(supabaseStale, messageSenderStale, sendTextStale, session2Stale as any, '+2341234567890', 'refund_1');
 
@@ -643,9 +656,9 @@ describe('refund-request: real two-turn 7a→7b proof (Finding 3)', () => {
     expect(messageSenderStale.sendButtons).not.toHaveBeenCalled();
     expect(messageSenderStale.sendList).not.toHaveBeenCalled();
 
-    // Assert 2: only one CAS RPC call, no retry/fallback/secondary writes
-    const casCalls = rpcStale.mock.calls.filter((c: any[]) => c[0] === 'update_session_cas');
-    expect(casCalls).toHaveLength(1);
+    // Assert 2: stale CAS was called and got version_conflict
+    const staleCasCalls = rpcStale.mock.calls.filter((c: any[]) => c[0] === 'update_session_cas');
+    expect(staleCasCalls).toHaveLength(1);
     // No bot_sessions mutations via .from()
     const sessionMutations = fromSpy.mock.calls.filter((c: any[]) => c[0] === 'bot_sessions');
     expect(sessionMutations).toHaveLength(0);
@@ -949,11 +962,22 @@ describe('CAS result contract — all failure types (Finding 3)', () => {
 // These tests execute the actual code paths.
 // ──────────────────────────────────────────────────────────
 
-/** Builds a minimal BotService with controllable Supabase/sender/standalone/intelligence */
+/**
+ * Builds a minimal BotService with controllable Supabase/sender/standalone/intelligence.
+ *
+ * When `sharedRow` is provided, the target CAS (2nd update_session_cas call) compares
+ * p_expected_version against the sharedRow's version — conflict is genuine, not hard-coded.
+ * Winner execution advances the row; stale execution gets version_conflict.
+ *
+ * When `casResponse` is provided without `sharedRow`, the target CAS returns the hard-coded
+ * response (used for success tests and error-type tests).
+ */
 function makeBotServiceMocks(opts: {
   session: Record<string, unknown>;
   casResponse: { success: boolean; version?: number; reason?: string };
   businessId?: string;
+  sharedRow?: { version: number; current_step: string; session_data: Record<string, unknown> };
+  eventLog?: Array<{ event: string; detail?: string }>;
 }) {
   const bizId = opts.businessId ?? 'biz-cas';
   const business = {
@@ -972,13 +996,10 @@ function makeBotServiceMocks(opts: {
     status: 'active',
   };
 
-  // The bot calls rpc('get_bot_context') first (fast path when businessId is provided),
-  // then rpc('update_session_cas') twice:
-  //   1st: CAP-001 capability refresh (always succeeds, version bumped by 1)
-  //   2nd: the actual quick_rebook/browse_menu/correction CAS write (controlled by opts.casResponse)
+  const log = opts.eventLog || [];
   const initialVersion = (opts.session.version as number) ?? 0;
   let casCallCount = 0;
-  const rpcSpy = vi.fn().mockImplementation((rpcName: string) => {
+  const rpcSpy = vi.fn().mockImplementation((rpcName: string, params?: Record<string, unknown>) => {
     if (rpcName === 'get_bot_context') {
       return Promise.resolve({
         data: {
@@ -993,11 +1014,24 @@ function makeBotServiceMocks(opts: {
     }
     if (rpcName === 'update_session_cas') {
       casCallCount++;
+      log.push({ event: 'cas_call', detail: `#${casCallCount} v=${params?.p_expected_version} step=${params?.p_current_step}` });
       if (casCallCount === 1) {
         // First CAS: CAP-001 capability refresh — always succeeds with version + 1
         return Promise.resolve({ data: { success: true, version: initialVersion + 1 }, error: null });
       }
-      // Subsequent CAS calls: the test's target CAS (quick_rebook / browse_menu / correction)
+      // Target CAS: use sharedRow authority if provided, otherwise hard-coded response
+      if (opts.sharedRow) {
+        const expectedVersion = params?.p_expected_version as number;
+        if (expectedVersion !== opts.sharedRow.version) {
+          log.push({ event: 'cas_conflict', detail: `expected=${expectedVersion} actual=${opts.sharedRow.version}` });
+          return Promise.resolve({ data: { success: false, reason: 'version_conflict' }, error: null });
+        }
+        opts.sharedRow.version++;
+        opts.sharedRow.current_step = params?.p_current_step as string;
+        opts.sharedRow.session_data = params?.p_session_data as Record<string, unknown>;
+        log.push({ event: 'cas_success', detail: `new_version=${opts.sharedRow.version}` });
+        return Promise.resolve({ data: { success: true, version: opts.sharedRow.version }, error: null });
+      }
       return Promise.resolve({ data: opts.casResponse, error: null });
     }
     return Promise.resolve({ data: null, error: null });
@@ -1367,12 +1401,16 @@ describe('BotService runtime: quick_rebook CAS (Finding 3)', () => {
     };
     const winnerSnapshot = { ...sharedSession, session_data: { ...sharedSession.session_data } };
 
+    // Wire shared authority into CAS mock — conflict is genuine, not hard-coded
+    const eventLog: Array<{ event: string; detail?: string }> = [];
     const { supabase, standalone, intelligence, rpcSpy } = makeBotServiceMocks({
       session,
-      casResponse: { success: false, reason: 'version_conflict' },
+      casResponse: { success: true, version: 9 }, // unused — sharedRow authority decides
+      sharedRow: sharedSession,
+      eventLog,
     });
 
-    // Track all bot_sessions mutations via from()
+    // Track bot_sessions mutations
     const sessionMutations: string[] = [];
     const origFrom = supabase.from;
     supabase.from = vi.fn().mockImplementation((table: string) => {
@@ -1393,21 +1431,17 @@ describe('BotService runtime: quick_rebook CAS (Finding 3)', () => {
     const bot = new BotService(supabase, sender, standalone, intelligence);
     await bot.handleMessage(BS_PHONE, 'quick_rebook', 'button', undefined, 'biz-cas');
 
-    // CAS ordering: refresh succeeded (version 8), rebook CAS conflicted
+    // CAS conflict was genuine — event log proves version mismatch against shared authority
+    expect(eventLog.some(e => e.event === 'cas_conflict')).toBe(true);
     const casCalls = rpcSpy.mock.calls.filter((c: any[]) => c[0] === 'update_session_cas');
-    expect(casCalls.length).toBe(2); // exactly refresh + failed target CAS
-    expect(casCalls[1][1]).toMatchObject({
-      p_current_step: 'select_date',
-      p_expected_version: 8,
-    });
+    expect(casCalls).toHaveLength(2);
+    expect(casCalls[1][1]).toMatchObject({ p_current_step: 'select_date', p_expected_version: 8 });
 
     // Zero messages — silent loser, no continuation ran
     expect(sender.getMessages()).toHaveLength(0);
-
-    // Zero direct bot_sessions mutations after the losing CAS (no update/delete/insert)
+    // Zero direct bot_sessions mutations
     expect(sessionMutations).toHaveLength(0);
-
-    // Shared session model unchanged — loser CAS did not mutate the winner's row
+    // Shared row unchanged — winner's authority preserved
     expect(sharedSession.version).toBe(winnerSnapshot.version);
     expect(sharedSession.current_step).toBe(winnerSnapshot.current_step);
     expect(sharedSession.session_data).toEqual(winnerSnapshot.session_data);
@@ -1563,9 +1597,12 @@ describe('BotService runtime: browse_menu CAS (Finding 4)', () => {
     };
     const winnerSnapshot = { ...sharedSession, session_data: { ...sharedSession.session_data } };
 
+    const eventLog: Array<{ event: string; detail?: string }> = [];
     const { supabase, standalone, intelligence, rpcSpy } = makeBotServiceMocks({
       session,
-      casResponse: { success: false, reason: 'version_conflict' },
+      casResponse: { success: true, version: 6 },
+      sharedRow: sharedSession,
+      eventLog,
     });
 
     // Track bot_sessions mutations
@@ -1589,12 +1626,11 @@ describe('BotService runtime: browse_menu CAS (Finding 4)', () => {
     const bot = new BotService(supabase, sender, standalone, intelligence);
     await bot.handleMessage(BS_PHONE, 'browse_menu', 'button', undefined, 'biz-cas');
 
+    // Genuine CAS conflict against shared authority
+    expect(eventLog.some(e => e.event === 'cas_conflict')).toBe(true);
     const casCalls = rpcSpy.mock.calls.filter((c: any[]) => c[0] === 'update_session_cas');
-    expect(casCalls).toHaveLength(2); // exactly refresh + failed target CAS
-    expect(casCalls[1][1]).toMatchObject({
-      p_current_step: 'select_capability',
-      p_expected_version: 5,
-    });
+    expect(casCalls).toHaveLength(2);
+    expect(casCalls[1][1]).toMatchObject({ p_current_step: 'select_capability', p_expected_version: 5 });
     // Zero messages — silent loser, no continuation
     expect(sender.getMessages()).toHaveLength(0);
     // Zero direct bot_sessions mutations
@@ -1813,9 +1849,12 @@ describe('BotService runtime: apply_correction CAS (Finding 5)', () => {
     };
     const winnerSnapshot = { ...sharedSession, session_data: { ...sharedSession.session_data } };
 
+    const eventLog: Array<{ event: string; detail?: string }> = [];
     const { supabase, standalone, intelligence, rpcSpy } = makeBotServiceMocks({
       session,
-      casResponse: { success: false, reason: 'version_conflict' },
+      casResponse: { success: true, version: 5 },
+      sharedRow: sharedSession,
+      eventLog,
     });
 
     // Track bot_sessions mutations
@@ -1839,12 +1878,11 @@ describe('BotService runtime: apply_correction CAS (Finding 5)', () => {
     const bot = new BotService(supabase, sender, standalone, intelligence);
     await bot.handleMessage(BS_PHONE, 'actually change the date to Friday', 'text', undefined, 'biz-cas');
 
+    // Genuine CAS conflict against shared authority
+    expect(eventLog.some(e => e.event === 'cas_conflict')).toBe(true);
     const casCalls = rpcSpy.mock.calls.filter((c: any[]) => c[0] === 'update_session_cas');
-    expect(casCalls).toHaveLength(2); // exactly refresh + failed correction CAS
-    expect(casCalls[1][1]).toMatchObject({
-      p_current_step: 'select_time',
-      p_expected_version: 4,
-    });
+    expect(casCalls).toHaveLength(2);
+    expect(casCalls[1][1]).toMatchObject({ p_current_step: 'select_time', p_expected_version: 4 });
     // Zero messages — silent loser, no continuation
     expect(sender.getMessages()).toHaveLength(0);
     // Zero direct bot_sessions mutations
