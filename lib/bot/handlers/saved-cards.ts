@@ -219,7 +219,11 @@ export async function handleCardPinStep(
       throw casPinError;
     }
     // 3. CAS conflict — another message won the race; silent exit, ZERO sends
-    if (!casPinResult?.success) return;
+    if (!casPinResult?.success) {
+      if (casPinResult?.reason === 'version_conflict') return;
+      logger.error('[SAVED_CARDS] PIN reset CAS unexpected:', casPinResult?.reason);
+      throw new Error(`CAS failure: ${casPinResult?.reason || 'unknown'}`);
+    }
     // 4. CAS won — update local version then send the recovery message
     session.version = casPinResult.version;
     await sendText(from, 'Something went wrong. Please type *save card* again.');

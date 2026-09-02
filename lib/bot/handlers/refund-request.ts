@@ -144,7 +144,11 @@ async function handleRefundSelect(
       logger.error('[REFUND_REQUEST] CAS 7a RPC error:', cas7aError.message);
       throw cas7aError;
     }
-    if (!cas7a?.success) return; // CAS loser — silent exit
+    if (!cas7a?.success) {
+      if (cas7a?.reason === 'version_conflict') return;
+      logger.error('[REFUND_REQUEST] CAS 7a unexpected:', cas7a?.reason);
+      throw new Error(`CAS failure: ${cas7a?.reason || 'unknown'}`);
+    }
     session.version = cas7a.version;
 
     if (items.length === 1) {
@@ -189,7 +193,11 @@ async function handleRefundSelect(
     logger.error('[REFUND_REQUEST] CAS 7b RPC error:', cas7bError.message);
     throw cas7bError;
   }
-  if (!cas7b?.success) return; // CAS loser — silent exit
+  if (!cas7b?.success) {
+    if (cas7b?.reason === 'version_conflict') return;
+    logger.error('[REFUND_REQUEST] CAS 7b unexpected:', cas7b?.reason);
+    throw new Error(`CAS failure: ${cas7b?.reason || 'unknown'}`);
+  }
   session.version = cas7b.version;
 
   await sendText(from, 'Please tell us the reason for your refund request:');

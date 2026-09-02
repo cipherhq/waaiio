@@ -5,10 +5,95 @@
  * converted to use the atomic update_session_cas RPC. For each path:
  *   - CAS success → handler proceeds (sends messages / calls next handler)
  *   - CAS failure → handler returns silently (no customer message)
+ *
+ * Also contains BotService runtime tests for the bot.service.ts CAS paths
+ * (quick_rebook, browse_menu, apply_correction) — replacing the source-string
+ * proofs that were rejected in CTO Round 2.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-// ── Shared mock factory ──────────────────────────────────
+// ── Module-level mocks required for BotService to boot ──
+// vi.mock calls are hoisted by Vitest and must appear before any imports
+// that transitively load the mocked modules.
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+
+vi.mock('@/lib/rate-limit', () => ({
+  checkRateLimitAsync: vi.fn().mockResolvedValue({ allowed: true, remaining: 10 }),
+}));
+vi.mock('@/lib/platformSettings', () => ({
+  loadPlatformSettings: vi.fn().mockResolvedValue({ bot_rate_limit_per_minute: 30 }),
+}));
+vi.mock('@sentry/nextjs', () => ({
+  captureException: vi.fn(),
+  captureMessage: vi.fn(),
+}));
+vi.mock('@/lib/bot/translate', () => ({
+  translateBotResponse: vi.fn(async (t: string) => t),
+  detectLanguage: vi.fn(async () => 'en'),
+  getLanguageName: vi.fn(() => 'English'),
+}));
+vi.mock('@/lib/bot/handlers/escape-hatches', () => ({
+  HOME_PATTERN: /^home$/i,
+  handleEscapeHatch: vi.fn().mockResolvedValue({ handled: false }),
+}));
+vi.mock('@/lib/bot/handlers/global-queries', () => ({
+  handleGlobalQuery: vi.fn(async (opts: { session: unknown }) => ({ handled: false, session: opts.session })),
+  isOrdersQuery: vi.fn(() => false),
+}));
+vi.mock('@/lib/bot/keyword-service', () => ({
+  loadBotCustomConfig: vi.fn().mockResolvedValue({ welcome_buttons: [], quick_replies: [], default_reply: null }),
+  matchQuickReply: vi.fn(() => null),
+  loadUnifiedKeywords: vi.fn().mockResolvedValue([]),
+  matchUnifiedKeyword: vi.fn(() => null),
+}));
+vi.mock('@/lib/bot/confidence-policy', () => ({
+  loadConversationConfig: vi.fn().mockResolvedValue({
+    aiEnabled: false, autoRouteThreshold: 0.85, clarificationThreshold: 0.60,
+    fallbackBehavior: 'menu', faqEnabled: false, knowledgeEnabled: false,
+    assistantName: 'Assistant', tone: 'friendly',
+  }),
+}));
+vi.mock('@/lib/bot/automation/rules-engine', () => ({
+  evaluateRules: vi.fn().mockResolvedValue(undefined),
+}));
+vi.mock('@/lib/logger', () => ({
+  logger: { debug: vi.fn(), error: vi.fn(), warn: vi.fn(), info: vi.fn() },
+}));
+// Stub ConversationOrchestrator to avoid Anthropic calls.
+// Default constructor returns a no-op understand() so non-correction tests are unaffected.
+// Correction tests override the constructor via vi.mocked(ConversationOrchestrator).mockImplementation().
+vi.mock('@/lib/bot/conversation-orchestrator', () => ({
+  ConversationOrchestrator: vi.fn().mockImplementation(function() {
+    return {
+      understand: vi.fn().mockResolvedValue({
+        recommendedAction: 'none',
+        corrections: [],
+        intent: null,
+        confidence: 0,
+        activeCapability: null,
+        semanticFamily: null,
+        temporaryQuestion: null,
+      }),
+    };
+  }),
+}));
+// Stub canonical understanding to return empty/low-confidence result (no LLM calls, no action dispatch)
+vi.mock('@/lib/bot/canonical-understanding', () => ({
+  understandCanonicalMessage: vi.fn().mockResolvedValue({
+    requestedAction: null, confidence: 0, semanticFamily: null,
+    intent: null, entities: {}, language: null,
+    languageBlocked: false, allowedLanguageNames: ['English'],
+    languageEntitlement: { allowedLanguages: ['en'], llmAllowed: false },
+  }),
+}));
+
+import { BotService } from '../bot.service';
+import { createCaptureSender } from './bot-harness';
+import { loadConversationConfig } from '@/lib/bot/confidence-policy';
+import { ConversationOrchestrator } from '@/lib/bot/conversation-orchestrator';
+import type { StandaloneService } from '../standalone.service';
+import type { BotIntelligenceService } from '../bot-intelligence';
+
+// ── Shared mock factory (handler-level tests) ────────────
 
 function makeMockSupabase(casResponse: { success: boolean; version?: number; reason?: string }) {
   const rpcMock = vi.fn().mockResolvedValue({ data: casResponse, error: null });
@@ -595,67 +680,625 @@ describe('RPC error propagation — booking, orders, saved-cards', () => {
 });
 
 // ──────────────────────────────────────────────────────────
-// BotService CAS paths — source-structure proofs (Findings 3, 4, 5)
-// These verify the quick_rebook, browse_menu, and correction paths
-// follow the correct throw-on-error / silent-on-conflict / adopt-version pattern.
+// BotService CAS paths — executable runtime tests (Findings 3, 4, 5)
+//
+// These tests call BotService.handleMessage() with a realistic resumed-session
+// state to exercise the CAS RPC calls that live inside bot.service.ts private
+// paths (quick_rebook, browse_menu, apply_correction).
+//
+// The source-string proofs (previously here) were rejected in CTO Round 2
+// because they only verify what the code says, not what it does at runtime.
+// These tests execute the actual code paths.
 // ──────────────────────────────────────────────────────────
 
-describe('bot.service.ts CAS structure — quick_rebook (Finding 3)', () => {
-  it('casResultError is thrown before any flow executor call', async () => {
-    const src = await (await import('fs')).promises.readFile(
-      new URL('../bot.service.ts', import.meta.url).pathname,
-      'utf-8',
-    );
-    // Locate the QUICK_REBOOK CAS block
-    const quickRebookCasIdx = src.indexOf('[QUICK_REBOOK] CAS RPC error');
-    expect(quickRebookCasIdx).toBeGreaterThan(0);
+/** Builds a minimal BotService with controllable Supabase/sender/standalone/intelligence */
+function makeBotServiceMocks(opts: {
+  session: Record<string, unknown>;
+  casResponse: { success: boolean; version?: number; reason?: string };
+  businessId?: string;
+}) {
+  const bizId = opts.businessId ?? 'biz-cas';
+  const business = {
+    id: bizId,
+    name: 'CAS Salon',
+    slug: 'cas-salon',
+    category: 'salon',
+    flow_type: 'scheduling',
+    subscription_tier: 'growth',
+    trial_ends_at: null,
+    metadata: {},
+    operating_hours: null,
+    country_code: 'NG',
+    payment_gateway: 'paystack',
+    is_whitelabel: false,
+    status: 'active',
+  };
 
-    // Extract a wider window (800 chars) to capture the throw + executor call
-    const block = src.slice(quickRebookCasIdx - 100, quickRebookCasIdx + 800);
+  // The bot calls rpc('get_bot_context') first (fast path when businessId is provided),
+  // then rpc('update_session_cas') twice:
+  //   1st: CAP-001 capability refresh (always succeeds, version bumped by 1)
+  //   2nd: the actual quick_rebook/browse_menu/correction CAS write (controlled by opts.casResponse)
+  const initialVersion = (opts.session.version as number) ?? 0;
+  let casCallCount = 0;
+  const rpcSpy = vi.fn().mockImplementation((rpcName: string) => {
+    if (rpcName === 'get_bot_context') {
+      return Promise.resolve({
+        data: {
+          has_session: true,
+          session: opts.session,
+          business: business,
+          capabilities: [{ capability: 'scheduling', is_enabled: true, sort_order: 0 }],
+          capability_overrides: [],
+        },
+        error: null,
+      });
+    }
+    if (rpcName === 'update_session_cas') {
+      casCallCount++;
+      if (casCallCount === 1) {
+        // First CAS: CAP-001 capability refresh — always succeeds with version + 1
+        return Promise.resolve({ data: { success: true, version: initialVersion + 1 }, error: null });
+      }
+      // Subsequent CAS calls: the test's target CAS (quick_rebook / browse_menu / correction)
+      return Promise.resolve({ data: opts.casResponse, error: null });
+    }
+    return Promise.resolve({ data: null, error: null });
+  });
 
-    // Must throw the error (not swallow it)
-    expect(block).toContain('throw casResultError');
+  function makeChain(resolveData: unknown = null) {
+    const chain: Record<string, any> = {};
+    for (const m of ['select','insert','update','upsert','delete','eq','neq','or','in','is','not','ilike','like','gte','lte','gt','lt','order','limit','range','filter','match','contains','containedBy'])
+      chain[m] = vi.fn().mockReturnValue(chain);
+    chain.single = vi.fn().mockResolvedValue({ data: resolveData, error: resolveData ? null : { message: 'not found' } });
+    chain.maybeSingle = vi.fn().mockResolvedValue({ data: resolveData, error: null });
+    chain.then = undefined;
+    return chain;
+  }
 
-    // CAS conflict guard must appear before flow executor call
-    const conflictIdx = block.indexOf('!casResult?.success) return');
-    const versionIdx = block.indexOf('session.version = casResult.version');
-    const executorIdx = block.indexOf('flowExecutor.execute');
-    expect(conflictIdx).toBeGreaterThan(0);
-    expect(versionIdx).toBeGreaterThan(conflictIdx);
-    expect(executorIdx).toBeGreaterThan(versionIdx);
+  const supabase: any = {
+    from: vi.fn((table: string) => {
+      if (table === 'bot_sessions') return makeChain(opts.session);
+      if (table === 'businesses') return makeChain(business);
+      if (table === 'business_capabilities') {
+        const d = Promise.resolve({ data: [{ capability: 'scheduling', is_enabled: true, sort_order: 0 }], error: null });
+        const c: Record<string, any> = {};
+        for (const m of ['select','eq','order']) c[m] = () => c;
+        c.then = d.then.bind(d); c.catch = d.catch.bind(d);
+        return c;
+      }
+      if (table === 'capability_overrides') {
+        const d = Promise.resolve({ data: [], error: null });
+        const c: Record<string, any> = {};
+        for (const m of ['select','eq']) c[m] = () => c;
+        c.then = d.then.bind(d); c.catch = d.catch.bind(d);
+        return c;
+      }
+      if (table === 'services') return makeChain(null);
+      if (table === 'profiles') return makeChain({ id: 'profile-1' });
+      if (table === 'platform_settings') return makeChain({ value: false });
+      if (table === 'ai_conversation_config') return makeChain(null);
+      return makeChain();
+    }),
+    rpc: rpcSpy,
+    storage: { from: vi.fn(() => ({ upload: vi.fn(), createSignedUrl: vi.fn(), getPublicUrl: vi.fn() })) },
+    auth: { getUser: vi.fn().mockResolvedValue({ data: { user: null } }) },
+  };
+
+  const standalone: StandaloneService = {
+    loadWhatsAppConfigBundle: vi.fn().mockResolvedValue({
+      templates: { greeting: 'Welcome!' },
+      welcome_buttons: [],
+      auto_reply_enabled: false,
+      business_hours: null,
+      alias: null,
+    }),
+    checkTierLimitsFromBusiness: vi.fn().mockResolvedValue({ allowed: true, isWhitelabel: false }),
+    fillTemplate: vi.fn((t: string) => t),
+    getBotAlias: vi.fn().mockResolvedValue(null),
+  } as any;
+
+  const intelligence: BotIntelligenceService = {
+    isTimedOut: vi.fn(() => ({ timedOut: false, remaining: 0 })),
+    containsProfanity: vi.fn(() => false),
+    recordProfanity: vi.fn(() => ({ timeout: false, warn: false })),
+    resetAbuse: vi.fn(),
+    getHelpText: vi.fn(() => 'Help'),
+    getPersonaGreeting: vi.fn((_a: string, n: string) => `Hi from ${n}`),
+    getContextualHelp: vi.fn(() => 'Help'),
+  } as any;
+
+  return { supabase, standalone, intelligence, rpcSpy };
+}
+
+const BS_PHONE = '+2349000000001';
+
+// ──────────────────────────────────────────────────────────
+// Finding 3: quick_rebook CAS path in BotService
+// Triggered by: text === 'quick_rebook' with _quick_rebook_service_id in session_data
+// ──────────────────────────────────────────────────────────
+
+describe('BotService runtime: quick_rebook CAS (Finding 3)', () => {
+  it('CAS success → update_session_cas called with select_date step', async () => {
+    const session = {
+      id: 'sess-qrebook-001',
+      whatsapp_number: BS_PHONE,
+      user_id: 'u1',
+      business_id: 'biz-cas',
+      current_step: 'select_capability',
+      session_data: {
+        _quick_rebook_service_id: 'svc-123',
+        _quick_rebook_service_name: 'Haircut',
+        _quick_rebook_sent: true,
+        capabilities: ['scheduling'],
+        active_capability: 'scheduling',
+        business_id: 'biz-cas',
+        business_name: 'CAS Salon',
+        business_category: 'salon',
+      },
+      is_active: true,
+      expires_at: new Date(Date.now() + 600000).toISOString(),
+      version: 7,
+    };
+
+    const { supabase, standalone, intelligence, rpcSpy } = makeBotServiceMocks({
+      session,
+      casResponse: { success: true, version: 8 },
+    });
+
+    const sender = createCaptureSender();
+    const bot = new BotService(supabase, sender, standalone, intelligence);
+    await bot.handleMessage(BS_PHONE, 'quick_rebook', 'button', undefined, 'biz-cas');
+
+    // The CAS RPC must have been called with the correct step (select_date for scheduling).
+    // Note: the first update_session_cas call is the CAP-001 capability refresh (expected).
+    // The SECOND call is the quick_rebook CAS — it uses the version returned by the refresh (8).
+    expect(rpcSpy).toHaveBeenCalledWith('update_session_cas', expect.objectContaining({
+      p_session_id: 'sess-qrebook-001',
+      p_expected_version: 8, // version after refresh CAS returned 8
+      p_current_step: 'select_date',
+    }));
+  });
+
+  it('CAS conflict → silent return, no message dispatched', async () => {
+    const session = {
+      id: 'sess-qrebook-002',
+      whatsapp_number: BS_PHONE,
+      user_id: 'u1',
+      business_id: 'biz-cas',
+      current_step: 'select_capability',
+      session_data: {
+        _quick_rebook_service_id: 'svc-123',
+        _quick_rebook_service_name: 'Haircut',
+        _quick_rebook_sent: true,
+        capabilities: ['scheduling'],
+        active_capability: 'scheduling',
+        business_id: 'biz-cas',
+        business_name: 'CAS Salon',
+        business_category: 'salon',
+      },
+      is_active: true,
+      expires_at: new Date(Date.now() + 600000).toISOString(),
+      version: 7,
+    };
+
+    const { supabase, standalone, intelligence, rpcSpy } = makeBotServiceMocks({
+      session,
+      casResponse: { success: false, reason: 'version_conflict' },
+    });
+
+    const sender = createCaptureSender();
+    const bot = new BotService(supabase, sender, standalone, intelligence);
+    await bot.handleMessage(BS_PHONE, 'quick_rebook', 'button', undefined, 'biz-cas');
+
+    // The quick_rebook CAS was called (2nd update_session_cas call) with select_date
+    expect(rpcSpy).toHaveBeenCalledWith('update_session_cas', expect.objectContaining({
+      p_current_step: 'select_date',
+    }));
+    // Silent exit on conflict — no WhatsApp message sent to customer
+    expect(sender.getMessages()).toHaveLength(0);
+  });
+
+  it('CAS RPC transport error → throws (fail-closed, no message before throw)', async () => {
+    const session = {
+      id: 'sess-qrebook-003',
+      whatsapp_number: BS_PHONE,
+      user_id: 'u1',
+      business_id: 'biz-cas',
+      current_step: 'select_capability',
+      session_data: {
+        _quick_rebook_service_id: 'svc-123',
+        _quick_rebook_service_name: 'Haircut',
+        _quick_rebook_sent: true,
+        capabilities: ['scheduling'],
+        active_capability: 'scheduling',
+        business_id: 'biz-cas',
+        business_name: 'CAS Salon',
+        business_category: 'salon',
+      },
+      is_active: true,
+      expires_at: new Date(Date.now() + 600000).toISOString(),
+      version: 7,
+    };
+
+    const business = { id: 'biz-cas', name: 'CAS Salon', slug: 'cas-salon', category: 'salon', flow_type: 'scheduling', subscription_tier: 'growth', trial_ends_at: null, metadata: {}, operating_hours: null, country_code: 'NG', payment_gateway: 'paystack', is_whitelabel: false, status: 'active' };
+    const { supabase, standalone, intelligence } = makeBotServiceMocks({
+      session,
+      casResponse: { success: true, version: 8 },
+    });
+    // get_bot_context succeeds, 1st CAS (refresh) succeeds, 2nd CAS (quick_rebook) fails with transport error
+    let casCount2 = 0;
+    supabase.rpc = vi.fn().mockImplementation((rpcName: string) => {
+      if (rpcName === 'get_bot_context') {
+        return Promise.resolve({ data: { has_session: true, session, business, capabilities: [{ capability: 'scheduling', is_enabled: true, sort_order: 0 }], capability_overrides: [] }, error: null });
+      }
+      if (rpcName === 'update_session_cas') {
+        casCount2++;
+        if (casCount2 === 1) return Promise.resolve({ data: { success: true, version: 8 }, error: null });
+        return Promise.resolve({ data: null, error: { message: 'connection refused' } });
+      }
+      return Promise.resolve({ data: null, error: null });
+    });
+
+    const sender = createCaptureSender();
+    const bot = new BotService(supabase, sender, standalone, intelligence);
+    // BotService has a top-level try-catch that swallows throws and sends an error recovery message.
+    // So the promise resolves (doesn't reject) but we verify no "success" content was sent —
+    // only the generic "Something went wrong" error recovery (fail-closed: no ghost booking step).
+    await bot.handleMessage(BS_PHONE, 'quick_rebook', 'button', undefined, 'biz-cas');
+
+    // The error recovery path sends a "went wrong" message — this is the expected fail-closed behavior
+    const msgs = sender.getMessages();
+    const allText = msgs.map(m => (m as any).text || '').join(' ').toLowerCase();
+    // Must NOT have started a successful rebook flow (no date-picker prompt)
+    expect(allText).not.toContain('select a date');
+    expect(allText).not.toContain('pick a date');
   });
 });
 
-describe('bot.service.ts CAS structure — browse_menu (Finding 4)', () => {
-  it('casMenuError is thrown and version adopted before executor', async () => {
-    const src = await (await import('fs')).promises.readFile(
-      new URL('../bot.service.ts', import.meta.url).pathname,
-      'utf-8',
-    );
-    const browseMenuCasIdx = src.indexOf('[BROWSE_MENU] CAS RPC error');
-    expect(browseMenuCasIdx).toBeGreaterThan(0);
+// ──────────────────────────────────────────────────────────
+// Finding 4: browse_menu CAS path in BotService
+// Triggered by: text === 'browse_menu' in resumed-session path
+// ──────────────────────────────────────────────────────────
 
-    const window = src.slice(browseMenuCasIdx - 50, browseMenuCasIdx + 400);
+describe('BotService runtime: browse_menu CAS (Finding 4)', () => {
+  it('CAS success → update_session_cas called with select_capability step', async () => {
+    const session = {
+      id: 'sess-browse-001',
+      whatsapp_number: BS_PHONE,
+      user_id: 'u1',
+      business_id: 'biz-cas',
+      current_step: 'select_capability',
+      session_data: {
+        _quick_rebook_sent: true,
+        _quick_rebook_service_id: 'svc-123',
+        _quick_rebook_service_name: 'Haircut',
+        capabilities: ['scheduling'],
+        active_capability: 'scheduling',
+        business_id: 'biz-cas',
+        business_name: 'CAS Salon',
+        business_category: 'salon',
+      },
+      is_active: true,
+      expires_at: new Date(Date.now() + 600000).toISOString(),
+      version: 4,
+    };
 
-    expect(window).toContain('throw casMenuError');
-    expect(window).toContain('!casMenuResult?.success) return');
-    expect(window).toContain('session.version = casMenuResult.version');
+    const { supabase, standalone, intelligence, rpcSpy } = makeBotServiceMocks({
+      session,
+      casResponse: { success: true, version: 5 },
+    });
+
+    const sender = createCaptureSender();
+    const bot = new BotService(supabase, sender, standalone, intelligence);
+    await bot.handleMessage(BS_PHONE, 'browse_menu', 'button', undefined, 'biz-cas');
+
+    expect(rpcSpy).toHaveBeenCalledWith('update_session_cas', expect.objectContaining({
+      p_session_id: 'sess-browse-001',
+      p_expected_version: 4,
+      p_current_step: 'select_capability',
+    }));
+  });
+
+  it('CAS conflict → silent return, no message dispatched', async () => {
+    const session = {
+      id: 'sess-browse-002',
+      whatsapp_number: BS_PHONE,
+      user_id: 'u1',
+      business_id: 'biz-cas',
+      current_step: 'select_capability',
+      session_data: {
+        _quick_rebook_sent: true,
+        capabilities: ['scheduling'],
+        active_capability: 'scheduling',
+        business_id: 'biz-cas',
+        business_name: 'CAS Salon',
+        business_category: 'salon',
+      },
+      is_active: true,
+      expires_at: new Date(Date.now() + 600000).toISOString(),
+      version: 4,
+    };
+
+    const { supabase, standalone, intelligence, rpcSpy } = makeBotServiceMocks({
+      session,
+      casResponse: { success: false, reason: 'version_conflict' },
+    });
+
+    const sender = createCaptureSender();
+    const bot = new BotService(supabase, sender, standalone, intelligence);
+    await bot.handleMessage(BS_PHONE, 'browse_menu', 'button', undefined, 'biz-cas');
+
+    expect(rpcSpy).toHaveBeenCalledWith('update_session_cas', expect.objectContaining({
+      p_current_step: 'select_capability',
+    }));
+    // Silent exit on conflict — no WhatsApp message sent
+    expect(sender.getMessages()).toHaveLength(0);
+  });
+
+  it('CAS RPC transport error → throws (fail-closed)', async () => {
+    const session = {
+      id: 'sess-browse-003',
+      whatsapp_number: BS_PHONE,
+      user_id: 'u1',
+      business_id: 'biz-cas',
+      current_step: 'select_capability',
+      session_data: {
+        _quick_rebook_sent: true,
+        capabilities: ['scheduling'],
+        active_capability: 'scheduling',
+        business_id: 'biz-cas',
+        business_name: 'CAS Salon',
+        business_category: 'salon',
+      },
+      is_active: true,
+      expires_at: new Date(Date.now() + 600000).toISOString(),
+      version: 4,
+    };
+
+    const business = { id: 'biz-cas', name: 'CAS Salon', slug: 'cas-salon', category: 'salon', flow_type: 'scheduling', subscription_tier: 'growth', trial_ends_at: null, metadata: {}, operating_hours: null, country_code: 'NG', payment_gateway: 'paystack', is_whitelabel: false, status: 'active' };
+    const { supabase, standalone, intelligence } = makeBotServiceMocks({
+      session,
+      casResponse: { success: true, version: 5 },
+    });
+    // get_bot_context succeeds, 1st CAS (refresh) succeeds, 2nd CAS (browse_menu) fails with transport error
+    let casCount3 = 0;
+    supabase.rpc = vi.fn().mockImplementation((rpcName: string) => {
+      if (rpcName === 'get_bot_context') {
+        return Promise.resolve({ data: { has_session: true, session, business, capabilities: [{ capability: 'scheduling', is_enabled: true, sort_order: 0 }], capability_overrides: [] }, error: null });
+      }
+      if (rpcName === 'update_session_cas') {
+        casCount3++;
+        if (casCount3 === 1) return Promise.resolve({ data: { success: true, version: 5 }, error: null });
+        return Promise.resolve({ data: null, error: { message: 'pg_down' } });
+      }
+      return Promise.resolve({ data: null, error: null });
+    });
+
+    const sender = createCaptureSender();
+    const bot = new BotService(supabase, sender, standalone, intelligence);
+    // BotService has a top-level try-catch that swallows throws and sends an error recovery message.
+    // So the promise resolves (doesn't reject) but we verify no "success" content was sent —
+    // only the generic error recovery (fail-closed: no menu presented).
+    await bot.handleMessage(BS_PHONE, 'browse_menu', 'button', undefined, 'biz-cas');
+
+    const msgs = sender.getMessages();
+    const allText = msgs.map(m => (m as any).text || '').join(' ').toLowerCase();
+    // Must NOT have shown the capability selection menu
+    expect(allText).not.toContain('what would you like to do');
+    expect(allText).not.toContain('select a service');
   });
 });
 
-describe('bot.service.ts CAS structure — apply_correction (Finding 5)', () => {
-  it('casCorrError is thrown and version adopted before sendText', async () => {
-    const src = await (await import('fs')).promises.readFile(
-      new URL('../bot.service.ts', import.meta.url).pathname,
-      'utf-8',
-    );
-    const corrCasIdx = src.indexOf('[CORRECTION] CAS RPC error');
-    expect(corrCasIdx).toBeGreaterThan(0);
+// ──────────────────────────────────────────────────────────
+// Finding 5: apply_correction CAS path in BotService
+//
+// The correction path runs inside the Conversational AI layer which only fires
+// when convConfig.aiEnabled === true AND the ConversationOrchestrator returns
+// recommendedAction === 'apply_correction'. We enable AI via the confidence-policy
+// mock and stub the orchestrator to deliver a correction result.
+// ──────────────────────────────────────────────────────────
 
-    const window = src.slice(corrCasIdx - 50, corrCasIdx + 400);
+describe('BotService runtime: apply_correction CAS (Finding 5)', () => {
+  // Note: the vi.mock for confidence-policy at the top of this file sets aiEnabled: false
+  // (the safe default). For the correction path we need aiEnabled: true. Each test uses
+  // vi.mocked(loadConversationConfig).mockResolvedValue(...) to override for all calls.
+  // We restore the default after each test to avoid leaking into other test suites.
+  afterEach(() => {
+    vi.mocked(loadConversationConfig).mockResolvedValue({
+      aiEnabled: false, autoRouteThreshold: 0.85, clarificationThreshold: 0.60,
+      fallbackBehavior: 'menu', faqEnabled: false, knowledgeEnabled: false,
+      assistantName: 'Assistant', tone: 'friendly',
+    } as any);
+  });
 
-    expect(window).toContain('throw casCorrError');
-    expect(window).toContain('!casCorrResult?.success) return');
-    expect(window).toContain('session.version = casCorrResult.version');
+  it('CAS success → update_session_cas called with same step + corrected data, confirmation sent', async () => {
+    // Enable AI for all loadConversationConfig calls in this test
+    // (called once for CAS-004 routing check + once for the orchestrator block)
+    vi.mocked(loadConversationConfig).mockResolvedValue({
+      aiEnabled: true, autoRouteThreshold: 0.85, clarificationThreshold: 0.60,
+      fallbackBehavior: 'menu', faqEnabled: false, knowledgeEnabled: false,
+      assistantName: 'Assistant', tone: 'friendly',
+    } as any);
+    vi.mocked(ConversationOrchestrator).mockImplementation(function() {
+      return {
+        understand: vi.fn().mockResolvedValue({
+          recommendedAction: 'apply_correction',
+          corrections: [{ field: 'date', newValue: 'Friday', oldValue: 'Thursday' }],
+          intent: 'correction',
+          confidence: 0.95,
+          activeCapability: 'scheduling',
+          semanticFamily: 'service_time_booking',
+          temporaryQuestion: null,
+        }),
+      };
+    });
+
+    const session = {
+      id: 'sess-corr-001',
+      whatsapp_number: BS_PHONE,
+      user_id: 'u1',
+      business_id: 'biz-cas',
+      current_step: 'select_time',
+      session_data: {
+        capabilities: ['scheduling'],
+        active_capability: 'scheduling',
+        business_id: 'biz-cas',
+        business_name: 'CAS Salon',
+        business_category: 'salon',
+        date: 'Thursday',
+      },
+      is_active: true,
+      expires_at: new Date(Date.now() + 600000).toISOString(),
+      version: 3,
+    };
+
+    const { supabase, standalone, intelligence, rpcSpy } = makeBotServiceMocks({
+      session,
+      casResponse: { success: true, version: 4 },
+    });
+
+    const sender = createCaptureSender();
+    const bot = new BotService(supabase, sender, standalone, intelligence);
+    await bot.handleMessage(BS_PHONE, 'actually change the date to Friday', 'text', undefined, 'biz-cas');
+
+    // CAS must have been called with same current_step (correction doesn't change step).
+    // Note: session.version is 4 after the CAP-001 refresh CAS (which returns version 4).
+    expect(rpcSpy).toHaveBeenCalledWith('update_session_cas', expect.objectContaining({
+      p_session_id: 'sess-corr-001',
+      p_expected_version: 4, // version after refresh CAS returned initialVersion+1 = 3+1
+      p_current_step: 'select_time',
+    }));
+    // Confirmation message sent after successful CAS
+    // (the bot sends "Got it! Changed date to Friday.")
+    const msgs = sender.getMessages();
+    const allText = msgs.map(m => (m as any).text || '').join(' ');
+    expect(allText).toContain('date');
+  });
+
+  it('CAS conflict → silent return, no sendText called', async () => {
+    vi.mocked(loadConversationConfig).mockResolvedValue({
+      aiEnabled: true, autoRouteThreshold: 0.85, clarificationThreshold: 0.60,
+      fallbackBehavior: 'menu', faqEnabled: false, knowledgeEnabled: false,
+      assistantName: 'Assistant', tone: 'friendly',
+    } as any);
+    vi.mocked(ConversationOrchestrator).mockImplementation(function() {
+      return {
+        understand: vi.fn().mockResolvedValue({
+          recommendedAction: 'apply_correction',
+          corrections: [{ field: 'date', newValue: 'Friday', oldValue: 'Thursday' }],
+          intent: 'correction',
+          confidence: 0.95,
+          activeCapability: 'scheduling',
+          semanticFamily: 'service_time_booking',
+          temporaryQuestion: null,
+        }),
+      };
+    });
+
+    const session = {
+      id: 'sess-corr-002',
+      whatsapp_number: BS_PHONE,
+      user_id: 'u1',
+      business_id: 'biz-cas',
+      current_step: 'select_time',
+      session_data: {
+        capabilities: ['scheduling'],
+        active_capability: 'scheduling',
+        business_id: 'biz-cas',
+        business_name: 'CAS Salon',
+        business_category: 'salon',
+        date: 'Thursday',
+      },
+      is_active: true,
+      expires_at: new Date(Date.now() + 600000).toISOString(),
+      version: 3,
+    };
+
+    const { supabase, standalone, intelligence, rpcSpy } = makeBotServiceMocks({
+      session,
+      casResponse: { success: false, reason: 'version_conflict' },
+    });
+
+    const sender = createCaptureSender();
+    const bot = new BotService(supabase, sender, standalone, intelligence);
+    await bot.handleMessage(BS_PHONE, 'actually change the date to Friday', 'text', undefined, 'biz-cas');
+
+    // The correction CAS must have been called (2nd update_session_cas call)
+    expect(rpcSpy).toHaveBeenCalledWith('update_session_cas', expect.objectContaining({
+      p_current_step: 'select_time',
+    }));
+    // Silent exit on conflict — no confirmation message sent
+    expect(sender.getMessages()).toHaveLength(0);
+  });
+
+  it('CAS RPC transport error → throws (fail-closed)', async () => {
+    vi.mocked(loadConversationConfig).mockResolvedValue({
+      aiEnabled: true, autoRouteThreshold: 0.85, clarificationThreshold: 0.60,
+      fallbackBehavior: 'menu', faqEnabled: false, knowledgeEnabled: false,
+      assistantName: 'Assistant', tone: 'friendly',
+    } as any);
+    vi.mocked(ConversationOrchestrator).mockImplementation(function() {
+      return {
+        understand: vi.fn().mockResolvedValue({
+          recommendedAction: 'apply_correction',
+          corrections: [{ field: 'date', newValue: 'Friday', oldValue: 'Thursday' }],
+          intent: 'correction',
+          confidence: 0.95,
+          activeCapability: 'scheduling',
+          semanticFamily: 'service_time_booking',
+          temporaryQuestion: null,
+        }),
+      };
+    });
+
+    const sessionForCorr = {
+      id: 'sess-corr-003',
+      whatsapp_number: BS_PHONE,
+      user_id: 'u1',
+      business_id: 'biz-cas',
+      current_step: 'select_time',
+      session_data: {
+        capabilities: ['scheduling'],
+        active_capability: 'scheduling',
+        business_id: 'biz-cas',
+        business_name: 'CAS Salon',
+        business_category: 'salon',
+        date: 'Thursday',
+      },
+      is_active: true,
+      expires_at: new Date(Date.now() + 600000).toISOString(),
+      version: 3,
+    };
+    const businessForCorr = { id: 'biz-cas', name: 'CAS Salon', slug: 'cas-salon', category: 'salon', flow_type: 'scheduling', subscription_tier: 'growth', trial_ends_at: null, metadata: {}, operating_hours: null, country_code: 'NG', payment_gateway: 'paystack', is_whitelabel: false, status: 'active' };
+    const { supabase, standalone, intelligence } = makeBotServiceMocks({
+      session: sessionForCorr,
+      casResponse: { success: true, version: 4 },
+    });
+    // get_bot_context succeeds, 1st CAS (refresh) succeeds, 2nd CAS (correction) fails with transport error
+    let casCount4 = 0;
+    supabase.rpc = vi.fn().mockImplementation((rpcName: string) => {
+      if (rpcName === 'get_bot_context') {
+        return Promise.resolve({ data: { has_session: true, session: sessionForCorr, business: businessForCorr, capabilities: [{ capability: 'scheduling', is_enabled: true, sort_order: 0 }], capability_overrides: [] }, error: null });
+      }
+      if (rpcName === 'update_session_cas') {
+        casCount4++;
+        if (casCount4 === 1) return Promise.resolve({ data: { success: true, version: 4 }, error: null });
+        return Promise.resolve({ data: null, error: { message: 'rpc_timeout' } });
+      }
+      return Promise.resolve({ data: null, error: null });
+    });
+
+    const sender = createCaptureSender();
+    const bot = new BotService(supabase, sender, standalone, intelligence);
+    // BotService has a top-level try-catch that swallows throws and sends an error recovery message.
+    // So the promise resolves (doesn't reject) but we verify no "success" content was sent —
+    // only the generic error recovery (fail-closed: no correction confirmation).
+    await bot.handleMessage(BS_PHONE, 'actually change the date to Friday', 'text', undefined, 'biz-cas');
+
+    const msgs = sender.getMessages();
+    const allText = msgs.map(m => (m as any).text || '').join(' ').toLowerCase();
+    // Must NOT have sent a successful correction confirmation ("got it" / "changed")
+    expect(allText).not.toContain('got it');
+    expect(allText).not.toContain('changed date');
   });
 });

@@ -165,7 +165,11 @@ export async function handleMyOrders(
       logger.error('[MY_ORDERS] order-selection CAS RPC error:', casOrderError.message);
       throw casOrderError;
     }
-    if (!casOrderResult?.success) return; // CAS loser — silent exit
+    if (!casOrderResult?.success) {
+      if (casOrderResult?.reason === 'version_conflict') return;
+      logger.error('[MY_ORDERS] order-selection CAS unexpected:', casOrderResult?.reason);
+      throw new Error(`CAS failure: ${casOrderResult?.reason || 'unknown'}`);
+    }
     session.version = casOrderResult.version;
     await handleOrderDetail(supabase, messageSender, sendText, session, from, orderId);
     return;

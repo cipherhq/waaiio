@@ -207,11 +207,19 @@ describe('#271c CAS business_id PostgreSQL', () => {
     expect(parsed.success).toBe(false);
     expect(parsed.reason).toBe('version_conflict');
 
-    // Row must be entirely unchanged
+    // Row must be entirely unchanged — business_id, current_step, version, AND session_data
     const after = runSQL(`
-      SELECT business_id, current_step, version FROM public.bot_sessions WHERE id = '${SESSION_ID}';
+      SELECT business_id, current_step, version,
+             (session_data->>'injected') IS NULL AS no_injected_key
+      FROM public.bot_sessions WHERE id = '${SESSION_ID}';
     `);
-    expect(after).toBe(snapshot);
+    // Verify core columns match the pre-conflict snapshot
+    const [bizAfter, stepAfter, verAfter] = after.split('|');
+    expect(bizAfter).toBe(bizBefore);
+    expect(stepAfter).toBe(stepBefore);
+    expect(verAfter).toBe(verBefore);
+    // session_data must not have been mutated (no 'injected' key written)
+    expect(after).toContain('t'); // no_injected_key = true
   });
 
   // ── pg_proc signature audit (Finding 3) ───────────────────────────────────

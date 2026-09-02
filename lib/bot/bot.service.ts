@@ -2071,7 +2071,11 @@ export class BotService {
         logger.error('[QUICK_REBOOK] CAS RPC error:', casResultError.message);
         throw casResultError;
       }
-      if (!casResult?.success) return; // CAS loser — silent exit
+      if (!casResult?.success) {
+        if (casResult?.reason === 'version_conflict') return; // expected race loser — silent exit
+        logger.error('[QUICK_REBOOK] CAS unexpected failure:', casResult?.reason);
+        throw new Error(`CAS failure: ${casResult?.reason || 'unknown'}`);
+      }
       session.version = casResult.version;
 
       const business = session.business_id
@@ -2105,7 +2109,11 @@ export class BotService {
         logger.error('[BROWSE_MENU] CAS RPC error:', casMenuError.message);
         throw casMenuError;
       }
-      if (!casMenuResult?.success) return; // CAS loser — silent exit
+      if (!casMenuResult?.success) {
+        if (casMenuResult?.reason === 'version_conflict') return;
+        logger.error('[BROWSE_MENU] CAS unexpected failure:', casMenuResult?.reason);
+        throw new Error(`CAS failure: ${casMenuResult?.reason || 'unknown'}`);
+      }
       session.version = casMenuResult.version;
       // Execute the flow to show the capability menu
       const bizForMenu = session.business_id
@@ -2650,7 +2658,11 @@ export class BotService {
               logger.error('[CORRECTION] CAS RPC error:', casCorrError.message);
               throw casCorrError;
             }
-            if (!casCorrResult?.success) return; // CAS loser — silent exit
+            if (!casCorrResult?.success) {
+              if (casCorrResult?.reason === 'version_conflict') return;
+              logger.error('[CORRECTION] CAS unexpected failure:', casCorrResult?.reason);
+              throw new Error(`CAS failure: ${casCorrResult?.reason || 'unknown'}`);
+            }
             session.version = casCorrResult.version;
             await this.sendText(
               from,
