@@ -223,9 +223,10 @@ export class MetaCloudSender implements MessageSender {
   // ── Business-scoped sends — require business identity, fail-closed ──
 
   async sendText(msg: { to: string; text: string; noRetry?: boolean }) {
-    // Guard re-authorizes before EVERY retry attempt (no stale authorization)
+    // Both guards fire before EVERY provider attempt (including noRetry single attempt)
     const textCall = async () => {
-      await assertMessagingAllowed(this._businessId);
+      if (this.beforeEachAttempt) this.beforeEachAttempt(); // #279 deadline
+      await assertMessagingAllowed(this._businessId);        // #256 hard-stop
       return this.cloud.sendText({ to: msg.to, text: msg.text });
     };
     const result = msg.noRetry ? await textCall() : await withRetry(textCall, 2, 1000, this.beforeEachAttempt);
@@ -327,7 +328,11 @@ export class MetaCloudSender implements MessageSender {
         components.push({ type: 'button' as const, sub_type: 'url', index, parameters: [{ type: 'text' as const, text: param }] });
       });
     }
-    const templateCall = async () => { await assertMessagingAllowed(this._businessId); return this.cloud.sendTemplate({ to: msg.to, templateName: msg.templateName, components }); };
+    const templateCall = async () => {
+      if (this.beforeEachAttempt) this.beforeEachAttempt(); // #279 deadline
+      await assertMessagingAllowed(this._businessId);        // #256 hard-stop
+      return this.cloud.sendTemplate({ to: msg.to, templateName: msg.templateName, components });
+    };
     const result = msg.noRetry ? await templateCall() : await withRetry(templateCall, 2, 1000, this.beforeEachAttempt);
     return { success: true, messageId: result.messageId };
   }

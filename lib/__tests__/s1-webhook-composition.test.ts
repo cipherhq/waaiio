@@ -108,10 +108,11 @@ describe('S-1 + #279 Webhook Composition (#256)', () => {
     expect(cloud.sendText).toHaveBeenCalledTimes(1);
   });
 
-  it('noRetry path → at most 1 provider call with both guards', async () => {
+  it('noRetry + valid guards → exactly 1 provider call', async () => {
     const cloud = createMockCloud();
     const sender = new MetaCloudSender(cloud as any);
     sender.bindBusiness('biz-ok');
+    sender.beforeEachAttempt = () => {}; // valid deadline
     await sender.sendText({ to: '+234800', text: 'test', noRetry: true });
     expect(cloud.sendText).toHaveBeenCalledTimes(1);
   });
@@ -121,8 +122,36 @@ describe('S-1 + #279 Webhook Composition (#256)', () => {
     const cloud = createMockCloud();
     const sender = new MetaCloudSender(cloud as any);
     sender.bindBusiness('biz-bad');
+    sender.beforeEachAttempt = () => {}; // valid deadline
     await expect(sender.sendText({ to: '+234800', text: 'test', noRetry: true })).rejects.toThrow('suspended');
     expect(cloud.sendText).not.toHaveBeenCalled();
+  });
+
+  it('noRetry + expired deadline → zero provider calls', async () => {
+    const cloud = createMockCloud();
+    const sender = new MetaCloudSender(cloud as any);
+    sender.bindBusiness('biz-ok');
+    sender.beforeEachAttempt = () => { throw new Error('Side-effect deadline exceeded'); };
+    await expect(sender.sendText({ to: '+234800', text: 'test', noRetry: true })).rejects.toThrow('deadline');
+    expect(cloud.sendText).not.toHaveBeenCalled();
+  });
+
+  it('noRetry: deadline expires during hard-stop authorization → zero provider calls', async () => {
+    // Simulate: beforeEachAttempt passes, but hard-stop auth takes time,
+    // and by the time we'd invoke the provider, deadline has expired.
+    // In our implementation, beforeEachAttempt fires first in the closure,
+    // so this tests that beforeEachAttempt fires AT ALL for noRetry.
+    let attempt = 0;
+    const cloud = createMockCloud();
+    const sender = new MetaCloudSender(cloud as any);
+    sender.bindBusiness('biz-ok');
+    sender.beforeEachAttempt = () => {
+      attempt++;
+      if (attempt >= 1) throw new Error('Side-effect deadline exceeded');
+    };
+    await expect(sender.sendText({ to: '+234800', text: 'test', noRetry: true })).rejects.toThrow('deadline');
+    expect(cloud.sendText).not.toHaveBeenCalled();
+    expect(attempt).toBe(1); // beforeEachAttempt was called for the single attempt
   });
 
   it('wrapper forwarding preserves bindBusiness/enterPlatformDiscovery', async () => {

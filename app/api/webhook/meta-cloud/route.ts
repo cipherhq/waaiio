@@ -123,13 +123,16 @@ async function handleCatalogOrder(
   if (!biz || biz.status !== 'active') {
     msgLog.error('[META-WEBHOOK] No active business found for catalog:', catalogId);
     try {
-      await outbound.sendText({
-        to: source,
-        text: 'Sorry, this catalog is currently unavailable. Please try again later.',
-      });
+      // Platform-scoped: no known business, send neutral guidance
+      if (outbound.sendPlatformText) {
+        await outbound.sendPlatformText({ to: source, text: 'Sorry, this catalog is currently unavailable. Please try again later.' });
+      }
     } catch { /* ignore */ }
     return;
   }
+
+  // S-1 (#256): Bind the catalog-resolved business before business-attributable responses
+  if (outbound.bindBusiness) outbound.bindBusiness(biz.id);
 
   // Create or find user profile for the WhatsApp customer
   const phone = source.startsWith('+') ? source : `+${source}`;
