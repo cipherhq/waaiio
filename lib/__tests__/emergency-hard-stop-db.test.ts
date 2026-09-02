@@ -68,6 +68,8 @@ describe.skipIf(!canRun)('Emergency Hard-Stop DB Tests (#256 S-1)', () => {
       END $$;
       INSERT INTO profiles (id) VALUES ('00000000-0000-0000-0000-000000000099') ON CONFLICT DO NOTHING;
       INSERT INTO profiles (id) VALUES ('00000000-0000-0000-0000-000000000001') ON CONFLICT DO NOTHING;
+      -- Migration 010 policy requires profiles.role = 'admin' for the admin actor
+      UPDATE public.profiles SET role = 'admin' WHERE id = '00000000-0000-0000-0000-000000000099'::uuid;
 
       -- Businesses table (minimal for testing)
       DO $$ BEGIN
