@@ -1,15 +1,13 @@
 /**
- * S-1 Catalog-Order Shared-Channel Binding Test (#256)
+ * S-1 Catalog-Order Production Path Test (#256)
  *
- * Exercises the handleCatalogOrder production path with mocked Supabase/Meta
- * to prove catalog-resolved business binding and suspension enforcement.
+ * Invokes the actual exported handleCatalogOrder() from the webhook route
+ * with mocked Supabase/Meta to prove catalog-resolved business binding,
+ * suspension enforcement, and shared-channel ownership invariants.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-vi.mock('@/lib/circuit-breaker', () => ({
-  isCircuitOpen: () => false, recordSuccess: vi.fn(), recordFailure: vi.fn(),
-  CircuitBreakerOpenError: class extends Error {},
-}));
+vi.mock('@/lib/circuit-breaker', () => ({ isCircuitOpen: () => false, recordSuccess: vi.fn(), recordFailure: vi.fn(), CircuitBreakerOpenError: class extends Error {} }));
 
 let suspendedBizIds = new Set<string>();
 vi.mock('@/lib/channels/send-guard', () => ({
@@ -19,7 +17,14 @@ vi.mock('@/lib/channels/send-guard', () => ({
   }),
 }));
 
+// Mock createWhatsAppUser (called inside handleCatalogOrder)
+vi.mock('@/lib/bot/flows/shared/user', () => ({
+  createWhatsAppUser: vi.fn().mockResolvedValue('user-123'),
+}));
+
 const { MetaCloudSender } = await import('@/lib/channels/message-sender');
+const { handleCatalogOrder } = await import('@/app/api/webhook/meta-cloud/route');
+const { logger } = await import('@/lib/logger');
 
 function createMockCloud() {
   return {
@@ -28,87 +33,104 @@ function createMockCloud() {
   };
 }
 
-describe('S-1 Catalog-Order Shared-Channel Binding (#256)', () => {
+function makeChain(data: unknown) {
+  const chain: Record<string, any> = {};
+  for (const m of ['select', 'eq', 'neq', 'or', 'is', 'in', 'not', 'lt', 'gt', 'gte', 'lte', 'limit', 'order', 'head', 'insert', 'update', 'delete', 'upsert']) chain[m] = vi.fn().mockReturnValue(chain);
+  chain.single = vi.fn().mockResolvedValue({ data, error: null });
+  chain.maybeSingle = vi.fn().mockResolvedValue({ data, error: null });
+  chain.select = vi.fn().mockReturnValue(chain);
+  return chain;
+}
+
+describe('S-1 Catalog-Order Production handleCatalogOrder (#256)', () => {
   beforeEach(() => {
     suspendedBizIds = new Set();
     vi.clearAllMocks();
   });
 
-  /**
-   * Reproduce the exact production handleCatalogOrder binding flow:
-   * query → bind → send business-attributable response.
-   */
-  async function catalogOrderFlow(
-    sender: InstanceType<typeof MetaCloudSender>,
-    catalogBiz: { id: string; name: string; status: string } | null,
-    source: string,
-  ) {
-    if (!catalogBiz || catalogBiz.status !== 'active') {
-      try { if (sender.sendPlatformText) await sender.sendPlatformText({ to: source, text: 'Sorry, this catalog is currently unavailable.' }); } catch { /* ignore */ }
-      return { sent: false, reason: 'unavailable' };
-    }
-    // Production: outbound.bindBusiness(biz.id)
-    if (sender.bindBusiness) sender.bindBusiness(catalogBiz.id);
-    try {
-      await sender.sendText({ to: source, text: `Order from ${catalogBiz.name} confirmed!` });
-      return { sent: true };
-    } catch (err) {
-      return { sent: false, reason: (err as Error).message };
-    }
-  }
+  const sharedChannel = { id: 'ch-shared', business_id: null, channel_type: 'shared', phone_number_id: 'pnid-1', is_active: true } as any;
+  const catalogMsg = { order: { catalog_id: 'cat-A', product_items: [{ product_retailer_id: 'prod-1', quantity: 1, item_price: 5000, currency: 'NGN' }] }, id: 'meta-msg-1' };
+  const msgLog = logger.withContext({ op: 'test' });
 
-  it('shared channel NULL: catalog resolves suspended A → zero Meta calls', async () => {
-    suspendedBizIds.add('biz-catalog-A');
+  it('shared channel NULL → catalog resolves active A → response reaches Meta', async () => {
     const cloud = createMockCloud();
     const sender = new MetaCloudSender(cloud as any);
-    expect(sender.boundBusinessId).toBe('');
+    expect(sender.boundBusinessId).toBe(''); // tenantless
 
-    const result = await catalogOrderFlow(sender, { id: 'biz-catalog-A', name: 'Biz A', status: 'active' }, '+234800');
-    expect(sender.boundBusinessId).toBe('biz-catalog-A');
-    expect(result.sent).toBe(false);
-    expect(result.reason).toContain('suspended');
-    expect(cloud.sendText).not.toHaveBeenCalled();
+    const supabase = {
+      from: vi.fn().mockImplementation((table: string) => {
+        if (table === 'businesses') return makeChain({ id: 'biz-A', name: 'Catalog Biz', country_code: 'NG', payment_gateway: 'paystack', status: 'active' });
+        return makeChain(null);
+      }),
+      rpc: vi.fn().mockResolvedValue({ data: { success: true, order_id: 'ord-1', reference_code: 'WA-ORD-1', total_amount: 5000, items_with_prices: [{ product_id: 'prod-1', quantity: 1, unit_price: 5000, line_total: 5000 }], out_of_stock: [] }, error: null }),
+    };
+
+    await handleCatalogOrder(supabase as any, { channel: sharedChannel, sender } as any, catalogMsg, '+234800', msgLog, sender);
+
+    // Production code bound biz-A
+    expect(sender.boundBusinessId).toBe('biz-A');
+    // Business-attributable catalog response reached Meta
+    expect(cloud.sendText).toHaveBeenCalled();
   });
 
-  it('shared channel NULL: catalog resolves active A → response reaches Meta', async () => {
+  it('shared channel NULL → catalog resolves suspended A → zero Meta calls', async () => {
+    suspendedBizIds.add('biz-A');
     const cloud = createMockCloud();
     const sender = new MetaCloudSender(cloud as any);
     expect(sender.boundBusinessId).toBe('');
 
-    const result = await catalogOrderFlow(sender, { id: 'biz-catalog-A', name: 'Biz A', status: 'active' }, '+234800');
-    expect(sender.boundBusinessId).toBe('biz-catalog-A');
-    expect(result.sent).toBe(true);
-    expect(cloud.sendText).toHaveBeenCalledTimes(1);
+    const supabase = {
+      from: vi.fn().mockImplementation((table: string) => {
+        if (table === 'businesses') return makeChain({ id: 'biz-A', name: 'Catalog Biz', country_code: 'NG', payment_gateway: 'paystack', status: 'active' });
+        return makeChain(null);
+      }),
+      rpc: vi.fn().mockResolvedValue({ data: { success: true, order_id: 'ord-1', reference_code: 'WA-ORD-1', total_amount: 5000, items_with_prices: [{ product_id: 'prod-1', quantity: 1, unit_price: 5000, line_total: 5000 }], out_of_stock: [] }, error: null }),
+    };
+
+    await handleCatalogOrder(supabase as any, { channel: sharedChannel, sender } as any, catalogMsg, '+234800', msgLog, sender);
+
+    // Production code bound biz-A (before attempting sends)
+    expect(sender.boundBusinessId).toBe('biz-A');
+    // Suspended A: business-attributable sends blocked — zero Meta calls
+    expect(cloud.sendText).not.toHaveBeenCalled();
   });
 
   it('unavailable catalog: sendPlatformText neutral guidance', async () => {
     const cloud = createMockCloud();
     const sender = new MetaCloudSender(cloud as any);
 
-    const result = await catalogOrderFlow(sender, null, '+234800');
+    const supabase = {
+      from: vi.fn().mockReturnValue(makeChain(null)), // No business found
+      rpc: vi.fn().mockResolvedValue({ data: null, error: null }),
+    };
+
+    await handleCatalogOrder(supabase as any, { channel: sharedChannel, sender } as any, catalogMsg, '+234800', msgLog, sender);
+
+    // No business resolved — stays tenantless
     expect(sender.boundBusinessId).toBe('');
-    expect(result.reason).toBe('unavailable');
+    // Platform-scoped guidance sent
     expect(cloud.sendText).toHaveBeenCalledTimes(1);
+    expect(cloud.sendText.mock.calls[0][0].text).toContain('unavailable');
   });
 
-  it('shared channel ownership not mutated by catalog binding', () => {
+  it('shared-channel ownership remains NULL after catalog binding', async () => {
     const cloud = createMockCloud();
     const sender = new MetaCloudSender(cloud as any);
-    const sharedChannel = { id: 'ch-shared', business_id: null };
+    const channelCopy = { ...sharedChannel };
 
-    sender.bindBusiness('biz-catalog-A');
-    expect(sharedChannel.business_id).toBeNull();
-    expect(sender.boundBusinessId).toBe('biz-catalog-A');
-  });
+    const supabase = {
+      from: vi.fn().mockImplementation((table: string) => {
+        if (table === 'businesses') return makeChain({ id: 'biz-A', name: 'Cat Biz', country_code: 'NG', payment_gateway: 'paystack', status: 'active' });
+        return makeChain(null);
+      }),
+      rpc: vi.fn().mockResolvedValue({ data: { success: true, order_id: 'ord-1', reference_code: 'WA-ORD-1', total_amount: 5000, items_with_prices: [], out_of_stock: [] }, error: null }),
+    };
 
-  it('structural: handleCatalogOrder binds business before responses', () => {
-    const fs = require('fs');
-    const src = fs.readFileSync('app/api/webhook/meta-cloud/route.ts', 'utf-8');
-    // bindBusiness call must appear after business resolution and before business-attributable sends
-    const catalogSection = src.slice(src.indexOf('handleCatalogOrder'));
-    const bindIdx = catalogSection.indexOf('outbound.bindBusiness(biz.id)');
-    const firstSendIdx = catalogSection.indexOf('outbound.sendText', bindIdx);
-    expect(bindIdx).toBeGreaterThan(0);
-    expect(firstSendIdx).toBeGreaterThan(bindIdx);
+    await handleCatalogOrder(supabase as any, { channel: channelCopy, sender } as any, catalogMsg, '+234800', msgLog, sender);
+
+    // Channel ownership unchanged
+    expect(channelCopy.business_id).toBeNull();
+    // Sender bound to A
+    expect(sender.boundBusinessId).toBe('biz-A');
   });
 });
