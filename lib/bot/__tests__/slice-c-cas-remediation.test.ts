@@ -2,7 +2,7 @@
  * Slice C — CAS Remediation Tests (#271)
  *
  * 38 tests in this file.
- * Full suite: 223 files / 5702 tests passed (CI run #33673952829).
+ * Full suite: 223 files / 5702 tests passed (CI run #33677529736).
  *
  * Verifies that 10 bare .update() call sites on bot_sessions have been
  * converted to use the atomic update_session_cas RPC (1a + 1b are two
