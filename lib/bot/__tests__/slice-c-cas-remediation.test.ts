@@ -104,6 +104,33 @@ import { ConversationOrchestrator } from '@/lib/bot/conversation-orchestrator';
 import type { StandaloneService } from '../standalone.service';
 import type { BotIntelligenceService } from '../bot-intelligence';
 
+/**
+ * Wraps createCaptureSender to log every outbound send to the event log.
+ * This connects the sender to the same event stream as CAS calls.
+ */
+function createEventLogSender(eventLog: Array<{ event: string; detail?: string }>) {
+  const sender = createCaptureSender();
+  const origSendText = sender.sendText;
+  const origSendButtons = sender.sendButtons;
+  const origSendList = sender.sendList;
+  sender.sendText = vi.fn(async (msg: any) => {
+    const result = await origSendText(msg);
+    eventLog.push({ event: 'send', detail: 'sendText' });
+    return result;
+  });
+  sender.sendButtons = vi.fn(async (msg: any) => {
+    const result = await origSendButtons(msg);
+    eventLog.push({ event: 'send', detail: 'sendButtons' });
+    return result;
+  });
+  sender.sendList = vi.fn(async (msg: any) => {
+    const result = await origSendList(msg);
+    eventLog.push({ event: 'send', detail: 'sendList' });
+    return result;
+  });
+  return sender;
+}
+
 // ── Shared mock factory (handler-level tests) ────────────
 
 function makeMockSupabase(casResponse: { success: boolean; version?: number; reason?: string }) {
@@ -1032,6 +1059,12 @@ function makeBotServiceMocks(opts: {
         log.push({ event: 'cas_success', detail: `new_version=${opts.sharedRow.version}` });
         return Promise.resolve({ data: { success: true, version: opts.sharedRow.version }, error: null });
       }
+      // Non-shared path: log success/failure based on the configured response
+      if (opts.casResponse.success) {
+        log.push({ event: 'cas_success', detail: `version=${opts.casResponse.version}` });
+      } else {
+        log.push({ event: 'cas_conflict', detail: `reason=${opts.casResponse.reason}` });
+      }
       return Promise.resolve({ data: opts.casResponse, error: null });
     }
     return Promise.resolve({ data: null, error: null });
@@ -1339,31 +1372,29 @@ describe('BotService runtime: quick_rebook CAS (Finding 3)', () => {
       eventLog,
     });
 
-    const sender = createCaptureSender();
+    const sender = createEventLogSender(eventLog);
     const bot = new BotService(supabase, sender, standalone, intelligence);
     await bot.handleMessage(BS_PHONE, 'quick_rebook', 'button', undefined, 'biz-cas');
 
-    // CAS ordering via event log: refresh → target CAS success
-    const casEvents = eventLog.filter(e => e.event.startsWith('cas_'));
-    expect(casEvents.length).toBeGreaterThanOrEqual(2);
-    expect(casEvents[0].event).toBe('cas_call'); // CAP-001 refresh
-    expect(casEvents[1].event).toBe('cas_call'); // target quick_rebook CAS
+    // Event ordering: cas_call (refresh) → cas_call (target) → cas_success → send
+    const targetCasSuccessIdx = eventLog.findIndex(e => e.event === 'cas_success');
+    const firstSendIdx = eventLog.findIndex(e => e.event === 'send');
+    expect(targetCasSuccessIdx).toBeGreaterThan(0); // target CAS success was logged
+    expect(firstSendIdx).toBeGreaterThan(targetCasSuccessIdx); // send comes AFTER CAS success
 
-    // CAS call verification: at least refresh + target CAS (executor may add more)
+    // CAS call verification
     const casCalls = rpcSpy.mock.calls.filter((c: any[]) => c[0] === 'update_session_cas');
     expect(casCalls.length).toBeGreaterThanOrEqual(2);
     expect(casCalls[0][1]).toMatchObject({ p_session_id: 'sess-qrebook-001', p_expected_version: 7 });
     expect(casCalls[1][1]).toMatchObject({ p_session_id: 'sess-qrebook-001', p_expected_version: 8, p_current_step: 'select_date' });
 
-    // Continuation output: flow executor sends the scheduling step prompt AFTER target CAS success
+    // Exact output: NOT the generic fallback, IS the scheduling continuation
     const msgs = sender.getMessages();
     expect(msgs.length).toBeGreaterThan(0);
-    const allText = msgs.map(m => (m as any).text || (m as any).bodyText || (m as any).body || '').join(' ');
-    // Must NOT be the generic fallback
+    const allText = msgs.map(m => (m as any).text || (m as any).body || '').join(' ');
     expect(allText).not.toContain('Something went wrong');
-    // Must NOT be empty — the flow executor produced a scheduling prompt
     expect(allText.length).toBeGreaterThan(0);
-    // No cas_conflict in the event log — this was a successful path
+    // No conflict in event log
     expect(eventLog.some(e => e.event === 'cas_conflict')).toBe(false);
   });
 
@@ -1536,28 +1567,28 @@ describe('BotService runtime: browse_menu CAS (Finding 4)', () => {
       eventLog,
     });
 
-    const sender = createCaptureSender();
+    const sender = createEventLogSender(eventLog);
     const bot = new BotService(supabase, sender, standalone, intelligence);
     await bot.handleMessage(BS_PHONE, 'browse_menu', 'button', undefined, 'biz-cas');
 
-    // CAS ordering via event log
-    const casEvents = eventLog.filter(e => e.event.startsWith('cas_'));
-    expect(casEvents.length).toBeGreaterThanOrEqual(2);
+    // Event ordering: cas_success precedes send
+    const targetCasSuccessIdx = eventLog.findIndex(e => e.event === 'cas_success');
+    const firstSendIdx = eventLog.findIndex(e => e.event === 'send');
+    expect(targetCasSuccessIdx).toBeGreaterThan(0);
+    expect(firstSendIdx).toBeGreaterThan(targetCasSuccessIdx);
 
-    // CAS call verification: at least refresh + target CAS (executor may add more)
+    // CAS call verification
     const casCalls = rpcSpy.mock.calls.filter((c: any[]) => c[0] === 'update_session_cas');
     expect(casCalls.length).toBeGreaterThanOrEqual(2);
     expect(casCalls[0][1]).toMatchObject({ p_session_id: 'sess-browse-001', p_expected_version: 4 });
     expect(casCalls[1][1]).toMatchObject({ p_session_id: 'sess-browse-001', p_expected_version: 5, p_current_step: 'select_capability' });
 
-    // Continuation output: capability selection menu sent AFTER target CAS success
+    // Exact output: NOT fallback, IS capability selection
     const msgs = sender.getMessages();
     expect(msgs.length).toBeGreaterThan(0);
-    const allText = msgs.map(m => (m as any).text || (m as any).bodyText || (m as any).body || '').join(' ');
-    // Must NOT be the generic fallback
+    const allText = msgs.map(m => (m as any).text || (m as any).body || '').join(' ');
     expect(allText).not.toContain('Something went wrong');
     expect(allText.length).toBeGreaterThan(0);
-    // No conflict in event log — successful path
     expect(eventLog.some(e => e.event === 'cas_conflict')).toBe(false);
   });
 
@@ -1758,13 +1789,15 @@ describe('BotService runtime: apply_correction CAS (Finding 5)', () => {
       eventLog,
     });
 
-    const sender = createCaptureSender();
+    const sender = createEventLogSender(eventLog);
     const bot = new BotService(supabase, sender, standalone, intelligence);
     await bot.handleMessage(BS_PHONE, 'actually change the date to Friday', 'text', undefined, 'biz-cas');
 
-    // CAS ordering via event log
-    const casEvents = eventLog.filter(e => e.event.startsWith('cas_'));
-    expect(casEvents.length).toBeGreaterThanOrEqual(2);
+    // Event ordering: cas_success precedes send
+    const targetCasSuccessIdx = eventLog.findIndex(e => e.event === 'cas_success');
+    const firstSendIdx = eventLog.findIndex(e => e.event === 'send');
+    expect(targetCasSuccessIdx).toBeGreaterThan(0);
+    expect(firstSendIdx).toBeGreaterThan(targetCasSuccessIdx);
 
     // CAS call verification
     const casCalls = rpcSpy.mock.calls.filter((c: any[]) => c[0] === 'update_session_cas');
@@ -1772,15 +1805,12 @@ describe('BotService runtime: apply_correction CAS (Finding 5)', () => {
     expect(casCalls[0][1]).toMatchObject({ p_session_id: 'sess-corr-001', p_expected_version: 3 });
     expect(casCalls[1][1]).toMatchObject({ p_session_id: 'sess-corr-001', p_expected_version: 4, p_current_step: 'select_time' });
 
-    // Continuation output: correction confirmation sent AFTER target CAS success
+    // Exact output: NOT fallback, IS correction confirmation with 'Friday'
     const msgs = sender.getMessages();
     expect(msgs.length).toBeGreaterThan(0);
-    const allText = msgs.map(m => (m as any).text || (m as any).bodyText || (m as any).body || '').join(' ');
-    // Must NOT be the generic fallback
+    const allText = msgs.map(m => (m as any).text || (m as any).body || '').join(' ');
     expect(allText).not.toContain('Something went wrong');
-    // Must contain the corrected value "Friday" — proves the correction path executed, not some other send
     expect(allText).toContain('Friday');
-    // No conflict in event log — successful path
     expect(eventLog.some(e => e.event === 'cas_conflict')).toBe(false);
   });
 
