@@ -241,21 +241,18 @@ describe('Slice B — processing failure → completed (no replay)', () => {
   it('handleCatalogOrder sender parameter is required (fail-closed)', async () => {
     const { readFileSync } = await import('fs');
     const { resolve } = await import('path');
+
+    // Route imports handleCatalogOrder from shared module
     const routeSrc = readFileSync(resolve(__dirname, '../route.ts'), 'utf-8');
-
-    // The call site must pass guardedSender to handleCatalogOrder
     expect(routeSrc).toContain('handleCatalogOrder(supabase, resolved, msg, source, msgLog, guardedSender)');
+    expect(routeSrc).toContain("import { handleCatalogOrder } from '@/lib/channels/catalog-order-handler'");
 
-    // handleCatalogOrder sender parameter must be required (not optional)
-    const fnBody = routeSrc.slice(
-      routeSrc.indexOf('async function handleCatalogOrder'),
-      routeSrc.indexOf('async function handleCatalogOrder') + 5000,
-    );
-    // Must have required sender parameter (no ?)
-    expect(fnBody).toContain('sender: import');
-    expect(fnBody).not.toContain('sender?:');
+    // Shared module has required sender parameter (not optional)
+    const handlerSrc = readFileSync(resolve(__dirname, '../../../../../lib/channels/catalog-order-handler.ts'), 'utf-8');
+    expect(handlerSrc).toContain('sender: MessageSender');
+    expect(handlerSrc).not.toContain('sender?:');
     // Must use outbound for sends
-    const sendTexts = fnBody.match(/await\s+(outbound|resolved\.sender)\.sendText/g) || [];
+    const sendTexts = handlerSrc.match(/await\s+(outbound|resolved\.sender)\.sendText/g) || [];
     const rawSenderSends = sendTexts.filter(s => s.includes('resolved.sender'));
     expect(rawSenderSends.length).toBe(0);
   });
