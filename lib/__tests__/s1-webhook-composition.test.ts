@@ -136,22 +136,34 @@ describe('S-1 + #279 Webhook Composition (#256)', () => {
     expect(cloud.sendText).not.toHaveBeenCalled();
   });
 
-  it('noRetry: deadline expires during hard-stop authorization → zero provider calls', async () => {
-    // Simulate: beforeEachAttempt passes, but hard-stop auth takes time,
-    // and by the time we'd invoke the provider, deadline has expired.
-    // In our implementation, beforeEachAttempt fires first in the closure,
-    // so this tests that beforeEachAttempt fires AT ALL for noRetry.
-    let attempt = 0;
+  it('noRetry: deadline expires DURING hard-stop authorization → zero provider calls', async () => {
+    // The genuine race: deadline is valid when checked pre-auth, but expires
+    // while the async assertMessagingAllowed DB call is pending. The post-auth
+    // final deadline check catches the expiry before the provider call.
+    let deadlineCheckCount = 0;
+    let deadlineExpired = false;
+
     const cloud = createMockCloud();
     const sender = new MetaCloudSender(cloud as any);
     sender.bindBusiness('biz-ok');
+
+    // Deadline hook: passes on first call (pre-auth), throws on second (post-auth)
     sender.beforeEachAttempt = () => {
-      attempt++;
-      if (attempt >= 1) throw new Error('Side-effect deadline exceeded');
+      deadlineCheckCount++;
+      if (deadlineExpired) throw new Error('Side-effect deadline exceeded');
     };
+
+    // Mock assertMessagingAllowed to simulate async work during which deadline expires
+    const { assertMessagingAllowed } = await import('@/lib/channels/send-guard');
+    (assertMessagingAllowed as ReturnType<typeof vi.fn>).mockImplementationOnce(async () => {
+      // Simulate: authorization takes time, deadline expires during this await
+      deadlineExpired = true;
+      // Authorization itself succeeds (business is not suspended)
+    });
+
     await expect(sender.sendText({ to: '+234800', text: 'test', noRetry: true })).rejects.toThrow('deadline');
-    expect(cloud.sendText).not.toHaveBeenCalled();
-    expect(attempt).toBe(1); // beforeEachAttempt was called for the single attempt
+    expect(cloud.sendText).not.toHaveBeenCalled(); // Zero provider calls
+    expect(deadlineCheckCount).toBe(2); // Pre-auth (passed) + post-auth (caught expiry)
   });
 
   it('wrapper forwarding preserves bindBusiness/enterPlatformDiscovery', async () => {

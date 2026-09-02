@@ -35,6 +35,16 @@ vi.mock('@/lib/circuit-breaker', () => ({
   CircuitBreakerOpenError: class extends Error {},
 }));
 
+// Mock bot-code-detection — controllable fuzzy detection results
+let mockDetectionResult: { businessId: string | null; suggestions: Array<{ id: string; name: string; bot_code: string }> } = { businessId: null, suggestions: [] };
+vi.mock('@/lib/bot/handlers/bot-code-detection', () => ({
+  detectBotCode: vi.fn().mockResolvedValue(null),
+  detectBotCodeWithSuggestions: vi.fn().mockImplementation(async () => mockDetectionResult),
+  rankSuggestions: vi.fn().mockReturnValue([]),
+  findReturningCustomerBusiness: vi.fn().mockResolvedValue(null),
+  findReturningCustomerBusinesses: vi.fn().mockResolvedValue([]),
+}));
+
 let suspendedBizIds = new Set<string>();
 vi.mock('@/lib/channels/send-guard', () => ({
   assertMessagingAllowed: vi.fn().mockImplementation(async (bizId: string) => {
@@ -219,5 +229,74 @@ describe('S-1 Real BotService.handleMessage() (#256)', () => {
     sender.bindBusiness('biz-A');
     await expect(sender.sendPlatformText({ to: '+234800', text: 'maintenance' })).rejects.toThrow('suspended');
     expect(cloud.sendText).not.toHaveBeenCalled();
+  });
+
+  // Test 6: switch <keyword> from suspended A — fuzzy suggestions → platform discovery picker works
+  it('switch <keyword> from suspended A: enterPlatformDiscovery → fuzzy picker reaches Meta', async () => {
+    suspendedBizIds.add('biz-A');
+    const cloud = createMockCloud();
+    const sender = new MetaCloudSender(cloud as any);
+    // Simulate existing session with suspended business A
+    sender.bindBusiness('biz-A');
+
+    // Configure fuzzy detection to return suggestions (not an exact match)
+    mockDetectionResult = {
+      businessId: null,
+      suggestions: [
+        { id: 'biz-B', name: 'Spa B', bot_code: 'SPAB' },
+        { id: 'biz-C', name: 'Spa C', bot_code: 'SPAC' },
+      ],
+    };
+
+    const supabase = {
+      from: vi.fn().mockReturnValue({
+        select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(),
+        neq: vi.fn().mockReturnThis(), or: vi.fn().mockReturnThis(),
+        is: vi.fn().mockReturnThis(), in: vi.fn().mockReturnThis(),
+        not: vi.fn().mockReturnThis(), lt: vi.fn().mockReturnThis(),
+        gt: vi.fn().mockReturnThis(), gte: vi.fn().mockReturnThis(),
+        lte: vi.fn().mockReturnThis(), limit: vi.fn().mockReturnThis(),
+        order: vi.fn().mockReturnThis(), head: vi.fn().mockReturnThis(),
+        single: vi.fn().mockResolvedValue({ data: { value: false }, error: null }),
+        maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+        insert: vi.fn().mockReturnThis(), update: vi.fn().mockReturnThis(),
+        delete: vi.fn().mockReturnThis(), upsert: vi.fn().mockReturnThis(),
+      }),
+      rpc: vi.fn().mockResolvedValue({ data: null, error: null }),
+    };
+
+    const bot = new BotService(supabase as any, sender, { parseNaturalBooking: vi.fn().mockResolvedValue(null), detectLanguage: vi.fn().mockResolvedValue(null) } as any, createMockIntelligence() as any);
+
+    // "switch spa" triggers fuzzy detection branch
+    await bot.handleMessage('+234800', 'switch spa', 'text', 'pnid-1');
+
+    // BotService should have:
+    // 1. Called enterPlatformDiscovery (clears suspended A binding)
+    expect(sender.boundBusinessId).toBe('');
+    // 2. Sent the picker via platform scope (reaches Meta despite A being suspended)
+    const totalCalls = cloud.sendText.mock.calls.length + cloud.sendButtons.mock.calls.length;
+    expect(totalCalls).toBeGreaterThanOrEqual(1);
+  });
+
+  // Test 7: resolve B after discovery — binds B, evaluates B independently
+  it('resolve B after switch: bindBusiness(B) evaluates B independently', async () => {
+    suspendedBizIds.add('biz-A');
+    const cloud = createMockCloud();
+    const sender = new MetaCloudSender(cloud as any);
+
+    // After switch_biz, sender is tenantless
+    expect(sender.boundBusinessId).toBe('');
+
+    // Bind B (simulating what happens when BotService resolves B)
+    sender.bindBusiness('biz-B');
+    expect(sender.boundBusinessId).toBe('biz-B');
+
+    // B is not suspended — send succeeds
+    await sender.sendText({ to: '+234800', text: 'B message' });
+    expect(cloud.sendText).toHaveBeenCalledTimes(1);
+
+    // Verify guard was called for B, not A
+    const { assertMessagingAllowed } = await import('@/lib/channels/send-guard');
+    expect(assertMessagingAllowed).toHaveBeenCalledWith('biz-B');
   });
 });
