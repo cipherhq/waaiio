@@ -75,6 +75,16 @@ describe('classifyRemoteVersions', () => {
   it('ts', () => expect(classifyRemoteVersions(['20260902052231']).timestamped).toEqual(['20260902052231']));
   it('unknown', () => expect(classifyRemoteVersions(['abc']).unknown).toEqual(['abc']));
   it('dupes', () => expect(classifyRemoteVersions(['354', '354']).duplicates).toEqual(['354']));
+  it('normalized numeric dupes', () => {
+    const r = classifyRemoteVersions(['354', '0354']);
+    expect(r.duplicates.length).toBe(1);
+    expect(r.duplicates[0]).toContain('normalized duplicate');
+  });
+  it('normalized numeric dupes with leading zeros', () => {
+    const r = classifyRemoteVersions(['1', '001', '01']);
+    expect(r.duplicates.length).toBe(2);
+    expect(r.duplicates.every((d: string) => d.includes('normalized duplicate'))).toBe(true);
+  });
   it('mixed', () => {
     const r = classifyRemoteVersions(['1', '20260902052231', 'abc', '354']);
     expect(r.numeric).toEqual([1, 354]);
@@ -308,6 +318,69 @@ describe('reconcile — history/schema disagreement', () => {
     });
     expect(r.state).toBe('BLOCKED');
     expect(r.errors.some((e: string) => e.includes('absent') && e.includes('present'))).toBe(true);
+  });
+});
+
+describe('reconcile — normalized numeric duplicate BLOCKED', () => {
+  const FL = buildFullLocal([355, 356, 357, 359, 360, 361, 362, 363]);
+
+  it('354 and 0354 -> BLOCKED', () => {
+    const r = reconcile(FL, [...remoteThrough(353), '354', '0354'], SA, {
+      intentionallyAbsent: ABSENT,
+      pendingSetAllowlist: [355, 356, 357, 359, 360, 361, 362, 363],
+    });
+    expect(r.state).toBe('BLOCKED');
+    expect(r.errors.some((e: string) => e.includes('Duplicate remote versions') && e.includes('normalized duplicate'))).toBe(true);
+  });
+
+  it('1 and 001 -> BLOCKED', () => {
+    const r = reconcile(FL, [...remoteThrough(354), '001'], SA, {
+      intentionallyAbsent: ABSENT,
+    });
+    expect(r.state).toBe('BLOCKED');
+    expect(r.errors.some((e: string) => e.includes('normalized duplicate'))).toBe(true);
+  });
+});
+
+describe('reconcile — numeric history vs schema cross-check', () => {
+  const FL = buildFullLocal([355, 356, 357, 359, 360, 361, 362, 363]);
+
+  it('numeric 355 in history but schema says absent -> BLOCKED', () => {
+    const r = reconcile(FL, [...remoteThrough(354), '355'], SA, {
+      intentionallyAbsent: ABSENT,
+      pendingSetAllowlist: DEFAULT_PENDING_ALLOWLIST,
+    });
+    expect(r.state).toBe('BLOCKED');
+    expect(r.errors.some((e: string) => e.includes('Numeric history contains 355') && e.includes('absent'))).toBe(true);
+  });
+
+  it('schema says 355 present but not in history -> BLOCKED', () => {
+    const r = reconcile(FL, remoteThrough(354), SP, {
+      intentionallyAbsent: ABSENT,
+      pendingSetAllowlist: [355, 356, 357, 359, 360, 361, 362, 363],
+    });
+    expect(r.state).toBe('BLOCKED');
+    expect(r.errors.some((e: string) => e.includes('Schema evidence says migration 355 is present') && e.includes('not in remote history'))).toBe(true);
+  });
+
+  it('numeric 355 in history AND schema says present -> no error from cross-check', () => {
+    const r = reconcile(FL, [...remoteThrough(354), '355'], SP, {
+      intentionallyAbsent: ABSENT,
+      pendingSetAllowlist: DEFAULT_PENDING_ALLOWLIST,
+    });
+    expect(r.state).toBe('READY');
+    expect(r.errors).toEqual([]);
+  });
+
+  it('schema present via timestamp mapping does not trigger direction-2 error', () => {
+    const r = reconcile(FL, [...remoteThrough(354), '20260902052231'], SP, {
+      intentionallyAbsent: ABSENT,
+      timestampMappings: buildMapping(),
+      pendingSetAllowlist: DEFAULT_PENDING_ALLOWLIST,
+    });
+    // Should be REPAIR_REQUIRED, not BLOCKED — the timestamp mapping accounts for 355
+    expect(r.state).toBe('REPAIR_REQUIRED');
+    expect(r.errors).toEqual([]);
   });
 });
 
@@ -565,6 +638,7 @@ describe('reconcile — mapping validation edge cases', () => {
           remoteName: '355_test',
           repoVersion: 355,
           localFilename: '355_test.sql',
+          contentHash: 'a'.repeat(64),
           schemaPresent: 'yes',
         }],
       },
@@ -583,6 +657,7 @@ describe('reconcile — mapping validation edge cases', () => {
           remoteName: '355_test',
           repoVersion: 355,
           localFilename: '355_test.sql',
+          contentHash: 'a'.repeat(64), // valid SHA-256 format; file doesn't exist so content check skipped
           schemaPresent: true,
         }],
       },
@@ -592,6 +667,101 @@ describe('reconcile — mapping validation edge cases', () => {
     expect(result.valid).toBe(true);
     expect(result.mappings).toBeInstanceOf(Map);
     expect(result.mappings.size).toBe(1);
+  });
+
+  it('missing contentHash -> invalid', () => {
+    const result = validateTimestampMappings(
+      {
+        mappings: [{
+          remoteVersion: '20260902052231',
+          remoteName: '355_test',
+          repoVersion: 355,
+          localFilename: '355_test.sql',
+          schemaPresent: true,
+        }],
+      },
+      FL,
+      ABSENT,
+    );
+    expect(result.valid).toBe(false);
+    expect(result.reason).toContain('missing required contentHash');
+  });
+
+  it('malformed contentHash -> invalid', () => {
+    const result = validateTimestampMappings(
+      {
+        mappings: [{
+          remoteVersion: '20260902052231',
+          remoteName: '355_test',
+          repoVersion: 355,
+          localFilename: '355_test.sql',
+          contentHash: 'not-a-sha256',
+          schemaPresent: true,
+        }],
+      },
+      FL,
+      ABSENT,
+    );
+    expect(result.valid).toBe(false);
+    expect(result.reason).toContain('not a valid SHA-256');
+  });
+
+  it('duplicate repoVersion across mappings -> invalid', () => {
+    const result = validateTimestampMappings(
+      {
+        mappings: [
+          {
+            remoteVersion: '20260902052231',
+            remoteName: '355_test',
+            repoVersion: 355,
+            localFilename: '355_test.sql',
+            contentHash: 'a'.repeat(64),
+            schemaPresent: true,
+          },
+          {
+            remoteVersion: '20260902099999',
+            remoteName: '355_test',
+            repoVersion: 355,
+            localFilename: '355_test.sql',
+            contentHash: 'a'.repeat(64),
+            schemaPresent: true,
+          },
+        ],
+      },
+      FL,
+      ABSENT,
+    );
+    expect(result.valid).toBe(false);
+    expect(result.reason).toContain('Duplicate repoVersion 355');
+  });
+
+  it('duplicate remoteVersion -> invalid', () => {
+    const result = validateTimestampMappings(
+      {
+        mappings: [
+          {
+            remoteVersion: '20260902052231',
+            remoteName: '355_test',
+            repoVersion: 355,
+            localFilename: '355_test.sql',
+            contentHash: 'a'.repeat(64),
+            schemaPresent: true,
+          },
+          {
+            remoteVersion: '20260902052231',
+            remoteName: '355_test',
+            repoVersion: 355,
+            localFilename: '355_test.sql',
+            contentHash: 'a'.repeat(64),
+            schemaPresent: true,
+          },
+        ],
+      },
+      FL,
+      ABSENT,
+    );
+    expect(result.valid).toBe(false);
+    expect(result.reason).toContain('Duplicate remoteVersion');
   });
 });
 
@@ -678,12 +848,16 @@ describe('CLI exit codes', () => {
       .map((m: any) => String(m.version));
     const history = { versions: [...through354, '20260902052231'] };
     const m355 = local.migrations.find((m: any) => m.version === 355);
+    const { createHash: ch } = require('crypto');
+    const content355 = readFileSync(resolve('supabase/migrations', m355.filename), 'utf-8');
+    const hash355 = ch('sha256').update(content355).digest('hex');
     const mapping = {
       mappings: [{
         remoteVersion: '20260902052231',
         remoteName: m355.filename.replace(/\.sql$/, ''),
         repoVersion: 355,
         localFilename: m355.filename,
+        contentHash: hash355,
         schemaPresent: true,
       }],
     };
@@ -754,7 +928,7 @@ describe('validateTimestampMappings with real files', () => {
           remoteName: m355.filename.replace(/\.sql$/, ''),
           repoVersion: 355,
           localFilename: m355.filename,
-          contentHash: 'deadbeef',
+          contentHash: 'deadbeef'.repeat(8), // 64 chars, valid format but wrong hash
           schemaPresent: true,
         }],
       },

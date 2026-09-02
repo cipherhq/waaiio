@@ -41,12 +41,25 @@ function classifyRemoteVersions(versions) {
   const unknown = [];
   const seen = new Set();
   const duplicates = [];
+  const numericSeen = new Map(); // parsed int -> first raw string
   for (const v of versions) {
     const s = String(v);
-    if (seen.has(s)) duplicates.push(s);
+    const isRawDupe = seen.has(s);
+    if (isRawDupe) duplicates.push(s);
     seen.add(s);
     if (/^\d{12,}$/.test(s)) timestamped.push(s);
-    else if (/^\d{1,4}$/.test(s)) numeric.push(parseInt(s, 10));
+    else if (/^\d{1,4}$/.test(s)) {
+      const parsed = parseInt(s, 10);
+      if (!isRawDupe && numericSeen.has(parsed)) {
+        // Normalized duplicate: e.g. '354' and '0354' both parse to 354
+        // (raw string duplicates are already caught above)
+        duplicates.push(s + ' (normalized duplicate of ' + numericSeen.get(parsed) + ')');
+      }
+      if (!numericSeen.has(parsed)) {
+        numericSeen.set(parsed, s);
+      }
+      numeric.push(parsed);
+    }
     else unknown.push(s);
   }
   return { numeric: numeric.sort((a, b) => a - b), timestamped, unknown, duplicates };
@@ -168,15 +181,19 @@ function validateTimestampMappings(mappingData, localMigrations, intentionallyAb
       }
     }
 
-    // Verify contentHash if present
-    if (entry.contentHash) {
-      const filePath = resolve(migrationsDir || MIGRATIONS_DIR, localMig.filename);
-      if (existsSync(filePath)) {
-        const content = readFileSync(filePath, 'utf-8');
-        const actualHash = createHash('sha256').update(content).digest('hex');
-        if (entry.contentHash !== actualHash) {
-          return { valid: false, reason: 'Content hash mismatch for ' + localMig.filename + '. Expected ' + entry.contentHash + ', got ' + actualHash + '.' };
-        }
+    // contentHash is required — must be a valid SHA-256 hex string
+    if (!entry.contentHash || typeof entry.contentHash !== 'string') {
+      return { valid: false, reason: 'Mapping entry for version ' + entry.repoVersion + ' is missing required contentHash.' };
+    }
+    if (!/^[0-9a-f]{64}$/.test(entry.contentHash)) {
+      return { valid: false, reason: 'Mapping contentHash for version ' + entry.repoVersion + ' is not a valid SHA-256 hex string.' };
+    }
+    const filePath = resolve(migrationsDir || MIGRATIONS_DIR, localMig.filename);
+    if (existsSync(filePath)) {
+      const content = readFileSync(filePath, 'utf-8');
+      const actualHash = createHash('sha256').update(content).digest('hex');
+      if (entry.contentHash !== actualHash) {
+        return { valid: false, reason: 'Content hash mismatch for ' + localMig.filename + '. Expected ' + entry.contentHash + ', got ' + actualHash + '.' };
       }
     }
 
@@ -188,6 +205,13 @@ function validateTimestampMappings(mappingData, localMigrations, intentionallyAb
     // Check for duplicate remote versions in mappings
     if (result.has(entry.remoteVersion)) {
       return { valid: false, reason: 'Duplicate remoteVersion in mappings: ' + entry.remoteVersion + '.' };
+    }
+
+    // Check for duplicate repoVersion across mappings
+    for (const [existingTs, existingMapping] of result.entries()) {
+      if (existingMapping.repoVersion === entry.repoVersion) {
+        return { valid: false, reason: 'Duplicate repoVersion ' + entry.repoVersion + ' in mappings: remoteVersions ' + existingTs + ' and ' + entry.remoteVersion + ' both map to it.' };
+      }
     }
 
     result.set(entry.remoteVersion, entry);
@@ -297,6 +321,26 @@ function reconcile(localMigrations, remoteVersions, schemaEvidence, options) {
   for (const [ts, mapping] of timestampMappings.entries()) {
     if (classified.timestamped.includes(ts) && mapping.schemaPresent) {
       appliedSet.add(mapping.repoVersion);
+    }
+  }
+
+  // Cross-check numeric history against schema evidence (both directions)
+  // Direction 1: numeric version in history but schema says absent
+  for (const nv of classified.numeric) {
+    if (absentSet.has(nv)) {
+      errors.push('Numeric history contains ' + nv + ' as applied, but schema evidence says it is absent.');
+    }
+  }
+  // Direction 2: schema says present but not in history (and not from a timestamp mapping)
+  const timestampMappedVersions = new Set();
+  for (const [ts, mapping] of timestampMappings.entries()) {
+    if (classified.timestamped.includes(ts) && mapping.schemaPresent) {
+      timestampMappedVersions.add(mapping.repoVersion);
+    }
+  }
+  for (const pv of presentSet) {
+    if (!classified.numeric.includes(pv) && !timestampMappedVersions.has(pv)) {
+      errors.push('Schema evidence says migration ' + pv + ' is present, but it is not in remote history (numeric or mapped timestamp).');
     }
   }
 
