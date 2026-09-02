@@ -96,11 +96,11 @@ FROM information_schema.columns
 WHERE table_schema = 'public' AND table_name = 'payments'
   AND column_name IN ('refund_amount', 'refund_reason', 'refunded_by', 'refunded_at');
 
--- 355: refunds table key columns
+-- 355: refunds table columns added by migration
 SELECT column_name, data_type
 FROM information_schema.columns
 WHERE table_schema = 'public' AND table_name = 'refunds'
-  AND column_name IN ('dispatched_at', 'finalized_at', 'provider_refund_id', 'recovery_token', 'connect_account_id');
+  AND column_name IN ('dispatched_at', 'finalized_at', 'provider_refund_id', 'provider_status', 'recovery_token', 'recovery_claimed_at', 'connect_account_id', 'provider_connection_id');
 
 -- 356: customer_profiles.user_id
 SELECT column_name, data_type
@@ -170,7 +170,7 @@ WHERE p.pronamespace = 'public'::regnamespace
   )
 ORDER BY p.proname;
 ```
-Expected: 30 functions. All RPCs that mutate state must show `security_definer = true`. Trigger helpers (`prevent_*`, `guard_*`) do not require SECURITY DEFINER.
+Expected: 29 functions (5 from 355 + 4 from 356 + 1 from 357 + 5 from 359 + 4 from 360 + 4 from 361 + 3 from 362 + 3 from 363). All RPCs that mutate state must show `security_definer = true`. Trigger helpers (`prevent_*`, `guard_*`) do not require SECURITY DEFINER.
 
 ### 5. RLS enabled on new tables
 ```sql
@@ -279,9 +279,9 @@ Expected: all show `auth_can_execute = false`, `service_can_execute = true`.
 
 ### 10. Advisors / lint
 ```bash
-supabase inspect db lint --linked
+supabase db lint --linked --level warning --fail-on warning
 ```
-Review output for any `ERROR` or `WARNING` findings on the tables and functions created by migrations 355-363. Post full output to Issue #256.
+**Failure policy:** the command must exit 0. Any non-zero exit (warning or error level findings) is a **STOP** condition — post the full output to Issue #256 and wait for CTO authorization before proceeding. Do not suppress or skip warnings.
 
 ## Failure Procedure
 STOP. Post exact output to Issue #256. Wait for CTO authorization.
