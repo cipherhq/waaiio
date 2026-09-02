@@ -354,6 +354,8 @@ describe.skipIf(!canRun)('Emergency Hard-Stop DB Tests (#256 S-1)', () => {
     // auth schema/function dependency required by toggle_messaging_suspension.
     psqlMayFail(`
       DO $$ BEGIN CREATE ROLE _test_db_owner NOLOGIN NOSUPERUSER; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+      -- Production postgres is NOSUPERUSER + BYPASSRLS; match that contract
+      ALTER ROLE _test_db_owner NOSUPERUSER BYPASSRLS;
       GRANT USAGE ON SCHEMA public TO _test_db_owner;
       GRANT ALL ON public.businesses TO _test_db_owner;
       GRANT ALL ON public.messaging_suspension_audit TO _test_db_owner;
