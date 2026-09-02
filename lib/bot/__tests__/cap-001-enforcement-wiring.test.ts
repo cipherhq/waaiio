@@ -101,7 +101,7 @@ function createTableMock(config: {
         const capData = { data: config.capabilities ?? [], error: null };
         const resolved = Promise.resolve(capData);
         const chain: Record<string, any> = {};
-        for (const m of ['select', 'eq', 'order']) chain[m] = () => chain;
+        for (const m of ['select', 'eq', 'order', 'not']) chain[m] = () => chain;
         chain.then = resolved.then.bind(resolved);
         chain.catch = resolved.catch.bind(resolved);
         return chain;

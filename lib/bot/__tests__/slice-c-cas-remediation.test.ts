@@ -1,7 +1,7 @@
 /**
  * Slice C — CAS Remediation Tests (#271)
  *
- * Verifies that 9 bare .update() calls on bot_sessions have been
+ * Verifies that 10 bare .update() calls on bot_sessions have been
  * converted to use the atomic update_session_cas RPC. For each path:
  *   - CAS success → handler proceeds (sends messages / calls next handler)
  *   - CAS failure → handler returns silently (no customer message)
@@ -374,59 +374,10 @@ describe('my-orders: order selection CAS', () => {
 // ──────────────────────────────────────────────────────────
 
 describe('refund-request: CAS 7a→7b chain', () => {
-  it('CAS 7a success → version feeds 7b', async () => {
-    const { handleRefundRequest } = await import('../handlers/refund-request');
-    // We need to mock rpc to return different versions for 7a and 7b
-    const rpcMock = vi.fn()
-      .mockResolvedValueOnce({ data: { success: true, version: 10 }, error: null }) // 7a
-      .mockResolvedValueOnce({ data: { success: true, version: 11 }, error: null }); // 7b
-    const supabase = makeMockSupabase({ success: true, version: 10 }) as any;
-    supabase.rpc = rpcMock;
-    supabase.from.mockImplementation((table: string) => {
-      if (table === 'payments') {
-        return {
-          select: vi.fn().mockReturnValue({
-            eq: vi.fn().mockReturnValue({
-              eq: vi.fn().mockReturnValue({
-                order: vi.fn().mockReturnValue({
-                  limit: vi.fn().mockResolvedValue({
-                    data: [{
-                      id: 'pay-1', amount: 5000, currency: 'NGN', status: 'success', refund_amount: 0,
-                      created_at: '2026-08-01T00:00:00Z', business_id: 'biz-1', booking_id: 'bk-1', order_id: null, invoice_id: null,
-                      bookings: { guest_phone: '+2341234567890', guest_name: 'Test', services: { name: 'Haircut' }, events: null },
-                    }],
-                  }),
-                }),
-              }),
-            }),
-          }),
-        };
-      }
-      return { select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis() };
-    });
-    const sendText = makeSendText();
-    const messageSender = makeMessageSender() as any;
-    const session = makeSession({
-      current_step: 'refund_select',
-      session_data: {
-        refund_payments: { refund_1: { id: 'pay-1', amount: 5000, currency: 'NGN', refundAmount: 0, businessId: 'biz-1', bookingId: 'bk-1' } },
-      },
-    });
-
-    // Simulate selecting refund_1 (7a already happened during list show, so session_data has refund_payments)
-    await handleRefundRequest(supabase, messageSender, sendText, session as any, '+2341234567890', 'refund_1');
-
-    // 7b should use version 10 (returned by 7a) as expected_version
-    // The second rpc call is 7b
-    expect(rpcMock).toHaveBeenCalledTimes(1);
-    // Since refund_select with input triggers only 7b (7a was done earlier when listing),
-    // let's verify the call uses the session's current version
-    expect(rpcMock).toHaveBeenCalledWith('update_session_cas', expect.objectContaining({
-      p_current_step: 'refund_reason',
-      p_expected_version: 5, // session.version from makeSession
-    }));
-    expect(session.version).toBe(10);
-  });
+  // NOTE: The misleading "CAS 7a success → version feeds 7b" test was deleted in CTO Round 4.
+  // That test pre-populated refund_payments in session_data, meaning it only ever exercised 7b,
+  // not the 7a→7b chain. The real two-turn proof lives in
+  // 'refund-request: real two-turn 7a→7b proof' below, which uses a shared store.
 
   it('CAS 7a failure during list → returns silently', async () => {
     const { handleRefundRequest } = await import('../handlers/refund-request');
@@ -517,11 +468,34 @@ describe('refund-request: real two-turn 7a→7b proof (Finding 3)', () => {
     return chain;
   }
 
-  it('real two-turn: Turn 1 (7a) persists payment map, Turn 2 (7b) uses fresh version', async () => {
+  it('real two-turn: 7a persists → store → 7b uses stored version', async () => {
     const { handleRefundRequest } = await import('../handlers/refund-request');
 
+    // Shared durable store — simulates the persisted DB row between two HTTP requests.
+    // Turn 1 writes to the store via the CAS RPC call; Turn 2 reads from it.
+    // This proves 7b's p_expected_version is sourced from the version 7a wrote, not the original version.
+    const store: {
+      version: number;
+      session_data: Record<string, unknown>;
+      current_step: string;
+    } = {
+      version: 5,
+      session_data: { refund_booking_id: 'bk-1' },
+      current_step: 'refund_select',
+    };
+
     // ── TURN 1: empty input → 7a CAS at version 5, returns version 6 ──
-    const rpc1 = vi.fn().mockResolvedValue({ data: { success: true, version: 6 }, error: null });
+    // Intercept the CAS call to capture the session_data written to the DB (store simulation)
+    const rpc1 = vi.fn().mockImplementation((rpcName: string, args: Record<string, unknown>) => {
+      if (rpcName === 'update_session_cas') {
+        // Simulate the DB write: persist the p_session_data and new version to the store
+        store.version = 6;
+        store.session_data = args.p_session_data as Record<string, unknown>;
+        store.current_step = args.p_current_step as string;
+        return Promise.resolve({ data: { success: true, version: 6 }, error: null });
+      }
+      return Promise.resolve({ data: null, error: null });
+    });
     const supabase1 = {
       rpc: rpc1,
       from: vi.fn((table: string) => {
@@ -532,47 +506,49 @@ describe('refund-request: real two-turn 7a→7b proof (Finding 3)', () => {
     const session1 = makeSession({
       version: 5,
       current_step: 'refund_select',
-      session_data: {},
+      session_data: { refund_booking_id: 'bk-1' },
     });
     const sendText1 = makeSendText();
     const messageSender1 = makeMessageSender() as any;
 
     await handleRefundRequest(supabase1, messageSender1, sendText1, session1 as any, '+2341234567890', '');
 
-    // 7a CAS was called with version 5
+    // 7a CAS was called with version 5 (from store)
     expect(rpc1).toHaveBeenCalledWith('update_session_cas', expect.objectContaining({
       p_session_id: 'sess-001',
       p_expected_version: 5,
       p_current_step: 'refund_select',
     }));
-    // session1.version updated to 6 (from 7a CAS return)
+    // session1.version must be updated to 6 (from 7a CAS return)
     expect(session1.version).toBe(6);
     // Payment list was sent (CAS succeeded)
     expect(messageSender1.sendButtons).toHaveBeenCalled();
 
+    // ── STORE NOW HAS version=6 and refund_payments (written by 7a CAS call) ──
+    expect(store.version).toBe(6);
+    expect(store.session_data).toHaveProperty('refund_payments');
+
     // ── MODEL REQUEST BOUNDARY ──
-    // Turn 2 starts with a fresh session reload at version 6
-    const session2 = makeSession({
-      version: 6,
-      current_step: 'refund_select',
-      session_data: {
-        refund_payments: { refund_1: { id: 'pay-1', amount: 5000, currency: 'NGN', refundAmount: 0, businessId: 'biz-1', bookingId: 'bk-1' } },
-      },
-    });
+    // Turn 2 starts with a freshly-loaded session from the store (version=6, refund_payments present)
     const rpc2 = vi.fn().mockResolvedValue({ data: { success: true, version: 7 }, error: null });
     const supabase2 = {
       rpc: rpc2,
       from: vi.fn(() => ({ select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis() })),
     } as any;
+    const session2 = makeSession({
+      version: store.version,                  // 6 — sourced from store, not hard-coded
+      current_step: store.current_step,
+      session_data: { ...store.session_data }, // refund_payments is here because 7a wrote it
+    });
     const sendText2 = makeSendText();
     const messageSender2 = makeMessageSender() as any;
 
     await handleRefundRequest(supabase2, messageSender2, sendText2, session2 as any, '+2341234567890', 'refund_1');
 
-    // 7b CAS was called with the fresh version (6) — not the old version (5)
+    // 7b CAS was called with store version (6) — proves 7a's write is the source of truth
     expect(rpc2).toHaveBeenCalledWith('update_session_cas', expect.objectContaining({
       p_session_id: 'sess-001',
-      p_expected_version: 6,
+      p_expected_version: 6,     // from store — 7a's returned version, not original 5
       p_current_step: 'refund_reason',
     }));
     // session2.version updated to 7 (from 7b CAS return)
@@ -799,6 +775,90 @@ describe('RPC error propagation — booking, orders, saved-cards', () => {
 
     expect(sendText).not.toHaveBeenCalled();
   });
+});
+
+// ──────────────────────────────────────────────────────────
+// CAS result contract — parameterized failure coverage (Finding 3 / CTO Round 4)
+//
+// For each possible RPC result type (version_conflict, session_not_found,
+// unknown reason, malformed result, transport error) we verify:
+//   - version_conflict → silent exit (no customer message)
+//   - all other failures → throw (fail-closed)
+//
+// Uses booking selection (handleMyBookings) as the representative handler path.
+// ──────────────────────────────────────────────────────────
+
+describe('CAS result contract — all failure types (Finding 3)', () => {
+  const failureCases: Array<{
+    name: string;
+    rpcResult: { data: unknown; error: unknown };
+    expectedBehavior: 'silent' | 'throw';
+  }> = [
+    {
+      name: 'version_conflict',
+      rpcResult: { data: { success: false, reason: 'version_conflict' }, error: null },
+      expectedBehavior: 'silent',
+    },
+    {
+      name: 'session_not_found',
+      rpcResult: { data: { success: false, reason: 'session_not_found' }, error: null },
+      expectedBehavior: 'throw',
+    },
+    {
+      name: 'unknown reason',
+      rpcResult: { data: { success: false, reason: 'wtf' }, error: null },
+      expectedBehavior: 'throw',
+    },
+    {
+      name: 'malformed result (no reason field)',
+      rpcResult: { data: { success: false }, error: null },
+      expectedBehavior: 'throw',
+    },
+    {
+      name: 'RPC transport error',
+      rpcResult: { data: null, error: { message: 'connection refused' } },
+      expectedBehavior: 'throw',
+    },
+  ];
+
+  for (const tc of failureCases) {
+    it(`booking selection: ${tc.name} → ${tc.expectedBehavior}`, async () => {
+      const { handleMyBookings } = await import('../handlers/my-bookings');
+      const supabase = makeMockSupabase({ success: true, version: 6 }) as any;
+      // Override RPC to return this failure type
+      supabase.rpc.mockResolvedValue(tc.rpcResult);
+      supabase.from.mockImplementation(() => ({
+        select: vi.fn().mockReturnValue({
+          eq: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              maybeSingle: vi.fn().mockResolvedValue({ data: { id: 'booking-1' } }),
+            }),
+          }),
+        }),
+      }));
+      const sendText = makeSendText();
+      const messageSender = makeMessageSender() as any;
+      const executor = makeFlowExecutor() as any;
+      const session = makeSession();
+
+      if (tc.expectedBehavior === 'silent') {
+        await handleMyBookings(supabase, messageSender, sendText, executor, session as any, '+2341234567890', 'booking_booking-1');
+        // Silent exit — CAS was called but no message sent
+        expect(supabase.rpc).toHaveBeenCalledWith('update_session_cas', expect.objectContaining({
+          p_current_step: 'modify_booking',
+        }));
+        expect(sendText).not.toHaveBeenCalled();
+        expect(messageSender.sendButtons).not.toHaveBeenCalled();
+      } else {
+        await expect(
+          handleMyBookings(supabase, messageSender, sendText, executor, session as any, '+2341234567890', 'booking_booking-1')
+        ).rejects.toThrow();
+        // No message must be sent before the throw
+        expect(sendText).not.toHaveBeenCalled();
+        expect(messageSender.sendButtons).not.toHaveBeenCalled();
+      }
+    });
+  }
 });
 
 // ──────────────────────────────────────────────────────────
