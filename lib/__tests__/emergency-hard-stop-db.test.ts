@@ -49,7 +49,7 @@ describe.skipIf(!canRun)('Emergency Hard-Stop DB Tests (#256 S-1)', () => {
       BEGIN
         RETURN COALESCE(current_setting('request.jwt.claims', true)::jsonb->>'role' = 'admin', false);
       END;
-      $fn$ LANGUAGE plpgsql STABLE;
+      $fn$ LANGUAGE plpgsql SECURITY DEFINER STABLE;
 
       CREATE SCHEMA IF NOT EXISTS auth;
       CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $fn$
