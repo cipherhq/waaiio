@@ -45,17 +45,161 @@ supabase migration list --linked
 Expected pending: **356, 357, 359, 360, 361, 362, 363, 364** (exactly 8).
 If ANY other migration appears pending, STOP.
 
-Then verify with dry-run:
-```bash
-supabase db push --linked --dry-run
+## Migration 359 Hold
+
+Migration 359 (`config_versioning`) requires all 11 commercial keys in `platform_settings`.
+Production currently has 10 of 11; `minimum_bank_transfer` is absent.
+
+**Owner must choose before 359 can be applied:**
+- **Option A:** Insert `minimum_bank_transfer` with value `{"NG": 10000, "GH": 600}` (canonical fallback from `lib/platformSettings.ts:124`), then apply 359. Full 11-key snapshot.
+- **Option B:** Apply 359 as-is. Bootstrap succeeds with 10 keys; `minimum_bank_transfer` can be added later via `save_commercial_config`.
+
+**Do not** mark 359 as applied without executing its SQL. That creates ledger/schema drift.
+
+Until the owner decides, apply the other 7 migrations individually (skipping 359).
+
+## Individual Migration Application Procedure
+
+`supabase db push --linked` cannot skip migration 359. Migrations are applied individually
+using the Management API query endpoint with an explicit PostgreSQL transaction.
+
+### Transaction design
+
+Each migration is wrapped in an explicit `BEGIN...COMMIT` block that includes both the
+migration DDL and the ledger INSERT. This guarantees atomic commit: either both the schema
+change and the ledger entry succeed, or neither does.
+
+```sql
+BEGIN;
+SET LOCAL lock_timeout = '5s';
+SET LOCAL statement_timeout = '120s';
+
+-- === Migration SQL (verbatim from supabase/migrations/N_name.sql) ===
+<migration SQL here>
+
+-- === Ledger recording (same transaction) ===
+INSERT INTO supabase_migrations.schema_migrations (version, name)
+VALUES ('N', 'N_name');
+
+COMMIT;
 ```
 
-## Apply Pending Migrations
+**Transaction semantics** (proven via Supabase `postgres-meta` source → node-postgres → PostgreSQL simple query protocol):
+- The Management API `POST /database/query` passes the SQL string unchanged to `pool.query()`
+- node-postgres sends the full string as a single PostgreSQL simple-query 'Q' message
+- PostgreSQL executes all statements on the same connection, honoring the explicit `BEGIN...COMMIT`
+- `SET LOCAL` is scoped to the transaction and resets after COMMIT or ROLLBACK
 
-`supabase db push --linked` applies ALL local pending migrations in numeric order. It is not single-migration.
+### Failure and cleanup semantics
+
+If any statement between `BEGIN` and `COMMIT` fails (DDL error, lock timeout, constraint violation):
+
+1. PostgreSQL stops processing the remaining statements in the query string — `COMMIT` is never reached
+2. The connection holds an aborted transaction (state `E` / `InFailedTransaction`)
+3. The Management API's `pgMeta.end()` closes the connection, which causes PostgreSQL to roll back the aborted transaction
+4. All DDL changes within the transaction are rolled back — no partial schema change
+5. The ledger INSERT is also rolled back — no orphaned ledger entry
+6. Any ACCESS EXCLUSIVE locks acquired during the transaction are released on rollback
+
+**The operator does not need to perform manual cleanup after a failure.** The failed migration leaves no trace in the schema or ledger. The operator can investigate, resolve the root cause (e.g., wait for blocking transactions), and retry.
+
+### Execution command
+
 ```bash
-supabase db push --linked
+SQL=$(cat supabase/migrations/N_name.sql)
+
+FULL_SQL="BEGIN;
+SET LOCAL lock_timeout = '5s';
+SET LOCAL statement_timeout = '120s';
+
+${SQL}
+
+INSERT INTO supabase_migrations.schema_migrations (version, name)
+VALUES ('N', 'N_name');
+
+COMMIT;"
+
+RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
+  "https://api.supabase.com/v1/projects/${SUPABASE_REF}/database/query" \
+  -H "Authorization: Bearer ${SUPABASE_ACCESS_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d "$(jq -n --arg q "$FULL_SQL" '{query: $q}')")
+
+HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+BODY=$(echo "$RESPONSE" | head -n -1)
+
+if [ "$HTTP_CODE" != "200" ]; then
+  echo "FAILED: HTTP $HTTP_CODE"
+  echo "$BODY"
+  echo "Transaction rolled back automatically. No schema or ledger change."
+  echo "STOP — post exact output to Issue #218."
+  exit 1
+fi
+
+echo "SUCCESS — verify postconditions before proceeding."
 ```
+
+### Postconditions (after each migration)
+
+```bash
+# A. Ledger entry exists
+curl -s -X POST "https://api.supabase.com/v1/projects/${SUPABASE_REF}/database/query" \
+  -H "Authorization: Bearer ${SUPABASE_ACCESS_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "SELECT version, name FROM supabase_migrations.schema_migrations WHERE version = '"'"'N'"'"'"}'
+# Must return 1 row. If empty → STOP.
+
+# B. Migration objects exist (run the migration-specific verification from Post-Verification below)
+```
+
+If either postcondition fails, STOP and post exact output to Issue #218.
+
+## Application Order
+
+**Critical barrier:** Migration 363 MUST be applied and verified BEFORE migration 362.
+
+Applying 362 before 363 creates a window where inbound webhook messages are claimed and
+completed but outbound responses fail (because `businesses.messaging_suspended` column is
+absent), permanently losing those messages.
+
+### Phase A — Urgent recovery (restores bot functionality)
+
+**Step 1:** Apply migration **363** (`emergency_hard_stop`) — restores outbound messaging.
+Verify: `businesses.messaging_suspended` column, `toggle_messaging_suspension` function, audit table, triggers.
+**Do not proceed until verification passes.**
+
+**Step 2:** Apply migration **362** (`webhook_claim_fencing`) — restores inbound webhook processing.
+Verify: `claim_webhook_event`, `complete_webhook_event`, `fail_webhook_event` functions, `claim_token` column.
+
+### Phase B — Full convergence
+
+Apply in this order: **356**, **357**, **360**, **361**, **364**.
+Verify postconditions after each.
+
+### Phase C — Deferred migration 359
+
+After owner decides on `minimum_bank_transfer` (Option A or B above), apply **359**.
+After 359, verify with:
+```bash
+supabase migration list --linked
+```
+Expected: zero pending migrations.
+
+### Lock contention notes
+
+| Migration | Lock-acquiring DDL | Target table | Timeout behavior |
+|-----------|-------------------|-------------|-----------------|
+| 363 | `ALTER TABLE ADD COLUMN` + `CREATE TRIGGER` | `businesses` (high traffic) | `lock_timeout = 5s` → aborts and rolls back if blocked |
+| 362 | `ALTER TABLE ADD COLUMN` + `DROP/ADD CONSTRAINT` | `processed_webhook_events` (low traffic) | Same |
+| 356 | `ALTER TABLE ADD COLUMN` | `customer_profiles` | Same |
+| 360 | `ALTER TABLE ADD COLUMN` | `orders` | Same |
+| 357 | `DROP/CREATE FUNCTION` | No table lock | Near-instant |
+| 361 | `CREATE TABLE` | No existing table lock | Near-instant |
+| 364 | `DROP/CREATE FUNCTION` | No table lock | Near-instant |
+
+If `lock_timeout` fires: the entire transaction rolls back automatically. Wait for the
+blocking transaction to complete, then retry. Check `pg_stat_activity` for long-running
+queries on the target table.
 
 ## Post-Verification
 
