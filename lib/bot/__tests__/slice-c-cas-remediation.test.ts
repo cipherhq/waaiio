@@ -2,7 +2,7 @@
  * Slice C — CAS Remediation Tests (#271)
  *
  * 38 tests in this file.
- * Full suite: 223 files / 5702 tests passed (CI run #33670191207).
+ * Full suite: 223 files / 5702 tests passed (CI run #33672112369).
  *
  * Verifies that 10 bare .update() call sites on bot_sessions have been
  * converted to use the atomic update_session_cas RPC (1a + 1b are two
@@ -1395,15 +1395,20 @@ describe('BotService runtime: quick_rebook CAS (Finding 3)', () => {
     expect(casCalls[0][1]).toMatchObject({ p_session_id: 'sess-qrebook-001', p_expected_version: 7 });
     expect(casCalls[1][1]).toMatchObject({ p_session_id: 'sess-qrebook-001', p_expected_version: 8, p_current_step: 'select_date' });
 
-    // Exact output: flow executor scheduling prompt, NOT the generic fallback
+    // Exact production output: flow executor sends the scheduling date-selection prompt
     const msgs = sender.getMessages();
-    expect(msgs.length).toBeGreaterThan(0);
-    const firstMsg = msgs[0];
-    // The flow executor sends a date-selection prompt (buttons or list) for the scheduling flow
-    const kind = (firstMsg as Record<string, unknown>)['type'] as string;
-    expect(kind === 'buttons' || kind === 'list' || kind === 'text').toBe(true);
-    const allText = msgs.map(m => (m as any).text || (m as any).body || '').join(' ');
-    expect(allText).not.toContain('Something went wrong');
+    expect(msgs).toHaveLength(1);
+    const msg = msgs[0] as Record<string, unknown>;
+    expect(msg['type']).toBe('buttons');
+    expect(msg['body']).toBe('When would you like to book?');
+    const btns = msg['buttons'] as Array<{ id: string; title: string }>;
+    expect(btns.length).toBe(3);
+    expect(btns[2]).toMatchObject({ id: 'pick_date', title: 'Pick a Date' });
+    // Not the fallback
+    expect(msg['body']).not.toContain('Something went wrong');
+    // Continuation event logged after target CAS success
+    const sendEvents = eventLog.filter(e => e.event === 'send');
+    expect(sendEvents.length).toBeGreaterThan(0);
     expect(eventLog.some(e => e.event === 'cas_target_conflict')).toBe(false);
   });
 
@@ -1596,15 +1601,18 @@ describe('BotService runtime: browse_menu CAS (Finding 4)', () => {
     expect(casCalls[0][1]).toMatchObject({ p_session_id: 'sess-browse-001', p_expected_version: 4 });
     expect(casCalls[1][1]).toMatchObject({ p_session_id: 'sess-browse-001', p_expected_version: 5, p_current_step: 'select_capability' });
 
-    // Exact output: flow executor capability selection prompt, NOT fallback
+    // Exact production output: capability selection prompt
     const msgs = sender.getMessages();
-    expect(msgs.length).toBeGreaterThan(0);
-    const firstMsg = msgs[0];
-    // The flow executor sends a capability-selection menu (buttons or list)
-    const kind = (firstMsg as Record<string, unknown>)['type'] as string;
-    expect(kind === 'buttons' || kind === 'list' || kind === 'text').toBe(true);
-    const allText = msgs.map(m => (m as any).text || (m as any).body || '').join(' ');
-    expect(allText).not.toContain('Something went wrong');
+    expect(msgs).toHaveLength(1);
+    const msg = msgs[0] as Record<string, unknown>;
+    expect(msg['type']).toBe('text');
+    const msgText = msg['text'] as string;
+    expect(msgText).toContain('What would you like to do?');
+    // Not the fallback
+    expect(msgText).not.toContain('Something went wrong');
+    // Continuation event logged after target CAS success
+    const sendEvents = eventLog.filter(e => e.event === 'send');
+    expect(sendEvents.length).toBeGreaterThan(0);
     expect(eventLog.some(e => e.event === 'cas_target_conflict')).toBe(false);
   });
 
@@ -1825,15 +1833,15 @@ describe('BotService runtime: apply_correction CAS (Finding 5)', () => {
     expect(casCalls[0][1]).toMatchObject({ p_session_id: 'sess-corr-001', p_expected_version: 3 });
     expect(casCalls[1][1]).toMatchObject({ p_session_id: 'sess-corr-001', p_expected_version: 4, p_current_step: 'select_time' });
 
-    // Exact output: correction confirmation containing the corrected value 'Friday'
+    // Exact production output: correction confirmation
     const msgs = sender.getMessages();
-    expect(msgs.length).toBeGreaterThan(0);
-    const firstMsg = msgs[0];
-    const corrKind = (firstMsg as Record<string, unknown>)['type'] as string;
-    expect(corrKind).toBe('text');
-    const allText = msgs.map(m => (m as any).text || (m as any).body || '').join(' ');
-    expect(allText).not.toContain('Something went wrong');
-    expect(allText).toContain('Friday');
+    expect(msgs).toHaveLength(1);
+    const msg = msgs[0] as Record<string, unknown>;
+    expect(msg['type']).toBe('text');
+    expect(msg['text']).toBe('Got it! Changed date to Friday.');
+    // Continuation event logged after target CAS success
+    const sendEvents = eventLog.filter(e => e.event === 'send');
+    expect(sendEvents.length).toBeGreaterThan(0);
     expect(eventLog.some(e => e.event === 'cas_target_conflict')).toBe(false);
   });
 
