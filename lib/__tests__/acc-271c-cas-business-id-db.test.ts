@@ -153,6 +153,91 @@ describe('#271c CAS business_id PostgreSQL', () => {
     `);
     expect(exitCode).not.toBe(0);
   });
+
+  // ── Full rebook atomicity (Finding 3) ─────────────────────────────────────
+
+  it('rebook: success atomically updates business_id, current_step, session_data, and version', () => {
+    // Reset session to a known state first (version is currently 2 from prior tests)
+    const currentVersion = Number(runSQL(`SELECT version FROM public.bot_sessions WHERE id = '${SESSION_ID}';`));
+    const nextVersion = currentVersion + 1;
+
+    const result = runSQL(`
+      SELECT update_session_cas(
+        '${SESSION_ID}'::UUID, ${currentVersion}::BIGINT,
+        'select_date', '{"_step_history": ["select_capability", "select_date"], "_reschedule": true}'::JSONB,
+        NULL::JSONB, NULL::TEXT[],
+        '${BIZ_A}'::UUID
+      );
+    `);
+    const parsed = JSON.parse(result);
+    expect(parsed.success).toBe(true);
+    expect(parsed.version).toBe(nextVersion);
+
+    // All four columns must be updated atomically in one RPC call
+    const row = runSQL(`
+      SELECT business_id, current_step, version,
+             session_data->>'_reschedule' AS reschedule_flag
+      FROM public.bot_sessions WHERE id = '${SESSION_ID}';
+    `);
+    const [bizId, step, ver, rebook] = row.split('|');
+    expect(bizId).toBe(BIZ_A);
+    expect(step).toBe('select_date');
+    expect(Number(ver)).toBe(nextVersion);
+    expect(rebook).toBe('true');
+  });
+
+  it('rebook: stale expected_version leaves all columns unchanged', () => {
+    // Fetch current state
+    const snapshot = runSQL(`
+      SELECT business_id, current_step, version FROM public.bot_sessions WHERE id = '${SESSION_ID}';
+    `);
+    const [bizBefore, stepBefore, verBefore] = snapshot.split('|');
+
+    // Pass a stale expected_version to trigger conflict
+    const staleVersion = Number(verBefore) - 1;
+    const result = runSQL(`
+      SELECT update_session_cas(
+        '${SESSION_ID}'::UUID, ${staleVersion}::BIGINT,
+        'inject_step', '{"injected": true}'::JSONB,
+        NULL::JSONB, NULL::TEXT[],
+        '${BIZ_B}'::UUID
+      );
+    `);
+    const parsed = JSON.parse(result);
+    expect(parsed.success).toBe(false);
+    expect(parsed.reason).toBe('version_conflict');
+
+    // Row must be entirely unchanged
+    const after = runSQL(`
+      SELECT business_id, current_step, version FROM public.bot_sessions WHERE id = '${SESSION_ID}';
+    `);
+    expect(after).toBe(snapshot);
+  });
+
+  // ── pg_proc signature audit (Finding 3) ───────────────────────────────────
+
+  it('exactly one update_session_cas function exists after migration 363', () => {
+    const count = runSQL(`
+      SELECT COUNT(*)::text
+      FROM pg_proc p
+      JOIN pg_namespace n ON n.oid = p.pronamespace
+      WHERE n.nspname = 'public'
+        AND p.proname = 'update_session_cas';
+    `);
+    // Must be exactly 1 — no overloads, no stale signatures
+    expect(count).toBe('1');
+  });
+
+  it('update_session_cas has 7 parameters (includes p_business_id)', () => {
+    const argCount = runSQL(`
+      SELECT pronargs::text
+      FROM pg_proc p
+      JOIN pg_namespace n ON n.oid = p.pronamespace
+      WHERE n.nspname = 'public'
+        AND p.proname = 'update_session_cas';
+    `);
+    expect(argCount).toBe('7');
+  });
 });
 
 } // end if (dbUrl)

@@ -431,7 +431,8 @@ describe('saved-cards: PIN-failure reset CAS', () => {
     expect(session.version).toBe(9);
   });
 
-  it('CAS failure → still sends error message (best-effort reset)', async () => {
+  it('CAS failure → ZERO sends (CAS runs before any sendText)', async () => {
+    // Finding 2 corrected-ordering proof: CAS fires first; conflict → silent exit with no message
     const { handleCardPinStep } = await import('../handlers/saved-cards');
     const supabase = makeMockSupabase({ success: false, reason: 'version_conflict' }) as any;
     const sendText = makeSendText();
@@ -447,9 +448,214 @@ describe('saved-cards: PIN-failure reset CAS', () => {
 
     await handleCardPinStep(supabase, sendText, '+2341234567890', session as any, '1234');
 
-    // Error message is sent BEFORE CAS — so it should still be sent
-    expect(sendText).toHaveBeenCalledWith('+2341234567890', 'Something went wrong. Please type *save card* again.');
-    // Version should NOT be updated since CAS failed
+    // CAS ran BEFORE sendText — conflict means silent exit, zero sends
+    expect(sendText).not.toHaveBeenCalled();
+    // Version must NOT be updated since CAS failed
     expect(session.version).toBe(5);
+  });
+});
+
+// ──────────────────────────────────────────────────────────
+// RPC-error proofs (Finding 1) — RPC transport error throws,
+// never silently swallowed like a CAS conflict.
+// ──────────────────────────────────────────────────────────
+
+describe('RPC error propagation — booking, orders, saved-cards', () => {
+  it('booking selection: RPC error throws, no message sent', async () => {
+    const { handleMyBookings } = await import('../handlers/my-bookings');
+    const supabase = makeMockSupabase({ success: true, version: 6 }) as any;
+    // Simulate RPC transport failure (network down, pg crash, etc.)
+    supabase.rpc.mockResolvedValue({ data: null, error: { message: 'connection refused' } });
+    supabase.from.mockImplementation(() => ({
+      select: vi.fn().mockReturnValue({
+        eq: vi.fn().mockReturnValue({
+          eq: vi.fn().mockReturnValue({
+            maybeSingle: vi.fn().mockResolvedValue({ data: { id: 'booking-1' } }),
+          }),
+        }),
+      }),
+    }));
+    const sendText = makeSendText();
+    const messageSender = makeMessageSender() as any;
+    const executor = makeFlowExecutor() as any;
+    const session = makeSession();
+
+    await expect(
+      handleMyBookings(supabase, messageSender, sendText, executor, session as any, '+2341234567890', 'booking_booking-1')
+    ).rejects.toThrow();
+
+    // No message must be dispatched before the throw
+    expect(sendText).not.toHaveBeenCalled();
+    expect(messageSender.sendButtons).not.toHaveBeenCalled();
+  });
+
+  it('order selection: RPC error throws, no message sent', async () => {
+    const { handleMyOrders } = await import('../handlers/my-orders');
+    const supabase = makeMockSupabase({ success: true, version: 8 }) as any;
+    supabase.rpc.mockResolvedValue({ data: null, error: { message: 'timeout' } });
+    supabase.from.mockImplementation(() => ({
+      select: vi.fn().mockReturnValue({
+        eq: vi.fn().mockReturnValue({
+          eq: vi.fn().mockReturnValue({
+            maybeSingle: vi.fn().mockResolvedValue({ data: { id: 'order-1' } }),
+          }),
+        }),
+      }),
+    }));
+    const sendText = makeSendText();
+    const messageSender = makeMessageSender() as any;
+    const session = makeSession();
+
+    await expect(
+      handleMyOrders(supabase, messageSender, sendText, vi.fn(), session as any, '+2341234567890', 'order_order-1')
+    ).rejects.toThrow();
+
+    expect(sendText).not.toHaveBeenCalled();
+  });
+
+  it('saved-cards PIN reset: RPC error throws, no message sent', async () => {
+    const { handleCardPinStep } = await import('../handlers/saved-cards');
+    const supabase = makeMockSupabase({ success: true, version: 6 }) as any;
+    supabase.rpc.mockResolvedValue({ data: null, error: { message: 'pg_down' } });
+    const sendText = makeSendText();
+    const session = makeSession({
+      session_data: {
+        _save_card_pending: true,
+        _save_card_business_id: null, // missing → triggers reset branch
+        _save_card_gateway: 'paystack',
+        _save_card_auth: {},           // no authorization_code → triggers reset branch
+      },
+    });
+
+    await expect(
+      handleCardPinStep(supabase, sendText, '+2341234567890', session as any, '1234')
+    ).rejects.toThrow();
+
+    // The throw must happen BEFORE any sendText
+    expect(sendText).not.toHaveBeenCalled();
+  });
+
+  it('refund 7a: RPC error throws, no list sent', async () => {
+    const { handleRefundRequest } = await import('../handlers/refund-request');
+    const supabase = makeMockSupabase({ success: true, version: 6 }) as any;
+    supabase.rpc.mockResolvedValue({ data: null, error: { message: 'connection lost' } });
+    // Provide a payments result so the query doesn't bail early
+    const paymentsData = [{
+      id: 'pay-1', amount: 5000, currency: 'NGN', status: 'success', refund_amount: 0,
+      created_at: '2026-08-01T00:00:00Z', business_id: 'biz-1', booking_id: 'bk-1', order_id: null, invoice_id: null,
+      bookings: { guest_phone: '+2341234567890', guest_name: 'Test', service_id: 'svc-1', event_id: null, services: { name: 'Haircut' }, events: null },
+    }];
+    const chain: Record<string, any> = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      order: vi.fn().mockReturnThis(),
+      limit: vi.fn().mockResolvedValue({ data: paymentsData }),
+    };
+    chain.select.mockReturnValue(chain);
+    chain.eq.mockReturnValue(chain);
+    chain.order.mockReturnValue(chain);
+    supabase.from.mockImplementation((table: string) => {
+      if (table === 'payments') return chain;
+      return { select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis() };
+    });
+    const sendText = makeSendText();
+    const messageSender = makeMessageSender() as any;
+    const session = makeSession({ current_step: 'refund_select' });
+
+    // Empty input → triggers list display path (7a CAS)
+    await expect(
+      handleRefundRequest(supabase, messageSender, sendText, session as any, '+2341234567890', '')
+    ).rejects.toThrow();
+
+    // List must NOT be sent since throw happens before messageSender calls
+    expect(messageSender.sendButtons).not.toHaveBeenCalled();
+    expect(messageSender.sendList).not.toHaveBeenCalled();
+  });
+
+  it('refund 7b: RPC error throws, no reason-prompt sent', async () => {
+    const { handleRefundRequest } = await import('../handlers/refund-request');
+    const supabase = makeMockSupabase({ success: true, version: 6 }) as any;
+    supabase.rpc.mockResolvedValue({ data: null, error: { message: 'pg_crash' } });
+    const sendText = makeSendText();
+    const messageSender = makeMessageSender() as any;
+    const session = makeSession({
+      current_step: 'refund_select',
+      session_data: {
+        refund_payments: { refund_1: { id: 'pay-1', amount: 5000, currency: 'NGN', refundAmount: 0, businessId: 'biz-1', bookingId: 'bk-1' } },
+      },
+    });
+
+    // Non-empty input with a valid map key → triggers 7b CAS
+    await expect(
+      handleRefundRequest(supabase, messageSender, sendText, session as any, '+2341234567890', 'refund_1')
+    ).rejects.toThrow();
+
+    expect(sendText).not.toHaveBeenCalled();
+  });
+});
+
+// ──────────────────────────────────────────────────────────
+// BotService CAS paths — source-structure proofs (Findings 3, 4, 5)
+// These verify the quick_rebook, browse_menu, and correction paths
+// follow the correct throw-on-error / silent-on-conflict / adopt-version pattern.
+// ──────────────────────────────────────────────────────────
+
+describe('bot.service.ts CAS structure — quick_rebook (Finding 3)', () => {
+  it('casResultError is thrown before any flow executor call', async () => {
+    const src = await (await import('fs')).promises.readFile(
+      new URL('../bot.service.ts', import.meta.url).pathname,
+      'utf-8',
+    );
+    // Locate the QUICK_REBOOK CAS block
+    const quickRebookCasIdx = src.indexOf('[QUICK_REBOOK] CAS RPC error');
+    expect(quickRebookCasIdx).toBeGreaterThan(0);
+
+    // Extract a wider window (800 chars) to capture the throw + executor call
+    const block = src.slice(quickRebookCasIdx - 100, quickRebookCasIdx + 800);
+
+    // Must throw the error (not swallow it)
+    expect(block).toContain('throw casResultError');
+
+    // CAS conflict guard must appear before flow executor call
+    const conflictIdx = block.indexOf('!casResult?.success) return');
+    const versionIdx = block.indexOf('session.version = casResult.version');
+    const executorIdx = block.indexOf('flowExecutor.execute');
+    expect(conflictIdx).toBeGreaterThan(0);
+    expect(versionIdx).toBeGreaterThan(conflictIdx);
+    expect(executorIdx).toBeGreaterThan(versionIdx);
+  });
+});
+
+describe('bot.service.ts CAS structure — browse_menu (Finding 4)', () => {
+  it('casMenuError is thrown and version adopted before executor', async () => {
+    const src = await (await import('fs')).promises.readFile(
+      new URL('../bot.service.ts', import.meta.url).pathname,
+      'utf-8',
+    );
+    const browseMenuCasIdx = src.indexOf('[BROWSE_MENU] CAS RPC error');
+    expect(browseMenuCasIdx).toBeGreaterThan(0);
+
+    const window = src.slice(browseMenuCasIdx - 50, browseMenuCasIdx + 400);
+
+    expect(window).toContain('throw casMenuError');
+    expect(window).toContain('!casMenuResult?.success) return');
+    expect(window).toContain('session.version = casMenuResult.version');
+  });
+});
+
+describe('bot.service.ts CAS structure — apply_correction (Finding 5)', () => {
+  it('casCorrError is thrown and version adopted before sendText', async () => {
+    const src = await (await import('fs')).promises.readFile(
+      new URL('../bot.service.ts', import.meta.url).pathname,
+      'utf-8',
+    );
+    const corrCasIdx = src.indexOf('[CORRECTION] CAS RPC error');
+    expect(corrCasIdx).toBeGreaterThan(0);
+
+    const window = src.slice(corrCasIdx - 50, corrCasIdx + 400);
+
+    expect(window).toContain('throw casCorrError');
+    expect(window).toContain('!casCorrResult?.success) return');
+    expect(window).toContain('session.version = casCorrResult.version');
   });
 });
