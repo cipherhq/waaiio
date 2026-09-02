@@ -57,9 +57,9 @@ describe('#271c CAS business_id PostgreSQL', () => {
     // Create test fixtures
     runSQL(`
       INSERT INTO auth.users (id, email) VALUES ('${OWNER}', 'cas-test@example.com');
-      INSERT INTO public.businesses (id, name, slug, category, flow_type, owner_id, subscription_tier, address)
-        VALUES ('${BIZ_A}', 'Biz A', 'biz-a-cas', 'salon', 'scheduling', '${OWNER}', 'growth', '123 Test St'),
-               ('${BIZ_B}', 'Biz B', 'biz-b-cas', 'salon', 'scheduling', '${OWNER}', 'growth', '456 Test Ave');
+      INSERT INTO public.businesses (id, name, slug, category, flow_type, owner_id, subscription_tier, address, city, neighborhood, phone)
+        VALUES ('${BIZ_A}', 'Biz A', 'biz-a-cas', 'salon', 'scheduling', '${OWNER}', 'growth', '123 Test St', 'Lagos', 'Ikeja', '+234000111'),
+               ('${BIZ_B}', 'Biz B', 'biz-b-cas', 'salon', 'scheduling', '${OWNER}', 'growth', '456 Test Ave', 'Lagos', 'Lekki', '+234000222');
       INSERT INTO public.bot_sessions (id, whatsapp_number, business_id, current_step, session_data, is_active, expires_at, version)
         VALUES ('${SESSION_ID}', '+2340001112222', '${BIZ_A}', 'select_capability', '{}', true, NOW() + interval '10 minutes', 0);
     `);
