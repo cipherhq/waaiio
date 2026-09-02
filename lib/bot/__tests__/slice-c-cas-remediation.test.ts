@@ -2,7 +2,7 @@
  * Slice C — CAS Remediation Tests (#271)
  *
  * 38 tests in this file.
- * Full suite: 223 files / 5702 tests passed (CI run #33672112369).
+ * Full suite: 223 files / 5702 tests passed (CI run #33673952829).
  *
  * Verifies that 10 bare .update() call sites on bot_sessions have been
  * converted to use the atomic update_session_cas RPC (1a + 1b are two
@@ -1396,17 +1396,28 @@ describe('BotService runtime: quick_rebook CAS (Finding 3)', () => {
     expect(casCalls[1][1]).toMatchObject({ p_session_id: 'sess-qrebook-001', p_expected_version: 8, p_current_step: 'select_date' });
 
     // Exact production output: flow executor sends the scheduling date-selection prompt
+    // Compute expected dynamic date buttons using the same logic as scheduling.flow.ts
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const tomorrowStr = tomorrow.toISOString().split('T')[0];
+    const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+    const dayLabel = dayNames[tomorrow.getDay()].charAt(0).toUpperCase() + dayNames[tomorrow.getDay()].slice(1, 3);
+    const nextSat = new Date();
+    nextSat.setDate(nextSat.getDate() + ((6 - nextSat.getDay() + 7) % 7 || 7));
+    const nextSatStr = nextSat.toISOString().split('T')[0];
+
     const msgs = sender.getMessages();
     expect(msgs).toHaveLength(1);
     const msg = msgs[0] as Record<string, unknown>;
     expect(msg['type']).toBe('buttons');
     expect(msg['body']).toBe('When would you like to book?');
     const btns = msg['buttons'] as Array<{ id: string; title: string }>;
-    expect(btns.length).toBe(3);
-    expect(btns[2]).toMatchObject({ id: 'pick_date', title: 'Pick a Date' });
-    // Not the fallback
+    expect(btns).toEqual([
+      { id: 'date_' + tomorrowStr, title: 'Tomorrow (' + dayLabel + ')' },
+      { id: 'date_' + nextSatStr, title: 'This Saturday' },
+      { id: 'pick_date', title: 'Pick a Date' },
+    ]);
     expect(msg['body']).not.toContain('Something went wrong');
-    // Continuation event logged after target CAS success
     const sendEvents = eventLog.filter(e => e.event === 'send');
     expect(sendEvents.length).toBeGreaterThan(0);
     expect(eventLog.some(e => e.event === 'cas_target_conflict')).toBe(false);
@@ -1601,16 +1612,12 @@ describe('BotService runtime: browse_menu CAS (Finding 4)', () => {
     expect(casCalls[0][1]).toMatchObject({ p_session_id: 'sess-browse-001', p_expected_version: 4 });
     expect(casCalls[1][1]).toMatchObject({ p_session_id: 'sess-browse-001', p_expected_version: 5, p_current_step: 'select_capability' });
 
-    // Exact production output: capability selection prompt
+    // Exact production output: capability selection prompt (full stable text)
     const msgs = sender.getMessages();
     expect(msgs).toHaveLength(1);
     const msg = msgs[0] as Record<string, unknown>;
     expect(msg['type']).toBe('text');
-    const msgText = msg['text'] as string;
-    expect(msgText).toContain('What would you like to do?');
-    // Not the fallback
-    expect(msgText).not.toContain('Something went wrong');
-    // Continuation event logged after target CAS success
+    expect(msg['text']).toBe('What would you like to do? \u{1F447}\n\nThis business is still setting up. Please try again later.');
     const sendEvents = eventLog.filter(e => e.event === 'send');
     expect(sendEvents.length).toBeGreaterThan(0);
     expect(eventLog.some(e => e.event === 'cas_target_conflict')).toBe(false);
