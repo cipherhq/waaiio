@@ -136,10 +136,9 @@ describe('S-1 + #279 Webhook Composition (#256)', () => {
     expect(cloud.sendText).not.toHaveBeenCalled();
   });
 
-  it('noRetry: deadline expires DURING hard-stop authorization → zero provider calls', async () => {
-    // The genuine race: deadline is valid when checked pre-auth, but expires
-    // while the async assertMessagingAllowed DB call is pending. The post-auth
-    // final deadline check catches the expiry before the provider call.
+  it('noRetry: deadline expires DURING pending hard-stop authorization → zero provider calls', async () => {
+    // Genuinely deferred: auth promise stays pending while deadline expires,
+    // then resolves as allowed. Post-auth deadline check catches the expiry.
     let deadlineCheckCount = 0;
     let deadlineExpired = false;
 
@@ -147,23 +146,36 @@ describe('S-1 + #279 Webhook Composition (#256)', () => {
     const sender = new MetaCloudSender(cloud as any);
     sender.bindBusiness('biz-ok');
 
-    // Deadline hook: passes on first call (pre-auth), throws on second (post-auth)
     sender.beforeEachAttempt = () => {
       deadlineCheckCount++;
       if (deadlineExpired) throw new Error('Side-effect deadline exceeded');
     };
 
-    // Mock assertMessagingAllowed to simulate async work during which deadline expires
+    // Create a deferred promise for authorization
+    let resolveAuth!: () => void;
+    const authPending = new Promise<void>(r => { resolveAuth = r; });
+
     const { assertMessagingAllowed } = await import('@/lib/channels/send-guard');
     (assertMessagingAllowed as ReturnType<typeof vi.fn>).mockImplementationOnce(async () => {
-      // Simulate: authorization takes time, deadline expires during this await
-      deadlineExpired = true;
-      // Authorization itself succeeds (business is not suspended)
+      // Authorization is genuinely pending — waiting for resolveAuth()
+      await authPending;
+      // When resolved: authorization succeeds (business allowed)
     });
 
-    await expect(sender.sendText({ to: '+234800', text: 'test', noRetry: true })).rejects.toThrow('deadline');
-    expect(cloud.sendText).not.toHaveBeenCalled(); // Zero provider calls
-    expect(deadlineCheckCount).toBe(2); // Pre-auth (passed) + post-auth (caught expiry)
+    // Start the send — blocks on pending authorization
+    const sendPromise = sender.sendText({ to: '+234800', text: 'test', noRetry: true });
+
+    // While auth is pending, expire the deadline
+    await new Promise(r => setTimeout(r, 10));
+    deadlineExpired = true;
+
+    // Resolve authorization as allowed
+    resolveAuth();
+
+    // Post-auth deadline check catches the expiry
+    await expect(sendPromise).rejects.toThrow('deadline');
+    expect(cloud.sendText).not.toHaveBeenCalled();
+    expect(deadlineCheckCount).toBe(2); // Pre-auth (passed) + post-auth (caught)
   });
 
   it('wrapper forwarding preserves bindBusiness/enterPlatformDiscovery', async () => {

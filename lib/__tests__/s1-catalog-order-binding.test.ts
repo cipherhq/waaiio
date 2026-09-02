@@ -34,60 +34,71 @@ describe('S-1 Catalog-Order Shared-Channel Binding (#256)', () => {
     vi.clearAllMocks();
   });
 
-  it('shared channel: catalog resolves A → bindBusiness(A) → suspended A → zero Meta calls', async () => {
+  /**
+   * Reproduce the exact production handleCatalogOrder binding flow:
+   * query → bind → send business-attributable response.
+   */
+  async function catalogOrderFlow(
+    sender: InstanceType<typeof MetaCloudSender>,
+    catalogBiz: { id: string; name: string; status: string } | null,
+    source: string,
+  ) {
+    if (!catalogBiz || catalogBiz.status !== 'active') {
+      try { if (sender.sendPlatformText) await sender.sendPlatformText({ to: source, text: 'Sorry, this catalog is currently unavailable.' }); } catch { /* ignore */ }
+      return { sent: false, reason: 'unavailable' };
+    }
+    // Production: outbound.bindBusiness(biz.id)
+    if (sender.bindBusiness) sender.bindBusiness(catalogBiz.id);
+    try {
+      await sender.sendText({ to: source, text: `Order from ${catalogBiz.name} confirmed!` });
+      return { sent: true };
+    } catch (err) {
+      return { sent: false, reason: (err as Error).message };
+    }
+  }
+
+  it('shared channel NULL: catalog resolves suspended A → zero Meta calls', async () => {
     suspendedBizIds.add('biz-catalog-A');
     const cloud = createMockCloud();
     const sender = new MetaCloudSender(cloud as any);
-
-    // Sender starts tenantless (shared channel with business_id=NULL)
     expect(sender.boundBusinessId).toBe('');
 
-    // Catalog resolves business A
-    sender.bindBusiness('biz-catalog-A');
+    const result = await catalogOrderFlow(sender, { id: 'biz-catalog-A', name: 'Biz A', status: 'active' }, '+234800');
     expect(sender.boundBusinessId).toBe('biz-catalog-A');
-
-    // Business-attributable catalog response → blocked by suspension
-    await expect(sender.sendText({ to: '+234800', text: 'Your order #123 has been confirmed!' })).rejects.toThrow('suspended');
+    expect(result.sent).toBe(false);
+    expect(result.reason).toContain('suspended');
     expect(cloud.sendText).not.toHaveBeenCalled();
   });
 
-  it('shared channel: catalog resolves A → unsuspended A → catalog response reaches Meta', async () => {
+  it('shared channel NULL: catalog resolves active A → response reaches Meta', async () => {
     const cloud = createMockCloud();
     const sender = new MetaCloudSender(cloud as any);
-
     expect(sender.boundBusinessId).toBe('');
 
-    // Catalog resolves business A (not suspended)
-    sender.bindBusiness('biz-catalog-A');
-
-    // Business-attributable catalog response succeeds
-    await sender.sendText({ to: '+234800', text: 'Your order #123 has been confirmed!' });
+    const result = await catalogOrderFlow(sender, { id: 'biz-catalog-A', name: 'Biz A', status: 'active' }, '+234800');
+    expect(sender.boundBusinessId).toBe('biz-catalog-A');
+    expect(result.sent).toBe(true);
     expect(cloud.sendText).toHaveBeenCalledTimes(1);
   });
 
-  it('unavailable catalog: no business resolved → sendPlatformText for neutral guidance', async () => {
+  it('unavailable catalog: sendPlatformText neutral guidance', async () => {
     const cloud = createMockCloud();
     const sender = new MetaCloudSender(cloud as any);
 
-    // No business resolved — stays tenantless
+    const result = await catalogOrderFlow(sender, null, '+234800');
     expect(sender.boundBusinessId).toBe('');
-
-    // Platform-scoped neutral guidance works (no business guard)
-    await sender.sendPlatformText({ to: '+234800', text: 'Sorry, this catalog is currently unavailable.' });
+    expect(result.reason).toBe('unavailable');
     expect(cloud.sendText).toHaveBeenCalledTimes(1);
   });
 
-  it('shared channel ownership is not mutated by catalog binding', () => {
+  it('shared channel ownership not mutated by catalog binding', () => {
     const cloud = createMockCloud();
     const sender = new MetaCloudSender(cloud as any);
+    const sharedChannel = { id: 'ch-shared', business_id: null };
 
-    // Shared channel record (simulated)
-    const sharedChannel = { id: 'ch-shared', business_id: null, channel_type: 'shared' };
-
-    // Binding business on sender does NOT mutate the channel record
     sender.bindBusiness('biz-catalog-A');
-    expect(sharedChannel.business_id).toBeNull(); // Channel ownership unchanged
-    expect(sender.boundBusinessId).toBe('biz-catalog-A'); // Only sender state changed
+    expect(sharedChannel.business_id).toBeNull();
+    expect(sender.boundBusinessId).toBe('biz-catalog-A');
   });
 
   it('structural: handleCatalogOrder binds business before responses', () => {
