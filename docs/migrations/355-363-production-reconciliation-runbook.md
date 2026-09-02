@@ -4,36 +4,58 @@
 
 ## Current State
 - Last correct tracking: `354`
-- Migration 355 SQL: **applied** (schema present)
-- Migration 355 tracking: **INCORRECT** — `20260902052231` instead of `355`
-- 356-363: **not applied**
-- Intentionally absent: `358`
+- Migration 355 SQL: **applied** (schema objects present)
+- Migration 355 tracking: **INCORRECT** — recorded as `20260902052231`
+- 356-363: **not applied**; 358 intentionally absent
 
-## Repair Steps
+## Pre-Repair Verification
+```sql
+SELECT version, name FROM supabase_migrations.schema_migrations
+WHERE version ~ '^\d+$' AND version::int > 354
+ORDER BY version::int;
 
-### Step 1: Revert timestamp entry
-```bash
-supabase migration repair --status reverted 20260902052231 --linked
+SELECT version, name FROM supabase_migrations.schema_migrations
+WHERE version !~ '^\d{1,4}$';
 ```
 
-### Step 2: Mark 355 as applied
+## History Repair
+
+Step 1 — revert the erroneous timestamp entry:
 ```bash
-supabase migration repair --status applied 355 --linked
+supabase migration repair 20260902052231 --status reverted --linked
 ```
 
-### Step 3: Verify repair
+Step 2 — mark repository version 355 as applied (no SQL re-execution):
+```bash
+supabase migration repair 355 --status applied --linked
+```
+
+Step 3 — verify:
 ```sql
 SELECT version, name FROM supabase_migrations.schema_migrations
 WHERE version IN ('355', '20260902052231');
 ```
-Expected: `version = '355'` only.
 
-## Apply Pending (356-363)
+## Pending Migration Preflight
+
+Before applying, verify the exact pending set:
 ```bash
-supabase migration list --linked  -- verify pending set
-supabase db push --linked         -- applies ALL pending
+supabase migration list --linked
 ```
-Note: `db push` applies all pending migrations, not one at a time.
+Expected pending: **356, 357, 359, 360, 361, 362, 363** (exactly 7).
+If ANY other migration appears pending, STOP.
+
+Then verify with dry-run:
+```bash
+supabase db push --linked --dry-run
+```
+
+## Apply Pending Migrations
+
+`supabase db push --linked` applies ALL local pending migrations in numeric order. It is not single-migration.
+```bash
+supabase db push --linked
+```
 
 ## Post-Verification
 ```sql
@@ -41,7 +63,7 @@ SELECT version FROM supabase_migrations.schema_migrations
 WHERE version ~ '^\d+$' AND version::int BETWEEN 355 AND 363
 ORDER BY version::int;
 ```
-Expected: `355, 356, 357, 359, 360, 361, 362, 363` (8 rows).
+Expected: 355, 356, 357, 359, 360, 361, 362, 363 (8 rows).
 
 ### Migration 363 postconditions
 ```sql
@@ -50,13 +72,10 @@ WHERE table_schema='public' AND table_name='businesses' AND column_name='messagi
 
 SELECT proname, prosecdef FROM pg_proc
 WHERE pronamespace='public'::regnamespace AND proname='toggle_messaging_suspension';
-
-SELECT tgname FROM pg_trigger WHERE tgrelid='public.businesses'::regclass AND tgname='trg_guard_messaging_suspended';
 ```
 
-### Security advisors
-```bash
-supabase inspect db lint --linked
-```
+### Security review
+Use the Supabase Dashboard Database Advisors page or the supported CLI lint equivalent for the current project version.
 
-## Failure: STOP and post to Issue #256.
+## Failure Procedure
+STOP. Post exact output to Issue #256. Wait for CTO authorization.
