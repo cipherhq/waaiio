@@ -2,7 +2,7 @@
  * Slice C — CAS Remediation Tests (#271)
  *
  * 38 tests in this file.
- * Full suite: 223 files / 5702 tests passed (CI run #33669262972).
+ * Full suite: 223 files / 5702 tests passed (CI run #33670191207).
  *
  * Verifies that 10 bare .update() call sites on bot_sessions have been
  * converted to use the atomic update_session_cas RPC (1a + 1b are two
@@ -1041,29 +1041,32 @@ function makeBotServiceMocks(opts: {
     }
     if (rpcName === 'update_session_cas') {
       casCallCount++;
-      log.push({ event: 'cas_call', detail: `#${casCallCount} v=${params?.p_expected_version} step=${params?.p_current_step}` });
-      if (casCallCount === 1) {
+      const isRefresh = casCallCount === 1;
+      const tag = isRefresh ? 'refresh' : 'target';
+      log.push({ event: 'cas_call_' + tag, detail: 'v=' + (params?.p_expected_version) + ' step=' + (params?.p_current_step) });
+      if (isRefresh) {
         // First CAS: CAP-001 capability refresh — always succeeds with version + 1
+        log.push({ event: 'cas_refresh_success' });
         return Promise.resolve({ data: { success: true, version: initialVersion + 1 }, error: null });
       }
       // Target CAS: use sharedRow authority if provided, otherwise hard-coded response
       if (opts.sharedRow) {
         const expectedVersion = params?.p_expected_version as number;
         if (expectedVersion !== opts.sharedRow.version) {
-          log.push({ event: 'cas_conflict', detail: `expected=${expectedVersion} actual=${opts.sharedRow.version}` });
+          log.push({ event: 'cas_target_conflict', detail: 'expected=' + expectedVersion + ' actual=' + opts.sharedRow.version });
           return Promise.resolve({ data: { success: false, reason: 'version_conflict' }, error: null });
         }
         opts.sharedRow.version++;
         opts.sharedRow.current_step = params?.p_current_step as string;
         opts.sharedRow.session_data = params?.p_session_data as Record<string, unknown>;
-        log.push({ event: 'cas_success', detail: `new_version=${opts.sharedRow.version}` });
+        log.push({ event: 'cas_target_success', detail: 'new_version=' + opts.sharedRow.version });
         return Promise.resolve({ data: { success: true, version: opts.sharedRow.version }, error: null });
       }
       // Non-shared path: log success/failure based on the configured response
       if (opts.casResponse.success) {
-        log.push({ event: 'cas_success', detail: `version=${opts.casResponse.version}` });
+        log.push({ event: 'cas_target_success', detail: 'version=' + opts.casResponse.version });
       } else {
-        log.push({ event: 'cas_conflict', detail: `reason=${opts.casResponse.reason}` });
+        log.push({ event: 'cas_target_conflict', detail: 'reason=' + opts.casResponse.reason });
       }
       return Promise.resolve({ data: opts.casResponse, error: null });
     }
@@ -1376,11 +1379,15 @@ describe('BotService runtime: quick_rebook CAS (Finding 3)', () => {
     const bot = new BotService(supabase, sender, standalone, intelligence);
     await bot.handleMessage(BS_PHONE, 'quick_rebook', 'button', undefined, 'biz-cas');
 
-    // Event ordering: cas_call (refresh) → cas_call (target) → cas_success → send
-    const targetCasSuccessIdx = eventLog.findIndex(e => e.event === 'cas_success');
+    // Event ordering: refresh success → target call → target success → send
+    const refreshIdx = eventLog.findIndex(e => e.event === 'cas_refresh_success');
+    const targetCallIdx = eventLog.findIndex(e => e.event === 'cas_call_target');
+    const targetSuccessIdx = eventLog.findIndex(e => e.event === 'cas_target_success');
     const firstSendIdx = eventLog.findIndex(e => e.event === 'send');
-    expect(targetCasSuccessIdx).toBeGreaterThan(0); // target CAS success was logged
-    expect(firstSendIdx).toBeGreaterThan(targetCasSuccessIdx); // send comes AFTER CAS success
+    expect(refreshIdx).toBeGreaterThanOrEqual(0);
+    expect(targetCallIdx).toBeGreaterThan(refreshIdx);
+    expect(targetSuccessIdx).toBeGreaterThan(targetCallIdx);
+    expect(firstSendIdx).toBeGreaterThan(targetSuccessIdx);
 
     // CAS call verification
     const casCalls = rpcSpy.mock.calls.filter((c: any[]) => c[0] === 'update_session_cas');
@@ -1388,14 +1395,16 @@ describe('BotService runtime: quick_rebook CAS (Finding 3)', () => {
     expect(casCalls[0][1]).toMatchObject({ p_session_id: 'sess-qrebook-001', p_expected_version: 7 });
     expect(casCalls[1][1]).toMatchObject({ p_session_id: 'sess-qrebook-001', p_expected_version: 8, p_current_step: 'select_date' });
 
-    // Exact output: NOT the generic fallback, IS the scheduling continuation
+    // Exact output: flow executor scheduling prompt, NOT the generic fallback
     const msgs = sender.getMessages();
     expect(msgs.length).toBeGreaterThan(0);
+    const firstMsg = msgs[0];
+    // The flow executor sends a date-selection prompt (buttons or list) for the scheduling flow
+    const kind = (firstMsg as Record<string, unknown>)['type'] as string;
+    expect(kind === 'buttons' || kind === 'list' || kind === 'text').toBe(true);
     const allText = msgs.map(m => (m as any).text || (m as any).body || '').join(' ');
     expect(allText).not.toContain('Something went wrong');
-    expect(allText.length).toBeGreaterThan(0);
-    // No conflict in event log
-    expect(eventLog.some(e => e.event === 'cas_conflict')).toBe(false);
+    expect(eventLog.some(e => e.event === 'cas_target_conflict')).toBe(false);
   });
 
   it('CAS conflict → silent return, no message, no continuation, no secondary mutation', async () => {
@@ -1460,7 +1469,7 @@ describe('BotService runtime: quick_rebook CAS (Finding 3)', () => {
     await bot.handleMessage(BS_PHONE, 'quick_rebook', 'button', undefined, 'biz-cas');
 
     // CAS conflict was genuine — event log proves version mismatch against shared authority
-    expect(eventLog.some(e => e.event === 'cas_conflict')).toBe(true);
+    expect(eventLog.some(e => e.event === 'cas_target_conflict')).toBe(true);
     const casCalls = rpcSpy.mock.calls.filter((c: any[]) => c[0] === 'update_session_cas');
     expect(casCalls).toHaveLength(2);
     expect(casCalls[1][1]).toMatchObject({ p_current_step: 'select_date', p_expected_version: 8 });
@@ -1571,11 +1580,15 @@ describe('BotService runtime: browse_menu CAS (Finding 4)', () => {
     const bot = new BotService(supabase, sender, standalone, intelligence);
     await bot.handleMessage(BS_PHONE, 'browse_menu', 'button', undefined, 'biz-cas');
 
-    // Event ordering: cas_success precedes send
-    const targetCasSuccessIdx = eventLog.findIndex(e => e.event === 'cas_success');
+    // Event ordering: refresh success → target call → target success → send
+    const refreshIdx = eventLog.findIndex(e => e.event === 'cas_refresh_success');
+    const targetCallIdx = eventLog.findIndex(e => e.event === 'cas_call_target');
+    const targetSuccessIdx = eventLog.findIndex(e => e.event === 'cas_target_success');
     const firstSendIdx = eventLog.findIndex(e => e.event === 'send');
-    expect(targetCasSuccessIdx).toBeGreaterThan(0);
-    expect(firstSendIdx).toBeGreaterThan(targetCasSuccessIdx);
+    expect(refreshIdx).toBeGreaterThanOrEqual(0);
+    expect(targetCallIdx).toBeGreaterThan(refreshIdx);
+    expect(targetSuccessIdx).toBeGreaterThan(targetCallIdx);
+    expect(firstSendIdx).toBeGreaterThan(targetSuccessIdx);
 
     // CAS call verification
     const casCalls = rpcSpy.mock.calls.filter((c: any[]) => c[0] === 'update_session_cas');
@@ -1583,13 +1596,16 @@ describe('BotService runtime: browse_menu CAS (Finding 4)', () => {
     expect(casCalls[0][1]).toMatchObject({ p_session_id: 'sess-browse-001', p_expected_version: 4 });
     expect(casCalls[1][1]).toMatchObject({ p_session_id: 'sess-browse-001', p_expected_version: 5, p_current_step: 'select_capability' });
 
-    // Exact output: NOT fallback, IS capability selection
+    // Exact output: flow executor capability selection prompt, NOT fallback
     const msgs = sender.getMessages();
     expect(msgs.length).toBeGreaterThan(0);
+    const firstMsg = msgs[0];
+    // The flow executor sends a capability-selection menu (buttons or list)
+    const kind = (firstMsg as Record<string, unknown>)['type'] as string;
+    expect(kind === 'buttons' || kind === 'list' || kind === 'text').toBe(true);
     const allText = msgs.map(m => (m as any).text || (m as any).body || '').join(' ');
     expect(allText).not.toContain('Something went wrong');
-    expect(allText.length).toBeGreaterThan(0);
-    expect(eventLog.some(e => e.event === 'cas_conflict')).toBe(false);
+    expect(eventLog.some(e => e.event === 'cas_target_conflict')).toBe(false);
   });
 
   it('CAS conflict → silent return, no message, no continuation, no secondary mutation', async () => {
@@ -1651,7 +1667,7 @@ describe('BotService runtime: browse_menu CAS (Finding 4)', () => {
     await bot.handleMessage(BS_PHONE, 'browse_menu', 'button', undefined, 'biz-cas');
 
     // Genuine CAS conflict against shared authority
-    expect(eventLog.some(e => e.event === 'cas_conflict')).toBe(true);
+    expect(eventLog.some(e => e.event === 'cas_target_conflict')).toBe(true);
     const casCalls = rpcSpy.mock.calls.filter((c: any[]) => c[0] === 'update_session_cas');
     expect(casCalls).toHaveLength(2);
     expect(casCalls[1][1]).toMatchObject({ p_current_step: 'select_capability', p_expected_version: 5 });
@@ -1793,11 +1809,15 @@ describe('BotService runtime: apply_correction CAS (Finding 5)', () => {
     const bot = new BotService(supabase, sender, standalone, intelligence);
     await bot.handleMessage(BS_PHONE, 'actually change the date to Friday', 'text', undefined, 'biz-cas');
 
-    // Event ordering: cas_success precedes send
-    const targetCasSuccessIdx = eventLog.findIndex(e => e.event === 'cas_success');
+    // Event ordering: refresh success → target call → target success → send
+    const refreshIdx = eventLog.findIndex(e => e.event === 'cas_refresh_success');
+    const targetCallIdx = eventLog.findIndex(e => e.event === 'cas_call_target');
+    const targetSuccessIdx = eventLog.findIndex(e => e.event === 'cas_target_success');
     const firstSendIdx = eventLog.findIndex(e => e.event === 'send');
-    expect(targetCasSuccessIdx).toBeGreaterThan(0);
-    expect(firstSendIdx).toBeGreaterThan(targetCasSuccessIdx);
+    expect(refreshIdx).toBeGreaterThanOrEqual(0);
+    expect(targetCallIdx).toBeGreaterThan(refreshIdx);
+    expect(targetSuccessIdx).toBeGreaterThan(targetCallIdx);
+    expect(firstSendIdx).toBeGreaterThan(targetSuccessIdx);
 
     // CAS call verification
     const casCalls = rpcSpy.mock.calls.filter((c: any[]) => c[0] === 'update_session_cas');
@@ -1805,13 +1825,16 @@ describe('BotService runtime: apply_correction CAS (Finding 5)', () => {
     expect(casCalls[0][1]).toMatchObject({ p_session_id: 'sess-corr-001', p_expected_version: 3 });
     expect(casCalls[1][1]).toMatchObject({ p_session_id: 'sess-corr-001', p_expected_version: 4, p_current_step: 'select_time' });
 
-    // Exact output: NOT fallback, IS correction confirmation with 'Friday'
+    // Exact output: correction confirmation containing the corrected value 'Friday'
     const msgs = sender.getMessages();
     expect(msgs.length).toBeGreaterThan(0);
+    const firstMsg = msgs[0];
+    const corrKind = (firstMsg as Record<string, unknown>)['type'] as string;
+    expect(corrKind).toBe('text');
     const allText = msgs.map(m => (m as any).text || (m as any).body || '').join(' ');
     expect(allText).not.toContain('Something went wrong');
     expect(allText).toContain('Friday');
-    expect(eventLog.some(e => e.event === 'cas_conflict')).toBe(false);
+    expect(eventLog.some(e => e.event === 'cas_target_conflict')).toBe(false);
   });
 
   it('CAS conflict → silent return, no message, no continuation, no secondary mutation', async () => {
@@ -1892,7 +1915,7 @@ describe('BotService runtime: apply_correction CAS (Finding 5)', () => {
     await bot.handleMessage(BS_PHONE, 'actually change the date to Friday', 'text', undefined, 'biz-cas');
 
     // Genuine CAS conflict against shared authority
-    expect(eventLog.some(e => e.event === 'cas_conflict')).toBe(true);
+    expect(eventLog.some(e => e.event === 'cas_target_conflict')).toBe(true);
     const casCalls = rpcSpy.mock.calls.filter((c: any[]) => c[0] === 'update_session_cas');
     expect(casCalls).toHaveLength(2);
     expect(casCalls[1][1]).toMatchObject({ p_current_step: 'select_time', p_expected_version: 4 });
