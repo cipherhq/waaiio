@@ -2,7 +2,7 @@
  * Slice C — CAS Remediation Tests (#271)
  *
  * 38 tests in this file.
- * Full suite: 223 files / 5702 tests passed (CI run #33662774189).
+ * Full suite: 223 files / 5702 tests passed (CI run #33665265722).
  *
  * Verifies that 10 bare .update() call sites on bot_sessions have been
  * converted to use the atomic update_session_cas RPC (1a + 1b are two
@@ -1332,42 +1332,39 @@ describe('BotService runtime: quick_rebook CAS (Finding 3)', () => {
       version: 7,
     };
 
+    const eventLog: Array<{ event: string; detail?: string }> = [];
     const { supabase, standalone, intelligence, rpcSpy } = makeBotServiceMocks({
       session,
-      casResponse: { success: true, version: 9 }, // 2nd CAS returns version 9
+      casResponse: { success: true, version: 9 },
+      eventLog,
     });
 
     const sender = createCaptureSender();
     const bot = new BotService(supabase, sender, standalone, intelligence);
     await bot.handleMessage(BS_PHONE, 'quick_rebook', 'button', undefined, 'biz-cas');
 
-    // Isolate all update_session_cas calls
+    // CAS ordering via event log: refresh → target CAS success
+    const casEvents = eventLog.filter(e => e.event.startsWith('cas_'));
+    expect(casEvents.length).toBeGreaterThanOrEqual(2);
+    expect(casEvents[0].event).toBe('cas_call'); // CAP-001 refresh
+    expect(casEvents[1].event).toBe('cas_call'); // target quick_rebook CAS
+
+    // CAS call verification: at least refresh + target CAS (executor may add more)
     const casCalls = rpcSpy.mock.calls.filter((c: any[]) => c[0] === 'update_session_cas');
-    // 1st: CAP-001 refresh (p_expected_version = 7, returns version 8)
-    // 2nd: quick_rebook (p_expected_version = 8, returns version 9)
     expect(casCalls.length).toBeGreaterThanOrEqual(2);
-    const refreshCall = casCalls[0];
-    const rebookCall = casCalls[1];
-    // 1st: CAP-001 refresh fires with initial session.version (7)
-    expect(refreshCall[1]).toMatchObject({
-      p_session_id: 'sess-qrebook-001',
-      p_expected_version: 7,
-    });
-    // 2nd: quick_rebook fires with the version returned by the refresh (8 = 7+1)
-    // This proves the chain: version returned by CAS-1 feeds into CAS-2's p_expected_version
-    expect(rebookCall[1]).toMatchObject({
-      p_session_id: 'sess-qrebook-001',
-      p_expected_version: 8, // version after CAP-001 refresh returned initialVersion+1
-      p_current_step: 'select_date',
-    });
-    // Observable continuation AFTER target CAS: the flow executor sends the first step prompt
-    // (date selection prompt) — verifiable via sender messages.
-    // BotService kicks off the scheduling flow after the rebook CAS succeeds.
+    expect(casCalls[0][1]).toMatchObject({ p_session_id: 'sess-qrebook-001', p_expected_version: 7 });
+    expect(casCalls[1][1]).toMatchObject({ p_session_id: 'sess-qrebook-001', p_expected_version: 8, p_current_step: 'select_date' });
+
+    // Continuation output: flow executor sends the scheduling step prompt AFTER target CAS success
     const msgs = sender.getMessages();
-    // At minimum, the flow executor must have dispatched at least one message (the date prompt).
-    // We don't assert the exact text since it depends on the flow executor's prompt() output,
-    // but we confirm the continuation DID happen (not zero messages).
     expect(msgs.length).toBeGreaterThan(0);
+    const allText = msgs.map(m => (m as any).text || (m as any).bodyText || (m as any).body || '').join(' ');
+    // Must NOT be the generic fallback
+    expect(allText).not.toContain('Something went wrong');
+    // Must NOT be empty — the flow executor produced a scheduling prompt
+    expect(allText.length).toBeGreaterThan(0);
+    // No cas_conflict in the event log — this was a successful path
+    expect(eventLog.some(e => e.event === 'cas_conflict')).toBe(false);
   });
 
   it('CAS conflict → silent return, no message, no continuation, no secondary mutation', async () => {
@@ -1532,40 +1529,36 @@ describe('BotService runtime: browse_menu CAS (Finding 4)', () => {
       version: 4,
     };
 
+    const eventLog: Array<{ event: string; detail?: string }> = [];
     const { supabase, standalone, intelligence, rpcSpy } = makeBotServiceMocks({
       session,
-      casResponse: { success: true, version: 6 }, // 2nd CAS (browse_menu) returns 6
+      casResponse: { success: true, version: 6 },
+      eventLog,
     });
 
     const sender = createCaptureSender();
     const bot = new BotService(supabase, sender, standalone, intelligence);
     await bot.handleMessage(BS_PHONE, 'browse_menu', 'button', undefined, 'biz-cas');
 
-    // Isolate all update_session_cas calls
+    // CAS ordering via event log
+    const casEvents = eventLog.filter(e => e.event.startsWith('cas_'));
+    expect(casEvents.length).toBeGreaterThanOrEqual(2);
+
+    // CAS call verification: at least refresh + target CAS (executor may add more)
     const casCalls = rpcSpy.mock.calls.filter((c: any[]) => c[0] === 'update_session_cas');
-    // 1st: CAP-001 refresh (p_expected_version = 4, returns version 5)
-    // 2nd: browse_menu (p_expected_version = 5, returns version 6)
     expect(casCalls.length).toBeGreaterThanOrEqual(2);
-    const refreshCall = casCalls[0];
-    const browseCall = casCalls[1];
-    // 1st: CAP-001 refresh fires with initial session.version (4)
-    expect(refreshCall[1]).toMatchObject({
-      p_session_id: 'sess-browse-001',
-      p_expected_version: 4,
-    });
-    // 2nd: browse_menu fires with the version returned by the refresh (5 = 4+1)
-    // This proves the chain: CAS-1's returned version feeds into CAS-2's p_expected_version
-    expect(browseCall[1]).toMatchObject({
-      p_session_id: 'sess-browse-001',
-      p_expected_version: 5, // version after CAP-001 refresh returned initialVersion+1
-      p_current_step: 'select_capability',
-    });
-    // Observable continuation AFTER target CAS: the flow executor sends the capability selection menu.
-    // BotService calls the capability-selection flow after the browse_menu CAS succeeds.
-    // Verify continuation DID happen — at minimum one message dispatched to the customer.
+    expect(casCalls[0][1]).toMatchObject({ p_session_id: 'sess-browse-001', p_expected_version: 4 });
+    expect(casCalls[1][1]).toMatchObject({ p_session_id: 'sess-browse-001', p_expected_version: 5, p_current_step: 'select_capability' });
+
+    // Continuation output: capability selection menu sent AFTER target CAS success
     const msgs = sender.getMessages();
     expect(msgs.length).toBeGreaterThan(0);
-    // BotService creates an internal session copy — version adoption proved via the call chain above
+    const allText = msgs.map(m => (m as any).text || (m as any).bodyText || (m as any).body || '').join(' ');
+    // Must NOT be the generic fallback
+    expect(allText).not.toContain('Something went wrong');
+    expect(allText.length).toBeGreaterThan(0);
+    // No conflict in event log — successful path
+    expect(eventLog.some(e => e.event === 'cas_conflict')).toBe(false);
   });
 
   it('CAS conflict → silent return, no message, no continuation, no secondary mutation', async () => {
@@ -1758,47 +1751,37 @@ describe('BotService runtime: apply_correction CAS (Finding 5)', () => {
       version: 3,
     };
 
+    const eventLog: Array<{ event: string; detail?: string }> = [];
     const { supabase, standalone, intelligence, rpcSpy } = makeBotServiceMocks({
       session,
-      casResponse: { success: true, version: 5 }, // 2nd CAS (correction) returns version 5
+      casResponse: { success: true, version: 5 },
+      eventLog,
     });
 
     const sender = createCaptureSender();
     const bot = new BotService(supabase, sender, standalone, intelligence);
     await bot.handleMessage(BS_PHONE, 'actually change the date to Friday', 'text', undefined, 'biz-cas');
 
-    // Isolate all update_session_cas calls
+    // CAS ordering via event log
+    const casEvents = eventLog.filter(e => e.event.startsWith('cas_'));
+    expect(casEvents.length).toBeGreaterThanOrEqual(2);
+
+    // CAS call verification
     const casCalls = rpcSpy.mock.calls.filter((c: any[]) => c[0] === 'update_session_cas');
-    // 1st: CAP-001 refresh (p_expected_version = 3, returns version 4)
-    // 2nd: correction CAS (p_expected_version = 4, returns version 5)
-    expect(casCalls.length).toBeGreaterThanOrEqual(2);
-    const refreshCall = casCalls[0];
-    const corrCall = casCalls[1];
-    // 1st: CAP-001 refresh fires with initial session.version (3)
-    expect(refreshCall[1]).toMatchObject({
-      p_session_id: 'sess-corr-001',
-      p_expected_version: 3,
-    });
-    // 2nd: correction fires with the version returned by the refresh (4 = 3+1)
-    // This proves the chain: CAS-1's returned version feeds into CAS-2's p_expected_version
-    expect(corrCall[1]).toMatchObject({
-      p_session_id: 'sess-corr-001',
-      p_expected_version: 4, // version after CAP-001 refresh returned initialVersion+1
-      p_current_step: 'select_time',
-    });
-    // BotService creates an internal session copy — version adoption proved via the call chain above
-    // Observable continuation AFTER target CAS: confirmation message sent
-    // (the bot sends "Got it! Changed date to Friday." — observable via sender)
+    expect(casCalls.length).toBe(2);
+    expect(casCalls[0][1]).toMatchObject({ p_session_id: 'sess-corr-001', p_expected_version: 3 });
+    expect(casCalls[1][1]).toMatchObject({ p_session_id: 'sess-corr-001', p_expected_version: 4, p_current_step: 'select_time' });
+
+    // Continuation output: correction confirmation sent AFTER target CAS success
     const msgs = sender.getMessages();
-    const allText = msgs.map(m => (m as any).text || '').join(' ');
-    // Confirm the correction confirmation text contains the changed field ("date")
-    expect(allText).toContain('date');
-    // Confirm a message WAS sent (continuation happened after the CAS succeeded)
     expect(msgs.length).toBeGreaterThan(0);
-    // The confirmation should include "Got it" or the corrected value — proving the full path executed
-    const lowerText = allText.toLowerCase();
-    const hasConfirmation = lowerText.includes('got it') || lowerText.includes('changed') || lowerText.includes('friday') || lowerText.includes('date');
-    expect(hasConfirmation).toBe(true);
+    const allText = msgs.map(m => (m as any).text || (m as any).bodyText || (m as any).body || '').join(' ');
+    // Must NOT be the generic fallback
+    expect(allText).not.toContain('Something went wrong');
+    // Must contain the corrected value "Friday" — proves the correction path executed, not some other send
+    expect(allText).toContain('Friday');
+    // No conflict in event log — successful path
+    expect(eventLog.some(e => e.event === 'cas_conflict')).toBe(false);
   });
 
   it('CAS conflict → silent return, no message, no continuation, no secondary mutation', async () => {
