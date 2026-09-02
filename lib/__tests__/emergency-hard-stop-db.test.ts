@@ -359,6 +359,8 @@ describe.skipIf(!canRun)('Emergency Hard-Stop DB Tests (#256 S-1)', () => {
       GRANT USAGE ON SCHEMA auth TO _test_db_owner;
       GRANT EXECUTE ON FUNCTION auth.uid() TO _test_db_owner;
       GRANT EXECUTE ON FUNCTION public.is_admin() TO _test_db_owner;
+      -- Migration 010 policy "Admins can view all businesses" directly reads profiles
+      GRANT SELECT ON public.profiles TO _test_db_owner;
     `);
 
     // Transfer ownership to the non-superuser role
