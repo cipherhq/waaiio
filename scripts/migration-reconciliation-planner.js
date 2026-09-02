@@ -5,7 +5,7 @@ const { createHash } = require('crypto');
 
 const MIGRATIONS_DIR = resolve(__dirname, '../supabase/migrations');
 const INTENTIONALLY_ABSENT = new Set([358]);
-const DEFAULT_PENDING_ALLOWLIST = [356, 357, 359, 360, 361, 362, 363];
+const DEFAULT_PENDING_ALLOWLIST = [356, 357, 359, 360, 361, 362, 363, 364];
 
 const ReconciliationState = {
   READY: 'READY',
@@ -259,7 +259,7 @@ function reconcile(localMigrations, remoteVersions, schemaEvidence, options) {
 
   // Determine reconciliation scope — versions in the range that exist locally minus intentionally absent
   const scopeMin = 355;
-  const scopeMax = 363;
+  const scopeMax = 364;
   const scopeVersions = [];
   for (const m of localMigrations) {
     if (m.version >= scopeMin && m.version <= scopeMax && !intentionallyAbsent.has(m.version)) {

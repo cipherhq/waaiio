@@ -114,8 +114,12 @@ function buildSupabaseMock(opts: {
 
   const rpcResults = opts.rpcResults || {};
   const mockRpc = vi.fn().mockImplementation((name: string) => {
-    const result = rpcResults[name] || { data: null, error: null };
-    return Promise.resolve(result);
+    if (rpcResults[name]) return Promise.resolve(rpcResults[name]);
+    // Default CAS success so handler tests proceed past CAS gate
+    if (name === 'update_session_cas') {
+      return Promise.resolve({ data: { success: true, version: 99 }, error: null });
+    }
+    return Promise.resolve({ data: null, error: null });
   });
 
   const mockFrom = vi.fn().mockImplementation((table: string) => {
@@ -166,6 +170,7 @@ function buildSession(userId: string = OWNER_USER_ID, data: Record<string, unkno
     user_id: userId,
     current_step: 'my_bookings',
     session_data: { ...data },
+    version: 1,
   } as unknown as import('@/lib/bot/bot-types').BotSession;
 }
 

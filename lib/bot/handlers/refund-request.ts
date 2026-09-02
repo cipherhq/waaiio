@@ -133,10 +133,23 @@ async function handleRefundSelect(
       });
     }
 
-    // Save payment map to session
-    await supabase.from('bot_sessions').update({
-      session_data: { ...session.session_data, refund_payments: paymentMap },
-    }).eq('id', session.id);
+    // Save payment map to session (CAS 7a)
+    const { data: cas7a, error: cas7aError } = await supabase.rpc('update_session_cas', {
+      p_session_id: session.id,
+      p_expected_version: session.version ?? 0,
+      p_current_step: session.current_step,
+      p_session_data: { ...session.session_data, refund_payments: paymentMap },
+    });
+    if (cas7aError) {
+      logger.error('[REFUND_REQUEST] CAS 7a RPC error:', cas7aError.message);
+      throw cas7aError;
+    }
+    if (!cas7a?.success) {
+      if (cas7a?.reason === 'version_conflict') return;
+      logger.error('[REFUND_REQUEST] CAS 7a unexpected:', cas7a?.reason);
+      throw new Error(`CAS failure: ${cas7a?.reason || 'unknown'}`);
+    }
+    session.version = cas7a.version;
 
     if (items.length === 1) {
       // Use buttons for single item
@@ -166,14 +179,26 @@ async function handleRefundSelect(
 
   const selected = paymentMap[input];
 
-  // Store selected payment and move to reason step
-  await supabase.from('bot_sessions').update({
-    current_step: 'refund_reason',
-    session_data: {
+  // Store selected payment and move to reason step (CAS 7b — uses version from 7a)
+  const { data: cas7b, error: cas7bError } = await supabase.rpc('update_session_cas', {
+    p_session_id: session.id,
+    p_expected_version: session.version, // from 7a's returned version
+    p_current_step: 'refund_reason',
+    p_session_data: {
       ...session.session_data,
       refund_selected: selected,
     },
-  }).eq('id', session.id);
+  });
+  if (cas7bError) {
+    logger.error('[REFUND_REQUEST] CAS 7b RPC error:', cas7bError.message);
+    throw cas7bError;
+  }
+  if (!cas7b?.success) {
+    if (cas7b?.reason === 'version_conflict') return;
+    logger.error('[REFUND_REQUEST] CAS 7b unexpected:', cas7b?.reason);
+    throw new Error(`CAS failure: ${cas7b?.reason || 'unknown'}`);
+  }
+  session.version = cas7b.version;
 
   await sendText(from, 'Please tell us the reason for your refund request:');
 }

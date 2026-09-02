@@ -3,12 +3,31 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
-### feat(256): emergency messaging hard-stop — per-business suspension (S-1)
+## 2026-09-02 — #271 Slice C: Full Active-Session CAS Remediation
 
-- **Date:** 2026-09-01
-- **Migration 363:** `363_emergency_hard_stop.sql` — `businesses.messaging_suspended` column, column-protection trigger, `toggle_messaging_suspension()` SECURITY DEFINER RPC with atomic audit, `messaging_suspension_audit` append-only table.
-- **Runtime:** `lib/channels/send-guard.ts` — `assertMessagingAllowed()` checked at every business-scoped Meta /messages egress. Fail-closed on DB error, missing row, NULL, or ambiguous identity.
-- **Refs:** #256, #250
+### What changed
+- **Migration 363:** Drops the old 6-arg `update_session_cas` overload (migration 236) and replaces it with a single 7-arg authority including `p_business_id UUID DEFAULT NULL`. Existing callers passing 6 args continue to work via the default parameter. `pg_proc` audit proves exactly one function signature exists.
+- **10 bare `.update()` calls converted to CAS:** quick-rebook 1a (capability-unavailable) + 1b (confirm), browse-menu fallback, correction mutation (bot.service.ts); booking selection, rebook-after-cancel with `p_business_id` (my-bookings.ts); order selection (my-orders.ts); payment-map 7a + reason-step 7b (refund-request.ts); PIN-failure reset (saved-cards.ts).
+- **Pre-existing CAP-001 CAS callers audited:** Lines 700/714 in bot.service.ts now destructure `{ data, error }` and check `reason === 'version_conflict'` explicitly.
+- **CAS result contract:** `version_conflict` → silent exit. `session_not_found` / unknown / malformed → throws to operational error boundary. RPC transport errors → throws.
+- **Rebook pre-CAS delete moved after CAS:** Inactive-session cleanup runs only after CAS wins. Stale loser performs zero persistent mutations.
+- **Refund 7a→7b:** Separate customer turns. Turn 1 persists N+1, Turn 2 reloads at N+1. Executable two-turn proof.
+- **Rebook-after-cancel:** business_id + current_step + session_data in one atomic CAS. PG proof: stale CAS leaves complete session_data unchanged (full JSONB equality).
+
+### What could break
+- Migration 363 replaces the 6-arg `update_session_cas` with a 7-arg version. The old overload is dropped. Existing callers passing 6 args resolve correctly via DEFAULT NULL.
+- Handlers that previously raced silently will now have the losing worker exit without sending a message. This is the desired behavior.
+
+### Files changed
+- `supabase/migrations/363_cas_business_id.sql` (new)
+- `lib/bot/bot.service.ts`
+- `lib/bot/handlers/my-bookings.ts`
+- `lib/bot/handlers/my-orders.ts`
+- `lib/bot/handlers/refund-request.ts`
+- `lib/bot/handlers/saved-cards.ts`
+- `lib/bot/__tests__/slice-c-cas-remediation.test.ts` (new)
+- `lib/__tests__/acc-271c-cas-business-id-db.test.ts` (new)
+- `.github/workflows/ci.yml`
 
 ## 2026-09-01 — #244: Outcome persistence + typed MetaApiError + #255 cleanup
 

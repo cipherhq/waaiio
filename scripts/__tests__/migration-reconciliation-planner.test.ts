@@ -43,9 +43,9 @@ function remoteThrough(n: number) {
   return versions;
 }
 const ABSENT = new Set([358]);
-const SCOPE_VERSIONS = [355, 356, 357, 359, 360, 361, 362, 363];
-const SP = { presentMigrations: [355], absentMigrations: [356, 357, 359, 360, 361, 362, 363] };
-const SA = { presentMigrations: [] as number[], absentMigrations: [355, 356, 357, 359, 360, 361, 362, 363] };
+const SCOPE_VERSIONS = [355, 356, 357, 359, 360, 361, 362, 363, 364];
+const SP = { presentMigrations: [355], absentMigrations: [356, 357, 359, 360, 361, 362, 363, 364] };
+const SA = { presentMigrations: [] as number[], absentMigrations: [355, 356, 357, 359, 360, 361, 362, 363, 364] };
 
 function buildMapping(overrides?: Partial<{ schemaPresent: boolean }>) {
   const m = new Map();
@@ -182,7 +182,7 @@ describe('validateSchemaEvidence', () => {
 
   it('duplicate in presentMigrations -> invalid', () => {
     const r = validateSchemaEvidence(
-      { presentMigrations: [355, 355], absentMigrations: [356, 357, 359, 360, 361, 362, 363] },
+      { presentMigrations: [355, 355], absentMigrations: [356, 357, 359, 360, 361, 362, 363, 364] },
       SCOPE_VERSIONS
     );
     expect(r.valid).toBe(false);
@@ -191,7 +191,7 @@ describe('validateSchemaEvidence', () => {
 
   it('overlap between present and absent -> invalid', () => {
     const r = validateSchemaEvidence(
-      { presentMigrations: [355], absentMigrations: [355, 356, 357, 359, 360, 361, 362, 363] },
+      { presentMigrations: [355], absentMigrations: [355, 356, 357, 359, 360, 361, 362, 363, 364] },
       SCOPE_VERSIONS
     );
     expect(r.valid).toBe(false);
@@ -223,7 +223,7 @@ describe('validateSchemaEvidence', () => {
 });
 
 describe('reconcile — executability field', () => {
-  const FL = buildFullLocal([355, 356, 357, 359, 360, 361, 362, 363]);
+  const FL = buildFullLocal([355, 356, 357, 359, 360, 361, 362, 363, 364]);
 
   it('READY includes executable: true', () => {
     const r = reconcile(FL, [...remoteThrough(354), '355'], SP, {
@@ -254,7 +254,7 @@ describe('reconcile — executability field', () => {
 });
 
 describe('reconcile — schema evidence validation', () => {
-  const FL = buildFullLocal([355, 356, 357, 359, 360, 361, 362, 363]);
+  const FL = buildFullLocal([355, 356, 357, 359, 360, 361, 362, 363, 364]);
 
   it('{} empty evidence -> BLOCKED', () => {
     const r = reconcile(FL, remoteThrough(354), {}, { intentionallyAbsent: ABSENT });
@@ -284,7 +284,7 @@ describe('reconcile — schema evidence validation', () => {
   it('contradictory evidence -> BLOCKED', () => {
     const r = reconcile(FL, remoteThrough(354), {
       presentMigrations: [355],
-      absentMigrations: [355, 356, 357, 359, 360, 361, 362, 363],
+      absentMigrations: [355, 356, 357, 359, 360, 361, 362, 363, 364],
     }, { intentionallyAbsent: ABSENT });
     expect(r.state).toBe('BLOCKED');
     expect(r.errors.some((e: string) => e.includes('both'))).toBe(true);
@@ -292,12 +292,12 @@ describe('reconcile — schema evidence validation', () => {
 });
 
 describe('reconcile — history/schema disagreement', () => {
-  const FL = buildFullLocal([355, 356, 357, 359, 360, 361, 362, 363]);
+  const FL = buildFullLocal([355, 356, 357, 359, 360, 361, 362, 363, 364]);
 
   it('mapping says present but evidence says absent -> BLOCKED', () => {
     const r = reconcile(FL, [...remoteThrough(354), '20260902052231'], {
       presentMigrations: [] as number[],
-      absentMigrations: [355, 356, 357, 359, 360, 361, 362, 363],
+      absentMigrations: [355, 356, 357, 359, 360, 361, 362, 363, 364],
     }, {
       intentionallyAbsent: ABSENT,
       timestampMappings: buildMapping({ schemaPresent: true }),
@@ -310,7 +310,7 @@ describe('reconcile — history/schema disagreement', () => {
   it('mapping says absent but evidence says present -> BLOCKED', () => {
     const r = reconcile(FL, [...remoteThrough(354), '20260902052231'], {
       presentMigrations: [355],
-      absentMigrations: [356, 357, 359, 360, 361, 362, 363],
+      absentMigrations: [356, 357, 359, 360, 361, 362, 363, 364],
     }, {
       intentionallyAbsent: ABSENT,
       timestampMappings: buildMapping({ schemaPresent: false }),
@@ -322,12 +322,12 @@ describe('reconcile — history/schema disagreement', () => {
 });
 
 describe('reconcile — normalized numeric duplicate BLOCKED', () => {
-  const FL = buildFullLocal([355, 356, 357, 359, 360, 361, 362, 363]);
+  const FL = buildFullLocal([355, 356, 357, 359, 360, 361, 362, 363, 364]);
 
   it('354 and 0354 -> BLOCKED', () => {
     const r = reconcile(FL, [...remoteThrough(353), '354', '0354'], SA, {
       intentionallyAbsent: ABSENT,
-      pendingSetAllowlist: [355, 356, 357, 359, 360, 361, 362, 363],
+      pendingSetAllowlist: [355, 356, 357, 359, 360, 361, 362, 363, 364],
     });
     expect(r.state).toBe('BLOCKED');
     expect(r.errors.some((e: string) => e.includes('Duplicate remote versions') && e.includes('normalized duplicate'))).toBe(true);
@@ -343,7 +343,7 @@ describe('reconcile — normalized numeric duplicate BLOCKED', () => {
 });
 
 describe('reconcile — numeric history vs schema cross-check', () => {
-  const FL = buildFullLocal([355, 356, 357, 359, 360, 361, 362, 363]);
+  const FL = buildFullLocal([355, 356, 357, 359, 360, 361, 362, 363, 364]);
 
   it('numeric 355 in history but schema says absent -> BLOCKED', () => {
     const r = reconcile(FL, [...remoteThrough(354), '355'], SA, {
@@ -357,7 +357,7 @@ describe('reconcile — numeric history vs schema cross-check', () => {
   it('schema says 355 present but not in history -> BLOCKED', () => {
     const r = reconcile(FL, remoteThrough(354), SP, {
       intentionallyAbsent: ABSENT,
-      pendingSetAllowlist: [355, 356, 357, 359, 360, 361, 362, 363],
+      pendingSetAllowlist: [355, 356, 357, 359, 360, 361, 362, 363, 364],
     });
     expect(r.state).toBe('BLOCKED');
     expect(r.errors.some((e: string) => e.includes('Schema evidence says migration 355 is present') && e.includes('not in remote history'))).toBe(true);
@@ -385,12 +385,12 @@ describe('reconcile — numeric history vs schema cross-check', () => {
 });
 
 describe('reconcile — pending set allowlist', () => {
-  const FL = buildFullLocal([355, 356, 357, 359, 360, 361, 362, 363]);
+  const FL = buildFullLocal([355, 356, 357, 359, 360, 361, 362, 363, 364]);
 
   it('exact match -> passes', () => {
     const r = reconcile(FL, remoteThrough(354), SA, {
       intentionallyAbsent: ABSENT,
-      pendingSetAllowlist: [355, 356, 357, 359, 360, 361, 362, 363],
+      pendingSetAllowlist: [355, 356, 357, 359, 360, 361, 362, 363, 364],
     });
     expect(r.state).toBe('READY');
   });
@@ -409,7 +409,7 @@ describe('reconcile — pending set allowlist', () => {
     const FL2 = buildFullLocal([355, 356, 357, 359, 360, 361, 362, 363, 999]);
     const r = reconcile(FL2, remoteThrough(354), {
       presentMigrations: [] as number[],
-      absentMigrations: [355, 356, 357, 359, 360, 361, 362, 363],
+      absentMigrations: [355, 356, 357, 359, 360, 361, 362, 363, 364],
     }, {
       intentionallyAbsent: ABSENT,
       pendingSetAllowlist: DEFAULT_PENDING_ALLOWLIST,
@@ -419,15 +419,15 @@ describe('reconcile — pending set allowlist', () => {
 });
 
 describe('reconcile — core scenarios', () => {
-  const FL = buildFullLocal([355, 356, 357, 359, 360, 361, 362, 363]);
+  const FL = buildFullLocal([355, 356, 357, 359, 360, 361, 362, 363, 364]);
 
   it('clean 354 -> READY with 8 pending', () => {
     const r = reconcile(FL, remoteThrough(354), SA, {
       intentionallyAbsent: ABSENT,
-      pendingSetAllowlist: [355, 356, 357, 359, 360, 361, 362, 363],
+      pendingSetAllowlist: [355, 356, 357, 359, 360, 361, 362, 363, 364],
     });
     expect(r.state).toBe('READY');
-    expect(r.pendingMigrations.length).toBe(8);
+    expect(r.pendingMigrations.length).toBe(9);
   });
 
   it('clean 355 applied -> no rerun', () => {
@@ -437,7 +437,7 @@ describe('reconcile — core scenarios', () => {
     });
     expect(r.state).toBe('READY');
     expect(r.pendingMigrations.find((m: any) => m.version === 355)).toBeUndefined();
-    expect(r.pendingMigrations.length).toBe(7);
+    expect(r.pendingMigrations.length).toBe(8);
   });
 
   it('ts 355 -> REPAIR_REQUIRED', () => {
@@ -448,7 +448,7 @@ describe('reconcile — core scenarios', () => {
     });
     expect(r.state).toBe('REPAIR_REQUIRED');
     expect(r.repairSteps.some((s: string) => s.includes('reverted'))).toBe(true);
-    expect(r.pendingMigrations.map((m: any) => m.version)).toEqual([356, 357, 359, 360, 361, 362, 363]);
+    expect(r.pendingMigrations.map((m: any) => m.version)).toEqual([356, 357, 359, 360, 361, 362, 363, 364]);
   });
 
   it('unmapped ts -> BLOCKED', () => {
@@ -503,17 +503,17 @@ describe('reconcile — core scenarios', () => {
       pendingSetAllowlist: DEFAULT_PENDING_ALLOWLIST,
     });
     expect(r.state).toBe('REPAIR_REQUIRED');
-    expect(r.pendingMigrations.map((m: any) => m.version)).toEqual([356, 357, 359, 360, 361, 362, 363]);
+    expect(r.pendingMigrations.map((m: any) => m.version)).toEqual([356, 357, 359, 360, 361, 362, 363, 364]);
     expect(r.note).toContain('non-executable');
   });
 
   it('all applied -> empty pending', () => {
     const allApplied = [
       ...remoteThrough(357),
-      '359', '360', '361', '362', '363',
+      '359', '360', '361', '362', '363', '364',
     ];
     const r = reconcile(FL, allApplied, {
-      presentMigrations: [355, 356, 357, 359, 360, 361, 362, 363],
+      presentMigrations: [355, 356, 357, 359, 360, 361, 362, 363, 364],
       absentMigrations: [],
     }, {
       intentionallyAbsent: ABSENT,
@@ -524,7 +524,7 @@ describe('reconcile — core scenarios', () => {
   });
 
   it('358 always skipped', () => {
-    const FL2 = buildFullLocal([355, 356, 357, 358, 359, 360, 361, 362, 363]);
+    const FL2 = buildFullLocal([355, 356, 357, 358, 359, 360, 361, 362, 363, 364]);
     const r = reconcile(FL2, [...remoteThrough(354), '355'], SP, {
       intentionallyAbsent: ABSENT,
       pendingSetAllowlist: DEFAULT_PENDING_ALLOWLIST,
@@ -534,7 +534,7 @@ describe('reconcile — core scenarios', () => {
 });
 
 describe('reconcile — mapping validation edge cases', () => {
-  const FL = buildFullLocal([355, 356, 357, 359, 360, 361, 362, 363]);
+  const FL = buildFullLocal([355, 356, 357, 359, 360, 361, 362, 363, 364]);
 
   it('mapping to non-local migration -> BLOCKED via validateTimestampMappings', () => {
     const result = validateTimestampMappings(
@@ -555,7 +555,7 @@ describe('reconcile — mapping validation edge cases', () => {
   });
 
   it('mapping to intentionally-absent migration -> BLOCKED', () => {
-    const FL2 = buildFullLocal([355, 356, 357, 358, 359, 360, 361, 362, 363]);
+    const FL2 = buildFullLocal([355, 356, 357, 358, 359, 360, 361, 362, 363, 364]);
     const result = validateTimestampMappings(
       {
         mappings: [{

@@ -101,7 +101,7 @@ function createTableMock(config: {
         const capData = { data: config.capabilities ?? [], error: null };
         const resolved = Promise.resolve(capData);
         const chain: Record<string, any> = {};
-        for (const m of ['select', 'eq', 'order']) chain[m] = () => chain;
+        for (const m of ['select', 'eq', 'order', 'not']) chain[m] = () => chain;
         chain.then = resolved.then.bind(resolved);
         chain.catch = resolved.catch.bind(resolved);
         return chain;
@@ -218,16 +218,17 @@ describe('CAP-001 quick_rebook via BotService.handleMessage', () => {
     // Assert: recoverable message sent (CAS-005 says "not available")
     expect(sender.hasMessageContaining('not available')).toBe(true);
 
-    // Assert: rebook state cleaned in session update
-    const sessionUpdates = updateTracker.filter(u => u.table === 'bot_sessions');
-    expect(sessionUpdates.length).toBeGreaterThan(0);
-    const lastUpdate = sessionUpdates[sessionUpdates.length - 1].data as Record<string, unknown>;
-    const updatedSessionData = (lastUpdate.session_data || lastUpdate) as Record<string, unknown>;
+    // Assert: rebook state cleaned via CAS RPC (Slice C converted this from bare .update)
+    const casCalls = supabase.rpc.mock.calls.filter((c: unknown[]) => c[0] === 'update_session_cas');
+    expect(casCalls.length).toBeGreaterThan(0);
+    // The 1a CAS call should clean rebook state from session_data
+    const lastCasCall = casCalls[casCalls.length - 1][1] as Record<string, unknown>;
+    const casSessionData = lastCasCall.p_session_data as Record<string, unknown>;
     // _quick_rebook_service_id should be cleaned
-    expect(updatedSessionData._quick_rebook_service_id).toBeUndefined();
+    expect(casSessionData._quick_rebook_service_id).toBeUndefined();
 
     // Assert: active_capability NOT set to scheduling
-    expect(updatedSessionData.active_capability).toBeUndefined();
+    expect(casSessionData.active_capability).toBeUndefined();
   });
 
   it('allows quick_rebook when capability IS in effective set', async () => {

@@ -132,10 +132,22 @@ export async function handleMyBookings(
       return;
     }
     session.session_data.selected_booking_id = bookingId;
-    await supabase.from('bot_sessions').update({
-      current_step: 'modify_booking',
-      session_data: session.session_data,
-    }).eq('id', session.id);
+    const { data: casBookingResult, error: casBookingError } = await supabase.rpc('update_session_cas', {
+      p_session_id: session.id,
+      p_expected_version: session.version ?? 0,
+      p_current_step: 'modify_booking',
+      p_session_data: session.session_data,
+    });
+    if (casBookingError) {
+      logger.error('[MY_BOOKINGS] booking-selection CAS RPC error:', casBookingError.message);
+      throw casBookingError;
+    }
+    if (!casBookingResult?.success) {
+      if (casBookingResult?.reason === 'version_conflict') return;
+      logger.error('[MY_BOOKINGS] booking-selection CAS unexpected:', casBookingResult?.reason);
+      throw new Error(`CAS failure: ${casBookingResult?.reason || 'unknown'}`);
+    }
+    session.version = casBookingResult.version;
     await handleModifyBooking(supabase, messageSender, sendText, flowExecutor, session, from, '');
     return;
   }
@@ -569,24 +581,34 @@ export async function handleModifyBooking(
       sessionData.skip_service = true;
     }
 
-    // Clean up old inactive sessions for this phone+business to avoid
-    // UNIQUE constraint violation on idx_bot_sessions_phone_business
-    // (the index covers all rows, not just active ones)
+    const { data: casRebookResult, error: casRebookError } = await supabase.rpc('update_session_cas', {
+      p_session_id: session.id,
+      p_expected_version: session.version ?? 0,
+      p_current_step: 'select_date',
+      p_session_data: sessionData,
+      p_business_id: biz.id,
+    });
+    if (casRebookError) {
+      logger.error('[MY_BOOKINGS] rebook-after-cancel CAS RPC error:', casRebookError.message);
+      throw casRebookError;
+    }
+    if (!casRebookResult?.success) {
+      if (casRebookResult?.reason === 'version_conflict') return;
+      logger.error('[MY_BOOKINGS] rebook CAS unexpected:', casRebookResult?.reason);
+      throw new Error(`CAS failure: ${casRebookResult?.reason || 'unknown'}`);
+    }
+    session.version = casRebookResult.version;
+    session.session_data = sessionData;
+    session.current_step = 'select_date';
+    session.business_id = biz.id;
+
+    // Clean up old inactive sessions for this phone+business AFTER winning CAS.
+    // Moved after CAS to ensure a stale loser performs no secondary mutation.
     await supabase.from('bot_sessions')
       .delete()
       .eq('whatsapp_number', from)
       .eq('business_id', biz.id)
       .eq('is_active', false);
-
-    await supabase.from('bot_sessions').update({
-      current_step: 'select_date',
-      session_data: sessionData,
-      business_id: biz.id,
-    }).eq('id', session.id);
-
-    session.session_data = sessionData;
-    session.current_step = 'select_date';
-    session.business_id = biz.id;
 
     await sendText(from, "Let's pick a new date and time for your booking.");
     await flowExecutor.execute(from, '', session as unknown as BotSession, biz as BusinessRecord | null);

@@ -703,27 +703,37 @@ export class BotService {
             const recoveryMsg = buildCapabilityRecoveryMessage(activeCap, ufCaps, (currentBiz.category as string) || 'other');
 
             // Persist via CAS (BLOCKER 4: version-gated write)
-            const { data: casResult } = await this.supabase.rpc('update_session_cas', {
+            const { data: casCapResult, error: casCapError } = await this.supabase.rpc('update_session_cas', {
               p_session_id: session.id,
               p_expected_version: session.version ?? 0,
               p_current_step: 'select_capability',
               p_session_data: session.session_data,
             });
-            if (!casResult?.success) return; // stale — another worker owns this session
-            session.version = casResult.version;
+            if (casCapError) { logger.error('[CAP_REFRESH] CAS RPC error:', casCapError.message); throw casCapError; }
+            if (!casCapResult?.success) {
+              if (casCapResult?.reason === 'version_conflict') return;
+              logger.error('[CAP_REFRESH] CAS unexpected:', casCapResult?.reason);
+              throw new Error(`CAS failure: ${casCapResult?.reason || 'unknown'}`);
+            }
+            session.version = casCapResult.version;
 
             await this.sendText(from, recoveryMsg);
             return;
           }
 
           // BLOCKER 4: Use CAS for capability refresh persistence (not direct update)
-          const { data: refreshCas } = await this.supabase.rpc('update_session_cas', {
+          const { data: refreshCas, error: refreshCasError } = await this.supabase.rpc('update_session_cas', {
             p_session_id: session.id,
             p_expected_version: session.version ?? 0,
             p_current_step: session.current_step,
             p_session_data: session.session_data,
           });
-          if (!refreshCas?.success) return; // stale — another worker owns this session
+          if (refreshCasError) { logger.error('[CAP_REFRESH] refresh CAS RPC error:', refreshCasError.message); throw refreshCasError; }
+          if (!refreshCas?.success) {
+            if (refreshCas?.reason === 'version_conflict') return;
+            logger.error('[CAP_REFRESH] refresh CAS unexpected:', refreshCas?.reason);
+            throw new Error(`CAS failure: ${refreshCas?.reason || 'unknown'}`);
+          }
           session.version = refreshCas.version;
         } else {
           // CAS-007: Capability read failure — fail closed for ALL non-MANAGE_EXISTING.
@@ -2009,7 +2019,22 @@ export class BotService {
         clearRejectedTransactionalState(session.session_data);
         const ufCaps = getUserFacingCapabilities(currentCaps);
         const recoveryMsg = buildCapabilityRecoveryMessage(rebookCap, ufCaps, (session.session_data.business_category as string) || 'other');
-        await this.supabase.from('bot_sessions').update({ session_data: session.session_data }).eq('id', session.id);
+        const { data: cas1aResult, error: cas1aError } = await this.supabase.rpc('update_session_cas', {
+          p_session_id: session.id,
+          p_expected_version: session.version ?? 0,
+          p_current_step: session.current_step,
+          p_session_data: session.session_data,
+        });
+        if (cas1aError) {
+          logger.error('[QUICK_REBOOK_1A] CAS RPC error:', cas1aError.message);
+          throw cas1aError;
+        }
+        if (!cas1aResult?.success) {
+          if (cas1aResult?.reason === 'version_conflict') return;
+          logger.error('[QUICK_REBOOK_1A] CAS unexpected:', cas1aResult?.reason);
+          throw new Error(`CAS failure: ${cas1aResult?.reason || 'unknown'}`);
+        }
+        session.version = cas1aResult.version;
         await this.sendText(from, recoveryMsg);
         return;
       }
@@ -2061,10 +2086,22 @@ export class BotService {
       // Initialize step history so "back"/"cancel" works correctly
       session.session_data._step_history = ['select_capability', firstStep];
 
-      await this.supabase.from('bot_sessions').update({
-        session_data: session.session_data,
-        current_step: firstStep,
-      }).eq('id', session.id);
+      const { data: casResult, error: casResultError } = await this.supabase.rpc('update_session_cas', {
+        p_session_id: session.id,
+        p_expected_version: session.version ?? 0,
+        p_current_step: firstStep,
+        p_session_data: session.session_data,
+      });
+      if (casResultError) {
+        logger.error('[QUICK_REBOOK] CAS RPC error:', casResultError.message);
+        throw casResultError;
+      }
+      if (!casResult?.success) {
+        if (casResult?.reason === 'version_conflict') return; // expected race loser — silent exit
+        logger.error('[QUICK_REBOOK] CAS unexpected failure:', casResult?.reason);
+        throw new Error(`CAS failure: ${casResult?.reason || 'unknown'}`);
+      }
+      session.version = casResult.version;
 
       const business = session.business_id
         ? (await this.supabase.from('businesses').select('*').eq('id', session.business_id).single()).data
@@ -2087,10 +2124,22 @@ export class BotService {
         // Greeting already stored — will be used by capability selection
       }
       session.current_step = 'select_capability';
-      await this.supabase.from('bot_sessions').update({
-        session_data: session.session_data,
-        current_step: 'select_capability',
-      }).eq('id', session.id);
+      const { data: casMenuResult, error: casMenuError } = await this.supabase.rpc('update_session_cas', {
+        p_session_id: session.id,
+        p_expected_version: session.version ?? 0,
+        p_current_step: 'select_capability',
+        p_session_data: session.session_data,
+      });
+      if (casMenuError) {
+        logger.error('[BROWSE_MENU] CAS RPC error:', casMenuError.message);
+        throw casMenuError;
+      }
+      if (!casMenuResult?.success) {
+        if (casMenuResult?.reason === 'version_conflict') return;
+        logger.error('[BROWSE_MENU] CAS unexpected failure:', casMenuResult?.reason);
+        throw new Error(`CAS failure: ${casMenuResult?.reason || 'unknown'}`);
+      }
+      session.version = casMenuResult.version;
       // Execute the flow to show the capability menu
       const bizForMenu = session.business_id
         ? (await this.supabase.from('businesses').select('*').eq('id', session.business_id).single()).data
@@ -2624,10 +2673,22 @@ export class BotService {
               session.session_data || {},
               correction,
             );
-            await this.supabase
-              .from('bot_sessions')
-              .update({ session_data: updatedData })
-              .eq('id', session.id);
+            const { data: casCorrResult, error: casCorrError } = await this.supabase.rpc('update_session_cas', {
+              p_session_id: session.id,
+              p_expected_version: session.version ?? 0,
+              p_current_step: session.current_step,
+              p_session_data: updatedData,
+            });
+            if (casCorrError) {
+              logger.error('[CORRECTION] CAS RPC error:', casCorrError.message);
+              throw casCorrError;
+            }
+            if (!casCorrResult?.success) {
+              if (casCorrResult?.reason === 'version_conflict') return;
+              logger.error('[CORRECTION] CAS unexpected failure:', casCorrResult?.reason);
+              throw new Error(`CAS failure: ${casCorrResult?.reason || 'unknown'}`);
+            }
+            session.version = casCorrResult.version;
             await this.sendText(
               from,
               `Got it! Changed ${correction.field} to ${String(correction.newValue)}.`,
