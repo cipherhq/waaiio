@@ -96,7 +96,7 @@ function createDeadlineGuardedSender(
  * Meta sends a message with type === 'order'. We create an order record, init payment,
  * and send the customer a summary with a payment link.
  */
-export async function handleCatalogOrder(
+async function handleCatalogOrder(
   supabase: SupabaseClient,
   resolved: ResolvedChannel,
   msg: { order?: { catalog_id: string; text?: string; product_items: Array<{ product_retailer_id: string; quantity: number; item_price: number; currency: string }> }; id?: string },
