@@ -29,10 +29,21 @@ function generateToken(length = 24): string {
   return Array.from(array, byte => chars[byte % chars.length]).join('');
 }
 
-async function sendWhatsApp(to: string, text: string): Promise<boolean> {
+async function sendWhatsApp(to: string, text: string, supabase: ReturnType<typeof createClient>, businessId: string): Promise<boolean> {
   if (!whatsappToken || !whatsappPhoneId) {
     console.log(`[mock] WhatsApp to ${to}: ${text.slice(0, 100)}...`);
     return true;
+  }
+
+  // S-1 (#256): Fresh fail-closed suspension check immediately before Meta dispatch
+  const { data: bizCheck, error: bizErr } = await supabase
+    .from('businesses')
+    .select('messaging_suspended')
+    .eq('id', businessId)
+    .maybeSingle();
+  if (bizErr || !bizCheck || bizCheck.messaging_suspended !== false) {
+    console.log(`[generate-sign-link] Send blocked: business ${businessId} suspended/unverifiable`);
+    return false;
   }
 
   const phone = to.replace(/\D/g, '');
@@ -158,7 +169,7 @@ Deno.serve(async (req) => {
         `⏰ Expires in 72 hours.`,
       ].join('\n');
 
-      await sendWhatsApp(signer_phone, message);
+      await sendWhatsApp(signer_phone, message, supabase, business_id);
     }
 
     return new Response(

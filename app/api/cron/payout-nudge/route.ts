@@ -5,6 +5,7 @@ import { sendEmail } from '@/lib/email/client';
 import { logger } from '@/lib/logger';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
 import { verifyCronAuth } from '@/lib/cron-auth';
+import { assertMessagingAllowed, MessagingSuspendedError } from '@/lib/channels/send-guard';
 
 /**
  * GET /api/cron/payout-nudge
@@ -137,6 +138,7 @@ export async function GET(request: NextRequest) {
       // Send WhatsApp notification to business owner (if they have a phone)
       if (profile.phone) {
         try {
+          await assertMessagingAllowed(biz.id);
           const waToken = process.env.META_CLOUD_ACCESS_TOKEN || '';
           const waPhoneId = process.env.META_CLOUD_PHONE_NUMBER_ID || '';
           if (waToken && waPhoneId) {
@@ -155,7 +157,11 @@ export async function GET(request: NextRequest) {
             });
           }
         } catch (err) {
-          logger.error(`[PAYOUT-NUDGE] WhatsApp failed for ${biz.name}:`, err);
+          if (err instanceof MessagingSuspendedError) {
+            logger.warn(`[PAYOUT-NUDGE] Messaging suspended for ${biz.name}, skipping WhatsApp nudge`);
+          } else {
+            logger.error(`[PAYOUT-NUDGE] WhatsApp failed for ${biz.name}:`, err);
+          }
         }
       }
 

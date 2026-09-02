@@ -3,6 +3,13 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+### feat(256): emergency messaging hard-stop — per-business suspension (S-1)
+
+- **Date:** 2026-09-01
+- **Migration 363:** `363_emergency_hard_stop.sql` — `businesses.messaging_suspended` column, column-protection trigger, `toggle_messaging_suspension()` SECURITY DEFINER RPC with atomic audit, `messaging_suspension_audit` append-only table.
+- **Runtime:** `lib/channels/send-guard.ts` — `assertMessagingAllowed()` checked at every business-scoped Meta /messages egress. Fail-closed on DB error, missing row, NULL, or ambiguous identity.
+- **Refs:** #256, #250
+
 ## 2026-09-01 — #244: Outcome persistence + typed MetaApiError + #255 cleanup
 
 ### What changed

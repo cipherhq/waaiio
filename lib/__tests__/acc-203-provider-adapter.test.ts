@@ -17,6 +17,11 @@ vi.mock('@/lib/channels/circuit-breaker', () => ({
   CircuitBreakerOpenError: class extends Error { constructor(k: string) { super(`Circuit open: ${k}`); } },
 }));
 
+// Mock send guard — this test exercises retry behavior, not suspension
+vi.mock('@/lib/channels/send-guard', () => ({
+  assertMessagingAllowed: vi.fn().mockResolvedValue(undefined),
+}));
+
 // Import after mocking circuit breaker
 const { MetaCloudSender } = await import('@/lib/channels/message-sender');
 const { MetaApiError } = await import('@/lib/channels/meta-api-error');

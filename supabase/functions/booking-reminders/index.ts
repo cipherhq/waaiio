@@ -28,13 +28,24 @@ const whatsappPhoneId = Deno.env.get('WHATSAPP_PHONE_NUMBER_ID') || '';
 
 const DEFAULT_REMINDER_HOURS = [24, 2];
 
-async function sendWhatsApp(to: string, text: string): Promise<boolean> {
+async function sendWhatsApp(to: string, text: string, supabase: ReturnType<typeof createClient>, businessId: string): Promise<boolean> {
   if (!whatsappToken || !whatsappPhoneId) {
     log.debug(`[mock] WhatsApp to ${to}: ${text.slice(0, 100)}...`);
     return true;
   }
 
   try {
+    // S-1 (#256): Fresh fail-closed suspension check immediately before Meta dispatch
+    const { data: bizCheck, error: bizErr } = await supabase
+      .from('businesses')
+      .select('messaging_suspended')
+      .eq('id', businessId)
+      .maybeSingle();
+    if (bizErr || !bizCheck || bizCheck.messaging_suspended !== false) {
+      log.debug(`[booking-reminders] Send blocked: business ${businessId} suspended/unverifiable`);
+      return false;
+    }
+
     const phone = to.replace('+', '');
     const response = await fetch(
       `https://graph.facebook.com/v22.0/${whatsappPhoneId}/messages`,
@@ -133,7 +144,7 @@ Deno.serve(async () => {
         ? `⏰ *Reminder: You have a booking ${hoursAhead === 24 ? 'tomorrow' : `in ${humanHours}`}!*\n\n📍 ${bizInfo.name}\n📅 ${booking.date}\n🕐 ${booking.time}\n\nWe look forward to seeing you, ${booking.guest_name || 'there'}! 🙌`
         : `⏰ *Your booking is in ${humanHours}!*\n\n📍 ${bizInfo.name}\n🕐 ${booking.time}\n\nSee you soon, ${booking.guest_name || 'there'}! 👋`;
 
-      const sent = await sendWhatsApp(booking.guest_phone, msg);
+      const sent = await sendWhatsApp(booking.guest_phone, msg, supabase, booking.business_id);
       if (sent) {
         // Mark as sent
         if (flagColumn) {
@@ -177,7 +188,7 @@ Deno.serve(async () => {
       `We look forward to welcoming you, ${res.guest_name || 'there'}! 🙌`,
     ].filter(Boolean).join('\n');
 
-    const sent = await sendWhatsApp(res.guest_phone, lines);
+    const sent = await sendWhatsApp(res.guest_phone, lines, supabase, res.business_id);
     if (sent) sentReservationReminders++;
   }
 
@@ -211,7 +222,7 @@ Deno.serve(async () => {
         `Thank you for staying with us, ${res.guest_name || 'there'}! We hope you enjoyed your stay. 🙏`,
       ].filter(Boolean).join('\n');
 
-      const sent = await sendWhatsApp(res.guest_phone, msg);
+      const sent = await sendWhatsApp(res.guest_phone, msg, supabase, res.business_id);
       if (sent) sentCheckoutReminders++;
     }
   }
@@ -247,8 +258,8 @@ Deno.serve(async () => {
 
   for (const booking of completedBookings || []) {
     if (!booking.guest_phone) continue;
-    const biz = (booking as Record<string, unknown>).businesses as Record<string, string>;
-    const bizName = biz?.name || 'us';
+    const biz = (booking as Record<string, unknown>).businesses as Record<string, unknown>;
+    const bizName = (biz?.name as string) || 'us';
     const svc = (booking as Record<string, unknown>).services as Record<string, string> | null;
     const svcName = svc?.name || '';
 
@@ -268,7 +279,7 @@ Deno.serve(async () => {
       .replace(/\{customer_name\}/g, booking.guest_name || 'there')
       .replace(/\{service_name\}/g, svcName);
 
-    const sent = await sendWhatsApp(booking.guest_phone, msg);
+    const sent = await sendWhatsApp(booking.guest_phone, msg, supabase, booking.business_id);
     if (sent) {
       await supabase.from('bookings').update({ feedback_requested: true }).eq('id', booking.id);
       sentFollowUp++;

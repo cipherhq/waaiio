@@ -105,6 +105,17 @@ async function sendWhatsAppForBusiness(
       return false;
     }
 
+    // S-1 (#256): Fresh fail-closed suspension check immediately before Meta dispatch
+    const { data: bizCheck, error: bizErr } = await supabase
+      .from('businesses')
+      .select('messaging_suspended')
+      .eq('id', businessId)
+      .maybeSingle();
+    if (bizErr || !bizCheck || bizCheck.messaging_suspended !== false) {
+      log.debug(`[chat-timeout] Send blocked: business ${businessId} suspended/unverifiable`);
+      return false;
+    }
+
     const phone = to.replace('+', '');
     const response = await fetch(
       `https://graph.facebook.com/v22.0/${phoneNumberId}/messages`,

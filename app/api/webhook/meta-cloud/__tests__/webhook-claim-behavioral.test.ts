@@ -21,6 +21,12 @@ vi.mock('@sentry/nextjs', () => ({ captureException: vi.fn(), captureMessage: vi
 
 import type { MessageSender } from '@/lib/channels/message-sender';
 
+// Mock send-guard so assertMessagingAllowed is a no-op (business suspension not under test here)
+vi.mock('@/lib/channels/send-guard', () => ({
+  assertMessagingAllowed: vi.fn(async () => {}),
+  MessagingSuspendedError: class extends Error { constructor(id: string, r: string) { super(`Messaging suspended for business ${id}: ${r}`); } },
+}));
+
 // Mock circuit breaker (used by withRetry inside MetaCloudSender)
 vi.mock('@/lib/circuit-breaker', () => ({
   isCircuitOpen: vi.fn(() => false),
@@ -277,6 +283,8 @@ describe('Slice B — real MetaCloudSender.withRetry deadline enforcement', () =
     } as any;
 
     const sender = new MetaCloudSender(mockCloud);
+    // Bind a test business so the send-guard doesn't fail on missing_business_id
+    sender.bindBusiness('test-biz-id');
 
     // Simulate: request started 49.5s ago — just before the 50s deadline
     const SIDE_EFFECT_DEADLINE_MS = 50_000;

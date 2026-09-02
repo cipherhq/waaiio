@@ -81,6 +81,12 @@ function createDeadlineGuardedSender(
     sendLocation: inner.sendLocation ? (msg) => guardedCall(() => inner.sendLocation!(msg)) : undefined,
     sendProduct: inner.sendProduct ? (msg) => guardedCall(() => inner.sendProduct!(msg)) : undefined,
     sendProductList: inner.sendProductList ? (msg) => guardedCall(() => inner.sendProductList!(msg)) : undefined,
+    // S-1 (#256): Forward business identity + platform-scoped sends through deadline guard
+    sendPlatformText: inner.sendPlatformText ? (msg) => guardedCall(() => inner.sendPlatformText!(msg)) : undefined,
+    sendPlatformButtons: inner.sendPlatformButtons ? (msg) => guardedCall(() => inner.sendPlatformButtons!(msg)) : undefined,
+    bindBusiness: inner.bindBusiness ? (id: string) => inner.bindBusiness!(id) : undefined,
+    enterPlatformDiscovery: inner.enterPlatformDiscovery ? () => inner.enterPlatformDiscovery!() : undefined,
+    get boundBusinessId() { return inner.boundBusinessId; },
   };
 }
 
@@ -616,6 +622,12 @@ export async function POST(request: NextRequest) {
         }
 
         const preResolvedBusinessId = resolved.channel.business_id || undefined;
+
+        // Propagate businessId to the sender for send-guard checks (#256)
+        if (preResolvedBusinessId && resolved.sender?.bindBusiness) {
+          resolved.sender.bindBusiness(preResolvedBusinessId);
+        }
+
         // Wrap the sender with a deadline guard — every outbound Meta send checks
         // the request-scoped deadline before attempting the provider call.
         const guardedSender = createDeadlineGuardedSender(resolved.sender, t0);
