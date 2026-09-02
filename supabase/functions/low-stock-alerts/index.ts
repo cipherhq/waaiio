@@ -23,13 +23,24 @@ const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const whatsappToken = Deno.env.get('WHATSAPP_TOKEN') || '';
 const whatsappPhoneId = Deno.env.get('WHATSAPP_PHONE_NUMBER_ID') || '';
 
-async function sendWhatsApp(to: string, text: string): Promise<boolean> {
+async function sendWhatsApp(to: string, text: string, supabase: ReturnType<typeof createClient>, businessId: string): Promise<boolean> {
   if (!whatsappToken || !whatsappPhoneId) {
     log.debug(`[mock] WhatsApp to ${to}: ${text.slice(0, 100)}...`);
     return true;
   }
 
   try {
+    // S-1 (#256): Fresh fail-closed suspension check immediately before Meta dispatch
+    const { data: bizCheck, error: bizErr } = await supabase
+      .from('businesses')
+      .select('messaging_suspended')
+      .eq('id', businessId)
+      .maybeSingle();
+    if (bizErr || !bizCheck || bizCheck.messaging_suspended !== false) {
+      log.debug(`[low-stock-alerts] Send blocked: business ${businessId} suspended/unverifiable`);
+      return false;
+    }
+
     const phone = to.replace('+', '');
     const response = await fetch(
       `https://graph.facebook.com/v22.0/${whatsappPhoneId}/messages`,
@@ -101,7 +112,7 @@ Deno.serve(async () => {
 
     const msg = `⚠️ *Low Stock Alert — ${info.bizName}*\n\nThe following products are running low:\n\n${productList}\n\nRestock soon to avoid missed orders! Log in to your dashboard to update inventory.`;
 
-    const sent = await sendWhatsApp(info.ownerPhone, msg);
+    const sent = await sendWhatsApp(info.ownerPhone, msg, supabase, bizId);
     if (sent) {
       // Mark products as alerted
       const productIds = (lowStockProducts || [])

@@ -21,6 +21,12 @@ vi.mock('@sentry/nextjs', () => ({ captureException: vi.fn(), captureMessage: vi
 
 import type { MessageSender } from '@/lib/channels/message-sender';
 
+// Mock send-guard so assertMessagingAllowed is a no-op (business suspension not under test here)
+vi.mock('@/lib/channels/send-guard', () => ({
+  assertMessagingAllowed: vi.fn(async () => {}),
+  MessagingSuspendedError: class extends Error { constructor(id: string, r: string) { super(`Messaging suspended for business ${id}: ${r}`); } },
+}));
+
 // Mock circuit breaker (used by withRetry inside MetaCloudSender)
 vi.mock('@/lib/circuit-breaker', () => ({
   isCircuitOpen: vi.fn(() => false),
@@ -235,21 +241,18 @@ describe('Slice B — processing failure → completed (no replay)', () => {
   it('handleCatalogOrder sender parameter is required (fail-closed)', async () => {
     const { readFileSync } = await import('fs');
     const { resolve } = await import('path');
+
+    // Route imports handleCatalogOrder from shared module
     const routeSrc = readFileSync(resolve(__dirname, '../route.ts'), 'utf-8');
-
-    // The call site must pass guardedSender to handleCatalogOrder
     expect(routeSrc).toContain('handleCatalogOrder(supabase, resolved, msg, source, msgLog, guardedSender)');
+    expect(routeSrc).toContain("import { handleCatalogOrder } from '@/lib/channels/catalog-order-handler'");
 
-    // handleCatalogOrder sender parameter must be required (not optional)
-    const fnBody = routeSrc.slice(
-      routeSrc.indexOf('async function handleCatalogOrder'),
-      routeSrc.indexOf('async function handleCatalogOrder') + 5000,
-    );
-    // Must have required sender parameter (no ?)
-    expect(fnBody).toContain('sender: import');
-    expect(fnBody).not.toContain('sender?:');
+    // Shared module has required sender parameter (not optional)
+    const handlerSrc = readFileSync(resolve(__dirname, '../../../../../lib/channels/catalog-order-handler.ts'), 'utf-8');
+    expect(handlerSrc).toContain('sender: MessageSender');
+    expect(handlerSrc).not.toContain('sender?:');
     // Must use outbound for sends
-    const sendTexts = fnBody.match(/await\s+(outbound|resolved\.sender)\.sendText/g) || [];
+    const sendTexts = handlerSrc.match(/await\s+(outbound|resolved\.sender)\.sendText/g) || [];
     const rawSenderSends = sendTexts.filter(s => s.includes('resolved.sender'));
     expect(rawSenderSends.length).toBe(0);
   });
@@ -277,6 +280,8 @@ describe('Slice B — real MetaCloudSender.withRetry deadline enforcement', () =
     } as any;
 
     const sender = new MetaCloudSender(mockCloud);
+    // Bind a test business so the send-guard doesn't fail on missing_business_id
+    sender.bindBusiness('test-biz-id');
 
     // Simulate: request started 49.5s ago — just before the 50s deadline
     const SIDE_EFFECT_DEADLINE_MS = 50_000;

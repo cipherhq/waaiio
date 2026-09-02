@@ -99,6 +99,7 @@ export default function Businesses() {
   const [tierSaving, setTierSaving] = useState(false);
   const [selectedStatus, setSelectedStatus] = useState('');
   const [statusSaving, setStatusSaving] = useState(false);
+  const [suspensionSaving, setSuspensionSaving] = useState(false);
   // WhatsApp channel assignment
   const [channels, setChannels] = useState<Array<{ id: string; phone_number: string; display_name: string; country_code: string }>>([]);
   const [channelSaving, setChannelSaving] = useState(false);
@@ -120,7 +121,7 @@ export default function Businesses() {
     const [bizRes, chRes, limitsRes] = await Promise.all([
       adminDb
         .from('businesses')
-        .select('id, name, slug, bot_code, category, flow_type, country_code, subscription_tier, payout_mode, status, phone, city, neighborhood, created_at, verification_level, verification_status, payout_limit_monthly, assigned_channel_id, custom_fee_percentage, custom_fee_flat, payment_channels')
+        .select('id, name, slug, bot_code, category, flow_type, country_code, subscription_tier, payout_mode, status, phone, city, neighborhood, created_at, verification_level, verification_status, payout_limit_monthly, assigned_channel_id, custom_fee_percentage, custom_fee_flat, payment_channels, messaging_suspended')
         .order('created_at', { ascending: false }),
       adminDb
         .from('whatsapp_channels')
@@ -307,6 +308,30 @@ export default function Businesses() {
       alert('Failed to change status');
     } finally {
       setStatusSaving(false);
+    }
+  }
+
+  async function handleToggleSuspension() {
+    if (!selected || !isFullAdmin) return;
+    const newState = !selected.messaging_suspended;
+    const reason = newState
+      ? prompt('Reason for suspending messaging (optional):')
+      : prompt('Reason for resuming messaging (optional):');
+    setSuspensionSaving(true);
+    try {
+      const { data, error } = await adminDb.rpc('toggle_messaging_suspension', {
+        p_business_id: selected.id,
+        p_suspended: newState,
+        p_reason: reason || null,
+      });
+      if (error) throw error;
+      setBusinesses(prev => prev.map(b => b.id === selected.id ? { ...b, messaging_suspended: newState } : b));
+      setSelected(prev => prev ? { ...prev, messaging_suspended: newState } : prev);
+    } catch (err) {
+      console.error('Suspension toggle error:', err);
+      alert('Failed to toggle messaging suspension');
+    } finally {
+      setSuspensionSaving(false);
     }
   }
 
@@ -670,6 +695,27 @@ export default function Businesses() {
                       {statusSaving ? '...' : 'Save'}
                     </button>
                   </div>
+                </div>
+              </div>
+
+              {/* Emergency Messaging Suspension */}
+              <div className="mt-3">
+                <label className="block text-xs font-medium text-gray-600 mb-1">Emergency Messaging Control</label>
+                <div className="flex items-center gap-2">
+                  <span className={`text-xs font-medium ${selected.messaging_suspended ? 'text-red-600' : 'text-green-600'}`}>
+                    {selected.messaging_suspended ? '🔴 Messaging SUSPENDED' : '🟢 Messaging Active'}
+                  </span>
+                  <button
+                    onClick={handleToggleSuspension}
+                    disabled={suspensionSaving}
+                    className={`rounded-lg px-3 py-1.5 text-xs font-bold text-white transition disabled:opacity-50 ${
+                      selected.messaging_suspended
+                        ? 'bg-green-600 hover:bg-green-700'
+                        : 'bg-red-600 hover:bg-red-700'
+                    }`}
+                  >
+                    {suspensionSaving ? '...' : selected.messaging_suspended ? 'Resume Messaging' : 'Suspend Messaging'}
+                  </button>
                 </div>
               </div>
 

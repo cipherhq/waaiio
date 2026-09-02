@@ -101,8 +101,14 @@ export class BotService {
       return; // Silently drop — don't even send a response (saves WhatsApp outbound cost)
     }
 
+    // S-1 (#256): If business is already known (dedicated channel or pre-resolved),
+    // bind it to the sender immediately so ALL sends check the hard-stop guard.
+    if (preResolvedBusinessId && this.messageSender.bindBusiness) {
+      this.messageSender.bindBusiness(preResolvedBusinessId);
+    }
+
     if (maintResult.data?.value === true) {
-      await this.sendText(from, "We're currently undergoing maintenance and will be back shortly. Please try again in a few minutes. 🙏");
+      await this.sendPlatformText(from, "We're currently undergoing maintenance and will be back shortly. Please try again in a few minutes. 🙏");
       return;
     }
 
@@ -121,7 +127,7 @@ export class BotService {
         opted_out_at: new Date().toISOString(),
       }, { onConflict: 'phone,business_id,channel' }).select();
 
-      await this.sendText(from, 'You have been unsubscribed. You will no longer receive promotional messages. Send START to resubscribe.');
+      await this.sendPlatformText(from, 'You have been unsubscribed. You will no longer receive promotional messages. Send START to resubscribe.');
       return;
     }
 
@@ -132,14 +138,14 @@ export class BotService {
         .eq('phone', from)
         .is('resubscribed_at', null);
 
-      await this.sendText(from, 'You have been resubscribed. You will receive messages again.');
+      await this.sendPlatformText(from, 'You have been resubscribed. You will receive messages again.');
       return;
     }
 
     // Pre-check 1: Timeout
     const timeoutCheck = this.intelligence.isTimedOut(from);
     if (timeoutCheck.timedOut) {
-      await this.sendText(from, `You can message again in ${timeoutCheck.remaining} minute${timeoutCheck.remaining !== 1 ? 's' : ''}. 🙏`);
+      await this.sendPlatformText(from, `You can message again in ${timeoutCheck.remaining} minute${timeoutCheck.remaining !== 1 ? 's' : ''}. 🙏`);
       return;
     }
 
@@ -166,11 +172,12 @@ export class BotService {
     }
 
     if (text === 'switch_biz') {
-      // Show business picker
+      // S-1 (#256): Explicitly transition to platform discovery before showing picker
+      if (this.messageSender.enterPlatformDiscovery) this.messageSender.enterPlatformDiscovery();
+      // Show business picker (platform-scoped: pre-business discovery)
       const recentBiz = await this.findReturningCustomerBusinesses(from, null, null);
       if (recentBiz.length > 1) {
         const quickPick = recentBiz.slice(0, 3);
-        // Clean up old inactive sessions
         await this.supabase.from('bot_sessions').delete()
           .eq('whatsapp_number', from).eq('is_active', false).is('business_id', null);
         await this.supabase.from('bot_sessions').insert({
@@ -182,13 +189,10 @@ export class BotService {
           is_active: true,
           expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
         });
-        await this.messageSender.sendButtons({
-          to: from,
-          body: 'Which business would you like to visit?',
-          buttons: quickPick.map((s, i) => ({ id: `biz_${i}`, title: truncTitle(s.name) })),
-        });
+        await this.sendPlatformButtons(from, 'Which business would you like to visit?',
+          quickPick.map((s, i) => ({ id: `biz_${i}`, title: truncTitle(s.name) })));
       } else {
-        await this.sendText(from, 'Type the name or code of the business you\'d like to visit.');
+        await this.sendPlatformText(from, 'Type the name or code of the business you\'d like to visit.');
       }
       return;
     }
@@ -197,7 +201,9 @@ export class BotService {
     if (HOME_PATTERN.test(text.trim())) {
       const activeSession = await this.getActiveSession(from);
       if (activeSession) await this.deactivateSession(activeSession.id);
-      // Show marketplace greeting by finding returning businesses
+      // S-1 (#256): Explicitly transition to platform discovery
+      if (this.messageSender.enterPlatformDiscovery) this.messageSender.enterPlatformDiscovery();
+      // Show marketplace greeting (platform-scoped: pre-business discovery)
       const recentBiz = await this.findReturningCustomerBusinesses(from, null, null);
       if (recentBiz.length > 0) {
         const quickPick = recentBiz.slice(0, 3);
@@ -212,13 +218,10 @@ export class BotService {
           is_active: true,
           expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
         });
-        await this.messageSender.sendButtons({
-          to: from,
-          body: 'Welcome to Waaiio! Which business would you like to visit?',
-          buttons: quickPick.map((s, i) => ({ id: `biz_${i}`, title: truncTitle(s.name) })),
-        });
+        await this.sendPlatformButtons(from, 'Welcome to Waaiio! Which business would you like to visit?',
+          quickPick.map((s, i) => ({ id: `biz_${i}`, title: truncTitle(s.name) })));
       } else {
-        await this.sendText(from, 'Welcome to Waaiio! Send a *business code* to get started, or visit waaiio.com/directory to find a business.');
+        await this.sendPlatformText(from, 'Welcome to Waaiio! Send a *business code* to get started, or visit waaiio.com/directory to find a business.');
       }
       return;
     }
@@ -229,11 +232,11 @@ export class BotService {
       if (abuse.timeout) {
         const existingSession = await this.getActiveSession(from);
         if (existingSession) await this.deactivateSession(existingSession.id);
-        await this.sendText(from, abuse.message);
+        await this.sendPlatformText(from, abuse.message);
         return;
       }
       if (abuse.warn && abuse.message) {
-        await this.sendText(from, abuse.message);
+        await this.sendPlatformText(from, abuse.message);
         return;
       }
       // First 1-2 offenses: let the message through (could be false positive on free-text input)
@@ -606,6 +609,9 @@ export class BotService {
     // capability disabled, business suspended, etc.).
     // Request-scoped business cache — avoid refetching the same business row
     if (session?.business_id) {
+      // S-1 (#256): Bind resumed session's business to sender for hard-stop guard
+      if (this.messageSender.bindBusiness) this.messageSender.bindBusiness(session.business_id);
+
       try {
         // BOT-PERF: Use RPC-provided business if available, otherwise fetch
         let currentBiz = _cachedBusiness as Record<string, unknown> | null;
@@ -622,7 +628,7 @@ export class BotService {
         if (!currentBiz || currentBiz.status !== 'active') {
           // Business no longer active — deactivate session with recoverable message
           await this.deactivateSession(session.id);
-          await this.sendText(from, 'This business is currently unavailable. Send *Hi* to start over.');
+          await this.sendPlatformText(from, 'This business is currently unavailable. Send *Hi* to start over.');
           return;
         }
 
@@ -778,6 +784,8 @@ export class BotService {
       if (session) {
         await this.deactivateSession(session.id);
       }
+      // S-1 (#256): Transition to platform discovery for business switching
+      if (this.messageSender.enterPlatformDiscovery) this.messageSender.enterPlatformDiscovery();
 
       // Use the full fuzzy matching engine (same as bot code detection)
       const detection = await this.detectBotCodeWithSuggestions(keyword, from);
@@ -797,19 +805,13 @@ export class BotService {
       }
 
       if (detection.suggestions && detection.suggestions.length > 0) {
-        // Show suggestions as buttons
+        // Show suggestions as buttons (platform-scoped: pre-business discovery)
         if (detection.suggestions.length <= 3) {
-          await this.messageSender.sendButtons({
-            to: from,
-            body: `Which business did you mean?`,
-            buttons: detection.suggestions.map((s, i) => ({
-              id: `biz_${i}`,
-              title: truncTitle(s.name),
-            })),
-          });
+          await this.sendPlatformButtons(from, 'Which business did you mean?',
+            detection.suggestions.map((s, i) => ({ id: `biz_${i}`, title: truncTitle(s.name) })));
         } else {
           const list = detection.suggestions.map((s, i) => `${i + 1}. *${s.name}*`).join('\n');
-          await this.sendText(from, `Which business did you mean?\n\n${list}\n\nReply with the number to select.`);
+          await this.sendPlatformText(from, `Which business did you mean?\n\n${list}\n\nReply with the number to select.`);
         }
 
         // Create suggestion session so the reply gets handled
@@ -827,7 +829,7 @@ export class BotService {
         return;
       }
 
-      await this.sendText(from, `No business found matching "${keyword}". Try: switch restaurant, switch spa, switch church, switch shop, etc.`);
+      await this.sendPlatformText(from, `No business found matching "${keyword}". Try: switch restaurant, switch spa, switch church, switch shop, etc.`);
       return;
     }
 
@@ -1111,29 +1113,19 @@ export class BotService {
               : `Did you mean one of these businesses?`;
 
           if (pendingSuggestions.length === 1 && !isCategoryMatch) {
-            // Single fuzzy match — confirmation buttons (Yes/No)
-            await this.messageSender.sendButtons({
-              to: from,
-              body: headerText,
-              buttons: [
-                { id: 'biz_0', title: 'Yes' },
-                { id: 'biz_no', title: 'No' },
-              ],
-            });
+            // Single fuzzy match — confirmation buttons (platform-scoped: pre-business discovery)
+            await this.sendPlatformButtons(from, headerText, [
+              { id: 'biz_0', title: 'Yes' },
+              { id: 'biz_no', title: 'No' },
+            ]);
           } else if (pendingSuggestions.length <= 3) {
-            // Use buttons (WhatsApp supports up to 3)
-            await this.messageSender.sendButtons({
-              to: from,
-              body: headerText,
-              buttons: pendingSuggestions.map((s, i) => ({
-                id: `biz_${i}`,
-                title: truncTitle(s.name),
-              })),
-            });
+            // Use buttons (platform-scoped: pre-business discovery)
+            await this.sendPlatformButtons(from, headerText,
+              pendingSuggestions.map((s, i) => ({ id: `biz_${i}`, title: truncTitle(s.name) })));
           } else {
-            // Fallback to numbered list as text
+            // Fallback to numbered list as text (platform-scoped: pre-business discovery)
             const list = pendingSuggestions.map((s, i) => `${i + 1}. *${s.name}*`).join('\n');
-            await this.sendText(from, `${headerText}\n\n${list}\n\nReply with the number to select.`);
+            await this.sendPlatformText(from, `${headerText}\n\n${list}\n\nReply with the number to select.`);
           }
           return;
         }
@@ -1149,7 +1141,7 @@ export class BotService {
           .single();
         // Reject suspended/deactivated businesses
         if (biz && (biz as Record<string, unknown>).status !== 'active') {
-          await this.sendText(from, 'This business is currently unavailable. Please try again later.');
+          await this.sendPlatformText(from, 'This business is currently unavailable. Please try again later.');
           return;
         }
         // Check if phone is blocked by admin (table-based + legacy metadata fallback)
@@ -1172,6 +1164,12 @@ export class BotService {
           }
         }
         business = biz as BusinessRecord | null;
+      }
+
+      // S-1 (#256): Bind resolved business to sender for hard-stop guard.
+      // After this point, ALL sends (including platform-scoped) check the guard.
+      if (businessId && this.messageSender.bindBusiness) {
+        this.messageSender.bindBusiness(businessId);
       }
 
       // Load capabilities + WhatsApp config + tier limits in parallel (all only need businessId)
@@ -2911,6 +2909,32 @@ export class BotService {
 
   private async sendText(to: string, text: string): Promise<void> {
     return sendBotText(this.messageSender, to, text);
+  }
+
+  /**
+   * S-1 (#256): Platform-scoped text send for pre-business shared-channel sends.
+   * Bypasses the business hard-stop guard. ONLY for Waaiio/platform greetings,
+   * business pickers, STOP/START, abuse warnings, and guidance — NOT for
+   * business-attributable messages.
+   */
+  private async sendPlatformText(to: string, text: string): Promise<void> {
+    if (this.messageSender.sendPlatformText) {
+      await this.messageSender.sendPlatformText({ to, text });
+    } else {
+      // Fallback for non-MetaCloudSender implementations (tests)
+      await this.messageSender.sendText({ to, text });
+    }
+  }
+
+  /**
+   * S-1 (#256): Platform-scoped buttons send for pre-business shared-channel sends.
+   */
+  private async sendPlatformButtons(to: string, body: string, buttons: Array<{ id: string; title: string }>): Promise<void> {
+    if (this.messageSender.sendPlatformButtons) {
+      await this.messageSender.sendPlatformButtons({ to, body, buttons });
+    } else {
+      await this.messageSender.sendButtons({ to, body, buttons });
+    }
   }
 
   /** Send text with auto-translation based on session language */

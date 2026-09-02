@@ -69,7 +69,9 @@ export class ChannelResolver {
         phoneNumberId: channel.phone_number_id,
         wabaId: channel.waba_id || undefined,
       });
-      return { channel, sender: new MetaCloudSender(cloud), cloud };
+      const sender = new MetaCloudSender(cloud);
+      if (channel.business_id) sender.bindBusiness(channel.business_id);
+      return { channel, sender, cloud };
     }
     return { channel, sender: this.buildSender(channel) };
   }
@@ -92,7 +94,9 @@ export class ChannelResolver {
       phoneNumberId: channel.phone_number_id,
       wabaId: channel.waba_id || undefined,
     });
-    return new MetaCloudSender(cloud);
+    const sender = new MetaCloudSender(cloud);
+    if (channel.business_id) sender.bindBusiness(channel.business_id);
+    return sender;
   }
 
   /**
@@ -185,7 +189,10 @@ export class ChannelResolver {
     const cached = this.cache.get(cacheKey);
     if (cached && Date.now() - cached.ts < CACHE_TTL) {
       if (!cached.data) return null;
-      return { channel: cached.data, sender: this.buildSender(cached.data) };
+      // Propagate the REQUESTED businessId, not the channel's nullable business_id
+      const resolved = { channel: cached.data, sender: this.buildSender(cached.data) };
+      this.stampBusinessId(resolved, businessId);
+      return resolved;
     }
 
     // 1. Check admin-assigned channel first (assigned_channel_id takes priority)
@@ -207,7 +214,9 @@ export class ChannelResolver {
       if (assigned) {
         const record = assigned as ChannelRecord;
         this.cacheSet(cacheKey, record);
-        return this.buildResolved(record);
+        const resolved = this.buildResolved(record);
+        this.stampBusinessId(resolved, businessId);
+        return resolved;
       }
     }
 
@@ -223,7 +232,9 @@ export class ChannelResolver {
     if (data) {
       const record = data as ChannelRecord;
       this.cacheSet(cacheKey, record);
-      return this.buildResolved(record);
+      const resolved = this.buildResolved(record);
+      this.stampBusinessId(resolved, businessId);
+      return resolved;
     }
 
     // 3. Shared channel for the business's country
@@ -231,6 +242,7 @@ export class ChannelResolver {
       const shared = await this.getSharedChannelForCountry(bizData.country_code as CountryCode);
       if (shared) {
         this.cacheSet(cacheKey, shared.channel);
+        this.stampBusinessId(shared, businessId);
         return shared;
       }
     }
@@ -247,11 +259,24 @@ export class ChannelResolver {
     if (anyShared) {
       const record = anyShared as ChannelRecord;
       this.cacheSet(cacheKey, record);
-      return this.buildResolved(record);
+      const resolved = this.buildResolved(record);
+      this.stampBusinessId(resolved, businessId);
+      return resolved;
     }
 
     this.cacheSet(cacheKey, null);
     return null;
+  }
+
+  /**
+   * S-1 (#256): Stamp the authoritative requested businessId onto the sender.
+   * This is separate from the channel's business_id (which is NULL for shared channels).
+   * The businessId is the authorization identity for the hard-stop guard.
+   */
+  private stampBusinessId(resolved: ResolvedChannel, businessId: string): void {
+    if (resolved.sender?.bindBusiness) {
+      resolved.sender.bindBusiness(businessId);
+    }
   }
 
   /**

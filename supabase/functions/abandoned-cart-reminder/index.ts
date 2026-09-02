@@ -23,13 +23,24 @@ const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const whatsappToken = Deno.env.get('WHATSAPP_TOKEN') || '';
 const whatsappPhoneId = Deno.env.get('WHATSAPP_PHONE_NUMBER_ID') || '';
 
-async function sendWhatsApp(to: string, text: string): Promise<boolean> {
+async function sendWhatsApp(to: string, text: string, supabase: ReturnType<typeof createClient>, businessId: string): Promise<boolean> {
   if (!whatsappToken || !whatsappPhoneId) {
     log.debug(`[mock] WhatsApp to ${to}: ${text.slice(0, 100)}...`);
     return true;
   }
 
   try {
+    // S-1 (#256): Fresh fail-closed suspension check immediately before Meta dispatch
+    const { data: bizCheck, error: bizErr } = await supabase
+      .from('businesses')
+      .select('messaging_suspended')
+      .eq('id', businessId)
+      .maybeSingle();
+    if (bizErr || !bizCheck || bizCheck.messaging_suspended !== false) {
+      log.debug(`[abandoned-cart-reminder] Send blocked: business ${businessId} suspended/unverifiable`);
+      return false;
+    }
+
     const phone = to.replace('+', '');
     const response = await fetch(
       `https://graph.facebook.com/v22.0/${whatsappPhoneId}/messages`,
@@ -97,7 +108,7 @@ Deno.serve(async () => {
     const msg = `Hey there! 👋\n\nYou left *${itemText}* in your cart at *${bizName}*.\n\nReady to complete your order? Just send *cart* to pick up where you left off!\n\nYour cart is saved and waiting for you. 🛒`;
 
     const phone = session.whatsapp_number;
-    const sent = await sendWhatsApp(phone, msg);
+    const sent = await sendWhatsApp(phone, msg, supabase, session.business_id);
     if (sent) {
       await supabase
         .from('bot_sessions')
