@@ -47,12 +47,17 @@ If ANY other migration appears pending, STOP.
 
 ## Migration 359 Hold
 
-Migration 359 (`config_versioning`) requires all 11 commercial keys in `platform_settings`.
-Production currently has 10 of 11; `minimum_bank_transfer` is absent.
+Migration 359 (`config_versioning`) creates a `platform_config_versions` table and bootstraps
+an initial authoritative snapshot from the 11 commercial keys in `platform_settings`.
+Production currently has 10 of 11 keys; `minimum_bank_transfer` is absent.
+
+The bootstrap succeeds with 10 keys (the snapshot is non-empty), but the initial snapshot
+will not include `minimum_bank_transfer`. This is an incomplete-snapshot decision, not a
+migration failure.
 
 **Owner must choose before 359 can be applied:**
-- **Option A:** Insert `minimum_bank_transfer` with value `{"NG": 10000, "GH": 600}` (canonical fallback from `lib/platformSettings.ts:124`), then apply 359. Full 11-key snapshot.
-- **Option B:** Apply 359 as-is. Bootstrap succeeds with 10 keys; `minimum_bank_transfer` can be added later via `save_commercial_config`.
+- **Option A:** Insert `minimum_bank_transfer` with value `{"NG": 10000, "GH": 600}` (canonical fallback from `lib/platformSettings.ts:124`) before applying 359. The initial snapshot includes all 11 commercial keys.
+- **Option B:** Apply 359 without inserting the key. The initial snapshot includes 10 of 11 keys. `minimum_bank_transfer` can be added later via the admin `save_commercial_config` RPC, which will create a new versioned snapshot including it.
 
 **Do not** mark 359 as applied without executing its SQL. That creates ledger/schema drift.
 
@@ -128,31 +133,50 @@ RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
 HTTP_CODE=$(echo "$RESPONSE" | tail -1)
 BODY=$(echo "$RESPONSE" | head -n -1)
 
-if [ "$HTTP_CODE" != "200" ]; then
-  echo "FAILED: HTTP $HTTP_CODE"
+if [ "$HTTP_CODE" = "200" ]; then
+  echo "HTTP 200 received — run postconditions to confirm committed state."
+elif echo "$BODY" | grep -q "ERROR:"; then
+  echo "CONFIRMED DATABASE ERROR: HTTP $HTTP_CODE"
   echo "$BODY"
-  echo "Transaction rolled back automatically. No schema or ledger change."
-  echo "STOP — post exact output to Issue #218."
+  echo "The database returned a SQL error. The transaction was not committed."
+  echo "Investigate the error, resolve the root cause, and retry."
   exit 1
+else
+  echo "AMBIGUOUS OUTCOME: HTTP $HTTP_CODE"
+  echo "$BODY"
+  echo "The HTTP response does not confirm whether the transaction committed."
+  echo "This can occur on timeout, proxy 5xx, or client disconnect."
+  echo "DO NOT RETRY. Run postconditions below to determine actual state."
 fi
-
-echo "SUCCESS — verify postconditions before proceeding."
 ```
 
-### Postconditions (after each migration)
+### Postconditions (REQUIRED after every attempt — success or ambiguous)
+
+Postconditions must be run after EVERY migration attempt, including HTTP 200 responses.
+An HTTP status code alone is not sufficient evidence of committed migration state.
 
 ```bash
-# A. Ledger entry exists
+# A. Ledger entry check (read-only)
 curl -s -X POST "https://api.supabase.com/v1/projects/${SUPABASE_REF}/database/query" \
   -H "Authorization: Bearer ${SUPABASE_ACCESS_TOKEN}" \
   -H "Content-Type: application/json" \
   -d '{"query": "SELECT version, name FROM supabase_migrations.schema_migrations WHERE version = '"'"'N'"'"'"}'
-# Must return 1 row. If empty → STOP.
 
-# B. Migration objects exist (run the migration-specific verification from Post-Verification below)
+# B. Migration objects check (run the migration-specific verification from Post-Verification below)
 ```
 
-If either postcondition fails, STOP and post exact output to Issue #218.
+**Interpreting postcondition results:**
+
+| HTTP response | Ledger entry | Objects exist | State | Action |
+|--------------|-------------|---------------|-------|--------|
+| 200 | Present | Present | **Committed** | Proceed to next migration |
+| 200 | Absent | Absent | **Not committed** (unexpected) | STOP — post evidence |
+| Non-200 (SQL error) | Absent | Absent | **Rolled back** | Fix root cause, retry |
+| Ambiguous (timeout/5xx) | Present | Present | **Committed** | Proceed |
+| Ambiguous (timeout/5xx) | Absent | Absent | **Rolled back** | Fix root cause, retry |
+| Any | Present | Absent (or vice versa) | **Split state** | STOP — manual investigation required |
+
+If postconditions show split state (ledger present but objects absent, or vice versa), STOP immediately and post exact evidence to Issue #218. Do not retry.
 
 ## Application Order
 
