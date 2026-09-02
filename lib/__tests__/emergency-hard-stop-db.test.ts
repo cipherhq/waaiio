@@ -355,9 +355,10 @@ describe.skipIf(!canRun)('Emergency Hard-Stop DB Tests (#256 S-1)', () => {
       GRANT USAGE ON SCHEMA public TO _test_db_owner;
       GRANT ALL ON public.businesses TO _test_db_owner;
       GRANT ALL ON public.messaging_suspension_audit TO _test_db_owner;
-      -- Minimum auth dependency: toggle_messaging_suspension calls auth.uid()
+      -- Minimum RPC dependencies: toggle_messaging_suspension calls auth.uid() and public.is_admin()
       GRANT USAGE ON SCHEMA auth TO _test_db_owner;
       GRANT EXECUTE ON FUNCTION auth.uid() TO _test_db_owner;
+      GRANT EXECUTE ON FUNCTION public.is_admin() TO _test_db_owner;
     `);
 
     // Transfer ownership to the non-superuser role
