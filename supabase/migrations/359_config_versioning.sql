@@ -44,14 +44,24 @@ CREATE TRIGGER trg_config_versions_no_delete
   BEFORE DELETE ON public.platform_config_versions FOR EACH ROW
   EXECUTE FUNCTION public.prevent_config_version_mutation();
 
--- ── 4. Version INSERT guard (only postgres/supabase_admin may INSERT) ──
+-- ── 4. Version INSERT guard ──
+-- Only the DB-owner role (the role that owns save_commercial_config) may INSERT.
+-- In Supabase Cloud postgres is non-superuser but owns all migration-created
+-- SECURITY DEFINER functions. This guard uses the exact function signature OID
+-- to resolve the trusted owner deterministically, preventing overload ambiguity.
+-- Fail-closed: if the authority function cannot be resolved, INSERT is rejected.
 
 CREATE OR REPLACE FUNCTION public.guard_config_version_insert()
 RETURNS TRIGGER AS $$
+DECLARE
+  v_trusted_owner TEXT;
 BEGIN
-  -- Allow superuser roles (postgres in Supabase, any superuser in dev/CI)
-  -- and the SECURITY DEFINER function (which runs as its owner = superuser)
-  IF NOT (SELECT rolsuper FROM pg_roles WHERE rolname = current_user) THEN
+  SELECT r.rolname INTO v_trusted_owner
+    FROM pg_proc p
+    JOIN pg_roles r ON p.proowner = r.oid
+   WHERE p.oid = to_regprocedure('public.save_commercial_config(text,jsonb,text)');
+
+  IF v_trusted_owner IS NULL OR current_user != v_trusted_owner THEN
     RAISE EXCEPTION 'platform_config_versions INSERT must occur via save_commercial_config() or migration';
   END IF;
   RETURN NEW;
@@ -73,6 +83,7 @@ CREATE OR REPLACE FUNCTION public.guard_commercial_settings()
 RETURNS TRIGGER AS $$
 DECLARE
   v_touches_commercial BOOLEAN;
+  v_trusted_owner TEXT;
   v_commercial_keys TEXT[] := ARRAY[
     'pricing_tiers', 'trial_days', 'broadcast_limits', 'conversation_limits',
     'default_platform_fee_percent', 'annual_discount_percentage',
@@ -90,9 +101,15 @@ BEGIN
       OR NEW.key = ANY(v_commercial_keys);
   END IF;
 
-  IF v_touches_commercial
-     AND NOT (SELECT rolsuper FROM pg_roles WHERE rolname = current_user) THEN
-    RAISE EXCEPTION 'Commercial platform settings must be modified via save_commercial_config()';
+  IF v_touches_commercial THEN
+    SELECT r.rolname INTO v_trusted_owner
+      FROM pg_proc p
+      JOIN pg_roles r ON p.proowner = r.oid
+     WHERE p.oid = to_regprocedure('public.save_commercial_config(text,jsonb,text)');
+
+    IF v_trusted_owner IS NULL OR current_user != v_trusted_owner THEN
+      RAISE EXCEPTION 'Commercial platform settings must be modified via save_commercial_config()';
+    END IF;
   END IF;
 
   IF TG_OP = 'DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
@@ -188,8 +205,15 @@ BEGIN
 END;
 $$;
 
--- Restrict EXECUTE: revoke from PUBLIC, grant only to authenticated (admin check is internal)
+-- Restrict EXECUTE: Supabase Cloud default privileges auto-grant EXECUTE to
+-- anon, authenticated, and service_role on new functions in public schema.
+-- REVOKE FROM PUBLIC alone does not remove these explicit per-role grants.
+-- Explicitly revoke from all app roles, then grant only to authenticated.
+-- Internal auth.uid() + is_admin() provides defense-in-depth authorization.
 REVOKE ALL ON FUNCTION public.save_commercial_config(TEXT, JSONB, TEXT) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.save_commercial_config(TEXT, JSONB, TEXT) FROM anon;
+REVOKE ALL ON FUNCTION public.save_commercial_config(TEXT, JSONB, TEXT) FROM authenticated;
+REVOKE ALL ON FUNCTION public.save_commercial_config(TEXT, JSONB, TEXT) FROM service_role;
 GRANT EXECUTE ON FUNCTION public.save_commercial_config(TEXT, JSONB, TEXT) TO authenticated;
 
 -- ── 8. Bootstrap: create initial version from observed DB state ──

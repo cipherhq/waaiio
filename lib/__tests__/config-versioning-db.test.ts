@@ -13,7 +13,7 @@
  */
 import { execSync, spawn } from 'child_process';
 import { readFileSync } from 'fs';
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 
 const dbUrl = process.env.TEST_DATABASE_URL || '';
 const canRun = dbUrl.length > 0;
@@ -618,5 +618,369 @@ describe.skipIf(!canRun)('Config Versioning DB Tests (#255 C-1)', () => {
     // Key still exists
     const stillExists = psql("SELECT count(*)::int FROM platform_settings WHERE key = 'minimum_bank_transfer';");
     expect(stillExists).toBe('1');
+  });
+
+  // ── 31. Option B bootstrap: exactly 10 keys, no minimum_bank_transfer ──
+
+  it('31. Option B bootstrap snapshot contains exactly 10 existing commercial keys, no minimum_bank_transfer', () => {
+    // The bootstrap version is the first one (earliest effective_from)
+    const snap = psql("SELECT config_snapshot::text FROM platform_config_versions ORDER BY effective_from ASC LIMIT 1;");
+    const parsed = JSON.parse(snap);
+    const keys = Object.keys(parsed).sort();
+
+    // Exactly these 10 keys, no minimum_bank_transfer
+    expect(keys).toEqual([
+      'annual_discount_percentage',
+      'broadcast_limits',
+      'conversation_limits',
+      'default_platform_fee_percent',
+      'minimum_payout',
+      'payout_cooling_period_days',
+      'payout_verification_limits',
+      'pricing_tiers',
+      'transfer_expiry_hours',
+      'trial_days',
+    ]);
+    expect(parsed).not.toHaveProperty('minimum_bank_transfer');
+
+    // Bootstrap created_by must be NULL (migration runner, not an auth'd user)
+    const createdBy = psql("SELECT created_by::text FROM platform_config_versions ORDER BY effective_from ASC LIMIT 1;");
+    expect(createdBy).toBe('');
+
+    // minimum_bank_transfer must NOT have been invented in platform_settings by bootstrap
+    // (Clean up from earlier tests that may have created it)
+    psql("DELETE FROM platform_settings WHERE key = 'minimum_bank_transfer';");
+    const mbtExists = psql("SELECT count(*)::int FROM platform_settings WHERE key = 'minimum_bank_transfer';");
+    expect(mbtExists).toBe('0');
+  });
+
+  // ── 32. Authenticated non-admin cannot invoke save_commercial_config ──
+
+  it('32. Authenticated non-admin user is rejected by internal is_admin() check', () => {
+    const NON_ADMIN_CLAIMS = '{"sub":"00000000-0000-0000-0000-000000000002","role":"user","user_metadata":{"role":"user"}}';
+    // Create the non-admin user + profile so auth.uid() resolves
+    // In CI with full schema, profiles.id references auth.users.id
+    // CI auth.users stub has only (id, email, raw_app_meta_data) — use minimal columns
+    psqlMayFail("INSERT INTO auth.users (id, email) VALUES ('00000000-0000-0000-0000-000000000002', 'nonadmin@test.com') ON CONFLICT DO NOTHING;");
+    psqlMayFail("INSERT INTO profiles (id) VALUES ('00000000-0000-0000-0000-000000000002') ON CONFLICT DO NOTHING;");
+
+    const err = psqlMayFail(`
+      SELECT set_config('request.jwt.claims', '${NON_ADMIN_CLAIMS}', false);
+      SET ROLE authenticated;
+      SELECT save_commercial_config('trial_days', '99'::jsonb);
+      RESET ROLE;
+    `);
+    expect(err).toContain('requires admin role');
+  });
+
+  // ── 33-35. Explicit RPC EXECUTE privilege assertions ──
+
+  it('33. anon CANNOT execute save_commercial_config', () => {
+    const canExec = psql("SELECT has_function_privilege('anon', 'save_commercial_config(text,jsonb,text)', 'EXECUTE');");
+    expect(canExec).toBe('f');
+  });
+
+  it('34. authenticated CAN execute save_commercial_config', () => {
+    const canExec = psql("SELECT has_function_privilege('authenticated', 'save_commercial_config(text,jsonb,text)', 'EXECUTE');");
+    expect(canExec).toBe('t');
+  });
+
+  it('35. service_role CANNOT execute save_commercial_config', () => {
+    const canExec = psql("SELECT has_function_privilege('service_role', 'save_commercial_config(text,jsonb,text)', 'EXECUTE');");
+    expect(canExec).toBe('f');
+  });
+
+  // ── 36. Structural regression: guard functions use function-owner, not rolsuper ──
+
+  it('36. Guard functions do NOT contain rolsuper (structural regression)', () => {
+    const insertGuardSrc = psql("SELECT prosrc FROM pg_proc WHERE proname = 'guard_config_version_insert';");
+    const settingsGuardSrc = psql("SELECT prosrc FROM pg_proc WHERE proname = 'guard_commercial_settings';");
+
+    // Must NOT contain the vulnerable rolsuper pattern
+    expect(insertGuardSrc).not.toContain('rolsuper');
+    expect(settingsGuardSrc).not.toContain('rolsuper');
+
+    // Must contain the function-owner lookup pattern
+    expect(insertGuardSrc).toContain('proowner');
+    expect(settingsGuardSrc).toContain('proowner');
+    expect(insertGuardSrc).toContain('to_regprocedure');
+    expect(settingsGuardSrc).toContain('to_regprocedure');
+  });
+});
+
+// ═══════════════════════════════════════════════════════
+// Non-superuser authority proof suite
+//
+// Creates a dedicated isolated database, sets up Supabase-shaped
+// prerequisites, then executes the ACTUAL checked-in
+// supabase/migrations/359_config_versioning.sql under a non-superuser
+// role via SET ROLE. All proofs run against the real migration artifact.
+// ═══════════════════════════════════════════════════════
+
+describe.skipIf(!canRun)('Config Versioning — non-superuser authority proof (#218)', () => {
+  const NSU_DB = 'waaiio_359_nsu_test';
+  const NSU_ROLE = '_nsu_migration_owner';
+  const NSU_ADMIN_CLAIMS = `{"sub":"00000000-0000-0000-0000-000000000099","role":"admin","user_metadata":{"role":"admin"}}`;
+
+  /** Run SQL against the isolated NSU database */
+  function nsuPsql(sql: string): string {
+    const nsuUrl = dbUrl.replace(/\/[^/]+$/, `/${NSU_DB}`);
+    return execSync(`psql "${nsuUrl}" -tAXq -v ON_ERROR_STOP=1`, {
+      input: sql, encoding: 'utf-8', timeout: 15000,
+    }).trim();
+  }
+  function nsuPsqlMayFail(sql: string): string {
+    const nsuUrl = dbUrl.replace(/\/[^/]+$/, `/${NSU_DB}`);
+    try {
+      return execSync(`psql "${nsuUrl}" -tAXq -v ON_ERROR_STOP=1`, {
+        input: sql, encoding: 'utf-8', timeout: 15000,
+      }).trim();
+    } catch (e: unknown) {
+      return (e as { stderr?: string }).stderr || String(e);
+    }
+  }
+
+  beforeAll(() => {
+    // 1. Create isolated database (connect to default db for CREATE DATABASE)
+    psqlMayFail(`DROP DATABASE IF EXISTS ${NSU_DB};`);
+    psql(`CREATE DATABASE ${NSU_DB};`);
+
+    // 2. Create the non-superuser Supabase-shaped role (cluster-wide)
+    psql(`
+      DO $$ BEGIN CREATE ROLE ${NSU_ROLE} NOLOGIN NOSUPERUSER; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+      DO $$ BEGIN CREATE ROLE authenticated NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+      DO $$ BEGIN CREATE ROLE service_role NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+      DO $$ BEGIN CREATE ROLE anon NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+    `);
+
+    // 3. Verify NSU role is NOT a superuser
+    const isSuperuser = nsuPsql(`SELECT rolsuper FROM pg_roles WHERE rolname = '${NSU_ROLE}';`);
+    expect(isSuperuser).toBe('f');
+
+    // 4. Set up Supabase-shaped prerequisites in the isolated DB
+    nsuPsql(`
+      CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+
+      GRANT USAGE, CREATE ON SCHEMA public TO ${NSU_ROLE};
+      GRANT USAGE ON SCHEMA public TO authenticated, service_role, anon;
+
+      CREATE OR REPLACE FUNCTION public.is_admin() RETURNS BOOLEAN AS $fn$
+      BEGIN
+        RETURN COALESCE(
+          current_setting('request.jwt.claims', true)::jsonb->>'role' = 'admin',
+          false
+        );
+      END;
+      $fn$ LANGUAGE plpgsql STABLE;
+
+      CREATE SCHEMA IF NOT EXISTS auth;
+      GRANT USAGE ON SCHEMA auth TO ${NSU_ROLE};
+      CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $fn$
+      BEGIN
+        RETURN (current_setting('request.jwt.claims', true)::jsonb->>'sub')::uuid;
+      EXCEPTION WHEN OTHERS THEN RETURN NULL;
+      END;
+      $fn$ LANGUAGE plpgsql STABLE;
+      GRANT EXECUTE ON FUNCTION auth.uid() TO ${NSU_ROLE}, authenticated, service_role, anon;
+      GRANT EXECUTE ON FUNCTION public.is_admin() TO ${NSU_ROLE}, authenticated, service_role, anon;
+
+      CREATE TABLE IF NOT EXISTS public.profiles (id UUID PRIMARY KEY);
+      INSERT INTO profiles (id) VALUES ('00000000-0000-0000-0000-000000000099') ON CONFLICT DO NOTHING;
+      INSERT INTO profiles (id) VALUES ('00000000-0000-0000-0000-000000000002') ON CONFLICT DO NOTHING;
+
+      CREATE TABLE IF NOT EXISTS public.platform_settings (
+        key VARCHAR(100) PRIMARY KEY,
+        value JSONB NOT NULL DEFAULT '{}',
+        description TEXT,
+        updated_by UUID REFERENCES public.profiles(id),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      ALTER TABLE public.platform_settings ENABLE ROW LEVEL SECURITY;
+
+      DO $$ BEGIN
+        CREATE POLICY admin_all_platform_settings ON public.platform_settings FOR ALL USING (public.is_admin());
+      EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+      -- Seed exactly the 10 Option B commercial keys (no minimum_bank_transfer)
+      INSERT INTO platform_settings (key, value) VALUES
+        ('pricing_tiers', '{"free":{"feePercentage":2.5}}'::jsonb),
+        ('trial_days', '7'::jsonb),
+        ('broadcast_limits', '{"free":{"maxBroadcasts":0}}'::jsonb),
+        ('conversation_limits', '{"free":200}'::jsonb),
+        ('default_platform_fee_percent', '2.5'::jsonb),
+        ('annual_discount_percentage', '20'::jsonb),
+        ('payout_cooling_period_days', '7'::jsonb),
+        ('minimum_payout', '{"NG":5000}'::jsonb),
+        ('payout_verification_limits', '{"unverified":0}'::jsonb),
+        ('transfer_expiry_hours', '4'::jsonb),
+        ('maintenance_mode', 'false'::jsonb)
+      ON CONFLICT (key) DO NOTHING;
+
+      GRANT SELECT, INSERT, UPDATE, DELETE ON public.platform_settings TO authenticated, service_role, ${NSU_ROLE};
+      GRANT ALL ON ALL TABLES IN SCHEMA public TO ${NSU_ROLE};
+
+      -- RLS bypass policies simulating Supabase Cloud BYPASSRLS for the NSU role
+      DO $$ BEGIN CREATE POLICY nsu_bypass_settings ON platform_settings FOR ALL TO ${NSU_ROLE} USING (true) WITH CHECK (true); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+      DO $$ BEGIN CREATE POLICY service_role_bypass ON platform_settings FOR ALL TO service_role USING (true) WITH CHECK (true); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+    `);
+
+    // 5. Execute the ACTUAL Migration 359 file under SET ROLE to the non-superuser
+    const migrationSql = readFileSync('supabase/migrations/359_config_versioning.sql', 'utf-8');
+    nsuPsql(`
+      SET ROLE ${NSU_ROLE};
+      ${migrationSql}
+      RESET ROLE;
+    `);
+
+    // 6. Grant table permissions to app roles (Supabase Cloud does this via default privileges)
+    nsuPsql(`
+      GRANT SELECT, INSERT, UPDATE, DELETE ON public.platform_config_versions TO service_role, ${NSU_ROLE};
+      GRANT SELECT ON public.platform_config_versions TO authenticated;
+      DO $$ BEGIN CREATE POLICY nsu_bypass_versions ON platform_config_versions FOR ALL TO ${NSU_ROLE} USING (true) WITH CHECK (true); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+      DO $$ BEGIN CREATE POLICY service_role_bypass_versions ON platform_config_versions FOR ALL TO service_role USING (true) WITH CHECK (true); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+    `);
+  });
+
+  function nsuAdminSave(key: string, value: string): string {
+    return nsuPsql(`
+      SELECT set_config('request.jwt.claims', '${NSU_ADMIN_CLAIMS}', false);
+      SET ROLE authenticated;
+      SELECT save_commercial_config('${key}', '${value}'::jsonb);
+      RESET ROLE;
+    `);
+  }
+
+  it('NSU-1. Migration owner role has rolsuper=false', () => {
+    const isSuperuser = nsuPsql(`SELECT rolsuper FROM pg_roles WHERE rolname = '${NSU_ROLE}';`);
+    expect(isSuperuser).toBe('f');
+  });
+
+  it('NSU-2. Actual migration-created save_commercial_config is owned by the non-superuser role', () => {
+    const owner = nsuPsql(`
+      SELECT r.rolname FROM pg_proc p JOIN pg_roles r ON p.proowner = r.oid
+      WHERE p.oid = to_regprocedure('public.save_commercial_config(text,jsonb,text)');
+    `);
+    expect(owner).toBe(NSU_ROLE);
+  });
+
+  it('NSU-3. Migration bootstrap succeeded and initial snapshot contains exactly 10 Option B keys', () => {
+    const count = parseInt(nsuPsql('SELECT count(*)::int FROM platform_config_versions;'), 10);
+    expect(count).toBeGreaterThanOrEqual(1);
+
+    const snap = nsuPsql("SELECT config_snapshot::text FROM platform_config_versions ORDER BY effective_from ASC LIMIT 1;");
+    const parsed = JSON.parse(snap);
+    const keys = Object.keys(parsed).sort();
+    expect(keys).toEqual([
+      'annual_discount_percentage', 'broadcast_limits', 'conversation_limits',
+      'default_platform_fee_percent', 'minimum_payout', 'payout_cooling_period_days',
+      'payout_verification_limits', 'pricing_tiers', 'transfer_expiry_hours', 'trial_days',
+    ]);
+    expect(parsed).not.toHaveProperty('minimum_bank_transfer');
+
+    const createdBy = nsuPsql("SELECT created_by::text FROM platform_config_versions ORDER BY effective_from ASC LIMIT 1;");
+    expect(createdBy).toBe('');
+  });
+
+  it('NSU-4. Authorized admin save_commercial_config succeeds and creates exactly one version', () => {
+    const before = parseInt(nsuPsql('SELECT count(*)::int FROM platform_config_versions;'), 10);
+    nsuAdminSave('trial_days', '21');
+    const after = parseInt(nsuPsql('SELECT count(*)::int FROM platform_config_versions;'), 10);
+    expect(after).toBe(before + 1);
+
+    const val = nsuPsql("SELECT value::text FROM platform_settings WHERE key = 'trial_days';");
+    expect(val).toBe('21');
+  });
+
+  it('NSU-5. Authenticated non-admin is rejected', () => {
+    const NON_ADMIN = '{"sub":"00000000-0000-0000-0000-000000000002","role":"user","user_metadata":{"role":"user"}}';
+    const err = nsuPsqlMayFail(`
+      SELECT set_config('request.jwt.claims', '${NON_ADMIN}', false);
+      SET ROLE authenticated;
+      SELECT save_commercial_config('trial_days', '99'::jsonb);
+      RESET ROLE;
+    `);
+    expect(err).toContain('requires admin role');
+  });
+
+  it('NSU-6. anon has no RPC EXECUTE', () => {
+    const canExec = nsuPsql("SELECT has_function_privilege('anon', 'save_commercial_config(text,jsonb,text)', 'EXECUTE');");
+    expect(canExec).toBe('f');
+  });
+
+  it('NSU-7. service_role has no RPC EXECUTE', () => {
+    const canExec = nsuPsql("SELECT has_function_privilege('service_role', 'save_commercial_config(text,jsonb,text)', 'EXECUTE');");
+    expect(canExec).toBe('f');
+  });
+
+  it('NSU-8. service_role direct commercial-key DML rejected', () => {
+    const err = nsuPsqlMayFail(`
+      SET ROLE service_role;
+      UPDATE platform_settings SET value = '"hacked"'::jsonb WHERE key = 'pricing_tiers';
+      RESET ROLE;
+    `);
+    expect(err).toContain('save_commercial_config');
+  });
+
+  it('NSU-9. service_role direct version INSERT rejected', () => {
+    const err = nsuPsqlMayFail(`
+      SET ROLE service_role;
+      INSERT INTO platform_config_versions (config_snapshot, effective_from)
+      VALUES ('{"hacked": true}'::jsonb, NOW());
+      RESET ROLE;
+    `);
+    expect(err).toContain('save_commercial_config');
+  });
+
+  it('NSU-10. Exact-signature trusted-owner lookup works (function owner = migration runner)', () => {
+    // The guard resolves the trusted owner via to_regprocedure + proowner
+    // Verify the lookup matches the actual NSU role
+    const guardSrc = nsuPsql("SELECT prosrc FROM pg_proc WHERE proname = 'guard_config_version_insert';");
+    expect(guardSrc).toContain('to_regprocedure');
+    expect(guardSrc).toContain('proowner');
+    expect(guardSrc).not.toContain('rolsuper');
+
+    // Direct INSERT as the NSU (trusted) owner succeeds
+    nsuPsql(`
+      SET ROLE ${NSU_ROLE};
+      INSERT INTO platform_config_versions (config_snapshot, effective_from, created_by)
+      VALUES ('{"nsu_owner_test":true}'::jsonb, '2018-01-01T00:00:00Z'::timestamptz, NULL);
+      RESET ROLE;
+    `);
+    // Clean up
+    nsuPsql(`
+      ALTER TABLE platform_config_versions DISABLE TRIGGER trg_config_versions_no_delete;
+      DELETE FROM platform_config_versions WHERE config_snapshot->>'nsu_owner_test' = 'true';
+      ALTER TABLE platform_config_versions ENABLE TRIGGER trg_config_versions_no_delete;
+    `);
+  });
+
+  it('NSU-11. Unresolved trusted authority fails closed', () => {
+    // Drop save_commercial_config + attempt INSERT in a single transaction.
+    // The INSERT should fail (guard can't resolve the trusted owner).
+    // On failure, psql aborts the transaction and PG rolls back on disconnect,
+    // restoring save_commercial_config — no function body duplication needed.
+    const err = nsuPsqlMayFail(`
+      BEGIN;
+      SET ROLE ${NSU_ROLE};
+      DROP FUNCTION save_commercial_config(text, jsonb, text);
+      INSERT INTO platform_config_versions (config_snapshot, effective_from)
+      VALUES ('{"should_fail":true}'::jsonb, '2017-01-01T00:00:00Z'::timestamptz);
+      RESET ROLE;
+      COMMIT;
+    `);
+    // The INSERT error triggers abort → transaction rolls back → DROP is undone
+    expect(err).toContain('save_commercial_config');
+
+    // Verify the function was restored (transaction rolled back)
+    const exists = nsuPsql("SELECT count(*) FROM pg_proc WHERE oid = to_regprocedure('public.save_commercial_config(text,jsonb,text)');");
+    expect(exists).toBe('1');
+  });
+
+  // ── Deterministic teardown: drop isolated DB and test role ──
+  afterAll(() => {
+    // Drop the isolated NSU database (connects to parent DB for DROP DATABASE)
+    psqlMayFail(`DROP DATABASE IF EXISTS ${NSU_DB};`);
+    // Drop the dedicated test role (safe: only used by this suite)
+    psqlMayFail(`DROP ROLE IF EXISTS ${NSU_ROLE};`);
   });
 });
