@@ -22,7 +22,7 @@ interface GroupDef {
 const GROUPS: GroupDef[] = [
   {
     label: 'Pricing & Fees',
-    keys: ['pricing_tiers', 'conversation_limits', 'broadcast_limits', 'trial_days', 'platform_fee_percentage', 'annual_discount_percentage', 'default_platform_fee_percent'],
+    keys: ['pricing_tiers', 'conversation_limits', 'broadcast_limits', 'trial_days', 'annual_discount_percentage', 'default_platform_fee_percent'],
   },
   {
     label: 'Payments & Payouts',
@@ -30,35 +30,23 @@ const GROUPS: GroupDef[] = [
   },
   {
     label: 'Bot & Automation',
-    keys: ['bot_rate_limit_per_minute', 'ocr_confidence_threshold', 'abuse_cooldown_soft_minutes', 'abuse_cooldown_hard_minutes', 'max_bot_sessions_per_business', 'contract_signing_hours'],
+    keys: ['bot_rate_limit_per_minute', 'ocr_confidence_threshold', 'abuse_cooldown_soft_minutes', 'abuse_cooldown_hard_minutes', 'contract_signing_hours'],
   },
   {
     label: 'Business Limits',
     keys: ['max_businesses_per_user', 'booking_defaults'],
   },
   {
-    label: 'WhatsApp',
-    keys: ['whatsapp_shared_numbers'],
-  },
-  {
-    label: 'Website Content',
-    keys: ['hero_content', 'contact_emails', 'social_links', 'default_greetings'],
-  },
-  {
     label: 'Directory',
     keys: ['directory_featured', 'directory_hidden'],
   },
   {
-    label: 'Countries & Currencies',
-    keys: ['supported_countries', 'supported_currencies'],
-  },
-  {
     label: 'App Versions',
-    keys: ['min_app_version', 'terms_version', 'privacy_version'],
+    keys: ['privacy_version'],
   },
   {
     label: 'System',
-    keys: ['maintenance_mode', 'support_email'],
+    keys: ['maintenance_mode'],
   },
 ];
 
