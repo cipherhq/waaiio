@@ -4,6 +4,10 @@
  * Real PostgreSQL proofs that toggle_messaging_suspension EXECUTE ACL
  * matches the accepted caller architecture after Migration 366.
  *
+ * Hermetic: seeds its own auth.users with canonical raw_app_meta_data,
+ * verifies is_admin() reads canonical source before admin-success test.
+ * Does not depend on any earlier test suite's stub/state.
+ *
  *   TEST_DATABASE_URL=postgresql://localhost:5432/waaiio_test \
  *     npx vitest run lib/__tests__/suspension-rpc-acl-db.test.ts
  */
@@ -29,68 +33,111 @@ function psqlMayFail(sql: string): string {
   }
 }
 
-const ADMIN_CLAIMS = '{"sub":"00000000-0000-0000-0000-000000000001","role":"admin","user_metadata":{"role":"admin"}}';
-const NON_ADMIN_CLAIMS = '{"sub":"00000000-0000-0000-0000-000000000002","role":"user","user_metadata":{"role":"user"}}';
+// Dedicated UUIDs for this suite — avoid cross-test contamination
+const ADMIN_UUID = '20000000-0000-0000-0000-000000000287';
+const NON_ADMIN_UUID = '20000000-0000-0000-0000-000000000288';
+
+// JWT claims carry identity/session context only. Authority comes from canonical app_metadata.
+const ADMIN_JWT = `{"sub":"${ADMIN_UUID}","role":"authenticated"}`;
+const NON_ADMIN_JWT = `{"sub":"${NON_ADMIN_UUID}","role":"authenticated"}`;
 
 describe.skipIf(!canRun)('Suspension RPC ACL Tests (#287 / Migration 366)', () => {
   let BIZ_ID: string;
 
   beforeAll(() => {
-    // Find a business to use for toggle tests
+    // 1. Seed dedicated admin user with canonical raw_app_meta_data.role = 'admin'
+    const adminResult = psqlMayFail(`
+      INSERT INTO auth.users (id, email, raw_app_meta_data)
+      VALUES ('${ADMIN_UUID}', 'acl-admin-287@test.com', '{"role":"admin"}'::jsonb)
+      ON CONFLICT (id) DO UPDATE SET raw_app_meta_data = '{"role":"admin"}'::jsonb;
+    `);
+    if (adminResult.includes('ERROR')) throw new Error(`Failed to seed admin user: ${adminResult}`);
+
+    const adminProfileResult = psqlMayFail(`
+      INSERT INTO profiles (id, email) VALUES ('${ADMIN_UUID}', 'acl-admin-287@test.com')
+      ON CONFLICT (id) DO NOTHING;
+    `);
+    if (adminProfileResult.includes('ERROR')) throw new Error(`Failed to seed admin profile: ${adminProfileResult}`);
+
+    // 2. Seed non-admin user with NO platform role in app_metadata
+    const nonAdminResult = psqlMayFail(`
+      INSERT INTO auth.users (id, email, raw_app_meta_data)
+      VALUES ('${NON_ADMIN_UUID}', 'acl-nonadmin-287@test.com', '{}'::jsonb)
+      ON CONFLICT (id) DO UPDATE SET raw_app_meta_data = '{}'::jsonb;
+    `);
+    if (nonAdminResult.includes('ERROR')) throw new Error(`Failed to seed non-admin user: ${nonAdminResult}`);
+
+    const nonAdminProfileResult = psqlMayFail(`
+      INSERT INTO profiles (id, email) VALUES ('${NON_ADMIN_UUID}', 'acl-nonadmin-287@test.com')
+      ON CONFLICT (id) DO NOTHING;
+    `);
+    if (nonAdminProfileResult.includes('ERROR')) throw new Error(`Failed to seed non-admin profile: ${nonAdminProfileResult}`);
+
+    // 3. Find a business for toggle tests
     BIZ_ID = psql("SELECT id::text FROM businesses LIMIT 1;");
     if (!BIZ_ID) throw new Error('No business found for suspension toggle tests');
+  });
 
-    // Ensure test users exist
-    psqlMayFail(`
-      INSERT INTO auth.users (id, email, raw_app_meta_data)
-      VALUES ('00000000-0000-0000-0000-000000000002', 'nonadmin-287@test.com', '{}'::jsonb)
-      ON CONFLICT (id) DO NOTHING;
+  // ── 0. Precondition: is_admin() is canonical (reads raw_app_meta_data) ──
+
+  it('0. is_admin() reads canonical raw_app_meta_data, not JWT top-level role', () => {
+    // Verify is_admin() source reads raw_app_meta_data
+    const src = psql("SELECT prosrc FROM pg_proc WHERE pronamespace = 'public'::regnamespace AND proname = 'is_admin';");
+    expect(src).toContain('raw_app_meta_data');
+
+    // Positive: admin user with raw_app_meta_data.role='admin' → is_admin() = true
+    const adminCheck = psql(`
+      SELECT set_config('request.jwt.claims', '${ADMIN_JWT}', false);
+      SET ROLE authenticated;
+      SELECT is_admin();
+      RESET ROLE;
     `);
-    psqlMayFail(`
-      INSERT INTO profiles (id, email) VALUES ('00000000-0000-0000-0000-000000000002', 'nonadmin-287@test.com')
-      ON CONFLICT (id) DO NOTHING;
+    // Last line is the result
+    const lines = adminCheck.split('\n');
+    expect(lines[lines.length - 1]).toBe('t');
+
+    // Negative: non-admin user with empty raw_app_meta_data → is_admin() = false
+    const nonAdminCheck = psql(`
+      SELECT set_config('request.jwt.claims', '${NON_ADMIN_JWT}', false);
+      SET ROLE authenticated;
+      SELECT is_admin();
+      RESET ROLE;
     `);
+    const lines2 = nonAdminCheck.split('\n');
+    expect(lines2[lines2.length - 1]).toBe('f');
   });
 
   // ── 1-3. has_function_privilege assertions ──
 
   it('1. anon has no EXECUTE on toggle_messaging_suspension', () => {
-    const result = psql("SELECT has_function_privilege('anon', 'toggle_messaging_suspension(uuid,boolean,text)', 'EXECUTE');");
-    expect(result).toBe('f');
+    expect(psql("SELECT has_function_privilege('anon', 'toggle_messaging_suspension(uuid,boolean,text)', 'EXECUTE');")).toBe('f');
   });
 
   it('2. authenticated has EXECUTE on toggle_messaging_suspension', () => {
-    const result = psql("SELECT has_function_privilege('authenticated', 'toggle_messaging_suspension(uuid,boolean,text)', 'EXECUTE');");
-    expect(result).toBe('t');
+    expect(psql("SELECT has_function_privilege('authenticated', 'toggle_messaging_suspension(uuid,boolean,text)', 'EXECUTE');")).toBe('t');
   });
 
   it('3. service_role has no EXECUTE on toggle_messaging_suspension', () => {
-    const result = psql("SELECT has_function_privilege('service_role', 'toggle_messaging_suspension(uuid,boolean,text)', 'EXECUTE');");
-    expect(result).toBe('f');
+    expect(psql("SELECT has_function_privilege('service_role', 'toggle_messaging_suspension(uuid,boolean,text)', 'EXECUTE');")).toBe('f');
   });
 
   // ── 4. PUBLIC has no EXECUTE ACE ──
 
   it('4. PUBLIC has no EXECUTE ACE (direct ACL inspection)', () => {
-    // Check the raw ACL for PUBLIC grant (represented as empty grantee = before the '=' sign)
     const acl = psql("SELECT proacl::text FROM pg_proc WHERE proname = 'toggle_messaging_suspension';");
-    // PUBLIC grant would appear as "=X/" (empty string before =). Should NOT be present.
-    // Authenticated grant appears as "authenticated=X/"
+    // PUBLIC grant would appear as "=X/" (empty grantee before =). Must be absent.
     expect(acl).not.toMatch(/(?<![a-z_])=X\//);
     expect(acl).toContain('authenticated=X/');
   });
 
-  // ── 5. Admin can suspend/resume with atomic audit ──
+  // ── 5. Admin suspend/resume with canonical authority ──
 
-  it('5. Authenticated admin can suspend and resume with durable audit', () => {
-    // Get current state
-    const before = psql(`SELECT messaging_suspended FROM businesses WHERE id = '${BIZ_ID}';`);
-
+  it('5. Authenticated admin (canonical app_metadata) can suspend and resume with durable audit', () => {
     // Suspend
     const suspendResult = psqlMayFail(`
-      SELECT set_config('request.jwt.claims', '${ADMIN_CLAIMS}', false);
+      SELECT set_config('request.jwt.claims', '${ADMIN_JWT}', false);
       SET ROLE authenticated;
-      SELECT toggle_messaging_suspension('${BIZ_ID}'::uuid, true, 'ACL test suspend');
+      SELECT toggle_messaging_suspension('${BIZ_ID}'::uuid, true, 'ACL test suspend 287');
       RESET ROLE;
     `);
     expect(suspendResult).not.toContain('ERROR');
@@ -102,36 +149,28 @@ describe.skipIf(!canRun)('Suspension RPC ACL Tests (#287 / Migration 366)', () =
     // Verify audit record
     const auditExists = psql(`
       SELECT count(*)::int FROM messaging_suspension_audit
-      WHERE business_id = '${BIZ_ID}' AND new_state = true AND reason = 'ACL test suspend';
+      WHERE business_id = '${BIZ_ID}' AND new_state = true AND reason = 'ACL test suspend 287';
     `);
     expect(parseInt(auditExists, 10)).toBeGreaterThan(0);
 
     // Resume
-    psqlMayFail(`
-      SELECT set_config('request.jwt.claims', '${ADMIN_CLAIMS}', false);
+    const resumeResult = psqlMayFail(`
+      SELECT set_config('request.jwt.claims', '${ADMIN_JWT}', false);
       SET ROLE authenticated;
-      SELECT toggle_messaging_suspension('${BIZ_ID}'::uuid, false, 'ACL test resume');
+      SELECT toggle_messaging_suspension('${BIZ_ID}'::uuid, false, 'ACL test resume 287');
       RESET ROLE;
     `);
+    expect(resumeResult).not.toContain('ERROR');
 
-    // Restore original state
-    if (before === 'f') {
-      // Already resumed above
-    } else {
-      psqlMayFail(`
-        SELECT set_config('request.jwt.claims', '${ADMIN_CLAIMS}', false);
-        SET ROLE authenticated;
-        SELECT toggle_messaging_suspension('${BIZ_ID}'::uuid, ${before === 't'}, 'Restore');
-        RESET ROLE;
-      `);
-    }
+    const afterResume = psql(`SELECT messaging_suspended FROM businesses WHERE id = '${BIZ_ID}';`);
+    expect(afterResume).toBe('f');
   });
 
   // ── 6. Non-admin denied by internal is_admin() ──
 
   it('6. Ordinary authenticated non-admin is denied by internal is_admin()', () => {
     const err = psqlMayFail(`
-      SELECT set_config('request.jwt.claims', '${NON_ADMIN_CLAIMS}', false);
+      SELECT set_config('request.jwt.claims', '${NON_ADMIN_JWT}', false);
       SET ROLE authenticated;
       SELECT toggle_messaging_suspension('${BIZ_ID}'::uuid, true);
       RESET ROLE;
@@ -171,7 +210,6 @@ describe.skipIf(!canRun)('Suspension RPC ACL Tests (#287 / Migration 366)', () =
     expect(src).toContain('requires admin role');
     expect(src).toContain('messaging_suspended');
 
-    // SECURITY DEFINER preserved
     const secdef = psql("SELECT prosecdef FROM pg_proc WHERE proname = 'toggle_messaging_suspension';");
     expect(secdef).toBe('t');
   });
