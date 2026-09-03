@@ -83,8 +83,8 @@ describe.skipIf(!canRun)('Platform Role Authority DB Tests (#217)', () => {
 
     // Seed test data in each policy-protected table
     psqlMayFail(`
-      INSERT INTO demo_requests (id, email, business_name, message)
-      VALUES ('d0000000-0000-0000-0000-000000000001', 'demo@test.com', 'Test Biz', 'test')
+      INSERT INTO demo_requests (id, business_name, contact_name, work_email, phone, industry)
+      VALUES ('d0000000-0000-0000-0000-000000000001', 'Test Biz', 'Test User', 'demo@test.com', '+1234567890', 'tech')
       ON CONFLICT DO NOTHING;
     `);
     psqlMayFail(`
@@ -130,17 +130,17 @@ describe.skipIf(!canRun)('Platform Role Authority DB Tests (#217)', () => {
   it('4. demo_requests UPDATE: admin/support allowed, finance/operations denied', () => {
     // admin can update
     const adminResult = asRoleMayFail(USERS.admin, 'admin',
-      "UPDATE demo_requests SET message = 'updated by admin' WHERE id = 'd0000000-0000-0000-0000-000000000001' RETURNING id;");
+      "UPDATE demo_requests SET notes = 'updated by admin' WHERE id = 'd0000000-0000-0000-0000-000000000001' RETURNING id;");
     expect(adminResult).not.toContain('permission denied');
 
     // support can update
     const supportResult = asRoleMayFail(USERS.support, 'support',
-      "UPDATE demo_requests SET message = 'updated by support' WHERE id = 'd0000000-0000-0000-0000-000000000001' RETURNING id;");
+      "UPDATE demo_requests SET notes = 'updated by support' WHERE id = 'd0000000-0000-0000-0000-000000000001' RETURNING id;");
     expect(supportResult).not.toContain('permission denied');
 
     // operations: UPDATE policy doesn't include operations → 0 rows affected (silent deny via RLS)
     const opsResult = asRole(USERS.operations, 'operations',
-      "UPDATE demo_requests SET message = 'ops attempt' WHERE id = 'd0000000-0000-0000-0000-000000000001' RETURNING id;");
+      "UPDATE demo_requests SET notes = 'ops attempt' WHERE id = 'd0000000-0000-0000-0000-000000000001' RETURNING id;");
     // Should return empty (0 rows matched by RLS)
     const opsLines = opsResult.split('\n').filter(l => l.includes('d0000000'));
     expect(opsLines.length).toBe(0);

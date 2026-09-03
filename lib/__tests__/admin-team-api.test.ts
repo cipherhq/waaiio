@@ -52,16 +52,16 @@ describe('admin-provision shared helpers (#217)', () => {
     mockUsers.clear();
     vi.clearAllMocks();
 
-    mockUsers.set('user-1', {
-      id: 'user-1', email: 'admin@test.com',
+    mockUsers.set('a0000000-0000-0000-0000-000000000001', {
+      id: 'a0000000-0000-0000-0000-000000000001', email: 'admin@test.com',
       app_metadata: { role: 'admin', provider: 'email', custom_flag: true },
     });
-    mockUsers.set('user-2', {
-      id: 'user-2', email: 'support@test.com',
+    mockUsers.set('a0000000-0000-0000-0000-000000000002', {
+      id: 'a0000000-0000-0000-0000-000000000002', email: 'support@test.com',
       app_metadata: { role: 'support' },
     });
-    mockUsers.set('user-3', {
-      id: 'user-3', email: 'norole@test.com',
+    mockUsers.set('a0000000-0000-0000-0000-000000000003', {
+      id: 'a0000000-0000-0000-0000-000000000003', email: 'norole@test.com',
       app_metadata: { provider: 'google' },
     });
 
@@ -88,19 +88,19 @@ describe('admin-provision shared helpers (#217)', () => {
   const supabase = { auth: mockAuth } as any;
 
   it('17. Grant preserves unrelated app_metadata keys', async () => {
-    const result = await grantPlatformRole(supabase, 'user-3', 'finance');
+    const result = await grantPlatformRole(supabase, 'a0000000-0000-0000-0000-000000000003', 'finance');
     expect(result.role).toBe('finance');
     expect(result.preservedKeys).toContain('provider');
     // Verify the actual metadata has both keys
-    const user = mockUsers.get('user-3')!;
+    const user = mockUsers.get('a0000000-0000-0000-0000-000000000003')!;
     expect(user.app_metadata.role).toBe('finance');
     expect(user.app_metadata.provider).toBe('google');
   });
 
   it('18. Revoke removes only role key, does not write customer', async () => {
-    const result = await revokePlatformRole(supabase, 'user-1');
+    const result = await revokePlatformRole(supabase, 'a0000000-0000-0000-0000-000000000001');
     // Verify role key is gone
-    const user = mockUsers.get('user-1')!;
+    const user = mockUsers.get('a0000000-0000-0000-0000-000000000001')!;
     expect(user.app_metadata.role).toBeUndefined();
     expect(user.app_metadata).not.toHaveProperty('role');
     // Verify other keys preserved
@@ -115,32 +115,32 @@ describe('admin-provision shared helpers (#217)', () => {
   });
 
   it('20. Invalid platform role is rejected', async () => {
-    await expect(grantPlatformRole(supabase, 'user-3', 'superadmin' as any)).rejects.toThrow('Invalid role');
+    await expect(grantPlatformRole(supabase, 'a0000000-0000-0000-0000-000000000003', 'superadmin' as any)).rejects.toThrow('Invalid role');
   });
 
   it('21. List derives roles from app_metadata', async () => {
     const admins = await listPlatformAdmins(supabase);
     expect(admins).toHaveLength(2); // admin + support (user-3 has no role)
-    expect(admins.find(a => a.id === 'user-1')?.role).toBe('admin');
-    expect(admins.find(a => a.id === 'user-2')?.role).toBe('support');
+    expect(admins.find(a => a.id === 'a0000000-0000-0000-0000-000000000001')?.role).toBe('admin');
+    expect(admins.find(a => a.id === 'a0000000-0000-0000-0000-000000000002')?.role).toBe('support');
     // user-3 should NOT appear (no platform role)
-    expect(admins.find(a => a.id === 'user-3')).toBeUndefined();
+    expect(admins.find(a => a.id === 'a0000000-0000-0000-0000-000000000003')).toBeUndefined();
   });
 
   it('22. Existing admin-provision CLI contract: resolveAuthUser by UUID', async () => {
-    const user = await resolveAuthUser(supabase, 'user-1');
-    expect(user.id).toBe('user-1');
+    const user = await resolveAuthUser(supabase, 'a0000000-0000-0000-0000-000000000001');
+    expect(user.id).toBe('a0000000-0000-0000-0000-000000000001');
     expect(user.email).toBe('admin@test.com');
   });
 
   it('23. Grant + revoke round-trip preserves metadata integrity', async () => {
     // Start with user-3 who has provider=google, no role
-    await grantPlatformRole(supabase, 'user-3', 'operations');
-    expect(mockUsers.get('user-3')!.app_metadata.role).toBe('operations');
-    expect(mockUsers.get('user-3')!.app_metadata.provider).toBe('google');
+    await grantPlatformRole(supabase, 'a0000000-0000-0000-0000-000000000003', 'operations');
+    expect(mockUsers.get('a0000000-0000-0000-0000-000000000003')!.app_metadata.role).toBe('operations');
+    expect(mockUsers.get('a0000000-0000-0000-0000-000000000003')!.app_metadata.provider).toBe('google');
 
-    await revokePlatformRole(supabase, 'user-3');
-    expect(mockUsers.get('user-3')!.app_metadata.role).toBeUndefined();
-    expect(mockUsers.get('user-3')!.app_metadata.provider).toBe('google');
+    await revokePlatformRole(supabase, 'a0000000-0000-0000-0000-000000000003');
+    expect(mockUsers.get('a0000000-0000-0000-0000-000000000003')!.app_metadata.role).toBeUndefined();
+    expect(mockUsers.get('a0000000-0000-0000-0000-000000000003')!.app_metadata.provider).toBe('google');
   });
 });
