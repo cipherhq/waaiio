@@ -723,8 +723,10 @@ describe.skipIf(!canRun)('Config Versioning — non-superuser authority proof (#
 
   beforeAll(() => {
     // 1. Create a non-superuser role that simulates Supabase Cloud postgres
+    // BYPASSRLS mirrors Supabase Cloud where postgres has NOSUPERUSER + BYPASSRLS
     psql(`
-      DO $$ BEGIN CREATE ROLE ${NSU_ROLE} NOLOGIN NOSUPERUSER; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+      DO $$ BEGIN CREATE ROLE ${NSU_ROLE} NOLOGIN NOSUPERUSER BYPASSRLS; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+      ALTER ROLE ${NSU_ROLE} NOSUPERUSER BYPASSRLS;
       GRANT USAGE, CREATE ON SCHEMA public TO ${NSU_ROLE};
       GRANT USAGE ON SCHEMA auth TO ${NSU_ROLE};
       GRANT ALL ON ALL TABLES IN SCHEMA public TO ${NSU_ROLE};
