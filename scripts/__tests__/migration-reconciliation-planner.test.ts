@@ -826,7 +826,9 @@ describe('CLI exit codes', () => {
     // All migrations applied — include every local version in history
     const allVersions = local.migrations.map((m: any) => String(m.version));
     const history = { versions: allVersions };
-    writeTempFiles(d, history, SP, { mappings: [] });
+    // All scope migrations are schema-present
+    const allPresent = { presentMigrations: SCOPE_VERSIONS, absentMigrations: [] as number[] };
+    writeTempFiles(d, history, allPresent, { mappings: [] });
     const r = runCLI(
       '--remote-history-file ' + join(d, 'h.json') +
       ' --schema-evidence-file ' + join(d, 's.json') +
