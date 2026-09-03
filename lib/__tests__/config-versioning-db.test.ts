@@ -955,30 +955,24 @@ describe.skipIf(!canRun)('Config Versioning — non-superuser authority proof (#
   });
 
   it('NSU-11. Unresolved trusted authority fails closed', () => {
-    // Temporarily drop save_commercial_config so the guard can't resolve the trusted owner
-    nsuPsql(`
+    // Drop save_commercial_config + attempt INSERT in a single transaction.
+    // The INSERT should fail (guard can't resolve the trusted owner).
+    // On failure, psql aborts the transaction and PG rolls back on disconnect,
+    // restoring save_commercial_config — no function body duplication needed.
+    const err = nsuPsqlMayFail(`
+      BEGIN;
       SET ROLE ${NSU_ROLE};
-      DROP FUNCTION IF EXISTS save_commercial_config(text, jsonb, text);
+      DROP FUNCTION save_commercial_config(text, jsonb, text);
+      INSERT INTO platform_config_versions (config_snapshot, effective_from)
+      VALUES ('{"should_fail":true}'::jsonb, '2017-01-01T00:00:00Z'::timestamptz);
       RESET ROLE;
+      COMMIT;
     `);
+    // The INSERT error triggers abort → transaction rolls back → DROP is undone
+    expect(err).toContain('save_commercial_config');
 
-    try {
-      // Direct INSERT as the NSU role should now FAIL because guard can't resolve owner
-      const err = nsuPsqlMayFail(`
-        SET ROLE ${NSU_ROLE};
-        INSERT INTO platform_config_versions (config_snapshot, effective_from)
-        VALUES ('{"should_fail":true}'::jsonb, '2017-01-01T00:00:00Z'::timestamptz);
-        RESET ROLE;
-      `);
-      expect(err).toContain('save_commercial_config');
-    } finally {
-      // Restore by re-running the migration section that creates save_commercial_config
-      const migrationSql = readFileSync('supabase/migrations/359_config_versioning.sql', 'utf-8');
-      nsuPsql(`
-        SET ROLE ${NSU_ROLE};
-        ${migrationSql}
-        RESET ROLE;
-      `);
-    }
+    // Verify the function was restored (transaction rolled back)
+    const exists = nsuPsql("SELECT count(*) FROM pg_proc WHERE oid = to_regprocedure('public.save_commercial_config(text,jsonb,text)');");
+    expect(exists).toBe('1');
   });
 });
