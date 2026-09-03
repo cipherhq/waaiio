@@ -34,7 +34,14 @@ export async function checkBankTransferEligibility(
   const ps = await loadPlatformSettings({ useServiceClient: true });
   const { countryCode: cc, subscriptionTier: tier, amount } = params;
 
-  const minBankTransfer = ps.minimum_bank_transfer[cc] ?? 10000;
+  // minimum_bank_transfer is null when not configured by admin — bank transfer disabled
+  if (!ps.minimum_bank_transfer) {
+    return { qualifies: false, bankAccount: null, platformSettings: ps };
+  }
+  const minBankTransfer = ps.minimum_bank_transfer[cc];
+  if (minBankTransfer === undefined) {
+    return { qualifies: false, bankAccount: null, platformSettings: ps };
+  }
   const qualifies =
     (cc === 'NG' || cc === 'GH') &&
     (tier === 'growth' || tier === 'business') &&

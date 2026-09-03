@@ -26,7 +26,7 @@ const GROUPS: GroupDef[] = [
   },
   {
     label: 'Payments & Payouts',
-    keys: ['transfer_expiry_hours', 'payout_cooling_period_days', 'minimum_payout', 'fraud_velocity_threshold', 'invoice_expiry_days'],
+    keys: ['transfer_expiry_hours', 'payout_cooling_period_days', 'minimum_payout', 'minimum_bank_transfer', 'fraud_velocity_threshold', 'invoice_expiry_days'],
   },
   {
     label: 'Bot & Automation',
