@@ -104,6 +104,38 @@ describe('bank-transfer — checkBankTransferEligibility', () => {
     // qualifies is false because bankAccount is null (!!null === false)
     expect(result.qualifies).toBe(false);
   });
+
+  it('returns qualifies=false when minimum_bank_transfer is null (not configured)', async () => {
+    const { loadPlatformSettings } = await import('@/lib/platformSettings');
+    vi.mocked(loadPlatformSettings).mockResolvedValueOnce({
+      minimum_bank_transfer: null,
+    } as any);
+    const supabase = createMockSupabase();
+    const result = await checkBankTransferEligibility(supabase as any, {
+      businessId: 'biz-001',
+      countryCode: 'NG',
+      subscriptionTier: 'growth',
+      amount: 100000,
+    });
+    expect(result.qualifies).toBe(false);
+    expect(result.bankAccount).toBeNull();
+  });
+
+  it('returns qualifies=false when country not in configured minimum_bank_transfer', async () => {
+    const { loadPlatformSettings } = await import('@/lib/platformSettings');
+    vi.mocked(loadPlatformSettings).mockResolvedValueOnce({
+      minimum_bank_transfer: { NG: 5000 }, // GH not configured
+    } as any);
+    const supabase = createMockSupabase();
+    const result = await checkBankTransferEligibility(supabase as any, {
+      businessId: 'biz-001',
+      countryCode: 'GH',
+      subscriptionTier: 'growth',
+      amount: 100000,
+    });
+    expect(result.qualifies).toBe(false);
+    expect(result.bankAccount).toBeNull();
+  });
 });
 
 describe('bank-transfer — createPendingTransfer', () => {

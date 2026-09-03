@@ -63,8 +63,8 @@ export interface PlatformSettings {
   abuse_cooldown_hard_minutes: number;
   /** Monthly payout limits per verification level (in local currency minor units) */
   payout_verification_limits: Record<string, number>;
-  /** Minimum amount for bank transfer option per country in major currency units (e.g. ₦10,000) */
-  minimum_bank_transfer: Record<string, number>;
+  /** Minimum amount for bank transfer option per country in major currency units (e.g. ₦10,000). Null = not configured (bank transfer disabled until admin sets via save_commercial_config). */
+  minimum_bank_transfer: Record<string, number> | null;
 }
 
 // ── Sentinel Utility ──
@@ -121,7 +121,7 @@ function buildFallback(): PlatformSettings {
     abuse_cooldown_soft_minutes: 5,
     abuse_cooldown_hard_minutes: 30,
     payout_verification_limits: { unverified: 0, basic: 500000, standard: 2000000, full: 999999999 },
-    minimum_bank_transfer: { NG: 10000, GH: 600 },
+    minimum_bank_transfer: null,
   };
 }
 
@@ -227,7 +227,7 @@ export async function loadPlatformSettings(
         : fallback.payout_verification_limits,
       minimum_bank_transfer: map.has('minimum_bank_transfer')
         ? (map.get('minimum_bank_transfer') as Record<string, number>)
-        : fallback.minimum_bank_transfer,
+        : null,
     };
     cacheTime = Date.now();
     return cache;

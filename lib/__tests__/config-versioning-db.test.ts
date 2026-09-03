@@ -545,4 +545,78 @@ describe.skipIf(!canRun)('Config Versioning DB Tests (#255 C-1)', () => {
     `);
     expect(err).toContain('not a commercial config key');
   });
+
+  // ── 28-30. Admin discoverability — absent key lifecycle ──
+
+  it('28. minimum_bank_transfer absent → save_commercial_config creates it → appears in platform_settings with correct value', () => {
+    // Ensure key is absent
+    psql("DELETE FROM platform_settings WHERE key = 'minimum_bank_transfer';");
+    const absentCheck = psql("SELECT count(*)::int FROM platform_settings WHERE key = 'minimum_bank_transfer';");
+    expect(absentCheck).toBe('0');
+
+    // Admin creates it through save_commercial_config (the same RPC the admin UI calls)
+    adminSave('minimum_bank_transfer', '{"NG": 5000, "GH": 5000}');
+
+    // Verify it now exists with the correct value
+    const exists = psql("SELECT count(*)::int FROM platform_settings WHERE key = 'minimum_bank_transfer';");
+    expect(exists).toBe('1');
+
+    const value = psql("SELECT value::text FROM platform_settings WHERE key = 'minimum_bank_transfer';");
+    const parsed = JSON.parse(value);
+    expect(parsed).toEqual({ NG: 5000, GH: 5000 });
+
+    // Verify it was captured in the config version snapshot
+    const snap = psql("SELECT config_snapshot->>'minimum_bank_transfer' FROM platform_config_versions ORDER BY effective_from DESC LIMIT 1;");
+    expect(JSON.parse(snap)).toEqual({ NG: 5000, GH: 5000 });
+  });
+
+  it('29. minimum_bank_transfer created via save_commercial_config is subsequently updatable via save_commercial_config', () => {
+    // Ensure it exists from test 28
+    const existsBefore = psql("SELECT count(*)::int FROM platform_settings WHERE key = 'minimum_bank_transfer';");
+    if (existsBefore === '0') {
+      adminSave('minimum_bank_transfer', '{"NG": 5000}');
+    }
+    const versionsBefore = countVersions();
+
+    // Update it via save_commercial_config
+    adminSave('minimum_bank_transfer', '{"NG": 10000, "GH": 8000}');
+
+    // Verify the updated value
+    const value = psql("SELECT value::text FROM platform_settings WHERE key = 'minimum_bank_transfer';");
+    const parsed = JSON.parse(value);
+    expect(parsed).toEqual({ NG: 10000, GH: 8000 });
+
+    // Verify a new version was created
+    const versionsAfter = countVersions();
+    expect(versionsAfter).toBe(versionsBefore + 1);
+  });
+
+  it('30. minimum_bank_transfer created via save_commercial_config cannot be deleted (commercial key protection)', () => {
+    // Ensure it exists
+    const existsBefore = psql("SELECT count(*)::int FROM platform_settings WHERE key = 'minimum_bank_transfer';");
+    if (existsBefore === '0') {
+      adminSave('minimum_bank_transfer', '{"NG": 5000}');
+    }
+
+    // Attempt admin delete → rejected
+    const errAdmin = psqlMayFail(`
+      SELECT set_config('request.jwt.claims', '${ADMIN_CLAIMS}', false);
+      SET ROLE authenticated;
+      DELETE FROM platform_settings WHERE key = 'minimum_bank_transfer';
+      RESET ROLE;
+    `);
+    expect(errAdmin).toContain('save_commercial_config');
+
+    // Attempt service_role delete → rejected
+    const errService = psqlMayFail(`
+      SET ROLE service_role;
+      DELETE FROM platform_settings WHERE key = 'minimum_bank_transfer';
+      RESET ROLE;
+    `);
+    expect(errService).toContain('save_commercial_config');
+
+    // Key still exists
+    const stillExists = psql("SELECT count(*)::int FROM platform_settings WHERE key = 'minimum_bank_transfer';");
+    expect(stillExists).toBe('1');
+  });
 });

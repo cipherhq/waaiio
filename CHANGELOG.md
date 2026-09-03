@@ -3,6 +3,29 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-09-02 — #218 Admin discoverability for absent commercial settings
+
+### What changed
+- **PlatformSettings.tsx:** Absent settings defined in GROUPS but missing from `platform_settings` now appear as "Not configured" placeholders in the correct group tab. Admin can click "Configure" to set the initial value inline. Commercial keys route through `save_commercial_config` RPC. Non-commercial keys use direct insert.
+- **GROUPS audit:** Removed 10 ghost/stale keys that have zero consumers in the main app: `platform_fee_percentage` (duplicate of `default_platform_fee_percent`), `max_bot_sessions_per_business`, `whatsapp_shared_numbers`, `hero_content`, `contact_emails`, `social_links`, `default_greetings`, `supported_countries`, `supported_currencies`, `min_app_version`, `terms_version`, `support_email`. Removed empty groups: WhatsApp, Website Content, Countries & Currencies.
+- **Component interaction tests (new):** 5 tests in `admin/src/__tests__/platform-settings-discoverability.test.tsx` proving the full UI lifecycle: tab visible → placeholder rendered → Configure click → `save_commercial_config` used (not direct insert) → placeholder replaced by configured setting.
+- **Admin test infra (new):** vitest + @testing-library/react + jsdom configured in `admin/vite.config.js`.
+- **config-versioning-db.test.ts:** Tests 28-30 covering absent-key DB lifecycle.
+
+### What could break
+- Groups with no configured AND no unconfigured keys still show nothing (same as before). Groups with only unconfigured keys now appear as tabs.
+- Admin settings previously categorized under removed groups (WhatsApp, Website Content, etc.) will now appear under "Other" if they exist as rows.
+
+### Files changed
+- `admin/src/pages/PlatformSettings.tsx`
+- `admin/src/__tests__/platform-settings-discoverability.test.tsx` (new)
+- `admin/src/__tests__/setup.ts` (new)
+- `admin/vite.config.js`
+- `admin/package.json`, `admin/package-lock.json`
+- `lib/__tests__/config-versioning-db.test.ts`
+
+---
+
 ## 2026-09-02 — #271 Slice C: Full Active-Session CAS Remediation
 
 ### What changed
