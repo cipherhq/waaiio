@@ -115,16 +115,16 @@ describe.skipIf(!canRun)('Platform Role Authority DB Tests (#217)', () => {
 
     // Seed attendance_log with known data
     const attResult = psqlMayFail(`
-      INSERT INTO attendance_log (id, business_id, customer_phone, marked_by, event_type)
-      VALUES ('a0000000-0000-0000-0000-000000000001', '${BIZ_ID}', '+2348000000000', 'system', 'check_in')
+      INSERT INTO attendance_log (id, business_id, customer_name, customer_phone)
+      VALUES ('a0000000-0000-0000-0000-000000000001', '${BIZ_ID}', 'Test Attendee', '+2348000000000')
       ON CONFLICT DO NOTHING;
     `);
     if (attResult.includes('ERROR')) throw new Error(`Failed to seed attendance_log: ${attResult}`);
 
     // Seed ai_classification_log with known data
     const aiResult = psqlMayFail(`
-      INSERT INTO ai_classification_log (id, business_id, input_text, classification, confidence, model)
-      VALUES ('c0000000-0000-0000-0000-000000000001', '${BIZ_ID}', 'test', 'greeting', 0.95, 'test')
+      INSERT INTO ai_classification_log (id, business_id, intent, confidence, model)
+      VALUES ('c0000000-0000-0000-0000-000000000001', '${BIZ_ID}', 'greeting', 0.95, 'test')
       ON CONFLICT DO NOTHING;
     `);
     if (aiResult.includes('ERROR')) throw new Error(`Failed to seed ai_classification_log: ${aiResult}`);
