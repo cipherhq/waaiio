@@ -1,22 +1,21 @@
 import { useEffect, useState } from 'react';
-import { supabase, adminDb } from '@/lib/supabase';
+import { supabase } from '@/lib/supabase';
 import { useAdminSession } from '@/components/AdminLayout';
 import { Pagination } from '@/components/Pagination';
-import { StatusBadge } from '@/components/StatusBadge';
 import { DetailModal, DetailRow } from '@/components/DetailModal';
 import { SummaryCard } from '@/components/SummaryCard';
-import { fmtDate, fmtDateTime, fmtRelative } from '@/lib/formatters';
-import { logAudit } from '@/lib/auditLog';
+import { fmtDateTime } from '@/lib/formatters';
 import { Shield, UserPlus } from 'lucide-react';
 
-interface AdminProfile {
+const API_URL = import.meta.env.VITE_API_URL || '';
+
+interface TeamMember {
   id: string;
   email: string;
-  first_name: string | null;
-  last_name: string | null;
-  role?: string;
-  created_at: string;
-  last_sign_in_at: string | null;
+  role: string;
+  firstName: string | null;
+  lastName: string | null;
+  phone: string | null;
 }
 
 const ADMIN_ROLES = [
@@ -26,40 +25,43 @@ const ADMIN_ROLES = [
   { value: 'operations', label: 'Operations', desc: 'View businesses, bookings, orders, events, bot sessions, WhatsApp channels' },
 ];
 
+async function getAuthToken(): Promise<string | null> {
+  const { data } = await supabase.auth.getSession();
+  return data?.session?.access_token || null;
+}
+
 export default function AdminTeam() {
   const session = useAdminSession();
   const isFullAdmin = session?.role === 'admin';
 
-  const [admins, setAdmins] = useState<AdminProfile[]>([]);
+  const [team, setTeam] = useState<TeamMember[]>([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
   const perPage = 20;
 
-  // Detail / remove modal
-  const [selected, setSelected] = useState<AdminProfile | null>(null);
+  const [selected, setSelected] = useState<TeamMember | null>(null);
   const [removing, setRemoving] = useState(false);
 
-  // Invite form
   const [showInvite, setShowInvite] = useState(false);
   const [inviteEmail, setInviteEmail] = useState('');
-  const [inviteFirstName, setInviteFirstName] = useState('');
-  const [inviteLastName, setInviteLastName] = useState('');
+  const [inviteRole, setInviteRole] = useState<string>('support');
   const [inviting, setInviting] = useState(false);
   const [inviteError, setInviteError] = useState('');
   const [inviteSuccess, setInviteSuccess] = useState('');
 
-  const [inviteRole, setInviteRole] = useState<string>('support');
-
   async function loadData() {
     setLoading(true);
     try {
-      const { data } = await adminDb
-        .from('profiles')
-        .select('id, email, first_name, last_name, created_at, last_sign_in_at, role')
-        .in('role', ['admin', 'support', 'finance', 'operations'])
-        .order('created_at', { ascending: false });
+      const token = await getAuthToken();
+      if (!token) return;
 
-      setAdmins(data || []);
+      const res = await fetch(`${API_URL}/api/admin/team`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error('Failed to load team');
+
+      const data = await res.json();
+      setTeam(data.team || []);
     } catch (error) {
       console.warn('Failed to load admin team:', error);
     } finally {
@@ -69,125 +71,71 @@ export default function AdminTeam() {
 
   useEffect(() => { loadData(); }, []);
 
-  // Promote existing user to admin
   async function handleInvite() {
     if (!isFullAdmin) { setInviteError('Only full admins can manage team members.'); return; }
     if (!inviteEmail.trim()) return;
-    // Prevent changing your own role
-    if (inviteEmail.trim().toLowerCase() === session?.email?.toLowerCase()) {
-      setInviteError('You cannot change your own role from here.');
-      return;
-    }
 
     setInviting(true);
     setInviteError('');
     setInviteSuccess('');
 
     try {
-      // Check if user exists
-      const { data: existing, error: lookupError } = await adminDb
-        .from('profiles')
-        .select('id, email, role, first_name, last_name')
-        .eq('email', inviteEmail.trim().toLowerCase())
-        .maybeSingle();
+      const token = await getAuthToken();
+      if (!token) { setInviteError('Not authenticated'); return; }
 
-      if (lookupError) throw lookupError;
+      const res = await fetch(`${API_URL}/api/admin/team`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ identifier: inviteEmail.trim(), role: inviteRole }),
+      });
 
-      const roleLabel = ADMIN_ROLES.find(r => r.value === inviteRole)?.label || inviteRole;
+      const data = await res.json();
 
-      if (existing) {
-        if (existing.role === inviteRole) {
-          setInviteError(`This user already has the ${roleLabel} role.`);
-          return;
+      if (!res.ok) {
+        if (data.error === 'AUTH_USER_REQUIRED') {
+          setInviteError('No Waaiio account found for this email. The user must first create a Waaiio account before they can be assigned a platform role.');
+        } else if (data.error === 'Cannot change your own platform role') {
+          setInviteError('You cannot change your own role.');
+        } else {
+          setInviteError(data.error || 'Failed to assign role');
         }
-
-        const { error: updateError } = await adminDb
-          .from('profiles')
-          .update({ role: inviteRole })
-          .eq('id', existing.id);
-
-        if (updateError) throw updateError;
-
-        await logAudit({
-          action: 'change_team_role',
-          entity_type: 'profile',
-          entity_id: existing.id,
-          details: {
-            email: existing.email,
-            previous_role: existing.role,
-            new_role: inviteRole,
-          },
-        });
-
-        setInviteSuccess(`${existing.email} has been assigned the ${roleLabel} role.`);
-      } else {
-        const { error: insertError } = await adminDb
-          .from('profiles')
-          .insert({
-            email: inviteEmail.trim().toLowerCase(),
-            first_name: inviteFirstName.trim() || null,
-            last_name: inviteLastName.trim() || null,
-            role: inviteRole,
-          });
-
-        if (insertError) throw insertError;
-
-        await logAudit({
-          action: 'invite_team_member',
-          entity_type: 'profile',
-          entity_id: inviteEmail.trim().toLowerCase(),
-          details: {
-            email: inviteEmail.trim().toLowerCase(),
-            role: inviteRole,
-            note: 'Placeholder profile created — user must sign up separately',
-          },
-        });
-
-        setInviteSuccess(
-          `${roleLabel} profile created for ${inviteEmail.trim()}. They must sign up at admin.waaiio.com with this email to gain access.`
-        );
+        return;
       }
 
+      const roleLabel = ADMIN_ROLES.find(r => r.value === inviteRole)?.label || inviteRole;
+      setInviteSuccess(`${data.user.email} has been assigned the ${roleLabel} role.`);
       setInviteEmail('');
-      setInviteFirstName('');
-      setInviteLastName('');
       await loadData();
     } catch (error) {
       console.error('Invite error:', error);
-      setInviteError('Failed to add admin. Please try again.');
+      setInviteError('Failed to assign role. Please try again.');
     } finally {
       setInviting(false);
     }
   }
 
-  // Remove admin role (demote to customer)
   async function handleRemoveAdmin() {
-    if (!isFullAdmin) return;
-    if (!selected) return;
-    if (selected.id === session?.userId) {
-      alert('You cannot remove your own admin role.');
-      return;
-    }
-    if (!confirm(`Remove admin role from ${selected.email}? They will be demoted to "customer".`)) return;
+    if (!isFullAdmin || !selected) return;
+
+    if (!confirm(`Remove platform role from ${selected.email}? They will lose admin access.`)) return;
 
     setRemoving(true);
     try {
-      const { error } = await adminDb
-        .from('profiles')
-        .update({ role: 'customer' })
-        .eq('id', selected.id);
+      const token = await getAuthToken();
+      if (!token) return;
 
-      if (error) throw error;
-
-      await logAudit({
-        action: 'remove_admin',
-        entity_type: 'profile',
-        entity_id: selected.id,
-        details: {
-          email: selected.email,
-          demoted_to: 'customer',
-        },
+      const res = await fetch(`${API_URL}/api/admin/team`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ identifier: selected.id }),
       });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        alert(data.error || 'Failed to revoke role');
+        return;
+      }
 
       setSelected(null);
       await loadData();
@@ -199,8 +147,8 @@ export default function AdminTeam() {
     }
   }
 
-  const totalPages = Math.max(1, Math.ceil(admins.length / perPage));
-  const pageItems = admins.slice((page - 1) * perPage, page * perPage);
+  const totalPages = Math.max(1, Math.ceil(team.length / perPage));
+  const pageItems = team.slice((page - 1) * perPage, page * perPage);
 
   if (loading) {
     return (
@@ -217,21 +165,21 @@ export default function AdminTeam() {
           <h1 className="text-2xl font-bold text-gray-900">Admin Team</h1>
           <p className="mt-1 text-sm text-gray-500">Manage admin access for the Waaiio console</p>
         </div>
-        <button
-          onClick={() => { setShowInvite(true); setInviteError(''); setInviteSuccess(''); }}
-          className="flex items-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-sm font-bold text-white transition hover:bg-brand-600"
-        >
-          <UserPlus className="h-4 w-4" />
-          Add Team Member
-        </button>
+        {isFullAdmin && (
+          <button
+            onClick={() => { setShowInvite(true); setInviteError(''); setInviteSuccess(''); }}
+            className="flex items-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-sm font-bold text-white transition hover:bg-brand-600"
+          >
+            <UserPlus className="h-4 w-4" />
+            Add Team Member
+          </button>
+        )}
       </div>
 
-      {/* Summary Cards */}
       <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        <SummaryCard label="Total Team" value={admins.length} icon={Shield} color="indigo" />
+        <SummaryCard label="Total Team" value={team.length} icon={Shield} color="indigo" />
       </div>
 
-      {/* Table */}
       <div className="mt-6 overflow-x-auto rounded-xl border border-gray-200 bg-white">
         {pageItems.length === 0 ? (
           <div className="py-16 text-center text-sm text-gray-500">No admin users found</div>
@@ -242,36 +190,30 @@ export default function AdminTeam() {
                 <th className="px-4 py-3 text-left font-medium text-gray-500">Name</th>
                 <th className="px-4 py-3 text-left font-medium text-gray-500">Email</th>
                 <th className="px-4 py-3 text-left font-medium text-gray-500">Role</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Created</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Last Login</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
-              {pageItems.map(admin => (
+              {pageItems.map(member => (
                 <tr
-                  key={admin.id}
-                  onClick={() => setSelected(admin)}
+                  key={member.id}
+                  onClick={() => setSelected(member)}
                   className="cursor-pointer transition hover:bg-gray-50"
                 >
                   <td className="px-4 py-3 font-medium text-gray-900">
-                    {admin.first_name || admin.last_name
-                      ? `${admin.first_name || ''} ${admin.last_name || ''}`.trim()
+                    {member.firstName || member.lastName
+                      ? `${member.firstName || ''} ${member.lastName || ''}`.trim()
                       : '—'}
                   </td>
-                  <td className="px-4 py-3 text-gray-600">{admin.email}</td>
+                  <td className="px-4 py-3 text-gray-600">{member.email}</td>
                   <td className="px-4 py-3">
                     <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${
-                      admin.role === 'admin' ? 'bg-purple-100 text-purple-700' :
-                      admin.role === 'finance' ? 'bg-green-100 text-green-700' :
-                      admin.role === 'operations' ? 'bg-amber-100 text-amber-700' :
+                      member.role === 'admin' ? 'bg-purple-100 text-purple-700' :
+                      member.role === 'finance' ? 'bg-green-100 text-green-700' :
+                      member.role === 'operations' ? 'bg-amber-100 text-amber-700' :
                       'bg-blue-100 text-blue-700'
                     }`}>
-                      {ADMIN_ROLES.find(r => r.value === admin.role)?.label || admin.role}
+                      {ADMIN_ROLES.find(r => r.value === member.role)?.label || member.role}
                     </span>
-                  </td>
-                  <td className="px-4 py-3 text-gray-500">{fmtDate(admin.created_at)}</td>
-                  <td className="px-4 py-3 text-gray-500">
-                    {admin.last_sign_in_at ? fmtRelative(admin.last_sign_in_at) : '—'}
                   </td>
                 </tr>
               ))}
@@ -282,11 +224,10 @@ export default function AdminTeam() {
 
       <Pagination page={page} totalPages={totalPages} onPageChange={setPage} />
 
-      {/* Detail / Remove Modal */}
       <DetailModal
         open={!!selected}
         onClose={() => setSelected(null)}
-        title={selected ? `${selected.first_name || ''} ${selected.last_name || ''}`.trim() || selected.email : ''}
+        title={selected ? `${selected.firstName || ''} ${selected.lastName || ''}`.trim() || selected.email : ''}
       >
         {selected && (
           <>
@@ -294,31 +235,33 @@ export default function AdminTeam() {
               <DetailRow label="ID" value={selected.id} />
               <DetailRow label="Email" value={selected.email} />
               <DetailRow label="Name" value={
-                selected.first_name || selected.last_name
-                  ? `${selected.first_name || ''} ${selected.last_name || ''}`.trim()
+                selected.firstName || selected.lastName
+                  ? `${selected.firstName || ''} ${selected.lastName || ''}`.trim()
                   : null
               } />
-              <DetailRow label="Created" value={fmtDateTime(selected.created_at)} />
-              <DetailRow label="Last Login" value={selected.last_sign_in_at ? fmtDateTime(selected.last_sign_in_at) : null} />
+              <DetailRow label="Role" value={
+                ADMIN_ROLES.find(r => r.value === selected.role)?.label || selected.role
+              } />
             </div>
 
-            <div className="mt-6 border-t border-gray-100 pt-4">
-              <button
-                onClick={handleRemoveAdmin}
-                disabled={removing}
-                className="w-full rounded-xl bg-red-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-red-700 disabled:opacity-50"
-              >
-                {removing ? 'Removing...' : 'Remove Admin Role'}
-              </button>
-              <p className="mt-2 text-center text-xs text-gray-400">
-                This will demote the user to the "customer" role.
-              </p>
-            </div>
+            {isFullAdmin && selected.id !== session?.userId && (
+              <div className="mt-6 border-t border-gray-100 pt-4">
+                <button
+                  onClick={handleRemoveAdmin}
+                  disabled={removing}
+                  className="w-full rounded-xl bg-red-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-red-700 disabled:opacity-50"
+                >
+                  {removing ? 'Removing...' : 'Remove Platform Role'}
+                </button>
+                <p className="mt-2 text-center text-xs text-gray-400">
+                  This will revoke the user's platform role. They will lose admin console access.
+                </p>
+              </div>
+            )}
           </>
         )}
       </DetailModal>
 
-      {/* Invite Modal */}
       {showInvite && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
           <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
@@ -332,7 +275,7 @@ export default function AdminTeam() {
             </div>
 
             <p className="mt-2 text-sm text-gray-500">
-              If the email matches an existing user, their role will be updated. Otherwise, a placeholder profile will be created and they must sign up at admin.waaiio.com.
+              Assign a platform role to an existing Waaiio user. The user must already have a Waaiio account.
             </p>
 
             <div className="mt-4 space-y-4">
@@ -351,36 +294,14 @@ export default function AdminTeam() {
                 </div>
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700">Email</label>
+                <label className="block text-sm font-medium text-gray-700">Email or User ID</label>
                 <input
-                  type="email"
+                  type="text"
                   value={inviteEmail}
                   onChange={e => setInviteEmail(e.target.value)}
-                  placeholder="admin@example.com"
+                  placeholder="user@example.com or UUID"
                   className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm text-gray-900 focus:border-brand focus:outline-none"
                 />
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700">First Name</label>
-                  <input
-                    type="text"
-                    value={inviteFirstName}
-                    onChange={e => setInviteFirstName(e.target.value)}
-                    placeholder="Jane"
-                    className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm text-gray-900 focus:border-brand focus:outline-none"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700">Last Name</label>
-                  <input
-                    type="text"
-                    value={inviteLastName}
-                    onChange={e => setInviteLastName(e.target.value)}
-                    placeholder="Doe"
-                    className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm text-gray-900 focus:border-brand focus:outline-none"
-                  />
-                </div>
               </div>
             </div>
 
@@ -402,7 +323,7 @@ export default function AdminTeam() {
                 disabled={inviting || !inviteEmail.trim()}
                 className="flex-1 rounded-xl bg-brand px-4 py-2.5 text-sm font-bold text-white transition hover:bg-brand-600 disabled:opacity-50"
               >
-                {inviting ? 'Adding...' : 'Add Team Member'}
+                {inviting ? 'Assigning...' : 'Assign Role'}
               </button>
               <button
                 onClick={() => setShowInvite(false)}
