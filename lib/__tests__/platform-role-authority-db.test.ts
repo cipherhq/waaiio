@@ -74,10 +74,10 @@ describe.skipIf(!canRun)('Platform Role Authority DB Tests (#217)', () => {
       const metaJson = metaRole ? `{"role":"${metaRole}"}` : '{}';
       const email = `test-${role}@waaiio-217-test.com`;
 
-      // auth.users insert — fail the test if this doesn't work
+      // auth.users insert — CI stub has only (id, email, raw_app_meta_data)
       const userResult = psqlMayFail(`
-        INSERT INTO auth.users (id, instance_id, aud, role, email, encrypted_password, email_confirmed_at, created_at, updated_at, raw_app_meta_data)
-        VALUES ('${id}', '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', '${email}', '', NOW(), NOW(), NOW(), '${metaJson}'::jsonb)
+        INSERT INTO auth.users (id, email, raw_app_meta_data)
+        VALUES ('${id}', '${email}', '${metaJson}'::jsonb)
         ON CONFLICT (id) DO UPDATE SET raw_app_meta_data = '${metaJson}'::jsonb;
       `);
       if (userResult.includes('ERROR')) throw new Error(`Failed to seed auth user ${role}: ${userResult}`);
