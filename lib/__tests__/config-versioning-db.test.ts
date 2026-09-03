@@ -619,4 +619,338 @@ describe.skipIf(!canRun)('Config Versioning DB Tests (#255 C-1)', () => {
     const stillExists = psql("SELECT count(*)::int FROM platform_settings WHERE key = 'minimum_bank_transfer';");
     expect(stillExists).toBe('1');
   });
+
+  // ── 31. Option B bootstrap: exactly 10 keys, no minimum_bank_transfer ──
+
+  it('31. Option B bootstrap snapshot contains exactly 10 existing commercial keys, no minimum_bank_transfer', () => {
+    // The bootstrap version is the first one (earliest effective_from)
+    const snap = psql("SELECT config_snapshot::text FROM platform_config_versions ORDER BY effective_from ASC LIMIT 1;");
+    const parsed = JSON.parse(snap);
+    const keys = Object.keys(parsed).sort();
+
+    // Exactly these 10 keys, no minimum_bank_transfer
+    expect(keys).toEqual([
+      'annual_discount_percentage',
+      'broadcast_limits',
+      'conversation_limits',
+      'default_platform_fee_percent',
+      'minimum_payout',
+      'payout_cooling_period_days',
+      'payout_verification_limits',
+      'pricing_tiers',
+      'transfer_expiry_hours',
+      'trial_days',
+    ]);
+    expect(parsed).not.toHaveProperty('minimum_bank_transfer');
+
+    // Bootstrap created_by must be NULL (migration runner, not an auth'd user)
+    const createdBy = psql("SELECT created_by::text FROM platform_config_versions ORDER BY effective_from ASC LIMIT 1;");
+    expect(createdBy).toBe('');
+
+    // minimum_bank_transfer must NOT have been invented in platform_settings by bootstrap
+    // (Clean up from earlier tests that may have created it)
+    psql("DELETE FROM platform_settings WHERE key = 'minimum_bank_transfer';");
+    const mbtExists = psql("SELECT count(*)::int FROM platform_settings WHERE key = 'minimum_bank_transfer';");
+    expect(mbtExists).toBe('0');
+  });
+
+  // ── 32. Authenticated non-admin cannot invoke save_commercial_config ──
+
+  it('32. Authenticated non-admin user is rejected by internal is_admin() check', () => {
+    const NON_ADMIN_CLAIMS = '{"sub":"00000000-0000-0000-0000-000000000002","role":"user","user_metadata":{"role":"user"}}';
+    // Create the non-admin profile so auth.uid() resolves
+    psql("INSERT INTO profiles (id) VALUES ('00000000-0000-0000-0000-000000000002') ON CONFLICT DO NOTHING;");
+
+    const err = psqlMayFail(`
+      SELECT set_config('request.jwt.claims', '${NON_ADMIN_CLAIMS}', false);
+      SET ROLE authenticated;
+      SELECT save_commercial_config('trial_days', '99'::jsonb);
+      RESET ROLE;
+    `);
+    expect(err).toContain('requires admin role');
+  });
+
+  // ── 33-35. Explicit RPC EXECUTE privilege assertions ──
+
+  it('33. anon CANNOT execute save_commercial_config', () => {
+    const canExec = psql("SELECT has_function_privilege('anon', 'save_commercial_config(text,jsonb,text)', 'EXECUTE')::text;");
+    expect(canExec).toBe('f');
+  });
+
+  it('34. authenticated CAN execute save_commercial_config', () => {
+    const canExec = psql("SELECT has_function_privilege('authenticated', 'save_commercial_config(text,jsonb,text)', 'EXECUTE')::text;");
+    expect(canExec).toBe('t');
+  });
+
+  it('35. service_role CANNOT execute save_commercial_config', () => {
+    const canExec = psql("SELECT has_function_privilege('service_role', 'save_commercial_config(text,jsonb,text)', 'EXECUTE')::text;");
+    expect(canExec).toBe('f');
+  });
+
+  // ── 36. Structural regression: guard functions use function-owner, not rolsuper ──
+
+  it('36. Guard functions do NOT contain rolsuper (structural regression)', () => {
+    const insertGuardSrc = psql("SELECT prosrc FROM pg_proc WHERE proname = 'guard_config_version_insert';");
+    const settingsGuardSrc = psql("SELECT prosrc FROM pg_proc WHERE proname = 'guard_commercial_settings';");
+
+    // Must NOT contain the vulnerable rolsuper pattern
+    expect(insertGuardSrc).not.toContain('rolsuper');
+    expect(settingsGuardSrc).not.toContain('rolsuper');
+
+    // Must contain the function-owner lookup pattern
+    expect(insertGuardSrc).toContain('proowner');
+    expect(settingsGuardSrc).toContain('proowner');
+    expect(insertGuardSrc).toContain('to_regprocedure');
+    expect(settingsGuardSrc).toContain('to_regprocedure');
+  });
+});
+
+// ═══════════════════════════════════════════════════════
+// Non-superuser authority proof suite
+//
+// Creates a dedicated non-superuser role that owns the migration objects,
+// then exercises the full guard behavior under rolsuper=false.
+// This is the executable proof that the function-owner guard works on
+// Supabase Cloud where postgres is not a superuser.
+// ═══════════════════════════════════════════════════════
+
+describe.skipIf(!canRun)('Config Versioning — non-superuser authority proof (#218)', () => {
+  const NSU_ROLE = '_test_nonsuperuser_owner';
+  const NSU_ADMIN_CLAIMS = `{"sub":"00000000-0000-0000-0000-000000000099","role":"admin","user_metadata":{"role":"admin"}}`;
+
+  beforeAll(() => {
+    // 1. Create a non-superuser role that simulates Supabase Cloud postgres
+    psql(`
+      DO $$ BEGIN CREATE ROLE ${NSU_ROLE} NOLOGIN NOSUPERUSER; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+      GRANT USAGE ON SCHEMA public TO ${NSU_ROLE};
+      GRANT USAGE ON SCHEMA auth TO ${NSU_ROLE};
+      GRANT ALL ON ALL TABLES IN SCHEMA public TO ${NSU_ROLE};
+      GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO ${NSU_ROLE};
+      GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA auth TO ${NSU_ROLE};
+    `);
+
+    // 2. Verify this role is NOT a superuser
+    const isSuperuser = psql(`SELECT rolsuper::text FROM pg_roles WHERE rolname = '${NSU_ROLE}';`);
+    expect(isSuperuser).toBe('f');
+
+    // 3. Create a profile for the test admin so auth.uid() works
+    psql("INSERT INTO profiles (id) VALUES ('00000000-0000-0000-0000-000000000099') ON CONFLICT DO NOTHING;");
+
+    // 4. Drop and recreate the guard functions + save_commercial_config owned by the NSU role
+    // This simulates what happens in Supabase Cloud where postgres owns these functions
+    psql(`
+      -- Drop existing triggers temporarily
+      DROP TRIGGER IF EXISTS trg_guard_config_version_insert ON platform_config_versions;
+      DROP TRIGGER IF EXISTS trg_guard_commercial_settings ON platform_settings;
+
+      -- Reassign ownership of the SECURITY DEFINER function to the non-superuser
+      ALTER FUNCTION save_commercial_config(text, jsonb, text) OWNER TO ${NSU_ROLE};
+
+      -- Recreate guard functions owned by the non-superuser
+      SET ROLE ${NSU_ROLE};
+
+      CREATE OR REPLACE FUNCTION public.guard_config_version_insert()
+      RETURNS TRIGGER AS $gf$
+      DECLARE
+        v_trusted_owner TEXT;
+      BEGIN
+        SELECT r.rolname INTO v_trusted_owner
+          FROM pg_proc p
+          JOIN pg_roles r ON p.proowner = r.oid
+         WHERE p.oid = to_regprocedure('public.save_commercial_config(text,jsonb,text)');
+
+        IF v_trusted_owner IS NULL OR current_user != v_trusted_owner THEN
+          RAISE EXCEPTION 'platform_config_versions INSERT must occur via save_commercial_config() or migration';
+        END IF;
+        RETURN NEW;
+      END;
+      $gf$ LANGUAGE plpgsql;
+
+      CREATE OR REPLACE FUNCTION public.guard_commercial_settings()
+      RETURNS TRIGGER AS $gf$
+      DECLARE
+        v_touches_commercial BOOLEAN;
+        v_trusted_owner TEXT;
+        v_commercial_keys TEXT[] := ARRAY[
+          'pricing_tiers', 'trial_days', 'broadcast_limits', 'conversation_limits',
+          'default_platform_fee_percent', 'annual_discount_percentage',
+          'payout_cooling_period_days', 'minimum_payout', 'payout_verification_limits',
+          'transfer_expiry_hours', 'minimum_bank_transfer'
+        ];
+      BEGIN
+        IF TG_OP = 'INSERT' THEN
+          v_touches_commercial := NEW.key = ANY(v_commercial_keys);
+        ELSIF TG_OP = 'DELETE' THEN
+          v_touches_commercial := OLD.key = ANY(v_commercial_keys);
+        ELSE
+          v_touches_commercial :=
+            OLD.key = ANY(v_commercial_keys)
+            OR NEW.key = ANY(v_commercial_keys);
+        END IF;
+
+        IF v_touches_commercial THEN
+          SELECT r.rolname INTO v_trusted_owner
+            FROM pg_proc p
+            JOIN pg_roles r ON p.proowner = r.oid
+           WHERE p.oid = to_regprocedure('public.save_commercial_config(text,jsonb,text)');
+
+          IF v_trusted_owner IS NULL OR current_user != v_trusted_owner THEN
+            RAISE EXCEPTION 'Commercial platform settings must be modified via save_commercial_config()';
+          END IF;
+        END IF;
+
+        IF TG_OP = 'DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
+      END;
+      $gf$ LANGUAGE plpgsql;
+
+      RESET ROLE;
+
+      -- Recreate triggers
+      CREATE TRIGGER trg_guard_config_version_insert
+        BEFORE INSERT ON platform_config_versions
+        FOR EACH ROW EXECUTE FUNCTION guard_config_version_insert();
+
+      CREATE TRIGGER trg_guard_commercial_settings
+        BEFORE INSERT OR UPDATE OR DELETE ON platform_settings
+        FOR EACH ROW EXECUTE FUNCTION guard_commercial_settings();
+    `);
+  });
+
+  /** Helper: call save_commercial_config as admin through the non-superuser owned function */
+  function nsuAdminSave(key: string, value: string): string {
+    return psql(`
+      SELECT set_config('request.jwt.claims', '${NSU_ADMIN_CLAIMS}', false);
+      SET ROLE authenticated;
+      SELECT save_commercial_config('${key}', '${value}'::jsonb);
+      RESET ROLE;
+    `);
+  }
+
+  it('NSU-1. Non-superuser owner role has rolsuper=false', () => {
+    const isSuperuser = psql(`SELECT rolsuper::text FROM pg_roles WHERE rolname = '${NSU_ROLE}';`);
+    expect(isSuperuser).toBe('f');
+  });
+
+  it('NSU-2. save_commercial_config is owned by the non-superuser role', () => {
+    const owner = psql(`
+      SELECT r.rolname FROM pg_proc p JOIN pg_roles r ON p.proowner = r.oid
+      WHERE p.oid = to_regprocedure('public.save_commercial_config(text,jsonb,text)');
+    `);
+    expect(owner).toBe(NSU_ROLE);
+  });
+
+  it('NSU-3. Bootstrap-style version INSERT succeeds under non-superuser owner', () => {
+    // Simulate what the bootstrap DO block does: direct INSERT as the trusted owner
+    const before = parseInt(psql('SELECT count(*)::int FROM platform_config_versions;'), 10);
+    psql(`
+      SET ROLE ${NSU_ROLE};
+      INSERT INTO platform_config_versions (config_snapshot, effective_from, created_by)
+      VALUES ('{"test_nsu":"bootstrap"}'::jsonb, '2019-01-01T00:00:00Z'::timestamptz, NULL);
+      RESET ROLE;
+    `);
+    const after = parseInt(psql('SELECT count(*)::int FROM platform_config_versions;'), 10);
+    expect(after).toBe(before + 1);
+
+    // Cleanup
+    psql(`
+      ALTER TABLE platform_config_versions DISABLE TRIGGER trg_config_versions_no_delete;
+      DELETE FROM platform_config_versions WHERE config_snapshot->>'test_nsu' = 'bootstrap';
+      ALTER TABLE platform_config_versions ENABLE TRIGGER trg_config_versions_no_delete;
+    `);
+  });
+
+  it('NSU-4. save_commercial_config() succeeds for authorized admin under non-superuser owner', () => {
+    const before = parseInt(psql('SELECT count(*)::int FROM platform_config_versions;'), 10);
+    nsuAdminSave('trial_days', '21');
+    const after = parseInt(psql('SELECT count(*)::int FROM platform_config_versions;'), 10);
+    expect(after).toBe(before + 1);
+
+    const val = psql("SELECT value::text FROM platform_settings WHERE key = 'trial_days';");
+    expect(val).toBe('21');
+  });
+
+  it('NSU-5. Authenticated direct commercial-key DML rejected under non-superuser owner', () => {
+    const err = psqlMayFail(`
+      SELECT set_config('request.jwt.claims', '${NSU_ADMIN_CLAIMS}', false);
+      SET ROLE authenticated;
+      UPDATE platform_settings SET value = '"hacked"'::jsonb WHERE key = 'trial_days';
+      RESET ROLE;
+    `);
+    expect(err).toContain('save_commercial_config');
+  });
+
+  it('NSU-6. Service_role direct commercial-key DML rejected under non-superuser owner', () => {
+    const err = psqlMayFail(`
+      SET ROLE service_role;
+      UPDATE platform_settings SET value = '"hacked"'::jsonb WHERE key = 'pricing_tiers';
+      RESET ROLE;
+    `);
+    expect(err).toContain('save_commercial_config');
+  });
+
+  it('NSU-7. Service_role direct version INSERT rejected under non-superuser owner', () => {
+    const err = psqlMayFail(`
+      SET ROLE service_role;
+      INSERT INTO platform_config_versions (config_snapshot, effective_from)
+      VALUES ('{"hacked": true}'::jsonb, NOW());
+      RESET ROLE;
+    `);
+    expect(err).toContain('save_commercial_config');
+  });
+
+  it('NSU-8. Anon cannot invoke save_commercial_config under non-superuser owner', () => {
+    const err = psqlMayFail(`
+      SET ROLE anon;
+      SELECT save_commercial_config('trial_days', '99'::jsonb);
+      RESET ROLE;
+    `);
+    expect(err.toLowerCase()).toMatch(/permission denied|does not exist/);
+  });
+
+  it('NSU-9. Authenticated non-admin rejected by is_admin() under non-superuser owner', () => {
+    const NON_ADMIN = '{"sub":"00000000-0000-0000-0000-000000000002","role":"user","user_metadata":{"role":"user"}}';
+    const err = psqlMayFail(`
+      SELECT set_config('request.jwt.claims', '${NON_ADMIN}', false);
+      SET ROLE authenticated;
+      SELECT save_commercial_config('trial_days', '99'::jsonb);
+      RESET ROLE;
+    `);
+    expect(err).toContain('requires admin role');
+  });
+
+  it('NSU-10. Atomic rollback still holds under non-superuser owner', () => {
+    const beforeVal = psql("SELECT value::text FROM platform_settings WHERE key = 'trial_days';");
+    const beforeCount = parseInt(psql('SELECT count(*)::int FROM platform_config_versions;'), 10);
+
+    psql(`
+      CREATE OR REPLACE FUNCTION _test_block_version_insert_nsu()
+      RETURNS TRIGGER AS $$ BEGIN
+        RAISE EXCEPTION 'NSU_TEST_INJECTED_FAILURE';
+      END; $$ LANGUAGE plpgsql;
+      CREATE TRIGGER _trg_test_block_nsu
+        BEFORE INSERT ON platform_config_versions
+        FOR EACH ROW EXECUTE FUNCTION _test_block_version_insert_nsu();
+    `);
+
+    try {
+      const err = psqlMayFail(`
+        SELECT set_config('request.jwt.claims', '${NSU_ADMIN_CLAIMS}', false);
+        SET ROLE authenticated;
+        SELECT save_commercial_config('trial_days', '999'::jsonb);
+        RESET ROLE;
+      `);
+      expect(err).toContain('NSU_TEST_INJECTED_FAILURE');
+
+      const afterVal = psql("SELECT value::text FROM platform_settings WHERE key = 'trial_days';");
+      expect(afterVal).toBe(beforeVal);
+
+      const afterCount = parseInt(psql('SELECT count(*)::int FROM platform_config_versions;'), 10);
+      expect(afterCount).toBe(beforeCount);
+    } finally {
+      psql(`
+        DROP TRIGGER IF EXISTS _trg_test_block_nsu ON platform_config_versions;
+        DROP FUNCTION IF EXISTS _test_block_version_insert_nsu();
+      `);
+    }
+  });
 });
