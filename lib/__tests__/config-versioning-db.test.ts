@@ -13,7 +13,7 @@
  */
 import { execSync, spawn } from 'child_process';
 import { readFileSync } from 'fs';
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 
 const dbUrl = process.env.TEST_DATABASE_URL || '';
 const canRun = dbUrl.length > 0;
@@ -974,5 +974,13 @@ describe.skipIf(!canRun)('Config Versioning — non-superuser authority proof (#
     // Verify the function was restored (transaction rolled back)
     const exists = nsuPsql("SELECT count(*) FROM pg_proc WHERE oid = to_regprocedure('public.save_commercial_config(text,jsonb,text)');");
     expect(exists).toBe('1');
+  });
+
+  // ── Deterministic teardown: drop isolated DB and test role ──
+  afterAll(() => {
+    // Drop the isolated NSU database (connects to parent DB for DROP DATABASE)
+    psqlMayFail(`DROP DATABASE IF EXISTS ${NSU_DB};`);
+    // Drop the dedicated test role (safe: only used by this suite)
+    psqlMayFail(`DROP ROLE IF EXISTS ${NSU_ROLE};`);
   });
 });
