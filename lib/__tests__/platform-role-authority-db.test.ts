@@ -42,7 +42,7 @@ const USERS = {
 
 // Fixed fixture IDs for deterministic assertions
 const DEMO_ID = 'd0000000-0000-0000-0000-000000000001';
-const TOKEN_ID = 't0000000-0000-0000-0000-000000000001';
+const TOKEN_ID = 'e0000000-0000-0000-0000-000000000001';
 
 function jwtClaims(userId: string, role: string): string {
   return `{"sub":"${userId}","role":"${role}","user_metadata":{"role":"${role}"}}`;
