@@ -16,6 +16,7 @@ import {
   grantPlatformRole,
   revokePlatformRole,
   listPlatformAdmins,
+  AuthUserNotFoundError,
   type AdminRole,
 } from '@/scripts/admin-provision';
 
@@ -23,11 +24,10 @@ const VALID_ROLES: readonly string[] = ['admin', 'support', 'finance', 'operatio
 
 /**
  * GET /api/admin/team — List platform administrators
- * Role display comes from Auth app_metadata, never profiles.role.
- * Profile name/phone are non-authoritative display enrichment only.
+ * Admin-only. Role display comes from Auth app_metadata, never profiles.role.
  */
 export async function GET(request: NextRequest) {
-  const admin = await requirePlatformAdmin(request, { requiredRole: ['admin', 'support'] });
+  const admin = await requirePlatformAdmin(request, { requiredRole: 'admin' });
   if (!admin) return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
 
   try {
@@ -85,13 +85,12 @@ export async function POST(request: NextRequest) {
 
     const supabase = createServiceClient();
 
-    // Resolve the target Auth user (fails closed if not found)
+    // Resolve the target Auth user (typed fail-closed contract)
     let targetUser: { id: string; email: string };
     try {
       targetUser = await resolveAuthUser(supabase, identifier.trim());
-    } catch (err: unknown) {
-      const reason = err instanceof Error ? err.message : String(err);
-      if (/no .* user found/i.test(reason)) {
+    } catch (err) {
+      if (err instanceof AuthUserNotFoundError) {
         return NextResponse.json({
           error: 'AUTH_USER_REQUIRED',
           message: 'No Waaiio account found for this identifier. The user must first create a Waaiio account before they can be assigned a platform role.',
@@ -108,18 +107,22 @@ export async function POST(request: NextRequest) {
     // Grant the role (preserves unrelated app_metadata keys)
     const result = await grantPlatformRole(supabase, targetUser.id, role as AdminRole);
 
-    // Server-side audit
-    await supabase.from('admin_audit_logs').insert({
+    // Server-side audit — inspect result, warn on failure but do not silently swallow
+    const { error: auditError } = await supabase.from('admin_audit_logs').insert({
       actor_id: admin.userId,
       action: 'grant_platform_role',
       entity_type: 'platform_team',
       entity_id: targetUser.id,
       details: { target_email: targetUser.email, role, preserved_keys: result.preservedKeys },
-    }).then(() => {}, err => console.error('[ADMIN_TEAM] Audit insert failed:', err));
+    });
+    if (auditError) {
+      console.error('[ADMIN_TEAM] Audit insert failed:', auditError.message);
+    }
 
     return NextResponse.json({
       success: true,
       user: { id: result.id, email: result.email, role: result.role },
+      auditRecorded: !auditError,
     });
   } catch (err) {
     console.error('[ADMIN_TEAM] Grant error:', err);
@@ -148,9 +151,8 @@ export async function DELETE(request: NextRequest) {
     let targetUser: { id: string; email: string };
     try {
       targetUser = await resolveAuthUser(supabase, identifier.trim());
-    } catch (err: unknown) {
-      const reason = err instanceof Error ? err.message : String(err);
-      if (/no .* user found/i.test(reason)) {
+    } catch (err) {
+      if (err instanceof AuthUserNotFoundError) {
         return NextResponse.json({
           error: 'AUTH_USER_REQUIRED',
           message: 'No Waaiio account found for this identifier.',
@@ -168,17 +170,21 @@ export async function DELETE(request: NextRequest) {
     const result = await revokePlatformRole(supabase, targetUser.id);
 
     // Server-side audit
-    await supabase.from('admin_audit_logs').insert({
+    const { error: auditError } = await supabase.from('admin_audit_logs').insert({
       actor_id: admin.userId,
       action: 'revoke_platform_role',
       entity_type: 'platform_team',
       entity_id: targetUser.id,
       details: { target_email: targetUser.email, preserved_keys: result.preservedKeys },
-    }).then(() => {}, err => console.error('[ADMIN_TEAM] Audit insert failed:', err));
+    });
+    if (auditError) {
+      console.error('[ADMIN_TEAM] Audit insert failed:', auditError.message);
+    }
 
     return NextResponse.json({
       success: true,
       user: { id: result.id, email: result.email },
+      auditRecorded: !auditError,
     });
   } catch (err) {
     console.error('[ADMIN_TEAM] Revoke error:', err);
