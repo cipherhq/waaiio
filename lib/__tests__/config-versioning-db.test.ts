@@ -724,7 +724,7 @@ describe.skipIf(!canRun)('Config Versioning — non-superuser authority proof (#
     // 1. Create a non-superuser role that simulates Supabase Cloud postgres
     psql(`
       DO $$ BEGIN CREATE ROLE ${NSU_ROLE} NOLOGIN NOSUPERUSER; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-      GRANT USAGE ON SCHEMA public TO ${NSU_ROLE};
+      GRANT USAGE, CREATE ON SCHEMA public TO ${NSU_ROLE};
       GRANT USAGE ON SCHEMA auth TO ${NSU_ROLE};
       GRANT ALL ON ALL TABLES IN SCHEMA public TO ${NSU_ROLE};
       GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO ${NSU_ROLE};
