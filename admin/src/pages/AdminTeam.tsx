@@ -102,6 +102,13 @@ export default function AdminTeam() {
         return;
       }
 
+      // Handle audit partial failure (207: mutation applied, audit failed)
+      if (data.error === 'ROLE_MUTATION_APPLIED_AUDIT_FAILED') {
+        setInviteError('Role change was applied, but the audit record could not be written. Verify/reconcile before continuing.');
+        await loadData();
+        return;
+      }
+
       const roleLabel = ADMIN_ROLES.find(r => r.value === inviteRole)?.label || inviteRole;
       setInviteSuccess(`${data.user.email} has been assigned the ${roleLabel} role.`);
       setInviteEmail('');
@@ -135,6 +142,11 @@ export default function AdminTeam() {
       if (!res.ok) {
         alert(data.error || 'Failed to revoke role');
         return;
+      }
+
+      // Handle audit partial failure
+      if (data.error === 'ROLE_MUTATION_APPLIED_AUDIT_FAILED') {
+        alert('Role was revoked, but the audit record could not be written. Verify/reconcile before continuing.');
       }
 
       setSelected(null);

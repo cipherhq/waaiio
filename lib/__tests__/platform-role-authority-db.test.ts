@@ -190,24 +190,28 @@ describe.skipIf(!canRun)('Platform Role Authority DB Tests (#217)', () => {
 
   // ── 5-6. attendance_log and ai_classification_log ──
 
-  it('5. attendance_log: admin/operations see rows, support/finance see nothing', () => {
+  it('5. attendance_log: admin/operations see exact fixture, support/finance see nothing', () => {
+    const ATT_ID = 'a0000000-0000-0000-0000-000000000001';
     for (const role of ['admin', 'operations'] as const) {
-      const count = asRole(USERS[role], role, "SELECT count(*)::int FROM attendance_log;");
-      expect(parseInt(count.split('\n').pop()!, 10)).toBeGreaterThan(0);
+      const name = asRole(USERS[role], role, `SELECT customer_name FROM attendance_log WHERE id = '${ATT_ID}';`);
+      expect(name).toBe('Test Attendee');
     }
-    const supportCount = asRole(USERS.support, 'support', "SELECT count(*)::int FROM attendance_log;");
-    expect(supportCount.split('\n').pop()).toBe('0');
-    const financeCount = asRole(USERS.finance, 'finance', "SELECT count(*)::int FROM attendance_log;");
-    expect(financeCount.split('\n').pop()).toBe('0');
+    for (const role of ['support', 'finance'] as const) {
+      const name = asRole(USERS[role], role, `SELECT customer_name FROM attendance_log WHERE id = '${ATT_ID}';`);
+      expect(name).toBe('');
+    }
   });
 
-  it('6. ai_classification_log: admin/operations see rows, support/finance see nothing', () => {
+  it('6. ai_classification_log: admin/operations see exact fixture, support/finance see nothing', () => {
+    const AI_ID = 'c0000000-0000-0000-0000-000000000001';
     for (const role of ['admin', 'operations'] as const) {
-      const count = asRole(USERS[role], role, "SELECT count(*)::int FROM ai_classification_log;");
-      expect(parseInt(count.split('\n').pop()!, 10)).toBeGreaterThan(0);
+      const intent = asRole(USERS[role], role, `SELECT intent FROM ai_classification_log WHERE id = '${AI_ID}';`);
+      expect(intent).toBe('greeting');
     }
-    const supportCount = asRole(USERS.support, 'support', "SELECT count(*)::int FROM ai_classification_log;");
-    expect(supportCount.split('\n').pop()).toBe('0');
+    for (const role of ['support', 'finance'] as const) {
+      const intent = asRole(USERS[role], role, `SELECT intent FROM ai_classification_log WHERE id = '${AI_ID}';`);
+      expect(intent).toBe('');
+    }
   });
 
   // ── 7. impersonation tokens (deterministic fixture) ──

@@ -64,6 +64,19 @@ export async function GET(request: NextRequest) {
   }
 }
 
+/** Resolve target Auth user with deterministic not-found vs operational error. */
+async function resolveTarget(supabase: ReturnType<typeof createServiceClient>, identifier: string) {
+  try {
+    return await resolveAuthUser(supabase, identifier.trim());
+  } catch (err) {
+    if (err instanceof AuthUserNotFoundError) {
+      return { notFound: true as const, err };
+    }
+    // Operational error (timeout, 5xx, network) — re-throw for 500 handling
+    throw err;
+  }
+}
+
 /**
  * POST /api/admin/team — Grant a platform role
  * Body: { identifier: string (UUID or email), role: string }
@@ -84,20 +97,14 @@ export async function POST(request: NextRequest) {
     }
 
     const supabase = createServiceClient();
-
-    // Resolve the target Auth user (typed fail-closed contract)
-    let targetUser: { id: string; email: string };
-    try {
-      targetUser = await resolveAuthUser(supabase, identifier.trim());
-    } catch (err) {
-      if (err instanceof AuthUserNotFoundError) {
-        return NextResponse.json({
-          error: 'AUTH_USER_REQUIRED',
-          message: 'No Waaiio account found for this identifier. The user must first create a Waaiio account before they can be assigned a platform role.',
-        }, { status: 404 });
-      }
-      throw err;
+    const resolved = await resolveTarget(supabase, identifier);
+    if ('notFound' in resolved) {
+      return NextResponse.json({
+        error: 'AUTH_USER_REQUIRED',
+        message: 'No Waaiio account found for this identifier. The user must first create a Waaiio account before they can be assigned a platform role.',
+      }, { status: 404 });
     }
+    const targetUser = resolved;
 
     // Reject self role-change
     if (targetUser.id === admin.userId) {
@@ -107,7 +114,7 @@ export async function POST(request: NextRequest) {
     // Grant the role (preserves unrelated app_metadata keys)
     const result = await grantPlatformRole(supabase, targetUser.id, role as AdminRole);
 
-    // Server-side audit — inspect result, warn on failure but do not silently swallow
+    // Server-side audit
     const { error: auditError } = await supabase.from('admin_audit_logs').insert({
       actor_id: admin.userId,
       action: 'grant_platform_role',
@@ -115,18 +122,28 @@ export async function POST(request: NextRequest) {
       entity_id: targetUser.id,
       details: { target_email: targetUser.email, role, preserved_keys: result.preservedKeys },
     });
+
     if (auditError) {
-      console.error('[ADMIN_TEAM] Audit insert failed:', auditError.message);
+      console.error('[ADMIN_TEAM] Grant audit failed:', auditError.message);
+      return NextResponse.json({
+        error: 'ROLE_MUTATION_APPLIED_AUDIT_FAILED',
+        message: 'Role change was applied, but the audit record could not be written. Verify/reconcile before continuing.',
+        mutationApplied: true,
+        auditRecorded: false,
+        user: { id: result.id, email: result.email, role: result.role },
+        operation: 'grant_platform_role',
+      }, { status: 207 });
     }
 
     return NextResponse.json({
       success: true,
+      mutationApplied: true,
+      auditRecorded: true,
       user: { id: result.id, email: result.email, role: result.role },
-      auditRecorded: !auditError,
     });
   } catch (err) {
     console.error('[ADMIN_TEAM] Grant error:', err);
-    return NextResponse.json({ error: 'Failed to grant role' }, { status: 500 });
+    return NextResponse.json({ error: 'Failed to grant role', mutationApplied: false }, { status: 500 });
   }
 }
 
@@ -147,19 +164,14 @@ export async function DELETE(request: NextRequest) {
     }
 
     const supabase = createServiceClient();
-
-    let targetUser: { id: string; email: string };
-    try {
-      targetUser = await resolveAuthUser(supabase, identifier.trim());
-    } catch (err) {
-      if (err instanceof AuthUserNotFoundError) {
-        return NextResponse.json({
-          error: 'AUTH_USER_REQUIRED',
-          message: 'No Waaiio account found for this identifier.',
-        }, { status: 404 });
-      }
-      throw err;
+    const resolved = await resolveTarget(supabase, identifier);
+    if ('notFound' in resolved) {
+      return NextResponse.json({
+        error: 'AUTH_USER_REQUIRED',
+        message: 'No Waaiio account found for this identifier.',
+      }, { status: 404 });
     }
+    const targetUser = resolved;
 
     // Reject self-demotion
     if (targetUser.id === admin.userId) {
@@ -177,17 +189,27 @@ export async function DELETE(request: NextRequest) {
       entity_id: targetUser.id,
       details: { target_email: targetUser.email, preserved_keys: result.preservedKeys },
     });
+
     if (auditError) {
-      console.error('[ADMIN_TEAM] Audit insert failed:', auditError.message);
+      console.error('[ADMIN_TEAM] Revoke audit failed:', auditError.message);
+      return NextResponse.json({
+        error: 'ROLE_MUTATION_APPLIED_AUDIT_FAILED',
+        message: 'Role revocation was applied, but the audit record could not be written. Verify/reconcile before continuing.',
+        mutationApplied: true,
+        auditRecorded: false,
+        user: { id: result.id, email: result.email },
+        operation: 'revoke_platform_role',
+      }, { status: 207 });
     }
 
     return NextResponse.json({
       success: true,
+      mutationApplied: true,
+      auditRecorded: true,
       user: { id: result.id, email: result.email },
-      auditRecorded: !auditError,
     });
   } catch (err) {
     console.error('[ADMIN_TEAM] Revoke error:', err);
-    return NextResponse.json({ error: 'Failed to revoke role' }, { status: 500 });
+    return NextResponse.json({ error: 'Failed to revoke role', mutationApplied: false }, { status: 500 });
   }
 }
