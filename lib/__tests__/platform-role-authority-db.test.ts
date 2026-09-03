@@ -48,22 +48,27 @@ function jwtClaims(userId: string, role: string): string {
   return `{"sub":"${userId}","role":"${role}","user_metadata":{"role":"${role}"}}`;
 }
 
+/** Execute SQL as an authenticated role. Returns only the query result (last line). */
 function asRole(userId: string, appMetaRole: string, sql: string): string {
-  return psql(`
+  const raw = psql(`
     SELECT set_config('request.jwt.claims', '${jwtClaims(userId, appMetaRole)}', false);
     SET ROLE authenticated;
     ${sql}
     RESET ROLE;
   `);
+  // set_config returns the value on its own line; the actual query result is the last non-empty line
+  const lines = raw.split('\n').filter(l => l.trim() !== '');
+  return lines.length > 1 ? lines.slice(1).join('\n') : lines[0] || '';
 }
 
 function asRoleMayFail(userId: string, appMetaRole: string, sql: string): string {
-  return psqlMayFail(`
+  const raw = psqlMayFail(`
     SELECT set_config('request.jwt.claims', '${jwtClaims(userId, appMetaRole)}', false);
     SET ROLE authenticated;
     ${sql}
     RESET ROLE;
   `);
+  return raw;
 }
 
 describe.skipIf(!canRun)('Platform Role Authority DB Tests (#217)', () => {
@@ -99,29 +104,38 @@ describe.skipIf(!canRun)('Platform Role Authority DB Tests (#217)', () => {
     `);
     if (demoResult.includes('ERROR')) throw new Error(`Failed to seed demo_requests: ${demoResult}`);
 
+    // Ensure a test business exists for FK references
+    const BIZ_ID = 'b0000000-0000-0000-0000-000000000217';
+    const bizResult = psqlMayFail(`
+      INSERT INTO businesses (id, name, owner_id, country, category)
+      VALUES ('${BIZ_ID}', 'Test217', '${USERS.admin}', 'NG', 'other')
+      ON CONFLICT (id) DO NOTHING;
+    `);
+    if (bizResult.includes('ERROR')) throw new Error(`Failed to seed business: ${bizResult}`);
+
     // Seed attendance_log with known data
-    psqlMayFail(`
+    const attResult = psqlMayFail(`
       INSERT INTO attendance_log (id, business_id, customer_phone, marked_by, event_type)
-      SELECT 'a0000000-0000-0000-0000-000000000001', b.id, '+2348000000000', 'system', 'check_in'
-      FROM businesses b LIMIT 1
+      VALUES ('a0000000-0000-0000-0000-000000000001', '${BIZ_ID}', '+2348000000000', 'system', 'check_in')
       ON CONFLICT DO NOTHING;
     `);
+    if (attResult.includes('ERROR')) throw new Error(`Failed to seed attendance_log: ${attResult}`);
 
     // Seed ai_classification_log with known data
-    psqlMayFail(`
+    const aiResult = psqlMayFail(`
       INSERT INTO ai_classification_log (id, business_id, input_text, classification, confidence, model)
-      SELECT 'c0000000-0000-0000-0000-000000000001', b.id, 'test', 'greeting', 0.95, 'test'
-      FROM businesses b LIMIT 1
+      VALUES ('c0000000-0000-0000-0000-000000000001', '${BIZ_ID}', 'test', 'greeting', 0.95, 'test')
       ON CONFLICT DO NOTHING;
     `);
+    if (aiResult.includes('ERROR')) throw new Error(`Failed to seed ai_classification_log: ${aiResult}`);
 
-    // Seed impersonation token with known ID for deterministic fixture
-    psqlMayFail(`
+    // Seed impersonation token with known ID
+    const tokenResult = psqlMayFail(`
       INSERT INTO admin_impersonation_tokens (id, admin_id, business_id, token, expires_at)
-      SELECT '${TOKEN_ID}', '${USERS.admin}', b.id, 'test-token-217', NOW() + INTERVAL '1 hour'
-      FROM businesses b LIMIT 1
+      VALUES ('${TOKEN_ID}', '${USERS.admin}', '${BIZ_ID}', 'test-token-217', NOW() + INTERVAL '1 hour')
       ON CONFLICT DO NOTHING;
     `);
+    if (tokenResult.includes('ERROR')) throw new Error(`Failed to seed impersonation token: ${tokenResult}`);
   });
 
   // ── 1-2. has_platform_role canonical authority ──
