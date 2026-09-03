@@ -45,6 +45,30 @@ describe.skipIf(!canRun)('Suspension RPC ACL Tests (#287 / Migration 366)', () =
   let BIZ_ID: string;
 
   beforeAll(() => {
+    // 0. Restore canonical is_admin() if contaminated by earlier test suites.
+    // The 363 test suite replaces is_admin() with a stub that reads JWT top-level role.
+    // We must restore the canonical definition that reads raw_app_meta_data.
+    // This matches the production definition from Migration 353.
+    psql(`
+      CREATE OR REPLACE FUNCTION public.is_admin()
+      RETURNS boolean
+      LANGUAGE plpgsql
+      STABLE
+      SECURITY DEFINER
+      SET search_path = ''
+      AS $fn$
+      DECLARE
+        v_role text;
+      BEGIN
+        SELECT raw_app_meta_data ->> 'role'
+        INTO v_role
+        FROM auth.users
+        WHERE id = auth.uid();
+        RETURN COALESCE(v_role = 'admin', false);
+      END;
+      $fn$;
+    `);
+
     // 1. Seed dedicated admin user with canonical raw_app_meta_data.role = 'admin'
     const adminResult = psqlMayFail(`
       INSERT INTO auth.users (id, email, raw_app_meta_data)
