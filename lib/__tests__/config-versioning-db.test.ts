@@ -863,6 +863,16 @@ describe.skipIf(!canRun)('Config Versioning — non-superuser authority proof (#
       CREATE TRIGGER trg_guard_commercial_settings
         BEFORE INSERT OR UPDATE OR DELETE ON platform_settings
         FOR EACH ROW EXECUTE FUNCTION guard_commercial_settings();
+
+      -- RLS bypass for the NSU role on tables it needs to write.
+      -- In Supabase Cloud, postgres has BYPASSRLS and RLS is transparent.
+      -- In CI with SET ROLE, we simulate this with explicit policies.
+      DO $$ BEGIN
+        CREATE POLICY nsu_bypass_versions ON platform_config_versions FOR ALL TO ${NSU_ROLE} USING (true) WITH CHECK (true);
+      EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+      DO $$ BEGIN
+        CREATE POLICY nsu_bypass_settings ON platform_settings FOR ALL TO ${NSU_ROLE} USING (true) WITH CHECK (true);
+      EXCEPTION WHEN duplicate_object THEN NULL; END $$;
     `);
   });
 
