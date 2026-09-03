@@ -658,8 +658,10 @@ describe.skipIf(!canRun)('Config Versioning DB Tests (#255 C-1)', () => {
 
   it('32. Authenticated non-admin user is rejected by internal is_admin() check', () => {
     const NON_ADMIN_CLAIMS = '{"sub":"00000000-0000-0000-0000-000000000002","role":"user","user_metadata":{"role":"user"}}';
-    // Create the non-admin profile so auth.uid() resolves
-    psql("INSERT INTO profiles (id) VALUES ('00000000-0000-0000-0000-000000000002') ON CONFLICT DO NOTHING;");
+    // Create the non-admin user + profile so auth.uid() resolves
+    // In CI with full schema, profiles.id references auth.users.id
+    psqlMayFail("INSERT INTO auth.users (id, instance_id, aud, role, email, encrypted_password, email_confirmed_at, created_at, updated_at) VALUES ('00000000-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'nonadmin@test.com', '', NOW(), NOW(), NOW()) ON CONFLICT DO NOTHING;");
+    psqlMayFail("INSERT INTO profiles (id) VALUES ('00000000-0000-0000-0000-000000000002') ON CONFLICT DO NOTHING;");
 
     const err = psqlMayFail(`
       SELECT set_config('request.jwt.claims', '${NON_ADMIN_CLAIMS}', false);
@@ -673,17 +675,17 @@ describe.skipIf(!canRun)('Config Versioning DB Tests (#255 C-1)', () => {
   // ── 33-35. Explicit RPC EXECUTE privilege assertions ──
 
   it('33. anon CANNOT execute save_commercial_config', () => {
-    const canExec = psql("SELECT has_function_privilege('anon', 'save_commercial_config(text,jsonb,text)', 'EXECUTE')::text;");
+    const canExec = psql("SELECT has_function_privilege('anon', 'save_commercial_config(text,jsonb,text)', 'EXECUTE');");
     expect(canExec).toBe('f');
   });
 
   it('34. authenticated CAN execute save_commercial_config', () => {
-    const canExec = psql("SELECT has_function_privilege('authenticated', 'save_commercial_config(text,jsonb,text)', 'EXECUTE')::text;");
+    const canExec = psql("SELECT has_function_privilege('authenticated', 'save_commercial_config(text,jsonb,text)', 'EXECUTE');");
     expect(canExec).toBe('t');
   });
 
   it('35. service_role CANNOT execute save_commercial_config', () => {
-    const canExec = psql("SELECT has_function_privilege('service_role', 'save_commercial_config(text,jsonb,text)', 'EXECUTE')::text;");
+    const canExec = psql("SELECT has_function_privilege('service_role', 'save_commercial_config(text,jsonb,text)', 'EXECUTE');");
     expect(canExec).toBe('f');
   });
 
@@ -730,11 +732,12 @@ describe.skipIf(!canRun)('Config Versioning — non-superuser authority proof (#
     `);
 
     // 2. Verify this role is NOT a superuser
-    const isSuperuser = psql(`SELECT rolsuper::text FROM pg_roles WHERE rolname = '${NSU_ROLE}';`);
+    const isSuperuser = psql(`SELECT rolsuper FROM pg_roles WHERE rolname = '${NSU_ROLE}';`);
     expect(isSuperuser).toBe('f');
 
-    // 3. Create a profile for the test admin so auth.uid() works
-    psql("INSERT INTO profiles (id) VALUES ('00000000-0000-0000-0000-000000000099') ON CONFLICT DO NOTHING;");
+    // 3. Create a user + profile for the test admin so auth.uid() works
+    psqlMayFail("INSERT INTO auth.users (id, instance_id, aud, role, email, encrypted_password, email_confirmed_at, created_at, updated_at) VALUES ('00000000-0000-0000-0000-000000000099', '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'nsu-admin@test.com', '', NOW(), NOW(), NOW()) ON CONFLICT DO NOTHING;");
+    psqlMayFail("INSERT INTO profiles (id) VALUES ('00000000-0000-0000-0000-000000000099') ON CONFLICT DO NOTHING;");
 
     // 4. Drop and recreate the guard functions + save_commercial_config owned by the NSU role
     // This simulates what happens in Supabase Cloud where postgres owns these functions
@@ -827,7 +830,7 @@ describe.skipIf(!canRun)('Config Versioning — non-superuser authority proof (#
   }
 
   it('NSU-1. Non-superuser owner role has rolsuper=false', () => {
-    const isSuperuser = psql(`SELECT rolsuper::text FROM pg_roles WHERE rolname = '${NSU_ROLE}';`);
+    const isSuperuser = psql(`SELECT rolsuper FROM pg_roles WHERE rolname = '${NSU_ROLE}';`);
     expect(isSuperuser).toBe('f');
   });
 
