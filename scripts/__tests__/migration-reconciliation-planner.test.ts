@@ -823,12 +823,15 @@ describe('CLI exit codes', () => {
   it('READY -> exit 0', () => {
     const d = mkdtempSync('/tmp/r-');
     const local = readLocalMigrations();
-    // All migrations applied — include every local version in history
-    const allVersions = local.migrations.map((m: any) => String(m.version));
-    const history = { versions: allVersions };
-    // All scope migrations are schema-present
-    const allPresent = { presentMigrations: SCOPE_VERSIONS, absentMigrations: [] as number[] };
-    writeTempFiles(d, history, allPresent, { mappings: [] });
+    const through354 = local.migrations
+      .filter((m: any) => m.version <= 354)
+      .map((m: any) => String(m.version));
+    // 355 applied numerically; post-scope (365+) applied so they don't appear as unexpected pending
+    const postScope = local.migrations
+      .filter((m: any) => m.version > 364 && !ABSENT.has(m.version))
+      .map((m: any) => String(m.version));
+    const history = { versions: [...through354, '355', ...postScope] };
+    writeTempFiles(d, history, SP, { mappings: [] });
     const r = runCLI(
       '--remote-history-file ' + join(d, 'h.json') +
       ' --schema-evidence-file ' + join(d, 's.json') +
