@@ -3,7 +3,7 @@ import { supabase, adminDb } from '@/lib/supabase';
 import { useAdminSession } from '@/components/AdminLayout';
 import { logAudit } from '@/lib/auditLog';
 import { fmtDateTime } from '@/lib/formatters';
-import { Settings, Plus, Pencil, Trash2, Save, X } from 'lucide-react';
+import { Settings, Plus, Pencil, Trash2, Save, X, AlertCircle } from 'lucide-react';
 
 interface PlatformSetting {
   key: string;
@@ -387,6 +387,30 @@ export default function PlatformSettings() {
     grouped[label].push(s);
   }
 
+  // Compute unconfigured keys per group (defined in GROUPS but absent from DB)
+  const existingKeys = new Set(settings.map(s => s.key));
+  const unconfiguredByGroup: Record<string, string[]> = {};
+  for (const g of GROUPS) {
+    const missing = g.keys.filter(k => !existingKeys.has(k));
+    if (missing.length > 0) {
+      unconfiguredByGroup[g.label] = missing;
+      // Ensure the group appears in tabs even if all its keys are absent
+      if (!grouped[g.label]) grouped[g.label] = [];
+    }
+  }
+
+  // Human-readable descriptions for known unconfigured keys
+  const KEY_DESCRIPTIONS: Record<string, string> = {
+    minimum_bank_transfer: 'Minimum amount (per country) for direct bank transfer payment option. JSON object keyed by country code, e.g. {"NG": 5000, "GH": 5000}.',
+    fraud_velocity_threshold: 'Maximum number of payment attempts per time window before flagging.',
+    invoice_expiry_days: 'Number of days before an unpaid invoice expires.',
+  };
+
+  // State for configuring unconfigured keys
+  const [configuringKey, setConfiguringKey] = useState<string | null>(null);
+  const [configValue, setConfigValue] = useState('');
+  const [configDescription, setConfigDescription] = useState('');
+
   // Get current value for a setting (edited or original)
   function getCurrentValue(setting: PlatformSetting): string {
     if (edits[setting.key] !== undefined) return edits[setting.key];
@@ -520,6 +544,59 @@ export default function PlatformSettings() {
     }
   }
 
+  // Configure an unconfigured key (create it for the first time)
+  async function handleConfigure(key: string) {
+    if (!configValue.trim()) {
+      alert('Value is required');
+      return;
+    }
+    setSavingKey(key);
+    try {
+      let parsedValue: unknown;
+      try {
+        parsedValue = JSON.parse(configValue);
+      } catch {
+        parsedValue = configValue;
+      }
+
+      if (COMMERCIAL_KEYS.has(key)) {
+        const { error } = await adminDb.rpc('save_commercial_config', {
+          p_key: key,
+          p_value: parsedValue,
+        });
+        if (error) throw error;
+      } else {
+        const { error } = await adminDb
+          .from('platform_settings')
+          .insert({
+            key,
+            value: parsedValue,
+            description: configDescription.trim() || null,
+            updated_by: userId,
+            updated_at: new Date().toISOString(),
+          });
+        if (error) throw error;
+      }
+
+      await logAudit({
+        action: 'create_platform_setting',
+        entity_type: 'platform_setting',
+        entity_id: key,
+        details: { key, value: parsedValue },
+      });
+
+      setConfiguringKey(null);
+      setConfigValue('');
+      setConfigDescription('');
+      await loadData();
+    } catch (error) {
+      console.error('Configure setting error:', error);
+      alert('Failed to configure setting');
+    } finally {
+      setSavingKey(null);
+    }
+  }
+
   // Delete setting
   async function handleDelete(key: string) {
     if (COMMERCIAL_KEYS.has(key)) {
@@ -637,7 +714,9 @@ export default function PlatformSettings() {
       <div className="mt-6 flex flex-wrap gap-1 border-b border-gray-200 pb-0">
         {groupOrder.map(groupLabel => {
           const items = grouped[groupLabel];
-          if (!items || items.length === 0) return null;
+          const unconfiguredCount = unconfiguredByGroup[groupLabel]?.length || 0;
+          const configuredCount = items?.length || 0;
+          if (configuredCount === 0 && unconfiguredCount === 0) return null;
           const isActive = activeTab === groupLabel;
           return (
             <button
@@ -650,7 +729,10 @@ export default function PlatformSettings() {
               }`}
             >
               {groupLabel}
-              <span className={`ml-1.5 text-xs ${isActive ? 'text-brand' : 'text-gray-400'}`}>{items.length}</span>
+              <span className={`ml-1.5 text-xs ${isActive ? 'text-brand' : 'text-gray-400'}`}>{configuredCount}</span>
+              {unconfiguredCount > 0 && (
+                <span className="ml-1 text-xs text-amber-500" title={`${unconfiguredCount} unconfigured`}>+{unconfiguredCount}</span>
+              )}
             </button>
           );
         })}
@@ -659,8 +741,9 @@ export default function PlatformSettings() {
       {/* Active Tab Content */}
       <div className="mt-0 space-y-0">
         {(() => {
-          const items = grouped[activeTab];
-          if (!items || items.length === 0) return <p className="py-8 text-center text-sm text-gray-400">No settings in this group</p>;
+          const items = grouped[activeTab] || [];
+          const unconfiguredKeys = unconfiguredByGroup[activeTab] || [];
+          if (items.length === 0 && unconfiguredKeys.length === 0) return <p className="py-8 text-center text-sm text-gray-400">No settings in this group</p>;
 
           return (
             <div className="rounded-b-xl border border-t-0 border-gray-200 bg-white">
@@ -670,8 +753,6 @@ export default function PlatformSettings() {
                   const val = getCurrentValue(setting);
                   const changed = hasChanges(setting.key);
                   const isSaving = savingKey === setting.key;
-                  const lines = val.split('\n').length;
-                  const isSimple = typeof setting.value !== 'object' || setting.value === null;
 
                   return (
                     <div key={setting.key} className="px-5 py-4">
@@ -717,6 +798,85 @@ export default function PlatformSettings() {
                       {renderSettingEditor(setting, val, changed, (newVal) => setEdits(prev => ({ ...prev, [setting.key]: newVal })))}
                       {setting.updated_at && (
                         <p className="mt-1 text-xs text-gray-400">Updated {fmtDateTime(setting.updated_at)}</p>
+                      )}
+                    </div>
+                  );
+                })}
+
+                {/* Unconfigured keys — visible placeholders for absent settings */}
+                {unconfiguredKeys.map(key => {
+                  const friendlyName = key.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase());
+                  const isConfiguring = configuringKey === key;
+                  const isSaving = savingKey === key;
+
+                  return (
+                    <div key={key} className="px-5 py-4 bg-amber-50/50">
+                      <div className="flex items-baseline justify-between gap-3 mb-1.5">
+                        <div className="flex items-center gap-2">
+                          <AlertCircle className="h-4 w-4 text-amber-500 shrink-0" />
+                          <span className="text-sm font-semibold text-gray-600">
+                            {friendlyName}
+                          </span>
+                          <span className="ml-1 font-mono text-xs text-gray-400">{key}</span>
+                          <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-700">Not configured</span>
+                        </div>
+                        {!isConfiguring && (
+                          <button
+                            onClick={() => {
+                              setConfiguringKey(key);
+                              setConfigValue('');
+                              setConfigDescription(KEY_DESCRIPTIONS[key] || '');
+                            }}
+                            className="rounded-lg bg-amber-500 px-3 py-1 text-xs font-semibold text-white hover:bg-amber-600"
+                          >
+                            Configure
+                          </button>
+                        )}
+                      </div>
+                      {KEY_DESCRIPTIONS[key] && !isConfiguring && (
+                        <p className="ml-6 text-xs text-gray-500">{KEY_DESCRIPTIONS[key]}</p>
+                      )}
+                      {isConfiguring && (
+                        <div className="mt-2 ml-6 rounded-lg border border-amber-200 bg-white p-4 space-y-3">
+                          <div>
+                            <label className="block text-xs font-medium text-gray-700 mb-1">Value</label>
+                            <input
+                              type="text"
+                              value={configValue}
+                              onChange={e => setConfigValue(e.target.value)}
+                              placeholder={KEY_DESCRIPTIONS[key] ? 'e.g. {"NG": 5000, "GH": 5000}' : 'Enter value (JSON or plain text)'}
+                              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 focus:border-brand focus:outline-none"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-medium text-gray-700 mb-1">Description</label>
+                            <input
+                              type="text"
+                              value={configDescription}
+                              onChange={e => setConfigDescription(e.target.value)}
+                              placeholder="Human-readable description"
+                              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 focus:border-brand focus:outline-none"
+                            />
+                          </div>
+                          {COMMERCIAL_KEYS.has(key) && (
+                            <p className="text-[10px] text-gray-400">This is a commercial config key. It will be saved via the versioned save_commercial_config RPC.</p>
+                          )}
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => handleConfigure(key)}
+                              disabled={isSaving || !configValue.trim()}
+                              className="rounded-lg bg-brand px-4 py-2 text-xs font-semibold text-white hover:bg-brand-600 disabled:opacity-50"
+                            >
+                              {isSaving ? 'Saving...' : 'Create Setting'}
+                            </button>
+                            <button
+                              onClick={() => { setConfiguringKey(null); setConfigValue(''); setConfigDescription(''); }}
+                              className="rounded-lg border border-gray-300 px-3 py-2 text-xs font-medium text-gray-700 hover:bg-gray-50"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
                       )}
                     </div>
                   );

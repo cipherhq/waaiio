@@ -3,6 +3,21 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-09-02 — #218 Admin discoverability for absent commercial settings
+
+### What changed
+- **PlatformSettings.tsx:** Absent settings defined in GROUPS but missing from `platform_settings` now appear as "Not configured" placeholders in the correct group tab. Admin can click "Configure" to set the initial value inline. Commercial keys route through `save_commercial_config` RPC. Non-commercial keys use direct insert.
+- **config-versioning-db.test.ts:** Added tests 28-30 covering the full absent-key lifecycle: absent → `save_commercial_config` creates → updatable → deletion-protected.
+
+### What could break
+- Groups with no configured AND no unconfigured keys still show nothing (same as before). Groups with only unconfigured keys now appear as tabs.
+
+### Files changed
+- `admin/src/pages/PlatformSettings.tsx`
+- `lib/__tests__/config-versioning-db.test.ts`
+
+---
+
 ## 2026-09-02 — #271 Slice C: Full Active-Session CAS Remediation
 
 ### What changed
