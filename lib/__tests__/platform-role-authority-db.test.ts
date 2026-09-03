@@ -48,7 +48,7 @@ function jwtClaims(userId: string, role: string): string {
   return `{"sub":"${userId}","role":"${role}","user_metadata":{"role":"${role}"}}`;
 }
 
-/** Execute SQL as an authenticated role. Returns only the query result (last line). */
+/** Execute SQL as an authenticated role. Strips the set_config output line. */
 function asRole(userId: string, appMetaRole: string, sql: string): string {
   const raw = psql(`
     SELECT set_config('request.jwt.claims', '${jwtClaims(userId, appMetaRole)}', false);
@@ -56,9 +56,11 @@ function asRole(userId: string, appMetaRole: string, sql: string): string {
     ${sql}
     RESET ROLE;
   `);
-  // set_config returns the value on its own line; the actual query result is the last non-empty line
-  const lines = raw.split('\n').filter(l => l.trim() !== '');
-  return lines.length > 1 ? lines.slice(1).join('\n') : lines[0] || '';
+  // First line is always the set_config return (the JWT claims JSON). Strip it.
+  const lines = raw.split('\n');
+  // Drop the first line (set_config output). Remaining lines are the query result.
+  const resultLines = lines.slice(1).filter(l => l.trim() !== '');
+  return resultLines.join('\n');
 }
 
 function asRoleMayFail(userId: string, appMetaRole: string, sql: string): string {
