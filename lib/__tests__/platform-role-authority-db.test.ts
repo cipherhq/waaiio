@@ -104,11 +104,11 @@ describe.skipIf(!canRun)('Platform Role Authority DB Tests (#217)', () => {
     `);
     if (demoResult.includes('ERROR')) throw new Error(`Failed to seed demo_requests: ${demoResult}`);
 
-    // Ensure a test business exists for FK references
+    // Ensure a test business exists for FK references — use minimal columns
     const BIZ_ID = 'b0000000-0000-0000-0000-000000000217';
     const bizResult = psqlMayFail(`
-      INSERT INTO businesses (id, name, owner_id, country, category)
-      VALUES ('${BIZ_ID}', 'Test217', '${USERS.admin}', 'NG', 'other')
+      INSERT INTO businesses (id, name, owner_id)
+      VALUES ('${BIZ_ID}', 'Test217', '${USERS.admin}')
       ON CONFLICT (id) DO NOTHING;
     `);
     if (bizResult.includes('ERROR')) throw new Error(`Failed to seed business: ${bizResult}`);
