@@ -14,6 +14,7 @@ const mockUsers = new Map<string, { id: string; email: string; app_metadata: Rec
 let lastAuditInsert: Record<string, unknown> | null = null;
 let auditInsertShouldFail = false;
 let getUserByIdShouldThrowOperational = false;
+let getUserByIdOperationalStatus = 504;
 
 const mockAuthAdmin = {
   getUserById: vi.fn(),
@@ -78,8 +79,7 @@ const NONEXISTENT_UUID = 'a0000000-0000-0000-0000-999999999999';
 function resetMockBehavior() {
   mockAuthAdmin.getUserById.mockImplementation(async (id: string) => {
     if (getUserByIdShouldThrowOperational) {
-      // Simulate Auth infra failure (timeout/5xx) — NOT a user-not-found
-      return { data: null, error: { message: 'Request timeout', status: 504 } };
+      return { data: null, error: { message: 'Auth operational error', status: getUserByIdOperationalStatus } };
     }
     const user = mockUsers.get(id);
     if (!user) return { data: null, error: { message: 'User not found', status: 404 } };
@@ -103,6 +103,7 @@ describe('AdminTeam API route tests (#217)', () => {
     lastAuditInsert = null;
     auditInsertShouldFail = false;
     getUserByIdShouldThrowOperational = false;
+    getUserByIdOperationalStatus = 504;
     vi.clearAllMocks();
 
     mockUsers.set(ADMIN_ID, { id: ADMIN_ID, email: 'admin@test.com', app_metadata: { role: 'admin' } });
@@ -188,6 +189,17 @@ describe('AdminTeam API route tests (#217)', () => {
 
   it('POST: Auth operational failure (504) ≠ AUTH_USER_REQUIRED → 500', async () => {
     getUserByIdShouldThrowOperational = true;
+    getUserByIdOperationalStatus = 504;
+    const res = await POST(makeRequest('POST', { identifier: TARGET_ID, role: 'support' }));
+    expect(res.status).toBe(500);
+    const data = await res.json();
+    expect(data.error).not.toBe('AUTH_USER_REQUIRED');
+    expect(data.mutationApplied).toBe(false);
+  });
+
+  it('POST: Auth 400 error ≠ AUTH_USER_REQUIRED → 500 (not misclassified as not-found)', async () => {
+    getUserByIdShouldThrowOperational = true;
+    getUserByIdOperationalStatus = 400;
     const res = await POST(makeRequest('POST', { identifier: TARGET_ID, role: 'support' }));
     expect(res.status).toBe(500);
     const data = await res.json();

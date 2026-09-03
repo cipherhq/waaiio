@@ -57,10 +57,11 @@ export async function resolveAuthUser(
   if (UUID_RE.test(identifier)) {
     const { data, error } = await supabase.auth.admin.getUserById(identifier);
     if (error) {
-      // Supabase Auth SDK: AuthApiError has .status. 404 / "User not found" = confirmed not-found.
-      // Any other error (500, timeout, network) = operational failure — do NOT classify as not-found.
-      const status = (error as { status?: number }).status;
-      if (status === 404 || status === 400) throw new AuthUserNotFoundError(identifier);
+      // Supabase Auth SDK: AuthApiError has .status and optional .code.
+      // Only HTTP 404 is confirmed user-not-found from the admin getUserById endpoint.
+      // 400/429/5xx/timeout/network = operational failure — must NOT become AUTH_USER_REQUIRED.
+      const authErr = error as { status?: number; code?: string };
+      if (authErr.status === 404) throw new AuthUserNotFoundError(identifier);
       throw new Error(`Auth API error for UUID ${identifier}: ${error.message}`);
     }
     if (!data?.user) throw new AuthUserNotFoundError(identifier);
