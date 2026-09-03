@@ -741,21 +741,61 @@ describe.skipIf(!canRun)('Config Versioning — non-superuser authority proof (#
     psqlMayFail("INSERT INTO auth.users (id, email) VALUES ('00000000-0000-0000-0000-000000000099', 'nsu-admin@test.com') ON CONFLICT DO NOTHING;");
     psqlMayFail("INSERT INTO profiles (id) VALUES ('00000000-0000-0000-0000-000000000099') ON CONFLICT DO NOTHING;");
 
-    // 4. Drop and recreate the guard functions + save_commercial_config owned by the NSU role
-    // This simulates what happens in Supabase Cloud where postgres owns these functions
+    // 4. Drop and recreate functions owned by the NSU role.
+    // This simulates Supabase Cloud where postgres (non-superuser) owns these functions.
+    // We drop the existing functions entirely, then recreate as the NSU role.
     psql(`
-      -- Drop existing triggers temporarily
+      -- Drop existing triggers + functions (superuser can drop anything)
       DROP TRIGGER IF EXISTS trg_guard_config_version_insert ON platform_config_versions;
       DROP TRIGGER IF EXISTS trg_guard_commercial_settings ON platform_settings;
+      DROP FUNCTION IF EXISTS guard_config_version_insert();
+      DROP FUNCTION IF EXISTS guard_commercial_settings();
+      DROP FUNCTION IF EXISTS save_commercial_config(text, jsonb, text);
 
-      -- Reassign ownership of all migration-created functions to the non-superuser
-      -- (must happen BEFORE SET ROLE, since CREATE OR REPLACE requires ownership)
-      ALTER FUNCTION save_commercial_config(text, jsonb, text) OWNER TO ${NSU_ROLE};
-      ALTER FUNCTION guard_config_version_insert() OWNER TO ${NSU_ROLE};
-      ALTER FUNCTION guard_commercial_settings() OWNER TO ${NSU_ROLE};
-
-      -- Recreate guard functions owned by the non-superuser
+      -- Recreate ALL functions as the non-superuser role
       SET ROLE ${NSU_ROLE};
+
+      -- Recreate save_commercial_config owned by the NSU role
+      CREATE OR REPLACE FUNCTION public.save_commercial_config(
+        p_key TEXT, p_value JSONB, p_description TEXT DEFAULT NULL
+      ) RETURNS UUID LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $fn$
+      DECLARE
+        v_commercial_keys TEXT[] := ARRAY[
+          'pricing_tiers', 'trial_days', 'broadcast_limits', 'conversation_limits',
+          'default_platform_fee_percent', 'annual_discount_percentage',
+          'payout_cooling_period_days', 'minimum_payout', 'payout_verification_limits',
+          'transfer_expiry_hours', 'minimum_bank_transfer'
+        ];
+        v_caller_id UUID; v_snapshot JSONB; v_version_id UUID; v_now TIMESTAMPTZ;
+      BEGIN
+        v_caller_id := auth.uid();
+        IF v_caller_id IS NULL THEN RAISE EXCEPTION 'save_commercial_config requires authenticated caller'; END IF;
+        IF NOT public.is_admin() THEN RAISE EXCEPTION 'save_commercial_config requires admin role'; END IF;
+        IF NOT (p_key = ANY(v_commercial_keys)) THEN RAISE EXCEPTION 'Key "%" is not a commercial config key', p_key; END IF;
+        PERFORM pg_advisory_xact_lock(hashtext('commercial_config_write'));
+        INSERT INTO platform_settings (key, value, description, updated_by, updated_at)
+        VALUES (p_key, p_value, COALESCE(p_description, ''), v_caller_id, clock_timestamp())
+        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value,
+          description = COALESCE(NULLIF(p_description, ''), platform_settings.description),
+          updated_by = EXCLUDED.updated_by, updated_at = EXCLUDED.updated_at;
+        SELECT jsonb_object_agg(key, value) INTO v_snapshot FROM platform_settings WHERE key = ANY(v_commercial_keys);
+        IF v_snapshot IS NULL OR v_snapshot = '{}'::jsonb THEN
+          RAISE EXCEPTION 'Cannot create config version: no commercial keys found in platform_settings';
+        END IF;
+        v_now := clock_timestamp();
+        v_version_id := gen_random_uuid();
+        INSERT INTO platform_config_versions (id, config_snapshot, effective_from, created_by, created_at)
+        VALUES (v_version_id, v_snapshot, v_now, v_caller_id, v_now);
+        RETURN v_version_id;
+      END;
+      $fn$;
+
+      -- ACL: only authenticated
+      REVOKE ALL ON FUNCTION public.save_commercial_config(TEXT, JSONB, TEXT) FROM PUBLIC;
+      REVOKE ALL ON FUNCTION public.save_commercial_config(TEXT, JSONB, TEXT) FROM anon;
+      REVOKE ALL ON FUNCTION public.save_commercial_config(TEXT, JSONB, TEXT) FROM authenticated;
+      REVOKE ALL ON FUNCTION public.save_commercial_config(TEXT, JSONB, TEXT) FROM service_role;
+      GRANT EXECUTE ON FUNCTION public.save_commercial_config(TEXT, JSONB, TEXT) TO authenticated;
 
       CREATE OR REPLACE FUNCTION public.guard_config_version_insert()
       RETURNS TRIGGER AS $gf$
