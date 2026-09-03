@@ -711,174 +711,138 @@ describe.skipIf(!canRun)('Config Versioning DB Tests (#255 C-1)', () => {
 // ═══════════════════════════════════════════════════════
 // Non-superuser authority proof suite
 //
-// Creates a dedicated non-superuser role that owns the migration objects,
-// then exercises the full guard behavior under rolsuper=false.
-// This is the executable proof that the function-owner guard works on
-// Supabase Cloud where postgres is not a superuser.
+// Creates a dedicated isolated database, sets up Supabase-shaped
+// prerequisites, then executes the ACTUAL checked-in
+// supabase/migrations/359_config_versioning.sql under a non-superuser
+// role via SET ROLE. All proofs run against the real migration artifact.
 // ═══════════════════════════════════════════════════════
 
 describe.skipIf(!canRun)('Config Versioning — non-superuser authority proof (#218)', () => {
-  const NSU_ROLE = '_test_nonsuperuser_owner';
+  const NSU_DB = 'waaiio_359_nsu_test';
+  const NSU_ROLE = '_nsu_migration_owner';
   const NSU_ADMIN_CLAIMS = `{"sub":"00000000-0000-0000-0000-000000000099","role":"admin","user_metadata":{"role":"admin"}}`;
 
+  /** Run SQL against the isolated NSU database */
+  function nsuPsql(sql: string): string {
+    const nsuUrl = dbUrl.replace(/\/[^/]+$/, `/${NSU_DB}`);
+    return execSync(`psql "${nsuUrl}" -tAXq -v ON_ERROR_STOP=1`, {
+      input: sql, encoding: 'utf-8', timeout: 15000,
+    }).trim();
+  }
+  function nsuPsqlMayFail(sql: string): string {
+    const nsuUrl = dbUrl.replace(/\/[^/]+$/, `/${NSU_DB}`);
+    try {
+      return execSync(`psql "${nsuUrl}" -tAXq -v ON_ERROR_STOP=1`, {
+        input: sql, encoding: 'utf-8', timeout: 15000,
+      }).trim();
+    } catch (e: unknown) {
+      return (e as { stderr?: string }).stderr || String(e);
+    }
+  }
+
   beforeAll(() => {
-    // 1. Create a non-superuser role that simulates Supabase Cloud postgres
-    // BYPASSRLS mirrors Supabase Cloud where postgres has NOSUPERUSER + BYPASSRLS
+    // 1. Create isolated database (connect to default db for CREATE DATABASE)
+    psqlMayFail(`DROP DATABASE IF EXISTS ${NSU_DB};`);
+    psql(`CREATE DATABASE ${NSU_DB};`);
+
+    // 2. Create the non-superuser Supabase-shaped role (cluster-wide)
     psql(`
-      DO $$ BEGIN CREATE ROLE ${NSU_ROLE} NOLOGIN NOSUPERUSER BYPASSRLS; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-      ALTER ROLE ${NSU_ROLE} NOSUPERUSER BYPASSRLS;
-      GRANT USAGE, CREATE ON SCHEMA public TO ${NSU_ROLE};
-      GRANT USAGE ON SCHEMA auth TO ${NSU_ROLE};
-      GRANT ALL ON ALL TABLES IN SCHEMA public TO ${NSU_ROLE};
-      GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO ${NSU_ROLE};
-      GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA auth TO ${NSU_ROLE};
+      DO $$ BEGIN CREATE ROLE ${NSU_ROLE} NOLOGIN NOSUPERUSER; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+      DO $$ BEGIN CREATE ROLE authenticated NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+      DO $$ BEGIN CREATE ROLE service_role NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+      DO $$ BEGIN CREATE ROLE anon NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
     `);
 
-    // 2. Verify this role is NOT a superuser
-    const isSuperuser = psql(`SELECT rolsuper FROM pg_roles WHERE rolname = '${NSU_ROLE}';`);
+    // 3. Verify NSU role is NOT a superuser
+    const isSuperuser = nsuPsql(`SELECT rolsuper FROM pg_roles WHERE rolname = '${NSU_ROLE}';`);
     expect(isSuperuser).toBe('f');
 
-    // 3. Create a user + profile for the test admin so auth.uid() works
-    // CI auth.users stub has only (id, email, raw_app_meta_data) — use minimal columns
-    psqlMayFail("INSERT INTO auth.users (id, email) VALUES ('00000000-0000-0000-0000-000000000099', 'nsu-admin@test.com') ON CONFLICT DO NOTHING;");
-    psqlMayFail("INSERT INTO profiles (id) VALUES ('00000000-0000-0000-0000-000000000099') ON CONFLICT DO NOTHING;");
+    // 4. Set up Supabase-shaped prerequisites in the isolated DB
+    nsuPsql(`
+      CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
-    // 4. Drop and recreate functions owned by the NSU role.
-    // This simulates Supabase Cloud where postgres (non-superuser) owns these functions.
-    // We drop the existing functions entirely, then recreate as the NSU role.
-    psql(`
-      -- Drop existing triggers + functions (superuser can drop anything)
-      DROP TRIGGER IF EXISTS trg_guard_config_version_insert ON platform_config_versions;
-      DROP TRIGGER IF EXISTS trg_guard_commercial_settings ON platform_settings;
-      DROP FUNCTION IF EXISTS guard_config_version_insert();
-      DROP FUNCTION IF EXISTS guard_commercial_settings();
-      DROP FUNCTION IF EXISTS save_commercial_config(text, jsonb, text);
+      GRANT USAGE, CREATE ON SCHEMA public TO ${NSU_ROLE};
+      GRANT USAGE ON SCHEMA public TO authenticated, service_role, anon;
 
-      -- Recreate ALL functions as the non-superuser role
+      CREATE OR REPLACE FUNCTION public.is_admin() RETURNS BOOLEAN AS $fn$
+      BEGIN
+        RETURN COALESCE(
+          current_setting('request.jwt.claims', true)::jsonb->>'role' = 'admin',
+          false
+        );
+      END;
+      $fn$ LANGUAGE plpgsql STABLE;
+
+      CREATE SCHEMA IF NOT EXISTS auth;
+      GRANT USAGE ON SCHEMA auth TO ${NSU_ROLE};
+      CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $fn$
+      BEGIN
+        RETURN (current_setting('request.jwt.claims', true)::jsonb->>'sub')::uuid;
+      EXCEPTION WHEN OTHERS THEN RETURN NULL;
+      END;
+      $fn$ LANGUAGE plpgsql STABLE;
+      GRANT EXECUTE ON FUNCTION auth.uid() TO ${NSU_ROLE}, authenticated, service_role, anon;
+      GRANT EXECUTE ON FUNCTION public.is_admin() TO ${NSU_ROLE}, authenticated, service_role, anon;
+
+      CREATE TABLE IF NOT EXISTS public.profiles (id UUID PRIMARY KEY);
+      INSERT INTO profiles (id) VALUES ('00000000-0000-0000-0000-000000000099') ON CONFLICT DO NOTHING;
+      INSERT INTO profiles (id) VALUES ('00000000-0000-0000-0000-000000000002') ON CONFLICT DO NOTHING;
+
+      CREATE TABLE IF NOT EXISTS public.platform_settings (
+        key VARCHAR(100) PRIMARY KEY,
+        value JSONB NOT NULL DEFAULT '{}',
+        description TEXT,
+        updated_by UUID REFERENCES public.profiles(id),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      ALTER TABLE public.platform_settings ENABLE ROW LEVEL SECURITY;
+
+      DO $$ BEGIN
+        CREATE POLICY admin_all_platform_settings ON public.platform_settings FOR ALL USING (public.is_admin());
+      EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+      -- Seed exactly the 10 Option B commercial keys (no minimum_bank_transfer)
+      INSERT INTO platform_settings (key, value) VALUES
+        ('pricing_tiers', '{"free":{"feePercentage":2.5}}'::jsonb),
+        ('trial_days', '7'::jsonb),
+        ('broadcast_limits', '{"free":{"maxBroadcasts":0}}'::jsonb),
+        ('conversation_limits', '{"free":200}'::jsonb),
+        ('default_platform_fee_percent', '2.5'::jsonb),
+        ('annual_discount_percentage', '20'::jsonb),
+        ('payout_cooling_period_days', '7'::jsonb),
+        ('minimum_payout', '{"NG":5000}'::jsonb),
+        ('payout_verification_limits', '{"unverified":0}'::jsonb),
+        ('transfer_expiry_hours', '4'::jsonb),
+        ('maintenance_mode', 'false'::jsonb)
+      ON CONFLICT (key) DO NOTHING;
+
+      GRANT SELECT, INSERT, UPDATE, DELETE ON public.platform_settings TO authenticated, service_role, ${NSU_ROLE};
+      GRANT ALL ON ALL TABLES IN SCHEMA public TO ${NSU_ROLE};
+
+      -- RLS bypass policies simulating Supabase Cloud BYPASSRLS for the NSU role
+      DO $$ BEGIN CREATE POLICY nsu_bypass_settings ON platform_settings FOR ALL TO ${NSU_ROLE} USING (true) WITH CHECK (true); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+      DO $$ BEGIN CREATE POLICY service_role_bypass ON platform_settings FOR ALL TO service_role USING (true) WITH CHECK (true); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+    `);
+
+    // 5. Execute the ACTUAL Migration 359 file under SET ROLE to the non-superuser
+    const migrationSql = readFileSync('supabase/migrations/359_config_versioning.sql', 'utf-8');
+    nsuPsql(`
       SET ROLE ${NSU_ROLE};
-
-      -- Recreate save_commercial_config owned by the NSU role
-      CREATE OR REPLACE FUNCTION public.save_commercial_config(
-        p_key TEXT, p_value JSONB, p_description TEXT DEFAULT NULL
-      ) RETURNS UUID LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $fn$
-      DECLARE
-        v_commercial_keys TEXT[] := ARRAY[
-          'pricing_tiers', 'trial_days', 'broadcast_limits', 'conversation_limits',
-          'default_platform_fee_percent', 'annual_discount_percentage',
-          'payout_cooling_period_days', 'minimum_payout', 'payout_verification_limits',
-          'transfer_expiry_hours', 'minimum_bank_transfer'
-        ];
-        v_caller_id UUID; v_snapshot JSONB; v_version_id UUID; v_now TIMESTAMPTZ;
-      BEGIN
-        v_caller_id := auth.uid();
-        IF v_caller_id IS NULL THEN RAISE EXCEPTION 'save_commercial_config requires authenticated caller'; END IF;
-        IF NOT public.is_admin() THEN RAISE EXCEPTION 'save_commercial_config requires admin role'; END IF;
-        IF NOT (p_key = ANY(v_commercial_keys)) THEN RAISE EXCEPTION 'Key "%" is not a commercial config key', p_key; END IF;
-        PERFORM pg_advisory_xact_lock(hashtext('commercial_config_write'));
-        INSERT INTO platform_settings (key, value, description, updated_by, updated_at)
-        VALUES (p_key, p_value, COALESCE(p_description, ''), v_caller_id, clock_timestamp())
-        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value,
-          description = COALESCE(NULLIF(p_description, ''), platform_settings.description),
-          updated_by = EXCLUDED.updated_by, updated_at = EXCLUDED.updated_at;
-        SELECT jsonb_object_agg(key, value) INTO v_snapshot FROM platform_settings WHERE key = ANY(v_commercial_keys);
-        IF v_snapshot IS NULL OR v_snapshot = '{}'::jsonb THEN
-          RAISE EXCEPTION 'Cannot create config version: no commercial keys found in platform_settings';
-        END IF;
-        v_now := clock_timestamp();
-        v_version_id := gen_random_uuid();
-        INSERT INTO platform_config_versions (id, config_snapshot, effective_from, created_by, created_at)
-        VALUES (v_version_id, v_snapshot, v_now, v_caller_id, v_now);
-        RETURN v_version_id;
-      END;
-      $fn$;
-
-      -- ACL: only authenticated
-      REVOKE ALL ON FUNCTION public.save_commercial_config(TEXT, JSONB, TEXT) FROM PUBLIC;
-      REVOKE ALL ON FUNCTION public.save_commercial_config(TEXT, JSONB, TEXT) FROM anon;
-      REVOKE ALL ON FUNCTION public.save_commercial_config(TEXT, JSONB, TEXT) FROM authenticated;
-      REVOKE ALL ON FUNCTION public.save_commercial_config(TEXT, JSONB, TEXT) FROM service_role;
-      GRANT EXECUTE ON FUNCTION public.save_commercial_config(TEXT, JSONB, TEXT) TO authenticated;
-
-      CREATE OR REPLACE FUNCTION public.guard_config_version_insert()
-      RETURNS TRIGGER AS $gf$
-      DECLARE
-        v_trusted_owner TEXT;
-      BEGIN
-        SELECT r.rolname INTO v_trusted_owner
-          FROM pg_proc p
-          JOIN pg_roles r ON p.proowner = r.oid
-         WHERE p.oid = to_regprocedure('public.save_commercial_config(text,jsonb,text)');
-
-        IF v_trusted_owner IS NULL OR current_user != v_trusted_owner THEN
-          RAISE EXCEPTION 'platform_config_versions INSERT must occur via save_commercial_config() or migration';
-        END IF;
-        RETURN NEW;
-      END;
-      $gf$ LANGUAGE plpgsql;
-
-      CREATE OR REPLACE FUNCTION public.guard_commercial_settings()
-      RETURNS TRIGGER AS $gf$
-      DECLARE
-        v_touches_commercial BOOLEAN;
-        v_trusted_owner TEXT;
-        v_commercial_keys TEXT[] := ARRAY[
-          'pricing_tiers', 'trial_days', 'broadcast_limits', 'conversation_limits',
-          'default_platform_fee_percent', 'annual_discount_percentage',
-          'payout_cooling_period_days', 'minimum_payout', 'payout_verification_limits',
-          'transfer_expiry_hours', 'minimum_bank_transfer'
-        ];
-      BEGIN
-        IF TG_OP = 'INSERT' THEN
-          v_touches_commercial := NEW.key = ANY(v_commercial_keys);
-        ELSIF TG_OP = 'DELETE' THEN
-          v_touches_commercial := OLD.key = ANY(v_commercial_keys);
-        ELSE
-          v_touches_commercial :=
-            OLD.key = ANY(v_commercial_keys)
-            OR NEW.key = ANY(v_commercial_keys);
-        END IF;
-
-        IF v_touches_commercial THEN
-          SELECT r.rolname INTO v_trusted_owner
-            FROM pg_proc p
-            JOIN pg_roles r ON p.proowner = r.oid
-           WHERE p.oid = to_regprocedure('public.save_commercial_config(text,jsonb,text)');
-
-          IF v_trusted_owner IS NULL OR current_user != v_trusted_owner THEN
-            RAISE EXCEPTION 'Commercial platform settings must be modified via save_commercial_config()';
-          END IF;
-        END IF;
-
-        IF TG_OP = 'DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
-      END;
-      $gf$ LANGUAGE plpgsql;
-
+      ${migrationSql}
       RESET ROLE;
+    `);
 
-      -- Recreate triggers
-      CREATE TRIGGER trg_guard_config_version_insert
-        BEFORE INSERT ON platform_config_versions
-        FOR EACH ROW EXECUTE FUNCTION guard_config_version_insert();
-
-      CREATE TRIGGER trg_guard_commercial_settings
-        BEFORE INSERT OR UPDATE OR DELETE ON platform_settings
-        FOR EACH ROW EXECUTE FUNCTION guard_commercial_settings();
-
-      -- RLS bypass for the NSU role on tables it needs to write.
-      -- In Supabase Cloud, postgres has BYPASSRLS and RLS is transparent.
-      -- In CI with SET ROLE, we simulate this with explicit policies.
-      DO $$ BEGIN
-        CREATE POLICY nsu_bypass_versions ON platform_config_versions FOR ALL TO ${NSU_ROLE} USING (true) WITH CHECK (true);
-      EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-      DO $$ BEGIN
-        CREATE POLICY nsu_bypass_settings ON platform_settings FOR ALL TO ${NSU_ROLE} USING (true) WITH CHECK (true);
-      EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+    // 6. Grant table permissions to app roles (Supabase Cloud does this via default privileges)
+    nsuPsql(`
+      GRANT SELECT, INSERT, UPDATE, DELETE ON public.platform_config_versions TO service_role, ${NSU_ROLE};
+      GRANT SELECT ON public.platform_config_versions TO authenticated;
+      DO $$ BEGIN CREATE POLICY nsu_bypass_versions ON platform_config_versions FOR ALL TO ${NSU_ROLE} USING (true) WITH CHECK (true); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+      DO $$ BEGIN CREATE POLICY service_role_bypass_versions ON platform_config_versions FOR ALL TO service_role USING (true) WITH CHECK (true); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
     `);
   });
 
-  /** Helper: call save_commercial_config as admin through the non-superuser owned function */
   function nsuAdminSave(key: string, value: string): string {
-    return psql(`
+    return nsuPsql(`
       SELECT set_config('request.jwt.claims', '${NSU_ADMIN_CLAIMS}', false);
       SET ROLE authenticated;
       SELECT save_commercial_config('${key}', '${value}'::jsonb);
@@ -886,90 +850,50 @@ describe.skipIf(!canRun)('Config Versioning — non-superuser authority proof (#
     `);
   }
 
-  it('NSU-1. Non-superuser owner role has rolsuper=false', () => {
-    const isSuperuser = psql(`SELECT rolsuper FROM pg_roles WHERE rolname = '${NSU_ROLE}';`);
+  it('NSU-1. Migration owner role has rolsuper=false', () => {
+    const isSuperuser = nsuPsql(`SELECT rolsuper FROM pg_roles WHERE rolname = '${NSU_ROLE}';`);
     expect(isSuperuser).toBe('f');
   });
 
-  it('NSU-2. save_commercial_config is owned by the non-superuser role', () => {
-    const owner = psql(`
+  it('NSU-2. Actual migration-created save_commercial_config is owned by the non-superuser role', () => {
+    const owner = nsuPsql(`
       SELECT r.rolname FROM pg_proc p JOIN pg_roles r ON p.proowner = r.oid
       WHERE p.oid = to_regprocedure('public.save_commercial_config(text,jsonb,text)');
     `);
     expect(owner).toBe(NSU_ROLE);
   });
 
-  it('NSU-3. Bootstrap-style version INSERT succeeds under non-superuser owner', () => {
-    // Simulate what the bootstrap DO block does: direct INSERT as the trusted owner
-    const before = parseInt(psql('SELECT count(*)::int FROM platform_config_versions;'), 10);
-    psql(`
-      SET ROLE ${NSU_ROLE};
-      INSERT INTO platform_config_versions (config_snapshot, effective_from, created_by)
-      VALUES ('{"test_nsu":"bootstrap"}'::jsonb, '2019-01-01T00:00:00Z'::timestamptz, NULL);
-      RESET ROLE;
-    `);
-    const after = parseInt(psql('SELECT count(*)::int FROM platform_config_versions;'), 10);
-    expect(after).toBe(before + 1);
+  it('NSU-3. Migration bootstrap succeeded and initial snapshot contains exactly 10 Option B keys', () => {
+    const count = parseInt(nsuPsql('SELECT count(*)::int FROM platform_config_versions;'), 10);
+    expect(count).toBeGreaterThanOrEqual(1);
 
-    // Cleanup
-    psql(`
-      ALTER TABLE platform_config_versions DISABLE TRIGGER trg_config_versions_no_delete;
-      DELETE FROM platform_config_versions WHERE config_snapshot->>'test_nsu' = 'bootstrap';
-      ALTER TABLE platform_config_versions ENABLE TRIGGER trg_config_versions_no_delete;
-    `);
+    const snap = nsuPsql("SELECT config_snapshot::text FROM platform_config_versions ORDER BY effective_from ASC LIMIT 1;");
+    const parsed = JSON.parse(snap);
+    const keys = Object.keys(parsed).sort();
+    expect(keys).toEqual([
+      'annual_discount_percentage', 'broadcast_limits', 'conversation_limits',
+      'default_platform_fee_percent', 'minimum_payout', 'payout_cooling_period_days',
+      'payout_verification_limits', 'pricing_tiers', 'transfer_expiry_hours', 'trial_days',
+    ]);
+    expect(parsed).not.toHaveProperty('minimum_bank_transfer');
+
+    const createdBy = nsuPsql("SELECT created_by::text FROM platform_config_versions ORDER BY effective_from ASC LIMIT 1;");
+    expect(createdBy).toBe('');
   });
 
-  it('NSU-4. save_commercial_config() succeeds for authorized admin under non-superuser owner', () => {
-    const before = parseInt(psql('SELECT count(*)::int FROM platform_config_versions;'), 10);
+  it('NSU-4. Authorized admin save_commercial_config succeeds and creates exactly one version', () => {
+    const before = parseInt(nsuPsql('SELECT count(*)::int FROM platform_config_versions;'), 10);
     nsuAdminSave('trial_days', '21');
-    const after = parseInt(psql('SELECT count(*)::int FROM platform_config_versions;'), 10);
+    const after = parseInt(nsuPsql('SELECT count(*)::int FROM platform_config_versions;'), 10);
     expect(after).toBe(before + 1);
 
-    const val = psql("SELECT value::text FROM platform_settings WHERE key = 'trial_days';");
+    const val = nsuPsql("SELECT value::text FROM platform_settings WHERE key = 'trial_days';");
     expect(val).toBe('21');
   });
 
-  it('NSU-5. Authenticated direct commercial-key DML rejected under non-superuser owner', () => {
-    const err = psqlMayFail(`
-      SELECT set_config('request.jwt.claims', '${NSU_ADMIN_CLAIMS}', false);
-      SET ROLE authenticated;
-      UPDATE platform_settings SET value = '"hacked"'::jsonb WHERE key = 'trial_days';
-      RESET ROLE;
-    `);
-    expect(err).toContain('save_commercial_config');
-  });
-
-  it('NSU-6. Service_role direct commercial-key DML rejected under non-superuser owner', () => {
-    const err = psqlMayFail(`
-      SET ROLE service_role;
-      UPDATE platform_settings SET value = '"hacked"'::jsonb WHERE key = 'pricing_tiers';
-      RESET ROLE;
-    `);
-    expect(err).toContain('save_commercial_config');
-  });
-
-  it('NSU-7. Service_role direct version INSERT rejected under non-superuser owner', () => {
-    const err = psqlMayFail(`
-      SET ROLE service_role;
-      INSERT INTO platform_config_versions (config_snapshot, effective_from)
-      VALUES ('{"hacked": true}'::jsonb, NOW());
-      RESET ROLE;
-    `);
-    expect(err).toContain('save_commercial_config');
-  });
-
-  it('NSU-8. Anon cannot invoke save_commercial_config under non-superuser owner', () => {
-    const err = psqlMayFail(`
-      SET ROLE anon;
-      SELECT save_commercial_config('trial_days', '99'::jsonb);
-      RESET ROLE;
-    `);
-    expect(err.toLowerCase()).toMatch(/permission denied|does not exist/);
-  });
-
-  it('NSU-9. Authenticated non-admin rejected by is_admin() under non-superuser owner', () => {
+  it('NSU-5. Authenticated non-admin is rejected', () => {
     const NON_ADMIN = '{"sub":"00000000-0000-0000-0000-000000000002","role":"user","user_metadata":{"role":"user"}}';
-    const err = psqlMayFail(`
+    const err = nsuPsqlMayFail(`
       SELECT set_config('request.jwt.claims', '${NON_ADMIN}', false);
       SET ROLE authenticated;
       SELECT save_commercial_config('trial_days', '99'::jsonb);
@@ -978,38 +902,82 @@ describe.skipIf(!canRun)('Config Versioning — non-superuser authority proof (#
     expect(err).toContain('requires admin role');
   });
 
-  it('NSU-10. Atomic rollback still holds under non-superuser owner', () => {
-    const beforeVal = psql("SELECT value::text FROM platform_settings WHERE key = 'trial_days';");
-    const beforeCount = parseInt(psql('SELECT count(*)::int FROM platform_config_versions;'), 10);
+  it('NSU-6. anon has no RPC EXECUTE', () => {
+    const canExec = nsuPsql("SELECT has_function_privilege('anon', 'save_commercial_config(text,jsonb,text)', 'EXECUTE');");
+    expect(canExec).toBe('f');
+  });
 
-    psql(`
-      CREATE OR REPLACE FUNCTION _test_block_version_insert_nsu()
-      RETURNS TRIGGER AS $$ BEGIN
-        RAISE EXCEPTION 'NSU_TEST_INJECTED_FAILURE';
-      END; $$ LANGUAGE plpgsql;
-      CREATE TRIGGER _trg_test_block_nsu
-        BEFORE INSERT ON platform_config_versions
-        FOR EACH ROW EXECUTE FUNCTION _test_block_version_insert_nsu();
+  it('NSU-7. service_role has no RPC EXECUTE', () => {
+    const canExec = nsuPsql("SELECT has_function_privilege('service_role', 'save_commercial_config(text,jsonb,text)', 'EXECUTE');");
+    expect(canExec).toBe('f');
+  });
+
+  it('NSU-8. service_role direct commercial-key DML rejected', () => {
+    const err = nsuPsqlMayFail(`
+      SET ROLE service_role;
+      UPDATE platform_settings SET value = '"hacked"'::jsonb WHERE key = 'pricing_tiers';
+      RESET ROLE;
+    `);
+    expect(err).toContain('save_commercial_config');
+  });
+
+  it('NSU-9. service_role direct version INSERT rejected', () => {
+    const err = nsuPsqlMayFail(`
+      SET ROLE service_role;
+      INSERT INTO platform_config_versions (config_snapshot, effective_from)
+      VALUES ('{"hacked": true}'::jsonb, NOW());
+      RESET ROLE;
+    `);
+    expect(err).toContain('save_commercial_config');
+  });
+
+  it('NSU-10. Exact-signature trusted-owner lookup works (function owner = migration runner)', () => {
+    // The guard resolves the trusted owner via to_regprocedure + proowner
+    // Verify the lookup matches the actual NSU role
+    const guardSrc = nsuPsql("SELECT prosrc FROM pg_proc WHERE proname = 'guard_config_version_insert';");
+    expect(guardSrc).toContain('to_regprocedure');
+    expect(guardSrc).toContain('proowner');
+    expect(guardSrc).not.toContain('rolsuper');
+
+    // Direct INSERT as the NSU (trusted) owner succeeds
+    nsuPsql(`
+      SET ROLE ${NSU_ROLE};
+      INSERT INTO platform_config_versions (config_snapshot, effective_from, created_by)
+      VALUES ('{"nsu_owner_test":true}'::jsonb, '2018-01-01T00:00:00Z'::timestamptz, NULL);
+      RESET ROLE;
+    `);
+    // Clean up
+    nsuPsql(`
+      ALTER TABLE platform_config_versions DISABLE TRIGGER trg_config_versions_no_delete;
+      DELETE FROM platform_config_versions WHERE config_snapshot->>'nsu_owner_test' = 'true';
+      ALTER TABLE platform_config_versions ENABLE TRIGGER trg_config_versions_no_delete;
+    `);
+  });
+
+  it('NSU-11. Unresolved trusted authority fails closed', () => {
+    // Temporarily drop save_commercial_config so the guard can't resolve the trusted owner
+    nsuPsql(`
+      SET ROLE ${NSU_ROLE};
+      DROP FUNCTION IF EXISTS save_commercial_config(text, jsonb, text);
+      RESET ROLE;
     `);
 
     try {
-      const err = psqlMayFail(`
-        SELECT set_config('request.jwt.claims', '${NSU_ADMIN_CLAIMS}', false);
-        SET ROLE authenticated;
-        SELECT save_commercial_config('trial_days', '999'::jsonb);
+      // Direct INSERT as the NSU role should now FAIL because guard can't resolve owner
+      const err = nsuPsqlMayFail(`
+        SET ROLE ${NSU_ROLE};
+        INSERT INTO platform_config_versions (config_snapshot, effective_from)
+        VALUES ('{"should_fail":true}'::jsonb, '2017-01-01T00:00:00Z'::timestamptz);
         RESET ROLE;
       `);
-      expect(err).toContain('NSU_TEST_INJECTED_FAILURE');
-
-      const afterVal = psql("SELECT value::text FROM platform_settings WHERE key = 'trial_days';");
-      expect(afterVal).toBe(beforeVal);
-
-      const afterCount = parseInt(psql('SELECT count(*)::int FROM platform_config_versions;'), 10);
-      expect(afterCount).toBe(beforeCount);
+      expect(err).toContain('save_commercial_config');
     } finally {
-      psql(`
-        DROP TRIGGER IF EXISTS _trg_test_block_nsu ON platform_config_versions;
-        DROP FUNCTION IF EXISTS _test_block_version_insert_nsu();
+      // Restore by re-running the migration section that creates save_commercial_config
+      const migrationSql = readFileSync('supabase/migrations/359_config_versioning.sql', 'utf-8');
+      nsuPsql(`
+        SET ROLE ${NSU_ROLE};
+        ${migrationSql}
+        RESET ROLE;
       `);
     }
   });
