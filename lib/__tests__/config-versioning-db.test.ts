@@ -660,7 +660,8 @@ describe.skipIf(!canRun)('Config Versioning DB Tests (#255 C-1)', () => {
     const NON_ADMIN_CLAIMS = '{"sub":"00000000-0000-0000-0000-000000000002","role":"user","user_metadata":{"role":"user"}}';
     // Create the non-admin user + profile so auth.uid() resolves
     // In CI with full schema, profiles.id references auth.users.id
-    psqlMayFail("INSERT INTO auth.users (id, instance_id, aud, role, email, encrypted_password, email_confirmed_at, created_at, updated_at) VALUES ('00000000-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'nonadmin@test.com', '', NOW(), NOW(), NOW()) ON CONFLICT DO NOTHING;");
+    // CI auth.users stub has only (id, email, raw_app_meta_data) — use minimal columns
+    psqlMayFail("INSERT INTO auth.users (id, email) VALUES ('00000000-0000-0000-0000-000000000002', 'nonadmin@test.com') ON CONFLICT DO NOTHING;");
     psqlMayFail("INSERT INTO profiles (id) VALUES ('00000000-0000-0000-0000-000000000002') ON CONFLICT DO NOTHING;");
 
     const err = psqlMayFail(`
@@ -736,7 +737,8 @@ describe.skipIf(!canRun)('Config Versioning — non-superuser authority proof (#
     expect(isSuperuser).toBe('f');
 
     // 3. Create a user + profile for the test admin so auth.uid() works
-    psqlMayFail("INSERT INTO auth.users (id, instance_id, aud, role, email, encrypted_password, email_confirmed_at, created_at, updated_at) VALUES ('00000000-0000-0000-0000-000000000099', '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'nsu-admin@test.com', '', NOW(), NOW(), NOW()) ON CONFLICT DO NOTHING;");
+    // CI auth.users stub has only (id, email, raw_app_meta_data) — use minimal columns
+    psqlMayFail("INSERT INTO auth.users (id, email) VALUES ('00000000-0000-0000-0000-000000000099', 'nsu-admin@test.com') ON CONFLICT DO NOTHING;");
     psqlMayFail("INSERT INTO profiles (id) VALUES ('00000000-0000-0000-0000-000000000099') ON CONFLICT DO NOTHING;");
 
     // 4. Drop and recreate the guard functions + save_commercial_config owned by the NSU role
@@ -746,8 +748,11 @@ describe.skipIf(!canRun)('Config Versioning — non-superuser authority proof (#
       DROP TRIGGER IF EXISTS trg_guard_config_version_insert ON platform_config_versions;
       DROP TRIGGER IF EXISTS trg_guard_commercial_settings ON platform_settings;
 
-      -- Reassign ownership of the SECURITY DEFINER function to the non-superuser
+      -- Reassign ownership of all migration-created functions to the non-superuser
+      -- (must happen BEFORE SET ROLE, since CREATE OR REPLACE requires ownership)
       ALTER FUNCTION save_commercial_config(text, jsonb, text) OWNER TO ${NSU_ROLE};
+      ALTER FUNCTION guard_config_version_insert() OWNER TO ${NSU_ROLE};
+      ALTER FUNCTION guard_commercial_settings() OWNER TO ${NSU_ROLE};
 
       -- Recreate guard functions owned by the non-superuser
       SET ROLE ${NSU_ROLE};
