@@ -99,7 +99,7 @@ describe('resolveAuthUser', () => {
   it('zero matching Auth emails fails', async () => {
     const client = buildMockClient({ users: [] });
     const { resolveAuthUser } = await import('@/scripts/admin-provision');
-    await expect(resolveAuthUser(client as any, 'nobody@test.com')).rejects.toThrow('No Auth user found');
+    await expect(resolveAuthUser(client as any, 'nobody@test.com')).rejects.toThrow('No Waaiio account found');
   });
 
   it('multiple matching Auth emails fails', async () => {
@@ -118,16 +118,22 @@ describe('resolveAuthUser', () => {
     // resolveAuthUser must NOT query profiles — the from() mock throws
     const client = buildMockClient({ users: [] });
     const { resolveAuthUser } = await import('@/scripts/admin-provision');
-    await expect(resolveAuthUser(client as any, 'spoofed@admin.com')).rejects.toThrow('No Auth user found');
+    await expect(resolveAuthUser(client as any, 'spoofed@admin.com')).rejects.toThrow('No Waaiio account found');
     // from() was never called
     expect(client.from).not.toHaveBeenCalled();
   });
 
-  it('getUserById error fails closed', async () => {
+  it('getUserById operational error (no status) fails as operational error, not user-not-found', async () => {
     const uuid = '11111111-2222-3333-4444-555555555555';
     const client = buildMockClient({ getUserByIdError: 'Connection refused' });
-    const { resolveAuthUser } = await import('@/scripts/admin-provision');
-    await expect(resolveAuthUser(client as any, uuid)).rejects.toThrow('Auth lookup failed');
+    const { resolveAuthUser, AuthUserNotFoundError } = await import('@/scripts/admin-provision');
+    await expect(resolveAuthUser(client as any, uuid)).rejects.toThrow('Auth API error');
+    // Must NOT throw AuthUserNotFoundError
+    try {
+      await resolveAuthUser(client as any, uuid);
+    } catch (err) {
+      expect(err).not.toBeInstanceOf(AuthUserNotFoundError);
+    }
   });
 });
 

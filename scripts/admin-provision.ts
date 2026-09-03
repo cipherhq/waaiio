@@ -27,6 +27,15 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 const VALID_ROLES = ['admin', 'support', 'finance', 'operations'] as const;
 export type AdminRole = typeof VALID_ROLES[number];
 
+/** Thrown when resolveAuthUser cannot find a matching Auth user. */
+export class AuthUserNotFoundError extends Error {
+  readonly code = 'AUTH_USER_NOT_FOUND' as const;
+  constructor(identifier: string) {
+    super(`No Waaiio account found for: ${identifier}`);
+    this.name = 'AuthUserNotFoundError';
+  }
+}
+
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function getClient(): SupabaseClient {
@@ -47,8 +56,15 @@ export async function resolveAuthUser(
   // UUID path
   if (UUID_RE.test(identifier)) {
     const { data, error } = await supabase.auth.admin.getUserById(identifier);
-    if (error) throw new Error(`Auth lookup failed for UUID ${identifier}: ${error.message}`);
-    if (!data?.user) throw new Error(`No Auth user found for UUID: ${identifier}`);
+    if (error) {
+      // Supabase Auth SDK: AuthApiError has .status and optional .code.
+      // Only HTTP 404 is confirmed user-not-found from the admin getUserById endpoint.
+      // 400/429/5xx/timeout/network = operational failure — must NOT become AUTH_USER_REQUIRED.
+      const authErr = error as { status?: number; code?: string };
+      if (authErr.status === 404) throw new AuthUserNotFoundError(identifier);
+      throw new Error(`Auth API error for UUID ${identifier}: ${error.message}`);
+    }
+    if (!data?.user) throw new AuthUserNotFoundError(identifier);
     return { id: data.user.id, email: data.user.email || '' };
   }
 
@@ -69,7 +85,7 @@ export async function resolveAuthUser(
     page++;
   }
 
-  if (matches.length === 0) throw new Error(`No Auth user found with email: ${normalizedEmail}`);
+  if (matches.length === 0) throw new AuthUserNotFoundError(normalizedEmail);
   if (matches.length > 1) throw new Error(`Multiple Auth users (${matches.length}) match email: ${normalizedEmail}. Use UUID instead.`);
 
   // Re-fetch by ID to confirm

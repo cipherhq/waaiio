@@ -826,8 +826,11 @@ describe('CLI exit codes', () => {
     const through354 = local.migrations
       .filter((m: any) => m.version <= 354)
       .map((m: any) => String(m.version));
-    // 355 is applied numerically
-    const history = { versions: [...through354, '355'] };
+    // 355 applied numerically; post-scope (365+) applied so they don't appear as unexpected pending
+    const postScope = local.migrations
+      .filter((m: any) => m.version > 364 && !ABSENT.has(m.version))
+      .map((m: any) => String(m.version));
+    const history = { versions: [...through354, '355', ...postScope] };
     writeTempFiles(d, history, SP, { mappings: [] });
     const r = runCLI(
       '--remote-history-file ' + join(d, 'h.json') +
@@ -843,10 +846,11 @@ describe('CLI exit codes', () => {
   it('REPAIR_REQUIRED -> exit 2', () => {
     const d = mkdtempSync('/tmp/r-');
     const local = readLocalMigrations();
-    const through354 = local.migrations
-      .filter((m: any) => m.version <= 354)
+    // All migrations through 354, plus any beyond the 355-364 scope, plus the erroneous timestamp
+    const outOfScope = local.migrations
+      .filter((m: any) => m.version <= 354 || m.version > 364)
       .map((m: any) => String(m.version));
-    const history = { versions: [...through354, '20260902052231'] };
+    const history = { versions: [...outOfScope, '20260902052231'] };
     const m355 = local.migrations.find((m: any) => m.version === 355);
     const { createHash: ch } = require('crypto');
     const content355 = readFileSync(resolve('supabase/migrations', m355.filename), 'utf-8');
