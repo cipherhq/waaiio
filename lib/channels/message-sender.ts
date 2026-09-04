@@ -212,18 +212,19 @@ export class MetaCloudSender implements MessageSender {
       : null;
 
     // 2. #256 authorization guard (after attempt creation)
-    // Business sends: always called (assertMessagingAllowed fails closed on empty businessId)
-    // Platform sends: skipped only when platformScopeAllowed=true AND no businessId bound
     if (!isPlatform) {
+      // Pre-auth deadline check (#279)
+      if (this.beforeEachAttempt) this.beforeEachAttempt();
       try {
         await assertMessagingAllowed(this._businessId);
       } catch (guardErr) {
-        // Suspended/blocked — mark attempt as failed_send (never reached provider)
         if (attemptId && this._supabase) {
           await markFailed(this._supabase, attemptId);
         }
         throw guardErr;
       }
+      // Post-auth deadline check (#279) — catches expiry during async authorization
+      if (this.beforeEachAttempt) this.beforeEachAttempt();
     }
 
     // 3. Durable pre-emission marker
@@ -315,9 +316,8 @@ export class MetaCloudSender implements MessageSender {
   // ── Business-scoped sends — require business identity, fail-closed ──
 
   async sendText(msg: { to: string; text: string; noRetry?: boolean }) {
-    // #257 lifecycle: attempt → #256 guard → sending → emission (all inside retry)
+    // #257 lifecycle: attempt → deadline → #256 guard → deadline → sending → emission
     const textCall = async () => {
-      if (this.beforeEachAttempt) this.beforeEachAttempt(); // #279 pre-auth deadline
       return this.withAttemptAndGuard(
         () => this.cloud.sendText({ to: msg.to, text: msg.text }),
         { recipientPhone: msg.to },
@@ -422,7 +422,6 @@ export class MetaCloudSender implements MessageSender {
       });
     }
     const templateCall = async () => {
-      if (this.beforeEachAttempt) this.beforeEachAttempt(); // #279 pre-auth deadline
       return this.withAttemptAndGuard(
         () => this.cloud.sendTemplate({ to: msg.to, templateName: msg.templateName, components }),
         { recipientPhone: msg.to, templateName: msg.templateName },
