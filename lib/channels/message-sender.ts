@@ -16,6 +16,7 @@ import {
   markAmbiguous,
   isAmbiguousTransportError,
   AmbiguousSendError,
+  WamidPersistenceError,
   type AttemptParams,
 } from '@/lib/channels/attempt-recording';
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -56,14 +57,16 @@ async function withRetry<T>(
       // #257: Ambiguous transport outcomes (timeout/reset after potential emission) — NEVER retry
       const isAmbiguous = err instanceof AmbiguousSendError
         || (err instanceof Error && isAmbiguousTransportError(err));
+      // #257: WAMID persistence failure after successful send — message was delivered, NEVER retry
+      const isWamidFailure = err instanceof WamidPersistenceError;
 
       // Only record failure for server errors (5xx) or network errors, not client errors or suspensions
-      if (!is4xx && !isSuspended && !isAmbiguous) {
+      if (!is4xx && !isSuspended && !isAmbiguous && !isWamidFailure) {
         recordFailure(CIRCUIT_KEY);
       }
 
-      // Don't retry: client errors, suspension blocks, ambiguous outcomes, or last attempt
-      if (is4xx || isSuspended || isAmbiguous || i === retries) throw err;
+      // Don't retry: client errors, suspension blocks, ambiguous, WAMID persistence, or last attempt
+      if (is4xx || isSuspended || isAmbiguous || isWamidFailure || i === retries) throw err;
       await new Promise(r => setTimeout(r, delay * (i + 1)));
     }
   }

@@ -39,7 +39,7 @@ CREATE TABLE IF NOT EXISTS public.message_send_attempts (
                         )),
   spend_period_start    TIMESTAMPTZ,
   needs_reconciliation  BOOLEAN NOT NULL DEFAULT false,
-  reserved_at           TIMESTAMPTZ DEFAULT NOW(),
+  reserved_at           TIMESTAMPTZ,
   sent_at               TIMESTAMPTZ,
   meta_accepted_at      TIMESTAMPTZ,
   reservation_expires_at TIMESTAMPTZ,

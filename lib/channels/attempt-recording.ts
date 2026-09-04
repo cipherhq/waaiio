@@ -95,6 +95,8 @@ export async function createAttempt(
 /**
  * Transition attempt to 'sending' immediately before network emission.
  * This is the durable pre-emission marker.
+ * Gate ON: failure throws (zero Meta emission).
+ * Gate OFF: failure logs and returns (best-effort).
  */
 export async function markSending(
   supabase: SupabaseClient,
@@ -106,12 +108,29 @@ export async function markSending(
     .eq('id', attemptId);
 
   if (error) {
+    if (sendAttemptGateEnabled) {
+      throw new Error(`[ATTEMPT] Gate ON: failed to persist pre-emission state — zero Meta emission: ${error.message}`);
+    }
     logger.error('[ATTEMPT] Failed to mark sending:', error.message);
+  }
+}
+
+/** Thrown when WAMID persistence fails after successful provider emission. */
+export class WamidPersistenceError extends Error {
+  readonly attemptId: string;
+  readonly wamid: string;
+  constructor(attemptId: string, wamid: string, cause: string) {
+    super(`[ATTEMPT] WAMID persistence failed for attempt ${attemptId} (wamid=${wamid}): ${cause}`);
+    this.name = 'WamidPersistenceError';
+    this.attemptId = attemptId;
+    this.wamid = wamid;
   }
 }
 
 /**
  * Link the WAMID and mark accepted after successful Meta response.
+ * On DB failure: marks attempt for reconciliation and throws
+ * WamidPersistenceError — caller must NOT retry (message was sent).
  */
 export async function markAccepted(
   supabase: SupabaseClient,
@@ -128,7 +147,15 @@ export async function markAccepted(
     .eq('id', attemptId);
 
   if (error) {
-    logger.error('[ATTEMPT] Failed to mark accepted:', error.message);
+    // Best-effort: try to mark for reconciliation
+    await supabase
+      .from('message_send_attempts')
+      .update({ needs_reconciliation: true })
+      .eq('id', attemptId)
+      .then(() => {}, () => {});
+
+    logger.error(`[ATTEMPT] WAMID persistence failed: attempt=${attemptId} wamid=${wamid} err=${error.message}`);
+    throw new WamidPersistenceError(attemptId, wamid, error.message);
   }
 }
 

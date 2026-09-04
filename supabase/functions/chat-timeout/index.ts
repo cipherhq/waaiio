@@ -11,6 +11,7 @@
  */
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { withEdgeAttemptRecording } from '../_shared/attempt-recording.ts';
 
 const isDev = Deno.env.get('ENVIRONMENT') !== 'production';
 const log = {
@@ -117,23 +118,27 @@ async function sendWhatsAppForBusiness(
     }
 
     const phone = to.replace('+', '');
-    const response = await fetch(
-      `https://graph.facebook.com/v22.0/${phoneNumberId}/messages`,
-      {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          'Content-Type': 'application/json',
+    const result = await withEdgeAttemptRecording(
+      supabase,
+      { businessId, recipientPhone: to, phoneNumberId, flowType: 'chat-timeout' },
+      () => fetch(
+        `https://graph.facebook.com/v22.0/${phoneNumberId}/messages`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            messaging_product: 'whatsapp',
+            to: phone,
+            type: 'text',
+            text: { body: text },
+          }),
         },
-        body: JSON.stringify({
-          messaging_product: 'whatsapp',
-          to: phone,
-          type: 'text',
-          text: { body: text },
-        }),
-      },
+      ),
     );
-    return response.ok;
+    return result.ok;
   } catch (err) {
     log.error(`Failed to send WhatsApp to ${to} for business ${businessId}:`, err);
     return false;

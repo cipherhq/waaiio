@@ -22,6 +22,7 @@ const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
 const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const whatsappToken = Deno.env.get('WHATSAPP_TOKEN') || '';
 const whatsappPhoneId = Deno.env.get('WHATSAPP_PHONE_NUMBER_ID') || '';
+import { withEdgeAttemptRecording } from '../_shared/attempt-recording.ts';
 
 async function sendWhatsApp(to: string, text: string, supabase: ReturnType<typeof createClient>, businessId: string): Promise<boolean> {
   if (!whatsappToken || !whatsappPhoneId) {
@@ -42,23 +43,27 @@ async function sendWhatsApp(to: string, text: string, supabase: ReturnType<typeo
     }
 
     const phone = to.replace('+', '');
-    const response = await fetch(
-      `https://graph.facebook.com/v22.0/${whatsappPhoneId}/messages`,
-      {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${whatsappToken}`,
-          'Content-Type': 'application/json',
+    const result = await withEdgeAttemptRecording(
+      supabase,
+      { businessId, recipientPhone: to, phoneNumberId: whatsappPhoneId, flowType: 'recurring-reminder' },
+      () => fetch(
+        `https://graph.facebook.com/v22.0/${whatsappPhoneId}/messages`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${whatsappToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            messaging_product: 'whatsapp',
+            to: phone,
+            type: 'text',
+            text: { body: text },
+          }),
         },
-        body: JSON.stringify({
-          messaging_product: 'whatsapp',
-          to: phone,
-          type: 'text',
-          text: { body: text },
-        }),
-      },
+      ),
     );
-    return response.ok;
+    return result.ok;
   } catch (err) {
     log.error('WhatsApp send error:', err);
     return false;

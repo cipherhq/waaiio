@@ -69,7 +69,7 @@ export class ChannelResolver {
         phoneNumberId: channel.phone_number_id,
         wabaId: channel.waba_id || undefined,
       });
-      const sender = new MetaCloudSender(cloud);
+      const sender = new MetaCloudSender(cloud, this.supabase);
       if (channel.business_id) sender.bindBusiness(channel.business_id);
       return { channel, sender, cloud };
     }
@@ -80,8 +80,6 @@ export class ChannelResolver {
     if (!channel.phone_number_id) {
       throw new Error(`[CHANNEL] Channel ${channel.id} has no phone_number_id — only meta_cloud channels are supported`);
     }
-    // Use channel-specific token, falling back to env var for shared channels
-    // Decrypt token if encrypted (backwards compatible with plaintext)
     let accessToken = channel.meta_access_token || process.env.META_CLOUD_ACCESS_TOKEN || '';
     try {
       const { decryptToken } = require('@/lib/encryption');
@@ -94,7 +92,7 @@ export class ChannelResolver {
       phoneNumberId: channel.phone_number_id,
       wabaId: channel.waba_id || undefined,
     });
-    const sender = new MetaCloudSender(cloud);
+    const sender = new MetaCloudSender(cloud, this.supabase);
     if (channel.business_id) sender.bindBusiness(channel.business_id);
     return sender;
   }
