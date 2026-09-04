@@ -16,11 +16,29 @@ const nextConfig = {
     ],
   },
   experimental: {
+    // PDFKit loads its built-in AFM font data via fs.readFileSync(__dirname + '/data/...').
+    // Keep it externalized so __dirname resolves inside node_modules/pdfkit on Vercel
+    // instead of a bundled .next/server/chunks directory.
+    serverComponentsExternalPackages: ['pdfkit'],
+    // Explicitly retain AFM data for every current server route that can reach
+    // a PDFKit generator, including dynamic send-confirmation paths.
     outputFileTracingIncludes: {
-      '/api/webhook/meta-cloud': ['./node_modules/pdfkit/js/data/**/*'],
-      '/api/webhook/whatsapp': ['./node_modules/pdfkit/js/data/**/*'],
       '/api/receipts/generate': ['./node_modules/pdfkit/js/data/**/*'],
-      '/api/webhooks/route': ['./node_modules/pdfkit/js/data/**/*'],
+      '/api/invoices/pdf/[id]': ['./node_modules/pdfkit/js/data/**/*'],
+      '/api/invoices/send': ['./node_modules/pdfkit/js/data/**/*'],
+      '/api/contracts/submit': ['./node_modules/pdfkit/js/data/**/*'],
+      '/api/webhook/meta-cloud': ['./node_modules/pdfkit/js/data/**/*'],
+      '/api/bookings/[id]/status': ['./node_modules/pdfkit/js/data/**/*'],
+      '/api/queue/call-next': ['./node_modules/pdfkit/js/data/**/*'],
+      '/api/queue/update': ['./node_modules/pdfkit/js/data/**/*'],
+      '/api/integrations/external-booking': ['./node_modules/pdfkit/js/data/**/*'],
+      '/api/payments/webhook': ['./node_modules/pdfkit/js/data/**/*'],
+      '/api/payments/stripe-webhook': ['./node_modules/pdfkit/js/data/**/*'],
+      '/api/payments/square-webhook': ['./node_modules/pdfkit/js/data/**/*'],
+      '/api/payments/paypal-webhook': ['./node_modules/pdfkit/js/data/**/*'],
+      '/api/webhooks/flutterwave': ['./node_modules/pdfkit/js/data/**/*'],
+      '/api/cron/payment-reconciliation': ['./node_modules/pdfkit/js/data/**/*'],
+      '/api/cron/retry-failed-charges': ['./node_modules/pdfkit/js/data/**/*'],
     },
   },
   async headers() {
