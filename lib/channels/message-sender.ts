@@ -218,9 +218,9 @@ export class MetaCloudSender implements MessageSender {
       try {
         await assertMessagingAllowed(this._businessId);
       } catch (guardErr) {
-        if (attemptId && this._supabase) {
-          await markFailed(this._supabase, attemptId);
-        }
+        // Suspension/deadline block: no Meta emission occurred.
+        // Attempt stays pending_authorization (not failed_send — that would be false state).
+        // No financial encumbrance exists, so no compensating release is needed.
         throw guardErr;
       }
       // Post-auth deadline check (#279) — catches expiry during async authorization

@@ -61,6 +61,17 @@ export async function POST(request: NextRequest) {
         .maybeSingle();
 
       if (channel?.phone_number_id && channel?.meta_access_token) {
+        // #257: platform-scoped attempt recording (best-effort)
+        let attemptId: string | null = null;
+        try {
+          const { createAttempt, markSending } = await import('@/lib/channels/attempt-recording');
+          attemptId = await createAttempt(supabase, {
+            businessId: null, attemptScope: 'platform', recipientPhone: phone,
+            flowType: 'auth-otp', templateName: OTP_TEMPLATE_NAME,
+          });
+          if (attemptId) await markSending(supabase, attemptId);
+        } catch { /* best-effort recording */ }
+
         const cloud = new MetaCloudService({
           phoneNumberId: channel.phone_number_id,
           accessToken: channel.meta_access_token,
@@ -72,6 +83,9 @@ export async function POST(request: NextRequest) {
           code,
         });
         waMessageId = result.messageId;
+        if (attemptId && waMessageId) {
+          try { const { markAccepted } = await import('@/lib/channels/attempt-recording'); await markAccepted(supabase, attemptId, waMessageId); } catch {}
+        }
         deliveryPath = 'database_channel';
         sent = true;
       }
@@ -91,6 +105,17 @@ export async function POST(request: NextRequest) {
         );
       }
 
+      // #257: platform-scoped attempt recording (env fallback, best-effort)
+      let attemptIdFb: string | null = null;
+      try {
+        const { createAttempt, markSending } = await import('@/lib/channels/attempt-recording');
+        attemptIdFb = await createAttempt(supabase, {
+          businessId: null, attemptScope: 'platform', recipientPhone: phone,
+          flowType: 'auth-otp-fallback', templateName: OTP_TEMPLATE_NAME,
+        });
+        if (attemptIdFb) await markSending(supabase, attemptIdFb);
+      } catch { /* best-effort */ }
+
       const cloud = new MetaCloudService({ phoneNumberId, accessToken });
       const result = await cloud.sendAuthenticationTemplate({
         to: phone,
@@ -99,6 +124,9 @@ export async function POST(request: NextRequest) {
         code,
       });
       waMessageId = result.messageId;
+      if (attemptIdFb && waMessageId) {
+        try { const { markAccepted } = await import('@/lib/channels/attempt-recording'); await markAccepted(supabase, attemptIdFb, waMessageId); } catch {}
+      }
       deliveryPath = 'env_fallback';
     }
 

@@ -36,7 +36,18 @@ export async function POST(request: NextRequest) {
       const whatsappPhoneId = process.env.WHATSAPP_PHONE_NUMBER_ID;
 
       if (whatsappToken && whatsappPhoneId) {
-        await fetch(`https://graph.facebook.com/${process.env.META_GRAPH_API_VERSION || 'v22.0'}/${whatsappPhoneId}/messages`, {
+        // #257: platform-scoped attempt recording (best-effort)
+        let attemptId: string | null = null;
+        try {
+          const { createAttempt, markSending } = await import('@/lib/channels/attempt-recording');
+          attemptId = await createAttempt(supabase, {
+            businessId: null, attemptScope: 'platform', recipientPhone: normalizedPhone,
+            flowType: 'recurring-verify-otp',
+          });
+          if (attemptId) await markSending(supabase, attemptId);
+        } catch { /* best-effort */ }
+
+        const response = await fetch(`https://graph.facebook.com/${process.env.META_GRAPH_API_VERSION || 'v22.0'}/${whatsappPhoneId}/messages`, {
           method: 'POST',
           headers: {
             Authorization: `Bearer ${whatsappToken}`,
@@ -49,6 +60,18 @@ export async function POST(request: NextRequest) {
             text: { body: `Your verification code is: ${code}\n\nThis code expires in 10 minutes.` },
           }),
         });
+        if (attemptId) {
+          try {
+            if (response.ok) {
+              const { markAccepted } = await import('@/lib/channels/attempt-recording');
+              const b = await response.clone().json();
+              await markAccepted(supabase, attemptId, b?.messages?.[0]?.id || '');
+            } else {
+              const { markFailed } = await import('@/lib/channels/attempt-recording');
+              await markFailed(supabase, attemptId);
+            }
+          } catch { /* best-effort */ }
+        }
       } else {
         logger.debug(`[mock OTP] ${normalizedPhone}: ${code}`);
       }

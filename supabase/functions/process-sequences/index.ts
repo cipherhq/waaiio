@@ -30,18 +30,8 @@ async function sendWhatsApp(to: string, text: string, supabase: ReturnType<typeo
   }
 
   try {
-    // S-1 (#256): Fresh fail-closed suspension check immediately before Meta dispatch
-    const { data: bizCheck, error: bizErr } = await supabase
-      .from('businesses')
-      .select('messaging_suspended')
-      .eq('id', businessId)
-      .maybeSingle();
-    if (bizErr || !bizCheck || bizCheck.messaging_suspended !== false) {
-      log.debug(`[process-sequences] Send blocked: business ${businessId} suspended/unverifiable`);
-      return false;
-    }
-
     const phone = to.replace('+', '');
+    // #257: attempt → #256 guard → sending → Meta fetch (all inside withEdgeAttemptRecording)
     const result = await withEdgeAttemptRecording(
       supabase,
       { businessId, recipientPhone: to, phoneNumberId: whatsappPhoneId, flowType: 'process-sequences' },
@@ -61,6 +51,19 @@ async function sendWhatsApp(to: string, text: string, supabase: ReturnType<typeo
           }),
         },
       ),
+      // S-1 (#256): Suspension check inside attempt lifecycle
+      async () => {
+        const { data: bizCheck, error: bizErr } = await supabase
+          .from('businesses')
+          .select('messaging_suspended')
+          .eq('id', businessId)
+          .maybeSingle();
+        if (bizErr || !bizCheck || bizCheck.messaging_suspended !== false) {
+          log.debug(`[process-sequences] Send blocked: business ${businessId} suspended/unverifiable`);
+          return false;
+        }
+        return true;
+      },
     );
     return result.ok;
   } catch (err) {
