@@ -117,6 +117,7 @@ describe('S-1 Egress Inventory (#256)', () => {
       'lib/channels/meta-cloud.ts',       // callApi — guarded via MetaCloudSender
       'lib/channels/message-sender.ts',    // MetaCloudSender — has guard
       'app/api/cron/payout-nudge/route.ts', // direct fetch — has assertMessagingAllowed
+      'lib/channels/payout-nudge-orchestrator.ts', // #257 orchestrator — uses withDirectRouteAttempt with authorizationCheck
       // Platform-scoped exemptions (no business context)
       'app/api/recurring/verify/route.ts',  // platform OTP — explicit exemption
       'app/api/admin/otp/route.ts',         // admin OTP — explicit exemption

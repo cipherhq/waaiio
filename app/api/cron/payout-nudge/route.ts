@@ -138,26 +138,17 @@ export async function GET(request: NextRequest) {
       // Send WhatsApp notification to business owner (if they have a phone)
       if (profile.phone) {
         try {
-          const waToken = process.env.META_CLOUD_ACCESS_TOKEN || '';
-          const waPhoneId = process.env.META_CLOUD_PHONE_NUMBER_ID || '';
-          if (waToken && waPhoneId) {
-            // #257: attempt → #256 guard → sending → Meta (all inside helper)
-            const { withDirectRouteAttempt } = await import('@/lib/channels/direct-route-attempt');
-            await withDirectRouteAttempt(supabase, {
-              businessId: biz.id, attemptScope: 'business', recipientPhone: profile.phone,
-              flowType: 'payout-nudge',
-            }, () => fetch(`https://graph.facebook.com/${process.env.META_GRAPH_API_VERSION || 'v22.0'}/${waPhoneId}/messages`, {
-              method: 'POST',
-              headers: { Authorization: `Bearer ${waToken}`, 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                messaging_product: 'whatsapp',
-                to: profile.phone!.replace('+', ''),
-                type: 'text',
-                text: { body: `💰 ${biz.name}: You have ${formattedBalance} from ${paymentCount} payments waiting!\n\nSet up your bank account to get paid automatically:\n${appUrl}/dashboard/payouts` },
-              }),
-            }), () => assertMessagingAllowed(biz.id));
-          }
-          // Missing credentials: no attempt, no Meta call (waToken/waPhoneId check above)
+          // #257: production orchestration module
+          const { executePayoutNudgeSend } = await import('@/lib/channels/payout-nudge-orchestrator');
+          await executePayoutNudgeSend({
+            supabase,
+            businessId: biz.id,
+            recipientPhone: profile.phone,
+            waToken: process.env.META_CLOUD_ACCESS_TOKEN || '',
+            waPhoneId: process.env.META_CLOUD_PHONE_NUMBER_ID || '',
+            messageBody: `💰 ${biz.name}: You have ${formattedBalance} from ${paymentCount} payments waiting!\n\nSet up your bank account to get paid automatically:\n${appUrl}/dashboard/payouts`,
+            authorizationCheck: () => assertMessagingAllowed(biz.id),
+          });
         } catch (err) {
           if (err instanceof MessagingSuspendedError) {
             logger.warn(`[PAYOUT-NUDGE] Messaging suspended for ${biz.name}, skipping WhatsApp nudge`);
