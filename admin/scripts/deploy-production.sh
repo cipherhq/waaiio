@@ -171,6 +171,18 @@ echo "Installing dependencies from lockfile..."
 npm ci --ignore-scripts 2>&1 | tail -3
 echo ""
 
+echo "Ensuring Chromium for post-deploy verification..."
+npx playwright install chromium 2>&1 | tail -2
+# Fail-closed: verify Chromium launches before any production mutation
+PREFLIGHT_EXIT=0
+node -e "import('playwright').then(async p => { const b = await p.chromium.launch({headless:true}); await b.close(); })" 2>/dev/null || PREFLIGHT_EXIT=$?
+if [ "${PREFLIGHT_EXIT}" -ne 0 ]; then
+  echo "❌ ABORT: Chromium preflight failed. Cannot verify deployment post-promotion."
+  exit 1
+fi
+echo "✅ Chromium preflight passed"
+echo ""
+
 echo "Building admin..."
 npm run build
 echo ""
@@ -301,47 +313,8 @@ echo ""
 # ══════════════════════════════════════════════════════
 
 echo "Running headless browser bootstrap smoke..."
-
-SMOKE_SCRIPT=$(mktemp /tmp/admin-smoke-XXXXXX.mjs)
-cat > "${SMOKE_SCRIPT}" << 'PW_SCRIPT'
-import { chromium } from 'playwright';
-const url = 'https://admin.waaiio.com';
-async function smoke() {
-  const browser = await chromium.launch({ headless: true });
-  const page = await browser.newPage();
-  const errors = [];
-  page.on('pageerror', (err) => errors.push(err.message));
-  page.on('console', (entry) => {
-    if (entry.type() === 'error') errors.push(entry.text());
-  });
-  try {
-    const response = await page.goto(url, { waitUntil: 'networkidle', timeout: 15000 });
-    if (!response || response.status() !== 200) {
-      console.error('HTTP ' + (response?.status() || 'no response'));
-      process.exit(1);
-    }
-    await page.waitForSelector('#root > *', { timeout: 10000 });
-    const bad = errors.filter(e =>
-      e.includes('Invalid supabaseUrl') || e.includes('supabaseUrl is required') || e.includes('supabaseUrl: Must be a valid')
-    );
-    if (bad.length > 0) {
-      bad.forEach(e => console.error('  ' + e));
-      process.exit(1);
-    }
-    const ok = await page.evaluate(() => {
-      const r = document.getElementById('root');
-      return r && r.innerHTML.length > 100;
-    });
-    if (!ok) { console.error('SPA root has no content'); process.exit(1); }
-    console.log('Bootstrap smoke passed');
-  } finally { await browser.close(); }
-}
-smoke().catch(err => { console.error('Smoke failed:', err.message); process.exit(1); });
-PW_SCRIPT
-
 SMOKE_EXIT=0
-(cd "${REPO_ROOT}" && node "${SMOKE_SCRIPT}") || SMOKE_EXIT=$?
-rm -f "${SMOKE_SCRIPT}"
+node "${ADMIN_DIR}/scripts/verify-production.mjs" || SMOKE_EXIT=$?
 
 if [ "${SMOKE_EXIT}" -ne 0 ]; then
   echo ""
