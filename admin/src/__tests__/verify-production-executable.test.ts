@@ -66,7 +66,10 @@ try {
   );
   canRunBrowser = true;
 } catch {
-  // Skip
+  // In CI, Chromium must be available — fail rather than skip
+  if (process.env.CI) {
+    throw new Error('Playwright Chromium is not available in CI. The Admin CI job must install it before running tests.');
+  }
 }
 
 describe.skipIf(!canRunBrowser)('verify-production.mjs executable proof (#292)', () => {
