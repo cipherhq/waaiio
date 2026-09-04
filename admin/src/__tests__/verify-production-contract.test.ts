@@ -56,9 +56,21 @@ describe('verify-production contract (#292)', () => {
     expect(deploy).not.toContain('mktemp /tmp/admin-smoke');
   });
 
-  it('deploy script installs Chromium before verification', () => {
+  it('deploy script installs Chromium in pre-deploy preflight, not post-promotion', () => {
     const deployPath = resolve(__dirname, '../../scripts/deploy-production.sh');
     const deploy = readFileSync(deployPath, 'utf-8');
-    expect(deploy).toContain('playwright install chromium');
+    // Chromium install + preflight check before deployment section
+    const chromiumIdx = deploy.indexOf('playwright install chromium');
+    const deployIdx = deploy.indexOf('Deploying to production');
+    expect(chromiumIdx).toBeGreaterThan(-1);
+    expect(deployIdx).toBeGreaterThan(chromiumIdx);
+  });
+
+  it('verify:production script uses && (fail-closed), not ; (continue on failure)', () => {
+    const pkgPath = resolve(__dirname, '../../package.json');
+    const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'));
+    const cmd = pkg.scripts['verify:production'];
+    expect(cmd).toContain('&&');
+    expect(cmd).not.toContain(';');
   });
 });

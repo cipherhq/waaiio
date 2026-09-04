@@ -42,7 +42,7 @@ async function verify() {
 
   try {
     // 1. Load the page
-    const response = await page.goto(url, { waitUntil: 'networkidle', timeout: TIMEOUT });
+    const response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: TIMEOUT });
     if (!response) {
       console.error('FAIL: No response from server');
       process.exit(1);

@@ -8,7 +8,7 @@
     "build": "vite build",
     "preview": "vite preview --port 8083",
     "test": "vitest run",
-    "verify:production": "npx playwright install chromium --with-deps 2>/dev/null; node scripts/verify-production.mjs"
+    "verify:production": "npx playwright install chromium && node scripts/verify-production.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.97.0",

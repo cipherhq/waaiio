@@ -171,6 +171,18 @@ echo "Installing dependencies from lockfile..."
 npm ci --ignore-scripts 2>&1 | tail -3
 echo ""
 
+echo "Ensuring Chromium for post-deploy verification..."
+npx playwright install chromium 2>&1 | tail -2
+# Fail-closed: verify Chromium launches before any production mutation
+PREFLIGHT_EXIT=0
+node -e "import('playwright').then(async p => { const b = await p.chromium.launch({headless:true}); await b.close(); })" 2>/dev/null || PREFLIGHT_EXIT=$?
+if [ "${PREFLIGHT_EXIT}" -ne 0 ]; then
+  echo "❌ ABORT: Chromium preflight failed. Cannot verify deployment post-promotion."
+  exit 1
+fi
+echo "✅ Chromium preflight passed"
+echo ""
+
 echo "Building admin..."
 npm run build
 echo ""
@@ -301,9 +313,6 @@ echo ""
 # ══════════════════════════════════════════════════════
 
 echo "Running headless browser bootstrap smoke..."
-echo "  Ensuring Chromium is available..."
-npx playwright install chromium 2>&1 | tail -2
-
 SMOKE_EXIT=0
 node "${ADMIN_DIR}/scripts/verify-production.mjs" || SMOKE_EXIT=$?
 
