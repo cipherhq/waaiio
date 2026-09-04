@@ -108,12 +108,13 @@ export async function POST(request: NextRequest) {
       // #257: platform-scoped attempt recording (env fallback, best-effort)
       let attemptIdFb: string | null = null;
       try {
+        const fbSupabase = createServiceClient();
         const { createAttempt, markSending } = await import('@/lib/channels/attempt-recording');
-        attemptIdFb = await createAttempt(supabase, {
+        attemptIdFb = await createAttempt(fbSupabase, {
           businessId: null, attemptScope: 'platform', recipientPhone: phone,
           flowType: 'auth-otp-fallback', templateName: OTP_TEMPLATE_NAME,
         });
-        if (attemptIdFb) await markSending(supabase, attemptIdFb);
+        if (attemptIdFb) await markSending(fbSupabase, attemptIdFb);
       } catch { /* best-effort */ }
 
       const cloud = new MetaCloudService({ phoneNumberId, accessToken });
@@ -125,7 +126,7 @@ export async function POST(request: NextRequest) {
       });
       waMessageId = result.messageId;
       if (attemptIdFb && waMessageId) {
-        try { const { markAccepted } = await import('@/lib/channels/attempt-recording'); await markAccepted(supabase, attemptIdFb, waMessageId); } catch {}
+        try { const fbSb = createServiceClient(); const { markAccepted } = await import('@/lib/channels/attempt-recording'); await markAccepted(fbSb, attemptIdFb, waMessageId); } catch {}
       }
       deliveryPath = 'env_fallback';
     }
