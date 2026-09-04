@@ -90,14 +90,13 @@ export async function POST(request: NextRequest) {
       }
     } catch (err) {
       // #257: Classify primary failure before allowing fallback
-      let { isAmbiguousTransportError: isAmb, GateBlockError: GBE } = { isAmbiguousTransportError: (_e: Error) => false, GateBlockError: class {} };
-      try { const mod = await import('@/lib/channels/attempt-recording'); isAmb = mod.isAmbiguousTransportError; GBE = mod.GateBlockError; } catch {}
-
-      if (err instanceof GBE) {
-        // Gate ON pre-emission failure — zero Meta emission, zero fallback
+      // Use isGateBlock property (duck typing) to avoid dynamic instanceof issues
+      if (err && typeof err === 'object' && 'isGateBlock' in err && (err as { isGateBlock: boolean }).isGateBlock) {
         primaryGateBlocked = true;
-      } else if (err instanceof Error && isAmb(err)) {
-        primaryAmbiguous = true;
+      } else if (err instanceof Error) {
+        let isAmb = false;
+        try { const mod = await import('@/lib/channels/attempt-recording'); isAmb = mod.isAmbiguousTransportError(err); } catch {}
+        if (isAmb) primaryAmbiguous = true;
       }
       if (!primaryAmbiguous && !primaryGateBlocked) {
         logger.withContext({ op: 'otp-send.whatsapp-channel', ...safeLogErrorContext(err) }).error('[OTP Send] WhatsApp channel send failed, trying env fallback');
