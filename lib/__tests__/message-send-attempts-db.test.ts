@@ -151,6 +151,20 @@ describe.skipIf(!canRun)('Message Send Attempts DB Tests (#257 / Migration 367)'
     expect(id).toBeTruthy();
   });
 
+  it('15a. FK RESTRICT: cannot delete business with attempt records', () => {
+    // Create a temp business with an attempt
+    const tempBiz = psql("INSERT INTO businesses (name, slug, owner_id, address, city, neighborhood, phone) VALUES ('TempBiz', 'temp-biz-fk-' || substr(md5(random()::text),1,8), '00000000-0000-0000-0000-000000000001', '1 Test', 'T', 'T', '+1') RETURNING id;");
+    psql(`INSERT INTO message_send_attempts (business_id, recipient_phone) VALUES ('${tempBiz}', '+1234');`);
+    const err = psqlMayFail(`DELETE FROM businesses WHERE id = '${tempBiz}';`);
+    expect(err.toLowerCase()).toMatch(/restrict|referenced|foreign key/);
+  });
+
+  it('15b. reserved_at defaults to NULL (no financial encumbrance at INSERT)', () => {
+    const id = psql(`INSERT INTO message_send_attempts (business_id, recipient_phone) VALUES ('${BIZ_ID}', '+1234') RETURNING id;`);
+    const val = psql(`SELECT reserved_at FROM message_send_attempts WHERE id = '${id}';`);
+    expect(val).toBe('');  // NULL renders as empty in psql -tA
+  });
+
   // ── RLS ──
 
   it('15. Authenticated non-owner cannot see other business attempts', () => {

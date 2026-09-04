@@ -11,7 +11,7 @@
 
 CREATE TABLE IF NOT EXISTS public.message_send_attempts (
   id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  business_id           UUID REFERENCES public.businesses(id) ON DELETE SET NULL,
+  business_id           UUID REFERENCES public.businesses(id) ON DELETE RESTRICT,
   attempt_scope         TEXT NOT NULL DEFAULT 'business'
                         CHECK (attempt_scope IN ('business', 'platform')),
   channel_id            UUID,

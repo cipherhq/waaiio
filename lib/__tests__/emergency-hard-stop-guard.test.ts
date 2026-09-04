@@ -17,17 +17,19 @@ describe('S-1 Egress Inventory (#256)', () => {
   const MESSAGE_SENDER_PATH = resolve(__dirname, '../channels/message-sender.ts');
   const EDGE_FN_DIR = resolve(__dirname, '../../supabase/functions');
 
-  it('Structural: MetaCloudSender has assertMessagingAllowed guard in every send method', () => {
+  it('Structural: MetaCloudSender has assertMessagingAllowed guard for every send method', () => {
     const src = readFileSync(MESSAGE_SENDER_PATH, 'utf-8');
-    // All 12 send methods (excluding markAsRead which is not on MetaCloudSender) must have the guard
+    // #257: guard is inside withAttemptAndGuard(), called by every send method.
+    // Verify: 1) withAttemptAndGuard contains the guard, 2) every send method uses it.
+    expect(src, 'withAttemptAndGuard missing assertMessagingAllowed').toContain('assertMessagingAllowed');
     const sendMethods = [
       'sendText', 'sendList', 'sendButtons', 'sendImage', 'sendDocument',
       'sendAudio', 'sendTemplate', 'sendFlow', 'sendReaction', 'sendLocation',
       'sendProduct', 'sendProductList',
     ];
     for (const method of sendMethods) {
-      const methodRegex = new RegExp(`async ${method}\\b[\\s\\S]*?assertMessagingAllowed`, 'm');
-      expect(src, `${method} missing assertMessagingAllowed guard`).toMatch(methodRegex);
+      const methodRegex = new RegExp(`async ${method}\\b[\\s\\S]*?withAttemptAndGuard`, 'm');
+      expect(src, `${method} missing withAttemptAndGuard (contains guard)`).toMatch(methodRegex);
     }
   });
 

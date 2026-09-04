@@ -22,29 +22,29 @@ vi.mock('@/lib/logger', () => ({
   logger: { warn: vi.fn(), error: vi.fn(), info: vi.fn() },
 }));
 
-function buildMockSupabase(options: { insertError?: boolean; updateError?: boolean } = {}) {
+function buildMockSupabase(options: { insertError?: boolean; updateError?: boolean; acceptedUpdateError?: boolean } = {}) {
   const insertedRows: Record<string, unknown>[] = [];
   const updatedRows: Array<{ id: string; data: Record<string, unknown> }> = [];
 
-  const chain: Record<string, any> = {};
-  chain.insert = vi.fn().mockImplementation((data: Record<string, unknown>) => {
-    if (options.insertError) return { select: () => ({ single: () => ({ data: null, error: { message: 'Insert failed' } }) }) };
-    const id = 'attempt-' + Math.random().toString(36).slice(2, 8);
-    insertedRows.push({ ...data, id });
-    return { select: () => ({ single: () => ({ data: { id }, error: null }) }) };
-  });
-  chain.update = vi.fn().mockImplementation((data: Record<string, unknown>) => {
-    return {
-      eq: (col: string, val: string) => {
-        if (options.updateError) return { error: { message: 'Update failed' } };
-        updatedRows.push({ id: val, data });
-        return { error: null };
-      },
-    };
+  const makeUpdateChain = (data: Record<string, unknown>) => ({
+    eq: (col: string, val: string) => {
+      if (options.updateError) return { error: { message: 'Update failed' } };
+      if (options.acceptedUpdateError && (data as any).status === 'accepted') return { error: { message: 'Accepted update failed' } };
+      updatedRows.push({ id: val, data });
+      return { error: null };
+    },
   });
 
   return {
-    from: vi.fn().mockReturnValue(chain),
+    from: vi.fn().mockImplementation(() => ({
+      insert: vi.fn().mockImplementation((data: Record<string, unknown>) => {
+        if (options.insertError) return { select: () => ({ single: () => ({ data: null, error: { message: 'Insert failed' } }) }) };
+        const id = 'attempt-' + Math.random().toString(36).slice(2, 8);
+        insertedRows.push({ ...data, id });
+        return { select: () => ({ single: () => ({ data: { id }, error: null }) }) };
+      }),
+      update: vi.fn().mockImplementation((data: Record<string, unknown>) => makeUpdateChain(data)),
+    })),
     _insertedRows: insertedRows,
     _updatedRows: updatedRows,
   };
@@ -135,6 +135,31 @@ describe('Attempt recording (#257)', () => {
     await markAccepted(supabase as any, 'test-id', 'wamid.abc123');
     expect(supabase._updatedRows[0].data.status).toBe('accepted');
     expect(supabase._updatedRows[0].data.meta_message_id).toBe('wamid.abc123');
+  });
+
+  it('markAccepted: DB failure throws WamidPersistenceError (not failed_send)', async () => {
+    const supabase = buildMockSupabase({ acceptedUpdateError: true });
+    await expect(markAccepted(supabase as any, 'test-id', 'wamid.lost'))
+      .rejects.toThrow('WAMID persistence failed');
+    try {
+      await markAccepted(supabase as any, 'test-id', 'wamid.lost');
+    } catch (err) {
+      expect((err as any).attemptId).toBe('test-id');
+      expect((err as any).wamid).toBe('wamid.lost');
+    }
+  });
+
+  it('markSending: Gate ON failure throws (zero Meta emission)', async () => {
+    setSendAttemptGate(true);
+    const supabase = buildMockSupabase({ updateError: true });
+    await expect(markSending(supabase as any, 'test-id')).rejects.toThrow('Gate ON');
+  });
+
+  it('markSending: Gate OFF failure logs and returns (best-effort)', async () => {
+    setSendAttemptGate(false);
+    const supabase = buildMockSupabase({ updateError: true });
+    // Should not throw
+    await markSending(supabase as any, 'test-id');
   });
 
   it('markFailed sets failed_send', async () => {

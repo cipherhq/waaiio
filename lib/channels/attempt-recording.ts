@@ -148,11 +148,14 @@ export async function markAccepted(
 
   if (error) {
     // Best-effort: try to mark for reconciliation
-    await supabase
-      .from('message_send_attempts')
-      .update({ needs_reconciliation: true })
-      .eq('id', attemptId)
-      .then(() => {}, () => {});
+    try {
+      await supabase
+        .from('message_send_attempts')
+        .update({ needs_reconciliation: true })
+        .eq('id', attemptId);
+    } catch {
+      // Ignore — best-effort reconciliation flag
+    }
 
     logger.error(`[ATTEMPT] WAMID persistence failed: attempt=${attemptId} wamid=${wamid} err=${error.message}`);
     throw new WamidPersistenceError(attemptId, wamid, error.message);

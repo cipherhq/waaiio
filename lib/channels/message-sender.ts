@@ -191,36 +191,60 @@ export class MetaCloudSender implements MessageSender {
   }
 
   /**
-   * #257: Execute a provider call with attempt recording.
-   * Creates a fresh attempt for each actual emission.
+   * #257: Create an attempt, run the #256 guard, mark sending, execute provider call.
+   * Agreed lifecycle: attempt INSERT → #256 authorization → durable sending → emission.
+   * Creates a fresh attempt for each retry iteration.
    * Gate OFF: recording failure does not block send.
-   * Gate ON: recording failure blocks send (zero Meta emission).
+   * Gate ON: recording/persistence failure blocks send (zero Meta emission).
    */
-  private async withAttemptRecording<T extends { messageId?: string }>(
+  private async withAttemptAndGuard<T extends { messageId?: string }>(
     providerCall: () => Promise<T>,
     params: Omit<AttemptParams, 'businessId' | 'attemptScope'> & { recipientPhone: string },
+    /** Platform-scoped sends skip the guard when no business is bound */
+    options?: { platformScopeAllowed?: boolean },
   ): Promise<T> {
-    const scope: 'business' | 'platform' = this._businessId ? 'business' : 'platform';
+    const isPlatform = !this._businessId && options?.platformScopeAllowed;
+    const scope: 'business' | 'platform' = isPlatform ? 'platform' : 'business';
+
+    // 1. Create pre-WAMID attempt (before guard)
     const attemptId = this._supabase
       ? await createAttempt(this._supabase, { ...params, businessId: this._businessId || null, attemptScope: scope })
       : null;
 
-    // Mark sending (durable pre-emission marker)
+    // 2. #256 authorization guard (after attempt creation)
+    // Business sends: always called (assertMessagingAllowed fails closed on empty businessId)
+    // Platform sends: skipped only when platformScopeAllowed=true AND no businessId bound
+    if (!isPlatform) {
+      try {
+        await assertMessagingAllowed(this._businessId);
+      } catch (guardErr) {
+        // Suspended/blocked — mark attempt as failed_send (never reached provider)
+        if (attemptId && this._supabase) {
+          await markFailed(this._supabase, attemptId);
+        }
+        throw guardErr;
+      }
+    }
+
+    // 3. Durable pre-emission marker
     if (attemptId && this._supabase) {
       await markSending(this._supabase, attemptId);
     }
 
+    // 4. Provider emission
     try {
       const result = await providerCall();
 
-      // Link WAMID on success
+      // 5. Link WAMID on success
       if (attemptId && this._supabase && result.messageId) {
         await markAccepted(this._supabase, attemptId, result.messageId);
       }
       return result;
     } catch (err) {
       if (attemptId && this._supabase) {
-        if (err instanceof Error && isAmbiguousTransportError(err)) {
+        if (err instanceof WamidPersistenceError) {
+          // Message sent, WAMID persistence failed — already marked needs_reconciliation
+        } else if (err instanceof Error && isAmbiguousTransportError(err)) {
           await markAmbiguous(this._supabase, attemptId);
           throw new AmbiguousSendError(err.message, attemptId);
         } else {
@@ -264,13 +288,10 @@ export class MetaCloudSender implements MessageSender {
 
   async sendPlatformText(msg: { to: string; text: string }) {
     const result = await withRetry(async () => {
-      if (this._businessId) {
-        await assertMessagingAllowed(this._businessId);
-        if (this.beforeEachAttempt) this.beforeEachAttempt();
-      }
-      return this.withAttemptRecording(
+      return this.withAttemptAndGuard(
         () => this.cloud.sendText({ to: msg.to, text: msg.text }),
         { recipientPhone: msg.to },
+        { platformScopeAllowed: true },
       );
     }, 2, 1000, this.beforeEachAttempt);
     return { success: true, messageId: result.messageId };
@@ -278,17 +299,14 @@ export class MetaCloudSender implements MessageSender {
 
   async sendPlatformButtons(msg: { to: string; body: string; buttons: Array<{ id: string; title: string }>; footer?: string }) {
     const result = await withRetry(async () => {
-      if (this._businessId) {
-        await assertMessagingAllowed(this._businessId);
-        if (this.beforeEachAttempt) this.beforeEachAttempt();
-      }
-      return this.withAttemptRecording(
+      return this.withAttemptAndGuard(
         () => this.cloud.sendButtons({
           to: msg.to, bodyText: msg.body.slice(0, 1024),
           footerText: msg.footer ? msg.footer.slice(0, 60) : undefined,
           buttons: msg.buttons.map(b => ({ id: b.id, title: b.title.slice(0, 20) })),
         }),
         { recipientPhone: msg.to },
+        { platformScopeAllowed: true },
       );
     }, 2, 1000, this.beforeEachAttempt);
     return { success: true, messageId: result.messageId };
@@ -297,13 +315,10 @@ export class MetaCloudSender implements MessageSender {
   // ── Business-scoped sends — require business identity, fail-closed ──
 
   async sendText(msg: { to: string; text: string; noRetry?: boolean }) {
-    // Both guards fire before EVERY provider attempt (including noRetry).
-    // Order: deadline → authorization (async) → FINAL deadline → attempt record → provider call.
+    // #257 lifecycle: attempt → #256 guard → sending → emission (all inside retry)
     const textCall = async () => {
       if (this.beforeEachAttempt) this.beforeEachAttempt(); // #279 pre-auth deadline
-      await assertMessagingAllowed(this._businessId);        // #256 hard-stop (async)
-      if (this.beforeEachAttempt) this.beforeEachAttempt(); // #279 post-auth final deadline
-      return this.withAttemptRecording(
+      return this.withAttemptAndGuard(
         () => this.cloud.sendText({ to: msg.to, text: msg.text }),
         { recipientPhone: msg.to },
       );
@@ -347,7 +362,7 @@ export class MetaCloudSender implements MessageSender {
           })),
         }];
 
-    const result = await withRetry(async () => { await assertMessagingAllowed(this._businessId); if (this.beforeEachAttempt) this.beforeEachAttempt(); return this.withAttemptRecording(() => this.cloud.sendList({
+    const result = await withRetry(async () => { return this.withAttemptAndGuard(() => this.cloud.sendList({
       to: msg.to,
       headerText: truncatedTitle,
       bodyText: truncatedBody,
@@ -364,7 +379,7 @@ export class MetaCloudSender implements MessageSender {
     buttons: Array<{ id: string; title: string }>;
     footer?: string;
   }) {
-    const result = await withRetry(async () => { await assertMessagingAllowed(this._businessId); if (this.beforeEachAttempt) this.beforeEachAttempt(); return this.withAttemptRecording(() => this.cloud.sendButtons({
+    const result = await withRetry(async () => { return this.withAttemptAndGuard(() => this.cloud.sendButtons({
       to: msg.to,
       bodyText: msg.body.slice(0, 1024),
       footerText: msg.footer ? msg.footer.slice(0, 60) : undefined,
@@ -374,17 +389,17 @@ export class MetaCloudSender implements MessageSender {
   }
 
   async sendImage(msg: { to: string; imageUrl: string; caption?: string }) {
-    const result = await withRetry(async () => { await assertMessagingAllowed(this._businessId); if (this.beforeEachAttempt) this.beforeEachAttempt(); return this.withAttemptRecording(() => this.cloud.sendImage({ to: msg.to, imageUrl: msg.imageUrl, caption: msg.caption }), { recipientPhone: msg.to }); }, 2, 1000, this.beforeEachAttempt);
+    const result = await withRetry(async () => { return this.withAttemptAndGuard(() => this.cloud.sendImage({ to: msg.to, imageUrl: msg.imageUrl, caption: msg.caption }), { recipientPhone: msg.to }); }, 2, 1000, this.beforeEachAttempt);
     return { success: true, messageId: result.messageId };
   }
 
   async sendDocument(msg: { to: string; documentUrl: string; filename: string; caption?: string }) {
-    const result = await withRetry(async () => { await assertMessagingAllowed(this._businessId); if (this.beforeEachAttempt) this.beforeEachAttempt(); return this.withAttemptRecording(() => this.cloud.sendDocument({ to: msg.to, documentUrl: msg.documentUrl, filename: msg.filename, caption: msg.caption }), { recipientPhone: msg.to }); }, 2, 1000, this.beforeEachAttempt);
+    const result = await withRetry(async () => { return this.withAttemptAndGuard(() => this.cloud.sendDocument({ to: msg.to, documentUrl: msg.documentUrl, filename: msg.filename, caption: msg.caption }), { recipientPhone: msg.to }); }, 2, 1000, this.beforeEachAttempt);
     return { success: true, messageId: result.messageId };
   }
 
   async sendAudio(msg: { to: string; audioUrl: string }) {
-    const result = await withRetry(async () => { await assertMessagingAllowed(this._businessId); if (this.beforeEachAttempt) this.beforeEachAttempt(); return this.withAttemptRecording(() => this.cloud.sendAudio({ to: msg.to, audioUrl: msg.audioUrl }), { recipientPhone: msg.to }); }, 2, 1000, this.beforeEachAttempt);
+    const result = await withRetry(async () => { return this.withAttemptAndGuard(() => this.cloud.sendAudio({ to: msg.to, audioUrl: msg.audioUrl }), { recipientPhone: msg.to }); }, 2, 1000, this.beforeEachAttempt);
     return { success: true, messageId: result.messageId };
   }
 
@@ -408,9 +423,7 @@ export class MetaCloudSender implements MessageSender {
     }
     const templateCall = async () => {
       if (this.beforeEachAttempt) this.beforeEachAttempt(); // #279 pre-auth deadline
-      await assertMessagingAllowed(this._businessId);        // #256 hard-stop (async)
-      if (this.beforeEachAttempt) this.beforeEachAttempt(); // #279 post-auth final deadline
-      return this.withAttemptRecording(
+      return this.withAttemptAndGuard(
         () => this.cloud.sendTemplate({ to: msg.to, templateName: msg.templateName, components }),
         { recipientPhone: msg.to, templateName: msg.templateName },
       );
@@ -420,27 +433,27 @@ export class MetaCloudSender implements MessageSender {
   }
 
   async sendFlow(msg: { to: string; bodyText: string; flowId: string; flowCta: string; screen: string; flowToken?: string; data?: Record<string, unknown> }) {
-    const result = await withRetry(async () => { await assertMessagingAllowed(this._businessId); if (this.beforeEachAttempt) this.beforeEachAttempt(); return this.withAttemptRecording(() => this.cloud.sendFlow(msg), { recipientPhone: msg.to }); }, 2, 1000, this.beforeEachAttempt);
+    const result = await withRetry(async () => { return this.withAttemptAndGuard(() => this.cloud.sendFlow(msg), { recipientPhone: msg.to }); }, 2, 1000, this.beforeEachAttempt);
     return { success: true, messageId: result.messageId };
   }
 
   async sendReaction(msg: { to: string; messageId: string; emoji: string }) {
-    const result = await withRetry(async () => { await assertMessagingAllowed(this._businessId); if (this.beforeEachAttempt) this.beforeEachAttempt(); return this.withAttemptRecording(() => this.cloud.sendReaction(msg), { recipientPhone: msg.to }); }, 2, 1000, this.beforeEachAttempt);
+    const result = await withRetry(async () => { return this.withAttemptAndGuard(() => this.cloud.sendReaction(msg), { recipientPhone: msg.to }); }, 2, 1000, this.beforeEachAttempt);
     return { success: true, messageId: result.messageId };
   }
 
   async sendLocation(msg: { to: string; latitude: number; longitude: number; name?: string; address?: string }) {
-    const result = await withRetry(async () => { await assertMessagingAllowed(this._businessId); if (this.beforeEachAttempt) this.beforeEachAttempt(); return this.withAttemptRecording(() => this.cloud.sendLocation(msg), { recipientPhone: msg.to }); }, 2, 1000, this.beforeEachAttempt);
+    const result = await withRetry(async () => { return this.withAttemptAndGuard(() => this.cloud.sendLocation(msg), { recipientPhone: msg.to }); }, 2, 1000, this.beforeEachAttempt);
     return { success: true, messageId: result.messageId };
   }
 
   async sendProduct(msg: { to: string; catalogId: string; productRetailerId: string; body?: string; footer?: string }) {
-    const result = await withRetry(async () => { await assertMessagingAllowed(this._businessId); if (this.beforeEachAttempt) this.beforeEachAttempt(); return this.withAttemptRecording(() => this.cloud.sendProduct({ to: msg.to, catalogId: msg.catalogId, productId: msg.productRetailerId, body: msg.body, footer: msg.footer }), { recipientPhone: msg.to }); }, 2, 1000, this.beforeEachAttempt);
+    const result = await withRetry(async () => { return this.withAttemptAndGuard(() => this.cloud.sendProduct({ to: msg.to, catalogId: msg.catalogId, productId: msg.productRetailerId, body: msg.body, footer: msg.footer }), { recipientPhone: msg.to }); }, 2, 1000, this.beforeEachAttempt);
     return { success: true, messageId: result.messageId };
   }
 
   async sendProductList(msg: { to: string; catalogId: string; header: string; body: string; footer?: string; sections: Array<{ title: string; productRetailerIds: string[] }> }) {
-    const result = await withRetry(async () => { await assertMessagingAllowed(this._businessId); if (this.beforeEachAttempt) this.beforeEachAttempt(); return this.withAttemptRecording(() => this.cloud.sendProductList({ to: msg.to, catalogId: msg.catalogId, headerText: msg.header, bodyText: msg.body, footerText: msg.footer, sections: msg.sections.map(s => ({ title: s.title, productIds: s.productRetailerIds })) }), { recipientPhone: msg.to }); }, 2, 1000, this.beforeEachAttempt);
+    const result = await withRetry(async () => { return this.withAttemptAndGuard(() => this.cloud.sendProductList({ to: msg.to, catalogId: msg.catalogId, headerText: msg.header, bodyText: msg.body, footerText: msg.footer, sections: msg.sections.map(s => ({ title: s.title, productIds: s.productRetailerIds })) }), { recipientPhone: msg.to }); }, 2, 1000, this.beforeEachAttempt);
     return { success: true, messageId: result.messageId };
   }
 }
