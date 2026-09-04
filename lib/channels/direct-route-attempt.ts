@@ -15,6 +15,7 @@ import {
   markAccepted,
   markFailed,
   markAmbiguous,
+  GateBlockError,
   isAmbiguousTransportError,
   isSendAttemptGateOn,
   type AttemptParams,
@@ -31,9 +32,9 @@ interface DirectSendResult {
 /**
  * Execute a direct-route Meta send with proper attempt lifecycle.
  *
- * Lifecycle: attempt INSERT → provider call → link WAMID / mark outcome.
+ * Lifecycle: attempt INSERT → authorization (if provided) → durable sending → provider call.
  * Gate OFF: recording failure does not block send.
- * Gate ON: recording/persistence failure blocks send (zero Meta call).
+ * Gate ON: recording/persistence failure throws GateBlockError (zero Meta call).
  */
 export async function withDirectRouteAttempt(
   supabase: SupabaseClient,
@@ -43,18 +44,31 @@ export async function withDirectRouteAttempt(
     recipientPhone: string;
   },
   providerCall: () => Promise<Response>,
+  /** Optional #256 authorization check — runs after attempt creation, before emission */
+  authorizationCheck?: () => Promise<void>,
 ): Promise<DirectSendResult> {
   // 1. Create attempt
   let attemptId: string | null = null;
   try {
     attemptId = await createAttempt(supabase, params);
   } catch (err) {
-    // Gate ON throws here — propagate to block Meta call
+    // Gate ON throws GateBlockError — propagate to block entire logical send
+    if (err instanceof GateBlockError) throw err;
     if (isSendAttemptGateOn()) throw err;
     logger.warn('[DIRECT-ATTEMPT] Gate OFF: attempt creation failed, send proceeds');
   }
 
-  // 2. Mark sending (durable pre-emission)
+  // 2. Authorization check (#256 suspension, if provided)
+  if (authorizationCheck) {
+    try {
+      await authorizationCheck();
+    } catch (guardErr) {
+      // Attempt stays pending_authorization — no Meta emission
+      throw guardErr;
+    }
+  }
+
+  // 3. Mark sending (durable pre-emission)
   if (attemptId) {
     try {
       await markSending(supabase, attemptId);

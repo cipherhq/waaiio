@@ -138,12 +138,10 @@ export async function GET(request: NextRequest) {
       // Send WhatsApp notification to business owner (if they have a phone)
       if (profile.phone) {
         try {
-          await assertMessagingAllowed(biz.id);
-
           const waToken = process.env.META_CLOUD_ACCESS_TOKEN || '';
           const waPhoneId = process.env.META_CLOUD_PHONE_NUMBER_ID || '';
           if (waToken && waPhoneId) {
-            // #257: unified direct-route attempt recording
+            // #257: attempt → #256 guard → sending → Meta (all inside helper)
             const { withDirectRouteAttempt } = await import('@/lib/channels/direct-route-attempt');
             await withDirectRouteAttempt(supabase, {
               businessId: biz.id, attemptScope: 'business', recipientPhone: profile.phone,
@@ -157,8 +155,9 @@ export async function GET(request: NextRequest) {
                 type: 'text',
                 text: { body: `💰 ${biz.name}: You have ${formattedBalance} from ${paymentCount} payments waiting!\n\nSet up your bank account to get paid automatically:\n${appUrl}/dashboard/payouts` },
               }),
-            }));
+            }), () => assertMessagingAllowed(biz.id));
           }
+          // Missing credentials: no attempt, no Meta call (waToken/waPhoneId check above)
         } catch (err) {
           if (err instanceof MessagingSuspendedError) {
             logger.warn(`[PAYOUT-NUDGE] Messaging suspended for ${biz.name}, skipping WhatsApp nudge`);

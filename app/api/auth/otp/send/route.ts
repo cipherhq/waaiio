@@ -49,8 +49,9 @@ export async function POST(request: NextRequest) {
     let deliveryPath: 'database_channel' | 'env_fallback' | null = null;
     let waMessageId: string | null = null;
 
-    // #257: Track whether the primary emission was ambiguous (may have sent)
+    // #257: Track whether the primary emission was ambiguous or gate-blocked
     let primaryAmbiguous = false;
+    let primaryGateBlocked = false;
 
     try {
       const supabase = createServiceClient();
@@ -89,18 +90,23 @@ export async function POST(request: NextRequest) {
       }
     } catch (err) {
       // #257: Classify primary failure before allowing fallback
-      const { isAmbiguousTransportError } = await import('@/lib/channels/attempt-recording').catch(() => ({ isAmbiguousTransportError: () => false }));
-      if (err instanceof Error && isAmbiguousTransportError(err)) {
+      let { isAmbiguousTransportError: isAmb, GateBlockError: GBE } = { isAmbiguousTransportError: (_e: Error) => false, GateBlockError: class {} };
+      try { const mod = await import('@/lib/channels/attempt-recording'); isAmb = mod.isAmbiguousTransportError; GBE = mod.GateBlockError; } catch {}
+
+      if (err instanceof GBE) {
+        // Gate ON pre-emission failure — zero Meta emission, zero fallback
+        primaryGateBlocked = true;
+      } else if (err instanceof Error && isAmb(err)) {
         primaryAmbiguous = true;
       }
-      if (!primaryAmbiguous) {
+      if (!primaryAmbiguous && !primaryGateBlocked) {
         logger.withContext({ op: 'otp-send.whatsapp-channel', ...safeLogErrorContext(err) }).error('[OTP Send] WhatsApp channel send failed, trying env fallback');
       }
     }
 
     // Fallback: use env-level Meta Cloud credentials
-    // #257: NO fallback after ambiguous primary emission (may have already sent)
-    if (!sent && !primaryAmbiguous) {
+    // #257: NO fallback after ambiguous primary (may have sent) or Gate ON block (required recording failed)
+    if (!sent && !primaryAmbiguous && !primaryGateBlocked) {
       const phoneNumberId = process.env.META_CLOUD_PHONE_NUMBER_ID;
       const accessToken = process.env.META_CLOUD_ACCESS_TOKEN;
 

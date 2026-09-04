@@ -38,6 +38,16 @@ export class AmbiguousSendError extends Error {
   }
 }
 
+/** Thrown when Gate ON blocks a send due to required pre-emission recording failure.
+ * Not a provider failure — no Meta emission occurred. Callers must not fallback/resend. */
+export class GateBlockError extends Error {
+  readonly isGateBlock = true as const;
+  constructor(message: string) {
+    super(message);
+    this.name = 'GateBlockError';
+  }
+}
+
 /** Feature gate: OFF = best-effort recording; ON = fail-closed. */
 let sendAttemptGateEnabled = false;
 
@@ -85,7 +95,7 @@ export async function createAttempt(
     return data.id;
   } catch (err) {
     if (sendAttemptGateEnabled) {
-      throw new Error(`[ATTEMPT] Gate ON: failed to create attempt record — zero Meta emission: ${(err as Error).message}`);
+      throw new GateBlockError(`Gate ON: failed to create attempt record — zero Meta emission: ${(err as Error).message}`);
     }
     logger.warn('[ATTEMPT] Gate OFF: failed to create attempt record, send proceeds:', (err as Error).message);
     return null;
@@ -109,7 +119,7 @@ export async function markSending(
 
   if (error) {
     if (sendAttemptGateEnabled) {
-      throw new Error(`[ATTEMPT] Gate ON: failed to persist pre-emission state — zero Meta emission: ${error.message}`);
+      throw new GateBlockError(`Gate ON: failed to persist pre-emission state — zero Meta emission: ${error.message}`);
     }
     logger.error('[ATTEMPT] Failed to mark sending:', error.message);
   }

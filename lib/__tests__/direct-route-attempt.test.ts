@@ -10,13 +10,23 @@ vi.mock('@/lib/logger', () => ({
   logger: { warn: vi.fn(), error: vi.fn(), info: vi.fn() },
 }));
 
-// Mock attempt-recording module
-const mockCreateAttempt = vi.fn();
-const mockMarkSending = vi.fn();
-const mockMarkAccepted = vi.fn();
-const mockMarkFailed = vi.fn();
-const mockMarkAmbiguous = vi.fn();
-let mockGateOn = false;
+// Hoisted mocks — must be inside vi.hoisted() so vi.mock() can reference them
+const { mockCreateAttempt, mockMarkSending, mockMarkAccepted, mockMarkFailed, mockMarkAmbiguous, MockGateBlockError, gateState } = vi.hoisted(() => {
+  class _GBE extends Error {
+    readonly isGateBlock = true as const;
+    constructor(m: string) { super(m); this.name = 'GateBlockError'; }
+  }
+  const state = { on: false };
+  return {
+    mockCreateAttempt: vi.fn(),
+    mockMarkSending: vi.fn(),
+    mockMarkAccepted: vi.fn(),
+    mockMarkFailed: vi.fn(),
+    mockMarkAmbiguous: vi.fn(),
+    MockGateBlockError: _GBE,
+    gateState: state,
+  };
+});
 
 vi.mock('@/lib/channels/attempt-recording', () => ({
   createAttempt: (...args: unknown[]) => mockCreateAttempt(...args),
@@ -25,7 +35,8 @@ vi.mock('@/lib/channels/attempt-recording', () => ({
   markFailed: (...args: unknown[]) => mockMarkFailed(...args),
   markAmbiguous: (...args: unknown[]) => mockMarkAmbiguous(...args),
   isAmbiguousTransportError: (err: Error) => /abort|timeout|econnreset/i.test(err.message),
-  isSendAttemptGateOn: () => mockGateOn,
+  isSendAttemptGateOn: () => gateState.on,
+  GateBlockError: MockGateBlockError,
 }));
 
 import { withDirectRouteAttempt } from '@/lib/channels/direct-route-attempt';
@@ -33,7 +44,7 @@ import { withDirectRouteAttempt } from '@/lib/channels/direct-route-attempt';
 describe('withDirectRouteAttempt (#257)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockGateOn = false;
+    gateState.on = false;
     mockCreateAttempt.mockResolvedValue('attempt-1');
     mockMarkSending.mockResolvedValue(undefined);
     mockMarkAccepted.mockResolvedValue(undefined);
@@ -41,17 +52,17 @@ describe('withDirectRouteAttempt (#257)', () => {
     mockMarkAmbiguous.mockResolvedValue(undefined);
   });
 
-  it('Gate OFF: createAttempt failure => send proceeds', async () => {
-    mockCreateAttempt.mockRejectedValue(new Error('DB down'));
+  it('Gate OFF: createAttempt failure => send proceeds (not GateBlockError)', async () => {
+    mockCreateAttempt.mockRejectedValue(new Error('DB down')); // plain Error, not GateBlockError
     const fetchFn = vi.fn().mockResolvedValue(new Response(JSON.stringify({ messages: [{ id: 'w1' }] }), { status: 200 }));
     const r = await withDirectRouteAttempt({} as any, { businessId: null, attemptScope: 'platform', recipientPhone: '+1' }, fetchFn);
     expect(r.ok).toBe(true);
     expect(fetchFn).toHaveBeenCalledTimes(1);
   });
 
-  it('Gate ON: createAttempt failure => zero Meta call', async () => {
-    mockGateOn = true;
-    mockCreateAttempt.mockRejectedValue(new Error('Gate ON: failed'));
+  it('Gate ON: createAttempt failure => zero Meta call (GateBlockError)', async () => {
+    gateState.on = true;
+    mockCreateAttempt.mockRejectedValue(new MockGateBlockError('Gate ON: create failed'));
     const fetchFn = vi.fn();
     await expect(withDirectRouteAttempt({} as any, { businessId: null, attemptScope: 'platform', recipientPhone: '+1' }, fetchFn))
       .rejects.toThrow('Gate ON');
@@ -59,8 +70,8 @@ describe('withDirectRouteAttempt (#257)', () => {
   });
 
   it('Gate ON: markSending failure => zero Meta call', async () => {
-    mockGateOn = true;
-    mockMarkSending.mockRejectedValue(new Error('Gate ON: failed'));
+    gateState.on = true;
+    mockMarkSending.mockRejectedValue(new MockGateBlockError('Gate ON: sending failed'));
     const fetchFn = vi.fn();
     await expect(withDirectRouteAttempt({} as any, { businessId: null, attemptScope: 'platform', recipientPhone: '+1' }, fetchFn))
       .rejects.toThrow('Gate ON');
@@ -105,5 +116,35 @@ describe('withDirectRouteAttempt (#257)', () => {
     const r = await withDirectRouteAttempt({} as any, { businessId: null, attemptScope: 'platform', recipientPhone: '+1' }, fetchFn);
     expect(r.ok).toBe(true);
     expect(fetchFn).toHaveBeenCalledTimes(1);
+  });
+
+  // ── Authorization callback ──
+
+  it('Authorization callback failure (suspension) => attempt stays pending, zero Meta call', async () => {
+    const fetchFn = vi.fn();
+    await expect(withDirectRouteAttempt(
+      {} as any,
+      { businessId: 'biz-1', attemptScope: 'business', recipientPhone: '+1' },
+      fetchFn,
+      async () => { throw new Error('Messaging suspended'); },
+    )).rejects.toThrow('suspended');
+    expect(fetchFn).not.toHaveBeenCalled();
+    // Attempt was created (createAttempt called) but NOT marked failed
+    expect(mockCreateAttempt).toHaveBeenCalled();
+    expect(mockMarkFailed).not.toHaveBeenCalled();
+  });
+
+  // ── GateBlockError ──
+
+  it('Gate ON createAttempt failure propagates GateBlockError with isGateBlock', async () => {
+    gateState.on = true;
+    mockCreateAttempt.mockRejectedValue(new MockGateBlockError('Gate ON: create failed'));
+    const fetchFn = vi.fn();
+    let caught: unknown;
+    try {
+      await withDirectRouteAttempt({} as any, { businessId: null, attemptScope: 'platform', recipientPhone: '+1' }, fetchFn);
+    } catch (err) { caught = err; }
+    expect(fetchFn).not.toHaveBeenCalled();
+    expect((caught as any).isGateBlock).toBe(true);
   });
 });
