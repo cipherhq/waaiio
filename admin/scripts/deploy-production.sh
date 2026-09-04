@@ -3,19 +3,12 @@
 # Admin Console — Production Deploy Script (#292)
 #
 # Deterministic deployment from exact clean protected-main checkout.
-# Default mode: consumes Vercel-pulled production env only.
-# Emergency recovery: --emergency-local-env flag allows admin/.env.
+# Default: consumes Vercel-pulled production env only.
+# Emergency: --emergency-local-env flag allows admin/.env.
 #
 # Usage:
 #   cd admin && ./scripts/deploy-production.sh
 #   cd admin && ./scripts/deploy-production.sh --emergency-local-env
-#
-# Prerequisites:
-#   - Clean git worktree on main branch, synced with remote
-#   - Vercel CLI authenticated (npx vercel whoami)
-#   - Node.js + npm + npx playwright installed
-#   - Default mode: run `npx vercel env pull --yes --environment production` first
-#   - Emergency mode: admin/.env with production values
 # ═══════════════════════════════════════════════════════
 
 set -euo pipefail
@@ -24,12 +17,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ADMIN_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 REPO_ROOT="$(cd "${ADMIN_DIR}/.." && pwd)"
 
-# Canonical identifiers
 CANONICAL_PROJECT_ID="prj_jr7l0grIW2xE6FxVTy5RwRec1rFt"
 CANONICAL_ORG_ID="team_AEcg69CktrGEptXDznpae8Rp"
 CANONICAL_SUPABASE_REF="cxcmiqotkowhxinjbytg"
 
-# Parse flags
 EMERGENCY_LOCAL_ENV=false
 for arg in "$@"; do
   case "${arg}" in
@@ -52,28 +43,23 @@ echo ""
 
 BRANCH=$(git -C "${REPO_ROOT}" rev-parse --abbrev-ref HEAD)
 if [ "${BRANCH}" != "main" ]; then
-  echo "❌ ABORT: Not on main branch (current: ${BRANCH})"
-  exit 1
+  echo "❌ ABORT: Not on main branch (current: ${BRANCH})"; exit 1
 fi
 
 git -C "${REPO_ROOT}" fetch origin main --quiet
 LOCAL_SHA=$(git -C "${REPO_ROOT}" rev-parse HEAD)
 REMOTE_SHA=$(git -C "${REPO_ROOT}" rev-parse origin/main)
-
 if [ "${LOCAL_SHA}" != "${REMOTE_SHA}" ]; then
-  echo "❌ ABORT: Local HEAD (${LOCAL_SHA}) != remote main (${REMOTE_SHA})"
-  exit 1
+  echo "❌ ABORT: Local HEAD != remote main"; exit 1
 fi
 
 DIRTY=$(git -C "${REPO_ROOT}" status --porcelain admin/ | wc -l | tr -d ' ')
 if [ "${DIRTY}" != "0" ]; then
-  echo "❌ ABORT: admin/ has uncommitted changes:"
-  git -C "${REPO_ROOT}" status --porcelain admin/
-  exit 1
+  echo "❌ ABORT: admin/ has uncommitted changes"; exit 1
 fi
 
-echo "Source SHA:  ${LOCAL_SHA}"
-echo "✅ Exact protected-main provenance verified"
+echo "Source: ${LOCAL_SHA} (main, clean)"
+echo "✅ Provenance verified"
 echo ""
 
 # ══════════════════════════════════════════════════════
@@ -81,67 +67,101 @@ echo ""
 # ══════════════════════════════════════════════════════
 
 if [ ! -f .vercel/project.json ]; then
-  echo "❌ ABORT: .vercel/project.json not found. Run: npx vercel link"
-  exit 1
+  echo "❌ ABORT: .vercel/project.json not found"; exit 1
 fi
-
 LINKED_PROJECT=$(grep -o '"projectId":"[^"]*"' .vercel/project.json | cut -d'"' -f4)
 LINKED_ORG=$(grep -o '"orgId":"[^"]*"' .vercel/project.json | cut -d'"' -f4)
-
 if [ "${LINKED_PROJECT}" != "${CANONICAL_PROJECT_ID}" ] || [ "${LINKED_ORG}" != "${CANONICAL_ORG_ID}" ]; then
-  echo "❌ ABORT: Vercel project/org mismatch"
-  exit 1
+  echo "❌ ABORT: Vercel project/org mismatch"; exit 1
 fi
-
 echo "✅ Vercel project identity verified"
 echo ""
 
 # ══════════════════════════════════════════════════════
-# 3. BUILD-TIME ENV RESOLUTION
+# 3. RESOLVE + VALIDATE + INJECT BUILD ENV
 # ══════════════════════════════════════════════════════
 
+resolve_env_from_file() {
+  local envfile="$1"
+  local url_val key_val
+  url_val=$(grep "^VITE_SUPABASE_URL=" "${envfile}" 2>/dev/null | head -1 | cut -d= -f2- || true)
+  key_val=$(grep "^VITE_SUPABASE_ANON_KEY=" "${envfile}" 2>/dev/null | head -1 | cut -d= -f2- || true)
+  if [ -n "${url_val}" ] && [ -n "${key_val}" ]; then
+    echo "${url_val}|${key_val}"
+  fi
+}
+
 RESOLVED_URL=""
+RESOLVED_KEY=""
 ENV_SOURCE=""
 
 if [ "${EMERGENCY_LOCAL_ENV}" = true ]; then
-  # Emergency mode: check local .env files
   for envfile in .env.local .env; do
     if [ -f "${envfile}" ]; then
-      VAL=$(grep "^VITE_SUPABASE_URL=" "${envfile}" 2>/dev/null | head -1 | cut -d= -f2- || true)
-      if [ -n "${VAL}" ] && echo "${VAL}" | grep -q "^https://${CANONICAL_SUPABASE_REF}\.supabase\.co"; then
-        RESOLVED_URL="${VAL}"
+      PAIR=$(resolve_env_from_file "${envfile}")
+      if [ -n "${PAIR}" ]; then
+        RESOLVED_URL="${PAIR%%|*}"
+        RESOLVED_KEY="${PAIR#*|}"
         ENV_SOURCE="${envfile} (EMERGENCY)"
         break
       fi
     fi
   done
 else
-  # Normal mode: only Vercel-pulled production env
   VERCEL_ENV=".vercel/.env.production.local"
   if [ -f "${VERCEL_ENV}" ]; then
-    VAL=$(grep "^VITE_SUPABASE_URL=" "${VERCEL_ENV}" 2>/dev/null | head -1 | cut -d= -f2- || true)
-    if [ -n "${VAL}" ] && echo "${VAL}" | grep -q "^https://${CANONICAL_SUPABASE_REF}\.supabase\.co"; then
-      RESOLVED_URL="${VAL}"
+    PAIR=$(resolve_env_from_file "${VERCEL_ENV}")
+    if [ -n "${PAIR}" ]; then
+      RESOLVED_URL="${PAIR%%|*}"
+      RESOLVED_KEY="${PAIR#*|}"
       ENV_SOURCE="${VERCEL_ENV}"
     fi
   fi
-
   if [ -z "${RESOLVED_URL}" ]; then
-    echo "❌ ABORT: Vercel production env does not have a valid VITE_SUPABASE_URL."
+    echo "❌ ABORT: Vercel production env missing valid VITE_SUPABASE_URL + VITE_SUPABASE_ANON_KEY."
     echo "   Run: npx vercel env pull --yes --environment production"
-    echo "   If Vercel Secret-type vars cannot be decrypted, use --emergency-local-env"
+    echo "   If Vercel Secrets cannot be decrypted, use --emergency-local-env"
     exit 1
   fi
 fi
 
-if [ -z "${RESOLVED_URL}" ]; then
-  echo "❌ ABORT: No valid VITE_SUPABASE_URL found for canonical project ${CANONICAL_SUPABASE_REF}"
-  exit 1
+if [ -z "${RESOLVED_URL}" ] || [ -z "${RESOLVED_KEY}" ]; then
+  echo "❌ ABORT: Could not resolve both VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY"; exit 1
+fi
+
+# Validate URL matches canonical project
+if ! echo "${RESOLVED_URL}" | grep -q "^https://${CANONICAL_SUPABASE_REF}\.supabase\.co"; then
+  echo "❌ ABORT: URL does not match canonical project ${CANONICAL_SUPABASE_REF}"; exit 1
+fi
+
+# Decode and validate anon JWT from the resolved env value (before build)
+JWT_PAYLOAD_B64=$(echo "${RESOLVED_KEY}" | cut -d. -f2)
+PADDED=$(echo "${JWT_PAYLOAD_B64}" | tr '_-' '/+')
+MOD=$((${#PADDED} % 4))
+if [ "${MOD}" -eq 2 ]; then PADDED="${PADDED}=="; elif [ "${MOD}" -eq 3 ]; then PADDED="${PADDED}="; fi
+JWT_DECODED=$(echo "${PADDED}" | base64 -d 2>/dev/null || echo "FAIL")
+
+if [ "${JWT_DECODED}" = "FAIL" ]; then
+  echo "❌ ABORT: Anon key JWT decode failed"; exit 1
+fi
+
+JWT_ROLE=$(echo "${JWT_DECODED}" | grep -oE '"role"\s*:\s*"[^"]*"' | head -1 | grep -oE '"[^"]*"$' | tr -d '"')
+if [ "${JWT_ROLE}" != "anon" ]; then
+  echo "❌ ABORT: JWT role='${JWT_ROLE}', expected 'anon'"; exit 1
+fi
+
+JWT_REF=$(echo "${JWT_DECODED}" | grep -oE '"ref"\s*:\s*"[^"]*"' | head -1 | grep -oE '"[^"]*"$' | tr -d '"')
+if [ -z "${JWT_REF}" ] || [ "${JWT_REF}" != "${CANONICAL_SUPABASE_REF}" ]; then
+  echo "❌ ABORT: JWT ref='${JWT_REF:-MISSING}', expected '${CANONICAL_SUPABASE_REF}'"; exit 1
 fi
 
 echo "Env source: ${ENV_SOURCE}"
-echo "✅ Build-time env resolves to canonical production project"
+echo "✅ URL + anon key validated (role=anon, ref=${CANONICAL_SUPABASE_REF})"
 echo ""
+
+# Export with highest precedence — Vite respects process.env over .env files
+export VITE_SUPABASE_URL="${RESOLVED_URL}"
+export VITE_SUPABASE_ANON_KEY="${RESOLVED_KEY}"
 
 # ══════════════════════════════════════════════════════
 # 4. DETERMINISTIC BUILD
@@ -156,75 +176,62 @@ npm run build
 echo ""
 
 # ══════════════════════════════════════════════════════
-# 5. BUNDLE SAFETY — JWT DECODE + PROJECT PROOF
+# 5. BUNDLE SAFETY VERIFICATION
 # ══════════════════════════════════════════════════════
 
 BUNDLE=$(ls dist/assets/index-*.js 2>/dev/null | head -1)
 if [ -z "${BUNDLE}" ]; then
-  echo "❌ ABORT: No index bundle found in dist/assets/"
-  exit 1
+  echo "❌ ABORT: No index bundle found"; exit 1
 fi
 
-# 5a. Canonical Supabase URL
 if ! grep -q "${CANONICAL_SUPABASE_REF}\.supabase\.co" "${BUNDLE}"; then
-  echo "❌ ABORT: Bundle missing canonical Supabase URL"
-  exit 1
+  echo "❌ ABORT: Bundle missing canonical Supabase URL"; exit 1
 fi
-echo "  ✅ Canonical Supabase URL present"
+echo "  ✅ Canonical Supabase URL in bundle"
 
-# 5b. JWT decode — role + project identity (fail-closed)
-JWT_RAW=$(grep -oE 'eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+' "${BUNDLE}" | head -1)
-if [ -z "${JWT_RAW}" ]; then
-  echo "❌ ABORT: No JWT in bundle"
-  exit 1
+# Verify bundle JWT matches the one we injected
+BUNDLE_JWT=$(grep -oE 'eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+' "${BUNDLE}" | head -1)
+if [ -z "${BUNDLE_JWT}" ]; then
+  echo "❌ ABORT: No JWT in bundle"; exit 1
 fi
+BUNDLE_JWT_PAYLOAD=$(echo "${BUNDLE_JWT}" | cut -d. -f2)
+B_PADDED=$(echo "${BUNDLE_JWT_PAYLOAD}" | tr '_-' '/+')
+B_MOD=$((${#B_PADDED} % 4))
+if [ "${B_MOD}" -eq 2 ]; then B_PADDED="${B_PADDED}=="; elif [ "${B_MOD}" -eq 3 ]; then B_PADDED="${B_PADDED}="; fi
+B_DECODED=$(echo "${B_PADDED}" | base64 -d 2>/dev/null || echo "FAIL")
+B_ROLE=$(echo "${B_DECODED}" | grep -oE '"role"\s*:\s*"[^"]*"' | head -1 | grep -oE '"[^"]*"$' | tr -d '"')
+B_REF=$(echo "${B_DECODED}" | grep -oE '"ref"\s*:\s*"[^"]*"' | head -1 | grep -oE '"[^"]*"$' | tr -d '"')
+if [ "${B_ROLE}" != "anon" ] || [ "${B_REF}" != "${CANONICAL_SUPABASE_REF}" ]; then
+  echo "❌ ABORT: Bundle JWT does not match injected credentials (role=${B_ROLE}, ref=${B_REF})"; exit 1
+fi
+echo "  ✅ Bundle JWT = anon + ${CANONICAL_SUPABASE_REF}"
 
-JWT_PAYLOAD=$(echo "${JWT_RAW}" | cut -d. -f2)
-PADDED=$(echo "${JWT_PAYLOAD}" | tr '_-' '/+')
-MOD=$((${#PADDED} % 4))
-if [ "${MOD}" -eq 2 ]; then PADDED="${PADDED}=="; elif [ "${MOD}" -eq 3 ]; then PADDED="${PADDED}="; fi
-DECODED=$(echo "${PADDED}" | base64 -d 2>/dev/null || echo "DECODE_FAILED")
-
-if [ "${DECODED}" = "DECODE_FAILED" ]; then
-  echo "❌ ABORT: JWT decode failed"
-  exit 1
+# No service_role in bundle
+if grep -q 'service_role' "${BUNDLE}"; then
+  echo "❌ ABORT: Bundle contains service_role"; exit 1
 fi
-
-JWT_ROLE=$(echo "${DECODED}" | grep -oE '"role"\s*:\s*"[^"]*"' | head -1 | grep -oE '"[^"]*"$' | tr -d '"')
-if [ "${JWT_ROLE}" != "anon" ]; then
-  echo "❌ ABORT: JWT role='${JWT_ROLE}', expected 'anon'"
-  exit 1
-fi
-echo "  ✅ JWT role = anon"
-
-# Project identity — FAIL CLOSED (must be present and match)
-JWT_REF=$(echo "${DECODED}" | grep -oE '"ref"\s*:\s*"[^"]*"' | head -1 | grep -oE '"[^"]*"$' | tr -d '"')
-if [ -z "${JWT_REF}" ]; then
-  echo "❌ ABORT: JWT has no 'ref' claim — cannot verify production project identity"
-  exit 1
-fi
-if [ "${JWT_REF}" != "${CANONICAL_SUPABASE_REF}" ]; then
-  echo "❌ ABORT: JWT ref='${JWT_REF}', expected '${CANONICAL_SUPABASE_REF}'"
-  exit 1
-fi
-echo "  ✅ JWT project ref = ${CANONICAL_SUPABASE_REF}"
+echo "  ✅ No service_role credential"
 echo ""
 
 # ══════════════════════════════════════════════════════
-# 6. CAPTURE PREVIOUS DEPLOYMENT FOR ROLLBACK
+# 6. CAPTURE PREVIOUS DEPLOYMENT (REQUIRED)
 # ══════════════════════════════════════════════════════
 
-PREV_DEPLOYMENT=$(npx vercel ls --prod 2>&1 | grep "● Ready" | head -1 | awk '{print $3}' || true)
-if [ -n "${PREV_DEPLOYMENT}" ]; then
-  echo "Previous production deployment: ${PREV_DEPLOYMENT}"
-  echo "  (rollback: npx vercel rollback ${PREV_DEPLOYMENT})"
-else
-  echo "⚠️  Could not capture previous deployment for rollback"
+echo "Capturing previous production deployment..."
+PREV_DEPLOY_URL=$(npx vercel ls --prod 2>&1 | grep "● Ready" | head -1 | awk '{print $3}' || true)
+
+if [ -z "${PREV_DEPLOY_URL}" ]; then
+  echo "❌ ABORT: Cannot identify previous production deployment for rollback."
+  echo "   A valid rollback target is required before production promotion."
+  exit 1
 fi
+
+echo "  Previous: ${PREV_DEPLOY_URL}"
+echo "  ✅ Rollback target captured"
 echo ""
 
 # ══════════════════════════════════════════════════════
-# 7. DEPLOY (prebuilt)
+# 7. DEPLOY
 # ══════════════════════════════════════════════════════
 
 rm -rf .vercel/output
@@ -248,120 +255,88 @@ echo ""
 # 8. HEADLESS BROWSER BOOTSTRAP SMOKE
 # ══════════════════════════════════════════════════════
 
-echo "Running headless browser bootstrap smoke test..."
+echo "Running headless browser bootstrap smoke..."
 
-# Create a temporary Playwright script
 SMOKE_SCRIPT=$(mktemp /tmp/admin-smoke-XXXXXX.mjs)
-cat > "${SMOKE_SCRIPT}" << 'PLAYWRIGHT_SCRIPT'
+cat > "${SMOKE_SCRIPT}" << 'PW_SCRIPT'
 import { chromium } from 'playwright';
-
 const url = 'https://admin.waaiio.com';
-const timeout = 15000;
-
 async function smoke() {
   const browser = await chromium.launch({ headless: true });
   const page = await browser.newPage();
-
   const errors = [];
   page.on('pageerror', (err) => errors.push(err.message));
   page.on('console', (entry) => {
     if (entry.type() === 'error') errors.push(entry.text());
   });
-
   try {
-    const response = await page.goto(url, { waitUntil: 'networkidle', timeout });
+    const response = await page.goto(url, { waitUntil: 'networkidle', timeout: 15000 });
     if (!response || response.status() !== 200) {
-      console.error(`HTTP ${response?.status() || 'no response'}`);
+      console.error('HTTP ' + (response?.status() || 'no response'));
       process.exit(1);
     }
-
-    // Wait for the SPA to mount — the root div should have children
     await page.waitForSelector('#root > *', { timeout: 10000 });
-
-    // Check for the Supabase initialization crash
-    const supabaseErrors = errors.filter(e =>
-      e.includes('Invalid supabaseUrl') ||
-      e.includes('supabaseUrl is required') ||
-      e.includes('supabaseUrl: Must be a valid')
+    const bad = errors.filter(e =>
+      e.includes('Invalid supabaseUrl') || e.includes('supabaseUrl is required') || e.includes('supabaseUrl: Must be a valid')
     );
-
-    if (supabaseErrors.length > 0) {
-      console.error('Supabase initialization error detected:');
-      supabaseErrors.forEach(e => console.error('  ' + e));
+    if (bad.length > 0) {
+      bad.forEach(e => console.error('  ' + e));
       process.exit(1);
     }
-
-    // Verify the login page or app shell rendered (not a blank/error page)
-    const hasContent = await page.evaluate(() => {
-      const root = document.getElementById('root');
-      return root && root.innerHTML.length > 100;
+    const ok = await page.evaluate(() => {
+      const r = document.getElementById('root');
+      return r && r.innerHTML.length > 100;
     });
-
-    if (!hasContent) {
-      console.error('SPA root has no meaningful content — possible render failure');
-      process.exit(1);
-    }
-
-    console.log('Bootstrap smoke passed: SPA mounted, no Supabase errors');
-
-    if (errors.length > 0) {
-      console.log(`Note: ${errors.length} non-critical console error(s) observed`);
-    }
-  } finally {
-    await browser.close();
-  }
+    if (!ok) { console.error('SPA root has no content'); process.exit(1); }
+    console.log('Bootstrap smoke passed');
+  } finally { await browser.close(); }
 }
+smoke().catch(err => { console.error('Smoke failed:', err.message); process.exit(1); });
+PW_SCRIPT
 
-smoke().catch(err => {
-  console.error('Smoke test failed:', err.message);
-  process.exit(1);
-});
-PLAYWRIGHT_SCRIPT
-
-# Run the smoke test from repo root (where playwright is installed)
 SMOKE_EXIT=0
 (cd "${REPO_ROOT}" && node "${SMOKE_SCRIPT}") || SMOKE_EXIT=$?
 rm -f "${SMOKE_SCRIPT}"
 
 if [ "${SMOKE_EXIT}" -ne 0 ]; then
   echo ""
-  echo "❌ BOOTSTRAP SMOKE FAILED — SPA did not initialize correctly"
+  echo "❌ BOOTSTRAP SMOKE FAILED"
   echo ""
-  if [ -n "${PREV_DEPLOYMENT}" ]; then
-    echo "Rolling back to previous deployment: ${PREV_DEPLOYMENT}"
-    npx vercel rollback "${PREV_DEPLOYMENT}" --yes 2>&1 || true
-    echo "⚠️  Rollback attempted. Verify admin.waaiio.com manually."
-  else
-    echo "⚠️  No previous deployment captured — manual recovery required."
+  echo "Rolling back to: ${PREV_DEPLOY_URL}"
+  ROLLBACK_EXIT=0
+  npx vercel rollback "${PREV_DEPLOY_URL}" --yes 2>&1 || ROLLBACK_EXIT=$?
+  if [ "${ROLLBACK_EXIT}" -ne 0 ]; then
+    echo ""
+    echo "🚨 ROLLBACK FAILED (exit ${ROLLBACK_EXIT})"
+    echo "   IMMEDIATE MANUAL INTERVENTION REQUIRED"
+    echo "   Previous deployment: ${PREV_DEPLOY_URL}"
+    exit 2
   fi
+  echo "✅ Rolled back to ${PREV_DEPLOY_URL}"
   exit 1
 fi
 
-echo "  ✅ Headless browser bootstrap smoke passed"
+echo "  ✅ Headless browser bootstrap passed"
 echo ""
 
 # ══════════════════════════════════════════════════════
-# 9. ARTIFACT PROVENANCE VERIFICATION
+# 9. ARTIFACT PROVENANCE
 # ══════════════════════════════════════════════════════
 
-LOCAL_JS_NAME=$(basename "${BUNDLE}")
+LOCAL_JS=$(basename "${BUNDLE}")
 LIVE_JS_REF=$(curl -s https://admin.waaiio.com/ | grep -oE 'src="/assets/index-[^"]+\.js"' | sed 's/src="//;s/"//' || true)
-
 if [ -n "${LIVE_JS_REF}" ]; then
-  LIVE_JS_NAME=$(basename "${LIVE_JS_REF}")
-  if [ "${LIVE_JS_NAME}" = "${LOCAL_JS_NAME}" ]; then
-    echo "  ✅ Live artifact matches deployed bundle (${LOCAL_JS_NAME})"
+  LIVE_JS=$(basename "${LIVE_JS_REF}")
+  if [ "${LIVE_JS}" = "${LOCAL_JS}" ]; then
+    echo "  ✅ Live artifact = ${LOCAL_JS}"
   else
-    echo "  ⚠️  Live bundle (${LIVE_JS_NAME}) != deployed (${LOCAL_JS_NAME}) — possible propagation delay"
+    echo "  ⚠️  Live (${LIVE_JS}) != deployed (${LOCAL_JS}) — propagation delay?"
   fi
 fi
 
 echo ""
 echo "═══ Deploy complete ═══"
-echo "Source:  ${LOCAL_SHA} (main)"
-echo "Bundle:  ${LOCAL_JS_NAME}"
-echo "Live:    https://admin.waaiio.com"
-if [ -n "${PREV_DEPLOYMENT}" ]; then
-  echo "Rollback: npx vercel rollback ${PREV_DEPLOYMENT}"
-fi
+echo "Source:   ${LOCAL_SHA}"
+echo "Bundle:   ${LOCAL_JS}"
+echo "Rollback: npx vercel rollback ${PREV_DEPLOY_URL}"
 echo ""
