@@ -21,6 +21,7 @@ const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const appUrl = Deno.env.get('APP_URL') || 'https://waaiio.com';
 const whatsappToken = Deno.env.get('WHATSAPP_TOKEN') || '';
 const whatsappPhoneId = Deno.env.get('WHATSAPP_PHONE_NUMBER_ID') || '';
+import { withEdgeAttemptRecording } from '../_shared/attempt-recording.ts';
 
 function generateToken(length = 24): string {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
@@ -35,36 +36,44 @@ async function sendWhatsApp(to: string, text: string, supabase: ReturnType<typeo
     return true;
   }
 
-  // S-1 (#256): Fresh fail-closed suspension check immediately before Meta dispatch
-  const { data: bizCheck, error: bizErr } = await supabase
-    .from('businesses')
-    .select('messaging_suspended')
-    .eq('id', businessId)
-    .maybeSingle();
-  if (bizErr || !bizCheck || bizCheck.messaging_suspended !== false) {
-    console.log(`[generate-sign-link] Send blocked: business ${businessId} suspended/unverifiable`);
-    return false;
-  }
-
   const phone = to.replace(/\D/g, '');
-  const res = await fetch(
-    `https://graph.facebook.com/v22.0/${whatsappPhoneId}/messages`,
-    {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${whatsappToken}`,
-        'Content-Type': 'application/json',
+  const supabaseForRecording = createClient(supabaseUrl, supabaseKey);
+  // #257: attempt → #256 guard → sending → Meta fetch (all inside withEdgeAttemptRecording)
+  const result = await withEdgeAttemptRecording(
+    supabaseForRecording,
+    { businessId, recipientPhone: to, phoneNumberId: whatsappPhoneId, flowType: 'generate-sign-link' },
+    () => fetch(
+      `https://graph.facebook.com/v22.0/${whatsappPhoneId}/messages`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${whatsappToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          messaging_product: 'whatsapp',
+          to: phone,
+          type: 'text',
+          text: { body: text },
+        }),
       },
-      body: JSON.stringify({
-        messaging_product: 'whatsapp',
-        to: phone,
-        type: 'text',
-        text: { body: text },
-      }),
+    ),
+    // S-1 (#256): Suspension check inside attempt lifecycle
+    async () => {
+      const { data: bizCheck, error: bizErr } = await supabase
+        .from('businesses')
+        .select('messaging_suspended')
+        .eq('id', businessId)
+        .maybeSingle();
+      if (bizErr || !bizCheck || bizCheck.messaging_suspended !== false) {
+        console.log(`[generate-sign-link] Send blocked: business ${businessId} suspended/unverifiable`);
+        return false;
+      }
+      return true;
     },
   );
 
-  return res.ok;
+  return result.ok;
 }
 
 const allowedOrigins = [

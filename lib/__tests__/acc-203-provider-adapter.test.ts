@@ -79,9 +79,11 @@ describe('MetaCloudSender.sendTemplate provider-adapter proof', () => {
 
   // ── 2. Default behavior (retry still works) ──
 
-  it('default (no noRetry) — retries on network error and eventually succeeds', async () => {
+  it('default (no noRetry) — retries on retryable server error and eventually succeeds', async () => {
+    // #257: ECONNRESET is now ambiguous (may have emitted) → no retry.
+    // Use a clearly retryable 500 error instead.
     const cloudSendTemplate = vi.fn()
-      .mockRejectedValueOnce(new Error('ECONNRESET'))
+      .mockRejectedValueOnce(new Error('Cloud API error: 500'))
       .mockResolvedValueOnce({ messageId: 'wamid.retry-success' });
 
     const sender = new MetaCloudSender(createMockCloud(cloudSendTemplate));

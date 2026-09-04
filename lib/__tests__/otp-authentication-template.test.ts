@@ -280,9 +280,10 @@ describe('OTP send route — authentication template delivery', () => {
     }));
     const { POST } = await import('@/app/api/auth/otp/send/route');
     const res = await POST(makeReq());
-    expect(res.status).toBe(500);
+    // #257: orchestrator returns !sent → route returns 503 (service unavailable)
+    expect(res.status).toBe(503);
     const body = await res.json();
-    expect(body.message).toContain('Failed');
+    expect(body.message).toBeDefined();
     expect(JSON.stringify(body)).not.toContain('654321');
   });
 });

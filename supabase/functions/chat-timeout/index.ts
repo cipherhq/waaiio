@@ -11,6 +11,7 @@
  */
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { withEdgeAttemptRecording } from '../_shared/attempt-recording.ts';
 
 const isDev = Deno.env.get('ENVIRONMENT') !== 'production';
 const log = {
@@ -105,35 +106,42 @@ async function sendWhatsAppForBusiness(
       return false;
     }
 
-    // S-1 (#256): Fresh fail-closed suspension check immediately before Meta dispatch
-    const { data: bizCheck, error: bizErr } = await supabase
-      .from('businesses')
-      .select('messaging_suspended')
-      .eq('id', businessId)
-      .maybeSingle();
-    if (bizErr || !bizCheck || bizCheck.messaging_suspended !== false) {
-      log.debug(`[chat-timeout] Send blocked: business ${businessId} suspended/unverifiable`);
-      return false;
-    }
-
     const phone = to.replace('+', '');
-    const response = await fetch(
-      `https://graph.facebook.com/v22.0/${phoneNumberId}/messages`,
-      {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          'Content-Type': 'application/json',
+    // #257: attempt → #256 guard → sending → Meta fetch (all inside withEdgeAttemptRecording)
+    const result = await withEdgeAttemptRecording(
+      supabase,
+      { businessId, recipientPhone: to, phoneNumberId, flowType: 'chat-timeout' },
+      () => fetch(
+        `https://graph.facebook.com/v22.0/${phoneNumberId}/messages`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            messaging_product: 'whatsapp',
+            to: phone,
+            type: 'text',
+            text: { body: text },
+          }),
         },
-        body: JSON.stringify({
-          messaging_product: 'whatsapp',
-          to: phone,
-          type: 'text',
-          text: { body: text },
-        }),
+      ),
+      // S-1 (#256): Suspension check inside attempt lifecycle
+      async () => {
+        const { data: bizCheck, error: bizErr } = await supabase
+          .from('businesses')
+          .select('messaging_suspended')
+          .eq('id', businessId)
+          .maybeSingle();
+        if (bizErr || !bizCheck || bizCheck.messaging_suspended !== false) {
+          log.debug(`[chat-timeout] Send blocked: business ${businessId} suspended/unverifiable`);
+          return false;
+        }
+        return true;
       },
     );
-    return response.ok;
+    return result.ok;
   } catch (err) {
     log.error(`Failed to send WhatsApp to ${to} for business ${businessId}:`, err);
     return false;

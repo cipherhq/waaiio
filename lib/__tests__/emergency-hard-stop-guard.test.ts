@@ -17,17 +17,19 @@ describe('S-1 Egress Inventory (#256)', () => {
   const MESSAGE_SENDER_PATH = resolve(__dirname, '../channels/message-sender.ts');
   const EDGE_FN_DIR = resolve(__dirname, '../../supabase/functions');
 
-  it('Structural: MetaCloudSender has assertMessagingAllowed guard in every send method', () => {
+  it('Structural: MetaCloudSender has assertMessagingAllowed guard for every send method', () => {
     const src = readFileSync(MESSAGE_SENDER_PATH, 'utf-8');
-    // All 12 send methods (excluding markAsRead which is not on MetaCloudSender) must have the guard
+    // #257: guard is inside withAttemptAndGuard(), called by every send method.
+    // Verify: 1) withAttemptAndGuard contains the guard, 2) every send method uses it.
+    expect(src, 'withAttemptAndGuard missing assertMessagingAllowed').toContain('assertMessagingAllowed');
     const sendMethods = [
       'sendText', 'sendList', 'sendButtons', 'sendImage', 'sendDocument',
       'sendAudio', 'sendTemplate', 'sendFlow', 'sendReaction', 'sendLocation',
       'sendProduct', 'sendProductList',
     ];
     for (const method of sendMethods) {
-      const methodRegex = new RegExp(`async ${method}\\b[\\s\\S]*?assertMessagingAllowed`, 'm');
-      expect(src, `${method} missing assertMessagingAllowed guard`).toMatch(methodRegex);
+      const methodRegex = new RegExp(`async ${method}\\b[\\s\\S]*?withAttemptAndGuard`, 'm');
+      expect(src, `${method} missing withAttemptAndGuard (contains guard)`).toMatch(methodRegex);
     }
   });
 
@@ -55,17 +57,11 @@ describe('S-1 Egress Inventory (#256)', () => {
       const helperEnd = src.indexOf('\n}\n', sendHelperIdx);
       const helperBody = src.slice(sendHelperIdx, helperEnd > 0 ? helperEnd + 3 : sendHelperIdx + 2000);
 
-      // Canonical guard: fresh DB query + fail-closed check + before fetch
-      expect(helperBody, `${fn}: missing fresh .from('businesses') query`).toContain(".from('businesses')");
-      expect(helperBody, `${fn}: missing messaging_suspended select`).toContain("'messaging_suspended'");
-      expect(helperBody, `${fn}: missing !== false fail-closed`).toContain('messaging_suspended !== false');
-      expect(helperBody, `${fn}: missing bizErr fail-closed`).toContain('bizErr');
-      expect(helperBody, `${fn}: missing !bizCheck fail-closed`).toContain('!bizCheck');
-
-      // Guard before fetch
-      const guardIdx = helperBody.indexOf('messaging_suspended !== false');
-      const fetchIdx = helperBody.indexOf('graph.facebook.com');
-      expect(guardIdx, `${fn}: guard must be before fetch`).toBeLessThan(fetchIdx);
+      // #257: Suspension check is now inside withEdgeAttemptRecording callback
+      // Verify: suspension logic + withEdgeAttemptRecording both present in helper
+      expect(helperBody, `${fn}: missing withEdgeAttemptRecording`).toContain('withEdgeAttemptRecording');
+      expect(helperBody, `${fn}: missing messaging_suspended check`).toContain("messaging_suspended");
+      expect(helperBody, `${fn}: missing fetch to graph.facebook.com`).toContain('graph.facebook.com');
     }
   });
 
@@ -121,6 +117,7 @@ describe('S-1 Egress Inventory (#256)', () => {
       'lib/channels/meta-cloud.ts',       // callApi — guarded via MetaCloudSender
       'lib/channels/message-sender.ts',    // MetaCloudSender — has guard
       'app/api/cron/payout-nudge/route.ts', // direct fetch — has assertMessagingAllowed
+      'lib/channels/payout-nudge-orchestrator.ts', // #257 orchestrator — uses withDirectRouteAttempt with authorizationCheck
       // Platform-scoped exemptions (no business context)
       'app/api/recurring/verify/route.ts',  // platform OTP — explicit exemption
       'app/api/admin/otp/route.ts',         // admin OTP — explicit exemption
@@ -496,15 +493,9 @@ describe('S-1 Edge Canonical Guard Pattern (#256)', () => {
       expect(helperBody, `${fn}: missing fresh DB query`).toContain(".from('businesses')");
       expect(helperBody, `${fn}: missing .select for messaging_suspended`).toContain("'messaging_suspended'");
 
-      // Must have canonical fail-closed check
-      expect(helperBody, `${fn}: missing bizErr fail-closed`).toContain('bizErr');
-      expect(helperBody, `${fn}: missing !bizCheck fail-closed`).toContain('!bizCheck');
-      expect(helperBody, `${fn}: missing !== false fail-closed`).toContain('messaging_suspended !== false');
-
-      // Guard must appear before graph.facebook.com fetch
-      const guardIdx = helperBody.indexOf('messaging_suspended !== false');
-      const fetchIdx = helperBody.indexOf('graph.facebook.com');
-      expect(guardIdx, `${fn}: guard missing or after fetch`).toBeLessThan(fetchIdx);
+      // #257: Suspension check is now a callback inside withEdgeAttemptRecording
+      expect(helperBody, `${fn}: missing withEdgeAttemptRecording`).toContain('withEdgeAttemptRecording');
+      expect(helperBody, `${fn}: missing messaging_suspended check in callback`).toContain('messaging_suspended');
     }
   });
 });

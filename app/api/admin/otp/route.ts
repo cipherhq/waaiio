@@ -132,26 +132,22 @@ async function handleSend(request: NextRequest, body: Record<string, unknown>, c
     }
 
     // Send a plain text message via Meta Cloud API
-    const waPhone = profile!.phone!.replace(/\D/g, ''); // strip non-digits (safe — guarded by check above)
+    const waPhone = profile!.phone!.replace(/\D/g, '');
     try {
-      const response = await fetch(`https://graph.facebook.com/v19.0/${phoneNumberId}/messages`, {
+      const { withDirectRouteAttempt } = await import('@/lib/channels/direct-route-attempt');
+      const result = await withDirectRouteAttempt(supabase, {
+        businessId: null, attemptScope: 'platform', recipientPhone: waPhone,
+        flowType: 'admin-otp',
+      }, () => fetch(`https://graph.facebook.com/v19.0/${phoneNumberId}/messages`, {
         method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${accessToken}`,
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          messaging_product: 'whatsapp',
-          recipient_type: 'individual',
-          to: waPhone,
-          type: 'text',
-          text: { preview_url: false, body: `Your Waaiio admin login code: *${code}*. Expires in 5 minutes.` },
+          messaging_product: 'whatsapp', recipient_type: 'individual', to: waPhone,
+          type: 'text', text: { preview_url: false, body: `Your Waaiio admin login code: *${code}*. Expires in 5 minutes.` },
         }),
-      });
+      }));
 
-      if (!response.ok) {
-        const errBody = await response.text();
-        logger.error('[ADMIN-OTP] WhatsApp send failed:', errBody);
+      if (!result.ok) {
         return NextResponse.json({ error: 'Failed to send WhatsApp message. Use email instead.' }, { status: 500, headers: cors });
       }
     } catch (err) {

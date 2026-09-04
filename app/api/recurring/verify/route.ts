@@ -36,19 +36,21 @@ export async function POST(request: NextRequest) {
       const whatsappPhoneId = process.env.WHATSAPP_PHONE_NUMBER_ID;
 
       if (whatsappToken && whatsappPhoneId) {
-        await fetch(`https://graph.facebook.com/${process.env.META_GRAPH_API_VERSION || 'v22.0'}/${whatsappPhoneId}/messages`, {
+        // #257: unified direct-route attempt recording
+        const { withDirectRouteAttempt } = await import('@/lib/channels/direct-route-attempt');
+        await withDirectRouteAttempt(supabase, {
+          businessId: null, attemptScope: 'platform', recipientPhone: normalizedPhone,
+          flowType: 'recurring-verify-otp',
+        }, () => fetch(`https://graph.facebook.com/${process.env.META_GRAPH_API_VERSION || 'v22.0'}/${whatsappPhoneId}/messages`, {
           method: 'POST',
-          headers: {
-            Authorization: `Bearer ${whatsappToken}`,
-            'Content-Type': 'application/json',
-          },
+          headers: { Authorization: `Bearer ${whatsappToken}`, 'Content-Type': 'application/json' },
           body: JSON.stringify({
             messaging_product: 'whatsapp',
             to: normalizedPhone.replace('+', ''),
             type: 'text',
             text: { body: `Your verification code is: ${code}\n\nThis code expires in 10 minutes.` },
           }),
-        });
+        }));
       } else {
         logger.debug(`[mock OTP] ${normalizedPhone}: ${code}`);
       }
