@@ -142,7 +142,7 @@ describe('Shared Edge withEdgeAttemptRecording (actual production module)', () =
       ['app/api/cron/payout-nudge/route.ts', 'executePayoutNudgeSend'],
       ['app/api/recurring/verify/route.ts', 'withDirectRouteAttempt'],
       ['app/api/admin/otp/route.ts', 'withDirectRouteAttempt'],
-      ['app/api/auth/otp/send/route.ts', 'withDirectRouteAttempt'],
+      ['app/api/auth/otp/send/route.ts', 'orchestrateOtpSend'],
     ];
     for (const [route, expected] of checks) {
       const src = readFileSync(resolve(__dirname, '../..', route), 'utf-8');

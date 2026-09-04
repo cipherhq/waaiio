@@ -45,93 +45,76 @@ export async function POST(request: NextRequest) {
     const { code, challengeId } = await generatePhoneOtp(phone);
 
     // Send OTP via WhatsApp AUTHENTICATION template
-    let sent = false;
-    let deliveryPath: 'database_channel' | 'env_fallback' | null = null;
-    let waMessageId: string | null = null;
+    // #257: Use production orchestrator for primary → fallback topology
+    const { orchestrateOtpSend } = await import('@/lib/channels/otp-send-orchestrator');
+    const { withDirectRouteAttempt } = await import('@/lib/channels/direct-route-attempt');
 
-    // #257: Track whether the primary emission was ambiguous or gate-blocked
-    let primaryAmbiguous = false;
-    let primaryGateBlocked = false;
+    const supabase = createServiceClient();
 
-    try {
-      const supabase = createServiceClient();
-      const { data: channel } = await supabase
-        .from('whatsapp_channels')
-        .select('phone_number_id, meta_access_token')
-        .eq('provider', 'meta_cloud')
-        .eq('is_active', true)
-        .eq('channel_type', 'shared')
-        .limit(1)
-        .maybeSingle();
+    const otpResult = await orchestrateOtpSend({
+      supabase,
+      phone,
+      templateName: OTP_TEMPLATE_NAME,
+      languageCode: OTP_TEMPLATE_LANGUAGE,
+      code,
+      onPrimaryError: (err) => {
+        logger.withContext({ op: 'otp-send.whatsapp-channel', ...safeLogErrorContext(err as Error) }).error('[OTP Send] WhatsApp channel send failed, trying env fallback');
+      },
+      // Primary: database channel
+      primarySend: async (sb) => {
+        const { data: channel } = await sb
+          .from('whatsapp_channels')
+          .select('phone_number_id, meta_access_token')
+          .eq('provider', 'meta_cloud')
+          .eq('is_active', true)
+          .eq('channel_type', 'shared')
+          .limit(1)
+          .maybeSingle();
 
-      if (channel?.phone_number_id && channel?.meta_access_token) {
-        // #257: unified direct-route attempt recording for primary path
-        const { withDirectRouteAttempt } = await import('@/lib/channels/direct-route-attempt');
+        if (!channel?.phone_number_id || !channel?.meta_access_token) {
+          return { ok: false };
+        }
+
         const cloud = new MetaCloudService({
           phoneNumberId: channel.phone_number_id,
           accessToken: channel.meta_access_token,
         });
-        const result = await withDirectRouteAttempt(supabase, {
+        return withDirectRouteAttempt(sb, {
           businessId: null, attemptScope: 'platform', recipientPhone: phone,
           flowType: 'auth-otp', templateName: OTP_TEMPLATE_NAME,
         }, async () => {
           const sendResult = await cloud.sendAuthenticationTemplate({
             to: phone, templateName: OTP_TEMPLATE_NAME, languageCode: OTP_TEMPLATE_LANGUAGE, code,
           });
-          // MetaCloudService returns { messageId } — convert to Response-like for the helper
           return new Response(JSON.stringify({ messages: [{ id: sendResult.messageId }] }), { status: 200 });
         });
-        if (result.ok) {
-          waMessageId = result.wamid || null;
-          deliveryPath = 'database_channel';
-          sent = true;
-        }
-        if (result.ambiguous) primaryAmbiguous = true;
-      }
-    } catch (err) {
-      // #257: Classify primary failure before allowing fallback
-      // Use isGateBlock property (duck typing) to avoid dynamic instanceof issues
-      if (err && typeof err === 'object' && 'isGateBlock' in err && (err as { isGateBlock: boolean }).isGateBlock) {
-        primaryGateBlocked = true;
-      } else if (err instanceof Error) {
-        let isAmb = false;
-        try { const mod = await import('@/lib/channels/attempt-recording'); isAmb = mod.isAmbiguousTransportError(err); } catch {}
-        if (isAmb) primaryAmbiguous = true;
-      }
-      if (!primaryAmbiguous && !primaryGateBlocked) {
-        logger.withContext({ op: 'otp-send.whatsapp-channel', ...safeLogErrorContext(err) }).error('[OTP Send] WhatsApp channel send failed, trying env fallback');
-      }
-    }
+      },
+      // Fallback: env credentials
+      fallbackSend: async (sb) => {
+        const phoneNumberId = process.env.META_CLOUD_PHONE_NUMBER_ID;
+        const accessToken = process.env.META_CLOUD_ACCESS_TOKEN;
+        if (!phoneNumberId || !accessToken) return { ok: false };
 
-    // Fallback: use env-level Meta Cloud credentials
-    // #257: NO fallback after ambiguous primary (may have sent) or Gate ON block (required recording failed)
-    if (!sent && !primaryAmbiguous && !primaryGateBlocked) {
-      const phoneNumberId = process.env.META_CLOUD_PHONE_NUMBER_ID;
-      const accessToken = process.env.META_CLOUD_ACCESS_TOKEN;
-
-      if (!phoneNumberId || !accessToken) {
-        return NextResponse.json(
-          { message: 'WhatsApp OTP service is unavailable. Please try again later.' },
-          { status: 503 },
-        );
-      }
-
-      const fbSupabase = createServiceClient();
-      const { withDirectRouteAttempt } = await import('@/lib/channels/direct-route-attempt');
-      const cloud = new MetaCloudService({ phoneNumberId, accessToken });
-      const fbResult = await withDirectRouteAttempt(fbSupabase, {
-        businessId: null, attemptScope: 'platform', recipientPhone: phone,
-        flowType: 'auth-otp-fallback', templateName: OTP_TEMPLATE_NAME,
-      }, async () => {
-        const sendResult = await cloud.sendAuthenticationTemplate({
-          to: phone, templateName: OTP_TEMPLATE_NAME, languageCode: OTP_TEMPLATE_LANGUAGE, code,
+        const cloud = new MetaCloudService({ phoneNumberId, accessToken });
+        return withDirectRouteAttempt(sb, {
+          businessId: null, attemptScope: 'platform', recipientPhone: phone,
+          flowType: 'auth-otp-fallback', templateName: OTP_TEMPLATE_NAME,
+        }, async () => {
+          const sendResult = await cloud.sendAuthenticationTemplate({
+            to: phone, templateName: OTP_TEMPLATE_NAME, languageCode: OTP_TEMPLATE_LANGUAGE, code,
+          });
+          return new Response(JSON.stringify({ messages: [{ id: sendResult.messageId }] }), { status: 200 });
         });
-        return new Response(JSON.stringify({ messages: [{ id: sendResult.messageId }] }), { status: 200 });
-      });
-      if (fbResult.ok) {
-        waMessageId = fbResult.wamid || null;
-        deliveryPath = 'env_fallback';
-      }
+      },
+    });
+
+    const { sent, deliveryPath, waMessageId } = otpResult;
+
+    if (!sent) {
+      return NextResponse.json(
+        { message: 'WhatsApp OTP service is unavailable. Please try again later.' },
+        { status: 503 },
+      );
     }
 
     // Record delivery attempt for observability (non-blocking)

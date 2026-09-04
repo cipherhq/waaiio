@@ -19,6 +19,8 @@ interface OtpSendDeps {
   primarySend: (supabase: SupabaseClient) => Promise<{ ok: boolean; wamid?: string; ambiguous?: boolean }>;
   /** Fallback channel send function — only called after non-ambiguous, non-gate-blocked primary failure */
   fallbackSend: (supabase: SupabaseClient) => Promise<{ ok: boolean; wamid?: string }>;
+  /** Called when primary fails with a non-ambiguous, non-gate-blocked error (for structured logging) */
+  onPrimaryError?: (err: unknown) => void;
 }
 
 interface OtpSendResult {
@@ -55,6 +57,10 @@ export async function orchestrateOtpSend(deps: OtpSendDeps): Promise<OtpSendResu
       primaryGateBlocked = true;
     } else if (err instanceof Error && isAmbiguousTransportError(err)) {
       primaryAmbiguous = true;
+    }
+    // Notify caller for structured logging (non-ambiguous, non-gate-blocked errors)
+    if (!primaryAmbiguous && !primaryGateBlocked && deps.onPrimaryError) {
+      deps.onPrimaryError(err);
     }
   }
 
