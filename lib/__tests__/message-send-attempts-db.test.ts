@@ -198,6 +198,7 @@ describe.skipIf(!canRun)('Message Send Attempts DB Tests (#257 / Migration 367)'
       INSERT INTO message_send_attempts (business_id, recipient_phone) VALUES ('${BIZ_ID}', '+1111');
       RESET ROLE;
     `);
-    expect(err.toLowerCase()).toContain('permission denied');
+    // Either permission denied (no table-level grant) or RLS violation (no matching policy)
+    expect(err.toLowerCase()).toMatch(/permission denied|row-level security/);
   });
 });
