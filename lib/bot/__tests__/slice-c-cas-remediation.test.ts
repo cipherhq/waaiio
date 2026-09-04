@@ -1346,6 +1346,17 @@ describe('BotService runtime: quick_rebook 1a — capability unavailable CAS (Fi
 // ──────────────────────────────────────────────────────────
 
 describe('BotService runtime: quick_rebook CAS (Finding 3)', () => {
+  // Freeze clock to Wednesday 2026-01-07 12:00 UTC — deterministic across all weekdays.
+  // Production scheduling suppresses "This Saturday" when tomorrow IS Saturday (Friday UTC).
+  // Pinning to Wednesday ensures tomorrow=Thursday, nextSat=2026-01-10, no boundary issues.
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-07T12:00:00Z'));
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('CAS success → 2nd update_session_cas called with select_date + flow executor continuation sent', async () => {
     const session = {
       id: 'sess-qrebook-001',
