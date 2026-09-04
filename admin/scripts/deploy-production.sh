@@ -252,7 +252,52 @@ npx vercel deploy --prebuilt --prod --yes 2>&1
 echo ""
 
 # ══════════════════════════════════════════════════════
-# 8. HEADLESS BROWSER BOOTSTRAP SMOKE
+# 8. LIVE ARTIFACT IDENTITY (fail-closed with polling)
+# ══════════════════════════════════════════════════════
+
+LOCAL_JS=$(basename "${BUNDLE}")
+echo "Verifying live artifact identity: ${LOCAL_JS}..."
+
+ARTIFACT_VERIFIED=false
+MAX_POLLS=12
+POLL_INTERVAL=5
+
+for i in $(seq 1 ${MAX_POLLS}); do
+  LIVE_JS_REF=$(curl -s https://admin.waaiio.com/ | grep -oE 'src="/assets/index-[^"]+\.js"' | sed 's/src="//;s/"//' || true)
+  if [ -n "${LIVE_JS_REF}" ]; then
+    LIVE_JS=$(basename "${LIVE_JS_REF}")
+    if [ "${LIVE_JS}" = "${LOCAL_JS}" ]; then
+      ARTIFACT_VERIFIED=true
+      break
+    fi
+    echo "  Poll ${i}/${MAX_POLLS}: live=${LIVE_JS}, expected=${LOCAL_JS} — waiting..."
+  else
+    echo "  Poll ${i}/${MAX_POLLS}: no JS reference in live HTML — waiting..."
+  fi
+  sleep "${POLL_INTERVAL}"
+done
+
+if [ "${ARTIFACT_VERIFIED}" != "true" ]; then
+  echo ""
+  echo "❌ ARTIFACT VERIFICATION FAILED: live site is not serving the deployed bundle after ${MAX_POLLS} polls"
+  echo ""
+  echo "Rolling back to: ${PREV_DEPLOY_URL}"
+  ROLLBACK_EXIT=0
+  npx vercel rollback "${PREV_DEPLOY_URL}" --yes 2>&1 || ROLLBACK_EXIT=$?
+  if [ "${ROLLBACK_EXIT}" -ne 0 ]; then
+    echo "🚨 ROLLBACK FAILED (exit ${ROLLBACK_EXIT}) — IMMEDIATE MANUAL INTERVENTION REQUIRED"
+    echo "   Previous deployment: ${PREV_DEPLOY_URL}"
+    exit 2
+  fi
+  echo "✅ Rolled back to ${PREV_DEPLOY_URL}"
+  exit 1
+fi
+
+echo "  ✅ Live artifact = ${LOCAL_JS}"
+echo ""
+
+# ══════════════════════════════════════════════════════
+# 9. HEADLESS BROWSER BOOTSTRAP SMOKE (on verified artifact)
 # ══════════════════════════════════════════════════════
 
 echo "Running headless browser bootstrap smoke..."
@@ -306,9 +351,7 @@ if [ "${SMOKE_EXIT}" -ne 0 ]; then
   ROLLBACK_EXIT=0
   npx vercel rollback "${PREV_DEPLOY_URL}" --yes 2>&1 || ROLLBACK_EXIT=$?
   if [ "${ROLLBACK_EXIT}" -ne 0 ]; then
-    echo ""
-    echo "🚨 ROLLBACK FAILED (exit ${ROLLBACK_EXIT})"
-    echo "   IMMEDIATE MANUAL INTERVENTION REQUIRED"
+    echo "🚨 ROLLBACK FAILED (exit ${ROLLBACK_EXIT}) — IMMEDIATE MANUAL INTERVENTION REQUIRED"
     echo "   Previous deployment: ${PREV_DEPLOY_URL}"
     exit 2
   fi
@@ -317,23 +360,6 @@ if [ "${SMOKE_EXIT}" -ne 0 ]; then
 fi
 
 echo "  ✅ Headless browser bootstrap passed"
-echo ""
-
-# ══════════════════════════════════════════════════════
-# 9. ARTIFACT PROVENANCE
-# ══════════════════════════════════════════════════════
-
-LOCAL_JS=$(basename "${BUNDLE}")
-LIVE_JS_REF=$(curl -s https://admin.waaiio.com/ | grep -oE 'src="/assets/index-[^"]+\.js"' | sed 's/src="//;s/"//' || true)
-if [ -n "${LIVE_JS_REF}" ]; then
-  LIVE_JS=$(basename "${LIVE_JS_REF}")
-  if [ "${LIVE_JS}" = "${LOCAL_JS}" ]; then
-    echo "  ✅ Live artifact = ${LOCAL_JS}"
-  else
-    echo "  ⚠️  Live (${LIVE_JS}) != deployed (${LOCAL_JS}) — propagation delay?"
-  fi
-fi
-
 echo ""
 echo "═══ Deploy complete ═══"
 echo "Source:   ${LOCAL_SHA}"
