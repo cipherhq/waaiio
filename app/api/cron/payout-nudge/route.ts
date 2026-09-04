@@ -138,38 +138,26 @@ export async function GET(request: NextRequest) {
       // Send WhatsApp notification to business owner (if they have a phone)
       if (profile.phone) {
         try {
-          // #257: attempt recording for payout-nudge WhatsApp send
-          const { createAttempt, markSending, markAccepted, markFailed } = await import('@/lib/channels/attempt-recording');
-          const attemptId = await createAttempt(supabase, {
-            businessId: biz.id, attemptScope: 'business', recipientPhone: profile.phone,
-            flowType: 'payout-nudge',
-          });
-
           await assertMessagingAllowed(biz.id);
-
-          if (attemptId) await markSending(supabase, attemptId);
 
           const waToken = process.env.META_CLOUD_ACCESS_TOKEN || '';
           const waPhoneId = process.env.META_CLOUD_PHONE_NUMBER_ID || '';
           if (waToken && waPhoneId) {
-            const response = await fetch(`https://graph.facebook.com/${process.env.META_GRAPH_API_VERSION || 'v22.0'}/${waPhoneId}/messages`, {
+            // #257: unified direct-route attempt recording
+            const { withDirectRouteAttempt } = await import('@/lib/channels/direct-route-attempt');
+            await withDirectRouteAttempt(supabase, {
+              businessId: biz.id, attemptScope: 'business', recipientPhone: profile.phone,
+              flowType: 'payout-nudge',
+            }, () => fetch(`https://graph.facebook.com/${process.env.META_GRAPH_API_VERSION || 'v22.0'}/${waPhoneId}/messages`, {
               method: 'POST',
-              headers: {
-                Authorization: `Bearer ${waToken}`,
-                'Content-Type': 'application/json',
-              },
+              headers: { Authorization: `Bearer ${waToken}`, 'Content-Type': 'application/json' },
               body: JSON.stringify({
                 messaging_product: 'whatsapp',
-                to: profile.phone.replace('+', ''),
+                to: profile.phone!.replace('+', ''),
                 type: 'text',
                 text: { body: `💰 ${biz.name}: You have ${formattedBalance} from ${paymentCount} payments waiting!\n\nSet up your bank account to get paid automatically:\n${appUrl}/dashboard/payouts` },
               }),
-            });
-            if (response.ok && attemptId) {
-              try { const b = await response.clone().json(); await markAccepted(supabase, attemptId, b?.messages?.[0]?.id || ''); } catch {}
-            } else if (attemptId) {
-              await markFailed(supabase, attemptId);
-            }
+            }));
           }
         } catch (err) {
           if (err instanceof MessagingSuspendedError) {

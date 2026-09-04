@@ -49,6 +49,9 @@ export async function POST(request: NextRequest) {
     let deliveryPath: 'database_channel' | 'env_fallback' | null = null;
     let waMessageId: string | null = null;
 
+    // #257: Track whether the primary emission was ambiguous (may have sent)
+    let primaryAmbiguous = false;
+
     try {
       const supabase = createServiceClient();
       const { data: channel } = await supabase
@@ -61,40 +64,43 @@ export async function POST(request: NextRequest) {
         .maybeSingle();
 
       if (channel?.phone_number_id && channel?.meta_access_token) {
-        // #257: platform-scoped attempt recording (best-effort)
-        let attemptId: string | null = null;
-        try {
-          const { createAttempt, markSending } = await import('@/lib/channels/attempt-recording');
-          attemptId = await createAttempt(supabase, {
-            businessId: null, attemptScope: 'platform', recipientPhone: phone,
-            flowType: 'auth-otp', templateName: OTP_TEMPLATE_NAME,
-          });
-          if (attemptId) await markSending(supabase, attemptId);
-        } catch { /* best-effort recording */ }
-
+        // #257: unified direct-route attempt recording for primary path
+        const { withDirectRouteAttempt } = await import('@/lib/channels/direct-route-attempt');
         const cloud = new MetaCloudService({
           phoneNumberId: channel.phone_number_id,
           accessToken: channel.meta_access_token,
         });
-        const result = await cloud.sendAuthenticationTemplate({
-          to: phone,
-          templateName: OTP_TEMPLATE_NAME,
-          languageCode: OTP_TEMPLATE_LANGUAGE,
-          code,
+        const result = await withDirectRouteAttempt(supabase, {
+          businessId: null, attemptScope: 'platform', recipientPhone: phone,
+          flowType: 'auth-otp', templateName: OTP_TEMPLATE_NAME,
+        }, async () => {
+          const sendResult = await cloud.sendAuthenticationTemplate({
+            to: phone, templateName: OTP_TEMPLATE_NAME, languageCode: OTP_TEMPLATE_LANGUAGE, code,
+          });
+          // MetaCloudService returns { messageId } — convert to Response-like for the helper
+          return new Response(JSON.stringify({ messages: [{ id: sendResult.messageId }] }), { status: 200 });
         });
-        waMessageId = result.messageId;
-        if (attemptId && waMessageId) {
-          try { const { markAccepted } = await import('@/lib/channels/attempt-recording'); await markAccepted(supabase, attemptId, waMessageId); } catch {}
+        if (result.ok) {
+          waMessageId = result.wamid || null;
+          deliveryPath = 'database_channel';
+          sent = true;
         }
-        deliveryPath = 'database_channel';
-        sent = true;
+        if (result.ambiguous) primaryAmbiguous = true;
       }
     } catch (err) {
-      logger.withContext({ op: 'otp-send.whatsapp-channel', ...safeLogErrorContext(err) }).error('[OTP Send] WhatsApp channel send failed, trying env fallback');
+      // #257: Classify primary failure before allowing fallback
+      const { isAmbiguousTransportError } = await import('@/lib/channels/attempt-recording').catch(() => ({ isAmbiguousTransportError: () => false }));
+      if (err instanceof Error && isAmbiguousTransportError(err)) {
+        primaryAmbiguous = true;
+      }
+      if (!primaryAmbiguous) {
+        logger.withContext({ op: 'otp-send.whatsapp-channel', ...safeLogErrorContext(err) }).error('[OTP Send] WhatsApp channel send failed, trying env fallback');
+      }
     }
 
     // Fallback: use env-level Meta Cloud credentials
-    if (!sent) {
+    // #257: NO fallback after ambiguous primary emission (may have already sent)
+    if (!sent && !primaryAmbiguous) {
       const phoneNumberId = process.env.META_CLOUD_PHONE_NUMBER_ID;
       const accessToken = process.env.META_CLOUD_ACCESS_TOKEN;
 
@@ -105,30 +111,22 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      // #257: platform-scoped attempt recording (env fallback, best-effort)
-      let attemptIdFb: string | null = null;
-      try {
-        const fbSupabase = createServiceClient();
-        const { createAttempt, markSending } = await import('@/lib/channels/attempt-recording');
-        attemptIdFb = await createAttempt(fbSupabase, {
-          businessId: null, attemptScope: 'platform', recipientPhone: phone,
-          flowType: 'auth-otp-fallback', templateName: OTP_TEMPLATE_NAME,
-        });
-        if (attemptIdFb) await markSending(fbSupabase, attemptIdFb);
-      } catch { /* best-effort */ }
-
+      const fbSupabase = createServiceClient();
+      const { withDirectRouteAttempt } = await import('@/lib/channels/direct-route-attempt');
       const cloud = new MetaCloudService({ phoneNumberId, accessToken });
-      const result = await cloud.sendAuthenticationTemplate({
-        to: phone,
-        templateName: OTP_TEMPLATE_NAME,
-        languageCode: OTP_TEMPLATE_LANGUAGE,
-        code,
+      const fbResult = await withDirectRouteAttempt(fbSupabase, {
+        businessId: null, attemptScope: 'platform', recipientPhone: phone,
+        flowType: 'auth-otp-fallback', templateName: OTP_TEMPLATE_NAME,
+      }, async () => {
+        const sendResult = await cloud.sendAuthenticationTemplate({
+          to: phone, templateName: OTP_TEMPLATE_NAME, languageCode: OTP_TEMPLATE_LANGUAGE, code,
+        });
+        return new Response(JSON.stringify({ messages: [{ id: sendResult.messageId }] }), { status: 200 });
       });
-      waMessageId = result.messageId;
-      if (attemptIdFb && waMessageId) {
-        try { const fbSb = createServiceClient(); const { markAccepted } = await import('@/lib/channels/attempt-recording'); await markAccepted(fbSb, attemptIdFb, waMessageId); } catch {}
+      if (fbResult.ok) {
+        waMessageId = fbResult.wamid || null;
+        deliveryPath = 'env_fallback';
       }
-      deliveryPath = 'env_fallback';
     }
 
     // Record delivery attempt for observability (non-blocking)

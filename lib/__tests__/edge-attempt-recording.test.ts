@@ -136,7 +136,7 @@ describe('Shared Edge withEdgeAttemptRecording (actual production module)', () =
     }
   });
 
-  it('Structural: all 4 direct API routes import attempt recording', async () => {
+  it('Structural: all 4 direct API routes use withDirectRouteAttempt', async () => {
     const { readFileSync } = await import('fs');
     const routes = [
       'app/api/cron/payout-nudge/route.ts',
@@ -146,7 +146,7 @@ describe('Shared Edge withEdgeAttemptRecording (actual production module)', () =
     ];
     for (const route of routes) {
       const src = readFileSync(resolve(__dirname, '../..', route), 'utf-8');
-      expect(src, `${route} missing attempt recording`).toContain('createAttempt');
+      expect(src, `${route} missing withDirectRouteAttempt`).toContain('withDirectRouteAttempt');
     }
   });
 });
