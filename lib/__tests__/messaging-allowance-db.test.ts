@@ -172,22 +172,19 @@ describe.skipIf(!canRun)('Messaging Allowance Schema DB Tests (#258 / Migration 
     const aId = psql(`INSERT INTO messaging_allowances (business_id, type, amount_minor, currency_code, remaining_minor, source_ref) VALUES ('${BIZ_ID}', 'purchased', 100, 'NGN', 100, 'append-upd-' || substr(md5(random()::text),1,8)) RETURNING id;`);
     const eventId = psql(`INSERT INTO messaging_allowance_events (allowance_id, business_id, event_type, amount_minor, balance_after_minor) VALUES ('${aId}', '${BIZ_ID}', 'grant', 100, 100) RETURNING id;`);
 
+    // Trigger fires regardless of role — test as superuser to prove trigger works
     const err = psqlMayFail(`
-      SET ROLE service_role;
       UPDATE messaging_allowance_events SET amount_minor = 999 WHERE id = '${eventId}';
-      RESET ROLE;
     `);
     expect(err).toContain('append-only');
   });
 
-  it('11. Service-role DELETE of event → rejected by trigger', () => {
+  it('11. Superuser DELETE of event → rejected by trigger', () => {
     const aId = psql(`INSERT INTO messaging_allowances (business_id, type, amount_minor, currency_code, remaining_minor, source_ref) VALUES ('${BIZ_ID}', 'purchased', 100, 'NGN', 100, 'append-del-' || substr(md5(random()::text),1,8)) RETURNING id;`);
     const eventId = psql(`INSERT INTO messaging_allowance_events (allowance_id, business_id, event_type, amount_minor, balance_after_minor) VALUES ('${aId}', '${BIZ_ID}', 'grant', 100, 100) RETURNING id;`);
 
     const err = psqlMayFail(`
-      SET ROLE service_role;
       DELETE FROM messaging_allowance_events WHERE id = '${eventId}';
-      RESET ROLE;
     `);
     expect(err).toContain('append-only');
   });
