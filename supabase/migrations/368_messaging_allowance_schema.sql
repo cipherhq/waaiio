@@ -101,6 +101,11 @@ BEGIN
     SELECT business_id, attempt_scope INTO _attempt_biz, _attempt_scope
       FROM message_send_attempts WHERE id = NEW.attempt_id;
 
+    -- If attempt not found, defer to FK constraint (which will reject)
+    IF NOT FOUND THEN
+      RETURN NEW;
+    END IF;
+
     IF _attempt_scope <> 'business' THEN
       RAISE EXCEPTION 'attempt % has scope "%" — only business-scoped attempts allowed in allowance events',
         NEW.attempt_id, _attempt_scope;
@@ -161,15 +166,15 @@ CREATE POLICY mae_admin_select ON messaging_allowance_events
   FOR SELECT USING (public.is_admin());
 
 -- ── 7. Grants ──
+-- Clean slate: revoke everything from application roles before explicit grants.
+-- Prevents stale inherited privileges from defeating intended ACL.
+REVOKE ALL ON messaging_allowances FROM PUBLIC, authenticated, service_role, anon;
+REVOKE ALL ON messaging_allowance_events FROM PUBLIC, authenticated, service_role, anon;
 
--- Allowances: authenticated SELECT, service-role INSERT/UPDATE
+-- Allowances: authenticated SELECT, service-role SELECT/INSERT/UPDATE
 GRANT SELECT ON messaging_allowances TO authenticated;
 GRANT SELECT, INSERT, UPDATE ON messaging_allowances TO service_role;
 
 -- Events: authenticated SELECT, service-role INSERT only (no UPDATE/DELETE — trigger-enforced)
 GRANT SELECT ON messaging_allowance_events TO authenticated;
 GRANT SELECT, INSERT ON messaging_allowance_events TO service_role;
-
--- Explicit deny: no DELETE/TRUNCATE path defeats append-only semantics
-REVOKE DELETE, TRUNCATE ON messaging_allowance_events FROM authenticated, service_role, anon;
-REVOKE DELETE, TRUNCATE ON messaging_allowances FROM authenticated, anon;

@@ -310,7 +310,6 @@ describe.skipIf(!canRun)('Messaging Allowance Schema DB Tests (#258 / Migration 
   // ═══════════════════════════════════════════════════════
 
   it('18. Mismatched event business_id vs allowance business_id → rejected', () => {
-    // allowanceId belongs to BIZ_ID; inserting event claiming BIZ_ID_B → rejected
     const err = psqlMayFail(`
       INSERT INTO messaging_allowance_events (allowance_id, business_id, event_type, amount_minor, balance_after_minor)
       VALUES ('${allowanceId}', '${BIZ_ID_B}', 'grant', 100, 100);
@@ -328,7 +327,6 @@ describe.skipIf(!canRun)('Messaging Allowance Schema DB Tests (#258 / Migration 
   });
 
   it('20. Attempt from different business → rejected by tenant trigger', () => {
-    // Create an attempt for BIZ_ID_B, try to use it in an event for BIZ_ID allowance
     const otherAttempt = psql(`INSERT INTO message_send_attempts (business_id, recipient_phone, attempt_scope) VALUES ('${BIZ_ID_B}', '+1', 'business') RETURNING id;`);
     const aId = psql(`INSERT INTO messaging_allowances (business_id, type, amount_minor, currency_code, remaining_minor, source_ref) VALUES ('${BIZ_ID}', 'purchased', 200, 'NGN', 200, 'tenant-attempt-mismatch-' || substr(md5(random()::text),1,8)) RETURNING id;`);
     const err = psqlMayFail(`
@@ -340,7 +338,6 @@ describe.skipIf(!canRun)('Messaging Allowance Schema DB Tests (#258 / Migration 
   });
 
   it('21. Platform-scoped attempt → rejected by tenant trigger', () => {
-    // Create a platform-scoped attempt
     const platformAttempt = psql(`INSERT INTO message_send_attempts (business_id, recipient_phone, attempt_scope) VALUES ('${BIZ_ID}', '+1', 'platform') RETURNING id;`);
     const aId = psql(`INSERT INTO messaging_allowances (business_id, type, amount_minor, currency_code, remaining_minor, source_ref) VALUES ('${BIZ_ID}', 'purchased', 200, 'NGN', 200, 'platform-scope-reject-' || substr(md5(random()::text),1,8)) RETURNING id;`);
     const err = psqlMayFail(`
@@ -372,27 +369,14 @@ describe.skipIf(!canRun)('Messaging Allowance Schema DB Tests (#258 / Migration 
     expect(err).toContain('append-only');
   });
 
-  it('24. service_role UPDATE of event → rejected by trigger', () => {
-    const aId = psql(`INSERT INTO messaging_allowances (business_id, type, amount_minor, currency_code, remaining_minor, source_ref) VALUES ('${BIZ_ID}', 'purchased', 100, 'NGN', 100, 'svc-upd-' || substr(md5(random()::text),1,8)) RETURNING id;`);
-    const eventId = psql(`INSERT INTO messaging_allowance_events (allowance_id, business_id, event_type, amount_minor, balance_after_minor) VALUES ('${aId}', '${BIZ_ID}', 'grant', 100, 100) RETURNING id;`);
-    const err = psqlMayFail(`
-      SET ROLE service_role;
-      UPDATE messaging_allowance_events SET amount_minor = 999 WHERE id = '${eventId}';
-      RESET ROLE;
-    `);
-    expect(err).toContain('append-only');
+  it('24. service_role has no UPDATE privilege on events (has_table_privilege)', () => {
+    const hasUpdate = psql(`SELECT has_table_privilege('service_role', 'messaging_allowance_events', 'UPDATE');`);
+    expect(hasUpdate).toBe('f');
   });
 
-  it('25. service_role DELETE of event → rejected by trigger', () => {
-    const aId = psql(`INSERT INTO messaging_allowances (business_id, type, amount_minor, currency_code, remaining_minor, source_ref) VALUES ('${BIZ_ID}', 'purchased', 100, 'NGN', 100, 'svc-del-' || substr(md5(random()::text),1,8)) RETURNING id;`);
-    const eventId = psql(`INSERT INTO messaging_allowance_events (allowance_id, business_id, event_type, amount_minor, balance_after_minor) VALUES ('${aId}', '${BIZ_ID}', 'grant', 100, 100) RETURNING id;`);
-    const err = psqlMayFail(`
-      SET ROLE service_role;
-      DELETE FROM messaging_allowance_events WHERE id = '${eventId}';
-      RESET ROLE;
-    `);
-    // service_role has no DELETE grant, so either permission denied or trigger fires
-    expect(err.toLowerCase()).toMatch(/append-only|permission denied/);
+  it('25. service_role has no DELETE privilege on events (has_table_privilege)', () => {
+    const hasDelete = psql(`SELECT has_table_privilege('service_role', 'messaging_allowance_events', 'DELETE');`);
+    expect(hasDelete).toBe('f');
   });
 
   // ═══════════════════════════════════════════════════════
@@ -407,7 +391,6 @@ describe.skipIf(!canRun)('Messaging Allowance Schema DB Tests (#258 / Migration 
       SELECT count(*)::int FROM messaging_allowances WHERE business_id = '${BIZ_ID}';
       RESET ROLE;
     `);
-    // OWNER_A owns BIZ_ID, should see rows
     expect(parseInt(count.split('\n').pop()!)).toBeGreaterThan(0);
   });
 
@@ -484,52 +467,56 @@ describe.skipIf(!canRun)('Messaging Allowance Schema DB Tests (#258 / Migration 
   });
 
   // ═══════════════════════════════════════════════════════
-  // 10. Effective ACLs — no DELETE/TRUNCATE path
+  // 10. Effective ACLs — no DELETE/TRUNCATE path (has_table_privilege)
   // ═══════════════════════════════════════════════════════
 
-  it('33. Effective ACL: no role has DELETE on messaging_allowance_events', () => {
-    const deletePrivs = psql(`
-      SELECT grantee FROM information_schema.table_privileges
-      WHERE table_name = 'messaging_allowance_events' AND privilege_type = 'DELETE'
-      AND grantee IN ('authenticated', 'service_role', 'anon');
-    `);
-    expect(deletePrivs).toBe('');
+  it('33. No application role has DELETE on events', () => {
+    for (const role of ['authenticated', 'service_role', 'anon']) {
+      const has = psql(`SELECT has_table_privilege('${role}', 'messaging_allowance_events', 'DELETE');`);
+      expect(has).toBe('f');
+    }
   });
 
-  it('34. Effective ACL: no application role has TRUNCATE on messaging_allowance_events', () => {
-    const truncPrivs = psql(`
-      SELECT grantee FROM information_schema.table_privileges
-      WHERE table_name = 'messaging_allowance_events' AND privilege_type = 'TRUNCATE'
-      AND grantee IN ('authenticated', 'service_role', 'anon');
-    `);
-    expect(truncPrivs).toBe('');
+  it('34. No application role has TRUNCATE on events', () => {
+    for (const role of ['authenticated', 'service_role', 'anon']) {
+      const has = psql(`SELECT has_table_privilege('${role}', 'messaging_allowance_events', 'TRUNCATE');`);
+      expect(has).toBe('f');
+    }
   });
 
-  it('35. Effective ACL: service_role has only SELECT+INSERT on events', () => {
-    const privs = psql(`
-      SELECT privilege_type FROM information_schema.table_privileges
-      WHERE table_name = 'messaging_allowance_events' AND grantee = 'service_role'
-      ORDER BY privilege_type;
-    `);
-    expect(privs.split('\n').sort()).toEqual(['INSERT', 'SELECT']);
+  it('35. service_role effective privileges on events: SELECT + INSERT only', () => {
+    const sel = psql(`SELECT has_table_privilege('service_role', 'messaging_allowance_events', 'SELECT');`);
+    const ins = psql(`SELECT has_table_privilege('service_role', 'messaging_allowance_events', 'INSERT');`);
+    const upd = psql(`SELECT has_table_privilege('service_role', 'messaging_allowance_events', 'UPDATE');`);
+    const del = psql(`SELECT has_table_privilege('service_role', 'messaging_allowance_events', 'DELETE');`);
+    const trn = psql(`SELECT has_table_privilege('service_role', 'messaging_allowance_events', 'TRUNCATE');`);
+    expect(sel).toBe('t');
+    expect(ins).toBe('t');
+    expect(upd).toBe('f');
+    expect(del).toBe('f');
+    expect(trn).toBe('f');
   });
 
-  it('36. Effective ACL: authenticated has only SELECT on events', () => {
-    const privs = psql(`
-      SELECT privilege_type FROM information_schema.table_privileges
-      WHERE table_name = 'messaging_allowance_events' AND grantee = 'authenticated'
-      ORDER BY privilege_type;
-    `);
-    expect(privs).toBe('SELECT');
+  it('36. authenticated effective privileges on events: SELECT only', () => {
+    const sel = psql(`SELECT has_table_privilege('authenticated', 'messaging_allowance_events', 'SELECT');`);
+    const ins = psql(`SELECT has_table_privilege('authenticated', 'messaging_allowance_events', 'INSERT');`);
+    const upd = psql(`SELECT has_table_privilege('authenticated', 'messaging_allowance_events', 'UPDATE');`);
+    const del = psql(`SELECT has_table_privilege('authenticated', 'messaging_allowance_events', 'DELETE');`);
+    expect(sel).toBe('t');
+    expect(ins).toBe('f');
+    expect(upd).toBe('f');
+    expect(del).toBe('f');
   });
 
-  it('37. Effective ACL: authenticated has only SELECT on allowances', () => {
-    const privs = psql(`
-      SELECT privilege_type FROM information_schema.table_privileges
-      WHERE table_name = 'messaging_allowances' AND grantee = 'authenticated'
-      ORDER BY privilege_type;
-    `);
-    expect(privs).toBe('SELECT');
+  it('37. authenticated effective privileges on allowances: SELECT only', () => {
+    const sel = psql(`SELECT has_table_privilege('authenticated', 'messaging_allowances', 'SELECT');`);
+    const ins = psql(`SELECT has_table_privilege('authenticated', 'messaging_allowances', 'INSERT');`);
+    const upd = psql(`SELECT has_table_privilege('authenticated', 'messaging_allowances', 'UPDATE');`);
+    const del = psql(`SELECT has_table_privilege('authenticated', 'messaging_allowances', 'DELETE');`);
+    expect(sel).toBe('t');
+    expect(ins).toBe('f');
+    expect(upd).toBe('f');
+    expect(del).toBe('f');
   });
 
   // ═══════════════════════════════════════════════════════
@@ -551,6 +538,7 @@ describe.skipIf(!canRun)('Messaging Allowance Schema DB Tests (#258 / Migration 
       INSERT INTO messaging_allowance_events (allowance_id, business_id, event_type, amount_minor, attempt_id, balance_after_minor)
       VALUES ('${aId}', '${BIZ_ID}', 'reserve', -100, '00000000-0000-0000-0000-999999999999', 400);
     `);
+    // Trigger defers to FK constraint for nonexistent attempts
     expect(err.toLowerCase()).toMatch(/foreign key|violates/);
   });
 });
