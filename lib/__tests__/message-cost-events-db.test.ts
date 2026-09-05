@@ -329,24 +329,9 @@ describe.skipIf(!canRun)('Message Cost Events Schema DB Tests (#259 / Migration 
     expect(parseInt(count.split('\n').pop()!)).toBeGreaterThan(0);
   });
 
-  it('22b. DIAGNOSTIC: RLS policies and table state', () => {
-    // Check via pg_policies view (higher-level than pg_policy)
-    const policiesView = psqlMayFail(`SELECT policyname, cmd, roles, qual FROM pg_policies WHERE tablename = 'message_cost_events' ORDER BY policyname;`);
-    console.log('[DIAG] pg_policies view:', policiesView);
-
-    // Also check pg_policy catalog
-    const policiesCat = psql(`SELECT polname FROM pg_policy WHERE polrelid = 'message_cost_events'::regclass ORDER BY polname;`);
-    console.log('[DIAG] pg_policy catalog:', policiesCat);
-
-    // Check RLS state
-    const rlsState = psql(`SELECT relrowsecurity, relforcerowsecurity FROM pg_class WHERE relname = 'message_cost_events';`);
-    console.log('[DIAG] RLS enabled|forced:', rlsState);
-
-    // Check total policies count
-    const polCount = psql(`SELECT count(*) FROM pg_policy WHERE polrelid = 'message_cost_events'::regclass;`);
-    console.log('[DIAG] total policy count:', polCount);
-
-    expect(true).toBe(true);
+  it('22b. RLS policies exist', () => {
+    const count = psql(`SELECT count(*) FROM pg_policy WHERE polrelid = 'message_cost_events'::regclass;`);
+    expect(parseInt(count)).toBeGreaterThanOrEqual(2);
   });
 
   it('23. Cross-tenant SELECT returns zero', () => {

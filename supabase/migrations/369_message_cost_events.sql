@@ -71,15 +71,28 @@ CREATE TRIGGER trg_cost_events_no_delete
 ALTER TABLE message_cost_events ENABLE ROW LEVEL SECURITY;
 
 -- Business owners read cost events for their own business-scoped attempts.
--- Same inline auth.uid() pattern proven in Migration 368 (#258).
--- Platform-scoped attempts (msa.business_id IS NULL) excluded — no owning tenant.
+-- SECURITY DEFINER helper resolves the attempt → business → owner chain
+-- bypassing inner-table RLS on message_send_attempts and businesses.
+CREATE OR REPLACE FUNCTION public.mce_check_owner(p_attempt_id UUID, p_uid UUID)
+RETURNS BOOLEAN
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM public.message_send_attempts msa
+    JOIN public.businesses b ON b.id = msa.business_id
+    WHERE msa.id = p_attempt_id
+      AND b.owner_id = p_uid
+  );
+$$;
+
+REVOKE ALL ON FUNCTION public.mce_check_owner(UUID, UUID) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.mce_check_owner(UUID, UUID) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.mce_check_owner(UUID, UUID) TO service_role;
+
 CREATE POLICY mce_owner_select ON message_cost_events
-  FOR SELECT USING (EXISTS (
-    SELECT 1 FROM message_send_attempts msa
-    JOIN businesses b ON b.id = msa.business_id
-    WHERE msa.id = message_cost_events.attempt_id
-      AND b.owner_id = auth.uid()
-  ));
+  FOR SELECT USING (public.mce_check_owner(attempt_id, auth.uid()));
 
 -- Platform admins read all (including platform-scoped)
 CREATE POLICY mce_admin_select ON message_cost_events
