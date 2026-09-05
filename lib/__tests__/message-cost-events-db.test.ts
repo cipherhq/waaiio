@@ -32,7 +32,9 @@ function psqlMayFail(sql: string): string {
 
 const BIZ_ID   = 'b0000000-0000-0000-0000-000000000259';
 const BIZ_ID_B = 'b0000000-0000-0000-0000-000000000260';
-const OWNER_A  = '00000000-0000-0000-0000-000000000001';
+// CI auth.uid() stub returns '00000000-0000-0000-0000-000000000000'.
+// OWNER_A matches this so own-tenant RLS tests work; OWNER_B does not.
+const OWNER_A  = '00000000-0000-0000-0000-000000000000';
 const OWNER_B  = '00000000-0000-0000-0000-000000000099';
 
 describe.skipIf(!canRun)('Message Cost Events Schema DB Tests (#259 / Migration 369)', () => {
