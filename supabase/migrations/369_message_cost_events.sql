@@ -85,6 +85,24 @@ CREATE POLICY mce_owner_select ON message_cost_events
 CREATE POLICY mce_admin_select ON message_cost_events
   FOR SELECT USING (public.is_admin());
 
+-- Verify both policies exist (fail-closed)
+DO $$
+DECLARE
+  v_count INT;
+BEGIN
+  SELECT count(*) INTO v_count FROM pg_policy
+    WHERE polrelid = 'message_cost_events'::regclass AND polname = 'mce_owner_select';
+  IF v_count = 0 THEN
+    RAISE EXCEPTION 'MIGRATION 369 VERIFICATION FAILED: mce_owner_select policy was not created';
+  END IF;
+  SELECT count(*) INTO v_count FROM pg_policy
+    WHERE polrelid = 'message_cost_events'::regclass AND polname = 'mce_admin_select';
+  IF v_count = 0 THEN
+    RAISE EXCEPTION 'MIGRATION 369 VERIFICATION FAILED: mce_admin_select policy was not created';
+  END IF;
+END;
+$$;
+
 -- ── 5. Grants ──
 -- Clean slate: revoke everything from application roles before explicit grants.
 REVOKE ALL ON message_cost_events FROM PUBLIC, authenticated, service_role, anon;
