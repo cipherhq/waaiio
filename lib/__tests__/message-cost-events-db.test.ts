@@ -329,6 +329,44 @@ describe.skipIf(!canRun)('Message Cost Events Schema DB Tests (#259 / Migration 
     expect(parseInt(count.split('\n').pop()!)).toBeGreaterThan(0);
   });
 
+  it('22b. DIAGNOSTIC: RLS state and visibility check', () => {
+    // Check if RLS is enabled
+    const rlsEnabled = psql(`SELECT relrowsecurity, relforcerowsecurity FROM pg_class WHERE relname = 'message_cost_events';`);
+    console.log('[DIAG] RLS enabled|forced:', rlsEnabled);
+
+    // Check policies
+    const policies = psql(`SELECT polname, polroles::regrole[], polcmd FROM pg_policy WHERE polrelid = 'message_cost_events'::regclass;`);
+    console.log('[DIAG] Policies:', policies);
+
+    // Check what authenticated sees without WHERE clause
+    const CLAIMS = `{"sub":"${OWNER_A}","role":"authenticated"}`;
+    const allCount = psqlMayFail(`
+      SELECT set_config('request.jwt.claims', '${CLAIMS}', false);
+      SET ROLE authenticated;
+      SELECT count(*)::int FROM message_cost_events;
+      RESET ROLE;
+    `);
+    console.log('[DIAG] Total rows visible to authenticated:', allCount);
+
+    // Check auth.uid() value
+    const uid = psqlMayFail(`
+      SET ROLE authenticated;
+      SELECT auth.uid()::text;
+      RESET ROLE;
+    `);
+    console.log('[DIAG] auth.uid() as authenticated:', uid);
+
+    // Check current_user after SET ROLE
+    const curUser = psqlMayFail(`
+      SET ROLE authenticated;
+      SELECT current_user, session_user;
+      RESET ROLE;
+    `);
+    console.log('[DIAG] current_user|session_user:', curUser);
+
+    expect(true).toBe(true);
+  });
+
   it('23. Cross-tenant SELECT returns zero', () => {
     const a = psql(`INSERT INTO message_send_attempts (business_id, recipient_phone, attempt_scope) VALUES ('${BIZ_ID}', '+1', 'business') RETURNING id;`);
     psql(`INSERT INTO message_cost_events (attempt_id, event_type, amount_minor, charge_type, balance_after_minor) VALUES ('${a}', 'reserve', -100, 'included', 900);`);
