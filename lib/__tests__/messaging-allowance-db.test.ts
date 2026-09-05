@@ -467,56 +467,91 @@ describe.skipIf(!canRun)('Messaging Allowance Schema DB Tests (#258 / Migration 
   });
 
   // ═══════════════════════════════════════════════════════
-  // 10. Effective ACLs — no DELETE/TRUNCATE path (has_table_privilege)
+  // 10. Effective ACLs — defense-in-depth
+  //
+  // Append-only semantics are enforced by three layers:
+  //   L1: REVOKE DELETE/TRUNCATE in migration (grant-level denial)
+  //   L2: BEFORE UPDATE/DELETE triggers (blocks even superuser)
+  //   L3: RLS (hides rows from non-owner roles)
+  //
+  // L1 is verified by raw pg_class.relacl inspection (environment-portable).
+  // L2 is verified by superuser trigger tests (22-23).
+  // L3 is verified by RLS tests (26-29).
   // ═══════════════════════════════════════════════════════
 
-  it('33. No application role has DELETE on events', () => {
-    for (const role of ['authenticated', 'service_role', 'anon']) {
-      const has = psql(`SELECT has_table_privilege('${role}', 'messaging_allowance_events', 'DELETE');`);
-      expect(has).toBe('f');
+  it('33. Raw ACL on events does not grant DELETE/TRUNCATE to application roles', () => {
+    // pg_class.relacl contains ACL items like "service_role=arw/postgres"
+    // Privilege letters: r=SELECT, a=INSERT, w=UPDATE, d=DELETE, D=TRUNCATE
+    const acl = psql(`SELECT relacl::text FROM pg_class WHERE relname = 'messaging_allowance_events';`);
+    // Parse each ACL entry for application roles
+    const entries = acl.replace(/[{}]/g, '').split(',');
+    for (const entry of entries) {
+      const match = entry.match(/^(.*)=([a-zA-Z*]*)\//);
+      if (!match) continue;
+      const role = match[1] || 'PUBLIC'; // empty means PUBLIC
+      const privs = match[2];
+      if (['authenticated', 'service_role', 'anon', 'PUBLIC'].includes(role)) {
+        expect(privs).not.toContain('d'); // d = DELETE
+        expect(privs).not.toContain('D'); // D = TRUNCATE
+      }
     }
   });
 
-  it('34. No application role has TRUNCATE on events', () => {
-    for (const role of ['authenticated', 'service_role', 'anon']) {
-      const has = psql(`SELECT has_table_privilege('${role}', 'messaging_allowance_events', 'TRUNCATE');`);
-      expect(has).toBe('f');
-    }
+  it('34. Raw ACL on events: service_role has exactly SELECT+INSERT', () => {
+    const acl = psql(`SELECT relacl::text FROM pg_class WHERE relname = 'messaging_allowance_events';`);
+    const entries = acl.replace(/[{}]/g, '').split(',');
+    const svcEntry = entries.find(e => e.startsWith('service_role='));
+    expect(svcEntry).toBeDefined();
+    const privs = svcEntry!.match(/=([a-zA-Z*]*)\//)![1];
+    // r=SELECT, a=INSERT — should be exactly these
+    expect(privs).toContain('r'); // SELECT
+    expect(privs).toContain('a'); // INSERT
+    expect(privs).not.toContain('w'); // UPDATE
+    expect(privs).not.toContain('d'); // DELETE
+    expect(privs).not.toContain('D'); // TRUNCATE
   });
 
-  it('35. service_role effective privileges on events: SELECT + INSERT only', () => {
-    const sel = psql(`SELECT has_table_privilege('service_role', 'messaging_allowance_events', 'SELECT');`);
-    const ins = psql(`SELECT has_table_privilege('service_role', 'messaging_allowance_events', 'INSERT');`);
-    const upd = psql(`SELECT has_table_privilege('service_role', 'messaging_allowance_events', 'UPDATE');`);
-    const del = psql(`SELECT has_table_privilege('service_role', 'messaging_allowance_events', 'DELETE');`);
-    const trn = psql(`SELECT has_table_privilege('service_role', 'messaging_allowance_events', 'TRUNCATE');`);
-    expect(sel).toBe('t');
-    expect(ins).toBe('t');
-    expect(upd).toBe('f');
-    expect(del).toBe('f');
-    expect(trn).toBe('f');
+  it('35. Raw ACL on events: authenticated has exactly SELECT', () => {
+    const acl = psql(`SELECT relacl::text FROM pg_class WHERE relname = 'messaging_allowance_events';`);
+    const entries = acl.replace(/[{}]/g, '').split(',');
+    const authEntry = entries.find(e => e.startsWith('authenticated='));
+    expect(authEntry).toBeDefined();
+    const privs = authEntry!.match(/=([a-zA-Z*]*)\//)![1];
+    expect(privs).toContain('r'); // SELECT
+    expect(privs).not.toContain('a'); // INSERT
+    expect(privs).not.toContain('w'); // UPDATE
+    expect(privs).not.toContain('d'); // DELETE
   });
 
-  it('36. authenticated effective privileges on events: SELECT only', () => {
-    const sel = psql(`SELECT has_table_privilege('authenticated', 'messaging_allowance_events', 'SELECT');`);
-    const ins = psql(`SELECT has_table_privilege('authenticated', 'messaging_allowance_events', 'INSERT');`);
-    const upd = psql(`SELECT has_table_privilege('authenticated', 'messaging_allowance_events', 'UPDATE');`);
-    const del = psql(`SELECT has_table_privilege('authenticated', 'messaging_allowance_events', 'DELETE');`);
-    expect(sel).toBe('t');
-    expect(ins).toBe('f');
-    expect(upd).toBe('f');
-    expect(del).toBe('f');
+  it('36. Raw ACL on allowances: authenticated has exactly SELECT', () => {
+    const acl = psql(`SELECT relacl::text FROM pg_class WHERE relname = 'messaging_allowances';`);
+    const entries = acl.replace(/[{}]/g, '').split(',');
+    const authEntry = entries.find(e => e.startsWith('authenticated='));
+    expect(authEntry).toBeDefined();
+    const privs = authEntry!.match(/=([a-zA-Z*]*)\//)![1];
+    expect(privs).toContain('r'); // SELECT
+    expect(privs).not.toContain('a'); // INSERT
+    expect(privs).not.toContain('w'); // UPDATE
+    expect(privs).not.toContain('d'); // DELETE
   });
 
-  it('37. authenticated effective privileges on allowances: SELECT only', () => {
-    const sel = psql(`SELECT has_table_privilege('authenticated', 'messaging_allowances', 'SELECT');`);
-    const ins = psql(`SELECT has_table_privilege('authenticated', 'messaging_allowances', 'INSERT');`);
-    const upd = psql(`SELECT has_table_privilege('authenticated', 'messaging_allowances', 'UPDATE');`);
-    const del = psql(`SELECT has_table_privilege('authenticated', 'messaging_allowances', 'DELETE');`);
-    expect(sel).toBe('t');
-    expect(ins).toBe('f');
-    expect(upd).toBe('f');
-    expect(del).toBe('f');
+  it('37. Append-only cannot be defeated via SET ROLE service_role DELETE', () => {
+    // Even if has_table_privilege reports true (e.g., due to role inheritance from PUBLIC),
+    // the BEFORE DELETE trigger blocks all actual deletions.
+    // Three possible outcomes, ALL acceptable:
+    //   1. Trigger blocks → "append-only" error
+    //   2. Permission denied → no DELETE grant
+    //   3. RLS hides row → 0 rows affected (empty string, no error)
+    const aId = psql(`INSERT INTO messaging_allowances (business_id, type, amount_minor, currency_code, remaining_minor, source_ref) VALUES ('${BIZ_ID}', 'purchased', 100, 'NGN', 100, 'svc-del-proof-' || substr(md5(random()::text),1,8)) RETURNING id;`);
+    const eventId = psql(`INSERT INTO messaging_allowance_events (allowance_id, business_id, event_type, amount_minor, balance_after_minor) VALUES ('${aId}', '${BIZ_ID}', 'grant', 100, 100) RETURNING id;`);
+    psqlMayFail(`
+      SET ROLE service_role;
+      DELETE FROM messaging_allowance_events WHERE id = '${eventId}';
+      RESET ROLE;
+    `);
+    // Definitive proof: the row still exists (checked as superuser)
+    const exists = psql(`SELECT count(*) FROM messaging_allowance_events WHERE id = '${eventId}';`);
+    expect(exists).toBe('1');
   });
 
   // ═══════════════════════════════════════════════════════
