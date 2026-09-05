@@ -70,46 +70,31 @@ CREATE TRIGGER trg_cost_events_no_delete
 
 ALTER TABLE message_cost_events ENABLE ROW LEVEL SECURITY;
 
--- Business owners read cost events for their own attempts.
--- Uses SECURITY DEFINER helper to bypass inner-table RLS when resolving
--- attempt → business → owner_id chain. auth.uid() is called inside the
--- SECURITY DEFINER context where the auth schema is accessible.
-CREATE OR REPLACE FUNCTION public.check_cost_event_owner(p_attempt_id UUID)
-RETURNS BOOLEAN
-LANGUAGE plpgsql
-STABLE
-SECURITY DEFINER
-AS $$
-DECLARE
-  v_owner UUID;
-  v_uid UUID;
-BEGIN
-  -- Resolve auth.uid() in SECURITY DEFINER context (auth schema accessible)
-  v_uid := auth.uid();
-  IF v_uid IS NULL THEN RETURN false; END IF;
+-- Service-role INSERT policy (required: service_role bypasses RLS by default in
+-- Supabase, but explicit INSERT policy ensures correctness if FORCE is ever added)
+CREATE POLICY mce_service_insert ON message_cost_events
+  FOR INSERT TO service_role
+  WITH CHECK (true);
 
-  SELECT b.owner_id INTO v_owner
-    FROM public.message_send_attempts msa
-    JOIN public.businesses b ON b.id = msa.business_id
-    WHERE msa.id = p_attempt_id;
-
-  RETURN COALESCE(v_owner = v_uid, false);
-END;
-$$;
-
-REVOKE ALL ON FUNCTION public.check_cost_event_owner(UUID) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.check_cost_event_owner(UUID) FROM anon;
-GRANT EXECUTE ON FUNCTION public.check_cost_event_owner(UUID) TO authenticated;
-GRANT EXECUTE ON FUNCTION public.check_cost_event_owner(UUID) TO service_role;
-
+-- Business owners read cost events for their own business-scoped attempts.
+-- Uses same inline auth.uid() pattern proven in Migration 368 (#258).
+-- Platform-scoped attempts (msa.business_id IS NULL) are excluded from
+-- this policy — they have no owning business tenant.
 CREATE POLICY mce_owner_select ON message_cost_events
-  FOR SELECT USING (public.check_cost_event_owner(attempt_id));
+  FOR SELECT TO authenticated
+  USING (EXISTS (
+    SELECT 1 FROM public.message_send_attempts msa
+    JOIN public.businesses b ON b.id = msa.business_id
+    WHERE msa.id = message_cost_events.attempt_id
+      AND b.owner_id = auth.uid()
+  ));
 
 -- Platform admins read all (including platform-scoped)
 CREATE POLICY mce_admin_select ON message_cost_events
-  FOR SELECT USING (public.is_admin());
+  FOR SELECT
+  USING (public.is_admin());
 
--- ── 6. Grants ──
+-- ── 5. Grants ──
 -- Clean slate: revoke everything from application roles before explicit grants.
 REVOKE ALL ON message_cost_events FROM PUBLIC, authenticated, service_role, anon;
 

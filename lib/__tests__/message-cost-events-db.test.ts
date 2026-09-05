@@ -329,53 +329,10 @@ describe.skipIf(!canRun)('Message Cost Events Schema DB Tests (#259 / Migration 
     expect(parseInt(count.split('\n').pop()!)).toBeGreaterThan(0);
   });
 
-  it('22b. DIAGNOSTIC: RLS behavior in CI', () => {
-    // Check RLS state
-    const rlsEnabled = psql(`SELECT relrowsecurity, relforcerowsecurity FROM pg_class WHERE relname = 'message_cost_events';`);
-    console.log('[DIAG] mce RLS enabled|forced:', rlsEnabled);
-
-    // Check ALL policies
+  it('22b. RLS policies exist', () => {
     const policies = psql(`SELECT polname FROM pg_policy WHERE polrelid = 'message_cost_events'::regclass ORDER BY polname;`);
-    console.log('[DIAG] policies:', policies);
-
-    // Check businesses RLS
-    const bizRls = psql(`SELECT relrowsecurity FROM pg_class WHERE relname = 'businesses';`);
-    console.log('[DIAG] businesses RLS:', bizRls);
-
-    // Check MSA RLS
-    const msaRls = psql(`SELECT relrowsecurity FROM pg_class WHERE relname = 'message_send_attempts';`);
-    console.log('[DIAG] MSA RLS:', msaRls);
-
-    // Check if authenticated has BYPASSRLS
-    const bypassRls = psql(`SELECT rolbypassrls FROM pg_roles WHERE rolname = 'authenticated';`);
-    console.log('[DIAG] authenticated BYPASSRLS:', bypassRls);
-
-    // Check function exists
-    const fnExists = psql(`SELECT count(*) FROM pg_proc WHERE proname = 'check_cost_event_owner';`);
-    console.log('[DIAG] check_cost_event_owner exists:', fnExists);
-
-    // Test: what does authenticated see on messaging_allowances (#258) vs message_cost_events (#259)?
-    const CLAIMS = `{"sub":"${OWNER_A}","role":"authenticated"}`;
-
-    // #258 table - should work (proven in CI)
-    const ma258 = psqlMayFail(`
-      SELECT set_config('request.jwt.claims', '${CLAIMS}', false);
-      SET ROLE authenticated;
-      SELECT count(*)::int FROM messaging_allowances;
-      RESET ROLE;
-    `);
-    console.log('[DIAG] authenticated sees on messaging_allowances:', ma258.split('\\n').pop());
-
-    // #259 table
-    const mce259 = psqlMayFail(`
-      SELECT set_config('request.jwt.claims', '${CLAIMS}', false);
-      SET ROLE authenticated;
-      SELECT count(*)::int FROM message_cost_events;
-      RESET ROLE;
-    `);
-    console.log('[DIAG] authenticated sees on message_cost_events:', mce259.split('\\n').pop());
-
-    expect(true).toBe(true);
+    expect(policies).toContain('mce_owner_select');
+    expect(policies).toContain('mce_admin_select');
   });
 
   it('23. Cross-tenant SELECT returns zero', () => {
