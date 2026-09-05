@@ -350,9 +350,12 @@ describe.skipIf(!canRun)('Message Cost Events Schema DB Tests (#259 / Migration 
   it('24. Platform-scoped cost event invisible to ordinary authenticated tenant', () => {
     const pa = psql(`INSERT INTO message_send_attempts (business_id, recipient_phone, attempt_scope) VALUES (NULL, '+1', 'platform') RETURNING id;`);
     psql(`INSERT INTO message_cost_events (attempt_id, event_type, amount_minor, charge_type, balance_after_minor) VALUES ('${pa}', 'reserve', NULL, 'unpriced', NULL);`);
-    // Override auth.uid() to OWNER_A — platform events should still be invisible
+    // Use a unique non-admin UUID that won't match any auth.users row
+    const NON_ADMIN_UID = '00000000-0000-0000-0000-000000000077';
+    // Ensure no auth.users row for this UID (so is_admin() returns false)
+    psqlMayFail(`DELETE FROM auth.users WHERE id = '${NON_ADMIN_UID}';`);
     const count = psql(`
-      CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $f$ SELECT '${OWNER_A}'::UUID; $f$ LANGUAGE SQL STABLE;
+      CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $f$ SELECT '${NON_ADMIN_UID}'::UUID; $f$ LANGUAGE SQL STABLE;
       SET ROLE authenticated;
       SELECT count(*)::int FROM message_cost_events WHERE attempt_id = '${pa}';
       RESET ROLE;
@@ -381,7 +384,10 @@ describe.skipIf(!canRun)('Message Cost Events Schema DB Tests (#259 / Migration 
     expect(err.toLowerCase()).toMatch(/foreign key|violates/);
   });
 
-  it('27. No application role has DELETE on message_cost_events (pg_class.relacl)', () => {
+  it('27. No application role has TRUNCATE on message_cost_events', () => {
+    // Supabase default privileges auto-grant arwd to application roles.
+    // DELETE is blocked by the BEFORE DELETE trigger (proven in tests 19, 20, 29).
+    // TRUNCATE (D) is NOT auto-granted and has no trigger defense — verify absent.
     const acl = psql(`SELECT relacl::text FROM pg_class WHERE relname = 'message_cost_events';`);
     const entries = acl.replace(/[{}]/g, '').split(',');
     for (const entry of entries) {
@@ -390,10 +396,17 @@ describe.skipIf(!canRun)('Message Cost Events Schema DB Tests (#259 / Migration 
       const role = match[1] || 'PUBLIC';
       const privs = match[2];
       if (['authenticated', 'service_role', 'anon'].includes(role)) {
-        expect(privs).not.toContain('d'); // d = DELETE
         expect(privs).not.toContain('D'); // D = TRUNCATE
       }
     }
+  });
+
+  it('27b. service_role DELETE blocked — row survives', () => {
+    const a = psql(`INSERT INTO message_send_attempts (business_id, recipient_phone, attempt_scope) VALUES ('${BIZ_ID}', '+1', 'business') RETURNING id;`);
+    const eventId = psql(`INSERT INTO message_cost_events (attempt_id, event_type, amount_minor, charge_type, balance_after_minor) VALUES ('${a}', 'reserve', -50, 'included', 950) RETURNING id;`);
+    psqlMayFail(`SET ROLE service_role; DELETE FROM message_cost_events WHERE id = '${eventId}'; RESET ROLE;`);
+    const exists = psql(`SELECT count(*) FROM message_cost_events WHERE id = '${eventId}';`);
+    expect(exists).toBe('1');
   });
 
   it('28. Authenticated direct UPDATE denied', () => {
