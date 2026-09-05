@@ -329,40 +329,51 @@ describe.skipIf(!canRun)('Message Cost Events Schema DB Tests (#259 / Migration 
     expect(parseInt(count.split('\n').pop()!)).toBeGreaterThan(0);
   });
 
-  it('22b. DIAGNOSTIC: RLS state and visibility check', () => {
-    // Check if RLS is enabled
+  it('22b. DIAGNOSTIC: RLS behavior in CI', () => {
+    // Check RLS state
     const rlsEnabled = psql(`SELECT relrowsecurity, relforcerowsecurity FROM pg_class WHERE relname = 'message_cost_events';`);
-    console.log('[DIAG] RLS enabled|forced:', rlsEnabled);
+    console.log('[DIAG] mce RLS enabled|forced:', rlsEnabled);
 
-    // Check policies
-    const policies = psql(`SELECT polname, polroles::regrole[], polcmd FROM pg_policy WHERE polrelid = 'message_cost_events'::regclass;`);
-    console.log('[DIAG] Policies:', policies);
+    // Check ALL policies
+    const policies = psql(`SELECT polname FROM pg_policy WHERE polrelid = 'message_cost_events'::regclass ORDER BY polname;`);
+    console.log('[DIAG] policies:', policies);
 
-    // Check what authenticated sees without WHERE clause
+    // Check businesses RLS
+    const bizRls = psql(`SELECT relrowsecurity FROM pg_class WHERE relname = 'businesses';`);
+    console.log('[DIAG] businesses RLS:', bizRls);
+
+    // Check MSA RLS
+    const msaRls = psql(`SELECT relrowsecurity FROM pg_class WHERE relname = 'message_send_attempts';`);
+    console.log('[DIAG] MSA RLS:', msaRls);
+
+    // Check if authenticated has BYPASSRLS
+    const bypassRls = psql(`SELECT rolbypassrls FROM pg_roles WHERE rolname = 'authenticated';`);
+    console.log('[DIAG] authenticated BYPASSRLS:', bypassRls);
+
+    // Check function exists
+    const fnExists = psql(`SELECT count(*) FROM pg_proc WHERE proname = 'check_cost_event_owner';`);
+    console.log('[DIAG] check_cost_event_owner exists:', fnExists);
+
+    // Test: what does authenticated see on messaging_allowances (#258) vs message_cost_events (#259)?
     const CLAIMS = `{"sub":"${OWNER_A}","role":"authenticated"}`;
-    const allCount = psqlMayFail(`
+
+    // #258 table - should work (proven in CI)
+    const ma258 = psqlMayFail(`
+      SELECT set_config('request.jwt.claims', '${CLAIMS}', false);
+      SET ROLE authenticated;
+      SELECT count(*)::int FROM messaging_allowances;
+      RESET ROLE;
+    `);
+    console.log('[DIAG] authenticated sees on messaging_allowances:', ma258.split('\\n').pop());
+
+    // #259 table
+    const mce259 = psqlMayFail(`
       SELECT set_config('request.jwt.claims', '${CLAIMS}', false);
       SET ROLE authenticated;
       SELECT count(*)::int FROM message_cost_events;
       RESET ROLE;
     `);
-    console.log('[DIAG] Total rows visible to authenticated:', allCount);
-
-    // Check auth.uid() value
-    const uid = psqlMayFail(`
-      SET ROLE authenticated;
-      SELECT auth.uid()::text;
-      RESET ROLE;
-    `);
-    console.log('[DIAG] auth.uid() as authenticated:', uid);
-
-    // Check current_user after SET ROLE
-    const curUser = psqlMayFail(`
-      SET ROLE authenticated;
-      SELECT current_user, session_user;
-      RESET ROLE;
-    `);
-    console.log('[DIAG] current_user|session_user:', curUser);
+    console.log('[DIAG] authenticated sees on message_cost_events:', mce259.split('\\n').pop());
 
     expect(true).toBe(true);
   });
