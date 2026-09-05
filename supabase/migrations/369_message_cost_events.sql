@@ -73,26 +73,39 @@ ALTER TABLE message_cost_events ENABLE ROW LEVEL SECURITY;
 -- Business owners read cost events for their own business-scoped attempts.
 -- SECURITY DEFINER helper resolves the attempt → business → owner chain
 -- bypassing inner-table RLS on message_send_attempts and businesses.
-CREATE OR REPLACE FUNCTION public.mce_check_owner(p_attempt_id UUID, p_uid UUID)
+-- Identity comes from auth.uid() INSIDE the function — not caller-supplied.
+CREATE OR REPLACE FUNCTION public.mce_check_owner(p_attempt_id UUID)
 RETURNS BOOLEAN
-LANGUAGE sql
+LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER
+SET search_path = ''
 AS $$
-  SELECT EXISTS (
-    SELECT 1 FROM public.message_send_attempts msa
+DECLARE
+  v_uid UUID;
+  v_owner UUID;
+BEGIN
+  v_uid := auth.uid();
+  IF v_uid IS NULL THEN RETURN false; END IF;
+
+  SELECT b.owner_id INTO v_owner
+    FROM public.message_send_attempts msa
     JOIN public.businesses b ON b.id = msa.business_id
-    WHERE msa.id = p_attempt_id
-      AND b.owner_id = p_uid
-  );
+    WHERE msa.id = p_attempt_id;
+
+  RETURN COALESCE(v_owner = v_uid, false);
+END;
 $$;
 
-REVOKE ALL ON FUNCTION public.mce_check_owner(UUID, UUID) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION public.mce_check_owner(UUID, UUID) TO authenticated;
-GRANT EXECUTE ON FUNCTION public.mce_check_owner(UUID, UUID) TO service_role;
+-- Minimal grants: authenticated needs EXECUTE for the RLS policy to evaluate.
+-- The function is safe: identity derived from auth.uid() internally, not from caller.
+REVOKE ALL ON FUNCTION public.mce_check_owner(UUID) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.mce_check_owner(UUID) FROM anon;
+GRANT EXECUTE ON FUNCTION public.mce_check_owner(UUID) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.mce_check_owner(UUID) TO service_role;
 
 CREATE POLICY mce_owner_select ON message_cost_events
-  FOR SELECT USING (public.mce_check_owner(attempt_id, auth.uid()));
+  FOR SELECT USING (public.mce_check_owner(attempt_id));
 
 -- Platform admins read all (including platform-scoped)
 CREATE POLICY mce_admin_select ON message_cost_events

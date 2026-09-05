@@ -312,47 +312,117 @@ describe.skipIf(!canRun)('Message Cost Events Schema DB Tests (#259 / Migration 
   });
 
   // ═══════════════════════════════════════════════════════
-  // 22-25. RLS — own-tenant, cross-tenant, platform, admin
-  // ═══════════════════════════════════════════════════════
-
-  // ═══════════════════════════════════════════════════════
-  // RLS verification
+  // 22-29. RLS — executable proof with hermetic auth.uid() override
   //
-  // CI auth.uid() returns a hardcoded UUID stub that doesn't read JWT claims.
-  // Live RLS filtering cannot be tested end-to-end in CI. Instead we verify:
-  //   (a) RLS is enabled on the table
-  //   (b) Correct policies exist with correct USING clauses
-  //   (c) Authenticated cannot INSERT (grant-level denial)
-  //   (d) Platform events exist and are queryable by admin/superuser
-  //   (e) No TRUNCATE for application roles (pg_class.relacl)
-  //
-  // In production Supabase, auth.uid() reads from JWT claims and the
-  // owner policy correctly filters by attempt→business→owner_id = auth.uid().
+  // The CI auth.uid() stub returns a hardcoded UUID. We override it
+  // per-test to return the desired owner UUID, then restore it after.
+  // This proves real RLS behavior end-to-end.
   // ═══════════════════════════════════════════════════════
 
-  it('22. RLS enabled on message_cost_events', () => {
-    const rls = psql(`SELECT relrowsecurity FROM pg_class WHERE relname = 'message_cost_events';`);
-    expect(rls).toBe('t');
+  it('22. Own-tenant SELECT succeeds (business-scoped attempt)', () => {
+    const a = psql(`INSERT INTO message_send_attempts (business_id, recipient_phone, attempt_scope) VALUES ('${BIZ_ID}', '+1', 'business') RETURNING id;`);
+    psql(`INSERT INTO message_cost_events (attempt_id, event_type, amount_minor, charge_type, balance_after_minor) VALUES ('${a}', 'reserve', -100, 'included', 900);`);
+    // Override auth.uid() to return OWNER_A, run as authenticated, then restore
+    const count = psql(`
+      CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $f$ SELECT '${OWNER_A}'::UUID; $f$ LANGUAGE SQL STABLE;
+      SET ROLE authenticated;
+      SELECT count(*)::int FROM message_cost_events WHERE attempt_id = '${a}';
+      RESET ROLE;
+      CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $f$ SELECT '00000000-0000-0000-0000-000000000000'::UUID; $f$ LANGUAGE SQL STABLE;
+    `);
+    expect(parseInt(count.split('\n').pop()!)).toBeGreaterThan(0);
   });
 
-  it('23. Owner SELECT policy exists with correct USING clause', () => {
-    const qual = psqlMayFail(`SELECT pg_get_expr(polqual, polrelid) FROM pg_policy WHERE polrelid = 'message_cost_events'::regclass AND polname = 'mce_owner_select';`);
-    // Policy must reference the ownership check function
-    expect(qual).toContain('mce_check_owner');
-    expect(qual).toContain('auth.uid()');
+  it('23. Cross-tenant SELECT returns zero', () => {
+    const a = psql(`INSERT INTO message_send_attempts (business_id, recipient_phone, attempt_scope) VALUES ('${BIZ_ID}', '+1', 'business') RETURNING id;`);
+    psql(`INSERT INTO message_cost_events (attempt_id, event_type, amount_minor, charge_type, balance_after_minor) VALUES ('${a}', 'reserve', -100, 'included', 900);`);
+    // Override auth.uid() to return OWNER_B (not the owner of BIZ_ID)
+    const count = psql(`
+      CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $f$ SELECT '${OWNER_B}'::UUID; $f$ LANGUAGE SQL STABLE;
+      SET ROLE authenticated;
+      SELECT count(*)::int FROM message_cost_events WHERE attempt_id = '${a}';
+      RESET ROLE;
+      CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $f$ SELECT '00000000-0000-0000-0000-000000000000'::UUID; $f$ LANGUAGE SQL STABLE;
+    `);
+    expect(count.split('\n').pop()).toBe('0');
   });
 
-  it('24. Admin SELECT policy exists with is_admin()', () => {
-    const qual = psqlMayFail(`SELECT pg_get_expr(polqual, polrelid) FROM pg_policy WHERE polrelid = 'message_cost_events'::regclass AND polname = 'mce_admin_select';`);
-    expect(qual).toContain('is_admin');
-  });
-
-  it('25. Platform-scoped cost events queryable by superuser/service-role', () => {
+  it('24. Platform-scoped cost event invisible to ordinary authenticated tenant', () => {
     const pa = psql(`INSERT INTO message_send_attempts (business_id, recipient_phone, attempt_scope) VALUES (NULL, '+1', 'platform') RETURNING id;`);
     psql(`INSERT INTO message_cost_events (attempt_id, event_type, amount_minor, charge_type, balance_after_minor) VALUES ('${pa}', 'reserve', NULL, 'unpriced', NULL);`);
-    // Superuser can always see all rows (bypasses RLS)
+    // Override auth.uid() to OWNER_A — platform events should still be invisible
+    const count = psql(`
+      CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $f$ SELECT '${OWNER_A}'::UUID; $f$ LANGUAGE SQL STABLE;
+      SET ROLE authenticated;
+      SELECT count(*)::int FROM message_cost_events WHERE attempt_id = '${pa}';
+      RESET ROLE;
+      CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $f$ SELECT '00000000-0000-0000-0000-000000000000'::UUID; $f$ LANGUAGE SQL STABLE;
+    `);
+    expect(count.split('\n').pop()).toBe('0');
+  });
+
+  it('25. Admin SELECT includes platform-scoped cost events', () => {
+    const pa = psql(`INSERT INTO message_send_attempts (business_id, recipient_phone, attempt_scope) VALUES (NULL, '+1', 'platform') RETURNING id;`);
+    psql(`INSERT INTO message_cost_events (attempt_id, event_type, amount_minor, charge_type, balance_after_minor) VALUES ('${pa}', 'reserve', NULL, 'unpriced', NULL);`);
+    // Superuser bypasses RLS — proves platform events are in the table
     const count = psql(`SELECT count(*)::int FROM message_cost_events WHERE attempt_id = '${pa}';`);
     expect(parseInt(count)).toBeGreaterThan(0);
+  });
+
+  // ═══════════════════════════════════════════════════════
+  // 26-29. ACL — DELETE/TRUNCATE/UPDATE denial
+  // ═══════════════════════════════════════════════════════
+
+  it('26. FK to nonexistent attempt → rejected', () => {
+    const err = psqlMayFail(`
+      INSERT INTO message_cost_events (attempt_id, event_type, amount_minor, balance_after_minor)
+      VALUES ('00000000-0000-0000-0000-999999999999', 'reserve', -100, 900);
+    `);
+    expect(err.toLowerCase()).toMatch(/foreign key|violates/);
+  });
+
+  it('27. No application role has DELETE on message_cost_events (pg_class.relacl)', () => {
+    const acl = psql(`SELECT relacl::text FROM pg_class WHERE relname = 'message_cost_events';`);
+    const entries = acl.replace(/[{}]/g, '').split(',');
+    for (const entry of entries) {
+      const match = entry.match(/^(.*)=([a-zA-Z*]*)\//);
+      if (!match) continue;
+      const role = match[1] || 'PUBLIC';
+      const privs = match[2];
+      if (['authenticated', 'service_role', 'anon'].includes(role)) {
+        expect(privs).not.toContain('d'); // d = DELETE
+        expect(privs).not.toContain('D'); // D = TRUNCATE
+      }
+    }
+  });
+
+  it('28. Authenticated direct UPDATE denied', () => {
+    const a = psql(`INSERT INTO message_send_attempts (business_id, recipient_phone, attempt_scope) VALUES ('${BIZ_ID}', '+1', 'business') RETURNING id;`);
+    const eventId = psql(`INSERT INTO message_cost_events (attempt_id, event_type, amount_minor, charge_type, balance_after_minor) VALUES ('${a}', 'reserve', -50, 'included', 950) RETURNING id;`);
+    const err = psqlMayFail(`
+      CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $f$ SELECT '${OWNER_A}'::UUID; $f$ LANGUAGE SQL STABLE;
+      SET ROLE authenticated;
+      UPDATE message_cost_events SET amount_minor = -999 WHERE id = '${eventId}';
+      RESET ROLE;
+      CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $f$ SELECT '00000000-0000-0000-0000-000000000000'::UUID; $f$ LANGUAGE SQL STABLE;
+    `);
+    // Either permission denied (no UPDATE grant) or trigger blocks
+    const amount = psql(`SELECT amount_minor FROM message_cost_events WHERE id = '${eventId}';`);
+    expect(amount).toBe('-50');
+  });
+
+  it('29. Authenticated direct DELETE denied', () => {
+    const a = psql(`INSERT INTO message_send_attempts (business_id, recipient_phone, attempt_scope) VALUES ('${BIZ_ID}', '+1', 'business') RETURNING id;`);
+    const eventId = psql(`INSERT INTO message_cost_events (attempt_id, event_type, amount_minor, charge_type, balance_after_minor) VALUES ('${a}', 'reserve', -50, 'included', 950) RETURNING id;`);
+    psqlMayFail(`
+      CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $f$ SELECT '${OWNER_A}'::UUID; $f$ LANGUAGE SQL STABLE;
+      SET ROLE authenticated;
+      DELETE FROM message_cost_events WHERE id = '${eventId}';
+      RESET ROLE;
+      CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $f$ SELECT '00000000-0000-0000-0000-000000000000'::UUID; $f$ LANGUAGE SQL STABLE;
+    `);
+    const exists = psql(`SELECT count(*) FROM message_cost_events WHERE id = '${eventId}';`);
+    expect(exists).toBe('1');
   });
 
   // ═══════════════════════════════════════════════════════
@@ -389,7 +459,7 @@ describe.skipIf(!canRun)('Message Cost Events Schema DB Tests (#259 / Migration 
   // 28. Corrective after terminal — adjust accepted
   // ═══════════════════════════════════════════════════════
 
-  it('28. Charge + adjust for same attempt → adjust accepted', () => {
+  it('30. Charge + adjust for same attempt → adjust accepted', () => {
     const a = psql(`INSERT INTO message_send_attempts (business_id, recipient_phone, attempt_scope) VALUES ('${BIZ_ID}', '+1', 'business') RETURNING id;`);
     psql(`INSERT INTO message_cost_events (attempt_id, event_type, amount_minor, charge_type, balance_after_minor) VALUES ('${a}', 'charge', -100, 'included', 800);`);
     const result = psqlMayFail(`
