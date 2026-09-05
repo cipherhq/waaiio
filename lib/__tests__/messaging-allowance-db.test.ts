@@ -168,28 +168,28 @@ describe.skipIf(!canRun)('Messaging Allowance Schema DB Tests (#258 / Migration 
   // ── Append-only enforcement ──
 
   it('10. Service-role UPDATE of event → rejected by trigger', () => {
-    // Get an existing event
-    const eventId = psql(`SELECT id FROM messaging_allowance_events WHERE allowance_id = '${allowanceId}' LIMIT 1;`);
-    if (eventId) {
-      const err = psqlMayFail(`
-        SET ROLE service_role;
-        UPDATE messaging_allowance_events SET amount_minor = 999 WHERE id = '${eventId}';
-        RESET ROLE;
-      `);
-      expect(err).toContain('append-only');
-    }
+    // Ensure an event exists for this test
+    const aId = psql(`INSERT INTO messaging_allowances (business_id, type, amount_minor, currency_code, remaining_minor, source_ref) VALUES ('${BIZ_ID}', 'purchased', 100, 'NGN', 100, 'append-upd-' || substr(md5(random()::text),1,8)) RETURNING id;`);
+    const eventId = psql(`INSERT INTO messaging_allowance_events (allowance_id, business_id, event_type, amount_minor, balance_after_minor) VALUES ('${aId}', '${BIZ_ID}', 'grant', 100, 100) RETURNING id;`);
+
+    const err = psqlMayFail(`
+      SET ROLE service_role;
+      UPDATE messaging_allowance_events SET amount_minor = 999 WHERE id = '${eventId}';
+      RESET ROLE;
+    `);
+    expect(err).toContain('append-only');
   });
 
   it('11. Service-role DELETE of event → rejected by trigger', () => {
-    const eventId = psql(`SELECT id FROM messaging_allowance_events WHERE allowance_id = '${allowanceId}' LIMIT 1;`);
-    if (eventId) {
-      const err = psqlMayFail(`
-        SET ROLE service_role;
-        DELETE FROM messaging_allowance_events WHERE id = '${eventId}';
-        RESET ROLE;
-      `);
-      expect(err).toContain('append-only');
-    }
+    const aId = psql(`INSERT INTO messaging_allowances (business_id, type, amount_minor, currency_code, remaining_minor, source_ref) VALUES ('${BIZ_ID}', 'purchased', 100, 'NGN', 100, 'append-del-' || substr(md5(random()::text),1,8)) RETURNING id;`);
+    const eventId = psql(`INSERT INTO messaging_allowance_events (allowance_id, business_id, event_type, amount_minor, balance_after_minor) VALUES ('${aId}', '${BIZ_ID}', 'grant', 100, 100) RETURNING id;`);
+
+    const err = psqlMayFail(`
+      SET ROLE service_role;
+      DELETE FROM messaging_allowance_events WHERE id = '${eventId}';
+      RESET ROLE;
+    `);
+    expect(err).toContain('append-only');
   });
 
   // ── RLS ──
