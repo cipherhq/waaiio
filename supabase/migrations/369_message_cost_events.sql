@@ -66,24 +66,49 @@ CREATE TRIGGER trg_cost_events_no_delete
   BEFORE DELETE ON message_cost_events FOR EACH ROW
   EXECUTE FUNCTION prevent_cost_event_mutation();
 
--- ── 4. RLS ──
+-- ── 4. RLS helper ──
+-- SECURITY DEFINER bypasses inner-table RLS so the policy subquery can
+-- reach message_send_attempts and businesses regardless of the calling role.
+-- Returns TRUE only when the attempt's business is owned by the given user.
+
+CREATE OR REPLACE FUNCTION public.cost_event_visible_to_owner(p_attempt_id UUID)
+RETURNS BOOLEAN
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = ''
+AS $$
+DECLARE
+  v_owner UUID;
+BEGIN
+  SELECT b.owner_id INTO v_owner
+    FROM public.message_send_attempts msa
+    JOIN public.businesses b ON b.id = msa.business_id
+    WHERE msa.id = p_attempt_id;
+  RETURN COALESCE(v_owner = auth.uid(), false);
+END;
+$$;
+
+-- ACL: only authenticated and service_role may call this helper
+REVOKE ALL ON FUNCTION public.cost_event_visible_to_owner(UUID) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.cost_event_visible_to_owner(UUID) FROM anon;
+GRANT EXECUTE ON FUNCTION public.cost_event_visible_to_owner(UUID) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.cost_event_visible_to_owner(UUID) TO service_role;
+
+-- ── 5. RLS ──
 
 ALTER TABLE message_cost_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE message_cost_events FORCE ROW LEVEL SECURITY;
 
--- Business owners read cost events for their own attempts (via attempt ownership)
+-- Business owners read cost events for their own attempts (via SECURITY DEFINER helper)
 CREATE POLICY mce_owner_select ON message_cost_events
-  FOR SELECT USING (EXISTS (
-    SELECT 1 FROM message_send_attempts msa
-    JOIN businesses b ON b.id = msa.business_id
-    WHERE msa.id = message_cost_events.attempt_id
-      AND b.owner_id = auth.uid()
-  ));
+  FOR SELECT USING (public.cost_event_visible_to_owner(attempt_id));
 
 -- Platform admins read all (including platform-scoped)
 CREATE POLICY mce_admin_select ON message_cost_events
   FOR SELECT USING (public.is_admin());
 
--- ── 5. Grants ──
+-- ── 6. Grants ──
 -- Clean slate: revoke everything from application roles before explicit grants.
 REVOKE ALL ON message_cost_events FROM PUBLIC, authenticated, service_role, anon;
 
