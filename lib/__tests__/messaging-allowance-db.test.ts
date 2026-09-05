@@ -1,14 +1,14 @@
 /**
  * Messaging Allowance Schema DB Tests (#258 / Migration 368)
  *
- * Real PostgreSQL proofs for business_messaging_accounts,
- * message_cost_reservations, authorize_message_send(),
- * finalize_reservation(), and concurrency safety.
+ * Real PostgreSQL proofs for messaging_allowances,
+ * messaging_allowance_events, constraints, partial unique indexes,
+ * append-only triggers, RLS, and grants.
  *
  *   TEST_DATABASE_URL=postgresql://localhost:5432/waaiio_test \
  *     npx vitest run lib/__tests__/messaging-allowance-db.test.ts
  */
-import { execSync, spawn } from 'child_process';
+import { execSync } from 'child_process';
 import { describe, it, expect, beforeAll } from 'vitest';
 
 const dbUrl = process.env.TEST_DATABASE_URL || '';
@@ -30,271 +30,253 @@ function psqlMayFail(sql: string): string {
   }
 }
 
-function psqlAsync(sql: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const child = spawn('psql', [dbUrl, '-tAXq', '-v', 'ON_ERROR_STOP=1'], { stdio: ['pipe', 'pipe', 'pipe'] });
-    let stdout = '', stderr = '';
-    child.stdout.on('data', (d: Buffer) => { stdout += d.toString(); });
-    child.stderr.on('data', (d: Buffer) => { stderr += d.toString(); });
-    child.on('close', (code) => {
-      if (code !== 0) reject(new Error(stderr || `exit ${code}`));
-      else resolve(stdout.trim());
-    });
-    child.stdin.write(sql);
-    child.stdin.end();
-  });
-}
-
 const BIZ_ID = 'b0000000-0000-0000-0000-000000000258';
 
-describe.skipIf(!canRun)('Messaging Allowance DB Tests (#258 / Migration 368)', () => {
+describe.skipIf(!canRun)('Messaging Allowance Schema DB Tests (#258 / Migration 368)', () => {
+  let allowanceId: string;
+  let attemptId: string;
+
   beforeAll(() => {
     // Seed test business
-    psqlMayFail(`
+    const bizResult = psqlMayFail(`
       INSERT INTO businesses (id, name, slug, owner_id, address, city, neighborhood, phone)
-      VALUES ('${BIZ_ID}', 'Test258', 'test258-allow', '00000000-0000-0000-0000-000000000001', '1 Test', 'T', 'T', '+1')
+      VALUES ('${BIZ_ID}', 'Test258', 'test258-ma', '00000000-0000-0000-0000-000000000001', '1 Test', 'T', 'T', '+1')
       ON CONFLICT (id) DO NOTHING;
     `);
+    if (bizResult.includes('ERROR') && !bizResult.includes('duplicate')) throw new Error(bizResult);
 
-    // Seed messaging account with known balances
-    psqlMayFail(`
-      INSERT INTO business_messaging_accounts (business_id, free_units_remaining, trial_units_remaining, paid_balance_minor, currency_code)
-      VALUES ('${BIZ_ID}', 5, 10, 50000, 'NGN')
-      ON CONFLICT (business_id) DO UPDATE SET free_units_remaining = 5, trial_units_remaining = 10, paid_balance_minor = 50000;
+    // Seed a test attempt for FK references
+    attemptId = psql(`INSERT INTO message_send_attempts (business_id, recipient_phone) VALUES ('${BIZ_ID}', '+1') RETURNING id;`);
+
+    // Seed a test allowance
+    allowanceId = psql(`
+      INSERT INTO messaging_allowances (business_id, type, amount_minor, currency_code, remaining_minor, source_ref)
+      VALUES ('${BIZ_ID}', 'trial_grant', 10000, 'NGN', 10000, 'test-seed-258')
+      ON CONFLICT (business_id, type, source_ref) DO UPDATE SET remaining_minor = 10000
+      RETURNING id;
     `);
   });
 
-  // ── Schema ──
+  // ── Schema existence ──
 
   it('1. Tables exist', () => {
-    expect(psql("SELECT count(*) FROM information_schema.tables WHERE table_name = 'business_messaging_accounts';")).toBe('1');
-    expect(psql("SELECT count(*) FROM information_schema.tables WHERE table_name = 'message_cost_reservations';")).toBe('1');
+    expect(psql("SELECT count(*) FROM information_schema.tables WHERE table_name = 'messaging_allowances';")).toBe('1');
+    expect(psql("SELECT count(*) FROM information_schema.tables WHERE table_name = 'messaging_allowance_events';")).toBe('1');
   });
 
-  // ── Reservation transitions ──
+  // ── Allowance constraints ──
 
-  it('2. Valid: reserved → consumed', () => {
-    const attemptId = psql(`INSERT INTO message_send_attempts (business_id, recipient_phone) VALUES ('${BIZ_ID}', '+1') RETURNING id;`);
-    psql(`INSERT INTO message_cost_reservations (attempt_id, business_id, authorization_source, estimated_cost_minor, currency_code, estimate_provenance)
-      VALUES ('${attemptId}', '${BIZ_ID}', 'paid', 100, 'NGN', '{"source":"server_rate_card"}'::jsonb);`);
-    psql(`UPDATE message_cost_reservations SET status = 'consumed' WHERE attempt_id = '${attemptId}';`);
-    expect(psql(`SELECT status FROM message_cost_reservations WHERE attempt_id = '${attemptId}';`)).toBe('consumed');
-  });
-
-  it('3. Valid: reserved → released', () => {
-    const attemptId = psql(`INSERT INTO message_send_attempts (business_id, recipient_phone) VALUES ('${BIZ_ID}', '+1') RETURNING id;`);
-    psql(`INSERT INTO message_cost_reservations (attempt_id, business_id, authorization_source, estimated_cost_minor, currency_code, estimate_provenance)
-      VALUES ('${attemptId}', '${BIZ_ID}', 'trial', 0, 'NGN', '{"source":"server_rate_card"}'::jsonb);`);
-    psql(`UPDATE message_cost_reservations SET status = 'released' WHERE attempt_id = '${attemptId}';`);
-    expect(psql(`SELECT status FROM message_cost_reservations WHERE attempt_id = '${attemptId}';`)).toBe('released');
-  });
-
-  it('4. Invalid: consumed → released (terminal)', () => {
-    const attemptId = psql(`INSERT INTO message_send_attempts (business_id, recipient_phone) VALUES ('${BIZ_ID}', '+1') RETURNING id;`);
-    psql(`INSERT INTO message_cost_reservations (attempt_id, business_id, authorization_source, estimated_cost_minor, currency_code, estimate_provenance)
-      VALUES ('${attemptId}', '${BIZ_ID}', 'free', 0, 'NGN', '{"source":"server_rate_card"}'::jsonb);`);
-    psql(`UPDATE message_cost_reservations SET status = 'consumed' WHERE attempt_id = '${attemptId}';`);
-    const err = psqlMayFail(`UPDATE message_cost_reservations SET status = 'released' WHERE attempt_id = '${attemptId}';`);
-    expect(err).toContain('terminal');
-  });
-
-  it('5. One reservation per attempt (UNIQUE)', () => {
-    const attemptId = psql(`INSERT INTO message_send_attempts (business_id, recipient_phone) VALUES ('${BIZ_ID}', '+1') RETURNING id;`);
-    psql(`INSERT INTO message_cost_reservations (attempt_id, business_id, authorization_source, estimated_cost_minor, currency_code, estimate_provenance)
-      VALUES ('${attemptId}', '${BIZ_ID}', 'free', 0, 'NGN', '{"source":"server_rate_card"}'::jsonb);`);
-    const err = psqlMayFail(`INSERT INTO message_cost_reservations (attempt_id, business_id, authorization_source, estimated_cost_minor, currency_code, estimate_provenance)
-      VALUES ('${attemptId}', '${BIZ_ID}', 'paid', 100, 'NGN', '{"source":"server_rate_card"}'::jsonb);`);
-    expect(err.toLowerCase()).toContain('unique');
-  });
-
-  // ── authorize_message_send ──
-
-  it('6. Authorized: free units consumed first', () => {
-    // Reset account
-    psql(`UPDATE business_messaging_accounts SET free_units_remaining = 3, trial_units_remaining = 5, paid_balance_minor = 10000 WHERE business_id = '${BIZ_ID}';`);
-    const attemptId = psql(`INSERT INTO message_send_attempts (business_id, recipient_phone, financial_disposition) VALUES ('${BIZ_ID}', '+1', 'pending_authorization') RETURNING id;`);
-
-    const result = psql(`
-      SET ROLE service_role;
-      SELECT authorize_message_send('${attemptId}'::uuid, 100, 'NGN', '{"source":"server_rate_card","country":"NG"}'::jsonb);
-      RESET ROLE;
-    `);
-    const parsed = JSON.parse(result.split('\n').pop()!);
-    expect(parsed.authorized).toBe(true);
-    expect(parsed.source).toBe('free');
-
-    // Free units decremented
-    const freeRemaining = psql(`SELECT free_units_remaining FROM business_messaging_accounts WHERE business_id = '${BIZ_ID}';`);
-    expect(freeRemaining).toBe('2');
-  });
-
-  it('7. Authorized: trial units after free exhausted', () => {
-    psql(`UPDATE business_messaging_accounts SET free_units_remaining = 0, trial_units_remaining = 5 WHERE business_id = '${BIZ_ID}';`);
-    const attemptId = psql(`INSERT INTO message_send_attempts (business_id, recipient_phone, financial_disposition) VALUES ('${BIZ_ID}', '+1', 'pending_authorization') RETURNING id;`);
-
-    const result = psql(`
-      SET ROLE service_role;
-      SELECT authorize_message_send('${attemptId}'::uuid, 100, 'NGN', '{"source":"server_rate_card"}'::jsonb);
-      RESET ROLE;
-    `);
-    expect(JSON.parse(result.split('\n').pop()!).source).toBe('trial');
-    expect(psql(`SELECT trial_units_remaining FROM business_messaging_accounts WHERE business_id = '${BIZ_ID}';`)).toBe('4');
-  });
-
-  it('8. Authorized: paid after free+trial exhausted', () => {
-    psql(`UPDATE business_messaging_accounts SET free_units_remaining = 0, trial_units_remaining = 0, paid_balance_minor = 5000 WHERE business_id = '${BIZ_ID}';`);
-    const attemptId = psql(`INSERT INTO message_send_attempts (business_id, recipient_phone, financial_disposition) VALUES ('${BIZ_ID}', '+1', 'pending_authorization') RETURNING id;`);
-
-    const result = psql(`
-      SET ROLE service_role;
-      SELECT authorize_message_send('${attemptId}'::uuid, 100, 'NGN', '{"source":"server_rate_card"}'::jsonb);
-      RESET ROLE;
-    `);
-    expect(JSON.parse(result.split('\n').pop()!).source).toBe('paid');
-    expect(psql(`SELECT paid_balance_minor FROM business_messaging_accounts WHERE business_id = '${BIZ_ID}';`)).toBe('4900');
-  });
-
-  it('9. Insufficient allowance → rejected', () => {
-    psql(`UPDATE business_messaging_accounts SET free_units_remaining = 0, trial_units_remaining = 0, paid_balance_minor = 50 WHERE business_id = '${BIZ_ID}';`);
-    const attemptId = psql(`INSERT INTO message_send_attempts (business_id, recipient_phone, financial_disposition) VALUES ('${BIZ_ID}', '+1', 'pending_authorization') RETURNING id;`);
-
+  it('2. remaining_minor >= 0', () => {
     const err = psqlMayFail(`
-      SET ROLE service_role;
-      SELECT authorize_message_send('${attemptId}'::uuid, 100, 'NGN', '{"source":"server_rate_card"}'::jsonb);
-      RESET ROLE;
+      INSERT INTO messaging_allowances (business_id, type, amount_minor, currency_code, remaining_minor, source_ref)
+      VALUES ('${BIZ_ID}', 'purchased', 1000, 'NGN', -1, 'test-neg');
     `);
-    expect(err).toContain('insufficient');
+    expect(err.toLowerCase()).toContain('check');
   });
 
-  it('10. Untrusted estimate source → rejected', () => {
-    psql(`UPDATE business_messaging_accounts SET free_units_remaining = 5 WHERE business_id = '${BIZ_ID}';`);
-    const attemptId = psql(`INSERT INTO message_send_attempts (business_id, recipient_phone, financial_disposition) VALUES ('${BIZ_ID}', '+1', 'pending_authorization') RETURNING id;`);
-
+  it('3. remaining_minor <= amount_minor', () => {
     const err = psqlMayFail(`
-      SET ROLE service_role;
-      SELECT authorize_message_send('${attemptId}'::uuid, 100, 'NGN', '{"source":"browser_calc"}'::jsonb);
-      RESET ROLE;
+      INSERT INTO messaging_allowances (business_id, type, amount_minor, currency_code, remaining_minor, source_ref)
+      VALUES ('${BIZ_ID}', 'purchased', 1000, 'NGN', 2000, 'test-exceed');
     `);
-    expect(err).toContain('Untrusted');
+    expect(err.toLowerCase()).toContain('check');
   });
 
-  it('11. Missing provenance → rejected', () => {
-    const attemptId = psql(`INSERT INTO message_send_attempts (business_id, recipient_phone, financial_disposition) VALUES ('${BIZ_ID}', '+1', 'pending_authorization') RETURNING id;`);
+  it('4. UNIQUE(business_id, type, source_ref) prevents duplicate grants', () => {
+    psqlMayFail(`
+      INSERT INTO messaging_allowances (business_id, type, amount_minor, currency_code, remaining_minor, source_ref)
+      VALUES ('${BIZ_ID}', 'promotional', 500, 'NGN', 500, 'promo-dup-test')
+      ON CONFLICT DO NOTHING;
+    `);
     const err = psqlMayFail(`
-      SET ROLE service_role;
-      SELECT authorize_message_send('${attemptId}'::uuid, 100, 'NGN', '{}'::jsonb);
-      RESET ROLE;
+      INSERT INTO messaging_allowances (business_id, type, amount_minor, currency_code, remaining_minor, source_ref)
+      VALUES ('${BIZ_ID}', 'promotional', 500, 'NGN', 500, 'promo-dup-test');
     `);
-    expect(err).toContain('provenance');
+    expect(err.toLowerCase()).toMatch(/unique|duplicate/);
   });
 
-  // ── Idempotency ──
+  // ── Event partial unique indexes ──
 
-  it('12. Repeated authorization → idempotent (no double reservation)', () => {
-    psql(`UPDATE business_messaging_accounts SET free_units_remaining = 5 WHERE business_id = '${BIZ_ID}';`);
-    const attemptId = psql(`INSERT INTO message_send_attempts (business_id, recipient_phone, financial_disposition) VALUES ('${BIZ_ID}', '+1', 'pending_authorization') RETURNING id;`);
-
-    psql(`SET ROLE service_role; SELECT authorize_message_send('${attemptId}'::uuid, 100, 'NGN', '{"source":"server_rate_card"}'::jsonb); RESET ROLE;`);
-    const freeAfterFirst = psql(`SELECT free_units_remaining FROM business_messaging_accounts WHERE business_id = '${BIZ_ID}';`);
-
-    // Second call — should be idempotent
-    const result = psql(`SET ROLE service_role; SELECT authorize_message_send('${attemptId}'::uuid, 100, 'NGN', '{"source":"server_rate_card"}'::jsonb); RESET ROLE;`);
-    const parsed = JSON.parse(result.split('\n').pop()!);
-    expect(parsed.idempotent).toBe(true);
-
-    // Balance unchanged
-    const freeAfterSecond = psql(`SELECT free_units_remaining FROM business_messaging_accounts WHERE business_id = '${BIZ_ID}';`);
-    expect(freeAfterSecond).toBe(freeAfterFirst);
-  });
-
-  // ── Finalization ──
-
-  it('13. finalize consumed → consumed once', () => {
-    psql(`UPDATE business_messaging_accounts SET paid_balance_minor = 5000 WHERE business_id = '${BIZ_ID}';`);
-    const attemptId = psql(`INSERT INTO message_send_attempts (business_id, recipient_phone, financial_disposition) VALUES ('${BIZ_ID}', '+1', 'pending_authorization') RETURNING id;`);
-    psql(`SET ROLE service_role; SELECT authorize_message_send('${attemptId}'::uuid, 100, 'NGN', '{"source":"server_rate_card"}'::jsonb); RESET ROLE;`);
-
-    const result = psql(`SET ROLE service_role; SELECT finalize_reservation('${attemptId}'::uuid, 'consumed'); RESET ROLE;`);
-    expect(JSON.parse(result.split('\n').pop()!).finalized).toBe(true);
-  });
-
-  it('14. finalize released → balance restored', () => {
-    psql(`UPDATE business_messaging_accounts SET free_units_remaining = 0, trial_units_remaining = 0, paid_balance_minor = 5000 WHERE business_id = '${BIZ_ID}';`);
-    const attemptId = psql(`INSERT INTO message_send_attempts (business_id, recipient_phone, financial_disposition) VALUES ('${BIZ_ID}', '+1', 'pending_authorization') RETURNING id;`);
-    psql(`SET ROLE service_role; SELECT authorize_message_send('${attemptId}'::uuid, 200, 'NGN', '{"source":"server_rate_card"}'::jsonb); RESET ROLE;`);
-    // Balance should be 4800
-    expect(psql(`SELECT paid_balance_minor FROM business_messaging_accounts WHERE business_id = '${BIZ_ID}';`)).toBe('4800');
-
-    psql(`SET ROLE service_role; SELECT finalize_reservation('${attemptId}'::uuid, 'released'); RESET ROLE;`);
-    // Balance restored to 5000
-    expect(psql(`SELECT paid_balance_minor FROM business_messaging_accounts WHERE business_id = '${BIZ_ID}';`)).toBe('5000');
-  });
-
-  it('15. Repeated finalization → idempotent', () => {
-    psql(`UPDATE business_messaging_accounts SET paid_balance_minor = 5000 WHERE business_id = '${BIZ_ID}';`);
-    const attemptId = psql(`INSERT INTO message_send_attempts (business_id, recipient_phone, financial_disposition) VALUES ('${BIZ_ID}', '+1', 'pending_authorization') RETURNING id;`);
-    psql(`SET ROLE service_role; SELECT authorize_message_send('${attemptId}'::uuid, 100, 'NGN', '{"source":"server_rate_card"}'::jsonb); RESET ROLE;`);
-    psql(`SET ROLE service_role; SELECT finalize_reservation('${attemptId}'::uuid, 'consumed'); RESET ROLE;`);
-
-    const result = psql(`SET ROLE service_role; SELECT finalize_reservation('${attemptId}'::uuid, 'consumed'); RESET ROLE;`);
-    expect(JSON.parse(result.split('\n').pop()!).idempotent).toBe(true);
-  });
-
-  // ── ACL ──
-
-  it('16. anon cannot EXECUTE authorize_message_send', () => {
-    expect(psql("SELECT has_function_privilege('anon', 'authorize_message_send(uuid,integer,text,jsonb)', 'EXECUTE');")).toBe('f');
-  });
-
-  it('17. authenticated cannot EXECUTE authorize_message_send', () => {
-    expect(psql("SELECT has_function_privilege('authenticated', 'authorize_message_send(uuid,integer,text,jsonb)', 'EXECUTE');")).toBe('f');
-  });
-
-  it('18. service_role CAN EXECUTE authorize_message_send', () => {
-    expect(psql("SELECT has_function_privilege('service_role', 'authorize_message_send(uuid,integer,text,jsonb)', 'EXECUTE');")).toBe('t');
-  });
-
-  // ── Concurrency ──
-
-  it('19. Two-session race on last free unit → only one wins', async () => {
-    psql(`UPDATE business_messaging_accounts SET free_units_remaining = 1, trial_units_remaining = 0, paid_balance_minor = 0 WHERE business_id = '${BIZ_ID}';`);
-    const a1 = psql(`INSERT INTO message_send_attempts (business_id, recipient_phone, financial_disposition) VALUES ('${BIZ_ID}', '+1', 'pending_authorization') RETURNING id;`);
-    const a2 = psql(`INSERT INTO message_send_attempts (business_id, recipient_phone, financial_disposition) VALUES ('${BIZ_ID}', '+2', 'pending_authorization') RETURNING id;`);
-
-    const sessionA = psqlAsync(`
-      SET ROLE service_role;
-      SELECT authorize_message_send('${a1}'::uuid, 100, 'NGN', '{"source":"server_rate_card"}'::jsonb);
-      RESET ROLE;
+  it('5. Grant event duplicate → rejected', () => {
+    psql(`
+      INSERT INTO messaging_allowance_events (allowance_id, business_id, event_type, amount_minor, balance_after_minor)
+      VALUES ('${allowanceId}', '${BIZ_ID}', 'grant', 10000, 10000)
+      ON CONFLICT DO NOTHING;
     `);
-
-    await new Promise(r => setTimeout(r, 50));
-
-    const sessionB = psqlAsync(`
-      SET ROLE service_role;
-      SELECT authorize_message_send('${a2}'::uuid, 100, 'NGN', '{"source":"server_rate_card"}'::jsonb);
-      RESET ROLE;
+    const err = psqlMayFail(`
+      INSERT INTO messaging_allowance_events (allowance_id, business_id, event_type, amount_minor, balance_after_minor)
+      VALUES ('${allowanceId}', '${BIZ_ID}', 'grant', 10000, 10000);
     `);
+    expect(err.toLowerCase()).toMatch(/unique|duplicate/);
+  });
 
-    const results = await Promise.allSettled([sessionA, sessionB]);
-    const successes = results.filter(r => r.status === 'fulfilled');
-    const failures = results.filter(r => r.status === 'rejected');
+  it('6. Expire event duplicate → rejected', () => {
+    psql(`
+      INSERT INTO messaging_allowance_events (allowance_id, business_id, event_type, amount_minor, balance_after_minor)
+      VALUES ('${allowanceId}', '${BIZ_ID}', 'expire', -10000, 0)
+      ON CONFLICT DO NOTHING;
+    `);
+    const err = psqlMayFail(`
+      INSERT INTO messaging_allowance_events (allowance_id, business_id, event_type, amount_minor, balance_after_minor)
+      VALUES ('${allowanceId}', '${BIZ_ID}', 'expire', -10000, 0);
+    `);
+    expect(err.toLowerCase()).toMatch(/unique|duplicate/);
+  });
 
-    // Exactly one should succeed, one should fail (insufficient)
-    expect(successes.length).toBe(1);
-    expect(failures.length).toBe(1);
-    expect(psql(`SELECT free_units_remaining FROM business_messaging_accounts WHERE business_id = '${BIZ_ID}';`)).toBe('0');
-  }, 15000);
+  it('7. Reserve duplicate for same (allowance, attempt) → rejected', () => {
+    psql(`
+      INSERT INTO messaging_allowance_events (allowance_id, business_id, event_type, amount_minor, attempt_id, balance_after_minor)
+      VALUES ('${allowanceId}', '${BIZ_ID}', 'reserve', -100, '${attemptId}', 9900)
+      ON CONFLICT DO NOTHING;
+    `);
+    const err = psqlMayFail(`
+      INSERT INTO messaging_allowance_events (allowance_id, business_id, event_type, amount_minor, attempt_id, balance_after_minor)
+      VALUES ('${allowanceId}', '${BIZ_ID}', 'reserve', -100, '${attemptId}', 9900);
+    `);
+    expect(err.toLowerCase()).toMatch(/unique|duplicate/);
+  });
+
+  it('8. Adjust with NULL source_key → rejected by CHECK', () => {
+    const err = psqlMayFail(`
+      INSERT INTO messaging_allowance_events (allowance_id, business_id, event_type, amount_minor, balance_after_minor, source_key)
+      VALUES ('${allowanceId}', '${BIZ_ID}', 'adjust', 50, 10050, NULL);
+    `);
+    expect(err.toLowerCase()).toContain('check');
+  });
+
+  it('9. Adjust replay with same source_key → rejected; different → accepted', () => {
+    psql(`
+      INSERT INTO messaging_allowance_events (allowance_id, business_id, event_type, amount_minor, balance_after_minor, source_key)
+      VALUES ('${allowanceId}', '${BIZ_ID}', 'adjust', 50, 10050, 'adj-key-1')
+      ON CONFLICT DO NOTHING;
+    `);
+    // Same key → rejected
+    const err = psqlMayFail(`
+      INSERT INTO messaging_allowance_events (allowance_id, business_id, event_type, amount_minor, balance_after_minor, source_key)
+      VALUES ('${allowanceId}', '${BIZ_ID}', 'adjust', 50, 10050, 'adj-key-1');
+    `);
+    expect(err.toLowerCase()).toMatch(/unique|duplicate/);
+
+    // Different key → accepted
+    const ok = psqlMayFail(`
+      INSERT INTO messaging_allowance_events (allowance_id, business_id, event_type, amount_minor, balance_after_minor, source_key)
+      VALUES ('${allowanceId}', '${BIZ_ID}', 'adjust', 25, 10075, 'adj-key-2');
+    `);
+    expect(ok).not.toContain('ERROR');
+  });
+
+  // ── Append-only enforcement ──
+
+  it('10. Service-role UPDATE of event → rejected by trigger', () => {
+    // Get an existing event
+    const eventId = psql(`SELECT id FROM messaging_allowance_events WHERE allowance_id = '${allowanceId}' LIMIT 1;`);
+    if (eventId) {
+      const err = psqlMayFail(`
+        SET ROLE service_role;
+        UPDATE messaging_allowance_events SET amount_minor = 999 WHERE id = '${eventId}';
+        RESET ROLE;
+      `);
+      expect(err).toContain('append-only');
+    }
+  });
+
+  it('11. Service-role DELETE of event → rejected by trigger', () => {
+    const eventId = psql(`SELECT id FROM messaging_allowance_events WHERE allowance_id = '${allowanceId}' LIMIT 1;`);
+    if (eventId) {
+      const err = psqlMayFail(`
+        SET ROLE service_role;
+        DELETE FROM messaging_allowance_events WHERE id = '${eventId}';
+        RESET ROLE;
+      `);
+      expect(err).toContain('append-only');
+    }
+  });
 
   // ── RLS ──
 
-  it('20. Cross-tenant read denied', () => {
+  it('12. Cross-tenant read denied (allowances)', () => {
     const CLAIMS = '{"sub":"00000000-0000-0000-0000-000000000099","role":"authenticated"}';
     const count = psqlMayFail(`
       SELECT set_config('request.jwt.claims', '${CLAIMS}', false);
       SET ROLE authenticated;
-      SELECT count(*)::int FROM business_messaging_accounts WHERE business_id = '${BIZ_ID}';
+      SELECT count(*)::int FROM messaging_allowances WHERE business_id = '${BIZ_ID}';
       RESET ROLE;
     `);
     expect(count.split('\n').pop()).toBe('0');
+  });
+
+  it('13. Cross-tenant read denied (events)', () => {
+    const CLAIMS = '{"sub":"00000000-0000-0000-0000-000000000099","role":"authenticated"}';
+    const count = psqlMayFail(`
+      SELECT set_config('request.jwt.claims', '${CLAIMS}', false);
+      SET ROLE authenticated;
+      SELECT count(*)::int FROM messaging_allowance_events WHERE business_id = '${BIZ_ID}';
+      RESET ROLE;
+    `);
+    expect(count.split('\n').pop()).toBe('0');
+  });
+
+  // ── Grants ──
+
+  it('14. Authenticated cannot INSERT allowances (service-role only)', () => {
+    const CLAIMS = '{"sub":"00000000-0000-0000-0000-000000000001","role":"authenticated"}';
+    const err = psqlMayFail(`
+      SELECT set_config('request.jwt.claims', '${CLAIMS}', false);
+      SET ROLE authenticated;
+      INSERT INTO messaging_allowances (business_id, type, amount_minor, currency_code, remaining_minor, source_ref)
+      VALUES ('${BIZ_ID}', 'purchased', 100, 'NGN', 100, 'auth-insert-test');
+      RESET ROLE;
+    `);
+    expect(err.toLowerCase()).toMatch(/permission denied|row-level security/);
+  });
+
+  it('15. Service-role CAN INSERT events', () => {
+    // Create a fresh allowance + attempt for this test
+    const aId = psql(`INSERT INTO messaging_allowances (business_id, type, amount_minor, currency_code, remaining_minor, source_ref) VALUES ('${BIZ_ID}', 'purchased', 100, 'NGN', 100, 'svc-event-test-' || substr(md5(random()::text),1,8)) RETURNING id;`);
+    const result = psqlMayFail(`
+      SET ROLE service_role;
+      INSERT INTO messaging_allowance_events (allowance_id, business_id, event_type, amount_minor, balance_after_minor)
+      VALUES ('${aId}', '${BIZ_ID}', 'grant', 100, 100);
+      RESET ROLE;
+    `);
+    expect(result).not.toContain('permission denied');
+  });
+
+  // ── FK to message_send_attempts ──
+
+  it('16. Event with valid attempt_id FK succeeds', () => {
+    const aId = psql(`INSERT INTO messaging_allowances (business_id, type, amount_minor, currency_code, remaining_minor, source_ref) VALUES ('${BIZ_ID}', 'purchased', 500, 'NGN', 500, 'fk-test-' || substr(md5(random()::text),1,8)) RETURNING id;`);
+    const result = psqlMayFail(`
+      INSERT INTO messaging_allowance_events (allowance_id, business_id, event_type, amount_minor, attempt_id, balance_after_minor)
+      VALUES ('${aId}', '${BIZ_ID}', 'reserve', -100, '${attemptId}', 400);
+    `);
+    expect(result).not.toContain('ERROR');
+  });
+
+  it('17. Event with invalid attempt_id FK → rejected', () => {
+    const aId = psql(`INSERT INTO messaging_allowances (business_id, type, amount_minor, currency_code, remaining_minor, source_ref) VALUES ('${BIZ_ID}', 'purchased', 500, 'NGN', 500, 'fk-bad-' || substr(md5(random()::text),1,8)) RETURNING id;`);
+    const err = psqlMayFail(`
+      INSERT INTO messaging_allowance_events (allowance_id, business_id, event_type, amount_minor, attempt_id, balance_after_minor)
+      VALUES ('${aId}', '${BIZ_ID}', 'reserve', -100, '00000000-0000-0000-0000-999999999999', 400);
+    `);
+    expect(err.toLowerCase()).toMatch(/foreign key|violates/);
+  });
+
+  // ── Type enum ──
+
+  it('18. Invalid allowance type → rejected', () => {
+    const err = psqlMayFail(`
+      INSERT INTO messaging_allowances (business_id, type, amount_minor, currency_code, remaining_minor, source_ref)
+      VALUES ('${BIZ_ID}', 'invalid_type', 100, 'NGN', 100, 'type-test');
+    `);
+    expect(err.toLowerCase()).toContain('check');
+  });
+
+  it('19. Invalid event type → rejected', () => {
+    const err = psqlMayFail(`
+      INSERT INTO messaging_allowance_events (allowance_id, business_id, event_type, amount_minor, balance_after_minor)
+      VALUES ('${allowanceId}', '${BIZ_ID}', 'invalid_event', 100, 100);
+    `);
+    expect(err.toLowerCase()).toContain('check');
   });
 });
