@@ -49,7 +49,10 @@ CREATE TABLE IF NOT EXISTS public.messaging_allowance_events (
   created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
   -- adjust requires non-null source_key
-  CHECK (event_type <> 'adjust' OR source_key IS NOT NULL)
+  CHECK (event_type <> 'adjust' OR source_key IS NOT NULL),
+
+  -- reserve|charge|release require non-null attempt_id
+  CHECK (event_type NOT IN ('reserve', 'charge', 'release') OR attempt_id IS NOT NULL)
 );
 
 -- ── 3. Partial unique indexes (PostgreSQL NULL-safe idempotency) ──
@@ -73,7 +76,51 @@ CREATE INDEX IF NOT EXISTS idx_mae_allowance ON messaging_allowance_events(allow
 CREATE INDEX IF NOT EXISTS idx_mae_attempt ON messaging_allowance_events(attempt_id)
   WHERE attempt_id IS NOT NULL;
 
--- ── 4. Append-only enforcement (triggers block UPDATE/DELETE including service_role) ──
+-- ── 4. Tenant consistency enforcement ──
+-- Validates that event.business_id matches the referenced allowance's business_id,
+-- and when attempt_id is present, the referenced attempt is business-scoped for the same business.
+
+CREATE OR REPLACE FUNCTION public.validate_allowance_event_tenant()
+RETURNS TRIGGER AS $$
+DECLARE
+  _allowance_biz UUID;
+  _attempt_biz UUID;
+  _attempt_scope TEXT;
+BEGIN
+  -- Check allowance business_id matches event business_id
+  SELECT business_id INTO _allowance_biz
+    FROM messaging_allowances WHERE id = NEW.allowance_id;
+
+  IF _allowance_biz IS DISTINCT FROM NEW.business_id THEN
+    RAISE EXCEPTION 'event business_id (%) does not match allowance business_id (%)',
+      NEW.business_id, _allowance_biz;
+  END IF;
+
+  -- When attempt_id is present, validate same-business + business-scoped
+  IF NEW.attempt_id IS NOT NULL THEN
+    SELECT business_id, attempt_scope INTO _attempt_biz, _attempt_scope
+      FROM message_send_attempts WHERE id = NEW.attempt_id;
+
+    IF _attempt_scope <> 'business' THEN
+      RAISE EXCEPTION 'attempt % has scope "%" — only business-scoped attempts allowed in allowance events',
+        NEW.attempt_id, _attempt_scope;
+    END IF;
+
+    IF _attempt_biz IS DISTINCT FROM NEW.business_id THEN
+      RAISE EXCEPTION 'attempt business_id (%) does not match event business_id (%)',
+        _attempt_biz, NEW.business_id;
+    END IF;
+  END IF;
+
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_allowance_events_tenant_check
+  BEFORE INSERT ON messaging_allowance_events FOR EACH ROW
+  EXECUTE FUNCTION validate_allowance_event_tenant();
+
+-- ── 5. Append-only enforcement ──
 
 CREATE OR REPLACE FUNCTION public.prevent_allowance_event_mutation()
 RETURNS TRIGGER AS $$
@@ -90,7 +137,7 @@ CREATE TRIGGER trg_allowance_events_no_delete
   BEFORE DELETE ON messaging_allowance_events FOR EACH ROW
   EXECUTE FUNCTION prevent_allowance_event_mutation();
 
--- ── 5. RLS ──
+-- ── 6. RLS ──
 
 ALTER TABLE messaging_allowances ENABLE ROW LEVEL SECURITY;
 ALTER TABLE messaging_allowance_events ENABLE ROW LEVEL SECURITY;
@@ -113,7 +160,7 @@ CREATE POLICY mae_owner_select ON messaging_allowance_events
 CREATE POLICY mae_admin_select ON messaging_allowance_events
   FOR SELECT USING (public.is_admin());
 
--- ── 6. Grants ──
+-- ── 7. Grants ──
 
 -- Allowances: authenticated SELECT, service-role INSERT/UPDATE
 GRANT SELECT ON messaging_allowances TO authenticated;
@@ -122,3 +169,7 @@ GRANT SELECT, INSERT, UPDATE ON messaging_allowances TO service_role;
 -- Events: authenticated SELECT, service-role INSERT only (no UPDATE/DELETE — trigger-enforced)
 GRANT SELECT ON messaging_allowance_events TO authenticated;
 GRANT SELECT, INSERT ON messaging_allowance_events TO service_role;
+
+-- Explicit deny: no DELETE/TRUNCATE path defeats append-only semantics
+REVOKE DELETE, TRUNCATE ON messaging_allowance_events FROM authenticated, service_role, anon;
+REVOKE DELETE, TRUNCATE ON messaging_allowances FROM authenticated, anon;
