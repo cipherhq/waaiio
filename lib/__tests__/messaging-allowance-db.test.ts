@@ -479,6 +479,25 @@ describe.skipIf(!canRun)('Messaging Allowance Schema DB Tests (#258 / Migration 
   // L3 is verified by RLS tests (26-29).
   // ═══════════════════════════════════════════════════════
 
+  it('33-diag. Diagnostic: default privileges and raw ACLs', () => {
+    // Check for ALTER DEFAULT PRIVILEGES that might auto-grant to roles
+    const defacl = psqlMayFail(`SELECT defaclrole::regrole || '|' || defaclnamespace::regnamespace || '|' || defaclobjtype || '|' || defaclacl::text FROM pg_default_acl;`);
+    console.log('[DIAG] pg_default_acl:', defacl || '(empty)');
+
+    // Check raw ACL on both tables
+    const eventsAcl = psql(`SELECT relacl::text FROM pg_class WHERE relname = 'messaging_allowance_events';`);
+    const allowancesAcl = psql(`SELECT relacl::text FROM pg_class WHERE relname = 'messaging_allowances';`);
+    console.log('[DIAG] events ACL:', eventsAcl);
+    console.log('[DIAG] allowances ACL:', allowancesAcl);
+
+    // Check message_send_attempts ACL for comparison (migration 367)
+    const attemptsAcl = psql(`SELECT relacl::text FROM pg_class WHERE relname = 'message_send_attempts';`);
+    console.log('[DIAG] attempts ACL (367):', attemptsAcl);
+
+    // This test always passes — it's purely diagnostic
+    expect(true).toBe(true);
+  });
+
   it('33. Raw ACL on events does not grant DELETE/TRUNCATE to application roles', () => {
     // pg_class.relacl contains ACL items like "service_role=arw/postgres"
     // Privilege letters: r=SELECT, a=INSERT, w=UPDATE, d=DELETE, D=TRUNCATE
