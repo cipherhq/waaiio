@@ -329,10 +329,26 @@ describe.skipIf(!canRun)('Message Cost Events Schema DB Tests (#259 / Migration 
     expect(parseInt(count.split('\n').pop()!)).toBeGreaterThan(0);
   });
 
-  it('22b. RLS policies exist', () => {
+  it('22b. DIAGNOSTIC: RLS policies and visibility', () => {
     const policies = psql(`SELECT polname FROM pg_policy WHERE polrelid = 'message_cost_events'::regclass ORDER BY polname;`);
+    console.log('[DIAG] policies:', policies);
     expect(policies).toContain('mce_owner_select');
     expect(policies).toContain('mce_admin_select');
+
+    // Test: what does authenticated see on the cost events table?
+    const a = psql(`INSERT INTO message_send_attempts (business_id, recipient_phone, attempt_scope) VALUES ('${BIZ_ID}', '+1', 'business') RETURNING id;`);
+    psql(`INSERT INTO message_cost_events (attempt_id, event_type, amount_minor, charge_type, balance_after_minor) VALUES ('${a}', 'reserve', -100, 'included', 900);`);
+    const CLAIMS = `{"sub":"${OWNER_B}","role":"authenticated"}`;
+    // Run SET ROLE + SELECT in single statement to see exact output
+    const raw = psqlMayFail(`
+      SELECT set_config('request.jwt.claims', '${CLAIMS}', false);
+      SET ROLE authenticated;
+      SELECT count(*)::int FROM message_cost_events WHERE attempt_id = '${a}';
+      RESET ROLE;
+    `);
+    console.log('[DIAG] raw cross-tenant output:', JSON.stringify(raw));
+    const lines = raw.split('\n').filter(l => l.trim() !== '');
+    console.log('[DIAG] non-empty lines:', JSON.stringify(lines));
   });
 
   it('23. Cross-tenant SELECT returns zero', () => {

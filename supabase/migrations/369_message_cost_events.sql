@@ -70,29 +70,20 @@ CREATE TRIGGER trg_cost_events_no_delete
 
 ALTER TABLE message_cost_events ENABLE ROW LEVEL SECURITY;
 
--- Service-role INSERT policy (required: service_role bypasses RLS by default in
--- Supabase, but explicit INSERT policy ensures correctness if FORCE is ever added)
-CREATE POLICY mce_service_insert ON message_cost_events
-  FOR INSERT TO service_role
-  WITH CHECK (true);
-
 -- Business owners read cost events for their own business-scoped attempts.
--- Uses same inline auth.uid() pattern proven in Migration 368 (#258).
--- Platform-scoped attempts (msa.business_id IS NULL) are excluded from
--- this policy — they have no owning business tenant.
+-- Same inline auth.uid() pattern proven in Migration 368 (#258).
+-- Platform-scoped attempts (msa.business_id IS NULL) excluded — no owning tenant.
 CREATE POLICY mce_owner_select ON message_cost_events
-  FOR SELECT TO authenticated
-  USING (EXISTS (
-    SELECT 1 FROM public.message_send_attempts msa
-    JOIN public.businesses b ON b.id = msa.business_id
+  FOR SELECT USING (EXISTS (
+    SELECT 1 FROM message_send_attempts msa
+    JOIN businesses b ON b.id = msa.business_id
     WHERE msa.id = message_cost_events.attempt_id
       AND b.owner_id = auth.uid()
   ));
 
 -- Platform admins read all (including platform-scoped)
 CREATE POLICY mce_admin_select ON message_cost_events
-  FOR SELECT
-  USING (public.is_admin());
+  FOR SELECT USING (public.is_admin());
 
 -- ── 5. Grants ──
 -- Clean slate: revoke everything from application roles before explicit grants.
