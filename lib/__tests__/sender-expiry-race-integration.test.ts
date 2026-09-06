@@ -270,6 +270,15 @@ describe.skipIf(!canRun)('Sender expiry-race integration (#261 production-shaped
 
     // === ASSERTIONS ===
 
+    // Debug: log what happened
+    if (!sendError) {
+      // Check if provider was called
+      const providerCalls = providerSpy.mock.calls.length;
+      // Check attempt state
+      const attemptRows = psql(`SELECT id, status, financial_disposition FROM message_send_attempts WHERE business_id = '${bizId}' AND recipient_phone = '${UNIQUE_PHONE}' ORDER BY created_at;`);
+      console.error(`[TEST44 DEBUG] sendError=null, providerCalls=${providerCalls}, beforeCallCount=${beforeCallCount}, capturedAttemptId=${capturedAttemptId}, attempts:\n${attemptRows}`);
+    }
+
     // 1. The real send rejected with GateBlockError
     expect(sendError).not.toBeNull();
     expect(sendError).toBeInstanceOf(GateBlockError);
