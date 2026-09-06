@@ -1074,10 +1074,227 @@ describe.skipIf(!canRun)('Financial Authorization & Settlement DB Tests (#260 / 
   });
 
   // ═══════════════════════════════════════════════════════
-  // 48. auth.uid() hermetic restoration (must be last)
+  // 48. NULL → non-NULL config_version_id rewrite rejected
   // ═══════════════════════════════════════════════════════
 
-  it('48. auth.uid() restored to exact original after all RLS tests', () => {
+  it('48. NULL → non-NULL config_version_id rewrite rejected (immutability includes NULL)', () => {
+    const biz = createIsolatedBusiness();
+    // Manually insert a period with NULL config_version_id
+    psql(`INSERT INTO public.messaging_spend_periods (business_id, currency_code, period_start, cap_minor, config_version_id) VALUES ('${biz}', 'NGN', '2020-01-01T00:00:00Z', 10000, NULL);`);
+    const periodId = psql(`SELECT id FROM public.messaging_spend_periods WHERE business_id = '${biz}' AND currency_code = 'NGN' AND period_start = '2020-01-01T00:00:00Z';`);
+
+    // Attempt to assign a config_version_id → should be rejected
+    const err = psqlMayFail(`UPDATE public.messaging_spend_periods SET config_version_id = gen_random_uuid() WHERE id = '${periodId}';`);
+    expect(err).toContain('immutable');
+
+    // Value unchanged (still NULL)
+    const val = psql(`SELECT config_version_id IS NULL FROM public.messaging_spend_periods WHERE id = '${periodId}';`);
+    expect(val).toBe('t');
+  });
+
+  // ═══════════════════════════════════════════════════════
+  // 49-52. Fail-closed paths with zero durable financial mutation
+  // ═══════════════════════════════════════════════════════
+
+  it('49. Ambiguous country (present in >1 currency bucket) → fail closed, zero mutation', () => {
+    // Insert config where NG is in BOTH NGN and XAF buckets
+    psql(`
+      INSERT INTO public.platform_config_versions (config_snapshot, effective_from, created_by)
+      VALUES ('${JSON.stringify({
+        messaging_pricing: {
+          NGN: {
+            default_cost_minor: 500,
+            rates: { NG: { marketing: 800, utility: 300 } },
+            default_spend_cap_minor: 50000,
+          },
+          XAF: {
+            default_cost_minor: 100,
+            rates: { NG: { marketing: 200 } },
+            default_spend_cap_minor: 100000,
+          },
+        },
+      })}'::JSONB, NOW() + INTERVAL '49370 microseconds', '${OWNER_A}');
+    `);
+
+    const biz = createIsolatedBusiness();
+    createAllowance(biz, 'trial_grant', 10000, 'NGN', `auth-test-49-${Date.now()}`);
+    const attemptId = createAttempt(biz, 'NG', 'marketing');
+    const result = JSON.parse(psql(`SELECT public.authorize_message_send('${attemptId}');`));
+    expect(result.authorized).toBe(false);
+    expect(result.reason).toBe('ambiguous_currency_for_country');
+
+    // Zero durable financial mutation
+    const disp = psql(`SELECT financial_disposition FROM message_send_attempts WHERE id = '${attemptId}';`);
+    expect(disp).toBe('pending_authorization');
+    const costEvents = psql(`SELECT count(*) FROM public.message_cost_events WHERE attempt_id = '${attemptId}';`);
+    expect(costEvents).toBe('0');
+    const allowanceEvents = psql(`SELECT count(*) FROM public.messaging_allowance_events WHERE attempt_id = '${attemptId}';`);
+    expect(allowanceEvents).toBe('0');
+
+    // Restore standard config
+    psql(`
+      INSERT INTO public.platform_config_versions (config_snapshot, effective_from, created_by)
+      VALUES ('${JSON.stringify({
+        messaging_pricing: {
+          NGN: {
+            default_cost_minor: 500,
+            rates: { NG: { marketing: 800, utility: 300, authentication: 200 } },
+            default_spend_cap_minor: 50000,
+          },
+          USD: {
+            default_cost_minor: 8,
+            rates: { US: { marketing: 12, utility: 5, authentication: 4 }, CA: { marketing: 10, utility: 5 } },
+            default_spend_cap_minor: 5000,
+          },
+        },
+      })}'::JSONB, NOW() + INTERVAL '49371 microseconds', '${OWNER_A}');
+    `);
+  });
+
+  it('50. Known country, no category/wildcard/default rate → unresolved_rate, zero mutation', () => {
+    // Insert config where US has rates but missing everything for a specific test
+    psql(`
+      INSERT INTO public.platform_config_versions (config_snapshot, effective_from, created_by)
+      VALUES ('${JSON.stringify({
+        messaging_pricing: {
+          USD: {
+            rates: { US: { marketing: 12 } },
+            default_spend_cap_minor: 5000,
+          },
+        },
+      })}'::JSONB, NOW() + INTERVAL '50370 microseconds', '${OWNER_A}');
+    `);
+
+    const biz = createIsolatedBusiness();
+    createAllowance(biz, 'trial_grant', 10000, 'USD', `auth-test-50-${Date.now()}`);
+    // 'service' not in US rates, no '*', no default_cost_minor
+    const attemptId = createAttempt(biz, 'US', 'service');
+    const result = JSON.parse(psql(`SELECT public.authorize_message_send('${attemptId}');`));
+    expect(result.authorized).toBe(false);
+    expect(result.reason).toBe('unresolved_rate');
+
+    // Zero durable mutation
+    const disp = psql(`SELECT financial_disposition FROM message_send_attempts WHERE id = '${attemptId}';`);
+    expect(disp).toBe('pending_authorization');
+    const costEvents = psql(`SELECT count(*) FROM public.message_cost_events WHERE attempt_id = '${attemptId}';`);
+    expect(costEvents).toBe('0');
+
+    // Restore standard config
+    psql(`
+      INSERT INTO public.platform_config_versions (config_snapshot, effective_from, created_by)
+      VALUES ('${JSON.stringify({
+        messaging_pricing: {
+          NGN: {
+            default_cost_minor: 500,
+            rates: { NG: { marketing: 800, utility: 300, authentication: 200 } },
+            default_spend_cap_minor: 50000,
+          },
+          USD: {
+            default_cost_minor: 8,
+            rates: { US: { marketing: 12, utility: 5, authentication: 4 }, CA: { marketing: 10, utility: 5 } },
+            default_spend_cap_minor: 5000,
+          },
+        },
+      })}'::JSONB, NOW() + INTERVAL '50371 microseconds', '${OWNER_A}');
+    `);
+  });
+
+  it('51. Resolved currency with no spend cap → fail closed, zero mutation', () => {
+    // Insert config where NGN has rates but NO default_spend_cap_minor
+    psql(`
+      INSERT INTO public.platform_config_versions (config_snapshot, effective_from, created_by)
+      VALUES ('${JSON.stringify({
+        messaging_pricing: {
+          NGN: {
+            default_cost_minor: 500,
+            rates: { NG: { marketing: 800, utility: 300 } },
+          },
+        },
+      })}'::JSONB, NOW() + INTERVAL '51370 microseconds', '${OWNER_A}');
+    `);
+
+    const biz = createIsolatedBusiness();
+    createAllowance(biz, 'trial_grant', 10000, 'NGN', `auth-test-51-${Date.now()}`);
+    const attemptId = createAttempt(biz, 'NG', 'utility');
+    const result = JSON.parse(psql(`SELECT public.authorize_message_send('${attemptId}');`));
+    expect(result.authorized).toBe(false);
+    expect(result.reason).toBe('no_spend_cap_for_currency');
+
+    // Zero durable mutation
+    const disp = psql(`SELECT financial_disposition FROM message_send_attempts WHERE id = '${attemptId}';`);
+    expect(disp).toBe('pending_authorization');
+    const costEvents = psql(`SELECT count(*) FROM public.message_cost_events WHERE attempt_id = '${attemptId}';`);
+    expect(costEvents).toBe('0');
+    const periods = psql(`SELECT count(*) FROM public.messaging_spend_periods WHERE business_id = '${biz}';`);
+    expect(periods).toBe('0');
+
+    // Restore standard config
+    psql(`
+      INSERT INTO public.platform_config_versions (config_snapshot, effective_from, created_by)
+      VALUES ('${JSON.stringify({
+        messaging_pricing: {
+          NGN: {
+            default_cost_minor: 500,
+            rates: { NG: { marketing: 800, utility: 300, authentication: 200 } },
+            default_spend_cap_minor: 50000,
+          },
+          USD: {
+            default_cost_minor: 8,
+            rates: { US: { marketing: 12, utility: 5, authentication: 4 }, CA: { marketing: 10, utility: 5 } },
+            default_spend_cap_minor: 5000,
+          },
+        },
+      })}'::JSONB, NOW() + INTERVAL '51371 microseconds', '${OWNER_A}');
+    `);
+  });
+
+  it('52. Missing/invalid messaging_pricing config → fail closed, zero mutation', () => {
+    // Insert config with no messaging_pricing key at all
+    psql(`
+      INSERT INTO public.platform_config_versions (config_snapshot, effective_from, created_by)
+      VALUES ('${JSON.stringify({
+        some_other_key: { foo: 'bar' },
+      })}'::JSONB, NOW() + INTERVAL '52370 microseconds', '${OWNER_A}');
+    `);
+
+    const biz = createIsolatedBusiness();
+    createAllowance(biz, 'trial_grant', 10000, 'NGN', `auth-test-52-${Date.now()}`);
+    const attemptId = createAttempt(biz, 'NG', 'utility');
+    const result = JSON.parse(psql(`SELECT public.authorize_message_send('${attemptId}');`));
+    expect(result.authorized).toBe(false);
+    expect(result.reason).toBe('no_messaging_pricing');
+
+    // Zero durable mutation
+    const disp = psql(`SELECT financial_disposition FROM message_send_attempts WHERE id = '${attemptId}';`);
+    expect(disp).toBe('pending_authorization');
+    const costEvents = psql(`SELECT count(*) FROM public.message_cost_events WHERE attempt_id = '${attemptId}';`);
+    expect(costEvents).toBe('0');
+
+    // Restore standard config (must be last config insertion to avoid breaking later tests)
+    psql(`
+      INSERT INTO public.platform_config_versions (config_snapshot, effective_from, created_by)
+      VALUES ('${JSON.stringify({
+        messaging_pricing: {
+          NGN: {
+            default_cost_minor: 500,
+            rates: { NG: { marketing: 800, utility: 300, authentication: 200 } },
+            default_spend_cap_minor: 50000,
+          },
+          USD: {
+            default_cost_minor: 8,
+            rates: { US: { marketing: 12, utility: 5, authentication: 4 }, CA: { marketing: 10, utility: 5 } },
+            default_spend_cap_minor: 5000,
+          },
+        },
+      })}'::JSONB, NOW() + INTERVAL '52371 microseconds', '${OWNER_A}');
+    `);
+  });
+
+  // ═══════════════════════════════════════════════════════
+  // 53. auth.uid() hermetic restoration (must be last)
+  // ═══════════════════════════════════════════════════════
+
+  it('53. auth.uid() restored to exact original after all RLS tests', () => {
     const currentDef = psql(`SELECT pg_get_functiondef(oid) FROM pg_proc WHERE proname = 'uid' AND pronamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'auth');`);
     expect(currentDef).toBe(originalAuthUidDef);
   });

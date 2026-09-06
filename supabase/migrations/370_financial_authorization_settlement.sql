@@ -57,11 +57,11 @@ CREATE POLICY msp_admin_select ON messaging_spend_periods
 CREATE OR REPLACE FUNCTION public.enforce_spend_period_provenance_immutability()
 RETURNS TRIGGER AS $$
 BEGIN
-  IF OLD.cap_minor IS NOT NULL AND NEW.cap_minor IS DISTINCT FROM OLD.cap_minor THEN
+  IF NEW.cap_minor IS DISTINCT FROM OLD.cap_minor THEN
     RAISE EXCEPTION 'messaging_spend_periods.cap_minor is immutable after creation (% → %)',
       OLD.cap_minor, NEW.cap_minor;
   END IF;
-  IF OLD.config_version_id IS NOT NULL AND NEW.config_version_id IS DISTINCT FROM OLD.config_version_id THEN
+  IF NEW.config_version_id IS DISTINCT FROM OLD.config_version_id THEN
     RAISE EXCEPTION 'messaging_spend_periods.config_version_id is immutable after creation (% → %)',
       OLD.config_version_id, NEW.config_version_id;
   END IF;
