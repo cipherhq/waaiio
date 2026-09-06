@@ -175,7 +175,6 @@ describe.skipIf(!canRun)('Sender expiry-race integration (#261 production-shaped
       VALUES ('${JSON.stringify({
         messaging_financial_gate: true,
         messaging_pricing: {
-          NG: { default_cost_minor: 500, rates: { NG: { service: 200 } }, default_spend_cap_minor: 50000 },
           NGN: { default_cost_minor: 500, rates: { NG: { service: 200 } }, default_spend_cap_minor: 50000 },
         },
         messaging_reservation_ttl_seconds: 1,
