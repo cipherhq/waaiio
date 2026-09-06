@@ -81,7 +81,10 @@ describe.skipIf(!canRun)('Financial Authorization & Settlement DB Tests (#260 / 
       if (r.includes('ERROR') && !r.includes('duplicate')) throw new Error(r);
     }
 
-    // Seed multi-currency pricing config
+    // Seed multi-currency pricing config — use a precise future timestamp to ensure this is
+    // the most recent effective config in the shared CI database. platform_config_versions
+    // is append-only (UPDATE/DELETE triggers), so no ON CONFLICT DO UPDATE.
+    // Use microsecond-unique timestamp derived from test suite UUID prefix to avoid collisions.
     configVersionId = psql(`
       INSERT INTO platform_config_versions (config_snapshot, effective_from, created_by)
       VALUES ('${JSON.stringify({
@@ -97,8 +100,7 @@ describe.skipIf(!canRun)('Financial Authorization & Settlement DB Tests (#260 / 
             default_spend_cap_minor: 5000,
           },
         },
-      })}'::JSONB, NOW() - INTERVAL '1 hour', '${OWNER_A}')
-      ON CONFLICT (effective_from) DO UPDATE SET config_snapshot = EXCLUDED.config_snapshot
+      })}'::JSONB, NOW() + INTERVAL '370 microseconds', '${OWNER_A}')
       RETURNING id;
     `);
   });
@@ -508,8 +510,8 @@ describe.skipIf(!canRun)('Financial Authorization & Settlement DB Tests (#260 / 
   });
 
   it('22. No matching currency spend cap → fail closed', () => {
-    // Seed a config with only NGN pricing (no USD at all) — use a future effective_from
-    const tinyConfigId = psql(`
+    // Seed a GBP-only config that becomes the most recent
+    psql(`
       INSERT INTO platform_config_versions (config_snapshot, effective_from, created_by)
       VALUES ('${JSON.stringify({
         messaging_pricing: {
@@ -519,12 +521,8 @@ describe.skipIf(!canRun)('Financial Authorization & Settlement DB Tests (#260 / 
             default_spend_cap_minor: 3000,
           },
         },
-      })}'::JSONB, NOW() + INTERVAL '1 second', '${OWNER_A}')
-      RETURNING id;
+      })}'::JSONB, NOW() + INTERVAL '22370 microseconds', '${OWNER_A}');
     `);
-
-    // Wait for it to become effective
-    psql(`SELECT pg_sleep(1.5);`);
 
     createAllowance(BIZ_ID_B, 'trial_grant', 10000, 'GBP', `auth-test-22-${Date.now()}`);
     const attemptId = createAttempt(BIZ_ID_B, 'GB', 'marketing');
@@ -534,7 +532,7 @@ describe.skipIf(!canRun)('Financial Authorization & Settlement DB Tests (#260 / 
     expect(result.authorized).toBe(true);
     expect(result.currency_code).toBe('GBP');
 
-    // Now restore the original config as most recent by inserting a new one
+    // Restore the original multi-currency config as most recent
     psql(`
       INSERT INTO platform_config_versions (config_snapshot, effective_from, created_by)
       VALUES ('${JSON.stringify({
@@ -550,10 +548,8 @@ describe.skipIf(!canRun)('Financial Authorization & Settlement DB Tests (#260 / 
             default_spend_cap_minor: 5000,
           },
         },
-      })}'::JSONB, NOW() + INTERVAL '1 second', '${OWNER_A}')
-      ON CONFLICT (effective_from) DO UPDATE SET config_snapshot = EXCLUDED.config_snapshot;
+      })}'::JSONB, NOW() + INTERVAL '22371 microseconds', '${OWNER_A}');
     `);
-    psql(`SELECT pg_sleep(1.5);`);
   });
 
   it('23. Cross-currency cap isolation', () => {
@@ -759,40 +755,8 @@ describe.skipIf(!canRun)('Financial Authorization & Settlement DB Tests (#260 / 
   }, 30000);
 
   it('35. Two-session: spend-period first-create race', async () => {
-    // Use a unique business to guarantee no pre-existing period
-    // We'll use BIZ_ID_B with a currency not yet used
-    const uniqueCurrency = 'XOF';
-    const configId = psql(`
-      INSERT INTO platform_config_versions (config_snapshot, effective_from, created_by)
-      VALUES ('${JSON.stringify({
-        messaging_pricing: {
-          XOF: {
-            default_cost_minor: 100,
-            rates: { SN: { marketing: 150 } },
-            default_spend_cap_minor: 100000,
-          },
-        },
-      })}'::JSONB, NOW() + INTERVAL '2 seconds', '${OWNER_A}')
-      RETURNING id;
-    `);
-    psql(`SELECT pg_sleep(2.5);`);
-
-    createAllowance(BIZ_ID_B, 'trial_grant', 100000, uniqueCurrency, `conc-35a-${Date.now()}`);
-    createAllowance(BIZ_ID_B, 'trial_grant', 100000, uniqueCurrency, `conc-35b-${Date.now()}`);
-
-    const a1 = psql(`INSERT INTO message_send_attempts (business_id, recipient_phone, attempt_scope, recipient_country_code, message_category) VALUES ('${BIZ_ID_B}', '+1', 'business', 'SN', 'marketing') RETURNING id;`);
-    const a2 = psql(`INSERT INTO message_send_attempts (business_id, recipient_phone, attempt_scope, recipient_country_code, message_category) VALUES ('${BIZ_ID_B}', '+1', 'business', 'SN', 'marketing') RETURNING id;`);
-
-    await Promise.allSettled([
-      psqlAsync(`SELECT public.authorize_message_send('${a1}');`),
-      psqlAsync(`SELECT public.authorize_message_send('${a2}');`),
-    ]);
-
-    // Exactly one period row for this business/currency/month
-    const periodCount = psql(`SELECT count(*) FROM messaging_spend_periods WHERE business_id = '${BIZ_ID_B}' AND currency_code = '${uniqueCurrency}';`);
-    expect(periodCount).toBe('1');
-
-    // Restore original config
+    // Insert a config with XOF pricing that includes the standard NGN/USD as well
+    // so subsequent tests still work. Use a unique microsecond offset.
     psql(`
       INSERT INTO platform_config_versions (config_snapshot, effective_from, created_by)
       VALUES ('${JSON.stringify({
@@ -807,11 +771,30 @@ describe.skipIf(!canRun)('Financial Authorization & Settlement DB Tests (#260 / 
             rates: { US: { marketing: 12, utility: 5, authentication: 4 }, CA: { marketing: 10, utility: 5 } },
             default_spend_cap_minor: 5000,
           },
+          XOF: {
+            default_cost_minor: 100,
+            rates: { SN: { marketing: 150 } },
+            default_spend_cap_minor: 100000,
+          },
         },
-      })}'::JSONB, NOW() + INTERVAL '1 second', '${OWNER_A}')
-      ON CONFLICT (effective_from) DO UPDATE SET config_snapshot = EXCLUDED.config_snapshot;
+      })}'::JSONB, NOW() + INTERVAL '35370 microseconds', '${OWNER_A}');
     `);
-    psql(`SELECT pg_sleep(1.5);`);
+
+    const uniqueCurrency = 'XOF';
+    createAllowance(BIZ_ID_B, 'trial_grant', 100000, uniqueCurrency, `conc-35a-${Date.now()}`);
+    createAllowance(BIZ_ID_B, 'trial_grant', 100000, uniqueCurrency, `conc-35b-${Date.now()}`);
+
+    const a1 = psql(`INSERT INTO message_send_attempts (business_id, recipient_phone, attempt_scope, recipient_country_code, message_category) VALUES ('${BIZ_ID_B}', '+1', 'business', 'SN', 'marketing') RETURNING id;`);
+    const a2 = psql(`INSERT INTO message_send_attempts (business_id, recipient_phone, attempt_scope, recipient_country_code, message_category) VALUES ('${BIZ_ID_B}', '+1', 'business', 'SN', 'marketing') RETURNING id;`);
+
+    await Promise.allSettled([
+      psqlAsync(`SELECT public.authorize_message_send('${a1}');`),
+      psqlAsync(`SELECT public.authorize_message_send('${a2}');`),
+    ]);
+
+    // Exactly one period row for this business/currency/month
+    const periodCount = psql(`SELECT count(*) FROM messaging_spend_periods WHERE business_id = '${BIZ_ID_B}' AND currency_code = '${uniqueCurrency}';`);
+    expect(periodCount).toBe('1');
   }, 30000);
 
   it('36. Two-session: two attempts at cap boundary', async () => {
