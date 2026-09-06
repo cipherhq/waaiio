@@ -122,6 +122,16 @@ describe.skipIf(!canRun)('Financial Authorization & Settlement DB Tests (#260 / 
     return psql(`INSERT INTO messaging_allowances (business_id, type, amount_minor, currency_code, remaining_minor, source_ref) VALUES ('${bizId}', '${type}', ${amount}, '${currency}', ${amount}, '${sourceRef}') RETURNING id;`);
   }
 
+  // Helper: create an isolated test business with its own owner
+  // This ensures tests that need clean allowance state are not affected by other tests.
+  function createIsolatedBusiness(): string {
+    const bizId = psql(`SELECT gen_random_uuid();`);
+    const ownerId = psql(`SELECT gen_random_uuid();`);
+    psqlMayFail(`INSERT INTO auth.users (id, email, raw_app_meta_data) VALUES ('${ownerId}', '${bizId.substring(0,8)}@test370.com', '{}') ON CONFLICT (id) DO NOTHING;`);
+    psqlMayFail(`INSERT INTO businesses (id, name, slug, owner_id, address, city, neighborhood, phone) VALUES ('${bizId}', 'IsolTest-${bizId.substring(0,8)}', 'isol-${bizId.substring(0,8)}', '${ownerId}', '1 Test', 'T', 'T', '+1');`);
+    return bizId;
+  }
+
   // ═══════════════════════════════════════════════════════
   // 1. Schema: messaging_spend_periods contract
   // ═══════════════════════════════════════════════════════
@@ -256,12 +266,13 @@ describe.skipIf(!canRun)('Financial Authorization & Settlement DB Tests (#260 / 
   // ═══════════════════════════════════════════════════════
 
   it('9. Mixed included + purchased reservation → charge_type = mixed', () => {
-    // Create one included allowance with 200 remaining and one purchased with 500
-    const inclAllowance = createAllowance(BIZ_ID_A, 'subscription_included', 200, 'NGN', `auth-test-9-incl-${Date.now()}`);
-    const purchAllowance = createAllowance(BIZ_ID_A, 'purchased', 5000, 'NGN', `auth-test-9-purch-${Date.now()}`);
+    // Use isolated business to ensure clean allowance state
+    const biz = createIsolatedBusiness();
+    const inclAllowance = createAllowance(biz, 'subscription_included', 200, 'NGN', `auth-test-9-incl-${Date.now()}`);
+    const purchAllowance = createAllowance(biz, 'purchased', 5000, 'NGN', `auth-test-9-purch-${Date.now()}`);
 
     // NG/marketing = 800 NGN, needs both allowances (200 incl + 600 purch)
-    const attemptId = createAttempt(BIZ_ID_A, 'NG', 'marketing');
+    const attemptId = createAttempt(biz, 'NG', 'marketing');
     const result = JSON.parse(psql(`SELECT public.authorize_message_send('${attemptId}');`));
 
     expect(result.authorized).toBe(true);
@@ -284,8 +295,9 @@ describe.skipIf(!canRun)('Financial Authorization & Settlement DB Tests (#260 / 
   });
 
   it('11. Pure overage reservation → charge_type = overage', () => {
-    createAllowance(BIZ_ID_A, 'purchased', 10000, 'USD', `auth-test-11-${Date.now()}`);
-    const attemptId = createAttempt(BIZ_ID_A, 'US', 'utility');
+    const biz = createIsolatedBusiness();
+    createAllowance(biz, 'purchased', 10000, 'USD', `auth-test-11-${Date.now()}`);
+    const attemptId = createAttempt(biz, 'US', 'utility');
 
     const result = JSON.parse(psql(`SELECT public.authorize_message_send('${attemptId}');`));
     expect(result.authorized).toBe(true);
@@ -298,8 +310,9 @@ describe.skipIf(!canRun)('Financial Authorization & Settlement DB Tests (#260 / 
   // ═══════════════════════════════════════════════════════
 
   it('12. Reserve → charge: no second allowance decrement', () => {
-    const allowanceId = createAllowance(BIZ_ID_A, 'trial_grant', 5000, 'NGN', `auth-test-12-${Date.now()}`);
-    const attemptId = createAttempt(BIZ_ID_A, 'NG', 'utility'); // 300 NGN
+    const biz = createIsolatedBusiness();
+    const allowanceId = createAllowance(biz, 'trial_grant', 5000, 'NGN', `auth-test-12-${Date.now()}`);
+    const attemptId = createAttempt(biz, 'NG', 'utility'); // 300 NGN
 
     psql(`SELECT public.authorize_message_send('${attemptId}');`);
 
@@ -326,8 +339,9 @@ describe.skipIf(!canRun)('Financial Authorization & Settlement DB Tests (#260 / 
   });
 
   it('13. Reserve → release: exact restoration', () => {
-    const allowanceId = createAllowance(BIZ_ID_A, 'trial_grant', 5000, 'NGN', `auth-test-13-${Date.now()}`);
-    const attemptId = createAttempt(BIZ_ID_A, 'NG', 'utility'); // 300 NGN
+    const biz = createIsolatedBusiness();
+    const allowanceId = createAllowance(biz, 'trial_grant', 5000, 'NGN', `auth-test-13-${Date.now()}`);
+    const attemptId = createAttempt(biz, 'NG', 'utility'); // 300 NGN
 
     psql(`SELECT public.authorize_message_send('${attemptId}');`);
 
@@ -450,9 +464,9 @@ describe.skipIf(!canRun)('Financial Authorization & Settlement DB Tests (#260 / 
   // ═══════════════════════════════════════════════════════
 
   it('18. Insufficient allowance balance → fail closed', () => {
-    // Create a tiny allowance
-    createAllowance(BIZ_ID_B, 'trial_grant', 1, 'NGN', `auth-test-18-${Date.now()}`);
-    const attemptId = createAttempt(BIZ_ID_B, 'NG', 'marketing'); // 800 NGN > 1
+    const biz = createIsolatedBusiness();
+    createAllowance(biz, 'trial_grant', 1, 'NGN', `auth-test-18-${Date.now()}`);
+    const attemptId = createAttempt(biz, 'NG', 'marketing'); // 800 NGN > 1
 
     const result = JSON.parse(psql(`SELECT public.authorize_message_send('${attemptId}');`));
     expect(result.authorized).toBe(false);
@@ -468,10 +482,11 @@ describe.skipIf(!canRun)('Financial Authorization & Settlement DB Tests (#260 / 
   // ═══════════════════════════════════════════════════════
 
   it('19. NGN attempt consumes only NGN allowances, not USD', () => {
-    const ngnAllowance = createAllowance(BIZ_ID_A, 'trial_grant', 5000, 'NGN', `auth-test-19-ngn-${Date.now()}`);
-    const usdAllowance = createAllowance(BIZ_ID_A, 'trial_grant', 500, 'USD', `auth-test-19-usd-${Date.now()}`);
+    const biz = createIsolatedBusiness();
+    const ngnAllowance = createAllowance(biz, 'trial_grant', 5000, 'NGN', `auth-test-19-ngn-${Date.now()}`);
+    const usdAllowance = createAllowance(biz, 'trial_grant', 500, 'USD', `auth-test-19-usd-${Date.now()}`);
 
-    const attemptId = createAttempt(BIZ_ID_A, 'NG', 'utility');
+    const attemptId = createAttempt(biz, 'NG', 'utility');
     psql(`SELECT public.authorize_message_send('${attemptId}');`);
 
     // NGN decremented
@@ -484,10 +499,11 @@ describe.skipIf(!canRun)('Financial Authorization & Settlement DB Tests (#260 / 
   });
 
   it('20. USD attempt consumes only USD allowances, not NGN', () => {
-    const ngnAllowance = createAllowance(BIZ_ID_A, 'trial_grant', 5000, 'NGN', `auth-test-20-ngn-${Date.now()}`);
-    const usdAllowance = createAllowance(BIZ_ID_A, 'trial_grant', 500, 'USD', `auth-test-20-usd-${Date.now()}`);
+    const biz = createIsolatedBusiness();
+    const ngnAllowance = createAllowance(biz, 'trial_grant', 5000, 'NGN', `auth-test-20-ngn-${Date.now()}`);
+    const usdAllowance = createAllowance(biz, 'trial_grant', 500, 'USD', `auth-test-20-usd-${Date.now()}`);
 
-    const attemptId = createAttempt(BIZ_ID_A, 'US', 'utility');
+    const attemptId = createAttempt(biz, 'US', 'utility');
     psql(`SELECT public.authorize_message_send('${attemptId}');`);
 
     // USD decremented
@@ -500,9 +516,9 @@ describe.skipIf(!canRun)('Financial Authorization & Settlement DB Tests (#260 / 
   });
 
   it('21. No matching currency allowance → fail closed', () => {
-    // Only NGN allowance, but attempt resolves to USD
-    createAllowance(BIZ_ID_B, 'trial_grant', 50000, 'NGN', `auth-test-21-${Date.now()}`);
-    const attemptId = createAttempt(BIZ_ID_B, 'US', 'utility');
+    const biz = createIsolatedBusiness();
+    createAllowance(biz, 'trial_grant', 50000, 'NGN', `auth-test-21-${Date.now()}`);
+    const attemptId = createAttempt(biz, 'US', 'utility');
 
     const result = JSON.parse(psql(`SELECT public.authorize_message_send('${attemptId}');`));
     expect(result.authorized).toBe(false);
@@ -663,12 +679,12 @@ describe.skipIf(!canRun)('Financial Authorization & Settlement DB Tests (#260 / 
   // ═══════════════════════════════════════════════════════
 
   it('31. Insufficient allowance mid-reservation → zero partial footprint', () => {
-    // Create two small allowances that together are insufficient for the cost
-    createAllowance(BIZ_ID_B, 'trial_grant', 100, 'NGN', `auth-test-31a-${Date.now()}`);
-    createAllowance(BIZ_ID_B, 'promotional', 100, 'NGN', `auth-test-31b-${Date.now()}`);
+    const biz = createIsolatedBusiness();
+    createAllowance(biz, 'trial_grant', 100, 'NGN', `auth-test-31a-${Date.now()}`);
+    createAllowance(biz, 'promotional', 100, 'NGN', `auth-test-31b-${Date.now()}`);
     // NG/marketing = 800 > 200 total
 
-    const attemptId = createAttempt(BIZ_ID_B, 'NG', 'marketing');
+    const attemptId = createAttempt(biz, 'NG', 'marketing');
     const result = JSON.parse(psql(`SELECT public.authorize_message_send('${attemptId}');`));
     expect(result.authorized).toBe(false);
 
@@ -727,10 +743,10 @@ describe.skipIf(!canRun)('Financial Authorization & Settlement DB Tests (#260 / 
   }, 30000);
 
   it('34. Two-session: two attempts contending for final eligible allowance', async () => {
-    // Single allowance with exactly enough for one send
-    const allowanceId = createAllowance(BIZ_ID_A, 'purchased', 300, 'NGN', `conc-34-${Date.now()}`);
-    const a1 = createAttempt(BIZ_ID_A, 'NG', 'utility'); // 300 NGN
-    const a2 = createAttempt(BIZ_ID_A, 'NG', 'utility'); // 300 NGN
+    const biz = createIsolatedBusiness();
+    const allowanceId = createAllowance(biz, 'purchased', 300, 'NGN', `conc-34-${Date.now()}`);
+    const a1 = createAttempt(biz, 'NG', 'utility'); // 300 NGN
+    const a2 = createAttempt(biz, 'NG', 'utility'); // 300 NGN
 
     const [r1, r2] = await Promise.allSettled([
       psqlAsync(`SELECT public.authorize_message_send('${a1}');`),
@@ -798,19 +814,19 @@ describe.skipIf(!canRun)('Financial Authorization & Settlement DB Tests (#260 / 
   }, 30000);
 
   it('36. Two-session: two attempts at cap boundary', async () => {
-    // Create fresh allowance and period scenario
-    createAllowance(BIZ_ID_A, 'purchased', 100000, 'NGN', `conc-36-${Date.now()}`);
+    const biz = createIsolatedBusiness();
+    createAllowance(biz, 'purchased', 100000, 'NGN', `conc-36-${Date.now()}`);
 
     // Create a fresh attempt to establish a period, then fill cap near boundary
-    const seed = createAttempt(BIZ_ID_A, 'NG', 'authentication'); // 200 NGN
+    const seed = createAttempt(biz, 'NG', 'authentication'); // 200 NGN
     psql(`SELECT public.authorize_message_send('${seed}');`);
     const periodStart = psql(`SELECT spend_period_start FROM message_send_attempts WHERE id = '${seed}';`);
 
     // Set reserved to cap - 300 (exactly one NG/utility send fits)
-    psql(`UPDATE messaging_spend_periods SET reserved_minor = cap_minor - 300 WHERE business_id = '${BIZ_ID_A}' AND currency_code = 'NGN' AND period_start = '${periodStart}';`);
+    psql(`UPDATE messaging_spend_periods SET reserved_minor = cap_minor - 300 WHERE business_id = '${biz}' AND currency_code = 'NGN' AND period_start = '${periodStart}';`);
 
-    const a1 = createAttempt(BIZ_ID_A, 'NG', 'utility'); // 300 NGN
-    const a2 = createAttempt(BIZ_ID_A, 'NG', 'utility'); // 300 NGN
+    const a1 = createAttempt(biz, 'NG', 'utility'); // 300 NGN
+    const a2 = createAttempt(biz, 'NG', 'utility'); // 300 NGN
 
     const [r1, r2] = await Promise.allSettled([
       psqlAsync(`SELECT public.authorize_message_send('${a1}');`),
@@ -828,8 +844,9 @@ describe.skipIf(!canRun)('Financial Authorization & Settlement DB Tests (#260 / 
   }, 30000);
 
   it('37. Two-session: charge-vs-release race → exactly one terminal wins', async () => {
-    createAllowance(BIZ_ID_A, 'trial_grant', 10000, 'NGN', `conc-37-${Date.now()}`);
-    const attemptId = createAttempt(BIZ_ID_A, 'NG', 'utility');
+    const biz = createIsolatedBusiness();
+    createAllowance(biz, 'trial_grant', 10000, 'NGN', `conc-37-${Date.now()}`);
+    const attemptId = createAttempt(biz, 'NG', 'utility');
     psql(`SELECT public.authorize_message_send('${attemptId}');`);
 
     const [r1, r2] = await Promise.allSettled([
@@ -852,11 +869,12 @@ describe.skipIf(!canRun)('Financial Authorization & Settlement DB Tests (#260 / 
   }, 30000);
 
   it('38. Two-session: two-currency contention — no cross-currency leakage', async () => {
-    const ngnAllowance = createAllowance(BIZ_ID_A, 'purchased', 10000, 'NGN', `conc-38-ngn-${Date.now()}`);
-    const usdAllowance = createAllowance(BIZ_ID_A, 'purchased', 5000, 'USD', `conc-38-usd-${Date.now()}`);
+    const biz = createIsolatedBusiness();
+    const ngnAllowance = createAllowance(biz, 'purchased', 10000, 'NGN', `conc-38-ngn-${Date.now()}`);
+    const usdAllowance = createAllowance(biz, 'purchased', 5000, 'USD', `conc-38-usd-${Date.now()}`);
 
-    const ngnAttempt = createAttempt(BIZ_ID_A, 'NG', 'utility'); // 300 NGN
-    const usdAttempt = createAttempt(BIZ_ID_A, 'US', 'utility'); // 5 USD
+    const ngnAttempt = createAttempt(biz, 'NG', 'utility'); // 300 NGN
+    const usdAttempt = createAttempt(biz, 'US', 'utility'); // 5 USD
 
     const [r1, r2] = await Promise.allSettled([
       psqlAsync(`SELECT public.authorize_message_send('${ngnAttempt}');`),
