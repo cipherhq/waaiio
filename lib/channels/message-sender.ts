@@ -18,6 +18,7 @@ import {
   isAmbiguousTransportError,
   AmbiguousSendError,
   WamidPersistenceError,
+  GateBlockError,
   type AttemptParams,
 } from '@/lib/channels/attempt-recording';
 import { resolveRecipientCountry } from '@/lib/channels/phone-country';
@@ -119,14 +120,18 @@ async function withRetry<T>(
         || (err instanceof Error && isAmbiguousTransportError(err));
       // #257: WAMID persistence failure after successful send — message was delivered, NEVER retry
       const isWamidFailure = err instanceof WamidPersistenceError;
+      // #261: Financial gate block (reserved attempt failed to enter sending) — NEVER retry.
+      // Retrying would create a fresh attempt+reservation and potentially emit after the
+      // original reservation was released by expiry.
+      const isGateBlock = err instanceof GateBlockError;
 
       // Only record failure for server errors (5xx) or network errors, not client errors or suspensions
-      if (!is4xx && !isSuspended && !isAmbiguous && !isWamidFailure) {
+      if (!is4xx && !isSuspended && !isAmbiguous && !isWamidFailure && !isGateBlock) {
         recordFailure(CIRCUIT_KEY);
       }
 
-      // Don't retry: client errors, suspension blocks, ambiguous, WAMID persistence, or last attempt
-      if (is4xx || isSuspended || isAmbiguous || isWamidFailure || i === retries) throw err;
+      // Don't retry: client errors, suspension blocks, ambiguous, WAMID persistence, gate blocks, or last attempt
+      if (is4xx || isSuspended || isAmbiguous || isWamidFailure || isGateBlock || i === retries) throw err;
       await new Promise(r => setTimeout(r, delay * (i + 1)));
     }
   }
