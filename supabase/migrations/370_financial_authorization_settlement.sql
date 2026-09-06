@@ -50,11 +50,86 @@ CREATE POLICY msp_owner_select ON messaging_spend_periods
 CREATE POLICY msp_admin_select ON messaging_spend_periods
   FOR SELECT USING (public.is_admin());
 
--- ── 1c. Grants ──
+-- ── 1c. Spend-period cap/config provenance immutability ──
+-- cap_minor and config_version_id are snapshotted at first-create and must
+-- never be rewritten, even by service_role direct UPDATE.
+
+CREATE OR REPLACE FUNCTION public.enforce_spend_period_provenance_immutability()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF OLD.cap_minor IS NOT NULL AND NEW.cap_minor IS DISTINCT FROM OLD.cap_minor THEN
+    RAISE EXCEPTION 'messaging_spend_periods.cap_minor is immutable after creation (% → %)',
+      OLD.cap_minor, NEW.cap_minor;
+  END IF;
+  IF OLD.config_version_id IS NOT NULL AND NEW.config_version_id IS DISTINCT FROM OLD.config_version_id THEN
+    RAISE EXCEPTION 'messaging_spend_periods.config_version_id is immutable after creation (% → %)',
+      OLD.config_version_id, NEW.config_version_id;
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_spend_period_provenance_immutability
+  BEFORE UPDATE ON public.messaging_spend_periods FOR EACH ROW
+  EXECUTE FUNCTION public.enforce_spend_period_provenance_immutability();
+
+-- ── 1d. Grants ──
 
 REVOKE ALL ON messaging_spend_periods FROM PUBLIC, authenticated, service_role, anon;
 GRANT SELECT ON messaging_spend_periods TO authenticated;
 GRANT SELECT, INSERT, UPDATE ON messaging_spend_periods TO service_role;
+
+-- ══════════════════════════════════════════════════════════
+-- 1e. Harden Migration 368 validate_allowance_event_tenant() for empty search_path
+-- The original function uses unqualified table references. Redefine with
+-- schema-qualified references and SET search_path = '' so it works correctly
+-- when called from SECURITY DEFINER RPCs with empty search_path.
+-- Semantics are preserved exactly; only qualification and search_path are added.
+-- ══════════════════════════════════════════════════════════
+
+CREATE OR REPLACE FUNCTION public.validate_allowance_event_tenant()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SET search_path = ''
+AS $$
+DECLARE
+  _allowance_biz UUID;
+  _attempt_biz UUID;
+  _attempt_scope TEXT;
+BEGIN
+  -- Check allowance business_id matches event business_id
+  SELECT business_id INTO _allowance_biz
+    FROM public.messaging_allowances WHERE id = NEW.allowance_id;
+
+  IF _allowance_biz IS DISTINCT FROM NEW.business_id THEN
+    RAISE EXCEPTION 'event business_id (%) does not match allowance business_id (%)',
+      NEW.business_id, _allowance_biz;
+  END IF;
+
+  -- When attempt_id is present, validate same-business + business-scoped
+  IF NEW.attempt_id IS NOT NULL THEN
+    SELECT business_id, attempt_scope INTO _attempt_biz, _attempt_scope
+      FROM public.message_send_attempts WHERE id = NEW.attempt_id;
+
+    -- If attempt not found, defer to FK constraint (which will reject)
+    IF NOT FOUND THEN
+      RETURN NEW;
+    END IF;
+
+    IF _attempt_scope <> 'business' THEN
+      RAISE EXCEPTION 'attempt % has scope "%" — only business-scoped attempts allowed in allowance events',
+        NEW.attempt_id, _attempt_scope;
+    END IF;
+
+    IF _attempt_biz IS DISTINCT FROM NEW.business_id THEN
+      RAISE EXCEPTION 'attempt business_id (%) does not match event business_id (%)',
+        _attempt_biz, NEW.business_id;
+    END IF;
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
 
 -- ══════════════════════════════════════════════════════════
 -- 2. Extend message_cost_events.charge_type CHECK to include 'mixed'
@@ -111,7 +186,7 @@ CREATE OR REPLACE FUNCTION public.authorize_message_send(p_attempt_id UUID)
 RETURNS JSONB
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = 'public'
+SET search_path = ''
 AS $$
 DECLARE
   -- Attempt state
@@ -182,7 +257,7 @@ BEGIN
     RETURN jsonb_build_object('authorized', false, 'reason', 'no_messaging_pricing');
   END IF;
 
-  -- Resolve country and category from attempt
+  -- Resolve country and category from attempt — both required
   v_country := v_attempt.recipient_country_code;
   v_category := v_attempt.message_category;
 
@@ -190,34 +265,22 @@ BEGIN
     RETURN jsonb_build_object('authorized', false, 'reason', 'missing_country_code');
   END IF;
 
-  -- Find which currency bucket(s) contain a rate for this country
+  IF v_category IS NULL THEN
+    RETURN jsonb_build_object('authorized', false, 'reason', 'missing_message_category');
+  END IF;
+
+  -- Find which currency bucket(s) have explicit country coverage for this country.
+  -- Country→currency membership is determined ONLY by explicit rates[country] presence.
+  -- Bucket default_cost_minor is a rate fallback, NOT a currency membership signal.
   v_matching_currencies := ARRAY[]::TEXT[];
   FOR v_resolved_currency IN SELECT key FROM jsonb_each(v_pricing)
   LOOP
     v_currency_bucket := v_pricing -> v_resolved_currency;
-    IF jsonb_typeof(v_currency_bucket) = 'object' THEN
-      -- Check if this bucket has rates for the country OR a default_cost_minor
-      IF v_currency_bucket -> 'rates' -> v_country IS NOT NULL THEN
-        v_matching_currencies := v_matching_currencies || v_resolved_currency;
-      ELSIF v_currency_bucket -> 'default_cost_minor' IS NOT NULL THEN
-        -- Only count as matching if there are no country-specific rates at all,
-        -- or if this is the only bucket. We'll handle this below.
-        NULL;
-      END IF;
+    IF jsonb_typeof(v_currency_bucket) = 'object'
+       AND v_currency_bucket -> 'rates' -> v_country IS NOT NULL THEN
+      v_matching_currencies := v_matching_currencies || v_resolved_currency;
     END IF;
   END LOOP;
-
-  -- If no country-specific match found, look for buckets with default_cost_minor as fallback
-  IF array_length(v_matching_currencies, 1) IS NULL OR array_length(v_matching_currencies, 1) = 0 THEN
-    FOR v_resolved_currency IN SELECT key FROM jsonb_each(v_pricing)
-    LOOP
-      v_currency_bucket := v_pricing -> v_resolved_currency;
-      IF jsonb_typeof(v_currency_bucket) = 'object'
-         AND v_currency_bucket -> 'default_cost_minor' IS NOT NULL THEN
-        v_matching_currencies := v_matching_currencies || v_resolved_currency;
-      END IF;
-    END LOOP;
-  END IF;
 
   -- Exactly one currency must match — zero or multiple = fail closed
   IF array_length(v_matching_currencies, 1) IS NULL OR array_length(v_matching_currencies, 1) = 0 THEN
@@ -231,19 +294,19 @@ BEGIN
   v_resolved_currency := v_matching_currencies[1];
   v_currency_bucket := v_pricing -> v_resolved_currency;
 
-  -- Resolve rate: rates[country][category] → rates[country] default → default_cost_minor
+  -- Resolve rate with accepted precedence:
+  --   rates[country][category] → rates[country]["*"] → bucket default_cost_minor → fail closed
   v_resolved_cost := NULL;
 
-  IF v_category IS NOT NULL
-     AND v_currency_bucket -> 'rates' -> v_country -> v_category IS NOT NULL
+  -- 1. Exact category match
+  IF v_currency_bucket -> 'rates' -> v_country -> v_category IS NOT NULL
      AND jsonb_typeof(v_currency_bucket -> 'rates' -> v_country -> v_category) = 'number' THEN
     v_resolved_cost := (v_currency_bucket -> 'rates' -> v_country -> v_category)::INTEGER;
-  ELSIF v_currency_bucket -> 'rates' -> v_country IS NOT NULL THEN
-    -- If the country key exists but not the specific category, try default_cost_minor
-    IF v_currency_bucket -> 'default_cost_minor' IS NOT NULL
-       AND jsonb_typeof(v_currency_bucket -> 'default_cost_minor') = 'number' THEN
-      v_resolved_cost := (v_currency_bucket -> 'default_cost_minor')::INTEGER;
-    END IF;
+  -- 2. Country wildcard "*"
+  ELSIF v_currency_bucket -> 'rates' -> v_country -> '*' IS NOT NULL
+     AND jsonb_typeof(v_currency_bucket -> 'rates' -> v_country -> '*') = 'number' THEN
+    v_resolved_cost := (v_currency_bucket -> 'rates' -> v_country -> '*')::INTEGER;
+  -- 3. Bucket default_cost_minor
   ELSIF v_currency_bucket -> 'default_cost_minor' IS NOT NULL
      AND jsonb_typeof(v_currency_bucket -> 'default_cost_minor') = 'number' THEN
     v_resolved_cost := (v_currency_bucket -> 'default_cost_minor')::INTEGER;
@@ -252,9 +315,6 @@ BEGIN
   IF v_resolved_cost IS NULL OR v_resolved_cost < 0 THEN
     RETURN jsonb_build_object('authorized', false, 'reason', 'unresolved_rate');
   END IF;
-
-  -- Never synthesize a zero price for missing configuration
-  -- (zero is a valid explicitly-configured price, but NULL resolution means missing)
 
   -- ── Step 4b: Validate against any prepopulated attempt pricing ──
   IF v_attempt.estimated_cost_minor IS NOT NULL AND v_attempt.estimated_cost_minor <> v_resolved_cost THEN
@@ -425,7 +485,7 @@ CREATE OR REPLACE FUNCTION public.settle_message_cost(p_attempt_id UUID, p_outco
 RETURNS JSONB
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = 'public'
+SET search_path = ''
 AS $$
 DECLARE
   v_attempt RECORD;
@@ -655,6 +715,23 @@ BEGIN
     WHERE proname = 'settle_message_cost' AND prosecdef = true;
   IF v_count = 0 THEN
     RAISE EXCEPTION 'MIGRATION 370 VERIFICATION FAILED: settle_message_cost not SECURITY DEFINER';
+  END IF;
+
+  -- Verify spend-period provenance immutability trigger exists
+  SELECT count(*) INTO v_count FROM pg_trigger
+    WHERE tgrelid = 'public.messaging_spend_periods'::regclass
+      AND tgname = 'trg_spend_period_provenance_immutability';
+  IF v_count = 0 THEN
+    RAISE EXCEPTION 'MIGRATION 370 VERIFICATION FAILED: spend-period provenance immutability trigger missing';
+  END IF;
+
+  -- Verify validate_allowance_event_tenant has search_path set
+  SELECT count(*) INTO v_count FROM pg_proc
+    WHERE proname = 'validate_allowance_event_tenant'
+      AND proconfig IS NOT NULL
+      AND array_to_string(proconfig, ',') LIKE '%search_path%';
+  IF v_count = 0 THEN
+    RAISE EXCEPTION 'MIGRATION 370 VERIFICATION FAILED: validate_allowance_event_tenant not hardened with search_path';
   END IF;
 
   -- Verify RLS policies exist on messaging_spend_periods

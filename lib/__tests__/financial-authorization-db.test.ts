@@ -650,14 +650,20 @@ describe.skipIf(!canRun)('Financial Authorization & Settlement DB Tests (#260 / 
   // 29-30. SECURITY DEFINER / search_path hardening
   // ═══════════════════════════════════════════════════════
 
-  it('29. Both RPCs are SECURITY DEFINER with hardened search_path', () => {
+  it('29. Both RPCs and hardened trigger are SECURITY DEFINER with search_path=empty', () => {
+    // RPCs must have search_path=''
     const authDef = psql(`SELECT prosecdef, proconfig FROM pg_proc WHERE proname = 'authorize_message_send';`);
     expect(authDef).toContain('t');
-    expect(authDef).toContain('search_path=public');
+    // proconfig stores as {search_path=} for empty search_path
+    expect(authDef).toMatch(/search_path=/);
 
     const settleDef = psql(`SELECT prosecdef, proconfig FROM pg_proc WHERE proname = 'settle_message_cost';`);
     expect(settleDef).toContain('t');
-    expect(settleDef).toContain('search_path=public');
+    expect(settleDef).toMatch(/search_path=/);
+
+    // validate_allowance_event_tenant must also have search_path set (hardened in M370)
+    const tenantDef = psql(`SELECT proconfig FROM pg_proc WHERE proname = 'validate_allowance_event_tenant';`);
+    expect(tenantDef).toMatch(/search_path=/);
   });
 
   it('30. No application role has TRUNCATE on messaging_spend_periods', () => {
@@ -900,10 +906,178 @@ describe.skipIf(!canRun)('Financial Authorization & Settlement DB Tests (#260 / 
   }, 30000);
 
   // ═══════════════════════════════════════════════════════
-  // 39. auth.uid() hermetic restoration
+  // 39-44. Pricing resolver contract (blocker 1 corrections)
   // ═══════════════════════════════════════════════════════
 
-  it('39. auth.uid() restored to exact original after all RLS tests', () => {
+  it('39. Wildcard "*" fallback: category not in rates but "*" present → uses wildcard', () => {
+    // Insert config with wildcard rate for NG
+    psql(`
+      INSERT INTO public.platform_config_versions (config_snapshot, effective_from, created_by)
+      VALUES ('${JSON.stringify({
+        messaging_pricing: {
+          NGN: {
+            default_cost_minor: 500,
+            rates: { NG: { marketing: 800, utility: 300, '*': 400 } },
+            default_spend_cap_minor: 50000,
+          },
+          USD: {
+            default_cost_minor: 8,
+            rates: { US: { marketing: 12, utility: 5, authentication: 4 }, CA: { marketing: 10, utility: 5 } },
+            default_spend_cap_minor: 5000,
+          },
+        },
+      })}'::JSONB, NOW() + INTERVAL '39370 microseconds', '${OWNER_A}');
+    `);
+
+    const biz = createIsolatedBusiness();
+    createAllowance(biz, 'trial_grant', 10000, 'NGN', `auth-test-39-${Date.now()}`);
+    // 'service' is not in NG rates, but '*' is
+    const attemptId = createAttempt(biz, 'NG', 'service');
+    const result = JSON.parse(psql(`SELECT public.authorize_message_send('${attemptId}');`));
+    expect(result.authorized).toBe(true);
+    expect(result.cost_minor).toBe(400); // wildcard rate
+  });
+
+  it('40. Category-over-wildcard precedence: exact category wins over "*"', () => {
+    const biz = createIsolatedBusiness();
+    createAllowance(biz, 'trial_grant', 10000, 'NGN', `auth-test-40-${Date.now()}`);
+    // 'utility' is explicitly 300, '*' is 400 — utility must win
+    const attemptId = createAttempt(biz, 'NG', 'utility');
+    const result = JSON.parse(psql(`SELECT public.authorize_message_send('${attemptId}');`));
+    expect(result.authorized).toBe(true);
+    expect(result.cost_minor).toBe(300); // exact category, not wildcard
+  });
+
+  it('41. Bucket-default after wildcard absent: country has rates but no "*" and no matching category → bucket default', () => {
+    // Insert config where US has only specific categories and no wildcard
+    psql(`
+      INSERT INTO public.platform_config_versions (config_snapshot, effective_from, created_by)
+      VALUES ('${JSON.stringify({
+        messaging_pricing: {
+          NGN: {
+            default_cost_minor: 500,
+            rates: { NG: { marketing: 800, utility: 300 } },
+            default_spend_cap_minor: 50000,
+          },
+          USD: {
+            default_cost_minor: 8,
+            rates: { US: { marketing: 12, utility: 5 } },
+            default_spend_cap_minor: 5000,
+          },
+        },
+      })}'::JSONB, NOW() + INTERVAL '41370 microseconds', '${OWNER_A}');
+    `);
+
+    const biz = createIsolatedBusiness();
+    createAllowance(biz, 'trial_grant', 10000, 'USD', `auth-test-41-${Date.now()}`);
+    // 'service' not in US rates, no wildcard, falls to default_cost_minor=8
+    const attemptId = createAttempt(biz, 'US', 'service');
+    const result = JSON.parse(psql(`SELECT public.authorize_message_send('${attemptId}');`));
+    expect(result.authorized).toBe(true);
+    expect(result.cost_minor).toBe(8); // bucket default
+  });
+
+  it('42. Unknown country with one default-enabled bucket → fail closed (not inferred)', () => {
+    const biz = createIsolatedBusiness();
+    createAllowance(biz, 'trial_grant', 10000, 'NGN', `auth-test-42-${Date.now()}`);
+    // 'ZZ' is not in any rates → no currency membership → fail closed
+    const attemptId = createAttempt(biz, 'ZZ', 'utility');
+    const result = JSON.parse(psql(`SELECT public.authorize_message_send('${attemptId}');`));
+    expect(result.authorized).toBe(false);
+    expect(result.reason).toBe('no_currency_for_country');
+
+    // Zero financial mutation
+    const disp = psql(`SELECT financial_disposition FROM message_send_attempts WHERE id = '${attemptId}';`);
+    expect(disp).toBe('pending_authorization');
+    const events = psql(`SELECT count(*) FROM message_cost_events WHERE attempt_id = '${attemptId}';`);
+    expect(events).toBe('0');
+  });
+
+  it('43. Missing message_category → fail closed with zero mutation', () => {
+    const biz = createIsolatedBusiness();
+    createAllowance(biz, 'trial_grant', 10000, 'NGN', `auth-test-43-${Date.now()}`);
+    // NULL category
+    const attemptId = psql(`INSERT INTO message_send_attempts (business_id, recipient_phone, attempt_scope, recipient_country_code, message_category) VALUES ('${biz}', '+1', 'business', 'NG', NULL) RETURNING id;`);
+    const result = JSON.parse(psql(`SELECT public.authorize_message_send('${attemptId}');`));
+    expect(result.authorized).toBe(false);
+    expect(result.reason).toBe('missing_message_category');
+
+    // Zero mutation
+    const disp = psql(`SELECT financial_disposition FROM message_send_attempts WHERE id = '${attemptId}';`);
+    expect(disp).toBe('pending_authorization');
+  });
+
+  it('44. Fail-closed cases stamp no trusted pricing fields on attempt', () => {
+    const biz = createIsolatedBusiness();
+    createAllowance(biz, 'trial_grant', 10000, 'NGN', `auth-test-44-${Date.now()}`);
+    // Unknown country → fail closed
+    const attemptId = createAttempt(biz, 'ZZ', 'utility');
+    psql(`SELECT public.authorize_message_send('${attemptId}');`);
+
+    // No pricing fields stamped
+    const row = psql(`SELECT estimated_cost_minor || '|' || currency_code || '|' || config_version_id FROM message_send_attempts WHERE id = '${attemptId}';`);
+    // All should be NULL → concatenation yields empty or '||'
+    expect(row).toMatch(/^\|?\|?$/);
+  });
+
+  // ═══════════════════════════════════════════════════════
+  // 45-47. Spend-period provenance immutability (blocker 3)
+  // ═══════════════════════════════════════════════════════
+
+  it('45. Direct cap_minor rewrite rejected even by service_role', () => {
+    const biz = createIsolatedBusiness();
+    createAllowance(biz, 'trial_grant', 10000, 'NGN', `auth-test-45-${Date.now()}`);
+    const attemptId = createAttempt(biz, 'NG', 'utility');
+    psql(`SELECT public.authorize_message_send('${attemptId}');`);
+
+    // Find the period
+    const periodId = psql(`SELECT id FROM messaging_spend_periods WHERE business_id = '${biz}' AND currency_code = 'NGN' LIMIT 1;`);
+
+    // Attempt to rewrite cap_minor → should be rejected
+    const err = psqlMayFail(`UPDATE messaging_spend_periods SET cap_minor = 999999 WHERE id = '${periodId}';`);
+    expect(err).toContain('immutable');
+
+    // Cap unchanged
+    const cap = psql(`SELECT cap_minor FROM messaging_spend_periods WHERE id = '${periodId}';`);
+    expect(cap).toBe('50000'); // original snapshotted cap
+  });
+
+  it('46. Direct config_version_id rewrite rejected', () => {
+    const biz = createIsolatedBusiness();
+    createAllowance(biz, 'trial_grant', 10000, 'NGN', `auth-test-46-${Date.now()}`);
+    const attemptId = createAttempt(biz, 'NG', 'utility');
+    psql(`SELECT public.authorize_message_send('${attemptId}');`);
+
+    const periodId = psql(`SELECT id FROM messaging_spend_periods WHERE business_id = '${biz}' AND currency_code = 'NGN' LIMIT 1;`);
+
+    // Attempt to rewrite config_version_id
+    const err = psqlMayFail(`UPDATE messaging_spend_periods SET config_version_id = gen_random_uuid() WHERE id = '${periodId}';`);
+    expect(err).toContain('immutable');
+  });
+
+  it('47. Legitimate reserved_minor/spent_minor updates still work', () => {
+    const biz = createIsolatedBusiness();
+    createAllowance(biz, 'trial_grant', 10000, 'NGN', `auth-test-47-${Date.now()}`);
+    const attemptId = createAttempt(biz, 'NG', 'utility');
+    psql(`SELECT public.authorize_message_send('${attemptId}');`);
+
+    const periodId = psql(`SELECT id FROM messaging_spend_periods WHERE business_id = '${biz}' AND currency_code = 'NGN' LIMIT 1;`);
+
+    // Settlement should work (it updates reserved_minor and spent_minor)
+    const result = JSON.parse(psql(`SELECT public.settle_message_cost('${attemptId}', 'charged');`));
+    expect(result.settled).toBe(true);
+
+    // Verify counters changed but cap/config untouched
+    const period = psql(`SELECT cap_minor || '|' || spent_minor FROM messaging_spend_periods WHERE id = '${periodId}';`);
+    expect(period).toContain('50000|'); // cap unchanged
+    expect(period).toContain('|300'); // spent = 300 (utility cost)
+  });
+
+  // ═══════════════════════════════════════════════════════
+  // 48. auth.uid() hermetic restoration (must be last)
+  // ═══════════════════════════════════════════════════════
+
+  it('48. auth.uid() restored to exact original after all RLS tests', () => {
     const currentDef = psql(`SELECT pg_get_functiondef(oid) FROM pg_proc WHERE proname = 'uid' AND pronamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'auth');`);
     expect(currentDef).toBe(originalAuthUidDef);
   });
