@@ -638,14 +638,14 @@ describe.skipIf(!canRun)('Financial Authorization & Settlement DB Tests (#260 / 
   // 29-30. SECURITY DEFINER / search_path hardening
   // ═══════════════════════════════════════════════════════
 
-  it('29. Both RPCs are SECURITY DEFINER with search_path = empty', () => {
+  it('29. Both RPCs are SECURITY DEFINER with hardened search_path', () => {
     const authDef = psql(`SELECT prosecdef, proconfig FROM pg_proc WHERE proname = 'authorize_message_send';`);
     expect(authDef).toContain('t');
-    expect(authDef).toContain('search_path=');
+    expect(authDef).toContain('search_path=public');
 
     const settleDef = psql(`SELECT prosecdef, proconfig FROM pg_proc WHERE proname = 'settle_message_cost';`);
     expect(settleDef).toContain('t');
-    expect(settleDef).toContain('search_path=');
+    expect(settleDef).toContain('search_path=public');
   });
 
   it('30. No application role has TRUNCATE on messaging_spend_periods', () => {

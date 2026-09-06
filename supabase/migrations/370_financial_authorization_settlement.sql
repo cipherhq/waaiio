@@ -111,7 +111,7 @@ CREATE OR REPLACE FUNCTION public.authorize_message_send(p_attempt_id UUID)
 RETURNS JSONB
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = ''
+SET search_path = 'public'
 AS $$
 DECLARE
   -- Attempt state
@@ -425,7 +425,7 @@ CREATE OR REPLACE FUNCTION public.settle_message_cost(p_attempt_id UUID, p_outco
 RETURNS JSONB
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = ''
+SET search_path = 'public'
 AS $$
 DECLARE
   v_attempt RECORD;
