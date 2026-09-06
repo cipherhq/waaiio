@@ -721,12 +721,9 @@ describe.skipIf(!canRun)('Runtime Financial Integration DB Tests (#261 / Migrati
       VALUES ('${testWamid}', 'delivered', NOW());
     `);
 
-    // Now link the WAMID (simulating markAccepted)
-    psql(`
-      UPDATE message_send_attempts
-      SET status = 'accepted', meta_message_id = '${testWamid}', meta_accepted_at = NOW()
-      WHERE id = '${attemptId}';
-    `);
+    // Now link the WAMID (simulating markAccepted — must go through state machine)
+    psql(`UPDATE message_send_attempts SET status = 'sending', sent_at = NOW() WHERE id = '${attemptId}';`);
+    psql(`UPDATE message_send_attempts SET status = 'accepted', meta_message_id = '${testWamid}', meta_accepted_at = NOW() WHERE id = '${attemptId}';`);
 
     // Drain buffered statuses
     const drainResult = JSON.parse(psql(`SELECT drain_unmatched_attempt_statuses('${attemptId}', '${testWamid}');`));
@@ -919,8 +916,9 @@ describe.skipIf(!canRun)('Runtime Financial Integration DB Tests (#261 / Migrati
       RETURNING id;
     `);
     psql(`SELECT authorize_message_send('${attemptId2}');`);
-    // Give it a WAMID (accepted)
-    psql(`UPDATE message_send_attempts SET status = 'accepted', meta_message_id = 'wamid.expiry_test_36' WHERE id = '${attemptId2}';`);
+    // Give it a WAMID (accepted) — must go through state machine
+    psql(`UPDATE message_send_attempts SET status = 'sending', sent_at = NOW() WHERE id = '${attemptId2}';`);
+    psql(`UPDATE message_send_attempts SET status = 'accepted', meta_message_id = 'wamid.expiry_test_36', meta_accepted_at = NOW() WHERE id = '${attemptId2}';`);
 
     const status2 = psql(`SELECT status FROM message_send_attempts WHERE id = '${attemptId2}';`);
     const wamid2 = psql(`SELECT meta_message_id FROM message_send_attempts WHERE id = '${attemptId2}';`);
