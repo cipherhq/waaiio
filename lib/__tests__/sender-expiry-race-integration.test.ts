@@ -178,7 +178,7 @@ describe.skipIf(!canRun)('Sender expiry-race integration (#261 production-shaped
           NGN: { default_cost_minor: 500, rates: { NG: { service: 200 } }, default_spend_cap_minor: 50000 },
         },
         messaging_reservation_ttl_seconds: 1,
-      })}'::JSONB, NOW() + INTERVAL '44999 microseconds', '${OWNER_ID}');
+      })}'::JSONB, NOW() + INTERVAL '999999 microseconds', '${OWNER_ID}');
     `);
 
     psql(`INSERT INTO messaging_allowances (business_id, type, amount_minor, currency_code, remaining_minor, source_ref) VALUES ('${bizId}', 'trial_grant', 50000, 'NGN', 50000, 'sender-e44-${Date.now()}');`);
@@ -189,6 +189,19 @@ describe.skipIf(!canRun)('Sender expiry-race integration (#261 production-shaped
   });
 
   it('44. Real MetaCloudSender.sendText + withRetry: expiry-first release → GateBlockError, provider=0, no retry attempt', async () => {
+    // Ensure the gate-ON config is the most recent effective version
+    // by inserting with a timestamp guaranteed to be latest
+    psql(`
+      INSERT INTO platform_config_versions (config_snapshot, effective_from, created_by)
+      VALUES ('${JSON.stringify({
+        messaging_financial_gate: true,
+        messaging_pricing: {
+          NGN: { default_cost_minor: 500, rates: { NG: { service: 200 } }, default_spend_cap_minor: 50000 },
+        },
+        messaging_reservation_ttl_seconds: 1,
+      })}'::JSONB, NOW(), '${OWNER_ID}');
+    `);
+
     // Ensure #257 gate is OFF (default production state)
     const { setSendAttemptGate } = await import('@/lib/channels/attempt-recording');
     setSendAttemptGate(false);
