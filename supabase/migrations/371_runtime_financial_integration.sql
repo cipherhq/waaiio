@@ -1549,5 +1549,107 @@ BEGIN
   IF v_count = 0 THEN
     RAISE EXCEPTION 'MIGRATION 371 VERIFICATION FAILED: mcrl_admin_select policy missing';
   END IF;
+
+  -- Verify safe_release_expired_reservation exists
+  SELECT count(*) INTO v_count FROM pg_proc WHERE proname = 'safe_release_expired_reservation';
+  IF v_count = 0 THEN
+    RAISE EXCEPTION 'MIGRATION 371 VERIFICATION FAILED: safe_release_expired_reservation not created';
+  END IF;
 END;
 $$;
+
+-- ══════════════════════════════════════════════════════════
+-- DB-atomic reservation expiry authority
+--
+-- Revalidates ALL safety predicates (reserved + pending_authorization +
+-- expired + no WAMID + !needs_reconciliation) at the same linearization
+-- point as release. If any predicate changed between the cron's query
+-- and this function, the release is NOT performed.
+-- ══════════════════════════════════════════════════════════
+
+CREATE OR REPLACE FUNCTION public.safe_release_expired_reservation(p_attempt_id UUID)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $$
+DECLARE
+  v_attempt RECORD;
+  v_result JSONB;
+BEGIN
+  -- Lock the attempt atomically
+  SELECT * INTO v_attempt
+    FROM public.message_send_attempts
+    WHERE id = p_attempt_id
+    FOR UPDATE;
+
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('released', false, 'reason', 'attempt_not_found');
+  END IF;
+
+  -- Revalidate ALL safety predicates atomically:
+  -- 1. Must still be reserved
+  IF v_attempt.financial_disposition <> 'reserved' THEN
+    RETURN jsonb_build_object('released', false, 'reason', 'not_reserved',
+      'disposition', v_attempt.financial_disposition);
+  END IF;
+
+  -- 2. Must still be pre-emission (pending_authorization)
+  IF v_attempt.status <> 'pending_authorization' THEN
+    -- Attempt has advanced to sending/accepted/ambiguous — NOT safe
+    -- Flag for reconciliation
+    UPDATE public.message_send_attempts
+      SET needs_reconciliation = true
+      WHERE id = p_attempt_id AND needs_reconciliation = false;
+    RETURN jsonb_build_object('released', false, 'reason', 'not_pre_emission',
+      'status', v_attempt.status);
+  END IF;
+
+  -- 3. Must not have a WAMID (no emission evidence)
+  IF v_attempt.meta_message_id IS NOT NULL THEN
+    UPDATE public.message_send_attempts
+      SET needs_reconciliation = true
+      WHERE id = p_attempt_id AND needs_reconciliation = false;
+    RETURN jsonb_build_object('released', false, 'reason', 'has_wamid');
+  END IF;
+
+  -- 4. Must not already be flagged for reconciliation
+  IF v_attempt.needs_reconciliation = true THEN
+    RETURN jsonb_build_object('released', false, 'reason', 'needs_reconciliation');
+  END IF;
+
+  -- 5. Must have an expired deadline
+  IF v_attempt.reservation_expires_at IS NULL THEN
+    -- Missing deadline — flag, do NOT synthesize
+    UPDATE public.message_send_attempts
+      SET needs_reconciliation = true
+      WHERE id = p_attempt_id;
+    RETURN jsonb_build_object('released', false, 'reason', 'missing_deadline');
+  END IF;
+
+  IF v_attempt.reservation_expires_at > clock_timestamp() THEN
+    RETURN jsonb_build_object('released', false, 'reason', 'not_expired');
+  END IF;
+
+  -- All predicates pass — delegate to #260 settlement authority
+  v_result := public.settle_message_cost(p_attempt_id, 'released');
+
+  -- Check the RPC result — settled:false is NOT released
+  IF (v_result ->> 'settled')::boolean = true THEN
+    RETURN jsonb_build_object('released', true, 'settlement', v_result);
+  ELSE
+    -- Settlement rejected (e.g., already settled) — flag
+    UPDATE public.message_send_attempts
+      SET needs_reconciliation = true
+      WHERE id = p_attempt_id AND needs_reconciliation = false;
+    RETURN jsonb_build_object('released', false, 'reason', 'settlement_rejected',
+      'settlement', v_result);
+  END IF;
+END;
+$$;
+
+-- ACL: service-role only
+REVOKE ALL ON FUNCTION public.safe_release_expired_reservation(UUID) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.safe_release_expired_reservation(UUID) FROM anon;
+REVOKE ALL ON FUNCTION public.safe_release_expired_reservation(UUID) FROM authenticated;
+GRANT EXECUTE ON FUNCTION public.safe_release_expired_reservation(UUID) TO service_role;

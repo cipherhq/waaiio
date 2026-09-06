@@ -926,4 +926,117 @@ describe.skipIf(!canRun)('Runtime Financial Integration DB Tests (#261 / Migrati
     expect(wamid2).toBe('wamid.expiry_test_36');
     // Cron would NOT release because meta_message_id IS NOT NULL
   });
+
+  // ═══════════════════════════════════════════════════════
+  // 37-38. Semantic category + atomic expiry proofs
+  // ═══════════════════════════════════════════════════════
+
+  it('37. Missing messageCategory with gate ON fails closed (no transport-derived fallback)', () => {
+    // Insert gate-ON config with pricing
+    psql(`
+      INSERT INTO platform_config_versions (config_snapshot, effective_from, created_by)
+      VALUES ('${JSON.stringify({
+        messaging_financial_gate: true,
+        messaging_pricing: {
+          NGN: { default_cost_minor: 500, rates: { NG: { service: 200 } }, default_spend_cap_minor: 50000 },
+        },
+        messaging_reservation_ttl_seconds: 900,
+      })}'::JSONB, NOW() + INTERVAL '37371 microseconds', '${OWNER_371}');
+    `);
+
+    const bizId = createIsolatedBusiness();
+    createAllowance(bizId, 'trial_grant', 10000, 'NGN', 'cat-test-37');
+
+    // Create attempt with NULL message_category (simulating missing semantic context)
+    const attemptId = psql(`INSERT INTO message_send_attempts (business_id, recipient_phone, attempt_scope, recipient_country_code, message_category) VALUES ('${bizId}', '+2341234567', 'business', 'NG', NULL) RETURNING id;`);
+
+    // Gate ON authorization must fail closed due to missing category
+    const result = JSON.parse(psql(`SELECT check_or_authorize_send('${attemptId}');`));
+    // The delegated authorize_message_send should reject: missing_message_category
+    expect(result.authorized).toBe(false);
+
+    // Zero financial mutation
+    const disp = psql(`SELECT financial_disposition FROM message_send_attempts WHERE id = '${attemptId}';`);
+    expect(disp).toBe('pending_authorization');
+  });
+
+  it('38. DB-atomic expiry: concurrent markSending races safe_release — no post-emission release', async () => {
+    psql(`
+      INSERT INTO platform_config_versions (config_snapshot, effective_from, created_by)
+      VALUES ('${JSON.stringify({
+        messaging_financial_gate: true,
+        messaging_pricing: {
+          NGN: { default_cost_minor: 500, rates: { NG: { service: 200 } }, default_spend_cap_minor: 50000 },
+        },
+        messaging_reservation_ttl_seconds: 1,
+      })}'::JSONB, NOW() + INTERVAL '38371 microseconds', '${OWNER_371}');
+    `);
+
+    const bizId = createIsolatedBusiness();
+    createAllowance(bizId, 'trial_grant', 10000, 'NGN', 'race-test-38');
+    const attemptId = createAttempt(bizId, 'NG', 'service');
+    psql(`SELECT authorize_message_send('${attemptId}');`);
+
+    // Wait for the 1-second TTL to expire
+    psql('SELECT pg_sleep(1.5);');
+
+    // Race: session A tries safe_release (expiry cron), session B tries markSending (send path)
+    const [rExpiry, rSend] = await Promise.allSettled([
+      psqlAsync(`SELECT safe_release_expired_reservation('${attemptId}');`),
+      psqlAsync(`UPDATE message_send_attempts SET status = 'sending', sent_at = NOW() WHERE id = '${attemptId}';`),
+    ]);
+
+    // Check final state
+    const finalDisp = psql(`SELECT financial_disposition FROM message_send_attempts WHERE id = '${attemptId}';`);
+    const finalStatus = psql(`SELECT status FROM message_send_attempts WHERE id = '${attemptId}';`);
+
+    if (finalStatus === 'sending') {
+      // Send path won: attempt advanced to sending → expiry must NOT have released
+      expect(finalDisp).toBe('reserved');
+    } else if (finalDisp === 'released') {
+      // Expiry won: released while still pending_authorization → send path blocked
+      expect(finalStatus).toBe('pending_authorization');
+    }
+
+    // Critical invariant: NEVER sending + released (post-emission release)
+    const sendingAndReleased = finalStatus !== 'pending_authorization' && finalDisp === 'released';
+    expect(sendingAndReleased).toBe(false);
+  }, 30000);
+
+  it('39. safe_release_expired_reservation rejects sending attempt', () => {
+    psql(`
+      INSERT INTO platform_config_versions (config_snapshot, effective_from, created_by)
+      VALUES ('${JSON.stringify({
+        messaging_financial_gate: true,
+        messaging_pricing: {
+          NGN: { default_cost_minor: 500, rates: { NG: { service: 200 } }, default_spend_cap_minor: 50000 },
+        },
+        messaging_reservation_ttl_seconds: 1,
+      })}'::JSONB, NOW() + INTERVAL '39371 microseconds', '${OWNER_371}');
+    `);
+
+    const bizId = createIsolatedBusiness();
+    createAllowance(bizId, 'trial_grant', 10000, 'NGN', 'safe-rel-39');
+    const attemptId = createAttempt(bizId, 'NG', 'service');
+    psql(`SELECT authorize_message_send('${attemptId}');`);
+
+    // Advance to sending (emission in-flight)
+    psql(`UPDATE message_send_attempts SET status = 'sending', sent_at = NOW() WHERE id = '${attemptId}';`);
+
+    // Wait for expiry
+    psql('SELECT pg_sleep(1.5);');
+
+    // Atomic release should refuse
+    const result = JSON.parse(psql(`SELECT safe_release_expired_reservation('${attemptId}');`));
+    expect(result.released).toBe(false);
+    expect(result.reason).toBe('not_pre_emission');
+
+    // Disposition unchanged (still reserved, NOT released)
+    const disp = psql(`SELECT financial_disposition FROM message_send_attempts WHERE id = '${attemptId}';`);
+    expect(disp).toBe('reserved');
+
+    // Flagged for reconciliation
+    const recon = psql(`SELECT needs_reconciliation FROM message_send_attempts WHERE id = '${attemptId}';`);
+    expect(recon).toBe('t');
+  });
 });

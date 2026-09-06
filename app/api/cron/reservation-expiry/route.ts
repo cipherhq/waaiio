@@ -1,14 +1,10 @@
 /**
- * Cron: Reservation Expiry Processor (#261 Blocker 8)
+ * Cron: Reservation Expiry Processor (#261)
  *
- * Scans message_send_attempts with expired reservations and either
- * auto-releases safe ones or flags unsafe ones for reconciliation.
- *
- * Safety rules:
- * - SAFE to release: status = 'pending_authorization' AND needs_reconciliation = false AND meta_message_id IS NULL
- * - UNSAFE (flag only): status IN ('sending', 'accepted', 'ambiguous', 'review_required')
- *   OR needs_reconciliation = true OR meta_message_id IS NOT NULL
- * - Missing deadline (reservation_expires_at IS NULL): flag, do NOT synthesize
+ * Scans message_send_attempts with expired reservations and delegates
+ * to the DB-atomic safe_release_expired_reservation() function which
+ * revalidates ALL safety predicates at the same linearization point
+ * as release, preventing race conditions with concurrent send paths.
  *
  * Uses service client for admin-level access.
  */
@@ -30,12 +26,13 @@ export async function GET(request: NextRequest) {
   let released = 0;
   let flagged = 0;
   let scanned = 0;
+  let errors = 0;
 
   try {
     // 1. Find all reserved attempts with expired deadlines
     const { data: expiredAttempts, error: queryErr } = await supabase
       .from('message_send_attempts')
-      .select('id, status, needs_reconciliation, meta_message_id, reservation_expires_at')
+      .select('id')
       .eq('financial_disposition', 'reserved')
       .lt('reservation_expires_at', new Date().toISOString())
       .limit(500);
@@ -48,7 +45,7 @@ export async function GET(request: NextRequest) {
     // 2. Find reserved attempts with NULL deadline (should not happen, but safety net)
     const { data: nullDeadlineAttempts, error: nullQueryErr } = await supabase
       .from('message_send_attempts')
-      .select('id, status, needs_reconciliation, meta_message_id, reservation_expires_at')
+      .select('id')
       .eq('financial_disposition', 'reserved')
       .is('reservation_expires_at', null)
       .limit(500);
@@ -58,67 +55,53 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Query failed' }, { status: 500 });
     }
 
-    // 3. Flag null-deadline attempts — do NOT synthesize a deadline
+    // 3. Process null-deadline attempts via the atomic function (it will flag them)
     for (const attempt of nullDeadlineAttempts || []) {
       scanned++;
-      const { error: flagErr } = await supabase
-        .from('message_send_attempts')
-        .update({ needs_reconciliation: true })
-        .eq('id', attempt.id);
-      if (flagErr) {
-        logger.error(`[RESERVATION-EXPIRY] Failed to flag null-deadline attempt ${attempt.id}:`, flagErr.message);
+      const { data, error } = await supabase.rpc('safe_release_expired_reservation', {
+        p_attempt_id: attempt.id,
+      });
+      if (error) {
+        logger.error(`[RESERVATION-EXPIRY] RPC failed for null-deadline ${attempt.id}:`, error.message);
+        errors++;
       } else {
-        flagged++;
+        const result = data as Record<string, unknown>;
+        if (result.released === true) {
+          released++;
+        } else {
+          flagged++;
+        }
       }
     }
 
-    // 4. Process expired attempts
+    // 4. Process expired attempts via the DB-atomic function
+    //    The function revalidates ALL safety predicates (reserved + pending_authorization +
+    //    expired + no WAMID + !needs_reconciliation) atomically under FOR UPDATE.
+    //    If any predicate changed between our query and the function, it does NOT release.
     for (const attempt of expiredAttempts || []) {
       scanned++;
+      const { data, error } = await supabase.rpc('safe_release_expired_reservation', {
+        p_attempt_id: attempt.id,
+      });
 
-      const isSafe =
-        attempt.status === 'pending_authorization' &&
-        attempt.needs_reconciliation !== true &&
-        attempt.meta_message_id === null;
+      if (error) {
+        logger.error(`[RESERVATION-EXPIRY] RPC failed for ${attempt.id}:`, error.message);
+        errors++;
+        continue;
+      }
 
-      if (isSafe) {
-        // Safe to auto-release
-        const { data: settleData, error: settleErr } = await supabase.rpc('settle_message_cost', {
-          p_attempt_id: attempt.id,
-          p_outcome: 'released',
-        });
-
-        if (settleErr) {
-          logger.error(`[RESERVATION-EXPIRY] settle_message_cost(released) failed for ${attempt.id}:`, settleErr.message);
-          // Settlement failed — flag for reconciliation
-          const { error: flagErr } = await supabase
-            .from('message_send_attempts')
-            .update({ needs_reconciliation: true })
-            .eq('id', attempt.id);
-          if (flagErr) {
-            logger.error(`[RESERVATION-EXPIRY] Failed to flag attempt ${attempt.id}:`, flagErr.message);
-          }
-          flagged++;
-        } else {
-          released++;
-        }
+      const result = data as Record<string, unknown>;
+      if (result.released === true) {
+        released++;
       } else {
-        // NOT safe — flag for reconciliation, do NOT release
-        if (!attempt.needs_reconciliation) {
-          const { error: flagErr } = await supabase
-            .from('message_send_attempts')
-            .update({ needs_reconciliation: true })
-            .eq('id', attempt.id);
-          if (flagErr) {
-            logger.error(`[RESERVATION-EXPIRY] Failed to flag unsafe attempt ${attempt.id}:`, flagErr.message);
-          }
-        }
+        // Not released — the function either flagged it or it was already handled
         flagged++;
+        logger.info(`[RESERVATION-EXPIRY] Not released ${attempt.id}: ${result.reason}`);
       }
     }
 
-    logger.info(`[RESERVATION-EXPIRY] Scanned ${scanned}, released ${released}, flagged ${flagged}`);
-    return NextResponse.json({ status: 'ok', scanned, released, flagged });
+    logger.info(`[RESERVATION-EXPIRY] Scanned ${scanned}, released ${released}, flagged ${flagged}, errors ${errors}`);
+    return NextResponse.json({ status: 'ok', scanned, released, flagged, errors });
   } catch (err) {
     logger.error('[RESERVATION-EXPIRY] Unexpected error:', err);
     return NextResponse.json({ error: 'Internal error' }, { status: 500 });

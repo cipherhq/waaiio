@@ -465,7 +465,7 @@ export class MetaCloudSender implements MessageSender {
     const textCall = async () => {
       return this.withAttemptAndGuard(
         () => this.cloud.sendText({ to: msg.to, text: msg.text }),
-        { recipientPhone: msg.to, messageCategory: msg.messageCategory || 'service' },
+        { recipientPhone: msg.to, messageCategory: msg.messageCategory },
       );
     };
     const result = msg.noRetry ? await textCall() : await withRetry(textCall, 2, 1000, this.beforeEachAttempt);
@@ -515,7 +515,7 @@ export class MetaCloudSender implements MessageSender {
       footerText: msg.footer ? msg.footer.slice(0, 60) : undefined,
       buttonText: truncatedButtonLabel,
       sections,
-    }), { recipientPhone: msg.to, messageCategory: msg.messageCategory || 'service' }); }, 2, 1000, this.beforeEachAttempt);
+    }), { recipientPhone: msg.to, messageCategory: msg.messageCategory }); }, 2, 1000, this.beforeEachAttempt);
     return { success: true, messageId: result.messageId };
   }
 
@@ -531,22 +531,22 @@ export class MetaCloudSender implements MessageSender {
       bodyText: msg.body.slice(0, 1024),
       footerText: msg.footer ? msg.footer.slice(0, 60) : undefined,
       buttons: msg.buttons.map(b => ({ id: b.id, title: b.title.slice(0, 20) })),
-    }), { recipientPhone: msg.to, messageCategory: msg.messageCategory || 'service' }); }, 2, 1000, this.beforeEachAttempt);
+    }), { recipientPhone: msg.to, messageCategory: msg.messageCategory }); }, 2, 1000, this.beforeEachAttempt);
     return { success: true, messageId: result.messageId };
   }
 
   async sendImage(msg: { to: string; imageUrl: string; caption?: string; messageCategory?: string }) {
-    const result = await withRetry(async () => { return this.withAttemptAndGuard(() => this.cloud.sendImage({ to: msg.to, imageUrl: msg.imageUrl, caption: msg.caption }), { recipientPhone: msg.to, messageCategory: msg.messageCategory || 'service' }); }, 2, 1000, this.beforeEachAttempt);
+    const result = await withRetry(async () => { return this.withAttemptAndGuard(() => this.cloud.sendImage({ to: msg.to, imageUrl: msg.imageUrl, caption: msg.caption }), { recipientPhone: msg.to, messageCategory: msg.messageCategory }); }, 2, 1000, this.beforeEachAttempt);
     return { success: true, messageId: result.messageId };
   }
 
   async sendDocument(msg: { to: string; documentUrl: string; filename: string; caption?: string; messageCategory?: string }) {
-    const result = await withRetry(async () => { return this.withAttemptAndGuard(() => this.cloud.sendDocument({ to: msg.to, documentUrl: msg.documentUrl, filename: msg.filename, caption: msg.caption }), { recipientPhone: msg.to, messageCategory: msg.messageCategory || 'service' }); }, 2, 1000, this.beforeEachAttempt);
+    const result = await withRetry(async () => { return this.withAttemptAndGuard(() => this.cloud.sendDocument({ to: msg.to, documentUrl: msg.documentUrl, filename: msg.filename, caption: msg.caption }), { recipientPhone: msg.to, messageCategory: msg.messageCategory }); }, 2, 1000, this.beforeEachAttempt);
     return { success: true, messageId: result.messageId };
   }
 
   async sendAudio(msg: { to: string; audioUrl: string; messageCategory?: string }) {
-    const result = await withRetry(async () => { return this.withAttemptAndGuard(() => this.cloud.sendAudio({ to: msg.to, audioUrl: msg.audioUrl }), { recipientPhone: msg.to, messageCategory: msg.messageCategory || 'service' }); }, 2, 1000, this.beforeEachAttempt);
+    const result = await withRetry(async () => { return this.withAttemptAndGuard(() => this.cloud.sendAudio({ to: msg.to, audioUrl: msg.audioUrl }), { recipientPhone: msg.to, messageCategory: msg.messageCategory }); }, 2, 1000, this.beforeEachAttempt);
     return { success: true, messageId: result.messageId };
   }
 
@@ -572,7 +572,7 @@ export class MetaCloudSender implements MessageSender {
     const templateCall = async () => {
       return this.withAttemptAndGuard(
         () => this.cloud.sendTemplate({ to: msg.to, templateName: msg.templateName, components }),
-        { recipientPhone: msg.to, templateName: msg.templateName, messageCategory: msg.messageCategory || 'utility' },
+        { recipientPhone: msg.to, templateName: msg.templateName, messageCategory: msg.messageCategory },
       );
     };
     const result = msg.noRetry ? await templateCall() : await withRetry(templateCall, 2, 1000, this.beforeEachAttempt);
@@ -580,27 +580,27 @@ export class MetaCloudSender implements MessageSender {
   }
 
   async sendFlow(msg: { to: string; bodyText: string; flowId: string; flowCta: string; screen: string; flowToken?: string; data?: Record<string, unknown>; messageCategory?: string }) {
-    const result = await withRetry(async () => { return this.withAttemptAndGuard(() => this.cloud.sendFlow(msg), { recipientPhone: msg.to, messageCategory: msg.messageCategory || 'service' }); }, 2, 1000, this.beforeEachAttempt);
+    const result = await withRetry(async () => { return this.withAttemptAndGuard(() => this.cloud.sendFlow(msg), { recipientPhone: msg.to, messageCategory: msg.messageCategory }); }, 2, 1000, this.beforeEachAttempt);
     return { success: true, messageId: result.messageId };
   }
 
   async sendReaction(msg: { to: string; messageId: string; emoji: string; messageCategory?: string }) {
-    const result = await withRetry(async () => { return this.withAttemptAndGuard(() => this.cloud.sendReaction(msg), { recipientPhone: msg.to, messageCategory: msg.messageCategory || 'service' }); }, 2, 1000, this.beforeEachAttempt);
+    const result = await withRetry(async () => { return this.withAttemptAndGuard(() => this.cloud.sendReaction(msg), { recipientPhone: msg.to, messageCategory: msg.messageCategory }); }, 2, 1000, this.beforeEachAttempt);
     return { success: true, messageId: result.messageId };
   }
 
   async sendLocation(msg: { to: string; latitude: number; longitude: number; name?: string; address?: string; messageCategory?: string }) {
-    const result = await withRetry(async () => { return this.withAttemptAndGuard(() => this.cloud.sendLocation(msg), { recipientPhone: msg.to, messageCategory: msg.messageCategory || 'service' }); }, 2, 1000, this.beforeEachAttempt);
+    const result = await withRetry(async () => { return this.withAttemptAndGuard(() => this.cloud.sendLocation(msg), { recipientPhone: msg.to, messageCategory: msg.messageCategory }); }, 2, 1000, this.beforeEachAttempt);
     return { success: true, messageId: result.messageId };
   }
 
   async sendProduct(msg: { to: string; catalogId: string; productRetailerId: string; body?: string; footer?: string; messageCategory?: string }) {
-    const result = await withRetry(async () => { return this.withAttemptAndGuard(() => this.cloud.sendProduct({ to: msg.to, catalogId: msg.catalogId, productId: msg.productRetailerId, body: msg.body, footer: msg.footer }), { recipientPhone: msg.to, messageCategory: msg.messageCategory || 'utility' }); }, 2, 1000, this.beforeEachAttempt);
+    const result = await withRetry(async () => { return this.withAttemptAndGuard(() => this.cloud.sendProduct({ to: msg.to, catalogId: msg.catalogId, productId: msg.productRetailerId, body: msg.body, footer: msg.footer }), { recipientPhone: msg.to, messageCategory: msg.messageCategory }); }, 2, 1000, this.beforeEachAttempt);
     return { success: true, messageId: result.messageId };
   }
 
   async sendProductList(msg: { to: string; catalogId: string; header: string; body: string; footer?: string; sections: Array<{ title: string; productRetailerIds: string[] }>; messageCategory?: string }) {
-    const result = await withRetry(async () => { return this.withAttemptAndGuard(() => this.cloud.sendProductList({ to: msg.to, catalogId: msg.catalogId, headerText: msg.header, bodyText: msg.body, footerText: msg.footer, sections: msg.sections.map(s => ({ title: s.title, productIds: s.productRetailerIds })) }), { recipientPhone: msg.to, messageCategory: msg.messageCategory || 'utility' }); }, 2, 1000, this.beforeEachAttempt);
+    const result = await withRetry(async () => { return this.withAttemptAndGuard(() => this.cloud.sendProductList({ to: msg.to, catalogId: msg.catalogId, headerText: msg.header, bodyText: msg.body, footerText: msg.footer, sections: msg.sections.map(s => ({ title: s.title, productIds: s.productRetailerIds })) }), { recipientPhone: msg.to, messageCategory: msg.messageCategory }); }, 2, 1000, this.beforeEachAttempt);
     return { success: true, messageId: result.messageId };
   }
 }
