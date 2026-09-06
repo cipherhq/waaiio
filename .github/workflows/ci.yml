@@ -2329,6 +2329,31 @@ jobs:
           fi
           echo "✅ Migration 371 runtime financial integration tests complete — zero skips, zero failures."
 
+      - name: "Sender expiry-race integration test"
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/waaiio_test
+        run: |
+          echo "Running sender expiry-race integration test..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/sender-expiry-race-integration.test.ts 2>&1)
+          TEST_EXIT=$?
+          set -e
+          echo "$OUTPUT"
+          if [ $TEST_EXIT -ne 0 ]; then
+            echo "❌ Sender expiry-race integration test exited with code $TEST_EXIT."
+            exit 1
+          fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then
+            echo "❌ No sender expiry-race tests passed."
+            exit 1
+          fi
+          echo "✅ Sender expiry-race integration test complete."
+
       - name: "Production-shaped 355→356 convergence proof"
         env:
           PGHOST: localhost
