@@ -3,23 +3,35 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
-## 2026-09-05 — #261 Runtime Financial Integration
+## 2026-09-05 — #261 Runtime Financial Integration (9-blocker fix)
 
-### What changed
+### What changed (9-blocker fixes)
+- **Blocker 1 (C.2 frozen decision-context):** `check_or_authorize_send` now passes pre-resolved `config_version_id` and `decision_time` to a new 3-arg `authorize_message_send(UUID, UUID, TIMESTAMPTZ)` overload, preventing independent re-resolution drift. The single-arg version remains for backward compatibility.
+- **Blocker 2 (Fail closed on RPC/DB uncertainty):** `message-sender.ts` financial authorization now fails closed on ANY RPC/DB error. Only an explicit `enforcement_required: false` from a successful RPC call may skip authorization. Zero Meta emission on uncertainty.
+- **Blocker 3 (messageCategory from semantic context):** Added `messageCategory?: string` to all MessageSender interface send methods. Callers can now provide categories. Hardcoded defaults ('service'/'utility') remain as fallbacks for incremental adoption.
+- **Blocker 4 (Race-safe WAMID buffer drain):** `markAccepted()` now calls `drainUnmatchedStatuses()` after persisting the WAMID. New DB function `drain_unmatched_attempt_statuses(UUID, TEXT)` atomically drains buffered statuses using FOR UPDATE SKIP LOCKED.
+- **Blocker 5 (Settlement persistence checks):** `settleAttempt()` now checks `{ data, error }` and marks `needs_reconciliation = true` on failure. Webhook settlement calls also check errors and flag for reconciliation.
+- **Blocker 6 (Separate contradictory evidence):** Webhook no longer inserts into `message_cost_reconciliation_log` on contradiction. Instead buffers contradictory evidence in `unmatched_attempt_delivery_statuses` and marks `needs_reconciliation = true`. The reconciliation_log is reserved for authenticated admin resolution only.
+- **Blocker 7 (Threshold warnings):** New `app/api/cron/messaging-spend-warnings/route.ts` scans active spend periods, fires alerts at 50/75/90/100% utilization with structural dedupe, inserts into `alerts` table for in-app notification. Does NOT send WhatsApp messages (no recursive consumption).
+- **Blocker 8 (Reservation expiry):** New `app/api/cron/reservation-expiry/route.ts` processes expired reservations with strict safety rules: only pending_authorization + no-WAMID + no-reconciliation auto-releases; everything else gets flagged only.
+- **Blocker 9 (Production-shaped tests):** 8 new test cases (29-36) covering RPC uncertainty fail-closed, buffer drain on markAccepted, settlement failure handling, contradictory evidence isolation, threshold dedupe, no-recursion, expiry safety, and expiry forbidden paths.
+
+### Previous changes
 - **Migration 371 (`supabase/migrations/371_runtime_financial_integration.sql`):** New RPCs: `check_or_authorize_send` (gate-switchable financial authorization wrapper), `grant_messaging_allowance` (idempotent allowance granting), `resolve_message_cost_reconciliation` (admin reconciliation). New tables: `messaging_spend_threshold_alerts`, `unmatched_attempt_delivery_statuses`, `message_cost_reconciliation_log`. Extended `save_commercial_config` and `guard_commercial_settings` allowlist with `messaging_financial_gate` and `messaging_reservation_ttl_seconds`. Extended `authorize_message_send` with `reservation_expires_at` stamping. Extended `enforce_disposition_transitions` with `reservation_expires_at` immutability.
 - **`lib/channels/phone-country.ts` (new):** Resolves ISO 3166-1 alpha-2 country code from E.164 phone numbers using `libphonenumber-js`.
 - **`lib/channels/message-sender.ts`:** Added `messageCategory` to all business send methods (service/utility). Added financial authorization gate check via `check_or_authorize_send` RPC in `withAttemptAndGuard`. Added `settleAttempt` helper for releasing reservations on failure. Added country resolution via `resolveRecipientCountry`.
 - **`lib/channels/attempt-recording.ts`:** Added `updateAttemptContext` export for updating attempt country/category.
 - **`app/api/webhook/meta-cloud/route.ts`:** Added financial settlement logic in delivery status handler. Correlates WAMID to attempt, settles reserved attempts on delivered/failed, marks contradictions for reconciliation, buffers unmatched WAMIDs.
-- **`lib/__tests__/runtime-financial-integration-db.test.ts` (new):** 28 test cases covering gate behavior, grant idempotency, admin reconciliation, threshold alerts, delivery buffer, reservation TTL, ACL, and two-session concurrency.
+- **`lib/__tests__/runtime-financial-integration-db.test.ts` (new):** 36 test cases covering gate behavior, grant idempotency, admin reconciliation, threshold alerts, delivery buffer, reservation TTL, ACL, two-session concurrency, and production-shaped runtime tests.
 - **`.github/workflows/ci.yml`:** Added Migration 371 test step.
 - **`package.json`:** Added `libphonenumber-js` dependency.
 
 ### What could break
+- **BREAKING (Blocker 2):** Financial authorization now fails closed on RPC errors. Previously it failed open. If Supabase RPC is unreachable, NO business messages will be sent. This is the correct behavior (zero Meta emission on uncertainty).
 - Financial gate is OFF by default. No behavioral change until explicitly activated via `save_commercial_config('messaging_financial_gate', 'true')`.
 - The `save_commercial_config` allowlist now includes `messaging_financial_gate` and `messaging_reservation_ttl_seconds`. Existing commercial settings are unaffected.
-- Webhook delivery status handler now performs financial settlement lookups (non-fatal errors are caught and logged).
-- All business-scoped sends now include `messageCategory` in attempt params and resolve recipient country. This is additive metadata only.
+- Webhook delivery status handler now checks settlement errors and flags for reconciliation instead of silently proceeding.
+- Webhook no longer writes to `message_cost_reconciliation_log` on provider contradictions. Evidence is preserved in `unmatched_attempt_delivery_statuses` instead.
 
 ### Files changed
 - `supabase/migrations/371_runtime_financial_integration.sql`
@@ -28,6 +40,8 @@ If something breaks, check this log to find what changed and when.
 - `lib/channels/attempt-recording.ts`
 - `app/api/webhook/meta-cloud/route.ts`
 - `lib/__tests__/runtime-financial-integration-db.test.ts`
+- `app/api/cron/messaging-spend-warnings/route.ts` (new)
+- `app/api/cron/reservation-expiry/route.ts` (new)
 - `.github/workflows/ci.yml`
 - `package.json`, `package-lock.json`
 

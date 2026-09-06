@@ -33,13 +33,56 @@ const CIRCUIT_KEY = 'meta-cloud';
 /**
  * #261: Settle a message cost reservation via RPC.
  * Uses service client since this runs server-side in the send path.
+ * On settlement failure: logs and marks needs_reconciliation = true.
+ * Returns true if settlement succeeded, false otherwise.
  */
-async function settleAttempt(attemptId: string, outcome: 'charged' | 'released'): Promise<void> {
+async function settleAttempt(attemptId: string, outcome: 'charged' | 'released'): Promise<boolean> {
   try {
     const service = createServiceClient();
-    await service.rpc('settle_message_cost', { p_attempt_id: attemptId, p_outcome: outcome });
+    const { data, error } = await service.rpc('settle_message_cost', { p_attempt_id: attemptId, p_outcome: outcome });
+
+    if (error) {
+      logger.error(`[SENDER] settle_message_cost(${outcome}) RPC error for attempt ${attemptId}: ${error.message}`);
+      // Mark needs_reconciliation on failure
+      const { error: flagError } = await service
+        .from('message_send_attempts')
+        .update({ needs_reconciliation: true })
+        .eq('id', attemptId);
+      if (flagError) {
+        logger.error(`[SENDER] Failed to set needs_reconciliation for attempt ${attemptId}: ${flagError.message}`);
+      }
+      return false;
+    }
+
+    // Check the settlement result
+    const result = data as Record<string, unknown> | null;
+    if (result && result.settled === false && result.reason !== 'already_terminally_settled') {
+      logger.warn(`[SENDER] settle_message_cost(${outcome}) rejected for attempt ${attemptId}: ${result.reason}`);
+      const svc = createServiceClient();
+      const { error: flagError } = await svc
+        .from('message_send_attempts')
+        .update({ needs_reconciliation: true })
+        .eq('id', attemptId);
+      if (flagError) {
+        logger.error(`[SENDER] Failed to set needs_reconciliation for attempt ${attemptId}: ${flagError.message}`);
+      }
+      return false;
+    }
+
+    return true;
   } catch (err) {
-    logger.warn(`[SENDER] settle_message_cost(${outcome}) failed for attempt ${attemptId}:`, (err as Error).message);
+    logger.error(`[SENDER] settle_message_cost(${outcome}) exception for attempt ${attemptId}:`, (err as Error).message);
+    // Best-effort: try to flag for reconciliation
+    try {
+      const service = createServiceClient();
+      await service
+        .from('message_send_attempts')
+        .update({ needs_reconciliation: true })
+        .eq('id', attemptId);
+    } catch {
+      // Ignore — best effort
+    }
+    return false;
   }
 }
 
@@ -106,7 +149,7 @@ export interface MessageSender {
   enterPlatformDiscovery?(): void;
   /** S-1 (#256): Read the currently bound business identity. */
   readonly boundBusinessId?: string;
-  sendText(msg: { to: string; text: string; noRetry?: boolean }): Promise<{ success?: boolean; messageId?: string }>;
+  sendText(msg: { to: string; text: string; noRetry?: boolean; messageCategory?: string }): Promise<{ success?: boolean; messageId?: string }>;
   sendList(msg: {
     to: string;
     title: string;
@@ -118,27 +161,32 @@ export interface MessageSender {
       items: Array<{ title: string; description?: string; postbackText: string }>;
     }>;
     footer?: string;
+    messageCategory?: string;
   }): Promise<{ success?: boolean; messageId?: string }>;
   sendButtons(msg: {
     to: string;
     body: string;
     buttons: Array<{ id: string; title: string }>;
     footer?: string;
+    messageCategory?: string;
   }): Promise<{ success?: boolean; messageId?: string }>;
   sendImage(msg: {
     to: string;
     imageUrl: string;
     caption?: string;
+    messageCategory?: string;
   }): Promise<{ success?: boolean; messageId?: string }>;
   sendDocument(msg: {
     to: string;
     documentUrl: string;
     filename: string;
     caption?: string;
+    messageCategory?: string;
   }): Promise<{ success?: boolean; messageId?: string }>;
   sendAudio(msg: {
     to: string;
     audioUrl: string;
+    messageCategory?: string;
   }): Promise<{ success?: boolean; messageId?: string }>;
   sendTemplate?(msg: {
     to: string;
@@ -146,6 +194,7 @@ export interface MessageSender {
     templateParams: string[];
     buttonParams?: string[];
     noRetry?: boolean;
+    messageCategory?: string;
   }): Promise<{ success?: boolean; messageId?: string }>;
   sendFlow?(msg: {
     to: string;
@@ -155,11 +204,13 @@ export interface MessageSender {
     screen: string;
     flowToken?: string;
     data?: Record<string, unknown>;
+    messageCategory?: string;
   }): Promise<{ success?: boolean; messageId?: string }>;
   sendReaction?(msg: {
     to: string;
     messageId: string;
     emoji: string;
+    messageCategory?: string;
   }): Promise<{ success?: boolean; messageId?: string }>;
   sendLocation?(msg: {
     to: string;
@@ -167,6 +218,7 @@ export interface MessageSender {
     longitude: number;
     name?: string;
     address?: string;
+    messageCategory?: string;
   }): Promise<{ success?: boolean; messageId?: string }>;
   sendProduct?(msg: {
     to: string;
@@ -174,6 +226,7 @@ export interface MessageSender {
     productRetailerId: string;
     body?: string;
     footer?: string;
+    messageCategory?: string;
   }): Promise<{ success?: boolean; messageId?: string }>;
   sendProductList?(msg: {
     to: string;
@@ -182,6 +235,7 @@ export interface MessageSender {
     body: string;
     footer?: string;
     sections: Array<{ title: string; productRetailerIds: string[] }>;
+    messageCategory?: string;
   }): Promise<{ success?: boolean; messageId?: string }>;
 }
 
@@ -250,32 +304,48 @@ export class MetaCloudSender implements MessageSender {
       }
 
       // #261: Financial authorization gate
+      // Fail-closed: ANY RPC/DB error => zero Meta emission. Only explicit
+      // enforcement_required: false from a successful RPC call may skip authorization.
       if (attemptId) {
         try {
           const service = createServiceClient();
           const { data: authResult, error: authError } = await service.rpc('check_or_authorize_send', { p_attempt_id: attemptId });
 
           if (authError) {
-            logger.warn('[SENDER] check_or_authorize_send RPC error (non-fatal):', authError.message);
-            // RPC error: proceed if gate is not provably ON (fail-open for RPC errors)
+            // RPC error: fail closed — zero Meta emission
+            logger.error('[SENDER] check_or_authorize_send RPC error — fail closed:', authError.message);
+            throw new Error(`Financial authorization RPC error: ${authError.message}`);
           } else if (authResult) {
             const result = authResult as Record<string, unknown>;
             if (result.enforcement_required === false) {
-              // Gate OFF: proceed
+              // Gate OFF: proceed (explicit successful response)
             } else if (result.authorized === true) {
               // Gate ON, authorized: proceed
               wasReserved = true;
             } else if (result.authorized === false) {
               // Gate ON, rejected: zero Meta emission
               throw new Error(`Financial authorization denied: ${result.reason || 'unknown'}`);
+            } else {
+              // Unexpected response shape: fail closed
+              logger.error('[SENDER] check_or_authorize_send unexpected response — fail closed:', JSON.stringify(result));
+              throw new Error('Financial authorization: unexpected RPC response');
             }
+          } else {
+            // Null data with no error: fail closed
+            logger.error('[SENDER] check_or_authorize_send returned null — fail closed');
+            throw new Error('Financial authorization: null RPC response');
           }
         } catch (finErr) {
-          if (finErr instanceof Error && finErr.message.startsWith('Financial authorization denied:')) {
+          if (finErr instanceof Error && (
+            finErr.message.startsWith('Financial authorization denied:') ||
+            finErr.message.startsWith('Financial authorization RPC error:') ||
+            finErr.message.startsWith('Financial authorization:')
+          )) {
             throw finErr;
           }
-          // Other errors: non-fatal, proceed
-          logger.warn('[SENDER] Financial authorization check failed (non-fatal):', (finErr as Error).message);
+          // Any other error (network, etc.): fail closed — zero Meta emission
+          logger.error('[SENDER] Financial authorization check failed — fail closed:', (finErr as Error).message);
+          throw new Error(`Financial authorization error: ${(finErr as Error).message}`);
         }
       }
 
@@ -283,13 +353,17 @@ export class MetaCloudSender implements MessageSender {
       if (this.beforeEachAttempt) this.beforeEachAttempt();
 
       // #261: Re-check hard stop after financial authorization
-      // If blocked now but reservation exists, compensate
+      // If blocked now but reservation exists, compensate then block
       try {
         await assertMessagingAllowed(this._businessId);
       } catch (guardErr) {
         if (wasReserved && attemptId) {
-          await settleAttempt(attemptId, 'released');
+          const released = await settleAttempt(attemptId, 'released');
+          if (!released) {
+            logger.error(`[SENDER] Hard-stop release failed for attempt ${attemptId} — needs_reconciliation set`);
+          }
         }
+        // Hard stop wins regardless of release outcome — zero Meta emission
         throw guardErr;
       }
     }
@@ -386,12 +460,12 @@ export class MetaCloudSender implements MessageSender {
 
   // ── Business-scoped sends — require business identity, fail-closed ──
 
-  async sendText(msg: { to: string; text: string; noRetry?: boolean }) {
+  async sendText(msg: { to: string; text: string; noRetry?: boolean; messageCategory?: string }) {
     // #257 lifecycle: attempt → deadline → #256 guard → deadline → sending → emission
     const textCall = async () => {
       return this.withAttemptAndGuard(
         () => this.cloud.sendText({ to: msg.to, text: msg.text }),
-        { recipientPhone: msg.to, messageCategory: 'service' },
+        { recipientPhone: msg.to, messageCategory: msg.messageCategory || 'service' },
       );
     };
     const result = msg.noRetry ? await textCall() : await withRetry(textCall, 2, 1000, this.beforeEachAttempt);
@@ -409,6 +483,7 @@ export class MetaCloudSender implements MessageSender {
       items: Array<{ title: string; description?: string; postbackText: string }>;
     }>;
     footer?: string;
+    messageCategory?: string;
   }) {
     // Enforce WhatsApp API limits: title 24 chars, body 1024 chars, buttonLabel 20 chars, item title 24 chars, item description 72 chars
     const truncatedTitle = msg.title.length > 24 ? msg.title.slice(0, 21) + '...' : msg.title;
@@ -440,7 +515,7 @@ export class MetaCloudSender implements MessageSender {
       footerText: msg.footer ? msg.footer.slice(0, 60) : undefined,
       buttonText: truncatedButtonLabel,
       sections,
-    }), { recipientPhone: msg.to, messageCategory: 'service' }); }, 2, 1000, this.beforeEachAttempt);
+    }), { recipientPhone: msg.to, messageCategory: msg.messageCategory || 'service' }); }, 2, 1000, this.beforeEachAttempt);
     return { success: true, messageId: result.messageId };
   }
 
@@ -449,28 +524,29 @@ export class MetaCloudSender implements MessageSender {
     body: string;
     buttons: Array<{ id: string; title: string }>;
     footer?: string;
+    messageCategory?: string;
   }) {
     const result = await withRetry(async () => { return this.withAttemptAndGuard(() => this.cloud.sendButtons({
       to: msg.to,
       bodyText: msg.body.slice(0, 1024),
       footerText: msg.footer ? msg.footer.slice(0, 60) : undefined,
       buttons: msg.buttons.map(b => ({ id: b.id, title: b.title.slice(0, 20) })),
-    }), { recipientPhone: msg.to, messageCategory: 'service' }); }, 2, 1000, this.beforeEachAttempt);
+    }), { recipientPhone: msg.to, messageCategory: msg.messageCategory || 'service' }); }, 2, 1000, this.beforeEachAttempt);
     return { success: true, messageId: result.messageId };
   }
 
-  async sendImage(msg: { to: string; imageUrl: string; caption?: string }) {
-    const result = await withRetry(async () => { return this.withAttemptAndGuard(() => this.cloud.sendImage({ to: msg.to, imageUrl: msg.imageUrl, caption: msg.caption }), { recipientPhone: msg.to, messageCategory: 'service' }); }, 2, 1000, this.beforeEachAttempt);
+  async sendImage(msg: { to: string; imageUrl: string; caption?: string; messageCategory?: string }) {
+    const result = await withRetry(async () => { return this.withAttemptAndGuard(() => this.cloud.sendImage({ to: msg.to, imageUrl: msg.imageUrl, caption: msg.caption }), { recipientPhone: msg.to, messageCategory: msg.messageCategory || 'service' }); }, 2, 1000, this.beforeEachAttempt);
     return { success: true, messageId: result.messageId };
   }
 
-  async sendDocument(msg: { to: string; documentUrl: string; filename: string; caption?: string }) {
-    const result = await withRetry(async () => { return this.withAttemptAndGuard(() => this.cloud.sendDocument({ to: msg.to, documentUrl: msg.documentUrl, filename: msg.filename, caption: msg.caption }), { recipientPhone: msg.to, messageCategory: 'service' }); }, 2, 1000, this.beforeEachAttempt);
+  async sendDocument(msg: { to: string; documentUrl: string; filename: string; caption?: string; messageCategory?: string }) {
+    const result = await withRetry(async () => { return this.withAttemptAndGuard(() => this.cloud.sendDocument({ to: msg.to, documentUrl: msg.documentUrl, filename: msg.filename, caption: msg.caption }), { recipientPhone: msg.to, messageCategory: msg.messageCategory || 'service' }); }, 2, 1000, this.beforeEachAttempt);
     return { success: true, messageId: result.messageId };
   }
 
-  async sendAudio(msg: { to: string; audioUrl: string }) {
-    const result = await withRetry(async () => { return this.withAttemptAndGuard(() => this.cloud.sendAudio({ to: msg.to, audioUrl: msg.audioUrl }), { recipientPhone: msg.to, messageCategory: 'service' }); }, 2, 1000, this.beforeEachAttempt);
+  async sendAudio(msg: { to: string; audioUrl: string; messageCategory?: string }) {
+    const result = await withRetry(async () => { return this.withAttemptAndGuard(() => this.cloud.sendAudio({ to: msg.to, audioUrl: msg.audioUrl }), { recipientPhone: msg.to, messageCategory: msg.messageCategory || 'service' }); }, 2, 1000, this.beforeEachAttempt);
     return { success: true, messageId: result.messageId };
   }
 
@@ -481,6 +557,7 @@ export class MetaCloudSender implements MessageSender {
     buttonParams?: string[];
     /** Skip automatic retry for delivery-critical sends where ambiguous outcomes must not produce duplicate provider POSTs */
     noRetry?: boolean;
+    messageCategory?: string;
   }) {
     const components: Array<{ type: 'body' | 'button'; parameters: Array<{ type: 'text'; text: string }>; sub_type?: string; index?: number }> = [{
       type: 'body' as const,
@@ -495,35 +572,35 @@ export class MetaCloudSender implements MessageSender {
     const templateCall = async () => {
       return this.withAttemptAndGuard(
         () => this.cloud.sendTemplate({ to: msg.to, templateName: msg.templateName, components }),
-        { recipientPhone: msg.to, templateName: msg.templateName, messageCategory: 'utility' },
+        { recipientPhone: msg.to, templateName: msg.templateName, messageCategory: msg.messageCategory || 'utility' },
       );
     };
     const result = msg.noRetry ? await templateCall() : await withRetry(templateCall, 2, 1000, this.beforeEachAttempt);
     return { success: true, messageId: result.messageId };
   }
 
-  async sendFlow(msg: { to: string; bodyText: string; flowId: string; flowCta: string; screen: string; flowToken?: string; data?: Record<string, unknown> }) {
-    const result = await withRetry(async () => { return this.withAttemptAndGuard(() => this.cloud.sendFlow(msg), { recipientPhone: msg.to, messageCategory: 'service' }); }, 2, 1000, this.beforeEachAttempt);
+  async sendFlow(msg: { to: string; bodyText: string; flowId: string; flowCta: string; screen: string; flowToken?: string; data?: Record<string, unknown>; messageCategory?: string }) {
+    const result = await withRetry(async () => { return this.withAttemptAndGuard(() => this.cloud.sendFlow(msg), { recipientPhone: msg.to, messageCategory: msg.messageCategory || 'service' }); }, 2, 1000, this.beforeEachAttempt);
     return { success: true, messageId: result.messageId };
   }
 
-  async sendReaction(msg: { to: string; messageId: string; emoji: string }) {
-    const result = await withRetry(async () => { return this.withAttemptAndGuard(() => this.cloud.sendReaction(msg), { recipientPhone: msg.to, messageCategory: 'service' }); }, 2, 1000, this.beforeEachAttempt);
+  async sendReaction(msg: { to: string; messageId: string; emoji: string; messageCategory?: string }) {
+    const result = await withRetry(async () => { return this.withAttemptAndGuard(() => this.cloud.sendReaction(msg), { recipientPhone: msg.to, messageCategory: msg.messageCategory || 'service' }); }, 2, 1000, this.beforeEachAttempt);
     return { success: true, messageId: result.messageId };
   }
 
-  async sendLocation(msg: { to: string; latitude: number; longitude: number; name?: string; address?: string }) {
-    const result = await withRetry(async () => { return this.withAttemptAndGuard(() => this.cloud.sendLocation(msg), { recipientPhone: msg.to, messageCategory: 'service' }); }, 2, 1000, this.beforeEachAttempt);
+  async sendLocation(msg: { to: string; latitude: number; longitude: number; name?: string; address?: string; messageCategory?: string }) {
+    const result = await withRetry(async () => { return this.withAttemptAndGuard(() => this.cloud.sendLocation(msg), { recipientPhone: msg.to, messageCategory: msg.messageCategory || 'service' }); }, 2, 1000, this.beforeEachAttempt);
     return { success: true, messageId: result.messageId };
   }
 
-  async sendProduct(msg: { to: string; catalogId: string; productRetailerId: string; body?: string; footer?: string }) {
-    const result = await withRetry(async () => { return this.withAttemptAndGuard(() => this.cloud.sendProduct({ to: msg.to, catalogId: msg.catalogId, productId: msg.productRetailerId, body: msg.body, footer: msg.footer }), { recipientPhone: msg.to, messageCategory: 'utility' }); }, 2, 1000, this.beforeEachAttempt);
+  async sendProduct(msg: { to: string; catalogId: string; productRetailerId: string; body?: string; footer?: string; messageCategory?: string }) {
+    const result = await withRetry(async () => { return this.withAttemptAndGuard(() => this.cloud.sendProduct({ to: msg.to, catalogId: msg.catalogId, productId: msg.productRetailerId, body: msg.body, footer: msg.footer }), { recipientPhone: msg.to, messageCategory: msg.messageCategory || 'utility' }); }, 2, 1000, this.beforeEachAttempt);
     return { success: true, messageId: result.messageId };
   }
 
-  async sendProductList(msg: { to: string; catalogId: string; header: string; body: string; footer?: string; sections: Array<{ title: string; productRetailerIds: string[] }> }) {
-    const result = await withRetry(async () => { return this.withAttemptAndGuard(() => this.cloud.sendProductList({ to: msg.to, catalogId: msg.catalogId, headerText: msg.header, bodyText: msg.body, footerText: msg.footer, sections: msg.sections.map(s => ({ title: s.title, productIds: s.productRetailerIds })) }), { recipientPhone: msg.to, messageCategory: 'utility' }); }, 2, 1000, this.beforeEachAttempt);
+  async sendProductList(msg: { to: string; catalogId: string; header: string; body: string; footer?: string; sections: Array<{ title: string; productRetailerIds: string[] }>; messageCategory?: string }) {
+    const result = await withRetry(async () => { return this.withAttemptAndGuard(() => this.cloud.sendProductList({ to: msg.to, catalogId: msg.catalogId, headerText: msg.header, bodyText: msg.body, footerText: msg.footer, sections: msg.sections.map(s => ({ title: s.title, productIds: s.productRetailerIds })) }), { recipientPhone: msg.to, messageCategory: msg.messageCategory || 'utility' }); }, 2, 1000, this.beforeEachAttempt);
     return { success: true, messageId: result.messageId };
   }
 }

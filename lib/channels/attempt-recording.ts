@@ -141,6 +141,9 @@ export class WamidPersistenceError extends Error {
  * Link the WAMID and mark accepted after successful Meta response.
  * On DB failure: marks attempt for reconciliation and throws
  * WamidPersistenceError — caller must NOT retry (message was sent).
+ *
+ * After persisting the WAMID, drains any buffered delivery statuses
+ * that arrived before the WAMID was linked (race-safe via DB function).
  */
 export async function markAccepted(
   supabase: SupabaseClient,
@@ -169,6 +172,39 @@ export async function markAccepted(
 
     logger.error(`[ATTEMPT] WAMID persistence failed: attempt=${attemptId} wamid=${wamid} err=${error.message}`);
     throw new WamidPersistenceError(attemptId, wamid, error.message);
+  }
+
+  // #261 C.4: Drain buffered delivery statuses that arrived before WAMID linkage
+  await drainUnmatchedStatuses(supabase, attemptId, wamid);
+}
+
+/**
+ * #261 C.4: Drain delivery statuses that arrived before the WAMID was linked.
+ * Uses the DB function drain_unmatched_attempt_statuses for race safety (FOR UPDATE).
+ * On failure: logs warning, does NOT throw (evidence is preserved in buffer).
+ */
+export async function drainUnmatchedStatuses(
+  supabase: SupabaseClient,
+  attemptId: string,
+  wamid: string,
+): Promise<void> {
+  try {
+    const { data, error } = await supabase.rpc('drain_unmatched_attempt_statuses', {
+      p_attempt_id: attemptId,
+      p_wamid: wamid,
+    });
+
+    if (error) {
+      logger.warn(`[ATTEMPT] drain_unmatched_attempt_statuses RPC error: attempt=${attemptId} wamid=${wamid} err=${error.message}`);
+      return;
+    }
+
+    const result = data as Record<string, unknown> | null;
+    if (result && (result.drained as number) > 0) {
+      logger.info(`[ATTEMPT] Drained ${result.drained} buffered statuses for attempt=${attemptId} wamid=${wamid}, settled=${result.settled}`);
+    }
+  } catch (err) {
+    logger.warn(`[ATTEMPT] drain_unmatched_attempt_statuses failed: attempt=${attemptId} wamid=${wamid}`, (err as Error).message);
   }
 }
 
