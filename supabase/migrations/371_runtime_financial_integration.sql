@@ -1550,11 +1550,6 @@ BEGIN
     RAISE EXCEPTION 'MIGRATION 371 VERIFICATION FAILED: mcrl_admin_select policy missing';
   END IF;
 
-  -- Verify safe_release_expired_reservation exists
-  SELECT count(*) INTO v_count FROM pg_proc WHERE proname = 'safe_release_expired_reservation';
-  IF v_count = 0 THEN
-    RAISE EXCEPTION 'MIGRATION 371 VERIFICATION FAILED: safe_release_expired_reservation not created';
-  END IF;
 END;
 $$;
 
@@ -1653,3 +1648,14 @@ REVOKE ALL ON FUNCTION public.safe_release_expired_reservation(UUID) FROM PUBLIC
 REVOKE ALL ON FUNCTION public.safe_release_expired_reservation(UUID) FROM anon;
 REVOKE ALL ON FUNCTION public.safe_release_expired_reservation(UUID) FROM authenticated;
 GRANT EXECUTE ON FUNCTION public.safe_release_expired_reservation(UUID) TO service_role;
+
+-- Post-creation verification for safe_release_expired_reservation
+DO $$
+DECLARE v_count INT;
+BEGIN
+  SELECT count(*) INTO v_count FROM pg_proc WHERE proname = 'safe_release_expired_reservation' AND prosecdef = true;
+  IF v_count = 0 THEN
+    RAISE EXCEPTION 'MIGRATION 371 VERIFICATION FAILED: safe_release_expired_reservation not created or not SECURITY DEFINER';
+  END IF;
+END;
+$$;
