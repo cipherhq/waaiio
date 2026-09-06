@@ -1649,13 +1649,50 @@ REVOKE ALL ON FUNCTION public.safe_release_expired_reservation(UUID) FROM anon;
 REVOKE ALL ON FUNCTION public.safe_release_expired_reservation(UUID) FROM authenticated;
 GRANT EXECUTE ON FUNCTION public.safe_release_expired_reservation(UUID) TO service_role;
 
--- Post-creation verification for safe_release_expired_reservation
+-- ══════════════════════════════════════════════════════════
+-- Cross-state invariant: block entry into 'sending' when
+-- financial_disposition is terminally settled ('released' or 'charged').
+--
+-- This prevents the expiry/send race: if expiry releases a reservation
+-- while a concurrent sender is waiting behind the row lock, the sender
+-- wakes to find disposition='released' and is blocked from entering
+-- 'sending', ensuring zero post-release Meta emission.
+-- ══════════════════════════════════════════════════════════
+
+CREATE OR REPLACE FUNCTION public.guard_sending_requires_valid_reservation()
+RETURNS TRIGGER AS $$
+BEGIN
+  -- Only enforce on transitions INTO 'sending'
+  IF NEW.status = 'sending' AND OLD.status <> 'sending' THEN
+    -- Check the CURRENT financial_disposition (which may have been changed
+    -- by a concurrent transaction that committed while we were waiting)
+    IF NEW.financial_disposition IN ('released', 'charged') THEN
+      RAISE EXCEPTION 'Cannot enter sending: financial_disposition is terminally settled (%)',
+        NEW.financial_disposition;
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_guard_sending_reservation
+  BEFORE UPDATE ON public.message_send_attempts FOR EACH ROW
+  EXECUTE FUNCTION public.guard_sending_requires_valid_reservation();
+
+-- Post-creation verification
 DO $$
 DECLARE v_count INT;
 BEGIN
   SELECT count(*) INTO v_count FROM pg_proc WHERE proname = 'safe_release_expired_reservation' AND prosecdef = true;
   IF v_count = 0 THEN
     RAISE EXCEPTION 'MIGRATION 371 VERIFICATION FAILED: safe_release_expired_reservation not created or not SECURITY DEFINER';
+  END IF;
+
+  SELECT count(*) INTO v_count FROM pg_trigger
+    WHERE tgrelid = 'public.message_send_attempts'::regclass
+      AND tgname = 'trg_guard_sending_reservation';
+  IF v_count = 0 THEN
+    RAISE EXCEPTION 'MIGRATION 371 VERIFICATION FAILED: trg_guard_sending_reservation not created';
   END IF;
 END;
 $$;

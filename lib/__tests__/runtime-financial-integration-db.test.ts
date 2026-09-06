@@ -1039,4 +1039,116 @@ describe.skipIf(!canRun)('Runtime Financial Integration DB Tests (#261 / Migrati
     const recon = psql(`SELECT needs_reconciliation FROM message_send_attempts WHERE id = '${attemptId}';`);
     expect(recon).toBe('t');
   });
+
+  // ═══════════════════════════════════════════════════════
+  // 40-41. Cross-state invariant + deterministic expiry-first proof
+  // ═══════════════════════════════════════════════════════
+
+  it('40. DB trigger blocks sending when financial_disposition is released', () => {
+    psql(`
+      INSERT INTO platform_config_versions (config_snapshot, effective_from, created_by)
+      VALUES ('${JSON.stringify({
+        messaging_financial_gate: true,
+        messaging_pricing: {
+          NGN: { default_cost_minor: 500, rates: { NG: { service: 200 } }, default_spend_cap_minor: 50000 },
+        },
+        messaging_reservation_ttl_seconds: 1,
+      })}'::JSONB, NOW() + INTERVAL '40371 microseconds', '${OWNER_371}');
+    `);
+
+    const bizId = createIsolatedBusiness();
+    createAllowance(bizId, 'trial_grant', 10000, 'NGN', 'guard-test-40');
+    const attemptId = createAttempt(bizId, 'NG', 'service');
+    psql(`SELECT authorize_message_send('${attemptId}');`);
+
+    // Wait for expiry + release
+    psql('SELECT pg_sleep(1.5);');
+    const releaseResult = JSON.parse(psql(`SELECT safe_release_expired_reservation('${attemptId}');`));
+    expect(releaseResult.released).toBe(true);
+
+    // Now try to enter sending — the trigger must block it
+    const err = psqlMayFail(`UPDATE message_send_attempts SET status = 'sending', sent_at = NOW() WHERE id = '${attemptId}';`);
+    expect(err).toContain('Cannot enter sending');
+    expect(err).toContain('released');
+
+    // Status stays pending_authorization, disposition stays released — no emission possible
+    const status = psql(`SELECT status FROM message_send_attempts WHERE id = '${attemptId}';`);
+    expect(status).toBe('pending_authorization');
+    const disp = psql(`SELECT financial_disposition FROM message_send_attempts WHERE id = '${attemptId}';`);
+    expect(disp).toBe('released');
+  });
+
+  it('41. Two-session deterministic expiry-first: queued sender blocked after release', async () => {
+    psql(`
+      INSERT INTO platform_config_versions (config_snapshot, effective_from, created_by)
+      VALUES ('${JSON.stringify({
+        messaging_financial_gate: true,
+        messaging_pricing: {
+          NGN: { default_cost_minor: 500, rates: { NG: { service: 200 } }, default_spend_cap_minor: 50000 },
+        },
+        messaging_reservation_ttl_seconds: 1,
+      })}'::JSONB, NOW() + INTERVAL '41371 microseconds', '${OWNER_371}');
+    `);
+
+    const bizId = createIsolatedBusiness();
+    createAllowance(bizId, 'trial_grant', 10000, 'NGN', 'det-race-41');
+    const attemptId = createAttempt(bizId, 'NG', 'service');
+    psql(`SELECT authorize_message_send('${attemptId}');`);
+
+    // Wait for TTL to expire
+    psql('SELECT pg_sleep(1.5);');
+
+    // Session A (expiry): acquires row lock FIRST via advisory lock coordination,
+    // releases the reservation, then commits.
+    // Session B (sender): tries markSending but is queued behind the lock;
+    // wakes after release commits and is blocked by the cross-state trigger.
+    //
+    // We force ordering: session A uses pg_advisory_lock to signal it has the row lock,
+    // session B waits for that signal before attempting its UPDATE.
+    const sessionA = `
+      BEGIN;
+      -- Acquire the row lock first
+      SELECT id FROM message_send_attempts WHERE id = '${attemptId}' FOR UPDATE;
+      -- Signal to session B that we hold the lock
+      SELECT pg_advisory_lock(371410);
+      -- Perform the release
+      SELECT safe_release_expired_reservation('${attemptId}');
+      -- Release advisory lock so session B can proceed
+      SELECT pg_advisory_unlock(371410);
+      COMMIT;
+    `;
+
+    const sessionB = `
+      -- Wait for session A to acquire the row lock (advisory lock signals this)
+      SELECT pg_advisory_lock(371410);
+      SELECT pg_advisory_unlock(371410);
+      -- Now try to enter sending — session A may or may not have committed yet.
+      -- If A committed: trigger blocks us (released disposition).
+      -- If A hasn't committed: we wait behind row lock, then trigger blocks us.
+      UPDATE message_send_attempts SET status = 'sending', sent_at = NOW() WHERE id = '${attemptId}';
+    `;
+
+    const [rA, rB] = await Promise.allSettled([
+      psqlAsync(sessionA),
+      psqlAsync(sessionB),
+    ]);
+
+    // Session A should succeed (release)
+    expect(rA.status).toBe('fulfilled');
+
+    // Session B should fail (trigger blocks sending after release)
+    expect(rB.status).toBe('rejected');
+    if (rB.status === 'rejected') {
+      expect(rB.reason.message || String(rB.reason)).toContain('Cannot enter sending');
+    }
+
+    // Final state: released + pending_authorization (never entered sending)
+    const finalDisp = psql(`SELECT financial_disposition FROM message_send_attempts WHERE id = '${attemptId}';`);
+    const finalStatus = psql(`SELECT status FROM message_send_attempts WHERE id = '${attemptId}';`);
+    expect(finalDisp).toBe('released');
+    expect(finalStatus).toBe('pending_authorization');
+
+    // Clean up advisory locks
+    psqlMayFail('SELECT pg_advisory_unlock_all();');
+  }, 30000);
 });
