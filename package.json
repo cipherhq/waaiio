@@ -26,6 +26,7 @@
     "@upstash/redis": "^1.38.0",
     "framer-motion": "^12.38.0",
     "html5-qrcode": "^2.3.8",
+    "libphonenumber-js": "^1.13.12",
     "next": "14.2.35",
     "openai": "^6.35.0",
     "pdf-lib": "^1.17.1",

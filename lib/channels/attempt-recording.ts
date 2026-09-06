@@ -228,3 +228,23 @@ export function isAmbiguousTransportError(err: Error): boolean {
 export function is4xxError(err: Error): boolean {
   return /\b4\d{2}\b/.test(err.message);
 }
+
+/**
+ * #261: Update attempt with resolved country and message category.
+ * Called after attempt creation, before financial authorization.
+ */
+export async function updateAttemptContext(
+  supabase: SupabaseClient,
+  attemptId: string,
+  recipientCountryCode: string | null,
+  messageCategory: string | null,
+): Promise<void> {
+  const { error } = await supabase
+    .from('message_send_attempts')
+    .update({ recipient_country_code: recipientCountryCode, message_category: messageCategory })
+    .eq('id', attemptId);
+
+  if (error) {
+    logger.warn('[ATTEMPT] Failed to update attempt context:', error.message);
+  }
+}
