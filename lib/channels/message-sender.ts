@@ -369,8 +369,11 @@ export class MetaCloudSender implements MessageSender {
     }
 
     // 3. Durable pre-emission marker
+    // When financially reserved, markSending MUST succeed before emission —
+    // the cross-state trigger rejects if the reservation was released by expiry,
+    // and that rejection must not be swallowed (independent of #257 gate state).
     if (attemptId && this._supabase) {
-      await markSending(this._supabase, attemptId);
+      await markSending(this._supabase, attemptId, { financiallyReserved: wasReserved });
     }
 
     // 4. Provider emission

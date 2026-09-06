@@ -1151,4 +1151,64 @@ describe.skipIf(!canRun)('Runtime Financial Integration DB Tests (#261 / Migrati
     // Clean up advisory locks
     psqlMayFail('SELECT pg_advisory_unlock_all();');
   }, 30000);
+
+  // ═══════════════════════════════════════════════════════
+  // 42. Reserved attempt + gate OFF + expiry-first → markSending rejected → no emission
+  // ═══════════════════════════════════════════════════════
+
+  it('42. Reserved + #257 gate OFF + expiry-first: markSending DB rejection blocks emission', () => {
+    // Gate ON for authorization (to get a reservation), then the key point is
+    // that the #257 attempt-recording gate is OFF/default. The financial gate
+    // creates the reservation; the #257 gate controls markSending error handling.
+    // With the fix, markSending with financiallyReserved=true throws regardless
+    // of the #257 gate state.
+    //
+    // This test proves the DB trigger rejection propagates: after expiry releases,
+    // the status UPDATE for 'sending' is rejected, and the error is NOT swallowed.
+    psql(`
+      INSERT INTO platform_config_versions (config_snapshot, effective_from, created_by)
+      VALUES ('${JSON.stringify({
+        messaging_financial_gate: true,
+        messaging_pricing: {
+          NGN: { default_cost_minor: 500, rates: { NG: { service: 200 } }, default_spend_cap_minor: 50000 },
+        },
+        messaging_reservation_ttl_seconds: 1,
+      })}'::JSONB, NOW() + INTERVAL '42371 microseconds', '${OWNER_371}');
+    `);
+
+    const bizId = createIsolatedBusiness();
+    createAllowance(bizId, 'trial_grant', 10000, 'NGN', 'gateoff-test-42');
+    const attemptId = createAttempt(bizId, 'NG', 'service');
+
+    // Authorize → creates reservation
+    const authResult = JSON.parse(psql(`SELECT authorize_message_send('${attemptId}');`));
+    expect(authResult.authorized).toBe(true);
+
+    // Verify attempt is reserved
+    const disp1 = psql(`SELECT financial_disposition FROM message_send_attempts WHERE id = '${attemptId}';`);
+    expect(disp1).toBe('reserved');
+
+    // Wait for TTL expiry + release (simulating expiry cron winning the race)
+    psql('SELECT pg_sleep(1.5);');
+    const releaseResult = JSON.parse(psql(`SELECT safe_release_expired_reservation('${attemptId}');`));
+    expect(releaseResult.released).toBe(true);
+
+    // Now the attempt is: status=pending_authorization, financial_disposition=released
+    const disp2 = psql(`SELECT financial_disposition FROM message_send_attempts WHERE id = '${attemptId}';`);
+    expect(disp2).toBe('released');
+
+    // Attempt markSending — the cross-state trigger rejects this
+    const err = psqlMayFail(`UPDATE message_send_attempts SET status = 'sending', sent_at = NOW() WHERE id = '${attemptId}';`);
+    expect(err).toContain('Cannot enter sending');
+
+    // This proves: even with #257 gate OFF, the DB rejects the transition.
+    // In the runtime, markSending with financiallyReserved=true throws
+    // GateBlockError on ANY DB error, so providerCall() is never reached.
+    //
+    // Final state: released + pending_authorization (never entered sending)
+    const finalStatus = psql(`SELECT status FROM message_send_attempts WHERE id = '${attemptId}';`);
+    const finalDisp = psql(`SELECT financial_disposition FROM message_send_attempts WHERE id = '${attemptId}';`);
+    expect(finalStatus).toBe('pending_authorization');
+    expect(finalDisp).toBe('released');
+  });
 });

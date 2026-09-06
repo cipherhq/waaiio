@@ -105,12 +105,20 @@ export async function createAttempt(
 /**
  * Transition attempt to 'sending' immediately before network emission.
  * This is the durable pre-emission marker.
- * Gate ON: failure throws (zero Meta emission).
- * Gate OFF: failure logs and returns (best-effort).
+ *
+ * Fail-closed when:
+ *   - #257 gate ON: any DB failure throws GateBlockError
+ *   - financiallyReserved=true: DB failure throws regardless of gate state,
+ *     because a reserved attempt MUST durably enter 'sending' before emission
+ *     (the cross-state trigger rejects 'sending' if the reservation was released
+ *     by expiry, and that rejection must not be swallowed)
+ *
+ * Best-effort only when gate OFF and NOT financially reserved.
  */
 export async function markSending(
   supabase: SupabaseClient,
   attemptId: string,
+  options?: { financiallyReserved?: boolean },
 ): Promise<void> {
   const { error } = await supabase
     .from('message_send_attempts')
@@ -118,8 +126,10 @@ export async function markSending(
     .eq('id', attemptId);
 
   if (error) {
-    if (sendAttemptGateEnabled) {
-      throw new GateBlockError(`Gate ON: failed to persist pre-emission state — zero Meta emission: ${error.message}`);
+    if (sendAttemptGateEnabled || options?.financiallyReserved) {
+      throw new GateBlockError(
+        `${options?.financiallyReserved ? 'Reserved attempt' : 'Gate ON'}: failed to persist pre-emission state — zero Meta emission: ${error.message}`
+      );
     }
     logger.error('[ATTEMPT] Failed to mark sending:', error.message);
   }
