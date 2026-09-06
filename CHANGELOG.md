@@ -3,6 +3,34 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-09-05 — #261 Runtime Financial Integration
+
+### What changed
+- **Migration 371 (`supabase/migrations/371_runtime_financial_integration.sql`):** New RPCs: `check_or_authorize_send` (gate-switchable financial authorization wrapper), `grant_messaging_allowance` (idempotent allowance granting), `resolve_message_cost_reconciliation` (admin reconciliation). New tables: `messaging_spend_threshold_alerts`, `unmatched_attempt_delivery_statuses`, `message_cost_reconciliation_log`. Extended `save_commercial_config` and `guard_commercial_settings` allowlist with `messaging_financial_gate` and `messaging_reservation_ttl_seconds`. Extended `authorize_message_send` with `reservation_expires_at` stamping. Extended `enforce_disposition_transitions` with `reservation_expires_at` immutability.
+- **`lib/channels/phone-country.ts` (new):** Resolves ISO 3166-1 alpha-2 country code from E.164 phone numbers using `libphonenumber-js`.
+- **`lib/channels/message-sender.ts`:** Added `messageCategory` to all business send methods (service/utility). Added financial authorization gate check via `check_or_authorize_send` RPC in `withAttemptAndGuard`. Added `settleAttempt` helper for releasing reservations on failure. Added country resolution via `resolveRecipientCountry`.
+- **`lib/channels/attempt-recording.ts`:** Added `updateAttemptContext` export for updating attempt country/category.
+- **`app/api/webhook/meta-cloud/route.ts`:** Added financial settlement logic in delivery status handler. Correlates WAMID to attempt, settles reserved attempts on delivered/failed, marks contradictions for reconciliation, buffers unmatched WAMIDs.
+- **`lib/__tests__/runtime-financial-integration-db.test.ts` (new):** 28 test cases covering gate behavior, grant idempotency, admin reconciliation, threshold alerts, delivery buffer, reservation TTL, ACL, and two-session concurrency.
+- **`.github/workflows/ci.yml`:** Added Migration 371 test step.
+- **`package.json`:** Added `libphonenumber-js` dependency.
+
+### What could break
+- Financial gate is OFF by default. No behavioral change until explicitly activated via `save_commercial_config('messaging_financial_gate', 'true')`.
+- The `save_commercial_config` allowlist now includes `messaging_financial_gate` and `messaging_reservation_ttl_seconds`. Existing commercial settings are unaffected.
+- Webhook delivery status handler now performs financial settlement lookups (non-fatal errors are caught and logged).
+- All business-scoped sends now include `messageCategory` in attempt params and resolve recipient country. This is additive metadata only.
+
+### Files changed
+- `supabase/migrations/371_runtime_financial_integration.sql`
+- `lib/channels/phone-country.ts`
+- `lib/channels/message-sender.ts`
+- `lib/channels/attempt-recording.ts`
+- `app/api/webhook/meta-cloud/route.ts`
+- `lib/__tests__/runtime-financial-integration-db.test.ts`
+- `.github/workflows/ci.yml`
+- `package.json`, `package-lock.json`
+
 ## 2026-09-02 — #218 Admin discoverability for absent commercial settings
 
 ### What changed

@@ -422,6 +422,70 @@ export async function POST(request: NextRequest) {
             } catch {
               // Non-fatal — fulfillment notification tracking should not block webhook processing
             }
+
+            // #261: Financial settlement — correlate WAMID → attempt → settle
+            if (wamid) {
+              try {
+                const { data: attempt } = await supabase
+                  .from('message_send_attempts')
+                  .select('id, financial_disposition')
+                  .eq('meta_message_id', wamid)
+                  .single();
+
+                if (attempt) {
+                  if (attempt.financial_disposition === 'reserved') {
+                    if (newStatus === 'delivered' || newStatus === 'read') {
+                      await supabase.rpc('settle_message_cost', { p_attempt_id: attempt.id, p_outcome: 'charged' });
+                    } else if (newStatus === 'failed') {
+                      await supabase.rpc('settle_message_cost', { p_attempt_id: attempt.id, p_outcome: 'released' });
+                    }
+                    // 'sent' → no settlement, remains reserved
+                  }
+                  // Already terminal → contradiction handling
+                  if ((attempt.financial_disposition === 'released' && (newStatus === 'delivered' || newStatus === 'read'))
+                      || (attempt.financial_disposition === 'charged' && newStatus === 'failed')) {
+                    // Contradiction: mark for reconciliation
+                    await supabase
+                      .from('message_send_attempts')
+                      .update({ needs_reconciliation: true })
+                      .eq('id', attempt.id);
+                    // The settle RPC will return already_terminally_settled — that's expected
+                    await supabase.rpc('settle_message_cost', {
+                      p_attempt_id: attempt.id,
+                      p_outcome: newStatus === 'failed' ? 'released' : 'charged',
+                    });
+                  }
+                } else {
+                  // WAMID not found — buffer for later drain
+                  const uadsTsNum = Number(status.timestamp);
+                  const uadsParsed = new Date(uadsTsNum * 1000);
+                  const uadsTimestamp = (!Number.isFinite(uadsTsNum) || uadsTsNum <= 0 || Number.isNaN(uadsParsed.getTime()))
+                    ? null
+                    : uadsParsed.toISOString();
+
+                  const failedErrForBuffer = isFailed && status.errors?.[0]
+                    ? { code: String(status.errors[0].code), reason: status.errors[0].title || 'unknown' }
+                    : { code: null, reason: null };
+
+                  // Insert buffered status — duplicate key (23505) is expected and ignored
+                  const { error: bufferErr } = await supabase
+                    .from('unmatched_attempt_delivery_statuses')
+                    .insert({
+                      meta_message_id: wamid,
+                      status: newStatus,
+                      provider_timestamp: uadsTimestamp,
+                      error_code: failedErrForBuffer.code,
+                      error_reason: failedErrForBuffer.reason,
+                    });
+                  if (bufferErr && bufferErr.code !== '23505') {
+                    log.warn('[META-WEBHOOK] Failed to buffer unmatched delivery status:', bufferErr.message);
+                  }
+                }
+              } catch (settlementErr) {
+                // Non-fatal — settlement errors should not block webhook processing
+                log.warn('[META-WEBHOOK] Financial settlement error (non-fatal):', settlementErr);
+              }
+            }
           }
         }
 
