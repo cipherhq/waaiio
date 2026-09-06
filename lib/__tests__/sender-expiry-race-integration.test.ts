@@ -1,21 +1,23 @@
 /**
- * Production-shaped sender integration test (#261)
+ * Production-shaped sender expiry-race integration test (#261)
  *
- * Proves that a financially-reserved attempt whose reservation is released
- * by expiry CANNOT emit to the provider, even with:
- * - #257 attempt-recording gate OFF (default)
- * - Normal retry enabled (withRetry, 2 retries)
+ * Invokes the REAL MetaCloudSender.sendText() with real withRetry,
+ * real withAttemptAndGuard, real markSending, against real PostgreSQL.
+ * Deterministically releases the reserved attempt between authorization
+ * and markSending, proving the entire send operation produces zero
+ * provider calls and no retry-created attempts.
  *
- * Uses the REAL markSending() with financiallyReserved=true against a real
- * PostgreSQL database, real GateBlockError classification in withRetry,
- * and a provider spy to prove zero invocations.
+ * Infrastructure boundaries mocked: Supabase client (proxied to psql),
+ * hard-stop guard (pass-through), service client factory.
+ * Production logic NOT mocked: withRetry, withAttemptAndGuard, markSending,
+ * GateBlockError classification, createAttempt, updateAttemptContext.
  *
  *   TEST_DATABASE_URL=postgresql://localhost:5432/waaiio_test \
  *     npx vitest run lib/__tests__/sender-expiry-race-integration.test.ts
  */
 
 import { execSync } from 'child_process';
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 
 const dbUrl = process.env.TEST_DATABASE_URL || '';
 const canRun = dbUrl.length > 0;
@@ -36,17 +38,136 @@ function psqlMayFail(sql: string): string {
   }
 }
 
+/**
+ * Minimal Supabase client proxy that routes operations to psql.
+ * Only implements the subset used by attempt-recording.ts and message-sender.ts.
+ */
+function createPsqlProxy() {
+  const proxy = {
+    from: (table: string) => {
+      let insertRow: Record<string, unknown> | null = null;
+      let updateValues: Record<string, unknown> | null = null;
+      let eqCol: string | null = null;
+      let eqVal: string | null = null;
+
+      const chain = {
+        insert: (row: Record<string, unknown>) => {
+          insertRow = row;
+          return chain;
+        },
+        update: (values: Record<string, unknown>) => {
+          updateValues = values;
+          return chain;
+        },
+        select: (_cols?: string) => chain,
+        eq: (col: string, val: string) => {
+          eqCol = col;
+          eqVal = val;
+          // Execute UPDATE immediately when eq is called after update
+          if (updateValues && eqCol && eqVal) {
+            const setClauses = Object.entries(updateValues)
+              .map(([k, v]) => {
+                if (v === null) return `${k} = NULL`;
+                if (typeof v === 'boolean') return `${k} = ${v}`;
+                if (typeof v === 'number') return `${k} = ${v}`;
+                return `${k} = '${String(v).replace(/'/g, "''")}'`;
+              })
+              .join(', ');
+            const result = psqlMayFail(`UPDATE ${table} SET ${setClauses} WHERE ${eqCol} = '${eqVal}';`);
+            if (result.includes('ERROR')) {
+              return Promise.resolve({ data: null, error: { message: result, code: 'DB_ERROR' } });
+            }
+            return Promise.resolve({ data: null, error: null });
+          }
+          return chain;
+        },
+        single: async () => {
+          if (insertRow) {
+            const cols = Object.keys(insertRow);
+            const vals = cols.map(k => {
+              const v = insertRow![k];
+              if (v === null || v === undefined) return 'NULL';
+              if (typeof v === 'boolean') return String(v);
+              if (typeof v === 'number') return String(v);
+              return `'${String(v).replace(/'/g, "''")}'`;
+            });
+            const result = psqlMayFail(
+              `INSERT INTO ${table} (${cols.join(',')}) VALUES (${vals.join(',')}) RETURNING id;`
+            );
+            if (result.includes('ERROR')) {
+              return { data: null, error: { message: result } };
+            }
+            return { data: { id: result.trim() }, error: null };
+          }
+          return { data: null, error: null };
+        },
+        // Make the chain thenable for cases where .eq() is the terminal call
+        then: (resolve: (val: { data: unknown; error: unknown }) => void) => {
+          if (updateValues && eqCol && eqVal) {
+            const setClauses = Object.entries(updateValues)
+              .map(([k, v]) => {
+                if (v === null) return `${k} = NULL`;
+                if (typeof v === 'boolean') return `${k} = ${v}`;
+                if (typeof v === 'number') return `${k} = ${v}`;
+                return `${k} = '${String(v).replace(/'/g, "''")}'`;
+              })
+              .join(', ');
+            const result = psqlMayFail(`UPDATE ${table} SET ${setClauses} WHERE ${eqCol} = '${eqVal}';`);
+            if (result.includes('ERROR')) {
+              resolve({ data: null, error: { message: result, code: 'DB_ERROR' } });
+            } else {
+              resolve({ data: null, error: null });
+            }
+          } else {
+            resolve({ data: null, error: null });
+          }
+        },
+      };
+      return chain;
+    },
+    rpc: async (name: string, params: Record<string, unknown>) => {
+      const paramStr = Object.entries(params)
+        .map(([k, v]) => `${k} => '${String(v).replace(/'/g, "''")}'`)
+        .join(', ');
+      const result = psqlMayFail(`SELECT ${name}(${paramStr});`);
+      if (result.includes('ERROR')) {
+        return { data: null, error: { message: result } };
+      }
+      try {
+        return { data: JSON.parse(result), error: null };
+      } catch {
+        return { data: result, error: null };
+      }
+    },
+  };
+  return proxy;
+}
+
 const OWNER_ID = '00000000-0000-0000-0000-000000000e44';
+const UNIQUE_PHONE = '+2349099999944';
+
+// Mock infrastructure boundaries BEFORE importing production modules
+vi.mock('@/lib/channels/send-guard', () => ({
+  assertMessagingAllowed: vi.fn().mockResolvedValue(undefined),
+  isMessagingAllowed: vi.fn().mockResolvedValue(true),
+}));
+
+vi.mock('@/lib/supabase/service', () => ({
+  createServiceClient: () => createPsqlProxy(),
+}));
+
+vi.mock('@/lib/supabase/client', () => ({
+  createClient: () => createPsqlProxy(),
+}));
 
 describe.skipIf(!canRun)('Sender expiry-race integration (#261 production-shaped proof)', () => {
 
   let bizId: string;
 
   beforeAll(() => {
-    // Seed test user + business
-    psqlMayFail(`INSERT INTO auth.users (id, email, raw_app_meta_data) VALUES ('${OWNER_ID}', 'sender-test-e44@test.com', '{}') ON CONFLICT (id) DO NOTHING;`);
+    psqlMayFail(`INSERT INTO auth.users (id, email, raw_app_meta_data) VALUES ('${OWNER_ID}', 'sender-e44@test.com', '{}') ON CONFLICT (id) DO NOTHING;`);
     bizId = psql(`SELECT gen_random_uuid();`);
-    psqlMayFail(`INSERT INTO businesses (id, name, slug, owner_id, address, city, neighborhood, phone) VALUES ('${bizId}', 'SenderTest44', 'sender-test-e44-${Date.now()}', '${OWNER_ID}', '1 Test', 'T', 'T', '+1');`);
+    psqlMayFail(`INSERT INTO businesses (id, name, slug, owner_id, address, city, neighborhood, phone, messaging_suspended) VALUES ('${bizId}', 'SenderTest44', 'sender-e44-${Date.now()}', '${OWNER_ID}', '1 Test', 'T', 'T', '+1', false);`);
 
     // Gate-ON config with 1-second TTL
     psql(`
@@ -54,112 +175,115 @@ describe.skipIf(!canRun)('Sender expiry-race integration (#261 production-shaped
       VALUES ('${JSON.stringify({
         messaging_financial_gate: true,
         messaging_pricing: {
+          NG: { default_cost_minor: 500, rates: { NG: { service: 200 } }, default_spend_cap_minor: 50000 },
           NGN: { default_cost_minor: 500, rates: { NG: { service: 200 } }, default_spend_cap_minor: 50000 },
         },
         messaging_reservation_ttl_seconds: 1,
       })}'::JSONB, NOW() + INTERVAL '44999 microseconds', '${OWNER_ID}');
     `);
 
-    // Create allowance
-    psql(`INSERT INTO messaging_allowances (business_id, type, amount_minor, currency_code, remaining_minor, source_ref) VALUES ('${bizId}', 'trial_grant', 50000, 'NGN', 50000, 'sender-race-e44-${Date.now()}');`);
+    psql(`INSERT INTO messaging_allowances (business_id, type, amount_minor, currency_code, remaining_minor, source_ref) VALUES ('${bizId}', 'trial_grant', 50000, 'NGN', 50000, 'sender-e44-${Date.now()}');`);
   });
 
-  it('44. Real markSending + GateBlockError + withRetry non-retryable: provider called 0 times', async () => {
-    // === STEP 1: Create attempt and authorize (reserve) ===
-    const attemptId = psql(`INSERT INTO message_send_attempts (business_id, recipient_phone, attempt_scope, recipient_country_code, message_category) VALUES ('${bizId}', '+2341234567890', 'business', 'NG', 'service') RETURNING id;`);
-    const authResult = JSON.parse(psql(`SELECT authorize_message_send('${attemptId}');`));
-    expect(authResult.authorized).toBe(true);
-    expect(psql(`SELECT financial_disposition FROM message_send_attempts WHERE id = '${attemptId}';`)).toBe('reserved');
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
 
-    // === STEP 2: Wait for TTL expiry and release ===
-    psql('SELECT pg_sleep(1.5);');
-    const releaseResult = JSON.parse(psql(`SELECT safe_release_expired_reservation('${attemptId}');`));
-    expect(releaseResult.released).toBe(true);
-    expect(psql(`SELECT financial_disposition FROM message_send_attempts WHERE id = '${attemptId}';`)).toBe('released');
-
-    // === STEP 3: Import real production modules ===
-    const { GateBlockError, setSendAttemptGate } = await import('@/lib/channels/attempt-recording');
-    const { isAmbiguousTransportError, AmbiguousSendError, WamidPersistenceError } = await import('@/lib/channels/attempt-recording');
-
+  it('44. Real MetaCloudSender.sendText + withRetry: expiry-first release → GateBlockError, provider=0, no retry attempt', async () => {
     // Ensure #257 gate is OFF (default production state)
+    const { setSendAttemptGate } = await import('@/lib/channels/attempt-recording');
     setSendAttemptGate(false);
 
-    // === STEP 4: Execute the REAL markSending via psql (same DB trigger path) ===
-    // markSending does: UPDATE message_send_attempts SET status='sending' WHERE id=attemptId
-    // The cross-state trigger rejects this because financial_disposition='released'
-    const markResult = psqlMayFail(`UPDATE message_send_attempts SET status = 'sending', sent_at = NOW() WHERE id = '${attemptId}';`);
-    expect(markResult).toContain('Cannot enter sending');
-    expect(markResult).toContain('released');
+    // Import REAL production modules (withRetry, withAttemptAndGuard, markSending all real)
+    const { MetaCloudSender } = await import('@/lib/channels/message-sender');
+    const { MetaCloudService } = await import('@/lib/channels/meta-cloud');
+    const { GateBlockError } = await import('@/lib/channels/attempt-recording');
 
-    // === STEP 5: Verify GateBlockError would be thrown by markSending ===
-    // In production, markSending(supabase, attemptId, { financiallyReserved: true })
-    // catches the Supabase error and throws GateBlockError when financiallyReserved=true.
-    // We verify the GateBlockError class is correctly constructed:
-    const gateErr = new GateBlockError(`Reserved attempt: failed to persist pre-emission state — zero Meta emission: ${markResult}`);
-    expect(gateErr.isGateBlock).toBe(true);
-    expect(gateErr.name).toBe('GateBlockError');
+    // Create real MetaCloudService with provider spy
+    const cloudService = new MetaCloudService({
+      accessToken: 'test-fake', phoneNumberId: 'test-fake',
+    });
+    const providerSpy = vi.spyOn(cloudService, 'sendText')
+      .mockResolvedValue({ messageId: 'wamid.should_never_happen' });
 
-    // === STEP 6: Verify withRetry classification ===
-    // Reproduce the EXACT withRetry non-retryable check from message-sender.ts:
-    const err: Error = gateErr;
-    const is4xx = /\b4\d{2}\b/.test(err.message);
-    const isSuspended = err.message.includes('Messaging suspended') || err.message.includes('missing_business_id');
-    const isAmbiguous = err instanceof AmbiguousSendError || isAmbiguousTransportError(err);
-    const isWamidFailure = err instanceof WamidPersistenceError;
-    const isGateBlock = err instanceof GateBlockError;
+    // Create REAL MetaCloudSender with psql-proxied Supabase client
+    const supabaseProxy = createPsqlProxy();
+    const sender = new MetaCloudSender(cloudService, supabaseProxy as never);
+    sender.bindBusiness(bizId);
 
-    // GateBlockError must be classified as non-retryable
-    expect(isGateBlock).toBe(true);
-    // And NONE of the other non-retryable flags are true (proving it's the gate block that stops retry)
-    expect(is4xx).toBe(false);
-    expect(isSuspended).toBe(false);
-    expect(isAmbiguous).toBe(false);
-    expect(isWamidFailure).toBe(false);
+    // Track the attempt ID created by the real createAttempt inside withAttemptAndGuard
+    let capturedAttemptId: string | null = null;
+    let beforeCallCount = 0;
 
-    // The withRetry code: if (is4xx || isSuspended || isAmbiguous || isWamidFailure || isGateBlock || i === retries) throw err;
-    // With isGateBlock=true, the loop exits immediately on iteration 0. No retry.
-
-    // === STEP 7: Track provider invocations ===
-    // Since GateBlockError exits withRetry before providerCall is reached,
-    // and no retry creates a fresh attempt, the provider call count is 0.
-    let providerCallCount = 0;
-
-    // Simulate the exact withRetry loop with the real error classification:
-    const maxRetries = 2;
-    let thrown: Error | null = null;
-    for (let i = 0; i <= maxRetries; i++) {
-      try {
-        // In production: withAttemptAndGuard → markSending → GateBlockError
-        throw gateErr; // markSending would throw this
-        // providerCall would be here — never reached
-        providerCallCount++; // dead code — never reached after throw
-      } catch (loopErr) {
-        const e = loopErr as Error;
-        const loopIsGateBlock = e instanceof GateBlockError;
-        // withRetry exits immediately for GateBlockError
-        if (loopIsGateBlock) {
-          thrown = e;
-          break;
+    // Use beforeEachAttempt to deterministically release between auth and markSending.
+    // In withAttemptAndGuard, beforeEachAttempt is called:
+    //   1st: pre-auth deadline check (line 301)
+    //   2nd: post-auth deadline check (line 358) — RIGHT BEFORE markSending
+    sender.beforeEachAttempt = () => {
+      beforeCallCount++;
+      if (beforeCallCount === 2) {
+        // Post-auth, pre-markSending. The attempt has been authorized (reserved).
+        // Find the attempt by unique phone + business correlation.
+        const attemptId = psqlMayFail(
+          `SELECT id FROM message_send_attempts WHERE business_id = '${bizId}' AND recipient_phone = '${UNIQUE_PHONE}' AND financial_disposition = 'reserved' ORDER BY created_at DESC LIMIT 1;`
+        );
+        if (attemptId && !attemptId.includes('ERROR')) {
+          capturedAttemptId = attemptId.trim();
+          // Wait for TTL expiry
+          psql('SELECT pg_sleep(1.5);');
+          // Release via the real DB-atomic expiry function
+          const releaseResult = psqlMayFail(`SELECT safe_release_expired_reservation('${capturedAttemptId}');`);
+          if (!releaseResult.includes('ERROR')) {
+            // Attempt is now released — markSending will fail
+          }
         }
-        if (i === maxRetries) { thrown = e; break; }
       }
+    };
+
+    // === INVOKE THE REAL PRODUCTION SEND PATH ===
+    let sendError: Error | null = null;
+    try {
+      // This calls the REAL: withRetry → withAttemptAndGuard → createAttempt →
+      // updateAttemptContext → assertMessagingAllowed → check_or_authorize_send →
+      // beforeEachAttempt(release happens here) → assertMessagingAllowed →
+      // markSending(financiallyReserved=true) → GateBlockError → withRetry exits
+      await sender.sendText({
+        to: UNIQUE_PHONE,
+        text: 'This message should never reach the provider',
+        messageCategory: 'service',
+      });
+    } catch (err) {
+      sendError = err as Error;
     }
 
-    // === STEP 8: Assertions ===
-    // Provider was NEVER called
-    expect(providerCallCount).toBe(0);
+    // === ASSERTIONS ===
 
-    // The error that exited the loop is our GateBlockError
-    expect(thrown).toBeInstanceOf(GateBlockError);
+    // 1. The real send rejected with GateBlockError
+    expect(sendError).not.toBeNull();
+    expect(sendError).toBeInstanceOf(GateBlockError);
 
-    // No second attempt was created (the retry never reached createAttempt)
-    const totalAttempts = psql(`SELECT count(*) FROM message_send_attempts WHERE id = '${attemptId}';`);
-    expect(totalAttempts).toBe('1');
+    // 2. Provider spy call count is exactly 0
+    expect(providerSpy).toHaveBeenCalledTimes(0);
 
-    // === STEP 9: Final DB state ===
-    const finalStatus = psql(`SELECT status FROM message_send_attempts WHERE id = '${attemptId}';`);
-    const finalDisp = psql(`SELECT financial_disposition FROM message_send_attempts WHERE id = '${attemptId}';`);
+    // 3. Exactly one attempt row for this unique send/business correlation
+    const attemptCount = psql(
+      `SELECT count(*) FROM message_send_attempts WHERE business_id = '${bizId}' AND recipient_phone = '${UNIQUE_PHONE}';`
+    );
+    expect(parseInt(attemptCount)).toBe(1);
+
+    // 4. That attempt ends pending_authorization + released
+    expect(capturedAttemptId).not.toBeNull();
+    const finalStatus = psql(`SELECT status FROM message_send_attempts WHERE id = '${capturedAttemptId}';`);
+    const finalDisp = psql(`SELECT financial_disposition FROM message_send_attempts WHERE id = '${capturedAttemptId}';`);
     expect(finalStatus).toBe('pending_authorization');
     expect(finalDisp).toBe('released');
-  }, 30000);
+
+    // 5. No retry-created reservation/attempt exists
+    const reservedCount = psql(
+      `SELECT count(*) FROM message_send_attempts WHERE business_id = '${bizId}' AND recipient_phone = '${UNIQUE_PHONE}' AND financial_disposition = 'reserved';`
+    );
+    expect(parseInt(reservedCount)).toBe(0);
+
+    providerSpy.mockRestore();
+  }, 60000);
 });
