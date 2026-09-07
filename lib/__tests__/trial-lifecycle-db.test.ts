@@ -400,43 +400,107 @@ describe.skipIf(!canRun)('schema verification', () => {
 // ══════════════════════════════════════════════════════════
 
 describe.skipIf(!canRun)('concurrent activation (deterministic dblink barrier proof)', () => {
-  it('two dblink sessions race on FOR UPDATE => exactly one grant, clock==expires_at, canonical amount/currency', () => {
+  it('coordinator holds row lock, two workers block at FOR UPDATE, release races => one fresh + one idempotent, canonical state', () => {
     const bizId = createTestBusiness({ countryCode: 'NG', waMethod: 'shared' });
     try {
-      // ── Deterministic concurrency using dblink ──
-      //
-      // dblink opens genuinely separate DB connections from within SQL.
-      // We use dblink_send_query (async) to dispatch two concurrent
-      // activate_trial_if_eligible calls on separate connections, then
-      // collect results. The FOR UPDATE inside the RPC serializes the
-      // two sessions at the row level with genuine overlap: both queries
-      // are in-flight before either result is collected.
-      //
-      // All dblink operations run in a single psql session to keep
-      // named connections alive across calls.
-
       psql(`CREATE EXTENSION IF NOT EXISTS dblink`);
 
-      // Single psql session: open connections, send async queries, collect
-      const output = psql(`
-        SELECT dblink_connect('race_a', 'dbname=' || current_database());
-        SELECT dblink_connect('race_b', 'dbname=' || current_database());
-        SELECT dblink_send_query('race_a',
-          'SELECT public.activate_trial_if_eligible(''${bizId}'');');
-        SELECT dblink_send_query('race_b',
-          'SELECT public.activate_trial_if_eligible(''${bizId}'');');
-        SELECT val FROM dblink_get_result('race_a') AS t(val JSONB);
-        SELECT val FROM dblink_get_result('race_b') AS t(val JSONB);
-        SELECT dblink_disconnect('race_a');
-        SELECT dblink_disconnect('race_b');
+      // ── Deterministic barrier using dblink + coordinator row lock ──
+      //
+      // A PL/pgSQL function orchestrates the entire race:
+      // 1. Opens 3 dblink connections (coordinator + 2 workers)
+      // 2. Coordinator: BEGIN + SELECT ... FOR UPDATE on the business row
+      //    (holds the exact lock that activate_trial_if_eligible acquires)
+      // 3. Workers: dblink_send_query dispatches both activations async
+      //    — they block on FOR UPDATE behind the coordinator
+      // 4. Polls pg_stat_activity (by worker PIDs) until both show
+      //    wait_event_type='Lock', proving both sessions are alive and
+      //    waiting at the authority boundary
+      // 5. Coordinator: COMMIT releases the row lock — workers race
+      // 6. Collects both results and returns as JSON
+
+      // Create a temporary orchestrator function that returns results
+      psql(`
+        CREATE EXTENSION IF NOT EXISTS dblink;
+        CREATE OR REPLACE FUNCTION pg_temp.race_trial_activation(p_biz_id UUID)
+        RETURNS JSONB LANGUAGE plpgsql AS $fn$
+        DECLARE
+          v_waiters INTEGER;
+          v_attempts INTEGER := 0;
+          v_result_a JSONB;
+          v_result_b JSONB;
+          v_pid_a INTEGER;
+          v_pid_b INTEGER;
+        BEGIN
+          PERFORM dblink_connect('coord', 'dbname=' || current_database());
+          PERFORM dblink_connect('worker_a', 'dbname=' || current_database());
+          PERFORM dblink_connect('worker_b', 'dbname=' || current_database());
+
+          -- Coordinator holds the business row lock
+          PERFORM dblink_exec('coord',
+            'BEGIN; SELECT id FROM public.businesses WHERE id = ''' || p_biz_id || ''' FOR UPDATE;');
+
+          -- Get worker PIDs
+          SELECT pid INTO v_pid_a
+            FROM dblink('worker_a', 'SELECT pg_backend_pid()') AS t(pid INTEGER);
+          SELECT pid INTO v_pid_b
+            FROM dblink('worker_b', 'SELECT pg_backend_pid()') AS t(pid INTEGER);
+
+          -- Dispatch both workers — they block on FOR UPDATE
+          PERFORM dblink_send_query('worker_a',
+            'SELECT public.activate_trial_if_eligible(''' || p_biz_id || ''');');
+          PERFORM dblink_send_query('worker_b',
+            'SELECT public.activate_trial_if_eligible(''' || p_biz_id || ''');');
+
+          -- Poll until both workers are waiting on a lock
+          LOOP
+            v_attempts := v_attempts + 1;
+            IF v_attempts > 200 THEN
+              PERFORM dblink_exec('coord', 'COMMIT;');
+              PERFORM dblink_disconnect('coord');
+              PERFORM dblink_disconnect('worker_a');
+              PERFORM dblink_disconnect('worker_b');
+              RAISE EXCEPTION 'Timeout: workers did not reach lock boundary';
+            END IF;
+            PERFORM pg_sleep(0.05);
+            SELECT count(*) INTO v_waiters
+              FROM pg_stat_activity
+              WHERE pid IN (v_pid_a, v_pid_b)
+                AND wait_event_type = 'Lock'
+                AND state = 'active';
+            EXIT WHEN v_waiters >= 2;
+          END LOOP;
+
+          -- Release: coordinator commits, workers race
+          PERFORM dblink_exec('coord', 'COMMIT;');
+
+          -- Collect results
+          SELECT val INTO v_result_a
+            FROM dblink_get_result('worker_a') AS t(val JSONB);
+          SELECT val INTO v_result_b
+            FROM dblink_get_result('worker_b') AS t(val JSONB);
+
+          PERFORM dblink_disconnect('coord');
+          PERFORM dblink_disconnect('worker_a');
+          PERFORM dblink_disconnect('worker_b');
+
+          RETURN jsonb_build_object(
+            'result_a', v_result_a,
+            'result_b', v_result_b,
+            'waiters_observed', v_waiters
+          );
+        END;
+        $fn$;
       `);
 
-      // Parse results — output contains multiple result rows, JSON lines
-      const jsonLines = output.split('\n').filter(l => l.trim().startsWith('{'));
-      expect(jsonLines.length).toBeGreaterThanOrEqual(2);
+      const raceOutput = psqlJson(`SELECT pg_temp.race_trial_activation('${bizId}') AS r`) as Record<string, unknown>;
 
-      const resultA = JSON.parse(jsonLines[0]);
-      const resultB = JSON.parse(jsonLines[1]);
+      const resultA = raceOutput.result_a as Record<string, unknown>;
+      const resultB = raceOutput.result_b as Record<string, unknown>;
+      const waitersObserved = raceOutput.waiters_observed as number;
+
+      // Both workers were provably at the lock boundary
+      expect(waitersObserved).toBeGreaterThanOrEqual(2);
 
       // Both must report activated=true
       expect(resultA.activated).toBe(true);
@@ -472,8 +536,9 @@ describe.skipIf(!canRun)('concurrent activation (deterministic dblink barrier pr
       `);
       expect(grantRow).toBe('50000|NGN');
     } finally {
-      psqlCleanup(`SELECT dblink_disconnect('race_a')`);
-      psqlCleanup(`SELECT dblink_disconnect('race_b')`);
+      psqlCleanup(`SELECT dblink_disconnect('coord')`);
+      psqlCleanup(`SELECT dblink_disconnect('worker_a')`);
+      psqlCleanup(`SELECT dblink_disconnect('worker_b')`);
       cleanup(bizId);
     }
   });
