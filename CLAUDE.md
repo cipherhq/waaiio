@@ -226,23 +226,28 @@ npm run test                             # full local test suite
 ```
 
 ### Level 3: Exact-head release CI (before CTO review)
-Launch the full 7-job GitHub Actions suite on the exact PR head SHA:
+Launch merge-gate-compatible CI on the exact PR head SHA using draft→ready_for_review:
 ```bash
-gh workflow run ci.yml --ref feat/your-branch
+# Convert PR to draft, then immediately back to ready-for-review
+gh pr ready <PR_NUMBER> --undo   # → draft
+gh pr ready <PR_NUMBER>          # → ready-for-review (triggers CI)
 ```
 Then verify and report:
 ```bash
-gh run list --workflow=ci.yml --branch=feat/your-branch --limit=1
-# Wait for completion, then:
+# Wait for completion:
 gh pr checks <PR_NUMBER>
+# Verify merge gate recognizes all checks:
+gh pr view <PR_NUMBER> --json statusCheckRollup
 ```
 **All 7 jobs must be green on the exact head SHA.** If the head changes after the CI run, that evidence is stale and CI must be rerun.
 
+The draft→ready_for_review transition fires a `pull_request: ready_for_review` event that GitHub branch protection recognizes for required status checks. `workflow_dispatch` runs are supplemental evidence only — they do NOT satisfy the protected merge gate.
+
 ### Trigger semantics
 - `push` to `main`: full CI runs automatically (post-merge regression)
-- `pull_request` opened/ready_for_review: full CI runs once on PR creation
+- `pull_request` opened/reopened/ready_for_review: full CI on PR creation or draft→ready transition
 - `pull_request` synchronize: **does NOT trigger CI** (intermediate commits validated locally)
-- `workflow_dispatch`: explicit full CI for any branch (release-gate evidence)
+- `workflow_dispatch`: supplemental full CI for any branch (does NOT satisfy merge gate)
 
 ## Brand
 - Primary color: Purple (#6C2BD9)
