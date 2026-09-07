@@ -263,7 +263,7 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    await service
+    const { error: bizUpdateError } = await service
       .from('businesses')
       .update({
         status: 'active',
@@ -272,6 +272,18 @@ export async function POST(request: NextRequest) {
         ...(plan !== 'free' ? { trial_ends_at: new Date().toISOString() } : {}),
       })
       .eq('id', businessId);
+
+    // Attempt trial activation for free-tier businesses (atomic: grant + clock together)
+    // Only invoke if the prerequisite business update succeeded — the DB authority
+    // checks status='active' for shared channel eligibility.
+    // Non-fatal: if activation fails (e.g., no channel yet), the deferred cron will retry.
+    if (plan === 'free' && !bizUpdateError) {
+      try {
+        await service.rpc('activate_trial_if_eligible', { p_business_id: businessId });
+      } catch (trialErr) {
+        console.warn('[ONBOARDING-VERIFY] Trial activation failed (non-fatal):', trialErr);
+      }
+    }
 
     const { data: business } = await service
       .from('businesses')

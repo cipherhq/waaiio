@@ -11,6 +11,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // ── Module-level mocks (installed BEFORE BotService is imported) ──
 
+vi.mock('@/lib/trial-status', () => ({
+  resolveTrialCredit: vi.fn().mockResolvedValue(false),
+  resolveTrialStatus: vi.fn().mockResolvedValue(false),
+}));
 vi.mock('@/lib/rate-limit', () => ({
   checkRateLimitAsync: vi.fn().mockResolvedValue({ allowed: true, remaining: 10 }),
 }));
@@ -52,6 +56,7 @@ import { BotService } from '../bot.service';
 import { createCaptureSender } from './bot-harness';
 import type { StandaloneService } from '../standalone.service';
 import type { BotIntelligenceService } from '../bot-intelligence';
+import { resolveTrialCredit } from '@/lib/trial-status';
 
 // ── Helpers ──
 
@@ -173,6 +178,12 @@ function createMockIntelligence(): BotIntelligenceService {
 
 const TEST_PHONE = '+2341234567890';
 const TEST_BIZ_ID = 'biz-test-001';
+
+// Reset trial credit mock before each test — fail closed by default.
+// Individual tests that exercise active-trial paths must override to true.
+beforeEach(() => {
+  vi.mocked(resolveTrialCredit).mockResolvedValue(false);
+});
 
 // ═══════════════════════════════════════════════════════
 // 1. QUICK_REBOOK — actual BotService.handleMessage
@@ -338,6 +349,7 @@ describe('CAP-001 Point A — session resume via BotService.handleMessage', () =
   });
 
   it('preserves reservation with active trial', async () => {
+    vi.mocked(resolveTrialCredit).mockResolvedValue(true);
     const sender = createCaptureSender();
     const updateTracker: Array<{ table: string; data: unknown }> = [];
 

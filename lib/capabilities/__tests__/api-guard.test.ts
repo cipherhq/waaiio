@@ -20,8 +20,16 @@
  * 16. suspended business → denied
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+// Mock resolveTrialCredit before importing api-guard (which imports it at load time)
+vi.mock('@/lib/trial-status', () => ({
+  resolveTrialCredit: vi.fn().mockResolvedValue(false),
+  resolveTrialStatus: vi.fn().mockResolvedValue(false),
+}));
+
 import { requireCapability, requireAnyCapability } from '../api-guard';
 import type { CapabilityId } from '../types';
+import { resolveTrialCredit } from '@/lib/trial-status';
 
 // ── Mock factories ──
 
@@ -97,6 +105,11 @@ const SUSPENDED_BIZ = { id: 'biz-1', status: 'suspended', subscription_tier: 'gr
 const PENDING_BIZ = { id: 'biz-1', status: 'pending', subscription_tier: 'free', trial_ends_at: '2099-01-01T00:00:00Z', category: 'salon' };
 
 describe('requireCapability — create_new', () => {
+  beforeEach(() => {
+    // Default: no trial credit (fail closed). Override per-test for active trial scenarios.
+    vi.mocked(resolveTrialCredit).mockResolvedValue(false);
+  });
+
   it('effective capability → allowed', async () => {
     const result = await requireCapability(
       mockSupabase({ business: ACTIVE_BIZ }),
@@ -251,6 +264,7 @@ describe('requireCapability — create_new', () => {
   });
 
   it('active trial on free tier → allowed', async () => {
+    vi.mocked(resolveTrialCredit).mockResolvedValue(true);
     const result = await requireCapability(
       mockSupabase({ business: FREE_BIZ_ACTIVE_TRIAL }),
       mockService({ capabilities: [{ capability: 'broadcast', is_enabled: true, sort_order: 0 }] }),

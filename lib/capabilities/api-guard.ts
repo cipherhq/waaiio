@@ -26,6 +26,7 @@ import {
 } from '@/lib/capabilities/policy';
 import { getConfiguredCapabilities } from '@/lib/capabilities/service';
 import { getLegacyDefaultCapabilities } from '@/lib/capabilities/legacy-defaults';
+import { resolveTrialCredit } from '@/lib/trial-status';
 
 // ── Result types ──
 
@@ -145,15 +146,19 @@ export async function requireCapability(
     }));
   }
 
-  // 5. Resolve effective capabilities using the authoritative policy
+  // 5. Resolve canonical trial credit state (fail closed on error)
+  const hasTrialCredit = await resolveTrialCredit(service, business.id);
+
+  // 6. Resolve effective capabilities using the authoritative policy
   const resolution = getEffectiveCapabilities({
     configuredCapabilities: configuredRows,
     overrides,
     tier: business.subscription_tier || 'free',
     trialEndsAt: business.trial_ends_at,
+    hasTrialCredit,
   });
 
-  // 6. Check action permission
+  // 7. Check action permission
   const actionResult = canPerformAction({
     action,
     capability,
@@ -257,12 +262,16 @@ export async function requireAnyCapability(
     configuredRows = defaultCaps.map((cap, i) => ({ capability: cap, is_enabled: true, sort_order: i }));
   }
 
-  // 4. Resolve effective capabilities
+  // 4. Resolve canonical trial credit state (fail closed on error)
+  const hasTrialCredit = await resolveTrialCredit(service, business.id);
+
+  // 5. Resolve effective capabilities
   const resolution = getEffectiveCapabilities({
     configuredCapabilities: configuredRows,
     overrides,
     tier: business.subscription_tier || 'free',
     trialEndsAt: business.trial_ends_at,
+    hasTrialCredit,
   });
 
   // 5. Check if ANY of the listed capabilities passes the action check
@@ -392,11 +401,15 @@ export async function requireCapabilityWithRole(
     }));
   }
 
+  // Resolve canonical trial credit state (fail closed on error)
+  const hasTrialCredit = await resolveTrialCredit(service, business.id);
+
   const resolution = getEffectiveCapabilities({
     configuredCapabilities: configuredRows,
     overrides,
     tier: business.subscription_tier || 'free',
     trialEndsAt: business.trial_ends_at,
+    hasTrialCredit,
   });
 
   // 6. Check action permission (canPerformAction)

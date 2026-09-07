@@ -5,6 +5,7 @@ import { getPaymentGateway, getPaymentGatewayByName } from '@/lib/payments/facto
 import { observe } from '@/lib/observability';
 import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
+import { resolveTrialStatus } from '@/lib/trial-status';
 
 export async function initializePayment(
   supabase: SupabaseClient,
@@ -181,9 +182,9 @@ export async function initializePayment(
 
         if (business) {
           const tier = (business.subscription_tier || 'free') as SubscriptionTier;
-          const isInTrial = tier === 'free' && business.trial_ends_at && new Date(business.trial_ends_at) > new Date();
+          const isInTrial = await resolveTrialStatus(supabase, opts.businessId, tier, business.trial_ends_at);
           const { getPlatformFees } = await import('@/lib/getPlatformFees');
-          const feeResult = await getPlatformFees(opts.amount, tier, !!isInTrial, {
+          const feeResult = await getPlatformFees(opts.amount, tier, isInTrial, {
             feePercentage: business.custom_fee_percentage ?? undefined,
             feeFlat: business.custom_fee_flat ?? undefined,
           });
@@ -207,9 +208,9 @@ export async function initializePayment(
 
         if (business) {
           const tier = (business.subscription_tier || 'free') as SubscriptionTier;
-          const isInTrial = tier === 'free' && business.trial_ends_at && new Date(business.trial_ends_at) > new Date();
+          const isInTrial = await resolveTrialStatus(supabase, opts.businessId, tier, business.trial_ends_at);
           const { getPlatformFees } = await import('@/lib/getPlatformFees');
-          const feeResult = await getPlatformFees(opts.amount, tier, !!isInTrial, {
+          const feeResult = await getPlatformFees(opts.amount, tier, isInTrial, {
             feePercentage: business.custom_fee_percentage ?? undefined,
             feeFlat: business.custom_fee_flat ?? undefined,
           });
@@ -236,9 +237,9 @@ export async function initializePayment(
 
         if (business) {
           const tier = (business.subscription_tier || 'free') as SubscriptionTier;
-          const isInTrial = tier === 'free' && business.trial_ends_at && new Date(business.trial_ends_at) > new Date();
+          const isInTrial = await resolveTrialStatus(supabase, opts.businessId, tier, business.trial_ends_at);
           const { getPlatformFees } = await import('@/lib/getPlatformFees');
-          const feeResult = await getPlatformFees(opts.amount, tier, !!isInTrial, {
+          const feeResult = await getPlatformFees(opts.amount, tier, isInTrial, {
             feePercentage: business.custom_fee_percentage ?? undefined,
             feeFlat: business.custom_fee_flat ?? undefined,
           });
