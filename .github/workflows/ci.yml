@@ -218,6 +218,12 @@ jobs:
           GRANT USAGE ON SCHEMA auth TO authenticated, service_role, anon;
           GRANT USAGE ON SCHEMA storage TO authenticated, service_role, anon;
           GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA auth TO authenticated, service_role, anon;
+
+          -- Seed common test user (many test suites reference this UUID)
+          INSERT INTO auth.users (id, email) VALUES
+            ('00000000-0000-0000-0000-000000000000', 'default-stub@test.local'),
+            ('00000000-0000-0000-0000-000000000001', 'admin-stub@test.local')
+          ON CONFLICT (id) DO NOTHING;
           EOSQL
           echo "✅ Supabase schema stubs created"
 
@@ -1085,6 +1091,12 @@ jobs:
           GRANT USAGE ON SCHEMA auth TO authenticated, service_role, anon;
           GRANT USAGE ON SCHEMA storage TO authenticated, service_role, anon;
           GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA auth TO authenticated, service_role, anon;
+
+          -- Seed common test user (many test suites reference this UUID)
+          INSERT INTO auth.users (id, email) VALUES
+            ('00000000-0000-0000-0000-000000000000', 'default-stub@test.local'),
+            ('00000000-0000-0000-0000-000000000001', 'admin-stub@test.local')
+          ON CONFLICT (id) DO NOTHING;
           EOSQL
           echo "✅ Supabase schema stubs created"
 
@@ -2287,6 +2299,12 @@ jobs:
           GRANT USAGE ON SCHEMA auth TO authenticated, service_role, anon;
           GRANT USAGE ON SCHEMA storage TO authenticated, service_role, anon;
           GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA auth TO authenticated, service_role, anon;
+
+          -- Seed common test user (many test suites reference this UUID)
+          INSERT INTO auth.users (id, email) VALUES
+            ('00000000-0000-0000-0000-000000000000', 'default-stub@test.local'),
+            ('00000000-0000-0000-0000-000000000001', 'admin-stub@test.local')
+          ON CONFLICT (id) DO NOTHING;
           EOSQL
           echo "✅ Supabase schema stubs created"
 
