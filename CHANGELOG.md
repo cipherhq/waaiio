@@ -3,6 +3,23 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-09-05 — #262 Trial Lifecycle
+
+### What changed
+- **Migration 372 (`supabase/migrations/372_trial_lifecycle.sql`):** `businesses.trial_ends_at` is now nullable (NULL = trial not yet activated). New RPC `activate_trial_if_eligible(UUID)` reads config-versioned `trial_days`, `trial_credit_minor_by_currency`, and `messaging_pricing` to atomically grant a messaging allowance and set `trial_ends_at`. Extended `save_commercial_config` and `guard_commercial_settings` allowlist with `trial_credit_minor_by_currency`. Legacy grandfather block creates matching `trial_v2` grants for active legacy trials. Structural alert dedupe index `uq_trial_pending_alert` for pending trial config alerts.
+- **`lib/capabilities/policy.ts`:** `isTrialActive()` now takes a third param `hasTrialCredit` (default `true` for backward compat). `GetEffectiveCapabilitiesParams` and `CanModifyCapabilityParams` extended with optional `hasTrialCredit`.
+- **`lib/trial-status.ts`:** New `resolveTrialStatus()` helper queries `messaging_allowances` for `trial_v2` credit and delegates to `isTrialActive()` for the dual-condition check.
+- **`lib/payments/process-success.ts`, `lib/payments/charge-saved.ts`, `lib/bot/flows/shared/payment.ts`:** All `isInTrial` computations now use `resolveTrialStatus()` instead of time-only checks.
+- **`app/api/onboarding/register/route.ts`:** Removed hardcoded `trial_ends_at` from business INSERT. New businesses start with `trial_ends_at = NULL`.
+- **`app/api/whatsapp/embedded-signup/route.ts`:** Calls `activate_trial_if_eligible` after channel creation (non-fatal).
+- **`app/api/onboarding/verify/route.ts`:** Calls `activate_trial_if_eligible` for free-tier businesses after activation (non-fatal).
+- **`app/api/cron/trial-activation/route.ts`:** New deferred activation cron. Finds businesses with `trial_ends_at IS NULL` + active channel, calls `activate_trial_if_eligible`, inserts deduped alerts on config-pending results.
+
+### What could break
+- Any code that assumes `trial_ends_at` is always non-null on free-tier businesses. Now NULL means trial not yet activated.
+- Payment fee calculation now queries `messaging_allowances` — adds one extra DB query per payment path.
+- The `isTrialActive()` signature change is backward-compatible (3rd param defaults to `true`), but callers that want credit enforcement must pass `hasTrialCredit` explicitly.
+
 ## 2026-09-05 — #261 Runtime Financial Integration (9-blocker fix)
 
 ### What changed (9-blocker fixes)

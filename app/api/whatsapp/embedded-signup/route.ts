@@ -188,7 +188,15 @@ export async function POST(request: NextRequest) {
       })
       .eq('id', business_id);
 
-    // 8. Auto-provision message templates (non-fatal)
+    // 8. Attempt trial activation (atomic: grant + clock together)
+    try {
+      await service.rpc('activate_trial_if_eligible', { p_business_id: business_id });
+    } catch (trialErr) {
+      // Non-fatal: trial activation failure should not block channel setup
+      console.warn('[EMBEDDED-SIGNUP] Trial activation failed (non-fatal):', trialErr);
+    }
+
+    // 9. Auto-provision message templates (non-fatal)
     try {
       const { provisionTemplates } = await import('@/lib/channels/provision-templates');
       await provisionTemplates(wabaId, accessToken);
