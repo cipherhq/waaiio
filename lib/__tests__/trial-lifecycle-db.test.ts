@@ -44,13 +44,23 @@ function psqlCleanup(sql: string): void {
 }
 
 // ── Monotonic config version counter ─────────────────────
-// Each config insert uses a deterministic effective_from with sub-second
-// offset to guarantee ORDER BY effective_from DESC ordering.
-let configEpochOffset = 0;
+// The activate_trial_if_eligible RPC resolves config with
+//   WHERE effective_from <= clock_timestamp() ORDER BY effective_from DESC
+// So effective_from must be <= clock_timestamp() (in the past or present).
+//
+// Strategy: use clock_timestamp() (wall clock, not transaction-frozen) minus a
+// decreasing microsecond offset. Each insert is:
+//   - in the past or at present (satisfies the WHERE clause)
+//   - strictly later than the previous insert (monotonic ordering)
+//   - later than any M371 config (M371 uses NOW() + 371µs from an earlier time)
+//
+// Counter starts at 372000µs (0.372s) and decrements, so each config is
+// progressively closer to clock_timestamp() and therefore later.
+let configOffsetMicros = 372000;
 
 function nextConfigTimestamp(): string {
-  configEpochOffset++;
-  return `NOW() + INTERVAL '${configEpochOffset} seconds'`;
+  configOffsetMicros -= 1000; // 1ms step ensures unique ordering
+  return `clock_timestamp() - INTERVAL '${configOffsetMicros} microseconds'`;
 }
 
 // ── Helper: create a test business (strict — all setup must succeed) ──
