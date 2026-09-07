@@ -1,10 +1,30 @@
 name: CI
 
+# ── Trigger semantics ──
+#
+# 1. push to main: full CI runs automatically (post-merge regression check)
+# 2. pull_request opened/ready_for_review: full CI runs once on PR creation
+#    (but NOT on every subsequent push/synchronize — intermediate commits
+#    are validated locally by the implementer)
+# 3. workflow_dispatch: explicit full CI launch for any branch/ref
+#    — used before CTO exact-head review to produce release-gate evidence
+#    — the run records the exact head_sha of the dispatched ref
+#
+# The full 7-job suite is NEVER weakened, skipped, or path-filtered.
+# All jobs run identically regardless of trigger.
+
 on:
   push:
     branches: [main]
   pull_request:
     branches: [main]
+    types: [opened, ready_for_review]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Branch or SHA to run CI against (defaults to the branch selected in the UI)'
+        required: false
+        type: string
 
 jobs:
   # ── Main Application ──

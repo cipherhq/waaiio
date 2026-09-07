@@ -206,6 +206,44 @@ NEXT_PUBLIC_POSTHOG_KEY
 - **Naming:** Migrations are `NNN_description.sql`. API routes are `/api/{resource}/{action}/route.ts`.
 - **Testing:** `npm run test` (Vitest). E2E with `@antiwork/shortest`.
 
+## CI Process (three-level)
+
+Full GitHub Actions CI is a **release gate**, not an every-commit loop.
+
+### Level 1: Changed-area preflight (every commit)
+Run focused tests for the files you changed:
+```bash
+npx vitest run path/to/changed.test.ts  # affected test suites
+npx next build                           # type check
+```
+
+### Level 2: Related regressions (before requesting review)
+Run broader regression suites that could be affected:
+```bash
+npm run test                             # full local test suite
+# For migration changes, also run real-PG suites:
+# TEST_DATABASE_URL=... npx vitest run lib/__tests__/trial-lifecycle-db.test.ts
+```
+
+### Level 3: Exact-head release CI (before CTO review)
+Launch the full 7-job GitHub Actions suite on the exact PR head SHA:
+```bash
+gh workflow run ci.yml --ref feat/your-branch
+```
+Then verify and report:
+```bash
+gh run list --workflow=ci.yml --branch=feat/your-branch --limit=1
+# Wait for completion, then:
+gh pr checks <PR_NUMBER>
+```
+**All 7 jobs must be green on the exact head SHA.** If the head changes after the CI run, that evidence is stale and CI must be rerun.
+
+### Trigger semantics
+- `push` to `main`: full CI runs automatically (post-merge regression)
+- `pull_request` opened/ready_for_review: full CI runs once on PR creation
+- `pull_request` synchronize: **does NOT trigger CI** (intermediate commits validated locally)
+- `workflow_dispatch`: explicit full CI for any branch (release-gate evidence)
+
 ## Brand
 - Primary color: Purple (#6C2BD9)
 - Accent: Orange (#F59E0B)  
