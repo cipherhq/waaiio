@@ -4,6 +4,7 @@ import { getPlatformFees } from '@/lib/getPlatformFees';
 import type { SubscriptionTier } from '@/lib/constants';
 import { observeProvider, logSplitResolved, logSplitMissing } from '@/lib/observability';
 import { normalizeError } from '@/lib/errors';
+import { resolveTrialStatus } from '@/lib/trial-status';
 
 const paystackSecretKey = process.env.PAYSTACK_SECRET_KEY || '';
 
@@ -66,8 +67,8 @@ export async function resolveGatewaySplit(
   }
 
   const tier = (biz.subscription_tier || 'free') as SubscriptionTier;
-  const isInTrial = tier === 'free' && biz.trial_ends_at && new Date(biz.trial_ends_at) > new Date();
-  const feeResult = await getPlatformFees(amount, tier, !!isInTrial, {
+  const isInTrial = await resolveTrialStatus(supabase, businessId, tier, biz.trial_ends_at);
+  const feeResult = await getPlatformFees(amount, tier, isInTrial, {
     feePercentage: biz.custom_fee_percentage ?? undefined,
     feeFlat: biz.custom_fee_flat ?? undefined,
   });

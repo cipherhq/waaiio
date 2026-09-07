@@ -7,6 +7,7 @@ import { safeLogErrorContext } from '@/lib/errors';
 import { isSafeIdentifier } from '@/lib/redact';
 import { markWaitlistConverted } from '@/lib/waitlist/auto-notify';
 import type { FinalizationResult } from './authority';
+import { resolveTrialStatus } from '@/lib/trial-status';
 
 interface PaymentRecord {
   id: string;
@@ -513,7 +514,7 @@ export async function recordPlatformFee(
   if (business.payout_mode === 'direct_split') return;
 
   const tier = (business.subscription_tier || 'free') as SubscriptionTier;
-  const isInTrial = tier === 'free' && new Date(business.trial_ends_at) > new Date();
+  const isInTrial = await resolveTrialStatus(supabase, businessId, tier, business.trial_ends_at);
 
   const { feePercentage, feeFlat, feeTotal } = await getPlatformFees(transactionAmount, tier, isInTrial, {
     feePercentage: business.custom_fee_percentage != null ? Number(business.custom_fee_percentage) : null,

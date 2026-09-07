@@ -61,6 +61,24 @@ describe('isTrialActive', () => {
   it('returns false for unknown tier', () => {
     expect(isTrialActive('premium', futureDate)).toBe(false);
   });
+
+  // ── Dual-condition tests (hasTrialCredit param) ──
+  it('returns false when hasTrialCredit is false even with valid time', () => {
+    expect(isTrialActive('free', futureDate, false)).toBe(false);
+  });
+
+  it('returns true when hasTrialCredit is true with valid time', () => {
+    expect(isTrialActive('free', futureDate, true)).toBe(true);
+  });
+
+  it('returns false when both time expired and no credit', () => {
+    expect(isTrialActive('free', pastDate, false)).toBe(false);
+  });
+
+  it('defaults hasTrialCredit to true for backward compat', () => {
+    // 2-arg call should behave like hasTrialCredit=true
+    expect(isTrialActive('free', futureDate)).toBe(true);
+  });
 });
 
 // ══════════════════════════════════════════════════════════

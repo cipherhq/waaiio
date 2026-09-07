@@ -273,6 +273,16 @@ export async function POST(request: NextRequest) {
       })
       .eq('id', businessId);
 
+    // Attempt trial activation for free-tier businesses (atomic: grant + clock together)
+    // Non-fatal: if activation fails (e.g., no channel yet), the deferred cron will retry
+    if (plan === 'free') {
+      try {
+        await service.rpc('activate_trial_if_eligible', { p_business_id: businessId });
+      } catch (trialErr) {
+        console.warn('[ONBOARDING-VERIFY] Trial activation failed (non-fatal):', trialErr);
+      }
+    }
+
     const { data: business } = await service
       .from('businesses')
       .select('bot_code, slug')

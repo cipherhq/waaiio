@@ -227,18 +227,14 @@ describe('Onboarding behavioral coverage (CAS-001)', () => {
       expect(inserted.category).toBe('salon');
     });
 
-    it('sets trial_ends_at using TRIAL_DAYS constant (30 days from now)', async () => {
+    it('does NOT set trial_ends_at at registration (deferred to activate_trial_if_eligible RPC)', async () => {
       setupDefaultServiceMock();
-      const before = Date.now();
       const { POST } = await import('@/app/api/onboarding/register/route');
       await POST(makeRequest(FRESH_BODY));
-      const after = Date.now();
       expect(businessInserts).toHaveLength(1);
       const inserted = businessInserts[0] as Record<string, unknown>;
-      const trialEnd = new Date(inserted.trial_ends_at as string).getTime();
-      const thirtyDaysMs = 30 * 24 * 60 * 60 * 1000;
-      expect(trialEnd).toBeGreaterThanOrEqual(before + thirtyDaysMs);
-      expect(trialEnd).toBeLessThanOrEqual(after + thirtyDaysMs);
+      // trial_ends_at should not be present in the insert — activation is deferred
+      expect(inserted.trial_ends_at).toBeUndefined();
     });
 
     it('proceeds to initCapabilities and finalizeOnboarding on success', async () => {
