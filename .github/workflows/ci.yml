@@ -257,6 +257,27 @@ jobs:
           fi
           echo "✅ All migrations applied successfully."
 
+      - name: Post-migration role grants
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+        run: |
+          # Ensure test roles have necessary table/function permissions
+          # (shared-DB tests depend on these regardless of step ordering)
+          psql -q -v ON_ERROR_STOP=1 <<'EOGRANTS'
+          GRANT USAGE ON SCHEMA public TO authenticated, service_role, anon;
+          GRANT SELECT ON ALL TABLES IN SCHEMA public TO authenticated;
+          GRANT ALL ON ALL TABLES IN SCHEMA public TO service_role;
+          GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO authenticated, service_role;
+          GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO authenticated, service_role;
+          ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO authenticated;
+          ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO service_role;
+          EOGRANTS
+          echo "✅ Post-migration role grants applied"
+
       - name: Verify key tables exist
         env:
           PGHOST: localhost
@@ -1131,6 +1152,27 @@ jobs:
             exit 1
           fi
           echo "✅ All migrations applied successfully."
+
+      - name: Post-migration role grants
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+        run: |
+          # Ensure test roles have necessary table/function permissions
+          # (shared-DB tests depend on these regardless of step ordering)
+          psql -q -v ON_ERROR_STOP=1 <<'EOGRANTS'
+          GRANT USAGE ON SCHEMA public TO authenticated, service_role, anon;
+          GRANT SELECT ON ALL TABLES IN SCHEMA public TO authenticated;
+          GRANT ALL ON ALL TABLES IN SCHEMA public TO service_role;
+          GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO authenticated, service_role;
+          GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO authenticated, service_role;
+          ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO authenticated;
+          ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO service_role;
+          EOGRANTS
+          echo "✅ Post-migration role grants applied"
 
       - name: Verify key tables exist
         env:
@@ -2341,6 +2383,27 @@ jobs:
             exit 1
           fi
           echo "✅ All migrations applied successfully."
+
+      - name: Post-migration role grants
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+        run: |
+          # Ensure test roles have necessary table/function permissions
+          # (shared-DB tests depend on these regardless of step ordering)
+          psql -q -v ON_ERROR_STOP=1 <<'EOGRANTS'
+          GRANT USAGE ON SCHEMA public TO authenticated, service_role, anon;
+          GRANT SELECT ON ALL TABLES IN SCHEMA public TO authenticated;
+          GRANT ALL ON ALL TABLES IN SCHEMA public TO service_role;
+          GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO authenticated, service_role;
+          GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO authenticated, service_role;
+          ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO authenticated;
+          ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO service_role;
+          EOGRANTS
+          echo "✅ Post-migration role grants applied"
 
       - name: Verify key tables exist
         env:
