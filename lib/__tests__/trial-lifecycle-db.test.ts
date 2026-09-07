@@ -419,9 +419,10 @@ describe.skipIf(!canRun)('concurrent activation (deterministic dblink barrier pr
       // 5. Coordinator: COMMIT releases the row lock — workers race
       // 6. Collects both results and returns as JSON
 
-      // Create a temporary orchestrator function that returns results
-      psql(`
-        CREATE EXTENSION IF NOT EXISTS dblink;
+      // Single psql session: create temp function + call it in one invocation
+      psql(`CREATE EXTENSION IF NOT EXISTS dblink`);
+
+      const raceRaw = psql(`
         CREATE OR REPLACE FUNCTION pg_temp.race_trial_activation(p_biz_id UUID)
         RETURNS JSONB LANGUAGE plpgsql AS $fn$
         DECLARE
@@ -491,9 +492,14 @@ describe.skipIf(!canRun)('concurrent activation (deterministic dblink barrier pr
           );
         END;
         $fn$;
+
+        SELECT pg_temp.race_trial_activation('${bizId}');
       `);
 
-      const raceOutput = psqlJson(`SELECT pg_temp.race_trial_activation('${bizId}') AS r`) as Record<string, unknown>;
+      // Parse: output may have CREATE FUNCTION line then the JSON result
+      const jsonLine = raceRaw.split('\n').filter(l => l.trim().startsWith('{')).pop();
+      expect(jsonLine).toBeDefined();
+      const raceOutput = JSON.parse(jsonLine!) as Record<string, unknown>;
 
       const resultA = raceOutput.result_a as Record<string, unknown>;
       const resultB = raceOutput.result_b as Record<string, unknown>;
