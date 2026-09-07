@@ -1,10 +1,34 @@
 name: CI
 
+# ── Trigger semantics (#304) ──
+#
+# 1. push to main: full CI runs automatically (post-merge regression check)
+# 2. pull_request opened/ready_for_review: full CI on PR creation and on
+#    draft → ready-for-review transition. Does NOT run on every push
+#    (synchronize) — intermediate commits are validated locally.
+# 3. workflow_dispatch: supplemental full CI for any branch/ref
+#    (evidence only — does NOT satisfy the protected merge gate)
+#
+# Release gate: to trigger merge-gate-compatible CI on the exact current
+# head without a code change, convert the PR to draft then back to
+# ready-for-review. This fires a `ready_for_review` event that GitHub
+# branch protection recognizes for the required status checks.
+#
+# The full 7-job suite is NEVER weakened, skipped, or path-filtered.
+# All jobs run identically regardless of trigger.
+
 on:
   push:
     branches: [main]
   pull_request:
     branches: [main]
+    types: [opened, reopened, ready_for_review]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Branch or SHA to run CI against (supplemental evidence, not merge-gate)'
+        required: false
+        type: string
 
 jobs:
   # ── Main Application ──
