@@ -403,36 +403,40 @@ describe.skipIf(!canRun)('concurrent activation (deterministic dblink barrier pr
   it('two dblink sessions race on FOR UPDATE => exactly one grant, clock==expires_at, canonical amount/currency', () => {
     const bizId = createTestBusiness({ countryCode: 'NG', waMethod: 'shared' });
     try {
-      // ── Deterministic barrier using dblink ──
+      // ── Deterministic concurrency using dblink ──
       //
       // dblink opens genuinely separate DB connections from within SQL.
-      // We use dblink_send_query (async) to launch two concurrent sessions
-      // that call activate_trial_if_eligible, then collect results.
-      // The FOR UPDATE inside the RPC serializes the two sessions at the
-      // row level, proving one-at-a-time access with genuine overlap.
+      // We use dblink_send_query (async) to dispatch two concurrent
+      // activate_trial_if_eligible calls on separate connections, then
+      // collect results. The FOR UPDATE inside the RPC serializes the
+      // two sessions at the row level with genuine overlap: both queries
+      // are in-flight before either result is collected.
       //
-      // Prerequisite: CREATE EXTENSION dblink (idempotent)
+      // All dblink operations run in a single psql session to keep
+      // named connections alive across calls.
 
       psql(`CREATE EXTENSION IF NOT EXISTS dblink`);
 
-      // Open two named connections
-      psql(`SELECT dblink_connect('race_a', '${dbUrl}')`);
-      psql(`SELECT dblink_connect('race_b', '${dbUrl}')`);
+      // Single psql session: open connections, send async queries, collect
+      const output = psql(`
+        SELECT dblink_connect('race_a', 'dbname=' || current_database());
+        SELECT dblink_connect('race_b', 'dbname=' || current_database());
+        SELECT dblink_send_query('race_a',
+          'SELECT public.activate_trial_if_eligible(''${bizId}'');');
+        SELECT dblink_send_query('race_b',
+          'SELECT public.activate_trial_if_eligible(''${bizId}'');');
+        SELECT val FROM dblink_get_result('race_a') AS t(val JSONB);
+        SELECT val FROM dblink_get_result('race_b') AS t(val JSONB);
+        SELECT dblink_disconnect('race_a');
+        SELECT dblink_disconnect('race_b');
+      `);
 
-      // Launch both activations asynchronously — they race on the row lock
-      psql(`SELECT dblink_send_query('race_a', 'SELECT public.activate_trial_if_eligible(''${bizId}'');')`);
-      psql(`SELECT dblink_send_query('race_b', 'SELECT public.activate_trial_if_eligible(''${bizId}'');')`);
+      // Parse results — output contains multiple result rows, JSON lines
+      const jsonLines = output.split('\n').filter(l => l.trim().startsWith('{'));
+      expect(jsonLines.length).toBeGreaterThanOrEqual(2);
 
-      // Collect results (blocks until each query completes)
-      const rawA = psql(`SELECT val FROM dblink_get_result('race_a') AS t(val JSONB)`);
-      const rawB = psql(`SELECT val FROM dblink_get_result('race_b') AS t(val JSONB)`);
-
-      // Disconnect
-      psqlCleanup(`SELECT dblink_disconnect('race_a')`);
-      psqlCleanup(`SELECT dblink_disconnect('race_b')`);
-
-      const resultA = JSON.parse(rawA);
-      const resultB = JSON.parse(rawB);
+      const resultA = JSON.parse(jsonLines[0]);
+      const resultB = JSON.parse(jsonLines[1]);
 
       // Both must report activated=true
       expect(resultA.activated).toBe(true);
