@@ -23,6 +23,16 @@ function psql(sql: string): string {
   }).trim();
 }
 
+function psqlMayFail(sql: string): string {
+  try {
+    return execSync(`psql "${dbUrl}" -tAXq -v ON_ERROR_STOP=1`, {
+      input: sql, encoding: 'utf-8', timeout: 30000,
+    }).trim();
+  } catch (e: unknown) {
+    return (e as { stderr?: string }).stderr || String(e);
+  }
+}
+
 function psqlJson(sql: string): unknown {
   const raw = psql(sql);
   return JSON.parse(raw);
@@ -49,14 +59,11 @@ function createTestBusiness(opts: {
     ? 'NULL'
     : `'${opts.trialEndsAt}'`;
 
-  // Create owner
-  const ownerId = psql(`
-    INSERT INTO auth.users (id, email, encrypted_password, email_confirmed_at, created_at, updated_at, instance_id, aud, role)
-    VALUES (gen_random_uuid(), 'test-m372-${bizCounter}-${Date.now()}@test.com', 'test', NOW(), NOW(), NOW(), '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated')
-    RETURNING id;
-  `);
+  // Create owner (minimal insert compatible with CI Supabase auth schema)
+  const ownerId = psql(`SELECT gen_random_uuid();`);
+  psqlMayFail(`INSERT INTO auth.users (id, email, raw_app_meta_data) VALUES ('${ownerId}', 'test-m372-${bizCounter}-${Date.now()}@test.com', '{}') ON CONFLICT (id) DO NOTHING;`);
 
-  psql(`
+  psqlMayFail(`
     INSERT INTO public.profiles (id, first_name, last_name, role)
     VALUES ('${ownerId}', 'Test', 'User', 'restaurant_owner')
     ON CONFLICT (id) DO NOTHING;
@@ -91,8 +98,7 @@ function createTestBusiness(opts: {
 // ── Helper: ensure config exists ───────────────────────
 
 function ensureTrialConfig(): string {
-  // Clear existing configs and create a fresh one
-  psql(`DELETE FROM public.platform_config_versions`);
+  // Append a new latest config version (table is append-only, no DELETE allowed)
   return psql(`
     INSERT INTO public.platform_config_versions (id, config_snapshot, effective_from, created_at)
     VALUES (gen_random_uuid(), '${JSON.stringify({
@@ -103,7 +109,7 @@ function ensureTrialConfig(): string {
         NGN: { rates: { NG: { utility: 100, marketing: 200 } } },
         USD: { rates: { US: { utility: 10, marketing: 20 }, GB: { utility: 12, marketing: 22 } } },
       },
-    }).replace(/'/g, "''")}'::jsonb, NOW() - INTERVAL '1 hour', NOW())
+    }).replace(/'/g, "''")}'::jsonb, NOW(), NOW())
     RETURNING id;
   `);
 }
@@ -160,15 +166,14 @@ describe('activate_trial_if_eligible', () => {
 
   it('4. missing trial_credit_minor_by_currency returns pending', () => {
     if (!canRun) return;
-    // Create config without trial_credit
-    psql(`DELETE FROM public.platform_config_versions`);
+    // Append config without trial_credit (latest effective_from wins)
     psql(`
       INSERT INTO public.platform_config_versions (id, config_snapshot, effective_from, created_at)
       VALUES (gen_random_uuid(), '${JSON.stringify({
         messaging_financial_gate: true,
         trial_days: 30,
         messaging_pricing: { NGN: { rates: { NG: { utility: 100 } } } },
-      }).replace(/'/g, "''")}'::jsonb, NOW() - INTERVAL '1 hour', NOW())
+      }).replace(/'/g, "''")}'::jsonb, NOW(), NOW())
     `);
 
     const bizId = createTestBusiness({ countryCode: 'NG', waMethod: 'shared' });
@@ -177,13 +182,13 @@ describe('activate_trial_if_eligible', () => {
       expect(result).toMatchObject({ activated: false, reason: 'missing_trial_credit_config' });
     } finally {
       cleanup(bizId);
-      ensureTrialConfig();
+      ensureTrialConfig(); // restore good config as latest
     }
   });
 
   it('6. financial gate OFF returns no activation', () => {
     if (!canRun) return;
-    psql(`DELETE FROM public.platform_config_versions`);
+    // Append config with gate OFF (latest effective_from wins)
     psql(`
       INSERT INTO public.platform_config_versions (id, config_snapshot, effective_from, created_at)
       VALUES (gen_random_uuid(), '${JSON.stringify({
@@ -191,7 +196,7 @@ describe('activate_trial_if_eligible', () => {
         trial_days: 30,
         trial_credit_minor_by_currency: { NGN: 50000 },
         messaging_pricing: { NGN: { rates: { NG: { utility: 100 } } } },
-      }).replace(/'/g, "''")}'::jsonb, NOW() - INTERVAL '1 hour', NOW())
+      }).replace(/'/g, "''")}'::jsonb, NOW(), NOW())
     `);
 
     const bizId = createTestBusiness({ countryCode: 'NG', waMethod: 'shared' });
@@ -200,13 +205,13 @@ describe('activate_trial_if_eligible', () => {
       expect(result).toMatchObject({ activated: false, reason: 'financial_gate_off' });
     } finally {
       cleanup(bizId);
-      ensureTrialConfig();
+      ensureTrialConfig(); // restore good config as latest
     }
   });
 
   it('7. invalid trial_days (0) returns no activation', () => {
     if (!canRun) return;
-    psql(`DELETE FROM public.platform_config_versions`);
+    // Append config with invalid trial_days (latest effective_from wins)
     psql(`
       INSERT INTO public.platform_config_versions (id, config_snapshot, effective_from, created_at)
       VALUES (gen_random_uuid(), '${JSON.stringify({
@@ -214,7 +219,7 @@ describe('activate_trial_if_eligible', () => {
         trial_days: 0,
         trial_credit_minor_by_currency: { NGN: 50000 },
         messaging_pricing: { NGN: { rates: { NG: { utility: 100 } } } },
-      }).replace(/'/g, "''")}'::jsonb, NOW() - INTERVAL '1 hour', NOW())
+      }).replace(/'/g, "''")}'::jsonb, NOW(), NOW())
     `);
 
     const bizId = createTestBusiness({ countryCode: 'NG', waMethod: 'shared' });
@@ -223,7 +228,7 @@ describe('activate_trial_if_eligible', () => {
       expect(result).toMatchObject({ activated: false, reason: 'invalid_trial_days' });
     } finally {
       cleanup(bizId);
-      ensureTrialConfig();
+      ensureTrialConfig(); // restore good config as latest
     }
   });
 
