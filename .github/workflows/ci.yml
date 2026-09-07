@@ -1,6 +1,6 @@
 name: CI
 
-# ── Trigger semantics ──
+# ── Trigger semantics (#304) ──
 #
 # 1. push to main: full CI runs automatically (post-merge regression check)
 # 2. pull_request opened/ready_for_review: full CI runs once on PR creation
