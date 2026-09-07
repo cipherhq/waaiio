@@ -105,12 +105,20 @@ export async function createAttempt(
 /**
  * Transition attempt to 'sending' immediately before network emission.
  * This is the durable pre-emission marker.
- * Gate ON: failure throws (zero Meta emission).
- * Gate OFF: failure logs and returns (best-effort).
+ *
+ * Fail-closed when:
+ *   - #257 gate ON: any DB failure throws GateBlockError
+ *   - financiallyReserved=true: DB failure throws regardless of gate state,
+ *     because a reserved attempt MUST durably enter 'sending' before emission
+ *     (the cross-state trigger rejects 'sending' if the reservation was released
+ *     by expiry, and that rejection must not be swallowed)
+ *
+ * Best-effort only when gate OFF and NOT financially reserved.
  */
 export async function markSending(
   supabase: SupabaseClient,
   attemptId: string,
+  options?: { financiallyReserved?: boolean },
 ): Promise<void> {
   const { error } = await supabase
     .from('message_send_attempts')
@@ -118,8 +126,10 @@ export async function markSending(
     .eq('id', attemptId);
 
   if (error) {
-    if (sendAttemptGateEnabled) {
-      throw new GateBlockError(`Gate ON: failed to persist pre-emission state — zero Meta emission: ${error.message}`);
+    if (sendAttemptGateEnabled || options?.financiallyReserved) {
+      throw new GateBlockError(
+        `${options?.financiallyReserved ? 'Reserved attempt' : 'Gate ON'}: failed to persist pre-emission state — zero Meta emission: ${error.message}`
+      );
     }
     logger.error('[ATTEMPT] Failed to mark sending:', error.message);
   }
@@ -141,6 +151,9 @@ export class WamidPersistenceError extends Error {
  * Link the WAMID and mark accepted after successful Meta response.
  * On DB failure: marks attempt for reconciliation and throws
  * WamidPersistenceError — caller must NOT retry (message was sent).
+ *
+ * After persisting the WAMID, drains any buffered delivery statuses
+ * that arrived before the WAMID was linked (race-safe via DB function).
  */
 export async function markAccepted(
   supabase: SupabaseClient,
@@ -169,6 +182,39 @@ export async function markAccepted(
 
     logger.error(`[ATTEMPT] WAMID persistence failed: attempt=${attemptId} wamid=${wamid} err=${error.message}`);
     throw new WamidPersistenceError(attemptId, wamid, error.message);
+  }
+
+  // #261 C.4: Drain buffered delivery statuses that arrived before WAMID linkage
+  await drainUnmatchedStatuses(supabase, attemptId, wamid);
+}
+
+/**
+ * #261 C.4: Drain delivery statuses that arrived before the WAMID was linked.
+ * Uses the DB function drain_unmatched_attempt_statuses for race safety (FOR UPDATE).
+ * On failure: logs warning, does NOT throw (evidence is preserved in buffer).
+ */
+export async function drainUnmatchedStatuses(
+  supabase: SupabaseClient,
+  attemptId: string,
+  wamid: string,
+): Promise<void> {
+  try {
+    const { data, error } = await supabase.rpc('drain_unmatched_attempt_statuses', {
+      p_attempt_id: attemptId,
+      p_wamid: wamid,
+    });
+
+    if (error) {
+      logger.warn(`[ATTEMPT] drain_unmatched_attempt_statuses RPC error: attempt=${attemptId} wamid=${wamid} err=${error.message}`);
+      return;
+    }
+
+    const result = data as Record<string, unknown> | null;
+    if (result && (result.drained as number) > 0) {
+      logger.info(`[ATTEMPT] Drained ${result.drained} buffered statuses for attempt=${attemptId} wamid=${wamid}, settled=${result.settled}`);
+    }
+  } catch (err) {
+    logger.warn(`[ATTEMPT] drain_unmatched_attempt_statuses failed: attempt=${attemptId} wamid=${wamid}`, (err as Error).message);
   }
 }
 
@@ -227,4 +273,24 @@ export function isAmbiguousTransportError(err: Error): boolean {
  */
 export function is4xxError(err: Error): boolean {
   return /\b4\d{2}\b/.test(err.message);
+}
+
+/**
+ * #261: Update attempt with resolved country and message category.
+ * Called after attempt creation, before financial authorization.
+ */
+export async function updateAttemptContext(
+  supabase: SupabaseClient,
+  attemptId: string,
+  recipientCountryCode: string | null,
+  messageCategory: string | null,
+): Promise<void> {
+  const { error } = await supabase
+    .from('message_send_attempts')
+    .update({ recipient_country_code: recipientCountryCode, message_category: messageCategory })
+    .eq('id', attemptId);
+
+  if (error) {
+    logger.warn('[ATTEMPT] Failed to update attempt context:', error.message);
+  }
 }

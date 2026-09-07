@@ -422,6 +422,102 @@ export async function POST(request: NextRequest) {
             } catch {
               // Non-fatal — fulfillment notification tracking should not block webhook processing
             }
+
+            // #261: Financial settlement — correlate WAMID → attempt → settle
+            // Every settlement call checks { data, error } — on failure marks needs_reconciliation.
+            // Contradictory evidence stays in buffer (not reconciliation_log) per Blocker 6.
+            if (wamid) {
+              try {
+                const { data: attempt } = await supabase
+                  .from('message_send_attempts')
+                  .select('id, financial_disposition')
+                  .eq('meta_message_id', wamid)
+                  .single();
+
+                if (attempt) {
+                  if (attempt.financial_disposition === 'reserved') {
+                    if (newStatus === 'delivered' || newStatus === 'read') {
+                      const { data: settleData, error: settleErr } = await supabase.rpc('settle_message_cost', { p_attempt_id: attempt.id, p_outcome: 'charged' });
+                      if (settleErr) {
+                        log.error('[META-WEBHOOK] settle_message_cost(charged) failed:', settleErr.message);
+                        const { error: flagErr } = await supabase.from('message_send_attempts').update({ needs_reconciliation: true }).eq('id', attempt.id);
+                        if (flagErr) log.error('[META-WEBHOOK] Failed to set needs_reconciliation:', flagErr.message);
+                      }
+                    } else if (newStatus === 'failed') {
+                      const { data: settleData, error: settleErr } = await supabase.rpc('settle_message_cost', { p_attempt_id: attempt.id, p_outcome: 'released' });
+                      if (settleErr) {
+                        log.error('[META-WEBHOOK] settle_message_cost(released) failed:', settleErr.message);
+                        const { error: flagErr } = await supabase.from('message_send_attempts').update({ needs_reconciliation: true }).eq('id', attempt.id);
+                        if (flagErr) log.error('[META-WEBHOOK] Failed to set needs_reconciliation:', flagErr.message);
+                      }
+                    }
+                    // 'sent' → no settlement, remains reserved
+                  }
+                  // Already terminal → contradiction: mark needs_reconciliation, buffer evidence
+                  // Do NOT insert into message_cost_reconciliation_log (that's for admin resolution only)
+                  if ((attempt.financial_disposition === 'released' && (newStatus === 'delivered' || newStatus === 'read'))
+                      || (attempt.financial_disposition === 'charged' && newStatus === 'failed')) {
+                    // Contradiction detected — mark for reconciliation
+                    const { error: contradictionFlagErr } = await supabase
+                      .from('message_send_attempts')
+                      .update({ needs_reconciliation: true })
+                      .eq('id', attempt.id);
+                    if (contradictionFlagErr) {
+                      log.error('[META-WEBHOOK] Failed to flag contradiction needs_reconciliation:', contradictionFlagErr.message);
+                    }
+                    // Buffer the contradictory evidence (row stays settled=false for admin review)
+                    const contradictTsNum = Number(status.timestamp);
+                    const contradictParsed = new Date(contradictTsNum * 1000);
+                    const contradictTimestamp = (!Number.isFinite(contradictTsNum) || contradictTsNum <= 0 || Number.isNaN(contradictParsed.getTime()))
+                      ? null
+                      : contradictParsed.toISOString();
+                    const contradictErr = isFailed && status.errors?.[0]
+                      ? { code: String(status.errors[0].code), reason: status.errors[0].title || 'unknown' }
+                      : { code: null, reason: null };
+                    const { error: bufferContraErr } = await supabase
+                      .from('unmatched_attempt_delivery_statuses')
+                      .insert({
+                        meta_message_id: wamid,
+                        status: newStatus,
+                        provider_timestamp: contradictTimestamp,
+                        error_code: contradictErr.code,
+                        error_reason: contradictErr.reason,
+                      });
+                    if (bufferContraErr && bufferContraErr.code !== '23505') {
+                      log.warn('[META-WEBHOOK] Failed to buffer contradictory status:', bufferContraErr.message);
+                    }
+                  }
+                } else {
+                  // WAMID not found — buffer for later drain
+                  const uadsTsNum = Number(status.timestamp);
+                  const uadsParsed = new Date(uadsTsNum * 1000);
+                  const uadsTimestamp = (!Number.isFinite(uadsTsNum) || uadsTsNum <= 0 || Number.isNaN(uadsParsed.getTime()))
+                    ? null
+                    : uadsParsed.toISOString();
+
+                  const failedErrForBuffer = isFailed && status.errors?.[0]
+                    ? { code: String(status.errors[0].code), reason: status.errors[0].title || 'unknown' }
+                    : { code: null, reason: null };
+
+                  // Insert buffered status — duplicate key (23505) is expected and ignored
+                  const { error: bufferErr } = await supabase
+                    .from('unmatched_attempt_delivery_statuses')
+                    .insert({
+                      meta_message_id: wamid,
+                      status: newStatus,
+                      provider_timestamp: uadsTimestamp,
+                      error_code: failedErrForBuffer.code,
+                      error_reason: failedErrForBuffer.reason,
+                    });
+                  if (bufferErr && bufferErr.code !== '23505') {
+                    log.warn('[META-WEBHOOK] Failed to buffer unmatched delivery status:', bufferErr.message);
+                  }
+                }
+              } catch (settlementErr) {
+                // Non-fatal — settlement errors should not block webhook processing
+                log.warn('[META-WEBHOOK] Financial settlement error (non-fatal):', settlementErr);
+              }
+            }
           }
         }
 
