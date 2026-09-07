@@ -17,20 +17,12 @@ import { isTrialActive } from '@/lib/capabilities/policy';
 const dbUrl = process.env.TEST_DATABASE_URL || '';
 const canRun = dbUrl.length > 0;
 
+// ── Strict SQL: setup errors MUST fail the test ──────────
+
 function psql(sql: string): string {
   return execSync(`psql "${dbUrl}" -tAXq -v ON_ERROR_STOP=1`, {
     input: sql, encoding: 'utf-8', timeout: 30000,
   }).trim();
-}
-
-function psqlMayFail(sql: string): string {
-  try {
-    return execSync(`psql "${dbUrl}" -tAXq -v ON_ERROR_STOP=1`, {
-      input: sql, encoding: 'utf-8', timeout: 30000,
-    }).trim();
-  } catch (e: unknown) {
-    return (e as { stderr?: string }).stderr || String(e);
-  }
 }
 
 function psqlJson(sql: string): unknown {
@@ -38,7 +30,30 @@ function psqlJson(sql: string): unknown {
   return JSON.parse(raw);
 }
 
-// ── Helper: create a test business ─────────────────────
+// ── Expected-failure helper: only for cleanup of FK/append-only tables ──
+
+function psqlCleanup(sql: string): void {
+  try {
+    execSync(`psql "${dbUrl}" -tAXq -v ON_ERROR_STOP=1`, {
+      input: sql, encoding: 'utf-8', timeout: 30000,
+    });
+  } catch {
+    // Cleanup failures are tolerated (FK to append-only events, etc.)
+    // Each test uses a unique business_id for isolation
+  }
+}
+
+// ── Monotonic config version counter ─────────────────────
+// Each config insert uses a deterministic effective_from with sub-second
+// offset to guarantee ORDER BY effective_from DESC ordering.
+let configEpochOffset = 0;
+
+function nextConfigTimestamp(): string {
+  configEpochOffset++;
+  return `NOW() + INTERVAL '${configEpochOffset} seconds'`;
+}
+
+// ── Helper: create a test business (strict — all setup must succeed) ──
 
 let bizCounter = 0;
 
@@ -59,11 +74,11 @@ function createTestBusiness(opts: {
     ? 'NULL'
     : `'${opts.trialEndsAt}'`;
 
-  // Create owner (minimal insert compatible with CI Supabase auth schema)
+  // All fixture creation is strict — errors fail the test
   const ownerId = psql(`SELECT gen_random_uuid();`);
-  psqlMayFail(`INSERT INTO auth.users (id, email, raw_app_meta_data) VALUES ('${ownerId}', 'test-m372-${bizCounter}-${Date.now()}@test.com', '{}') ON CONFLICT (id) DO NOTHING;`);
+  psql(`INSERT INTO auth.users (id, email, raw_app_meta_data) VALUES ('${ownerId}', 'test-m372-${bizCounter}-${Date.now()}@test.com', '{}') ON CONFLICT (id) DO NOTHING;`);
 
-  psqlMayFail(`
+  psql(`
     INSERT INTO public.profiles (id, first_name, last_name, role)
     VALUES ('${ownerId}', 'Test', 'User', 'restaurant_owner')
     ON CONFLICT (id) DO NOTHING;
@@ -95,44 +110,51 @@ function createTestBusiness(opts: {
   return bizId;
 }
 
-// ── Helper: ensure config exists ───────────────────────
+// ── Helper: append config (strictly append-only, deterministic ordering) ──
 
-function ensureTrialConfig(): string {
-  // Append a new latest config version (table is append-only, no DELETE allowed)
+function appendTrialConfig(snapshot: Record<string, unknown>): string {
+  const ts = nextConfigTimestamp();
   return psql(`
     INSERT INTO public.platform_config_versions (id, config_snapshot, effective_from, created_at)
-    VALUES (gen_random_uuid(), '${JSON.stringify({
-      messaging_financial_gate: true,
-      trial_days: 30,
-      trial_credit_minor_by_currency: { NGN: 50000, USD: 500 },
-      messaging_pricing: {
-        NGN: { rates: { NG: { utility: 100, marketing: 200 } } },
-        USD: { rates: { US: { utility: 10, marketing: 20 }, GB: { utility: 12, marketing: 22 } } },
-      },
-    }).replace(/'/g, "''")}'::jsonb, NOW(), NOW())
+    VALUES (gen_random_uuid(), '${JSON.stringify(snapshot).replace(/'/g, "''")}'::jsonb, ${ts}, NOW())
     RETURNING id;
   `);
 }
 
+const GOOD_CONFIG = {
+  messaging_financial_gate: true,
+  trial_days: 30,
+  trial_credit_minor_by_currency: { NGN: 50000, USD: 500 },
+  messaging_pricing: {
+    NGN: { rates: { NG: { utility: 100, marketing: 200 } } },
+    USD: { rates: { US: { utility: 10, marketing: 20 }, GB: { utility: 12, marketing: 22 } } },
+  },
+};
+
+function ensureTrialConfig(): string {
+  return appendTrialConfig(GOOD_CONFIG);
+}
+
+// ── Cleanup: tolerant of FK/append-only constraints ───────
+
 function cleanup(bizId: string) {
-  // messaging_allowance_events is append-only (no DELETE allowed); skip cleanup
-  // Each test uses a unique business_id so leftover events don't interfere
-  psqlMayFail(`DELETE FROM public.messaging_allowances WHERE business_id = '${bizId}'`);
-  psqlMayFail(`DELETE FROM public.alerts WHERE business_id = '${bizId}'`);
+  // messaging_allowance_events is append-only (no DELETE)
+  // messaging_allowances FK-references events so DELETE may fail
+  // Each test uses a unique business_id for isolation — cleanup is best-effort
+  psqlCleanup(`DELETE FROM public.messaging_allowances WHERE business_id = '${bizId}'`);
+  psqlCleanup(`DELETE FROM public.alerts WHERE business_id = '${bizId}'`);
 }
 
 // ══════════════════════════════════════════════════════════
-// Test: activate_trial_if_eligible
+// Test: activate_trial_if_eligible (real PostgreSQL)
 // ══════════════════════════════════════════════════════════
 
-describe('activate_trial_if_eligible', () => {
+describe.skipIf(!canRun)('activate_trial_if_eligible', () => {
   beforeAll(() => {
-    if (!canRun) return;
     ensureTrialConfig();
   });
 
   it('1. successful activation: grant + trial_ends_at set atomically', () => {
-    if (!canRun) return;
     const bizId = createTestBusiness({ countryCode: 'NG', waMethod: 'shared' });
     try {
       const result = psqlJson(`SELECT public.activate_trial_if_eligible('${bizId}') AS r`) as Record<string, unknown>;
@@ -154,7 +176,6 @@ describe('activate_trial_if_eligible', () => {
   });
 
   it('2. replay (same business) is idempotent', () => {
-    if (!canRun) return;
     const bizId = createTestBusiness({ countryCode: 'NG', waMethod: 'shared' });
     try {
       psql(`SELECT public.activate_trial_if_eligible('${bizId}')`);
@@ -166,16 +187,12 @@ describe('activate_trial_if_eligible', () => {
   });
 
   it('4. missing trial_credit_minor_by_currency returns pending', () => {
-    if (!canRun) return;
-    // Append config without trial_credit (latest effective_from wins)
-    psql(`
-      INSERT INTO public.platform_config_versions (id, config_snapshot, effective_from, created_at)
-      VALUES (gen_random_uuid(), '${JSON.stringify({
-        messaging_financial_gate: true,
-        trial_days: 30,
-        messaging_pricing: { NGN: { rates: { NG: { utility: 100 } } } },
-      }).replace(/'/g, "''")}'::jsonb, NOW(), NOW())
-    `);
+    // Append config without trial_credit (deterministic latest by offset)
+    appendTrialConfig({
+      messaging_financial_gate: true,
+      trial_days: 30,
+      messaging_pricing: { NGN: { rates: { NG: { utility: 100 } } } },
+    });
 
     const bizId = createTestBusiness({ countryCode: 'NG', waMethod: 'shared' });
     try {
@@ -188,17 +205,12 @@ describe('activate_trial_if_eligible', () => {
   });
 
   it('6. financial gate OFF returns no activation', () => {
-    if (!canRun) return;
-    // Append config with gate OFF (latest effective_from wins)
-    psql(`
-      INSERT INTO public.platform_config_versions (id, config_snapshot, effective_from, created_at)
-      VALUES (gen_random_uuid(), '${JSON.stringify({
-        messaging_financial_gate: false,
-        trial_days: 30,
-        trial_credit_minor_by_currency: { NGN: 50000 },
-        messaging_pricing: { NGN: { rates: { NG: { utility: 100 } } } },
-      }).replace(/'/g, "''")}'::jsonb, NOW(), NOW())
-    `);
+    appendTrialConfig({
+      messaging_financial_gate: false,
+      trial_days: 30,
+      trial_credit_minor_by_currency: { NGN: 50000 },
+      messaging_pricing: { NGN: { rates: { NG: { utility: 100 } } } },
+    });
 
     const bizId = createTestBusiness({ countryCode: 'NG', waMethod: 'shared' });
     try {
@@ -211,17 +223,12 @@ describe('activate_trial_if_eligible', () => {
   });
 
   it('7. invalid trial_days (0) returns no activation', () => {
-    if (!canRun) return;
-    // Append config with invalid trial_days (latest effective_from wins)
-    psql(`
-      INSERT INTO public.platform_config_versions (id, config_snapshot, effective_from, created_at)
-      VALUES (gen_random_uuid(), '${JSON.stringify({
-        messaging_financial_gate: true,
-        trial_days: 0,
-        trial_credit_minor_by_currency: { NGN: 50000 },
-        messaging_pricing: { NGN: { rates: { NG: { utility: 100 } } } },
-      }).replace(/'/g, "''")}'::jsonb, NOW(), NOW())
-    `);
+    appendTrialConfig({
+      messaging_financial_gate: true,
+      trial_days: 0,
+      trial_credit_minor_by_currency: { NGN: 50000 },
+      messaging_pricing: { NGN: { rates: { NG: { utility: 100 } } } },
+    });
 
     const bizId = createTestBusiness({ countryCode: 'NG', waMethod: 'shared' });
     try {
@@ -234,7 +241,6 @@ describe('activate_trial_if_eligible', () => {
   });
 
   it('8. currency not resolvable returns no activation', () => {
-    if (!canRun) return;
     const bizId = createTestBusiness({ countryCode: 'ZZ', waMethod: 'shared' });
     try {
       const result = psqlJson(`SELECT public.activate_trial_if_eligible('${bizId}') AS r`) as Record<string, unknown>;
@@ -245,7 +251,6 @@ describe('activate_trial_if_eligible', () => {
   });
 
   it('10. business not free tier is not activated', () => {
-    if (!canRun) return;
     const bizId = createTestBusiness({ countryCode: 'NG', waMethod: 'shared', tier: 'growth' });
     try {
       const result = psqlJson(`SELECT public.activate_trial_if_eligible('${bizId}') AS r`) as Record<string, unknown>;
@@ -256,7 +261,6 @@ describe('activate_trial_if_eligible', () => {
   });
 
   it('11. business already has trial_ends_at is idempotent', () => {
-    if (!canRun) return;
     const futureDate = new Date(Date.now() + 30 * 86400000).toISOString();
     const bizId = createTestBusiness({ countryCode: 'NG', waMethod: 'shared', trialEndsAt: futureDate });
     try {
@@ -268,7 +272,6 @@ describe('activate_trial_if_eligible', () => {
   });
 
   it('no usable channel returns no activation', () => {
-    if (!canRun) return;
     const bizId = createTestBusiness({ countryCode: 'NG', waMethod: 'transfer', withChannel: false });
     try {
       const result = psqlJson(`SELECT public.activate_trial_if_eligible('${bizId}') AS r`) as Record<string, unknown>;
@@ -279,7 +282,6 @@ describe('activate_trial_if_eligible', () => {
   });
 
   it('dedicated channel activation works', () => {
-    if (!canRun) return;
     const bizId = createTestBusiness({ countryCode: 'NG', waMethod: 'transfer', withChannel: true });
     try {
       const result = psqlJson(`SELECT public.activate_trial_if_eligible('${bizId}') AS r`) as Record<string, unknown>;
@@ -291,7 +293,7 @@ describe('activate_trial_if_eligible', () => {
 });
 
 // ══════════════════════════════════════════════════════════
-// Test: isTrialActive dual-condition
+// Test: isTrialActive dual-condition (pure unit — no DB needed)
 // ══════════════════════════════════════════════════════════
 
 describe('isTrialActive dual-condition', () => {
@@ -325,12 +327,11 @@ describe('isTrialActive dual-condition', () => {
 });
 
 // ══════════════════════════════════════════════════════════
-// Test: Alert dedupe
+// Test: Alert dedupe (real PostgreSQL)
 // ══════════════════════════════════════════════════════════
 
-describe('alert dedupe', () => {
+describe.skipIf(!canRun)('alert dedupe', () => {
   it('17. multiple pending inserts result in exactly one row', () => {
-    if (!canRun) return;
     const bizId = createTestBusiness({ countryCode: 'NG', waMethod: 'shared' });
     try {
       // First insert
@@ -358,12 +359,11 @@ describe('alert dedupe', () => {
 });
 
 // ══════════════════════════════════════════════════════════
-// Test: Schema verification
+// Test: Schema verification (real PostgreSQL)
 // ══════════════════════════════════════════════════════════
 
-describe('schema verification', () => {
+describe.skipIf(!canRun)('schema verification', () => {
   it('trial_ends_at is nullable', () => {
-    if (!canRun) return;
     const nullable = psql(`
       SELECT is_nullable FROM information_schema.columns
       WHERE table_schema = 'public' AND table_name = 'businesses' AND column_name = 'trial_ends_at'
@@ -372,7 +372,6 @@ describe('schema verification', () => {
   });
 
   it('activate_trial_if_eligible exists and is SECURITY DEFINER', () => {
-    if (!canRun) return;
     const secdef = psql(`
       SELECT prosecdef::text FROM pg_proc WHERE proname = 'activate_trial_if_eligible'
     `);
@@ -380,7 +379,6 @@ describe('schema verification', () => {
   });
 
   it('uq_trial_pending_alert index exists', () => {
-    if (!canRun) return;
     const cnt = psql(`
       SELECT count(*) FROM pg_indexes WHERE indexname = 'uq_trial_pending_alert'
     `);
