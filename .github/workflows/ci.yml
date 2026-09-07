@@ -213,6 +213,11 @@ jobs:
           RETURNS TEXT[] AS $$
             SELECT string_to_array(name, '/');
           $$ LANGUAGE SQL IMMUTABLE;
+
+          -- Grant schema access to test roles (required for SET ROLE + auth.uid() in RLS tests)
+          GRANT USAGE ON SCHEMA auth TO authenticated, service_role, anon;
+          GRANT USAGE ON SCHEMA storage TO authenticated, service_role, anon;
+          GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA auth TO authenticated, service_role, anon;
           EOSQL
           echo "✅ Supabase schema stubs created"
 
@@ -1075,6 +1080,11 @@ jobs:
           RETURNS TEXT[] AS $$
             SELECT string_to_array(name, '/');
           $$ LANGUAGE SQL IMMUTABLE;
+
+          -- Grant schema access to test roles (required for SET ROLE + auth.uid() in RLS tests)
+          GRANT USAGE ON SCHEMA auth TO authenticated, service_role, anon;
+          GRANT USAGE ON SCHEMA storage TO authenticated, service_role, anon;
+          GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA auth TO authenticated, service_role, anon;
           EOSQL
           echo "✅ Supabase schema stubs created"
 
@@ -1725,6 +1735,8 @@ jobs:
           CREATE TABLE IF NOT EXISTS capability_overrides (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), business_id UUID, capability TEXT);
           CREATE OR REPLACE FUNCTION check_appointment_schedule(p_appointment_id UUID, p_business_id UUID, p_date DATE, p_time TEXT) RETURNS TABLE(allowed BOOLEAN, reason TEXT) AS $$ SELECT true, NULL::text; $$ LANGUAGE SQL;
           CREATE OR REPLACE FUNCTION check_staff_availability(p_staff_id UUID, p_business_id UUID, p_date DATE, p_time TEXT, p_duration INTEGER DEFAULT 60) RETURNS TABLE(allowed BOOLEAN, reason TEXT) AS $$ SELECT true, NULL::text; $$ LANGUAGE SQL;
+          GRANT USAGE ON SCHEMA auth TO authenticated, service_role, anon;
+          GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA auth TO authenticated, service_role, anon;
           STUBS
           echo "Applying canonical migrations 321, 322, 323..."
           psql "$DBURL" -v ON_ERROR_STOP=1 -q -f supabase/migrations/321_promotions_schema.sql
@@ -1935,6 +1947,9 @@ jobs:
           CREATE TABLE IF NOT EXISTS storage.objects (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), bucket_id TEXT REFERENCES storage.buckets(id), name TEXT, owner UUID, created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW());
           ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY;
           CREATE OR REPLACE FUNCTION storage.foldername(name TEXT) RETURNS TEXT[] AS $$ SELECT string_to_array(name, '/'); $$ LANGUAGE SQL IMMUTABLE;
+          GRANT USAGE ON SCHEMA auth TO authenticated, service_role, anon;
+          GRANT USAGE ON SCHEMA storage TO authenticated, service_role, anon;
+          GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA auth TO authenticated, service_role, anon;
           STUBS
 
           for f in supabase/migrations/*.sql; do
@@ -2235,6 +2250,11 @@ jobs:
           RETURNS TEXT[] AS $$
             SELECT string_to_array(name, '/');
           $$ LANGUAGE SQL IMMUTABLE;
+
+          -- Grant schema access to test roles (required for SET ROLE + auth.uid() in RLS tests)
+          GRANT USAGE ON SCHEMA auth TO authenticated, service_role, anon;
+          GRANT USAGE ON SCHEMA storage TO authenticated, service_role, anon;
+          GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA auth TO authenticated, service_role, anon;
           EOSQL
           echo "✅ Supabase schema stubs created"
 
