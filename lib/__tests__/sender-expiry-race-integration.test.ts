@@ -123,7 +123,9 @@ describe.skipIf(!canRun)('Sender expiry-race integration (#261 production-shaped
   beforeEach(() => { vi.clearAllMocks(); });
 
   it('44. Real MetaCloudSender.sendText + withRetry: expiry-first → GateBlockError, provider=0, no retry attempt', async () => {
-    // Ensure gate-ON config is the absolute latest
+    // Ensure gate-ON config is the absolute latest effective version.
+    // Use NOW() + 1s and wait, to guarantee it's later than any config
+    // inserted by prior test suites in the shared CI database.
     psql(`
       INSERT INTO platform_config_versions (config_snapshot, effective_from, created_by)
       VALUES ('${JSON.stringify({
@@ -132,8 +134,9 @@ describe.skipIf(!canRun)('Sender expiry-race integration (#261 production-shaped
           NGN: { default_cost_minor: 500, rates: { NG: { service: 200 } }, default_spend_cap_minor: 50000 },
         },
         messaging_reservation_ttl_seconds: 1,
-      })}'::JSONB, NOW(), '${OWNER_ID}');
+      })}'::JSONB, NOW() + INTERVAL '1 second', '${OWNER_ID}');
     `);
+    psql('SELECT pg_sleep(1.5);');
 
     // #257 gate OFF (default production state)
     const { setSendAttemptGate } = await import('@/lib/channels/attempt-recording');
