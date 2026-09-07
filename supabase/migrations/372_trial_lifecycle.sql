@@ -242,7 +242,21 @@ BEGIN
   WHERE business_id = p_business_id AND type = 'trial_grant' AND source_ref = 'trial_v2';
 
   IF v_biz.trial_ends_at IS NOT NULL AND v_existing_grant.id IS NOT NULL THEN
-    -- Both exist: consistent replay — return idempotent success
+    -- Both exist: verify canonical consistency before replay success.
+    -- Clock must match grant's expires_at; grant must have valid amount/currency.
+    IF v_existing_grant.expires_at IS NULL
+       OR v_biz.trial_ends_at <> v_existing_grant.expires_at
+       OR v_existing_grant.amount_minor IS NULL
+       OR v_existing_grant.amount_minor <= 0
+       OR v_existing_grant.currency_code IS NULL
+       OR v_existing_grant.currency_code = '' THEN
+      RETURN jsonb_build_object('activated', false, 'reason', 'replay_state_mismatch',
+        'clock', v_biz.trial_ends_at::TEXT,
+        'grant_expires', COALESCE(v_existing_grant.expires_at::TEXT, 'NULL'),
+        'grant_amount', COALESCE(v_existing_grant.amount_minor::TEXT, 'NULL'),
+        'grant_currency', COALESCE(v_existing_grant.currency_code, 'NULL'));
+    END IF;
+    -- Consistent: both sides agree on canonical state
     RETURN jsonb_build_object('activated', true, 'idempotent', true);
   END IF;
 
@@ -418,7 +432,180 @@ REVOKE ALL ON FUNCTION public.activate_trial_if_eligible(UUID) FROM authenticate
 GRANT EXECUTE ON FUNCTION public.activate_trial_if_eligible(UUID) TO service_role;
 
 -- ══════════════════════════════════════════════════════════
--- D. Legacy transition block (grandfather active legacy trials)
+-- D1. reconcile_legacy_trial(UUID) — retryable legacy grandfather repair
+-- ══════════════════════════════════════════════════════════
+
+CREATE OR REPLACE FUNCTION public.reconcile_legacy_trial(p_business_id UUID)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $$
+DECLARE
+  v_biz RECORD;
+  v_config RECORD;
+  v_trial_credit JSONB;
+  v_pricing JSONB;
+  v_currency TEXT;
+  v_match_count INTEGER;
+  v_amount_raw NUMERIC;
+  v_amount INTEGER;
+  v_existing_grant RECORD;
+  v_gate_value JSONB;
+BEGIN
+  -- 1. Lock business
+  SELECT id, subscription_tier, trial_ends_at, country_code
+  INTO v_biz
+  FROM public.businesses
+  WHERE id = p_business_id
+  FOR UPDATE;
+
+  IF v_biz.id IS NULL THEN
+    RETURN jsonb_build_object('reconciled', false, 'reason', 'business_not_found');
+  END IF;
+
+  IF v_biz.subscription_tier <> 'free' THEN
+    RETURN jsonb_build_object('reconciled', false, 'reason', 'not_free_tier');
+  END IF;
+
+  -- 2. Must have legacy clock (trial_ends_at set)
+  IF v_biz.trial_ends_at IS NULL THEN
+    RETURN jsonb_build_object('reconciled', false, 'reason', 'no_legacy_clock');
+  END IF;
+
+  -- 3. Never reactivate expired trials
+  IF v_biz.trial_ends_at <= clock_timestamp() THEN
+    RETURN jsonb_build_object('reconciled', false, 'reason', 'expired');
+  END IF;
+
+  -- 4. Check if grant already exists (idempotent)
+  SELECT id FROM public.messaging_allowances
+  WHERE business_id = p_business_id AND type = 'trial_grant' AND source_ref = 'trial_v2'
+  INTO v_existing_grant;
+
+  IF v_existing_grant.id IS NOT NULL THEN
+    RETURN jsonb_build_object('reconciled', true, 'idempotent', true);
+  END IF;
+
+  -- 5. Resolve config
+  SELECT id, config_snapshot INTO v_config
+    FROM public.platform_config_versions
+    WHERE effective_from <= clock_timestamp()
+    ORDER BY effective_from DESC LIMIT 1;
+
+  IF v_config.id IS NULL THEN
+    RETURN jsonb_build_object('reconciled', false, 'reason', 'no_config_version');
+  END IF;
+
+  -- Check financial gate
+  v_gate_value := v_config.config_snapshot -> 'messaging_financial_gate';
+  IF v_gate_value IS NULL OR jsonb_typeof(v_gate_value) <> 'boolean' OR v_gate_value <> 'true'::JSONB THEN
+    RETURN jsonb_build_object('reconciled', false, 'reason', 'financial_gate_off');
+  END IF;
+
+  v_trial_credit := v_config.config_snapshot -> 'trial_credit_minor_by_currency';
+  v_pricing := v_config.config_snapshot -> 'messaging_pricing';
+
+  IF v_trial_credit IS NULL OR jsonb_typeof(v_trial_credit) <> 'object' THEN
+    RETURN jsonb_build_object('reconciled', false, 'reason', 'missing_trial_credit_config');
+  END IF;
+
+  IF v_pricing IS NULL OR jsonb_typeof(v_pricing) <> 'object' THEN
+    RETURN jsonb_build_object('reconciled', false, 'reason', 'currency_resolution_failed');
+  END IF;
+
+  -- 6. Resolve currency
+  v_match_count := 0;
+  v_currency := NULL;
+  FOR v_currency IN SELECT key FROM jsonb_each(v_pricing)
+  LOOP
+    IF v_pricing -> v_currency -> 'rates' -> v_biz.country_code IS NOT NULL THEN
+      v_match_count := v_match_count + 1;
+    END IF;
+  END LOOP;
+
+  IF v_match_count <> 1 THEN
+    RETURN jsonb_build_object('reconciled', false, 'reason', 'currency_resolution_failed');
+  END IF;
+
+  v_currency := NULL;
+  FOR v_currency IN SELECT key FROM jsonb_each(v_pricing)
+  LOOP
+    IF v_pricing -> v_currency -> 'rates' -> v_biz.country_code IS NOT NULL THEN
+      EXIT;
+    END IF;
+  END LOOP;
+
+  -- 7. Resolve amount
+  BEGIN
+    v_amount_raw := (v_trial_credit ->> v_currency)::NUMERIC;
+  EXCEPTION WHEN OTHERS THEN
+    RETURN jsonb_build_object('reconciled', false, 'reason', 'invalid_trial_credit_amount');
+  END;
+
+  IF v_amount_raw IS NULL OR v_amount_raw <= 0 OR v_amount_raw <> FLOOR(v_amount_raw) THEN
+    RETURN jsonb_build_object('reconciled', false, 'reason', 'no_trial_credit_for_currency');
+  END IF;
+  v_amount := v_amount_raw::INTEGER;
+
+  -- 8. Create the missing grant with original legacy expiry preserved
+  INSERT INTO public.messaging_allowances (
+    business_id, type, amount_minor, currency_code, remaining_minor,
+    source_ref, config_version_id, expires_at
+  ) VALUES (
+    p_business_id, 'trial_grant', v_amount, v_currency, v_amount,
+    'trial_v2', v_config.id, v_biz.trial_ends_at
+  ) ON CONFLICT (business_id, type, source_ref) DO NOTHING;
+
+  -- 9. Create grant event
+  INSERT INTO public.messaging_allowance_events (
+    allowance_id, business_id, event_type, amount_minor, balance_after_minor
+  ) SELECT
+    ma.id, p_business_id, 'grant', v_amount, v_amount
+  FROM public.messaging_allowances ma
+  WHERE ma.business_id = p_business_id AND ma.type = 'trial_grant' AND ma.source_ref = 'trial_v2'
+  ON CONFLICT DO NOTHING;
+
+  -- 10. Clear the pending alert if it exists
+  DELETE FROM public.alerts
+  WHERE business_id = p_business_id AND type = 'trial_config_missing';
+
+  RETURN jsonb_build_object('reconciled', true, 'amount_minor', v_amount,
+    'currency_code', v_currency, 'preserved_expiry', v_biz.trial_ends_at::TEXT);
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.reconcile_legacy_trial(UUID) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.reconcile_legacy_trial(UUID) FROM anon;
+REVOKE ALL ON FUNCTION public.reconcile_legacy_trial(UUID) FROM authenticated;
+GRANT EXECUTE ON FUNCTION public.reconcile_legacy_trial(UUID) TO service_role;
+
+-- Helper: find unreconciled legacy trial rows for the cron
+CREATE OR REPLACE FUNCTION public.find_unreconciled_legacy_trials()
+RETURNS TABLE(id UUID)
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = ''
+AS $$
+  SELECT b.id
+  FROM public.businesses b
+  WHERE b.subscription_tier = 'free'
+    AND b.trial_ends_at IS NOT NULL
+    AND b.trial_ends_at > clock_timestamp()
+    AND NOT EXISTS (
+      SELECT 1 FROM public.messaging_allowances ma
+      WHERE ma.business_id = b.id AND ma.type = 'trial_grant' AND ma.source_ref = 'trial_v2'
+    )
+  LIMIT 100;
+$$;
+
+REVOKE ALL ON FUNCTION public.find_unreconciled_legacy_trials() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.find_unreconciled_legacy_trials() FROM anon;
+REVOKE ALL ON FUNCTION public.find_unreconciled_legacy_trials() FROM authenticated;
+GRANT EXECUTE ON FUNCTION public.find_unreconciled_legacy_trials() TO service_role;
+
+-- ══════════════════════════════════════════════════════════
+-- D2. Legacy transition block (grandfather active legacy trials)
 -- ══════════════════════════════════════════════════════════
 
 DO $$

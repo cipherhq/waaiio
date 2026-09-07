@@ -399,33 +399,48 @@ describe.skipIf(!canRun)('schema verification', () => {
 // Blocker 6: Concurrency, failure, race, and authority proofs
 // ══════════════════════════════════════════════════════════
 
-describe.skipIf(!canRun)('concurrent activation', () => {
-  it('two-session concurrent activation => exactly one grant + one stable clock', () => {
+describe.skipIf(!canRun)('concurrent activation (genuine overlapping sessions)', () => {
+  it('two genuinely concurrent sessions => exactly one grant + one stable clock', () => {
     const bizId = createTestBusiness({ countryCode: 'NG', waMethod: 'shared' });
     try {
-      // Run two activations concurrently via separate connections
-      // (psql forks separate processes = separate DB sessions)
-      const r1 = psqlJson(`SELECT public.activate_trial_if_eligible('${bizId}') AS r`) as Record<string, unknown>;
-      const r2 = psqlJson(`SELECT public.activate_trial_if_eligible('${bizId}') AS r`) as Record<string, unknown>;
+      // Use shell to launch two genuinely parallel psql sessions.
+      // Both sessions start in the same shell command, run concurrently,
+      // and wait for each other to complete.
+      // The FOR UPDATE inside activate_trial_if_eligible serializes at the row level,
+      // but both sessions do overlap in the DB before one acquires the lock.
+      const output = execSync(
+        `echo "SELECT public.activate_trial_if_eligible('${bizId}');" | psql "${dbUrl}" -tAXq -v ON_ERROR_STOP=1 & ` +
+        `echo "SELECT public.activate_trial_if_eligible('${bizId}');" | psql "${dbUrl}" -tAXq -v ON_ERROR_STOP=1 & ` +
+        `wait`,
+        { encoding: 'utf-8', timeout: 15000, shell: '/bin/bash' },
+      ).trim();
 
-      // Exactly one should be fresh activation, the other idempotent
-      const activations = [r1, r2].filter(r => r.activated === true);
-      expect(activations.length).toBe(2); // both report success (one fresh, one idempotent)
+      // Parse both JSON results from the combined output
+      const jsonLines = output.split('\n').filter(l => l.trim().startsWith('{'));
+      expect(jsonLines.length).toBe(2);
 
-      const fresh = activations.filter(r => !r.idempotent);
-      const idempotent = activations.filter(r => r.idempotent === true);
-      expect(fresh.length + idempotent.length).toBe(2);
+      const results = jsonLines.map(l => JSON.parse(l));
 
-      // Exactly one grant row
+      // Both should report activated=true (one fresh, one idempotent)
+      expect(results.every((r: Record<string, unknown>) => r.activated === true)).toBe(true);
+
+      // Exactly one grant row must exist
       const grantCount = psql(`
         SELECT count(*) FROM public.messaging_allowances
         WHERE business_id = '${bizId}' AND type = 'trial_grant' AND source_ref = 'trial_v2'
       `);
       expect(parseInt(grantCount)).toBe(1);
 
-      // trial_ends_at is set and stable
+      // trial_ends_at must be set and stable
       const trialEnd = psql(`SELECT trial_ends_at FROM public.businesses WHERE id = '${bizId}'`);
       expect(trialEnd).not.toBe('');
+
+      // Grant must have correct amount/currency
+      const grantRow = psql(`
+        SELECT amount_minor || '|' || currency_code FROM public.messaging_allowances
+        WHERE business_id = '${bizId}' AND type = 'trial_grant' AND source_ref = 'trial_v2'
+      `);
+      expect(grantRow).toBe('50000|NGN');
     } finally {
       cleanup(bizId);
     }
@@ -479,6 +494,113 @@ describe.skipIf(!canRun)('split-state replay proofs', () => {
       psql(`SELECT public.activate_trial_if_eligible('${bizId}')`);
       const result = psqlJson(`SELECT public.activate_trial_if_eligible('${bizId}') AS r`) as Record<string, unknown>;
       expect(result).toMatchObject({ activated: true, idempotent: true });
+    } finally {
+      cleanup(bizId);
+    }
+  });
+});
+
+describe.skipIf(!canRun)('mismatched both-present replay proof', () => {
+  it('clock/grant expiry mismatch returns replay_state_mismatch', () => {
+    const bizId = createTestBusiness({ countryCode: 'NG', waMethod: 'shared' });
+    try {
+      // Activate normally
+      psql(`SELECT public.activate_trial_if_eligible('${bizId}')`);
+
+      // Tamper: shift the clock to create mismatch
+      psql(`UPDATE public.businesses SET trial_ends_at = trial_ends_at + INTERVAL '1 day' WHERE id = '${bizId}'`);
+
+      // Replay should detect mismatch
+      const result = psqlJson(`SELECT public.activate_trial_if_eligible('${bizId}') AS r`) as Record<string, unknown>;
+      expect(result).toMatchObject({ activated: false, reason: 'replay_state_mismatch' });
+    } finally {
+      cleanup(bizId);
+    }
+  });
+
+  it('grant with null expires_at returns replay_state_mismatch', () => {
+    const bizId = createTestBusiness({ countryCode: 'NG', waMethod: 'shared' });
+    try {
+      psql(`SELECT public.activate_trial_if_eligible('${bizId}')`);
+
+      // Tamper: clear grant's expires_at
+      psql(`UPDATE public.messaging_allowances SET expires_at = NULL WHERE business_id = '${bizId}' AND source_ref = 'trial_v2'`);
+
+      const result = psqlJson(`SELECT public.activate_trial_if_eligible('${bizId}') AS r`) as Record<string, unknown>;
+      expect(result).toMatchObject({ activated: false, reason: 'replay_state_mismatch' });
+    } finally {
+      cleanup(bizId);
+    }
+  });
+});
+
+describe.skipIf(!canRun)('legacy grandfather reconciliation', () => {
+  it('reconcile_legacy_trial adds missing grant preserving original expiry', () => {
+    // Create business with existing legacy clock (active)
+    const futureDate = new Date(Date.now() + 15 * 86400000).toISOString();
+    const bizId = createTestBusiness({ countryCode: 'NG', waMethod: 'shared', trialEndsAt: futureDate });
+    try {
+      // Verify no grant exists yet
+      const grantBefore = psql(`
+        SELECT count(*) FROM public.messaging_allowances
+        WHERE business_id = '${bizId}' AND type = 'trial_grant' AND source_ref = 'trial_v2'
+      `);
+      expect(parseInt(grantBefore)).toBe(0);
+
+      // Reconcile
+      const result = psqlJson(`SELECT public.reconcile_legacy_trial('${bizId}') AS r`) as Record<string, unknown>;
+      expect(result).toMatchObject({ reconciled: true, amount_minor: 50000, currency_code: 'NGN' });
+
+      // Grant now exists with original expiry preserved
+      const grantAfter = psql(`
+        SELECT count(*) FROM public.messaging_allowances
+        WHERE business_id = '${bizId}' AND type = 'trial_grant' AND source_ref = 'trial_v2'
+      `);
+      expect(parseInt(grantAfter)).toBe(1);
+
+      // Clock unchanged
+      const clock = psql(`SELECT trial_ends_at FROM public.businesses WHERE id = '${bizId}'`);
+      expect(clock).not.toBe('');
+    } finally {
+      cleanup(bizId);
+    }
+  });
+
+  it('reconcile_legacy_trial is idempotent', () => {
+    const futureDate = new Date(Date.now() + 15 * 86400000).toISOString();
+    const bizId = createTestBusiness({ countryCode: 'NG', waMethod: 'shared', trialEndsAt: futureDate });
+    try {
+      psql(`SELECT public.reconcile_legacy_trial('${bizId}')`);
+      const result = psqlJson(`SELECT public.reconcile_legacy_trial('${bizId}') AS r`) as Record<string, unknown>;
+      expect(result).toMatchObject({ reconciled: true, idempotent: true });
+    } finally {
+      cleanup(bizId);
+    }
+  });
+
+  it('reconcile_legacy_trial refuses expired trials', () => {
+    const pastDate = new Date(Date.now() - 86400000).toISOString();
+    const bizId = createTestBusiness({ countryCode: 'NG', waMethod: 'shared', trialEndsAt: pastDate });
+    try {
+      const result = psqlJson(`SELECT public.reconcile_legacy_trial('${bizId}') AS r`) as Record<string, unknown>;
+      expect(result).toMatchObject({ reconciled: false, reason: 'expired' });
+
+      // No grant created
+      const grantCount = psql(`
+        SELECT count(*) FROM public.messaging_allowances
+        WHERE business_id = '${bizId}' AND type = 'trial_grant' AND source_ref = 'trial_v2'
+      `);
+      expect(parseInt(grantCount)).toBe(0);
+    } finally {
+      cleanup(bizId);
+    }
+  });
+
+  it('reconcile_legacy_trial without legacy clock returns no_legacy_clock', () => {
+    const bizId = createTestBusiness({ countryCode: 'NG', waMethod: 'shared' });
+    try {
+      const result = psqlJson(`SELECT public.reconcile_legacy_trial('${bizId}') AS r`) as Record<string, unknown>;
+      expect(result).toMatchObject({ reconciled: false, reason: 'no_legacy_clock' });
     } finally {
       cleanup(bizId);
     }

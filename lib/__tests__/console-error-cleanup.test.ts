@@ -81,7 +81,7 @@ describe('Production console.error allowlist (exact counts)', () => {
     'app/dashboard/settings/tabs/AccountTab.tsx': { count: 2, client: true, reason: 'Browser error debugging for subscription downgrade' },
     'app/get-started/OnboardingWizard.tsx': { count: 2, client: true, reason: 'Browser error debugging for signup/onboarding' },
     'app/sign/[token]/page.tsx': { count: 1, client: true, reason: 'Browser error debugging for PDF rendering' },
-    'app/api/cron/trial-activation/route.ts': { count: 4, client: false, reason: 'Cron error logging for trial activation failures' },
+    'app/api/cron/trial-activation/route.ts': { count: 6, client: false, reason: 'Cron error logging for trial activation + legacy reconciliation failures' },
   };
 
   function collectTsFiles(dir: string, base: string): string[] {

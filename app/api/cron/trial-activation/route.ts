@@ -9,9 +9,14 @@ export const maxDuration = 60;
 /**
  * Deferred trial activation cron.
  *
- * Finds businesses with trial_ends_at IS NULL (not yet activated) that have
- * an active WhatsApp channel or wa_method = 'shared', and attempts
+ * Phase 1: Finds businesses with trial_ends_at IS NULL (not yet activated)
+ * that have an active WhatsApp channel or wa_method = 'shared', and attempts
  * activate_trial_if_eligible for each.
+ *
+ * Phase 2: Legacy grandfather reconciliation. Finds businesses with
+ * trial_ends_at > NOW() (active clock) but no trial_v2 grant (unresolved
+ * grandfather rows from M372 migration). Calls reconcile_legacy_trial
+ * to add the missing grant while preserving the original expiry.
  *
  * On pending results (missing config), inserts a deduped alert so the admin
  * dashboard can surface configuration issues.
@@ -24,13 +29,10 @@ export async function GET(request: NextRequest) {
   let activated = 0;
   let pending = 0;
   let errors = 0;
+  let reconciled = 0;
 
   try {
-    // Find businesses eligible for deferred trial activation:
-    // - subscription_tier = 'free'
-    // - trial_ends_at IS NULL (not yet activated)
-    // - status = 'active' (completed onboarding)
-    // - Has a channel (whatsapp_channel_id IS NOT NULL) OR wa_method = 'shared'
+    // ── Phase 1: Fresh trial activation ──
     const { data: businesses, error: queryError } = await supabase
       .from('businesses')
       .select('id, name')
@@ -45,11 +47,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Query failed' }, { status: 500 });
     }
 
-    if (!businesses || businesses.length === 0) {
-      return NextResponse.json({ activated: 0, pending: 0, errors: 0 });
-    }
-
-    for (const biz of businesses) {
+    for (const biz of (businesses || [])) {
       try {
         const { data: result, error: rpcError } = await supabase.rpc(
           'activate_trial_if_eligible',
@@ -67,11 +65,9 @@ export async function GET(request: NextRequest) {
         if (parsed?.activated) {
           activated++;
         } else {
-          // Pending: missing config, currency resolution failed, etc.
           pending++;
           const reason = parsed?.reason || 'unknown';
 
-          // Insert deduped alert for admin visibility
           if (
             reason === 'missing_trial_credit_config' ||
             reason === 'invalid_trial_days' ||
@@ -96,7 +92,45 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    return NextResponse.json({ activated, pending, errors, total: businesses.length });
+    // ── Phase 2: Legacy grandfather reconciliation ──
+    // Find active legacy trials (clock set, still valid) without a trial_v2 grant.
+    // These are unresolved grandfather rows from M372 migration.
+    const { data: legacyRows, error: legacyError } = await supabase
+      .rpc('find_unreconciled_legacy_trials');
+
+    if (legacyError) {
+      console.warn('[TRIAL-ACTIVATION-CRON] Legacy query failed (non-fatal):', legacyError);
+    } else if (legacyRows && Array.isArray(legacyRows)) {
+      for (const row of legacyRows) {
+        try {
+          const { data: result, error: rpcError } = await supabase.rpc(
+            'reconcile_legacy_trial',
+            { p_business_id: row.id },
+          );
+
+          if (rpcError) {
+            console.error(`[TRIAL-ACTIVATION-CRON] Legacy reconcile error for ${row.id}:`, rpcError);
+            errors++;
+            continue;
+          }
+
+          const parsed = typeof result === 'string' ? JSON.parse(result) : result;
+          if (parsed?.reconciled) {
+            reconciled++;
+          } else {
+            pending++;
+          }
+        } catch (err) {
+          console.error(`[TRIAL-ACTIVATION-CRON] Legacy error for ${row.id}:`, err);
+          errors++;
+        }
+      }
+    }
+
+    return NextResponse.json({
+      activated, pending, errors, reconciled,
+      total: (businesses?.length || 0),
+    });
   } catch (err) {
     console.error('[TRIAL-ACTIVATION-CRON] Unexpected error:', err);
     return NextResponse.json({ error: 'Unexpected error' }, { status: 500 });
