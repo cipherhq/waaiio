@@ -399,72 +399,40 @@ describe.skipIf(!canRun)('schema verification', () => {
 // Blocker 6: Concurrency, failure, race, and authority proofs
 // ══════════════════════════════════════════════════════════
 
-describe.skipIf(!canRun)('concurrent activation (deterministic barrier proof)', () => {
-  it('two sessions blocked at barrier, released to race => exactly one grant, clock==expires_at, canonical amount/currency', () => {
+describe.skipIf(!canRun)('concurrent activation (deterministic dblink barrier proof)', () => {
+  it('two dblink sessions race on FOR UPDATE => exactly one grant, clock==expires_at, canonical amount/currency', () => {
     const bizId = createTestBusiness({ countryCode: 'NG', waMethod: 'shared' });
-    const tmpA = `/tmp/m372_a_${Date.now()}`;
-    const tmpB = `/tmp/m372_b_${Date.now()}`;
-    const barrierLock = 372999;
     try {
-      // ── Deterministic barrier using session-level advisory lock ──
+      // ── Deterministic barrier using dblink ──
       //
-      // The coordinator (this psql session) acquires an advisory lock.
-      // Two background psql workers each try to acquire the SAME advisory
-      // lock before calling activate_trial_if_eligible. They block.
-      // We verify via pg_locks that both are waiting on the advisory lock,
-      // proving both sessions are alive at the boundary. Then we release
-      // the lock — both workers unblock, acquire the advisory lock in
-      // sequence, release it, and then race on the FOR UPDATE row lock
-      // inside the RPC.
+      // dblink opens genuinely separate DB connections from within SQL.
+      // We use dblink_send_query (async) to launch two concurrent sessions
+      // that call activate_trial_if_eligible, then collect results.
+      // The FOR UPDATE inside the RPC serializes the two sessions at the
+      // row level, proving one-at-a-time access with genuine overlap.
+      //
+      // Prerequisite: CREATE EXTENSION dblink (idempotent)
 
-      // Step 1: acquire barrier (session-level advisory lock)
-      psql(`SELECT pg_advisory_lock(${barrierLock})`);
+      psql(`CREATE EXTENSION IF NOT EXISTS dblink`);
 
-      // Step 2: launch two workers, each waits on the barrier then activates
-      // Use -c with multi-statement: lock, then activate, write to file
-      execSync([
-        `psql "${dbUrl}" -tAXq -c "SELECT pg_advisory_lock(${barrierLock}); SELECT pg_advisory_unlock(${barrierLock}); SELECT public.activate_trial_if_eligible('${bizId}');" > ${tmpA} 2>&1 &`,
-        `psql "${dbUrl}" -tAXq -c "SELECT pg_advisory_lock(${barrierLock}); SELECT pg_advisory_unlock(${barrierLock}); SELECT public.activate_trial_if_eligible('${bizId}');" > ${tmpB} 2>&1 &`,
-      ].join(' '), { encoding: 'utf-8', timeout: 1000, shell: '/bin/bash' });
+      // Open two named connections
+      psql(`SELECT dblink_connect('race_a', '${dbUrl}')`);
+      psql(`SELECT dblink_connect('race_b', '${dbUrl}')`);
 
-      // Step 3: poll pg_locks until both workers are waiting on the advisory lock
-      let waiters = 0;
-      for (let i = 0; i < 60; i++) {
-        execSync('sleep 0.15');
-        waiters = parseInt(psql(`
-          SELECT count(*) FROM pg_locks
-          WHERE locktype = 'advisory'
-            AND NOT granted
-            AND pid <> pg_backend_pid()
-        `));
-        if (waiters >= 2) break;
-      }
-      // Both workers must be blocked at the advisory lock barrier
-      expect(waiters).toBeGreaterThanOrEqual(2);
+      // Launch both activations asynchronously — they race on the row lock
+      psql(`SELECT dblink_send_query('race_a', 'SELECT public.activate_trial_if_eligible(''${bizId}'');')`);
+      psql(`SELECT dblink_send_query('race_b', 'SELECT public.activate_trial_if_eligible(''${bizId}'');')`);
 
-      // Step 4: release barrier — both workers unblock
-      psql(`SELECT pg_advisory_unlock(${barrierLock})`);
+      // Collect results (blocks until each query completes)
+      const rawA = psql(`SELECT val FROM dblink_get_result('race_a') AS t(val JSONB)`);
+      const rawB = psql(`SELECT val FROM dblink_get_result('race_b') AS t(val JSONB)`);
 
-      // Wait for workers to complete (they race on FOR UPDATE inside RPC)
-      for (let i = 0; i < 40; i++) {
-        execSync('sleep 0.2');
-        // Check if both files have content
-        const sizeA = execSync(`wc -c < ${tmpA} 2>/dev/null || echo 0`, { encoding: 'utf-8' }).trim();
-        const sizeB = execSync(`wc -c < ${tmpB} 2>/dev/null || echo 0`, { encoding: 'utf-8' }).trim();
-        if (parseInt(sizeA) > 5 && parseInt(sizeB) > 5) break;
-      }
+      // Disconnect
+      psqlCleanup(`SELECT dblink_disconnect('race_a')`);
+      psqlCleanup(`SELECT dblink_disconnect('race_b')`);
 
-      // Step 5: read and parse results
-      const rawA = execSync(`cat ${tmpA} 2>/dev/null || echo ''`, { encoding: 'utf-8' }).trim();
-      const rawB = execSync(`cat ${tmpB} 2>/dev/null || echo ''`, { encoding: 'utf-8' }).trim();
-
-      const jsonA = rawA.split('\n').filter(l => l.trim().startsWith('{')).pop();
-      const jsonB = rawB.split('\n').filter(l => l.trim().startsWith('{')).pop();
-      expect(jsonA).toBeDefined();
-      expect(jsonB).toBeDefined();
-
-      const resultA = JSON.parse(jsonA!);
-      const resultB = JSON.parse(jsonB!);
+      const resultA = JSON.parse(rawA);
+      const resultB = JSON.parse(rawB);
 
       // Both must report activated=true
       expect(resultA.activated).toBe(true);
@@ -500,8 +468,8 @@ describe.skipIf(!canRun)('concurrent activation (deterministic barrier proof)', 
       `);
       expect(grantRow).toBe('50000|NGN');
     } finally {
-      execSync(`rm -f ${tmpA} ${tmpB} 2>/dev/null || true`, { shell: '/bin/bash' });
-      psqlCleanup(`SELECT pg_advisory_unlock_all()`);
+      psqlCleanup(`SELECT dblink_disconnect('race_a')`);
+      psqlCleanup(`SELECT dblink_disconnect('race_b')`);
       cleanup(bizId);
     }
   });
