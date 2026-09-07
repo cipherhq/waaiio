@@ -169,10 +169,12 @@ jobs:
             SELECT 'authenticated'::TEXT;
           $$ LANGUAGE SQL STABLE;
 
-          -- Create a minimal auth.users table (referenced by some FKs)
+          -- Create a minimal auth.users table (referenced by some FKs and triggers)
+          -- Must include phone column: handle_new_user() trigger references NEW.phone
           CREATE TABLE IF NOT EXISTS auth.users (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             email TEXT,
+            phone TEXT,
             raw_app_meta_data JSONB DEFAULT '{}'
           );
 
@@ -1042,10 +1044,12 @@ jobs:
             SELECT 'authenticated'::TEXT;
           $$ LANGUAGE SQL STABLE;
 
-          -- Create a minimal auth.users table (referenced by some FKs)
+          -- Create a minimal auth.users table (referenced by some FKs and triggers)
+          -- Must include phone column: handle_new_user() trigger references NEW.phone
           CREATE TABLE IF NOT EXISTS auth.users (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             email TEXT,
+            phone TEXT,
             raw_app_meta_data JSONB DEFAULT '{}'
           );
 
@@ -1724,7 +1728,7 @@ jobs:
           CREATE EXTENSION IF NOT EXISTS pgcrypto SCHEMA extensions;
           CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $$ SELECT gen_random_uuid(); $$ LANGUAGE SQL STABLE;
           CREATE OR REPLACE FUNCTION auth.role() RETURNS TEXT AS $$ SELECT 'authenticated'::TEXT; $$ LANGUAGE SQL STABLE;
-          CREATE TABLE IF NOT EXISTS auth.users (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), email TEXT, raw_app_meta_data JSONB DEFAULT '{}');
+          CREATE TABLE IF NOT EXISTS auth.users (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), email TEXT, phone TEXT, raw_app_meta_data JSONB DEFAULT '{}');
           DO $$ BEGIN CREATE ROLE service_role NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
           DO $$ BEGIN CREATE ROLE authenticated NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
           DO $$ BEGIN CREATE ROLE anon NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
@@ -1948,7 +1952,7 @@ jobs:
           CREATE EXTENSION IF NOT EXISTS pgcrypto SCHEMA extensions;
           CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $$ SELECT '00000000-0000-0000-0000-000000000000'::UUID; $$ LANGUAGE SQL STABLE;
           CREATE OR REPLACE FUNCTION auth.role() RETURNS TEXT AS $$ SELECT 'authenticated'::TEXT; $$ LANGUAGE SQL STABLE;
-          CREATE TABLE IF NOT EXISTS auth.users (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), email TEXT, raw_app_meta_data JSONB DEFAULT '{}');
+          CREATE TABLE IF NOT EXISTS auth.users (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), email TEXT, phone TEXT, raw_app_meta_data JSONB DEFAULT '{}');
           DO $$ BEGIN CREATE ROLE service_role NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
           DO $$ BEGIN CREATE ROLE authenticated NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
           DO $$ BEGIN CREATE ROLE anon NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
@@ -2250,10 +2254,12 @@ jobs:
             SELECT 'authenticated'::TEXT;
           $$ LANGUAGE SQL STABLE;
 
-          -- Create a minimal auth.users table (referenced by some FKs)
+          -- Create a minimal auth.users table (referenced by some FKs and triggers)
+          -- Must include phone column: handle_new_user() trigger references NEW.phone
           CREATE TABLE IF NOT EXISTS auth.users (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             email TEXT,
+            phone TEXT,
             raw_app_meta_data JSONB DEFAULT '{}'
           );
 
@@ -2847,7 +2853,7 @@ jobs:
           CREATE EXTENSION IF NOT EXISTS pgcrypto SCHEMA extensions;
           CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $$ SELECT '00000000-0000-0000-0000-000000000000'::UUID; $$ LANGUAGE SQL STABLE;
           CREATE OR REPLACE FUNCTION auth.role() RETURNS TEXT AS $$ SELECT 'authenticated'::TEXT; $$ LANGUAGE SQL STABLE;
-          CREATE TABLE IF NOT EXISTS auth.users (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), email TEXT, raw_app_meta_data JSONB DEFAULT '{}');
+          CREATE TABLE IF NOT EXISTS auth.users (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), email TEXT, phone TEXT, raw_app_meta_data JSONB DEFAULT '{}');
           DO $$ BEGIN CREATE ROLE service_role; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
           DO $$ BEGIN CREATE ROLE authenticated; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
           DO $$ BEGIN CREATE ROLE anon; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
