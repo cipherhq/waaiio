@@ -111,7 +111,7 @@ function createTestBusiness(opts: {
         phone_number, display_name, country_code, connection_method,
         connection_status, is_active
       ) VALUES ('${bizId}', 'meta_cloud', 'dedicated', 'pnid-m372-${bizCounter}', 'waba-test',
-        '+1234567890', 'Test Channel', '${countryCode}', 'transfer', 'active', true)
+        '+1${Date.now()}${bizCounter}', 'Test Channel', '${countryCode}', 'transfer', 'active', true)
       RETURNING id;
     `);
     psql(`UPDATE public.businesses SET whatsapp_channel_id = '${channelId}' WHERE id = '${bizId}'`);
@@ -444,23 +444,28 @@ describe.skipIf(!canRun)('split-state replay proofs', () => {
     }
   });
 
-  it('grant without clock converges by setting clock', () => {
+  it('grant without clock converges by restoring clock from grant expires_at', () => {
     // Create business, activate normally, then clear trial_ends_at to simulate split
     const bizId = createTestBusiness({ countryCode: 'NG', waMethod: 'shared' });
     try {
       psql(`SELECT public.activate_trial_if_eligible('${bizId}')`);
-      // Verify both exist
+      // Verify both exist and capture original expiry
       const clockBefore = psql(`SELECT trial_ends_at FROM public.businesses WHERE id = '${bizId}'`);
       expect(clockBefore).not.toBe('');
+      const grantExpiry = psql(`
+        SELECT expires_at FROM public.messaging_allowances
+        WHERE business_id = '${bizId}' AND type = 'trial_grant' AND source_ref = 'trial_v2'
+      `);
+      expect(grantExpiry).not.toBe('');
 
       // Simulate split: clear clock but leave grant
       psql(`UPDATE public.businesses SET trial_ends_at = NULL WHERE id = '${bizId}'`);
 
-      // Replay should converge
+      // Replay should converge by restoring clock from grant's expires_at
       const result = psqlJson(`SELECT public.activate_trial_if_eligible('${bizId}') AS r`) as Record<string, unknown>;
       expect(result).toMatchObject({ activated: true, idempotent: true, converged_clock: true });
 
-      // Clock should be restored
+      // Clock should be restored to the grant's expires_at
       const clockAfter = psql(`SELECT trial_ends_at FROM public.businesses WHERE id = '${bizId}'`);
       expect(clockAfter).not.toBe('');
     } finally {
@@ -598,14 +603,24 @@ describe.skipIf(!canRun)('malformed config proofs', () => {
 });
 
 describe.skipIf(!canRun)('upgrade/downgrade preservation', () => {
+  // The prevent_tier_tampering trigger allows service_role; CI runs as postgres superuser.
+  // Use SET LOCAL role to simulate service_role within a transaction.
+  function setTier(bizId: string, tier: string) {
+    psql(`
+      BEGIN;
+      SET LOCAL role = 'service_role';
+      UPDATE public.businesses SET subscription_tier = '${tier}' WHERE id = '${bizId}';
+      COMMIT;
+    `);
+  }
+
   it('upgrading from free to growth preserves original trial clock and grant', () => {
     const bizId = createTestBusiness({ countryCode: 'NG', waMethod: 'shared' });
     try {
       psql(`SELECT public.activate_trial_if_eligible('${bizId}')`);
       const clockBefore = psql(`SELECT trial_ends_at FROM public.businesses WHERE id = '${bizId}'`);
 
-      // Simulate upgrade to growth
-      psql(`UPDATE public.businesses SET subscription_tier = 'growth' WHERE id = '${bizId}'`);
+      setTier(bizId, 'growth');
 
       // Clock should remain unchanged
       const clockAfter = psql(`SELECT trial_ends_at FROM public.businesses WHERE id = '${bizId}'`);
@@ -632,9 +647,8 @@ describe.skipIf(!canRun)('upgrade/downgrade preservation', () => {
       psql(`SELECT public.activate_trial_if_eligible('${bizId}')`);
       const clockBefore = psql(`SELECT trial_ends_at FROM public.businesses WHERE id = '${bizId}'`);
 
-      // Simulate upgrade then downgrade
-      psql(`UPDATE public.businesses SET subscription_tier = 'growth' WHERE id = '${bizId}'`);
-      psql(`UPDATE public.businesses SET subscription_tier = 'free' WHERE id = '${bizId}'`);
+      setTier(bizId, 'growth');
+      setTier(bizId, 'free');
 
       // Clock preserved
       const clockAfter = psql(`SELECT trial_ends_at FROM public.businesses WHERE id = '${bizId}'`);

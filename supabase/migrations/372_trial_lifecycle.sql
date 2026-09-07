@@ -252,7 +252,15 @@ BEGIN
   END IF;
 
   IF v_biz.trial_ends_at IS NULL AND v_existing_grant.id IS NOT NULL THEN
-    -- Grant exists but no clock: split state — fail closed
+    -- Grant exists but no clock: converge by setting clock to match grant's expires_at
+    IF v_existing_grant.expires_at IS NOT NULL THEN
+      UPDATE public.businesses
+      SET trial_ends_at = v_existing_grant.expires_at
+      WHERE id = p_business_id AND trial_ends_at IS NULL;
+
+      RETURN jsonb_build_object('activated', true, 'idempotent', true, 'converged_clock', true);
+    END IF;
+    -- Grant exists but has no expires_at: unrecoverable split state
     RETURN jsonb_build_object('activated', false, 'reason', 'split_state_grant_without_clock');
   END IF;
 
