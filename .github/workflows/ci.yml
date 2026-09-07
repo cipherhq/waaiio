@@ -257,27 +257,6 @@ jobs:
           fi
           echo "✅ All migrations applied successfully."
 
-      - name: Post-migration role grants
-        env:
-          PGHOST: localhost
-          PGPORT: 5432
-          PGUSER: postgres
-          PGPASSWORD: postgres
-          PGDATABASE: waaiio_test
-        run: |
-          # Ensure test roles have necessary table/function permissions
-          # (shared-DB tests depend on these regardless of step ordering)
-          psql -q -v ON_ERROR_STOP=1 <<'EOGRANTS'
-          GRANT USAGE ON SCHEMA public TO authenticated, service_role, anon;
-          GRANT SELECT ON ALL TABLES IN SCHEMA public TO authenticated;
-          GRANT ALL ON ALL TABLES IN SCHEMA public TO service_role;
-          GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO authenticated, service_role;
-          GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO authenticated, service_role;
-          ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO authenticated;
-          ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO service_role;
-          EOGRANTS
-          echo "✅ Post-migration role grants applied"
-
       - name: Verify key tables exist
         env:
           PGHOST: localhost
@@ -1152,27 +1131,6 @@ jobs:
             exit 1
           fi
           echo "✅ All migrations applied successfully."
-
-      - name: Post-migration role grants
-        env:
-          PGHOST: localhost
-          PGPORT: 5432
-          PGUSER: postgres
-          PGPASSWORD: postgres
-          PGDATABASE: waaiio_test
-        run: |
-          # Ensure test roles have necessary table/function permissions
-          # (shared-DB tests depend on these regardless of step ordering)
-          psql -q -v ON_ERROR_STOP=1 <<'EOGRANTS'
-          GRANT USAGE ON SCHEMA public TO authenticated, service_role, anon;
-          GRANT SELECT ON ALL TABLES IN SCHEMA public TO authenticated;
-          GRANT ALL ON ALL TABLES IN SCHEMA public TO service_role;
-          GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO authenticated, service_role;
-          GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO authenticated, service_role;
-          ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO authenticated;
-          ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO service_role;
-          EOGRANTS
-          echo "✅ Post-migration role grants applied"
 
       - name: Verify key tables exist
         env:
@@ -2233,229 +2191,6 @@ jobs:
           fi
           echo "✅ Migration 355 refund convergence tests complete — zero skips, zero failures."
 
-  migration-shard-c:
-    name: "Migration validation (shard c)"
-    runs-on: ubuntu-24.04
-
-    services:
-      postgres:
-        image: postgres:15
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: waaiio_test
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 24.11.1
-          cache: npm
-
-      - name: Install Node.js dependencies
-        run: npm ci
-
-      - name: Verify PostgreSQL client
-        run: |
-          command -v psql
-          psql --version
-
-      - name: Create Supabase schema prerequisites
-        env:
-          PGHOST: localhost
-          PGPORT: 5432
-          PGUSER: postgres
-          PGPASSWORD: postgres
-          PGDATABASE: waaiio_test
-        run: |
-          # Create the auth schema and functions that Supabase provides
-          psql -q -v ON_ERROR_STOP=1 <<'EOSQL'
-          CREATE SCHEMA IF NOT EXISTS auth;
-          CREATE SCHEMA IF NOT EXISTS extensions;
-          CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-          CREATE EXTENSION IF NOT EXISTS pgcrypto SCHEMA extensions;
-
-          -- Minimal auth.uid() stub for RLS policies
-          CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $$
-            SELECT '00000000-0000-0000-0000-000000000000'::UUID;
-          $$ LANGUAGE SQL STABLE;
-
-          -- Minimal auth.role() stub
-          CREATE OR REPLACE FUNCTION auth.role() RETURNS TEXT AS $$
-            SELECT 'authenticated'::TEXT;
-          $$ LANGUAGE SQL STABLE;
-
-          -- Create a minimal auth.users table (referenced by some FKs and triggers)
-          -- Must include phone column: handle_new_user() trigger references NEW.phone
-          CREATE TABLE IF NOT EXISTS auth.users (
-            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-            email TEXT,
-            phone TEXT,
-            raw_app_meta_data JSONB DEFAULT '{}'
-          );
-
-          -- Supabase roles: required by GRANT/REVOKE in migrations
-          -- 137, 176, 181, 233, 244 (GRANT EXECUTE ... TO service_role)
-          -- 003, 017, 018, 023 (RLS policies using auth.role() = 'service_role')
-          DO $$ BEGIN CREATE ROLE service_role; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-          DO $$ BEGIN CREATE ROLE authenticated; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-          DO $$ BEGIN CREATE ROLE anon; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-          -- Realtime publication: required by ALTER PUBLICATION in migrations
-          -- 001 (reservations), 020 (chat_messages), 025 (chat_conversations), 110 (queue_entries)
-          -- Note: CREATE PUBLICATION IF NOT EXISTS requires PG16+; CI uses PG15
-          DO $$ BEGIN CREATE PUBLICATION supabase_realtime; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-          -- Storage schema: required by bucket/object policies in migrations
-          -- 018 (customer-reports bucket), 033 (business-documents bucket)
-          CREATE SCHEMA IF NOT EXISTS storage;
-          CREATE TABLE IF NOT EXISTS storage.buckets (
-            id TEXT PRIMARY KEY,
-            name TEXT NOT NULL,
-            public BOOLEAN DEFAULT false,
-            created_at TIMESTAMPTZ DEFAULT NOW(),
-            updated_at TIMESTAMPTZ DEFAULT NOW()
-          );
-          CREATE TABLE IF NOT EXISTS storage.objects (
-            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-            bucket_id TEXT REFERENCES storage.buckets(id),
-            name TEXT,
-            owner UUID,
-            created_at TIMESTAMPTZ DEFAULT NOW(),
-            updated_at TIMESTAMPTZ DEFAULT NOW()
-          );
-          ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY;
-
-          -- Supabase storage helper function used in bucket policies (migration 133)
-          CREATE OR REPLACE FUNCTION storage.foldername(name TEXT)
-          RETURNS TEXT[] AS $$
-            SELECT string_to_array(name, '/');
-          $$ LANGUAGE SQL IMMUTABLE;
-
-          -- Grant schema access to test roles (required for SET ROLE + auth.uid() in RLS tests)
-          GRANT USAGE ON SCHEMA auth TO authenticated, service_role, anon;
-          GRANT USAGE ON SCHEMA storage TO authenticated, service_role, anon;
-          GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA auth TO authenticated, service_role, anon;
-
-          -- Seed common test user (many test suites reference this UUID)
-          INSERT INTO auth.users (id, email) VALUES
-            ('00000000-0000-0000-0000-000000000000', 'default-stub@test.local'),
-            ('00000000-0000-0000-0000-000000000001', 'admin-stub@test.local')
-          ON CONFLICT (id) DO NOTHING;
-          EOSQL
-          echo "✅ Supabase schema stubs created"
-
-      - name: Apply all migrations
-        env:
-          PGHOST: localhost
-          PGPORT: 5432
-          PGUSER: postgres
-          PGPASSWORD: postgres
-          PGDATABASE: waaiio_test
-        run: |
-          FAILED=0
-          APPLIED=0
-          for f in supabase/migrations/*.sql; do
-            echo "Applying $(basename $f)..."
-            if ! psql -q -v ON_ERROR_STOP=1 -f "$f" 2>&1; then
-              echo "❌ FAILED: $(basename $f)"
-              FAILED=1
-              # Continue to catch multiple failures
-            else
-              APPLIED=$((APPLIED + 1))
-            fi
-          done
-          echo ""
-          echo "Applied: $APPLIED migrations"
-          if [ "$FAILED" -eq 1 ]; then
-            echo "❌ Some migrations failed. See errors above."
-            exit 1
-          fi
-          echo "✅ All migrations applied successfully."
-
-      - name: Post-migration role grants
-        env:
-          PGHOST: localhost
-          PGPORT: 5432
-          PGUSER: postgres
-          PGPASSWORD: postgres
-          PGDATABASE: waaiio_test
-        run: |
-          # Ensure test roles have necessary table/function permissions
-          # (shared-DB tests depend on these regardless of step ordering)
-          psql -q -v ON_ERROR_STOP=1 <<'EOGRANTS'
-          GRANT USAGE ON SCHEMA public TO authenticated, service_role, anon;
-          GRANT SELECT ON ALL TABLES IN SCHEMA public TO authenticated;
-          GRANT ALL ON ALL TABLES IN SCHEMA public TO service_role;
-          GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO authenticated, service_role;
-          GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO authenticated, service_role;
-          ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO authenticated;
-          ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO service_role;
-          EOGRANTS
-          echo "✅ Post-migration role grants applied"
-
-      - name: Verify key tables exist
-        env:
-          PGHOST: localhost
-          PGPORT: 5432
-          PGUSER: postgres
-          PGPASSWORD: postgres
-          PGDATABASE: waaiio_test
-        run: |
-          echo "Verifying key tables..."
-          TABLES="businesses bookings payments orders products events event_tickets attendance_log whatsapp_channels processed_webhook_events promo_campaigns promo_campaign_codes promo_redemptions class_sessions class_recurrence_rules"
-          MISSING=0
-          for t in $TABLES; do
-            if psql -tAc "SELECT 1 FROM information_schema.tables WHERE table_name='$t'" | grep -q 1; then
-              echo "  ✅ $t"
-            else
-              echo "  ❌ $t MISSING"
-              MISSING=1
-            fi
-          done
-          if [ "$MISSING" -eq 1 ]; then
-            echo "❌ Some expected tables are missing."
-            exit 1
-          fi
-          echo "✅ All key tables verified."
-
-      - name: Verify RLS is enabled
-        env:
-          PGHOST: localhost
-          PGPORT: 5432
-          PGUSER: postgres
-          PGPASSWORD: postgres
-          PGDATABASE: waaiio_test
-        run: |
-          echo "Checking RLS on user-facing tables..."
-          NO_RLS=$(psql -tAc "
-            SELECT tablename FROM pg_tables
-            WHERE schemaname = 'public'
-            AND tablename NOT IN ('schema_migrations', 'spatial_ref_sys')
-            AND tablename NOT IN (
-              SELECT tablename FROM pg_tables t
-              JOIN pg_class c ON c.relname = t.tablename
-              WHERE c.relrowsecurity = true
-            )
-          ")
-          if [ -n "$NO_RLS" ]; then
-            echo "⚠️  Tables without RLS (may be intentional):"
-            echo "$NO_RLS"
-          fi
-          echo "✅ RLS check complete."
-
-
       - name: Migration 356 Customer360/Financials tests
         env:
           PGHOST: localhost
@@ -3074,18 +2809,16 @@ jobs:
   migrations:
     name: Migration validation
     runs-on: ubuntu-24.04
-    needs: [migration-shard-a, migration-shard-b, migration-shard-c]
+    needs: [migration-shard-a, migration-shard-b]
     if: always()
     steps:
       - name: Check shard results
         run: |
           if [ "${{ needs.migration-shard-a.result }}" != "success" ] || \
-             [ "${{ needs.migration-shard-b.result }}" != "success" ] || \
-             [ "${{ needs.migration-shard-c.result }}" != "success" ]; then
+             [ "${{ needs.migration-shard-b.result }}" != "success" ]; then
             echo "❌ One or more migration shards failed."
             echo "Shard A: ${{ needs.migration-shard-a.result }}"
             echo "Shard B: ${{ needs.migration-shard-b.result }}"
-            echo "Shard C: ${{ needs.migration-shard-c.result }}"
             exit 1
           fi
           echo "All migration shards passed"
