@@ -399,49 +399,107 @@ describe.skipIf(!canRun)('schema verification', () => {
 // Blocker 6: Concurrency, failure, race, and authority proofs
 // ══════════════════════════════════════════════════════════
 
-describe.skipIf(!canRun)('concurrent activation (genuine overlapping sessions)', () => {
-  it('two genuinely concurrent sessions => exactly one grant + one stable clock', () => {
+describe.skipIf(!canRun)('concurrent activation (deterministic barrier proof)', () => {
+  it('two sessions blocked at barrier, released to race => exactly one grant, clock==expires_at, canonical amount/currency', () => {
     const bizId = createTestBusiness({ countryCode: 'NG', waMethod: 'shared' });
+    const barrierLock = 372999;
     try {
-      // Use shell to launch two genuinely parallel psql sessions.
-      // Both sessions start in the same shell command, run concurrently,
-      // and wait for each other to complete.
-      // The FOR UPDATE inside activate_trial_if_eligible serializes at the row level,
-      // but both sessions do overlap in the DB before one acquires the lock.
-      const output = execSync(
-        `echo "SELECT public.activate_trial_if_eligible('${bizId}');" | psql "${dbUrl}" -tAXq -v ON_ERROR_STOP=1 & ` +
-        `echo "SELECT public.activate_trial_if_eligible('${bizId}');" | psql "${dbUrl}" -tAXq -v ON_ERROR_STOP=1 & ` +
-        `wait`,
-        { encoding: 'utf-8', timeout: 15000, shell: '/bin/bash' },
-      ).trim();
+      // ── Deterministic barrier approach ──
+      // 1. Coordinator acquires advisory lock (barrier)
+      // 2. Two worker psql processes start in background; each waits on the
+      //    barrier lock, then calls activate_trial_if_eligible
+      // 3. Coordinator polls pg_stat_activity until both workers are blocked
+      //    on the advisory lock — proving both sessions are alive at the boundary
+      // 4. Coordinator releases the lock — both workers unblock and race on
+      //    the FOR UPDATE row lock inside the RPC
+      // 5. Results files are read and validated
 
-      // Parse both JSON results from the combined output
-      const jsonLines = output.split('\n').filter(l => l.trim().startsWith('{'));
-      expect(jsonLines.length).toBe(2);
+      // Step 1: acquire barrier
+      psql(`SELECT pg_advisory_lock(${barrierLock})`);
 
-      const results = jsonLines.map(l => JSON.parse(l));
+      // Step 2: launch two workers in background, each writes result to a temp file
+      const tmpA = `/tmp/m372_race_a_${bizId}`;
+      const tmpB = `/tmp/m372_race_b_${bizId}`;
+      execSync(
+        `psql "${dbUrl}" -tAXq -c "SELECT pg_advisory_lock(${barrierLock}); SELECT public.activate_trial_if_eligible('${bizId}');" > ${tmpA} 2>&1 &` +
+        `psql "${dbUrl}" -tAXq -c "SELECT pg_advisory_lock(${barrierLock}); SELECT public.activate_trial_if_eligible('${bizId}');" > ${tmpB} 2>&1 &`,
+        { encoding: 'utf-8', timeout: 1000, shell: '/bin/bash' },
+      );
 
-      // Both should report activated=true (one fresh, one idempotent)
-      expect(results.every((r: Record<string, unknown>) => r.activated === true)).toBe(true);
+      // Step 3: wait until both workers are blocked on the advisory lock
+      // Poll pg_stat_activity for sessions waiting on advisory lock
+      let waiters = 0;
+      for (let i = 0; i < 30; i++) {
+        execSync('sleep 0.1');
+        waiters = parseInt(psql(`
+          SELECT count(*) FROM pg_stat_activity
+          WHERE wait_event_type = 'Lock'
+            AND wait_event = 'advisory'
+            AND state = 'active'
+            AND pid <> pg_backend_pid()
+        `));
+        if (waiters >= 2) break;
+      }
+      // Verify both workers reached the barrier
+      expect(waiters).toBeGreaterThanOrEqual(2);
 
-      // Exactly one grant row must exist
+      // Step 4: release barrier — both workers unblock and race
+      psql(`SELECT pg_advisory_unlock(${barrierLock})`);
+
+      // Wait for both workers to complete
+      execSync('sleep 2');
+
+      // Step 5: read and parse results
+      const rawA = execSync(`cat ${tmpA}`, { encoding: 'utf-8' }).trim();
+      const rawB = execSync(`cat ${tmpB}`, { encoding: 'utf-8' }).trim();
+
+      // Extract JSON (skip the advisory lock result line)
+      const jsonA = rawA.split('\n').filter(l => l.trim().startsWith('{')).pop();
+      const jsonB = rawB.split('\n').filter(l => l.trim().startsWith('{')).pop();
+      expect(jsonA).toBeDefined();
+      expect(jsonB).toBeDefined();
+
+      const resultA = JSON.parse(jsonA!);
+      const resultB = JSON.parse(jsonB!);
+
+      // Both must report activated=true
+      expect(resultA.activated).toBe(true);
+      expect(resultB.activated).toBe(true);
+
+      // Exactly one fresh, one idempotent
+      const fresh = [resultA, resultB].filter((r: Record<string, unknown>) => !r.idempotent);
+      const idempotent = [resultA, resultB].filter((r: Record<string, unknown>) => r.idempotent === true);
+      expect(fresh.length).toBe(1);
+      expect(idempotent.length).toBe(1);
+
+      // Exactly one grant row
       const grantCount = psql(`
         SELECT count(*) FROM public.messaging_allowances
         WHERE business_id = '${bizId}' AND type = 'trial_grant' AND source_ref = 'trial_v2'
       `);
       expect(parseInt(grantCount)).toBe(1);
 
-      // trial_ends_at must be set and stable
-      const trialEnd = psql(`SELECT trial_ends_at FROM public.businesses WHERE id = '${bizId}'`);
-      expect(trialEnd).not.toBe('');
+      // trial_ends_at == grant.expires_at (canonical clock consistency)
+      const clockAndExpiry = psql(`
+        SELECT b.trial_ends_at = ma.expires_at AS consistent
+        FROM public.businesses b
+        JOIN public.messaging_allowances ma
+          ON ma.business_id = b.id AND ma.type = 'trial_grant' AND ma.source_ref = 'trial_v2'
+        WHERE b.id = '${bizId}'
+      `);
+      expect(clockAndExpiry).toBe('t');
 
-      // Grant must have correct amount/currency
+      // Canonical amount/currency
       const grantRow = psql(`
         SELECT amount_minor || '|' || currency_code FROM public.messaging_allowances
         WHERE business_id = '${bizId}' AND type = 'trial_grant' AND source_ref = 'trial_v2'
       `);
       expect(grantRow).toBe('50000|NGN');
+
+      // Cleanup temp files
+      execSync(`rm -f ${tmpA} ${tmpB}`);
     } finally {
+      psqlCleanup(`SELECT pg_advisory_unlock_all()`);
       cleanup(bizId);
     }
   });
@@ -528,6 +586,70 @@ describe.skipIf(!canRun)('mismatched both-present replay proof', () => {
 
       const result = psqlJson(`SELECT public.activate_trial_if_eligible('${bizId}') AS r`) as Record<string, unknown>;
       expect(result).toMatchObject({ activated: false, reason: 'replay_state_mismatch' });
+    } finally {
+      cleanup(bizId);
+    }
+  });
+
+  it('wrong positive amount returns replay_state_mismatch (amount_mismatch)', () => {
+    const bizId = createTestBusiness({ countryCode: 'NG', waMethod: 'shared' });
+    try {
+      psql(`SELECT public.activate_trial_if_eligible('${bizId}')`);
+
+      // Tamper: change grant amount to a different valid positive value
+      psql(`UPDATE public.messaging_allowances SET amount_minor = 99999 WHERE business_id = '${bizId}' AND source_ref = 'trial_v2'`);
+
+      const result = psqlJson(`SELECT public.activate_trial_if_eligible('${bizId}') AS r`) as Record<string, unknown>;
+      expect(result).toMatchObject({ activated: false, reason: 'replay_state_mismatch' });
+      expect((result as Record<string, string>).detail).toBe('amount_mismatch');
+    } finally {
+      cleanup(bizId);
+    }
+  });
+
+  it('wrong valid currency returns replay_state_mismatch (currency_mismatch)', () => {
+    const bizId = createTestBusiness({ countryCode: 'NG', waMethod: 'shared' });
+    try {
+      psql(`SELECT public.activate_trial_if_eligible('${bizId}')`);
+
+      // Tamper: change grant currency to a different valid currency
+      psql(`UPDATE public.messaging_allowances SET currency_code = 'USD' WHERE business_id = '${bizId}' AND source_ref = 'trial_v2'`);
+
+      const result = psqlJson(`SELECT public.activate_trial_if_eligible('${bizId}') AS r`) as Record<string, unknown>;
+      expect(result).toMatchObject({ activated: false, reason: 'replay_state_mismatch' });
+      expect((result as Record<string, string>).detail).toBe('currency_mismatch');
+    } finally {
+      cleanup(bizId);
+    }
+  });
+
+  it('null config_version_id returns replay_state_mismatch (missing_config_provenance)', () => {
+    const bizId = createTestBusiness({ countryCode: 'NG', waMethod: 'shared' });
+    try {
+      psql(`SELECT public.activate_trial_if_eligible('${bizId}')`);
+
+      // Tamper: clear config provenance
+      psql(`UPDATE public.messaging_allowances SET config_version_id = NULL WHERE business_id = '${bizId}' AND source_ref = 'trial_v2'`);
+
+      const result = psqlJson(`SELECT public.activate_trial_if_eligible('${bizId}') AS r`) as Record<string, unknown>;
+      expect(result).toMatchObject({ activated: false, reason: 'replay_state_mismatch' });
+      expect((result as Record<string, string>).detail).toBe('missing_config_provenance');
+    } finally {
+      cleanup(bizId);
+    }
+  });
+
+  it('invalid config_version_id returns replay_state_mismatch (invalid_config_provenance)', () => {
+    const bizId = createTestBusiness({ countryCode: 'NG', waMethod: 'shared' });
+    try {
+      psql(`SELECT public.activate_trial_if_eligible('${bizId}')`);
+
+      // Tamper: set a non-existent config version
+      psql(`UPDATE public.messaging_allowances SET config_version_id = '00000000-0000-0000-0000-000000000000' WHERE business_id = '${bizId}' AND source_ref = 'trial_v2'`);
+
+      const result = psqlJson(`SELECT public.activate_trial_if_eligible('${bizId}') AS r`) as Record<string, unknown>;
+      expect(result).toMatchObject({ activated: false, reason: 'replay_state_mismatch' });
+      expect((result as Record<string, string>).detail).toBe('invalid_config_provenance');
     } finally {
       cleanup(bizId);
     }

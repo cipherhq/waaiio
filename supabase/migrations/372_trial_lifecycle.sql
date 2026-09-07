@@ -217,6 +217,13 @@ DECLARE
   v_grant_result JSONB;
   v_has_channel BOOLEAN;
   v_existing_grant RECORD;
+  v_replay_config RECORD;
+  v_replay_credit JSONB;
+  v_replay_pricing JSONB;
+  v_replay_currency TEXT;
+  v_replay_match INTEGER;
+  v_replay_amount_raw NUMERIC;
+  v_replay_amount INTEGER;
 BEGIN
   -- 1. Lock business FOR UPDATE
   SELECT id, subscription_tier, trial_ends_at, country_code,
@@ -236,27 +243,97 @@ BEGIN
   END IF;
 
   -- 2b. [Blocker 2] Replay consistency: if clock OR grant exists, verify BOTH agree
-  SELECT id, amount_minor, currency_code, expires_at
+  SELECT id, amount_minor, currency_code, expires_at, config_version_id
   INTO v_existing_grant
   FROM public.messaging_allowances
   WHERE business_id = p_business_id AND type = 'trial_grant' AND source_ref = 'trial_v2';
 
   IF v_biz.trial_ends_at IS NOT NULL AND v_existing_grant.id IS NOT NULL THEN
-    -- Both exist: verify canonical consistency before replay success.
-    -- Clock must match grant's expires_at; grant must have valid amount/currency.
+    -- Both exist: validate canonical consistency before replay success.
+
+    -- 2b-i. Clock must match grant's expires_at
     IF v_existing_grant.expires_at IS NULL
-       OR v_biz.trial_ends_at <> v_existing_grant.expires_at
-       OR v_existing_grant.amount_minor IS NULL
-       OR v_existing_grant.amount_minor <= 0
-       OR v_existing_grant.currency_code IS NULL
-       OR v_existing_grant.currency_code = '' THEN
+       OR v_biz.trial_ends_at <> v_existing_grant.expires_at THEN
       RETURN jsonb_build_object('activated', false, 'reason', 'replay_state_mismatch',
-        'clock', v_biz.trial_ends_at::TEXT,
-        'grant_expires', COALESCE(v_existing_grant.expires_at::TEXT, 'NULL'),
-        'grant_amount', COALESCE(v_existing_grant.amount_minor::TEXT, 'NULL'),
-        'grant_currency', COALESCE(v_existing_grant.currency_code, 'NULL'));
+        'detail', 'clock_expiry_mismatch');
     END IF;
-    -- Consistent: both sides agree on canonical state
+
+    -- 2b-ii. Grant must reference a valid config version
+    IF v_existing_grant.config_version_id IS NULL THEN
+      RETURN jsonb_build_object('activated', false, 'reason', 'replay_state_mismatch',
+        'detail', 'missing_config_provenance');
+    END IF;
+
+    SELECT id, config_snapshot INTO v_replay_config
+      FROM public.platform_config_versions
+      WHERE id = v_existing_grant.config_version_id;
+
+    IF v_replay_config.id IS NULL THEN
+      RETURN jsonb_build_object('activated', false, 'reason', 'replay_state_mismatch',
+        'detail', 'invalid_config_provenance');
+    END IF;
+
+    -- 2b-iii. Resolve canonical amount/currency from the grant's config version
+    v_replay_credit := v_replay_config.config_snapshot -> 'trial_credit_minor_by_currency';
+    v_replay_pricing := v_replay_config.config_snapshot -> 'messaging_pricing';
+
+    IF v_replay_credit IS NULL OR v_replay_pricing IS NULL THEN
+      RETURN jsonb_build_object('activated', false, 'reason', 'replay_state_mismatch',
+        'detail', 'config_missing_credit_or_pricing');
+    END IF;
+
+    -- Resolve country → currency from the grant's config version
+    v_replay_match := 0;
+    v_replay_currency := NULL;
+    FOR v_replay_currency IN SELECT key FROM jsonb_each(v_replay_pricing)
+    LOOP
+      IF v_replay_pricing -> v_replay_currency -> 'rates' -> v_biz.country_code IS NOT NULL THEN
+        v_replay_match := v_replay_match + 1;
+      END IF;
+    END LOOP;
+
+    IF v_replay_match <> 1 THEN
+      RETURN jsonb_build_object('activated', false, 'reason', 'replay_state_mismatch',
+        'detail', 'config_currency_resolution_failed');
+    END IF;
+
+    v_replay_currency := NULL;
+    FOR v_replay_currency IN SELECT key FROM jsonb_each(v_replay_pricing)
+    LOOP
+      IF v_replay_pricing -> v_replay_currency -> 'rates' -> v_biz.country_code IS NOT NULL THEN
+        EXIT;
+      END IF;
+    END LOOP;
+
+    -- Resolve canonical amount from the grant's config version
+    BEGIN
+      v_replay_amount_raw := (v_replay_credit ->> v_replay_currency)::NUMERIC;
+    EXCEPTION WHEN OTHERS THEN
+      RETURN jsonb_build_object('activated', false, 'reason', 'replay_state_mismatch',
+        'detail', 'config_amount_parse_failed');
+    END;
+    IF v_replay_amount_raw IS NULL OR v_replay_amount_raw <= 0 THEN
+      RETURN jsonb_build_object('activated', false, 'reason', 'replay_state_mismatch',
+        'detail', 'config_amount_invalid');
+    END IF;
+    v_replay_amount := v_replay_amount_raw::INTEGER;
+
+    -- 2b-iv. Compare grant's persisted amount/currency against canonical values
+    IF v_existing_grant.amount_minor <> v_replay_amount THEN
+      RETURN jsonb_build_object('activated', false, 'reason', 'replay_state_mismatch',
+        'detail', 'amount_mismatch',
+        'grant_amount', v_existing_grant.amount_minor,
+        'canonical_amount', v_replay_amount);
+    END IF;
+
+    IF v_existing_grant.currency_code <> v_replay_currency THEN
+      RETURN jsonb_build_object('activated', false, 'reason', 'replay_state_mismatch',
+        'detail', 'currency_mismatch',
+        'grant_currency', v_existing_grant.currency_code,
+        'canonical_currency', v_replay_currency);
+    END IF;
+
+    -- All canonical checks passed: consistent replay
     RETURN jsonb_build_object('activated', true, 'idempotent', true);
   END IF;
 
