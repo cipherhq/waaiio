@@ -228,13 +228,17 @@ describe.skipIf(!canRun)('Sender expiry-race integration (#261 production-shaped
     // If sendError is null, dump diagnostics before failing
     if (!sendError) {
       const attempts = psql(`SELECT id, status, financial_disposition, recipient_phone FROM message_send_attempts WHERE business_id = '${bizId}' ORDER BY created_at;`);
+      const allAttempts = psql(`SELECT count(*) FROM message_send_attempts WHERE business_id = '${bizId}';`);
+      const recentAttempts = psql(`SELECT id, business_id, recipient_phone, status, financial_disposition FROM message_send_attempts ORDER BY created_at DESC LIMIT 5;`);
       const provCalls = providerSpy.mock.calls.length;
       const latestConfig = psql(`SELECT config_snapshot -> 'messaging_financial_gate' FROM platform_config_versions WHERE effective_from <= NOW() ORDER BY effective_from DESC LIMIT 1;`);
       throw new Error(
         `DIAGNOSTIC: sendError was null.\n` +
         `providerCalls=${provCalls}, beforeCallCount=${beforeCallCount}\n` +
         `latestGateConfig=${latestConfig}\n` +
-        `attempts:\n${attempts}`
+        `bizAttempts=${allAttempts}\n` +
+        `forPhone:\n${attempts}\n` +
+        `recent5:\n${recentAttempts}`
       );
     }
 
