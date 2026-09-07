@@ -21,6 +21,7 @@ import {
 } from '@/lib/capabilities/policy';
 import { getConfiguredCapabilities } from '@/lib/capabilities/service';
 import { getLegacyDefaultCapabilities } from '@/lib/capabilities/legacy-defaults';
+import { resolveTrialCredit } from '@/lib/trial-status';
 import { logger } from '@/lib/logger';
 
 // ── Result types ──
@@ -135,12 +136,16 @@ export async function requireCurrentCapability(
     }));
   }
 
-  // 6. Resolve effective capabilities using canonical policy
+  // 6. Resolve canonical trial credit state (fail closed on error)
+  const hasTrialCredit = await resolveTrialCredit(supabase, business.id);
+
+  // 7. Resolve effective capabilities using canonical policy
   const resolution = getEffectiveCapabilities({
     configuredCapabilities: configuredRows,
     overrides,
     tier: business.subscription_tier || 'free',
     trialEndsAt: business.trial_ends_at,
+    hasTrialCredit,
   });
 
   // 7. Apply action semantics

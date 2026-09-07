@@ -81,7 +81,17 @@ BEGIN
     END IF;
   END IF;
 
-  -- 2c. Write-time validation for trial_credit_minor_by_currency
+  -- 2c. Write-time validation for trial_days
+  IF p_key = 'trial_days' THEN
+    IF jsonb_typeof(p_value) <> 'number' THEN
+      RAISE EXCEPTION 'trial_days must be a positive integer, got %', jsonb_typeof(p_value);
+    END IF;
+    IF (p_value::TEXT)::NUMERIC <= 0 OR (p_value::TEXT)::NUMERIC <> FLOOR((p_value::TEXT)::NUMERIC) THEN
+      RAISE EXCEPTION 'trial_days must be a positive integer, got %', p_value::TEXT;
+    END IF;
+  END IF;
+
+  -- 2d. Write-time validation for trial_credit_minor_by_currency
   IF p_key = 'trial_credit_minor_by_currency' THEN
     IF jsonb_typeof(p_value) <> 'object' THEN
       RAISE EXCEPTION 'trial_credit_minor_by_currency must be a JSONB object, got %', jsonb_typeof(p_value);
@@ -194,20 +204,23 @@ DECLARE
   v_decision_time TIMESTAMPTZ;
   v_config RECORD;
   v_gate_value JSONB;
-  v_trial_days_val JSONB;
+  v_trial_days_raw JSONB;
+  v_trial_days_numeric NUMERIC;
   v_trial_days INTEGER;
   v_trial_credit JSONB;
   v_pricing JSONB;
   v_currency TEXT;
   v_match_count INTEGER;
+  v_amount_raw NUMERIC;
   v_amount INTEGER;
   v_trial_ends_at TIMESTAMPTZ;
   v_grant_result JSONB;
   v_has_channel BOOLEAN;
+  v_existing_grant RECORD;
 BEGIN
   -- 1. Lock business FOR UPDATE
   SELECT id, subscription_tier, trial_ends_at, country_code,
-         whatsapp_channel_id, wa_method
+         whatsapp_channel_id, wa_method, status
   INTO v_biz
   FROM public.businesses
   WHERE id = p_business_id
@@ -217,29 +230,53 @@ BEGIN
     RETURN jsonb_build_object('activated', false, 'reason', 'business_not_found');
   END IF;
 
-  -- 2. Verify: subscription_tier = 'free' AND trial_ends_at IS NULL
+  -- 2. Verify: subscription_tier = 'free'
   IF v_biz.subscription_tier <> 'free' THEN
     RETURN jsonb_build_object('activated', false, 'reason', 'not_free_tier');
   END IF;
 
-  IF v_biz.trial_ends_at IS NOT NULL THEN
-    -- Already activated (idempotent)
+  -- 2b. [Blocker 2] Replay consistency: if clock OR grant exists, verify BOTH agree
+  SELECT id, amount_minor, currency_code, expires_at
+  INTO v_existing_grant
+  FROM public.messaging_allowances
+  WHERE business_id = p_business_id AND type = 'trial_grant' AND source_ref = 'trial_v2';
+
+  IF v_biz.trial_ends_at IS NOT NULL AND v_existing_grant.id IS NOT NULL THEN
+    -- Both exist: consistent replay — return idempotent success
     RETURN jsonb_build_object('activated', true, 'idempotent', true);
   END IF;
 
-  -- 3. Verify: business has a usable channel
-  v_has_channel := false;
-  IF v_biz.whatsapp_channel_id IS NOT NULL THEN
-    -- Check channel is actually active
-    PERFORM 1 FROM public.whatsapp_channels
-      WHERE id = v_biz.whatsapp_channel_id AND is_active = true;
-    IF FOUND THEN
-      v_has_channel := true;
-    END IF;
+  IF v_biz.trial_ends_at IS NOT NULL AND v_existing_grant.id IS NULL THEN
+    -- Clock set but no grant: split state — fail closed
+    RETURN jsonb_build_object('activated', false, 'reason', 'split_state_clock_without_grant');
   END IF;
 
-  IF NOT v_has_channel AND v_biz.wa_method = 'shared' THEN
-    v_has_channel := true;
+  IF v_biz.trial_ends_at IS NULL AND v_existing_grant.id IS NOT NULL THEN
+    -- Grant exists but no clock: split state — fail closed
+    RETURN jsonb_build_object('activated', false, 'reason', 'split_state_grant_without_clock');
+  END IF;
+
+  -- Both NULL: proceed with fresh activation
+
+  -- 3. [Blocker 3] Verify: business has a durably usable channel
+  --    Shared: business must be active (finalized onboarding)
+  --    Dedicated: whatsapp_channel_id must reference an active channel
+  v_has_channel := false;
+
+  IF v_biz.wa_method IN ('transfer', 'dedicated') THEN
+    -- Dedicated: must have an active assigned channel
+    IF v_biz.whatsapp_channel_id IS NOT NULL THEN
+      PERFORM 1 FROM public.whatsapp_channels
+        WHERE id = v_biz.whatsapp_channel_id AND is_active = true;
+      IF FOUND THEN
+        v_has_channel := true;
+      END IF;
+    END IF;
+  ELSIF v_biz.wa_method = 'shared' THEN
+    -- Shared: business must be finalized (status = 'active')
+    IF v_biz.status = 'active' THEN
+      v_has_channel := true;
+    END IF;
   END IF;
 
   IF NOT v_has_channel THEN
@@ -263,15 +300,23 @@ BEGIN
     RETURN jsonb_build_object('activated', false, 'reason', 'financial_gate_off');
   END IF;
 
-  -- 6. Read trial_days from config
-  v_trial_days_val := v_config.config_snapshot -> 'trial_days';
-  IF v_trial_days_val IS NULL OR jsonb_typeof(v_trial_days_val) <> 'number' THEN
+  -- 6. [Blocker 5] Read and defensively validate trial_days from config
+  v_trial_days_raw := v_config.config_snapshot -> 'trial_days';
+  IF v_trial_days_raw IS NULL OR jsonb_typeof(v_trial_days_raw) <> 'number' THEN
     RETURN jsonb_build_object('activated', false, 'reason', 'invalid_trial_days');
   END IF;
-  v_trial_days := (v_trial_days_val::TEXT)::INTEGER;
-  IF v_trial_days <= 0 THEN
+
+  -- Defensive cast: catch malformed numeric values
+  BEGIN
+    v_trial_days_numeric := (v_trial_days_raw::TEXT)::NUMERIC;
+  EXCEPTION WHEN OTHERS THEN
+    RETURN jsonb_build_object('activated', false, 'reason', 'invalid_trial_days');
+  END;
+
+  IF v_trial_days_numeric <= 0 OR v_trial_days_numeric <> FLOOR(v_trial_days_numeric) THEN
     RETURN jsonb_build_object('activated', false, 'reason', 'invalid_trial_days');
   END IF;
+  v_trial_days := v_trial_days_numeric::INTEGER;
 
   -- 7. Read trial_credit_minor_by_currency from config
   v_trial_credit := v_config.config_snapshot -> 'trial_credit_minor_by_currency';
@@ -307,11 +352,17 @@ BEGIN
     END IF;
   END LOOP;
 
-  -- 9. Look up trial credit amount for resolved currency
-  v_amount := (v_trial_credit ->> v_currency)::INTEGER;
-  IF v_amount IS NULL OR v_amount <= 0 THEN
+  -- 9. [Blocker 5] Look up trial credit amount with defensive cast
+  BEGIN
+    v_amount_raw := (v_trial_credit ->> v_currency)::NUMERIC;
+  EXCEPTION WHEN OTHERS THEN
+    RETURN jsonb_build_object('activated', false, 'reason', 'invalid_trial_credit_amount');
+  END;
+
+  IF v_amount_raw IS NULL OR v_amount_raw <= 0 OR v_amount_raw <> FLOOR(v_amount_raw) THEN
     RETURN jsonb_build_object('activated', false, 'reason', 'no_trial_credit_for_currency');
   END IF;
+  v_amount := v_amount_raw::INTEGER;
 
   -- 10. Compute trial end date
   v_trial_ends_at := v_decision_time + (v_trial_days * INTERVAL '1 day');
@@ -323,7 +374,7 @@ BEGIN
   );
 
   IF (v_grant_result ->> 'granted')::BOOLEAN = true THEN
-    -- Grant succeeded: set trial_ends_at atomically
+    -- Grant succeeded: set trial_ends_at atomically in same transaction
     UPDATE public.businesses
     SET trial_ends_at = v_trial_ends_at
     WHERE id = p_business_id;
@@ -333,8 +384,13 @@ BEGIN
   END IF;
 
   IF (v_grant_result ->> 'idempotent')::BOOLEAN = true THEN
-    -- Replay: grant already exists with same params
-    RETURN jsonb_build_object('activated', true, 'idempotent', true);
+    -- [Blocker 2] Grant exists but clock was NULL (verified above).
+    -- Converge: set the clock to match the grant's expires_at.
+    UPDATE public.businesses
+    SET trial_ends_at = v_trial_ends_at
+    WHERE id = p_business_id AND trial_ends_at IS NULL;
+
+    RETURN jsonb_build_object('activated', true, 'idempotent', true, 'converged_clock', true);
   END IF;
 
   IF v_grant_result ->> 'reason' = 'idempotency_key_mismatch' THEN
@@ -417,13 +473,29 @@ BEGIN
     END LOOP;
 
     IF v_match_count <> 1 THEN
+      -- [Blocker 4] Create durable pending alert for unresolved legacy trial
+      INSERT INTO public.alerts (business_id, type, severity, title, message)
+      VALUES (v_biz.id, 'trial_config_missing', 'warning',
+        'Legacy trial v2 grant pending',
+        'Currency resolution failed during M372 grandfather (match_count=' || v_match_count || '). Trial clock preserved; grant pending retry.')
+      ON CONFLICT (business_id, type) WHERE type = 'trial_config_missing' DO NOTHING;
       v_skipped := v_skipped + 1;
       CONTINUE;
     END IF;
 
     -- Get amount for resolved currency
-    v_amount := (v_trial_credit ->> v_currency)::INTEGER;
+    BEGIN
+      v_amount := (v_trial_credit ->> v_currency)::INTEGER;
+    EXCEPTION WHEN OTHERS THEN
+      v_amount := NULL;
+    END;
     IF v_amount IS NULL OR v_amount <= 0 THEN
+      -- [Blocker 4] Create durable pending alert for unresolved legacy trial
+      INSERT INTO public.alerts (business_id, type, severity, title, message)
+      VALUES (v_biz.id, 'trial_config_missing', 'warning',
+        'Legacy trial v2 grant pending',
+        'Credit amount invalid for currency ' || COALESCE(v_currency, 'NULL') || ' during M372 grandfather. Trial clock preserved; grant pending retry.')
+      ON CONFLICT (business_id, type) WHERE type = 'trial_config_missing' DO NOTHING;
       v_skipped := v_skipped + 1;
       CONTINUE;
     END IF;

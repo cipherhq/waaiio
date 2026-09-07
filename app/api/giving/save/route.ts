@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { getConfiguredCapabilities } from '@/lib/capabilities/service';
 import { getEffectiveCapabilities } from '@/lib/capabilities/policy';
+import { resolveTrialCredit } from '@/lib/trial-status';
 import { buildGivingServicePayload, type GivingServiceInput } from '@/lib/services/payload-builders';
 
 const SUPPORTED_INTERVALS = new Set(['weekly', 'monthly']);
@@ -77,11 +78,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: false, reason: 'capability_check_failed' }, { status: 500 });
     }
 
+    const hasTrialCredit = await resolveTrialCredit(supabase, businessId);
     const effectiveCaps = getEffectiveCapabilities({
       configuredCapabilities: configResult.rows,
       tier: business.subscription_tier || 'free',
       trialEndsAt: business.trial_ends_at || null,
       overrides: (business.capability_overrides as string[]) || [],
+      hasTrialCredit,
     });
 
     if (!effectiveCaps.effective.includes('recurring')) {

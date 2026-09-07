@@ -10,6 +10,7 @@ import { FlowExecutor } from './flows/executor';
 import { getLocale, formatCurrency, type BusinessCategoryKey, type FlowType, type CountryCode } from '@/lib/constants';
 import { getConfiguredCapabilities } from '@/lib/capabilities/service';
 import { getEffectiveCapabilities as resolveEffectiveCaps } from '@/lib/capabilities/policy';
+import { resolveTrialCredit } from '@/lib/trial-status';
 import { getCategoryLabels } from '@/lib/categoryConfig';
 import type { CapabilityId } from '@/lib/capabilities/types';
 import { parseSmartIntent, parseSmartIntentHybrid, matchServiceFromKeywords, buildAcknowledgment } from './smart-intent';
@@ -670,11 +671,13 @@ export class BotService {
             }));
           }
 
+          const hasTrialCredit = await resolveTrialCredit(this.supabase, currentBiz.id as string);
           const policyResult = resolveEffectiveCaps({
             configuredCapabilities: configuredRows,
             overrides,
             tier: (currentBiz.subscription_tier as string) || 'free',
             trialEndsAt: currentBiz.trial_ends_at as string,
+            hasTrialCredit,
           });
 
           // Refresh the session's capabilities array with CURRENT effective set
@@ -1204,12 +1207,14 @@ export class BotService {
           ? [] // fail closed on override read error
           : (overrideRows.data || []).map((r: { capability: string }) => r.capability);
 
+        const hasTrialCredit = await resolveTrialCredit(this.supabase, business.id);
         if (capResult.rows.length > 0) {
           const policyResult = resolveEffectiveCaps({
             configuredCapabilities: capResult.rows,
             overrides,
             tier: business.subscription_tier,
             trialEndsAt: business.trial_ends_at,
+            hasTrialCredit,
           });
           capabilities = policyResult.effective;
         } else {
@@ -1224,6 +1229,7 @@ export class BotService {
             overrides,
             tier: business.subscription_tier,
             trialEndsAt: business.trial_ends_at,
+            hasTrialCredit,
           });
           capabilities = policyResult.effective;
         }

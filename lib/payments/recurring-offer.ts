@@ -14,6 +14,7 @@ import { logger } from '@/lib/logger';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
 import { getConfiguredCapabilities } from '@/lib/capabilities/service';
 import { getEffectiveCapabilities } from '@/lib/capabilities/policy';
+import { resolveTrialCredit } from '@/lib/trial-status';
 
 interface PaymentForRecurring {
   id: string;
@@ -106,11 +107,13 @@ export async function checkAndOfferRecurring(
     const configResult = await getConfiguredCapabilities(supabase, businessId);
     if (!configResult.ok) return;
 
+    const hasTrialCredit = await resolveTrialCredit(supabase, businessId);
     const effectiveCaps = getEffectiveCapabilities({
       configuredCapabilities: configResult.rows,
       tier: business.subscription_tier || 'free',
       trialEndsAt: business.trial_ends_at || null,
       overrides: (business.capability_overrides as string[]) || [],
+      hasTrialCredit,
     });
 
     if (!effectiveCaps.effective.includes('recurring')) {

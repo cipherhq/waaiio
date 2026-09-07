@@ -12,12 +12,8 @@ import { isTrialActive } from '@/lib/capabilities/policy';
  * the time condition (trial_ends_at) and the credit condition
  * (remaining trial_v2 grant in messaging_allowances).
  *
- * Use this in payment paths and other server-side code that has
- * access to a Supabase client.
- *
- * Falls back to time-only check if the credit query fails (e.g., table
- * doesn't exist yet during migration rollout, or in test environments
- * with incomplete mocks).
+ * Fails closed: if the credit query fails or throws, returns false.
+ * No fallback to time-only check.
  */
 export async function resolveTrialStatus(
   supabase: SupabaseClient,
@@ -39,15 +35,40 @@ export async function resolveTrialStatus(
       .limit(1);
 
     if (error) {
-      // Query failed — fall back to time-only check (backward compat)
-      return isTrialActive(tier, trialEndsAt, true);
+      // Query failed — fail closed, no trial access
+      return false;
     }
 
     const hasCredit = (data?.length ?? 0) > 0;
     return isTrialActive(tier, trialEndsAt, hasCredit);
   } catch {
-    // Supabase client doesn't support .gt() or table doesn't exist
-    // Fall back to time-only check for backward compat
-    return isTrialActive(tier, trialEndsAt, true);
+    // DB/network error — fail closed, no trial access
+    return false;
+  }
+}
+
+/**
+ * Resolves the canonical trial_v2 credit state for a business.
+ * Returns true if the business has a trial_v2 grant with remaining_minor > 0.
+ * Fails closed: returns false on any DB/query error.
+ */
+export async function resolveTrialCredit(
+  supabase: SupabaseClient,
+  businessId: string,
+): Promise<boolean> {
+  try {
+    const { data, error } = await supabase
+      .from('messaging_allowances')
+      .select('remaining_minor')
+      .eq('business_id', businessId)
+      .eq('type', 'trial_grant')
+      .eq('source_ref', 'trial_v2')
+      .gt('remaining_minor', 0)
+      .limit(1);
+
+    if (error) return false;
+    return (data?.length ?? 0) > 0;
+  } catch {
+    return false;
   }
 }

@@ -42,14 +42,14 @@ function isTierSufficient(
  * No grace period.
  *
  * @param hasTrialCredit - Whether the business still has remaining trial credit.
- *   Defaults to `true` for backward compatibility with callers that only check
- *   the time condition (legacy paths). New code should always resolve this from
- *   the messaging_allowances table via `resolveTrialStatus()`.
+ *   Required. Must be resolved from the messaging_allowances table via
+ *   `resolveTrialStatus()` or equivalent DB query. No default — callers must
+ *   explicitly provide the canonical credit state.
  */
 export function isTrialActive(
   tier: string,
   trialEndsAt: string | Date | null,
-  hasTrialCredit: boolean = true,
+  hasTrialCredit: boolean,
 ): boolean {
   if (tier !== 'free') return false;
   if (!hasTrialCredit) return false;
@@ -78,8 +78,8 @@ export interface GetEffectiveCapabilitiesParams {
   overrides: string[];
   tier: string;
   trialEndsAt: string | Date | null;
-  /** Whether the business still has remaining trial credit. Defaults to true for backward compat. */
-  hasTrialCredit?: boolean;
+  /** Whether the business still has remaining trial credit. Required — resolve from DB. */
+  hasTrialCredit: boolean;
 }
 
 export interface BlockedCapability {
@@ -122,7 +122,7 @@ export function getEffectiveCapabilities(
       : 'free'
   ) as SubscriptionTier;
 
-  const trialActive = isTrialActive(tier, trialEndsAt, hasTrialCredit ?? true);
+  const trialActive = isTrialActive(tier, trialEndsAt, hasTrialCredit);
   const overrideSet = new Set(overrides);
 
   const effective: CapabilityId[] = [];
@@ -172,8 +172,8 @@ export interface CanModifyCapabilityParams {
   tier: string;
   trialEndsAt: string | Date | null;
   overrides: string[];
-  /** Whether the business still has remaining trial credit. Defaults to true for backward compat. */
-  hasTrialCredit?: boolean;
+  /** Whether the business still has remaining trial credit. Required — resolve from DB. */
+  hasTrialCredit: boolean;
 }
 
 export interface CanModifyCapabilityResult {
@@ -212,7 +212,7 @@ export function canModifyCapability(
 
   if (isTierSufficient(safeTier, required)) return { allowed: true };
   if (overrides.includes(capId)) return { allowed: true };
-  if (isTrialActive(tier, trialEndsAt, hasTrialCredit ?? true)) return { allowed: true };
+  if (isTrialActive(tier, trialEndsAt, hasTrialCredit)) return { allowed: true };
 
   return { allowed: false, reason: `requires_${required}_tier` };
 }

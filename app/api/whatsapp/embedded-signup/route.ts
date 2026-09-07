@@ -180,7 +180,7 @@ export async function POST(request: NextRequest) {
     }
 
     // 7. Update business — assign channel and set wa_method
-    await service.from('businesses')
+    const { error: bizAssignError } = await service.from('businesses')
       .update({
         wa_method: 'transfer',
         whatsapp_channel_id: channel.id,
@@ -189,8 +189,15 @@ export async function POST(request: NextRequest) {
       .eq('id', business_id);
 
     // 8. Attempt trial activation (atomic: grant + clock together)
+    // Only invoke if the prerequisite channel assignment succeeded — the DB authority
+    // checks for an active assigned channel for dedicated businesses.
+    if (bizAssignError) {
+      console.warn('[EMBEDDED-SIGNUP] Business channel assignment failed, skipping trial activation:', bizAssignError.message);
+    }
     try {
-      await service.rpc('activate_trial_if_eligible', { p_business_id: business_id });
+      if (!bizAssignError) {
+        await service.rpc('activate_trial_if_eligible', { p_business_id: business_id });
+      }
     } catch (trialErr) {
       // Non-fatal: trial activation failure should not block channel setup
       console.warn('[EMBEDDED-SIGNUP] Trial activation failed (non-fatal):', trialErr);

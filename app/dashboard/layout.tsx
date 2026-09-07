@@ -11,6 +11,7 @@ import { NotificationBell } from '@/components/dashboard/NotificationBell';
 import { IdleTimeout } from '@/components/dashboard/IdleTimeout';
 import { CATEGORY_DEFAULT_CAPABILITIES } from '@/lib/capabilities/types';
 import { getEffectiveCapabilities, type ConfiguredCapability } from '@/lib/capabilities/policy';
+import { resolveTrialCredit } from '@/lib/trial-status';
 import type { CapabilityId } from '@/lib/capabilities/types';
 import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
@@ -188,6 +189,9 @@ export default async function DashboardLayout({
   let pausedCapabilities: Array<{ capability: CapabilityId; reason: string }> = [];
   let disabledCapabilities: CapabilityId[] = [];
 
+  // Resolve canonical trial credit state (fail closed on error)
+  const hasTrialCredit = await resolveTrialCredit(supabase, business.id);
+
   if (capError) {
     // DB read error — fail closed with empty capabilities rather than exposing defaults
     console.warn('[DASHBOARD] Capability read failed:', capError.message);
@@ -199,6 +203,7 @@ export default async function DashboardLayout({
       overrides: overrideError ? [] : capabilityOverrides,
       tier: business.subscription_tier,
       trialEndsAt: business.trial_ends_at,
+      hasTrialCredit,
     });
     capabilities = policyResult.effective;
     selectedCapabilities = policyResult.selected;
@@ -217,6 +222,7 @@ export default async function DashboardLayout({
       overrides: overrideError ? [] : capabilityOverrides,
       tier: business.subscription_tier,
       trialEndsAt: business.trial_ends_at,
+      hasTrialCredit,
     });
     capabilities = policyResult.effective;
     selectedCapabilities = policyResult.selected;
