@@ -438,8 +438,9 @@ describe.skipIf(!canRun)('concurrent activation (deterministic dblink barrier pr
           PERFORM dblink_connect('worker_b', 'dbname=' || current_database());
 
           -- Coordinator holds the business row lock
-          PERFORM dblink_exec('coord',
-            'BEGIN; SELECT id FROM public.businesses WHERE id = ''' || p_biz_id || ''' FOR UPDATE;');
+          PERFORM dblink_exec('coord', 'BEGIN;');
+          PERFORM * FROM dblink('coord',
+            'SELECT id FROM public.businesses WHERE id = ''' || p_biz_id || ''' FOR UPDATE') AS t(id UUID);
 
           -- Get worker PIDs
           SELECT pid INTO v_pid_a
