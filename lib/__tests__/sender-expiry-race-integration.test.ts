@@ -199,7 +199,11 @@ describe.skipIf(!canRun)('Sender expiry-race integration (#261 production-shaped
     let beforeCallCount = 0;
     sender.beforeEachAttempt = () => {
       beforeCallCount++;
-      if (beforeCallCount === 2) {
+      // beforeEachAttempt is called:
+      //   1: withRetry pre-loop guard
+      //   2: withAttemptAndGuard pre-auth (line 301) — attempt exists but NOT yet authorized
+      //   3: withAttemptAndGuard post-auth (line 358) — attempt IS reserved, pre-markSending
+      if (beforeCallCount === 3) {
         // Post-auth, pre-markSending: find the reserved attempt and release it
         const aid = psqlMayFail(
           `SELECT id FROM message_send_attempts WHERE business_id = '${bizId}' AND recipient_phone = '${UNIQUE_PHONE}' AND financial_disposition = 'reserved' ORDER BY created_at DESC LIMIT 1;`
