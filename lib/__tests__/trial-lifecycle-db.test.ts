@@ -115,9 +115,10 @@ function ensureTrialConfig(): string {
 }
 
 function cleanup(bizId: string) {
-  psql(`DELETE FROM public.messaging_allowance_events WHERE business_id = '${bizId}'`);
-  psql(`DELETE FROM public.messaging_allowances WHERE business_id = '${bizId}'`);
-  psql(`DELETE FROM public.alerts WHERE business_id = '${bizId}'`);
+  // messaging_allowance_events is append-only (no DELETE allowed); skip cleanup
+  // Each test uses a unique business_id so leftover events don't interfere
+  psqlMayFail(`DELETE FROM public.messaging_allowances WHERE business_id = '${bizId}'`);
+  psqlMayFail(`DELETE FROM public.alerts WHERE business_id = '${bizId}'`);
 }
 
 // ══════════════════════════════════════════════════════════
