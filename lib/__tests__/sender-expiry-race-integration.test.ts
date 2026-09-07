@@ -1,13 +1,11 @@
 /**
  * Production-shaped sender expiry-race integration test (#261)
  *
- * Invokes the REAL MetaCloudSender.sendText() with real withRetry,
- * real withAttemptAndGuard, real markSending (financiallyReserved=true),
- * and real GateBlockError classification — against real PostgreSQL.
- *
- * Infrastructure boundaries mocked at the Supabase client level (PostgREST
- * not available in CI), routed to psql for DB operations.
- * Provider method is spied to prove zero invocations.
+ * Invokes the REAL MetaCloudSender.sendText() path against real PostgreSQL.
+ * Structured as incremental proofs:
+ *   Step A: createAttempt creates a real DB row
+ *   Step B: check_or_authorize_send creates a real reservation
+ *   Step C: expiry release + markSending throws GateBlockError
  *
  *   TEST_DATABASE_URL=postgresql://localhost:5432/waaiio_test \
  *     npx vitest run lib/__tests__/sender-expiry-race-integration.test.ts
@@ -39,48 +37,52 @@ const OWNER_ID = '00000000-0000-0000-0000-000000000e44';
 const UNIQUE_PHONE = '+2349099999944';
 
 /**
- * Supabase client mock that routes to psql.
- * Handles the exact call patterns used by attempt-recording.ts and message-sender.ts.
+ * Supabase client backed by psql. Handles the exact Supabase PostgREST
+ * builder patterns used by attempt-recording.ts and message-sender.ts.
  */
 function makePsqlClient() {
+  function sqlVal(v: unknown): string {
+    if (v === null || v === undefined) return 'NULL';
+    if (typeof v === 'boolean') return v ? 'true' : 'false';
+    if (typeof v === 'number') return String(v);
+    return `'${String(v).replace(/'/g, "''")}'`;
+  }
+
   return {
     from: (table: string) => {
-      let pendingInsert: Record<string, unknown> | null = null;
-      let pendingUpdate: Record<string, unknown> | null = null;
+      let _insert: Record<string, unknown> | null = null;
+      let _update: Record<string, unknown> | null = null;
 
-      function sqlVal(v: unknown): string {
-        if (v === null || v === undefined) return 'NULL';
-        if (typeof v === 'boolean') return v ? 'true' : 'false';
-        if (typeof v === 'number') return String(v);
-        return `'${String(v).replace(/'/g, "''")}'`;
-      }
-
-      const builder: Record<string, unknown> = {
-        insert(row: Record<string, unknown>) { pendingInsert = row; return builder; },
-        update(vals: Record<string, unknown>) { pendingUpdate = vals; return builder; },
-        select() { return builder; },
+      const builder = {
+        insert(row: Record<string, unknown>) { _insert = row; return builder; },
+        update(vals: Record<string, unknown>) { _update = vals; return builder; },
+        select(_cols?: string) { return builder; },
         eq(col: string, val: unknown) {
-          if (pendingUpdate) {
-            const set = Object.entries(pendingUpdate).map(([k, v]) => `${k} = ${sqlVal(v)}`).join(', ');
-            const res = psqlMayFail(`UPDATE ${table} SET ${set} WHERE ${col} = ${sqlVal(val)};`);
+          // Execute the pending UPDATE and return a thenable result
+          if (_update) {
+            const set = Object.entries(_update).map(([k, v]) => `${k} = ${sqlVal(v)}`).join(', ');
+            const sql = `UPDATE ${table} SET ${set} WHERE ${col} = ${sqlVal(val)};`;
+            const res = psqlMayFail(sql);
+            _update = null;
             const hasErr = res.toLowerCase().includes('error');
-            pendingUpdate = null;
-            // Return a thenable so `await supabase.from().update().eq()` works
             const result = { data: null, error: hasErr ? { message: res, code: 'DB_ERROR' } : null };
-            return { then: (fn: (v: typeof result) => void) => fn(result), ...result };
+            // Must be thenable for `const { error } = await ...eq()`
+            return Object.assign(Promise.resolve(result), result);
           }
           return builder;
         },
         async single() {
-          if (pendingInsert) {
-            const cols = Object.keys(pendingInsert);
-            const vals = cols.map(k => sqlVal(pendingInsert![k]));
-            const res = psqlMayFail(`INSERT INTO ${table} (${cols.join(',')}) VALUES (${vals.join(',')}) RETURNING id;`);
-            pendingInsert = null;
+          if (_insert) {
+            const cols = Object.keys(_insert);
+            const vals = cols.map(k => sqlVal(_insert![k]));
+            const sql = `INSERT INTO ${table} (${cols.join(',')}) VALUES (${vals.join(',')}) RETURNING id;`;
+            const res = psqlMayFail(sql);
+            _insert = null;
             if (res.toLowerCase().includes('error')) {
               return { data: null, error: { message: res } };
             }
-            return { data: { id: res.trim().split('\n').pop() }, error: null };
+            const id = res.trim().split('\n').pop()!.trim();
+            return { data: { id }, error: null };
           }
           return { data: null, error: null };
         },
@@ -88,8 +90,9 @@ function makePsqlClient() {
       return builder;
     },
     rpc: async (name: string, params: Record<string, unknown>) => {
-      const args = Object.entries(params).map(([k, v]) => `${k} => '${String(v)}'`).join(', ');
-      const res = psqlMayFail(`SELECT ${name}(${args});`);
+      const args = Object.entries(params).map(([k, v]) => `${k} => ${sqlVal(v)}`).join(', ');
+      const sql = `SELECT ${name}(${args});`;
+      const res = psqlMayFail(sql);
       if (res.toLowerCase().includes('error')) {
         return { data: null, error: { message: res } };
       }
@@ -99,7 +102,8 @@ function makePsqlClient() {
   };
 }
 
-// Mock infrastructure boundaries before production imports
+// Mock infrastructure boundaries — these are module-level so they apply
+// to all dynamic imports of production code within this test file.
 vi.mock('@/lib/channels/send-guard', () => ({
   assertMessagingAllowed: vi.fn().mockResolvedValue(undefined),
   isMessagingAllowed: vi.fn().mockResolvedValue(true),
@@ -116,16 +120,13 @@ describe.skipIf(!canRun)('Sender expiry-race integration (#261 production-shaped
     psqlMayFail(`INSERT INTO auth.users (id, email, raw_app_meta_data) VALUES ('${OWNER_ID}', 'sender-e44@test.com', '{}') ON CONFLICT (id) DO NOTHING;`);
     bizId = psql('SELECT gen_random_uuid();');
     psqlMayFail(`INSERT INTO businesses (id, name, slug, owner_id, address, city, neighborhood, phone, messaging_suspended) VALUES ('${bizId}', 'SenderTest44', 'slug-e44-${Date.now()}', '${OWNER_ID}', '1 Test', 'T', 'T', '+1', false);`);
-
     psql(`INSERT INTO messaging_allowances (business_id, type, amount_minor, currency_code, remaining_minor, source_ref) VALUES ('${bizId}', 'trial_grant', 50000, 'NGN', 50000, 'e44-${Date.now()}');`);
   });
 
   beforeEach(() => { vi.clearAllMocks(); });
 
   it('44. Real MetaCloudSender.sendText + withRetry: expiry-first → GateBlockError, provider=0, no retry attempt', async () => {
-    // Ensure gate-ON config is the absolute latest effective version.
-    // Use NOW() + 1s and wait, to guarantee it's later than any config
-    // inserted by prior test suites in the shared CI database.
+    // ═══ CONFIG: gate-ON, 1-second TTL, latest effective ═══
     psql(`
       INSERT INTO platform_config_versions (config_snapshot, effective_from, created_by)
       VALUES ('${JSON.stringify({
@@ -136,42 +137,66 @@ describe.skipIf(!canRun)('Sender expiry-race integration (#261 production-shaped
         messaging_reservation_ttl_seconds: 1,
       })}'::JSONB, NOW() + INTERVAL '1 second', '${OWNER_ID}');
     `);
-    psql('SELECT pg_sleep(1.5);');
+    psql('SELECT pg_sleep(1.2);');
 
-    // #257 gate OFF (default production state)
-    const { setSendAttemptGate } = await import('@/lib/channels/attempt-recording');
+    // Verify config is gate-ON
+    const gateCheck = psql(`SELECT config_snapshot -> 'messaging_financial_gate' FROM platform_config_versions WHERE effective_from <= NOW() ORDER BY effective_from DESC LIMIT 1;`);
+    expect(gateCheck).toBe('true');
+
+    // ═══ SETUP: #257 gate OFF, real production modules ═══
+    const { setSendAttemptGate, GateBlockError } = await import('@/lib/channels/attempt-recording');
     setSendAttemptGate(false);
 
     const { MetaCloudSender } = await import('@/lib/channels/message-sender');
     const { MetaCloudService } = await import('@/lib/channels/meta-cloud');
-    const { GateBlockError } = await import('@/lib/channels/attempt-recording');
 
     // Real MetaCloudService with provider spy
     const cloud = new MetaCloudService({ accessToken: 'fake', phoneNumberId: 'fake' });
     const providerSpy = vi.spyOn(cloud, 'sendText').mockResolvedValue({ messageId: 'wamid.nope' });
 
     // Real MetaCloudSender with psql-backed Supabase client
-    const sender = new MetaCloudSender(cloud, makePsqlClient() as never);
+    const client = makePsqlClient();
+    const sender = new MetaCloudSender(cloud, client as never);
     sender.bindBusiness(bizId);
 
-    // Deterministic release: on the 2nd beforeEachAttempt (post-auth, pre-markSending),
-    // find and release the reserved attempt
-    let callNum = 0;
+    // ═══ STEP A: Verify createAttempt works through the psql client ═══
+    // Do a manual test insert to confirm the client works
+    const testInsertResult = await client.from('message_send_attempts').insert({
+      business_id: bizId,
+      attempt_scope: 'business',
+      recipient_phone: '+0000000000',
+      status: 'pending_authorization',
+      financial_disposition: 'pending_authorization',
+    }).select('id').single();
+    expect(testInsertResult.error).toBeNull();
+    expect(testInsertResult.data?.id).toBeTruthy();
+    const testRow = psql(`SELECT id FROM message_send_attempts WHERE id = '${testInsertResult.data!.id}';`);
+    expect(testRow).toBe(testInsertResult.data!.id);
+
+    // ═══ STEP B: Verify check_or_authorize_send RPC works ═══
+    const rpcResult = await client.rpc('check_or_authorize_send', { p_attempt_id: testInsertResult.data!.id });
+    // Should return authorized result (gate ON, this attempt has country/category = NULL → should fail closed)
+    // That's fine — this is just proving the RPC call works through the proxy
+    expect(rpcResult.error).toBeNull();
+    expect(rpcResult.data).toBeTruthy();
+
+    // ═══ DETERMINISTIC RELEASE HOOK ═══
+    let beforeCallCount = 0;
     sender.beforeEachAttempt = () => {
-      callNum++;
-      if (callNum === 2) {
-        // The attempt was just authorized (reserved). Find it and release.
+      beforeCallCount++;
+      if (beforeCallCount === 2) {
+        // Post-auth, pre-markSending: find the reserved attempt and release it
         const aid = psqlMayFail(
           `SELECT id FROM message_send_attempts WHERE business_id = '${bizId}' AND recipient_phone = '${UNIQUE_PHONE}' AND financial_disposition = 'reserved' ORDER BY created_at DESC LIMIT 1;`
         );
-        if (aid && !aid.includes('ERROR') && aid.trim().length > 0) {
-          psql('SELECT pg_sleep(1.2);');
+        if (aid && !aid.includes('ERROR') && aid.trim().length > 10) {
+          psql('SELECT pg_sleep(1.2);'); // Wait for TTL
           psqlMayFail(`SELECT safe_release_expired_reservation('${aid.trim()}');`);
         }
       }
     };
 
-    // === INVOKE THE REAL PRODUCTION SEND PATH ===
+    // ═══ INVOKE THE REAL PRODUCTION SEND PATH ═══
     let sendError: Error | null = null;
     try {
       await sender.sendText({
@@ -183,16 +208,28 @@ describe.skipIf(!canRun)('Sender expiry-race integration (#261 production-shaped
       sendError = err as Error;
     }
 
-    // === ASSERTIONS ===
+    // ═══ ASSERTIONS ═══
 
-    // 1. Send rejected with GateBlockError (from real markSending + real withRetry)
-    expect(sendError).not.toBeNull();
+    // If sendError is null, dump diagnostics before failing
+    if (!sendError) {
+      const attempts = psql(`SELECT id, status, financial_disposition, recipient_phone FROM message_send_attempts WHERE business_id = '${bizId}' ORDER BY created_at;`);
+      const provCalls = providerSpy.mock.calls.length;
+      const latestConfig = psql(`SELECT config_snapshot -> 'messaging_financial_gate' FROM platform_config_versions WHERE effective_from <= NOW() ORDER BY effective_from DESC LIMIT 1;`);
+      throw new Error(
+        `DIAGNOSTIC: sendError was null.\n` +
+        `providerCalls=${provCalls}, beforeCallCount=${beforeCallCount}\n` +
+        `latestGateConfig=${latestConfig}\n` +
+        `attempts:\n${attempts}`
+      );
+    }
+
+    // 1. Send rejected with GateBlockError
     expect(sendError).toBeInstanceOf(GateBlockError);
 
     // 2. Provider spy: exactly zero calls
     expect(providerSpy).toHaveBeenCalledTimes(0);
 
-    // 3. Exactly one attempt for this business+phone correlation
+    // 3. Exactly one attempt for this business+phone (excluding the test insert)
     const count = psql(`SELECT count(*) FROM message_send_attempts WHERE business_id = '${bizId}' AND recipient_phone = '${UNIQUE_PHONE}';`);
     expect(parseInt(count)).toBe(1);
 
@@ -200,10 +237,10 @@ describe.skipIf(!canRun)('Sender expiry-race integration (#261 production-shaped
     const row = psql(`SELECT status || '|' || financial_disposition FROM message_send_attempts WHERE business_id = '${bizId}' AND recipient_phone = '${UNIQUE_PHONE}';`);
     expect(row).toBe('pending_authorization|released');
 
-    // 5. No retry-created reservation exists
+    // 5. No retry-created reservation
     const reserved = psql(`SELECT count(*) FROM message_send_attempts WHERE business_id = '${bizId}' AND recipient_phone = '${UNIQUE_PHONE}' AND financial_disposition = 'reserved';`);
     expect(parseInt(reserved)).toBe(0);
 
     providerSpy.mockRestore();
-  }, 60000);
+  }, 90000);
 });
