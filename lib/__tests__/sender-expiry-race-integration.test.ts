@@ -160,25 +160,40 @@ describe.skipIf(!canRun)('Sender expiry-race integration (#261 production-shaped
     sender.bindBusiness(bizId);
 
     // ═══ STEP A: Verify createAttempt works through the psql client ═══
-    // Do a manual test insert to confirm the client works
+    // Replicate the EXACT insert that createAttempt() does
     const testInsertResult = await client.from('message_send_attempts').insert({
       business_id: bizId,
       attempt_scope: 'business',
       recipient_phone: '+0000000000',
+      recipient_country_code: null,
+      phone_number_id: null,
+      channel_id: null,
+      flow_type: null,
+      session_id: null,
+      transaction_ref: null,
+      message_category: 'service',
+      template_name: null,
+      is_free_entry_point: false,
+      config_version_id: null,
       status: 'pending_authorization',
       financial_disposition: 'pending_authorization',
     }).select('id').single();
-    expect(testInsertResult.error).toBeNull();
+
+    if (testInsertResult.error) {
+      throw new Error(`STEP A FAILED: createAttempt proxy insert error: ${JSON.stringify(testInsertResult.error)}`);
+    }
     expect(testInsertResult.data?.id).toBeTruthy();
     const testRow = psql(`SELECT id FROM message_send_attempts WHERE id = '${testInsertResult.data!.id}';`);
     expect(testRow).toBe(testInsertResult.data!.id);
 
     // ═══ STEP B: Verify check_or_authorize_send RPC works ═══
     const rpcResult = await client.rpc('check_or_authorize_send', { p_attempt_id: testInsertResult.data!.id });
-    // Should return authorized result (gate ON, this attempt has country/category = NULL → should fail closed)
-    // That's fine — this is just proving the RPC call works through the proxy
-    expect(rpcResult.error).toBeNull();
+    if (rpcResult.error) {
+      throw new Error(`STEP B FAILED: RPC proxy error: ${JSON.stringify(rpcResult.error)}`);
+    }
     expect(rpcResult.data).toBeTruthy();
+    // With gate ON, this should return authorized result (the attempt has category='service' + no country → should fail)
+    // We just need to prove the RPC call routes correctly
 
     // ═══ DETERMINISTIC RELEASE HOOK ═══
     let beforeCallCount = 0;
