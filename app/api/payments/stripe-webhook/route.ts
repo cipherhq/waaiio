@@ -180,14 +180,27 @@ export async function POST(request: NextRequest) {
                 .eq('business_id', metadata.business_id);
             }
 
-            // Resolve effective config version for payment provenance
+            // Use provider payment timestamp (data.created is Unix seconds)
+            const checkoutCreated = data.created as number | undefined;
+            if (!checkoutCreated) {
+              logger.error('[STRIPE-WEBHOOK] Missing checkout session created timestamp', { sessionId });
+              return NextResponse.json({ error: 'Missing provider timestamp' }, { status: 500 });
+            }
+            const providerTimestamp = new Date(checkoutCreated * 1000).toISOString();
+
+            // Resolve effective config version at provider payment time
             const { data: configVersion } = await supabase
               .from('platform_config_versions')
               .select('id')
-              .lte('effective_from', new Date().toISOString())
+              .lte('effective_from', providerTimestamp)
               .order('effective_from', { ascending: false })
               .limit(1)
               .single();
+
+            if (!configVersion) {
+              logger.error('[STRIPE-WEBHOOK] No config version found at provider payment time', { providerTimestamp });
+              return NextResponse.json({ error: 'Config version not found' }, { status: 500 });
+            }
 
             // Get subscription for this business
             const { data: subRecord } = await supabase
@@ -206,7 +219,7 @@ export async function POST(request: NextRequest) {
               // Persist payment evidence BEFORE calling RPC
               const stripeAmountSmallest = (data.amount_total as number) || 0;
               const stripeCurrency = ((data.currency as string) || '').toUpperCase();
-              await supabase.from('subscription_payments').insert({
+              const { data: paymentEvidence, error: evidenceInsertErr } = await supabase.from('subscription_payments').insert({
                 business_id: metadata.business_id,
                 subscription_id: subRecord.id,
                 amount: stripeAmountSmallest,
@@ -217,19 +230,25 @@ export async function POST(request: NextRequest) {
                 plan,
                 action: 'activation',
                 status: 'success',
-                config_version_id: configVersion?.id || null,
-                period_start: new Date().toISOString(),
-                period_end: (() => { const d = new Date(); d.setDate(d.getDate() + 30); return d.toISOString(); })(),
-              });
+                config_version_id: configVersion.id,
+                period_start: providerTimestamp,
+                period_end: (() => { const d = new Date(checkoutCreated * 1000); d.setDate(d.getDate() + 30); return d.toISOString(); })(),
+              }).select('id').single();
 
-              // Atomic activation via RPC — sets tier + grants allowance
+              if (evidenceInsertErr || !paymentEvidence) {
+                logger.error('[STRIPE-WEBHOOK] Payment evidence insert failed:', evidenceInsertErr);
+                return NextResponse.json({ error: 'Payment evidence insert failed' }, { status: 500 });
+              }
+
+              // Atomic activation via RPC — bound to exact payment evidence
               const { data: activationResult, error: activationError } = await supabase.rpc(
                 'activate_paid_subscription',
-                { p_subscription_id: subRecord.id },
+                { p_payment_id: paymentEvidence.id },
               );
 
               if (activationError) {
                 logger.error('[STRIPE-WEBHOOK] Paid activation RPC error:', activationError);
+                return NextResponse.json({ error: 'Activation RPC failed' }, { status: 500 });
               } else if (activationResult && activationResult.activated !== true) {
                 logger.error('[STRIPE-WEBHOOK] Paid activation rejected:', activationResult);
               }
@@ -379,19 +398,34 @@ export async function POST(request: NextRequest) {
             })
             .eq('id', platformSub.id);
 
-          // Resolve effective config version for payment provenance
+          // Use provider payment timestamp (invoice created or period_start)
+          const invoiceCreated = data.created as number | undefined;
+          const invoicePeriodStart = data.period_start as number | undefined;
+          const renewalProviderTs = invoiceCreated || invoicePeriodStart;
+          if (!renewalProviderTs) {
+            logger.error('[STRIPE-WEBHOOK] Missing invoice provider timestamp', { invoiceId: data.id });
+            return NextResponse.json({ error: 'Missing provider timestamp' }, { status: 500 });
+          }
+          const renewalProviderTimestamp = new Date(renewalProviderTs * 1000).toISOString();
+
+          // Resolve effective config version at provider payment time
           const { data: renewalConfig } = await supabase
             .from('platform_config_versions')
             .select('id')
-            .lte('effective_from', new Date().toISOString())
+            .lte('effective_from', renewalProviderTimestamp)
             .order('effective_from', { ascending: false })
             .limit(1)
             .single();
 
+          if (!renewalConfig) {
+            logger.error('[STRIPE-WEBHOOK] No config version found at renewal time', { renewalProviderTimestamp });
+            return NextResponse.json({ error: 'Config version not found' }, { status: 500 });
+          }
+
           const renewalProviderRef = (data.payment_intent as string) || (data.id as string);
 
           // Persist payment evidence BEFORE calling activation RPC
-          await supabase.from('subscription_payments').insert({
+          const { data: renewalEvidence, error: renewalEvidenceErr } = await supabase.from('subscription_payments').insert({
             business_id: platformSub.business_id,
             subscription_id: platformSub.id,
             amount: (data.amount_paid as number) || 0,
@@ -402,17 +436,23 @@ export async function POST(request: NextRequest) {
             plan: platformSub.plan,
             action: 'renewal',
             status: 'success',
-            config_version_id: renewalConfig?.id || null,
+            config_version_id: renewalConfig.id,
             period_start: periodStart,
             period_end: periodEnd,
-          });
+          }).select('id').single();
+
+          if (renewalEvidenceErr || !renewalEvidence) {
+            logger.error('[STRIPE-WEBHOOK] Renewal evidence insert failed:', renewalEvidenceErr);
+            return NextResponse.json({ error: 'Renewal evidence insert failed' }, { status: 500 });
+          }
 
           // Atomic activation: restores tier if downgraded + grants period allowance
           const { data: renewActivation, error: renewActivateErr } = await supabase.rpc(
-            'activate_paid_subscription', { p_subscription_id: platformSub.id },
+            'activate_paid_subscription', { p_payment_id: renewalEvidence.id },
           );
           if (renewActivateErr) {
-            console.warn('[STRIPE-WEBHOOK] Paid activation RPC error (non-fatal):', renewActivateErr);
+            logger.error('[STRIPE-WEBHOOK] Paid activation RPC error:', renewActivateErr);
+            return NextResponse.json({ error: 'Activation RPC failed' }, { status: 500 });
           } else if (renewActivation && renewActivation.activated !== true) {
             console.warn('[STRIPE-WEBHOOK] Paid activation rejected:', renewActivation);
           }

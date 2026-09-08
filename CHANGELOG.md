@@ -3,6 +3,28 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-09-06 — #263 Subscribe Now (5-blocker CTO fix)
+
+### What changed
+- **Blocker 1 (RPC bound to exact payment evidence):** `activate_paid_subscription(p_subscription_id UUID)` renamed to `activate_paid_subscription(p_payment_id UUID)`. The RPC now locks the exact `subscription_payments` row first, derives the subscription from it, validates the locked payment status, and builds `source_ref` from the locked payment's `provider_reference`. Added plan mismatch validation (payment.plan must match subscription.plan) and annual billing rejection (`billing_interval = 'year'`). Currency resolution now fails with specific reason when `match_count != 1`.
+- **Blocker 2 (Route errors fail closed):** `onboarding/verify/route.ts` now checks subscription upsert error (500), config version null (500), and payment evidence insert error (500). `stripe-webhook/route.ts` returns 500 on evidence insert failure and activation RPC failure for both `checkout.session.completed` and `invoice.paid`. `webhook/route.ts` (Paystack) returns 500 on evidence insert or activation failure.
+- **Blocker 3 (Config at provider payment time):** All three route files now resolve config using the provider's payment timestamp instead of `new Date()`. Stripe checkout uses `data.created`, Stripe invoice uses `data.created || data.period_start`, Paystack uses `data.paid_at || data.created_at`. Missing provider timestamp fails closed with 500.
+- **Blocker 4 (Complete commercial binding):** `activate_paid_subscription` now validates `v_payment.payment_plan` matches `v_sub.plan`, rejects `billing_interval = 'year'` with `annual_not_supported`, and rejects `match_count != 1` on currency resolution with specific `currency_resolution_failed` reason.
+- **Blocker 5 (Callers/tests updated):** All callers of `activate_paid_subscription` pass `p_payment_id` instead of `p_subscription_id`. Test helper returns `paymentId`, all 27 test invocations updated. Bridge webhook integration test mock updated with `paid_at` fixture and `activate_paid_subscription` RPC success path.
+
+### Files changed
+- `supabase/migrations/375_subscribe_now.sql` — RPC signature + validation logic
+- `app/api/onboarding/verify/route.ts` — fail-closed checks + provider timestamp
+- `app/api/payments/stripe-webhook/route.ts` — fail-closed + provider timestamp
+- `app/api/payments/webhook/route.ts` — fail-closed + provider timestamp
+- `lib/__tests__/subscribe-now-db.test.ts` — all tests updated for `p_payment_id`
+- `lib/__tests__/bridge-webhook-integration.test.ts` — mock updated for new RPC
+
+### What could break
+- Any external caller of `activate_paid_subscription` must now pass a payment ID, not a subscription ID
+- Routes now return 500 where they previously continued silently on config/evidence failures — retries may increase but data integrity is guaranteed
+- Annual billing interval is now explicitly rejected — must be re-enabled when annual pricing is supported
+
 ## 2026-09-05 — #262 Trial Lifecycle
 
 ### What changed

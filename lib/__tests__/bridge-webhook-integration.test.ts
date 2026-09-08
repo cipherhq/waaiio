@@ -57,6 +57,10 @@ function buildServiceMock(config: MockConfig = {}) {
                 return config.schemaReady
                   ? Promise.resolve({ data: null, error: null })
                   : Promise.resolve({ data: null, error: MISSING_TABLE_ERROR });
+              case 'subscription_payments':
+                return Promise.resolve({ data: { id: 'sp-evidence-1' }, error: null });
+              case 'platform_config_versions':
+                return Promise.resolve({ data: { id: 'cfg-v1' }, error: null });
               default:
                 return Promise.resolve({ data: null, error: null });
             }
@@ -123,6 +127,10 @@ function buildServiceMock(config: MockConfig = {}) {
 
   const rpcFn = vi.fn((fn: string, args: unknown) => {
     rpcCalls.push({ fn, args });
+    // activate_paid_subscription always succeeds (not schema-gated)
+    if (fn === 'activate_paid_subscription') {
+      return Promise.resolve({ data: { activated: true, allowance_granted: true }, error: null });
+    }
     if (!config.schemaReady) {
       return Promise.resolve({ data: null, error: MISSING_TABLE_ERROR });
     }
@@ -312,12 +320,12 @@ describe('Bridge v3.1: Actual POST handler integration', () => {
   it('Role C: platform renewal → 200, Block 4 skipped', async () => {
     const body = makeWebhookBody({
       subscription: { subscription_code: 'SUB_platform_123' },
+      paid_at: '2026-09-06T12:00:00.000Z',
     });
     const { status, mockData } = await callPOST(body, {
       existingPayment: null,
       platformSub: { id: 'plat-1', business_id: 'biz-1', plan: 'growth', paystack_subscription_code: 'SUB_platform_123' },
     });
-
     expect(status).toBe(200);
     expect(mockData.queriedTables).not.toContain('paystack_billing_attempts');
   });

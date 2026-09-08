@@ -5,7 +5,7 @@
 --   ALTERED: subscription_status enum — add 'pending'
 --   ALTERED: whatsapp_channels.connection_status CHECK — add 'provisioning'
 --   ALTERED: save_commercial_config / guard_commercial_settings — new key
---   NEW RPC: activate_paid_subscription(UUID) — atomic paid entitlement
+--   NEW RPC: activate_paid_subscription(p_payment_id UUID) — atomic paid entitlement (bound to exact payment)
 --   NEW RPC: reconcile_paid_allowance(UUID) — channel-READY allowance grant
 --   NEW INDEX: uq_subscription_allowance_pending on alerts
 -- ═══════════════════════════════════════════════════════
@@ -248,9 +248,10 @@ $$ LANGUAGE plpgsql;
 
 -- ══════════════════════════════════════════════════════════
 -- C. activate_paid_subscription(UUID) — atomic paid entitlement
+-- Bound to exact payment evidence: caller passes the payment ID, not subscription ID.
 -- ══════════════════════════════════════════════════════════
 
-CREATE OR REPLACE FUNCTION public.activate_paid_subscription(p_subscription_id UUID)
+CREATE OR REPLACE FUNCTION public.activate_paid_subscription(p_payment_id UUID)
 RETURNS JSONB
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -274,24 +275,57 @@ DECLARE
   v_grant_result JSONB;
   v_has_channel BOOLEAN;
 BEGIN
-  -- 1. Lock subscription FOR UPDATE
+  -- 1. Lock the exact payment row FOR UPDATE (evidence-first)
+  SELECT id, subscription_id, config_version_id, provider_reference, amount, currency,
+         period_start, period_end, plan AS payment_plan, status AS payment_status
+  INTO v_payment
+  FROM public.subscription_payments
+  WHERE id = p_payment_id
+  FOR UPDATE;
+
+  IF v_payment.id IS NULL THEN
+    RETURN jsonb_build_object('activated', false, 'reason', 'no_payment_evidence');
+  END IF;
+
+  -- 1a. Validate the locked payment is successful
+  IF v_payment.payment_status <> 'success' THEN
+    RETURN jsonb_build_object('activated', false, 'reason', 'payment_not_successful',
+      'payment_status', v_payment.payment_status);
+  END IF;
+
+  -- 2. Derive subscription from the locked payment row
+  IF v_payment.subscription_id IS NULL THEN
+    RETURN jsonb_build_object('activated', false, 'reason', 'payment_missing_subscription');
+  END IF;
+
   SELECT id, business_id, plan, status, amount, currency, billing_interval,
          current_period_start, current_period_end
   INTO v_sub
   FROM public.subscriptions
-  WHERE id = p_subscription_id
+  WHERE id = v_payment.subscription_id
   FOR UPDATE;
 
   IF v_sub.id IS NULL THEN
     RETURN jsonb_build_object('activated', false, 'reason', 'subscription_not_found');
   END IF;
 
-  -- 2. Validate plan is a known paid tier
+  -- 2a. Validate plan is a known paid tier
   IF v_sub.plan NOT IN ('growth', 'business') THEN
     RETURN jsonb_build_object('activated', false, 'reason', 'invalid_plan');
   END IF;
 
-  -- 3. Lock business FOR UPDATE (moved before payment evidence so renewals can proceed)
+  -- 2b. Reject annual billing (out of scope for #263)
+  IF v_sub.billing_interval = 'year' THEN
+    RETURN jsonb_build_object('activated', false, 'reason', 'annual_not_supported');
+  END IF;
+
+  -- 2c. Validate payment plan matches subscription plan (commercial binding)
+  IF v_payment.payment_plan IS NOT NULL AND v_payment.payment_plan <> v_sub.plan THEN
+    RETURN jsonb_build_object('activated', false, 'reason', 'plan_mismatch',
+      'payment_plan', v_payment.payment_plan, 'subscription_plan', v_sub.plan);
+  END IF;
+
+  -- 3. Lock business FOR UPDATE
   SELECT id, subscription_tier, whatsapp_channel_id, wa_method, status,
          country_code
   INTO v_biz
@@ -303,29 +337,14 @@ BEGIN
     RETURN jsonb_build_object('activated', false, 'reason', 'business_not_found');
   END IF;
 
-  -- 4. Look up canonical payment evidence for this subscription
-  SELECT id, config_version_id, provider_reference, amount, currency,
-         period_start, period_end
-  INTO v_payment
-  FROM public.subscription_payments
-  WHERE subscription_id = p_subscription_id
-    AND status = 'success'
-  ORDER BY created_at DESC
-  LIMIT 1;
-
-  IF v_payment.id IS NULL THEN
-    RETURN jsonb_build_object('activated', false, 'reason', 'no_payment_evidence');
-  END IF;
-
-  -- 4a. Idempotent: if already active with matching tier AND same payment evidence period,
+  -- 4. Idempotent: if already active with matching tier AND same payment evidence,
   -- this is a duplicate call — not a renewal. Return early.
   IF v_sub.status = 'active' AND v_biz.subscription_tier::TEXT = v_sub.plan THEN
-    -- Check if allowance already exists for this payment's source_ref
     DECLARE
       v_idempotent_ref TEXT;
       v_existing_allowance_id UUID;
     BEGIN
-      v_idempotent_ref := 'sub:' || p_subscription_id::TEXT || ':' || COALESCE(v_payment.provider_reference, v_sub.current_period_start::TEXT);
+      v_idempotent_ref := 'sub:' || v_payment.subscription_id::TEXT || ':' || COALESCE(v_payment.provider_reference, v_sub.current_period_start::TEXT);
       SELECT id INTO v_existing_allowance_id
         FROM public.messaging_allowances
         WHERE business_id = v_sub.business_id
@@ -350,9 +369,6 @@ BEGIN
   IF v_config.id IS NULL THEN
     RETURN jsonb_build_object('activated', false, 'reason', 'no_config_version');
   END IF;
-
-  -- 6. Validate payment plan matches subscription plan
-  -- (payment evidence plan column is set by webhook — must match subscription)
 
   -- 6a. Validate billing_interval
   IF v_sub.billing_interval IS NULL OR v_sub.billing_interval NOT IN ('month', 'year') THEN
@@ -397,24 +413,27 @@ BEGIN
           v_biz_match_count := v_biz_match_count + 1;
         END IF;
       END LOOP;
-      IF v_biz_match_count = 1 AND v_biz_currency IS NOT NULL THEN
-        IF UPPER(v_payment.currency) <> UPPER(v_biz_currency) THEN
-          RETURN jsonb_build_object('activated', false, 'reason', 'currency_mismatch',
-            'payment_currency', v_payment.currency,
-            'business_currency', v_biz_currency);
-        END IF;
+      -- If match_count != 1, reject with specific reason
+      IF v_biz_match_count <> 1 THEN
+        RETURN jsonb_build_object('activated', false, 'reason', 'currency_resolution_failed',
+          'match_count', v_biz_match_count, 'country_code', v_biz.country_code);
+      END IF;
+      IF UPPER(v_payment.currency) <> UPPER(v_biz_currency) THEN
+        RETURN jsonb_build_object('activated', false, 'reason', 'currency_mismatch',
+          'payment_currency', v_payment.currency,
+          'business_currency', v_biz_currency);
       END IF;
     END IF;
   END;
 
-  -- Build stable source_ref using provider_reference (not current_period_start which can change on retry)
-  v_source_ref := 'sub:' || p_subscription_id::TEXT || ':' || COALESCE(v_payment.provider_reference, v_sub.current_period_start::TEXT);
+  -- Build stable source_ref from the locked payment's provider_reference
+  v_source_ref := 'sub:' || v_payment.subscription_id::TEXT || ':' || COALESCE(v_payment.provider_reference, v_sub.current_period_start::TEXT);
 
   -- 7. Atomically activate: subscription status + business tier (entitlement)
   UPDATE public.subscriptions
   SET status = 'active',
       updated_at = clock_timestamp()
-  WHERE id = p_subscription_id;
+  WHERE id = v_payment.subscription_id;
 
   UPDATE public.businesses
   SET subscription_tier = v_sub.plan::public.subscription_tier,

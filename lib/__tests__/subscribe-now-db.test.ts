@@ -52,7 +52,7 @@ function createPaidTestBusiness(opts: {
   gateway?: string;
   billingInterval?: string;
   withChannel?: boolean;
-} = {}): { bizId: string; subId: string; channelId?: string; provRef: string } {
+} = {}): { bizId: string; subId: string; paymentId: string; channelId?: string; provRef: string } {
   bizCounter++;
   const slug = `test-sub-${bizCounter}-${Date.now()}`;
   const botCode = `TS${bizCounter}${Date.now()}`;
@@ -105,7 +105,7 @@ function createPaidTestBusiness(opts: {
   // Persist canonical payment evidence with pinned config version
   const configId = psql(`SELECT id FROM public.platform_config_versions ORDER BY effective_from DESC LIMIT 1`);
   const provRef = `prov-${bizCounter}-${Date.now()}`;
-  psql(`
+  const paymentId = psql(`
     INSERT INTO public.subscription_payments (
       business_id, subscription_id, amount, currency, gateway, gateway_reference,
       plan, action, status, config_version_id, provider_reference, period_start, period_end
@@ -113,10 +113,10 @@ function createPaidTestBusiness(opts: {
       '${bizId}', '${subId}', ${amount}, '${currency}', '${gateway}', 'ref-${bizCounter}',
       '${plan}', 'upgrade', 'success', ${configId ? `'${configId}'` : 'NULL'}, '${provRef}',
       NOW(), NOW() + INTERVAL '30 days'
-    );
+    ) RETURNING id;
   `);
 
-  return { bizId, subId, channelId, provRef };
+  return { bizId, subId, paymentId, channelId, provRef };
 }
 
 // ── Config helper ────────────────────────────────────────
@@ -165,9 +165,9 @@ describe.skipIf(!canRun)('activate_paid_subscription', () => {
   });
 
   it('1. with READY channel → tier + allowance granted', () => {
-    const { bizId, subId } = createPaidTestBusiness({ withChannel: true });
+    const { bizId, subId, paymentId } = createPaidTestBusiness({ withChannel: true });
     try {
-      const result = psqlJson(`SELECT public.activate_paid_subscription('${subId}') AS r`) as Record<string, unknown>;
+      const result = psqlJson(`SELECT public.activate_paid_subscription('${paymentId}') AS r`) as Record<string, unknown>;
       expect(result).toMatchObject({ activated: true, allowance_granted: true, amount_minor: 100000, currency_code: 'NGN' });
 
       // Verify tier was upgraded
@@ -190,11 +190,11 @@ describe.skipIf(!canRun)('activate_paid_subscription', () => {
   });
 
   it('2. without channel → tier updated, allowance pending (channel_not_ready)', () => {
-    const { bizId, subId } = createPaidTestBusiness({ withChannel: false });
+    const { bizId, paymentId } = createPaidTestBusiness({ withChannel: false });
     // Set wa_method to transfer so shared fallback doesn't apply
     psql(`UPDATE public.businesses SET wa_method = 'transfer' WHERE id = '${bizId}'`);
     try {
-      const result = psqlJson(`SELECT public.activate_paid_subscription('${subId}') AS r`) as Record<string, unknown>;
+      const result = psqlJson(`SELECT public.activate_paid_subscription('${paymentId}') AS r`) as Record<string, unknown>;
       expect(result).toMatchObject({ activated: true, allowance_granted: false, reason: 'channel_not_ready' });
 
       // Tier should still be upgraded
@@ -206,10 +206,10 @@ describe.skipIf(!canRun)('activate_paid_subscription', () => {
   });
 
   it('3. is idempotent', () => {
-    const { bizId, subId } = createPaidTestBusiness({ withChannel: true });
+    const { bizId, paymentId } = createPaidTestBusiness({ withChannel: true });
     try {
-      psql(`SELECT public.activate_paid_subscription('${subId}')`);
-      const result = psqlJson(`SELECT public.activate_paid_subscription('${subId}') AS r`) as Record<string, unknown>;
+      psql(`SELECT public.activate_paid_subscription('${paymentId}')`);
+      const result = psqlJson(`SELECT public.activate_paid_subscription('${paymentId}') AS r`) as Record<string, unknown>;
       expect(result).toMatchObject({ activated: true, idempotent: true });
     } finally {
       cleanup(bizId);
@@ -217,9 +217,9 @@ describe.skipIf(!canRun)('activate_paid_subscription', () => {
   });
 
   it('4. with invalid plan → rejected', () => {
-    const { bizId, subId } = createPaidTestBusiness({ plan: 'enterprise' });
+    const { bizId, paymentId } = createPaidTestBusiness({ plan: 'enterprise' });
     try {
-      const result = psqlJson(`SELECT public.activate_paid_subscription('${subId}') AS r`) as Record<string, unknown>;
+      const result = psqlJson(`SELECT public.activate_paid_subscription('${paymentId}') AS r`) as Record<string, unknown>;
       expect(result).toMatchObject({ activated: false, reason: 'invalid_plan' });
     } finally {
       cleanup(bizId);
@@ -227,13 +227,13 @@ describe.skipIf(!canRun)('activate_paid_subscription', () => {
   });
 
   it('7. duplicate activation → no double allowance (source_ref idempotency)', () => {
-    const { bizId, subId } = createPaidTestBusiness({ withChannel: true });
+    const { bizId, subId, paymentId } = createPaidTestBusiness({ withChannel: true });
     try {
-      psql(`SELECT public.activate_paid_subscription('${subId}')`);
+      psql(`SELECT public.activate_paid_subscription('${paymentId}')`);
       // Force subscription back to pending to retry
       psql(`UPDATE public.subscriptions SET status = 'pending' WHERE id = '${subId}'`);
       psql(`UPDATE public.businesses SET subscription_tier = 'free' WHERE id = '${bizId}'`);
-      psql(`SELECT public.activate_paid_subscription('${subId}')`);
+      psql(`SELECT public.activate_paid_subscription('${paymentId}')`);
 
       const grantCount = psql(`
         SELECT count(*) FROM public.messaging_allowances
@@ -245,10 +245,10 @@ describe.skipIf(!canRun)('activate_paid_subscription', () => {
     }
   });
 
-  it('8. subscription_not_found → rejected', () => {
+  it('8. no_payment_evidence → rejected (unknown payment ID)', () => {
     const fakeId = psql(`SELECT gen_random_uuid()`);
     const result = psqlJson(`SELECT public.activate_paid_subscription('${fakeId}') AS r`) as Record<string, unknown>;
-    expect(result).toMatchObject({ activated: false, reason: 'subscription_not_found' });
+    expect(result).toMatchObject({ activated: false, reason: 'no_payment_evidence' });
   });
 
   it('9. missing allowance config → entitlement active, allowance pending + alert', () => {
@@ -267,9 +267,9 @@ describe.skipIf(!canRun)('activate_paid_subscription', () => {
       RETURNING id;
     `);
 
-    const { bizId, subId } = createPaidTestBusiness({ withChannel: true });
+    const { bizId, paymentId } = createPaidTestBusiness({ withChannel: true });
     try {
-      const result = psqlJson(`SELECT public.activate_paid_subscription('${subId}') AS r`) as Record<string, unknown>;
+      const result = psqlJson(`SELECT public.activate_paid_subscription('${paymentId}') AS r`) as Record<string, unknown>;
       expect(result).toMatchObject({ activated: true, allowance_granted: false, reason: 'missing_allowance_config' });
 
       // Verify alert was created
@@ -296,10 +296,10 @@ describe.skipIf(!canRun)('reconcile_paid_allowance', () => {
 
   it('5. after channel READY → exactly one allowance', () => {
     // Create without channel, activate (pending allowance), then add channel and reconcile
-    const { bizId, subId } = createPaidTestBusiness({ withChannel: false });
+    const { bizId, paymentId } = createPaidTestBusiness({ withChannel: false });
     psql(`UPDATE public.businesses SET wa_method = 'transfer' WHERE id = '${bizId}'`);
     try {
-      psql(`SELECT public.activate_paid_subscription('${subId}')`);
+      psql(`SELECT public.activate_paid_subscription('${paymentId}')`);
 
       // Add READY channel
       const channelId = psql(`
@@ -327,9 +327,9 @@ describe.skipIf(!canRun)('reconcile_paid_allowance', () => {
   });
 
   it('6. is idempotent', () => {
-    const { bizId, subId } = createPaidTestBusiness({ withChannel: true });
+    const { bizId, paymentId } = createPaidTestBusiness({ withChannel: true });
     try {
-      psql(`SELECT public.activate_paid_subscription('${subId}')`);
+      psql(`SELECT public.activate_paid_subscription('${paymentId}')`);
       const result = psqlJson(`SELECT public.reconcile_paid_allowance('${bizId}') AS r`) as Record<string, unknown>;
       expect(result).toMatchObject({ reconciled: true, idempotent: true });
     } finally {
@@ -427,25 +427,18 @@ describe.skipIf(!canRun)('schema verification', () => {
 describe.skipIf(!canRun)('adversarial authority proofs', () => {
   beforeAll(() => { ensurePaidConfig(); });
 
-  it('17. activation without payment evidence → rejected', () => {
-    const { bizId, subId } = createPaidTestBusiness({ withChannel: true });
-    // Delete payment evidence
-    psqlCleanup(`DELETE FROM public.subscription_payments WHERE subscription_id = '${subId}'`);
-    try {
-      const result = psqlJson(`SELECT public.activate_paid_subscription('${subId}') AS r`) as Record<string, unknown>;
-      expect(result).toMatchObject({ activated: false, reason: 'no_payment_evidence' });
-      // Business tier must NOT have changed
-      const tier = psql(`SELECT subscription_tier FROM public.businesses WHERE id = '${bizId}'`);
-      expect(tier).toBe('free');
-    } finally { cleanup(bizId); }
+  it('17. activation with unknown payment ID → rejected', () => {
+    const fakePaymentId = psql(`SELECT gen_random_uuid()`);
+    const result = psqlJson(`SELECT public.activate_paid_subscription('${fakePaymentId}') AS r`) as Record<string, unknown>;
+    expect(result).toMatchObject({ activated: false, reason: 'no_payment_evidence' });
   });
 
   it('18. amount mismatch → rejected, tier unchanged', () => {
-    const { bizId, subId } = createPaidTestBusiness({ withChannel: true });
+    const { bizId, paymentId } = createPaidTestBusiness({ withChannel: true });
     // Tamper payment amount to mismatch config pricing_tiers.growth.price (5000)
-    psql(`UPDATE public.subscription_payments SET amount = 999999 WHERE subscription_id = '${subId}'`);
+    psql(`UPDATE public.subscription_payments SET amount = 999999 WHERE id = '${paymentId}'`);
     try {
-      const result = psqlJson(`SELECT public.activate_paid_subscription('${subId}') AS r`) as Record<string, unknown>;
+      const result = psqlJson(`SELECT public.activate_paid_subscription('${paymentId}') AS r`) as Record<string, unknown>;
       expect(result).toMatchObject({ activated: false, reason: 'amount_mismatch' });
       // Verify no tier mutation
       const tier = psql(`SELECT subscription_tier FROM public.businesses WHERE id = '${bizId}'`);
@@ -454,9 +447,9 @@ describe.skipIf(!canRun)('adversarial authority proofs', () => {
   });
 
   it('19. stable provider_reference-based replay → same source_ref', () => {
-    const { bizId, subId, provRef } = createPaidTestBusiness({ withChannel: true });
+    const { bizId, paymentId, provRef } = createPaidTestBusiness({ withChannel: true });
     try {
-      psql(`SELECT public.activate_paid_subscription('${subId}')`);
+      psql(`SELECT public.activate_paid_subscription('${paymentId}')`);
       // Check the allowance source_ref uses provider_reference
       const sourceRef = psql(`
         SELECT source_ref FROM public.messaging_allowances
@@ -468,11 +461,11 @@ describe.skipIf(!canRun)('adversarial authority proofs', () => {
   });
 
   it('20. same payment replay cannot create second allowance', () => {
-    const { bizId, subId } = createPaidTestBusiness({ withChannel: true });
+    const { bizId, paymentId } = createPaidTestBusiness({ withChannel: true });
     try {
-      psql(`SELECT public.activate_paid_subscription('${subId}')`);
+      psql(`SELECT public.activate_paid_subscription('${paymentId}')`);
       // Replay — should be idempotent
-      const result = psqlJson(`SELECT public.activate_paid_subscription('${subId}') AS r`) as Record<string, unknown>;
+      const result = psqlJson(`SELECT public.activate_paid_subscription('${paymentId}') AS r`) as Record<string, unknown>;
       expect(result).toMatchObject({ activated: true, idempotent: true });
       // Exactly one allowance
       const cnt = psql(`
@@ -485,7 +478,7 @@ describe.skipIf(!canRun)('adversarial authority proofs', () => {
 
   it('21. config v1 pinned payment still uses v1 after v2 effective', () => {
     // Create business + payment pinned to current config (v1)
-    const { bizId, subId } = createPaidTestBusiness({ withChannel: true });
+    const { bizId, paymentId } = createPaidTestBusiness({ withChannel: true });
     try {
       // Insert a new config version (v2) with different allowance amount
       const v2Config = { ...PAID_CONFIG, subscription_included_minor_by_tier_currency: { growth: { NGN: 999999, USD: 9999 }, business: { NGN: 999999, USD: 9999 } } };
@@ -495,7 +488,7 @@ describe.skipIf(!canRun)('adversarial authority proofs', () => {
         VALUES (gen_random_uuid(), '${JSON.stringify(v2Config).replace(/'/g, "''")}'::jsonb, ${ts}, NOW())
       `);
       // Activate — should use v1 (pinned on payment), not v2
-      psql(`SELECT public.activate_paid_subscription('${subId}')`);
+      psql(`SELECT public.activate_paid_subscription('${paymentId}')`);
       const allowanceAmount = psql(`
         SELECT amount_minor FROM public.messaging_allowances
         WHERE business_id = '${bizId}' AND type = 'subscription_included'
@@ -508,10 +501,10 @@ describe.skipIf(!canRun)('adversarial authority proofs', () => {
   });
 
   it('22. missing config_version_id on payment → rejected', () => {
-    const { bizId, subId } = createPaidTestBusiness({ withChannel: true });
-    psql(`UPDATE public.subscription_payments SET config_version_id = NULL WHERE subscription_id = '${subId}'`);
+    const { bizId, paymentId } = createPaidTestBusiness({ withChannel: true });
+    psql(`UPDATE public.subscription_payments SET config_version_id = NULL WHERE id = '${paymentId}'`);
     try {
-      const result = psqlJson(`SELECT public.activate_paid_subscription('${subId}') AS r`) as Record<string, unknown>;
+      const result = psqlJson(`SELECT public.activate_paid_subscription('${paymentId}') AS r`) as Record<string, unknown>;
       expect(result).toMatchObject({ activated: false, reason: 'missing_config_provenance' });
       const tier = psql(`SELECT subscription_tier FROM public.businesses WHERE id = '${bizId}'`);
       expect(tier).toBe('free');
@@ -519,26 +512,26 @@ describe.skipIf(!canRun)('adversarial authority proofs', () => {
   });
 
   it('23. currency mismatch → rejected', () => {
-    const { bizId, subId } = createPaidTestBusiness({ withChannel: true });
+    const { bizId, paymentId } = createPaidTestBusiness({ withChannel: true });
     // Change payment currency to one that doesn't match business country
-    psql(`UPDATE public.subscription_payments SET currency = 'EUR' WHERE subscription_id = '${subId}'`);
+    psql(`UPDATE public.subscription_payments SET currency = 'EUR' WHERE id = '${paymentId}'`);
     try {
-      const result = psqlJson(`SELECT public.activate_paid_subscription('${subId}') AS r`) as Record<string, unknown>;
+      const result = psqlJson(`SELECT public.activate_paid_subscription('${paymentId}') AS r`) as Record<string, unknown>;
       expect(result).toMatchObject({ activated: false, reason: 'currency_mismatch' });
     } finally { cleanup(bizId); }
   });
 
   it('24. renewal with new payment evidence → new period allowance', () => {
-    const { bizId, subId } = createPaidTestBusiness({ withChannel: true });
+    const { bizId, subId, paymentId } = createPaidTestBusiness({ withChannel: true });
     try {
       // First activation
-      psql(`SELECT public.activate_paid_subscription('${subId}')`);
+      psql(`SELECT public.activate_paid_subscription('${paymentId}')`);
       const cnt1 = psql(`SELECT count(*) FROM public.messaging_allowances WHERE business_id = '${bizId}' AND type = 'subscription_included'`);
       expect(parseInt(cnt1)).toBe(1);
 
       // Simulate renewal: insert new payment evidence with different provider_reference
       const configId = psql(`SELECT id FROM public.platform_config_versions ORDER BY effective_from DESC LIMIT 1`);
-      psql(`
+      const renewalPaymentId = psql(`
         INSERT INTO public.subscription_payments (
           business_id, subscription_id, amount, currency, gateway, gateway_reference,
           plan, action, status, config_version_id, provider_reference, period_start, period_end
@@ -546,11 +539,11 @@ describe.skipIf(!canRun)('adversarial authority proofs', () => {
           '${bizId}', '${subId}', 5000, 'NGN', 'paystack', 'renewal-ref-${Date.now()}',
           'growth', 'renewal', 'success', '${configId}', 'renewal-prov-${Date.now()}',
           NOW() + INTERVAL '30 days', NOW() + INTERVAL '60 days'
-        );
+        ) RETURNING id;
       `);
 
-      // Re-activate with new evidence
-      const result = psqlJson(`SELECT public.activate_paid_subscription('${subId}') AS r`) as Record<string, unknown>;
+      // Re-activate with new payment evidence
+      const result = psqlJson(`SELECT public.activate_paid_subscription('${renewalPaymentId}') AS r`) as Record<string, unknown>;
       expect(result).toMatchObject({ activated: true });
 
       // Should have 2 allowances (one per period)
@@ -561,10 +554,10 @@ describe.skipIf(!canRun)('adversarial authority proofs', () => {
 
   it('25. delayed READY reconciliation uses payment-pinned config (not current)', () => {
     // Create business without channel (delayed READY)
-    const { bizId, subId } = createPaidTestBusiness({ withChannel: false });
+    const { bizId, paymentId } = createPaidTestBusiness({ withChannel: false });
     try {
       // Activate — tier set, allowance pending (no channel)
-      psql(`SELECT public.activate_paid_subscription('${subId}')`);
+      psql(`SELECT public.activate_paid_subscription('${paymentId}')`);
       const tier = psql(`SELECT subscription_tier FROM public.businesses WHERE id = '${bizId}'`);
       expect(tier).toBe('growth');
 

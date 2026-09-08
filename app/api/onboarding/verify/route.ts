@@ -27,6 +27,7 @@ export async function POST(request: NextRequest) {
     let stripeCustomerId: string | undefined;
     let stripePeriodStart: string | undefined;
     let stripePeriodEnd: string | undefined;
+    let providerPaymentTimestamp: string | undefined;
 
     // ── Stripe verification (checkout session IDs start with cs_) ──
     if (reference && reference.startsWith('cs_')) {
@@ -81,6 +82,11 @@ export async function POST(request: NextRequest) {
       amountSmallest = session.amount_total || 0;
       gateway = 'stripe';
       currency = (session.currency || 'usd').toUpperCase();
+
+      // Capture provider payment timestamp (Stripe session.created is Unix seconds)
+      if (session.created) {
+        providerPaymentTimestamp = new Date(session.created * 1000).toISOString();
+      }
 
       // Extract Stripe subscription and customer IDs (subscription mode)
       stripeSubscriptionId = session.subscription as string | undefined;
@@ -151,6 +157,15 @@ export async function POST(request: NextRequest) {
       amountSmallest = data.data.amount || 0;
       gateway = 'paystack';
       currency = (data.data.currency || 'NGN').toUpperCase();
+
+      // Capture provider payment timestamp
+      const paidAt = data.data.paid_at as string | undefined;
+      const createdAt = data.data.created_at as string | undefined;
+      if (paidAt) {
+        providerPaymentTimestamp = new Date(paidAt).toISOString();
+      } else if (createdAt) {
+        providerPaymentTimestamp = new Date(createdAt).toISOString();
+      }
     }
     // ── Free tier (no payment required) ──
     else if (bodyBusinessId && bodyPlan) {
@@ -277,26 +292,52 @@ export async function POST(request: NextRequest) {
       upsertData.stripe_customer_id = null;
     }
 
-    const { data: subscription } = await service.from('subscriptions').upsert(
+    const { data: subscription, error: subscriptionUpsertError } = await service.from('subscriptions').upsert(
       upsertData,
       { onConflict: 'business_id' },
     ).select('id').single();
 
+    if (subscriptionUpsertError) {
+      console.warn('[ONBOARDING-VERIFY] Subscription upsert error:', subscriptionUpsertError);
+      return NextResponse.json(
+        { message: 'Subscription creation failed. Please try again.', recoverable: true },
+        { status: 500 },
+      );
+    }
+
     // Record subscription payment (only for paid plans)
+    let paymentEvidenceId: string | null = null;
     if (plan !== 'free' && gateway !== 'none') {
-      // Resolve effective config version at payment evidence time
+      // Fail closed: provider payment timestamp is mandatory
+      if (!providerPaymentTimestamp) {
+        console.warn('[ONBOARDING-VERIFY] No provider payment timestamp available');
+        return NextResponse.json(
+          { message: 'Payment timestamp verification failed. Please contact support.', recoverable: true },
+          { status: 500 },
+        );
+      }
+
+      // Resolve effective config version at provider payment time (not wall-clock)
       const { data: configVersion } = await service
         .from('platform_config_versions')
         .select('id')
-        .lte('effective_from', new Date().toISOString())
+        .lte('effective_from', providerPaymentTimestamp)
         .order('effective_from', { ascending: false })
         .limit(1)
         .single();
 
+      if (!configVersion) {
+        console.warn('[ONBOARDING-VERIFY] No config version found at provider payment time:', providerPaymentTimestamp);
+        return NextResponse.json(
+          { message: 'Platform configuration not available. Please contact support.', recoverable: true },
+          { status: 500 },
+        );
+      }
+
       const computedPeriodStart = stripePeriodStart || new Date().toISOString();
       const computedPeriodEnd = stripePeriodEnd || periodEnd.toISOString();
 
-      await service.from('subscription_payments').insert({
+      const { data: paymentEvidence, error: paymentInsertError } = await service.from('subscription_payments').insert({
         business_id: businessId,
         subscription_id: subscription?.id || null,
         amount: amountSmallest,
@@ -306,18 +347,28 @@ export async function POST(request: NextRequest) {
         plan,
         action,
         status: 'success',
-        config_version_id: configVersion?.id || null,
+        config_version_id: configVersion.id,
         provider_reference: reference,
         period_start: computedPeriodStart,
         period_end: computedPeriodEnd,
-      });
+      }).select('id').single();
+
+      if (paymentInsertError) {
+        console.warn('[ONBOARDING-VERIFY] Payment evidence insert error:', paymentInsertError);
+        return NextResponse.json(
+          { message: 'Payment recording failed. Please contact support.', recoverable: true },
+          { status: 500 },
+        );
+      }
+
+      paymentEvidenceId = paymentEvidence?.id || null;
     }
 
-    if (plan !== 'free' && subscription?.id) {
+    if (plan !== 'free' && subscription?.id && paymentEvidenceId) {
       // Paid path: atomic activation via RPC — sets subscription active + business tier + allowance
       const { data: activationResult, error: activationError } = await service.rpc(
         'activate_paid_subscription',
-        { p_subscription_id: subscription.id },
+        { p_payment_id: paymentEvidenceId },
       );
 
       if (activationError) {

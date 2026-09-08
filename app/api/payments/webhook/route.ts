@@ -250,19 +250,31 @@ export async function POST(request: NextRequest) {
             })
             .eq('id', platformSub.id);
 
-          // Resolve effective config version for payment provenance
+          // Use provider payment timestamp (not wall-clock)
+          if (!paidAt) {
+            logger.error('[PAYSTACK-WEBHOOK] Missing provider payment timestamp for renewal', { reference });
+            return NextResponse.json({ error: 'Missing provider timestamp' }, { status: 500 });
+          }
+          const renewalProviderTimestamp = new Date(paidAt).toISOString();
+
+          // Resolve effective config version at provider payment time
           const { data: renewalConfig } = await supabase
             .from('platform_config_versions')
             .select('id')
-            .lte('effective_from', new Date().toISOString())
+            .lte('effective_from', renewalProviderTimestamp)
             .order('effective_from', { ascending: false })
             .limit(1)
             .single();
 
+          if (!renewalConfig) {
+            logger.error('[PAYSTACK-WEBHOOK] No config version found at renewal time', { renewalProviderTimestamp });
+            return NextResponse.json({ error: 'Config version not found' }, { status: 500 });
+          }
+
           // Persist payment evidence BEFORE calling activation RPC
           // Store amount in smallest unit (kobo) — NOT converted to naira
           const chargeAmountKobo = data.amount as number;
-          await supabase.from('subscription_payments').insert({
+          const { data: renewalEvidence, error: renewalEvidenceErr } = await supabase.from('subscription_payments').insert({
             business_id: platformSub.business_id,
             subscription_id: platformSub.id,
             amount: chargeAmountKobo,
@@ -273,17 +285,23 @@ export async function POST(request: NextRequest) {
             plan: platformSub.plan,
             action: 'renewal',
             status: 'success',
-            config_version_id: renewalConfig?.id || null,
+            config_version_id: renewalConfig.id,
             period_start: periodStartIso,
             period_end: periodEndIso,
-          });
+          }).select('id').single();
+
+          if (renewalEvidenceErr || !renewalEvidence) {
+            logger.error('[PAYSTACK-WEBHOOK] Renewal evidence insert failed:', renewalEvidenceErr);
+            return NextResponse.json({ error: 'Renewal evidence insert failed' }, { status: 500 });
+          }
 
           // Atomic activation: restores tier if downgraded + grants period allowance
           const { data: activationResult, error: activateErr } = await supabase.rpc(
-            'activate_paid_subscription', { p_subscription_id: platformSub.id },
+            'activate_paid_subscription', { p_payment_id: renewalEvidence.id },
           );
           if (activateErr) {
-            console.warn('[PAYSTACK-WEBHOOK] Paid activation RPC error (non-fatal):', activateErr);
+            logger.error('[PAYSTACK-WEBHOOK] Paid activation RPC error:', activateErr);
+            return NextResponse.json({ error: 'Activation RPC failed' }, { status: 500 });
           } else if (activationResult && activationResult.activated !== true) {
             console.warn('[PAYSTACK-WEBHOOK] Paid activation rejected:', activationResult);
           }
