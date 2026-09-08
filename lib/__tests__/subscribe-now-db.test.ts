@@ -125,8 +125,8 @@ const PAID_CONFIG = {
   messaging_financial_gate: true,
   pricing_tiers: {
     free: { price: 0 },
-    growth: { price: 5000 },
-    business: { price: 15000 },
+    growth: { price: 50 },
+    business: { price: 150 },
   },
   subscription_included_minor_by_tier_currency: {
     growth: { NGN: 100000, USD: 1000 },
