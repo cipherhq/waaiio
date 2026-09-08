@@ -23,7 +23,31 @@ ALTER TABLE public.whatsapp_channels DROP CONSTRAINT IF EXISTS whatsapp_channels
 ALTER TABLE public.whatsapp_channels ADD CONSTRAINT whatsapp_channels_connection_status_check
   CHECK (connection_status IN ('pending', 'verifying', 'active', 'suspended', 'disconnected', 'provisioning'));
 
--- A3. Alert dedupe for subscription allowance pending
+-- A3. Update prevent_tier_tampering to allow SECURITY DEFINER function owners
+-- The trigger currently only allows service_role, but SECURITY DEFINER RPCs
+-- run as the function owner (postgres/superuser), not service_role.
+CREATE OR REPLACE FUNCTION prevent_tier_tampering()
+RETURNS TRIGGER AS $$
+DECLARE
+  v_is_superuser BOOLEAN;
+BEGIN
+  IF OLD.subscription_tier = NEW.subscription_tier THEN
+    RETURN NEW;
+  END IF;
+  -- Allow service_role (used by API routes via Supabase service client)
+  IF current_setting('role', true) = 'service_role' THEN
+    RETURN NEW;
+  END IF;
+  -- Allow superuser (SECURITY DEFINER RPCs run as function owner = superuser)
+  SELECT rolsuper INTO v_is_superuser FROM pg_roles WHERE rolname = current_user;
+  IF v_is_superuser THEN
+    RETURN NEW;
+  END IF;
+  RAISE EXCEPTION 'subscription_tier cannot be modified directly';
+END;
+$$ LANGUAGE plpgsql;
+
+-- A4. Alert dedupe for subscription allowance pending
 CREATE UNIQUE INDEX IF NOT EXISTS uq_subscription_allowance_pending
   ON public.alerts(business_id, type)
   WHERE type = 'subscription_allowance_pending';
@@ -300,14 +324,10 @@ BEGIN
       updated_at = clock_timestamp()
   WHERE id = p_subscription_id;
 
-  -- SET LOCAL ROLE to satisfy prevent_tier_tampering trigger
-  -- (trigger allows service_role; this RPC runs as SECURITY DEFINER owner)
-  SET LOCAL ROLE service_role;
   UPDATE public.businesses
   SET subscription_tier = v_sub.plan::public.subscription_tier,
       trial_ends_at = COALESCE(trial_ends_at, clock_timestamp())
   WHERE id = v_sub.business_id;
-  RESET ROLE;
 
   -- 8. Check channel READY for allowance grant
   v_has_channel := false;
