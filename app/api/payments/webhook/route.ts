@@ -236,16 +236,22 @@ export async function POST(request: NextRequest) {
           const periodEnd = new Date();
           periodEnd.setDate(periodEnd.getDate() + 30);
 
-          // Update subscription period and ensure active status
+          // Update subscription period with canonical provider-derived timestamps
           await supabase
             .from('subscriptions')
             .update({
-              status: 'active',
               current_period_start: now.toISOString(),
               current_period_end: periodEnd.toISOString(),
               updated_at: now.toISOString(),
             })
             .eq('id', platformSub.id);
+
+          // Atomic activation: restores tier if downgraded + grants period allowance
+          try {
+            await supabase.rpc('activate_paid_subscription', { p_subscription_id: platformSub.id });
+          } catch (activateErr) {
+            console.warn('[PAYSTACK-WEBHOOK] Paid activation RPC error (non-fatal):', activateErr);
+          }
 
           // Ensure business stays active
           await supabase

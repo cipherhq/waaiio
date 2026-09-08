@@ -163,8 +163,8 @@ export async function POST(request: NextRequest) {
         quality_rating: phone.quality_rating || null,
         country_code: biz.country_code || 'US',
         connection_method: 'transfer',
-        connection_status: 'active',
-        is_active: true,
+        connection_status: 'provisioning',
+        is_active: false,
       })
       .select()
       .single();
@@ -178,6 +178,11 @@ export async function POST(request: NextRequest) {
       }).error('[EMBEDDED-SIGNUP] Channel insert failed');
       return NextResponse.json({ error: 'Failed to save channel' }, { status: 500 });
     }
+
+    // 6b. Positive READY transition — registration + subscription already succeeded before INSERT
+    await service.from('whatsapp_channels')
+      .update({ connection_status: 'active', is_active: true, metadata: {} })
+      .eq('id', channel.id);
 
     // 7. Update business — assign channel and set wa_method
     const { error: bizAssignError } = await service.from('businesses')
@@ -201,6 +206,15 @@ export async function POST(request: NextRequest) {
     } catch (trialErr) {
       // Non-fatal: trial activation failure should not block channel setup
       console.warn('[EMBEDDED-SIGNUP] Trial activation failed (non-fatal):', trialErr);
+    }
+
+    // 8b. Reconcile paid allowance if business has active subscription
+    try {
+      if (!bizAssignError) {
+        await service.rpc('reconcile_paid_allowance', { p_business_id: business_id });
+      }
+    } catch (reconcileErr) {
+      console.warn('[EMBEDDED-SIGNUP] Paid allowance reconciliation (non-fatal):', reconcileErr);
     }
 
     // 9. Auto-provision message templates (non-fatal)

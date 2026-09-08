@@ -315,14 +315,21 @@ export async function POST(request: NextRequest) {
             ? new Date((data.period_end as number) * 1000).toISOString()
             : (() => { const d = new Date(); d.setDate(d.getDate() + 30); return d.toISOString(); })();
 
+          // Update period with canonical provider-derived timestamps
           await supabase
             .from('subscriptions')
             .update({
-              status: 'active',
               current_period_start: periodStart,
               current_period_end: periodEnd,
             })
             .eq('id', platformSub.id);
+
+          // Atomic activation: restores tier if downgraded + grants period allowance
+          try {
+            await supabase.rpc('activate_paid_subscription', { p_subscription_id: platformSub.id });
+          } catch (activateErr) {
+            console.warn('[STRIPE-WEBHOOK] Paid activation RPC error (non-fatal):', activateErr);
+          }
 
           await supabase.from('subscription_payments').insert({
             business_id: platformSub.business_id,

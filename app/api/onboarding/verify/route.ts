@@ -213,10 +213,12 @@ export async function POST(request: NextRequest) {
     const action = previousTier === plan ? 'renewal' : 'upgrade';
 
     // Upsert: one subscription per business (prevent duplicates on re-onboarding)
+    // Paid plans: persist as 'pending' — activation RPC will atomically set 'active' + tier
+    // Free plans: persist as 'active' (no paid activation needed)
     const upsertData: Record<string, unknown> = {
       business_id: businessId,
       plan,
-      status: 'active',
+      status: plan !== 'free' ? 'pending' : 'active',
       amount: amountSmallest ? Math.round(amountSmallest / 100) : (tier.price ?? 0),
       gateway: gateway !== 'none' ? gateway : null,
       currency,
@@ -263,25 +265,33 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    const { error: bizUpdateError } = await service
-      .from('businesses')
-      .update({
-        status: 'active',
-        subscription_tier: plan,
-        // End trial when upgrading to a paid plan — they're now a paying customer
-        ...(plan !== 'free' ? { trial_ends_at: new Date().toISOString() } : {}),
-      })
-      .eq('id', businessId);
-
-    // Attempt trial activation for free-tier businesses (atomic: grant + clock together)
-    // Only invoke if the prerequisite business update succeeded — the DB authority
-    // checks status='active' for shared channel eligibility.
-    // Non-fatal: if activation fails (e.g., no channel yet), the deferred cron will retry.
-    if (plan === 'free' && !bizUpdateError) {
+    if (plan !== 'free' && subscription?.id) {
+      // Paid path: atomic activation via RPC — sets subscription active + business tier + allowance
       try {
-        await service.rpc('activate_trial_if_eligible', { p_business_id: businessId });
-      } catch (trialErr) {
-        console.warn('[ONBOARDING-VERIFY] Trial activation failed (non-fatal):', trialErr);
+        await service.rpc('activate_paid_subscription', { p_subscription_id: subscription.id });
+      } catch (activateErr) {
+        console.warn('[ONBOARDING-VERIFY] Paid activation RPC error (non-fatal):', activateErr);
+        // Fallback: ensure business is at least active even if RPC fails
+        await service.from('businesses').update({ status: 'active' }).eq('id', businessId);
+      }
+      // Ensure business status is active regardless (idempotent)
+      await service.from('businesses').update({ status: 'active' }).eq('id', businessId);
+    } else {
+      // Free path: set status + tier directly, then attempt trial activation
+      const { error: bizUpdateError } = await service
+        .from('businesses')
+        .update({
+          status: 'active',
+          subscription_tier: plan,
+        })
+        .eq('id', businessId);
+
+      if (!bizUpdateError) {
+        try {
+          await service.rpc('activate_trial_if_eligible', { p_business_id: businessId });
+        } catch (trialErr) {
+          console.warn('[ONBOARDING-VERIFY] Trial activation failed (non-fatal):', trialErr);
+        }
       }
     }
 
