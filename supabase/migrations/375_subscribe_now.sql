@@ -300,10 +300,14 @@ BEGIN
       updated_at = clock_timestamp()
   WHERE id = p_subscription_id;
 
+  -- SET LOCAL ROLE to satisfy prevent_tier_tampering trigger
+  -- (trigger allows service_role; this RPC runs as SECURITY DEFINER owner)
+  SET LOCAL ROLE service_role;
   UPDATE public.businesses
   SET subscription_tier = v_sub.plan::public.subscription_tier,
       trial_ends_at = COALESCE(trial_ends_at, clock_timestamp())
   WHERE id = v_sub.business_id;
+  RESET ROLE;
 
   -- 8. Check channel READY for allowance grant
   v_has_channel := false;
