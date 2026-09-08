@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import Image from 'next/image';
 import { createClient } from '@/lib/supabase/client';
+import { buildEmbeddedSignupLoginOptions, extractAuthCode, buildDiscoverRequestBody } from '@/lib/whatsapp/embedded-signup-config';
 import { queryChannelsPublic } from '@/lib/supabase/safe-view-query';
 import { getPostHogClient } from '@/lib/posthog/client';
 import {
@@ -738,14 +739,13 @@ function OnboardingWizard() {
 
     window.FB.login(
       function (response: any) {
-        if (response.authResponse) {
-          const code = response.authResponse.code;
-
+        const code = extractAuthCode(response);
+        if (code) {
           // Exchange code immediately (codes expire fast) and discover WABAs/phones
           fetch('/api/auth/facebook/discover', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ code }),
+            body: JSON.stringify(buildDiscoverRequestBody(code)),
           })
             .then((res) => res.json())
             .then((data) => {
@@ -785,18 +785,7 @@ function OnboardingWizard() {
           setFbConnecting(false);
         }
       },
-      {
-        config_id: configId,
-        response_type: 'code',
-        override_default_response_type: true,
-        extras: {
-          setup: {
-            business: { name: name || undefined },
-          },
-          featureType: '',
-          sessionInfoVersion: '3',
-        },
-      }
+      buildEmbeddedSignupLoginOptions(configId)
     );
   }
 
