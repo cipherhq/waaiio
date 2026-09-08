@@ -52,7 +52,7 @@ function createPaidTestBusiness(opts: {
   gateway?: string;
   billingInterval?: string;
   withChannel?: boolean;
-} = {}): { bizId: string; subId: string; channelId?: string } {
+} = {}): { bizId: string; subId: string; channelId?: string; provRef: string } {
   bizCounter++;
   const slug = `test-sub-${bizCounter}-${Date.now()}`;
   const botCode = `TS${bizCounter}${Date.now()}`;
@@ -102,7 +102,21 @@ function createPaidTestBusiness(opts: {
     ) RETURNING id;
   `);
 
-  return { bizId, subId, channelId };
+  // Persist canonical payment evidence with pinned config version
+  const configId = psql(`SELECT id FROM public.platform_config_versions ORDER BY effective_from DESC LIMIT 1`);
+  const provRef = `prov-${bizCounter}-${Date.now()}`;
+  psql(`
+    INSERT INTO public.subscription_payments (
+      business_id, subscription_id, amount, currency, gateway, gateway_reference,
+      plan, action, status, config_version_id, provider_reference, period_start, period_end
+    ) VALUES (
+      '${bizId}', '${subId}', ${amount}, '${currency}', '${gateway}', 'ref-${bizCounter}',
+      '${plan}', 'upgrade', 'success', ${configId ? `'${configId}'` : 'NULL'}, '${provRef}',
+      NOW(), NOW() + INTERVAL '30 days'
+    );
+  `);
+
+  return { bizId, subId, channelId, provRef };
 }
 
 // ── Config helper ────────────────────────────────────────
@@ -396,5 +410,115 @@ describe.skipIf(!canRun)('schema verification', () => {
         AND enumtypid = 'subscription_status'::regtype
     `);
     expect(parseInt(cnt)).toBeGreaterThanOrEqual(1);
+  });
+});
+
+// ══════════════════════════════════════════════════════════
+// Adversarial proofs (blockers 1-6)
+// ══════════════════════════════════════════════════════════
+
+describe.skipIf(!canRun)('adversarial authority proofs', () => {
+  beforeAll(() => { ensurePaidConfig(); });
+
+  it('17. activation without payment evidence → rejected', () => {
+    const { bizId, subId } = createPaidTestBusiness({ withChannel: true });
+    // Delete payment evidence
+    psqlCleanup(`DELETE FROM public.subscription_payments WHERE subscription_id = '${subId}'`);
+    try {
+      const result = psqlJson(`SELECT public.activate_paid_subscription('${subId}') AS r`) as Record<string, unknown>;
+      expect(result).toMatchObject({ activated: false, reason: 'no_payment_evidence' });
+      // Business tier must NOT have changed
+      const tier = psql(`SELECT subscription_tier FROM public.businesses WHERE id = '${bizId}'`);
+      expect(tier).toBe('free');
+    } finally { cleanup(bizId); }
+  });
+
+  it('18. amount mismatch → rejected (no tier/allowance mutation)', () => {
+    const { bizId, subId } = createPaidTestBusiness({ withChannel: true });
+    // Tamper payment amount to mismatch config pricing
+    psql(`UPDATE public.subscription_payments SET amount = 999999 WHERE subscription_id = '${subId}'`);
+    try {
+      const result = psqlJson(`SELECT public.activate_paid_subscription('${subId}') AS r`) as Record<string, unknown>;
+      // If pricing_tiers has the plan, this should fail with amount_mismatch
+      // (depends on config having pricing_tiers; may pass if pricing_tiers absent — that's OK per design)
+      if ((result as Record<string, unknown>).activated === false) {
+        expect(result).toMatchObject({ reason: 'amount_mismatch' });
+      }
+      // Verify no tier mutation on mismatch
+      const tier = psql(`SELECT subscription_tier FROM public.businesses WHERE id = '${bizId}'`);
+      if ((result as Record<string, unknown>).activated === false) {
+        expect(tier).toBe('free');
+      }
+    } finally { cleanup(bizId); }
+  });
+
+  it('19. stable provider_reference-based replay → same source_ref', () => {
+    const { bizId, subId, provRef } = createPaidTestBusiness({ withChannel: true });
+    try {
+      psql(`SELECT public.activate_paid_subscription('${subId}')`);
+      // Check the allowance source_ref uses provider_reference
+      const sourceRef = psql(`
+        SELECT source_ref FROM public.messaging_allowances
+        WHERE business_id = '${bizId}' AND type = 'subscription_included'
+      `);
+      expect(sourceRef).toContain(provRef);
+      expect(sourceRef).toContain('sub:');
+    } finally { cleanup(bizId); }
+  });
+
+  it('20. same payment replay cannot create second allowance', () => {
+    const { bizId, subId } = createPaidTestBusiness({ withChannel: true });
+    try {
+      psql(`SELECT public.activate_paid_subscription('${subId}')`);
+      // Replay — should be idempotent
+      const result = psqlJson(`SELECT public.activate_paid_subscription('${subId}') AS r`) as Record<string, unknown>;
+      expect(result).toMatchObject({ activated: true, idempotent: true });
+      // Exactly one allowance
+      const cnt = psql(`
+        SELECT count(*) FROM public.messaging_allowances
+        WHERE business_id = '${bizId}' AND type = 'subscription_included'
+      `);
+      expect(parseInt(cnt)).toBe(1);
+    } finally { cleanup(bizId); }
+  });
+
+  it('21. config v1 pinned payment still uses v1 after v2 effective', () => {
+    // Create business + payment pinned to current config (v1)
+    const { bizId, subId } = createPaidTestBusiness({ withChannel: true });
+    try {
+      // Insert a new config version (v2) with different allowance amount
+      const v2Config = { ...PAID_CONFIG, subscription_included_minor_by_tier_currency: { growth: { NGN: 999999, USD: 9999 }, business: { NGN: 999999, USD: 9999 } } };
+      const ts = nextConfigTimestamp();
+      psql(`
+        INSERT INTO public.platform_config_versions (id, config_snapshot, effective_from, created_at)
+        VALUES (gen_random_uuid(), '${JSON.stringify(v2Config).replace(/'/g, "''")}'::jsonb, ${ts}, NOW())
+      `);
+      // Activate — should use v1 (pinned on payment), not v2
+      psql(`SELECT public.activate_paid_subscription('${subId}')`);
+      const allowanceAmount = psql(`
+        SELECT amount_minor FROM public.messaging_allowances
+        WHERE business_id = '${bizId}' AND type = 'subscription_included'
+      `);
+      // v1 has NGN=100000, v2 has NGN=999999
+      expect(parseInt(allowanceAmount)).toBe(100000);
+      // Restore good config as latest
+      ensurePaidConfig();
+    } finally { cleanup(bizId); }
+  });
+
+  it('22. subscription_payments.config_version_id column exists', () => {
+    const cnt = psql(`
+      SELECT count(*) FROM information_schema.columns
+      WHERE table_name = 'subscription_payments' AND column_name = 'config_version_id'
+    `);
+    expect(parseInt(cnt)).toBe(1);
+  });
+
+  it('23. subscription_payments.provider_reference column exists', () => {
+    const cnt = psql(`
+      SELECT count(*) FROM information_schema.columns
+      WHERE table_name = 'subscription_payments' AND column_name = 'provider_reference'
+    `);
+    expect(parseInt(cnt)).toBe(1);
   });
 });

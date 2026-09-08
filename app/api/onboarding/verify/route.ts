@@ -63,9 +63,21 @@ export async function POST(request: NextRequest) {
       }
 
       const metadata = session.metadata as Record<string, string> | undefined;
-      businessId = metadata?.business_id || bodyBusinessId;
-      plan = metadata?.plan || bodyPlan;
-      billingInterval = (metadata?.billing_interval || bodyBillingInterval || 'month') === 'year' ? 'year' : 'month';
+      businessId = metadata?.business_id;
+      plan = metadata?.plan;
+      if (!businessId || !plan) {
+        return NextResponse.json(
+          { message: 'Payment metadata missing business_id or plan. Contact support.' },
+          { status: 400 },
+        );
+      }
+      if (plan !== 'growth' && plan !== 'business') {
+        return NextResponse.json(
+          { message: `Invalid paid plan "${plan}" in payment metadata` },
+          { status: 400 },
+        );
+      }
+      billingInterval = (metadata?.billing_interval || 'month') === 'year' ? 'year' : 'month';
       amountSmallest = session.amount_total || 0;
       gateway = 'stripe';
       currency = (session.currency || 'usd').toUpperCase();
@@ -121,9 +133,21 @@ export async function POST(request: NextRequest) {
       }
 
       const metadata = data.data.metadata as Record<string, string> | undefined;
-      businessId = metadata?.business_id || bodyBusinessId;
-      plan = metadata?.plan || bodyPlan;
-      billingInterval = (metadata?.billing_interval || bodyBillingInterval || 'month') === 'year' ? 'year' : 'month';
+      businessId = metadata?.business_id;
+      plan = metadata?.plan;
+      if (!businessId || !plan) {
+        return NextResponse.json(
+          { message: 'Payment metadata missing business_id or plan. Contact support.' },
+          { status: 400 },
+        );
+      }
+      if (plan !== 'growth' && plan !== 'business') {
+        return NextResponse.json(
+          { message: `Invalid paid plan "${plan}" in payment metadata` },
+          { status: 400 },
+        );
+      }
+      billingInterval = (metadata?.billing_interval || 'month') === 'year' ? 'year' : 'month';
       amountSmallest = data.data.amount || 0;
       gateway = 'paystack';
       currency = (data.data.currency || 'NGN').toUpperCase();
@@ -204,7 +228,15 @@ export async function POST(request: NextRequest) {
 
     // ── Setup verified. Proceed with subscription/activation. ──
 
-    const tier = PRICING_TIERS[plan as SubscriptionTier] || PRICING_TIERS.growth;
+    // For paid plans, plan was already validated as 'growth' | 'business' above
+    // For free plans, plan is 'free' — validated by the free-tier branch
+    const tier = PRICING_TIERS[plan as SubscriptionTier];
+    if (!tier) {
+      return NextResponse.json(
+        { message: `Unknown plan "${plan}"` },
+        { status: 400 },
+      );
+    }
     const periodEnd = new Date();
     periodEnd.setDate(periodEnd.getDate() + (billingInterval === 'year' ? 365 : 30));
 
@@ -252,6 +284,18 @@ export async function POST(request: NextRequest) {
 
     // Record subscription payment (only for paid plans)
     if (plan !== 'free' && gateway !== 'none') {
+      // Resolve effective config version at payment evidence time
+      const { data: configVersion } = await service
+        .from('platform_config_versions')
+        .select('id')
+        .lte('effective_from', new Date().toISOString())
+        .order('effective_from', { ascending: false })
+        .limit(1)
+        .single();
+
+      const computedPeriodStart = stripePeriodStart || new Date().toISOString();
+      const computedPeriodEnd = stripePeriodEnd || periodEnd.toISOString();
+
       await service.from('subscription_payments').insert({
         business_id: businessId,
         subscription_id: subscription?.id || null,
@@ -262,21 +306,36 @@ export async function POST(request: NextRequest) {
         plan,
         action,
         status: 'success',
+        config_version_id: configVersion?.id || null,
+        provider_reference: reference,
+        period_start: computedPeriodStart,
+        period_end: computedPeriodEnd,
       });
     }
 
     if (plan !== 'free' && subscription?.id) {
       // Paid path: atomic activation via RPC — sets subscription active + business tier + allowance
-      try {
-        await service.rpc('activate_paid_subscription', { p_subscription_id: subscription.id });
-      } catch (activateErr) {
-        console.warn('[ONBOARDING-VERIFY] Paid activation RPC error (non-fatal):', activateErr);
-        // Fallback: ensure business is at least active even if RPC fails
-        await service.from('businesses').update({ status: 'active' }).eq('id', businessId);
+      const { data: activationResult, error: activationError } = await service.rpc(
+        'activate_paid_subscription',
+        { p_subscription_id: subscription.id },
+      );
+
+      if (activationError) {
+        console.warn('[ONBOARDING-VERIFY] Paid activation RPC error:', activationError);
+        return NextResponse.json(
+          { message: 'Subscription activation failed. Please contact support.', recoverable: true },
+          { status: 500 },
+        );
       }
-      // Ensure business status is active regardless (idempotent)
-      await service.from('businesses').update({ status: 'active' }).eq('id', businessId);
-    } else {
+
+      if (activationResult && activationResult.activated === false) {
+        console.warn('[ONBOARDING-VERIFY] Paid activation rejected:', activationResult);
+        return NextResponse.json(
+          { message: `Subscription activation rejected: ${activationResult.reason || 'unknown'}`, recoverable: true },
+          { status: 400 },
+        );
+      }
+    } else if (plan === 'free') {
       // Free path: set status + tier directly, then attempt trial activation
       const { error: bizUpdateError } = await service
         .from('businesses')

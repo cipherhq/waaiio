@@ -47,7 +47,13 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- A4. Alert dedupe for subscription allowance pending
+-- A4. Extend subscription_payments with config provenance + period columns
+ALTER TABLE public.subscription_payments ADD COLUMN IF NOT EXISTS config_version_id UUID REFERENCES platform_config_versions(id);
+ALTER TABLE public.subscription_payments ADD COLUMN IF NOT EXISTS provider_reference TEXT;
+ALTER TABLE public.subscription_payments ADD COLUMN IF NOT EXISTS period_start TIMESTAMPTZ;
+ALTER TABLE public.subscription_payments ADD COLUMN IF NOT EXISTS period_end TIMESTAMPTZ;
+
+-- A5. Alert dedupe for subscription allowance pending
 CREATE UNIQUE INDEX IF NOT EXISTS uq_subscription_allowance_pending
   ON public.alerts(business_id, type)
   WHERE type = 'subscription_allowance_pending';
@@ -254,6 +260,9 @@ DECLARE
   v_sub RECORD;
   v_biz RECORD;
   v_config RECORD;
+  v_payment RECORD;
+  v_plan_pricing JSONB;
+  v_expected_amount NUMERIC;
   v_included_config JSONB;
   v_tier_config JSONB;
   v_amount_raw NUMERIC;
@@ -303,20 +312,55 @@ BEGIN
     RETURN jsonb_build_object('activated', false, 'reason', 'business_not_found');
   END IF;
 
-  -- 5. Resolve effective config version
-  SELECT id, config_snapshot INTO v_config
-    FROM public.platform_config_versions
-    WHERE effective_from <= clock_timestamp()
-    ORDER BY effective_from DESC LIMIT 1;
+  -- 5. Look up canonical payment evidence for this subscription
+  SELECT id, config_version_id, provider_reference, amount, currency,
+         period_start, period_end
+  INTO v_payment
+  FROM public.subscription_payments
+  WHERE subscription_id = p_subscription_id
+    AND status = 'success'
+  ORDER BY created_at DESC
+  LIMIT 1;
+
+  IF v_payment.id IS NULL THEN
+    RETURN jsonb_build_object('activated', false, 'reason', 'no_payment_evidence');
+  END IF;
+
+  -- Use payment's pinned config version if available, else resolve current
+  IF v_payment.config_version_id IS NOT NULL THEN
+    SELECT id, config_snapshot INTO v_config
+      FROM public.platform_config_versions
+      WHERE id = v_payment.config_version_id;
+  END IF;
+
+  IF v_config.id IS NULL THEN
+    SELECT id, config_snapshot INTO v_config
+      FROM public.platform_config_versions
+      WHERE effective_from <= clock_timestamp()
+      ORDER BY effective_from DESC LIMIT 1;
+  END IF;
 
   IF v_config.id IS NULL THEN
     RETURN jsonb_build_object('activated', false, 'reason', 'no_config_version');
   END IF;
 
-  -- 6. Validate subscription amount/currency against config pricing_tiers
-  -- (This validates the commercial terms match what was quoted)
-  -- Skip amount validation if pricing_tiers doesn't have the plan
-  -- (config may not have pricing_tiers yet — fail open on pricing, fail closed on allowance)
+  -- 6. Validate payment amount/currency against config pricing_tiers
+  v_plan_pricing := v_config.config_snapshot -> 'pricing_tiers' -> v_sub.plan;
+  IF v_plan_pricing IS NOT NULL AND jsonb_typeof(v_plan_pricing) = 'object' THEN
+    -- pricing_tiers stores amounts in major units; payment amount is smallest unit
+    v_expected_amount := (v_plan_pricing ->> 'price')::NUMERIC;
+    IF v_expected_amount IS NOT NULL AND v_expected_amount > 0 THEN
+      -- Convert payment amount from smallest to major (divide by 100)
+      IF ABS((v_payment.amount::NUMERIC / 100.0) - v_expected_amount) > 0.01 THEN
+        RETURN jsonb_build_object('activated', false, 'reason', 'amount_mismatch',
+          'expected_major', v_expected_amount,
+          'actual_smallest', v_payment.amount);
+      END IF;
+    END IF;
+  END IF;
+
+  -- Build stable source_ref using provider_reference (not current_period_start which can change on retry)
+  v_source_ref := 'sub:' || p_subscription_id::TEXT || ':' || COALESCE(v_payment.provider_reference, v_sub.current_period_start::TEXT);
 
   -- 7. Atomically activate: subscription status + business tier
   UPDATE public.subscriptions
@@ -436,8 +480,7 @@ BEGIN
       'amount_minor', v_amount, 'currency_code', v_currency);
   END IF;
 
-  -- 11. Build stable period-specific source_ref
-  v_source_ref := 'sub:' || p_subscription_id::TEXT || ':' || v_sub.current_period_start::TEXT;
+  -- 11. source_ref already built in step 5 using provider_reference
 
   -- 12. Grant subscription_included allowance
   v_grant_result := public.grant_messaging_allowance(
@@ -495,6 +538,7 @@ DECLARE
   v_source_ref TEXT;
   v_grant_result JSONB;
   v_existing_grant RECORD;
+  v_payment_ref TEXT;
 BEGIN
   -- 1. Lock business
   SELECT id, subscription_tier, whatsapp_channel_id, wa_method, status,
@@ -525,7 +569,12 @@ BEGIN
   END IF;
 
   -- 4. Check if allowance already exists for this period
-  v_source_ref := 'sub:' || v_sub.id::TEXT || ':' || v_sub.current_period_start::TEXT;
+  -- Use provider_reference for stable source_ref (consistent with activate_paid_subscription)
+  SELECT provider_reference INTO v_payment_ref
+    FROM public.subscription_payments
+    WHERE subscription_id = v_sub.id AND status = 'success'
+    ORDER BY created_at DESC LIMIT 1;
+  v_source_ref := 'sub:' || v_sub.id::TEXT || ':' || COALESCE(v_payment_ref, v_sub.current_period_start::TEXT);
   SELECT id INTO v_existing_grant
     FROM public.messaging_allowances
     WHERE business_id = p_business_id
