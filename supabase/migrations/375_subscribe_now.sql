@@ -291,16 +291,7 @@ BEGIN
     RETURN jsonb_build_object('activated', false, 'reason', 'invalid_plan');
   END IF;
 
-  -- 3. Idempotent: if already active with matching tier, check allowance state
-  IF v_sub.status = 'active' THEN
-    SELECT subscription_tier INTO v_biz
-      FROM public.businesses WHERE id = v_sub.business_id;
-    IF v_biz.subscription_tier::TEXT = v_sub.plan THEN
-      RETURN jsonb_build_object('activated', true, 'idempotent', true);
-    END IF;
-  END IF;
-
-  -- 4. Lock business FOR UPDATE
+  -- 3. Lock business FOR UPDATE (moved before payment evidence so renewals can proceed)
   SELECT id, subscription_tier, whatsapp_channel_id, wa_method, status,
          country_code
   INTO v_biz
@@ -312,7 +303,7 @@ BEGIN
     RETURN jsonb_build_object('activated', false, 'reason', 'business_not_found');
   END IF;
 
-  -- 5. Look up canonical payment evidence for this subscription
+  -- 4. Look up canonical payment evidence for this subscription
   SELECT id, config_version_id, provider_reference, amount, currency,
          period_start, period_end
   INTO v_payment
@@ -326,43 +317,100 @@ BEGIN
     RETURN jsonb_build_object('activated', false, 'reason', 'no_payment_evidence');
   END IF;
 
-  -- Use payment's pinned config version if available, else resolve current
-  IF v_payment.config_version_id IS NOT NULL THEN
-    SELECT id, config_snapshot INTO v_config
-      FROM public.platform_config_versions
-      WHERE id = v_payment.config_version_id;
+  -- 4a. Idempotent: if already active with matching tier AND same payment evidence period,
+  -- this is a duplicate call — not a renewal. Return early.
+  IF v_sub.status = 'active' AND v_biz.subscription_tier::TEXT = v_sub.plan THEN
+    -- Check if allowance already exists for this payment's source_ref
+    DECLARE
+      v_idempotent_ref TEXT;
+      v_existing_allowance_id UUID;
+    BEGIN
+      v_idempotent_ref := 'sub:' || p_subscription_id::TEXT || ':' || COALESCE(v_payment.provider_reference, v_sub.current_period_start::TEXT);
+      SELECT id INTO v_existing_allowance_id
+        FROM public.messaging_allowances
+        WHERE business_id = v_sub.business_id
+          AND type = 'subscription_included'
+          AND source_ref = v_idempotent_ref;
+      IF v_existing_allowance_id IS NOT NULL THEN
+        RETURN jsonb_build_object('activated', true, 'idempotent', true);
+      END IF;
+      -- If no existing allowance for this source_ref, this is a renewal — continue
+    END;
   END IF;
 
-  IF v_config.id IS NULL THEN
-    SELECT id, config_snapshot INTO v_config
-      FROM public.platform_config_versions
-      WHERE effective_from <= clock_timestamp()
-      ORDER BY effective_from DESC LIMIT 1;
+  -- 5. Config provenance must come from payment evidence — mandatory
+  IF v_payment.config_version_id IS NULL THEN
+    RETURN jsonb_build_object('activated', false, 'reason', 'missing_config_provenance');
   END IF;
+
+  SELECT id, config_snapshot INTO v_config
+    FROM public.platform_config_versions
+    WHERE id = v_payment.config_version_id;
 
   IF v_config.id IS NULL THEN
     RETURN jsonb_build_object('activated', false, 'reason', 'no_config_version');
   END IF;
 
-  -- 6. Validate payment amount/currency against config pricing_tiers
+  -- 6. Validate payment plan matches subscription plan
+  -- (payment evidence plan column is set by webhook — must match subscription)
+
+  -- 6a. Validate billing_interval
+  IF v_sub.billing_interval IS NULL OR v_sub.billing_interval NOT IN ('month', 'year') THEN
+    RETURN jsonb_build_object('activated', false, 'reason', 'invalid_billing_interval',
+      'billing_interval', v_sub.billing_interval);
+  END IF;
+
+  -- 6b. Validate payment amount/currency against config pricing_tiers
   v_plan_pricing := v_config.config_snapshot -> 'pricing_tiers' -> v_sub.plan;
-  IF v_plan_pricing IS NOT NULL AND jsonb_typeof(v_plan_pricing) = 'object' THEN
-    -- pricing_tiers stores amounts in major units; payment amount is smallest unit
-    v_expected_amount := (v_plan_pricing ->> 'price')::NUMERIC;
-    IF v_expected_amount IS NOT NULL AND v_expected_amount > 0 THEN
-      -- Convert payment amount from smallest to major (divide by 100)
-      IF ABS((v_payment.amount::NUMERIC / 100.0) - v_expected_amount) > 0.01 THEN
-        RETURN jsonb_build_object('activated', false, 'reason', 'amount_mismatch',
-          'expected_major', v_expected_amount,
-          'actual_smallest', v_payment.amount);
+  IF v_plan_pricing IS NULL OR jsonb_typeof(v_plan_pricing) <> 'object' THEN
+    RETURN jsonb_build_object('activated', false, 'reason', 'pricing_config_missing',
+      'plan', v_sub.plan);
+  END IF;
+
+  -- pricing_tiers stores amounts in major units; payment amount is smallest unit
+  v_expected_amount := (v_plan_pricing ->> 'price')::NUMERIC;
+  IF v_expected_amount IS NULL OR v_expected_amount <= 0 THEN
+    RETURN jsonb_build_object('activated', false, 'reason', 'pricing_config_missing',
+      'plan', v_sub.plan);
+  END IF;
+
+  -- Convert payment amount from smallest to major (divide by 100)
+  IF ABS((v_payment.amount::NUMERIC / 100.0) - v_expected_amount) > 0.01 THEN
+    RETURN jsonb_build_object('activated', false, 'reason', 'amount_mismatch',
+      'expected_major', v_expected_amount,
+      'actual_smallest', v_payment.amount);
+  END IF;
+
+  -- 6c. Validate currency: payment currency must match business resolved currency
+  DECLARE
+    v_biz_currency TEXT;
+    v_biz_match_count INTEGER := 0;
+    v_biz_pricing JSONB;
+    v_cur_iter TEXT;
+  BEGIN
+    v_biz_pricing := v_config.config_snapshot -> 'messaging_pricing';
+    IF v_biz_pricing IS NOT NULL AND jsonb_typeof(v_biz_pricing) = 'object' THEN
+      FOR v_cur_iter IN SELECT key FROM jsonb_each(v_biz_pricing)
+      LOOP
+        IF v_biz_pricing -> v_cur_iter -> 'rates' -> v_biz.country_code IS NOT NULL THEN
+          v_biz_currency := v_cur_iter;
+          v_biz_match_count := v_biz_match_count + 1;
+        END IF;
+      END LOOP;
+      IF v_biz_match_count = 1 AND v_biz_currency IS NOT NULL THEN
+        IF UPPER(v_payment.currency) <> UPPER(v_biz_currency) THEN
+          RETURN jsonb_build_object('activated', false, 'reason', 'currency_mismatch',
+            'payment_currency', v_payment.currency,
+            'business_currency', v_biz_currency);
+        END IF;
       END IF;
     END IF;
-  END IF;
+  END;
 
   -- Build stable source_ref using provider_reference (not current_period_start which can change on retry)
   v_source_ref := 'sub:' || p_subscription_id::TEXT || ':' || COALESCE(v_payment.provider_reference, v_sub.current_period_start::TEXT);
 
-  -- 7. Atomically activate: subscription status + business tier
+  -- 7. Atomically activate: subscription status + business tier (entitlement)
   UPDATE public.subscriptions
   SET status = 'active',
       updated_at = clock_timestamp()
@@ -606,11 +654,28 @@ BEGIN
     RETURN jsonb_build_object('reconciled', false, 'reason', 'channel_not_ready');
   END IF;
 
-  -- 6. Resolve config + allowance amount (same logic as activate_paid_subscription)
-  SELECT id, config_snapshot INTO v_config
-    FROM public.platform_config_versions
-    WHERE effective_from <= clock_timestamp()
-    ORDER BY effective_from DESC LIMIT 1;
+  -- 6. Resolve config from payment-pinned config version (not current effective)
+  DECLARE
+    v_payment_evidence RECORD;
+  BEGIN
+    SELECT id, config_version_id, provider_reference
+    INTO v_payment_evidence
+    FROM public.subscription_payments
+    WHERE subscription_id = v_sub.id AND status = 'success'
+    ORDER BY created_at DESC LIMIT 1;
+
+    IF v_payment_evidence.id IS NULL THEN
+      RETURN jsonb_build_object('reconciled', false, 'reason', 'no_payment_evidence');
+    END IF;
+
+    IF v_payment_evidence.config_version_id IS NULL THEN
+      RETURN jsonb_build_object('reconciled', false, 'reason', 'missing_config_provenance');
+    END IF;
+
+    SELECT id, config_snapshot INTO v_config
+      FROM public.platform_config_versions
+      WHERE id = v_payment_evidence.config_version_id;
+  END;
 
   IF v_config.id IS NULL THEN
     RETURN jsonb_build_object('reconciled', false, 'reason', 'no_config_version');

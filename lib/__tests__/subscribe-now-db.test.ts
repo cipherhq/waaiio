@@ -123,6 +123,11 @@ function createPaidTestBusiness(opts: {
 
 const PAID_CONFIG = {
   messaging_financial_gate: true,
+  pricing_tiers: {
+    free: { price: 0 },
+    growth: { price: 5000 },
+    business: { price: 15000 },
+  },
   subscription_included_minor_by_tier_currency: {
     growth: { NGN: 100000, USD: 1000 },
     business: { NGN: 250000, USD: 2500 },
@@ -433,22 +438,16 @@ describe.skipIf(!canRun)('adversarial authority proofs', () => {
     } finally { cleanup(bizId); }
   });
 
-  it('18. amount mismatch → rejected (no tier/allowance mutation)', () => {
+  it('18. amount mismatch → rejected, tier unchanged', () => {
     const { bizId, subId } = createPaidTestBusiness({ withChannel: true });
-    // Tamper payment amount to mismatch config pricing
+    // Tamper payment amount to mismatch config pricing_tiers.growth.price (5000)
     psql(`UPDATE public.subscription_payments SET amount = 999999 WHERE subscription_id = '${subId}'`);
     try {
       const result = psqlJson(`SELECT public.activate_paid_subscription('${subId}') AS r`) as Record<string, unknown>;
-      // If pricing_tiers has the plan, this should fail with amount_mismatch
-      // (depends on config having pricing_tiers; may pass if pricing_tiers absent — that's OK per design)
-      if ((result as Record<string, unknown>).activated === false) {
-        expect(result).toMatchObject({ reason: 'amount_mismatch' });
-      }
-      // Verify no tier mutation on mismatch
+      expect(result).toMatchObject({ activated: false, reason: 'amount_mismatch' });
+      // Verify no tier mutation
       const tier = psql(`SELECT subscription_tier FROM public.businesses WHERE id = '${bizId}'`);
-      if ((result as Record<string, unknown>).activated === false) {
-        expect(tier).toBe('free');
-      }
+      expect(tier).toBe('free');
     } finally { cleanup(bizId); }
   });
 
@@ -506,7 +505,96 @@ describe.skipIf(!canRun)('adversarial authority proofs', () => {
     } finally { cleanup(bizId); }
   });
 
-  it('22. subscription_payments.config_version_id column exists', () => {
+  it('22. missing config_version_id on payment → rejected', () => {
+    const { bizId, subId } = createPaidTestBusiness({ withChannel: true });
+    psql(`UPDATE public.subscription_payments SET config_version_id = NULL WHERE subscription_id = '${subId}'`);
+    try {
+      const result = psqlJson(`SELECT public.activate_paid_subscription('${subId}') AS r`) as Record<string, unknown>;
+      expect(result).toMatchObject({ activated: false, reason: 'missing_config_provenance' });
+      const tier = psql(`SELECT subscription_tier FROM public.businesses WHERE id = '${bizId}'`);
+      expect(tier).toBe('free');
+    } finally { cleanup(bizId); }
+  });
+
+  it('23. currency mismatch → rejected', () => {
+    const { bizId, subId } = createPaidTestBusiness({ withChannel: true });
+    // Change payment currency to one that doesn't match business country
+    psql(`UPDATE public.subscription_payments SET currency = 'EUR' WHERE subscription_id = '${subId}'`);
+    try {
+      const result = psqlJson(`SELECT public.activate_paid_subscription('${subId}') AS r`) as Record<string, unknown>;
+      expect(result).toMatchObject({ activated: false, reason: 'currency_mismatch' });
+    } finally { cleanup(bizId); }
+  });
+
+  it('24. renewal with new payment evidence → new period allowance', () => {
+    const { bizId, subId } = createPaidTestBusiness({ withChannel: true });
+    try {
+      // First activation
+      psql(`SELECT public.activate_paid_subscription('${subId}')`);
+      const cnt1 = psql(`SELECT count(*) FROM public.messaging_allowances WHERE business_id = '${bizId}' AND type = 'subscription_included'`);
+      expect(parseInt(cnt1)).toBe(1);
+
+      // Simulate renewal: insert new payment evidence with different provider_reference
+      const configId = psql(`SELECT id FROM public.platform_config_versions ORDER BY effective_from DESC LIMIT 1`);
+      psql(`
+        INSERT INTO public.subscription_payments (
+          business_id, subscription_id, amount, currency, gateway, gateway_reference,
+          plan, action, status, config_version_id, provider_reference, period_start, period_end
+        ) VALUES (
+          '${bizId}', '${subId}', 5000, 'NGN', 'paystack', 'renewal-ref-${Date.now()}',
+          'growth', 'renewal', 'success', '${configId}', 'renewal-prov-${Date.now()}',
+          NOW() + INTERVAL '30 days', NOW() + INTERVAL '60 days'
+        );
+      `);
+
+      // Re-activate with new evidence
+      const result = psqlJson(`SELECT public.activate_paid_subscription('${subId}') AS r`) as Record<string, unknown>;
+      expect(result).toMatchObject({ activated: true });
+
+      // Should have 2 allowances (one per period)
+      const cnt2 = psql(`SELECT count(*) FROM public.messaging_allowances WHERE business_id = '${bizId}' AND type = 'subscription_included'`);
+      expect(parseInt(cnt2)).toBe(2);
+    } finally { cleanup(bizId); }
+  });
+
+  it('25. delayed READY reconciliation uses payment-pinned config (not current)', () => {
+    // Create business without channel (delayed READY)
+    const { bizId, subId } = createPaidTestBusiness({ withChannel: false });
+    try {
+      // Activate — tier set, allowance pending (no channel)
+      psql(`SELECT public.activate_paid_subscription('${subId}')`);
+      const tier = psql(`SELECT subscription_tier FROM public.businesses WHERE id = '${bizId}'`);
+      expect(tier).toBe('growth');
+
+      // Insert new config v2 with different allowance amounts
+      const v2Config = { ...PAID_CONFIG, subscription_included_minor_by_tier_currency: { growth: { NGN: 999999 }, business: { NGN: 999999 } } };
+      const ts = nextConfigTimestamp();
+      psql(`INSERT INTO public.platform_config_versions (id, config_snapshot, effective_from, created_at) VALUES (gen_random_uuid(), '${JSON.stringify(v2Config).replace(/'/g, "''")}'::jsonb, ${ts}, NOW())`);
+
+      // Create READY channel
+      const channelId = psql(`
+        INSERT INTO public.whatsapp_channels (
+          business_id, provider, channel_type, phone_number_id, waba_id,
+          phone_number, display_name, country_code, connection_method,
+          connection_status, is_active
+        ) VALUES ('${bizId}', 'meta_cloud', 'dedicated', 'pnid-delayed-${bizCounter}', 'waba-test',
+          '+3${Date.now()}${bizCounter}', 'Delayed Channel', 'NG', 'transfer', 'active', true)
+        RETURNING id;
+      `);
+      psql(`UPDATE public.businesses SET whatsapp_channel_id = '${channelId}', wa_method = 'transfer' WHERE id = '${bizId}'`);
+
+      // Reconcile — should use pinned config v1, not current v2
+      psql(`SELECT public.reconcile_paid_allowance('${bizId}')`);
+      const amount = psql(`SELECT amount_minor FROM public.messaging_allowances WHERE business_id = '${bizId}' AND type = 'subscription_included'`);
+      // v1 has NGN=100000, v2 has NGN=999999
+      expect(parseInt(amount)).toBe(100000);
+
+      // Restore good config
+      ensurePaidConfig();
+    } finally { cleanup(bizId); }
+  });
+
+  it('26. subscription_payments config/evidence columns exist', () => {
     const cnt = psql(`
       SELECT count(*) FROM information_schema.columns
       WHERE table_name = 'subscription_payments' AND column_name = 'config_version_id'
@@ -514,7 +602,7 @@ describe.skipIf(!canRun)('adversarial authority proofs', () => {
     expect(parseInt(cnt)).toBe(1);
   });
 
-  it('23. subscription_payments.provider_reference column exists', () => {
+  it('27. subscription_payments.provider_reference column exists', () => {
     const cnt = psql(`
       SELECT count(*) FROM information_schema.columns
       WHERE table_name = 'subscription_payments' AND column_name = 'provider_reference'

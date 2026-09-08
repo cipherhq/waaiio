@@ -232,25 +232,60 @@ export async function POST(request: NextRequest) {
 
         // If we found a matching platform subscription, this is a renewal charge
         if (platformSub) {
-          const now = new Date();
-          const periodEnd = new Date();
-          periodEnd.setDate(periodEnd.getDate() + 30);
+          // Use provider timestamps for period (not retry-time)
+          const paidAt = (data.paid_at as string) || (data.created_at as string);
+          const periodStartDate = paidAt ? new Date(paidAt) : new Date();
+          const periodEndDate = new Date(periodStartDate);
+          periodEndDate.setDate(periodEndDate.getDate() + 30);
+          const periodStartIso = periodStartDate.toISOString();
+          const periodEndIso = periodEndDate.toISOString();
 
           // Update subscription period with canonical provider-derived timestamps
           await supabase
             .from('subscriptions')
             .update({
-              current_period_start: now.toISOString(),
-              current_period_end: periodEnd.toISOString(),
-              updated_at: now.toISOString(),
+              current_period_start: periodStartIso,
+              current_period_end: periodEndIso,
+              updated_at: new Date().toISOString(),
             })
             .eq('id', platformSub.id);
 
+          // Resolve effective config version for payment provenance
+          const { data: renewalConfig } = await supabase
+            .from('platform_config_versions')
+            .select('id')
+            .lte('effective_from', new Date().toISOString())
+            .order('effective_from', { ascending: false })
+            .limit(1)
+            .single();
+
+          // Persist payment evidence BEFORE calling activation RPC
+          // Store amount in smallest unit (kobo) — NOT converted to naira
+          const chargeAmountKobo = data.amount as number;
+          await supabase.from('subscription_payments').insert({
+            business_id: platformSub.business_id,
+            subscription_id: platformSub.id,
+            amount: chargeAmountKobo,
+            currency: ((data.currency as string) || 'NGN').toUpperCase(),
+            gateway: 'paystack',
+            gateway_reference: reference,
+            provider_reference: reference,
+            plan: platformSub.plan,
+            action: 'renewal',
+            status: 'success',
+            config_version_id: renewalConfig?.id || null,
+            period_start: periodStartIso,
+            period_end: periodEndIso,
+          });
+
           // Atomic activation: restores tier if downgraded + grants period allowance
-          try {
-            await supabase.rpc('activate_paid_subscription', { p_subscription_id: platformSub.id });
-          } catch (activateErr) {
+          const { data: activationResult, error: activateErr } = await supabase.rpc(
+            'activate_paid_subscription', { p_subscription_id: platformSub.id },
+          );
+          if (activateErr) {
             console.warn('[PAYSTACK-WEBHOOK] Paid activation RPC error (non-fatal):', activateErr);
+          } else if (activationResult && activationResult.activated !== true) {
+            console.warn('[PAYSTACK-WEBHOOK] Paid activation rejected:', activationResult);
           }
 
           // Ensure business stays active
@@ -258,21 +293,6 @@ export async function POST(request: NextRequest) {
             .from('businesses')
             .update({ status: 'active' })
             .eq('id', platformSub.business_id);
-
-          // Record renewal payment
-          const chargeAmountKobo = data.amount as number;
-          const chargeAmountNaira = chargeAmountKobo / 100;
-          await supabase.from('subscription_payments').insert({
-            business_id: platformSub.business_id,
-            subscription_id: platformSub.id,
-            amount: chargeAmountNaira,
-            currency: (data.currency as string) || 'NGN',
-            gateway: 'paystack',
-            gateway_reference: reference,
-            plan: platformSub.plan,
-            action: 'renewal',
-            status: 'success',
-          });
 
           // Send renewal receipt email to business owner
           try {
@@ -288,14 +308,13 @@ export async function POST(request: NextRequest) {
                 .eq('id', biz.owner_id)
                 .single();
               if (profile?.email) {
-                const periodEnd = new Date();
-                periodEnd.setDate(periodEnd.getDate() + 30);
+                const chargeAmountDisplay = chargeAmountKobo / 100;
                 const { subject, html } = subscriptionRenewalReceiptEmail(
                   biz.name,
                   platformSub.plan,
-                  String(chargeAmountNaira),
-                  (data.currency as string)?.toUpperCase() || 'NGN',
-                  periodEnd.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }),
+                  String(chargeAmountDisplay),
+                  ((data.currency as string) || 'NGN').toUpperCase(),
+                  periodEndDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }),
                 );
                 await sendEmail({ to: profile.email, subject, html });
               }

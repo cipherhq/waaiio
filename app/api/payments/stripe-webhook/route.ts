@@ -160,27 +160,82 @@ export async function POST(request: NextRequest) {
           });
         }
 
-        // Handle subscription payments (business tier upgrades)
+        // Handle subscription payments (business tier upgrades) via activation RPC
         if (metadata?.type === 'whatsapp_subscription' && metadata.business_id) {
-          await supabase
-            .from('businesses')
-            .update({
-              subscription_tier: metadata.plan || 'growth',
-              status: 'active',
-            })
-            .eq('id', metadata.business_id);
+          const plan = metadata.plan;
+          if (!plan || !['growth', 'business'].includes(plan)) {
+            logger.error('[STRIPE-WEBHOOK] Missing or invalid plan in checkout metadata', { plan, businessId: metadata.business_id });
+            // Fail closed — do not activate without valid plan
+          } else {
+            // For subscription mode: store Stripe subscription + customer IDs
+            const sessionSubscriptionId = data.subscription as string;
+            const sessionCustomerId = data.customer as string;
+            if (sessionSubscriptionId) {
+              await supabase
+                .from('subscriptions')
+                .update({
+                  stripe_subscription_id: sessionSubscriptionId,
+                  stripe_customer_id: sessionCustomerId || null,
+                })
+                .eq('business_id', metadata.business_id);
+            }
 
-          // For subscription mode: store Stripe subscription + customer IDs
-          const sessionSubscriptionId = data.subscription as string;
-          const sessionCustomerId = data.customer as string;
-          if (sessionSubscriptionId) {
-            await supabase
+            // Resolve effective config version for payment provenance
+            const { data: configVersion } = await supabase
+              .from('platform_config_versions')
+              .select('id')
+              .lte('effective_from', new Date().toISOString())
+              .order('effective_from', { ascending: false })
+              .limit(1)
+              .single();
+
+            // Get subscription for this business
+            const { data: subRecord } = await supabase
               .from('subscriptions')
-              .update({
-                stripe_subscription_id: sessionSubscriptionId,
-                stripe_customer_id: sessionCustomerId || null,
-              })
-              .eq('business_id', metadata.business_id);
+              .select('id')
+              .eq('business_id', metadata.business_id)
+              .single();
+
+            if (subRecord) {
+              // Update subscription status to pending before RPC activation
+              await supabase
+                .from('subscriptions')
+                .update({ status: 'pending', updated_at: new Date().toISOString() })
+                .eq('id', subRecord.id);
+
+              // Persist payment evidence BEFORE calling RPC
+              const stripeAmountSmallest = (data.amount_total as number) || 0;
+              const stripeCurrency = ((data.currency as string) || '').toUpperCase();
+              await supabase.from('subscription_payments').insert({
+                business_id: metadata.business_id,
+                subscription_id: subRecord.id,
+                amount: stripeAmountSmallest,
+                currency: stripeCurrency,
+                gateway: 'stripe',
+                gateway_reference: sessionId,
+                provider_reference: sessionId,
+                plan,
+                action: 'activation',
+                status: 'success',
+                config_version_id: configVersion?.id || null,
+                period_start: new Date().toISOString(),
+                period_end: (() => { const d = new Date(); d.setDate(d.getDate() + 30); return d.toISOString(); })(),
+              });
+
+              // Atomic activation via RPC — sets tier + grants allowance
+              const { data: activationResult, error: activationError } = await supabase.rpc(
+                'activate_paid_subscription',
+                { p_subscription_id: subRecord.id },
+              );
+
+              if (activationError) {
+                logger.error('[STRIPE-WEBHOOK] Paid activation RPC error:', activationError);
+              } else if (activationResult && activationResult.activated !== true) {
+                logger.error('[STRIPE-WEBHOOK] Paid activation rejected:', activationResult);
+              }
+            } else {
+              logger.error('[STRIPE-WEBHOOK] No subscription record found for business', { businessId: metadata.business_id });
+            }
           }
         }
 
@@ -307,7 +362,7 @@ export async function POST(request: NextRequest) {
         }
 
         if (platformSub) {
-          // ── Platform subscription renewal (unchanged behavior) ──
+          // ── Platform subscription renewal ──
           const periodStart = data.period_start
             ? new Date((data.period_start as number) * 1000).toISOString()
             : new Date().toISOString();
@@ -324,24 +379,43 @@ export async function POST(request: NextRequest) {
             })
             .eq('id', platformSub.id);
 
-          // Atomic activation: restores tier if downgraded + grants period allowance
-          try {
-            await supabase.rpc('activate_paid_subscription', { p_subscription_id: platformSub.id });
-          } catch (activateErr) {
-            console.warn('[STRIPE-WEBHOOK] Paid activation RPC error (non-fatal):', activateErr);
-          }
+          // Resolve effective config version for payment provenance
+          const { data: renewalConfig } = await supabase
+            .from('platform_config_versions')
+            .select('id')
+            .lte('effective_from', new Date().toISOString())
+            .order('effective_from', { ascending: false })
+            .limit(1)
+            .single();
 
+          const renewalProviderRef = (data.payment_intent as string) || (data.id as string);
+
+          // Persist payment evidence BEFORE calling activation RPC
           await supabase.from('subscription_payments').insert({
             business_id: platformSub.business_id,
             subscription_id: platformSub.id,
             amount: (data.amount_paid as number) || 0,
             currency: ((data.currency as string)?.toUpperCase()) || 'USD',
             gateway: 'stripe',
-            gateway_reference: (data.payment_intent as string) || (data.id as string),
+            gateway_reference: renewalProviderRef,
+            provider_reference: renewalProviderRef,
             plan: platformSub.plan,
             action: 'renewal',
             status: 'success',
+            config_version_id: renewalConfig?.id || null,
+            period_start: periodStart,
+            period_end: periodEnd,
           });
+
+          // Atomic activation: restores tier if downgraded + grants period allowance
+          const { data: renewActivation, error: renewActivateErr } = await supabase.rpc(
+            'activate_paid_subscription', { p_subscription_id: platformSub.id },
+          );
+          if (renewActivateErr) {
+            console.warn('[STRIPE-WEBHOOK] Paid activation RPC error (non-fatal):', renewActivateErr);
+          } else if (renewActivation && renewActivation.activated !== true) {
+            console.warn('[STRIPE-WEBHOOK] Paid activation rejected:', renewActivation);
+          }
 
           // Send renewal receipt email to business owner
           try {
