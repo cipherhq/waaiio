@@ -301,7 +301,7 @@ BEGIN
   WHERE id = p_subscription_id;
 
   UPDATE public.businesses
-  SET subscription_tier = v_sub.plan,
+  SET subscription_tier = v_sub.plan::public.subscription_tier,
       trial_ends_at = COALESCE(trial_ends_at, clock_timestamp())
   WHERE id = v_sub.business_id;
 
