@@ -143,11 +143,11 @@ export default function ConnectWhatsAppPage() {
     window.FB.login(
       function (response: any) {
         if (response.authResponse) {
-          const accessToken = response.authResponse.accessToken || response.authResponse.code;
+          const code = response.authResponse.code;
           fetch('/api/auth/facebook/discover', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ code: accessToken, access_token: response.authResponse.accessToken }),
+            body: JSON.stringify({ code }),
           })
             .then(r => r.json().then(d => ({ ok: r.ok, d })))
             .then(({ ok, d }) => {
@@ -172,7 +172,7 @@ export default function ConnectWhatsAppPage() {
             .catch(() => { setError('Failed. Try again.'); setFbConnecting(false); });
         } else { setFbConnecting(false); setError('Cancelled.'); }
       },
-      { config_id: configId, response_type: 'code token', override_default_response_type: true, extras: { setup: {}, featureType: '', sessionInfoVersion: '3' } },
+      { config_id: configId, response_type: 'code', override_default_response_type: true, extras: {} },
     );
   }
 

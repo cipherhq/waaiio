@@ -789,13 +789,7 @@ function OnboardingWizard() {
         config_id: configId,
         response_type: 'code',
         override_default_response_type: true,
-        extras: {
-          setup: {
-            business: { name: name || undefined },
-          },
-          featureType: '',
-          sessionInfoVersion: '3',
-        },
+        extras: {},
       }
     );
   }
