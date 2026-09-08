@@ -105,9 +105,9 @@ jobs:
       - name: Build
         run: npm run build
 
-  # ── Migration Validation (real PostgreSQL) ──
-  migrations:
-    name: Migration validation
+  # ── Migration Validation (real PostgreSQL — 3 parallel shards) ──
+  migration-shard-a:
+    name: "Migration validation (shard a)"
     runs-on: ubuntu-24.04
 
     services:
@@ -124,6 +124,7 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+
 
     steps:
       - name: Checkout code
@@ -168,10 +169,12 @@ jobs:
             SELECT 'authenticated'::TEXT;
           $$ LANGUAGE SQL STABLE;
 
-          -- Create a minimal auth.users table (referenced by some FKs)
+          -- Create a minimal auth.users table (referenced by some FKs and triggers)
+          -- Must include phone column: handle_new_user() trigger references NEW.phone
           CREATE TABLE IF NOT EXISTS auth.users (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             email TEXT,
+            phone TEXT,
             raw_app_meta_data JSONB DEFAULT '{}'
           );
 
@@ -212,6 +215,17 @@ jobs:
           RETURNS TEXT[] AS $$
             SELECT string_to_array(name, '/');
           $$ LANGUAGE SQL IMMUTABLE;
+
+          -- Grant schema access to test roles (required for SET ROLE + auth.uid() in RLS tests)
+          GRANT USAGE ON SCHEMA auth TO authenticated, service_role, anon;
+          GRANT USAGE ON SCHEMA storage TO authenticated, service_role, anon;
+          GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA auth TO authenticated, service_role, anon;
+
+          -- Seed common test user (many test suites reference this UUID)
+          INSERT INTO auth.users (id, email) VALUES
+            ('00000000-0000-0000-0000-000000000000', 'default-stub@test.local'),
+            ('00000000-0000-0000-0000-000000000001', 'admin-stub@test.local')
+          ON CONFLICT (id) DO NOTHING;
           EOSQL
           echo "✅ Supabase schema stubs created"
 
@@ -292,6 +306,7 @@ jobs:
             echo "$NO_RLS"
           fi
           echo "✅ RLS check complete."
+
 
       - name: P0 table exposure authorization tests
         env:
@@ -966,6 +981,240 @@ jobs:
           if ! echo "$OUTPUT" | grep -q "passed"; then echo "❌ No Migration 312 DB tests passed."; exit 1; fi
           echo "✅ Migration 312 ticket-row identity concurrency tests complete — zero skips, zero failures."
 
+      - name: "Migration 355 refund convergence tests (hermetic proof)"
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/waaiio_test
+        run: |
+          echo "Running migration 355 refund convergence tests (hermetic — no shared-DB dependency)..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/acc-232-refund-convergence-db.test.ts 2>&1)
+          TEST_EXIT=$?
+          set -e
+          echo "$OUTPUT"
+          if [ "$TEST_EXIT" -ne 0 ]; then
+            echo "❌ Migration 355 refund convergence tests exited with code $TEST_EXIT."
+            exit "$TEST_EXIT"
+          fi
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ Migration 355 refund convergence tests had $SKIP_COUNT skipped tests. All must execute."
+              exit 1
+            fi
+          fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then
+            echo "❌ No migration 355 refund convergence tests passed. Something is wrong."
+            exit 1
+          fi
+          echo "✅ Migration 355 refund convergence tests complete — zero skips, zero failures."
+
+  migration-shard-b:
+    name: "Migration validation (shard b)"
+    runs-on: ubuntu-24.04
+
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: waaiio_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.11.1
+          cache: npm
+
+      - name: Install Node.js dependencies
+        run: npm ci
+
+      - name: Verify PostgreSQL client
+        run: |
+          command -v psql
+          psql --version
+
+      - name: Create Supabase schema prerequisites
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+        run: |
+          # Create the auth schema and functions that Supabase provides
+          psql -q -v ON_ERROR_STOP=1 <<'EOSQL'
+          CREATE SCHEMA IF NOT EXISTS auth;
+          CREATE SCHEMA IF NOT EXISTS extensions;
+          CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+          CREATE EXTENSION IF NOT EXISTS pgcrypto SCHEMA extensions;
+
+          -- Minimal auth.uid() stub for RLS policies
+          CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $$
+            SELECT '00000000-0000-0000-0000-000000000000'::UUID;
+          $$ LANGUAGE SQL STABLE;
+
+          -- Minimal auth.role() stub
+          CREATE OR REPLACE FUNCTION auth.role() RETURNS TEXT AS $$
+            SELECT 'authenticated'::TEXT;
+          $$ LANGUAGE SQL STABLE;
+
+          -- Create a minimal auth.users table (referenced by some FKs and triggers)
+          -- Must include phone column: handle_new_user() trigger references NEW.phone
+          CREATE TABLE IF NOT EXISTS auth.users (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            email TEXT,
+            phone TEXT,
+            raw_app_meta_data JSONB DEFAULT '{}'
+          );
+
+          -- Supabase roles: required by GRANT/REVOKE in migrations
+          -- 137, 176, 181, 233, 244 (GRANT EXECUTE ... TO service_role)
+          -- 003, 017, 018, 023 (RLS policies using auth.role() = 'service_role')
+          DO $$ BEGIN CREATE ROLE service_role; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+          DO $$ BEGIN CREATE ROLE authenticated; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+          DO $$ BEGIN CREATE ROLE anon; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+          -- Realtime publication: required by ALTER PUBLICATION in migrations
+          -- 001 (reservations), 020 (chat_messages), 025 (chat_conversations), 110 (queue_entries)
+          -- Note: CREATE PUBLICATION IF NOT EXISTS requires PG16+; CI uses PG15
+          DO $$ BEGIN CREATE PUBLICATION supabase_realtime; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+          -- Storage schema: required by bucket/object policies in migrations
+          -- 018 (customer-reports bucket), 033 (business-documents bucket)
+          CREATE SCHEMA IF NOT EXISTS storage;
+          CREATE TABLE IF NOT EXISTS storage.buckets (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            public BOOLEAN DEFAULT false,
+            created_at TIMESTAMPTZ DEFAULT NOW(),
+            updated_at TIMESTAMPTZ DEFAULT NOW()
+          );
+          CREATE TABLE IF NOT EXISTS storage.objects (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            bucket_id TEXT REFERENCES storage.buckets(id),
+            name TEXT,
+            owner UUID,
+            created_at TIMESTAMPTZ DEFAULT NOW(),
+            updated_at TIMESTAMPTZ DEFAULT NOW()
+          );
+          ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY;
+
+          -- Supabase storage helper function used in bucket policies (migration 133)
+          CREATE OR REPLACE FUNCTION storage.foldername(name TEXT)
+          RETURNS TEXT[] AS $$
+            SELECT string_to_array(name, '/');
+          $$ LANGUAGE SQL IMMUTABLE;
+
+          -- Grant schema access to test roles (required for SET ROLE + auth.uid() in RLS tests)
+          GRANT USAGE ON SCHEMA auth TO authenticated, service_role, anon;
+          GRANT USAGE ON SCHEMA storage TO authenticated, service_role, anon;
+          GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA auth TO authenticated, service_role, anon;
+
+          -- Seed common test user (many test suites reference this UUID)
+          INSERT INTO auth.users (id, email) VALUES
+            ('00000000-0000-0000-0000-000000000000', 'default-stub@test.local'),
+            ('00000000-0000-0000-0000-000000000001', 'admin-stub@test.local')
+          ON CONFLICT (id) DO NOTHING;
+          EOSQL
+          echo "✅ Supabase schema stubs created"
+
+      - name: Apply all migrations
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+        run: |
+          FAILED=0
+          APPLIED=0
+          for f in supabase/migrations/*.sql; do
+            echo "Applying $(basename $f)..."
+            if ! psql -q -v ON_ERROR_STOP=1 -f "$f" 2>&1; then
+              echo "❌ FAILED: $(basename $f)"
+              FAILED=1
+              # Continue to catch multiple failures
+            else
+              APPLIED=$((APPLIED + 1))
+            fi
+          done
+          echo ""
+          echo "Applied: $APPLIED migrations"
+          if [ "$FAILED" -eq 1 ]; then
+            echo "❌ Some migrations failed. See errors above."
+            exit 1
+          fi
+          echo "✅ All migrations applied successfully."
+
+      - name: Verify key tables exist
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+        run: |
+          echo "Verifying key tables..."
+          TABLES="businesses bookings payments orders products events event_tickets attendance_log whatsapp_channels processed_webhook_events promo_campaigns promo_campaign_codes promo_redemptions class_sessions class_recurrence_rules"
+          MISSING=0
+          for t in $TABLES; do
+            if psql -tAc "SELECT 1 FROM information_schema.tables WHERE table_name='$t'" | grep -q 1; then
+              echo "  ✅ $t"
+            else
+              echo "  ❌ $t MISSING"
+              MISSING=1
+            fi
+          done
+          if [ "$MISSING" -eq 1 ]; then
+            echo "❌ Some expected tables are missing."
+            exit 1
+          fi
+          echo "✅ All key tables verified."
+
+      - name: Verify RLS is enabled
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+        run: |
+          echo "Checking RLS on user-facing tables..."
+          NO_RLS=$(psql -tAc "
+            SELECT tablename FROM pg_tables
+            WHERE schemaname = 'public'
+            AND tablename NOT IN ('schema_migrations', 'spatial_ref_sys')
+            AND tablename NOT IN (
+              SELECT tablename FROM pg_tables t
+              JOIN pg_class c ON c.relname = t.tablename
+              WHERE c.relrowsecurity = true
+            )
+          ")
+          if [ -n "$NO_RLS" ]; then
+            echo "⚠️  Tables without RLS (may be intentional):"
+            echo "$NO_RLS"
+          fi
+          echo "✅ RLS check complete."
+
+
       - name: Migration 313 atomic reschedule DB tests
         env:
           PGHOST: localhost
@@ -1511,7 +1760,7 @@ jobs:
           CREATE EXTENSION IF NOT EXISTS pgcrypto SCHEMA extensions;
           CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $$ SELECT gen_random_uuid(); $$ LANGUAGE SQL STABLE;
           CREATE OR REPLACE FUNCTION auth.role() RETURNS TEXT AS $$ SELECT 'authenticated'::TEXT; $$ LANGUAGE SQL STABLE;
-          CREATE TABLE IF NOT EXISTS auth.users (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), email TEXT, raw_app_meta_data JSONB DEFAULT '{}');
+          CREATE TABLE IF NOT EXISTS auth.users (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), email TEXT, phone TEXT, raw_app_meta_data JSONB DEFAULT '{}');
           DO $$ BEGIN CREATE ROLE service_role NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
           DO $$ BEGIN CREATE ROLE authenticated NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
           DO $$ BEGIN CREATE ROLE anon NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
@@ -1534,6 +1783,8 @@ jobs:
           CREATE TABLE IF NOT EXISTS capability_overrides (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), business_id UUID, capability TEXT);
           CREATE OR REPLACE FUNCTION check_appointment_schedule(p_appointment_id UUID, p_business_id UUID, p_date DATE, p_time TEXT) RETURNS TABLE(allowed BOOLEAN, reason TEXT) AS $$ SELECT true, NULL::text; $$ LANGUAGE SQL;
           CREATE OR REPLACE FUNCTION check_staff_availability(p_staff_id UUID, p_business_id UUID, p_date DATE, p_time TEXT, p_duration INTEGER DEFAULT 60) RETURNS TABLE(allowed BOOLEAN, reason TEXT) AS $$ SELECT true, NULL::text; $$ LANGUAGE SQL;
+          GRANT USAGE ON SCHEMA auth TO authenticated, service_role, anon;
+          GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA auth TO authenticated, service_role, anon;
           STUBS
           echo "Applying canonical migrations 321, 322, 323..."
           psql "$DBURL" -v ON_ERROR_STOP=1 -q -f supabase/migrations/321_promotions_schema.sql
@@ -1733,7 +1984,7 @@ jobs:
           CREATE EXTENSION IF NOT EXISTS pgcrypto SCHEMA extensions;
           CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $$ SELECT '00000000-0000-0000-0000-000000000000'::UUID; $$ LANGUAGE SQL STABLE;
           CREATE OR REPLACE FUNCTION auth.role() RETURNS TEXT AS $$ SELECT 'authenticated'::TEXT; $$ LANGUAGE SQL STABLE;
-          CREATE TABLE IF NOT EXISTS auth.users (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), email TEXT, raw_app_meta_data JSONB DEFAULT '{}');
+          CREATE TABLE IF NOT EXISTS auth.users (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), email TEXT, phone TEXT, raw_app_meta_data JSONB DEFAULT '{}');
           DO $$ BEGIN CREATE ROLE service_role NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
           DO $$ BEGIN CREATE ROLE authenticated NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
           DO $$ BEGIN CREATE ROLE anon NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
@@ -1744,6 +1995,9 @@ jobs:
           CREATE TABLE IF NOT EXISTS storage.objects (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), bucket_id TEXT REFERENCES storage.buckets(id), name TEXT, owner UUID, created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW());
           ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY;
           CREATE OR REPLACE FUNCTION storage.foldername(name TEXT) RETURNS TEXT[] AS $$ SELECT string_to_array(name, '/'); $$ LANGUAGE SQL IMMUTABLE;
+          GRANT USAGE ON SCHEMA auth TO authenticated, service_role, anon;
+          GRANT USAGE ON SCHEMA storage TO authenticated, service_role, anon;
+          GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA auth TO authenticated, service_role, anon;
           STUBS
 
           for f in supabase/migrations/*.sql; do
@@ -1968,38 +2222,6 @@ jobs:
             exit 1
           fi
           echo "✅ Migration 356 Customer360/Financials tests complete — zero skips, zero failures."
-
-      - name: Migration 355 refund convergence tests
-        env:
-          PGHOST: localhost
-          PGPORT: 5432
-          PGUSER: postgres
-          PGPASSWORD: postgres
-          PGDATABASE: waaiio_test
-          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/waaiio_test
-        run: |
-          echo "Running migration 355 refund convergence tests..."
-          set +e
-          OUTPUT=$(npx vitest run lib/__tests__/acc-232-refund-convergence-db.test.ts 2>&1)
-          TEST_EXIT=$?
-          set -e
-          echo "$OUTPUT"
-          if [ "$TEST_EXIT" -ne 0 ]; then
-            echo "❌ Migration 355 refund convergence tests exited with code $TEST_EXIT."
-            exit "$TEST_EXIT"
-          fi
-          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
-            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
-            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
-              echo "❌ Migration 355 refund convergence tests had $SKIP_COUNT skipped tests. All must execute."
-              exit 1
-            fi
-          fi
-          if ! echo "$OUTPUT" | grep -q "passed"; then
-            echo "❌ No migration 355 refund convergence tests passed. Something is wrong."
-            exit 1
-          fi
-          echo "✅ Migration 355 refund convergence tests complete — zero skips, zero failures."
 
       - name: "Migration 359 config versioning tests"
         env:
@@ -2429,7 +2651,7 @@ jobs:
           CREATE EXTENSION IF NOT EXISTS pgcrypto SCHEMA extensions;
           CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $$ SELECT '00000000-0000-0000-0000-000000000000'::UUID; $$ LANGUAGE SQL STABLE;
           CREATE OR REPLACE FUNCTION auth.role() RETURNS TEXT AS $$ SELECT 'authenticated'::TEXT; $$ LANGUAGE SQL STABLE;
-          CREATE TABLE IF NOT EXISTS auth.users (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), email TEXT, raw_app_meta_data JSONB DEFAULT '{}');
+          CREATE TABLE IF NOT EXISTS auth.users (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), email TEXT, phone TEXT, raw_app_meta_data JSONB DEFAULT '{}');
           DO $$ BEGIN CREATE ROLE service_role; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
           DO $$ BEGIN CREATE ROLE authenticated; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
           DO $$ BEGIN CREATE ROLE anon; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
@@ -2582,6 +2804,24 @@ jobs:
             exit 1
           fi
           echo "✅ #216 Object authorization tests complete — zero skips, zero failures."
+
+
+  migrations:
+    name: Migration validation
+    runs-on: ubuntu-24.04
+    needs: [migration-shard-a, migration-shard-b]
+    if: always()
+    steps:
+      - name: Check shard results
+        run: |
+          if [ "${{ needs.migration-shard-a.result }}" != "success" ] || \
+             [ "${{ needs.migration-shard-b.result }}" != "success" ]; then
+            echo "❌ One or more migration shards failed."
+            echo "Shard A: ${{ needs.migration-shard-a.result }}"
+            echo "Shard B: ${{ needs.migration-shard-b.result }}"
+            exit 1
+          fi
+          echo "All migration shards passed"
 
   # ── Engineering Governance ──
   governance:
