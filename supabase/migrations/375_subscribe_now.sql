@@ -286,7 +286,7 @@ BEGIN
   IF v_sub.status = 'active' THEN
     SELECT subscription_tier INTO v_biz
       FROM public.businesses WHERE id = v_sub.business_id;
-    IF v_biz.subscription_tier = v_sub.plan THEN
+    IF v_biz.subscription_tier::TEXT = v_sub.plan THEN
       RETURN jsonb_build_object('activated', true, 'idempotent', true);
     END IF;
   END IF;
