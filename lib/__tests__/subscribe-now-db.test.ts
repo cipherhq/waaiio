@@ -252,16 +252,18 @@ describe.skipIf(!canRun)('activate_paid_subscription', () => {
   });
 
   it('9. missing allowance config → entitlement active, allowance pending + alert', () => {
-    // Insert config without subscription_included_minor_by_tier_currency
-    const ts = nextConfigTimestamp();
-    psql(`
+    // Insert config WITH pricing_tiers (passes amount validation) but WITHOUT
+    // subscription_included_minor_by_tier_currency (hits allowance config gap)
+    const gapTs = nextConfigTimestamp();
+    const gapConfigId = psql(`
       INSERT INTO public.platform_config_versions (id, config_snapshot, effective_from, created_at)
       VALUES (gen_random_uuid(), '${JSON.stringify({
         messaging_financial_gate: true,
+        pricing_tiers: { free: { price: 0 }, growth: { price: 50 }, business: { price: 150 } },
         messaging_pricing: { NGN: { rates: { NG: { utility: 100 } } } },
         trial_days: 30,
         trial_credit_minor_by_currency: { NGN: 50000 },
-      }).replace(/'/g, "''")}'::jsonb, ${ts}, NOW())
+      }).replace(/'/g, "''")}'::jsonb, ${gapTs}, NOW())
       RETURNING id;
     `);
 
