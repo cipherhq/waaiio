@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
+import { buildEmbeddedSignupLoginOptions, extractAuthCode, buildDiscoverRequestBody } from '@/lib/whatsapp/embedded-signup-config';
 import { PhoneInput } from '@/components/auth/PhoneInput';
 
 declare global {
@@ -142,12 +143,12 @@ export default function ConnectWhatsAppPage() {
     setFbConnecting(true);
     window.FB.login(
       function (response: any) {
-        if (response.authResponse) {
-          const code = response.authResponse.code;
+        const code = extractAuthCode(response);
+        if (code) {
           fetch('/api/auth/facebook/discover', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ code }),
+            body: JSON.stringify(buildDiscoverRequestBody(code)),
           })
             .then(r => r.json().then(d => ({ ok: r.ok, d })))
             .then(({ ok, d }) => {
@@ -172,7 +173,7 @@ export default function ConnectWhatsAppPage() {
             .catch(() => { setError('Failed. Try again.'); setFbConnecting(false); });
         } else { setFbConnecting(false); setError('Cancelled.'); }
       },
-      { config_id: configId, response_type: 'code', override_default_response_type: true, extras: {} },
+      buildEmbeddedSignupLoginOptions(configId),
     );
   }
 
