@@ -48,6 +48,54 @@ function psqlAsync(sql: string): Promise<string> {
   });
 }
 
+/**
+ * Spawn a psql session, write initialSql, and wait for a stdout marker
+ * proving the session has reached a specific point (e.g., acquired a row lock).
+ * Returns a handle to write more SQL and await final completion.
+ *
+ * The barrier is parent-visible: the parent observes the marker on stdout
+ * before proceeding, ensuring deterministic ordering without wall-clock delays.
+ */
+function spawnPsqlWithBarrier(
+  initialSql: string,
+  marker: string,
+): { ready: Promise<void>; finish: (moreSql: string) => void; result: Promise<string> } {
+  const child = spawn('psql', [dbUrl, '-tAXq', '-v', 'ON_ERROR_STOP=1'], {
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+  let stdout = '';
+  let stderr = '';
+  let readyResolve: () => void;
+  let markerSeen = false;
+
+  const ready = new Promise<void>((resolve) => { readyResolve = resolve; });
+  const result = new Promise<string>((resolve, reject) => {
+    child.stdout.on('data', (d: Buffer) => {
+      stdout += d.toString();
+      if (!markerSeen && stdout.includes(marker)) {
+        markerSeen = true;
+        readyResolve();
+      }
+    });
+    child.stderr.on('data', (d: Buffer) => { stderr += d.toString(); });
+    child.on('close', (code) => {
+      if (!markerSeen) readyResolve(); // unblock if process exits early
+      if (code !== 0) reject(new Error(stderr || `exit ${code}`));
+      else resolve(stdout.trim());
+    });
+  });
+
+  // Write the initial SQL (up to the barrier point)
+  child.stdin.write(initialSql);
+
+  const finish = (moreSql: string) => {
+    child.stdin.write(moreSql);
+    child.stdin.end();
+  };
+
+  return { ready, finish, result };
+}
+
 // Test data — isolated UUIDs to avoid collision with other test suites
 const OWNER_371   = '00000000-0000-0000-0000-000000000381';
 const ADMIN_371   = '00000000-0000-0000-0000-00000000a371';
@@ -1098,40 +1146,38 @@ describe.skipIf(!canRun)('Runtime Financial Integration DB Tests (#261 / Migrati
     // Wait for TTL to expire
     psql('SELECT pg_sleep(1.5);');
 
-    // Session A (expiry): acquires row lock FIRST via advisory lock coordination,
-    // releases the reservation, then commits.
-    // Session B (sender): tries markSending but is queued behind the lock;
-    // wakes after release commits and is blocked by the cross-state trigger.
+    // Deterministic ordering via parent-visible barrier (no advisory locks, no pg_sleep):
     //
-    // We force ordering: session A uses pg_advisory_lock to signal it has the row lock,
-    // session B waits for that signal before attempting its UPDATE.
-    const sessionA = `
-      BEGIN;
-      -- Acquire the row lock first
-      SELECT id FROM message_send_attempts WHERE id = '${attemptId}' FOR UPDATE;
-      -- Signal to session B that we hold the lock
-      SELECT pg_advisory_lock(371410);
-      -- Perform the release
-      SELECT safe_release_expired_reservation('${attemptId}');
-      -- Release advisory lock so session B can proceed
-      SELECT pg_advisory_unlock(371410);
-      COMMIT;
-    `;
+    // 1. Spawn Session A → BEGIN + SELECT ... FOR UPDATE → emit 'ROW_LOCKED' on stdout
+    // 2. Parent waits for 'ROW_LOCKED' marker on A's stdout (positive evidence A holds lock)
+    // 3. Only THEN launch Session B (UPDATE ... SET status='sending')
+    // 4. Send release+commit to Session A
+    // 5. B's UPDATE either waits for A's row lock or sees committed released state;
+    //    either way the trigger blocks entry to 'sending' after disposition is 'released'.
 
-    const sessionB = `
-      -- Wait for session A to acquire the row lock (advisory lock signals this)
-      SELECT pg_advisory_lock(371410);
-      SELECT pg_advisory_unlock(371410);
-      -- Now try to enter sending — session A may or may not have committed yet.
-      -- If A committed: trigger blocks us (released disposition).
-      -- If A hasn't committed: we wait behind row lock, then trigger blocks us.
-      UPDATE message_send_attempts SET status = 'sending', sent_at = NOW() WHERE id = '${attemptId}';
-    `;
+    const sessionA = spawnPsqlWithBarrier(
+      `BEGIN;\n` +
+      `SELECT id FROM message_send_attempts WHERE id = '${attemptId}' FOR UPDATE;\n` +
+      `SELECT 'ROW_LOCKED';\n`,
+      'ROW_LOCKED',
+    );
 
-    const [rA, rB] = await Promise.allSettled([
-      psqlAsync(sessionA),
-      psqlAsync(sessionB),
-    ]);
+    // Wait for positive evidence that Session A holds the row lock
+    await sessionA.ready;
+
+    // NOW launch Session B — A definitively holds the row lock
+    const sessionBResult = psqlAsync(
+      `UPDATE message_send_attempts SET status = 'sending', sent_at = NOW() WHERE id = '${attemptId}';\n`,
+    );
+
+    // Send the release + commit to Session A (B is queued behind the row lock)
+    sessionA.finish(
+      `SELECT safe_release_expired_reservation('${attemptId}');\n` +
+      `COMMIT;\n`,
+    );
+
+    // Await both sessions
+    const [rA, rB] = await Promise.allSettled([sessionA.result, sessionBResult]);
 
     // Session A should succeed (release)
     expect(rA.status).toBe('fulfilled');
@@ -1147,9 +1193,6 @@ describe.skipIf(!canRun)('Runtime Financial Integration DB Tests (#261 / Migrati
     const finalStatus = psql(`SELECT status FROM message_send_attempts WHERE id = '${attemptId}';`);
     expect(finalDisp).toBe('released');
     expect(finalStatus).toBe('pending_authorization');
-
-    // Clean up advisory locks
-    psqlMayFail('SELECT pg_advisory_unlock_all();');
   }, 30000);
 
   // ═══════════════════════════════════════════════════════
