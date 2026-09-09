@@ -121,8 +121,8 @@ export async function GET(request: NextRequest) {
                 } else if (data?.data?.status === 'abandoned' || data?.data?.status === 'failed') {
                   // Found + terminal provider failure → checked terminal transition
                   resolved = await checkedTerminal(data.data.status);
-                } else if (data?.data?.authorization_url) {
-                  // Found + unpaid with resumable artifact → CAS with URL
+                } else if (typeof data?.data?.authorization_url === 'string' && data.data.authorization_url.startsWith('http')) {
+                  // Found + unpaid with valid resumable artifact → CAS with URL
                   resolved = await checkedCAS({ provider_init_state: 'provider_confirmed', metadata: { ...meta, checkout_url: data.data.authorization_url } });
                 } else if (data?.status === false && data?.message === 'Transaction reference not found') {
                   // Definitively absent — no replay in this PR (exact request-builder not yet factored).
@@ -151,7 +151,7 @@ export async function GET(request: NextRequest) {
                   }
                 } else if (data?.data?.status === 'failed') {
                   resolved = await checkedTerminal('failed');
-                } else if (data?.data?.link) {
+                } else if (typeof data?.data?.link === 'string' && data.data.link.startsWith('http')) {
                   resolved = await checkedCAS({ provider_init_state: 'provider_confirmed', metadata: { ...meta, checkout_url: data.data.link } });
                 } else if (data?.status === 'error' && data?.message === 'No transaction was found for this id') {
                   // Definitively absent — no replay in this PR (exact request-builder not yet factored).
@@ -184,12 +184,22 @@ export async function GET(request: NextRequest) {
                 if (!res.ok) { searchComplete = false; break; }
                 let list: Record<string, unknown>;
                 try { list = await res.json(); } catch { searchComplete = false; break; }
-                const sessions = (list.data || []) as Array<{ id: string; url: string; client_reference_id?: string }>;
-                for (const s of sessions) {
-                  if (s.client_reference_id === clientRef) matches.push(s);
+                // Validate List response shape — malformed provider shape is ambiguous
+                if (!Array.isArray(list.data) || typeof list.has_more !== 'boolean') {
+                  searchComplete = false; break;
                 }
-                if (!list.has_more || sessions.length === 0) break; // search exhausted normally
-                startingAfter = sessions[sessions.length - 1].id;
+                const sessions = list.data as Array<Record<string, unknown>>;
+                for (const s of sessions) {
+                  if (s.client_reference_id === clientRef
+                      && typeof s.id === 'string' && s.id
+                      && typeof s.url === 'string' && s.url) {
+                    matches.push({ id: s.id, url: s.url });
+                  }
+                }
+                if (!list.has_more || sessions.length === 0) break;
+                const lastId = sessions[sessions.length - 1]?.id;
+                if (typeof lastId !== 'string' || !lastId) { searchComplete = false; break; }
+                startingAfter = lastId;
                 // If this is the last allowed page and has_more is true → incomplete
                 if (pages >= MAX_PAGES && list.has_more) { searchComplete = false; break; }
               }
