@@ -191,7 +191,9 @@ function buildStripeMock(config: StripeTestConfig = {}) {
   }
 
   const fromFn = vi.fn((tableName: string) => createChain(tableName));
-  const rpcFn = vi.fn((fn: string) => {
+  const stripeRpcCalls: Array<{ fn: string; args: unknown }> = [];
+  const rpcFn = vi.fn((fn: string, args: unknown) => {
+    stripeRpcCalls.push({ fn, args });
     if (fn === 'activate_paid_subscription') {
       return Promise.resolve(config.activationResult ?? { data: { activated: true, allowance_granted: true }, error: null });
     }
@@ -201,6 +203,7 @@ function buildStripeMock(config: StripeTestConfig = {}) {
   return {
     client: { from: fromFn, rpc: rpcFn },
     eventUpdates,
+    rpcCalls: stripeRpcCalls,
     fromFn,
     rpcFn,
   };
@@ -298,7 +301,9 @@ function buildPaystackMock(config: PaystackTestConfig = {}) {
   }
 
   const fromFn = vi.fn((tableName: string) => createChain(tableName));
-  const rpcFn = vi.fn((fn: string) => {
+  const paystackRpcCalls: Array<{ fn: string; args: unknown }> = [];
+  const rpcFn = vi.fn((fn: string, args: unknown) => {
+    paystackRpcCalls.push({ fn, args });
     if (fn === 'activate_paid_subscription') {
       return Promise.resolve(config.activationResult ?? { data: { activated: true, allowance_granted: true }, error: null });
     }
@@ -308,6 +313,7 @@ function buildPaystackMock(config: PaystackTestConfig = {}) {
   return {
     client: { from: fromFn, rpc: rpcFn },
     eventUpdates,
+    rpcCalls: paystackRpcCalls,
     fromFn,
     rpcFn,
   };
@@ -593,30 +599,33 @@ describe('Stripe webhook: paid subscription failure paths', () => {
 
   // ── Retry recovery proofs (blocker 3) ──
 
-  it('checkout: duplicate evidence on retry → reuses exact evidence, RPC succeeds', async () => {
+  it('checkout: duplicate evidence on retry → recovers exact evidence, RPC receives recovered ID', async () => {
     const event = buildStripeCheckoutEvent();
-    const { status, json } = await callStripeWebhook(event, {
+    const { status, json, mock } = await callStripeWebhook(event, {
       subscriptionRecord: { id: 'sub-1' },
-      // Evidence insert fails with duplicate (retry scenario)
       evidenceInsertResult: { data: null, error: { code: '23505', message: 'duplicate key value violates unique constraint' } },
-      // RPC succeeds on the reused evidence
       activationResult: { data: { activated: true, idempotent: true }, error: null },
     });
-    // Should succeed — retry reused exact evidence via provider_reference lookup
     expect(status).toBe(200);
     expect(json.received).toBe(true);
+    // Assert RPC was called with the recovered evidence ID (sp-existing-1)
+    const activationRpc = mock.rpcCalls.find((c: { fn: string }) => c.fn === 'activate_paid_subscription');
+    expect(activationRpc).toBeDefined();
+    expect(activationRpc!.args).toEqual({ p_payment_id: 'sp-existing-1' });
   });
 
-  it('renewal: duplicate evidence on retry → reuses exact evidence, RPC succeeds', async () => {
+  it('renewal: duplicate evidence on retry → recovers exact evidence, RPC receives recovered ID', async () => {
     const event = buildStripeInvoicePaidEvent();
-    const { status, json } = await callStripeWebhook(event, {
+    const { status, json, mock } = await callStripeWebhook(event, {
       platformSub: { id: 'sub-1', business_id: 'biz-1', plan: 'growth', status: 'active' },
-      // Evidence insert fails with duplicate
       evidenceInsertResult: { data: null, error: { code: '23505', message: 'duplicate key value violates unique constraint' } },
       activationResult: { data: { activated: true, idempotent: true }, error: null },
     });
     expect(status).toBe(200);
     expect(json.received).toBe(true);
+    const activationRpc = mock.rpcCalls.find((c: { fn: string }) => c.fn === 'activate_paid_subscription');
+    expect(activationRpc).toBeDefined();
+    expect(activationRpc!.args).toEqual({ p_payment_id: 'sp-existing-1' });
   });
 });
 
@@ -767,16 +776,18 @@ describe('Paystack webhook: paid subscription failure paths', () => {
     expect(json.error).toMatch(/not confirmed/i);
   });
 
-  it('renewal: duplicate evidence on retry → reuses exact evidence, RPC succeeds', async () => {
+  it('renewal: duplicate evidence on retry → recovers exact evidence, RPC receives recovered ID', async () => {
     const event = buildPaystackRenewalEvent();
-    const { status, json } = await callPaystackWebhook(event, {
+    const { status, json, mock } = await callPaystackWebhook(event, {
       platformSub: { id: 'sub-1', business_id: 'biz-1', plan: 'growth', paystack_subscription_code: 'SUB_paystack_1' },
-      // Evidence insert fails with duplicate (retry scenario)
       evidenceInsertResult: { data: null, error: { code: '23505', message: 'duplicate key value violates unique constraint' } },
       activationResult: { data: { activated: true, idempotent: true }, error: null },
     });
     expect(status).toBe(200);
     expect(json.received).toBe(true);
+    const activationRpc = mock.rpcCalls.find((c: { fn: string }) => c.fn === 'activate_paid_subscription');
+    expect(activationRpc).toBeDefined();
+    expect(activationRpc!.args).toEqual({ p_payment_id: 'sp-existing-1' });
   });
 });
 
@@ -800,14 +811,15 @@ describe('Onboarding verify: paid subscription failure paths', () => {
       paystackVerification?: Record<string, unknown>;
       ownerCheck?: Record<string, unknown> | null;
       capabilities?: Array<Record<string, unknown>>;
+      subscriptionLookupError?: Record<string, unknown>;
       existingSubscription?: Record<string, unknown> | null;
       subscriptionUpsert?: { data: unknown; error: unknown };
       configVersion?: { data: unknown; error: unknown };
       evidenceInsert?: { data: unknown; error: unknown };
       activationResult?: { data: unknown; error: unknown };
+      postAuthUpdateError?: Record<string, unknown>;
     } = {},
   ) {
-    // Mock fetch for Stripe/Paystack verification
     const originalFetch = globalThis.fetch;
     globalThis.fetch = vi.fn(async (url: string | URL | Request) => {
       const urlStr = typeof url === 'string' ? url : url instanceof URL ? url.toString() : url.url;
@@ -826,7 +838,6 @@ describe('Onboarding verify: paid subscription failure paths', () => {
       return originalFetch(url as string);
     }) as unknown as typeof fetch;
 
-    // Build Supabase mocks
     const supabaseBrowser = {
       auth: {
         getUser: vi.fn().mockResolvedValue({
@@ -853,12 +864,16 @@ describe('Onboarding verify: paid subscription failure paths', () => {
       }),
     };
 
-    // Track query call counts to distinguish sequential calls to same table
+    // Track calls for assertions
     let subscriptionQueryCount = 0;
     let paymentEvidenceQueryCount = 0;
+    const rpcCalls: Array<{ fn: string; args: unknown }> = [];
+    const subscriptionUpdatePayloads: unknown[] = [];
+    const evidenceLookupFilters: string[][] = [];
 
     const supabaseService = {
       from: vi.fn((table: string) => {
+        const filterChain: string[] = [];
         const chain: Record<string, unknown> = {};
         const proxy: Record<string, unknown> = new Proxy(chain, {
           get(_, prop: string) {
@@ -872,10 +887,14 @@ describe('Onboarding verify: paid subscription failure paths', () => {
                 }
                 if (table === 'subscriptions') {
                   subscriptionQueryCount++;
-                  // First call: SELECT existing subscription check
-                  // Second call: UPSERT result
-                  if (subscriptionQueryCount === 1 && opts.existingSubscription !== undefined) {
-                    return Promise.resolve({ data: opts.existingSubscription, error: null });
+                  if (subscriptionQueryCount === 1) {
+                    // First call: existing subscription lookup
+                    if (opts.subscriptionLookupError) {
+                      return Promise.resolve({ data: null, error: opts.subscriptionLookupError });
+                    }
+                    if (opts.existingSubscription !== undefined) {
+                      return Promise.resolve({ data: opts.existingSubscription, error: null });
+                    }
                   }
                   return Promise.resolve(opts.subscriptionUpsert ?? { data: { id: 'sub-test-1' }, error: null });
                 }
@@ -884,12 +903,11 @@ describe('Onboarding verify: paid subscription failure paths', () => {
                 }
                 if (table === 'subscription_payments') {
                   paymentEvidenceQueryCount++;
-                  // First call: INSERT (may fail with duplicate)
-                  // Second call: SELECT lookup for existing evidence (on duplicate)
                   if (paymentEvidenceQueryCount === 1) {
                     return Promise.resolve(opts.evidenceInsert ?? { data: { id: 'sp-test-1' }, error: null });
                   }
-                  // Subsequent calls: return existing evidence for replay lookup
+                  // Second call: duplicate recovery lookup — record the filters used
+                  evidenceLookupFilters.push([...filterChain]);
                   return Promise.resolve({ data: { id: 'sp-existing-1' }, error: null });
                 }
                 if (table === 'businesses') {
@@ -901,21 +919,45 @@ describe('Onboarding verify: paid subscription failure paths', () => {
             if (prop === 'then') {
               return (resolve: (v: unknown) => void) => {
                 if (table === 'business_capabilities') {
-                  resolve({
-                    data: opts.capabilities ?? [{ capability: 'scheduling', is_enabled: true }],
-                    error: null,
-                  });
+                  resolve({ data: opts.capabilities ?? [{ capability: 'scheduling', is_enabled: true }], error: null });
                 } else {
                   resolve({ data: null, error: null });
                 }
               };
+            }
+            if (prop === 'update') {
+              return vi.fn((payload: unknown) => {
+                if (table === 'subscriptions') {
+                  subscriptionUpdatePayloads.push(payload);
+                  // Check if this is the post-auth update and should error
+                  if (opts.postAuthUpdateError && subscriptionQueryCount >= 1) {
+                    // Override the terminal .eq() to return error
+                    const errProxy: Record<string, unknown> = new Proxy({} as Record<string, unknown>, {
+                      get(_, p: string) {
+                        if (p === 'single') return vi.fn(() => Promise.resolve({ data: null, error: opts.postAuthUpdateError }));
+                        if (p === 'then') return (resolve: (v: unknown) => void) => resolve({ data: null, error: opts.postAuthUpdateError });
+                        return vi.fn(() => errProxy);
+                      },
+                    });
+                    return errProxy;
+                  }
+                }
+                return proxy;
+              });
+            }
+            if (prop === 'eq') {
+              return vi.fn((col: string, val: unknown) => {
+                filterChain.push(`${col}=${val}`);
+                return proxy;
+              });
             }
             return vi.fn((..._args: unknown[]) => proxy);
           },
         });
         return proxy;
       }),
-      rpc: vi.fn((fn: string) => {
+      rpc: vi.fn((fn: string, args: unknown) => {
+        rpcCalls.push({ fn, args });
         if (fn === 'activate_paid_subscription') {
           return Promise.resolve(opts.activationResult ?? { data: { activated: true }, error: null });
         }
@@ -945,11 +987,16 @@ describe('Onboarding verify: paid subscription failure paths', () => {
 
     const response = await POST(request);
     const json = await response.json();
-
-    // Restore fetch
     globalThis.fetch = originalFetch;
 
-    return { status: response.status, json };
+    return {
+      status: response.status,
+      json,
+      rpcCalls,
+      subscriptionUpdatePayloads,
+      evidenceLookupFilters,
+      serviceMock: supabaseService,
+    };
   }
 
   it('Stripe: missing billing_interval → returns 400', async () => {
@@ -961,7 +1008,7 @@ describe('Onboarding verify: paid subscription failure paths', () => {
           amount_total: 500000,
           currency: 'ngn',
           created: Math.floor(Date.now() / 1000),
-          metadata: { business_id: 'biz-1', plan: 'growth' },
+          metadata: { type: 'whatsapp_subscription', business_id: 'biz-1', plan: 'growth' },
           // billing_interval omitted
         },
       },
@@ -979,7 +1026,7 @@ describe('Onboarding verify: paid subscription failure paths', () => {
           amount_total: 500000,
           currency: 'ngn',
           created: Math.floor(Date.now() / 1000),
-          metadata: { business_id: 'biz-1', plan: 'growth', billing_interval: 'year' },
+          metadata: { type: 'whatsapp_subscription', business_id: 'biz-1', plan: 'growth', billing_interval: 'year' },
         },
       },
     );
@@ -996,7 +1043,7 @@ describe('Onboarding verify: paid subscription failure paths', () => {
           amount_total: 500000,
           // currency omitted
           created: Math.floor(Date.now() / 1000),
-          metadata: { business_id: 'biz-1', plan: 'growth', billing_interval: 'month' },
+          metadata: { type: 'whatsapp_subscription', business_id: 'biz-1', plan: 'growth', billing_interval: 'month' },
         },
       },
     );
@@ -1014,7 +1061,7 @@ describe('Onboarding verify: paid subscription failure paths', () => {
           currency: 'ngn',
           created: Math.floor(Date.now() / 1000),
           subscription: 'sub_stripe_1',
-          metadata: { business_id: 'biz-1', plan: 'growth', billing_interval: 'month' },
+          metadata: { type: 'whatsapp_subscription', business_id: 'biz-1', plan: 'growth', billing_interval: 'month' },
         },
         activationResult: { data: null, error: { message: 'RPC error' } },
       },
@@ -1033,7 +1080,7 @@ describe('Onboarding verify: paid subscription failure paths', () => {
           currency: 'ngn',
           created: Math.floor(Date.now() / 1000),
           subscription: 'sub_stripe_1',
-          metadata: { business_id: 'biz-1', plan: 'growth', billing_interval: 'month' },
+          metadata: { type: 'whatsapp_subscription', business_id: 'biz-1', plan: 'growth', billing_interval: 'month' },
         },
         activationResult: { data: { activated: false, reason: 'amount_mismatch' }, error: null },
       },
@@ -1052,7 +1099,7 @@ describe('Onboarding verify: paid subscription failure paths', () => {
           currency: 'ngn',
           created: Math.floor(Date.now() / 1000),
           subscription: 'sub_stripe_1',
-          metadata: { business_id: 'biz-1', plan: 'growth', billing_interval: 'month' },
+          metadata: { type: 'whatsapp_subscription', business_id: 'biz-1', plan: 'growth', billing_interval: 'month' },
         },
         evidenceInsert: { data: null, error: { message: 'insert failed' } },
       },
@@ -1071,7 +1118,7 @@ describe('Onboarding verify: paid subscription failure paths', () => {
             amount: 500000,
             currency: 'NGN',
             paid_at: new Date().toISOString(),
-            metadata: { business_id: 'biz-1', plan: 'growth' },
+            metadata: { type: 'whatsapp_subscription', business_id: 'biz-1', plan: 'growth' },
             // billing_interval omitted
           },
         },
@@ -1091,7 +1138,7 @@ describe('Onboarding verify: paid subscription failure paths', () => {
             amount: 500000,
             // currency omitted
             paid_at: new Date().toISOString(),
-            metadata: { business_id: 'biz-1', plan: 'growth', billing_interval: 'month' },
+            metadata: { type: 'whatsapp_subscription', business_id: 'biz-1', plan: 'growth', billing_interval: 'month' },
           },
         },
       },
@@ -1110,7 +1157,7 @@ describe('Onboarding verify: paid subscription failure paths', () => {
             amount: 500000,
             currency: 'NGN',
             // paid_at and created_at omitted
-            metadata: { business_id: 'biz-1', plan: 'growth', billing_interval: 'month' },
+            metadata: { type: 'whatsapp_subscription', business_id: 'biz-1', plan: 'growth', billing_interval: 'month' },
           },
         },
       },
@@ -1129,7 +1176,7 @@ describe('Onboarding verify: paid subscription failure paths', () => {
           currency: 'ngn',
           created: Math.floor(Date.now() / 1000),
           subscription: 'sub_stripe_1',
-          metadata: { business_id: 'biz-1', plan: 'growth', billing_interval: 'month' },
+          metadata: { type: 'whatsapp_subscription', business_id: 'biz-1', plan: 'growth', billing_interval: 'month' },
         },
         activationResult: { data: null, error: null },
       },
@@ -1138,10 +1185,10 @@ describe('Onboarding verify: paid subscription failure paths', () => {
     expect(json.message).toMatch(/rejected|null_result/i);
   });
 
-  // ── Same-payment replay idempotency proof ──
+  // ── Same-payment replay idempotency proof (with real assertions) ──
 
-  it('Stripe: active subscription + same-payment replay → idempotent success, status not demoted', async () => {
-    const { status, json } = await callOnboardingVerify(
+  it('Stripe: active subscription + duplicate evidence → recovers exact evidence, RPC receives recovered ID', async () => {
+    const { status, json, rpcCalls, subscriptionUpdatePayloads } = await callOnboardingVerify(
       { reference: 'cs_test_replay' },
       {
         stripeSession: {
@@ -1150,7 +1197,7 @@ describe('Onboarding verify: paid subscription failure paths', () => {
           currency: 'ngn',
           created: Math.floor(Date.now() / 1000),
           subscription: 'sub_stripe_1',
-          metadata: { business_id: 'biz-1', plan: 'growth', billing_interval: 'month' },
+          metadata: { type: 'whatsapp_subscription', business_id: 'biz-1', plan: 'growth', billing_interval: 'month' },
         },
         existingSubscription: { id: 'sub-active-1', status: 'active', plan: 'growth' },
         evidenceInsert: { data: null, error: { code: '23505', message: 'duplicate key value violates unique constraint' } },
@@ -1159,10 +1206,16 @@ describe('Onboarding verify: paid subscription failure paths', () => {
     );
     expect(status).toBe(200);
     expect(json.status).toBe('success');
+    // Assert RPC was called with the recovered evidence ID (sp-existing-1)
+    const activationRpc = rpcCalls.find(c => c.fn === 'activate_paid_subscription');
+    expect(activationRpc).toBeDefined();
+    expect(activationRpc!.args).toEqual({ p_payment_id: 'sp-existing-1' });
+    // Post-auth provider update happens after successful activation (expected for replay)
+    // But no pre-auth status/plan/amount/currency mutations occurred
   });
 
   it('Stripe: active subscription + evidence insert failure (non-duplicate) → returns 500', async () => {
-    const { status, json } = await callOnboardingVerify(
+    const { status, json, rpcCalls, subscriptionUpdatePayloads } = await callOnboardingVerify(
       { reference: 'cs_test_fail' },
       {
         stripeSession: {
@@ -1171,7 +1224,7 @@ describe('Onboarding verify: paid subscription failure paths', () => {
           currency: 'ngn',
           created: Math.floor(Date.now() / 1000),
           subscription: 'sub_stripe_1',
-          metadata: { business_id: 'biz-1', plan: 'growth', billing_interval: 'month' },
+          metadata: { type: 'whatsapp_subscription', business_id: 'biz-1', plan: 'growth', billing_interval: 'month' },
         },
         existingSubscription: { id: 'sub-active-1', status: 'active', plan: 'growth' },
         evidenceInsert: { data: null, error: { code: '42000', message: 'some other error' } },
@@ -1179,12 +1232,16 @@ describe('Onboarding verify: paid subscription failure paths', () => {
     );
     expect(status).toBe(500);
     expect(json.message).toMatch(/payment recording failed/i);
+    // No RPC should have been called
+    expect(rpcCalls.filter(c => c.fn === 'activate_paid_subscription').length).toBe(0);
+    // Zero subscription mutation
+    expect(subscriptionUpdatePayloads.length).toBe(0);
   });
 
   // ── Subscription lookup error fail-closed proof ──
 
-  it('Stripe: subscription lookup DB error → returns 500, no mutation', async () => {
-    const { status, json } = await callOnboardingVerify(
+  it('Stripe: subscription lookup DB error → returns 500, zero mutation/evidence/RPC', async () => {
+    const { status, json, rpcCalls, subscriptionUpdatePayloads } = await callOnboardingVerify(
       { reference: 'cs_test_lookup_err' },
       {
         stripeSession: {
@@ -1193,21 +1250,25 @@ describe('Onboarding verify: paid subscription failure paths', () => {
           currency: 'ngn',
           created: Math.floor(Date.now() / 1000),
           subscription: 'sub_stripe_1',
-          metadata: { business_id: 'biz-1', plan: 'growth', billing_interval: 'month' },
+          metadata: { type: 'whatsapp_subscription', business_id: 'biz-1', plan: 'growth', billing_interval: 'month' },
         },
-        // Simulate a DB error on subscription lookup (not PGRST116 "no rows")
-        existingSubscription: null,
-        subscriptionUpsert: { data: null, error: { code: '42501', message: 'permission denied for table subscriptions' } },
+        // Inject error on the actual first subscription lookup (not upsert)
+        subscriptionLookupError: { code: '42501', message: 'permission denied for table subscriptions' },
       },
     );
     expect(status).toBe(500);
-    expect(json.message).toMatch(/failed|error/i);
+    expect(json.message).toMatch(/verification failed/i);
+    // Zero subscription updates
+    expect(subscriptionUpdatePayloads.length).toBe(0);
+    // Zero evidence inserts — lookup error stops before evidence
+    // Zero RPC calls
+    expect(rpcCalls.filter(c => c.fn === 'activate_paid_subscription').length).toBe(0);
   });
 
   // ── Zero pre-authority mutation proof ──
 
-  it('Stripe: active subscription + RPC failure → entire subscription row unchanged', async () => {
-    const { status, json } = await callOnboardingVerify(
+  it('Stripe: active subscription + RPC failure → zero subscription mutations, no provider ID changes', async () => {
+    const { status, json, subscriptionUpdatePayloads, rpcCalls } = await callOnboardingVerify(
       { reference: 'cs_test_no_mutate' },
       {
         stripeSession: {
@@ -1216,17 +1277,100 @@ describe('Onboarding verify: paid subscription failure paths', () => {
           currency: 'ngn',
           created: Math.floor(Date.now() / 1000),
           subscription: 'sub_stripe_1',
-          metadata: { business_id: 'biz-1', plan: 'growth', billing_interval: 'month' },
+          metadata: { type: 'whatsapp_subscription', business_id: 'biz-1', plan: 'growth', billing_interval: 'month' },
         },
         existingSubscription: { id: 'sub-active-1', status: 'active', plan: 'growth' },
-        // RPC error after evidence persisted
         activationResult: { data: null, error: { message: 'RPC transport error' } },
       },
     );
-    // Must fail — RPC error
     expect(status).toBe(500);
     expect(json.message).toMatch(/activation failed/i);
-    // The mock subscription was never updated because existingSubIsActive=true
-    // means zero pre-authority mutation of the active row
+    // RPC was attempted (evidence persisted first)
+    expect(rpcCalls.filter(c => c.fn === 'activate_paid_subscription').length).toBe(1);
+    // Zero subscription row mutations — no status/plan/provider-ID changes
+    // Post-auth update only runs after SUCCESSFUL activation, not on failure
+    expect(subscriptionUpdatePayloads.length).toBe(0);
+  });
+
+  // ── Post-authority provider write fail-closed proof ──
+
+  it('Stripe: active replay + post-auth provider update failure → returns 500, retryable', async () => {
+    const { status, json, rpcCalls } = await callOnboardingVerify(
+      { reference: 'cs_test_postauth_fail' },
+      {
+        stripeSession: {
+          payment_status: 'paid',
+          amount_total: 500000,
+          currency: 'ngn',
+          created: Math.floor(Date.now() / 1000),
+          subscription: 'sub_stripe_1',
+          metadata: { type: 'whatsapp_subscription', business_id: 'biz-1', plan: 'growth', billing_interval: 'month' },
+        },
+        existingSubscription: { id: 'sub-active-1', status: 'active', plan: 'growth' },
+        activationResult: { data: { activated: true, idempotent: true }, error: null },
+        postAuthUpdateError: { code: '42501', message: 'permission denied' },
+      },
+    );
+    // Must return 500 (not 200) — provider identity write failed
+    expect(status).toBe(500);
+    expect(json.message).toMatch(/provider identity.*failed/i);
+    expect(json.recoverable).toBe(true);
+    // RPC was called and succeeded (activation is idempotent, safe to retry)
+    expect(rpcCalls.filter(c => c.fn === 'activate_paid_subscription').length).toBe(1);
+  });
+
+  // ── Metadata type validation proofs ──
+
+  it('Stripe: missing metadata.type → returns 400', async () => {
+    const { status, json } = await callOnboardingVerify(
+      { reference: 'cs_test_no_type' },
+      {
+        stripeSession: {
+          payment_status: 'paid',
+          amount_total: 500000,
+          currency: 'ngn',
+          created: Math.floor(Date.now() / 1000),
+          metadata: { business_id: 'biz-1', plan: 'growth', billing_interval: 'month' },
+        },
+      },
+    );
+    expect(status).toBe(400);
+    expect(json.message).toMatch(/subscription type/i);
+  });
+
+  it('Stripe: wrong metadata.type → returns 400', async () => {
+    const { status, json } = await callOnboardingVerify(
+      { reference: 'cs_test_wrong_type' },
+      {
+        stripeSession: {
+          payment_status: 'paid',
+          amount_total: 500000,
+          currency: 'ngn',
+          created: Math.floor(Date.now() / 1000),
+          metadata: { type: 'customer_recurring', business_id: 'biz-1', plan: 'growth', billing_interval: 'month' },
+        },
+      },
+    );
+    expect(status).toBe(400);
+    expect(json.message).toMatch(/subscription type/i);
+  });
+
+  it('Paystack: missing metadata.type → returns 400', async () => {
+    const { status, json } = await callOnboardingVerify(
+      { reference: 'ref_paystack_no_type' },
+      {
+        paystackVerification: {
+          data: {
+            status: 'success',
+            amount: 500000,
+            currency: 'NGN',
+            paid_at: new Date().toISOString(),
+            metadata: { business_id: 'biz-1', plan: 'growth', billing_interval: 'month' },
+          },
+        },
+      },
+    );
+    expect(status).toBe(400);
+    expect(json.message).toMatch(/subscription type/i);
   });
 });

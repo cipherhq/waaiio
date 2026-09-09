@@ -66,6 +66,13 @@ export async function POST(request: NextRequest) {
       }
 
       const metadata = session.metadata as Record<string, string> | undefined;
+      // Require canonical subscription purpose type from server-created metadata
+      if (metadata?.type !== 'whatsapp_subscription') {
+        return NextResponse.json(
+          { message: `Invalid or missing subscription type "${metadata?.type}" in payment metadata` },
+          { status: 400 },
+        );
+      }
       businessId = metadata?.business_id;
       plan = metadata?.plan;
       if (!businessId || !plan) {
@@ -169,6 +176,13 @@ export async function POST(request: NextRequest) {
       }
 
       const metadata = data.data.metadata as Record<string, string> | undefined;
+      // Require canonical subscription purpose type from server-created metadata
+      if (metadata?.type !== 'whatsapp_subscription') {
+        return NextResponse.json(
+          { message: `Invalid or missing subscription type "${metadata?.type}" in payment metadata` },
+          { status: 400 },
+        );
+      }
       businessId = metadata?.business_id;
       plan = metadata?.plan;
       if (!businessId || !plan) {
@@ -498,6 +512,7 @@ export async function POST(request: NextRequest) {
             .select('id')
             .eq('subscription_id', subscription.id)
             .eq('provider_reference', reference)
+            .eq('gateway', gateway)
             .eq('status', 'success')
             .single();
 
@@ -556,7 +571,13 @@ export async function POST(request: NextRequest) {
         if (Object.keys(postAuthUpdate).length > 0) {
           const { error: postAuthErr } = await service.from('subscriptions').update(postAuthUpdate).eq('id', subscription.id);
           if (postAuthErr) {
-            console.warn('[ONBOARDING-VERIFY] Post-activation provider update error (non-fatal):', postAuthErr);
+            // Fail retryable: exact-evidence/RPC replay is idempotent, so retry converges.
+            // If this write fails silently, Stripe renewal correlation can break.
+            console.warn('[ONBOARDING-VERIFY] Post-activation provider update failed:', postAuthErr);
+            return NextResponse.json(
+              { message: 'Provider identity update failed. Please retry verification.', recoverable: true },
+              { status: 500 },
+            );
           }
         }
       }
