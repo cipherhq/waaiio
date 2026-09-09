@@ -54,13 +54,15 @@ function createTestPayment(opts: {
   const pis = opts.providerInitState ? `'${opts.providerInitState}'` : 'NULL';
   const cvId = fpv >= 1 ? `'${configId}'` : 'NULL';
 
+  const pav = fpv >= 1 ? 1 : 'NULL';
   return psql(`
     INSERT INTO payments (
       business_id, user_id, amount, currency, gateway, gateway_reference, status,
-      fee_policy_version, config_version_id, transaction_category, fee_basis, provider_init_state
+      fee_policy_version, config_version_id, transaction_category, fee_basis, provider_init_state,
+      payment_authority_version
     ) VALUES (
       '${bizId}', '${ownerId}', 5000, 'NGN', 'paystack', 'ref-fee-${counter}-${Date.now()}', 'pending',
-      ${fpv}, ${cvId}, ${cat}, ${fb}, ${pis}
+      ${fpv}, ${cvId}, ${cat}, ${fb}, ${pis}, ${pav}
     ) RETURNING id
   `);
 }
@@ -161,10 +163,12 @@ function createV1InsertSQL(basis: Record<string, unknown>): string {
   return `
     INSERT INTO payments (
       business_id, user_id, amount, currency, gateway, gateway_reference, status,
-      fee_policy_version, config_version_id, transaction_category, fee_basis
+      fee_policy_version, config_version_id, transaction_category, fee_basis,
+      payment_authority_version, provider_init_state
     ) VALUES (
       gen_random_uuid(), '${ownerId}', 100, 'NGN', 'paystack', 'ref-fb-${counter}-${Date.now()}', 'pending',
-      1, '${configId}', 'scheduling', '${JSON.stringify(basis).replace(/'/g, "''")}'::JSONB
+      1, '${configId}', 'scheduling', '${JSON.stringify(basis).replace(/'/g, "''")}'::JSONB,
+      1, 'pre_dispatch'
     )
   `;
 }

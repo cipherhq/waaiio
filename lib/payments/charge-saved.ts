@@ -424,6 +424,20 @@ async function chargePaystackAuthorization(
   const paymentId = payRow.id;
   const amountInKobo = Math.round(opts.amount * 100);
 
+  // ── Step 2b: Provider-init state machine for v1 ──
+  if (v1Fields.fee_policy_version === 1) {
+    // CAS: pre_dispatch → dispatched
+    const { data: casRows } = await supabase.from('payments')
+      .update({ provider_init_state: 'dispatched' })
+      .eq('id', paymentId)
+      .eq('provider_init_state', 'pre_dispatch')
+      .select('id');
+    if (!casRows || casRows.length !== 1) {
+      logger.error('[SAVED-CARD] V1 CAS pre_dispatch→dispatched failed');
+      return { outcome: 'declined', reference: opts.reference, message: 'Provider dispatch state conflict' };
+    }
+  }
+
   // ── Step 3: Charge the authorization ──
   try {
     const data = await observeProvider({
@@ -457,6 +471,14 @@ async function chargePaystackAuthorization(
     });
 
     if (data.status && data.data?.status === 'success') {
+      // CAS: dispatched → provider_confirmed (for v1)
+      if (v1Fields.fee_policy_version === 1) {
+        await supabase.from('payments')
+          .update({ provider_init_state: 'provider_confirmed' })
+          .eq('id', paymentId)
+          .eq('provider_init_state', 'dispatched');
+      }
+
       await supabase.from('saved_payment_methods')
         .update({ last_used_at: new Date().toISOString() })
         .eq('id', opts.savedMethod.id);

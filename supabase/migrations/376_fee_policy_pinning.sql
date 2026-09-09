@@ -38,12 +38,14 @@ ALTER TABLE public.payments ADD CONSTRAINT chk_provider_init_state_valid
   CHECK (provider_init_state IS NULL
     OR provider_init_state IN ('pre_dispatch', 'dispatched', 'provider_confirmed'));
 
--- A6. V1 completeness: fee-policy-active rows must have full binding
+-- A6. V1 completeness: fee-policy-active rows must have full authority binding
 ALTER TABLE public.payments ADD CONSTRAINT chk_fee_policy_v1_complete
   CHECK (fee_policy_version = 0
     OR (config_version_id IS NOT NULL
         AND transaction_category IS NOT NULL
-        AND fee_basis IS NOT NULL));
+        AND fee_basis IS NOT NULL
+        AND payment_authority_version = 1
+        AND provider_init_state IS NOT NULL));
 
 -- ══════════════════════════════════════════════════════════
 -- B. Fee basis structural validation trigger (BEFORE INSERT)
@@ -245,6 +247,9 @@ BEGIN
     RAISE EXCEPTION 'Key "%" is not a commercial config key', p_key;
   END IF;
 
+  -- Serialize BEFORE cross-key reads/validation to prevent concurrent race
+  PERFORM pg_advisory_xact_lock(hashtext('commercial_config_write'));
+
   -- ── Write-time type validation for financial keys ──
 
   IF p_key = 'messaging_financial_gate' THEN
@@ -399,7 +404,7 @@ BEGIN
     END LOOP;
   END IF;
 
-  PERFORM pg_advisory_xact_lock(hashtext('commercial_config_write'));
+  -- Advisory lock already acquired above (before cross-key validation)
 
   INSERT INTO platform_settings (key, value, description, updated_by, updated_at)
   VALUES (p_key, p_value, COALESCE(p_description, ''), v_caller_id, clock_timestamp())

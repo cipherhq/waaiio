@@ -78,10 +78,22 @@ export async function POST(request: NextRequest) {
         .select('id, booking_id, invoice_id, campaign_id, reservation_id, order_id, amount, status, metadata, gateway_reference, payment_authority_version, finalization_completed_at')
         .eq('gateway', 'square');
 
-      const matchedPayment = payments?.find(p => {
+      let matchedPayment = payments?.find(p => {
         const meta = p.metadata as Record<string, string> | null;
         return meta?.square_order_id === orderId;
       });
+
+      // #264: V1 payment-link-based fallback — square_order_id may not be in metadata
+      // when v1 pre-provider row uses payment_note for correlation
+      if (!matchedPayment) {
+        const paymentNote = (payment as Record<string, unknown>).note as string | undefined;
+        if (paymentNote) {
+          matchedPayment = payments?.find(p => {
+            const meta = p.metadata as Record<string, string> | null;
+            return meta?.reference_code === paymentNote || p.gateway_reference === paymentNote;
+          });
+        }
+      }
 
       if (!matchedPayment) return NextResponse.json({ received: true });
 
