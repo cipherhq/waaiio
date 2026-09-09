@@ -44,7 +44,7 @@ export class SquareGateway implements PaymentGateway {
   name = 'square' as const;
 
   async initializePayment(opts: InitPaymentOpts): Promise<InitPaymentResult | null> {
-    const idempotencyKey = randomUUID();
+    const idempotencyKey = opts.referenceCode || randomUUID();
 
     try {
       if (!squareAccessToken) {
@@ -80,6 +80,7 @@ export class SquareGateway implements PaymentGateway {
 
       const paymentLinkBody: Record<string, unknown> = {
         idempotency_key: idempotencyKey,
+        payment_note: opts.referenceCode,
         quick_pay: {
           name: `${opts.businessName} - ${opts.referenceCode}`,
           price_money: {

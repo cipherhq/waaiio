@@ -371,6 +371,7 @@ export const paymentFlow: FlowDefinition = {
           businessId: ctx.business?.id,
           inboundChannelId: ctx.session.session_data._inbound_channel_id as string | undefined,
           confirmationOrigin: 'whatsapp' as const,
+          transactionCategory: 'payment',
         });
 
         // Check if business qualifies for direct bank transfer option

@@ -141,7 +141,7 @@ export class PayPalGateway implements PaymentGateway {
 
       let orderData: Record<string, unknown>;
       try {
-        orderData = await paypalRequest('/v2/checkout/orders', orderBody);
+        orderData = await paypalRequest('/v2/checkout/orders', orderBody, 'POST', opts.referenceCode);
       } catch (fetchErr) {
         logger.withContext({ op: 'paypal.order-fetch', ...safeLogErrorContext(fetchErr) }).error('[PAYPAL] Order API fetch failed');
         (globalThis as Record<string, unknown>).__paypalDebug = {

@@ -33,6 +33,8 @@ export async function initializePayment(
     inboundChannelId?: string;
     /** #219: Interaction origin — determines confirmation delivery behavior */
     confirmationOrigin?: 'whatsapp' | 'web';
+    /** #264: Server-derived transaction category for fee policy */
+    transactionCategory?: string;
   },
 ): Promise<{ url: string; reference: string } | null> {
   try {
@@ -41,6 +43,16 @@ export async function initializePayment(
     // reach the customer on the correct WhatsApp number.
     if (opts.confirmationOrigin === 'whatsapp' && !opts.inboundChannelId) {
       logger.warn('[PAYMENT] WhatsApp-origin payment blocked — no current inbound channel');
+      return null;
+    }
+
+    // #264: Fail closed on conflicting entity IDs
+    const entityIds = [opts.bookingId, opts.orderId, opts.invoiceId, opts.reservationId, opts.campaignId].filter(Boolean);
+    if (entityIds.length > 1) {
+      logger.error('[PAYMENT] Conflicting entity IDs — blocking payment', {
+        bookingId: opts.bookingId, orderId: opts.orderId, invoiceId: opts.invoiceId,
+        reservationId: opts.reservationId, campaignId: opts.campaignId,
+      });
       return null;
     }
 

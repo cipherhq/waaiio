@@ -2782,6 +2782,7 @@ export const schedulingFlow: FlowDefinition = {
             businessId: ctx.business?.id,
             inboundChannelId: ctx.session.session_data._inbound_channel_id as string | undefined,
             confirmationOrigin: 'whatsapp' as const,
+            transactionCategory: 'scheduling',
           });
 
           // Check if business qualifies for direct bank transfer option

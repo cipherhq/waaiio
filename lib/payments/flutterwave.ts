@@ -78,6 +78,7 @@ export class FlutterwaveGateway implements PaymentGateway {
           headers: {
             Authorization: `Bearer ${secretKey}`,
             'Content-Type': 'application/json',
+            'X-Idempotency-Key': opts.referenceCode || txRef,
           },
           signal: AbortSignal.timeout(15000),
           body: JSON.stringify({

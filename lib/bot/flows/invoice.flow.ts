@@ -266,6 +266,7 @@ const invoicePayStep: FlowStepConfig = {
         businessId: invoice.business_id,
         inboundChannelId: ctx.session.session_data._inbound_channel_id as string | undefined,
         confirmationOrigin: 'whatsapp' as const,
+        transactionCategory: 'invoice',
       });
 
       // Check if business qualifies for direct bank transfer

@@ -880,6 +880,7 @@ export const reservationFlow: FlowDefinition = {
             businessId: ctx.business?.id,
             inboundChannelId: ctx.session.session_data._inbound_channel_id as string | undefined,
             confirmationOrigin: 'whatsapp' as const,
+            transactionCategory: 'reservation',
           });
 
           // Check if business qualifies for direct bank transfer
