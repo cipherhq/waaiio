@@ -187,6 +187,9 @@ export async function POST(request: NextRequest) {
       // #264: V1 dispatched recovery — authoritative Order read for Capture events.
       // PAYMENT.CAPTURE.COMPLETED resource is a Capture, not an Order.
       // Read the Order to get purchase_units[].reference_id (= referenceCode).
+      // #264: V1 dispatched recovery — authoritative Order read with explicit outcome tracking.
+      // Outcomes: waaiio_ref_found | success_no_waaiio_ref | retryable_error
+      let orderReadOutcome: 'waaiio_ref_found' | 'success_no_waaiio_ref' | 'retryable_error' | 'not_attempted' = 'not_attempted';
       let recoveredRef: string | null = null;
       if (!payment && orderId) {
         try {
@@ -201,7 +204,9 @@ export async function POST(request: NextRequest) {
               body: 'grant_type=client_credentials',
               signal: AbortSignal.timeout(15000),
             });
-            if (tokenRes.ok) {
+            if (!tokenRes.ok) {
+              orderReadOutcome = 'retryable_error';
+            } else {
               const { access_token } = await tokenRes.json();
               const orderRes = await fetch(`${ppBase}/v2/checkout/orders/${orderId}`, {
                 headers: { Authorization: `Bearer ${access_token}` },
@@ -211,10 +216,20 @@ export async function POST(request: NextRequest) {
                 const orderData = await orderRes.json();
                 const units = orderData.purchase_units as Array<{ reference_id?: string }> | undefined;
                 recoveredRef = units?.[0]?.reference_id || null;
+                orderReadOutcome = recoveredRef ? 'waaiio_ref_found' : 'success_no_waaiio_ref';
+              } else if (orderRes.status === 404) {
+                // Definitive Order-not-found
+                orderReadOutcome = 'success_no_waaiio_ref';
+              } else {
+                orderReadOutcome = 'retryable_error';
               }
             }
+          } else {
+            orderReadOutcome = 'retryable_error'; // no credentials
           }
-        } catch { /* Order read failed — ambiguous */ }
+        } catch {
+          orderReadOutcome = 'retryable_error';
+        }
 
         if (recoveredRef) {
           const { data: dispatchedRow } = await supabase
@@ -239,20 +254,22 @@ export async function POST(request: NextRequest) {
         }
       }
 
-      // #264: v1-identifiable paid Capture unresolved → retryable 500
-      // Use authoritative Order-recovered reference OR Capture-level reference
+      // #264: Unresolved correlation decision based on explicit Order-read outcome
       if (!payment) {
-        const waaiioRef = recoveredRef || referenceId;
-        if (orderId && waaiioRef) {
-          // Had a Waaiio reference (from Order read or Capture) but couldn't find/repair the row
+        const captureRef = referenceId; // from Capture resource (may be absent)
+        if (orderReadOutcome === 'waaiio_ref_found') {
+          // Order had a Waaiio reference but we couldn't find/repair the canonical row
           return NextResponse.json({ error: 'V1 paid event unresolved' }, { status: 500 });
         }
-        // Order-read transport/auth failure with orderId → correlation incomplete → retryable
-        if (orderId && !recoveredRef && !referenceId) {
-          // We have a PayPal order ID but couldn't read the Order or find any Waaiio reference
-          // This could be a v1 payment whose Order read failed — return retryable rather than ack
-          return NextResponse.json({ error: 'PayPal Order correlation incomplete' }, { status: 500 });
+        if (captureRef) {
+          // Capture itself carried a Waaiio reference but no row found
+          return NextResponse.json({ error: 'V1 paid event unresolved' }, { status: 500 });
         }
+        if (orderReadOutcome === 'retryable_error') {
+          // Could not determine if this is a v1 payment — retryable
+          return NextResponse.json({ error: 'PayPal Order read failed' }, { status: 500 });
+        }
+        // success_no_waaiio_ref or not_attempted: proven non-v1/legacy → acknowledge
         return NextResponse.json({ received: true });
       }
       // Skip only if fully finalized (not just provider-paid)

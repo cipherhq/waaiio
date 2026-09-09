@@ -188,11 +188,11 @@ export async function GET(request: NextRequest) {
                 for (const s of sessions) {
                   if (s.client_reference_id === clientRef) matches.push(s);
                 }
-                if (!list.has_more || sessions.length === 0) break;
+                if (!list.has_more || sessions.length === 0) break; // search exhausted normally
                 startingAfter = sessions[sessions.length - 1].id;
+                // If this is the last allowed page and has_more is true → incomplete
+                if (pages >= MAX_PAGES && list.has_more) { searchComplete = false; break; }
               }
-              // Max pages exceeded with has_more → incomplete search
-              if (pages >= MAX_PAGES) searchComplete = false;
 
               // Only CAS when search completed normally + exactly one match with valid URL
               if (searchComplete && matches.length === 1 && matches[0].url) {
