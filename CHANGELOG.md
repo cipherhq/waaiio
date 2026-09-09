@@ -3,6 +3,22 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-09-08 — #263 Subscribe Now (CTO re-review 2-blocker fix)
+
+### What changed
+- **Blocker 1 (Missing business_id fail-closed):** Stripe `whatsapp_subscription` checkout with missing `business_id` now returns 500 instead of being silently acknowledged. Restructured guard: if `type=whatsapp_subscription`, require `business_id`; else fail closed.
+- **Blocker 2 (Idempotent paid replay):** Onboarding no longer demotes active subscriptions to `pending` before evidence/RPC. Active subscriptions get non-status field updates only. Same-payment duplicate evidence (unique constraint) triggers lookup of existing evidence for idempotent RPC replay.
+
+### Files changed
+- `app/api/payments/stripe-webhook/route.ts` — fail-closed missing business_id
+- `app/api/onboarding/verify/route.ts` — no active→pending demotion + duplicate evidence replay
+- `lib/__tests__/subscribe-now-handler.test.ts` — 3 new handler proofs (missing business_id, replay idempotency, non-duplicate failure)
+- `lib/__tests__/subscribe-now-db.test.ts` — 2 new real-PG proofs (tests 41-42: replay idempotency + duplicate evidence)
+
+### What could break
+- Stripe webhooks with `type=whatsapp_subscription` but no `business_id` now return 500 (previously silently processed)
+- Paid onboarding re-verification of active subscriptions no longer overwrites status
+
 ## 2026-09-08 — #263 Subscribe Now (CTO re-review 3-blocker fix)
 
 ### What changed
