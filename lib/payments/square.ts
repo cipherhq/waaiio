@@ -140,33 +140,38 @@ export class SquareGateway implements PaymentGateway {
       const squareRef = paymentLink.id as string;
       const orderId = paymentLink.order_id as string | undefined;
 
-      const { data: payment } = await opts.supabase.from('payments').insert({
-        booking_id: opts.bookingId || null,
-        invoice_id: opts.invoiceId || null,
-        campaign_id: opts.campaignId || null,
-        reservation_id: opts.reservationId || null,
-        order_id: opts.orderId || null,
-        business_id: opts.businessId || null,
-        user_id: opts.userId,
-        amount: opts.amount,
-        currency: opts.currency,
-        gateway: 'square',
-        gateway_reference: squareRef,
-        status: 'pending',
-        metadata: {
-          square_payment_link_id: squareRef,
-          square_order_id: orderId || null,
-          reference_code: opts.referenceCode,
-          channel: 'whatsapp',
+      // #264: Skip INSERT when v1 pre-provider row already exists
+      let paymentId: string | null = opts.existingPaymentId || null;
+      if (!opts.existingPaymentId) {
+        const { data: payment } = await opts.supabase.from('payments').insert({
+          booking_id: opts.bookingId || null,
+          invoice_id: opts.invoiceId || null,
+          campaign_id: opts.campaignId || null,
+          reservation_id: opts.reservationId || null,
           order_id: opts.orderId || null,
-        },
-      }).select().single();
-
-      if (payment && opts.bookingId) {
-        await opts.supabase.from('bookings').update({ payment_id: payment.id }).eq('id', opts.bookingId);
+          business_id: opts.businessId || null,
+          user_id: opts.userId,
+          amount: opts.amount,
+          currency: opts.currency,
+          gateway: 'square',
+          gateway_reference: squareRef,
+          status: 'pending',
+          metadata: {
+            square_payment_link_id: squareRef,
+            square_order_id: orderId || null,
+            reference_code: opts.referenceCode,
+            channel: 'whatsapp',
+            order_id: opts.orderId || null,
+          },
+        }).select().single();
+        paymentId = payment?.id || null;
       }
-      if (payment && opts.invoiceId) {
-        await opts.supabase.from('invoices').update({ payment_id: payment.id }).eq('id', opts.invoiceId);
+
+      if (paymentId && opts.bookingId) {
+        await opts.supabase.from('bookings').update({ payment_id: paymentId }).eq('id', opts.bookingId);
+      }
+      if (paymentId && opts.invoiceId) {
+        await opts.supabase.from('invoices').update({ payment_id: paymentId }).eq('id', opts.invoiceId);
       }
 
       return { url: paymentLink.url as string, reference: squareRef };

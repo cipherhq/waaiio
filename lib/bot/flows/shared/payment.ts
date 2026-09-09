@@ -365,7 +365,10 @@ export async function initializePayment(
               // Calculate v1 fee for provider split
               const { calculateFee } = await import('@/lib/payments/calculateFee');
               const v1Fee = calculateFee(opts.amount, feeBasis, opts.transactionCategory, snapshot as Parameters<typeof calculateFee>[3]);
-              if (paymentRouting !== 'byo') {
+              if (paymentRouting === 'byo') {
+                // BYO = 0% Waaiio fee invariant — override any legacy-calculated split
+                platformFeeAmount = 0;
+              } else {
                 platformFeeAmount = v1Fee.feeTotal;
               }
 
@@ -407,21 +410,24 @@ export async function initializePayment(
               }
               v1PaymentId = preRow.id;
 
-              // CAS: pre_dispatch → dispatched (before provider call)
-              const { error: casErr } = await supabase.from('payments')
+              // CAS: pre_dispatch → dispatched (before provider call) — check exact row count
+              const { data: casRows, error: casErr } = await supabase.from('payments')
                 .update({ provider_init_state: 'dispatched' })
                 .eq('id', v1PaymentId)
-                .eq('provider_init_state', 'pre_dispatch');
-              if (casErr) {
-                logger.error('[PAYMENT] V1 CAS pre_dispatch→dispatched failed', casErr);
+                .eq('provider_init_state', 'pre_dispatch')
+                .select('id');
+              if (casErr || !casRows || casRows.length !== 1) {
+                logger.error('[PAYMENT] V1 CAS pre_dispatch→dispatched failed (zero-row or error)', { casErr, rowCount: casRows?.length });
                 return null;
               }
             }
           }
         }
       } catch (feePolicyErr) {
-        logger.error('[PAYMENT] Fee policy resolution error — falling back to v0', feePolicyErr);
-        // Fall through to v0 path (gate check failure is not payment-blocking)
+        // Gate resolution failure while category is present = applicable #264 flow.
+        // Fail closed: do NOT silently create a v0 payment when the gate state is unknown.
+        logger.error('[PAYMENT] Fee policy resolution error — fail closed, no provider dispatch', feePolicyErr);
+        return null;
       }
     }
 
@@ -458,22 +464,17 @@ export async function initializePayment(
       campaignId: opts.campaignId,
       businessId: opts.businessId,
       channels,
+      existingPaymentId: v1PaymentId || undefined,
     }));
 
     // ── V1: CAS provider_confirmed + update gateway_reference ──
     if (v1PaymentId && result?.reference) {
-      // For gateways that return a different reference (Stripe cs_, Square, PayPal order ID),
-      // update gateway_reference with the canonical provider ID
       const providerRef = result.reference;
-      if (providerRef !== opts.referenceCode) {
-        await supabase.from('payments')
-          .update({ gateway_reference: providerRef })
-          .eq('id', v1PaymentId)
-          .eq('gateway_reference', opts.referenceCode); // CAS on original ref
-      }
-      // CAS: dispatched → provider_confirmed + persist checkout URL
-      const { error: confirmErr } = await supabase.from('payments')
+      // Atomic CAS: dispatched → provider_confirmed + provider ref + checkout URL
+      // No URL returned unless this authority write succeeds.
+      const { data: confirmRows, error: confirmErr } = await supabase.from('payments')
         .update({
+          gateway_reference: providerRef,
           provider_init_state: 'provider_confirmed',
           metadata: {
             reference_code: opts.referenceCode,
@@ -490,11 +491,15 @@ export async function initializePayment(
           },
         })
         .eq('id', v1PaymentId)
-        .eq('provider_init_state', 'dispatched');
-      if (confirmErr) {
-        logger.error('[PAYMENT] V1 CAS dispatched→provider_confirmed failed', confirmErr);
+        .eq('provider_init_state', 'dispatched')
+        .select('id');
+      if (confirmErr || !confirmRows || confirmRows.length !== 1) {
+        // Authority write failed — payment exists but provider state is ambiguous.
+        // Do NOT return checkout URL. Leave as 'dispatched' for verify-first recovery.
+        logger.error('[PAYMENT] V1 CAS dispatched→provider_confirmed failed — quarantining', { confirmErr, rowCount: confirmRows?.length });
+        return null;
       }
-      // Return the checkout URL — the payment row already exists
+      // Authority write succeeded — safe to return checkout URL
       return { url: result.url, reference: providerRef };
     } else if (v1PaymentId && !result) {
       // Provider call failed — mark payment as failed

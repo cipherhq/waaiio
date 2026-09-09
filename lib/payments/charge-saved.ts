@@ -367,7 +367,28 @@ async function chargePaystackAuthorization(
           }
         }
       }
-    } catch { /* fall through to v0 */ }
+    } catch (feePolicyErr) {
+      // Fail closed when category is present and gate state unknown
+      logger.error('[SAVED-CARD] Fee policy resolution error — fail closed', feePolicyErr);
+      return { outcome: 'declined', reference: opts.reference, message: 'Fee policy resolution failed' };
+    }
+  }
+
+  // If v1 resolved, override the provider split with the pinned fee
+  if (v1Fields.fee_policy_version === 1 && v1Fields.fee_basis) {
+    const { calculateFee } = await import('@/lib/payments/calculateFee');
+    const basis = v1Fields.fee_basis as Parameters<typeof calculateFee>[1];
+    const { data: snapRow } = await supabase.from('platform_config_versions')
+      .select('config_snapshot').eq('id', v1Fields.config_version_id).single();
+    if (snapRow?.config_snapshot) {
+      const v1Fee = calculateFee(opts.amount, basis, opts.transactionCategory || null, snapRow.config_snapshot as Parameters<typeof calculateFee>[3]);
+      if (splitResult.mode === 'split' && v1Fee.feeTotal >= 0) {
+        splitParams = {
+          subaccount: splitResult.subaccount,
+          transaction_charge: Math.round(v1Fee.feeTotal * 100), // convert to kobo
+        };
+      }
+    }
   }
 
   const { data: payRow, error: insertErr } = await supabase.from('payments').insert({

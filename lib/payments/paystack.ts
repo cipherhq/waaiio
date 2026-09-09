@@ -114,34 +114,39 @@ export class PaystackGateway implements PaymentGateway {
         throw new Error(data.message || 'Payment gateway rejected the request');
       }
 
-      const { data: payment } = await opts.supabase.from('payments').insert({
-        booking_id: opts.bookingId || null,
-        invoice_id: opts.invoiceId || null,
-        campaign_id: opts.campaignId || null,
-        reservation_id: opts.reservationId || null,
-        order_id: opts.orderId || null,
-        business_id: opts.businessId || null,
-        user_id: opts.userId,
-        amount: opts.amount,
-        currency: opts.currency,
-        gateway: 'paystack',
-        gateway_reference: data.data.reference,
-        status: 'pending',
-        metadata: {
-          access_code: data.data.access_code,
-          reference_code: opts.referenceCode,
-          channel: 'whatsapp',
+      // #264: Skip INSERT when v1 pre-provider row already exists
+      let paymentId: string | null = opts.existingPaymentId || null;
+      if (!opts.existingPaymentId) {
+        const { data: payment } = await opts.supabase.from('payments').insert({
+          booking_id: opts.bookingId || null,
+          invoice_id: opts.invoiceId || null,
+          campaign_id: opts.campaignId || null,
+          reservation_id: opts.reservationId || null,
           order_id: opts.orderId || null,
-          ...(opts.isByo && { byo: true, byo_business_id: opts.byoBusinessId }),
-          ...(opts.connectAccountId && { connect: true, connect_account_id: opts.connectAccountId }),
-        },
-      }).select().single();
-
-      if (payment && opts.bookingId) {
-        await opts.supabase.from('bookings').update({ payment_id: payment.id }).eq('id', opts.bookingId);
+          business_id: opts.businessId || null,
+          user_id: opts.userId,
+          amount: opts.amount,
+          currency: opts.currency,
+          gateway: 'paystack',
+          gateway_reference: data.data.reference,
+          status: 'pending',
+          metadata: {
+            access_code: data.data.access_code,
+            reference_code: opts.referenceCode,
+            channel: 'whatsapp',
+            order_id: opts.orderId || null,
+            ...(opts.isByo && { byo: true, byo_business_id: opts.byoBusinessId }),
+            ...(opts.connectAccountId && { connect: true, connect_account_id: opts.connectAccountId }),
+          },
+        }).select().single();
+        paymentId = payment?.id || null;
       }
-      if (payment && opts.invoiceId) {
-        await opts.supabase.from('invoices').update({ payment_id: payment.id }).eq('id', opts.invoiceId);
+
+      if (paymentId && opts.bookingId) {
+        await opts.supabase.from('bookings').update({ payment_id: paymentId }).eq('id', opts.bookingId);
+      }
+      if (paymentId && opts.invoiceId) {
+        await opts.supabase.from('invoices').update({ payment_id: paymentId }).eq('id', opts.invoiceId);
       }
 
       return { url: data.data.authorization_url, reference: data.data.reference };
