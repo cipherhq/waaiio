@@ -187,8 +187,8 @@ export async function POST(request: NextRequest) {
       // #264: V1 dispatched recovery — authoritative Order read for Capture events.
       // PAYMENT.CAPTURE.COMPLETED resource is a Capture, not an Order.
       // Read the Order to get purchase_units[].reference_id (= referenceCode).
+      let recoveredRef: string | null = null;
       if (!payment && orderId) {
-        let recoveredRef: string | null = null;
         try {
           const ppEnv = process.env.PAYPAL_ENVIRONMENT || 'sandbox';
           const ppBase = ppEnv === 'sandbox' ? 'https://api-m.sandbox.paypal.com' : 'https://api-m.paypal.com';
@@ -240,10 +240,18 @@ export async function POST(request: NextRequest) {
       }
 
       // #264: v1-identifiable paid Capture unresolved → retryable 500
+      // Use authoritative Order-recovered reference OR Capture-level reference
       if (!payment) {
-        if (orderId && referenceId) {
-          // Had a Waaiio reference from the Order but couldn't find/repair the row
+        const waaiioRef = recoveredRef || referenceId;
+        if (orderId && waaiioRef) {
+          // Had a Waaiio reference (from Order read or Capture) but couldn't find/repair the row
           return NextResponse.json({ error: 'V1 paid event unresolved' }, { status: 500 });
+        }
+        // Order-read transport/auth failure with orderId → correlation incomplete → retryable
+        if (orderId && !recoveredRef && !referenceId) {
+          // We have a PayPal order ID but couldn't read the Order or find any Waaiio reference
+          // This could be a v1 payment whose Order read failed — return retryable rather than ack
+          return NextResponse.json({ error: 'PayPal Order correlation incomplete' }, { status: 500 });
         }
         return NextResponse.json({ received: true });
       }

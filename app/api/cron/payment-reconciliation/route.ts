@@ -79,7 +79,6 @@ export async function GET(request: NextRequest) {
         const meta = (dp.metadata || {}) as Record<string, unknown>;
         const clientRef = (meta.reference_code as string) || dp.gateway_reference;
         const paymentAge = Date.now() - new Date(dp.created_at as string).getTime();
-        const initParams = meta._v1_init_params as Record<string, unknown> | undefined;
 
         // Helper: checked CAS — returns true only on exactly one affected row
         const checkedCAS = async (updates: Record<string, unknown>): Promise<boolean> => {
@@ -126,32 +125,8 @@ export async function GET(request: NextRequest) {
                   // Found + unpaid with resumable artifact → CAS with URL
                   resolved = await checkedCAS({ provider_init_state: 'provider_confirmed', metadata: { ...meta, checkout_url: data.data.authorization_url } });
                 } else if (data?.status === false && data?.message === 'Transaction reference not found') {
-                  // Definitively absent (exact Paystack documented message) → exact replay on same row
-                  if (initParams) {
-                    try {
-                      const initRes = await fetch('https://api.paystack.co/transaction/initialize', {
-                        method: 'POST',
-                        headers: { Authorization: `Bearer ${paystackKey}`, 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                          email: initParams.email,
-                          amount: initParams.amount_minor,
-                          currency: initParams.currency,
-                          reference: clientRef,
-                          callback_url: initParams.callback_url,
-                          ...(initParams.subaccount ? { subaccount: String(initParams.subaccount) } : {}),
-                          ...(initParams.platform_fee_amount != null ? { transaction_charge: Math.round(Number(initParams.platform_fee_amount) * 100) } : {}),
-                        }),
-                        signal: AbortSignal.timeout(15000),
-                      });
-                      if (initRes.ok) {
-                        const initData = await initRes.json();
-                        if (initData?.data?.authorization_url) {
-                          resolved = await checkedCAS({ provider_init_state: 'provider_confirmed', metadata: { ...meta, checkout_url: initData.data.authorization_url } });
-                        }
-                      }
-                    } catch { /* replay transport error → ambiguous */ }
-                  }
-                  // No initParams → quarantine (cannot replay without durable basis)
+                  // Definitively absent — no replay in this PR (exact request-builder not yet factored).
+                  // Remain dispatched → quarantine-eligible. No POST, no fresh logical payment.
                 }
                 // else: unrecognized → ambiguous
               }
@@ -179,29 +154,8 @@ export async function GET(request: NextRequest) {
                 } else if (data?.data?.link) {
                   resolved = await checkedCAS({ provider_init_state: 'provider_confirmed', metadata: { ...meta, checkout_url: data.data.link } });
                 } else if (data?.status === 'error' && data?.message === 'No transaction was found for this id') {
-                  // Definitively absent (exact FW message) → exact replay
-                  if (initParams) {
-                    try {
-                      const initRes = await fetch('https://api.flutterwave.com/v3/payments', {
-                        method: 'POST',
-                        headers: { Authorization: `Bearer ${fwKey}`, 'Content-Type': 'application/json', 'X-Idempotency-Key': clientRef },
-                        body: JSON.stringify({
-                          tx_ref: clientRef,
-                          amount: dp.amount,
-                          currency: dp.currency,
-                          redirect_url: initParams.callback_url,
-                          customer: { email: initParams.email },
-                        }),
-                        signal: AbortSignal.timeout(15000),
-                      });
-                      if (initRes.ok) {
-                        const initData = await initRes.json();
-                        if (initData?.data?.link) {
-                          resolved = await checkedCAS({ provider_init_state: 'provider_confirmed', metadata: { ...meta, checkout_url: initData.data.link, flw_link: initData.data.link } });
-                        }
-                      }
-                    } catch { /* replay transport error → ambiguous */ }
-                  }
+                  // Definitively absent — no replay in this PR (exact request-builder not yet factored).
+                  // Remain dispatched → quarantine-eligible.
                 }
               }
             } catch { /* ambiguous */ }
@@ -216,6 +170,7 @@ export async function GET(request: NextRequest) {
               let startingAfter: string | undefined;
               let pages = 0;
               const MAX_PAGES = 5;
+              let searchComplete = true;
 
               // Bounded pagination over narrow created window
               while (pages < MAX_PAGES) {
@@ -226,8 +181,9 @@ export async function GET(request: NextRequest) {
                   headers: { Authorization: `Bearer ${stripeKey}` },
                   signal: AbortSignal.timeout(15000),
                 });
-                if (!res.ok) break; // HTTP error → ambiguous
-                const list = await res.json();
+                if (!res.ok) { searchComplete = false; break; }
+                let list: Record<string, unknown>;
+                try { list = await res.json(); } catch { searchComplete = false; break; }
                 const sessions = (list.data || []) as Array<{ id: string; url: string; client_reference_id?: string }>;
                 for (const s of sessions) {
                   if (s.client_reference_id === clientRef) matches.push(s);
@@ -235,8 +191,11 @@ export async function GET(request: NextRequest) {
                 if (!list.has_more || sessions.length === 0) break;
                 startingAfter = sessions[sessions.length - 1].id;
               }
+              // Max pages exceeded with has_more → incomplete search
+              if (pages >= MAX_PAGES) searchComplete = false;
 
-              if (matches.length === 1 && matches[0].url) {
+              // Only CAS when search completed normally + exactly one match with valid URL
+              if (searchComplete && matches.length === 1 && matches[0].url) {
                 resolved = await checkedCAS({
                   gateway_reference: matches[0].id,
                   provider_init_state: 'provider_confirmed',
