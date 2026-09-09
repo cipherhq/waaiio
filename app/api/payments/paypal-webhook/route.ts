@@ -194,14 +194,17 @@ export async function POST(request: NextRequest) {
           .eq('provider_init_state', 'dispatched')
           .maybeSingle();
         if (dispatchedRow && orderId) {
-          // CAS repair: update gateway_reference + provider_init_state
-          const { data: repaired } = await supabase.from('payments')
+          // CAS repair: update gateway_reference + provider_init_state — fail closed
+          const { data: repaired, error: repairErr } = await supabase.from('payments')
             .update({ gateway_reference: orderId, provider_init_state: 'provider_confirmed' })
             .eq('id', dispatchedRow.id)
             .eq('provider_init_state', 'dispatched')
             .select('id, booking_id, order_id, amount, status, gateway_reference, payment_authority_version, finalization_completed_at')
             .single();
-          payment = repaired || dispatchedRow;
+          if (repairErr || !repaired) {
+            return NextResponse.json({ error: 'PayPal dispatched CAS repair failed' }, { status: 500 });
+          }
+          payment = repaired;
         }
       }
 

@@ -98,13 +98,18 @@ export async function POST(request: NextRequest) {
             .maybeSingle();
           if (dispatchedRow) {
             // CAS repair: update gateway_reference + provider_init_state atomically
-            const { data: repaired } = await supabase.from('payments')
+            const { data: repaired, error: repairErr } = await supabase.from('payments')
               .update({ gateway_reference: sessionId, provider_init_state: 'provider_confirmed' })
               .eq('id', dispatchedRow.id)
               .eq('provider_init_state', 'dispatched')
               .select('id, booking_id, invoice_id, campaign_id, reservation_id, order_id, amount, status, gateway_reference, payment_authority_version, finalization_completed_at')
               .single();
-            if (repaired) payment = repaired;
+            if (repairErr || !repaired) {
+              // CAS failed — do NOT continue processing, return retryable 500
+              logger.error('[STRIPE-WEBHOOK] V1 dispatched CAS repair failed — retryable', { repairErr, paymentId: dispatchedRow.id });
+              return NextResponse.json({ error: 'Dispatched CAS repair failed' }, { status: 500 });
+            }
+            payment = repaired;
           }
         }
 

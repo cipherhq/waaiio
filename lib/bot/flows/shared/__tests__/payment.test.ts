@@ -209,23 +209,27 @@ describe('initializePayment', () => {
       eq: vi.fn().mockResolvedValue({ data: null }),
     });
     const insertFn = vi.fn().mockResolvedValue({ data: null });
+    // Deep proxy mock that handles any Supabase chain and returns { data: null, error: null }
     const supabase = {
       from: vi.fn((table: string) => {
         if (table === 'campaign_donations') {
           return { insert: insertFn };
         }
-        return {
-          select: vi.fn().mockReturnValue({
-            eq: vi.fn().mockReturnValue({
-              single: vi.fn().mockResolvedValue({ data: null, error: null }),
-              maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
-              is: vi.fn().mockResolvedValue({ data: null, error: null }),
-            }),
-            not: vi.fn().mockReturnThis(),
-          }),
-          update: updateFn,
-          insert: insertFn,
-        };
+        const chainProxy: Record<string, unknown> = {};
+        const makeProxy = (): Record<string, unknown> => new Proxy(chainProxy, {
+          get(_, prop: string) {
+            if (prop === 'single' || prop === 'maybeSingle') {
+              return vi.fn().mockResolvedValue({ data: null, error: null });
+            }
+            if (prop === 'then') {
+              return (resolve: (v: unknown) => void) => resolve({ data: null, error: null });
+            }
+            if (prop === 'update') return updateFn;
+            if (prop === 'insert') return insertFn;
+            return vi.fn((..._args: unknown[]) => makeProxy());
+          },
+        });
+        return makeProxy();
       }),
     };
 

@@ -69,9 +69,9 @@ export async function initializePayment(
     // ── Idempotent reuse: check for an existing pending payment for this entity.
     // Fail closed: if the lookup itself fails, do NOT proceed to the provider —
     // creating a duplicate provider transaction is worse than a transient failure. ──
-    const entityId = opts.bookingId || opts.orderId || opts.invoiceId || opts.reservationId;
+    const entityId = opts.bookingId || opts.orderId || opts.invoiceId || opts.reservationId || opts.campaignId;
     if (entityId) {
-      const entityCol = opts.bookingId ? 'booking_id' : opts.orderId ? 'order_id' : opts.invoiceId ? 'invoice_id' : 'reservation_id';
+      const entityCol = opts.bookingId ? 'booking_id' : opts.orderId ? 'order_id' : opts.invoiceId ? 'invoice_id' : opts.reservationId ? 'reservation_id' : 'campaign_id';
       try {
         // ── Step 1: Quarantine guard (FIRST — wins over pending reuse) ──
         // If provider already collected money and the payment is under review,
@@ -156,7 +156,7 @@ export async function initializePayment(
     // accepted the charge. Return null to prevent double-charge.
     // The reconciliation cron handles verify-first recovery for dispatched rows.
     if (entityId && opts.transactionCategory) {
-      const entityCol = opts.bookingId ? 'booking_id' : opts.orderId ? 'order_id' : opts.invoiceId ? 'invoice_id' : 'reservation_id';
+      const entityCol = opts.bookingId ? 'booking_id' : opts.orderId ? 'order_id' : opts.invoiceId ? 'invoice_id' : opts.reservationId ? 'reservation_id' : 'campaign_id';
       const { data: dispatchedRow, error: dispatchLookupErr } = await supabase
         .from('payments')
         .select('id, provider_init_state, gateway_reference')

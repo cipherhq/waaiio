@@ -94,23 +94,28 @@ export async function POST(request: NextRequest) {
             return meta?.reference_code === paymentNote || p.gateway_reference === paymentNote;
           });
           if (found) {
-            // CAS repair: update gateway_reference + provider_init_state + Square artifacts
-            const squarePaymentId = payment.id as string | undefined;
-            const { data: repaired } = await supabase.from('payments')
-              .update({
-                gateway_reference: squarePaymentId || found.gateway_reference,
-                provider_init_state: 'provider_confirmed',
-                metadata: {
-                  ...(found.metadata as Record<string, unknown> || {}),
-                  square_order_id: orderId,
-                  square_payment_link_id: squarePaymentId,
-                },
-              })
-              .eq('id', found.id)
-              .in('provider_init_state', ['dispatched', 'provider_confirmed'])
-              .select('id, booking_id, invoice_id, campaign_id, reservation_id, order_id, amount, status, metadata, gateway_reference, payment_authority_version, finalization_completed_at')
-              .single();
-            matchedPayment = repaired || found;
+            // CAS repair: only for dispatched rows — must succeed before processing
+            if ((found as Record<string, unknown>).provider_init_state === 'dispatched') {
+              const { data: repaired, error: repairErr } = await supabase.from('payments')
+                .update({
+                  gateway_reference: found.gateway_reference, // keep existing (referenceCode)
+                  provider_init_state: 'provider_confirmed',
+                  metadata: {
+                    ...(found.metadata as Record<string, unknown> || {}),
+                    square_order_id: orderId,
+                  },
+                })
+                .eq('id', found.id)
+                .eq('provider_init_state', 'dispatched')
+                .select('id, booking_id, invoice_id, campaign_id, reservation_id, order_id, amount, status, metadata, gateway_reference, payment_authority_version, finalization_completed_at')
+                .single();
+              if (repairErr || !repaired) {
+                return NextResponse.json({ error: 'Square dispatched CAS repair failed' }, { status: 500 });
+              }
+              matchedPayment = repaired;
+            } else {
+              matchedPayment = found;
+            }
           }
         }
       }
