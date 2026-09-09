@@ -151,6 +151,28 @@ export async function initializePayment(
       }
     }
 
+    // ── V1 dispatched recovery: if an existing v1 row is stuck in 'dispatched',
+    // do NOT create a new row or blindly re-dispatch. The provider may have
+    // accepted the charge. Return null to prevent double-charge.
+    // The reconciliation cron handles verify-first recovery for dispatched rows.
+    if (entityId && opts.transactionCategory) {
+      const entityCol = opts.bookingId ? 'booking_id' : opts.orderId ? 'order_id' : opts.invoiceId ? 'invoice_id' : 'reservation_id';
+      const { data: dispatchedRow } = await supabase
+        .from('payments')
+        .select('id, provider_init_state, gateway_reference')
+        .eq(entityCol, entityId)
+        .eq('fee_policy_version', 1)
+        .eq('provider_init_state', 'dispatched')
+        .eq('status', 'pending')
+        .maybeSingle();
+      if (dispatchedRow) {
+        logger.warn('[PAYMENT] V1 dispatched row exists — blocking re-dispatch, needs verify-first recovery', {
+          paymentId: dispatchedRow.id, entityCol, entityId,
+        });
+        return null;
+      }
+    }
+
     // Fetch payout account for split payments
     let subaccountCode: string | undefined;
     let stripeAccountId: string | undefined;
@@ -335,9 +357,14 @@ export async function initializePayment(
         }
 
         const snapshot = configVer.config_snapshot as Record<string, unknown>;
-        const gateEnabled = snapshot.fee_policy_enabled === true;
+        // Strict tri-state: true → v1, false → v0, anything else → fail closed
+        const gateValue = snapshot.fee_policy_enabled;
+        if (gateValue !== true && gateValue !== false) {
+          logger.error('[PAYMENT] fee_policy_enabled is not true/false — fail closed', { gateValue });
+          return null;
+        }
 
-        if (gateEnabled) {
+        if (gateValue === true) {
           // Resolve fee basis — fail closed on any error
           const { data: bizForFee, error: bizErr } = await supabase
             .from('businesses')

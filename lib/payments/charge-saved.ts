@@ -323,7 +323,8 @@ async function chargePaystackAuthorization(
   let v1Fields: Record<string, unknown> = {};
   if (opts.transactionCategory) {
     try {
-      const { data: configVer } = await supabase
+      // Fail closed on read errors — only authoritative gate=false selects v0
+      const { data: configVer, error: cvErr } = await supabase
         .from('platform_config_versions')
         .select('id, config_snapshot')
         .lte('effective_from', new Date().toISOString())
@@ -331,65 +332,77 @@ async function chargePaystackAuthorization(
         .limit(1)
         .single();
 
-      if (configVer?.config_snapshot) {
-        const snapshot = configVer.config_snapshot as Record<string, unknown>;
-        if (snapshot.fee_policy_enabled === true) {
-          // Resolve business state for fee basis
-          const { data: bizForFee } = await supabase
-            .from('businesses')
-            .select('subscription_tier, trial_ends_at, custom_fee_percentage, custom_fee_flat')
-            .eq('id', opts.businessId)
-            .single();
+      if (cvErr || !configVer?.config_snapshot) {
+        logger.error('[SAVED-CARD] Config version lookup failed — fail closed', { cvErr });
+        return { outcome: 'declined', reference: opts.reference, message: 'Fee policy config unavailable' };
+      }
 
-          if (bizForFee) {
-            const scTier = (bizForFee.subscription_tier || 'free') as SubscriptionTier;
-            const scTrial = await resolveTrialStatus(supabase, opts.businessId, scTier, bizForFee.trial_ends_at);
-            const { validateV1Snapshot } = await import('@/lib/payments/calculateFee');
-            const snapErr = validateV1Snapshot(
-              snapshot as Parameters<typeof validateV1Snapshot>[0],
-              scTier,
-            );
-            if (!snapErr) {
-              v1Fields = {
-                fee_policy_version: 1,
-                config_version_id: configVer.id,
-                transaction_category: opts.transactionCategory,
-                fee_basis: {
-                  payment_routing: 'platform' as const,
-                  tier: scTier,
-                  is_in_trial: scTrial,
-                  custom_fee_percentage: bizForFee.custom_fee_percentage != null ? Number(bizForFee.custom_fee_percentage) : null,
-                  custom_fee_flat: bizForFee.custom_fee_flat != null ? Number(bizForFee.custom_fee_flat) : null,
-                },
-                provider_init_state: 'pre_dispatch',
-              };
-            }
-          }
+      const snapshot = configVer.config_snapshot as Record<string, unknown>;
+      // Strict tri-state: true → v1, false → v0, anything else → fail closed
+      const gateVal = snapshot.fee_policy_enabled;
+      if (gateVal !== true && gateVal !== false) {
+        logger.error('[SAVED-CARD] fee_policy_enabled is not true/false — fail closed', { gateVal });
+        return { outcome: 'declined', reference: opts.reference, message: 'Fee policy gate malformed' };
+      }
+
+      if (gateVal === true) {
+        const { data: bizForFee, error: bizErr } = await supabase
+          .from('businesses')
+          .select('subscription_tier, trial_ends_at, custom_fee_percentage, custom_fee_flat')
+          .eq('id', opts.businessId)
+          .single();
+
+        if (bizErr || !bizForFee) {
+          logger.error('[SAVED-CARD] Business lookup failed during v1 resolution — fail closed', { bizErr });
+          return { outcome: 'declined', reference: opts.reference, message: 'Business lookup failed' };
+        }
+
+        const scTier = (bizForFee.subscription_tier || 'free') as SubscriptionTier;
+        const scTrial = await resolveTrialStatus(supabase, opts.businessId, scTier, bizForFee.trial_ends_at);
+        const { validateV1Snapshot } = await import('@/lib/payments/calculateFee');
+        const snapErr = validateV1Snapshot(
+          snapshot as Parameters<typeof validateV1Snapshot>[0],
+          scTier,
+        );
+        if (snapErr) {
+          logger.error('[SAVED-CARD] V1 snapshot validation failed — fail closed', { snapErr });
+          return { outcome: 'declined', reference: opts.reference, message: 'Fee policy snapshot invalid' };
+        }
+
+        const scBasis = {
+          payment_routing: 'platform' as const,
+          tier: scTier,
+          is_in_trial: scTrial,
+          custom_fee_percentage: bizForFee.custom_fee_percentage != null ? Number(bizForFee.custom_fee_percentage) : null,
+          custom_fee_flat: bizForFee.custom_fee_flat != null ? Number(bizForFee.custom_fee_flat) : null,
+        };
+
+        v1Fields = {
+          fee_policy_version: 1,
+          config_version_id: configVer.id,
+          transaction_category: opts.transactionCategory,
+          fee_basis: scBasis,
+          provider_init_state: 'pre_dispatch',
+        };
+
+        // Override the provider split with the pinned v1 fee (not live getPlatformFees)
+        const { calculateFee } = await import('@/lib/payments/calculateFee');
+        const v1Fee = calculateFee(opts.amount, scBasis, opts.transactionCategory, snapshot as Parameters<typeof calculateFee>[3]);
+        if (splitResult.mode === 'split') {
+          splitParams = {
+            subaccount: splitResult.subaccount,
+            transaction_charge: Math.round(v1Fee.feeTotal * 100),
+          };
         }
       }
+      // gateVal === false → v0, no v1Fields set
     } catch (feePolicyErr) {
-      // Fail closed when category is present and gate state unknown
       logger.error('[SAVED-CARD] Fee policy resolution error — fail closed', feePolicyErr);
       return { outcome: 'declined', reference: opts.reference, message: 'Fee policy resolution failed' };
     }
   }
 
-  // If v1 resolved, override the provider split with the pinned fee
-  if (v1Fields.fee_policy_version === 1 && v1Fields.fee_basis) {
-    const { calculateFee } = await import('@/lib/payments/calculateFee');
-    const basis = v1Fields.fee_basis as Parameters<typeof calculateFee>[1];
-    const { data: snapRow } = await supabase.from('platform_config_versions')
-      .select('config_snapshot').eq('id', v1Fields.config_version_id).single();
-    if (snapRow?.config_snapshot) {
-      const v1Fee = calculateFee(opts.amount, basis, opts.transactionCategory || null, snapRow.config_snapshot as Parameters<typeof calculateFee>[3]);
-      if (splitResult.mode === 'split' && v1Fee.feeTotal >= 0) {
-        splitParams = {
-          subaccount: splitResult.subaccount,
-          transaction_charge: Math.round(v1Fee.feeTotal * 100), // convert to kobo
-        };
-      }
-    }
-  }
+  // v1 split is already computed above from pinned snapshot — no separate override needed
 
   const { data: payRow, error: insertErr } = await supabase.from('payments').insert({
     business_id: opts.businessId,
@@ -471,12 +484,19 @@ async function chargePaystackAuthorization(
     });
 
     if (data.status && data.data?.status === 'success') {
-      // CAS: dispatched → provider_confirmed (for v1)
+      // CAS: dispatched → provider_confirmed (for v1) — exact row check
       if (v1Fields.fee_policy_version === 1) {
-        await supabase.from('payments')
+        const { data: confirmRows, error: confirmErr } = await supabase.from('payments')
           .update({ provider_init_state: 'provider_confirmed' })
           .eq('id', paymentId)
-          .eq('provider_init_state', 'dispatched');
+          .eq('provider_init_state', 'dispatched')
+          .select('id');
+        if (confirmErr || !confirmRows || confirmRows.length !== 1) {
+          // Provider has charged but authority row didn't reach provider_confirmed.
+          // Return indeterminate — do not hide the provider-paid ambiguity.
+          logger.error('[SAVED-CARD] V1 provider_confirmed CAS failed after successful charge', { confirmErr, rowCount: confirmRows?.length });
+          return { outcome: 'indeterminate', paymentId, reference: opts.reference, message: 'Provider charged but authority write failed' };
+        }
       }
 
       await supabase.from('saved_payment_methods')
