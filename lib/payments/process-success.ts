@@ -19,6 +19,11 @@ interface PaymentRecord {
   order_id?: string | null;
   metadata?: Record<string, unknown> | null;
   gateway_fee?: number;
+  // #264: Fee policy fields (passed through from authority.ts for v1 payments)
+  fee_policy_version?: number;
+  config_version_id?: string;
+  transaction_category?: string;
+  fee_basis?: Record<string, unknown>;
 }
 
 /**
@@ -102,6 +107,10 @@ export async function processSuccessfulPayment(
         paymentId: payment.id,
         paymentAmount: payment.amount,
         gatewayFee: payment.gateway_fee,
+        feePolicyVersion: payment.fee_policy_version,
+        configVersionId: payment.config_version_id,
+        transactionCategory: payment.transaction_category,
+        feeBasis: payment.fee_basis,
       });
     } catch (feeErr) {
       criticalErrors.push('booking_platform_fee_failed');
@@ -170,7 +179,10 @@ export async function processSuccessfulPayment(
   // 2. Process invoice payment
   if (payment.invoice_id) {
     try {
-      await processInvoicePayment(supabase, payment.invoice_id, payment.id, payment.amount, payment.gateway_fee);
+      await processInvoicePayment(supabase, payment.invoice_id, payment.id, payment.amount, payment.gateway_fee, {
+        feePolicyVersion: payment.fee_policy_version, configVersionId: payment.config_version_id,
+        transactionCategory: payment.transaction_category, feeBasis: payment.fee_basis,
+      });
     } catch (err) {
       criticalErrors.push('invoice_payment_failed');
       logger.withContext({ op: 'process-success.invoice', ...safeLogErrorContext(err) }).error('[PROCESS-SUCCESS] Invoice payment error');
@@ -198,6 +210,8 @@ export async function processSuccessfulPayment(
       try {
         await recordPlatformFee(supabase, {
           orderId, paymentId: payment.id, paymentAmount: payment.amount, gatewayFee: payment.gateway_fee,
+          feePolicyVersion: payment.fee_policy_version, configVersionId: payment.config_version_id,
+          transactionCategory: payment.transaction_category, feeBasis: payment.fee_basis,
         });
       } catch (feeErr) {
         criticalErrors.push('order_platform_fee_failed');
@@ -373,6 +387,8 @@ export async function processSuccessfulPayment(
           paymentId: payment.id,
           paymentAmount: payment.amount,
           gatewayFee: payment.gateway_fee,
+          feePolicyVersion: payment.fee_policy_version, configVersionId: payment.config_version_id,
+          transactionCategory: payment.transaction_category, feeBasis: payment.fee_basis,
         });
       } catch (feeErr) {
         criticalErrors.push('reservation_platform_fee_failed');
@@ -442,6 +458,11 @@ export async function confirmBookingPayment(
  * Record platform fee for a transaction.
  * Looks up business tier, checks payout_mode, calculates fee, inserts record.
  * Skips for direct_split businesses (gateway already collected the fee).
+ *
+ * For fee_policy_version >= 1 payments: uses pinned config snapshot + immutable
+ * fee_basis from the payment row. Never reads current business state for fee calculation.
+ *
+ * For fee_policy_version = 0 (legacy): uses live loadPlatformSettings + current business state.
  */
 export async function recordPlatformFee(
   supabase: SupabaseClient,
@@ -455,6 +476,11 @@ export async function recordPlatformFee(
     paymentId?: string;
     paymentAmount: number;
     gatewayFee?: number;
+    // #264: v1 fee-policy fields (passed from authority.ts for pinned payments)
+    feePolicyVersion?: number;
+    configVersionId?: string;
+    transactionCategory?: string;
+    feeBasis?: Record<string, unknown>;
   },
 ): Promise<void> {
   let businessId = opts.businessId;
@@ -503,6 +529,93 @@ export async function recordPlatformFee(
   }
 
   if (!businessId) return;
+
+  // ── #264: V1 fee-policy pinned path ──
+  // For fee_policy_version >= 1, use the pinned config snapshot + immutable fee_basis.
+  // Never read current business tier/trial/overrides for v1 payments.
+  if (opts.feePolicyVersion && opts.feePolicyVersion >= 1 && opts.configVersionId && opts.feeBasis) {
+    const { calculateFee, validateV1Snapshot } = await import('@/lib/payments/calculateFee');
+    const feeBasis = opts.feeBasis as { payment_routing: 'platform' | 'byo' | 'connect'; tier: string; is_in_trial: boolean; custom_fee_percentage: number | null; custom_fee_flat: number | null };
+
+    // Load pinned config snapshot
+    const { data: configRow } = await supabase
+      .from('platform_config_versions')
+      .select('config_snapshot')
+      .eq('id', opts.configVersionId)
+      .single();
+
+    if (!configRow?.config_snapshot) {
+      logger.error('[PLATFORM-FEE] V1 pinned config snapshot not found', { configVersionId: opts.configVersionId, paymentId: opts.paymentId });
+      throw new Error('V1 fee policy: pinned config snapshot not found — cannot record fee');
+    }
+
+    const snapshot = configRow.config_snapshot as Record<string, unknown>;
+    const validationErr = validateV1Snapshot(snapshot as Parameters<typeof validateV1Snapshot>[0], feeBasis.tier as Parameters<typeof validateV1Snapshot>[1]);
+    if (validationErr) {
+      logger.error('[PLATFORM-FEE] V1 snapshot validation failed', { error: validationErr, paymentId: opts.paymentId });
+      throw new Error(`V1 fee policy: snapshot validation failed — ${validationErr}`);
+    }
+
+    // Check payout_mode (still need business lookup for this + reseller)
+    const { data: business } = await supabase
+      .from('businesses')
+      .select('payout_mode, reseller_id')
+      .eq('id', businessId)
+      .single();
+    if (!business) return;
+    if (business.payout_mode === 'direct_split') return;
+
+    const { feePercentage, feeFlat, feeTotal } = calculateFee(
+      transactionAmount,
+      feeBasis as Parameters<typeof calculateFee>[1],
+      opts.transactionCategory || null,
+      snapshot as Parameters<typeof calculateFee>[3],
+    );
+
+    // Reseller commission
+    let resellerId: string | null = business.reseller_id || null;
+    let resellerCommission = 0;
+    if (resellerId && feeTotal > 0) {
+      const { data: reseller } = await supabase
+        .from('resellers')
+        .select('id, commission_percentage, status')
+        .eq('id', resellerId)
+        .maybeSingle();
+      if (reseller && reseller.status === 'active' && reseller.commission_percentage > 0) {
+        resellerCommission = Math.round(feeTotal * (Number(reseller.commission_percentage) / 100) * 100) / 100;
+      } else {
+        resellerId = null;
+      }
+    }
+
+    const { error: feeErr } = await supabase.from('platform_fees').insert({
+      business_id: businessId,
+      payment_id: opts.paymentId || null,
+      booking_id: opts.bookingId || null,
+      invoice_id: opts.invoiceId || null,
+      campaign_id: opts.campaignId || null,
+      reservation_id: opts.reservationId || null,
+      order_id: opts.orderId || null,
+      transaction_amount: transactionAmount,
+      fee_percentage: feePercentage,
+      fee_flat: feeFlat,
+      fee_total: feeTotal,
+      gateway_fee: opts.gatewayFee || 0,
+      tier: feeBasis.tier,
+      reseller_id: resellerId,
+      reseller_commission: resellerCommission,
+    });
+    if (feeErr) {
+      const isDuplicate = feeErr.message?.includes('duplicate') || feeErr.message?.includes('unique');
+      if (!isDuplicate) {
+        Sentry.captureException(new Error(`V1 platform fee insert error: ${feeErr.message}`));
+        throw new Error(`V1 platform fee insert failed: ${feeErr.message}`);
+      }
+    }
+    return; // V1 path complete — do not fall through to legacy
+  }
+
+  // ── Legacy (v0) path — unchanged behavior ──
 
   const { data: business } = await supabase
     .from('businesses')
@@ -589,6 +702,7 @@ export async function processInvoicePayment(
   paymentId: string,
   paymentAmount: number,
   gatewayFee?: number,
+  feePolicy?: { feePolicyVersion?: number; configVersionId?: string; transactionCategory?: string; feeBasis?: Record<string, unknown> },
 ): Promise<void> {
   // RPC loads and validates payment + invoice from DB internally
   const { data: result, error: rpcError } = await supabase.rpc('apply_invoice_payment', {
@@ -619,6 +733,8 @@ export async function processInvoicePayment(
         paymentId,
         paymentAmount: authoritativeAmount,
         gatewayFee,
+        feePolicyVersion: feePolicy?.feePolicyVersion, configVersionId: feePolicy?.configVersionId,
+        transactionCategory: feePolicy?.transactionCategory, feeBasis: feePolicy?.feeBasis,
       });
     } else {
       logger.error('[INVOICE-PAYMENT] RPC returned fee-eligible result without valid amount', { invoiceId, paymentId, result });

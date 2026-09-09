@@ -2,13 +2,16 @@ import { loadPlatformSettings } from '@/lib/platformSettings';
 import type { SubscriptionTier } from '@/lib/constants';
 
 /**
- * Centralized async fee calculator — reads tier config from DB-backed
+ * Legacy (v0) async fee calculator — reads tier config from DB-backed
  * platform_settings (with 60s cache and hardcoded fallback).
  *
- * @param amount   Transaction amount in minor units (e.g. kobo / cents)
+ * For fee_policy_version=0 payments only. V1 payments use calculateFee()
+ * from @/lib/payments/calculateFee with a pinned config snapshot.
+ *
+ * @param amount   Transaction amount in major currency units (naira/dollars/pounds)
  * @param tier     Business subscription tier
  * @param isInTrial Whether the business is currently in its free trial
- * @returns Fee breakdown: feePercentage, feeFlat, feeTotal
+ * @returns Fee breakdown: feePercentage, feeFlat, feeTotal (major currency units)
  */
 export async function getPlatformFees(
   amount: number,
