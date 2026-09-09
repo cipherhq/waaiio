@@ -3,6 +3,33 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-09-09 — #264 F-1: Category / BYO-Aware Transaction Fee Policy
+
+### What changed
+- **Migration 376:** `fee_policy_version` (0/1), `config_version_id` FK, `transaction_category` (closed CHECK), `fee_basis` (JSONB), `provider_init_state` on payments. Structural validation trigger, immutability trigger (v1 freezes config/category/basis/amount/currency), v1 completeness CHECK. `fee_policy_enabled` + `category_fee_rates` added to commercial config with server-side validation.
+- **Pure fee calculator** (`lib/payments/calculateFee.ts`): Exact precedence: BYO→0% > trial→0% > custom override > category rate > tier fallback. Two-decimal precision for v1. Non-zero global tier feeFlat fails closed.
+- **Finalization path:** `authority.ts` + `process-success.ts` branch on `fee_policy_version`. V1 uses pinned config snapshot + immutable `fee_basis`. Never reads current business state for v1 payments. Legacy v0 completely unchanged.
+- **Flow callers:** All 7 bot flows pass `transactionCategory`. Conflicting entity fail-closed assertion.
+- **Gateway improvements:** Stripe `client_reference_id`, Square stable idempotency key + `payment_note`, PayPal stable `PayPal-Request-Id`, Flutterwave `X-Idempotency-Key`.
+
+### Files changed
+- `supabase/migrations/376_fee_policy_pinning.sql` — schema + triggers + config keys
+- `lib/payments/calculateFee.ts` — pure calculator (NEW)
+- `lib/getPlatformFees.ts` — docstring correction (v0 legacy only)
+- `lib/payments/authority.ts` — v1 fields in SELECT + processPayment call
+- `lib/payments/process-success.ts` — v1 pinned fee path in recordPlatformFee
+- `lib/payments/reconcile.ts` — v1 fields in SELECT
+- `lib/bot/flows/shared/payment.ts` — transactionCategory param + entity assertion
+- `lib/bot/flows/{scheduling,ticketing,reservation,ordering,invoice,crowdfunding,payment}.flow.ts` — pass category
+- `lib/payments/{stripe,square,paypal,flutterwave}.ts` — provider-identity improvements
+- `lib/__tests__/calculateFee.test.ts` — 23 calculator unit tests
+
+### What could break
+- Stripe checkout sessions now include `client_reference_id` (additive, no breaking change)
+- Square payment links now include `payment_note` and use stable idempotency key (additive)
+- PayPal order creation now uses stable `PayPal-Request-Id` (idempotent, no breaking change)
+- Payments with conflicting entity IDs (booking+order+invoice) now blocked at initiation
+
 ## 2026-09-08 — #263 Subscribe Now (CTO re-review 3-blocker fix: type/postauth/proofs)
 
 ### What changed
