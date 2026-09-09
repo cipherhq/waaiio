@@ -151,6 +151,8 @@ function ensurePaidConfig(): string {
 
 // ── Cleanup ─────────────────────────────────────────
 function cleanup(bizId: string) {
+  // Delete allowance events first (FK to messaging_allowances)
+  psqlCleanup(`DELETE FROM public.messaging_allowance_events WHERE allowance_id IN (SELECT id FROM public.messaging_allowances WHERE business_id = '${bizId}')`);
   psqlCleanup(`DELETE FROM public.messaging_allowances WHERE business_id = '${bizId}'`);
   psqlCleanup(`DELETE FROM public.alerts WHERE business_id = '${bizId}'`);
 }
@@ -666,9 +668,10 @@ describe.skipIf(!canRun)('canonical field fail-closed proofs', () => {
     } finally { cleanup(bizId); }
   });
 
-  it('34. missing payment currency → rejected', () => {
+  it('34. empty payment currency → rejected', () => {
     const { bizId, paymentId } = createPaidTestBusiness({ withChannel: true });
-    psql(`UPDATE public.subscription_payments SET currency = NULL WHERE id = '${paymentId}'`);
+    // DB has NOT NULL on currency, so test with empty string (RPC validates non-empty)
+    psql(`UPDATE public.subscription_payments SET currency = '' WHERE id = '${paymentId}'`);
     try {
       const result = psqlJson(`SELECT public.activate_paid_subscription('${paymentId}') AS r`) as Record<string, unknown>;
       expect(result).toMatchObject({ activated: false, reason: 'missing_payment_currency' });
