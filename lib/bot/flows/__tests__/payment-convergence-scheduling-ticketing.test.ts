@@ -116,10 +116,9 @@ describe('Saved-card convergence through Payment Authority', () => {
   it('persists payment_authority_version=1 on the payment row (not in metadata)', () => {
     const fs = require('fs');
     const src = fs.readFileSync('lib/payments/charge-saved.ts', 'utf-8');
-    // Must be a top-level column, not inside metadata
-    // The insert section spans from Step 2 comment through the .select() call after the INSERT
-    const afterStep2 = src.split('Step 2:')[1] || '';
-    const insertSection = afterStep2.split('select(\'id\')')[0] || afterStep2.split('.select(')[0] || '';
+    // Must be a top-level column in the payments INSERT, not inside metadata
+    const afterInsert = src.split("from('payments').insert")[1] || '';
+    const insertSection = afterInsert.split("select('id')")[0] || afterInsert.split('.select(')[0] || '';
     expect(insertSection).toContain('payment_authority_version: 1');
     expect(insertSection).toContain("payment_origin: 'platform'");
   });

@@ -81,11 +81,32 @@ export async function POST(request: NextRequest) {
       const metadata = data.metadata as Record<string, string> | undefined;
 
       if (paymentStatus === 'paid' && sessionId) {
-        const { data: payment } = await supabase
+        let { data: payment } = await supabase
           .from('payments')
           .select('id, booking_id, invoice_id, campaign_id, reservation_id, order_id, amount, status, gateway_reference, payment_authority_version, finalization_completed_at')
           .eq('gateway_reference', sessionId)
           .single();
+
+        // #264: V1 dispatched recovery — if session ID not found, try client_reference_id
+        if (!payment && metadata?.reference_code) {
+          const { data: dispatchedRow } = await supabase
+            .from('payments')
+            .select('id, booking_id, invoice_id, campaign_id, reservation_id, order_id, amount, status, gateway_reference, payment_authority_version, finalization_completed_at')
+            .eq('gateway_reference', metadata.reference_code as string)
+            .eq('gateway', 'stripe')
+            .eq('provider_init_state', 'dispatched')
+            .maybeSingle();
+          if (dispatchedRow) {
+            // CAS repair: update gateway_reference + provider_init_state atomically
+            const { data: repaired } = await supabase.from('payments')
+              .update({ gateway_reference: sessionId, provider_init_state: 'provider_confirmed' })
+              .eq('id', dispatchedRow.id)
+              .eq('provider_init_state', 'dispatched')
+              .select('id, booking_id, invoice_id, campaign_id, reservation_id, order_id, amount, status, gateway_reference, payment_authority_version, finalization_completed_at')
+              .single();
+            if (repaired) payment = repaired;
+          }
+        }
 
         // Allow new-authority success payments through for Stage 2/3 resume
         const needsReconciliation = payment && (

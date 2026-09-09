@@ -61,6 +61,11 @@ DECLARE
   ];
 BEGIN
   IF NEW.fee_policy_version >= 1 THEN
+    -- v1 payments must begin at pre_dispatch (exact initial state)
+    IF NEW.provider_init_state <> 'pre_dispatch' THEN
+      RAISE EXCEPTION 'v1 payments must be created with provider_init_state = pre_dispatch, got %', NEW.provider_init_state;
+    END IF;
+
     -- fee_basis must be a JSON object
     IF NEW.fee_basis IS NULL OR jsonb_typeof(NEW.fee_basis) <> 'object' THEN
       RAISE EXCEPTION 'fee_basis must be a non-null JSON object for fee_policy_version >= 1';

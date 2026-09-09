@@ -83,15 +83,35 @@ export async function POST(request: NextRequest) {
         return meta?.square_order_id === orderId;
       });
 
-      // #264: V1 payment-link-based fallback — square_order_id may not be in metadata
-      // when v1 pre-provider row uses payment_note for correlation
+      // #264: V1 dispatched recovery — square_order_id may not be in metadata.
+      // Use payment.note (= referenceCode) to find the pre-provider v1 row,
+      // then CAS-repair gateway_reference + provider_init_state + metadata.
       if (!matchedPayment) {
         const paymentNote = (payment as Record<string, unknown>).note as string | undefined;
         if (paymentNote) {
-          matchedPayment = payments?.find(p => {
+          const found = payments?.find(p => {
             const meta = p.metadata as Record<string, string> | null;
             return meta?.reference_code === paymentNote || p.gateway_reference === paymentNote;
           });
+          if (found) {
+            // CAS repair: update gateway_reference + provider_init_state + Square artifacts
+            const squarePaymentId = payment.id as string | undefined;
+            const { data: repaired } = await supabase.from('payments')
+              .update({
+                gateway_reference: squarePaymentId || found.gateway_reference,
+                provider_init_state: 'provider_confirmed',
+                metadata: {
+                  ...(found.metadata as Record<string, unknown> || {}),
+                  square_order_id: orderId,
+                  square_payment_link_id: squarePaymentId,
+                },
+              })
+              .eq('id', found.id)
+              .in('provider_init_state', ['dispatched', 'provider_confirmed'])
+              .select('id, booking_id, invoice_id, campaign_id, reservation_id, order_id, amount, status, metadata, gateway_reference, payment_authority_version, finalization_completed_at')
+              .single();
+            matchedPayment = repaired || found;
+          }
         }
       }
 

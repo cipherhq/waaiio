@@ -55,6 +55,46 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ ok: true, processed: 0 });
   }
 
+  // ── #264: V1 dispatched recovery ──
+  // V1 payments stuck in 'dispatched' need provider-specific verify-first recovery.
+  // For Paystack/Flutterwave: verify by reference (client ref = provider ref).
+  // For Stripe/Square/PayPal: cannot verify with client ref; quarantine for manual reconciliation.
+  const { data: dispatchedPayments } = await supabase
+    .from('payments')
+    .select('id, gateway, gateway_reference, metadata, provider_init_state, fee_policy_version')
+    .eq('fee_policy_version', 1)
+    .eq('provider_init_state', 'dispatched')
+    .eq('status', 'pending')
+    .lt('created_at', twoHoursAgo.toISOString())
+    .limit(20);
+
+  if (dispatchedPayments && dispatchedPayments.length > 0) {
+    for (const dp of dispatchedPayments) {
+      const meta = (dp.metadata || {}) as Record<string, string>;
+      const clientRef = meta.reference_code || dp.gateway_reference;
+
+      if (dp.gateway === 'paystack' || dp.gateway === 'flutterwave') {
+        // Paystack/FW: verify by client reference (echoed by provider)
+        try {
+          const { reconcilePayment: reconcileV1 } = await import('@/lib/payments/reconcile');
+          await reconcileV1(supabase, dp.id, 'cron');
+        } catch { /* logged inside reconcile */ }
+      } else {
+        // Stripe/Square/PayPal: client ref doesn't match provider ID format.
+        // Quarantine: mark for manual reconciliation after timeout.
+        const ageMs = Date.now() - new Date(twoHoursAgo).getTime();
+        if (ageMs > 24 * 60 * 60 * 1000) {
+          // Older than 24h — mark terminal failed (unrecoverable without manual intervention)
+          await supabase.from('payments')
+            .update({ status: 'failed', gateway_status: 'dispatched_unrecoverable' })
+            .eq('id', dp.id)
+            .eq('provider_init_state', 'dispatched');
+        }
+        // Otherwise leave dispatched — webhook may still arrive with provider ID
+      }
+    }
+  }
+
   let reconciled = 0;
   let markedFailed = 0;
   let errors = 0;

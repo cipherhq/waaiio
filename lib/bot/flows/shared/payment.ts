@@ -157,7 +157,7 @@ export async function initializePayment(
     // The reconciliation cron handles verify-first recovery for dispatched rows.
     if (entityId && opts.transactionCategory) {
       const entityCol = opts.bookingId ? 'booking_id' : opts.orderId ? 'order_id' : opts.invoiceId ? 'invoice_id' : 'reservation_id';
-      const { data: dispatchedRow } = await supabase
+      const { data: dispatchedRow, error: dispatchLookupErr } = await supabase
         .from('payments')
         .select('id, provider_init_state, gateway_reference')
         .eq(entityCol, entityId)
@@ -165,6 +165,10 @@ export async function initializePayment(
         .eq('provider_init_state', 'dispatched')
         .eq('status', 'pending')
         .maybeSingle();
+      if (dispatchLookupErr) {
+        logger.error('[PAYMENT] Dispatched-row lookup error — fail closed', { dispatchLookupErr });
+        return null;
+      }
       if (dispatchedRow) {
         logger.warn('[PAYMENT] V1 dispatched row exists — blocking re-dispatch, needs verify-first recovery', {
           paymentId: dispatchedRow.id, entityCol, entityId,
