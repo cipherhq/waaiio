@@ -604,4 +604,116 @@ describe.skipIf(!canRun)('adversarial authority proofs', () => {
     `);
     expect(parseInt(cnt)).toBe(1);
   });
+
+  it('28. uq_subscription_payment_period_success index exists', () => {
+    const cnt = psql(`
+      SELECT count(*) FROM pg_indexes
+      WHERE indexname = 'uq_subscription_payment_period_success'
+    `);
+    expect(parseInt(cnt)).toBe(1);
+  });
+
+  it('29. prevent_tier_tampering does not use rolsuper', () => {
+    const cnt = psql(`
+      SELECT count(*) FROM pg_proc
+      WHERE proname = 'prevent_tier_tampering'
+        AND prosrc LIKE '%rolsuper%'
+    `);
+    expect(parseInt(cnt)).toBe(0);
+  });
+
+  it('30. prevent_tier_tampering uses function-owner pattern', () => {
+    const src = psql(`
+      SELECT prosrc FROM pg_proc WHERE proname = 'prevent_tier_tampering'
+    `);
+    expect(src).toMatch(/to_regprocedure/);
+    expect(src).toMatch(/activate_paid_subscription/);
+    expect(src).toMatch(/proowner/);
+  });
+});
+
+// ══════════════════════════════════════════════════════════
+// Adversarial proofs: canonical field requirements
+// ══════════════════════════════════════════════════════════
+
+describe.skipIf(!canRun)('canonical field fail-closed proofs', () => {
+  beforeAll(() => { ensurePaidConfig(); });
+
+  it('31. missing provider_reference → rejected', () => {
+    const { bizId, paymentId } = createPaidTestBusiness({ withChannel: true });
+    psql(`UPDATE public.subscription_payments SET provider_reference = NULL WHERE id = '${paymentId}'`);
+    try {
+      const result = psqlJson(`SELECT public.activate_paid_subscription('${paymentId}') AS r`) as Record<string, unknown>;
+      expect(result).toMatchObject({ activated: false, reason: 'missing_provider_reference' });
+    } finally { cleanup(bizId); }
+  });
+
+  it('32. missing period_start → rejected', () => {
+    const { bizId, paymentId } = createPaidTestBusiness({ withChannel: true });
+    psql(`UPDATE public.subscription_payments SET period_start = NULL WHERE id = '${paymentId}'`);
+    try {
+      const result = psqlJson(`SELECT public.activate_paid_subscription('${paymentId}') AS r`) as Record<string, unknown>;
+      expect(result).toMatchObject({ activated: false, reason: 'missing_period_start' });
+    } finally { cleanup(bizId); }
+  });
+
+  it('33. missing period_end → rejected', () => {
+    const { bizId, paymentId } = createPaidTestBusiness({ withChannel: true });
+    psql(`UPDATE public.subscription_payments SET period_end = NULL WHERE id = '${paymentId}'`);
+    try {
+      const result = psqlJson(`SELECT public.activate_paid_subscription('${paymentId}') AS r`) as Record<string, unknown>;
+      expect(result).toMatchObject({ activated: false, reason: 'missing_period_end' });
+    } finally { cleanup(bizId); }
+  });
+
+  it('34. missing payment currency → rejected', () => {
+    const { bizId, paymentId } = createPaidTestBusiness({ withChannel: true });
+    psql(`UPDATE public.subscription_payments SET currency = NULL WHERE id = '${paymentId}'`);
+    try {
+      const result = psqlJson(`SELECT public.activate_paid_subscription('${paymentId}') AS r`) as Record<string, unknown>;
+      expect(result).toMatchObject({ activated: false, reason: 'missing_payment_currency' });
+    } finally { cleanup(bizId); }
+  });
+
+  it('35. zero amount → rejected', () => {
+    const { bizId, paymentId } = createPaidTestBusiness({ withChannel: true });
+    psql(`UPDATE public.subscription_payments SET amount = 0 WHERE id = '${paymentId}'`);
+    try {
+      const result = psqlJson(`SELECT public.activate_paid_subscription('${paymentId}') AS r`) as Record<string, unknown>;
+      expect(result).toMatchObject({ activated: false, reason: 'missing_payment_amount' });
+    } finally { cleanup(bizId); }
+  });
+
+  it('36. duplicate period evidence → unique constraint prevents ambiguity', () => {
+    const { bizId, subId, paymentId } = createPaidTestBusiness({ withChannel: true });
+    try {
+      // First activation
+      psql(`SELECT public.activate_paid_subscription('${paymentId}')`);
+
+      // Attempt to insert a second successful payment with same subscription_id + period_start
+      const periodStart = psql(`SELECT period_start FROM public.subscription_payments WHERE id = '${paymentId}'`);
+      const configId = psql(`SELECT id FROM public.platform_config_versions ORDER BY effective_from DESC LIMIT 1`);
+      const result = psqlMayFail(`
+        INSERT INTO public.subscription_payments (
+          business_id, subscription_id, amount, currency, gateway, gateway_reference,
+          plan, action, status, config_version_id, provider_reference, period_start, period_end
+        ) VALUES (
+          '${bizId}', '${subId}', 5000, 'NGN', 'paystack', 'dup-ref-${Date.now()}',
+          'growth', 'renewal', 'success', '${configId}', 'dup-prov-${Date.now()}',
+          '${periodStart}', NOW() + INTERVAL '30 days'
+        );
+      `);
+      expect(result).toMatch(/unique|duplicate/i);
+    } finally { cleanup(bizId); }
+  });
+
+  it('37. plan mismatch between payment and subscription → rejected', () => {
+    const { bizId, paymentId } = createPaidTestBusiness({ withChannel: true, plan: 'growth' });
+    // Change subscription plan to 'business' while payment says 'growth'
+    psql(`UPDATE public.subscriptions SET plan = 'business' WHERE business_id = '${bizId}'`);
+    try {
+      const result = psqlJson(`SELECT public.activate_paid_subscription('${paymentId}') AS r`) as Record<string, unknown>;
+      expect(result).toMatchObject({ activated: false, reason: 'plan_mismatch' });
+    } finally { cleanup(bizId); }
+  });
 });

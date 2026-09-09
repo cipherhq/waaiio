@@ -384,26 +384,22 @@ export async function POST(request: NextRequest) {
 
         if (platformSub) {
           // ── Platform subscription renewal ──
-          const periodStart = data.period_start
-            ? new Date((data.period_start as number) * 1000).toISOString()
-            : new Date().toISOString();
-          const periodEnd = data.period_end
-            ? new Date((data.period_end as number) * 1000).toISOString()
-            : (() => { const d = new Date(); d.setDate(d.getDate() + 30); return d.toISOString(); })();
+          // Require provider-derived period timestamps — no wall-clock fallbacks
+          const invoicePeriodStartUnix = data.period_start as number | undefined;
+          const invoicePeriodEndUnix = data.period_end as number | undefined;
+          if (!invoicePeriodStartUnix || !invoicePeriodEndUnix) {
+            logger.error('[STRIPE-WEBHOOK] Missing invoice period_start or period_end', { invoiceId: data.id });
+            return NextResponse.json({ error: 'Missing provider period timestamps' }, { status: 500 });
+          }
+          const periodStart = new Date(invoicePeriodStartUnix * 1000).toISOString();
+          const periodEnd = new Date(invoicePeriodEndUnix * 1000).toISOString();
 
-          // Update period with canonical provider-derived timestamps
-          await supabase
-            .from('subscriptions')
-            .update({
-              current_period_start: periodStart,
-              current_period_end: periodEnd,
-            })
-            .eq('id', platformSub.id);
+          // NO pre-write of periods to subscriptions — activate_paid_subscription RPC
+          // performs authoritative period synchronization after all validation succeeds.
 
           // Use provider payment timestamp (invoice created or period_start)
           const invoiceCreated = data.created as number | undefined;
-          const invoicePeriodStart = data.period_start as number | undefined;
-          const renewalProviderTs = invoiceCreated || invoicePeriodStart;
+          const renewalProviderTs = invoiceCreated || invoicePeriodStartUnix;
           if (!renewalProviderTs) {
             logger.error('[STRIPE-WEBHOOK] Missing invoice provider timestamp', { invoiceId: data.id });
             return NextResponse.json({ error: 'Missing provider timestamp' }, { status: 500 });
@@ -426,12 +422,24 @@ export async function POST(request: NextRequest) {
 
           const renewalProviderRef = (data.payment_intent as string) || (data.id as string);
 
+          // Require currency from provider — no defaults
+          const renewalCurrency = (data.currency as string)?.toUpperCase();
+          if (!renewalCurrency) {
+            logger.error('[STRIPE-WEBHOOK] Missing invoice currency', { invoiceId: data.id });
+            return NextResponse.json({ error: 'Missing provider currency' }, { status: 500 });
+          }
+          const renewalAmount = data.amount_paid as number;
+          if (renewalAmount == null || renewalAmount <= 0) {
+            logger.error('[STRIPE-WEBHOOK] Missing or invalid invoice amount', { invoiceId: data.id, amount: renewalAmount });
+            return NextResponse.json({ error: 'Missing or invalid provider amount' }, { status: 500 });
+          }
+
           // Persist payment evidence BEFORE calling activation RPC
           const { data: renewalEvidence, error: renewalEvidenceErr } = await supabase.from('subscription_payments').insert({
             business_id: platformSub.business_id,
             subscription_id: platformSub.id,
-            amount: (data.amount_paid as number) || 0,
-            currency: ((data.currency as string)?.toUpperCase()) || 'USD',
+            amount: renewalAmount,
+            currency: renewalCurrency,
             gateway: 'stripe',
             gateway_reference: renewalProviderRef,
             provider_reference: renewalProviderRef,
@@ -474,11 +482,9 @@ export async function POST(request: NextRequest) {
                 .eq('id', biz.owner_id)
                 .single();
               if (profile?.email) {
-                const periodEndDate = data.period_end
-                  ? new Date((data.period_end as number) * 1000)
-                  : (() => { const d = new Date(); d.setDate(d.getDate() + 30); return d; })();
-                const amountDisplay = String((data.amount_paid as number) || 0);
-                const curr = ((data.currency as string)?.toUpperCase()) || 'USD';
+                const periodEndDate = new Date(invoicePeriodEndUnix * 1000);
+                const amountDisplay = String(renewalAmount);
+                const curr = renewalCurrency;
                 const { subject, html } = subscriptionRenewalReceiptEmail(
                   biz.name,
                   platformSub.plan,

@@ -80,11 +80,11 @@ export async function POST(request: NextRequest) {
           { status: 400 },
         );
       }
-      // Only monthly billing supported for #263 — reject annual explicitly
-      const stripeInterval = metadata?.billing_interval || 'month';
-      if (stripeInterval === 'year') {
+      // Only monthly billing supported for #263 — require exactly 'month'
+      const stripeInterval = metadata?.billing_interval;
+      if (stripeInterval !== 'month') {
         return NextResponse.json(
-          { message: 'Annual billing is not yet supported' },
+          { message: stripeInterval === 'year' ? 'Annual billing is not yet supported' : `Invalid or missing billing interval "${stripeInterval}"` },
           { status: 400 },
         );
       }
@@ -97,7 +97,13 @@ export async function POST(request: NextRequest) {
         );
       }
       gateway = 'stripe';
-      currency = (session.currency || 'usd').toUpperCase();
+      if (!session.currency) {
+        return NextResponse.json(
+          { message: 'Payment currency not provided by payment gateway' },
+          { status: 500 },
+        );
+      }
+      currency = (session.currency as string).toUpperCase();
 
       // Capture provider payment timestamp (Stripe session.created is Unix seconds)
       if (session.created) {
@@ -177,11 +183,11 @@ export async function POST(request: NextRequest) {
           { status: 400 },
         );
       }
-      // Only monthly billing supported for #263 — reject annual explicitly
-      const paystackInterval = metadata?.billing_interval || 'month';
-      if (paystackInterval === 'year') {
+      // Only monthly billing supported for #263 — require exactly 'month'
+      const paystackInterval = metadata?.billing_interval;
+      if (paystackInterval !== 'month') {
         return NextResponse.json(
-          { message: 'Annual billing is not yet supported' },
+          { message: paystackInterval === 'year' ? 'Annual billing is not yet supported' : `Invalid or missing billing interval "${paystackInterval}"` },
           { status: 400 },
         );
       }
@@ -194,19 +200,29 @@ export async function POST(request: NextRequest) {
         );
       }
       gateway = 'paystack';
-      currency = (data.data.currency || 'NGN').toUpperCase();
+      if (!data.data.currency) {
+        return NextResponse.json(
+          { message: 'Payment currency not provided by payment gateway' },
+          { status: 500 },
+        );
+      }
+      currency = (data.data.currency as string).toUpperCase();
 
-      // Capture provider payment timestamp and derive period
+      // Capture provider payment timestamp and derive period — fail closed if missing
       const paidAt = data.data.paid_at as string | undefined;
       const createdAt = data.data.created_at as string | undefined;
       const paystackTs = paidAt || createdAt;
-      if (paystackTs) {
-        providerPaymentTimestamp = new Date(paystackTs).toISOString();
-        providerPeriodStart = new Date(paystackTs).toISOString();
-        const endDate = new Date(paystackTs);
-        endDate.setDate(endDate.getDate() + 30);
-        providerPeriodEnd = endDate.toISOString();
+      if (!paystackTs) {
+        return NextResponse.json(
+          { message: 'Payment timestamp not available from provider' },
+          { status: 500 },
+        );
       }
+      providerPaymentTimestamp = new Date(paystackTs).toISOString();
+      providerPeriodStart = new Date(paystackTs).toISOString();
+      const endDate = new Date(paystackTs);
+      endDate.setDate(endDate.getDate() + 30);
+      providerPeriodEnd = endDate.toISOString();
     }
     // ── Free tier (no payment required) ──
     else if (bodyBusinessId && bodyPlan) {

@@ -232,29 +232,21 @@ export async function POST(request: NextRequest) {
 
         // If we found a matching platform subscription, this is a renewal charge
         if (platformSub) {
-          // Use provider timestamps for period (not retry-time)
+          // Require provider payment timestamp — no wall-clock fallbacks
           const paidAt = (data.paid_at as string) || (data.created_at as string);
-          const periodStartDate = paidAt ? new Date(paidAt) : new Date();
+          if (!paidAt) {
+            logger.error('[PAYSTACK-WEBHOOK] Missing provider payment timestamp for renewal', { reference });
+            return NextResponse.json({ error: 'Missing provider timestamp' }, { status: 500 });
+          }
+          const periodStartDate = new Date(paidAt);
           const periodEndDate = new Date(periodStartDate);
           periodEndDate.setDate(periodEndDate.getDate() + 30);
           const periodStartIso = periodStartDate.toISOString();
           const periodEndIso = periodEndDate.toISOString();
 
-          // Update subscription period with canonical provider-derived timestamps
-          await supabase
-            .from('subscriptions')
-            .update({
-              current_period_start: periodStartIso,
-              current_period_end: periodEndIso,
-              updated_at: new Date().toISOString(),
-            })
-            .eq('id', platformSub.id);
+          // NO pre-write of periods to subscriptions — activate_paid_subscription RPC
+          // performs authoritative period synchronization after all validation succeeds.
 
-          // Use provider payment timestamp (not wall-clock)
-          if (!paidAt) {
-            logger.error('[PAYSTACK-WEBHOOK] Missing provider payment timestamp for renewal', { reference });
-            return NextResponse.json({ error: 'Missing provider timestamp' }, { status: 500 });
-          }
           const renewalProviderTimestamp = new Date(paidAt).toISOString();
 
           // Resolve effective config version at provider payment time
@@ -271,14 +263,25 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ error: 'Config version not found' }, { status: 500 });
           }
 
+          // Require currency from provider — no defaults
+          const renewalCurrency = (data.currency as string)?.toUpperCase();
+          if (!renewalCurrency) {
+            logger.error('[PAYSTACK-WEBHOOK] Missing provider currency for renewal', { reference });
+            return NextResponse.json({ error: 'Missing provider currency' }, { status: 500 });
+          }
+          const chargeAmountKobo = data.amount as number;
+          if (!chargeAmountKobo || chargeAmountKobo <= 0) {
+            logger.error('[PAYSTACK-WEBHOOK] Missing or invalid charge amount', { reference, amount: chargeAmountKobo });
+            return NextResponse.json({ error: 'Missing or invalid provider amount' }, { status: 500 });
+          }
+
           // Persist payment evidence BEFORE calling activation RPC
           // Store amount in smallest unit (kobo) — NOT converted to naira
-          const chargeAmountKobo = data.amount as number;
           const { data: renewalEvidence, error: renewalEvidenceErr } = await supabase.from('subscription_payments').insert({
             business_id: platformSub.business_id,
             subscription_id: platformSub.id,
             amount: chargeAmountKobo,
-            currency: ((data.currency as string) || 'NGN').toUpperCase(),
+            currency: renewalCurrency,
             gateway: 'paystack',
             gateway_reference: reference,
             provider_reference: reference,
@@ -326,7 +329,7 @@ export async function POST(request: NextRequest) {
                   biz.name,
                   platformSub.plan,
                   String(chargeAmountDisplay),
-                  ((data.currency as string) || 'NGN').toUpperCase(),
+                  renewalCurrency,
                   periodEndDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }),
                 );
                 await sendEmail({ to: profile.email, subject, html });

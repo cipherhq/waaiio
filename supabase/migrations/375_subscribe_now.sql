@@ -24,12 +24,12 @@ ALTER TABLE public.whatsapp_channels ADD CONSTRAINT whatsapp_channels_connection
   CHECK (connection_status IN ('pending', 'verifying', 'active', 'suspended', 'disconnected', 'provisioning'));
 
 -- A3. Update prevent_tier_tampering to allow SECURITY DEFINER function owners
--- The trigger currently only allows service_role, but SECURITY DEFINER RPCs
--- run as the function owner (postgres/superuser), not service_role.
+-- Uses the established #288 function-owner pattern (not rolsuper) for Supabase Cloud
+-- compatibility where postgres has rolsuper=false.
 CREATE OR REPLACE FUNCTION prevent_tier_tampering()
 RETURNS TRIGGER AS $$
 DECLARE
-  v_is_superuser BOOLEAN;
+  v_trusted_owner TEXT;
 BEGIN
   IF OLD.subscription_tier = NEW.subscription_tier THEN
     RETURN NEW;
@@ -38,9 +38,13 @@ BEGIN
   IF current_setting('role', true) = 'service_role' THEN
     RETURN NEW;
   END IF;
-  -- Allow superuser (SECURITY DEFINER RPCs run as function owner = superuser)
-  SELECT rolsuper INTO v_is_superuser FROM pg_roles WHERE rolname = current_user;
-  IF v_is_superuser THEN
+  -- Allow the owner of activate_paid_subscription (SECURITY DEFINER RPCs run as function owner)
+  -- This is the #288 non-superuser pattern: lookup via exact-signature pg_proc.proowner
+  SELECT r.rolname INTO v_trusted_owner
+    FROM pg_proc p
+    JOIN pg_roles r ON p.proowner = r.oid
+    WHERE p.oid = to_regprocedure('public.activate_paid_subscription(uuid)');
+  IF v_trusted_owner IS NOT NULL AND current_user = v_trusted_owner THEN
     RETURN NEW;
   END IF;
   RAISE EXCEPTION 'subscription_tier cannot be modified directly';
@@ -53,7 +57,13 @@ ALTER TABLE public.subscription_payments ADD COLUMN IF NOT EXISTS provider_refer
 ALTER TABLE public.subscription_payments ADD COLUMN IF NOT EXISTS period_start TIMESTAMPTZ;
 ALTER TABLE public.subscription_payments ADD COLUMN IF NOT EXISTS period_end TIMESTAMPTZ;
 
--- A5. Alert dedupe for subscription allowance pending
+-- A5. Unique constraint: exactly one successful payment per subscription per period
+-- This makes the period-based lookup in reconcile_paid_allowance canonical and unambiguous.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_subscription_payment_period_success
+  ON public.subscription_payments(subscription_id, period_start)
+  WHERE status = 'success';
+
+-- A6. Alert dedupe for subscription allowance pending
 CREATE UNIQUE INDEX IF NOT EXISTS uq_subscription_allowance_pending
   ON public.alerts(business_id, type)
   WHERE type = 'subscription_allowance_pending';
@@ -293,6 +303,23 @@ BEGIN
       'payment_status', v_payment.payment_status);
   END IF;
 
+  -- 1b. Require all canonical payment fields (fail closed on NULL gaps)
+  IF v_payment.amount IS NULL OR v_payment.amount <= 0 THEN
+    RETURN jsonb_build_object('activated', false, 'reason', 'missing_payment_amount');
+  END IF;
+  IF v_payment.currency IS NULL OR v_payment.currency = '' THEN
+    RETURN jsonb_build_object('activated', false, 'reason', 'missing_payment_currency');
+  END IF;
+  IF v_payment.provider_reference IS NULL OR v_payment.provider_reference = '' THEN
+    RETURN jsonb_build_object('activated', false, 'reason', 'missing_provider_reference');
+  END IF;
+  IF v_payment.period_start IS NULL THEN
+    RETURN jsonb_build_object('activated', false, 'reason', 'missing_period_start');
+  END IF;
+  IF v_payment.period_end IS NULL THEN
+    RETURN jsonb_build_object('activated', false, 'reason', 'missing_period_end');
+  END IF;
+
   -- 2. Derive subscription from the locked payment row
   IF v_payment.subscription_id IS NULL THEN
     RETURN jsonb_build_object('activated', false, 'reason', 'payment_missing_subscription');
@@ -347,7 +374,7 @@ BEGIN
       v_idempotent_ref TEXT;
       v_existing_allowance_id UUID;
     BEGIN
-      v_idempotent_ref := 'sub:' || v_payment.subscription_id::TEXT || ':' || COALESCE(v_payment.provider_reference, v_sub.current_period_start::TEXT);
+      v_idempotent_ref := 'sub:' || v_payment.subscription_id::TEXT || ':' || v_payment.provider_reference;
       SELECT id INTO v_existing_allowance_id
         FROM public.messaging_allowances
         WHERE business_id = v_sub.business_id
@@ -431,7 +458,7 @@ BEGIN
   END;
 
   -- Build stable source_ref from the locked payment's provider_reference
-  v_source_ref := 'sub:' || v_payment.subscription_id::TEXT || ':' || COALESCE(v_payment.provider_reference, v_sub.current_period_start::TEXT);
+  v_source_ref := 'sub:' || v_payment.subscription_id::TEXT || ':' || v_payment.provider_reference;
 
   -- 7. Atomically activate: subscription status + business tier (entitlement)
   -- Synchronize subscription period from payment evidence (source of truth)
@@ -853,6 +880,21 @@ BEGIN
     WHERE indexname = 'uq_subscription_allowance_pending';
   IF v_count = 0 THEN
     RAISE EXCEPTION 'M375: uq_subscription_allowance_pending index not found';
+  END IF;
+
+  -- Verify canonical period uniqueness index
+  SELECT count(*) INTO v_count FROM pg_indexes
+    WHERE indexname = 'uq_subscription_payment_period_success';
+  IF v_count = 0 THEN
+    RAISE EXCEPTION 'M375: uq_subscription_payment_period_success index not found';
+  END IF;
+
+  -- Verify prevent_tier_tampering does NOT use rolsuper (non-superuser pattern)
+  SELECT count(*) INTO v_count FROM pg_proc
+    WHERE proname = 'prevent_tier_tampering'
+      AND prosrc LIKE '%rolsuper%';
+  IF v_count > 0 THEN
+    RAISE EXCEPTION 'M375: prevent_tier_tampering must not reference rolsuper';
   END IF;
 
   RAISE NOTICE 'MIGRATION 375 VERIFICATION: All checks passed';
