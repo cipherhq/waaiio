@@ -417,6 +417,7 @@ export async function POST(request: NextRequest) {
         provider_reference: reference,
         period_start: computedPeriodStart,
         period_end: computedPeriodEnd,
+        billing_interval: billingInterval,
       }).select('id').single();
 
       if (paymentInsertError) {
@@ -445,10 +446,10 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      if (activationResult && activationResult.activated === false) {
-        console.warn('[ONBOARDING-VERIFY] Paid activation rejected:', activationResult);
+      if (!activationResult || activationResult.activated !== true) {
+        console.warn('[ONBOARDING-VERIFY] Paid activation not confirmed:', activationResult);
         return NextResponse.json(
-          { message: `Subscription activation rejected: ${activationResult.reason || 'unknown'}`, recoverable: true },
+          { message: `Subscription activation rejected: ${activationResult?.reason || 'null_result'}`, recoverable: true },
           { status: 400 },
         );
       }

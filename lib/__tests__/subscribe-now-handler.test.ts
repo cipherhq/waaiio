@@ -424,7 +424,7 @@ describe('Stripe webhook: paid subscription failure paths', () => {
       activationResult: { data: { activated: false, reason: 'amount_mismatch' }, error: null },
     });
     expect(status).toBe(500);
-    expect(json.error).toMatch(/rejected/i);
+    expect(json.error).toMatch(/rejected|not confirmed/i);
   });
 
   it('renewal: missing provider period_start → returns 500', async () => {
@@ -481,7 +481,7 @@ describe('Stripe webhook: paid subscription failure paths', () => {
       activationResult: { data: { activated: false, reason: 'currency_mismatch' }, error: null },
     });
     expect(status).toBe(500);
-    expect(json.error).toMatch(/rejected/i);
+    expect(json.error).toMatch(/rejected|not confirmed/i);
   });
 
   it('renewal: config version not found → returns 500', async () => {
@@ -492,6 +492,73 @@ describe('Stripe webhook: paid subscription failure paths', () => {
     });
     expect(status).toBe(500);
     expect(json.error).toMatch(/config/i);
+  });
+
+  // ── Null-safe activation proofs ──
+
+  it('checkout: null RPC result {data:null,error:null} → returns 500', async () => {
+    const event = buildStripeCheckoutEvent();
+    const { status, json } = await callStripeWebhook(event, {
+      subscriptionRecord: { id: 'sub-1' },
+      activationResult: { data: null, error: null },
+    });
+    expect(status).toBe(500);
+    expect(json.error).toMatch(/not confirmed/i);
+  });
+
+  it('renewal: null RPC result {data:null,error:null} → returns 500', async () => {
+    const event = buildStripeInvoicePaidEvent();
+    const { status, json } = await callStripeWebhook(event, {
+      platformSub: { id: 'sub-1', business_id: 'biz-1', plan: 'growth', status: 'active' },
+      activationResult: { data: null, error: null },
+    });
+    expect(status).toBe(500);
+    expect(json.error).toMatch(/not confirmed/i);
+  });
+
+  // ── Billing interval proofs ──
+
+  it('checkout: missing billing_interval in metadata → returns 500', async () => {
+    const event = buildStripeCheckoutEvent({
+      metadata: { type: 'whatsapp_subscription', business_id: 'biz-1', plan: 'growth' },
+    });
+    const { status, json } = await callStripeWebhook(event, {
+      subscriptionRecord: { id: 'sub-1' },
+    });
+    expect(status).toBe(500);
+    expect(json.error).toMatch(/billing interval/i);
+  });
+
+  it('checkout: annual billing_interval in metadata → returns 500', async () => {
+    const event = buildStripeCheckoutEvent({
+      metadata: { type: 'whatsapp_subscription', business_id: 'biz-1', plan: 'growth', billing_interval: 'year' },
+    });
+    const { status, json } = await callStripeWebhook(event, {
+      subscriptionRecord: { id: 'sub-1' },
+    });
+    expect(status).toBe(500);
+    expect(json.error).toMatch(/billing interval/i);
+  });
+
+  // ── Pre-mutation proof: config/evidence/RPC failure leaves subscription unchanged ──
+  // These tests verify no pre-activation status='pending' write (blocker 3).
+  // The mock returns the subscription as-is; since we removed the pre-mutation,
+  // a failed activation path returns 500 without ever writing to subscriptions.
+
+  it('checkout: evidence insert failure does not mutate subscription status', async () => {
+    const event = buildStripeCheckoutEvent();
+    const { status, mock } = await callStripeWebhook(event, {
+      subscriptionRecord: { id: 'sub-1' },
+      evidenceInsertResult: { data: null, error: { message: 'insert failed' } },
+    });
+    expect(status).toBe(500);
+    // Verify no subscription status update was attempted (mock tracks calls)
+    // The from('subscriptions').update() should NOT have been called with status='pending'
+    const subCalls = mock.fromFn.mock.calls.filter(
+      (c: unknown[]) => c[0] === 'subscriptions',
+    );
+    // Only the .select() call for subRecord lookup, no .update({status:'pending'})
+    expect(subCalls.length).toBeLessThanOrEqual(2); // select + possibly stripe IDs update
   });
 });
 
@@ -619,7 +686,7 @@ describe('Paystack webhook: paid subscription failure paths', () => {
       activationResult: { data: { activated: false, reason: 'amount_mismatch' }, error: null },
     });
     expect(status).toBe(500);
-    expect(json.error).toMatch(/rejected/i);
+    expect(json.error).toMatch(/rejected|not confirmed/i);
   });
 
   it('renewal: config version not found → returns 500', async () => {
@@ -630,6 +697,16 @@ describe('Paystack webhook: paid subscription failure paths', () => {
     });
     expect(status).toBe(500);
     expect(json.error).toMatch(/config/i);
+  });
+
+  it('renewal: null RPC result {data:null,error:null} → returns 500', async () => {
+    const event = buildPaystackRenewalEvent();
+    const { status, json } = await callPaystackWebhook(event, {
+      platformSub: { id: 'sub-1', business_id: 'biz-1', plan: 'growth', paystack_subscription_code: 'SUB_paystack_1' },
+      activationResult: { data: null, error: null },
+    });
+    expect(status).toBe(500);
+    expect(json.error).toMatch(/not confirmed/i);
   });
 });
 
@@ -952,5 +1029,24 @@ describe('Onboarding verify: paid subscription failure paths', () => {
     );
     expect(status).toBe(500);
     expect(json.message).toMatch(/timestamp/i);
+  });
+
+  it('Stripe: null RPC result {data:null,error:null} → returns 400, not success', async () => {
+    const { status, json } = await callOnboardingVerify(
+      { reference: 'cs_test_1' },
+      {
+        stripeSession: {
+          payment_status: 'paid',
+          amount_total: 500000,
+          currency: 'ngn',
+          created: Math.floor(Date.now() / 1000),
+          subscription: 'sub_stripe_1',
+          metadata: { business_id: 'biz-1', plan: 'growth', billing_interval: 'month' },
+        },
+        activationResult: { data: null, error: null },
+      },
+    );
+    expect(status).toBe(400);
+    expect(json.message).toMatch(/rejected|null_result/i);
   });
 });

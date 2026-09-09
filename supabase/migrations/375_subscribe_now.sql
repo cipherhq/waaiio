@@ -56,6 +56,7 @@ ALTER TABLE public.subscription_payments ADD COLUMN IF NOT EXISTS config_version
 ALTER TABLE public.subscription_payments ADD COLUMN IF NOT EXISTS provider_reference TEXT;
 ALTER TABLE public.subscription_payments ADD COLUMN IF NOT EXISTS period_start TIMESTAMPTZ;
 ALTER TABLE public.subscription_payments ADD COLUMN IF NOT EXISTS period_end TIMESTAMPTZ;
+ALTER TABLE public.subscription_payments ADD COLUMN IF NOT EXISTS billing_interval TEXT;
 
 -- A5. Unique constraint: exactly one successful payment per subscription per period
 -- This makes the period-based lookup in reconcile_paid_allowance canonical and unambiguous.
@@ -286,8 +287,9 @@ DECLARE
   v_has_channel BOOLEAN;
 BEGIN
   -- 1. Lock the exact payment row FOR UPDATE (evidence-first)
-  SELECT id, subscription_id, config_version_id, provider_reference, amount, currency,
-         period_start, period_end, plan AS payment_plan, status AS payment_status
+  SELECT id, subscription_id, business_id, config_version_id, provider_reference, amount, currency,
+         period_start, period_end, plan AS payment_plan, status AS payment_status,
+         billing_interval AS payment_billing_interval
   INTO v_payment
   FROM public.subscription_payments
   WHERE id = p_payment_id
@@ -341,10 +343,7 @@ BEGIN
     RETURN jsonb_build_object('activated', false, 'reason', 'invalid_plan');
   END IF;
 
-  -- 2b. Reject annual billing (out of scope for #263)
-  IF v_sub.billing_interval = 'year' THEN
-    RETURN jsonb_build_object('activated', false, 'reason', 'annual_not_supported');
-  END IF;
+  -- 2b. (billing_interval now validated from payment evidence in step 2e)
 
   -- 2c. Validate payment plan is present and matches subscription plan (commercial binding)
   IF v_payment.payment_plan IS NULL THEN
@@ -353,6 +352,19 @@ BEGIN
   IF v_payment.payment_plan <> v_sub.plan THEN
     RETURN jsonb_build_object('activated', false, 'reason', 'plan_mismatch',
       'payment_plan', v_payment.payment_plan, 'subscription_plan', v_sub.plan);
+  END IF;
+
+  -- 2d. Validate payment business_id matches subscription business (cross-business binding)
+  IF v_payment.business_id IS NULL OR v_payment.business_id <> v_sub.business_id THEN
+    RETURN jsonb_build_object('activated', false, 'reason', 'business_mismatch',
+      'payment_business', v_payment.business_id, 'subscription_business', v_sub.business_id);
+  END IF;
+
+  -- 2e. Validate billing interval on payment evidence (immutable provider term)
+  -- #263 requires exact monthly; annual is out of scope
+  IF v_payment.payment_billing_interval IS NULL OR v_payment.payment_billing_interval <> 'month' THEN
+    RETURN jsonb_build_object('activated', false, 'reason', 'invalid_payment_billing_interval',
+      'billing_interval', v_payment.payment_billing_interval);
   END IF;
 
   -- 3. Lock business FOR UPDATE
@@ -400,9 +412,10 @@ BEGIN
     RETURN jsonb_build_object('activated', false, 'reason', 'no_config_version');
   END IF;
 
-  -- 6a. Validate billing_interval
-  IF v_sub.billing_interval IS NULL OR v_sub.billing_interval NOT IN ('month', 'year') THEN
-    RETURN jsonb_build_object('activated', false, 'reason', 'invalid_billing_interval',
+  -- 6a. Defense-in-depth: subscription billing_interval must also be valid
+  -- (primary validation is from payment evidence in step 2e)
+  IF v_sub.billing_interval IS NULL OR v_sub.billing_interval NOT IN ('month') THEN
+    RETURN jsonb_build_object('activated', false, 'reason', 'invalid_subscription_billing_interval',
       'billing_interval', v_sub.billing_interval);
   END IF;
 

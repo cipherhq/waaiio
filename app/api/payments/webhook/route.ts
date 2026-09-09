@@ -282,6 +282,7 @@ export async function POST(request: NextRequest) {
             subscription_id: platformSub.id,
             amount: chargeAmountKobo,
             currency: renewalCurrency,
+            billing_interval: 'month',
             gateway: 'paystack',
             gateway_reference: reference,
             provider_reference: reference,
@@ -305,9 +306,10 @@ export async function POST(request: NextRequest) {
           if (activateErr) {
             logger.error('[PAYSTACK-WEBHOOK] Paid activation RPC error:', activateErr);
             return NextResponse.json({ error: 'Activation RPC failed' }, { status: 500 });
-          } else if (activationResult && activationResult.activated !== true) {
-            logger.error('[PAYSTACK-WEBHOOK] Paid renewal activation rejected:', activationResult);
-            return NextResponse.json({ error: 'Paid renewal activation rejected' }, { status: 500 });
+          }
+          if (!activationResult || activationResult.activated !== true) {
+            logger.error('[PAYSTACK-WEBHOOK] Paid renewal activation not confirmed:', activationResult);
+            return NextResponse.json({ error: 'Paid renewal activation not confirmed' }, { status: 500 });
           }
 
           // Send renewal receipt email to business owner

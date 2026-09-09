@@ -108,11 +108,12 @@ function createPaidTestBusiness(opts: {
   const paymentId = psql(`
     INSERT INTO public.subscription_payments (
       business_id, subscription_id, amount, currency, gateway, gateway_reference,
-      plan, action, status, config_version_id, provider_reference, period_start, period_end
+      plan, action, status, config_version_id, provider_reference, period_start, period_end,
+      billing_interval
     ) VALUES (
       '${bizId}', '${subId}', ${amount}, '${currency}', '${gateway}', 'ref-${bizCounter}',
       '${plan}', 'upgrade', 'success', ${configId ? `'${configId}'` : 'NULL'}, '${provRef}',
-      NOW(), NOW() + INTERVAL '30 days'
+      NOW(), NOW() + INTERVAL '30 days', '${billingInterval}'
     ) RETURNING id;
   `);
 
@@ -536,11 +537,12 @@ describe.skipIf(!canRun)('adversarial authority proofs', () => {
       const renewalPaymentId = psql(`
         INSERT INTO public.subscription_payments (
           business_id, subscription_id, amount, currency, gateway, gateway_reference,
-          plan, action, status, config_version_id, provider_reference, period_start, period_end
+          plan, action, status, config_version_id, provider_reference, period_start, period_end,
+          billing_interval
         ) VALUES (
           '${bizId}', '${subId}', 5000, 'NGN', 'paystack', 'renewal-ref-${Date.now()}',
           'growth', 'renewal', 'success', '${configId}', 'renewal-prov-${Date.now()}',
-          NOW() + INTERVAL '30 days', NOW() + INTERVAL '60 days'
+          NOW() + INTERVAL '30 days', NOW() + INTERVAL '60 days', 'month'
         ) RETURNING id;
       `);
 
@@ -717,6 +719,41 @@ describe.skipIf(!canRun)('canonical field fail-closed proofs', () => {
     try {
       const result = psqlJson(`SELECT public.activate_paid_subscription('${paymentId}') AS r`) as Record<string, unknown>;
       expect(result).toMatchObject({ activated: false, reason: 'plan_mismatch' });
+    } finally { cleanup(bizId); }
+  });
+
+  it('38. business_id mismatch between payment and subscription → rejected', () => {
+    // Create two businesses, then point payment at wrong subscription
+    const biz1 = createPaidTestBusiness({ withChannel: true });
+    const biz2 = createPaidTestBusiness({ withChannel: true });
+    // Tamper payment's business_id to biz2 while subscription belongs to biz1
+    psql(`UPDATE public.subscription_payments SET business_id = '${biz2.bizId}' WHERE id = '${biz1.paymentId}'`);
+    try {
+      const result = psqlJson(`SELECT public.activate_paid_subscription('${biz1.paymentId}') AS r`) as Record<string, unknown>;
+      expect(result).toMatchObject({ activated: false, reason: 'business_mismatch' });
+      // Verify no tier mutation on either business
+      const tier1 = psql(`SELECT subscription_tier FROM public.businesses WHERE id = '${biz1.bizId}'`);
+      expect(tier1).toBe('free');
+      const tier2 = psql(`SELECT subscription_tier FROM public.businesses WHERE id = '${biz2.bizId}'`);
+      expect(tier2).toBe('free');
+    } finally { cleanup(biz1.bizId); cleanup(biz2.bizId); }
+  });
+
+  it('39. missing billing_interval on payment evidence → rejected', () => {
+    const { bizId, paymentId } = createPaidTestBusiness({ withChannel: true });
+    psql(`UPDATE public.subscription_payments SET billing_interval = NULL WHERE id = '${paymentId}'`);
+    try {
+      const result = psqlJson(`SELECT public.activate_paid_subscription('${paymentId}') AS r`) as Record<string, unknown>;
+      expect(result).toMatchObject({ activated: false, reason: 'invalid_payment_billing_interval' });
+    } finally { cleanup(bizId); }
+  });
+
+  it('40. annual billing_interval on payment evidence → rejected', () => {
+    const { bizId, paymentId } = createPaidTestBusiness({ withChannel: true });
+    psql(`UPDATE public.subscription_payments SET billing_interval = 'year' WHERE id = '${paymentId}'`);
+    try {
+      const result = psqlJson(`SELECT public.activate_paid_subscription('${paymentId}') AS r`) as Record<string, unknown>;
+      expect(result).toMatchObject({ activated: false, reason: 'invalid_payment_billing_interval' });
     } finally { cleanup(bizId); }
   });
 });

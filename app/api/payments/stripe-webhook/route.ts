@@ -166,7 +166,14 @@ export async function POST(request: NextRequest) {
           if (!plan || !['growth', 'business'].includes(plan)) {
             logger.error('[STRIPE-WEBHOOK] Missing or invalid plan in checkout metadata', { plan, businessId: metadata.business_id });
             return NextResponse.json({ error: 'Missing or invalid plan in checkout metadata' }, { status: 500 });
-          } else {
+          }
+          // Validate billing_interval from checkout metadata — #263 requires exactly 'month'
+          const checkoutInterval = metadata.billing_interval;
+          if (checkoutInterval !== 'month') {
+            logger.error('[STRIPE-WEBHOOK] Missing or invalid billing_interval in checkout metadata', { billing_interval: checkoutInterval, businessId: metadata.business_id });
+            return NextResponse.json({ error: 'Missing or invalid billing interval in checkout metadata' }, { status: 500 });
+          }
+          {
             // For subscription mode: store Stripe subscription + customer IDs
             const sessionSubscriptionId = data.subscription as string;
             const sessionCustomerId = data.customer as string;
@@ -210,11 +217,10 @@ export async function POST(request: NextRequest) {
               .single();
 
             if (subRecord) {
-              // Update subscription status to pending before RPC activation
-              await supabase
-                .from('subscriptions')
-                .update({ status: 'pending', updated_at: new Date().toISOString() })
-                .eq('id', subRecord.id);
+              // NO pre-activation subscription status mutation — the DB authority
+              // (activate_paid_subscription RPC) performs the financial-state transition
+              // atomically after all validation succeeds. Pre-mutation would leave the
+              // subscription in 'pending' if config/evidence/RPC fails.
 
               // Persist payment evidence BEFORE calling RPC
               const stripeAmountSmallest = (data.amount_total as number) || 0;
@@ -233,6 +239,7 @@ export async function POST(request: NextRequest) {
                 config_version_id: configVersion.id,
                 period_start: providerTimestamp,
                 period_end: (() => { const d = new Date(checkoutCreated * 1000); d.setDate(d.getDate() + 30); return d.toISOString(); })(),
+                billing_interval: 'month',
               }).select('id').single();
 
               if (evidenceInsertErr || !paymentEvidence) {
@@ -249,9 +256,10 @@ export async function POST(request: NextRequest) {
               if (activationError) {
                 logger.error('[STRIPE-WEBHOOK] Paid activation RPC error:', activationError);
                 return NextResponse.json({ error: 'Activation RPC failed' }, { status: 500 });
-              } else if (activationResult && activationResult.activated !== true) {
-                logger.error('[STRIPE-WEBHOOK] Paid activation rejected:', activationResult);
-                return NextResponse.json({ error: 'Paid activation rejected' }, { status: 500 });
+              }
+              if (!activationResult || activationResult.activated !== true) {
+                logger.error('[STRIPE-WEBHOOK] Paid activation not confirmed:', activationResult);
+                return NextResponse.json({ error: 'Paid activation not confirmed' }, { status: 500 });
               }
             } else {
               logger.error('[STRIPE-WEBHOOK] No subscription record found for business', { businessId: metadata.business_id });
@@ -447,6 +455,7 @@ export async function POST(request: NextRequest) {
             action: 'renewal',
             status: 'success',
             config_version_id: renewalConfig.id,
+            billing_interval: 'month',
             period_start: periodStart,
             period_end: periodEnd,
           }).select('id').single();
@@ -463,9 +472,10 @@ export async function POST(request: NextRequest) {
           if (renewActivateErr) {
             logger.error('[STRIPE-WEBHOOK] Paid activation RPC error:', renewActivateErr);
             return NextResponse.json({ error: 'Activation RPC failed' }, { status: 500 });
-          } else if (renewActivation && renewActivation.activated !== true) {
-            logger.error('[STRIPE-WEBHOOK] Paid renewal activation rejected:', renewActivation);
-            return NextResponse.json({ error: 'Paid renewal activation rejected' }, { status: 500 });
+          }
+          if (!renewActivation || renewActivation.activated !== true) {
+            logger.error('[STRIPE-WEBHOOK] Paid renewal activation not confirmed:', renewActivation);
+            return NextResponse.json({ error: 'Paid renewal activation not confirmed' }, { status: 500 });
           }
 
           // Send renewal receipt email to business owner
