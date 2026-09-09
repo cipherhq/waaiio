@@ -756,4 +756,63 @@ describe.skipIf(!canRun)('canonical field fail-closed proofs', () => {
       expect(result).toMatchObject({ activated: false, reason: 'invalid_payment_billing_interval' });
     } finally { cleanup(bizId); }
   });
+
+  it('41. same-payment replay on active subscription → idempotent success, tier unchanged', () => {
+    const { bizId, subId, paymentId } = createPaidTestBusiness({ withChannel: true });
+    try {
+      // First activation: succeeds
+      psql(`SELECT public.activate_paid_subscription('${paymentId}')`);
+      const tier1 = psql(`SELECT subscription_tier FROM public.businesses WHERE id = '${bizId}'`);
+      expect(tier1).toBe('growth');
+      const status1 = psql(`SELECT status FROM public.subscriptions WHERE id = '${subId}'`);
+      expect(status1).toBe('active');
+
+      // Replay same payment: should return idempotent success (not error)
+      const result = psqlJson(`SELECT public.activate_paid_subscription('${paymentId}') AS r`) as Record<string, unknown>;
+      expect(result).toMatchObject({ activated: true, idempotent: true });
+
+      // Verify tier and status unchanged
+      const tier2 = psql(`SELECT subscription_tier FROM public.businesses WHERE id = '${bizId}'`);
+      expect(tier2).toBe('growth');
+      const status2 = psql(`SELECT status FROM public.subscriptions WHERE id = '${subId}'`);
+      expect(status2).toBe('active');
+
+      // Verify exactly one allowance (no double grant)
+      const cnt = psql(`SELECT count(*) FROM public.messaging_allowances WHERE business_id = '${bizId}' AND type = 'subscription_included'`);
+      expect(parseInt(cnt)).toBe(1);
+    } finally { cleanup(bizId); }
+  });
+
+  it('42. duplicate period evidence insert blocked by unique constraint, existing evidence usable', () => {
+    const { bizId, subId, paymentId } = createPaidTestBusiness({ withChannel: true });
+    try {
+      // Activate first
+      psql(`SELECT public.activate_paid_subscription('${paymentId}')`);
+
+      // Attempt duplicate insert (same subscription_id + period_start + status=success)
+      const periodStart = psql(`SELECT period_start FROM public.subscription_payments WHERE id = '${paymentId}'`);
+      const configId = psql(`SELECT config_version_id FROM public.subscription_payments WHERE id = '${paymentId}'`);
+      const insertResult = psqlMayFail(`
+        INSERT INTO public.subscription_payments (
+          business_id, subscription_id, amount, currency, gateway, gateway_reference,
+          plan, action, status, config_version_id, provider_reference, period_start, period_end,
+          billing_interval
+        ) VALUES (
+          '${bizId}', '${subId}', 5000, 'NGN', 'paystack', 'dup-replay-${Date.now()}',
+          'growth', 'renewal', 'success', '${configId}', 'dup-replay-prov-${Date.now()}',
+          '${periodStart}', NOW() + INTERVAL '30 days', 'month'
+        );
+      `);
+      // Insert should fail (unique constraint)
+      expect(insertResult).toMatch(/unique|duplicate/i);
+
+      // But the original evidence is still usable for idempotent replay
+      const replay = psqlJson(`SELECT public.activate_paid_subscription('${paymentId}') AS r`) as Record<string, unknown>;
+      expect(replay).toMatchObject({ activated: true, idempotent: true });
+
+      // Subscription still active, tier unchanged
+      const status = psql(`SELECT status FROM public.subscriptions WHERE id = '${subId}'`);
+      expect(status).toBe('active');
+    } finally { cleanup(bizId); }
+  });
 });

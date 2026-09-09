@@ -317,50 +317,113 @@ export async function POST(request: NextRequest) {
     const previousTier = ownerCheck.subscription_tier || 'free';
     const action = previousTier === plan ? 'renewal' : 'upgrade';
 
-    // Upsert: one subscription per business (prevent duplicates on re-onboarding)
-    // Paid plans: persist as 'pending' — activation RPC will atomically set 'active' + tier
-    // Free plans: persist as 'active' (no paid activation needed)
-    const upsertData: Record<string, unknown> = {
-      business_id: businessId,
-      plan,
-      status: plan !== 'free' ? 'pending' : 'active',
-      amount: amountSmallest ? Math.round(amountSmallest / 100) : (tier.price ?? 0),
-      gateway: gateway !== 'none' ? gateway : null,
-      currency,
-      current_period_start: stripePeriodStart || providerPeriodStart || providerPaymentTimestamp || (plan === 'free' ? new Date().toISOString() : undefined),
-      current_period_end: stripePeriodEnd || providerPeriodEnd || (plan === 'free' ? periodEnd.toISOString() : undefined),
-    };
+    // ── Subscription upsert: one subscription per business ──
+    // For paid plans: check if subscription already exists and is active.
+    // If active, reuse it — do NOT demote to 'pending' (same-payment replay
+    // must be idempotent and leave active state unchanged).
+    // For new/pending subscriptions: create as 'pending' — activation RPC will
+    // atomically set 'active' + tier after exact-evidence validation.
+    // For free plans: persist as 'active' (no paid activation needed).
 
-    // Only clear the codes that don't apply to the current gateway
-    if (gateway === 'stripe') {
-      upsertData.paystack_subscription_code = null;
-      upsertData.paystack_customer_code = null;
-      upsertData.stripe_subscription_id = stripeSubscriptionId || null;
-      upsertData.stripe_customer_id = stripeCustomerId || null;
-      upsertData.billing_interval = billingInterval;
-    } else if (gateway === 'paystack') {
-      upsertData.stripe_subscription_id = null;
-      upsertData.stripe_customer_id = null;
-      upsertData.billing_interval = billingInterval;
+    let subscription: { id: string } | null = null;
+
+    if (plan !== 'free') {
+      // Check for existing subscription first
+      const { data: existingSub } = await service
+        .from('subscriptions')
+        .select('id, status')
+        .eq('business_id', businessId)
+        .single();
+
+      if (existingSub && existingSub.status === 'active') {
+        // Active subscription exists — do NOT demote to pending.
+        // Update non-status fields only (gateway codes, billing metadata).
+        const updateData: Record<string, unknown> = {
+          plan,
+          amount: amountSmallest ? Math.round(amountSmallest / 100) : (tier.price ?? 0),
+          gateway: gateway !== 'none' ? gateway : null,
+          currency,
+        };
+        if (gateway === 'stripe') {
+          updateData.paystack_subscription_code = null;
+          updateData.paystack_customer_code = null;
+          updateData.stripe_subscription_id = stripeSubscriptionId || null;
+          updateData.stripe_customer_id = stripeCustomerId || null;
+          updateData.billing_interval = billingInterval;
+        } else if (gateway === 'paystack') {
+          updateData.stripe_subscription_id = null;
+          updateData.stripe_customer_id = null;
+          updateData.billing_interval = billingInterval;
+        }
+        await service.from('subscriptions').update(updateData).eq('id', existingSub.id);
+        subscription = { id: existingSub.id };
+      } else {
+        // No subscription or not active — upsert as pending
+        const upsertData: Record<string, unknown> = {
+          business_id: businessId,
+          plan,
+          status: 'pending',
+          amount: amountSmallest ? Math.round(amountSmallest / 100) : (tier.price ?? 0),
+          gateway: gateway !== 'none' ? gateway : null,
+          currency,
+          current_period_start: stripePeriodStart || providerPeriodStart || providerPaymentTimestamp || undefined,
+          current_period_end: stripePeriodEnd || providerPeriodEnd || undefined,
+        };
+        if (gateway === 'stripe') {
+          upsertData.paystack_subscription_code = null;
+          upsertData.paystack_customer_code = null;
+          upsertData.stripe_subscription_id = stripeSubscriptionId || null;
+          upsertData.stripe_customer_id = stripeCustomerId || null;
+          upsertData.billing_interval = billingInterval;
+        } else if (gateway === 'paystack') {
+          upsertData.stripe_subscription_id = null;
+          upsertData.stripe_customer_id = null;
+          upsertData.billing_interval = billingInterval;
+        }
+        const { data: upsertResult, error: subscriptionUpsertError } = await service.from('subscriptions').upsert(
+          upsertData,
+          { onConflict: 'business_id' },
+        ).select('id').single();
+
+        if (subscriptionUpsertError) {
+          console.warn('[ONBOARDING-VERIFY] Subscription upsert error:', subscriptionUpsertError);
+          return NextResponse.json(
+            { message: 'Subscription creation failed. Please try again.', recoverable: true },
+            { status: 500 },
+          );
+        }
+        subscription = upsertResult;
+      }
     } else {
-      // Free tier: clear both
-      upsertData.paystack_subscription_code = null;
-      upsertData.paystack_customer_code = null;
-      upsertData.stripe_subscription_id = null;
-      upsertData.stripe_customer_id = null;
-    }
+      // Free tier: upsert as active, clear gateway codes
+      const upsertData: Record<string, unknown> = {
+        business_id: businessId,
+        plan,
+        status: 'active',
+        amount: tier.price ?? 0,
+        gateway: null,
+        currency,
+        current_period_start: new Date().toISOString(),
+        current_period_end: periodEnd.toISOString(),
+        paystack_subscription_code: null,
+        paystack_customer_code: null,
+        stripe_subscription_id: null,
+        stripe_customer_id: null,
+      };
 
-    const { data: subscription, error: subscriptionUpsertError } = await service.from('subscriptions').upsert(
-      upsertData,
-      { onConflict: 'business_id' },
-    ).select('id').single();
+      const { data: upsertResult, error: subscriptionUpsertError } = await service.from('subscriptions').upsert(
+        upsertData,
+        { onConflict: 'business_id' },
+      ).select('id').single();
 
-    if (subscriptionUpsertError) {
-      console.warn('[ONBOARDING-VERIFY] Subscription upsert error:', subscriptionUpsertError);
-      return NextResponse.json(
-        { message: 'Subscription creation failed. Please try again.', recoverable: true },
-        { status: 500 },
-      );
+      if (subscriptionUpsertError) {
+        console.warn('[ONBOARDING-VERIFY] Subscription upsert error:', subscriptionUpsertError);
+        return NextResponse.json(
+          { message: 'Subscription creation failed. Please try again.', recoverable: true },
+          { status: 500 },
+        );
+      }
+      subscription = upsertResult;
     }
 
     // Record subscription payment (only for paid plans)
@@ -421,14 +484,41 @@ export async function POST(request: NextRequest) {
       }).select('id').single();
 
       if (paymentInsertError) {
-        console.warn('[ONBOARDING-VERIFY] Payment evidence insert error:', paymentInsertError);
-        return NextResponse.json(
-          { message: 'Payment recording failed. Please contact support.', recoverable: true },
-          { status: 500 },
-        );
-      }
+        // Same-payment replay: if insert fails due to unique constraint
+        // (uq_subscription_payment_period_success), look up the existing evidence
+        // and use it for idempotent activation via the RPC's idempotency path.
+        const isDuplicate = paymentInsertError.code === '23505'
+          || paymentInsertError.message?.includes('duplicate')
+          || paymentInsertError.message?.includes('unique');
 
-      paymentEvidenceId = paymentEvidence?.id || null;
+        if (isDuplicate && subscription?.id) {
+          const { data: existingEvidence } = await service
+            .from('subscription_payments')
+            .select('id')
+            .eq('subscription_id', subscription.id)
+            .eq('provider_reference', reference)
+            .eq('status', 'success')
+            .single();
+
+          if (existingEvidence) {
+            paymentEvidenceId = existingEvidence.id;
+          } else {
+            console.warn('[ONBOARDING-VERIFY] Duplicate evidence but lookup failed:', paymentInsertError);
+            return NextResponse.json(
+              { message: 'Payment recording failed. Please contact support.', recoverable: true },
+              { status: 500 },
+            );
+          }
+        } else {
+          console.warn('[ONBOARDING-VERIFY] Payment evidence insert error:', paymentInsertError);
+          return NextResponse.json(
+            { message: 'Payment recording failed. Please contact support.', recoverable: true },
+            { status: 500 },
+          );
+        }
+      } else {
+        paymentEvidenceId = paymentEvidence?.id || null;
+      }
     }
 
     if (plan !== 'free' && subscription?.id && paymentEvidenceId) {

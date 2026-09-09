@@ -161,6 +161,13 @@ export async function POST(request: NextRequest) {
         }
 
         // Handle subscription payments (business tier upgrades) via activation RPC
+        // Fail closed: if type is whatsapp_subscription, business_id MUST be present
+        if (metadata?.type === 'whatsapp_subscription') {
+          if (!metadata.business_id) {
+            logger.error('[STRIPE-WEBHOOK] whatsapp_subscription checkout missing business_id', { sessionId });
+            return NextResponse.json({ error: 'whatsapp_subscription checkout missing business_id' }, { status: 500 });
+          }
+        }
         if (metadata?.type === 'whatsapp_subscription' && metadata.business_id) {
           const plan = metadata.plan;
           if (!plan || !['growth', 'business'].includes(plan)) {

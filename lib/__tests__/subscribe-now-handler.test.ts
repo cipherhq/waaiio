@@ -560,6 +560,24 @@ describe('Stripe webhook: paid subscription failure paths', () => {
     // Only the .select() call for subRecord lookup, no .update({status:'pending'})
     expect(subCalls.length).toBeLessThanOrEqual(2); // select + possibly stripe IDs update
   });
+
+  // ── Missing business binding proof ──
+
+  it('checkout: whatsapp_subscription with missing business_id → returns 500, not processed', async () => {
+    const event = buildStripeCheckoutEvent({
+      metadata: { type: 'whatsapp_subscription', plan: 'growth', billing_interval: 'month' },
+      // business_id deliberately omitted
+    });
+    const { status, json, mock } = await callStripeWebhook(event, {});
+    expect(status).toBe(500);
+    expect(json.error).toMatch(/business_id/i);
+    // Verify event was NOT marked as processed
+    const completedEvents = mock.eventUpdates.filter(
+      (u: Record<string, unknown>) => u.status === 'completed' || u.event_id?.toString().includes('stripe-'),
+    );
+    // No upsert to processed_webhook_events should have succeeded
+    expect(completedEvents.length).toBe(0);
+  });
 });
 
 // ═══════════════════════════════════════════════════════════
@@ -730,6 +748,7 @@ describe('Onboarding verify: paid subscription failure paths', () => {
       paystackVerification?: Record<string, unknown>;
       ownerCheck?: Record<string, unknown> | null;
       capabilities?: Array<Record<string, unknown>>;
+      existingSubscription?: Record<string, unknown> | null;
       subscriptionUpsert?: { data: unknown; error: unknown };
       configVersion?: { data: unknown; error: unknown };
       evidenceInsert?: { data: unknown; error: unknown };
@@ -782,6 +801,10 @@ describe('Onboarding verify: paid subscription failure paths', () => {
       }),
     };
 
+    // Track query call counts to distinguish sequential calls to same table
+    let subscriptionQueryCount = 0;
+    let paymentEvidenceQueryCount = 0;
+
     const supabaseService = {
       from: vi.fn((table: string) => {
         const chain: Record<string, unknown> = {};
@@ -796,13 +819,26 @@ describe('Onboarding verify: paid subscription failure paths', () => {
                   });
                 }
                 if (table === 'subscriptions') {
+                  subscriptionQueryCount++;
+                  // First call: SELECT existing subscription check
+                  // Second call: UPSERT result
+                  if (subscriptionQueryCount === 1 && opts.existingSubscription !== undefined) {
+                    return Promise.resolve({ data: opts.existingSubscription, error: null });
+                  }
                   return Promise.resolve(opts.subscriptionUpsert ?? { data: { id: 'sub-test-1' }, error: null });
                 }
                 if (table === 'platform_config_versions') {
                   return Promise.resolve(opts.configVersion ?? { data: { id: 'cfg-test-1' }, error: null });
                 }
                 if (table === 'subscription_payments') {
-                  return Promise.resolve(opts.evidenceInsert ?? { data: { id: 'sp-test-1' }, error: null });
+                  paymentEvidenceQueryCount++;
+                  // First call: INSERT (may fail with duplicate)
+                  // Second call: SELECT lookup for existing evidence (on duplicate)
+                  if (paymentEvidenceQueryCount === 1) {
+                    return Promise.resolve(opts.evidenceInsert ?? { data: { id: 'sp-test-1' }, error: null });
+                  }
+                  // Subsequent calls: return existing evidence for replay lookup
+                  return Promise.resolve({ data: { id: 'sp-existing-1' }, error: null });
                 }
                 if (table === 'businesses') {
                   return Promise.resolve({ data: { bot_code: 'TEST', slug: 'test' }, error: null });
@@ -1048,5 +1084,55 @@ describe('Onboarding verify: paid subscription failure paths', () => {
     );
     expect(status).toBe(400);
     expect(json.message).toMatch(/rejected|null_result/i);
+  });
+
+  // ── Same-payment replay idempotency proof ──
+
+  it('Stripe: active subscription + same-payment replay → idempotent success, status not demoted', async () => {
+    // Simulates re-verification of an already-active subscription payment.
+    // The existing subscription is active; evidence insert returns duplicate;
+    // existing evidence is looked up; RPC returns idempotent success.
+    const { status, json } = await callOnboardingVerify(
+      { reference: 'cs_test_replay' },
+      {
+        stripeSession: {
+          payment_status: 'paid',
+          amount_total: 500000,
+          currency: 'ngn',
+          created: Math.floor(Date.now() / 1000),
+          subscription: 'sub_stripe_1',
+          metadata: { business_id: 'biz-1', plan: 'growth', billing_interval: 'month' },
+        },
+        existingSubscription: { id: 'sub-active-1', status: 'active' },
+        // Evidence insert fails with duplicate (unique constraint)
+        evidenceInsert: { data: null, error: { code: '23505', message: 'duplicate key value violates unique constraint' } },
+        // RPC returns idempotent success (payment already activated)
+        activationResult: { data: { activated: true, idempotent: true }, error: null },
+      },
+    );
+    // Should succeed — the replay is idempotent
+    expect(status).toBe(200);
+    expect(json.status).toBe('success');
+  });
+
+  it('Stripe: active subscription + evidence insert failure (non-duplicate) → returns 500', async () => {
+    const { status, json } = await callOnboardingVerify(
+      { reference: 'cs_test_fail' },
+      {
+        stripeSession: {
+          payment_status: 'paid',
+          amount_total: 500000,
+          currency: 'ngn',
+          created: Math.floor(Date.now() / 1000),
+          subscription: 'sub_stripe_1',
+          metadata: { business_id: 'biz-1', plan: 'growth', billing_interval: 'month' },
+        },
+        existingSubscription: { id: 'sub-active-1', status: 'active' },
+        // Non-duplicate insert failure
+        evidenceInsert: { data: null, error: { code: '42000', message: 'some other error' } },
+      },
+    );
+    expect(status).toBe(500);
+    expect(json.message).toMatch(/payment recording failed/i);
   });
 });
