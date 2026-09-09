@@ -122,8 +122,10 @@ interface StripeTestConfig {
 function buildStripeMock(config: StripeTestConfig = {}) {
   const eventUpdates: Array<{ event_id?: string; status?: string }> = [];
   let evidenceCallCount = 0;
+  const evidenceRecoveryFilters: string[][] = [];
 
   function createChain(tableName: string): Record<string, unknown> {
+    const filterChain: string[] = [];
     const handler: ProxyHandler<Record<string, unknown>> = {
       get(_target, prop: string) {
         if (prop === 'single') {
@@ -138,11 +140,11 @@ function buildStripeMock(config: StripeTestConfig = {}) {
                 return Promise.resolve({ data: config.platformSub ?? null, error: null });
               case 'subscription_payments':
                 evidenceCallCount++;
-                // First call: INSERT (may fail with duplicate on retry)
-                // Second call: SELECT lookup for existing evidence
                 if (evidenceCallCount === 1) {
                   return Promise.resolve(config.evidenceInsertResult ?? { data: { id: 'sp-test-1' }, error: null });
                 }
+                // Second+ call: recovery lookup — record the filters
+                evidenceRecoveryFilters.push([...filterChain]);
                 return Promise.resolve({ data: { id: 'sp-existing-1' }, error: null });
               case 'platform_config_versions':
                 return Promise.resolve(config.configVersionResult ?? { data: { id: 'cfg-v1' }, error: null });
@@ -168,6 +170,13 @@ function buildStripeMock(config: StripeTestConfig = {}) {
               default:
                 return Promise.resolve({ data: null, error: null });
             }
+          });
+        }
+
+        if (prop === 'eq') {
+          return vi.fn((col: string, val: unknown) => {
+            filterChain.push(`${col}=${val}`);
+            return proxy;
           });
         }
 
@@ -204,6 +213,7 @@ function buildStripeMock(config: StripeTestConfig = {}) {
     client: { from: fromFn, rpc: rpcFn },
     eventUpdates,
     rpcCalls: stripeRpcCalls,
+    evidenceRecoveryFilters,
     fromFn,
     rpcFn,
   };
@@ -227,8 +237,10 @@ interface PaystackTestConfig {
 function buildPaystackMock(config: PaystackTestConfig = {}) {
   const eventUpdates: Array<{ status: string }> = [];
   let evidenceCallCount = 0;
+  const evidenceRecoveryFilters: string[][] = [];
 
   function createChain(tableName: string): Record<string, unknown> {
+    const filterChain: string[] = [];
     const handler: ProxyHandler<Record<string, unknown>> = {
       get(_target, prop: string) {
         if (prop === 'single') {
@@ -245,6 +257,7 @@ function buildPaystackMock(config: PaystackTestConfig = {}) {
                 if (evidenceCallCount === 1) {
                   return Promise.resolve(config.evidenceInsertResult ?? { data: { id: 'sp-test-1' }, error: null });
                 }
+                evidenceRecoveryFilters.push([...filterChain]);
                 return Promise.resolve({ data: { id: 'sp-existing-1' }, error: null });
               case 'platform_config_versions':
                 return Promise.resolve(config.configVersionResult ?? { data: { id: 'cfg-v1' }, error: null });
@@ -270,6 +283,13 @@ function buildPaystackMock(config: PaystackTestConfig = {}) {
               default:
                 return Promise.resolve({ data: null, error: null });
             }
+          });
+        }
+
+        if (prop === 'eq') {
+          return vi.fn((col: string, val: unknown) => {
+            filterChain.push(`${col}=${val}`);
+            return proxy;
           });
         }
 
@@ -314,6 +334,7 @@ function buildPaystackMock(config: PaystackTestConfig = {}) {
     client: { from: fromFn, rpc: rpcFn },
     eventUpdates,
     rpcCalls: paystackRpcCalls,
+    evidenceRecoveryFilters,
     fromFn,
     rpcFn,
   };
@@ -599,7 +620,7 @@ describe('Stripe webhook: paid subscription failure paths', () => {
 
   // ── Retry recovery proofs (blocker 3) ──
 
-  it('checkout: duplicate evidence on retry → recovers exact evidence, RPC receives recovered ID', async () => {
+  it('checkout: duplicate evidence on retry → exact recovery filters + RPC receives recovered ID', async () => {
     const event = buildStripeCheckoutEvent();
     const { status, json, mock } = await callStripeWebhook(event, {
       subscriptionRecord: { id: 'sub-1' },
@@ -608,13 +629,20 @@ describe('Stripe webhook: paid subscription failure paths', () => {
     });
     expect(status).toBe(200);
     expect(json.received).toBe(true);
-    // Assert RPC was called with the recovered evidence ID (sp-existing-1)
+    // Assert exact recovery lookup filters: subscription_id + provider_reference + gateway + status
+    expect(mock.evidenceRecoveryFilters.length).toBe(1);
+    const filters = mock.evidenceRecoveryFilters[0];
+    expect(filters).toContainEqual(expect.stringMatching(/^subscription_id=sub-1$/));
+    expect(filters).toContainEqual(expect.stringMatching(/^provider_reference=cs_test_1$/));
+    expect(filters).toContainEqual(expect.stringMatching(/^gateway=stripe$/));
+    expect(filters).toContainEqual(expect.stringMatching(/^status=success$/));
+    // Assert RPC was called with the recovered evidence ID
     const activationRpc = mock.rpcCalls.find((c: { fn: string }) => c.fn === 'activate_paid_subscription');
     expect(activationRpc).toBeDefined();
     expect(activationRpc!.args).toEqual({ p_payment_id: 'sp-existing-1' });
   });
 
-  it('renewal: duplicate evidence on retry → recovers exact evidence, RPC receives recovered ID', async () => {
+  it('renewal: duplicate evidence on retry → exact recovery filters + RPC receives recovered ID', async () => {
     const event = buildStripeInvoicePaidEvent();
     const { status, json, mock } = await callStripeWebhook(event, {
       platformSub: { id: 'sub-1', business_id: 'biz-1', plan: 'growth', status: 'active' },
@@ -623,6 +651,14 @@ describe('Stripe webhook: paid subscription failure paths', () => {
     });
     expect(status).toBe(200);
     expect(json.received).toBe(true);
+    // Assert exact recovery lookup filters
+    expect(mock.evidenceRecoveryFilters.length).toBe(1);
+    const filters = mock.evidenceRecoveryFilters[0];
+    expect(filters).toContainEqual(expect.stringMatching(/^subscription_id=sub-1$/));
+    expect(filters).toContainEqual(expect.stringMatching(/^provider_reference=pi_test_1$/));
+    expect(filters).toContainEqual(expect.stringMatching(/^gateway=stripe$/));
+    expect(filters).toContainEqual(expect.stringMatching(/^status=success$/));
+    // Assert RPC receives recovered ID
     const activationRpc = mock.rpcCalls.find((c: { fn: string }) => c.fn === 'activate_paid_subscription');
     expect(activationRpc).toBeDefined();
     expect(activationRpc!.args).toEqual({ p_payment_id: 'sp-existing-1' });
@@ -776,7 +812,7 @@ describe('Paystack webhook: paid subscription failure paths', () => {
     expect(json.error).toMatch(/not confirmed/i);
   });
 
-  it('renewal: duplicate evidence on retry → recovers exact evidence, RPC receives recovered ID', async () => {
+  it('renewal: duplicate evidence on retry → exact recovery filters + RPC receives recovered ID', async () => {
     const event = buildPaystackRenewalEvent();
     const { status, json, mock } = await callPaystackWebhook(event, {
       platformSub: { id: 'sub-1', business_id: 'biz-1', plan: 'growth', paystack_subscription_code: 'SUB_paystack_1' },
@@ -785,6 +821,14 @@ describe('Paystack webhook: paid subscription failure paths', () => {
     });
     expect(status).toBe(200);
     expect(json.received).toBe(true);
+    // Assert exact recovery lookup filters: subscription_id + provider_reference + gateway + status
+    expect(mock.evidenceRecoveryFilters.length).toBe(1);
+    const filters = mock.evidenceRecoveryFilters[0];
+    expect(filters).toContainEqual(expect.stringMatching(/^subscription_id=sub-1$/));
+    expect(filters).toContainEqual(expect.stringMatching(/^provider_reference=ref-renewal-test-1$/));
+    expect(filters).toContainEqual(expect.stringMatching(/^gateway=paystack$/));
+    expect(filters).toContainEqual(expect.stringMatching(/^status=success$/));
+    // Assert RPC receives recovered ID
     const activationRpc = mock.rpcCalls.find((c: { fn: string }) => c.fn === 'activate_paid_subscription');
     expect(activationRpc).toBeDefined();
     expect(activationRpc!.args).toEqual({ p_payment_id: 'sp-existing-1' });
@@ -995,6 +1039,7 @@ describe('Onboarding verify: paid subscription failure paths', () => {
       rpcCalls,
       subscriptionUpdatePayloads,
       evidenceLookupFilters,
+      paymentEvidenceQueryCount,
       serviceMock: supabaseService,
     };
   }
@@ -1187,8 +1232,8 @@ describe('Onboarding verify: paid subscription failure paths', () => {
 
   // ── Same-payment replay idempotency proof (with real assertions) ──
 
-  it('Stripe: active subscription + duplicate evidence → recovers exact evidence, RPC receives recovered ID', async () => {
-    const { status, json, rpcCalls, subscriptionUpdatePayloads } = await callOnboardingVerify(
+  it('Stripe: active subscription + duplicate evidence → exact recovery filters + RPC receives recovered ID', async () => {
+    const { status, json, rpcCalls, subscriptionUpdatePayloads, evidenceLookupFilters } = await callOnboardingVerify(
       { reference: 'cs_test_replay' },
       {
         stripeSession: {
@@ -1206,12 +1251,17 @@ describe('Onboarding verify: paid subscription failure paths', () => {
     );
     expect(status).toBe(200);
     expect(json.status).toBe('success');
-    // Assert RPC was called with the recovered evidence ID (sp-existing-1)
+    // Assert exact recovery lookup filters: subscription_id + provider_reference + gateway + status
+    expect(evidenceLookupFilters.length).toBe(1);
+    const filters = evidenceLookupFilters[0];
+    expect(filters).toContainEqual(expect.stringMatching(/^subscription_id=sub-active-1$/));
+    expect(filters).toContainEqual(expect.stringMatching(/^provider_reference=cs_test_replay$/));
+    expect(filters).toContainEqual(expect.stringMatching(/^gateway=stripe$/));
+    expect(filters).toContainEqual(expect.stringMatching(/^status=success$/));
+    // Assert RPC was called with the recovered evidence ID
     const activationRpc = rpcCalls.find(c => c.fn === 'activate_paid_subscription');
     expect(activationRpc).toBeDefined();
     expect(activationRpc!.args).toEqual({ p_payment_id: 'sp-existing-1' });
-    // Post-auth provider update happens after successful activation (expected for replay)
-    // But no pre-auth status/plan/amount/currency mutations occurred
   });
 
   it('Stripe: active subscription + evidence insert failure (non-duplicate) → returns 500', async () => {
@@ -1240,8 +1290,8 @@ describe('Onboarding verify: paid subscription failure paths', () => {
 
   // ── Subscription lookup error fail-closed proof ──
 
-  it('Stripe: subscription lookup DB error → returns 500, zero mutation/evidence/RPC', async () => {
-    const { status, json, rpcCalls, subscriptionUpdatePayloads } = await callOnboardingVerify(
+  it('Stripe: subscription lookup DB error → returns 500, zero subscription/evidence/RPC work', async () => {
+    const { status, json, rpcCalls, subscriptionUpdatePayloads, paymentEvidenceQueryCount } = await callOnboardingVerify(
       { reference: 'cs_test_lookup_err' },
       {
         stripeSession: {
@@ -1260,8 +1310,9 @@ describe('Onboarding verify: paid subscription failure paths', () => {
     expect(json.message).toMatch(/verification failed/i);
     // Zero subscription updates
     expect(subscriptionUpdatePayloads.length).toBe(0);
-    // Zero evidence inserts — lookup error stops before evidence
-    // Zero RPC calls
+    // Zero subscription_payments inserts/lookups — lookup error stops before evidence
+    expect(paymentEvidenceQueryCount).toBe(0);
+    // Zero activation RPC calls
     expect(rpcCalls.filter(c => c.fn === 'activate_paid_subscription').length).toBe(0);
   });
 
