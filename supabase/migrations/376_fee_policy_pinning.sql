@@ -167,16 +167,18 @@ BEGIN
     RAISE EXCEPTION 'v0 payments cannot acquire config_version_id';
   END IF;
 
-  -- provider_init_state forward-only transitions
-  IF OLD.provider_init_state = 'provider_confirmed'
-     AND NEW.provider_init_state IS DISTINCT FROM OLD.provider_init_state
-     AND NEW.provider_init_state IN ('pre_dispatch', 'dispatched') THEN
-    RAISE EXCEPTION 'provider_init_state cannot regress from provider_confirmed';
-  END IF;
-  IF OLD.provider_init_state = 'dispatched'
-     AND NEW.provider_init_state IS DISTINCT FROM OLD.provider_init_state
-     AND NEW.provider_init_state = 'pre_dispatch' THEN
-    RAISE EXCEPTION 'provider_init_state cannot regress from dispatched';
+  -- provider_init_state exact forward graph:
+  -- NULL → pre_dispatch → dispatched → provider_confirmed (or NULL unchanged)
+  -- Any other transition is rejected.
+  IF OLD.provider_init_state IS DISTINCT FROM NEW.provider_init_state THEN
+    IF NOT (
+      (OLD.provider_init_state IS NULL AND NEW.provider_init_state = 'pre_dispatch')
+      OR (OLD.provider_init_state = 'pre_dispatch' AND NEW.provider_init_state = 'dispatched')
+      OR (OLD.provider_init_state = 'dispatched' AND NEW.provider_init_state = 'provider_confirmed')
+      OR (NEW.provider_init_state IS NULL AND OLD.provider_init_state IS NULL)
+    ) THEN
+      RAISE EXCEPTION 'Invalid provider_init_state transition: % → %', OLD.provider_init_state, NEW.provider_init_state;
+    END IF;
   END IF;
 
   RETURN NEW;
@@ -277,6 +279,29 @@ BEGIN
     END IF;
   END IF;
 
+  -- When updating pricing_tiers while fee_policy is enabled, enforce zero feeFlat
+  IF p_key = 'pricing_tiers' THEN
+    DECLARE
+      v_fee_gate JSONB;
+      v_pt_tier TEXT;
+      v_pt_data JSONB;
+      v_pt_flat NUMERIC;
+    BEGIN
+      SELECT value INTO v_fee_gate FROM platform_settings WHERE key = 'fee_policy_enabled';
+      IF v_fee_gate = 'true'::JSONB THEN
+        IF jsonb_typeof(p_value) = 'object' THEN
+          FOR v_pt_tier, v_pt_data IN SELECT * FROM jsonb_each(p_value)
+          LOOP
+            v_pt_flat := COALESCE((v_pt_data ->> 'feeFlat')::NUMERIC, 0);
+            IF v_pt_flat <> 0 THEN
+              RAISE EXCEPTION 'Cannot update pricing_tiers while fee_policy_enabled: %.feeFlat must be 0 (got %)', v_pt_tier, v_pt_flat;
+            END IF;
+          END LOOP;
+        END IF;
+      END IF;
+    END;
+  END IF;
+
   IF p_key = 'messaging_reservation_ttl_seconds' THEN
     IF jsonb_typeof(p_value) <> 'number' THEN
       RAISE EXCEPTION 'messaging_reservation_ttl_seconds must be a positive integer, got %', jsonb_typeof(p_value);
@@ -360,7 +385,17 @@ BEGIN
          OR (v_cat_val ->> 'feePercentage')::NUMERIC > 100 THEN
         RAISE EXCEPTION 'category_fee_rates[%].feePercentage must be 0-100', v_cat_key;
       END IF;
-      -- No feeFlat in category rates — percentage-only for v1
+      -- Reject extra keys (only feePercentage allowed — percentage-only for v1)
+      DECLARE
+        v_rate_key TEXT;
+      BEGIN
+        FOR v_rate_key IN SELECT key FROM jsonb_object_keys(v_cat_val) AS key
+        LOOP
+          IF v_rate_key <> 'feePercentage' THEN
+            RAISE EXCEPTION 'category_fee_rates[%] contains unknown key "%"; only feePercentage allowed', v_cat_key, v_rate_key;
+          END IF;
+        END LOOP;
+      END;
     END LOOP;
   END IF;
 

@@ -117,7 +117,9 @@ describe('Saved-card convergence through Payment Authority', () => {
     const fs = require('fs');
     const src = fs.readFileSync('lib/payments/charge-saved.ts', 'utf-8');
     // Must be a top-level column, not inside metadata
-    const insertSection = src.split('Step 2: Create canonical payment')[1]?.split('.select(')[0] || '';
+    // The insert section spans from Step 2 comment through the .select() call after the INSERT
+    const afterStep2 = src.split('Step 2:')[1] || '';
+    const insertSection = afterStep2.split('select(\'id\')')[0] || afterStep2.split('.select(')[0] || '';
     expect(insertSection).toContain('payment_authority_version: 1');
     expect(insertSection).toContain("payment_origin: 'platform'");
   });

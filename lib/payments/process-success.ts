@@ -531,9 +531,20 @@ export async function recordPlatformFee(
   if (!businessId) return;
 
   // ── #264: V1 fee-policy pinned path ──
-  // For fee_policy_version >= 1, use the pinned config snapshot + immutable fee_basis.
-  // Never read current business tier/trial/overrides for v1 payments.
-  if (opts.feePolicyVersion && opts.feePolicyVersion >= 1 && opts.configVersionId && opts.feeBasis) {
+  // Branch on fee_policy_version FIRST. If v1, require all authority fields or fail closed.
+  // Never downgrade to legacy — a v1 payment with missing authority is corrupt, not legacy.
+  if (opts.feePolicyVersion != null && opts.feePolicyVersion >= 1) {
+    if (!opts.configVersionId || !opts.feeBasis || !opts.transactionCategory) {
+      const missing = [
+        !opts.configVersionId && 'configVersionId',
+        !opts.feeBasis && 'feeBasis',
+        !opts.transactionCategory && 'transactionCategory',
+      ].filter(Boolean).join(', ');
+      logger.error('[PLATFORM-FEE] V1 payment missing required authority fields — fail closed', {
+        paymentId: opts.paymentId, missing,
+      });
+      throw new Error(`V1 fee policy: missing authority fields (${missing}) — cannot record fee`);
+    }
     const { calculateFee, validateV1Snapshot } = await import('@/lib/payments/calculateFee');
     const feeBasis = opts.feeBasis as { payment_routing: 'platform' | 'byo' | 'connect'; tier: string; is_in_trial: boolean; custom_fee_percentage: number | null; custom_fee_flat: number | null };
 

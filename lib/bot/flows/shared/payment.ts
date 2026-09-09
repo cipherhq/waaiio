@@ -310,6 +310,121 @@ export async function initializePayment(
       }
     }
 
+    // ── #264: V1 fee-policy pre-provider authority binding ──
+    // When fee_policy_enabled=true, create the local payment row with full v1 binding
+    // BEFORE any provider API call. When OFF, the gateway initializer creates the row
+    // post-provider as usual (v0 legacy path).
+    let v1PaymentId: string | null = null;
+    let feePolicyVersion = 0;
+
+    if (opts.businessId && opts.transactionCategory) {
+      try {
+        // Resolve effective config version at current time
+        const { data: configVer } = await supabase
+          .from('platform_config_versions')
+          .select('id, config_snapshot')
+          .lte('effective_from', new Date().toISOString())
+          .order('effective_from', { ascending: false })
+          .limit(1)
+          .single();
+
+        if (configVer?.config_snapshot) {
+          const snapshot = configVer.config_snapshot as Record<string, unknown>;
+          const gateEnabled = snapshot.fee_policy_enabled === true;
+
+          if (gateEnabled) {
+            // Resolve fee basis
+            const { data: bizForFee } = await supabase
+              .from('businesses')
+              .select('subscription_tier, trial_ends_at, custom_fee_percentage, custom_fee_flat')
+              .eq('id', opts.businessId)
+              .single();
+
+            if (bizForFee) {
+              const { resolveTrialStatus } = await import('@/lib/trial-status');
+              const tier = (bizForFee.subscription_tier || 'free') as import('@/lib/constants').SubscriptionTier;
+              const isInTrial = await resolveTrialStatus(supabase, opts.businessId, tier, bizForFee.trial_ends_at);
+
+              // Validate v1 snapshot (non-zero tier feeFlat fails closed)
+              const { validateV1Snapshot } = await import('@/lib/payments/calculateFee');
+              const snapErr = validateV1Snapshot(snapshot as Parameters<typeof validateV1Snapshot>[0], tier);
+              if (snapErr) {
+                logger.error('[PAYMENT] V1 snapshot validation failed — blocking payment', { error: snapErr });
+                return null;
+              }
+
+              const paymentRouting: 'platform' | 'byo' | 'connect' = isByo ? 'byo' : (connectAccountId ? 'connect' : 'platform');
+              const feeBasis = {
+                payment_routing: paymentRouting,
+                tier,
+                is_in_trial: isInTrial,
+                custom_fee_percentage: bizForFee.custom_fee_percentage != null ? Number(bizForFee.custom_fee_percentage) : null,
+                custom_fee_flat: bizForFee.custom_fee_flat != null ? Number(bizForFee.custom_fee_flat) : null,
+              };
+
+              // Calculate v1 fee for provider split
+              const { calculateFee } = await import('@/lib/payments/calculateFee');
+              const v1Fee = calculateFee(opts.amount, feeBasis, opts.transactionCategory, snapshot as Parameters<typeof calculateFee>[3]);
+              if (paymentRouting !== 'byo') {
+                platformFeeAmount = v1Fee.feeTotal;
+              }
+
+              feePolicyVersion = 1;
+
+              // Create pre-provider payment row with full v1 binding
+              const { data: preRow, error: preErr } = await supabase.from('payments').insert({
+                booking_id: opts.bookingId || null,
+                invoice_id: opts.invoiceId || null,
+                campaign_id: opts.campaignId || null,
+                reservation_id: opts.reservationId || null,
+                order_id: opts.orderId || null,
+                business_id: opts.businessId,
+                user_id: opts.userId,
+                amount: opts.amount,
+                currency: currencyCode,
+                gateway: gateway.name,
+                gateway_reference: opts.referenceCode,
+                status: 'pending',
+                payment_authority_version: 1,
+                fee_policy_version: 1,
+                config_version_id: configVer.id,
+                transaction_category: opts.transactionCategory,
+                fee_basis: feeBasis,
+                provider_init_state: 'pre_dispatch',
+                metadata: {
+                  reference_code: opts.referenceCode,
+                  channel: 'whatsapp',
+                  payment_origin: paymentRouting,
+                  ...(opts.orderId && { order_id: opts.orderId }),
+                  ...(isByo && { byo: true, byo_business_id: byoBusinessId }),
+                  ...(connectAccountId && { connect: true, connect_account_id: connectAccountId }),
+                },
+              }).select('id').single();
+
+              if (preErr || !preRow) {
+                logger.error('[PAYMENT] V1 pre-provider row creation failed — NOT calling provider', preErr);
+                return null;
+              }
+              v1PaymentId = preRow.id;
+
+              // CAS: pre_dispatch → dispatched (before provider call)
+              const { error: casErr } = await supabase.from('payments')
+                .update({ provider_init_state: 'dispatched' })
+                .eq('id', v1PaymentId)
+                .eq('provider_init_state', 'pre_dispatch');
+              if (casErr) {
+                logger.error('[PAYMENT] V1 CAS pre_dispatch→dispatched failed', casErr);
+                return null;
+              }
+            }
+          }
+        }
+      } catch (feePolicyErr) {
+        logger.error('[PAYMENT] Fee policy resolution error — falling back to v0', feePolicyErr);
+        // Fall through to v0 path (gate check failure is not payment-blocking)
+      }
+    }
+
     const result = await observe('payment.init', {
       gateway: gateway.name,
       businessId: opts.businessId,
@@ -344,6 +459,50 @@ export async function initializePayment(
       businessId: opts.businessId,
       channels,
     }));
+
+    // ── V1: CAS provider_confirmed + update gateway_reference ──
+    if (v1PaymentId && result?.reference) {
+      // For gateways that return a different reference (Stripe cs_, Square, PayPal order ID),
+      // update gateway_reference with the canonical provider ID
+      const providerRef = result.reference;
+      if (providerRef !== opts.referenceCode) {
+        await supabase.from('payments')
+          .update({ gateway_reference: providerRef })
+          .eq('id', v1PaymentId)
+          .eq('gateway_reference', opts.referenceCode); // CAS on original ref
+      }
+      // CAS: dispatched → provider_confirmed + persist checkout URL
+      const { error: confirmErr } = await supabase.from('payments')
+        .update({
+          provider_init_state: 'provider_confirmed',
+          metadata: {
+            reference_code: opts.referenceCode,
+            channel: 'whatsapp',
+            checkout_url: result.url,
+            payment_origin: isByo ? 'byo' : (connectAccountId ? 'connect' : 'platform'),
+            ...(providerConnectionId && { provider_connection_id: providerConnectionId }),
+            ...(connectAccountId && { provider_account_id: connectAccountId }),
+            ...(subaccountCode && { provider_account_id: subaccountCode }),
+            ...(stripeAccountId && { provider_account_id: stripeAccountId }),
+            ...(payoutAccountId && !providerConnectionId && { provider_connection_id: payoutAccountId }),
+            ...(opts.inboundChannelId && { _inbound_channel_id: opts.inboundChannelId }),
+            ...(opts.confirmationOrigin && { _confirmation_origin: opts.confirmationOrigin }),
+          },
+        })
+        .eq('id', v1PaymentId)
+        .eq('provider_init_state', 'dispatched');
+      if (confirmErr) {
+        logger.error('[PAYMENT] V1 CAS dispatched→provider_confirmed failed', confirmErr);
+      }
+      // Return the checkout URL — the payment row already exists
+      return { url: result.url, reference: providerRef };
+    } else if (v1PaymentId && !result) {
+      // Provider call failed — mark payment as failed
+      await supabase.from('payments')
+        .update({ status: 'failed', gateway_status: 'provider_init_failed' })
+        .eq('id', v1PaymentId);
+      return null;
+    }
 
     // Create donation record if this is a campaign payment
     if (result?.reference && opts.campaignId) {

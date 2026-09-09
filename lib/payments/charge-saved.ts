@@ -172,6 +172,8 @@ export async function chargeSavedCard(
     campaignId?: string;
     userId?: string;
     byoSecretKey?: string;
+    /** #264: Server-derived transaction category for fee policy */
+    transactionCategory?: string;
   },
 ): Promise<SavedCardOutcome> {
   // BYO saved-card not supported — fail closed without durable provider identity
@@ -201,6 +203,7 @@ async function chargePaystackAuthorization(
     orderId?: string;
     campaignId?: string;
     userId?: string;
+    transactionCategory?: string;
   },
 ): Promise<SavedCardOutcome> {
   if (!paystackSecretKey) {
@@ -315,7 +318,58 @@ async function chargePaystackAuthorization(
     return { outcome: 'declined', reference: opts.reference, message: 'Payment split configuration incomplete' };
   }
 
-  // ── Step 2: Create canonical payment row FIRST — fail closed ──
+  // ── Step 2: Resolve fee-policy gate + create canonical payment row ──
+  // #264: If fee_policy_enabled, bind v1 authority before provider charge
+  let v1Fields: Record<string, unknown> = {};
+  if (opts.transactionCategory) {
+    try {
+      const { data: configVer } = await supabase
+        .from('platform_config_versions')
+        .select('id, config_snapshot')
+        .lte('effective_from', new Date().toISOString())
+        .order('effective_from', { ascending: false })
+        .limit(1)
+        .single();
+
+      if (configVer?.config_snapshot) {
+        const snapshot = configVer.config_snapshot as Record<string, unknown>;
+        if (snapshot.fee_policy_enabled === true) {
+          // Resolve business state for fee basis
+          const { data: bizForFee } = await supabase
+            .from('businesses')
+            .select('subscription_tier, trial_ends_at, custom_fee_percentage, custom_fee_flat')
+            .eq('id', opts.businessId)
+            .single();
+
+          if (bizForFee) {
+            const scTier = (bizForFee.subscription_tier || 'free') as SubscriptionTier;
+            const scTrial = await resolveTrialStatus(supabase, opts.businessId, scTier, bizForFee.trial_ends_at);
+            const { validateV1Snapshot } = await import('@/lib/payments/calculateFee');
+            const snapErr = validateV1Snapshot(
+              snapshot as Parameters<typeof validateV1Snapshot>[0],
+              scTier,
+            );
+            if (!snapErr) {
+              v1Fields = {
+                fee_policy_version: 1,
+                config_version_id: configVer.id,
+                transaction_category: opts.transactionCategory,
+                fee_basis: {
+                  payment_routing: 'platform' as const,
+                  tier: scTier,
+                  is_in_trial: scTrial,
+                  custom_fee_percentage: bizForFee.custom_fee_percentage != null ? Number(bizForFee.custom_fee_percentage) : null,
+                  custom_fee_flat: bizForFee.custom_fee_flat != null ? Number(bizForFee.custom_fee_flat) : null,
+                },
+                provider_init_state: 'pre_dispatch',
+              };
+            }
+          }
+        }
+      }
+    } catch { /* fall through to v0 */ }
+  }
+
   const { data: payRow, error: insertErr } = await supabase.from('payments').insert({
     business_id: opts.businessId,
     booking_id: opts.bookingId || null,
@@ -338,6 +392,7 @@ async function chargePaystackAuthorization(
       saved_method: true,
       payment_origin: 'platform',
     },
+    ...v1Fields,
   }).select('id').single();
 
   if (insertErr || !payRow) {
