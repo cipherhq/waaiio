@@ -3,6 +3,29 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-09-08 — #263 Subscribe Now (CTO re-review 5-blocker fix)
+
+### What changed
+- **Blocker 1 (No pre-authority period writes):** Stripe and Paystack renewal handlers no longer write subscription periods before validation/activation. `activate_paid_subscription` RPC performs authoritative period sync atomically after all validation succeeds.
+- **Blocker 2 (No defaults/NULL gaps):** `billing_interval` must be exactly `'month'` (reject missing/unknown/year). Provider currency required (no `|| 'USD'`/`|| 'NGN'` defaults). Provider timestamps/periods required (no `new Date()` fallbacks). RPC requires non-null `amount`, `currency`, `provider_reference`, `period_start`, `period_end`. Source_ref no longer uses `COALESCE` — requires `provider_reference`.
+- **Blocker 3 (Exact evidence reconciliation):** Added unique partial index `uq_subscription_payment_period_success` on `subscription_payments(subscription_id, period_start) WHERE status='success'`. Guarantees `reconcile_paid_allowance` period lookup is canonical and unambiguous under concurrent/reordered renewals.
+- **Blocker 4 (Non-superuser pattern):** `prevent_tier_tampering()` replaced `rolsuper` check with `to_regprocedure + pg_proc.proowner` lookup against `activate_paid_subscription(uuid)` owner — the #288 pattern. Migration self-check verifies `rolsuper` is absent. Structural regression tests added.
+- **Blocker 5 (Handler failure-path proofs):** 30 new handler tests proving Stripe checkout/renewal, Paystack renewal, and onboarding return non-success on rejected activation, RPC errors, missing currency/interval/period/evidence, and evidence insert failures. 10 new DB adversarial tests for missing canonical fields, duplicate period evidence, and plan mismatch.
+
+### Files changed
+- `supabase/migrations/375_subscribe_now.sql` — prevent_tier_tampering + canonical field checks + unique index
+- `app/api/onboarding/verify/route.ts` — fail-closed billing_interval/currency/timestamp
+- `app/api/payments/stripe-webhook/route.ts` — no pre-write + fail-closed currency/period/amount
+- `app/api/payments/webhook/route.ts` — no pre-write + fail-closed currency/amount/timestamp
+- `lib/__tests__/subscribe-now-db.test.ts` — 10 new adversarial authority tests (28-37)
+- `lib/__tests__/subscribe-now-handler.test.ts` — 30 new handler failure-path tests (NEW)
+
+### What could break
+- Stripe/Paystack renewals missing `period_start`, `period_end`, or `currency` now return 500 (previously defaulted)
+- Onboarding without `billing_interval: 'month'` in metadata now returns 400 (previously defaulted)
+- Paystack onboarding without `paid_at`/`created_at` now returns 500 (previously continued)
+- Duplicate successful payments for same subscription+period now rejected by unique index
+
 ## 2026-09-06 — #263 Subscribe Now (5-blocker CTO fix)
 
 ### What changed
