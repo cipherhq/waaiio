@@ -75,7 +75,7 @@ export async function POST(request: NextRequest) {
       // Find our payment record by square_order_id in metadata
       const { data: payments } = await supabase
         .from('payments')
-        .select('id, booking_id, invoice_id, campaign_id, reservation_id, order_id, amount, status, metadata, gateway_reference, payment_authority_version, finalization_completed_at')
+        .select('id, booking_id, invoice_id, campaign_id, reservation_id, order_id, amount, status, metadata, gateway_reference, payment_authority_version, finalization_completed_at, provider_init_state')
         .eq('gateway', 'square');
 
       let matchedPayment = payments?.find(p => {
@@ -107,7 +107,7 @@ export async function POST(request: NextRequest) {
                 })
                 .eq('id', found.id)
                 .eq('provider_init_state', 'dispatched')
-                .select('id, booking_id, invoice_id, campaign_id, reservation_id, order_id, amount, status, metadata, gateway_reference, payment_authority_version, finalization_completed_at')
+                .select('id, booking_id, invoice_id, campaign_id, reservation_id, order_id, amount, status, metadata, gateway_reference, payment_authority_version, finalization_completed_at, provider_init_state')
                 .single();
               if (repairErr || !repaired) {
                 return NextResponse.json({ error: 'Square dispatched CAS repair failed' }, { status: 500 });

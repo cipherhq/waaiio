@@ -56,15 +56,21 @@ export async function GET(request: NextRequest) {
   }
 
   // ── #264: V1 dispatched recovery ──
-  // V1 payments stuck in 'dispatched' need provider-specific recovery.
-  const { data: dispatchedPayments } = await supabase
+  // Provider-specific verify/recovery for v1 payments stuck in 'dispatched'.
+  // Three-way outcome: found (paid or with artifact) / definitively absent / ambiguous.
+  const { data: dispatchedPayments, error: dispatchQueryErr } = await supabase
     .from('payments')
     .select('id, gateway, gateway_reference, metadata, provider_init_state, fee_policy_version, created_at, amount, currency')
     .eq('fee_policy_version', 1)
     .eq('provider_init_state', 'dispatched')
     .eq('status', 'pending')
+    .neq('gateway_status', 'dispatched_quarantine')
     .lt('created_at', twoHoursAgo.toISOString())
     .limit(20);
+
+  if (dispatchQueryErr) {
+    logger.error('[CRON] Dispatched recovery query error — skipping', { dispatchQueryErr });
+  }
 
   if (dispatchedPayments && dispatchedPayments.length > 0) {
     for (const dp of dispatchedPayments) {
@@ -73,140 +79,109 @@ export async function GET(request: NextRequest) {
         const clientRef = meta.reference_code || dp.gateway_reference;
         const paymentAge = Date.now() - new Date(dp.created_at as string).getTime();
 
+        // Helper: checked CAS to provider_confirmed
+        const checkedCAS = async (updates: Record<string, unknown>): Promise<boolean> => {
+          const { data: rows, error: casErr } = await supabase.from('payments')
+            .update(updates)
+            .eq('id', dp.id).eq('provider_init_state', 'dispatched')
+            .select('id');
+          return !casErr && rows != null && rows.length === 1;
+        };
+
         if (dp.gateway === 'paystack') {
-          // Paystack: verify by client reference (provider echoes it). Recover checkout URL.
+          // Paystack: verify by client reference (echoed by provider)
           const paystackKey = process.env.PAYSTACK_SECRET_KEY;
           if (paystackKey) {
-            const res = await fetch(`https://api.paystack.co/transaction/verify/${encodeURIComponent(clientRef)}`, {
-              headers: { Authorization: `Bearer ${paystackKey}` },
-              signal: AbortSignal.timeout(15000),
-            });
-            const data = await res.json();
-            if (data?.data?.status === 'success') {
-              // Provider charged — CAS to provider_confirmed + reconcile
-              await supabase.from('payments')
-                .update({ provider_init_state: 'provider_confirmed' })
-                .eq('id', dp.id).eq('provider_init_state', 'dispatched');
-              const { reconcilePayment: rp } = await import('@/lib/payments/reconcile');
-              await rp(supabase, dp.id, 'cron');
-            } else if (data?.data?.authorization_url) {
-              // Provider has the transaction but not yet paid — CAS confirm with URL
-              await supabase.from('payments')
-                .update({ provider_init_state: 'provider_confirmed', metadata: { ...meta, checkout_url: data.data.authorization_url } })
-                .eq('id', dp.id).eq('provider_init_state', 'dispatched');
-            }
-            // else: not found at provider — safe to leave dispatched for retry or terminal
+            try {
+              const res = await fetch(`https://api.paystack.co/transaction/verify/${encodeURIComponent(clientRef)}`, {
+                headers: { Authorization: `Bearer ${paystackKey}` },
+                signal: AbortSignal.timeout(15000),
+              });
+              if (!res.ok) continue; // HTTP error → ambiguous, skip
+              const data = await res.json();
+              if (data?.data?.status === 'success') {
+                // Found + paid → CAS to provider_confirmed + reconcile
+                if (await checkedCAS({ provider_init_state: 'provider_confirmed' })) {
+                  const { reconcilePayment: rp } = await import('@/lib/payments/reconcile');
+                  await rp(supabase, dp.id, 'cron');
+                }
+              } else if (data?.data?.status === 'abandoned' || data?.data?.status === 'failed') {
+                // Found + terminal provider failure → safe to leave dispatched for re-init on next user attempt
+              } else if (data?.data?.authorization_url) {
+                // Found + unpaid with resumable artifact → CAS with URL
+                await checkedCAS({ provider_init_state: 'provider_confirmed', metadata: { ...meta, checkout_url: data.data.authorization_url } });
+              } else if (data?.status === false && /not found|invalid/i.test(data?.message || '')) {
+                // Definitively absent → safe for fresh init on next user attempt (leave dispatched, user retry creates new)
+              }
+              // else: unrecognized response → ambiguous, no action
+            } catch { /* fetch error → ambiguous */ }
           }
         } else if (dp.gateway === 'flutterwave') {
           // Flutterwave: verify by tx_ref
           const fwKey = process.env.FLUTTERWAVE_SECRET_KEY;
           if (fwKey) {
-            const res = await fetch(`https://api.flutterwave.com/v3/transactions/verify_by_reference?tx_ref=${encodeURIComponent(clientRef)}`, {
-              headers: { Authorization: `Bearer ${fwKey}` },
-              signal: AbortSignal.timeout(15000),
-            });
-            const data = await res.json();
-            if (data?.data?.status === 'successful') {
-              await supabase.from('payments')
-                .update({ provider_init_state: 'provider_confirmed' })
-                .eq('id', dp.id).eq('provider_init_state', 'dispatched');
-              const { reconcilePayment: rp } = await import('@/lib/payments/reconcile');
-              await rp(supabase, dp.id, 'cron');
-            } else if (data?.data?.link) {
-              await supabase.from('payments')
-                .update({ provider_init_state: 'provider_confirmed', metadata: { ...meta, checkout_url: data.data.link } })
-                .eq('id', dp.id).eq('provider_init_state', 'dispatched');
-            }
-          }
-        } else if (dp.gateway === 'stripe') {
-          // Stripe: re-POST with same idempotency key (within 24h window)
-          const stripeKey = process.env.STRIPE_SECRET_KEY;
-          if (stripeKey && paymentAge < 24 * 60 * 60 * 1000) {
-            // Stripe idempotency key = `checkout_${referenceCode}`
-            const idempotencyKey = `checkout_${clientRef}`;
-            const res = await fetch('https://api.stripe.com/v1/checkout/sessions', {
-              method: 'POST',
-              headers: {
-                Authorization: `Bearer ${stripeKey}`,
-                'Content-Type': 'application/x-www-form-urlencoded',
-                'Idempotency-Key': idempotencyKey,
-              },
-              // Stripe returns the cached session for same idempotency key
-              body: '', // empty body — Stripe returns cached response
-              signal: AbortSignal.timeout(15000),
-            });
-            if (res.ok) {
-              const session = await res.json();
-              if (session.id && session.url) {
-                await supabase.from('payments')
-                  .update({ gateway_reference: session.id, provider_init_state: 'provider_confirmed', metadata: { ...meta, checkout_url: session.url, stripe_session_id: session.id } })
-                  .eq('id', dp.id).eq('provider_init_state', 'dispatched');
-              }
-            }
-            // else: idempotency key expired or error — leave for webhook recovery
-          }
-          // After 24h: only webhook can recover (Stripe purges idempotency keys)
-        } else if (dp.gateway === 'square') {
-          // Square: re-POST with same idempotency key
-          const squareToken = process.env.SQUARE_ACCESS_TOKEN;
-          if (squareToken) {
-            const res = await fetch(`${process.env.SQUARE_ENV === 'sandbox' ? 'https://connect.squareupsandbox.com' : 'https://connect.squareup.com'}/v2/online-checkout/payment-links`, {
-              method: 'POST',
-              headers: { 'Square-Version': '2024-12-18', Authorization: `Bearer ${squareToken}`, 'Content-Type': 'application/json' },
-              body: JSON.stringify({ idempotency_key: clientRef, quick_pay: { name: 'Recovery', price_money: { amount: Math.round(dp.amount * 100), currency: dp.currency }, location_id: process.env.SQUARE_LOCATION_ID || '' } }),
-              signal: AbortSignal.timeout(15000),
-            });
-            if (res.ok) {
-              const data = await res.json();
-              const link = data.payment_link;
-              if (link?.id && link?.url) {
-                await supabase.from('payments')
-                  .update({ provider_init_state: 'provider_confirmed', metadata: { ...meta, checkout_url: link.url, square_order_id: link.order_id } })
-                  .eq('id', dp.id).eq('provider_init_state', 'dispatched');
-              }
-            }
-          }
-        } else if (dp.gateway === 'paypal') {
-          // PayPal: re-POST with same PayPal-Request-Id
-          const ppClientId = process.env.PAYPAL_CLIENT_ID;
-          const ppSecret = process.env.PAYPAL_CLIENT_SECRET;
-          if (ppClientId && ppSecret) {
-            // Get access token
-            const tokenRes = await fetch(`${process.env.PAYPAL_ENV === 'sandbox' ? 'https://api-m.sandbox.paypal.com' : 'https://api-m.paypal.com'}/v1/oauth2/token`, {
-              method: 'POST',
-              headers: { Authorization: `Basic ${Buffer.from(`${ppClientId}:${ppSecret}`).toString('base64')}`, 'Content-Type': 'application/x-www-form-urlencoded' },
-              body: 'grant_type=client_credentials',
-              signal: AbortSignal.timeout(15000),
-            });
-            if (tokenRes.ok) {
-              const { access_token } = await tokenRes.json();
-              const orderRes = await fetch(`${process.env.PAYPAL_ENV === 'sandbox' ? 'https://api-m.sandbox.paypal.com' : 'https://api-m.paypal.com'}/v2/checkout/orders`, {
-                method: 'POST',
-                headers: { Authorization: `Bearer ${access_token}`, 'Content-Type': 'application/json', 'PayPal-Request-Id': clientRef },
-                body: JSON.stringify({ intent: 'CAPTURE', purchase_units: [{ reference_id: clientRef, amount: { currency_code: dp.currency, value: dp.amount.toFixed(2) } }] }),
+            try {
+              const res = await fetch(`https://api.flutterwave.com/v3/transactions/verify_by_reference?tx_ref=${encodeURIComponent(clientRef)}`, {
+                headers: { Authorization: `Bearer ${fwKey}` },
                 signal: AbortSignal.timeout(15000),
               });
-              if (orderRes.ok) {
-                const order = await orderRes.json();
-                if (order.id) {
-                  const links = (order.links || []) as Array<{ rel: string; href: string }>;
-                  const approveUrl = links.find((l: { rel: string }) => l.rel === 'payer-action')?.href || links.find((l: { rel: string }) => l.rel === 'approve')?.href;
-                  await supabase.from('payments')
-                    .update({ gateway_reference: order.id, provider_init_state: 'provider_confirmed', metadata: { ...meta, checkout_url: approveUrl, paypal_order_id: order.id } })
-                    .eq('id', dp.id).eq('provider_init_state', 'dispatched');
+              if (!res.ok) continue;
+              const data = await res.json();
+              if (data?.data?.status === 'successful') {
+                if (await checkedCAS({ provider_init_state: 'provider_confirmed' })) {
+                  const { reconcilePayment: rp } = await import('@/lib/payments/reconcile');
+                  await rp(supabase, dp.id, 'cron');
                 }
+              } else if (data?.data?.link) {
+                // Found + unpaid with checkout link artifact
+                await checkedCAS({ provider_init_state: 'provider_confirmed', metadata: { ...meta, checkout_url: data.data.link } });
+              } else if (data?.status === 'error' && /not found/i.test(data?.message || '')) {
+                // Definitively absent
               }
-            }
+            } catch { /* ambiguous */ }
           }
+        } else if (dp.gateway === 'stripe') {
+          // Stripe: read-only bounded session listing with local client_reference_id filter.
+          // Do NOT re-POST. The List Checkout Sessions endpoint does not support
+          // client_reference_id as a query filter — we list by created window and filter locally.
+          const stripeKey = process.env.STRIPE_SECRET_KEY;
+          if (stripeKey) {
+            try {
+              const createdAt = Math.floor(new Date(dp.created_at as string).getTime() / 1000);
+              const res = await fetch(
+                `https://api.stripe.com/v1/checkout/sessions?created[gte]=${createdAt - 60}&created[lte]=${createdAt + 300}&limit=20`,
+                { headers: { Authorization: `Bearer ${stripeKey}` }, signal: AbortSignal.timeout(15000) },
+              );
+              if (res.ok) {
+                const list = await res.json();
+                const sessions = (list.data || []) as Array<{ id: string; url: string; client_reference_id?: string }>;
+                const match = sessions.filter(s => s.client_reference_id === clientRef);
+                if (match.length === 1) {
+                  // Exactly one match → recover session
+                  await checkedCAS({
+                    gateway_reference: match[0].id,
+                    provider_init_state: 'provider_confirmed',
+                    metadata: { ...meta, checkout_url: match[0].url, stripe_session_id: match[0].id },
+                  });
+                }
+                // zero or multiple matches → ambiguous, leave dispatched for webhook recovery
+              }
+            } catch { /* ambiguous */ }
+          }
+        } else if (dp.gateway === 'square' || dp.gateway === 'paypal') {
+          // Square/PayPal: cannot safely re-POST (body reconstruction not proven safe).
+          // Rely on webhook CAS recovery only. Leave dispatched for webhook arrival.
+          // No cron POST attempt.
         }
 
-        // Terminal: payments older than 24h that are still dispatched after recovery attempt
+        // Quarantine: payments older than 24h still dispatched after recovery
+        // Do NOT set status='failed' — keep non-reusable but webhook-recoverable
         if (paymentAge > 24 * 60 * 60 * 1000) {
           const { data: stillDispatched } = await supabase.from('payments')
             .select('provider_init_state').eq('id', dp.id).single();
           if (stillDispatched?.provider_init_state === 'dispatched') {
             await supabase.from('payments')
-              .update({ status: 'failed', gateway_status: 'dispatched_unrecoverable' })
+              .update({ gateway_status: 'dispatched_quarantine' })
               .eq('id', dp.id).eq('provider_init_state', 'dispatched');
           }
         }
