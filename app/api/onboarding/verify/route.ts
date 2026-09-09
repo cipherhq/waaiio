@@ -27,6 +27,8 @@ export async function POST(request: NextRequest) {
     let stripeCustomerId: string | undefined;
     let stripePeriodStart: string | undefined;
     let stripePeriodEnd: string | undefined;
+    let providerPeriodStart: string | undefined;
+    let providerPeriodEnd: string | undefined;
     let providerPaymentTimestamp: string | undefined;
 
     // ── Stripe verification (checkout session IDs start with cs_) ──
@@ -78,8 +80,22 @@ export async function POST(request: NextRequest) {
           { status: 400 },
         );
       }
-      billingInterval = (metadata?.billing_interval || 'month') === 'year' ? 'year' : 'month';
-      amountSmallest = session.amount_total || 0;
+      // Only monthly billing supported for #263 — reject annual explicitly
+      const stripeInterval = metadata?.billing_interval || 'month';
+      if (stripeInterval === 'year') {
+        return NextResponse.json(
+          { message: 'Annual billing is not yet supported' },
+          { status: 400 },
+        );
+      }
+      billingInterval = 'month';
+      amountSmallest = session.amount_total;
+      if (!amountSmallest || amountSmallest <= 0) {
+        return NextResponse.json(
+          { message: 'Invalid payment amount' },
+          { status: 400 },
+        );
+      }
       gateway = 'stripe';
       currency = (session.currency || 'usd').toUpperCase();
 
@@ -110,8 +126,16 @@ export async function POST(request: NextRequest) {
             stripePeriodEnd = new Date(subData.current_period_end * 1000).toISOString();
           }
         } catch {
-          // Non-fatal: fall back to default 30-day period
+          // Non-fatal: derive from provider payment timestamp below
         }
+      }
+
+      // If Stripe subscription period not available, derive from checkout session.created
+      if (!stripePeriodStart && session.created) {
+        stripePeriodStart = new Date(session.created * 1000).toISOString();
+        const endDate = new Date(session.created * 1000);
+        endDate.setDate(endDate.getDate() + 30);
+        stripePeriodEnd = endDate.toISOString();
       }
     }
     // ── Paystack verification ──
@@ -153,18 +177,35 @@ export async function POST(request: NextRequest) {
           { status: 400 },
         );
       }
-      billingInterval = (metadata?.billing_interval || 'month') === 'year' ? 'year' : 'month';
-      amountSmallest = data.data.amount || 0;
+      // Only monthly billing supported for #263 — reject annual explicitly
+      const paystackInterval = metadata?.billing_interval || 'month';
+      if (paystackInterval === 'year') {
+        return NextResponse.json(
+          { message: 'Annual billing is not yet supported' },
+          { status: 400 },
+        );
+      }
+      billingInterval = 'month';
+      amountSmallest = data.data.amount;
+      if (!amountSmallest || amountSmallest <= 0) {
+        return NextResponse.json(
+          { message: 'Invalid payment amount' },
+          { status: 400 },
+        );
+      }
       gateway = 'paystack';
       currency = (data.data.currency || 'NGN').toUpperCase();
 
-      // Capture provider payment timestamp
+      // Capture provider payment timestamp and derive period
       const paidAt = data.data.paid_at as string | undefined;
       const createdAt = data.data.created_at as string | undefined;
-      if (paidAt) {
-        providerPaymentTimestamp = new Date(paidAt).toISOString();
-      } else if (createdAt) {
-        providerPaymentTimestamp = new Date(createdAt).toISOString();
+      const paystackTs = paidAt || createdAt;
+      if (paystackTs) {
+        providerPaymentTimestamp = new Date(paystackTs).toISOString();
+        providerPeriodStart = new Date(paystackTs).toISOString();
+        const endDate = new Date(paystackTs);
+        endDate.setDate(endDate.getDate() + 30);
+        providerPeriodEnd = endDate.toISOString();
       }
     }
     // ── Free tier (no payment required) ──
@@ -252,8 +293,9 @@ export async function POST(request: NextRequest) {
         { status: 400 },
       );
     }
+    // Annual billing rejected above; monthly is the only valid interval for #263
     const periodEnd = new Date();
-    periodEnd.setDate(periodEnd.getDate() + (billingInterval === 'year' ? 365 : 30));
+    periodEnd.setDate(periodEnd.getDate() + 30);
 
     // Determine action: upgrade vs renewal
     const previousTier = ownerCheck.subscription_tier || 'free';
@@ -269,8 +311,8 @@ export async function POST(request: NextRequest) {
       amount: amountSmallest ? Math.round(amountSmallest / 100) : (tier.price ?? 0),
       gateway: gateway !== 'none' ? gateway : null,
       currency,
-      current_period_start: stripePeriodStart || new Date().toISOString(),
-      current_period_end: stripePeriodEnd || periodEnd.toISOString(),
+      current_period_start: stripePeriodStart || providerPeriodStart || providerPaymentTimestamp || (plan === 'free' ? new Date().toISOString() : undefined),
+      current_period_end: stripePeriodEnd || providerPeriodEnd || (plan === 'free' ? periodEnd.toISOString() : undefined),
     };
 
     // Only clear the codes that don't apply to the current gateway
@@ -334,8 +376,16 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      const computedPeriodStart = stripePeriodStart || new Date().toISOString();
-      const computedPeriodEnd = stripePeriodEnd || periodEnd.toISOString();
+      // Derive period from provider evidence — never from wall-clock
+      const computedPeriodStart = stripePeriodStart || providerPeriodStart;
+      const computedPeriodEnd = stripePeriodEnd || providerPeriodEnd;
+      if (!computedPeriodStart || !computedPeriodEnd) {
+        console.warn('[ONBOARDING-VERIFY] Cannot derive period from provider evidence');
+        return NextResponse.json(
+          { message: 'Payment period verification failed. Please contact support.', recoverable: true },
+          { status: 500 },
+        );
+      }
 
       const { data: paymentEvidence, error: paymentInsertError } = await service.from('subscription_payments').insert({
         business_id: businessId,

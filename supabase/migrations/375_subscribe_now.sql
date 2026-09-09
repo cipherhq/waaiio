@@ -319,8 +319,11 @@ BEGIN
     RETURN jsonb_build_object('activated', false, 'reason', 'annual_not_supported');
   END IF;
 
-  -- 2c. Validate payment plan matches subscription plan (commercial binding)
-  IF v_payment.payment_plan IS NOT NULL AND v_payment.payment_plan <> v_sub.plan THEN
+  -- 2c. Validate payment plan is present and matches subscription plan (commercial binding)
+  IF v_payment.payment_plan IS NULL THEN
+    RETURN jsonb_build_object('activated', false, 'reason', 'missing_payment_plan');
+  END IF;
+  IF v_payment.payment_plan <> v_sub.plan THEN
     RETURN jsonb_build_object('activated', false, 'reason', 'plan_mismatch',
       'payment_plan', v_payment.payment_plan, 'subscription_plan', v_sub.plan);
   END IF;
@@ -405,24 +408,25 @@ BEGIN
     v_cur_iter TEXT;
   BEGIN
     v_biz_pricing := v_config.config_snapshot -> 'messaging_pricing';
-    IF v_biz_pricing IS NOT NULL AND jsonb_typeof(v_biz_pricing) = 'object' THEN
-      FOR v_cur_iter IN SELECT key FROM jsonb_each(v_biz_pricing)
-      LOOP
-        IF v_biz_pricing -> v_cur_iter -> 'rates' -> v_biz.country_code IS NOT NULL THEN
-          v_biz_currency := v_cur_iter;
-          v_biz_match_count := v_biz_match_count + 1;
-        END IF;
-      END LOOP;
-      -- If match_count != 1, reject with specific reason
-      IF v_biz_match_count <> 1 THEN
-        RETURN jsonb_build_object('activated', false, 'reason', 'currency_resolution_failed',
-          'match_count', v_biz_match_count, 'country_code', v_biz.country_code);
+    IF v_biz_pricing IS NULL OR jsonb_typeof(v_biz_pricing) <> 'object' THEN
+      RETURN jsonb_build_object('activated', false, 'reason', 'currency_config_missing');
+    END IF;
+    FOR v_cur_iter IN SELECT key FROM jsonb_each(v_biz_pricing)
+    LOOP
+      IF v_biz_pricing -> v_cur_iter -> 'rates' -> v_biz.country_code IS NOT NULL THEN
+        v_biz_currency := v_cur_iter;
+        v_biz_match_count := v_biz_match_count + 1;
       END IF;
-      IF UPPER(v_payment.currency) <> UPPER(v_biz_currency) THEN
-        RETURN jsonb_build_object('activated', false, 'reason', 'currency_mismatch',
-          'payment_currency', v_payment.currency,
-          'business_currency', v_biz_currency);
-      END IF;
+    END LOOP;
+    -- If match_count != 1, reject with specific reason
+    IF v_biz_match_count <> 1 THEN
+      RETURN jsonb_build_object('activated', false, 'reason', 'currency_resolution_failed',
+        'match_count', v_biz_match_count, 'country_code', v_biz.country_code);
+    END IF;
+    IF UPPER(v_payment.currency) <> UPPER(v_biz_currency) THEN
+      RETURN jsonb_build_object('activated', false, 'reason', 'currency_mismatch',
+        'payment_currency', v_payment.currency,
+        'business_currency', v_biz_currency);
     END IF;
   END;
 
@@ -430,8 +434,11 @@ BEGIN
   v_source_ref := 'sub:' || v_payment.subscription_id::TEXT || ':' || COALESCE(v_payment.provider_reference, v_sub.current_period_start::TEXT);
 
   -- 7. Atomically activate: subscription status + business tier (entitlement)
+  -- Synchronize subscription period from payment evidence (source of truth)
   UPDATE public.subscriptions
   SET status = 'active',
+      current_period_start = v_payment.period_start,
+      current_period_end = v_payment.period_end,
       updated_at = clock_timestamp()
   WHERE id = v_payment.subscription_id;
 
@@ -549,10 +556,10 @@ BEGIN
 
   -- 11. source_ref already built in step 5 using provider_reference
 
-  -- 12. Grant subscription_included allowance
+  -- 12. Grant subscription_included allowance (expiry from payment evidence, not subscription table)
   v_grant_result := public.grant_messaging_allowance(
     v_sub.business_id, 'subscription_included', v_amount, v_currency,
-    v_source_ref, v_config.id, v_sub.current_period_end
+    v_source_ref, v_config.id, v_payment.period_end
   );
 
   -- Clear any pending alert
@@ -606,6 +613,7 @@ DECLARE
   v_grant_result JSONB;
   v_existing_grant RECORD;
   v_payment_ref TEXT;
+  v_payment_period_end TIMESTAMPTZ;
 BEGIN
   -- 1. Lock business
   SELECT id, subscription_tier, whatsapp_channel_id, wa_method, status,
@@ -636,12 +644,18 @@ BEGIN
   END IF;
 
   -- 4. Check if allowance already exists for this period
-  -- Use provider_reference for stable source_ref (consistent with activate_paid_subscription)
-  SELECT provider_reference INTO v_payment_ref
+  -- Use exact period-matched payment evidence (consistent with activate_paid_subscription)
+  SELECT provider_reference, period_end INTO v_payment_ref, v_payment_period_end
     FROM public.subscription_payments
-    WHERE subscription_id = v_sub.id AND status = 'success'
-    ORDER BY created_at DESC LIMIT 1;
-  v_source_ref := 'sub:' || v_sub.id::TEXT || ':' || COALESCE(v_payment_ref, v_sub.current_period_start::TEXT);
+    WHERE subscription_id = v_sub.id
+      AND status = 'success'
+      AND period_start = v_sub.current_period_start;
+
+  IF v_payment_ref IS NULL THEN
+    RETURN jsonb_build_object('reconciled', false, 'reason', 'no_period_evidence');
+  END IF;
+
+  v_source_ref := 'sub:' || v_sub.id::TEXT || ':' || v_payment_ref;
   SELECT id INTO v_existing_grant
     FROM public.messaging_allowances
     WHERE business_id = p_business_id
@@ -677,14 +691,15 @@ BEGIN
   DECLARE
     v_payment_evidence RECORD;
   BEGIN
-    SELECT id, config_version_id, provider_reference
+    SELECT id, config_version_id, provider_reference, period_end
     INTO v_payment_evidence
     FROM public.subscription_payments
-    WHERE subscription_id = v_sub.id AND status = 'success'
-    ORDER BY created_at DESC LIMIT 1;
+    WHERE subscription_id = v_sub.id
+      AND status = 'success'
+      AND period_start = v_sub.current_period_start;
 
     IF v_payment_evidence.id IS NULL THEN
-      RETURN jsonb_build_object('reconciled', false, 'reason', 'no_payment_evidence');
+      RETURN jsonb_build_object('reconciled', false, 'reason', 'no_period_evidence');
     END IF;
 
     IF v_payment_evidence.config_version_id IS NULL THEN
@@ -747,10 +762,10 @@ BEGIN
   END IF;
   v_amount := v_amount_raw::INTEGER;
 
-  -- 7. Grant
+  -- 7. Grant (expiry from payment evidence, not subscription table)
   v_grant_result := public.grant_messaging_allowance(
     p_business_id, 'subscription_included', v_amount, v_currency,
-    v_source_ref, v_config.id, v_sub.current_period_end
+    v_source_ref, v_config.id, v_payment_period_end
   );
 
   -- Clear pending alert

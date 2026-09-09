@@ -165,7 +165,7 @@ export async function POST(request: NextRequest) {
           const plan = metadata.plan;
           if (!plan || !['growth', 'business'].includes(plan)) {
             logger.error('[STRIPE-WEBHOOK] Missing or invalid plan in checkout metadata', { plan, businessId: metadata.business_id });
-            // Fail closed — do not activate without valid plan
+            return NextResponse.json({ error: 'Missing or invalid plan in checkout metadata' }, { status: 500 });
           } else {
             // For subscription mode: store Stripe subscription + customer IDs
             const sessionSubscriptionId = data.subscription as string;
@@ -251,9 +251,11 @@ export async function POST(request: NextRequest) {
                 return NextResponse.json({ error: 'Activation RPC failed' }, { status: 500 });
               } else if (activationResult && activationResult.activated !== true) {
                 logger.error('[STRIPE-WEBHOOK] Paid activation rejected:', activationResult);
+                return NextResponse.json({ error: 'Paid activation rejected' }, { status: 500 });
               }
             } else {
               logger.error('[STRIPE-WEBHOOK] No subscription record found for business', { businessId: metadata.business_id });
+              return NextResponse.json({ error: 'No subscription record found for business' }, { status: 500 });
             }
           }
         }
@@ -454,7 +456,8 @@ export async function POST(request: NextRequest) {
             logger.error('[STRIPE-WEBHOOK] Paid activation RPC error:', renewActivateErr);
             return NextResponse.json({ error: 'Activation RPC failed' }, { status: 500 });
           } else if (renewActivation && renewActivation.activated !== true) {
-            console.warn('[STRIPE-WEBHOOK] Paid activation rejected:', renewActivation);
+            logger.error('[STRIPE-WEBHOOK] Paid renewal activation rejected:', renewActivation);
+            return NextResponse.json({ error: 'Paid renewal activation rejected' }, { status: 500 });
           }
 
           // Send renewal receipt email to business owner

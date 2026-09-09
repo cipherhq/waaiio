@@ -303,14 +303,9 @@ export async function POST(request: NextRequest) {
             logger.error('[PAYSTACK-WEBHOOK] Paid activation RPC error:', activateErr);
             return NextResponse.json({ error: 'Activation RPC failed' }, { status: 500 });
           } else if (activationResult && activationResult.activated !== true) {
-            console.warn('[PAYSTACK-WEBHOOK] Paid activation rejected:', activationResult);
+            logger.error('[PAYSTACK-WEBHOOK] Paid renewal activation rejected:', activationResult);
+            return NextResponse.json({ error: 'Paid renewal activation rejected' }, { status: 500 });
           }
-
-          // Ensure business stays active
-          await supabase
-            .from('businesses')
-            .update({ status: 'active' })
-            .eq('id', platformSub.business_id);
 
           // Send renewal receipt email to business owner
           try {
