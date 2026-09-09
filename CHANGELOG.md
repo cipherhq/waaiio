@@ -3,6 +3,17 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-09-08 — #263 Subscribe Now (CTO re-review 3-blocker fix: type/postauth/proofs)
+
+### What changed
+- **Blocker 1 (metadata.type binding):** Onboarding requires `metadata.type === 'whatsapp_subscription'` for Stripe and Paystack. Duplicate recovery now gateway-bound.
+- **Blocker 2 (Post-auth write fail-closed):** Provider identity update failure returns 500 (retryable) instead of silent success.
+- **Blocker 3 (Non-vacuous proofs):** Subscription lookup error injected on actual first call; zero-mutation test asserts subscriptionUpdatePayloads; retry tests assert recovered evidence ID in RPC args.
+
+### Files changed
+- `app/api/onboarding/verify/route.ts` — metadata.type validation + gateway-bound recovery + post-auth fail-closed
+- `lib/__tests__/subscribe-now-handler.test.ts` — 7 new/rewritten proofs with real assertions
+
 ## 2026-09-08 — #263 Subscribe Now (CTO re-review 3-blocker fix: mutation/lookup/retry)
 
 ### What changed
