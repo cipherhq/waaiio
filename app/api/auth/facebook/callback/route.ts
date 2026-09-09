@@ -207,8 +207,8 @@ export async function POST(request: NextRequest) {
       quality_rating: qualityRating,
       messaging_limit: messagingLimit,
       connection_method: connection_method || 'transfer',
-      connection_status: 'active',
-      is_active: true,
+      connection_status: 'provisioning',
+      is_active: false,
     };
 
     let channelId: string;
@@ -308,7 +308,24 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 3. Auto-set WhatsApp Business Profile (non-fatal)
+    // 3. Positive READY transition — phone registered + WABA subscribed
+    await service
+      .from('whatsapp_channels')
+      .update({
+        connection_status: 'active',
+        is_active: true,
+        metadata: {},
+      })
+      .eq('id', channelId);
+
+    // 3a. Reconcile paid allowance if subscription is active
+    try {
+      await service.rpc('reconcile_paid_allowance', { p_business_id: business_id });
+    } catch (reconcileErr) {
+      logger.warn('[FB-CALLBACK] Paid allowance reconciliation (non-fatal):', reconcileErr);
+    }
+
+    // 4. Auto-set WhatsApp Business Profile (non-fatal)
     try {
       await cloudService.setBusinessProfile({
         about: `${business.name} — powered by Waaiio`,

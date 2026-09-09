@@ -160,27 +160,147 @@ export async function POST(request: NextRequest) {
           });
         }
 
-        // Handle subscription payments (business tier upgrades)
+        // Handle subscription payments (business tier upgrades) via activation RPC
+        // Fail closed: if type is whatsapp_subscription, business_id MUST be present
+        if (metadata?.type === 'whatsapp_subscription') {
+          if (!metadata.business_id) {
+            logger.error('[STRIPE-WEBHOOK] whatsapp_subscription checkout missing business_id', { sessionId });
+            return NextResponse.json({ error: 'whatsapp_subscription checkout missing business_id' }, { status: 500 });
+          }
+        }
         if (metadata?.type === 'whatsapp_subscription' && metadata.business_id) {
-          await supabase
-            .from('businesses')
-            .update({
-              subscription_tier: metadata.plan || 'growth',
-              status: 'active',
-            })
-            .eq('id', metadata.business_id);
+          const plan = metadata.plan;
+          if (!plan || !['growth', 'business'].includes(plan)) {
+            logger.error('[STRIPE-WEBHOOK] Missing or invalid plan in checkout metadata', { plan, businessId: metadata.business_id });
+            return NextResponse.json({ error: 'Missing or invalid plan in checkout metadata' }, { status: 500 });
+          }
+          // Validate billing_interval from checkout metadata — #263 requires exactly 'month'
+          const checkoutInterval = metadata.billing_interval;
+          if (checkoutInterval !== 'month') {
+            logger.error('[STRIPE-WEBHOOK] Missing or invalid billing_interval in checkout metadata', { billing_interval: checkoutInterval, businessId: metadata.business_id });
+            return NextResponse.json({ error: 'Missing or invalid billing interval in checkout metadata' }, { status: 500 });
+          }
+          {
+            // For subscription mode: store Stripe subscription + customer IDs
+            const sessionSubscriptionId = data.subscription as string;
+            const sessionCustomerId = data.customer as string;
+            if (sessionSubscriptionId) {
+              await supabase
+                .from('subscriptions')
+                .update({
+                  stripe_subscription_id: sessionSubscriptionId,
+                  stripe_customer_id: sessionCustomerId || null,
+                })
+                .eq('business_id', metadata.business_id);
+            }
 
-          // For subscription mode: store Stripe subscription + customer IDs
-          const sessionSubscriptionId = data.subscription as string;
-          const sessionCustomerId = data.customer as string;
-          if (sessionSubscriptionId) {
-            await supabase
+            // Use provider payment timestamp (data.created is Unix seconds)
+            const checkoutCreated = data.created as number | undefined;
+            if (!checkoutCreated) {
+              logger.error('[STRIPE-WEBHOOK] Missing checkout session created timestamp', { sessionId });
+              return NextResponse.json({ error: 'Missing provider timestamp' }, { status: 500 });
+            }
+            const providerTimestamp = new Date(checkoutCreated * 1000).toISOString();
+
+            // Resolve effective config version at provider payment time
+            const { data: configVersion } = await supabase
+              .from('platform_config_versions')
+              .select('id')
+              .lte('effective_from', providerTimestamp)
+              .order('effective_from', { ascending: false })
+              .limit(1)
+              .single();
+
+            if (!configVersion) {
+              logger.error('[STRIPE-WEBHOOK] No config version found at provider payment time', { providerTimestamp });
+              return NextResponse.json({ error: 'Config version not found' }, { status: 500 });
+            }
+
+            // Get subscription for this business
+            const { data: subRecord } = await supabase
               .from('subscriptions')
-              .update({
-                stripe_subscription_id: sessionSubscriptionId,
-                stripe_customer_id: sessionCustomerId || null,
-              })
-              .eq('business_id', metadata.business_id);
+              .select('id')
+              .eq('business_id', metadata.business_id)
+              .single();
+
+            if (subRecord) {
+              // NO pre-activation subscription status mutation — the DB authority
+              // (activate_paid_subscription RPC) performs the financial-state transition
+              // atomically after all validation succeeds. Pre-mutation would leave the
+              // subscription in 'pending' if config/evidence/RPC fails.
+
+              // Persist payment evidence BEFORE calling RPC
+              const stripeAmountSmallest = (data.amount_total as number) || 0;
+              const stripeCurrency = ((data.currency as string) || '').toUpperCase();
+              const { data: paymentEvidence, error: evidenceInsertErr } = await supabase.from('subscription_payments').insert({
+                business_id: metadata.business_id,
+                subscription_id: subRecord.id,
+                amount: stripeAmountSmallest,
+                currency: stripeCurrency,
+                gateway: 'stripe',
+                gateway_reference: sessionId,
+                provider_reference: sessionId,
+                plan,
+                action: 'activation',
+                status: 'success',
+                config_version_id: configVersion.id,
+                period_start: providerTimestamp,
+                period_end: (() => { const d = new Date(checkoutCreated * 1000); d.setDate(d.getDate() + 30); return d.toISOString(); })(),
+                billing_interval: 'month',
+              }).select('id').single();
+
+              let evidenceId: string | null = null;
+              if (evidenceInsertErr) {
+                // Retry recovery: if duplicate (unique constraint), look up the exact
+                // existing evidence by subscription + provider_reference + gateway
+                const isDuplicate = evidenceInsertErr.code === '23505'
+                  || evidenceInsertErr.message?.includes('duplicate')
+                  || evidenceInsertErr.message?.includes('unique');
+                if (isDuplicate) {
+                  const { data: existing } = await supabase
+                    .from('subscription_payments')
+                    .select('id')
+                    .eq('subscription_id', subRecord.id)
+                    .eq('provider_reference', sessionId)
+                    .eq('gateway', 'stripe')
+                    .eq('status', 'success')
+                    .single();
+                  if (existing) {
+                    evidenceId = existing.id;
+                  } else {
+                    // Different payment for same period — fail closed
+                    logger.error('[STRIPE-WEBHOOK] Duplicate evidence but exact lookup failed:', evidenceInsertErr);
+                    return NextResponse.json({ error: 'Conflicting payment evidence for period' }, { status: 500 });
+                  }
+                } else {
+                  logger.error('[STRIPE-WEBHOOK] Payment evidence insert failed:', evidenceInsertErr);
+                  return NextResponse.json({ error: 'Payment evidence insert failed' }, { status: 500 });
+                }
+              } else if (!paymentEvidence) {
+                logger.error('[STRIPE-WEBHOOK] Payment evidence insert returned no data');
+                return NextResponse.json({ error: 'Payment evidence insert failed' }, { status: 500 });
+              } else {
+                evidenceId = paymentEvidence.id;
+              }
+
+              // Atomic activation via RPC — bound to exact payment evidence
+              const { data: activationResult, error: activationError } = await supabase.rpc(
+                'activate_paid_subscription',
+                { p_payment_id: evidenceId },
+              );
+
+              if (activationError) {
+                logger.error('[STRIPE-WEBHOOK] Paid activation RPC error:', activationError);
+                return NextResponse.json({ error: 'Activation RPC failed' }, { status: 500 });
+              }
+              if (!activationResult || activationResult.activated !== true) {
+                logger.error('[STRIPE-WEBHOOK] Paid activation not confirmed:', activationResult);
+                return NextResponse.json({ error: 'Paid activation not confirmed' }, { status: 500 });
+              }
+            } else {
+              logger.error('[STRIPE-WEBHOOK] No subscription record found for business', { businessId: metadata.business_id });
+              return NextResponse.json({ error: 'No subscription record found for business' }, { status: 500 });
+            }
           }
         }
 
@@ -307,34 +427,118 @@ export async function POST(request: NextRequest) {
         }
 
         if (platformSub) {
-          // ── Platform subscription renewal (unchanged behavior) ──
-          const periodStart = data.period_start
-            ? new Date((data.period_start as number) * 1000).toISOString()
-            : new Date().toISOString();
-          const periodEnd = data.period_end
-            ? new Date((data.period_end as number) * 1000).toISOString()
-            : (() => { const d = new Date(); d.setDate(d.getDate() + 30); return d.toISOString(); })();
+          // ── Platform subscription renewal ──
+          // Require provider-derived period timestamps — no wall-clock fallbacks
+          const invoicePeriodStartUnix = data.period_start as number | undefined;
+          const invoicePeriodEndUnix = data.period_end as number | undefined;
+          if (!invoicePeriodStartUnix || !invoicePeriodEndUnix) {
+            logger.error('[STRIPE-WEBHOOK] Missing invoice period_start or period_end', { invoiceId: data.id });
+            return NextResponse.json({ error: 'Missing provider period timestamps' }, { status: 500 });
+          }
+          const periodStart = new Date(invoicePeriodStartUnix * 1000).toISOString();
+          const periodEnd = new Date(invoicePeriodEndUnix * 1000).toISOString();
 
-          await supabase
-            .from('subscriptions')
-            .update({
-              status: 'active',
-              current_period_start: periodStart,
-              current_period_end: periodEnd,
-            })
-            .eq('id', platformSub.id);
+          // NO pre-write of periods to subscriptions — activate_paid_subscription RPC
+          // performs authoritative period synchronization after all validation succeeds.
 
-          await supabase.from('subscription_payments').insert({
+          // Use provider payment timestamp (invoice created or period_start)
+          const invoiceCreated = data.created as number | undefined;
+          const renewalProviderTs = invoiceCreated || invoicePeriodStartUnix;
+          if (!renewalProviderTs) {
+            logger.error('[STRIPE-WEBHOOK] Missing invoice provider timestamp', { invoiceId: data.id });
+            return NextResponse.json({ error: 'Missing provider timestamp' }, { status: 500 });
+          }
+          const renewalProviderTimestamp = new Date(renewalProviderTs * 1000).toISOString();
+
+          // Resolve effective config version at provider payment time
+          const { data: renewalConfig } = await supabase
+            .from('platform_config_versions')
+            .select('id')
+            .lte('effective_from', renewalProviderTimestamp)
+            .order('effective_from', { ascending: false })
+            .limit(1)
+            .single();
+
+          if (!renewalConfig) {
+            logger.error('[STRIPE-WEBHOOK] No config version found at renewal time', { renewalProviderTimestamp });
+            return NextResponse.json({ error: 'Config version not found' }, { status: 500 });
+          }
+
+          const renewalProviderRef = (data.payment_intent as string) || (data.id as string);
+
+          // Require currency from provider — no defaults
+          const renewalCurrency = (data.currency as string)?.toUpperCase();
+          if (!renewalCurrency) {
+            logger.error('[STRIPE-WEBHOOK] Missing invoice currency', { invoiceId: data.id });
+            return NextResponse.json({ error: 'Missing provider currency' }, { status: 500 });
+          }
+          const renewalAmount = data.amount_paid as number;
+          if (renewalAmount == null || renewalAmount <= 0) {
+            logger.error('[STRIPE-WEBHOOK] Missing or invalid invoice amount', { invoiceId: data.id, amount: renewalAmount });
+            return NextResponse.json({ error: 'Missing or invalid provider amount' }, { status: 500 });
+          }
+
+          // Persist payment evidence BEFORE calling activation RPC
+          const { data: renewalEvidence, error: renewalEvidenceErr } = await supabase.from('subscription_payments').insert({
             business_id: platformSub.business_id,
             subscription_id: platformSub.id,
-            amount: (data.amount_paid as number) || 0,
-            currency: ((data.currency as string)?.toUpperCase()) || 'USD',
+            amount: renewalAmount,
+            currency: renewalCurrency,
             gateway: 'stripe',
-            gateway_reference: (data.payment_intent as string) || (data.id as string),
+            gateway_reference: renewalProviderRef,
+            provider_reference: renewalProviderRef,
             plan: platformSub.plan,
             action: 'renewal',
             status: 'success',
-          });
+            config_version_id: renewalConfig.id,
+            billing_interval: 'month',
+            period_start: periodStart,
+            period_end: periodEnd,
+          }).select('id').single();
+
+          let renewalEvidenceId: string | null = null;
+          if (renewalEvidenceErr) {
+            const isDuplicate = renewalEvidenceErr.code === '23505'
+              || renewalEvidenceErr.message?.includes('duplicate')
+              || renewalEvidenceErr.message?.includes('unique');
+            if (isDuplicate) {
+              const { data: existing } = await supabase
+                .from('subscription_payments')
+                .select('id')
+                .eq('subscription_id', platformSub.id)
+                .eq('provider_reference', renewalProviderRef)
+                .eq('gateway', 'stripe')
+                .eq('status', 'success')
+                .single();
+              if (existing) {
+                renewalEvidenceId = existing.id;
+              } else {
+                logger.error('[STRIPE-WEBHOOK] Duplicate renewal evidence but exact lookup failed:', renewalEvidenceErr);
+                return NextResponse.json({ error: 'Conflicting renewal evidence for period' }, { status: 500 });
+              }
+            } else {
+              logger.error('[STRIPE-WEBHOOK] Renewal evidence insert failed:', renewalEvidenceErr);
+              return NextResponse.json({ error: 'Renewal evidence insert failed' }, { status: 500 });
+            }
+          } else if (!renewalEvidence) {
+            logger.error('[STRIPE-WEBHOOK] Renewal evidence insert returned no data');
+            return NextResponse.json({ error: 'Renewal evidence insert failed' }, { status: 500 });
+          } else {
+            renewalEvidenceId = renewalEvidence.id;
+          }
+
+          // Atomic activation: restores tier if downgraded + grants period allowance
+          const { data: renewActivation, error: renewActivateErr } = await supabase.rpc(
+            'activate_paid_subscription', { p_payment_id: renewalEvidenceId },
+          );
+          if (renewActivateErr) {
+            logger.error('[STRIPE-WEBHOOK] Paid activation RPC error:', renewActivateErr);
+            return NextResponse.json({ error: 'Activation RPC failed' }, { status: 500 });
+          }
+          if (!renewActivation || renewActivation.activated !== true) {
+            logger.error('[STRIPE-WEBHOOK] Paid renewal activation not confirmed:', renewActivation);
+            return NextResponse.json({ error: 'Paid renewal activation not confirmed' }, { status: 500 });
+          }
 
           // Send renewal receipt email to business owner
           try {
@@ -350,11 +554,9 @@ export async function POST(request: NextRequest) {
                 .eq('id', biz.owner_id)
                 .single();
               if (profile?.email) {
-                const periodEndDate = data.period_end
-                  ? new Date((data.period_end as number) * 1000)
-                  : (() => { const d = new Date(); d.setDate(d.getDate() + 30); return d; })();
-                const amountDisplay = String((data.amount_paid as number) || 0);
-                const curr = ((data.currency as string)?.toUpperCase()) || 'USD';
+                const periodEndDate = new Date(invoicePeriodEndUnix * 1000);
+                const amountDisplay = String(renewalAmount);
+                const curr = renewalCurrency;
                 const { subject, html } = subscriptionRenewalReceiptEmail(
                   biz.name,
                   platformSub.plan,

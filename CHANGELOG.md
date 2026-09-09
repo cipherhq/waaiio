@@ -3,6 +3,115 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-09-08 — #263 Subscribe Now (CTO re-review 3-blocker fix: type/postauth/proofs)
+
+### What changed
+- **Blocker 1 (metadata.type binding):** Onboarding requires `metadata.type === 'whatsapp_subscription'` for Stripe and Paystack. Duplicate recovery now gateway-bound.
+- **Blocker 2 (Post-auth write fail-closed):** Provider identity update failure returns 500 (retryable) instead of silent success.
+- **Blocker 3 (Non-vacuous proofs):** Subscription lookup error injected on actual first call; zero-mutation test asserts subscriptionUpdatePayloads; retry tests assert recovered evidence ID in RPC args.
+
+### Files changed
+- `app/api/onboarding/verify/route.ts` — metadata.type validation + gateway-bound recovery + post-auth fail-closed
+- `lib/__tests__/subscribe-now-handler.test.ts` — 7 new/rewritten proofs with real assertions
+
+## 2026-09-08 — #263 Subscribe Now (CTO re-review 3-blocker fix: mutation/lookup/retry)
+
+### What changed
+- **Blocker 1 (Zero pre-authority mutation):** Active subscriptions get ZERO row mutation before evidence/RPC. Plan must match (replay only). Provider IDs updated only post-activation.
+- **Blocker 2 (Fail-closed lookup):** Subscription lookup errors (non-PGRST116) now return 500 instead of falling through to pending upsert.
+- **Blocker 3 (Retry recovery):** Stripe checkout, Stripe renewal, and Paystack renewal now recover from duplicate evidence inserts by looking up exact existing evidence (subscription_id + provider_reference + gateway + status). Different-payment period conflicts still fail closed.
+
+### Files changed
+- `app/api/onboarding/verify/route.ts` — zero mutation + fail-closed lookup + post-auth provider update
+- `app/api/payments/stripe-webhook/route.ts` — duplicate evidence retry recovery (checkout + renewal)
+- `app/api/payments/webhook/route.ts` — duplicate evidence retry recovery (Paystack renewal)
+- `lib/__tests__/subscribe-now-handler.test.ts` — 5 new proofs (lookup error, zero mutation, 3× retry recovery)
+
+### What could break
+- Onboarding plan changes on active subscriptions now rejected (use dashboard for upgrade/downgrade)
+- Subscription lookup DB errors now return 500 (previously fell through silently)
+
+## 2026-09-08 — #263 Subscribe Now (CTO re-review 2-blocker fix)
+
+### What changed
+- **Blocker 1 (Missing business_id fail-closed):** Stripe `whatsapp_subscription` checkout with missing `business_id` now returns 500 instead of being silently acknowledged. Restructured guard: if `type=whatsapp_subscription`, require `business_id`; else fail closed.
+- **Blocker 2 (Idempotent paid replay):** Onboarding no longer demotes active subscriptions to `pending` before evidence/RPC. Active subscriptions get non-status field updates only. Same-payment duplicate evidence (unique constraint) triggers lookup of existing evidence for idempotent RPC replay.
+
+### Files changed
+- `app/api/payments/stripe-webhook/route.ts` — fail-closed missing business_id
+- `app/api/onboarding/verify/route.ts` — no active→pending demotion + duplicate evidence replay
+- `lib/__tests__/subscribe-now-handler.test.ts` — 3 new handler proofs (missing business_id, replay idempotency, non-duplicate failure)
+- `lib/__tests__/subscribe-now-db.test.ts` — 2 new real-PG proofs (tests 41-42: replay idempotency + duplicate evidence)
+
+### What could break
+- Stripe webhooks with `type=whatsapp_subscription` but no `business_id` now return 500 (previously silently processed)
+- Paid onboarding re-verification of active subscriptions no longer overwrites status
+
+## 2026-09-08 — #263 Subscribe Now (CTO re-review 3-blocker fix)
+
+### What changed
+- **Blocker 1 (Null-safe activation):** All four paid activation paths (Stripe checkout/renewal, Paystack renewal, onboarding) now require `activationResult?.activated === true`. `{data:null,error:null}` from RPC no longer falls through as success.
+- **Blocker 2 (Business + billing-interval binding):** Added `billing_interval` column to `subscription_payments`. All evidence inserts persist `billing_interval='month'`. RPC validates `payment.business_id` matches subscription business. RPC validates `payment.billing_interval` is exactly `'month'`. Stripe checkout validates `metadata.billing_interval`. Annual billing rejected at evidence level.
+- **Blocker 3 (No pre-activation mutation):** Removed `subscriptions.update({status:'pending'})` from Stripe checkout before config/evidence/RPC. The RPC performs financial-state transition atomically after all validation.
+
+### Files changed
+- `supabase/migrations/375_subscribe_now.sql` — billing_interval column + RPC business/interval validation
+- `app/api/payments/stripe-webhook/route.ts` — null-safe + interval validation + no pre-mutation
+- `app/api/payments/webhook/route.ts` — null-safe + billing_interval persist
+- `app/api/onboarding/verify/route.ts` — null-safe + billing_interval persist
+- `lib/__tests__/subscribe-now-db.test.ts` — tests 38-40 (business mismatch, interval)
+- `lib/__tests__/subscribe-now-handler.test.ts` — 7 new handler proofs (null result, interval, pre-mutation)
+
+### What could break
+- Any RPC call returning `{data:null,error:null}` now treated as activation failure (previously silent success)
+- Payment evidence without `billing_interval='month'` now rejected by RPC
+- Payment evidence with mismatched `business_id` now rejected by RPC
+
+## 2026-09-08 — #263 Subscribe Now (CTO re-review 5-blocker fix)
+
+### What changed
+- **Blocker 1 (No pre-authority period writes):** Stripe and Paystack renewal handlers no longer write subscription periods before validation/activation. `activate_paid_subscription` RPC performs authoritative period sync atomically after all validation succeeds.
+- **Blocker 2 (No defaults/NULL gaps):** `billing_interval` must be exactly `'month'` (reject missing/unknown/year). Provider currency required (no `|| 'USD'`/`|| 'NGN'` defaults). Provider timestamps/periods required (no `new Date()` fallbacks). RPC requires non-null `amount`, `currency`, `provider_reference`, `period_start`, `period_end`. Source_ref no longer uses `COALESCE` — requires `provider_reference`.
+- **Blocker 3 (Exact evidence reconciliation):** Added unique partial index `uq_subscription_payment_period_success` on `subscription_payments(subscription_id, period_start) WHERE status='success'`. Guarantees `reconcile_paid_allowance` period lookup is canonical and unambiguous under concurrent/reordered renewals.
+- **Blocker 4 (Non-superuser pattern):** `prevent_tier_tampering()` replaced `rolsuper` check with `to_regprocedure + pg_proc.proowner` lookup against `activate_paid_subscription(uuid)` owner — the #288 pattern. Migration self-check verifies `rolsuper` is absent. Structural regression tests added.
+- **Blocker 5 (Handler failure-path proofs):** 30 new handler tests proving Stripe checkout/renewal, Paystack renewal, and onboarding return non-success on rejected activation, RPC errors, missing currency/interval/period/evidence, and evidence insert failures. 10 new DB adversarial tests for missing canonical fields, duplicate period evidence, and plan mismatch.
+
+### Files changed
+- `supabase/migrations/375_subscribe_now.sql` — prevent_tier_tampering + canonical field checks + unique index
+- `app/api/onboarding/verify/route.ts` — fail-closed billing_interval/currency/timestamp
+- `app/api/payments/stripe-webhook/route.ts` — no pre-write + fail-closed currency/period/amount
+- `app/api/payments/webhook/route.ts` — no pre-write + fail-closed currency/amount/timestamp
+- `lib/__tests__/subscribe-now-db.test.ts` — 10 new adversarial authority tests (28-37)
+- `lib/__tests__/subscribe-now-handler.test.ts` — 30 new handler failure-path tests (NEW)
+
+### What could break
+- Stripe/Paystack renewals missing `period_start`, `period_end`, or `currency` now return 500 (previously defaulted)
+- Onboarding without `billing_interval: 'month'` in metadata now returns 400 (previously defaulted)
+- Paystack onboarding without `paid_at`/`created_at` now returns 500 (previously continued)
+- Duplicate successful payments for same subscription+period now rejected by unique index
+
+## 2026-09-06 — #263 Subscribe Now (5-blocker CTO fix)
+
+### What changed
+- **Blocker 1 (RPC bound to exact payment evidence):** `activate_paid_subscription(p_subscription_id UUID)` renamed to `activate_paid_subscription(p_payment_id UUID)`. The RPC now locks the exact `subscription_payments` row first, derives the subscription from it, validates the locked payment status, and builds `source_ref` from the locked payment's `provider_reference`. Added plan mismatch validation (payment.plan must match subscription.plan) and annual billing rejection (`billing_interval = 'year'`). Currency resolution now fails with specific reason when `match_count != 1`.
+- **Blocker 2 (Route errors fail closed):** `onboarding/verify/route.ts` now checks subscription upsert error (500), config version null (500), and payment evidence insert error (500). `stripe-webhook/route.ts` returns 500 on evidence insert failure and activation RPC failure for both `checkout.session.completed` and `invoice.paid`. `webhook/route.ts` (Paystack) returns 500 on evidence insert or activation failure.
+- **Blocker 3 (Config at provider payment time):** All three route files now resolve config using the provider's payment timestamp instead of `new Date()`. Stripe checkout uses `data.created`, Stripe invoice uses `data.created || data.period_start`, Paystack uses `data.paid_at || data.created_at`. Missing provider timestamp fails closed with 500.
+- **Blocker 4 (Complete commercial binding):** `activate_paid_subscription` now validates `v_payment.payment_plan` matches `v_sub.plan`, rejects `billing_interval = 'year'` with `annual_not_supported`, and rejects `match_count != 1` on currency resolution with specific `currency_resolution_failed` reason.
+- **Blocker 5 (Callers/tests updated):** All callers of `activate_paid_subscription` pass `p_payment_id` instead of `p_subscription_id`. Test helper returns `paymentId`, all 27 test invocations updated. Bridge webhook integration test mock updated with `paid_at` fixture and `activate_paid_subscription` RPC success path.
+
+### Files changed
+- `supabase/migrations/375_subscribe_now.sql` — RPC signature + validation logic
+- `app/api/onboarding/verify/route.ts` — fail-closed checks + provider timestamp
+- `app/api/payments/stripe-webhook/route.ts` — fail-closed + provider timestamp
+- `app/api/payments/webhook/route.ts` — fail-closed + provider timestamp
+- `lib/__tests__/subscribe-now-db.test.ts` — all tests updated for `p_payment_id`
+- `lib/__tests__/bridge-webhook-integration.test.ts` — mock updated for new RPC
+
+### What could break
+- Any external caller of `activate_paid_subscription` must now pass a payment ID, not a subscription ID
+- Routes now return 500 where they previously continued silently on config/evidence failures — retries may increase but data integrity is guaranteed
+- Annual billing interval is now explicitly rejected — must be re-enabled when annual pricing is supported
+
 ## 2026-09-05 — #262 Trial Lifecycle
 
 ### What changed

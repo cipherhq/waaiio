@@ -27,6 +27,9 @@ export async function POST(request: NextRequest) {
     let stripeCustomerId: string | undefined;
     let stripePeriodStart: string | undefined;
     let stripePeriodEnd: string | undefined;
+    let providerPeriodStart: string | undefined;
+    let providerPeriodEnd: string | undefined;
+    let providerPaymentTimestamp: string | undefined;
 
     // ── Stripe verification (checkout session IDs start with cs_) ──
     if (reference && reference.startsWith('cs_')) {
@@ -63,12 +66,56 @@ export async function POST(request: NextRequest) {
       }
 
       const metadata = session.metadata as Record<string, string> | undefined;
-      businessId = metadata?.business_id || bodyBusinessId;
-      plan = metadata?.plan || bodyPlan;
-      billingInterval = (metadata?.billing_interval || bodyBillingInterval || 'month') === 'year' ? 'year' : 'month';
-      amountSmallest = session.amount_total || 0;
+      // Require canonical subscription purpose type from server-created metadata
+      if (metadata?.type !== 'whatsapp_subscription') {
+        return NextResponse.json(
+          { message: `Invalid or missing subscription type "${metadata?.type}" in payment metadata` },
+          { status: 400 },
+        );
+      }
+      businessId = metadata?.business_id;
+      plan = metadata?.plan;
+      if (!businessId || !plan) {
+        return NextResponse.json(
+          { message: 'Payment metadata missing business_id or plan. Contact support.' },
+          { status: 400 },
+        );
+      }
+      if (plan !== 'growth' && plan !== 'business') {
+        return NextResponse.json(
+          { message: `Invalid paid plan "${plan}" in payment metadata` },
+          { status: 400 },
+        );
+      }
+      // Only monthly billing supported for #263 — require exactly 'month'
+      const stripeInterval = metadata?.billing_interval;
+      if (stripeInterval !== 'month') {
+        return NextResponse.json(
+          { message: stripeInterval === 'year' ? 'Annual billing is not yet supported' : `Invalid or missing billing interval "${stripeInterval}"` },
+          { status: 400 },
+        );
+      }
+      billingInterval = 'month';
+      amountSmallest = session.amount_total;
+      if (!amountSmallest || amountSmallest <= 0) {
+        return NextResponse.json(
+          { message: 'Invalid payment amount' },
+          { status: 400 },
+        );
+      }
       gateway = 'stripe';
-      currency = (session.currency || 'usd').toUpperCase();
+      if (!session.currency) {
+        return NextResponse.json(
+          { message: 'Payment currency not provided by payment gateway' },
+          { status: 500 },
+        );
+      }
+      currency = (session.currency as string).toUpperCase();
+
+      // Capture provider payment timestamp (Stripe session.created is Unix seconds)
+      if (session.created) {
+        providerPaymentTimestamp = new Date(session.created * 1000).toISOString();
+      }
 
       // Extract Stripe subscription and customer IDs (subscription mode)
       stripeSubscriptionId = session.subscription as string | undefined;
@@ -92,8 +139,16 @@ export async function POST(request: NextRequest) {
             stripePeriodEnd = new Date(subData.current_period_end * 1000).toISOString();
           }
         } catch {
-          // Non-fatal: fall back to default 30-day period
+          // Non-fatal: derive from provider payment timestamp below
         }
+      }
+
+      // If Stripe subscription period not available, derive from checkout session.created
+      if (!stripePeriodStart && session.created) {
+        stripePeriodStart = new Date(session.created * 1000).toISOString();
+        const endDate = new Date(session.created * 1000);
+        endDate.setDate(endDate.getDate() + 30);
+        stripePeriodEnd = endDate.toISOString();
       }
     }
     // ── Paystack verification ──
@@ -121,12 +176,67 @@ export async function POST(request: NextRequest) {
       }
 
       const metadata = data.data.metadata as Record<string, string> | undefined;
-      businessId = metadata?.business_id || bodyBusinessId;
-      plan = metadata?.plan || bodyPlan;
-      billingInterval = (metadata?.billing_interval || bodyBillingInterval || 'month') === 'year' ? 'year' : 'month';
-      amountSmallest = data.data.amount || 0;
+      // Require canonical subscription purpose type from server-created metadata
+      if (metadata?.type !== 'whatsapp_subscription') {
+        return NextResponse.json(
+          { message: `Invalid or missing subscription type "${metadata?.type}" in payment metadata` },
+          { status: 400 },
+        );
+      }
+      businessId = metadata?.business_id;
+      plan = metadata?.plan;
+      if (!businessId || !plan) {
+        return NextResponse.json(
+          { message: 'Payment metadata missing business_id or plan. Contact support.' },
+          { status: 400 },
+        );
+      }
+      if (plan !== 'growth' && plan !== 'business') {
+        return NextResponse.json(
+          { message: `Invalid paid plan "${plan}" in payment metadata` },
+          { status: 400 },
+        );
+      }
+      // Only monthly billing supported for #263 — require exactly 'month'
+      const paystackInterval = metadata?.billing_interval;
+      if (paystackInterval !== 'month') {
+        return NextResponse.json(
+          { message: paystackInterval === 'year' ? 'Annual billing is not yet supported' : `Invalid or missing billing interval "${paystackInterval}"` },
+          { status: 400 },
+        );
+      }
+      billingInterval = 'month';
+      amountSmallest = data.data.amount;
+      if (!amountSmallest || amountSmallest <= 0) {
+        return NextResponse.json(
+          { message: 'Invalid payment amount' },
+          { status: 400 },
+        );
+      }
       gateway = 'paystack';
-      currency = (data.data.currency || 'NGN').toUpperCase();
+      if (!data.data.currency) {
+        return NextResponse.json(
+          { message: 'Payment currency not provided by payment gateway' },
+          { status: 500 },
+        );
+      }
+      currency = (data.data.currency as string).toUpperCase();
+
+      // Capture provider payment timestamp and derive period — fail closed if missing
+      const paidAt = data.data.paid_at as string | undefined;
+      const createdAt = data.data.created_at as string | undefined;
+      const paystackTs = paidAt || createdAt;
+      if (!paystackTs) {
+        return NextResponse.json(
+          { message: 'Payment timestamp not available from provider' },
+          { status: 500 },
+        );
+      }
+      providerPaymentTimestamp = new Date(paystackTs).toISOString();
+      providerPeriodStart = new Date(paystackTs).toISOString();
+      const endDate = new Date(paystackTs);
+      endDate.setDate(endDate.getDate() + 30);
+      providerPeriodEnd = endDate.toISOString();
     }
     // ── Free tier (no payment required) ──
     else if (bodyBusinessId && bodyPlan) {
@@ -204,53 +314,174 @@ export async function POST(request: NextRequest) {
 
     // ── Setup verified. Proceed with subscription/activation. ──
 
-    const tier = PRICING_TIERS[plan as SubscriptionTier] || PRICING_TIERS.growth;
+    // For paid plans, plan was already validated as 'growth' | 'business' above
+    // For free plans, plan is 'free' — validated by the free-tier branch
+    const tier = PRICING_TIERS[plan as SubscriptionTier];
+    if (!tier) {
+      return NextResponse.json(
+        { message: `Unknown plan "${plan}"` },
+        { status: 400 },
+      );
+    }
+    // Annual billing rejected above; monthly is the only valid interval for #263
     const periodEnd = new Date();
-    periodEnd.setDate(periodEnd.getDate() + (billingInterval === 'year' ? 365 : 30));
+    periodEnd.setDate(periodEnd.getDate() + 30);
 
     // Determine action: upgrade vs renewal
     const previousTier = ownerCheck.subscription_tier || 'free';
     const action = previousTier === plan ? 'renewal' : 'upgrade';
 
-    // Upsert: one subscription per business (prevent duplicates on re-onboarding)
-    const upsertData: Record<string, unknown> = {
-      business_id: businessId,
-      plan,
-      status: 'active',
-      amount: amountSmallest ? Math.round(amountSmallest / 100) : (tier.price ?? 0),
-      gateway: gateway !== 'none' ? gateway : null,
-      currency,
-      current_period_start: stripePeriodStart || new Date().toISOString(),
-      current_period_end: stripePeriodEnd || periodEnd.toISOString(),
-    };
+    // ── Subscription: one per business ──
+    // For paid plans: check if subscription already exists.
+    //   If active: ZERO pre-authority mutation. Require incoming plan matches
+    //   existing plan (replay only, no upgrade/downgrade in #263). Reuse the
+    //   existing subscription ID. Provider identity updates happen only after
+    //   successful activation.
+    //   If not active / no subscription: upsert as 'pending'.
+    // For free plans: upsert as 'active'.
 
-    // Only clear the codes that don't apply to the current gateway
-    if (gateway === 'stripe') {
-      upsertData.paystack_subscription_code = null;
-      upsertData.paystack_customer_code = null;
-      upsertData.stripe_subscription_id = stripeSubscriptionId || null;
-      upsertData.stripe_customer_id = stripeCustomerId || null;
-      upsertData.billing_interval = billingInterval;
-    } else if (gateway === 'paystack') {
-      upsertData.stripe_subscription_id = null;
-      upsertData.stripe_customer_id = null;
-      upsertData.billing_interval = billingInterval;
+    let subscription: { id: string } | null = null;
+    let existingSubIsActive = false;
+
+    if (plan !== 'free') {
+      // Fail closed: subscription lookup errors must not be ignored
+      const { data: existingSub, error: existingSubError } = await service
+        .from('subscriptions')
+        .select('id, status, plan')
+        .eq('business_id', businessId)
+        .single();
+
+      if (existingSubError && existingSubError.code !== 'PGRST116') {
+        // PGRST116 = "no rows" (expected for first onboarding). Any other error is a real failure.
+        console.warn('[ONBOARDING-VERIFY] Subscription lookup error:', existingSubError);
+        return NextResponse.json(
+          { message: 'Subscription verification failed. Please try again.', recoverable: true },
+          { status: 500 },
+        );
+      }
+
+      if (existingSub && existingSub.status === 'active') {
+        // Active subscription exists — ZERO pre-authority mutation.
+        // Require plan match (replay/renewal only, no upgrade/downgrade in #263).
+        if (existingSub.plan !== plan) {
+          return NextResponse.json(
+            { message: `Plan change from ${existingSub.plan} to ${plan} is not supported during re-verification. Contact support.`, recoverable: false },
+            { status: 400 },
+          );
+        }
+        // Reuse existing subscription ID. No row mutation before evidence/RPC.
+        subscription = { id: existingSub.id };
+        existingSubIsActive = true;
+      } else {
+        // No subscription or not active — upsert as pending
+        const upsertData: Record<string, unknown> = {
+          business_id: businessId,
+          plan,
+          status: 'pending',
+          amount: amountSmallest ? Math.round(amountSmallest / 100) : (tier.price ?? 0),
+          gateway: gateway !== 'none' ? gateway : null,
+          currency,
+          current_period_start: stripePeriodStart || providerPeriodStart || providerPaymentTimestamp || undefined,
+          current_period_end: stripePeriodEnd || providerPeriodEnd || undefined,
+        };
+        if (gateway === 'stripe') {
+          upsertData.paystack_subscription_code = null;
+          upsertData.paystack_customer_code = null;
+          upsertData.stripe_subscription_id = stripeSubscriptionId || null;
+          upsertData.stripe_customer_id = stripeCustomerId || null;
+          upsertData.billing_interval = billingInterval;
+        } else if (gateway === 'paystack') {
+          upsertData.stripe_subscription_id = null;
+          upsertData.stripe_customer_id = null;
+          upsertData.billing_interval = billingInterval;
+        }
+        const { data: upsertResult, error: subscriptionUpsertError } = await service.from('subscriptions').upsert(
+          upsertData,
+          { onConflict: 'business_id' },
+        ).select('id').single();
+
+        if (subscriptionUpsertError) {
+          console.warn('[ONBOARDING-VERIFY] Subscription upsert error:', subscriptionUpsertError);
+          return NextResponse.json(
+            { message: 'Subscription creation failed. Please try again.', recoverable: true },
+            { status: 500 },
+          );
+        }
+        subscription = upsertResult;
+      }
     } else {
-      // Free tier: clear both
-      upsertData.paystack_subscription_code = null;
-      upsertData.paystack_customer_code = null;
-      upsertData.stripe_subscription_id = null;
-      upsertData.stripe_customer_id = null;
+      // Free tier: upsert as active, clear gateway codes
+      const upsertData: Record<string, unknown> = {
+        business_id: businessId,
+        plan,
+        status: 'active',
+        amount: tier.price ?? 0,
+        gateway: null,
+        currency,
+        current_period_start: new Date().toISOString(),
+        current_period_end: periodEnd.toISOString(),
+        paystack_subscription_code: null,
+        paystack_customer_code: null,
+        stripe_subscription_id: null,
+        stripe_customer_id: null,
+      };
+
+      const { data: upsertResult, error: subscriptionUpsertError } = await service.from('subscriptions').upsert(
+        upsertData,
+        { onConflict: 'business_id' },
+      ).select('id').single();
+
+      if (subscriptionUpsertError) {
+        console.warn('[ONBOARDING-VERIFY] Subscription upsert error:', subscriptionUpsertError);
+        return NextResponse.json(
+          { message: 'Subscription creation failed. Please try again.', recoverable: true },
+          { status: 500 },
+        );
+      }
+      subscription = upsertResult;
     }
 
-    const { data: subscription } = await service.from('subscriptions').upsert(
-      upsertData,
-      { onConflict: 'business_id' },
-    ).select('id').single();
-
     // Record subscription payment (only for paid plans)
+    let paymentEvidenceId: string | null = null;
     if (plan !== 'free' && gateway !== 'none') {
-      await service.from('subscription_payments').insert({
+      // Fail closed: provider payment timestamp is mandatory
+      if (!providerPaymentTimestamp) {
+        console.warn('[ONBOARDING-VERIFY] No provider payment timestamp available');
+        return NextResponse.json(
+          { message: 'Payment timestamp verification failed. Please contact support.', recoverable: true },
+          { status: 500 },
+        );
+      }
+
+      // Resolve effective config version at provider payment time (not wall-clock)
+      const { data: configVersion } = await service
+        .from('platform_config_versions')
+        .select('id')
+        .lte('effective_from', providerPaymentTimestamp)
+        .order('effective_from', { ascending: false })
+        .limit(1)
+        .single();
+
+      if (!configVersion) {
+        console.warn('[ONBOARDING-VERIFY] No config version found at provider payment time:', providerPaymentTimestamp);
+        return NextResponse.json(
+          { message: 'Platform configuration not available. Please contact support.', recoverable: true },
+          { status: 500 },
+        );
+      }
+
+      // Derive period from provider evidence — never from wall-clock
+      const computedPeriodStart = stripePeriodStart || providerPeriodStart;
+      const computedPeriodEnd = stripePeriodEnd || providerPeriodEnd;
+      if (!computedPeriodStart || !computedPeriodEnd) {
+        console.warn('[ONBOARDING-VERIFY] Cannot derive period from provider evidence');
+        return NextResponse.json(
+          { message: 'Payment period verification failed. Please contact support.', recoverable: true },
+          { status: 500 },
+        );
+      }
+
+      const { data: paymentEvidence, error: paymentInsertError } = await service.from('subscription_payments').insert({
         business_id: businessId,
         subscription_id: subscription?.id || null,
         amount: amountSmallest,
@@ -260,28 +491,112 @@ export async function POST(request: NextRequest) {
         plan,
         action,
         status: 'success',
-      });
+        config_version_id: configVersion.id,
+        provider_reference: reference,
+        period_start: computedPeriodStart,
+        period_end: computedPeriodEnd,
+        billing_interval: billingInterval,
+      }).select('id').single();
+
+      if (paymentInsertError) {
+        // Same-payment replay: if insert fails due to unique constraint
+        // (uq_subscription_payment_period_success), look up the existing evidence
+        // and use it for idempotent activation via the RPC's idempotency path.
+        const isDuplicate = paymentInsertError.code === '23505'
+          || paymentInsertError.message?.includes('duplicate')
+          || paymentInsertError.message?.includes('unique');
+
+        if (isDuplicate && subscription?.id) {
+          const { data: existingEvidence } = await service
+            .from('subscription_payments')
+            .select('id')
+            .eq('subscription_id', subscription.id)
+            .eq('provider_reference', reference)
+            .eq('gateway', gateway)
+            .eq('status', 'success')
+            .single();
+
+          if (existingEvidence) {
+            paymentEvidenceId = existingEvidence.id;
+          } else {
+            console.warn('[ONBOARDING-VERIFY] Duplicate evidence but lookup failed:', paymentInsertError);
+            return NextResponse.json(
+              { message: 'Payment recording failed. Please contact support.', recoverable: true },
+              { status: 500 },
+            );
+          }
+        } else {
+          console.warn('[ONBOARDING-VERIFY] Payment evidence insert error:', paymentInsertError);
+          return NextResponse.json(
+            { message: 'Payment recording failed. Please contact support.', recoverable: true },
+            { status: 500 },
+          );
+        }
+      } else {
+        paymentEvidenceId = paymentEvidence?.id || null;
+      }
     }
 
-    const { error: bizUpdateError } = await service
-      .from('businesses')
-      .update({
-        status: 'active',
-        subscription_tier: plan,
-        // End trial when upgrading to a paid plan — they're now a paying customer
-        ...(plan !== 'free' ? { trial_ends_at: new Date().toISOString() } : {}),
-      })
-      .eq('id', businessId);
+    if (plan !== 'free' && subscription?.id && paymentEvidenceId) {
+      // Paid path: atomic activation via RPC — sets subscription active + business tier + allowance
+      const { data: activationResult, error: activationError } = await service.rpc(
+        'activate_paid_subscription',
+        { p_payment_id: paymentEvidenceId },
+      );
 
-    // Attempt trial activation for free-tier businesses (atomic: grant + clock together)
-    // Only invoke if the prerequisite business update succeeded — the DB authority
-    // checks status='active' for shared channel eligibility.
-    // Non-fatal: if activation fails (e.g., no channel yet), the deferred cron will retry.
-    if (plan === 'free' && !bizUpdateError) {
-      try {
-        await service.rpc('activate_trial_if_eligible', { p_business_id: businessId });
-      } catch (trialErr) {
-        console.warn('[ONBOARDING-VERIFY] Trial activation failed (non-fatal):', trialErr);
+      if (activationError) {
+        console.warn('[ONBOARDING-VERIFY] Paid activation RPC error:', activationError);
+        return NextResponse.json(
+          { message: 'Subscription activation failed. Please contact support.', recoverable: true },
+          { status: 500 },
+        );
+      }
+
+      if (!activationResult || activationResult.activated !== true) {
+        console.warn('[ONBOARDING-VERIFY] Paid activation not confirmed:', activationResult);
+        return NextResponse.json(
+          { message: `Subscription activation rejected: ${activationResult?.reason || 'null_result'}`, recoverable: true },
+          { status: 400 },
+        );
+      }
+
+      // Post-authority provider identity update (only after successful activation)
+      // For active-subscription replay, this is the only point where provider IDs change.
+      if (existingSubIsActive && subscription?.id) {
+        const postAuthUpdate: Record<string, unknown> = {};
+        if (gateway === 'stripe') {
+          if (stripeSubscriptionId) postAuthUpdate.stripe_subscription_id = stripeSubscriptionId;
+          if (stripeCustomerId) postAuthUpdate.stripe_customer_id = stripeCustomerId;
+        }
+        if (Object.keys(postAuthUpdate).length > 0) {
+          const { error: postAuthErr } = await service.from('subscriptions').update(postAuthUpdate).eq('id', subscription.id);
+          if (postAuthErr) {
+            // Fail retryable: exact-evidence/RPC replay is idempotent, so retry converges.
+            // If this write fails silently, Stripe renewal correlation can break.
+            console.warn('[ONBOARDING-VERIFY] Post-activation provider update failed:', postAuthErr);
+            return NextResponse.json(
+              { message: 'Provider identity update failed. Please retry verification.', recoverable: true },
+              { status: 500 },
+            );
+          }
+        }
+      }
+    } else if (plan === 'free') {
+      // Free path: set status + tier directly, then attempt trial activation
+      const { error: bizUpdateError } = await service
+        .from('businesses')
+        .update({
+          status: 'active',
+          subscription_tier: plan,
+        })
+        .eq('id', businessId);
+
+      if (!bizUpdateError) {
+        try {
+          await service.rpc('activate_trial_if_eligible', { p_business_id: businessId });
+        } catch (trialErr) {
+          console.warn('[ONBOARDING-VERIFY] Trial activation failed (non-fatal):', trialErr);
+        }
       }
     }
 
