@@ -3,6 +3,26 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-09-08 — #263 Subscribe Now (CTO re-review 3-blocker fix)
+
+### What changed
+- **Blocker 1 (Null-safe activation):** All four paid activation paths (Stripe checkout/renewal, Paystack renewal, onboarding) now require `activationResult?.activated === true`. `{data:null,error:null}` from RPC no longer falls through as success.
+- **Blocker 2 (Business + billing-interval binding):** Added `billing_interval` column to `subscription_payments`. All evidence inserts persist `billing_interval='month'`. RPC validates `payment.business_id` matches subscription business. RPC validates `payment.billing_interval` is exactly `'month'`. Stripe checkout validates `metadata.billing_interval`. Annual billing rejected at evidence level.
+- **Blocker 3 (No pre-activation mutation):** Removed `subscriptions.update({status:'pending'})` from Stripe checkout before config/evidence/RPC. The RPC performs financial-state transition atomically after all validation.
+
+### Files changed
+- `supabase/migrations/375_subscribe_now.sql` — billing_interval column + RPC business/interval validation
+- `app/api/payments/stripe-webhook/route.ts` — null-safe + interval validation + no pre-mutation
+- `app/api/payments/webhook/route.ts` — null-safe + billing_interval persist
+- `app/api/onboarding/verify/route.ts` — null-safe + billing_interval persist
+- `lib/__tests__/subscribe-now-db.test.ts` — tests 38-40 (business mismatch, interval)
+- `lib/__tests__/subscribe-now-handler.test.ts` — 7 new handler proofs (null result, interval, pre-mutation)
+
+### What could break
+- Any RPC call returning `{data:null,error:null}` now treated as activation failure (previously silent success)
+- Payment evidence without `billing_interval='month'` now rejected by RPC
+- Payment evidence with mismatched `business_id` now rejected by RPC
+
 ## 2026-09-08 — #263 Subscribe Now (CTO re-review 5-blocker fix)
 
 ### What changed
