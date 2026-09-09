@@ -440,6 +440,17 @@ export async function initializePayment(
               ...(opts.orderId && { order_id: opts.orderId }),
               ...(isByo && { byo: true, byo_business_id: byoBusinessId }),
               ...(connectAccountId && { connect: true, connect_account_id: connectAccountId }),
+              // #264: Immutable non-secret request basis for exact provider replay on absence
+              _v1_init_params: {
+                email: opts.userEmail || opts.phone,
+                amount_minor: gateway.name === 'paystack' || gateway.name === 'flutterwave'
+                  ? Math.round(opts.amount * 100) : opts.amount,
+                currency: currencyCode,
+                callback_url: `${process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com'}/payment-success?ref=${opts.referenceCode}`,
+                gateway: gateway.name,
+                ...(subaccountCode && { subaccount: subaccountCode }),
+                ...(platformFeeAmount != null && { platform_fee_amount: platformFeeAmount }),
+              },
             },
           }).select('id').single();
 

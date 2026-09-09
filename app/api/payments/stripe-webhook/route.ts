@@ -113,6 +113,12 @@ export async function POST(request: NextRequest) {
           }
         }
 
+        // #264: v1-identifiable paid event that cannot be correlated → retryable 500
+        if (!payment && metadata?.reference_code) {
+          logger.error('[STRIPE-WEBHOOK] V1-identifiable checkout paid but no canonical row found', { sessionId, referenceCode: metadata.reference_code });
+          return NextResponse.json({ error: 'V1 paid event unresolved' }, { status: 500 });
+        }
+
         // Allow new-authority success payments through for Stage 2/3 resume
         const needsReconciliation = payment && (
           payment.status !== 'success'

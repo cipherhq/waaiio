@@ -239,7 +239,14 @@ export async function POST(request: NextRequest) {
         }
       }
 
-      if (!payment) return NextResponse.json({ received: true });
+      // #264: v1-identifiable paid Capture unresolved → retryable 500
+      if (!payment) {
+        if (orderId && referenceId) {
+          // Had a Waaiio reference from the Order but couldn't find/repair the row
+          return NextResponse.json({ error: 'V1 paid event unresolved' }, { status: 500 });
+        }
+        return NextResponse.json({ received: true });
+      }
       // Skip only if fully finalized (not just provider-paid)
       if (payment.status === 'success' && (payment.payment_authority_version !== 1 || payment.finalization_completed_at)) {
         return NextResponse.json({ received: true });

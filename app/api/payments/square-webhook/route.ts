@@ -120,7 +120,14 @@ export async function POST(request: NextRequest) {
         }
       }
 
-      if (!matchedPayment) return NextResponse.json({ received: true });
+      // #264: v1-identifiable paid event unresolved → retryable 500
+      if (!matchedPayment) {
+        const paymentNote = (payment as Record<string, unknown>).note as string | undefined;
+        if (paymentNote && paymentStatus === 'COMPLETED') {
+          return NextResponse.json({ error: 'V1 paid event unresolved' }, { status: 500 });
+        }
+        return NextResponse.json({ received: true });
+      }
 
       const sqNeedsReconciliation = matchedPayment.status !== 'success'
         || (matchedPayment.payment_authority_version != null && !matchedPayment.finalization_completed_at);
