@@ -3,6 +3,23 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-09-08 — #263 Subscribe Now (CTO re-review 3-blocker fix: mutation/lookup/retry)
+
+### What changed
+- **Blocker 1 (Zero pre-authority mutation):** Active subscriptions get ZERO row mutation before evidence/RPC. Plan must match (replay only). Provider IDs updated only post-activation.
+- **Blocker 2 (Fail-closed lookup):** Subscription lookup errors (non-PGRST116) now return 500 instead of falling through to pending upsert.
+- **Blocker 3 (Retry recovery):** Stripe checkout, Stripe renewal, and Paystack renewal now recover from duplicate evidence inserts by looking up exact existing evidence (subscription_id + provider_reference + gateway + status). Different-payment period conflicts still fail closed.
+
+### Files changed
+- `app/api/onboarding/verify/route.ts` — zero mutation + fail-closed lookup + post-auth provider update
+- `app/api/payments/stripe-webhook/route.ts` — duplicate evidence retry recovery (checkout + renewal)
+- `app/api/payments/webhook/route.ts` — duplicate evidence retry recovery (Paystack renewal)
+- `lib/__tests__/subscribe-now-handler.test.ts` — 5 new proofs (lookup error, zero mutation, 3× retry recovery)
+
+### What could break
+- Onboarding plan changes on active subscriptions now rejected (use dashboard for upgrade/downgrade)
+- Subscription lookup DB errors now return 500 (previously fell through silently)
+
 ## 2026-09-08 — #263 Subscribe Now (CTO re-review 2-blocker fix)
 
 ### What changed
