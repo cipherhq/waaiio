@@ -317,46 +317,47 @@ export async function POST(request: NextRequest) {
     const previousTier = ownerCheck.subscription_tier || 'free';
     const action = previousTier === plan ? 'renewal' : 'upgrade';
 
-    // ── Subscription upsert: one subscription per business ──
-    // For paid plans: check if subscription already exists and is active.
-    // If active, reuse it — do NOT demote to 'pending' (same-payment replay
-    // must be idempotent and leave active state unchanged).
-    // For new/pending subscriptions: create as 'pending' — activation RPC will
-    // atomically set 'active' + tier after exact-evidence validation.
-    // For free plans: persist as 'active' (no paid activation needed).
+    // ── Subscription: one per business ──
+    // For paid plans: check if subscription already exists.
+    //   If active: ZERO pre-authority mutation. Require incoming plan matches
+    //   existing plan (replay only, no upgrade/downgrade in #263). Reuse the
+    //   existing subscription ID. Provider identity updates happen only after
+    //   successful activation.
+    //   If not active / no subscription: upsert as 'pending'.
+    // For free plans: upsert as 'active'.
 
     let subscription: { id: string } | null = null;
+    let existingSubIsActive = false;
 
     if (plan !== 'free') {
-      // Check for existing subscription first
-      const { data: existingSub } = await service
+      // Fail closed: subscription lookup errors must not be ignored
+      const { data: existingSub, error: existingSubError } = await service
         .from('subscriptions')
-        .select('id, status')
+        .select('id, status, plan')
         .eq('business_id', businessId)
         .single();
 
+      if (existingSubError && existingSubError.code !== 'PGRST116') {
+        // PGRST116 = "no rows" (expected for first onboarding). Any other error is a real failure.
+        console.warn('[ONBOARDING-VERIFY] Subscription lookup error:', existingSubError);
+        return NextResponse.json(
+          { message: 'Subscription verification failed. Please try again.', recoverable: true },
+          { status: 500 },
+        );
+      }
+
       if (existingSub && existingSub.status === 'active') {
-        // Active subscription exists — do NOT demote to pending.
-        // Update non-status fields only (gateway codes, billing metadata).
-        const updateData: Record<string, unknown> = {
-          plan,
-          amount: amountSmallest ? Math.round(amountSmallest / 100) : (tier.price ?? 0),
-          gateway: gateway !== 'none' ? gateway : null,
-          currency,
-        };
-        if (gateway === 'stripe') {
-          updateData.paystack_subscription_code = null;
-          updateData.paystack_customer_code = null;
-          updateData.stripe_subscription_id = stripeSubscriptionId || null;
-          updateData.stripe_customer_id = stripeCustomerId || null;
-          updateData.billing_interval = billingInterval;
-        } else if (gateway === 'paystack') {
-          updateData.stripe_subscription_id = null;
-          updateData.stripe_customer_id = null;
-          updateData.billing_interval = billingInterval;
+        // Active subscription exists — ZERO pre-authority mutation.
+        // Require plan match (replay/renewal only, no upgrade/downgrade in #263).
+        if (existingSub.plan !== plan) {
+          return NextResponse.json(
+            { message: `Plan change from ${existingSub.plan} to ${plan} is not supported during re-verification. Contact support.`, recoverable: false },
+            { status: 400 },
+          );
         }
-        await service.from('subscriptions').update(updateData).eq('id', existingSub.id);
+        // Reuse existing subscription ID. No row mutation before evidence/RPC.
         subscription = { id: existingSub.id };
+        existingSubIsActive = true;
       } else {
         // No subscription or not active — upsert as pending
         const upsertData: Record<string, unknown> = {
@@ -542,6 +543,22 @@ export async function POST(request: NextRequest) {
           { message: `Subscription activation rejected: ${activationResult?.reason || 'null_result'}`, recoverable: true },
           { status: 400 },
         );
+      }
+
+      // Post-authority provider identity update (only after successful activation)
+      // For active-subscription replay, this is the only point where provider IDs change.
+      if (existingSubIsActive && subscription?.id) {
+        const postAuthUpdate: Record<string, unknown> = {};
+        if (gateway === 'stripe') {
+          if (stripeSubscriptionId) postAuthUpdate.stripe_subscription_id = stripeSubscriptionId;
+          if (stripeCustomerId) postAuthUpdate.stripe_customer_id = stripeCustomerId;
+        }
+        if (Object.keys(postAuthUpdate).length > 0) {
+          const { error: postAuthErr } = await service.from('subscriptions').update(postAuthUpdate).eq('id', subscription.id);
+          if (postAuthErr) {
+            console.warn('[ONBOARDING-VERIFY] Post-activation provider update error (non-fatal):', postAuthErr);
+          }
+        }
       }
     } else if (plan === 'free') {
       // Free path: set status + tier directly, then attempt trial activation

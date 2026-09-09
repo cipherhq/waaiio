@@ -249,15 +249,44 @@ export async function POST(request: NextRequest) {
                 billing_interval: 'month',
               }).select('id').single();
 
-              if (evidenceInsertErr || !paymentEvidence) {
-                logger.error('[STRIPE-WEBHOOK] Payment evidence insert failed:', evidenceInsertErr);
+              let evidenceId: string | null = null;
+              if (evidenceInsertErr) {
+                // Retry recovery: if duplicate (unique constraint), look up the exact
+                // existing evidence by subscription + provider_reference + gateway
+                const isDuplicate = evidenceInsertErr.code === '23505'
+                  || evidenceInsertErr.message?.includes('duplicate')
+                  || evidenceInsertErr.message?.includes('unique');
+                if (isDuplicate) {
+                  const { data: existing } = await supabase
+                    .from('subscription_payments')
+                    .select('id')
+                    .eq('subscription_id', subRecord.id)
+                    .eq('provider_reference', sessionId)
+                    .eq('gateway', 'stripe')
+                    .eq('status', 'success')
+                    .single();
+                  if (existing) {
+                    evidenceId = existing.id;
+                  } else {
+                    // Different payment for same period — fail closed
+                    logger.error('[STRIPE-WEBHOOK] Duplicate evidence but exact lookup failed:', evidenceInsertErr);
+                    return NextResponse.json({ error: 'Conflicting payment evidence for period' }, { status: 500 });
+                  }
+                } else {
+                  logger.error('[STRIPE-WEBHOOK] Payment evidence insert failed:', evidenceInsertErr);
+                  return NextResponse.json({ error: 'Payment evidence insert failed' }, { status: 500 });
+                }
+              } else if (!paymentEvidence) {
+                logger.error('[STRIPE-WEBHOOK] Payment evidence insert returned no data');
                 return NextResponse.json({ error: 'Payment evidence insert failed' }, { status: 500 });
+              } else {
+                evidenceId = paymentEvidence.id;
               }
 
               // Atomic activation via RPC — bound to exact payment evidence
               const { data: activationResult, error: activationError } = await supabase.rpc(
                 'activate_paid_subscription',
-                { p_payment_id: paymentEvidence.id },
+                { p_payment_id: evidenceId },
               );
 
               if (activationError) {
@@ -467,14 +496,40 @@ export async function POST(request: NextRequest) {
             period_end: periodEnd,
           }).select('id').single();
 
-          if (renewalEvidenceErr || !renewalEvidence) {
-            logger.error('[STRIPE-WEBHOOK] Renewal evidence insert failed:', renewalEvidenceErr);
+          let renewalEvidenceId: string | null = null;
+          if (renewalEvidenceErr) {
+            const isDuplicate = renewalEvidenceErr.code === '23505'
+              || renewalEvidenceErr.message?.includes('duplicate')
+              || renewalEvidenceErr.message?.includes('unique');
+            if (isDuplicate) {
+              const { data: existing } = await supabase
+                .from('subscription_payments')
+                .select('id')
+                .eq('subscription_id', platformSub.id)
+                .eq('provider_reference', renewalProviderRef)
+                .eq('gateway', 'stripe')
+                .eq('status', 'success')
+                .single();
+              if (existing) {
+                renewalEvidenceId = existing.id;
+              } else {
+                logger.error('[STRIPE-WEBHOOK] Duplicate renewal evidence but exact lookup failed:', renewalEvidenceErr);
+                return NextResponse.json({ error: 'Conflicting renewal evidence for period' }, { status: 500 });
+              }
+            } else {
+              logger.error('[STRIPE-WEBHOOK] Renewal evidence insert failed:', renewalEvidenceErr);
+              return NextResponse.json({ error: 'Renewal evidence insert failed' }, { status: 500 });
+            }
+          } else if (!renewalEvidence) {
+            logger.error('[STRIPE-WEBHOOK] Renewal evidence insert returned no data');
             return NextResponse.json({ error: 'Renewal evidence insert failed' }, { status: 500 });
+          } else {
+            renewalEvidenceId = renewalEvidence.id;
           }
 
           // Atomic activation: restores tier if downgraded + grants period allowance
           const { data: renewActivation, error: renewActivateErr } = await supabase.rpc(
-            'activate_paid_subscription', { p_payment_id: renewalEvidence.id },
+            'activate_paid_subscription', { p_payment_id: renewalEvidenceId },
           );
           if (renewActivateErr) {
             logger.error('[STRIPE-WEBHOOK] Paid activation RPC error:', renewActivateErr);

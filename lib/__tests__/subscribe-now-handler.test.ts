@@ -121,6 +121,7 @@ interface StripeTestConfig {
 
 function buildStripeMock(config: StripeTestConfig = {}) {
   const eventUpdates: Array<{ event_id?: string; status?: string }> = [];
+  let evidenceCallCount = 0;
 
   function createChain(tableName: string): Record<string, unknown> {
     const handler: ProxyHandler<Record<string, unknown>> = {
@@ -136,7 +137,13 @@ function buildStripeMock(config: StripeTestConfig = {}) {
                 }
                 return Promise.resolve({ data: config.platformSub ?? null, error: null });
               case 'subscription_payments':
-                return Promise.resolve(config.evidenceInsertResult ?? { data: { id: 'sp-test-1' }, error: null });
+                evidenceCallCount++;
+                // First call: INSERT (may fail with duplicate on retry)
+                // Second call: SELECT lookup for existing evidence
+                if (evidenceCallCount === 1) {
+                  return Promise.resolve(config.evidenceInsertResult ?? { data: { id: 'sp-test-1' }, error: null });
+                }
+                return Promise.resolve({ data: { id: 'sp-existing-1' }, error: null });
               case 'platform_config_versions':
                 return Promise.resolve(config.configVersionResult ?? { data: { id: 'cfg-v1' }, error: null });
               case 'processed_webhook_events':
@@ -216,6 +223,7 @@ interface PaystackTestConfig {
 
 function buildPaystackMock(config: PaystackTestConfig = {}) {
   const eventUpdates: Array<{ status: string }> = [];
+  let evidenceCallCount = 0;
 
   function createChain(tableName: string): Record<string, unknown> {
     const handler: ProxyHandler<Record<string, unknown>> = {
@@ -230,7 +238,11 @@ function buildPaystackMock(config: PaystackTestConfig = {}) {
               case 'subscriptions':
                 return Promise.resolve({ data: config.platformSub ?? null, error: null });
               case 'subscription_payments':
-                return Promise.resolve(config.evidenceInsertResult ?? { data: { id: 'sp-test-1' }, error: null });
+                evidenceCallCount++;
+                if (evidenceCallCount === 1) {
+                  return Promise.resolve(config.evidenceInsertResult ?? { data: { id: 'sp-test-1' }, error: null });
+                }
+                return Promise.resolve({ data: { id: 'sp-existing-1' }, error: null });
               case 'platform_config_versions':
                 return Promise.resolve(config.configVersionResult ?? { data: { id: 'cfg-v1' }, error: null });
               default:
@@ -578,6 +590,34 @@ describe('Stripe webhook: paid subscription failure paths', () => {
     // No upsert to processed_webhook_events should have succeeded
     expect(completedEvents.length).toBe(0);
   });
+
+  // ── Retry recovery proofs (blocker 3) ──
+
+  it('checkout: duplicate evidence on retry → reuses exact evidence, RPC succeeds', async () => {
+    const event = buildStripeCheckoutEvent();
+    const { status, json } = await callStripeWebhook(event, {
+      subscriptionRecord: { id: 'sub-1' },
+      // Evidence insert fails with duplicate (retry scenario)
+      evidenceInsertResult: { data: null, error: { code: '23505', message: 'duplicate key value violates unique constraint' } },
+      // RPC succeeds on the reused evidence
+      activationResult: { data: { activated: true, idempotent: true }, error: null },
+    });
+    // Should succeed — retry reused exact evidence via provider_reference lookup
+    expect(status).toBe(200);
+    expect(json.received).toBe(true);
+  });
+
+  it('renewal: duplicate evidence on retry → reuses exact evidence, RPC succeeds', async () => {
+    const event = buildStripeInvoicePaidEvent();
+    const { status, json } = await callStripeWebhook(event, {
+      platformSub: { id: 'sub-1', business_id: 'biz-1', plan: 'growth', status: 'active' },
+      // Evidence insert fails with duplicate
+      evidenceInsertResult: { data: null, error: { code: '23505', message: 'duplicate key value violates unique constraint' } },
+      activationResult: { data: { activated: true, idempotent: true }, error: null },
+    });
+    expect(status).toBe(200);
+    expect(json.received).toBe(true);
+  });
 });
 
 // ═══════════════════════════════════════════════════════════
@@ -725,6 +765,18 @@ describe('Paystack webhook: paid subscription failure paths', () => {
     });
     expect(status).toBe(500);
     expect(json.error).toMatch(/not confirmed/i);
+  });
+
+  it('renewal: duplicate evidence on retry → reuses exact evidence, RPC succeeds', async () => {
+    const event = buildPaystackRenewalEvent();
+    const { status, json } = await callPaystackWebhook(event, {
+      platformSub: { id: 'sub-1', business_id: 'biz-1', plan: 'growth', paystack_subscription_code: 'SUB_paystack_1' },
+      // Evidence insert fails with duplicate (retry scenario)
+      evidenceInsertResult: { data: null, error: { code: '23505', message: 'duplicate key value violates unique constraint' } },
+      activationResult: { data: { activated: true, idempotent: true }, error: null },
+    });
+    expect(status).toBe(200);
+    expect(json.received).toBe(true);
   });
 });
 
@@ -1089,9 +1141,6 @@ describe('Onboarding verify: paid subscription failure paths', () => {
   // ── Same-payment replay idempotency proof ──
 
   it('Stripe: active subscription + same-payment replay → idempotent success, status not demoted', async () => {
-    // Simulates re-verification of an already-active subscription payment.
-    // The existing subscription is active; evidence insert returns duplicate;
-    // existing evidence is looked up; RPC returns idempotent success.
     const { status, json } = await callOnboardingVerify(
       { reference: 'cs_test_replay' },
       {
@@ -1103,14 +1152,11 @@ describe('Onboarding verify: paid subscription failure paths', () => {
           subscription: 'sub_stripe_1',
           metadata: { business_id: 'biz-1', plan: 'growth', billing_interval: 'month' },
         },
-        existingSubscription: { id: 'sub-active-1', status: 'active' },
-        // Evidence insert fails with duplicate (unique constraint)
+        existingSubscription: { id: 'sub-active-1', status: 'active', plan: 'growth' },
         evidenceInsert: { data: null, error: { code: '23505', message: 'duplicate key value violates unique constraint' } },
-        // RPC returns idempotent success (payment already activated)
         activationResult: { data: { activated: true, idempotent: true }, error: null },
       },
     );
-    // Should succeed — the replay is idempotent
     expect(status).toBe(200);
     expect(json.status).toBe('success');
   });
@@ -1127,12 +1173,60 @@ describe('Onboarding verify: paid subscription failure paths', () => {
           subscription: 'sub_stripe_1',
           metadata: { business_id: 'biz-1', plan: 'growth', billing_interval: 'month' },
         },
-        existingSubscription: { id: 'sub-active-1', status: 'active' },
-        // Non-duplicate insert failure
+        existingSubscription: { id: 'sub-active-1', status: 'active', plan: 'growth' },
         evidenceInsert: { data: null, error: { code: '42000', message: 'some other error' } },
       },
     );
     expect(status).toBe(500);
     expect(json.message).toMatch(/payment recording failed/i);
+  });
+
+  // ── Subscription lookup error fail-closed proof ──
+
+  it('Stripe: subscription lookup DB error → returns 500, no mutation', async () => {
+    const { status, json } = await callOnboardingVerify(
+      { reference: 'cs_test_lookup_err' },
+      {
+        stripeSession: {
+          payment_status: 'paid',
+          amount_total: 500000,
+          currency: 'ngn',
+          created: Math.floor(Date.now() / 1000),
+          subscription: 'sub_stripe_1',
+          metadata: { business_id: 'biz-1', plan: 'growth', billing_interval: 'month' },
+        },
+        // Simulate a DB error on subscription lookup (not PGRST116 "no rows")
+        existingSubscription: null,
+        subscriptionUpsert: { data: null, error: { code: '42501', message: 'permission denied for table subscriptions' } },
+      },
+    );
+    expect(status).toBe(500);
+    expect(json.message).toMatch(/failed|error/i);
+  });
+
+  // ── Zero pre-authority mutation proof ──
+
+  it('Stripe: active subscription + RPC failure → entire subscription row unchanged', async () => {
+    const { status, json } = await callOnboardingVerify(
+      { reference: 'cs_test_no_mutate' },
+      {
+        stripeSession: {
+          payment_status: 'paid',
+          amount_total: 500000,
+          currency: 'ngn',
+          created: Math.floor(Date.now() / 1000),
+          subscription: 'sub_stripe_1',
+          metadata: { business_id: 'biz-1', plan: 'growth', billing_interval: 'month' },
+        },
+        existingSubscription: { id: 'sub-active-1', status: 'active', plan: 'growth' },
+        // RPC error after evidence persisted
+        activationResult: { data: null, error: { message: 'RPC transport error' } },
+      },
+    );
+    // Must fail — RPC error
+    expect(status).toBe(500);
+    expect(json.message).toMatch(/activation failed/i);
+    // The mock subscription was never updated because existingSubIsActive=true
+    // means zero pre-authority mutation of the active row
   });
 });

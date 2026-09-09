@@ -294,14 +294,40 @@ export async function POST(request: NextRequest) {
             period_end: periodEndIso,
           }).select('id').single();
 
-          if (renewalEvidenceErr || !renewalEvidence) {
-            logger.error('[PAYSTACK-WEBHOOK] Renewal evidence insert failed:', renewalEvidenceErr);
+          let renewalEvidenceId: string | null = null;
+          if (renewalEvidenceErr) {
+            const isDuplicate = renewalEvidenceErr.code === '23505'
+              || renewalEvidenceErr.message?.includes('duplicate')
+              || renewalEvidenceErr.message?.includes('unique');
+            if (isDuplicate) {
+              const { data: existing } = await supabase
+                .from('subscription_payments')
+                .select('id')
+                .eq('subscription_id', platformSub.id)
+                .eq('provider_reference', reference)
+                .eq('gateway', 'paystack')
+                .eq('status', 'success')
+                .single();
+              if (existing) {
+                renewalEvidenceId = existing.id;
+              } else {
+                logger.error('[PAYSTACK-WEBHOOK] Duplicate renewal evidence but exact lookup failed:', renewalEvidenceErr);
+                return NextResponse.json({ error: 'Conflicting renewal evidence for period' }, { status: 500 });
+              }
+            } else {
+              logger.error('[PAYSTACK-WEBHOOK] Renewal evidence insert failed:', renewalEvidenceErr);
+              return NextResponse.json({ error: 'Renewal evidence insert failed' }, { status: 500 });
+            }
+          } else if (!renewalEvidence) {
+            logger.error('[PAYSTACK-WEBHOOK] Renewal evidence insert returned no data');
             return NextResponse.json({ error: 'Renewal evidence insert failed' }, { status: 500 });
+          } else {
+            renewalEvidenceId = renewalEvidence.id;
           }
 
           // Atomic activation: restores tier if downgraded + grants period allowance
           const { data: activationResult, error: activateErr } = await supabase.rpc(
-            'activate_paid_subscription', { p_payment_id: renewalEvidence.id },
+            'activate_paid_subscription', { p_payment_id: renewalEvidenceId },
           );
           if (activateErr) {
             logger.error('[PAYSTACK-WEBHOOK] Paid activation RPC error:', activateErr);
