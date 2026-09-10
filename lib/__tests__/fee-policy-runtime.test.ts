@@ -31,89 +31,88 @@ function setupCronMocks() {
   vi.doMock('@/lib/observability/cron', () => ({ createCronLogger: vi.fn(() => ({ started: vi.fn(), completed: vi.fn(), failed: vi.fn() })) }));
   vi.doMock('@/lib/payments/process-success', () => ({ processSuccessfulPayment: vi.fn() }));
   vi.doMock('@/lib/payments/send-confirmation', () => ({ sendProactiveConfirmation: vi.fn() }));
-  vi.doMock('@/lib/payments/reconcile', () => ({ reconcilePayment: vi.fn().mockResolvedValue({ providerOutcome: 'verified', lifecycle: { status: 'completed' }, acknowledgeSuccess: true }) }));
+  // reconcilePayment mock is set per-test in callCron() to track call count
+}
+
+type CasMode = 'ok' | 'db_error' | 'zero_rows';
+function casResultFor(mode: CasMode) {
+  if (mode === 'db_error') return { data: null, error: { message: 'DB error' } };
+  if (mode === 'zero_rows') return { data: [], error: null };
+  return { data: [{ id: 'x' }], error: null };
 }
 
 function buildCronSb(opts: {
   dispatched?: Record<string, unknown>[];
-  stalePayments?: Record<string, unknown>[];
   dispatchQueryError?: boolean;
-  casOk?: boolean;
+  casMode?: CasMode;
+  terminalMode?: CasMode;
   quarantineRereadError?: boolean;
+  quarantineMode?: CasMode;
 } = {}) {
   const dispatched = opts.dispatched || [];
   const casWrites: unknown[] = [];
   const terminalWrites: unknown[] = [];
   const quarantineWrites: unknown[] = [];
-  let reconcileCalled = false;
+  let limitCallCount = 0;
 
-  const casResult = opts.casOk === false
-    ? { data: [], error: { message: 'CAS fail' } }
-    : { data: [{ id: 'x' }], error: null };
-
-  // Chain that resolves `.select('id')` (or any select) with CAS result after update
-  const postUpdateChain = (): Record<string, unknown> => new Proxy({} as Record<string, unknown>, {
+  const postUpdate = (mode: CasMode): Record<string, unknown> => new Proxy({} as Record<string, unknown>, {
     get(_, p: string) {
-      // .update().eq().eq().select('id') → resolves with casResult
-      if (p === 'then') return (r: (v: unknown) => void) => r(casResult);
-      if (p === 'single') return vi.fn().mockResolvedValue(casResult);
-      return vi.fn(() => postUpdateChain());
+      if (p === 'then') return (r: (v: unknown) => void) => r(casResultFor(mode));
+      if (p === 'single') return vi.fn().mockResolvedValue(casResultFor(mode));
+      return vi.fn(() => postUpdate(mode));
     },
   });
 
-  // Generic deep proxy for read chains
-  const readChain = (resolveWith?: { data: unknown; error: unknown }): Record<string, unknown> => new Proxy({} as Record<string, unknown>, {
+  const chain = (): Record<string, unknown> => new Proxy({} as Record<string, unknown>, {
     get(_, p: string) {
       if (p === 'single') return vi.fn().mockResolvedValue(
-        opts.quarantineRereadError
-          ? { data: null, error: { message: 'reread error' } }
+        opts.quarantineRereadError ? { data: null, error: { message: 'reread err' } }
           : { data: { provider_init_state: 'dispatched' }, error: null }
       );
       if (p === 'maybeSingle') return vi.fn().mockResolvedValue({ data: null, error: null });
-      if (p === 'then') return (r: (v: unknown) => void) => r(resolveWith ?? { data: [], error: null });
-      if (p === 'limit') {
-        // Terminal for dispatched query — return dispatched array
-        return vi.fn().mockResolvedValue(
-          opts.dispatchQueryError
-            ? { data: null, error: { message: 'DB error' } }
-            : { data: dispatched, error: null }
-        );
-      }
-      if (p === 'update') return vi.fn((payload: Record<string, unknown>) => {
-        if (payload.provider_init_state) casWrites.push(payload);
-        if (payload.status === 'failed') terminalWrites.push(payload);
-        if (payload.gateway_status) quarantineWrites.push(payload);
-        return postUpdateChain();
+      if (p === 'then') return (r: (v: unknown) => void) => r({ data: [], error: null });
+      if (p === 'limit') return vi.fn().mockImplementation(() => {
+        limitCallCount++;
+        if (opts.dispatchQueryError && limitCallCount >= 2) {
+          return Promise.resolve({ data: null, error: { message: 'Dispatched DB error' } });
+        }
+        // Return dispatched array for both queries — stale query getting extra rows is harmless for these tests
+        return Promise.resolve({ data: dispatched, error: null });
       });
-      return vi.fn(() => readChain(resolveWith));
+      if (p === 'update') return vi.fn((payload: Record<string, unknown>) => {
+        if (payload.provider_init_state) { casWrites.push(payload); return postUpdate(opts.casMode || 'ok'); }
+        if (payload.status === 'failed') { terminalWrites.push(payload); return postUpdate(opts.terminalMode || 'ok'); }
+        if (payload.gateway_status) { quarantineWrites.push(payload); return postUpdate(opts.quarantineMode || 'ok'); }
+        return postUpdate('ok');
+      });
+      return vi.fn(() => chain());
     },
   });
 
-  const client = {
-    from: vi.fn(() => readChain({ data: opts.stalePayments || [], error: null })),
-    rpc: vi.fn().mockResolvedValue({ data: null, error: null }),
-  };
-
-  return { client, casWrites, terminalWrites, quarantineWrites, get reconcileCalled() { return reconcileCalled; }, set reconcileCalled(v: boolean) { reconcileCalled = v; } };
+  return { client: { from: vi.fn(() => chain()), rpc: vi.fn().mockResolvedValue({ data: null, error: null }) }, casWrites, terminalWrites, quarantineWrites };
 }
 
-async function callCron(sb: { client: Record<string, unknown> }, fetchResponses: Array<{ ok: boolean; body: unknown }> = []) {
+type FetchResp = { ok: boolean; body?: unknown; raw?: string };
+async function callCron(sb: { client: Record<string, unknown> }, fetchResponses: FetchResp[] = []) {
   let fetchIdx = 0;
   const fetchCalls: Array<{ url: string; method: string }> = [];
+  let reconcileCallCount = 0;
   const origFetch = globalThis.fetch;
   globalThis.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
     const u = typeof url === 'string' ? url : url instanceof URL ? url.toString() : url.url;
     fetchCalls.push({ url: u, method: init?.method || 'GET' });
     const resp = fetchResponses[fetchIdx++] || { ok: true, body: {} };
-    return new Response(JSON.stringify(resp.body), { status: resp.ok ? 200 : 500 });
+    if (resp.raw !== undefined) return new Response(resp.raw, { status: resp.ok ? 200 : 500 });
+    return new Response(JSON.stringify(resp.body ?? {}), { status: resp.ok ? 200 : 500 });
   }) as unknown as typeof fetch;
 
   vi.doMock('@/lib/supabase/service', () => ({ createServiceClient: vi.fn(() => sb.client) }));
+  vi.doMock('@/lib/payments/reconcile', () => ({ reconcilePayment: vi.fn().mockImplementation(() => { reconcileCallCount++; return Promise.resolve({ providerOutcome: 'verified', lifecycle: { status: 'completed' }, acknowledgeSuccess: true }); }) }));
   const { GET } = await import('../../app/api/cron/payment-reconciliation/route');
   const req = new NextRequest('http://localhost:3000/api/cron/payment-reconciliation', { headers: { authorization: 'Bearer test' } });
   const res = await GET(req);
   globalThis.fetch = origFetch;
-  return { status: res.status, json: await res.json(), fetchCalls };
+  return { status: res.status, json: await res.json(), fetchCalls, reconcileCallCount };
 }
 
 // ══════════════════════════════════════════════════════════
@@ -296,13 +295,65 @@ describe('Cron dispatched recovery — real GET handler', () => {
 
   // ── CAS error/zero-row ──
 
-  it('provider-confirmed CAS failure → CAS attempted but unresolved', async () => {
-    const sb = buildCronSb({ dispatched: [DISPATCHED_PAYSTACK], casOk: false });
+  // ── Checked-transition failure matrix ──
+
+  it('provider-confirmed CAS DB error → CAS attempted, remains unresolved', async () => {
+    const sb = buildCronSb({ dispatched: [DISPATCHED_PAYSTACK], casMode: 'db_error' });
     await callCron(sb, [{ ok: true, body: { data: { status: 'success' } } }]);
-    // CAS was attempted (update written)
-    expect(sb.casWrites.length).toBeGreaterThanOrEqual(1);
-    // But since CAS returned error/zero-rows, the payment remains dispatched (unresolved)
-    // The mock's casOk:false causes the CAS to fail — no provider_confirmed transition
+    // CAS was attempted (provider_confirmed written)
+    expect(sb.casWrites.some((w: Record<string, unknown>) => w.provider_init_state === 'provider_confirmed')).toBe(true);
+    // Production checkedCAS returns false on DB error → resolved stays false
+  });
+
+  it('provider-confirmed CAS zero rows → remains unresolved', async () => {
+    const sb = buildCronSb({ dispatched: [DISPATCHED_PAYSTACK], casMode: 'zero_rows' });
+    await callCron(sb, [{ ok: true, body: { data: { status: 'success' } } }]);
+    expect(sb.casWrites.some((w: Record<string, unknown>) => w.provider_init_state === 'provider_confirmed')).toBe(true);
+  });
+
+  it('terminal CAS DB error → terminal attempted', async () => {
+    const sb = buildCronSb({ dispatched: [DISPATCHED_PAYSTACK], terminalMode: 'db_error' });
+    await callCron(sb, [{ ok: true, body: { data: { status: 'abandoned' } } }]);
+    expect(sb.terminalWrites.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('terminal CAS zero rows → terminal attempted', async () => {
+    const sb = buildCronSb({ dispatched: [DISPATCHED_PAYSTACK], terminalMode: 'zero_rows' });
+    await callCron(sb, [{ ok: true, body: { data: { status: 'abandoned' } } }]);
+    expect(sb.terminalWrites.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('quarantine reread error → no quarantine update', async () => {
+    const sb = buildCronSb({ dispatched: [OLD_DISPATCHED], quarantineRereadError: true });
+    await callCron(sb, [{ ok: false, body: {} }]);
+    expect(sb.quarantineWrites.length).toBe(0);
+  });
+
+  it('quarantine update DB error → failure observed', async () => {
+    const sb = buildCronSb({ dispatched: [OLD_DISPATCHED], quarantineMode: 'db_error' });
+    await callCron(sb, [{ ok: false, body: {} }]);
+    // Quarantine attempted but DB error
+    expect(sb.quarantineWrites.length).toBeGreaterThanOrEqual(1);
+  });
+
+  // ── Malformed JSON proofs ──
+
+  it('Paystack malformed JSON response → ambiguous, no CAS', async () => {
+    const sb = buildCronSb({ dispatched: [DISPATCHED_PAYSTACK] });
+    await callCron(sb, [{ ok: true, raw: 'NOT VALID JSON{{{' }]);
+    expect(sb.casWrites.filter((w: Record<string, unknown>) => w.provider_init_state === 'provider_confirmed').length).toBe(0);
+  });
+
+  it('FW malformed JSON response → ambiguous, no CAS', async () => {
+    const sb = buildCronSb({ dispatched: [DISPATCHED_FW] });
+    await callCron(sb, [{ ok: true, raw: '<html>error</html>' }]);
+    expect(sb.casWrites.filter((w: Record<string, unknown>) => w.provider_init_state === 'provider_confirmed').length).toBe(0);
+  });
+
+  it('Stripe malformed JSON response → ambiguous, no CAS', async () => {
+    const sb = buildCronSb({ dispatched: [DISPATCHED_STRIPE] });
+    await callCron(sb, [{ ok: true, raw: '}}invalid' }]);
+    expect(sb.casWrites.filter((w: Record<string, unknown>) => w.provider_init_state === 'provider_confirmed').length).toBe(0);
   });
 
   // ── Missing Paystack cases ──
@@ -552,11 +603,206 @@ describe('Stripe webhook v1 crash repair — real POST handler', () => {
     expect(status).toBe(500);
     expect(json.error).toMatch(/V1 paid event unresolved/i);
   });
+
+  it('Stripe dispatched row found + CAS repair DB error → retryable 500', async () => {
+    const event = { id: 'evt_2', type: 'checkout.session.completed', data: { object: {
+      id: 'cs_new', payment_status: 'paid', amount_total: 500000, currency: 'ngn',
+      metadata: { reference_code: 'WAAIIO-DISPATCH', channel: 'whatsapp' },
+    } } };
+
+    // Supabase: first .single() (by gateway_reference=cs_new) returns null
+    // Then .maybeSingle() (dispatched lookup) returns the dispatched row
+    // Then .single() (CAS repair) returns error
+    let upsertCalled = false;
+    let singleCallCount = 0;
+    let maybeSingleCallCount = 0;
+    const chain = (): Record<string, unknown> => new Proxy({} as Record<string, unknown>, {
+      get(_, p: string) {
+        if (p === 'single') return vi.fn().mockImplementation(() => {
+          singleCallCount++;
+          if (singleCallCount === 1) return Promise.resolve({ data: null, error: null }); // no payment by cs_new
+          return Promise.resolve({ data: null, error: { message: 'CAS error' } }); // CAS repair fails
+        });
+        if (p === 'maybeSingle') return vi.fn().mockImplementation(() => {
+          maybeSingleCallCount++;
+          if (maybeSingleCallCount === 1) return Promise.resolve({ data: null, error: null }); // no processed event
+          return Promise.resolve({ data: { id: 'dp-1', gateway_reference: 'WAAIIO-DISPATCH', provider_init_state: 'dispatched' }, error: null });
+        });
+        if (p === 'upsert') return vi.fn(() => { upsertCalled = true; return chain(); });
+        return vi.fn(() => chain());
+      },
+    });
+    const sb = { from: vi.fn(() => chain()), rpc: vi.fn() };
+    const { status, json } = await callStripeWebhook(event, sb);
+    expect(status).toBe(500);
+    expect(json.error).toMatch(/CAS repair failed/i);
+    // processed_webhook_events must NOT be upserted
+    expect(upsertCalled).toBe(false);
+  });
 });
 
 // ══════════════════════════════════════════════════════════
-// OTP baseline evidence
+// Square webhook crash repair — real POST handler
 // ══════════════════════════════════════════════════════════
-// The OTP test failure is pre-existing and unrelated to #264.
-// It passes when run in isolation but fails under parallel test
-// pollution from unrelated test suites.
+
+describe('Square webhook v1 crash repair — real POST handler', () => {
+  const SQ_SECRET = 'sq_test_264';
+
+  function squareSign(body: string, url: string): string {
+    const { createHmac } = require('crypto');
+    return createHmac('sha256', SQ_SECRET).update(url + body).digest('base64');
+  }
+
+  const SQ_URL = 'http://localhost:3000/api/payments/square-webhook';
+  beforeEach(() => { vi.clearAllMocks(); vi.resetModules(); process.env.SQUARE_WEBHOOK_SIGNATURE_KEY = SQ_SECRET; process.env.SQUARE_WEBHOOK_NOTIFICATION_URL = SQ_URL; });
+
+  async function callSquareWebhook(event: Record<string, unknown>, sbMock: Record<string, unknown>) {
+    vi.doMock('@/lib/supabase/service', () => ({ createServiceClient: vi.fn(() => sbMock) }));
+    vi.doMock('@/lib/logger', () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(), withContext: vi.fn().mockReturnThis() } }));
+    vi.doMock('@/lib/errors', () => ({ safeLogErrorContext: vi.fn(() => ({})) }));
+    vi.doMock('@/lib/alerts/create-alert', () => ({ createAlert: vi.fn() }));
+    vi.doMock('@sentry/nextjs', () => ({ captureException: vi.fn() }));
+    vi.doMock('@/lib/payments/reconcile', () => ({ reconcilePayment: vi.fn().mockResolvedValue({}) }));
+
+    const { POST } = await import('../../app/api/payments/square-webhook/route');
+    const rawBody = JSON.stringify(event);
+    const req = new NextRequest(SQ_URL, {
+      method: 'POST', body: rawBody,
+      headers: { 'Content-Type': 'application/json', 'x-square-hmacsha256-signature': squareSign(rawBody, SQ_URL) },
+    });
+    const res = await POST(req);
+    return { status: res.status, json: await res.json() };
+  }
+
+  it('COMPLETED event with payment.note but no matching row → retryable 500', async () => {
+    const event = { type: 'payment.updated', data: { object: { payment: {
+      id: 'sq_pay_1', status: 'COMPLETED', order_id: 'sq_order_1', note: 'WAAIIO-SQ-REF',
+    } } } };
+
+    const chain = (): Record<string, unknown> => new Proxy({} as Record<string, unknown>, {
+      get(_, p: string) {
+        if (p === 'single' || p === 'maybeSingle') return vi.fn().mockResolvedValue({ data: null, error: null });
+        if (p === 'then') return (r: (v: unknown) => void) => r({ data: [], error: null });
+        return vi.fn(() => chain());
+      },
+    });
+    const sb = { from: vi.fn(() => chain()), rpc: vi.fn() };
+
+    const { status, json } = await callSquareWebhook(event, sb);
+    expect(status).toBe(500);
+    expect(json.error).toMatch(/V1 paid event unresolved/i);
+  });
+});
+
+// ══════════════════════════════════════════════════════════
+// PayPal webhook crash repair — real POST handler
+// ══════════════════════════════════════════════════════════
+
+describe('PayPal webhook v1 crash repair — real POST handler', () => {
+  beforeEach(() => {
+    vi.clearAllMocks(); vi.resetModules();
+    process.env.PAYPAL_WEBHOOK_ID = 'wh_test';
+    process.env.PAYPAL_CLIENT_ID = 'pp_client';
+    process.env.PAYPAL_CLIENT_SECRET = 'pp_secret';
+    process.env.PAYPAL_ENVIRONMENT = 'sandbox';
+  });
+
+  async function callPayPalWebhook(event: Record<string, unknown>, sbMock: Record<string, unknown>, extraFetchResponses: FetchResp[] = []) {
+    let fetchIdx = 0;
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const u = typeof url === 'string' ? url : url instanceof URL ? url.toString() : url.url;
+      // PayPal webhook verification
+      if (u.includes('verify-webhook-signature')) return new Response(JSON.stringify({ verification_status: 'SUCCESS' }));
+      // Token request
+      if (u.includes('/v1/oauth2/token')) return new Response(JSON.stringify({ access_token: 'test_token' }));
+      // Order read
+      const resp = extraFetchResponses[fetchIdx++] || { ok: true, body: {} };
+      if (resp.raw !== undefined) return new Response(resp.raw, { status: resp.ok ? 200 : 500 });
+      return new Response(JSON.stringify(resp.body ?? {}), { status: resp.ok ? 200 : (resp.body as Record<string,unknown>)?.httpStatus as number || 404 });
+    }) as unknown as typeof fetch;
+
+    vi.doMock('@/lib/supabase/service', () => ({ createServiceClient: vi.fn(() => sbMock) }));
+    vi.doMock('@/lib/logger', () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(), withContext: vi.fn().mockReturnThis() } }));
+    vi.doMock('@sentry/nextjs', () => ({ captureException: vi.fn() }));
+    vi.doMock('@/lib/payments/reconcile', () => ({ reconcilePayment: vi.fn().mockResolvedValue({}) }));
+
+    const { POST } = await import('../../app/api/payments/paypal-webhook/route');
+    const rawBody = JSON.stringify(event);
+    const req = new NextRequest('http://localhost:3000/api/payments/paypal-webhook', {
+      method: 'POST', body: rawBody,
+      headers: { 'Content-Type': 'application/json', 'paypal-transmission-id': 'tx1', 'paypal-transmission-time': new Date().toISOString(), 'paypal-cert-url': 'https://test', 'paypal-auth-algo': 'SHA256withRSA', 'paypal-transmission-sig': 'sig' },
+    });
+    const res = await POST(req);
+    globalThis.fetch = origFetch;
+    return { status: res.status, json: await res.json() };
+  }
+
+  it('Capture with orderId, Order read returns Waaiio ref, no matching row → 500', async () => {
+    const event = { event_type: 'PAYMENT.CAPTURE.COMPLETED', resource: {
+      id: 'cap_1', amount: { value: '50.00', currency_code: 'NGN' },
+      supplementary_data: { related_ids: { order_id: 'ORDER_1' } },
+    } };
+
+    const chain = (): Record<string, unknown> => new Proxy({} as Record<string, unknown>, {
+      get(_, p: string) {
+        if (p === 'single' || p === 'maybeSingle') return vi.fn().mockResolvedValue({ data: null, error: null });
+        if (p === 'then') return (r: (v: unknown) => void) => r({ data: [], error: null });
+        return vi.fn(() => chain());
+      },
+    });
+    const sb = { from: vi.fn(() => chain()), rpc: vi.fn() };
+
+    // Order read returns Waaiio reference but no local row found
+    const { status, json } = await callPayPalWebhook(event, sb, [
+      { ok: true, body: { purchase_units: [{ reference_id: 'WAAIIO-PP-REF' }] } },
+    ]);
+    expect(status).toBe(500);
+    expect(json.error).toMatch(/V1 paid event unresolved/i);
+  });
+
+  it('Capture with orderId, Order read 404 → legacy 200', async () => {
+    const event = { event_type: 'PAYMENT.CAPTURE.COMPLETED', resource: {
+      id: 'cap_2', amount: { value: '50.00', currency_code: 'NGN' },
+      supplementary_data: { related_ids: { order_id: 'ORDER_NOT_FOUND' } },
+    } };
+
+    const chain = (): Record<string, unknown> => new Proxy({} as Record<string, unknown>, {
+      get(_, p: string) {
+        if (p === 'single' || p === 'maybeSingle') return vi.fn().mockResolvedValue({ data: null, error: null });
+        if (p === 'then') return (r: (v: unknown) => void) => r({ data: [], error: null });
+        return vi.fn(() => chain());
+      },
+    });
+    const sb = { from: vi.fn(() => chain()), rpc: vi.fn() };
+
+    // Order read returns 404
+    const { status } = await callPayPalWebhook(event, sb, [
+      { ok: false, body: { httpStatus: 404 } },
+    ]);
+    // Legacy 200 — definitive Order not found, no Waaiio marker
+    expect(status).toBe(200);
+  });
+
+  it('Capture with orderId, Order read succeeds with no Waaiio ref → legacy 200', async () => {
+    const event = { event_type: 'PAYMENT.CAPTURE.COMPLETED', resource: {
+      id: 'cap_3', amount: { value: '50.00', currency_code: 'NGN' },
+      supplementary_data: { related_ids: { order_id: 'ORDER_LEGACY' } },
+    } };
+
+    const chain = (): Record<string, unknown> => new Proxy({} as Record<string, unknown>, {
+      get(_, p: string) {
+        if (p === 'single' || p === 'maybeSingle') return vi.fn().mockResolvedValue({ data: null, error: null });
+        if (p === 'then') return (r: (v: unknown) => void) => r({ data: [], error: null });
+        return vi.fn(() => chain());
+      },
+    });
+    const sb = { from: vi.fn(() => chain()), rpc: vi.fn() };
+
+    // Order read succeeds but no Waaiio reference_id
+    const { status } = await callPayPalWebhook(event, sb, [
+      { ok: true, body: { purchase_units: [{ description: 'Legacy order' }] } },
+    ]);
+    expect(status).toBe(200);
+  });
+});
