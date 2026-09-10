@@ -272,19 +272,34 @@ describe.skipIf(!canRun)('M376: provider_init_state transitions', () => {
     expect(result).toMatch(/Invalid provider_init_state transition/i);
   });
 
-  it('20. v0 NULL → dispatched allowed (state machine is v1-only)', () => {
+  it('20. NULL → dispatched REJECTED (skipped forward)', () => {
     const id = createTestPayment({ feePolicyVersion: 0 });
-    // v0 payments are backward-compatible — no state machine restriction
-    psql(`UPDATE payments SET provider_init_state = 'dispatched' WHERE id = '${id}'`);
-    const state = psql(`SELECT provider_init_state FROM payments WHERE id = '${id}'`);
-    expect(state).toBe('dispatched');
+    const result = psqlMayFail(`UPDATE payments SET provider_init_state = 'dispatched' WHERE id = '${id}'`);
+    expect(result).toMatch(/Invalid provider_init_state transition/i);
   });
 
-  it('21. v0 NULL → provider_confirmed allowed (state machine is v1-only)', () => {
+  it('21. NULL → provider_confirmed REJECTED (skipped forward)', () => {
     const id = createTestPayment({ feePolicyVersion: 0 });
-    psql(`UPDATE payments SET provider_init_state = 'provider_confirmed' WHERE id = '${id}'`);
-    const state = psql(`SELECT provider_init_state FROM payments WHERE id = '${id}'`);
-    expect(state).toBe('provider_confirmed');
+    const result = psqlMayFail(`UPDATE payments SET provider_init_state = 'provider_confirmed' WHERE id = '${id}'`);
+    expect(result).toMatch(/Invalid provider_init_state transition/i);
+  });
+
+  it('21b. pre_dispatch → provider_confirmed REJECTED (skipped forward)', () => {
+    const id = createTestPayment({
+      feePolicyVersion: 1, transactionCategory: 'scheduling',
+      feeBasis: VALID_FEE_BASIS, providerInitState: 'pre_dispatch',
+    });
+    const result = psqlMayFail(`UPDATE payments SET provider_init_state = 'provider_confirmed' WHERE id = '${id}'`);
+    expect(result).toMatch(/Invalid provider_init_state transition/i);
+  });
+
+  it('21c. non-NULL → NULL REJECTED (reset)', () => {
+    const id = createTestPayment({
+      feePolicyVersion: 1, transactionCategory: 'scheduling',
+      feeBasis: VALID_FEE_BASIS, providerInitState: 'pre_dispatch',
+    });
+    const result = psqlMayFail(`UPDATE payments SET provider_init_state = NULL WHERE id = '${id}'`);
+    expect(result).toMatch(/Invalid provider_init_state transition/i);
   });
 });
 

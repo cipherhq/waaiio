@@ -177,13 +177,13 @@ BEGIN
   -- provider_init_state exact forward graph:
   -- NULL → pre_dispatch → dispatched → provider_confirmed (or NULL unchanged)
   -- Any other transition is rejected.
+  -- Uses explicit NULL-safe branching to avoid SQL three-valued logic fall-through
+  -- where nullable OLD.x = 'value' yields NULL instead of FALSE.
   IF OLD.provider_init_state IS DISTINCT FROM NEW.provider_init_state THEN
-    IF NOT (
-      (OLD.provider_init_state IS NULL AND NEW.provider_init_state = 'pre_dispatch')
-      OR (OLD.provider_init_state = 'pre_dispatch' AND NEW.provider_init_state = 'dispatched')
-      OR (OLD.provider_init_state = 'dispatched' AND NEW.provider_init_state = 'provider_confirmed')
-      OR (NEW.provider_init_state IS NULL AND OLD.provider_init_state IS NULL)
-    ) THEN
+    IF    OLD.provider_init_state IS NULL          AND NEW.provider_init_state = 'pre_dispatch'      THEN NULL; -- allowed
+    ELSIF OLD.provider_init_state = 'pre_dispatch' AND NEW.provider_init_state = 'dispatched'        THEN NULL; -- allowed
+    ELSIF OLD.provider_init_state = 'dispatched'   AND NEW.provider_init_state = 'provider_confirmed' THEN NULL; -- allowed
+    ELSE
       RAISE EXCEPTION 'Invalid provider_init_state transition: % → %', OLD.provider_init_state, NEW.provider_init_state;
     END IF;
   END IF;

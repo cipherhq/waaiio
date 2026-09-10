@@ -3,6 +3,19 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-09-09 — #264 Fix: NULL-safe provider_init_state transition guard
+
+### What changed
+- **Migration 376 trigger fix:** `guard_fee_policy_immutability()` provider_init_state guard replaced with explicit NULL-safe IF/ELSIF branching. The previous OR-expression used nullable `=` comparisons on `OLD.provider_init_state`, causing SQL three-valued logic to evaluate `NOT NULL` → `NULL`, which PL/pgSQL treats as falsy — silently allowing prohibited transitions like `NULL → dispatched` and `NULL → provider_confirmed`.
+- **Tests restored/strengthened:** Tests 20–21 restored to assert REJECTED for `NULL → dispatched` and `NULL → provider_confirmed`. Added test 21b (`pre_dispatch → provider_confirmed` REJECTED) and test 21c (`non-NULL → NULL` REJECTED). Total: 30 passing real-PG proofs.
+
+### Files changed
+- `supabase/migrations/376_fee_policy_pinning.sql` — NULL-safe transition guard (lines 182–189)
+- `lib/__tests__/fee-policy-db.test.ts` — tests 20, 21 restored to REJECTED + tests 21b, 21c added
+
+### What could break
+- V0 payments that somehow acquired arbitrary `provider_init_state` values via direct DB update would now be rejected. No production code path does this — all transitions follow `pre_dispatch → dispatched → provider_confirmed`.
+
 ## 2026-09-09 — #264 F-1: Category / BYO-Aware Transaction Fee Policy
 
 ### What changed
