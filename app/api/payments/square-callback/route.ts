@@ -26,11 +26,14 @@ export async function GET(request: NextRequest) {
       .eq('gateway_reference', ref)
       .maybeSingle();
 
-    const payment = byRef || (await supabase
-      .from('payments')
-      .select('id, booking_id, invoice_id, status, metadata')
-      .eq('metadata->>square_payment_link_id', ref)
-      .maybeSingle()).data;
+    // #264: V1 payments use referenceCode as gateway_reference initially;
+    // after provider_confirmed, gateway_reference becomes the payment-link ID.
+    // Fall back to metadata.reference_code for v1 canonical row lookup.
+    const payment = byRef
+      || (await supabase.from('payments').select('id, booking_id, invoice_id, status, metadata')
+          .eq('metadata->>square_payment_link_id', ref).maybeSingle()).data
+      || (await supabase.from('payments').select('id, booking_id, invoice_id, status, metadata')
+          .eq('metadata->>reference_code', ref).eq('gateway', 'square').maybeSingle()).data;
 
     if (!payment) {
       // Payment not found — redirect to homepage

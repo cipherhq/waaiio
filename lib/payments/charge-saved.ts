@@ -172,6 +172,8 @@ export async function chargeSavedCard(
     campaignId?: string;
     userId?: string;
     byoSecretKey?: string;
+    /** #264: Server-derived transaction category for fee policy */
+    transactionCategory?: string;
   },
 ): Promise<SavedCardOutcome> {
   // BYO saved-card not supported — fail closed without durable provider identity
@@ -201,6 +203,7 @@ async function chargePaystackAuthorization(
     orderId?: string;
     campaignId?: string;
     userId?: string;
+    transactionCategory?: string;
   },
 ): Promise<SavedCardOutcome> {
   if (!paystackSecretKey) {
@@ -299,23 +302,125 @@ async function chargePaystackAuthorization(
     }
   }
 
-  // ── Step 1: Resolve split BEFORE creating any records ──
+  // ── Step 1: Resolve fee-policy gate FIRST, then split ──
+  // For v1: subaccount identity only (no live fee), then pinned split from snapshot.
+  // For v0: existing resolvePaystackSplit with live getPlatformFees.
   let splitParams: Record<string, unknown> = {};
-  const splitResult = await resolvePaystackSplit(supabase, opts.businessId, opts.amount);
-  if (splitResult.mode === 'split') {
-    splitParams = {
-      subaccount: splitResult.subaccount,
-      transaction_charge: splitResult.transactionChargeKobo,
-    };
-  } else if (splitResult.mode === 'split_required_but_missing') {
-    logger.error('[SAVED-CARD] Direct split config missing, blocking charge', {
-      businessId: opts.businessId,
-      reason: splitResult.reason,
-    });
-    return { outcome: 'declined', reference: opts.reference, message: 'Payment split configuration incomplete' };
+  let splitSubaccount: string | undefined;
+  let v1Fields: Record<string, unknown> = {};
+
+  if (opts.transactionCategory) {
+    try {
+      const { data: configVer, error: cvErr } = await supabase
+        .from('platform_config_versions')
+        .select('id, config_snapshot')
+        .lte('effective_from', new Date().toISOString())
+        .order('effective_from', { ascending: false })
+        .limit(1)
+        .single();
+
+      if (cvErr || !configVer?.config_snapshot) {
+        logger.error('[SAVED-CARD] Config version lookup failed — fail closed', { cvErr });
+        return { outcome: 'declined', reference: opts.reference, message: 'Fee policy config unavailable' };
+      }
+
+      const snapshot = configVer.config_snapshot as Record<string, unknown>;
+      // Strict tri-state: true → v1, false → v0, anything else → fail closed
+      const gateVal = snapshot.fee_policy_enabled;
+      if (gateVal !== true && gateVal !== false) {
+        logger.error('[SAVED-CARD] fee_policy_enabled is not true/false — fail closed', { gateVal });
+        return { outcome: 'declined', reference: opts.reference, message: 'Fee policy gate malformed' };
+      }
+
+      if (gateVal === true) {
+        // V1: resolve subaccount identity WITHOUT live fee, then pinned fee from snapshot
+        const { data: bizForFee, error: bizErr } = await supabase
+          .from('businesses')
+          .select('subscription_tier, trial_ends_at, custom_fee_percentage, custom_fee_flat, payout_mode')
+          .eq('id', opts.businessId)
+          .single();
+
+        if (bizErr || !bizForFee) {
+          logger.error('[SAVED-CARD] Business lookup failed during v1 resolution — fail closed', { bizErr });
+          return { outcome: 'declined', reference: opts.reference, message: 'Business lookup failed' };
+        }
+
+        // Subaccount identity (no fee calculation)
+        if (bizForFee.payout_mode === 'direct_split') {
+          const { data: payout, error: payoutErr } = await supabase
+            .from('payout_accounts')
+            .select('subaccount_code')
+            .eq('business_id', opts.businessId)
+            .eq('gateway', 'paystack')
+            .eq('is_active', true)
+            .not('subaccount_code', 'is', null)
+            .maybeSingle();
+          if (payoutErr || !payout?.subaccount_code) {
+            logger.error('[SAVED-CARD] V1 payout account lookup failed — fail closed', { payoutErr });
+            return { outcome: 'declined', reference: opts.reference, message: 'Payment split configuration incomplete' };
+          }
+          splitSubaccount = payout.subaccount_code;
+        }
+
+        const scTier = (bizForFee.subscription_tier || 'free') as SubscriptionTier;
+        const scTrial = await resolveTrialStatus(supabase, opts.businessId, scTier, bizForFee.trial_ends_at);
+        const { validateV1Snapshot } = await import('@/lib/payments/calculateFee');
+        const snapErr = validateV1Snapshot(
+          snapshot as Parameters<typeof validateV1Snapshot>[0],
+          scTier,
+        );
+        if (snapErr) {
+          logger.error('[SAVED-CARD] V1 snapshot validation failed — fail closed', { snapErr });
+          return { outcome: 'declined', reference: opts.reference, message: 'Fee policy snapshot invalid' };
+        }
+
+        const scBasis = {
+          payment_routing: 'platform' as const,
+          tier: scTier,
+          is_in_trial: scTrial,
+          custom_fee_percentage: bizForFee.custom_fee_percentage != null ? Number(bizForFee.custom_fee_percentage) : null,
+          custom_fee_flat: bizForFee.custom_fee_flat != null ? Number(bizForFee.custom_fee_flat) : null,
+        };
+
+        v1Fields = {
+          fee_policy_version: 1,
+          config_version_id: configVer.id,
+          transaction_category: opts.transactionCategory,
+          fee_basis: scBasis,
+          provider_init_state: 'pre_dispatch',
+        };
+
+        // Calculate provider split from pinned snapshot (not live getPlatformFees)
+        const { calculateFee } = await import('@/lib/payments/calculateFee');
+        const v1Fee = calculateFee(opts.amount, scBasis, opts.transactionCategory, snapshot as Parameters<typeof calculateFee>[3]);
+        if (splitSubaccount) {
+          splitParams = {
+            subaccount: splitSubaccount,
+            transaction_charge: Math.round(v1Fee.feeTotal * 100),
+          };
+        }
+      }
+      // gateVal === false → v0 (resolved below via resolvePaystackSplit)
+    } catch (feePolicyErr) {
+      logger.error('[SAVED-CARD] Fee policy resolution error — fail closed', feePolicyErr);
+      return { outcome: 'declined', reference: opts.reference, message: 'Fee policy resolution failed' };
+    }
   }
 
-  // ── Step 2: Create canonical payment row FIRST — fail closed ──
+  // v0 fallback: resolve split from live fee authority (only when v1 was NOT selected)
+  if (v1Fields.fee_policy_version !== 1) {
+    const splitResult = await resolvePaystackSplit(supabase, opts.businessId, opts.amount);
+    if (splitResult.mode === 'split') {
+      splitParams = {
+        subaccount: splitResult.subaccount,
+        transaction_charge: splitResult.transactionChargeKobo,
+      };
+    } else if (splitResult.mode === 'split_required_but_missing') {
+      logger.error('[SAVED-CARD] Direct split config missing, blocking charge', { businessId: opts.businessId, reason: splitResult.reason });
+      return { outcome: 'declined', reference: opts.reference, message: 'Payment split configuration incomplete' };
+    }
+  }
+
   const { data: payRow, error: insertErr } = await supabase.from('payments').insert({
     business_id: opts.businessId,
     booking_id: opts.bookingId || null,
@@ -338,6 +443,7 @@ async function chargePaystackAuthorization(
       saved_method: true,
       payment_origin: 'platform',
     },
+    ...v1Fields,
   }).select('id').single();
 
   if (insertErr || !payRow) {
@@ -347,6 +453,20 @@ async function chargePaystackAuthorization(
 
   const paymentId = payRow.id;
   const amountInKobo = Math.round(opts.amount * 100);
+
+  // ── Step 2b: Provider-init state machine for v1 ──
+  if (v1Fields.fee_policy_version === 1) {
+    // CAS: pre_dispatch → dispatched
+    const { data: casRows } = await supabase.from('payments')
+      .update({ provider_init_state: 'dispatched' })
+      .eq('id', paymentId)
+      .eq('provider_init_state', 'pre_dispatch')
+      .select('id');
+    if (!casRows || casRows.length !== 1) {
+      logger.error('[SAVED-CARD] V1 CAS pre_dispatch→dispatched failed');
+      return { outcome: 'declined', reference: opts.reference, message: 'Provider dispatch state conflict' };
+    }
+  }
 
   // ── Step 3: Charge the authorization ──
   try {
@@ -381,6 +501,21 @@ async function chargePaystackAuthorization(
     });
 
     if (data.status && data.data?.status === 'success') {
+      // CAS: dispatched → provider_confirmed (for v1) — exact row check
+      if (v1Fields.fee_policy_version === 1) {
+        const { data: confirmRows, error: confirmErr } = await supabase.from('payments')
+          .update({ provider_init_state: 'provider_confirmed' })
+          .eq('id', paymentId)
+          .eq('provider_init_state', 'dispatched')
+          .select('id');
+        if (confirmErr || !confirmRows || confirmRows.length !== 1) {
+          // Provider has charged but authority row didn't reach provider_confirmed.
+          // Return indeterminate — do not hide the provider-paid ambiguity.
+          logger.error('[SAVED-CARD] V1 provider_confirmed CAS failed after successful charge', { confirmErr, rowCount: confirmRows?.length });
+          return { outcome: 'indeterminate', paymentId, reference: opts.reference, message: 'Provider charged but authority write failed' };
+        }
+      }
+
       await supabase.from('saved_payment_methods')
         .update({ last_used_at: new Date().toISOString() })
         .eq('id', opts.savedMethod.id);

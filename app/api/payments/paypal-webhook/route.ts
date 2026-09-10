@@ -184,7 +184,94 @@ export async function POST(request: NextRequest) {
         }) || null;
       }
 
-      if (!payment) return NextResponse.json({ received: true });
+      // #264: V1 dispatched recovery — authoritative Order read for Capture events.
+      // PAYMENT.CAPTURE.COMPLETED resource is a Capture, not an Order.
+      // Read the Order to get purchase_units[].reference_id (= referenceCode).
+      // #264: V1 dispatched recovery — authoritative Order read with explicit outcome tracking.
+      // Outcomes: waaiio_ref_found | success_no_waaiio_ref | retryable_error
+      let orderReadOutcome: 'waaiio_ref_found' | 'success_no_waaiio_ref' | 'retryable_error' | 'not_attempted' = 'not_attempted';
+      let recoveredRef: string | null = null;
+      if (!payment && orderId) {
+        try {
+          const ppEnv = process.env.PAYPAL_ENVIRONMENT || 'sandbox';
+          const ppBase = ppEnv === 'sandbox' ? 'https://api-m.sandbox.paypal.com' : 'https://api-m.paypal.com';
+          const ppClientId = process.env.PAYPAL_CLIENT_ID;
+          const ppSecret = process.env.PAYPAL_CLIENT_SECRET;
+          if (ppClientId && ppSecret) {
+            const tokenRes = await fetch(`${ppBase}/v1/oauth2/token`, {
+              method: 'POST',
+              headers: { Authorization: `Basic ${Buffer.from(`${ppClientId}:${ppSecret}`).toString('base64')}`, 'Content-Type': 'application/x-www-form-urlencoded' },
+              body: 'grant_type=client_credentials',
+              signal: AbortSignal.timeout(15000),
+            });
+            if (!tokenRes.ok) {
+              orderReadOutcome = 'retryable_error';
+            } else {
+              const { access_token } = await tokenRes.json();
+              const orderRes = await fetch(`${ppBase}/v2/checkout/orders/${orderId}`, {
+                headers: { Authorization: `Bearer ${access_token}` },
+                signal: AbortSignal.timeout(15000),
+              });
+              if (orderRes.ok) {
+                const orderData = await orderRes.json();
+                const units = orderData.purchase_units as Array<{ reference_id?: string }> | undefined;
+                recoveredRef = units?.[0]?.reference_id || null;
+                orderReadOutcome = recoveredRef ? 'waaiio_ref_found' : 'success_no_waaiio_ref';
+              } else if (orderRes.status === 404) {
+                // Definitive Order-not-found
+                orderReadOutcome = 'success_no_waaiio_ref';
+              } else {
+                orderReadOutcome = 'retryable_error';
+              }
+            }
+          } else {
+            orderReadOutcome = 'retryable_error'; // no credentials
+          }
+        } catch {
+          orderReadOutcome = 'retryable_error';
+        }
+
+        if (recoveredRef) {
+          const { data: dispatchedRow } = await supabase
+            .from('payments')
+            .select('id, booking_id, order_id, amount, status, gateway_reference, payment_authority_version, finalization_completed_at')
+            .eq('gateway_reference', recoveredRef)
+            .eq('gateway', 'paypal')
+            .eq('provider_init_state', 'dispatched')
+            .maybeSingle();
+          if (dispatchedRow) {
+            const { data: repaired, error: repairErr } = await supabase.from('payments')
+              .update({ gateway_reference: orderId, provider_init_state: 'provider_confirmed' })
+              .eq('id', dispatchedRow.id)
+              .eq('provider_init_state', 'dispatched')
+              .select('id, booking_id, order_id, amount, status, gateway_reference, payment_authority_version, finalization_completed_at')
+              .single();
+            if (repairErr || !repaired) {
+              return NextResponse.json({ error: 'PayPal dispatched CAS repair failed' }, { status: 500 });
+            }
+            payment = repaired;
+          }
+        }
+      }
+
+      // #264: Unresolved correlation decision based on explicit Order-read outcome
+      if (!payment) {
+        const captureRef = referenceId; // from Capture resource (may be absent)
+        if (orderReadOutcome === 'waaiio_ref_found') {
+          // Order had a Waaiio reference but we couldn't find/repair the canonical row
+          return NextResponse.json({ error: 'V1 paid event unresolved' }, { status: 500 });
+        }
+        if (captureRef) {
+          // Capture itself carried a Waaiio reference but no row found
+          return NextResponse.json({ error: 'V1 paid event unresolved' }, { status: 500 });
+        }
+        if (orderReadOutcome === 'retryable_error') {
+          // Could not determine if this is a v1 payment — retryable
+          return NextResponse.json({ error: 'PayPal Order read failed' }, { status: 500 });
+        }
+        // success_no_waaiio_ref or not_attempted: proven non-v1/legacy → acknowledge
+        return NextResponse.json({ received: true });
+      }
       // Skip only if fully finalized (not just provider-paid)
       if (payment.status === 'success' && (payment.payment_authority_version !== 1 || payment.finalization_completed_at)) {
         return NextResponse.json({ received: true });

@@ -3,6 +3,13 @@ import * as Sentry from '@sentry/nextjs';
 import { createServiceClient } from '@/lib/supabase/service';
 import { verifyCronAuth } from '@/lib/cron-auth';
 import { processSuccessfulPayment } from '@/lib/payments/process-success';
+
+/** Validate a resumable checkout URL: must be a parseable http(s) URL string. */
+function isValidCheckoutUrl(v: unknown): v is string {
+  if (typeof v !== 'string' || !v) return false;
+  try { const u = new URL(v); return u.protocol === 'http:' || u.protocol === 'https:'; }
+  catch { return false; }
+}
 import { sendProactiveConfirmation } from '@/lib/payments/send-confirmation';
 import { logger } from '@/lib/logger';
 import { createCronLogger } from '@/lib/observability/cron';
@@ -40,7 +47,7 @@ export async function GET(request: NextRequest) {
   //    but NOT not_deliverable (terminal — no contact info to retry with)
   const { data: stalePayments, error: queryError } = await supabase
     .from('payments')
-    .select('id, amount, gateway, gateway_reference, booking_id, invoice_id, campaign_id, order_id, metadata, status, payment_authority_version, finalization_completed_at, confirmation_sent_at')
+    .select('id, amount, gateway, gateway_reference, booking_id, invoice_id, campaign_id, order_id, metadata, status, payment_authority_version, finalization_completed_at, confirmation_sent_at, fee_policy_version, provider_init_state')
     .or(`status.eq.pending,and(status.eq.success,payment_authority_version.not.is.null,finalization_completed_at.is.null),and(status.eq.success,payment_authority_version.not.is.null,finalization_completed_at.not.is.null,confirmation_sent_at.is.null,confirmation_terminal_reason.is.null)`)
     .lt('created_at', twoHoursAgo.toISOString())
     .limit(50);
@@ -55,6 +62,195 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ ok: true, processed: 0 });
   }
 
+  // ── #264: V1 dispatched recovery ──
+  // Three-way outcome per payment: found / definitively absent / ambiguous.
+  // found+paid → CAS+reconcile. found+artifact → CAS+URL. found+terminal → CAS to failed.
+  // absent → exact replay on same row if init params available, else quarantine.
+  // ambiguous → no action (quarantine after 24h).
+  const { data: dispatchedPayments, error: dispatchQueryErr } = await supabase
+    .from('payments')
+    .select('id, gateway, gateway_reference, metadata, provider_init_state, fee_policy_version, created_at, amount, currency')
+    .eq('fee_policy_version', 1)
+    .eq('provider_init_state', 'dispatched')
+    .eq('status', 'pending')
+    .neq('gateway_status', 'dispatched_quarantine')
+    .lt('created_at', twoHoursAgo.toISOString())
+    .limit(20);
+
+  // Structural skip on query error (even if partial data returned)
+  if (dispatchQueryErr) {
+    logger.error('[CRON] Dispatched recovery query error — skipping all recovery', { dispatchQueryErr });
+  } else if (dispatchedPayments && dispatchedPayments.length > 0) {
+    for (const dp of dispatchedPayments) {
+      try {
+        const meta = (dp.metadata || {}) as Record<string, unknown>;
+        const clientRef = (meta.reference_code as string) || dp.gateway_reference;
+        const paymentAge = Date.now() - new Date(dp.created_at as string).getTime();
+
+        // Helper: checked CAS — returns true only on exactly one affected row
+        const checkedCAS = async (updates: Record<string, unknown>): Promise<boolean> => {
+          const { data: rows, error: casErr } = await supabase.from('payments')
+            .update(updates)
+            .eq('id', dp.id).eq('provider_init_state', 'dispatched')
+            .select('id');
+          return !casErr && rows != null && rows.length === 1;
+        };
+
+        // Helper: checked terminal transition for provider-proven failure
+        const checkedTerminal = async (reason: string): Promise<boolean> => {
+          const { data: rows, error: err } = await supabase.from('payments')
+            .update({ status: 'failed', gateway_status: `provider_terminal_${reason}` })
+            .eq('id', dp.id).eq('provider_init_state', 'dispatched').eq('status', 'pending')
+            .select('id');
+          return !err && rows != null && rows.length === 1;
+        };
+
+        // Track outcome so quarantine runs regardless of provider path
+        let resolved = false; // true if CAS/terminal succeeded
+
+        if (dp.gateway === 'paystack') {
+          const paystackKey = process.env.PAYSTACK_SECRET_KEY;
+          if (paystackKey) {
+            try {
+              const res = await fetch(`https://api.paystack.co/transaction/verify/${encodeURIComponent(clientRef)}`, {
+                headers: { Authorization: `Bearer ${paystackKey}` },
+                signal: AbortSignal.timeout(15000),
+              });
+              if (res.ok) {
+                const data = await res.json();
+                if (data?.data?.status === 'success') {
+                  // Found + paid → CAS to provider_confirmed + reconcile
+                  resolved = await checkedCAS({ provider_init_state: 'provider_confirmed' });
+                  if (resolved) {
+                    const { reconcilePayment: rp } = await import('@/lib/payments/reconcile');
+                    await rp(supabase, dp.id, 'cron');
+                  }
+                } else if (data?.data?.status === 'abandoned' || data?.data?.status === 'failed') {
+                  // Found + terminal provider failure → checked terminal transition
+                  resolved = await checkedTerminal(data.data.status);
+                } else if (isValidCheckoutUrl(data?.data?.authorization_url)) {
+                  // Found + unpaid with valid resumable artifact → CAS with URL
+                  resolved = await checkedCAS({ provider_init_state: 'provider_confirmed', metadata: { ...meta, checkout_url: data.data.authorization_url } });
+                } else if (data?.status === false && data?.message === 'Transaction reference not found') {
+                  // Definitively absent — no replay in this PR (exact request-builder not yet factored).
+                  // Remain dispatched → quarantine-eligible. No POST, no fresh logical payment.
+                }
+                // else: unrecognized → ambiguous
+              }
+              // else: HTTP error → ambiguous (resolved stays false, quarantine may apply)
+            } catch { /* fetch error → ambiguous */ }
+          }
+        } else if (dp.gateway === 'flutterwave') {
+          const fwKey = process.env.FLUTTERWAVE_SECRET_KEY;
+          if (fwKey) {
+            try {
+              const res = await fetch(`https://api.flutterwave.com/v3/transactions/verify_by_reference?tx_ref=${encodeURIComponent(clientRef)}`, {
+                headers: { Authorization: `Bearer ${fwKey}` },
+                signal: AbortSignal.timeout(15000),
+              });
+              if (res.ok) {
+                const data = await res.json();
+                if (data?.data?.status === 'successful') {
+                  resolved = await checkedCAS({ provider_init_state: 'provider_confirmed' });
+                  if (resolved) {
+                    const { reconcilePayment: rp } = await import('@/lib/payments/reconcile');
+                    await rp(supabase, dp.id, 'cron');
+                  }
+                } else if (data?.data?.status === 'failed') {
+                  resolved = await checkedTerminal('failed');
+                } else if (isValidCheckoutUrl(data?.data?.link)) {
+                  resolved = await checkedCAS({ provider_init_state: 'provider_confirmed', metadata: { ...meta, checkout_url: data.data.link } });
+                } else if (data?.status === 'error' && data?.message === 'No transaction was found for this id') {
+                  // Definitively absent — no replay in this PR (exact request-builder not yet factored).
+                  // Remain dispatched → quarantine-eligible.
+                }
+              }
+            } catch { /* ambiguous */ }
+          }
+        } else if (dp.gateway === 'stripe') {
+          // Stripe: read-only bounded session listing with deterministic pagination.
+          const stripeKey = process.env.STRIPE_SECRET_KEY;
+          if (stripeKey) {
+            try {
+              const createdAt = Math.floor(new Date(dp.created_at as string).getTime() / 1000);
+              const matches: Array<{ id: string; url: string }> = [];
+              let malformedCandidates = 0; // matching client_reference_id but invalid id/url
+              let startingAfter: string | undefined;
+              let pages = 0;
+              const MAX_PAGES = 5;
+              let searchComplete = true;
+
+              // Bounded pagination over narrow created window
+              while (pages < MAX_PAGES) {
+                pages++;
+                let url = `https://api.stripe.com/v1/checkout/sessions?created[gte]=${createdAt - 60}&created[lte]=${createdAt + 300}&limit=20`;
+                if (startingAfter) url += `&starting_after=${startingAfter}`;
+                const res = await fetch(url, {
+                  headers: { Authorization: `Bearer ${stripeKey}` },
+                  signal: AbortSignal.timeout(15000),
+                });
+                if (!res.ok) { searchComplete = false; break; }
+                let list: Record<string, unknown>;
+                try { list = await res.json(); } catch { searchComplete = false; break; }
+                // Validate List response shape — malformed provider shape is ambiguous
+                if (!Array.isArray(list.data) || typeof list.has_more !== 'boolean') {
+                  searchComplete = false; break;
+                }
+                const sessions = list.data as Array<Record<string, unknown>>;
+                for (const s of sessions) {
+                  if (s.client_reference_id === clientRef) {
+                    if (typeof s.id === 'string' && s.id && isValidCheckoutUrl(s.url)) {
+                      matches.push({ id: s.id, url: s.url as string });
+                    } else {
+                      // Matching reference but malformed identity/artifact → ambiguous
+                      malformedCandidates++;
+                    }
+                  }
+                }
+                // has_more=true + empty page = ambiguous (no valid continuation)
+                if (list.has_more && sessions.length === 0) { searchComplete = false; break; }
+                if (!list.has_more) break; // search exhausted normally
+                const lastId = sessions[sessions.length - 1]?.id;
+                if (typeof lastId !== 'string' || !lastId) { searchComplete = false; break; }
+                startingAfter = lastId;
+                // If this is the last allowed page and has_more is true → incomplete
+                if (pages >= MAX_PAGES && list.has_more) { searchComplete = false; break; }
+              }
+
+              // Only CAS when search completed + exactly one valid match + no malformed candidates
+              if (searchComplete && matches.length === 1 && malformedCandidates === 0) {
+                resolved = await checkedCAS({
+                  gateway_reference: matches[0].id,
+                  provider_init_state: 'provider_confirmed',
+                  metadata: { ...meta, checkout_url: matches[0].url, stripe_session_id: matches[0].id },
+                });
+              }
+              // zero, multiple, no url, or pagination error → ambiguous
+            } catch { /* ambiguous */ }
+          }
+        }
+        // Square/PayPal: no cron recovery (cannot safely re-POST). Webhook-only.
+
+        // Quarantine: old dispatched rows that were not resolved by any path above
+        if (!resolved && paymentAge > 24 * 60 * 60 * 1000) {
+          const { data: stillRow, error: rereadErr } = await supabase.from('payments')
+            .select('provider_init_state').eq('id', dp.id).single();
+          if (!rereadErr && stillRow?.provider_init_state === 'dispatched') {
+            const { error: qErr, data: qRows } = await supabase.from('payments')
+              .update({ gateway_status: 'dispatched_quarantine' })
+              .eq('id', dp.id).eq('provider_init_state', 'dispatched')
+              .select('id');
+            if (qErr || !qRows || qRows.length !== 1) {
+              logger.error('[CRON] Quarantine CAS failed', { paymentId: dp.id, qErr, rows: qRows?.length });
+            }
+          }
+        }
+      } catch (recoveryErr) {
+        logger.error('[CRON] V1 dispatched recovery error', { paymentId: dp.id, error: String(recoveryErr) });
+      }
+    }
+  }
+
   let reconciled = 0;
   let markedFailed = 0;
   let errors = 0;
@@ -62,6 +258,13 @@ export async function GET(request: NextRequest) {
   const { reconcilePayment } = await import('@/lib/payments/reconcile');
 
   for (const payment of stalePayments) {
+    // #264: Skip v1 dispatched rows — the dedicated dispatched-recovery block owns them.
+    // They must not enter ordinary reconciliation until the exact checked transition succeeds.
+    const sp = payment as Record<string, unknown>;
+    if (sp.fee_policy_version === 1 && sp.provider_init_state === 'dispatched') {
+      continue;
+    }
+
     try {
       // Use canonical reconciliation (provider adapter + Payment Authority)
       const result = await reconcilePayment(supabase, payment.id, 'cron');

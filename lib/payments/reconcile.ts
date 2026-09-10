@@ -47,7 +47,7 @@ export async function reconcilePayment(
   // 1. Load the canonical payment
   const { data: payment, error: paymentError } = await supabase
     .from('payments')
-    .select('id, amount, currency, gateway, gateway_reference, status, business_id, booking_id, invoice_id, campaign_id, reservation_id, order_id, metadata, gateway_fee, payment_authority_version, finalization_completed_at')
+    .select('id, amount, currency, gateway, gateway_reference, status, business_id, booking_id, invoice_id, campaign_id, reservation_id, order_id, metadata, gateway_fee, payment_authority_version, finalization_completed_at, fee_policy_version, config_version_id, transaction_category, fee_basis')
     .eq('id', paymentId)
     .single();
 

@@ -39,6 +39,8 @@ export interface InitPaymentOpts {
   businessId?: string;
   /** Payment channels to show (e.g. ['card', 'bank_transfer', 'ussd']). Null = all. */
   channels?: string[];
+  /** #264: Pre-created payment row ID — skip INSERT when v1 fee-policy row already exists */
+  existingPaymentId?: string;
 }
 
 export interface InitPaymentResult {

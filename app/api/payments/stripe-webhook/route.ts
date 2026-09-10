@@ -81,11 +81,43 @@ export async function POST(request: NextRequest) {
       const metadata = data.metadata as Record<string, string> | undefined;
 
       if (paymentStatus === 'paid' && sessionId) {
-        const { data: payment } = await supabase
+        let { data: payment } = await supabase
           .from('payments')
           .select('id, booking_id, invoice_id, campaign_id, reservation_id, order_id, amount, status, gateway_reference, payment_authority_version, finalization_completed_at')
           .eq('gateway_reference', sessionId)
           .single();
+
+        // #264: V1 dispatched recovery — if session ID not found, try client_reference_id
+        if (!payment && metadata?.reference_code) {
+          const { data: dispatchedRow } = await supabase
+            .from('payments')
+            .select('id, booking_id, invoice_id, campaign_id, reservation_id, order_id, amount, status, gateway_reference, payment_authority_version, finalization_completed_at')
+            .eq('gateway_reference', metadata.reference_code as string)
+            .eq('gateway', 'stripe')
+            .eq('provider_init_state', 'dispatched')
+            .maybeSingle();
+          if (dispatchedRow) {
+            // CAS repair: update gateway_reference + provider_init_state atomically
+            const { data: repaired, error: repairErr } = await supabase.from('payments')
+              .update({ gateway_reference: sessionId, provider_init_state: 'provider_confirmed' })
+              .eq('id', dispatchedRow.id)
+              .eq('provider_init_state', 'dispatched')
+              .select('id, booking_id, invoice_id, campaign_id, reservation_id, order_id, amount, status, gateway_reference, payment_authority_version, finalization_completed_at')
+              .single();
+            if (repairErr || !repaired) {
+              // CAS failed — do NOT continue processing, return retryable 500
+              logger.error('[STRIPE-WEBHOOK] V1 dispatched CAS repair failed — retryable', { repairErr, paymentId: dispatchedRow.id });
+              return NextResponse.json({ error: 'Dispatched CAS repair failed' }, { status: 500 });
+            }
+            payment = repaired;
+          }
+        }
+
+        // #264: v1-identifiable paid event that cannot be correlated → retryable 500
+        if (!payment && metadata?.reference_code) {
+          logger.error('[STRIPE-WEBHOOK] V1-identifiable checkout paid but no canonical row found', { sessionId, referenceCode: metadata.reference_code });
+          return NextResponse.json({ error: 'V1 paid event unresolved' }, { status: 500 });
+        }
 
         // Allow new-authority success payments through for Stage 2/3 resume
         const needsReconciliation = payment && (

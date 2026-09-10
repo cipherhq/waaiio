@@ -88,6 +88,7 @@ export class StripeGateway implements PaymentGateway {
         'metadata[user_id]': opts.userId,
         'metadata[reference_code]': opts.referenceCode,
         'metadata[channel]': 'whatsapp',
+        client_reference_id: opts.referenceCode,
       };
       if (opts.userEmail) {
         sessionParams.customer_email = opts.userEmail;
@@ -120,37 +121,42 @@ export class StripeGateway implements PaymentGateway {
 
       const stripeRef = sessionData.id as string;
 
-      // Insert payment record — if gateway_reference already exists (idempotent retry),
-      // the UNIQUE constraint prevents a duplicate; look up the existing row instead.
-      let { data: payment } = await opts.supabase.from('payments').insert({
-        booking_id: opts.bookingId || null,
-        invoice_id: opts.invoiceId || null,
-        campaign_id: opts.campaignId || null,
-        reservation_id: opts.reservationId || null,
-        order_id: opts.orderId || null,
-        business_id: opts.businessId || null,
-        user_id: opts.userId,
-        amount: opts.amount,
-        currency: opts.currency,
-        gateway: 'stripe',
-        gateway_reference: stripeRef,
-        status: 'pending',
-        metadata: {
-          stripe_session_id: stripeRef,
-          reference_code: opts.referenceCode,
-          channel: 'whatsapp',
+      // #264: Skip INSERT when v1 pre-provider row already exists
+      let payment: Record<string, unknown> | null = null;
+      if (!opts.existingPaymentId) {
+        // Insert payment record — if gateway_reference already exists (idempotent retry),
+        // the UNIQUE constraint prevents a duplicate; look up the existing row instead.
+        const { data: inserted } = await opts.supabase.from('payments').insert({
+          booking_id: opts.bookingId || null,
+          invoice_id: opts.invoiceId || null,
+          campaign_id: opts.campaignId || null,
+          reservation_id: opts.reservationId || null,
           order_id: opts.orderId || null,
-        },
-      }).select().single();
+          business_id: opts.businessId || null,
+          user_id: opts.userId,
+          amount: opts.amount,
+          currency: opts.currency,
+          gateway: 'stripe',
+          gateway_reference: stripeRef,
+          status: 'pending',
+          metadata: {
+            stripe_session_id: stripeRef,
+            reference_code: opts.referenceCode,
+            channel: 'whatsapp',
+            order_id: opts.orderId || null,
+          },
+        }).select().single();
+        payment = inserted;
 
-      if (!payment) {
-        // Likely UNIQUE constraint on gateway_reference — reuse existing payment
-        const { data: existing } = await opts.supabase
-          .from('payments')
-          .select()
-          .eq('gateway_reference', stripeRef)
-          .single();
-        payment = existing;
+        if (!payment) {
+          // Likely UNIQUE constraint on gateway_reference — reuse existing payment
+          const { data: existing } = await opts.supabase
+            .from('payments')
+            .select()
+            .eq('gateway_reference', stripeRef)
+            .single();
+          payment = existing;
+        }
       }
 
       if (payment && opts.bookingId) {

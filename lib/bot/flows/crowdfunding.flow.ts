@@ -423,6 +423,7 @@ const donationPaymentStep: FlowStepConfig = {
       donorName,
       inboundChannelId: ctx.session.session_data._inbound_channel_id as string | undefined,
       confirmationOrigin: 'whatsapp' as const,
+      transactionCategory: 'giving',
     });
 
     // Store reference for verification

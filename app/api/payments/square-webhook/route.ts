@@ -75,15 +75,59 @@ export async function POST(request: NextRequest) {
       // Find our payment record by square_order_id in metadata
       const { data: payments } = await supabase
         .from('payments')
-        .select('id, booking_id, invoice_id, campaign_id, reservation_id, order_id, amount, status, metadata, gateway_reference, payment_authority_version, finalization_completed_at')
+        .select('id, booking_id, invoice_id, campaign_id, reservation_id, order_id, amount, status, metadata, gateway_reference, payment_authority_version, finalization_completed_at, provider_init_state')
         .eq('gateway', 'square');
 
-      const matchedPayment = payments?.find(p => {
+      let matchedPayment = payments?.find(p => {
         const meta = p.metadata as Record<string, string> | null;
         return meta?.square_order_id === orderId;
       });
 
-      if (!matchedPayment) return NextResponse.json({ received: true });
+      // #264: V1 dispatched recovery — square_order_id may not be in metadata.
+      // Use payment.note (= referenceCode) to find the pre-provider v1 row,
+      // then CAS-repair gateway_reference + provider_init_state + metadata.
+      if (!matchedPayment) {
+        const paymentNote = (payment as Record<string, unknown>).note as string | undefined;
+        if (paymentNote) {
+          const found = payments?.find(p => {
+            const meta = p.metadata as Record<string, string> | null;
+            return meta?.reference_code === paymentNote || p.gateway_reference === paymentNote;
+          });
+          if (found) {
+            // CAS repair: only for dispatched rows — must succeed before processing
+            if ((found as Record<string, unknown>).provider_init_state === 'dispatched') {
+              const { data: repaired, error: repairErr } = await supabase.from('payments')
+                .update({
+                  gateway_reference: found.gateway_reference, // keep existing (referenceCode)
+                  provider_init_state: 'provider_confirmed',
+                  metadata: {
+                    ...(found.metadata as Record<string, unknown> || {}),
+                    square_order_id: orderId,
+                  },
+                })
+                .eq('id', found.id)
+                .eq('provider_init_state', 'dispatched')
+                .select('id, booking_id, invoice_id, campaign_id, reservation_id, order_id, amount, status, metadata, gateway_reference, payment_authority_version, finalization_completed_at, provider_init_state')
+                .single();
+              if (repairErr || !repaired) {
+                return NextResponse.json({ error: 'Square dispatched CAS repair failed' }, { status: 500 });
+              }
+              matchedPayment = repaired;
+            } else {
+              matchedPayment = found;
+            }
+          }
+        }
+      }
+
+      // #264: v1-identifiable paid event unresolved → retryable 500
+      if (!matchedPayment) {
+        const paymentNote = (payment as Record<string, unknown>).note as string | undefined;
+        if (paymentNote && paymentStatus === 'COMPLETED') {
+          return NextResponse.json({ error: 'V1 paid event unresolved' }, { status: 500 });
+        }
+        return NextResponse.json({ received: true });
+      }
 
       const sqNeedsReconciliation = matchedPayment.status !== 'success'
         || (matchedPayment.payment_authority_version != null && !matchedPayment.finalization_completed_at);

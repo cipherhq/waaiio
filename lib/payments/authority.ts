@@ -105,6 +105,8 @@ export async function authorizeAndFinalize(
     booking_id: string | null; invoice_id: string | null; campaign_id: string | null;
     reservation_id: string | null; order_id: string | null;
     metadata: Record<string, unknown> | null; gateway_fee: number;
+    fee_policy_version?: number; config_version_id?: string;
+    transaction_category?: string; fee_basis?: Record<string, unknown>;
   }) => Promise<FinalizationResult>,
   sendConfirmation: (supabase: SupabaseClient, payment: {
     id: string; amount: number;
@@ -121,7 +123,7 @@ export async function authorizeAndFinalize(
   // ── Stage 1: Load and authorize payment ──
   const { data: payment, error: paymentError } = await supabase
     .from('payments')
-    .select('id, amount, currency, gateway, status, booking_id, invoice_id, campaign_id, reservation_id, order_id, metadata, gateway_fee, finalization_completed_at, payment_authority_version')
+    .select('id, amount, currency, gateway, status, booking_id, invoice_id, campaign_id, reservation_id, order_id, metadata, gateway_fee, finalization_completed_at, payment_authority_version, fee_policy_version, config_version_id, transaction_category, fee_basis')
     .eq('gateway_reference', verified.waaiioReference)
     .maybeSingle();
 
@@ -257,6 +259,11 @@ export async function authorizeAndFinalize(
       order_id: claim.order_id || null,
       metadata: (payment.metadata || null) as Record<string, unknown> | null,
       gateway_fee: claim.gateway_fee || 0,
+      // #264: Pass fee-policy fields for v1 pinned finalization
+      fee_policy_version: payment.fee_policy_version,
+      config_version_id: payment.config_version_id,
+      transaction_category: payment.transaction_category,
+      fee_basis: payment.fee_basis as Record<string, unknown> | undefined,
     });
   } catch (err) {
     logger.withContext({ op: 'authority.process-payment', ...safeLogErrorContext(err) })
