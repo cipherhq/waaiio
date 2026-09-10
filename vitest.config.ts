@@ -4,7 +4,7 @@ import path from 'path';
 // Lightweight inline plugin that transforms .tsx files with esbuild
 // before Vite's import-analysis parser runs. This avoids the need for
 // @vitejs/plugin-react (which introduces esbuild peer dep conflicts).
-function esbuildJsx(): import('vitest/config').PluginOption {
+function esbuildJsx() {
   return {
     name: 'esbuild-jsx',
     enforce: 'pre',
