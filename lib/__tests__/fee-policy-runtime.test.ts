@@ -1002,32 +1002,94 @@ describe('Stripe webhook — successful repair path', () => {
     return { status: res.status, json: await res.json() };
   }
 
-  it('successful dispatched CAS repair → event marked processed', async () => {
+  it('successful dispatched CAS repair → reconcilePayment called with repaired id → event marked processed', async () => {
     // Mock fetch for Stripe fee lookup (PaymentIntent → BalanceTransaction)
     const origFetch = globalThis.fetch;
     globalThis.fetch = vi.fn(async () => new Response(JSON.stringify({ latest_charge: { balance_transaction: { fee: 1450 } } }))) as unknown as typeof fetch;
+
+    // Capture reconcilePayment calls to prove the repaired canonical payment id is used
+    const reconcileCalls: Array<{ paymentId: string }> = [];
+    const reconcileMock = vi.fn(async (_sb: unknown, paymentId: string) => {
+      reconcileCalls.push({ paymentId });
+      return { providerOutcome: 'verified', lifecycle: { status: 'completed' }, acknowledgeSuccess: true };
+    });
 
     const event = { id: 'evt_ok', type: 'checkout.session.completed', data: { object: {
       id: 'cs_ok', payment_status: 'paid', amount_total: 500000, currency: 'ngn',
       metadata: { reference_code: 'REF-OK' }, payment_intent: 'pi_ok',
     } } };
-    const sb = buildWebhookSb({
-      paymentByRef: null, // not found by cs_ok
-      dispatchedByRef: { id: 'dp-ok', gateway_reference: 'REF-OK', provider_init_state: 'dispatched', status: 'pending', amount: 5000 },
-      casRepairResult: { data: { id: 'dp-ok', gateway_reference: 'cs_ok', status: 'pending', amount: 5000, booking_id: null, invoice_id: null, campaign_id: null, reservation_id: null, order_id: null, payment_authority_version: 1, finalization_completed_at: null }, error: null },
+
+    // Inline mock matching Stripe's exact query pattern:
+    //   1. processed_webhook_events.maybeSingle() → null (no duplicate)
+    //   2. payments.single() → null (no payment by session id cs_ok)
+    //   3. payments.maybeSingle() → dispatched row (by reference_code)
+    //   4. payments.update().eq().eq().select().single() → CAS repair success
+    //   5. payments.update().eq() → payment_method update (no .single())
+    //   6. processed_webhook_events.upsert() → mark processed
+    const repairedRow = { id: 'dp-ok', gateway_reference: 'cs_ok', status: 'pending', amount: 5000, booking_id: null, invoice_id: null, campaign_id: null, reservation_id: null, order_id: null, payment_authority_version: 1, finalization_completed_at: null };
+    let singleCallCount = 0;
+    let maybeSingleCallCount = 0;
+    const processedEventWrites: unknown[] = [];
+    const chain = (table?: string): Record<string, unknown> => new Proxy({} as Record<string, unknown>, {
+      get(_, p: string) {
+        if (p === 'single') return vi.fn().mockImplementation(() => {
+          if (table === 'processed_webhook_events') return Promise.resolve({ data: null, error: null });
+          singleCallCount++;
+          if (singleCallCount === 1) return Promise.resolve({ data: null, error: null }); // no payment by cs_ok
+          return Promise.resolve({ data: repairedRow, error: null }); // CAS repair success
+        });
+        if (p === 'maybeSingle') return vi.fn().mockImplementation(() => {
+          if (table === 'processed_webhook_events') return Promise.resolve({ data: null, error: null });
+          maybeSingleCallCount++;
+          // First maybeSingle on payments = dispatched lookup
+          return Promise.resolve({ data: { id: 'dp-ok', gateway_reference: 'REF-OK', provider_init_state: 'dispatched', status: 'pending', amount: 5000 }, error: null });
+        });
+        if (p === 'upsert') return vi.fn((payload: unknown) => {
+          if (table === 'processed_webhook_events') processedEventWrites.push(payload);
+          return chain(table);
+        });
+        if (p === 'update') return vi.fn(() => {
+          const postUpdate: Record<string, unknown> = new Proxy({} as Record<string, unknown>, {
+            get(_, p2: string) {
+              if (p2 === 'single') return vi.fn().mockResolvedValue({ data: repairedRow, error: null });
+              if (p2 === 'then') return (r: (v: unknown) => void) => r({ data: repairedRow, error: null });
+              return vi.fn(() => postUpdate);
+            },
+          });
+          return postUpdate;
+        });
+        if (p === 'then') return (r: (v: unknown) => void) => r({ data: [], error: null });
+        return vi.fn((..._a: unknown[]) => chain(table));
+      },
     });
-    const { status } = await callStripe(event, sb.client);
+    const sb = { from: vi.fn((table: string) => chain(table)), rpc: vi.fn().mockResolvedValue({ data: null, error: null }) };
+
+    vi.doMock('@/lib/payments/reconcile', () => ({ reconcilePayment: reconcileMock }));
+    vi.doMock('@/lib/supabase/service', () => ({ createServiceClient: vi.fn(() => sb) }));
+    vi.doMock('@/lib/logger', () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(), withContext: vi.fn().mockReturnThis() } }));
+    vi.doMock('@/lib/errors', () => ({ safeLogErrorContext: vi.fn(() => ({})) }));
+    vi.doMock('@/lib/alerts/create-alert', () => ({ createAlert: vi.fn() }));
+    vi.doMock('@/lib/email/templates', () => ({ subscriptionRenewalReceiptEmail: vi.fn().mockReturnValue({ subject: 't', html: '<p/>' }) }));
+    vi.doMock('@/lib/email/client', () => ({ sendEmail: vi.fn() }));
+    vi.doMock('@/lib/payments/send-confirmation', () => ({ sendProactiveConfirmation: vi.fn() }));
+    vi.doMock('@/lib/payments/notify-charge-failed', () => ({ notifyCustomerChargeFailed: vi.fn() }));
+    vi.doMock('@/lib/payments/stripe-invoice-extractors', () => ({ classifyInvoiceSubscription: vi.fn(() => ({ type: 'not_subscription' })), extractInvoicePaymentIdentity: vi.fn(() => ({ paymentIntentId: 'pi' })) }));
+    vi.doMock('@sentry/nextjs', () => ({ captureException: vi.fn() }));
+    const { POST } = await import('../../app/api/payments/stripe-webhook/route');
+    const raw = JSON.stringify(event);
+    const res = await POST(new NextRequest('http://localhost/api/payments/stripe-webhook', {
+      method: 'POST', body: raw,
+      headers: { 'stripe-signature': stripeSign(raw) },
+    }));
     globalThis.fetch = origFetch;
-    // After successful CAS repair, the handler continues with the repaired payment.
-    // It may reach event marking (200) or encounter a reconciliation error (500).
-    // The key invariant: CAS repair succeeded so the payment IS now provider_confirmed.
-    // Event marking depends on the full reconciliation stack which requires deeper mocks.
-    // Assert: status is not the CAS-failure 500 with "Dispatched CAS repair failed"
-    expect(sb.casWrites || []).toBeDefined(); // CAS repair was invoked
-    // For the success path, the processed event SHOULD be written if reconciliation succeeds
-    if (status === 200) {
-      expect(sb.processedEventWrites.length).toBeGreaterThanOrEqual(1);
-    }
+
+    // 1. Handler must return 200 (successful completion, not CAS-failure 500)
+    expect(res.status).toBe(200);
+    // 2. reconcilePayment must be called exactly once with the repaired canonical payment id
+    expect(reconcileCalls).toHaveLength(1);
+    expect(reconcileCalls[0].paymentId).toBe('dp-ok');
+    // 3. Event must be marked as processed (unconditional — not gated on status)
+    expect(processedEventWrites.length).toBeGreaterThanOrEqual(1);
   });
 });
 
