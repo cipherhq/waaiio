@@ -27,15 +27,14 @@ vi.mock('next/navigation', () => ({
 }));
 vi.mock('next/link', () => ({ default: ({ children, ...p }: any) => React.createElement('a', p, children) }));
 vi.mock('next/image', () => ({ default: (p: any) => React.createElement('img', p) }));
+const MockMotionDiv = React.forwardRef(function MockMotionDiv(p: any, r: any) { return React.createElement('div', { ...p, ref: r, whileHover: undefined, transition: undefined, animate: undefined, initial: undefined, exit: undefined, style: undefined }, p.children); });
+const MockMotionSvg = React.forwardRef(function MockMotionSvg(p: any, r: any) { return React.createElement('svg', { ...p, ref: r, animate: undefined, transition: undefined }, p.children); });
+const MockMotionPath = React.forwardRef(function MockMotionPath(p: any, r: any) { return React.createElement('path', { ...p, ref: r }, p.children); });
+const MockMotionSpan = React.forwardRef(function MockMotionSpan(p: any, r: any) { return React.createElement('span', { ...p, ref: r }, p.children); });
+const MockMotionP = React.forwardRef(function MockMotionP(p: any, r: any) { return React.createElement('p', { ...p, ref: r }, p.children); });
 vi.mock('framer-motion', () => ({
-  motion: {
-    div: React.forwardRef((p: any, r: any) => React.createElement('div', { ...p, ref: r, whileHover: undefined, transition: undefined, animate: undefined, initial: undefined, exit: undefined, style: undefined }, p.children)),
-    svg: React.forwardRef((p: any, r: any) => React.createElement('svg', { ...p, ref: r, animate: undefined, transition: undefined }, p.children)),
-    path: React.forwardRef((p: any, r: any) => React.createElement('path', { ...p, ref: r }, p.children)),
-    span: React.forwardRef((p: any, r: any) => React.createElement('span', { ...p, ref: r }, p.children)),
-    p: React.forwardRef((p: any, r: any) => React.createElement('p', { ...p, ref: r }, p.children)),
-  },
-  AnimatePresence: ({ children }: any) => children,
+  motion: { div: MockMotionDiv, svg: MockMotionSvg, path: MockMotionPath, span: MockMotionSpan, p: MockMotionP },
+  AnimatePresence: function MockAnimatePresence({ children }: any) { return children; },
   useScroll: () => ({ scrollYProgress: { get: () => 0 } }),
   useTransform: () => 0,
 }));

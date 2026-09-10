@@ -18,16 +18,15 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 
 // Mock framer-motion for SSR
+const MockDiv = React.forwardRef(function MockDiv(props: any, ref: any) {
+  return React.createElement('div', { ...props, ref, whileHover: undefined, transition: undefined }, props.children);
+});
+const MockSvg = React.forwardRef(function MockSvg(props: any, ref: any) {
+  return React.createElement('svg', { ...props, ref, animate: undefined, transition: undefined }, props.children);
+});
 vi.mock('framer-motion', () => ({
-  motion: {
-    div: React.forwardRef((props: any, ref: any) =>
-      React.createElement('div', { ...props, ref, whileHover: undefined, transition: undefined }, props.children)
-    ),
-    svg: React.forwardRef((props: any, ref: any) =>
-      React.createElement('svg', { ...props, ref, animate: undefined, transition: undefined }, props.children)
-    ),
-  },
-  AnimatePresence: ({ children }: any) => children,
+  motion: { div: MockDiv, svg: MockSvg },
+  AnimatePresence: function MockAnimatePresence({ children }: any) { return children; },
 }));
 
 // Mock next/link for server render
