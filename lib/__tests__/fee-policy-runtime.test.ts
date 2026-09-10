@@ -24,14 +24,19 @@ const DISPATCHED_SQUARE = { ...DISPATCHED_PAYSTACK, id: 'pay-sq-1', gateway: 'sq
 const DISPATCHED_PAYPAL = { ...DISPATCHED_PAYSTACK, id: 'pay-pp-1', gateway: 'paypal', gateway_reference: 'REF-PP', metadata: { reference_code: 'REF-PP' } };
 const OLD_DISPATCHED = { ...DISPATCHED_PAYSTACK, created_at: new Date(Date.now() - 25 * 3600000).toISOString() };
 
+const loggerErrors: string[] = [];
 function setupCronMocks() {
+  loggerErrors.length = 0;
   vi.doMock('@/lib/cron-auth', () => ({ verifyCronAuth: vi.fn().mockReturnValue(null) }));
   vi.doMock('@sentry/nextjs', () => ({ captureException: vi.fn() }));
-  vi.doMock('@/lib/logger', () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(), withContext: vi.fn().mockReturnThis() } }));
+  vi.doMock('@/lib/logger', () => ({ logger: {
+    info: vi.fn(), warn: vi.fn(), debug: vi.fn(),
+    error: vi.fn((...args: unknown[]) => { loggerErrors.push(String(args[0])); }),
+    withContext: vi.fn().mockReturnThis(),
+  } }));
   vi.doMock('@/lib/observability/cron', () => ({ createCronLogger: vi.fn(() => ({ started: vi.fn(), completed: vi.fn(), failed: vi.fn() })) }));
   vi.doMock('@/lib/payments/process-success', () => ({ processSuccessfulPayment: vi.fn() }));
   vi.doMock('@/lib/payments/send-confirmation', () => ({ sendProactiveConfirmation: vi.fn() }));
-  // reconcilePayment mock is set per-test in callCron() to track call count
 }
 
 type CasMode = 'ok' | 'db_error' | 'zero_rows';
@@ -123,12 +128,16 @@ async function callCron(sb: { client: Record<string, unknown> }, fetchResponses:
 describe('Cron dispatched recovery — real GET handler', () => {
   beforeEach(() => { vi.clearAllMocks(); vi.resetModules(); process.env.PAYSTACK_SECRET_KEY = 'test-ps-key'; process.env.FLUTTERWAVE_SECRET_KEY = 'test-fw-key'; process.env.STRIPE_SECRET_KEY = 'test-stripe-key'; setupCronMocks(); });
 
-  it('dispatched query DB error → zero provider recovery calls', async () => {
-    const sb = buildCronSb({ dispatchQueryError: true });
-    const { fetchCalls } = await callCron(sb);
-    // No provider fetch calls for recovery (only stale-payments query runs)
+  it('dispatched query DB error → zero provider recovery + zero reconcile for dispatched row', async () => {
+    // Seed the dispatched row so the stale-payments query returns it (first .limit()),
+    // but the stale loop will skip it (v1 dispatched). Then the dispatched-recovery
+    // query fails (second .limit()), proving zero provider calls from that exact branch.
+    const sb = buildCronSb({ dispatched: [DISPATCHED_PAYSTACK], dispatchQueryError: true });
+    const { fetchCalls, reconciledIds } = await callCron(sb);
     const providerCalls = fetchCalls.filter(c => c.url.includes('paystack') || c.url.includes('flutterwave') || c.url.includes('stripe'));
     expect(providerCalls.length).toBe(0);
+    // The dispatched row was in stalePayments but skipped; dispatched query failed; no reconcile
+    expect(reconciledIds.filter(id => id === DISPATCHED_PAYSTACK.id).length).toBe(0);
   });
 
   // ── Paystack ──
@@ -338,16 +347,18 @@ describe('Cron dispatched recovery — real GET handler', () => {
     expect(sb.quarantineWrites.length).toBe(0);
   });
 
-  it('quarantine update DB error → quarantine attempted', async () => {
+  it('quarantine update DB error → failure logged', async () => {
     const sb = buildCronSb({ dispatched: [OLD_DISPATCHED], quarantineMode: 'db_error' });
     await callCron(sb, [{ ok: false, body: {} }]);
     expect(sb.quarantineWrites.length).toBeGreaterThanOrEqual(1);
+    expect(loggerErrors.some(e => e.includes('Quarantine CAS failed'))).toBe(true);
   });
 
-  it('quarantine update zero rows → quarantine attempted', async () => {
+  it('quarantine update zero rows → failure logged', async () => {
     const sb = buildCronSb({ dispatched: [OLD_DISPATCHED], quarantineMode: 'zero_rows' });
     await callCron(sb, [{ ok: false, body: {} }]);
     expect(sb.quarantineWrites.length).toBeGreaterThanOrEqual(1);
+    expect(loggerErrors.some(e => e.includes('Quarantine CAS failed'))).toBe(true);
   });
 
   // ── Malformed JSON proofs ──
@@ -654,30 +665,32 @@ describe('Stripe webhook v1 crash repair — real POST handler', () => {
     expect(upsertCalled).toBe(false);
   });
 
-  it('Stripe dispatched row found + CAS repair zero rows → retryable 500', async () => {
+  it('Stripe dispatched row found + CAS repair zero rows → retryable 500 + no processed write', async () => {
     const event = { id: 'evt_3', type: 'checkout.session.completed', data: { object: {
       id: 'cs_zr', payment_status: 'paid', amount_total: 500000, currency: 'ngn',
       metadata: { reference_code: 'WAAIIO-ZR', channel: 'whatsapp' },
     } } };
-    let sC = 0; let mC = 0;
+    let sC = 0; let mC = 0; let upsertCalled2 = false;
     const ch = (): Record<string, unknown> => new Proxy({} as Record<string, unknown>, {
       get(_, p: string) {
         if (p === 'single') return vi.fn().mockImplementation(() => {
           sC++;
           if (sC === 1) return Promise.resolve({ data: null, error: null });
-          return Promise.resolve({ data: null, error: null }); // zero rows (null data, no error)
+          return Promise.resolve({ data: null, error: null }); // zero rows
         });
         if (p === 'maybeSingle') return vi.fn().mockImplementation(() => {
           mC++;
           if (mC === 1) return Promise.resolve({ data: null, error: null });
           return Promise.resolve({ data: { id: 'dp-2', gateway_reference: 'WAAIIO-ZR', provider_init_state: 'dispatched' }, error: null });
         });
+        if (p === 'upsert') return vi.fn(() => { upsertCalled2 = true; return ch(); });
         return vi.fn(() => ch());
       },
     });
     const sb2 = { from: vi.fn(() => ch()), rpc: vi.fn() };
     const { status: s2 } = await callStripeWebhook(event, sb2);
     expect(s2).toBe(500);
+    expect(upsertCalled2).toBe(false); // processed_webhook_events NOT written
   });
 });
 
