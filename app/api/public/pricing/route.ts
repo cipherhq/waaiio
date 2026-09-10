@@ -136,7 +136,7 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // 6. Build safe country pricing projection
+    // 6. Build safe country pricing projection — all 3 tiers required
     const countryPricing = (countryRow.pricing as Record<string, Record<string, unknown>>) || {};
     const safeCountryPricing: Record<string, { price: number; feeFlat: number; feePercentage: number }> = {};
     for (const tier of ['free', 'growth', 'business'] as const) {
@@ -150,27 +150,48 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // 7. Build safe countries list for picker
-    const safeCountries = allCountries.map(c => ({
-      code: c.code as string,
-      name: c.name as string,
-      currencyCode: c.currency_code as string,
-      currencySymbol: c.currency_symbol as string,
-      currencyLocale: c.currency_locale as string,
-      flag: c.flag as string,
-      gateway: c.payment_gateway as string,
-      pricing: (() => {
+    // Validate all 3 tiers are present — fail closed if any missing/malformed
+    if (!safeCountryPricing.free || !safeCountryPricing.growth || !safeCountryPricing.business) {
+      console.error('[public/pricing] Incomplete country pricing for', countryCode, '— missing tier(s)');
+      return NextResponse.json(
+        { error: 'pricing_unavailable', message: 'Regional pricing data is incomplete.' },
+        { status: 503 },
+      );
+    }
+
+    // 7. Build safe countries list — only include countries with all 3 tier prices
+    const safeCountries = allCountries
+      .map(c => {
         const p = (c.pricing as Record<string, Record<string, unknown>>) || {};
-        const result: Record<string, { price: number; feeFlat: number; feePercentage: number }> = {};
+        const pricing: Record<string, { price: number; feeFlat: number; feePercentage: number }> = {};
         for (const tier of ['free', 'growth', 'business'] as const) {
           const tp = p[tier];
           if (tp && typeof tp.price === 'number' && typeof tp.feeFlat === 'number' && typeof tp.feePercentage === 'number') {
-            result[tier] = { price: tp.price, feeFlat: tp.feeFlat, feePercentage: tp.feePercentage };
+            pricing[tier] = { price: tp.price, feeFlat: tp.feeFlat, feePercentage: tp.feePercentage };
           }
         }
-        return result;
-      })(),
-    }));
+        // Only include countries with complete tier pricing
+        if (!pricing.free || !pricing.growth || !pricing.business) return null;
+        return {
+          code: c.code as string,
+          name: c.name as string,
+          currencyCode: c.currency_code as string,
+          currencySymbol: c.currency_symbol as string,
+          currencyLocale: c.currency_locale as string,
+          flag: c.flag as string,
+          gateway: c.payment_gateway as string,
+          pricing,
+        };
+      })
+      .filter((c): c is NonNullable<typeof c> => c !== null);
+
+    if (safeCountries.length === 0) {
+      console.error('[public/pricing] No countries with complete pricing found');
+      return NextResponse.json(
+        { error: 'pricing_unavailable', message: 'No regional pricing available.' },
+        { status: 503 },
+      );
+    }
 
     // 8. Return exact allowlisted DTO — no extra keys
     return NextResponse.json({

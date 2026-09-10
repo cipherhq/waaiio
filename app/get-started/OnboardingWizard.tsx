@@ -280,6 +280,32 @@ function OnboardingWizard() {
     loadCountries().then(() => setCountryList(getCountryList()));
   }, []);
 
+  // Fetch authoritative pricing from DB projection — same source as pricing page / subscribe API
+  const [pricingProjection, setPricingProjection] = useState<{
+    trialDays: number;
+    annualDiscountPercentage: number;
+    tierFees: Record<string, { feePercentage: number }>;
+    country: { pricing: Record<string, { price: number; feeFlat: number; feePercentage: number }> };
+  } | null>(null);
+  const [pricingUnavailable, setPricingUnavailable] = useState(false);
+
+  useEffect(() => {
+    async function loadPricing() {
+      try {
+        setPricingUnavailable(false);
+        const res = await fetch(`/api/public/pricing?country=${selectedCountry}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        if (!data.trialDays || !data.country?.pricing) throw new Error('Malformed');
+        setPricingProjection(data);
+      } catch {
+        setPricingUnavailable(true);
+        setPricingProjection(null);
+      }
+    }
+    loadPricing();
+  }, [selectedCountry]);
+
   // Category
   const [category, setCategory] = useState<BusinessCategoryKey | ''>('');
   const [categorySearch, setCategorySearch] = useState('');
@@ -1074,7 +1100,17 @@ function OnboardingWizard() {
   const waLink = waMethod !== 'shared' && dedicatedNumber
     ? `https://wa.me/${dedicatedNumber}`
     : `https://wa.me/${sharedNumber}?text=${encodeURIComponent(successData?.bot_code || botCode)}`;
-  const localTiers = getPricingTiers(selectedCountry);
+  // Build localTiers from authoritative DB projection — no hardcoded commercial fallback
+  const localTiers = useMemo(() => {
+    if (!pricingProjection) return getPricingTiers(selectedCountry); // shape-only fallback during initial load
+    const cp = pricingProjection.country.pricing;
+    const base = getPricingTiers(selectedCountry); // for non-commercial metadata (name, features)
+    return {
+      free: { ...base.free, price: cp.free?.price ?? 0, feePercentage: cp.free?.feePercentage ?? base.free.feePercentage, feeFlat: cp.free?.feeFlat ?? base.free.feeFlat },
+      growth: { ...base.growth, price: cp.growth?.price ?? base.growth.price, feePercentage: cp.growth?.feePercentage ?? base.growth.feePercentage, feeFlat: cp.growth?.feeFlat ?? base.growth.feeFlat },
+      business: { ...base.business, price: cp.business?.price ?? base.business.price, feePercentage: cp.business?.feePercentage ?? base.business.feePercentage, feeFlat: cp.business?.feeFlat ?? base.business.feeFlat },
+    };
+  }, [pricingProjection, selectedCountry]);
 
   // Compute the minimum required plan based on selected features
   // IMPORTANT: This useMemo must be BEFORE any conditional returns (React hooks rule)
@@ -1269,6 +1305,7 @@ function OnboardingWizard() {
                 requiredPlan={requiredPlan}
                 localTiers={localTiers}
                 billingInterval={billingInterval}
+                annualDiscountPercentage={pricingProjection?.annualDiscountPercentage ?? 20}
                 setStep={setStep}
               />
             )}
@@ -1284,6 +1321,7 @@ function OnboardingWizard() {
                 requiredPlan={requiredPlan}
                 localTiers={localTiers}
                 billingInterval={billingInterval}
+                annualDiscountPercentage={pricingProjection?.annualDiscountPercentage ?? 20}
                 setStep={setStep}
               />
             )}

@@ -110,11 +110,8 @@ const JSON_LD_WEBSITE = {
 export default async function HomePage() {
   // Fetch real stats and pricing from DB (server-side, cached for 60s via revalidate)
   let stats = { businesses: '25+', payments: '95+', countries: '5' };
-  let jsonLdOffers: Array<Record<string, string>> = [
-    { '@type': 'Offer', name: TIER_FEATURES.free.marketingName, price: '0', priceCurrency: 'USD', description: 'Free plan with trial period', availability: 'https://schema.org/InStock' },
-    { '@type': 'Offer', name: TIER_FEATURES.growth.marketingName, price: '20', priceCurrency: 'USD', description: 'Pro plan for scaling businesses', availability: 'https://schema.org/InStock' },
-    { '@type': 'Offer', name: TIER_FEATURES.business.marketingName, price: '45', priceCurrency: 'USD', description: 'Full platform with white-label branding', availability: 'https://schema.org/InStock' },
-  ];
+  // JSON-LD offers are omitted when DB pricing is unavailable (fail-closed)
+  let jsonLdOffers: Array<Record<string, string>> | null = null;
   try {
     const supabase = createServiceClient();
     const [{ count: bizCount }, { count: payCount }, { data: countryData }, { data: usCountry }] = await Promise.all([
@@ -130,18 +127,20 @@ export default async function HomePage() {
       countries: String(uniqueCountries || 5),
     };
 
-    // Build JSON-LD offers from DB US pricing
+    // Build JSON-LD offers from DB US pricing — no hardcoded fallback
     const usPricing = usCountry?.pricing as Record<string, Record<string, number>> | undefined;
-    if (usPricing) {
+    const growthPrice = usPricing?.growth?.price;
+    const businessPrice = usPricing?.business?.price;
+    if (typeof growthPrice === 'number' && typeof businessPrice === 'number') {
       jsonLdOffers = [
         { '@type': 'Offer', name: TIER_FEATURES.free.marketingName, price: '0', priceCurrency: 'USD', description: 'Free plan with trial period', availability: 'https://schema.org/InStock' },
-        { '@type': 'Offer', name: TIER_FEATURES.growth.marketingName, price: String(usPricing.growth?.price ?? 20), priceCurrency: 'USD', description: 'Pro plan for scaling businesses', availability: 'https://schema.org/InStock' },
-        { '@type': 'Offer', name: TIER_FEATURES.business.marketingName, price: String(usPricing.business?.price ?? 45), priceCurrency: 'USD', description: 'Full platform with white-label branding', availability: 'https://schema.org/InStock' },
+        { '@type': 'Offer', name: TIER_FEATURES.growth.marketingName, price: String(growthPrice), priceCurrency: 'USD', description: 'Pro plan for scaling businesses', availability: 'https://schema.org/InStock' },
+        { '@type': 'Offer', name: TIER_FEATURES.business.marketingName, price: String(businessPrice), priceCurrency: 'USD', description: 'Full platform with white-label branding', availability: 'https://schema.org/InStock' },
       ];
     }
   } catch {}
 
-  const JSON_LD_APP = {
+  const JSON_LD_APP: Record<string, unknown> = {
     '@context': 'https://schema.org',
     '@type': 'SoftwareApplication',
     name: 'Waaiio',
@@ -151,9 +150,12 @@ export default async function HomePage() {
     url: baseUrl,
     description: `Automate bookings, payments, orders, donations, and tickets on WhatsApp for ${CATEGORY_COUNT}+ industries`,
     featureList: 'Appointment booking, Payment processing, Online ordering, Event ticketing, Donation collection, Customer chat, Feedback surveys, Loyalty programs, Queue management, Invoice generation, E-signatures',
-    offers: jsonLdOffers,
     creator: { '@type': 'Organization', name: 'Waaiio', url: baseUrl },
   };
+  // Only include price-bearing offers when authoritative DB pricing is available
+  if (jsonLdOffers) {
+    JSON_LD_APP.offers = jsonLdOffers;
+  }
 
   return (
     <>
