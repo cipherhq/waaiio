@@ -3,6 +3,13 @@ import * as Sentry from '@sentry/nextjs';
 import { createServiceClient } from '@/lib/supabase/service';
 import { verifyCronAuth } from '@/lib/cron-auth';
 import { processSuccessfulPayment } from '@/lib/payments/process-success';
+
+/** Validate a resumable checkout URL: must be a parseable http(s) URL string. */
+function isValidCheckoutUrl(v: unknown): v is string {
+  if (typeof v !== 'string' || !v) return false;
+  try { const u = new URL(v); return u.protocol === 'http:' || u.protocol === 'https:'; }
+  catch { return false; }
+}
 import { sendProactiveConfirmation } from '@/lib/payments/send-confirmation';
 import { logger } from '@/lib/logger';
 import { createCronLogger } from '@/lib/observability/cron';
@@ -121,7 +128,7 @@ export async function GET(request: NextRequest) {
                 } else if (data?.data?.status === 'abandoned' || data?.data?.status === 'failed') {
                   // Found + terminal provider failure → checked terminal transition
                   resolved = await checkedTerminal(data.data.status);
-                } else if (typeof data?.data?.authorization_url === 'string' && data.data.authorization_url.startsWith('http')) {
+                } else if (isValidCheckoutUrl(data?.data?.authorization_url)) {
                   // Found + unpaid with valid resumable artifact → CAS with URL
                   resolved = await checkedCAS({ provider_init_state: 'provider_confirmed', metadata: { ...meta, checkout_url: data.data.authorization_url } });
                 } else if (data?.status === false && data?.message === 'Transaction reference not found') {
@@ -151,7 +158,7 @@ export async function GET(request: NextRequest) {
                   }
                 } else if (data?.data?.status === 'failed') {
                   resolved = await checkedTerminal('failed');
-                } else if (typeof data?.data?.link === 'string' && data.data.link.startsWith('http')) {
+                } else if (isValidCheckoutUrl(data?.data?.link)) {
                   resolved = await checkedCAS({ provider_init_state: 'provider_confirmed', metadata: { ...meta, checkout_url: data.data.link } });
                 } else if (data?.status === 'error' && data?.message === 'No transaction was found for this id') {
                   // Definitively absent — no replay in this PR (exact request-builder not yet factored).
@@ -167,6 +174,7 @@ export async function GET(request: NextRequest) {
             try {
               const createdAt = Math.floor(new Date(dp.created_at as string).getTime() / 1000);
               const matches: Array<{ id: string; url: string }> = [];
+              let malformedCandidates = 0; // matching client_reference_id but invalid id/url
               let startingAfter: string | undefined;
               let pages = 0;
               const MAX_PAGES = 5;
@@ -190,13 +198,18 @@ export async function GET(request: NextRequest) {
                 }
                 const sessions = list.data as Array<Record<string, unknown>>;
                 for (const s of sessions) {
-                  if (s.client_reference_id === clientRef
-                      && typeof s.id === 'string' && s.id
-                      && typeof s.url === 'string' && s.url) {
-                    matches.push({ id: s.id, url: s.url });
+                  if (s.client_reference_id === clientRef) {
+                    if (typeof s.id === 'string' && s.id && isValidCheckoutUrl(s.url)) {
+                      matches.push({ id: s.id, url: s.url as string });
+                    } else {
+                      // Matching reference but malformed identity/artifact → ambiguous
+                      malformedCandidates++;
+                    }
                   }
                 }
-                if (!list.has_more || sessions.length === 0) break;
+                // has_more=true + empty page = ambiguous (no valid continuation)
+                if (list.has_more && sessions.length === 0) { searchComplete = false; break; }
+                if (!list.has_more) break; // search exhausted normally
                 const lastId = sessions[sessions.length - 1]?.id;
                 if (typeof lastId !== 'string' || !lastId) { searchComplete = false; break; }
                 startingAfter = lastId;
@@ -204,8 +217,8 @@ export async function GET(request: NextRequest) {
                 if (pages >= MAX_PAGES && list.has_more) { searchComplete = false; break; }
               }
 
-              // Only CAS when search completed normally + exactly one match with valid URL
-              if (searchComplete && matches.length === 1 && matches[0].url) {
+              // Only CAS when search completed + exactly one valid match + no malformed candidates
+              if (searchComplete && matches.length === 1 && malformedCandidates === 0) {
                 resolved = await checkedCAS({
                   gateway_reference: matches[0].id,
                   provider_init_state: 'provider_confirmed',
