@@ -47,7 +47,7 @@ export async function GET(request: NextRequest) {
   //    but NOT not_deliverable (terminal — no contact info to retry with)
   const { data: stalePayments, error: queryError } = await supabase
     .from('payments')
-    .select('id, amount, gateway, gateway_reference, booking_id, invoice_id, campaign_id, order_id, metadata, status, payment_authority_version, finalization_completed_at, confirmation_sent_at')
+    .select('id, amount, gateway, gateway_reference, booking_id, invoice_id, campaign_id, order_id, metadata, status, payment_authority_version, finalization_completed_at, confirmation_sent_at, fee_policy_version, provider_init_state')
     .or(`status.eq.pending,and(status.eq.success,payment_authority_version.not.is.null,finalization_completed_at.is.null),and(status.eq.success,payment_authority_version.not.is.null,finalization_completed_at.not.is.null,confirmation_sent_at.is.null,confirmation_terminal_reason.is.null)`)
     .lt('created_at', twoHoursAgo.toISOString())
     .limit(50);
@@ -258,6 +258,13 @@ export async function GET(request: NextRequest) {
   const { reconcilePayment } = await import('@/lib/payments/reconcile');
 
   for (const payment of stalePayments) {
+    // #264: Skip v1 dispatched rows — the dedicated dispatched-recovery block owns them.
+    // They must not enter ordinary reconciliation until the exact checked transition succeeds.
+    const sp = payment as Record<string, unknown>;
+    if (sp.fee_policy_version === 1 && sp.provider_init_state === 'dispatched') {
+      continue;
+    }
+
     try {
       // Use canonical reconciliation (provider adapter + Payment Authority)
       const result = await reconcilePayment(supabase, payment.id, 'cron');

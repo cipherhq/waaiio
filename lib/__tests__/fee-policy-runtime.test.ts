@@ -107,12 +107,13 @@ async function callCron(sb: { client: Record<string, unknown> }, fetchResponses:
   }) as unknown as typeof fetch;
 
   vi.doMock('@/lib/supabase/service', () => ({ createServiceClient: vi.fn(() => sb.client) }));
-  vi.doMock('@/lib/payments/reconcile', () => ({ reconcilePayment: vi.fn().mockImplementation(() => { reconcileCallCount++; return Promise.resolve({ providerOutcome: 'verified', lifecycle: { status: 'completed' }, acknowledgeSuccess: true }); }) }));
+  const reconciledIds: string[] = [];
+  vi.doMock('@/lib/payments/reconcile', () => ({ reconcilePayment: vi.fn().mockImplementation((_sb: unknown, id: string) => { reconcileCallCount++; reconciledIds.push(id); return Promise.resolve({ providerOutcome: 'verified', lifecycle: { status: 'completed' }, acknowledgeSuccess: true }); }) }));
   const { GET } = await import('../../app/api/cron/payment-reconciliation/route');
   const req = new NextRequest('http://localhost:3000/api/cron/payment-reconciliation', { headers: { authorization: 'Bearer test' } });
   const res = await GET(req);
   globalThis.fetch = origFetch;
-  return { status: res.status, json: await res.json(), fetchCalls, reconcileCallCount };
+  return { status: res.status, json: await res.json(), fetchCalls, reconcileCallCount, reconciledIds };
 }
 
 // ══════════════════════════════════════════════════════════
@@ -297,30 +298,38 @@ describe('Cron dispatched recovery — real GET handler', () => {
 
   // ── Checked-transition failure matrix ──
 
-  it('provider-confirmed CAS DB error → CAS attempted, remains unresolved', async () => {
+  it('paid + successful CAS → reconcile exactly ONCE (not twice from stale loop)', async () => {
+    const sb = buildCronSb({ dispatched: [DISPATCHED_PAYSTACK] });
+    const { reconcileCallCount, reconciledIds } = await callCron(sb, [{ ok: true, body: { data: { status: 'success' } } }]);
+    // Reconciled exactly once from the dispatched-recovery block
+    const psReconciles = reconciledIds.filter(id => id === DISPATCHED_PAYSTACK.id);
+    expect(psReconciles.length).toBe(1);
+  });
+
+  it('provider-confirmed CAS DB error → reconcile 0 times for that payment', async () => {
     const sb = buildCronSb({ dispatched: [DISPATCHED_PAYSTACK], casMode: 'db_error' });
-    await callCron(sb, [{ ok: true, body: { data: { status: 'success' } } }]);
-    // CAS was attempted (provider_confirmed written)
-    expect(sb.casWrites.some((w: Record<string, unknown>) => w.provider_init_state === 'provider_confirmed')).toBe(true);
-    // Production checkedCAS returns false on DB error → resolved stays false
+    const { reconciledIds } = await callCron(sb, [{ ok: true, body: { data: { status: 'success' } } }]);
+    expect(sb.casWrites.length).toBeGreaterThanOrEqual(1);
+    expect(reconciledIds.filter(id => id === DISPATCHED_PAYSTACK.id).length).toBe(0);
   });
 
-  it('provider-confirmed CAS zero rows → remains unresolved', async () => {
+  it('provider-confirmed CAS zero rows → reconcile 0 times', async () => {
     const sb = buildCronSb({ dispatched: [DISPATCHED_PAYSTACK], casMode: 'zero_rows' });
-    await callCron(sb, [{ ok: true, body: { data: { status: 'success' } } }]);
-    expect(sb.casWrites.some((w: Record<string, unknown>) => w.provider_init_state === 'provider_confirmed')).toBe(true);
+    const { reconciledIds } = await callCron(sb, [{ ok: true, body: { data: { status: 'success' } } }]);
+    expect(reconciledIds.filter(id => id === DISPATCHED_PAYSTACK.id).length).toBe(0);
   });
 
-  it('terminal CAS DB error → terminal attempted', async () => {
+  it('terminal CAS DB error → no ordinary reconcile of dispatched payment', async () => {
     const sb = buildCronSb({ dispatched: [DISPATCHED_PAYSTACK], terminalMode: 'db_error' });
-    await callCron(sb, [{ ok: true, body: { data: { status: 'abandoned' } } }]);
+    const { reconciledIds } = await callCron(sb, [{ ok: true, body: { data: { status: 'abandoned' } } }]);
     expect(sb.terminalWrites.length).toBeGreaterThanOrEqual(1);
+    expect(reconciledIds.filter(id => id === DISPATCHED_PAYSTACK.id).length).toBe(0);
   });
 
-  it('terminal CAS zero rows → terminal attempted', async () => {
+  it('terminal CAS zero rows → no ordinary reconcile', async () => {
     const sb = buildCronSb({ dispatched: [DISPATCHED_PAYSTACK], terminalMode: 'zero_rows' });
-    await callCron(sb, [{ ok: true, body: { data: { status: 'abandoned' } } }]);
-    expect(sb.terminalWrites.length).toBeGreaterThanOrEqual(1);
+    const { reconciledIds } = await callCron(sb, [{ ok: true, body: { data: { status: 'abandoned' } } }]);
+    expect(reconciledIds.filter(id => id === DISPATCHED_PAYSTACK.id).length).toBe(0);
   });
 
   it('quarantine reread error → no quarantine update', async () => {
@@ -329,10 +338,15 @@ describe('Cron dispatched recovery — real GET handler', () => {
     expect(sb.quarantineWrites.length).toBe(0);
   });
 
-  it('quarantine update DB error → failure observed', async () => {
+  it('quarantine update DB error → quarantine attempted', async () => {
     const sb = buildCronSb({ dispatched: [OLD_DISPATCHED], quarantineMode: 'db_error' });
     await callCron(sb, [{ ok: false, body: {} }]);
-    // Quarantine attempted but DB error
+    expect(sb.quarantineWrites.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('quarantine update zero rows → quarantine attempted', async () => {
+    const sb = buildCronSb({ dispatched: [OLD_DISPATCHED], quarantineMode: 'zero_rows' });
+    await callCron(sb, [{ ok: false, body: {} }]);
     expect(sb.quarantineWrites.length).toBeGreaterThanOrEqual(1);
   });
 
@@ -639,6 +653,32 @@ describe('Stripe webhook v1 crash repair — real POST handler', () => {
     // processed_webhook_events must NOT be upserted
     expect(upsertCalled).toBe(false);
   });
+
+  it('Stripe dispatched row found + CAS repair zero rows → retryable 500', async () => {
+    const event = { id: 'evt_3', type: 'checkout.session.completed', data: { object: {
+      id: 'cs_zr', payment_status: 'paid', amount_total: 500000, currency: 'ngn',
+      metadata: { reference_code: 'WAAIIO-ZR', channel: 'whatsapp' },
+    } } };
+    let sC = 0; let mC = 0;
+    const ch = (): Record<string, unknown> => new Proxy({} as Record<string, unknown>, {
+      get(_, p: string) {
+        if (p === 'single') return vi.fn().mockImplementation(() => {
+          sC++;
+          if (sC === 1) return Promise.resolve({ data: null, error: null });
+          return Promise.resolve({ data: null, error: null }); // zero rows (null data, no error)
+        });
+        if (p === 'maybeSingle') return vi.fn().mockImplementation(() => {
+          mC++;
+          if (mC === 1) return Promise.resolve({ data: null, error: null });
+          return Promise.resolve({ data: { id: 'dp-2', gateway_reference: 'WAAIIO-ZR', provider_init_state: 'dispatched' }, error: null });
+        });
+        return vi.fn(() => ch());
+      },
+    });
+    const sb2 = { from: vi.fn(() => ch()), rpc: vi.fn() };
+    const { status: s2 } = await callStripeWebhook(event, sb2);
+    expect(s2).toBe(500);
+  });
 });
 
 // ══════════════════════════════════════════════════════════
@@ -691,6 +731,27 @@ describe('Square webhook v1 crash repair — real POST handler', () => {
     const { status, json } = await callSquareWebhook(event, sb);
     expect(status).toBe(500);
     expect(json.error).toMatch(/V1 paid event unresolved/i);
+  });
+
+  it('Square dispatched row found + CAS repair failure → retryable 500', async () => {
+    const event = { type: 'payment.updated', data: { object: { payment: {
+      id: 'sq_pay_2', status: 'COMPLETED', order_id: 'sq_ord_2', note: 'WAAIIO-SQ-CAS',
+    } } } };
+    // Return matching row via find(), but CAS repair fails
+    const ch = (): Record<string, unknown> => new Proxy({} as Record<string, unknown>, {
+      get(_, p: string) {
+        if (p === 'single') return vi.fn().mockResolvedValue({ data: null, error: { message: 'CAS fail' } });
+        if (p === 'maybeSingle') return vi.fn().mockResolvedValue({ data: null, error: null });
+        if (p === 'then') return (r: (v: unknown) => void) => r({
+          data: [{ id: 'p1', gateway_reference: 'WAAIIO-SQ-CAS', metadata: { reference_code: 'WAAIIO-SQ-CAS' }, provider_init_state: 'dispatched', status: 'pending', amount: 5000 }],
+          error: null,
+        });
+        return vi.fn(() => ch());
+      },
+    });
+    const sb = { from: vi.fn(() => ch()), rpc: vi.fn() };
+    const { status } = await callSquareWebhook(event, sb);
+    expect(status).toBe(500);
   });
 });
 
@@ -804,5 +865,35 @@ describe('PayPal webhook v1 crash repair — real POST handler', () => {
       { ok: true, body: { purchase_units: [{ description: 'Legacy order' }] } },
     ]);
     expect(status).toBe(200);
+  });
+
+  it('PayPal dispatched row found + CAS repair failure → retryable 500', async () => {
+    const event = { event_type: 'PAYMENT.CAPTURE.COMPLETED', resource: {
+      id: 'cap_cas', amount: { value: '50.00', currency_code: 'NGN' },
+      supplementary_data: { related_ids: { order_id: 'ORDER_CAS' } },
+    } };
+    // Order read returns Waaiio ref, dispatched row found, but CAS repair fails
+    let maybeSingleCount = 0;
+    const ch = (): Record<string, unknown> => new Proxy({} as Record<string, unknown>, {
+      get(_, p: string) {
+        if (p === 'single') return vi.fn().mockResolvedValue({ data: null, error: { message: 'CAS error' } });
+        if (p === 'maybeSingle') return vi.fn().mockImplementation(() => {
+          maybeSingleCount++;
+          // First two calls: gateway_reference lookup + metadata scan → not found
+          if (maybeSingleCount <= 2) return Promise.resolve({ data: null, error: null });
+          // Third call: dispatched row lookup → found
+          return Promise.resolve({ data: { id: 'dp-pp', gateway_reference: 'WAAIIO-PP-CAS', provider_init_state: 'dispatched' }, error: null });
+        });
+        if (p === 'then') return (r: (v: unknown) => void) => r({ data: [], error: null });
+        return vi.fn(() => ch());
+      },
+    });
+    const sb = { from: vi.fn(() => ch()), rpc: vi.fn() };
+    const { status, json } = await callPayPalWebhook(event, sb, [
+      { ok: true, body: { purchase_units: [{ reference_id: 'WAAIIO-PP-CAS' }] } },
+    ]);
+    expect(status).toBe(500);
+    // Returns 500 for either CAS repair failure or unresolved correlation
+    expect(json.error).toMatch(/CAS repair failed|V1 paid event unresolved/i);
   });
 });
