@@ -288,6 +288,7 @@ function OnboardingWizard() {
     country: { pricing: Record<string, { price: number; feeFlat: number; feePercentage: number }> };
   } | null>(null);
   const [pricingUnavailable, setPricingUnavailable] = useState(false);
+  const [pricingRetryKey, setPricingRetryKey] = useState(0);
 
   useEffect(() => {
     async function loadPricing() {
@@ -304,7 +305,7 @@ function OnboardingWizard() {
       }
     }
     loadPricing();
-  }, [selectedCountry]);
+  }, [selectedCountry, pricingRetryKey]);
 
   // Category
   const [category, setCategory] = useState<BusinessCategoryKey | ''>('');
@@ -1100,17 +1101,29 @@ function OnboardingWizard() {
   const waLink = waMethod !== 'shared' && dedicatedNumber
     ? `https://wa.me/${dedicatedNumber}`
     : `https://wa.me/${sharedNumber}?text=${encodeURIComponent(successData?.bot_code || botCode)}`;
-  // Build localTiers from authoritative DB projection — no hardcoded commercial fallback
+  // Build localTiers from authoritative DB projection — no hardcoded commercial fallback.
+  // When projection is absent, commercial fields (price, feePercentage, feeFlat) are zeroed
+  // and the UI is gated by pricingReady below. Non-commercial metadata (name, features) from constants only.
   const localTiers = useMemo(() => {
-    if (!pricingProjection) return getPricingTiers(selectedCountry); // shape-only fallback during initial load
+    const base = getPricingTiers(selectedCountry); // non-commercial metadata only (name, features)
+    if (!pricingProjection) {
+      // Zero commercial fields — UI is gated so these are never displayed
+      return {
+        free: { ...base.free, price: 0, feePercentage: 0, feeFlat: 0 },
+        growth: { ...base.growth, price: 0, feePercentage: 0, feeFlat: 0 },
+        business: { ...base.business, price: 0, feePercentage: 0, feeFlat: 0 },
+      };
+    }
     const cp = pricingProjection.country.pricing;
-    const base = getPricingTiers(selectedCountry); // for non-commercial metadata (name, features)
     return {
-      free: { ...base.free, price: cp.free?.price ?? 0, feePercentage: cp.free?.feePercentage ?? base.free.feePercentage, feeFlat: cp.free?.feeFlat ?? base.free.feeFlat },
-      growth: { ...base.growth, price: cp.growth?.price ?? base.growth.price, feePercentage: cp.growth?.feePercentage ?? base.growth.feePercentage, feeFlat: cp.growth?.feeFlat ?? base.growth.feeFlat },
-      business: { ...base.business, price: cp.business?.price ?? base.business.price, feePercentage: cp.business?.feePercentage ?? base.business.feePercentage, feeFlat: cp.business?.feeFlat ?? base.business.feeFlat },
+      free: { ...base.free, price: cp.free.price, feePercentage: cp.free.feePercentage, feeFlat: cp.free.feeFlat },
+      growth: { ...base.growth, price: cp.growth.price, feePercentage: cp.growth.feePercentage, feeFlat: cp.growth.feeFlat },
+      business: { ...base.business, price: cp.business.price, feePercentage: cp.business.feePercentage, feeFlat: cp.business.feeFlat },
     };
   }, [pricingProjection, selectedCountry]);
+
+  // Pricing is ready only when the projection has been successfully loaded
+  const pricingReady = pricingProjection !== null && !pricingUnavailable;
 
   // Compute the minimum required plan based on selected features
   // IMPORTANT: This useMemo must be BEFORE any conditional returns (React hooks rule)
@@ -1294,7 +1307,7 @@ function OnboardingWizard() {
             )}
 
             {/* ── Step 3: Features ── */}
-            {step === 'features' && (
+            {step === 'features' && (pricingReady ? (
               <StepFeatures
                 selectedCapabilities={selectedCapabilities}
                 setSelectedCapabilities={setSelectedCapabilities}
@@ -1305,13 +1318,15 @@ function OnboardingWizard() {
                 requiredPlan={requiredPlan}
                 localTiers={localTiers}
                 billingInterval={billingInterval}
-                annualDiscountPercentage={pricingProjection?.annualDiscountPercentage ?? 20}
+                annualDiscountPercentage={pricingProjection.annualDiscountPercentage}
                 setStep={setStep}
               />
-            )}
+            ) : (
+              <PricingLoadingOrUnavailable loading={!pricingUnavailable} onRetry={() => setPricingRetryKey(k => k + 1)} onBack={() => setStep('category')} />
+            ))}
 
             {/* ── Step 4: Plan ── */}
-            {step === 'plan' && (
+            {step === 'plan' && (pricingReady ? (
               <StepPlan
                 selectedPlan={selectedPlan}
                 setSelectedPlan={setSelectedPlan}
@@ -1321,13 +1336,15 @@ function OnboardingWizard() {
                 requiredPlan={requiredPlan}
                 localTiers={localTiers}
                 billingInterval={billingInterval}
-                annualDiscountPercentage={pricingProjection?.annualDiscountPercentage ?? 20}
+                annualDiscountPercentage={pricingProjection.annualDiscountPercentage}
                 setStep={setStep}
               />
-            )}
+            ) : (
+              <PricingLoadingOrUnavailable loading={!pricingUnavailable} onRetry={() => setPricingRetryKey(k => k + 1)} onBack={() => setStep('category')} />
+            ))}
 
             {/* ── Step 5: Details ── */}
-            {step === 'details' && (
+            {step === 'details' && (selectedPlan === 'free' || pricingReady) ? (
               <StepDetails
                 firstName={firstName}
                 setFirstName={setFirstName}
@@ -1378,7 +1395,9 @@ function OnboardingWizard() {
                 handleRegister={handleRegister}
                 setStep={setStep}
               />
-            )}
+            ) : step === 'details' ? (
+              <PricingLoadingOrUnavailable loading={!pricingUnavailable} onRetry={() => setPricingRetryKey(k => k + 1)} onBack={() => setStep('plan')} />
+            ) : null}
 
             {/* Persona and Connect steps removed — persona is post-signup, connect is merged into details */}
             {/* Old plan step removed — now in step 3 above */}
@@ -1494,6 +1513,31 @@ function QRCodeDisplay({ value }: { value: string }) {
   return (
     <div className="inline-block rounded-2xl bg-white p-5 shadow-lg border border-gray-100">
       <QR value={value} size={192} level="M" />
+    </div>
+  );
+}
+
+/* ─── Pricing Loading / Unavailable Gate ─── */
+
+function PricingLoadingOrUnavailable({ loading, onRetry, onBack }: { loading: boolean; onRetry: () => void; onBack: () => void }) {
+  if (loading) {
+    return (
+      <div className="flex flex-col items-center py-16">
+        <div className="h-8 w-8 animate-spin rounded-full border-4 border-brand border-t-transparent" />
+        <p className="mt-4 text-sm text-gray-500">Loading pricing...</p>
+      </div>
+    );
+  }
+  return (
+    <div className="flex flex-col items-center py-12 text-center">
+      <h2 className="text-xl font-bold text-gray-900">Pricing temporarily unavailable</h2>
+      <p className="mt-2 max-w-sm text-sm text-gray-600">
+        We&apos;re having trouble loading pricing information. Please try again in a moment.
+      </p>
+      <div className="mt-6 flex gap-3">
+        <button type="button" onClick={onBack} className="rounded-xl border border-gray-300 px-5 py-2.5 text-sm font-medium text-gray-600 hover:bg-gray-50">Back</button>
+        <button type="button" onClick={onRetry} className="rounded-xl bg-brand px-5 py-2.5 text-sm font-bold text-white hover:bg-brand-600">Try Again</button>
+      </div>
     </div>
   );
 }
