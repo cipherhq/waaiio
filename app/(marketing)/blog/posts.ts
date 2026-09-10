@@ -55,7 +55,7 @@ Salons using WhatsApp automation typically see:
 
 ## Get Started Free
 
-Waaiio offers a 30-day free trial with all features included. No credit card required.
+Waaiio offers a free trial with all features included. No credit card required.
 
 [Start your free trial →](https://waaiio.com/get-started)
     `,
@@ -158,7 +158,7 @@ With Waaiio, the bot handles 90% of orders. You only step in for special request
 
 ## Try It Free
 
-30-day trial with everything included. Add your menu and start taking WhatsApp orders today.
+Free trial with everything included. Add your menu and start taking WhatsApp orders today.
 
 [Start your free trial →](https://waaiio.com/get-started)
     `,

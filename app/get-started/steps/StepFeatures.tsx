@@ -190,7 +190,7 @@ export function StepFeatures({
           const planOrder = ['free', 'growth', 'business'] as const;
           const capTierIdx = planOrder.indexOf(tier as typeof planOrder[number]);
           const selectedPlanIdx = planOrder.indexOf(selectedPlan);
-          // During onboarding, all features are available (30-day trial unlocks everything)
+          // During onboarding, all features are available (trial unlocks everything)
           // Tier badge still shown so users know what they'll need after trial
           const isLocked = false;
           return (
@@ -343,7 +343,7 @@ export function StepFeatures({
       </div>
 
       <div className="mt-6">
-        <p className="text-center text-xs text-gray-500 mb-3">All features included free for 30 days. No credit card required.</p>
+        <p className="text-center text-xs text-gray-500 mb-3">All features included free during your trial. No credit card required.</p>
         <button
           type="button"
           onClick={() => {

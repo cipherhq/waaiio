@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import HomeClient from './HomeClient';
 import { getCategoryList } from '@/lib/categoryConfig';
 import { createServiceClient } from '@/lib/supabase/service';
+import { TIER_FEATURES } from '@/lib/constants';
 
 export const revalidate = 60;
 
@@ -70,27 +71,9 @@ const JSON_LD_ORG = {
   ],
 };
 
-const JSON_LD_APP = {
-  '@context': 'https://schema.org',
-  '@type': 'SoftwareApplication',
-  name: 'Waaiio',
-  applicationCategory: 'BusinessApplication',
-  applicationSubCategory: 'WhatsApp Automation Platform',
-  operatingSystem: 'Web',
-  url: baseUrl,
-  description: `Automate bookings, payments, orders, donations, and tickets on WhatsApp for ${CATEGORY_COUNT}+ industries`,
-  featureList: 'Appointment booking, Payment processing, Online ordering, Event ticketing, Donation collection, Customer chat, Feedback surveys, Loyalty programs, Queue management, Invoice generation, E-signatures',
-  offers: [
-    { '@type': 'Offer', name: 'Starter', price: '0', priceCurrency: 'USD', description: 'Free plan with 30-day trial', availability: 'https://schema.org/InStock' },
-    { '@type': 'Offer', name: 'Pro', price: '14.99', priceCurrency: 'USD', description: 'Pro plan for scaling businesses', availability: 'https://schema.org/InStock' },
-    { '@type': 'Offer', name: 'Premium', price: '39.99', priceCurrency: 'USD', description: 'Full platform with white-label branding', availability: 'https://schema.org/InStock' },
-  ],
-  creator: { '@type': 'Organization', name: 'Waaiio', url: baseUrl },
-};
-
 const FAQ_DATA = [
   { question: 'Who can use Waaiio?', answer: `Anyone — businesses, churches, event organisers, individuals, and anyone who wants WhatsApp automation. Salons, barbers, spas, mosques, schools, NGOs, clinics, shops, event companies, hotels, restaurants, pharmacies, and much more. We support ${CATEGORY_COUNT}+ use cases.` },
-  { question: 'Is there really a free plan?', answer: 'Yes! Start with our Starter plan — 30-day free trial with zero fees, then a small per-transaction fee. No monthly subscription required. No credit card needed.' },
+  { question: 'Is there really a free plan?', answer: 'Yes! Start with our Starter plan — free trial with zero fees, then a small per-transaction fee. No monthly subscription required. No credit card needed.' },
   { question: 'How do payments work?', answer: 'When a customer needs to pay, they receive a secure payment link in the chat. We support Paystack (Nigeria, Ghana), Stripe (US, UK, Canada), Square (US), Flutterwave (Africa), and PayPal (US, UK, Canada). Funds go directly to your account.' },
   { question: 'Do I need a developer to set this up?', answer: 'No. Sign up, add your services, and connect your WhatsApp — your bot is live in under 5 minutes. Everything is managed from a simple dashboard.' },
   { question: 'Can I use my own WhatsApp number?', answer: 'Yes! You can use your existing business WhatsApp number (dedicated) or use our shared number to get started instantly. Switch to your own number anytime.' },
@@ -125,14 +108,20 @@ const JSON_LD_WEBSITE = {
 };
 
 export default async function HomePage() {
-  // Fetch real stats from DB (server-side, cached for 5 min)
+  // Fetch real stats and pricing from DB (server-side, cached for 60s via revalidate)
   let stats = { businesses: '25+', payments: '95+', countries: '5' };
+  let jsonLdOffers: Array<Record<string, string>> = [
+    { '@type': 'Offer', name: TIER_FEATURES.free.marketingName, price: '0', priceCurrency: 'USD', description: 'Free plan with trial period', availability: 'https://schema.org/InStock' },
+    { '@type': 'Offer', name: TIER_FEATURES.growth.marketingName, price: '20', priceCurrency: 'USD', description: 'Pro plan for scaling businesses', availability: 'https://schema.org/InStock' },
+    { '@type': 'Offer', name: TIER_FEATURES.business.marketingName, price: '45', priceCurrency: 'USD', description: 'Full platform with white-label branding', availability: 'https://schema.org/InStock' },
+  ];
   try {
     const supabase = createServiceClient();
-    const [{ count: bizCount }, { count: payCount }, { data: countryData }] = await Promise.all([
+    const [{ count: bizCount }, { count: payCount }, { data: countryData }, { data: usCountry }] = await Promise.all([
       supabase.from('businesses').select('id', { count: 'exact', head: true }).eq('status', 'active'),
       supabase.from('payments').select('id', { count: 'exact', head: true }).eq('status', 'success'),
       supabase.from('businesses').select('country_code').eq('status', 'active'),
+      supabase.from('countries').select('pricing').eq('code', 'US').eq('is_active', true).single(),
     ]);
     const uniqueCountries = new Set((countryData || []).map(b => b.country_code)).size;
     stats = {
@@ -140,7 +129,31 @@ export default async function HomePage() {
       payments: `${payCount || 95}+`,
       countries: String(uniqueCountries || 5),
     };
+
+    // Build JSON-LD offers from DB US pricing
+    const usPricing = usCountry?.pricing as Record<string, Record<string, number>> | undefined;
+    if (usPricing) {
+      jsonLdOffers = [
+        { '@type': 'Offer', name: TIER_FEATURES.free.marketingName, price: '0', priceCurrency: 'USD', description: 'Free plan with trial period', availability: 'https://schema.org/InStock' },
+        { '@type': 'Offer', name: TIER_FEATURES.growth.marketingName, price: String(usPricing.growth?.price ?? 20), priceCurrency: 'USD', description: 'Pro plan for scaling businesses', availability: 'https://schema.org/InStock' },
+        { '@type': 'Offer', name: TIER_FEATURES.business.marketingName, price: String(usPricing.business?.price ?? 45), priceCurrency: 'USD', description: 'Full platform with white-label branding', availability: 'https://schema.org/InStock' },
+      ];
+    }
   } catch {}
+
+  const JSON_LD_APP = {
+    '@context': 'https://schema.org',
+    '@type': 'SoftwareApplication',
+    name: 'Waaiio',
+    applicationCategory: 'BusinessApplication',
+    applicationSubCategory: 'WhatsApp Automation Platform',
+    operatingSystem: 'Web',
+    url: baseUrl,
+    description: `Automate bookings, payments, orders, donations, and tickets on WhatsApp for ${CATEGORY_COUNT}+ industries`,
+    featureList: 'Appointment booking, Payment processing, Online ordering, Event ticketing, Donation collection, Customer chat, Feedback surveys, Loyalty programs, Queue management, Invoice generation, E-signatures',
+    offers: jsonLdOffers,
+    creator: { '@type': 'Organization', name: 'Waaiio', url: baseUrl },
+  };
 
   return (
     <>

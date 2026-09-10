@@ -1,33 +1,18 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
-import { PRICING_TIERS, getPricingTiers, formatCurrency, type SubscriptionTier, type CountryCode } from '@/lib/constants';
-import { getCountry } from '@/lib/countries';
-import { getAnnualDiscount } from '@/lib/platformSettings';
+import { createServiceClient } from '@/lib/supabase/service';
+import { formatCurrency, type SubscriptionTier, type CountryCode } from '@/lib/constants';
 
-const PLAN_PAGE_SLUGS: Record<string, Record<string, string | undefined>> = {
-  month: {
-    growth: process.env.PAYSTACK_GROWTH_PLAN_CODE,
-    business: process.env.PAYSTACK_BUSINESS_PLAN_CODE,
-  },
-  year: {
-    growth: process.env.PAYSTACK_GROWTH_ANNUAL_PLAN_CODE,
-    business: process.env.PAYSTACK_BUSINESS_ANNUAL_PLAN_CODE,
-  },
-};
-
-const STRIPE_ANNUAL_PRICE_IDS: Record<string, string | undefined> = {
-  growth: process.env.STRIPE_GROWTH_ANNUAL_PRICE_ID,
-  business: process.env.STRIPE_BUSINESS_ANNUAL_PRICE_ID,
-};
-
-type BillingInterval = 'month' | 'year';
-const VALID_INTERVALS: BillingInterval[] = ['month', 'year'];
 const VALID_PLANS: SubscriptionTier[] = ['growth', 'business'];
+
+const PLAN_PAGE_SLUGS: Record<string, string | undefined> = {
+  growth: process.env.PAYSTACK_GROWTH_PLAN_CODE,
+  business: process.env.PAYSTACK_BUSINESS_PLAN_CODE,
+};
 
 export async function POST(request: NextRequest) {
   try {
     const supabase = await createClient();
-    const { multiplier: ANNUAL_DISCOUNT } = await getAnnualDiscount({ useServiceClient: true });
     const { data: { user } } = await supabase.auth.getUser();
 
     if (!user) {
@@ -51,9 +36,10 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (!VALID_INTERVALS.includes(billing_interval)) {
+    // #270: Annual billing is not supported — reject before any provider interaction
+    if (billing_interval !== 'month') {
       return NextResponse.json(
-        { message: 'Invalid billing_interval. Must be month or year.' },
+        { message: 'Only monthly billing is currently supported.' },
         { status: 400 },
       );
     }
@@ -72,10 +58,36 @@ export async function POST(request: NextRequest) {
     }
 
     const countryCode = (business.country_code || 'NG') as CountryCode;
-    const country = getCountry(countryCode);
-    const tiers = getPricingTiers(countryCode);
-    const tier = tiers[plan as SubscriptionTier];
-    const gateway = country?.payment_gateway ?? 'paystack';
+
+    // Read regional tier price directly from DB — fail closed, no hardcoded fallback
+    const service = createServiceClient();
+    const { data: countryRow, error: countryError } = await service
+      .from('countries')
+      .select('pricing, currency_code, payment_gateway')
+      .eq('code', countryCode)
+      .eq('is_active', true)
+      .single();
+
+    if (countryError || !countryRow?.pricing) {
+      return NextResponse.json(
+        { message: 'Regional pricing is unavailable. Please try again later.' },
+        { status: 503 },
+      );
+    }
+
+    const countryPricing = countryRow.pricing as Record<string, Record<string, number>>;
+    const tierPricing = countryPricing[plan as string];
+
+    if (!tierPricing || typeof tierPricing.price !== 'number' || tierPricing.price <= 0) {
+      return NextResponse.json(
+        { message: 'Plan pricing is unavailable for this region.' },
+        { status: 503 },
+      );
+    }
+
+    const monthlyPrice = tierPricing.price;
+    const currency = (countryRow.currency_code as string) || 'NGN';
+    const gateway = (countryRow.payment_gateway as string) || 'paystack';
 
     const { data: profile } = await supabase
       .from('profiles')
@@ -89,29 +101,26 @@ export async function POST(request: NextRequest) {
       ? `${appUrl}${callback}`
       : `${appUrl}/get-started?step=success&business_id=${business_id}`;
 
-    // Paystack path (NG, GH) — always use Transaction Initialize API
+    // Paystack path (NG, GH)
     if (gateway === 'paystack') {
       const paystackKey = process.env.PAYSTACK_SECRET_KEY;
-      const pageSlug = PLAN_PAGE_SLUGS[billing_interval]?.[plan];
+      const pageSlug = PLAN_PAGE_SLUGS[plan];
 
       if (!paystackKey) {
         return NextResponse.json({ message: 'Payment gateway not configured' }, { status: 500 });
       }
 
-      const monthlyPrice = tier.price as number;
-      const amount = billing_interval === 'year'
-        ? Math.round(monthlyPrice * 12 * ANNUAL_DISCOUNT * 100) // kobo, annual with 20% discount
-        : monthlyPrice * 100; // kobo, monthly
+      const amount = monthlyPrice * 100; // kobo/pesewa
 
       const payload: Record<string, unknown> = {
         email,
         amount,
-        currency: country?.currency_code ?? 'NGN',
+        currency,
         callback_url: callbackUrl,
         metadata: {
           business_id,
           plan,
-          billing_interval,
+          billing_interval: 'month',
           type: 'whatsapp_subscription',
           user_id: user.id,
         },
@@ -149,11 +158,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ message: 'Payment gateway not configured' }, { status: 500 });
     }
 
-    const monthlyPriceCents = Math.round((tier.price as number) * 100);
-    const annualPriceId = billing_interval === 'year' ? STRIPE_ANNUAL_PRICE_IDS[plan] : undefined;
-    const amountInCents = billing_interval === 'year'
-      ? Math.round(monthlyPriceCents * 12 * ANNUAL_DISCOUNT) // annual with 20% discount
-      : monthlyPriceCents;
+    const amountInCents = Math.round(monthlyPrice * 100);
+    const tierName = plan === 'growth' ? 'Pro' : 'Premium';
 
     const stripeBody = new URLSearchParams({
       'payment_method_types[0]': 'card',
@@ -164,20 +170,15 @@ export async function POST(request: NextRequest) {
       customer_email: email,
       'metadata[business_id]': business_id,
       'metadata[plan]': plan,
-      'metadata[billing_interval]': billing_interval,
+      'metadata[billing_interval]': 'month',
       'metadata[type]': 'whatsapp_subscription',
       'metadata[user_id]': user.id,
     });
 
-    // Use pre-created Stripe Price ID if available, otherwise use inline price_data
-    if (annualPriceId) {
-      stripeBody.set('line_items[0][price]', annualPriceId);
-    } else {
-      stripeBody.set('line_items[0][price_data][currency]', (country?.currency_code ?? 'USD').toLowerCase());
-      stripeBody.set('line_items[0][price_data][product_data][name]', `Waaiio ${tier.name} Plan (${billing_interval === 'year' ? 'Annual' : 'Monthly'})`);
-      stripeBody.set('line_items[0][price_data][unit_amount]', String(amountInCents));
-      stripeBody.set('line_items[0][price_data][recurring][interval]', billing_interval);
-    }
+    stripeBody.set('line_items[0][price_data][currency]', currency.toLowerCase());
+    stripeBody.set('line_items[0][price_data][product_data][name]', `Waaiio ${tierName} Plan (Monthly)`);
+    stripeBody.set('line_items[0][price_data][unit_amount]', String(amountInCents));
+    stripeBody.set('line_items[0][price_data][recurring][interval]', 'month');
 
     const response = await fetch('https://api.stripe.com/v1/checkout/sessions', {
       method: 'POST',

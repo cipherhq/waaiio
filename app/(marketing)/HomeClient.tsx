@@ -24,7 +24,7 @@ const FAQ_DATA = [
   },
   {
     question: 'Is there really a free plan?',
-    answer: 'Yes! Start with our Starter plan — 30-day free trial with zero fees, then a small per-transaction fee. No monthly subscription required. No credit card needed.',
+    answer: 'Yes! Start with our Starter plan — free trial with zero fees, then a small per-transaction fee. No monthly subscription required. No credit card needed.',
   },
   {
     question: 'How do payments work?',

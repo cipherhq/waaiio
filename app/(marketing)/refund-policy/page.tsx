@@ -58,9 +58,9 @@ export default function RefundPolicyPage() {
                 continues until the end of the annual billing period.
               </p>
 
-              <h3 className="mt-4 text-lg font-medium text-gray-900">1.3 30-Day Trial</h3>
+              <h3 className="mt-4 text-lg font-medium text-gray-900">1.3 Free Trial</h3>
               <p className="mt-2 leading-relaxed">
-                The 30-day trial is free. No charges are incurred during the trial period, so no
+                The free trial period is free. No charges are incurred during the trial period, so no
                 refund applies. If you subscribe to a paid plan after your trial ends, the refund
                 terms above apply from the date of your first paid subscription.
               </p>

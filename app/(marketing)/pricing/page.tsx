@@ -4,29 +4,100 @@ import Link from 'next/link';
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import AnimatedSection from '@/components/marketing/AnimatedSection';
-import { formatCurrency, getPricingTiers, TIER_FEATURES, type CountryCode, type SubscriptionTier } from '@/lib/constants';
-import { CAPABILITIES, CAPABILITY_TIER_REQUIREMENTS, type CapabilityId } from '@/lib/capabilities/types';
-import { loadCountries, getCountryList, type CountryRow } from '@/lib/countries';
-import { getAnnualDiscountSync } from '@/lib/platformSettings';
+import { formatCurrency, TIER_FEATURES, type CountryCode, type SubscriptionTier } from '@/lib/constants';
+import { CAPABILITIES, CAPABILITY_TIER_REQUIREMENTS } from '@/lib/capabilities/types';
+
+/** DTO shape returned by /api/public/pricing */
+interface PricingProjection {
+  trialDays: number;
+  annualDiscountPercentage: number;
+  tierFees: Record<string, { feePercentage: number }>;
+  categoryFees: Record<string, { label: string; feePercentage: number }>;
+  byoFeePolicy: string;
+  country: {
+    code: string;
+    name: string;
+    currencyCode: string;
+    currencySymbol: string;
+    currencyLocale: string;
+    flag: string;
+    gateway: string;
+    pricing: Record<string, { price: number; feeFlat: number; feePercentage: number }>;
+  };
+  countries: Array<{
+    code: string;
+    name: string;
+    currencyCode: string;
+    currencySymbol: string;
+    currencyLocale: string;
+    flag: string;
+    gateway: string;
+    pricing: Record<string, { price: number; feeFlat: number; feePercentage: number }>;
+  }>;
+}
 
 export default function PricingPage() {
   const [country, setCountry] = useState<CountryCode>('NG');
   const [isAnnual, setIsAnnual] = useState(false);
   const [billingVolume, setBillingVolume] = useState(200);
-  const [countryList, setCountryList] = useState<CountryRow[]>(getCountryList());
-  const tiers = getPricingTiers(country);
-  const { multiplier: annualMultiplier, percentage: annualPct } = getAnnualDiscountSync();
+  const [projection, setProjection] = useState<PricingProjection | null>(null);
+  const [loadError, setLoadError] = useState(false);
 
   useEffect(() => {
-    loadCountries().then(() => setCountryList(getCountryList()));
-  }, []);
+    fetchProjection(country);
+  }, [country]);
 
-  const avgTransaction: Record<CountryCode, number> = { NG: 5000, US: 40, GB: 35, CA: 45, GH: 50 };
+  async function fetchProjection(cc: string) {
+    try {
+      setLoadError(false);
+      const res = await fetch(`/api/public/pricing?country=${cc}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data: PricingProjection = await res.json();
+      if (!data.trialDays || !data.country?.pricing) throw new Error('Malformed projection');
+      setProjection(data);
+    } catch {
+      setLoadError(true);
+      setProjection(null);
+    }
+  }
+
+  // Fail-closed: show pricing-unavailable state
+  if (loadError) {
+    return (
+      <section className="py-32 text-center">
+        <div className="mx-auto max-w-md px-4">
+          <h1 className="text-2xl font-bold text-gray-900">Pricing temporarily unavailable</h1>
+          <p className="mt-3 text-gray-600">We&apos;re having trouble loading pricing information. Please try again in a moment.</p>
+          <button onClick={() => fetchProjection(country)} className="mt-6 rounded-xl bg-brand px-6 py-3 text-sm font-bold text-white hover:bg-brand-600 transition">
+            Try Again
+          </button>
+        </div>
+      </section>
+    );
+  }
+
+  if (!projection) {
+    return (
+      <section className="py-32 text-center">
+        <div className="mx-auto max-w-md px-4">
+          <div className="mx-auto h-8 w-8 animate-spin rounded-full border-4 border-brand border-t-transparent" />
+          <p className="mt-4 text-sm text-gray-500">Loading pricing...</p>
+        </div>
+      </section>
+    );
+  }
+
+  const { trialDays, annualDiscountPercentage, tierFees, categoryFees, byoFeePolicy } = projection;
+  const annualMultiplier = 1 - annualDiscountPercentage / 100;
+  const countryPricing = projection.country.pricing;
+  const countryList = projection.countries;
+
+  const avgTransaction: Record<string, number> = { NG: 5000, US: 40, GB: 35, CA: 45, GH: 50 };
   const avgTx = avgTransaction[country] || 40;
   const feeEstimates = {
-    free: Math.round(billingVolume * (TIER_FEATURES.free.feePercentage / 100) * avgTx + billingVolume * tiers.free.feeFlat),
-    growth: Math.round(billingVolume * (TIER_FEATURES.growth.feePercentage / 100) * avgTx + billingVolume * tiers.growth.feeFlat),
-    business: Math.round(billingVolume * (TIER_FEATURES.business.feePercentage / 100) * avgTx + billingVolume * tiers.business.feeFlat),
+    free: Math.round(billingVolume * ((countryPricing.free?.feePercentage ?? tierFees.free.feePercentage) / 100) * avgTx + billingVolume * (countryPricing.free?.feeFlat ?? 0)),
+    growth: Math.round(billingVolume * ((countryPricing.growth?.feePercentage ?? tierFees.growth.feePercentage) / 100) * avgTx + billingVolume * (countryPricing.growth?.feeFlat ?? 0)),
+    business: Math.round(billingVolume * ((countryPricing.business?.feePercentage ?? tierFees.business.feePercentage) / 100) * avgTx + billingVolume * (countryPricing.business?.feeFlat ?? 0)),
   };
 
   return (
@@ -38,9 +109,8 @@ export default function PricingPage() {
           <h1 className="mt-3 text-4xl font-extrabold text-gray-900 lg:text-5xl">
             Simple, transparent pricing
           </h1>
-          {/* NOTE: These values must match PRICING_TIERS in lib/constants.ts */}
           <p className="mx-auto mt-4 max-w-2xl text-lg text-gray-600">
-            30-day free trial with zero fees, then {TIER_FEATURES.free.feePercentage}% per transaction. No monthly fees on Starter. Free reservations don&apos;t count.
+            {trialDays}-day free trial with zero fees, then {tierFees.free.feePercentage}% per transaction. No monthly fees on Starter. Free reservations don&apos;t count.
           </p>
 
           {/* Country picker */}
@@ -48,7 +118,7 @@ export default function PricingPage() {
             {countryList.map((c) => (
               <button
                 key={c.code}
-                onClick={() => setCountry(c.code)}
+                onClick={() => setCountry(c.code as CountryCode)}
                 className={`flex items-center gap-1.5 rounded-full border px-4 py-2 text-sm font-medium transition ${
                   country === c.code
                     ? 'border-brand bg-brand-50 text-brand'
@@ -80,7 +150,7 @@ export default function PricingPage() {
                 <div className="absolute top-0.5 h-6 w-6 rounded-full bg-white shadow-md transition-all duration-200" style={{ left: isAnnual ? '30px' : '2px' }} />
               </button>
               <span className={`text-sm font-medium ${isAnnual ? 'text-gray-900' : 'text-gray-400'}`}>
-                Annual <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs font-bold text-green-700">Save {annualPct}%</span>
+                Annual <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs font-bold text-green-700">Save {annualDiscountPercentage}%</span>
               </span>
             </div>
 
@@ -92,34 +162,36 @@ export default function PricingPage() {
                   price="Free"
                   priceNote="No monthly fee"
                   description={TIER_FEATURES.free.description}
-                  features={tiers.free.features}
+                  features={TIER_FEATURES.free.highlights}
+                  trialDays={trialDays}
                   cta={{ label: 'Start Free Trial', href: '/get-started' }}
                   country={country}
                 />
-                {/* NOTE: These values must match PRICING_TIERS in lib/constants.ts */}
                 <p className="mt-3 rounded-lg bg-gray-50 px-4 py-3 text-center text-xs text-gray-500">
-                  After trial: {TIER_FEATURES.free.feePercentage}% per paid transaction. Free bookings (no deposit) are always free.
+                  After trial: {tierFees.free.feePercentage}% per paid transaction. Free bookings (no deposit) are always free.
                 </p>
               </div>
               <TierCard
                 tier="growth"
                 name={TIER_FEATURES.growth.marketingName}
-                price={formatCurrency(isAnnual ? Math.round(tiers.growth.price * annualMultiplier) : tiers.growth.price, country)}
+                price={formatCurrency(isAnnual ? Math.round((countryPricing.growth?.price ?? 0) * annualMultiplier) : (countryPricing.growth?.price ?? 0), country)}
                 priceNote={isAnnual ? '/mo billed annually' : '/month'}
                 description={TIER_FEATURES.growth.description}
                 highlight
-                features={tiers.growth.features}
-                cta={{ label: 'Get Started', href: isAnnual ? '/get-started?plan=growth&billing=annual' : '/get-started?plan=growth', gold: true }}
+                features={TIER_FEATURES.growth.highlights}
+                trialDays={trialDays}
+                cta={{ label: 'Get Started', href: '/get-started?plan=growth', gold: true }}
                 country={country}
               />
               <TierCard
                 tier="business"
                 name={TIER_FEATURES.business.marketingName}
-                price={formatCurrency(isAnnual ? Math.round(tiers.business.price * annualMultiplier) : tiers.business.price, country)}
+                price={formatCurrency(isAnnual ? Math.round((countryPricing.business?.price ?? 0) * annualMultiplier) : (countryPricing.business?.price ?? 0), country)}
                 priceNote={isAnnual ? '/mo billed annually' : '/month'}
                 description={TIER_FEATURES.business.description}
-                features={tiers.business.features}
-                cta={{ label: 'Get Started', href: isAnnual ? '/get-started?plan=business&billing=annual' : '/get-started?plan=business' }}
+                features={TIER_FEATURES.business.highlights}
+                trialDays={trialDays}
+                cta={{ label: 'Get Started', href: '/get-started?plan=business' }}
                 country={country}
               />
             </div>
@@ -162,14 +234,14 @@ export default function PricingPage() {
                   <CompareRow
                     label="Transaction fee"
                     values={[
-                      `${TIER_FEATURES.free.feePercentage}% + flat fee`,
-                      `${TIER_FEATURES.growth.feePercentage}% + flat fee`,
-                      `${TIER_FEATURES.business.feePercentage}% + flat fee`,
+                      `${tierFees.free.feePercentage}% + flat fee`,
+                      `${tierFees.growth.feePercentage}% + flat fee`,
+                      `${tierFees.business.feePercentage}% + flat fee`,
                     ]}
                   />
                   <CompareRow
                     label="Broadcasts / month"
-                    values={['—', '10 (500 recipients)', 'Unlimited']}
+                    values={['\u2014', '10 (500 recipients)', 'Unlimited']}
                   />
                   <CompareRow
                     label="Direct bank transfer"
@@ -205,6 +277,28 @@ export default function PricingPage() {
           </div>
         </AnimatedSection>
       </section>
+
+      {/* Category Fee Structure */}
+      {Object.keys(categoryFees).length > 0 && (
+        <section className="border-t border-gray-100 bg-white py-16">
+          <AnimatedSection delay={0.1}>
+            <div className="mx-auto max-w-4xl px-4">
+              <h2 className="text-center text-2xl font-bold text-gray-900">Transaction fees by category</h2>
+              <p className="mt-2 text-center text-gray-600">
+                Platform fees vary by transaction type. {byoFeePolicy}.
+              </p>
+              <div className="mt-8 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                {Object.entries(categoryFees).map(([key, { label, feePercentage }]) => (
+                  <div key={key} className="rounded-xl border border-gray-200 p-4 text-center">
+                    <p className="text-xs font-medium text-gray-500">{label}</p>
+                    <p className="mt-1 text-xl font-bold text-gray-900">{feePercentage}%</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </AnimatedSection>
+        </section>
+      )}
 
       {/* Billing Calculator */}
       <section className="border-t border-gray-100 bg-gray-50 py-16">
@@ -248,8 +342,8 @@ export default function PricingPage() {
             <div className="mt-6 grid gap-4 sm:grid-cols-3">
               {([
                 { tier: 'free' as SubscriptionTier, name: TIER_FEATURES.free.marketingName, monthly: 0 },
-                { tier: 'growth' as SubscriptionTier, name: TIER_FEATURES.growth.marketingName, monthly: tiers.growth.price },
-                { tier: 'business' as SubscriptionTier, name: TIER_FEATURES.business.marketingName, monthly: tiers.business.price },
+                { tier: 'growth' as SubscriptionTier, name: TIER_FEATURES.growth.marketingName, monthly: countryPricing.growth?.price ?? 0 },
+                { tier: 'business' as SubscriptionTier, name: TIER_FEATURES.business.marketingName, monthly: countryPricing.business?.price ?? 0 },
               ]).map((plan) => {
                 const fee = feeEstimates[plan.tier];
                 const total = plan.monthly + fee;
@@ -316,7 +410,7 @@ export default function PricingPage() {
             <p className="mt-2 text-center text-gray-600">
               See how much Waaiio can earn for you
             </p>
-            <RoiCalculator country={country} />
+            <RoiCalculator country={country} countryPricing={countryPricing} tierFees={tierFees} />
           </div>
         </AnimatedSection>
       </section>
@@ -365,7 +459,7 @@ export default function PricingPage() {
                   Within 3 months of going live, we captured every single one. Revenue went up 30%,
                   and our barbers love that the schedule is always organized.&rdquo;
                 </p>
-                <p className="mt-3 text-sm font-semibold text-gray-900">— Adebayo O., Owner</p>
+                <p className="mt-3 text-sm font-semibold text-gray-900">&mdash; Adebayo O., Owner</p>
               </div>
               <div className="grid grid-cols-2 gap-px border-t border-gray-100 bg-gray-100 lg:w-64 lg:border-l lg:border-t-0">
                 {[
@@ -399,9 +493,8 @@ export default function PricingPage() {
                 answer="Absolutely. You can upgrade or downgrade at any time from your dashboard settings. Changes take effect immediately."
               />
               <PricingFaqItem
-                question="What happens after my 30-day trial?"
-                // NOTE: This value must match PRICING_TIERS in lib/constants.ts
-                answer={`After 30 days, the Starter plan's per-transaction fees kick in (${TIER_FEATURES.free.feePercentage}% + flat fee). Your bot keeps working — there's no interruption.`}
+                question={`What happens after my ${trialDays}-day trial?`}
+                answer={`After ${trialDays} days, the Starter plan's per-transaction fees kick in (${tierFees.free.feePercentage}% + flat fee). Your bot keeps working — there's no interruption.`}
               />
               <PricingFaqItem
                 question="Are there any hidden fees?"
@@ -437,7 +530,7 @@ export default function PricingPage() {
                 Start automating today
               </h2>
               <p className="mx-auto mt-3 max-w-lg text-brand-200">
-                30-day free trial. No credit card. No setup fees. No risk.
+                {trialDays}-day free trial. No credit card. No setup fees. No risk.
               </p>
               <Link
                 href="/get-started"
@@ -463,8 +556,7 @@ function TierCard({
   features,
   highlight,
   cta,
-  tier,
-  country,
+  trialDays,
 }: {
   name: string;
   price: string;
@@ -475,7 +567,11 @@ function TierCard({
   cta: { label: string; href: string; gold?: boolean };
   tier: SubscriptionTier;
   country: CountryCode;
+  trialDays: number;
 }) {
+  // Replace any hardcoded "30-day" in highlight strings with authoritative trialDays
+  const safeFeatures = features.map(f => f.replace(/\b30-day\b/g, `${trialDays}-day`));
+
   return (
     <motion.div
       whileHover={{ y: -8, boxShadow: '0 25px 50px -12px rgba(0,0,0,0.15)' }}
@@ -500,7 +596,7 @@ function TierCard({
           <span className="text-sm text-gray-500">{priceNote}</span>
         </div>
         <ul className="mt-8 space-y-3 flex-1">
-          {features.map((f) => (
+          {safeFeatures.map((f) => (
             <li key={f} className="flex items-start gap-2 text-sm text-gray-600">
               <svg
                 className="mt-0.5 h-4 w-4 flex-shrink-0 text-brand"
@@ -557,7 +653,7 @@ function CompareRow({ label, values }: { label: string; values: (boolean | strin
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
               </svg>
             ) : (
-              <span className="text-gray-300">—</span>
+              <span className="text-gray-300">&mdash;</span>
             )
           ) : (
             <span className="text-gray-600">{v}</span>
@@ -597,23 +693,24 @@ function PricingFaqItem({ question, answer }: { question: string; answer: string
   );
 }
 
-function RoiCalculator({ country }: { country: CountryCode }) {
+function RoiCalculator({ country, countryPricing, tierFees }: {
+  country: CountryCode;
+  countryPricing: Record<string, { price: number; feeFlat: number; feePercentage: number }>;
+  tierFees: Record<string, { feePercentage: number }>;
+}) {
   const [bookingsPerDay, setBookingsPerDay] = useState(10);
   const [avgPrice, setAvgPrice] = useState(country === 'NG' ? 5000 : country === 'GH' ? 50 : 30);
   const tier: SubscriptionTier = bookingsPerDay <= 2 ? 'free' : bookingsPerDay <= 15 ? 'growth' : 'business';
-  const tiers = getPricingTiers(country);
-  const tierConfig = tiers[tier];
-  const feePercent = tierConfig.feePercentage;
-  const feeFlat = tierConfig.feeFlat;
-  const subscriptionPrice = tierConfig.price as number;
+  const tierConfig = countryPricing[tier];
+  const feePercent = tierConfig?.feePercentage ?? tierFees[tier]?.feePercentage ?? 2.5;
+  const feeFlat = tierConfig?.feeFlat ?? 0;
+  const subscriptionPrice = tierConfig?.price ?? 0;
 
-  const monthlyBookings = bookingsPerDay * 26; // ~26 working days
+  const monthlyBookings = bookingsPerDay * 26;
   const monthlyRevenue = monthlyBookings * avgPrice;
   const platformFees = monthlyBookings * (avgPrice * feePercent / 100 + feeFlat);
   const netRevenue = monthlyRevenue - platformFees - subscriptionPrice;
   const roi = subscriptionPrice > 0 ? Math.round((netRevenue / (platformFees + subscriptionPrice)) * 100) : Math.round((netRevenue / Math.max(platformFees, 1)) * 100);
-
-  // What they lose without Waaiio (assume 30% no-shows and missed messages)
   const missedRevenue = monthlyRevenue * 0.30;
 
   return (
@@ -654,7 +751,6 @@ function RoiCalculator({ country }: { country: CountryCode }) {
         </div>
       </div>
 
-      {/* Results */}
       <div className="mt-6 grid gap-3 sm:grid-cols-2">
         <div className="rounded-xl bg-white p-4 text-center shadow-sm">
           <p className="text-xs text-gray-500">Monthly revenue</p>
@@ -679,7 +775,7 @@ function RoiCalculator({ country }: { country: CountryCode }) {
       </div>
 
       <p className="mt-4 text-center text-xs text-gray-400">
-        Recommended plan: <span className="font-semibold text-brand">{tiers[tier].name}</span> ({formatCurrency(subscriptionPrice, country)}/mo)
+        Recommended plan: <span className="font-semibold text-brand">{TIER_FEATURES[tier].marketingName}</span> ({formatCurrency(subscriptionPrice, country)}/mo)
       </p>
     </div>
   );

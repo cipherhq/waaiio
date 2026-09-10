@@ -41,7 +41,7 @@ export function StepPlan({
           <div className="flex items-center justify-between">
             <div>
               <h3 className="text-lg font-bold text-gray-900">{String(localTiers?.free?.name || 'Starter')}</h3>
-              <p className="text-2xl font-bold text-brand">{formatCurrency(0, selectedCountry)} <span className="text-sm font-normal text-gray-400">30-day trial</span></p>
+              <p className="text-2xl font-bold text-brand">{formatCurrency(0, selectedCountry)} <span className="text-sm font-normal text-gray-400">free trial</span></p>
             </div>
             <div className={`flex h-6 w-6 items-center justify-center rounded-full border-2 ${selectedPlan === 'free' ? 'border-brand bg-brand' : 'border-gray-300'}`}>
               {selectedPlan === 'free' && <svg className="h-3 w-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>}
@@ -123,8 +123,10 @@ export function StepPlan({
       </div>
 
       <div className="mt-8">
-        <button type="button" onClick={() => setStep('details')} disabled={!selectedPlan} className="w-full rounded-xl bg-brand py-3.5 text-sm font-bold text-white transition hover:bg-brand-600 disabled:opacity-50">
-          Continue
+        <button type="button" onClick={() => setStep('details')} disabled={!selectedPlan} className={`w-full rounded-xl py-3.5 text-sm font-bold transition disabled:opacity-50 ${selectedPlan === 'free' ? 'bg-brand text-white hover:bg-brand-600' : 'bg-accent text-gray-900 shadow-lg shadow-accent/20 hover:bg-accent-400'}`}>
+          {selectedPlan === 'free'
+            ? 'Start Free Trial'
+            : `Subscribe \u2014 ${formatCurrency(Number(localTiers?.[selectedPlan as 'growth' | 'business']?.price) || 0, selectedCountry)}/mo`}
         </button>
       </div>
     </div>

@@ -63,7 +63,7 @@ const STEP_PANELS: Record<WizardStep, { title: string; subtitle: string; bullets
   auth: {
     title: 'Join businesses across 5 countries',
     subtitle: 'Create your account in seconds to get started with WhatsApp automation.',
-    bullets: ['No credit card required', '30-day free trial', 'Setup in under 5 minutes'],
+    bullets: ['No credit card required', 'Free trial included', 'Setup in under 5 minutes'],
     visual: '\u{1F512}',
   },
   category: {
@@ -81,7 +81,7 @@ const STEP_PANELS: Record<WizardStep, { title: string; subtitle: string; bullets
   plan: {
     title: 'Choose your plan',
     subtitle: 'Start free. Your QR code works on every plan.',
-    bullets: ['Free 30-day trial', 'Pay-as-you-go transaction fees', 'Upgrade or downgrade anytime', 'Pro & Premium: connect your own WhatsApp number'],
+    bullets: ['Free trial included', 'Pay-as-you-go transaction fees', 'Upgrade or downgrade anytime', 'Pro & Premium: connect your own WhatsApp number'],
     visual: '\u{1F4B3}',
   },
   details: {
