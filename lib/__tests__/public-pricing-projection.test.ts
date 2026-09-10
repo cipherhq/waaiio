@@ -96,24 +96,27 @@ function buildSupabaseMock(overrides: Record<string, unknown> = {}) {
 
 // ═══════════════════════════════════════════════════════════
 // 1. Pricing Projection — executable proofs
+//
+// Uses a single hoisted mock with a mutable fixture reference.
+// Each test sets the fixture before calling the route, avoiding
+// unreliable vi.resetModules()/vi.doMock() module cache issues.
 // ═══════════════════════════════════════════════════════════
 
+// Mutable fixture — set by each test before calling the route
+let activeMock: ReturnType<typeof buildSupabaseMock>;
+
+vi.mock('@/lib/supabase/service', () => ({
+  createServiceClient: () => activeMock,
+}));
+
 describe('Public Pricing Projection — runtime proofs', () => {
-  let mockSupabase: ReturnType<typeof buildSupabaseMock>;
-
   beforeEach(() => {
-    vi.resetModules();
-    mockSupabase = buildSupabaseMock();
-    vi.doMock('@/lib/supabase/service', () => ({
-      createServiceClient: () => mockSupabase,
-    }));
-  });
-
-  afterEach(() => {
-    vi.restoreAllMocks();
+    activeMock = buildSupabaseMock();
   });
 
   async function callGET(country = 'NG') {
+    // Import is cached by vitest — the hoisted mock ensures createServiceClient
+    // always returns the current activeMock reference
     const { GET } = await import('@/app/api/public/pricing/route');
     const req = new NextRequest(`http://localhost:3000/api/public/pricing?country=${country}`);
     return GET(req);
@@ -154,9 +157,8 @@ describe('Public Pricing Projection — runtime proofs', () => {
   });
 
   it('D3/D5: changing fixture snapshot changes projection output', async () => {
-    // Use a fresh mock with custom values — the beforeEach already resets modules
-    mockSupabase._resetCallIndex();
-    mockSupabase._setVersionData({
+    activeMock._resetCallIndex();
+    activeMock._setVersionData({
       id: 'v2',
       config_snapshot: {
         trial_days: 14,
@@ -197,25 +199,15 @@ describe('Public Pricing Projection — runtime proofs', () => {
   });
 
   it('D12: returns 503 when config_snapshot is missing', async () => {
-    vi.resetModules();
-    const brokenMock = buildSupabaseMock();
-    brokenMock._setVersionData(null, { message: 'not found' });
-    vi.doMock('@/lib/supabase/service', () => ({
-      createServiceClient: () => brokenMock,
-    }));
-    const { GET } = await import('@/app/api/public/pricing/route');
-    const req = new NextRequest('http://localhost:3000/api/public/pricing?country=NG');
-    const res = await GET(req);
+    activeMock._setVersionData(null, { message: 'not found' });
+    const res = await callGET();
     expect(res.status).toBe(503);
     const body = await res.json();
     expect(body.error).toBe('pricing_unavailable');
   });
 
   it('D12: returns 503 when country pricing is malformed (missing tier)', async () => {
-    vi.resetModules();
-    const partialMock = buildSupabaseMock();
-    // Country with missing business tier
-    partialMock._setCountryData({
+    activeMock._setCountryData({
       code: 'NG', name: 'Nigeria', currency_code: 'NGN', currency_symbol: '\u20A6',
       currency_locale: 'en-NG', flag: '\ud83c\uddf3\ud83c\uddec', payment_gateway: 'paystack',
       pricing: {
@@ -224,21 +216,14 @@ describe('Public Pricing Projection — runtime proofs', () => {
         // business tier missing!
       },
     });
-    vi.doMock('@/lib/supabase/service', () => ({
-      createServiceClient: () => partialMock,
-    }));
-    const { GET } = await import('@/app/api/public/pricing/route');
-    const req = new NextRequest('http://localhost:3000/api/public/pricing?country=NG');
-    const res = await GET(req);
+    const res = await callGET();
     expect(res.status).toBe(503);
     const body = await res.json();
     expect(body.error).toBe('pricing_unavailable');
   });
 
   it('D12: returns 503 when trial_days missing from snapshot', async () => {
-    vi.resetModules();
-    const badMock = buildSupabaseMock();
-    badMock._setVersionData({
+    activeMock._setVersionData({
       id: 'v-bad',
       config_snapshot: {
         // trial_days missing
@@ -246,12 +231,7 @@ describe('Public Pricing Projection — runtime proofs', () => {
         pricing_tiers: { free: { feePercentage: 2.5 }, growth: { feePercentage: 1.5 }, business: { feePercentage: 1.5 } },
       },
     });
-    vi.doMock('@/lib/supabase/service', () => ({
-      createServiceClient: () => badMock,
-    }));
-    const { GET } = await import('@/app/api/public/pricing/route');
-    const req = new NextRequest('http://localhost:3000/api/public/pricing?country=NG');
-    const res = await GET(req);
+    const res = await callGET();
     expect(res.status).toBe(503);
   });
 });
