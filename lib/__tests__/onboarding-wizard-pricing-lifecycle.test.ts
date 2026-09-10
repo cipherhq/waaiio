@@ -16,7 +16,7 @@
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import React from 'react';
-import { render, act, waitFor, cleanup } from '@testing-library/react';
+import { render, act, waitFor, cleanup, fireEvent } from '@testing-library/react';
 
 // ─── Mock all external deps BEFORE importing OnboardingWizard ───
 
@@ -275,23 +275,34 @@ describe('OnboardingWizard — pricing lifecycle proof', () => {
     expect(text).toContain('Launch');
   });
 
-  it('stale ?billing=annual URL cannot produce annual billing_interval in outbound requests', async () => {
-    // Set URL with legacy annual billing param
+  it('stale ?billing=annual URL: real wizard verify request emits billing_interval=month', async () => {
+    // Use the payment-return path: ?step=success&business_id=X&reference=Y&billing=annual
+    // When the wizard loads with step=success + business_id + reference, it auto-calls
+    // verifyPayment() which posts to /api/onboarding/verify with billing_interval.
+    // This exercises the REAL wizard code path without needing to fill form fields.
     Object.defineProperty(window, 'location', {
-      value: { search: '?billing=annual', href: 'http://localhost/get-started?billing=annual', pathname: '/get-started' },
+      value: {
+        search: '?step=success&business_id=test-biz-123&reference=test-ref-456&billing=annual',
+        href: 'http://localhost/get-started?step=success&business_id=test-biz-123&reference=test-ref-456&billing=annual',
+        pathname: '/get-started',
+      },
       writable: true, configurable: true,
     });
 
-    setupFetch('success');
-
-    // Track all fetch calls to inspect outbound payloads
+    // Track outbound payloads
     const outboundPayloads: Array<{ url: string; body: string }> = [];
-    const origFetchMock = fetchMock;
+
     global.fetch = vi.fn(async (url: string, init?: any) => {
       if (init?.body && typeof init.body === 'string') {
         outboundPayloads.push({ url, body: init.body });
       }
-      return origFetchMock(url, init);
+      if (typeof url === 'string' && url.includes('/api/public/pricing')) {
+        return new Response(JSON.stringify(PRICING_FIXTURE), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      if (typeof url === 'string' && url.includes('/api/onboarding/verify')) {
+        return new Response(JSON.stringify({ bot_code: 'TC', business_id: 'test-biz-123' }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      return new Response('{}', { status: 200 });
     }) as any;
 
     vi.resetModules();
@@ -302,24 +313,29 @@ describe('OnboardingWizard — pricing lifecycle proof', () => {
       container = result.container;
     });
 
-    // Wait for auth + pricing to load
-    await waitFor(() => assertTextPresent(container, 'Which country are you in'), { timeout: 3000 });
+    // Wait for the wizard's auth check → sets step='success' → triggers verifyPayment
+    await act(async () => { await new Promise(r => setTimeout(r, 500)); });
 
-    // Verify: the wizard's billingInterval is 'month' despite ?billing=annual URL
-    // Check the OnboardingWizard source to confirm it ignores the param
-    const wizardSource = require('fs').readFileSync(
-      require('path').join(process.cwd(), 'app/get-started/OnboardingWizard.tsx'), 'utf-8'
+    // Non-conditional: filter for the onboarding verify endpoint
+    const verifyPayloads = outboundPayloads.filter(p =>
+      p.url.includes('/api/onboarding/verify')
     );
-    // The billingInterval must be hardcoded to 'month', not derived from query param
-    expect(wizardSource).toContain("const billingInterval = 'month'");
-    expect(wizardSource).not.toMatch(/getQueryParam\('billing'\)\s*===\s*'annual'\s*\?\s*'year'/);
 
-    // Verify no outbound request contains billing_interval: 'year'
-    for (const p of outboundPayloads) {
-      if (p.body.includes('billing_interval')) {
-        const parsed = JSON.parse(p.body);
-        expect(parsed.billing_interval).not.toBe('year');
-      }
+    // 1. At least one captured request contains billing_interval
+    expect(verifyPayloads.length).toBeGreaterThan(0);
+
+    // 2. It reaches the expected onboarding endpoint
+    expect(verifyPayloads[0].url).toContain('/api/onboarding/verify');
+
+    // 3. Parsed payload contains exactly billing_interval: 'month'
+    const parsed = JSON.parse(verifyPayloads[0].body);
+    expect(parsed).toHaveProperty('billing_interval');
+    expect(parsed.billing_interval).toBe('month');
+
+    // 4. No captured onboarding payload contains billing_interval: 'year'
+    for (const p of verifyPayloads) {
+      const body = JSON.parse(p.body);
+      expect(body.billing_interval).not.toBe('year');
     }
   });
 });
