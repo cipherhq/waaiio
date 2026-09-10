@@ -216,3 +216,92 @@ describe('Onboarding pricing gate — production code proof', () => {
     expect(memoBlock).not.toMatch(/cp\.growth\?\.price\s*\?\?\s*base/);
   });
 });
+
+describe('No hardcoded commercial fee fallbacks in presentation', () => {
+  it('StepFeatures has no hardcoded fee percentage fallbacks', () => {
+    const source = readFileSync(join(process.cwd(), 'app/get-started/steps/StepFeatures.tsx'), 'utf-8');
+    // Must not contain ?? 2, ?? 1.5, ?? 1 fee fallbacks
+    expect(source).not.toMatch(/feePercentage\s*\?\?\s*\d/);
+    // Must not contain || 0 price fallbacks in commercial display
+    expect(source).not.toMatch(/localTiers\?\.growth\?\.price\)\s*\|\|\s*0/);
+    expect(source).not.toMatch(/localTiers\?\.business\?\.price\)\s*\|\|\s*0/);
+  });
+
+  it('StepPlan has no hardcoded fee percentage fallbacks', () => {
+    const source = readFileSync(join(process.cwd(), 'app/get-started/steps/StepPlan.tsx'), 'utf-8');
+    expect(source).not.toMatch(/feePercentage\s*\?\?\s*\d/);
+  });
+
+  it('pricing page ROI calculator has no hardcoded fee fallback', () => {
+    const source = readFileSync(join(process.cwd(), 'app/(marketing)/pricing/page.tsx'), 'utf-8');
+    const roiSection = source.slice(source.indexOf('function RoiCalculator'));
+    // Must not contain ?? 2.5 or any numeric fee fallback
+    expect(roiSection).not.toMatch(/feePercentage\s*\?\?\s*[\d.]/);
+    expect(roiSection).not.toMatch(/feeFlat\s*\?\?\s*\d/);
+    expect(roiSection).not.toMatch(/price\s*\?\?\s*\d/);
+  });
+
+  it('pricing page fee estimates have no hardcoded fallback', () => {
+    const source = readFileSync(join(process.cwd(), 'app/(marketing)/pricing/page.tsx'), 'utf-8');
+    const feeSection = source.slice(source.indexOf('feeEstimates'), source.indexOf('feeEstimates') + 500);
+    expect(feeSection).not.toMatch(/\?\?\s*\d/);
+  });
+});
+
+describe('Annual billing is non-actionable / informational only', () => {
+  it('pricing page has no annual toggle or selectable annual billing', () => {
+    const source = readFileSync(join(process.cwd(), 'app/(marketing)/pricing/page.tsx'), 'utf-8');
+    // No isAnnual state or toggle
+    expect(source).not.toContain('isAnnual');
+    expect(source).not.toContain("aria-label=\"Toggle annual billing\"");
+    // No "/mo billed annually" actionable pricing
+    expect(source).not.toContain('billed annually');
+    // Annual discount is informational only ("coming soon")
+    expect(source).toContain('coming soon');
+  });
+
+  it('StepPlan renders monthly-only prices, no annual branches', () => {
+    const source = readFileSync(join(process.cwd(), 'app/get-started/steps/StepPlan.tsx'), 'utf-8');
+    // No annual price computation or /year display
+    expect(source).not.toContain('/year');
+    expect(source).not.toContain('annualMultiplier');
+    expect(source).not.toContain('Billed annually');
+  });
+
+  it('StepFeatures renders monthly-only prices, no annual branches', () => {
+    const source = readFileSync(join(process.cwd(), 'app/get-started/steps/StepFeatures.tsx'), 'utf-8');
+    expect(source).not.toContain('/year');
+    expect(source).not.toContain('annualMultiplier');
+  });
+
+  it('StepPlan component renders only /mo prices, never /year', () => {
+    const base = getPricingTiers('NG');
+    const tiers = {
+      free: { ...base.free, price: 0, feePercentage: 3.0, feeFlat: 0 },
+      growth: { ...base.growth, price: 25000, feePercentage: 2.0, feeFlat: 75 },
+      business: { ...base.business, price: 70000, feePercentage: 1.0, feeFlat: 100 },
+    };
+
+    const noop = () => {};
+    const html = renderToString(
+      React.createElement(StepPlan, {
+        selectedPlan: 'growth',
+        setSelectedPlan: noop,
+        selectedCapabilities: [] as CapabilityId[],
+        setSelectedCapabilities: noop as any,
+        selectedCountry: 'NG' as CountryCode,
+        requiredPlan: 'free',
+        localTiers: tiers,
+        billingInterval: 'month',
+        annualDiscountPercentage: 25,
+        setStep: noop as any,
+      }),
+    );
+
+    // Must contain /mo, never /year
+    expect(html).toContain('/mo');
+    expect(html).not.toContain('/year');
+    // Must not contain annual savings messaging
+    expect(html).not.toContain('Save 25%');
+  });
+});

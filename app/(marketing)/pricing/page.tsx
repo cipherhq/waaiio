@@ -38,7 +38,6 @@ interface PricingProjection {
 
 export default function PricingPage() {
   const [country, setCountry] = useState<CountryCode>('NG');
-  const [isAnnual, setIsAnnual] = useState(false);
   const [billingVolume, setBillingVolume] = useState(200);
   const [projection, setProjection] = useState<PricingProjection | null>(null);
   const [loadError, setLoadError] = useState(false);
@@ -88,16 +87,16 @@ export default function PricingPage() {
   }
 
   const { trialDays, annualDiscountPercentage, tierFees, categoryFees, byoFeePolicy } = projection;
-  const annualMultiplier = 1 - annualDiscountPercentage / 100;
   const countryPricing = projection.country.pricing;
   const countryList = projection.countries;
 
+  // Fee estimates use only DB-projected country pricing — no hardcoded fallback
   const avgTransaction: Record<string, number> = { NG: 5000, US: 40, GB: 35, CA: 45, GH: 50 };
   const avgTx = avgTransaction[country] || 40;
   const feeEstimates = {
-    free: Math.round(billingVolume * ((countryPricing.free?.feePercentage ?? tierFees.free.feePercentage) / 100) * avgTx + billingVolume * (countryPricing.free?.feeFlat ?? 0)),
-    growth: Math.round(billingVolume * ((countryPricing.growth?.feePercentage ?? tierFees.growth.feePercentage) / 100) * avgTx + billingVolume * (countryPricing.growth?.feeFlat ?? 0)),
-    business: Math.round(billingVolume * ((countryPricing.business?.feePercentage ?? tierFees.business.feePercentage) / 100) * avgTx + billingVolume * (countryPricing.business?.feeFlat ?? 0)),
+    free: Math.round(billingVolume * (countryPricing.free.feePercentage / 100) * avgTx + billingVolume * countryPricing.free.feeFlat),
+    growth: Math.round(billingVolume * (countryPricing.growth.feePercentage / 100) * avgTx + billingVolume * countryPricing.growth.feeFlat),
+    business: Math.round(billingVolume * (countryPricing.business.feePercentage / 100) * avgTx + billingVolume * countryPricing.business.feeFlat),
   };
 
   return (
@@ -137,21 +136,14 @@ export default function PricingPage() {
       <section className="bg-white py-16">
         <AnimatedSection>
           <div className="mx-auto max-w-6xl px-4">
-            {/* Billing toggle */}
+            {/* Billing — monthly only; annual discount shown as informational */}
             <div className="mb-8 flex items-center justify-center gap-3">
-              <span className={`text-sm font-medium ${!isAnnual ? 'text-gray-900' : 'text-gray-400'}`}>Monthly</span>
-              <button
-                role="switch"
-                aria-checked={isAnnual}
-                aria-label="Toggle annual billing"
-                onClick={() => setIsAnnual(!isAnnual)}
-                className={`relative h-7 w-14 rounded-full transition ${isAnnual ? 'bg-brand' : 'bg-gray-300'}`}
-              >
-                <div className="absolute top-0.5 h-6 w-6 rounded-full bg-white shadow-md transition-all duration-200" style={{ left: isAnnual ? '30px' : '2px' }} />
-              </button>
-              <span className={`text-sm font-medium ${isAnnual ? 'text-gray-900' : 'text-gray-400'}`}>
-                Annual <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs font-bold text-green-700">Save {annualDiscountPercentage}%</span>
-              </span>
+              <span className="text-sm font-medium text-gray-900">Monthly billing</span>
+              {annualDiscountPercentage > 0 && (
+                <span className="rounded-full bg-green-50 border border-green-200 px-3 py-1 text-xs text-green-700">
+                  Annual billing coming soon &mdash; save {annualDiscountPercentage}%
+                </span>
+              )}
             </div>
 
             <div className="grid gap-8 lg:grid-cols-3">
@@ -174,8 +166,8 @@ export default function PricingPage() {
               <TierCard
                 tier="growth"
                 name={TIER_FEATURES.growth.marketingName}
-                price={formatCurrency(isAnnual ? Math.round((countryPricing.growth?.price ?? 0) * annualMultiplier) : (countryPricing.growth?.price ?? 0), country)}
-                priceNote={isAnnual ? '/mo billed annually' : '/month'}
+                price={formatCurrency(countryPricing.growth.price, country)}
+                priceNote="/month"
                 description={TIER_FEATURES.growth.description}
                 highlight
                 features={TIER_FEATURES.growth.highlights}
@@ -186,8 +178,8 @@ export default function PricingPage() {
               <TierCard
                 tier="business"
                 name={TIER_FEATURES.business.marketingName}
-                price={formatCurrency(isAnnual ? Math.round((countryPricing.business?.price ?? 0) * annualMultiplier) : (countryPricing.business?.price ?? 0), country)}
-                priceNote={isAnnual ? '/mo billed annually' : '/month'}
+                price={formatCurrency(countryPricing.business.price, country)}
+                priceNote="/month"
                 description={TIER_FEATURES.business.description}
                 features={TIER_FEATURES.business.highlights}
                 trialDays={trialDays}
@@ -342,8 +334,8 @@ export default function PricingPage() {
             <div className="mt-6 grid gap-4 sm:grid-cols-3">
               {([
                 { tier: 'free' as SubscriptionTier, name: TIER_FEATURES.free.marketingName, monthly: 0 },
-                { tier: 'growth' as SubscriptionTier, name: TIER_FEATURES.growth.marketingName, monthly: countryPricing.growth?.price ?? 0 },
-                { tier: 'business' as SubscriptionTier, name: TIER_FEATURES.business.marketingName, monthly: countryPricing.business?.price ?? 0 },
+                { tier: 'growth' as SubscriptionTier, name: TIER_FEATURES.growth.marketingName, monthly: countryPricing.growth.price },
+                { tier: 'business' as SubscriptionTier, name: TIER_FEATURES.business.marketingName, monthly: countryPricing.business.price },
               ]).map((plan) => {
                 const fee = feeEstimates[plan.tier];
                 const total = plan.monthly + fee;
@@ -702,9 +694,10 @@ function RoiCalculator({ country, countryPricing, tierFees }: {
   const [avgPrice, setAvgPrice] = useState(country === 'NG' ? 5000 : country === 'GH' ? 50 : 30);
   const tier: SubscriptionTier = bookingsPerDay <= 2 ? 'free' : bookingsPerDay <= 15 ? 'growth' : 'business';
   const tierConfig = countryPricing[tier];
-  const feePercent = tierConfig?.feePercentage ?? tierFees[tier]?.feePercentage ?? 2.5;
-  const feeFlat = tierConfig?.feeFlat ?? 0;
-  const subscriptionPrice = tierConfig?.price ?? 0;
+  // All tiers guaranteed present by projection validation — no hardcoded fallback
+  const feePercent = tierConfig.feePercentage;
+  const feeFlat = tierConfig.feeFlat;
+  const subscriptionPrice = tierConfig.price;
 
   const monthlyBookings = bookingsPerDay * 26;
   const monthlyRevenue = monthlyBookings * avgPrice;

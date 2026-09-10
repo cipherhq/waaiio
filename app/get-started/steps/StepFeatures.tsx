@@ -21,7 +21,6 @@ export function StepFeatures({
   annualDiscountPercentage,
   setStep,
 }: StepFeaturesProps) {
-  const annualMultiplier = 1 - annualDiscountPercentage / 100;
   return (
     <div>
       <button type="button" onClick={() => setStep('category')} className="mb-4 flex items-center gap-1 text-sm text-gray-500 hover:text-brand">
@@ -315,19 +314,11 @@ export function StepFeatures({
             </p>
             <p className="text-[11px] text-gray-500 mt-0.5">
               {requiredPlan === 'free' ? (
-                <span className="text-green-600 font-medium">Free plan — no monthly fee, {String(localTiers?.free?.feePercentage ?? 2)}% per transaction</span>
+                <span className="text-green-600 font-medium">Free plan — no monthly fee, {String(localTiers?.free?.feePercentage)}% per transaction</span>
               ) : requiredPlan === 'growth' ? (
-                billingInterval === 'year' ? (
-                  <span className="text-blue-600 font-medium">Requires Pro plan — {String(formatCurrency(Math.round((Number(localTiers?.growth?.price) || 0) * 12 * annualMultiplier), selectedCountry))}/year (save {annualDiscountPercentage}%), {String(localTiers?.growth?.feePercentage ?? 1.5)}% per transaction</span>
-                ) : (
-                  <span className="text-blue-600 font-medium">Requires Pro plan — {String(formatCurrency(Number(localTiers?.growth?.price) || 0, selectedCountry))}/mo, {String(localTiers?.growth?.feePercentage ?? 1.5)}% per transaction</span>
-                )
+                <span className="text-blue-600 font-medium">Requires Pro plan — {String(formatCurrency(Number(localTiers?.growth?.price), selectedCountry))}/mo, {String(localTiers?.growth?.feePercentage)}% per transaction</span>
               ) : (
-                billingInterval === 'year' ? (
-                  <span className="text-brand-600 font-medium">Requires Premium plan — {String(formatCurrency(Math.round((Number(localTiers?.business?.price) || 0) * 12 * annualMultiplier), selectedCountry))}/year (save {annualDiscountPercentage}%), {String(localTiers?.business?.feePercentage ?? 1)}% per transaction</span>
-                ) : (
-                  <span className="text-brand-600 font-medium">Requires Premium plan — {String(formatCurrency(Number(localTiers?.business?.price) || 0, selectedCountry))}/mo, {String(localTiers?.business?.feePercentage ?? 1)}% per transaction</span>
-                )
+                <span className="text-brand-600 font-medium">Requires Premium plan — {String(formatCurrency(Number(localTiers?.business?.price), selectedCountry))}/mo, {String(localTiers?.business?.feePercentage)}% per transaction</span>
               )}
             </p>
           </div>
