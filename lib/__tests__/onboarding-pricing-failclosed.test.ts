@@ -44,7 +44,6 @@ describe('StepPlan — component-level fail-closed pricing proof', () => {
 
   function renderPlanToHTML(overrides: {
     localTiers: ReturnType<typeof getPricingTiers>;
-    annualDiscountPercentage: number;
     selectedPlan?: 'free' | 'growth' | 'business';
   }): string {
     return renderToString(
@@ -56,8 +55,6 @@ describe('StepPlan — component-level fail-closed pricing proof', () => {
         selectedCountry: 'NG' as CountryCode,
         requiredPlan: 'free',
         localTiers: overrides.localTiers,
-        billingInterval: 'month',
-        annualDiscountPercentage: overrides.annualDiscountPercentage,
         setStep: noop as any,
       }),
     );
@@ -72,7 +69,6 @@ describe('StepPlan — component-level fail-closed pricing proof', () => {
 
     const html = renderPlanToHTML({
       localTiers: zeroed,
-      annualDiscountPercentage: 0,
     });
 
     // Known NG constants prices must NOT appear in rendered output
@@ -98,7 +94,6 @@ describe('StepPlan — component-level fail-closed pricing proof', () => {
 
     const html = renderPlanToHTML({
       localTiers: projected,
-      annualDiscountPercentage: 25,
     });
 
     // DB growth price (₦25,000) must appear
@@ -122,7 +117,6 @@ describe('StepPlan — component-level fail-closed pricing proof', () => {
 
     const html = renderPlanToHTML({
       localTiers: projected,
-      annualDiscountPercentage: 20,
       selectedPlan: 'growth',
     });
 
@@ -140,7 +134,6 @@ describe('StepPlan — component-level fail-closed pricing proof', () => {
 
     const html = renderPlanToHTML({
       localTiers: zeroed,
-      annualDiscountPercentage: 0,
       selectedPlan: 'free',
     });
 
@@ -156,7 +149,6 @@ describe('StepPlan — component-level fail-closed pricing proof', () => {
 
     const html = renderPlanToHTML({
       localTiers: zeroed,
-      annualDiscountPercentage: 0,
     });
 
     // All fee% rendered should be 0%, not 2.5% or 1.5%
@@ -292,8 +284,6 @@ describe('Annual billing is non-actionable / informational only', () => {
         selectedCountry: 'NG' as CountryCode,
         requiredPlan: 'free',
         localTiers: tiers,
-        billingInterval: 'month',
-        annualDiscountPercentage: 25,
         setStep: noop as any,
       }),
     );

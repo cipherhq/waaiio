@@ -435,9 +435,11 @@ describe('Onboarding pricing authority', () => {
     expect(source).not.toContain('getAnnualDiscountSync');
   });
 
-  it('StepPlan and StepFeatures receive annualDiscountPercentage as prop', () => {
+  it('StepPlan and StepFeatures do not accept dead annual props', () => {
     const types = readFileSync(join(process.cwd(), 'app/get-started/steps/types.ts'), 'utf-8');
-    expect(types).toContain('annualDiscountPercentage: number');
+    // annualDiscountPercentage and billingInterval removed — monthly-only
+    expect(types).not.toContain('annualDiscountPercentage');
+    expect(types).not.toContain("billingInterval: 'month' | 'year'");
   });
 
   it('localTiers zeros commercial fields when projection absent — no hardcoded fallback', () => {
@@ -449,13 +451,10 @@ describe('Onboarding pricing authority', () => {
     expect(source).not.toMatch(/cp\.free\?\.feePercentage\s*\?\?\s*base/);
   });
 
-  it('no hardcoded ?? 20 annual discount fallback', () => {
+  it('onboarding billingInterval is hardcoded to month, ignores legacy URL param', () => {
     const source = readFileSync(join(process.cwd(), 'app/get-started/OnboardingWizard.tsx'), 'utf-8');
-    // annualDiscountPercentage must come from pricingProjection directly, no ?? 20
-    expect(source).not.toMatch(/annualDiscountPercentage\s*[=:]\s*.*\?\?\s*20/);
-    // The prop must reference pricingProjection.annualDiscountPercentage (not optional chained with fallback)
-    expect(source).toContain('pricingProjection.annualDiscountPercentage');
-    expect(source).not.toContain('pricingProjection?.annualDiscountPercentage');
+    expect(source).toContain("const billingInterval = 'month'");
+    expect(source).not.toMatch(/getQueryParam\('billing'\)\s*===\s*'annual'\s*\?\s*'year'/);
   });
 
   it('features/plan/details steps are gated by pricingReady', () => {

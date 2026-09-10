@@ -69,8 +69,6 @@ export interface StepFeaturesProps {
   category: BusinessCategoryKey | '';
   requiredPlan: 'free' | 'growth' | 'business';
   localTiers: ReturnType<typeof import('@/lib/constants').getPricingTiers>;
-  billingInterval: 'month' | 'year';
-  annualDiscountPercentage: number;
   setStep: (v: WizardStep) => void;
 }
 
@@ -82,8 +80,6 @@ export interface StepPlanProps {
   selectedCountry: CountryCode;
   requiredPlan: 'free' | 'growth' | 'business';
   localTiers: ReturnType<typeof import('@/lib/constants').getPricingTiers>;
-  billingInterval: 'month' | 'year';
-  annualDiscountPercentage: number;
   setStep: (v: WizardStep) => void;
 }
 

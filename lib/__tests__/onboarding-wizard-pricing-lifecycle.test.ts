@@ -274,4 +274,52 @@ describe('OnboardingWizard — pricing lifecycle proof', () => {
     expect(text).toContain('Pay');
     expect(text).toContain('Launch');
   });
+
+  it('stale ?billing=annual URL cannot produce annual billing_interval in outbound requests', async () => {
+    // Set URL with legacy annual billing param
+    Object.defineProperty(window, 'location', {
+      value: { search: '?billing=annual', href: 'http://localhost/get-started?billing=annual', pathname: '/get-started' },
+      writable: true, configurable: true,
+    });
+
+    setupFetch('success');
+
+    // Track all fetch calls to inspect outbound payloads
+    const outboundPayloads: Array<{ url: string; body: string }> = [];
+    const origFetchMock = fetchMock;
+    global.fetch = vi.fn(async (url: string, init?: any) => {
+      if (init?.body && typeof init.body === 'string') {
+        outboundPayloads.push({ url, body: init.body });
+      }
+      return origFetchMock(url, init);
+    }) as any;
+
+    vi.resetModules();
+    const mod = await import('@/app/get-started/OnboardingWizard');
+    let container!: HTMLElement;
+    await act(async () => {
+      const result = render(React.createElement(mod.OnboardingWizard));
+      container = result.container;
+    });
+
+    // Wait for auth + pricing to load
+    await waitFor(() => assertTextPresent(container, 'Which country are you in'), { timeout: 3000 });
+
+    // Verify: the wizard's billingInterval is 'month' despite ?billing=annual URL
+    // Check the OnboardingWizard source to confirm it ignores the param
+    const wizardSource = require('fs').readFileSync(
+      require('path').join(process.cwd(), 'app/get-started/OnboardingWizard.tsx'), 'utf-8'
+    );
+    // The billingInterval must be hardcoded to 'month', not derived from query param
+    expect(wizardSource).toContain("const billingInterval = 'month'");
+    expect(wizardSource).not.toMatch(/getQueryParam\('billing'\)\s*===\s*'annual'\s*\?\s*'year'/);
+
+    // Verify no outbound request contains billing_interval: 'year'
+    for (const p of outboundPayloads) {
+      if (p.body.includes('billing_interval')) {
+        const parsed = JSON.parse(p.body);
+        expect(parsed.billing_interval).not.toBe('year');
+      }
+    }
+  });
 });

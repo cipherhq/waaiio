@@ -17,8 +17,6 @@ export function StepFeatures({
   category,
   requiredPlan,
   localTiers,
-  billingInterval,
-  annualDiscountPercentage,
   setStep,
 }: StepFeaturesProps) {
   return (

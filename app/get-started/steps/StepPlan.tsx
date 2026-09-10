@@ -13,8 +13,6 @@ export function StepPlan({
   selectedCountry,
   requiredPlan,
   localTiers,
-  billingInterval,
-  annualDiscountPercentage,
   setStep,
 }: StepPlanProps) {
   return (

@@ -221,7 +221,8 @@ function OnboardingWizard() {
   useCategoryConfig(); // trigger DB load for category templates
   const router = useRouter();
   const preselectedPlan = getQueryParam('plan') as SubscriptionTier | null;
-  const billingInterval = getQueryParam('billing') === 'annual' ? 'year' : 'month';
+  // #270: monthly-only — ignore legacy ?billing=annual query param
+  const billingInterval = 'month' as const;
   const successBusinessId = getQueryParam('business_id');
   const successStep = getQueryParam('step');
 
@@ -1317,8 +1318,6 @@ function OnboardingWizard() {
                 category={category}
                 requiredPlan={requiredPlan}
                 localTiers={localTiers}
-                billingInterval={billingInterval}
-                annualDiscountPercentage={pricingProjection.annualDiscountPercentage}
                 setStep={setStep}
               />
             ) : (
@@ -1335,8 +1334,6 @@ function OnboardingWizard() {
                 selectedCountry={selectedCountry}
                 requiredPlan={requiredPlan}
                 localTiers={localTiers}
-                billingInterval={billingInterval}
-                annualDiscountPercentage={pricingProjection.annualDiscountPercentage}
                 setStep={setStep}
               />
             ) : (
