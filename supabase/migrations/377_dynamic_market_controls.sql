@@ -362,10 +362,22 @@ BEGIN
         RAISE EXCEPTION 'messaging_pricing[%].rates[%] must be an object with rate values', v_currency, v_country_key;
       END IF;
 
-      -- Validate every rate entry is a non-negative integer
-      DECLARE v_rate_entry_key TEXT; v_rate_entry_val JSONB; v_rate_num NUMERIC;
+      -- Validate every rate entry: key must be a known category or wildcard, value must be non-negative integer
+      DECLARE
+        v_rate_entry_key TEXT;
+        v_rate_entry_val JSONB;
+        v_rate_num NUMERIC;
+        v_allowed_rate_keys TEXT[] := ARRAY[
+          '*', 'marketing', 'utility', 'authentication', 'service'
+        ];
       BEGIN
         FOR v_rate_entry_key IN SELECT key FROM jsonb_each(v_rate_val) LOOP
+          -- Validate rate key is a known category or wildcard
+          IF NOT (v_rate_entry_key = ANY(v_allowed_rate_keys)) THEN
+            RAISE EXCEPTION 'messaging_pricing[%].rates[%]: unknown rate key "%"; allowed: *, marketing, utility, authentication, service',
+              v_currency, v_country_key, v_rate_entry_key;
+          END IF;
+          -- Validate rate value is a non-negative integer
           v_rate_entry_val := v_rate_val -> v_rate_entry_key;
           IF jsonb_typeof(v_rate_entry_val) <> 'number' THEN
             RAISE EXCEPTION 'messaging_pricing[%].rates[%][%] must be a non-negative integer, got %',

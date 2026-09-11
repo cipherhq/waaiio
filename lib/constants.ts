@@ -1187,12 +1187,11 @@ export function getPhonePlaceholder(countryCode: CountryCode = 'NG'): string {
   return `${config.dialingCode} ${config.phonePlaceholder}`;
 }
 
-/** Get dialing code — AUTHORITATIVE: DB first, display fallback for cold cache */
+/** Get dialing code — AUTHORITATIVE, fail-closed. DB cache must be loaded. */
 export function getDialingCode(countryCode: CountryCode = 'NG'): string {
-  const strict = _getCountryConfigStrict(countryCode);
-  if (strict) return strict.dialingCode;
-  // Cold cache: use display fallback (log warning in dev)
-  return _getCountryConfigDisplay(countryCode).dialingCode;
+  const c = _getCountryConfigStrict(countryCode);
+  if (!c) throw new Error(`[AUTHORITATIVE] Country ${countryCode} not resolved from DB — ensure loadCountries() completed`);
+  return c.dialingCode;
 }
 
 /** Get currency symbol — display-only, fallback OK */
@@ -1200,12 +1199,11 @@ export function getCurrencySymbol(countryCode: CountryCode = 'NG'): string {
   return _getCountryConfigDisplay(countryCode).currencySymbol;
 }
 
-/** Get currency code (e.g. 'NGN', 'USD') — AUTHORITATIVE: DB first, display fallback for cold cache */
+/** Get currency code (e.g. 'NGN', 'USD') — AUTHORITATIVE, fail-closed. DB cache must be loaded. */
 export function getCurrencyCode(countryCode: CountryCode = 'NG'): string {
-  const strict = _getCountryConfigStrict(countryCode);
-  if (strict) return strict.currencyCode;
-  // Cold cache: use display fallback
-  return _getCountryConfigDisplay(countryCode).currencyCode;
+  const c = _getCountryConfigStrict(countryCode);
+  if (!c) throw new Error(`[AUTHORITATIVE] Country ${countryCode} not resolved from DB — ensure loadCountries() completed`);
+  return c.currencyCode;
 }
 
 /** Format currency — display-only, fallback OK */
@@ -1231,10 +1229,11 @@ export function getPricingTiers(countryCode: CountryCode = 'NG'): Record<Subscri
   whitelabel: boolean;
   features: string[];
 }> {
+  // Display-only pricing: DB cache first, per-code display fallback (no NG default)
   const dbCountry = _getCountryFromDb(countryCode);
   const cp = dbCountry?.pricing && Object.keys(dbCountry.pricing).length > 0
     ? dbCountry.pricing as Record<string, { price: number; feeFlat: number }>
-    : COUNTRY_PRICING[countryCode as keyof typeof COUNTRY_PRICING] ?? COUNTRY_PRICING.NG;
+    : COUNTRY_PRICING[countryCode as keyof typeof COUNTRY_PRICING] ?? { free: { price: 0, feeFlat: 0 }, growth: { price: 0, feeFlat: 0 }, business: { price: 0, feeFlat: 0 } };
   const fmt = (amt: number) => formatCurrency(amt, countryCode);
 
   return {
@@ -1280,11 +1279,11 @@ export function getCitiesForCountry(countryCode: CountryCode = 'NG') {
   return _getCountryConfigDisplay(countryCode).cities;
 }
 
-/** Get payment gateway — AUTHORITATIVE: DB first, display fallback for cold cache */
+/** Get payment gateway — AUTHORITATIVE, fail-closed. DB cache must be loaded. */
 export function getPaymentGatewayForCountry(countryCode: CountryCode = 'NG'): PaymentGatewayName {
-  const strict = _getCountryConfigStrict(countryCode);
-  if (strict) return strict.paymentGateway;
-  return _getCountryConfigDisplay(countryCode).paymentGateway;
+  const c = _getCountryConfigStrict(countryCode);
+  if (!c) throw new Error(`[AUTHORITATIVE] Country ${countryCode} not resolved from DB — ensure loadCountries() completed`);
+  return c.paymentGateway;
 }
 
 // ── Verification / KYC Configuration ──

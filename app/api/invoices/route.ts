@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { getCurrencyCode, type CountryCode } from '@/lib/constants';
+import { loadCountries } from '@/lib/countries';
 import { checkTierLimit } from '@/lib/tier-limits';
 
 export async function GET(request: NextRequest) {
@@ -104,6 +105,7 @@ export async function POST(request: NextRequest) {
         .select('country_code')
         .eq('id', business_id)
         .single();
+      await loadCountries();
       resolvedCurrency = getCurrencyCode((biz?.country_code || 'NG') as CountryCode);
     }
 

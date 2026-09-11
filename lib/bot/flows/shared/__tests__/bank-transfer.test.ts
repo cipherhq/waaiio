@@ -19,7 +19,15 @@ vi.mock('@/lib/logger', () => ({
   logger: { error: vi.fn(), warn: vi.fn(), info: vi.fn() },
 }));
 
-// Country helpers use display fallback when DB cache is cold (no mock needed)
+// Authoritative country helpers require DB cache — mock for unit tests
+vi.mock('@/lib/constants', async (importOriginal) => {
+  const orig = await importOriginal() as Record<string, unknown>;
+  return {
+    ...orig,
+    getCurrencyCode: (cc: string) => cc === 'GH' ? 'GHS' : cc === 'US' ? 'USD' : 'NGN',
+    getPaymentGatewayForCountry: (cc: string) => cc === 'US' ? 'stripe' : 'paystack',
+  };
+});
 
 function createMockSupabase(bankAccount: Record<string, string> | null = null) {
   const chain: Record<string, any> = {};

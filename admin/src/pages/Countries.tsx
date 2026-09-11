@@ -686,7 +686,23 @@ function MessagingFinancialControls({ countries, canMutate, onSaved }: { countri
 
       if (rpcError) throw new Error(rpcError.message);
 
-      setConfigVersionId(data as string); // New version ID returned
+      // Persist Paystack plan codes in countries.pricing for each Paystack market
+      for (const c of countries) {
+        if (c.payment_gateway !== 'paystack') continue;
+        const cfg = msgConfig[c.code];
+        if (!cfg) continue;
+        const currentPricing = (c.pricing || {}) as Record<string, Record<string, unknown>>;
+        const updatedPricing = { ...currentPricing };
+        if (cfg.paystackGrowthPlan) {
+          updatedPricing.growth = { ...(updatedPricing.growth || {}), paystack_plan_code: cfg.paystackGrowthPlan };
+        }
+        if (cfg.paystackBusinessPlan) {
+          updatedPricing.business = { ...(updatedPricing.business || {}), paystack_plan_code: cfg.paystackBusinessPlan };
+        }
+        await adminDb.from('countries').update({ pricing: updatedPricing }).eq('code', c.code);
+      }
+
+      setConfigVersionId(data as string);
       setSuccess('Messaging configuration saved successfully');
       await onSaved();
     } catch (err: unknown) {

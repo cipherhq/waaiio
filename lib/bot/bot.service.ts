@@ -8,6 +8,7 @@ import { StandaloneService } from './standalone.service';
 import { BotIntelligenceService } from './bot-intelligence';
 import { FlowExecutor } from './flows/executor';
 import { getLocale, formatCurrency, type BusinessCategoryKey, type FlowType, type CountryCode } from '@/lib/constants';
+import { loadCountries } from '@/lib/countries';
 import { getConfiguredCapabilities } from '@/lib/capabilities/service';
 import { getEffectiveCapabilities as resolveEffectiveCaps } from '@/lib/capabilities/policy';
 import { resolveTrialCredit } from '@/lib/trial-status';
@@ -91,10 +92,11 @@ export class BotService {
       return; // Silently drop — excessively long messages are never legitimate
     }
 
-    // Pre-checks: rate limit + maintenance mode (independent — run in parallel)
+    // Pre-checks: rate limit + maintenance mode + country cache (independent — run in parallel)
     const [botSettings, maintResult] = await Promise.all([
       loadPlatformSettings({ useServiceClient: true }),
       this.supabase.from('platform_settings').select('value').eq('key', 'maintenance_mode').single(),
+      loadCountries(), // Ensure DB-backed country cache is warm before any authoritative helper
     ]);
     const phoneRateLimit = await checkRateLimitAsync(`bot:${from}`, botSettings.bot_rate_limit_per_minute, 60_000);
     if (!phoneRateLimit.allowed) {
