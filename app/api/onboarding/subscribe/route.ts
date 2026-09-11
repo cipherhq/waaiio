@@ -110,7 +110,7 @@ export async function POST(request: NextRequest) {
     if (gateway === 'paystack') {
       const paystackKey = process.env.PAYSTACK_SECRET_KEY;
       // Market+tier Paystack plan code — DB-only, no env var fallback
-      const pageSlug = tierPricing.paystack_plan_code as string | undefined;
+      const pageSlug = (tierPricing as Record<string, unknown>).paystack_plan_code as string | undefined;
 
       if (!paystackKey) {
         return NextResponse.json({ message: 'Payment gateway not configured' }, { status: 500 });
