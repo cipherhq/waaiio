@@ -96,7 +96,7 @@ export class BotService {
     const [botSettings, maintResult] = await Promise.all([
       loadPlatformSettings({ useServiceClient: true }),
       this.supabase.from('platform_settings').select('value').eq('key', 'maintenance_mode').single(),
-      loadCountries(), // Ensure DB-backed country cache is warm before any authoritative helper
+      loadCountries().catch(() => []), // Best-effort country cache warm; authoritative helpers check cache
     ]);
     const phoneRateLimit = await checkRateLimitAsync(`bot:${from}`, botSettings.bot_rate_limit_per_minute, 60_000);
     if (!phoneRateLimit.allowed) {

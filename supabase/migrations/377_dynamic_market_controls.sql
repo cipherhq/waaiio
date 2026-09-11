@@ -581,6 +581,34 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- ══════════════════════════════════════════════════════════
+-- C2. Update guard_config_version_insert for new function signatures
+-- ══════════════════════════════════════════════════════════
+
+CREATE OR REPLACE FUNCTION public.guard_config_version_insert()
+RETURNS TRIGGER AS $$
+DECLARE
+  v_trusted_owner_scalar TEXT;
+  v_trusted_owner_bundle TEXT;
+BEGIN
+  SELECT r.rolname INTO v_trusted_owner_scalar
+    FROM pg_proc p
+    JOIN pg_roles r ON p.proowner = r.oid
+   WHERE p.oid = to_regprocedure('public.save_commercial_config(text,jsonb,text,uuid)');
+
+  SELECT r.rolname INTO v_trusted_owner_bundle
+    FROM pg_proc p
+    JOIN pg_roles r ON p.proowner = r.oid
+   WHERE p.oid = to_regprocedure('public.save_messaging_config(jsonb,jsonb,jsonb,uuid,text)');
+
+  IF (v_trusted_owner_scalar IS NULL OR current_user != v_trusted_owner_scalar)
+     AND (v_trusted_owner_bundle IS NULL OR current_user != v_trusted_owner_bundle) THEN
+    RAISE EXCEPTION 'platform_config_versions INSERT must occur via save_commercial_config() or save_messaging_config()';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- ══════════════════════════════════════════════════════════
 -- D. DB-enforced country activation / readiness trigger
 -- ══════════════════════════════════════════════════════════
 
