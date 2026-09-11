@@ -29,28 +29,27 @@ function psqlMayFail(sql: string): string {
 }
 
 // Helper: set up auth context for admin user
-// Uses the same JWT claims pattern as config-versioning-db.test.ts
+// Sets JWT claims in the session so auth.uid() and is_admin() work
+// inside SECURITY DEFINER functions. Uses set_config(..., false) for
+// session-level persistence (not just transaction-local).
 function adminContext(adminId: string): string {
   return `
-    SELECT set_config('request.jwt.claims', json_build_object(
-      'sub', '${adminId}', 'role', 'admin', 'aud', 'authenticated'
-    )::text, true);
-    SELECT set_config('request.jwt.claim.sub', '${adminId}', true);
+    SELECT set_config('request.jwt.claims', '{"sub":"${adminId}","role":"admin","aud":"authenticated"}', false);
+    SELECT set_config('request.jwt.claim.sub', '${adminId}', false);
     SET ROLE authenticated;
   `;
 }
 
 describe.skipIf(!canRun)('M377 Dynamic Market Controls — PostgreSQL proofs', () => {
-  const adminId = '00000000-0000-0000-0000-m377test0001';
+  // CI auth.uid() stub returns this fixed UUID; ensure it has admin role
+  const adminId = '00000000-0000-0000-0000-000000000000';
   let baseVersionId: string;
 
   beforeAll(() => {
-    // Create a test admin user with the correct raw_app_meta_data for M365 is_admin()
+    // Ensure the CI stub auth.uid() user has admin role in raw_app_meta_data
     psqlMayFail(`
-      INSERT INTO auth.users (id, email, raw_app_meta_data, instance_id, aud, role)
-      VALUES ('${adminId}', 'm377-test-admin@test.com', '{"role":"admin"}'::jsonb,
-              '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated')
-      ON CONFLICT (id) DO NOTHING;
+      UPDATE auth.users SET raw_app_meta_data = '{"role":"admin"}'::jsonb
+      WHERE id = '${adminId}';
     `);
 
     // Verify admin setup works
