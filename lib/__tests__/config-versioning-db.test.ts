@@ -962,7 +962,7 @@ describe.skipIf(!canRun)('Config Versioning — non-superuser authority proof (#
     const err = nsuPsqlMayFail(`
       BEGIN;
       SET ROLE ${NSU_ROLE};
-      DROP FUNCTION save_commercial_config(text, jsonb, text);
+      DROP FUNCTION save_commercial_config(text, jsonb, text, uuid);
       INSERT INTO platform_config_versions (config_snapshot, effective_from)
       VALUES ('{"should_fail":true}'::jsonb, '2017-01-01T00:00:00Z'::timestamptz);
       RESET ROLE;
