@@ -57,7 +57,10 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const countryCode = (business.country_code || 'NG') as CountryCode;
+    if (!business.country_code) {
+      return NextResponse.json({ message: 'Business country code is required' }, { status: 400 });
+    }
+    const countryCode = business.country_code as CountryCode;
 
     // Read regional tier price directly from DB — fail closed, no hardcoded fallback
     const service = createServiceClient();
@@ -86,8 +89,15 @@ export async function POST(request: NextRequest) {
     }
 
     const monthlyPrice = tierPricing.price;
-    const currency = (countryRow.currency_code as string) || 'NGN';
-    const gateway = (countryRow.payment_gateway as string) || 'paystack';
+    const currency = countryRow.currency_code as string;
+    const gateway = countryRow.payment_gateway as string;
+
+    if (!currency) {
+      return NextResponse.json({ message: 'Currency not configured for this region.' }, { status: 503 });
+    }
+    if (!gateway) {
+      return NextResponse.json({ message: 'Payment gateway not configured for this region.' }, { status: 503 });
+    }
 
     const { data: profile } = await supabase
       .from('profiles')
@@ -152,7 +162,15 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Stripe path (US, GB, CA)
+    // Explicit gateway dispatch — fail closed for unsupported gateways
+    if (gateway !== 'stripe') {
+      return NextResponse.json(
+        { message: `Payment gateway "${gateway}" is not supported for subscription checkout.` },
+        { status: 400 },
+      );
+    }
+
+    // Stripe path
     const stripeKey = process.env.STRIPE_SECRET_KEY;
     if (!stripeKey) {
       return NextResponse.json({ message: 'Payment gateway not configured' }, { status: 500 });

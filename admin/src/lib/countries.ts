@@ -71,37 +71,21 @@ export function getActiveCountries(): CountryRow[] {
   return (cache ?? []).filter(c => c.is_active);
 }
 
-export function getCurrencyCode(code: string): string {
+export function getCurrencyCode(code: string): string | null {
   const c = getCountry(code);
-  return c?.currency_code ?? 'NGN';
+  return c?.currency_code ?? null;
 }
 
-/** Build a country-code → currency-code map from the cached countries table.
- *  If cache is empty, returns a minimal fallback. */
+/** Build a country-code → currency-code map from DB cache. Empty if cache not loaded. */
 export function getCountryCurrencyMap(): Record<string, string> {
   const rows = getCountryList();
-  if (rows.length > 0) {
-    return Object.fromEntries(rows.map(c => [c.code, c.currency_code]));
-  }
-  // Fallback until countries are loaded
-  return { US: 'USD', CA: 'CAD', GB: 'GBP', NG: 'NGN', GH: 'GHS' };
+  return Object.fromEntries(rows.map(c => [c.code, c.currency_code]));
 }
 
-/** Build a country-code → { code, locale } map from the cached countries table.
- *  If cache is empty, returns a minimal fallback. */
+/** Build a country-code → { code, locale } map from DB cache. Empty if cache not loaded. */
 export function getCountryCurrencyDetailMap(): Record<string, { code: string; locale: string }> {
   const rows = getCountryList();
-  if (rows.length > 0) {
-    return Object.fromEntries(rows.map(c => [c.code, { code: c.currency_code, locale: c.currency_locale }]));
-  }
-  // Fallback until countries are loaded
-  return {
-    NG: { code: 'NGN', locale: 'en-NG' },
-    US: { code: 'USD', locale: 'en-US' },
-    GB: { code: 'GBP', locale: 'en-GB' },
-    CA: { code: 'CAD', locale: 'en-CA' },
-    GH: { code: 'GHS', locale: 'en-GH' },
-  };
+  return Object.fromEntries(rows.map(c => [c.code, { code: c.currency_code, locale: c.currency_locale }]));
 }
 
 export function getVerificationTiers(code: string) {
