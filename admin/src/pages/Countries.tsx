@@ -612,9 +612,10 @@ function MessagingFinancialControls({ countries, canMutate, onSaved }: { countri
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
 
-  // Country-scoped state: rate + Paystack plan codes
+  // Country-scoped state: category rates + Paystack plan codes
+  // rates keyed by category (utility, marketing, *, authentication, service)
   const [countryState, setCountryState] = useState<Record<string, {
-    defaultRate: string; paystackGrowthPlan: string; paystackBusinessPlan: string;
+    rates: Record<string, string>; paystackGrowthPlan: string; paystackBusinessPlan: string;
   }>>({});
 
   // Currency-scoped state: spend cap, trial credit, tier included (shared across countries with same currency)
@@ -652,14 +653,23 @@ function MessagingFinancialControls({ countries, canMutate, onSaved }: { countri
         }
         setCurrencyState(currInit);
 
-        // Build country-scoped state
+        // Build country-scoped state — load all category-specific rates
         const ctryInit: typeof countryState = {};
         for (const c of countries) {
           const bucket = pricing?.[c.currency_code];
-          const rate = bucket?.rates?.[c.code]?.['*'] ?? bucket?.default_cost_minor ?? '';
+          const countryRates = bucket?.rates?.[c.code] as Record<string, number> | undefined;
+          const rateStrings: Record<string, string> = {};
+          if (countryRates) {
+            for (const [cat, val] of Object.entries(countryRates)) {
+              rateStrings[cat] = String(val);
+            }
+          }
+          // Ensure utility and marketing always have editable entries
+          if (!rateStrings.utility) rateStrings.utility = '';
+          if (!rateStrings.marketing) rateStrings.marketing = '';
           const countryPricing = c.pricing as Record<string, Record<string, unknown>> | undefined;
           ctryInit[c.code] = {
-            defaultRate: String(rate),
+            rates: rateStrings,
             paystackGrowthPlan: (countryPricing?.growth?.paystack_plan_code as string) ?? '',
             paystackBusinessPlan: (countryPricing?.business?.paystack_plan_code as string) ?? '',
           };
@@ -708,16 +718,25 @@ function MessagingFinancialControls({ countries, canMutate, onSaved }: { countri
         if (bi) tierIncluded.business[currency] = bi;
       }
 
-      // Add country-scoped rates
+      // Add country-scoped category rates — preserve all existing category keys
       for (const c of countries) {
         if (!configuredCurrencies.has(c.currency_code)) continue;
         const cs = countryState[c.code];
         if (!cs) continue;
-        const rate = parseMinorInt(cs.defaultRate);
-        if (rate === null && cs.defaultRate.trim()) {
-          throw new Error(`${c.code} Default Rate: must be a non-negative integer (no decimals)`);
+        const countryRateMap: Record<string, number> = {};
+        for (const [cat, valStr] of Object.entries(cs.rates)) {
+          if (!valStr.trim()) continue; // Skip empty entries
+          const rate = parseMinorInt(valStr);
+          if (rate === null) {
+            throw new Error(`${c.code} ${cat} rate: must be a non-negative integer (no decimals)`);
+          }
+          countryRateMap[cat] = rate;
         }
-        messagingPricing[c.currency_code].rates[c.code] = { '*': rate ?? 0 };
+        // Require at least one rate entry per configured country
+        if (Object.keys(countryRateMap).length === 0) {
+          countryRateMap['*'] = 0; // Fallback if no category rates provided
+        }
+        messagingPricing[c.currency_code].rates[c.code] = countryRateMap;
       }
 
       // Build Paystack plan-code bundle
@@ -812,7 +831,8 @@ function MessagingFinancialControls({ countries, canMutate, onSaved }: { countri
             <tr className="border-b border-gray-200">
               <th className="py-2 text-left font-medium text-gray-500">Market</th>
               <th className="px-2 py-2 text-left font-medium text-gray-500">Currency</th>
-              <th className="px-2 py-2 text-left font-medium text-gray-500">Default Rate</th>
+              <th className="px-2 py-2 text-left font-medium text-gray-500">Utility Rate</th>
+              <th className="px-2 py-2 text-left font-medium text-gray-500">Marketing Rate</th>
               {hasPaystack && (
                 <>
                   <th className="px-2 py-2 text-left font-medium text-gray-500">PS Growth Plan</th>
@@ -823,13 +843,17 @@ function MessagingFinancialControls({ countries, canMutate, onSaved }: { countri
           </thead>
           <tbody className="divide-y divide-gray-100">
             {countries.map(c => {
-              const cs = countryState[c.code] || { defaultRate: '', paystackGrowthPlan: '', paystackBusinessPlan: '' };
+              const cs = countryState[c.code] || { rates: { utility: '', marketing: '' }, paystackGrowthPlan: '', paystackBusinessPlan: '' };
+              const updateRate = (cat: string, value: string) => setCountryState(prev => ({
+                ...prev, [c.code]: { ...cs, rates: { ...cs.rates, [cat]: value } },
+              }));
               const updateCtry = (field: string, value: string) => setCountryState(prev => ({ ...prev, [c.code]: { ...cs, [field]: value } }));
               return (
                 <tr key={c.code} className={!c.is_active ? 'opacity-50' : ''}>
                   <td className="py-2 font-medium">{c.flag} {c.code}</td>
                   <td className="px-2 py-2 text-gray-500">{c.currency_code}</td>
-                  <td className="px-2 py-2"><input type="text" inputMode="numeric" pattern="[0-9]*" className="w-20 rounded border border-gray-300 px-2 py-1 text-xs" value={cs.defaultRate} onChange={e => updateCtry('defaultRate', e.target.value)} disabled={!canMutate} /></td>
+                  <td className="px-2 py-2"><input type="text" inputMode="numeric" pattern="[0-9]*" className="w-20 rounded border border-gray-300 px-2 py-1 text-xs" value={cs.rates.utility || ''} onChange={e => updateRate('utility', e.target.value)} disabled={!canMutate} /></td>
+                  <td className="px-2 py-2"><input type="text" inputMode="numeric" pattern="[0-9]*" className="w-20 rounded border border-gray-300 px-2 py-1 text-xs" value={cs.rates.marketing || ''} onChange={e => updateRate('marketing', e.target.value)} disabled={!canMutate} /></td>
                   {hasPaystack && (
                     <>
                       <td className="px-2 py-2">{c.payment_gateway === 'paystack' ? <input type="text" className="w-28 rounded border border-gray-300 px-2 py-1 text-xs" value={cs.paystackGrowthPlan} onChange={e => updateCtry('paystackGrowthPlan', e.target.value)} disabled={!canMutate} placeholder="PLN_..." /> : <span className="text-gray-300">—</span>}</td>

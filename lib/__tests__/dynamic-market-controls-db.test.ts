@@ -241,6 +241,78 @@ describe.skipIf(!canRun)('M377 Dynamic Market Controls — PostgreSQL proofs', (
     expect(scalarSnap.trial_days).toBe(14);
   });
 
+  // ── Category-specific rate round-trip ──
+
+  it('14b. utility + marketing rates survive round-trip independently', () => {
+    // Build a bundle with category-specific rates (utility + marketing) for NG
+    const activeRows = psql("SELECT code, currency_code FROM countries WHERE is_active = true ORDER BY code;");
+    const markets = activeRows.split('\n').filter(Boolean).map(r => {
+      const [code, currency] = r.split('|');
+      return { code: code.trim(), currency: currency.trim() };
+    });
+    const buckets: Record<string, string[]> = {};
+    for (const m of markets) {
+      if (!buckets[m.currency]) buckets[m.currency] = [];
+      buckets[m.currency].push(m.code);
+    }
+
+    const pricingObj: Record<string, unknown> = {};
+    for (const [currency, codes] of Object.entries(buckets)) {
+      const rates: Record<string, Record<string, number>> = {};
+      for (const c of codes) {
+        if (c === 'NG') {
+          // Category-specific: utility=890, marketing=6850 (owner-approved W1 shape)
+          rates[c] = { utility: 890, marketing: 6850 };
+        } else if (c === 'GH') {
+          rates[c] = { utility: 5, marketing: 26 };
+        } else {
+          rates[c] = { utility: 1, marketing: 3 };
+        }
+      }
+      pricingObj[currency] = { rates, default_spend_cap_minor: 5000000 };
+    }
+    const trialObj: Record<string, number> = {};
+    const includedObj: Record<string, Record<string, number>> = { growth: {}, business: {} };
+    for (const currency of Object.keys(buckets)) {
+      trialObj[currency] = 50000;
+      includedObj.growth[currency] = 100000;
+      includedObj.business[currency] = 200000;
+    }
+
+    // Save the category-specific bundle
+    const v1 = psql(`${adminContext(adminId)} SELECT save_messaging_config('${JSON.stringify(pricingObj)}'::jsonb, '${JSON.stringify(trialObj)}'::jsonb, '${JSON.stringify(includedObj)}'::jsonb, '${currentVersion()}'::uuid);`);
+    expect(v1).toBeTruthy();
+
+    // Read back and verify category rates are preserved independently
+    const snap = JSON.parse(psql(`
+      SELECT config_snapshot::text FROM platform_config_versions
+      WHERE effective_from <= clock_timestamp()
+      ORDER BY effective_from DESC LIMIT 1;
+    `));
+
+    // NG must have both utility and marketing, not collapsed to *
+    const ngRates = snap.messaging_pricing.NGN.rates.NG;
+    expect(ngRates.utility).toBe(890);
+    expect(ngRates.marketing).toBe(6850);
+    expect(ngRates['*']).toBeUndefined(); // Must not have wildcard if not sent
+
+    // GH category rates preserved
+    const ghRates = snap.messaging_pricing.GHS.rates.GH;
+    expect(ghRates.utility).toBe(5);
+    expect(ghRates.marketing).toBe(26);
+
+    // Second save: scalar trial_days must not destroy category rates
+    psql(`${adminContext(adminId)} SELECT save_commercial_config('trial_days', '14'::jsonb);`);
+    const snap2 = JSON.parse(psql(`
+      SELECT config_snapshot::text FROM platform_config_versions
+      WHERE effective_from <= clock_timestamp()
+      ORDER BY effective_from DESC LIMIT 1;
+    `));
+    const ngRates2 = snap2.messaging_pricing.NGN.rates.NG;
+    expect(ngRates2.utility).toBe(890);
+    expect(ngRates2.marketing).toBe(6850);
+  });
+
   // ── Paystack activation readiness ──
 
   it('15. Paystack market rejected without plan codes', () => {
