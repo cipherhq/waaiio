@@ -361,17 +361,28 @@ describe.skipIf(!canRun)('M377 Dynamic Market Controls — PostgreSQL proofs', (
 
   // ── Plan-code authority guard ──
 
-  it('23. direct country update cannot mutate plan codes (authenticated admin context)', () => {
-    // Capture original plan code before attempt
+  it('23a. authenticated-admin direct UPDATE blocked by table ACL (defense-in-depth)', () => {
     const origPlanCode = psql("SELECT pricing->'growth'->>'paystack_plan_code' FROM countries WHERE code = 'NG';");
 
-    // Attempt direct mutation under authenticated admin context — must be rejected
-    // May be blocked by table permissions (permission denied) or by the plan-code authority trigger
     const r = psqlMayFail(`${adminContext(adminId)} UPDATE countries SET pricing = jsonb_set(pricing, '{growth,paystack_plan_code}', '"PLN_direct"') WHERE code = 'NG'; RESET ROLE;`);
-    const rejected = r.includes('permission denied') || r.includes('save_market_messaging_config') || r.includes('orchestration authorization');
-    expect(rejected).toBe(true);
+    expect(r).toContain('permission denied');
 
-    // Persisted value must be unchanged
+    const afterPlanCode = psql("SELECT pricing->'growth'->>'paystack_plan_code' FROM countries WHERE code = 'NG';");
+    expect(afterPlanCode).toBe(origPlanCode);
+  });
+
+  it('23b. DB-owner direct UPDATE rejected by guard_paystack_plan_code_authority trigger', () => {
+    // Capture existing Growth plan code before attempt
+    const origPlanCode = psql("SELECT pricing->'growth'->>'paystack_plan_code' FROM countries WHERE code = 'NG';");
+    expect(origPlanCode.length).toBeGreaterThanOrEqual(3); // precondition: plan code exists
+
+    // Direct UPDATE as DB owner — no SET ROLE, no waaiio.plan_code_auth marker
+    // DB owner = function owner in CI, so the trigger's first check (owner match) passes,
+    // but the second check (transaction-local orchestration marker) must reject
+    const r = psqlMayFail("UPDATE countries SET pricing = jsonb_set(pricing, '{growth,paystack_plan_code}', '\"PLN_direct_dbowner\"') WHERE code = 'NG';");
+    expect(r).toContain('orchestration authorization');
+
+    // Stored value must be exactly unchanged
     const afterPlanCode = psql("SELECT pricing->'growth'->>'paystack_plan_code' FROM countries WHERE code = 'NG';");
     expect(afterPlanCode).toBe(origPlanCode);
   });
