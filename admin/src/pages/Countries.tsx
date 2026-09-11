@@ -676,31 +676,28 @@ function MessagingFinancialControls({ countries, canMutate, onSaved }: { countri
         if (bi > 0) tierIncluded.business[c.currency_code] = bi;
       }
 
-      // Call save_messaging_config RPC with CAS
-      const { data, error: rpcError } = await adminDb.rpc('save_messaging_config', {
+      // Build Paystack plan-code bundle for atomic save
+      const paystackPlanCodes: Record<string, { growth?: string; business?: string }> = {};
+      for (const c of countries) {
+        if (c.payment_gateway !== 'paystack') continue;
+        const cfg = msgConfig[c.code];
+        if (!cfg?.paystackGrowthPlan && !cfg?.paystackBusinessPlan) continue;
+        const entry: { growth?: string; business?: string } = {};
+        if (cfg.paystackGrowthPlan) entry.growth = cfg.paystackGrowthPlan;
+        if (cfg.paystackBusinessPlan) entry.business = cfg.paystackBusinessPlan;
+        paystackPlanCodes[c.code] = entry;
+      }
+
+      // Single atomic RPC: three messaging maps + Paystack plan codes + CAS
+      const { data, error: rpcError } = await adminDb.rpc('save_market_messaging_config', {
         p_messaging_pricing: messagingPricing,
         p_trial_credit_minor_by_currency: trialCredit,
         p_subscription_included_minor_by_tier_currency: tierIncluded,
+        p_paystack_plan_codes: Object.keys(paystackPlanCodes).length > 0 ? paystackPlanCodes : null,
         p_expected_version_id: configVersionId,
       });
 
       if (rpcError) throw new Error(rpcError.message);
-
-      // Persist Paystack plan codes in countries.pricing for each Paystack market
-      for (const c of countries) {
-        if (c.payment_gateway !== 'paystack') continue;
-        const cfg = msgConfig[c.code];
-        if (!cfg) continue;
-        const currentPricing = (c.pricing || {}) as Record<string, Record<string, unknown>>;
-        const updatedPricing = { ...currentPricing };
-        if (cfg.paystackGrowthPlan) {
-          updatedPricing.growth = { ...(updatedPricing.growth || {}), paystack_plan_code: cfg.paystackGrowthPlan };
-        }
-        if (cfg.paystackBusinessPlan) {
-          updatedPricing.business = { ...(updatedPricing.business || {}), paystack_plan_code: cfg.paystackBusinessPlan };
-        }
-        await adminDb.from('countries').update({ pricing: updatedPricing }).eq('code', c.code);
-      }
 
       setConfigVersionId(data as string);
       setSuccess('Messaging configuration saved successfully');

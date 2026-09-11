@@ -331,7 +331,7 @@ describe('Subscribe Route — runtime proofs', () => {
               eq: () => ({
                 single: async () => ({
                   data: {
-                    pricing: { growth: { price: DB_GROWTH_PRICE, feeFlat: 50, feePercentage: 1.5 } },
+                    pricing: { growth: { price: DB_GROWTH_PRICE, feeFlat: 50, feePercentage: 1.5, paystack_plan_code: 'PLN_test_growth' } },
                     currency_code: 'NGN',
                     payment_gateway: 'paystack',
                   },
