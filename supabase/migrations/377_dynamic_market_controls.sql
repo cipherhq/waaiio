@@ -543,16 +543,97 @@ SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
 DECLARE
+  v_caller_id UUID;
   v_version_id UUID;
+  v_latest_version_id UUID;
   v_country_code TEXT;
   v_plan_obj JSONB;
   v_growth_code TEXT;
   v_business_code TEXT;
   v_row_count INTEGER;
   v_country_gateway TEXT;
+  v_plan_key TEXT;
+  v_key_count INTEGER;
 BEGIN
-  -- 1. Delegate the three-map save to save_messaging_config (same transaction)
-  -- This handles auth, advisory lock, CAS, validation, upserts, snapshot, version insert
+  -- ── 1. Auth: authenticated admin only ──
+  v_caller_id := auth.uid();
+  IF v_caller_id IS NULL THEN
+    RAISE EXCEPTION 'save_market_messaging_config requires authenticated caller';
+  END IF;
+  IF NOT public.is_admin() THEN
+    RAISE EXCEPTION 'save_market_messaging_config requires admin role';
+  END IF;
+
+  -- ── 2. Shared advisory lock (reentrant — save_messaging_config will re-acquire) ──
+  PERFORM pg_advisory_xact_lock(hashtext('commercial_config_write'));
+
+  -- ── 3. Authoritative CAS (redundant with save_messaging_config but fail-fast) ──
+  IF p_expected_version_id IS NULL THEN
+    RAISE EXCEPTION 'save_market_messaging_config requires a non-NULL expected_version_id';
+  END IF;
+  SELECT id INTO v_latest_version_id
+    FROM platform_config_versions
+    WHERE effective_from <= clock_timestamp()
+    ORDER BY effective_from DESC LIMIT 1;
+  IF v_latest_version_id IS DISTINCT FROM p_expected_version_id THEN
+    RAISE EXCEPTION 'config_version_conflict: expected % but latest is %',
+      p_expected_version_id, v_latest_version_id;
+  END IF;
+
+  -- ── 4. Complete plan-code prevalidation (before any mutation) ──
+  IF p_paystack_plan_codes IS NOT NULL THEN
+    -- NULL means no plan-code mutation; non-NULL must be valid
+    IF jsonb_typeof(p_paystack_plan_codes) <> 'object' THEN
+      RAISE EXCEPTION 'p_paystack_plan_codes must be a JSONB object keyed by country code';
+    END IF;
+
+    -- Empty object after explicit supply is rejected
+    IF p_paystack_plan_codes = '{}'::jsonb THEN
+      RAISE EXCEPTION 'p_paystack_plan_codes must not be empty when explicitly supplied';
+    END IF;
+
+    FOR v_country_code IN SELECT key FROM jsonb_each(p_paystack_plan_codes) LOOP
+      v_plan_obj := p_paystack_plan_codes -> v_country_code;
+
+      IF jsonb_typeof(v_plan_obj) <> 'object' THEN
+        RAISE EXCEPTION 'paystack_plan_codes[%] must be an object', v_country_code;
+      END IF;
+
+      -- Require exactly growth + business, no unknown keys
+      v_key_count := 0;
+      FOR v_plan_key IN SELECT key FROM jsonb_each(v_plan_obj) LOOP
+        IF v_plan_key NOT IN ('growth', 'business') THEN
+          RAISE EXCEPTION 'paystack_plan_codes[%] contains unknown key "%"; only growth and business allowed', v_country_code, v_plan_key;
+        END IF;
+        v_key_count := v_key_count + 1;
+      END LOOP;
+
+      -- Must have exactly both growth AND business
+      IF v_plan_obj -> 'growth' IS NULL OR v_plan_obj -> 'business' IS NULL THEN
+        RAISE EXCEPTION 'paystack_plan_codes[%] must contain both growth and business plan codes', v_country_code;
+      END IF;
+
+      -- Both must be non-empty strings
+      IF jsonb_typeof(v_plan_obj -> 'growth') <> 'string' OR length(TRIM(v_plan_obj ->> 'growth')) < 3 THEN
+        RAISE EXCEPTION 'paystack_plan_codes[%].growth must be a non-blank string (min 3 chars)', v_country_code;
+      END IF;
+      IF jsonb_typeof(v_plan_obj -> 'business') <> 'string' OR length(TRIM(v_plan_obj ->> 'business')) < 3 THEN
+        RAISE EXCEPTION 'paystack_plan_codes[%].business must be a non-blank string (min 3 chars)', v_country_code;
+      END IF;
+
+      -- Country must exist and currently use Paystack
+      SELECT payment_gateway INTO v_country_gateway
+        FROM public.countries WHERE code = v_country_code;
+      IF NOT FOUND THEN
+        RAISE EXCEPTION 'paystack_plan_codes references unknown country "%"', v_country_code;
+      END IF;
+      IF v_country_gateway <> 'paystack' THEN
+        RAISE EXCEPTION 'paystack_plan_codes[%]: country uses gateway "%" not "paystack"', v_country_code, v_country_gateway;
+      END IF;
+    END LOOP;
+  END IF;
+
+  -- ── 5. Delegate three-map save (re-acquires lock/CAS internally — safe) ──
   v_version_id := public.save_messaging_config(
     p_messaging_pricing,
     p_trial_credit_minor_by_currency,
@@ -561,74 +642,33 @@ BEGIN
     p_description
   );
 
-  -- 2. If no plan codes provided, we're done (pure messaging-maps save)
-  IF p_paystack_plan_codes IS NULL OR p_paystack_plan_codes = '{}'::jsonb THEN
-    RETURN v_version_id;
-  END IF;
+  -- ── 6. Apply plan-code mutations (if any) ──
+  IF p_paystack_plan_codes IS NOT NULL THEN
+    -- Set transaction-local authorization marker for the plan-code guard trigger
+    PERFORM set_config('waaiio.plan_code_auth', 'true', true);
 
-  -- 3. Validate plan-code bundle shape
-  IF jsonb_typeof(p_paystack_plan_codes) <> 'object' THEN
-    RAISE EXCEPTION 'p_paystack_plan_codes must be a JSONB object keyed by country code';
-  END IF;
+    FOR v_country_code IN SELECT key FROM jsonb_each(p_paystack_plan_codes) LOOP
+      v_plan_obj := p_paystack_plan_codes -> v_country_code;
+      v_growth_code := TRIM(v_plan_obj ->> 'growth');
+      v_business_code := TRIM(v_plan_obj ->> 'business');
 
-  -- 4. Process each country in the plan-code bundle
-  FOR v_country_code IN SELECT key FROM jsonb_each(p_paystack_plan_codes) LOOP
-    v_plan_obj := p_paystack_plan_codes -> v_country_code;
+      -- Single UPDATE with gateway re-check for concurrent safety
+      UPDATE public.countries
+      SET pricing = jsonb_set(
+        jsonb_set(COALESCE(pricing, '{}'::jsonb), '{growth,paystack_plan_code}', to_jsonb(v_growth_code)),
+        '{business,paystack_plan_code}', to_jsonb(v_business_code)
+      )
+      WHERE code = v_country_code AND payment_gateway = 'paystack';
 
-    -- Validate shape: must be an object with growth and/or business string values
-    IF jsonb_typeof(v_plan_obj) <> 'object' THEN
-      RAISE EXCEPTION 'paystack_plan_codes[%] must be an object with growth/business plan codes', v_country_code;
-    END IF;
-
-    -- Validate the country exists and is a Paystack market
-    SELECT payment_gateway INTO v_country_gateway
-      FROM public.countries WHERE code = v_country_code;
-    IF NOT FOUND THEN
-      RAISE EXCEPTION 'paystack_plan_codes references unknown country "%"', v_country_code;
-    END IF;
-    IF v_country_gateway <> 'paystack' THEN
-      RAISE EXCEPTION 'paystack_plan_codes[%]: country uses gateway "%" not "paystack"', v_country_code, v_country_gateway;
-    END IF;
-
-    -- Extract and validate plan codes
-    v_growth_code := NULL;
-    v_business_code := NULL;
-
-    IF v_plan_obj -> 'growth' IS NOT NULL THEN
-      IF jsonb_typeof(v_plan_obj -> 'growth') <> 'string' OR length(v_plan_obj ->> 'growth') < 3 THEN
-        RAISE EXCEPTION 'paystack_plan_codes[%].growth must be a non-empty string (min 3 chars)', v_country_code;
+      GET DIAGNOSTICS v_row_count = ROW_COUNT;
+      IF v_row_count <> 1 THEN
+        RAISE EXCEPTION 'paystack_plan_codes[%]: UPDATE affected % rows — country may have changed gateway', v_country_code, v_row_count;
       END IF;
-      v_growth_code := v_plan_obj ->> 'growth';
-    END IF;
+    END LOOP;
 
-    IF v_plan_obj -> 'business' IS NOT NULL THEN
-      IF jsonb_typeof(v_plan_obj -> 'business') <> 'string' OR length(v_plan_obj ->> 'business') < 3 THEN
-        RAISE EXCEPTION 'paystack_plan_codes[%].business must be a non-empty string (min 3 chars)', v_country_code;
-      END IF;
-      v_business_code := v_plan_obj ->> 'business';
-    END IF;
-
-    -- 5. Atomic single UPDATE per country using jsonb_set — preserves all unrelated pricing fields
-    UPDATE public.countries
-    SET pricing = CASE
-      WHEN v_growth_code IS NOT NULL AND v_business_code IS NOT NULL THEN
-        jsonb_set(
-          jsonb_set(COALESCE(pricing, '{}'::jsonb), '{growth,paystack_plan_code}', to_jsonb(v_growth_code)),
-          '{business,paystack_plan_code}', to_jsonb(v_business_code)
-        )
-      WHEN v_growth_code IS NOT NULL THEN
-        jsonb_set(COALESCE(pricing, '{}'::jsonb), '{growth,paystack_plan_code}', to_jsonb(v_growth_code))
-      WHEN v_business_code IS NOT NULL THEN
-        jsonb_set(COALESCE(pricing, '{}'::jsonb), '{business,paystack_plan_code}', to_jsonb(v_business_code))
-      ELSE pricing
-    END
-    WHERE code = v_country_code;
-
-    GET DIAGNOSTICS v_row_count = ROW_COUNT;
-    IF v_row_count <> 1 THEN
-      RAISE EXCEPTION 'paystack_plan_codes[%]: UPDATE affected % rows (expected 1)', v_country_code, v_row_count;
-    END IF;
-  END LOOP;
+    -- Reset authorization marker immediately
+    PERFORM set_config('waaiio.plan_code_auth', '', true);
+  END IF;
 
   RETURN v_version_id;
 END;
@@ -639,6 +679,61 @@ REVOKE ALL ON FUNCTION public.save_market_messaging_config(jsonb, jsonb, jsonb, 
 REVOKE ALL ON FUNCTION public.save_market_messaging_config(jsonb, jsonb, jsonb, jsonb, uuid, text) FROM authenticated;
 REVOKE ALL ON FUNCTION public.save_market_messaging_config(jsonb, jsonb, jsonb, jsonb, uuid, text) FROM service_role;
 GRANT EXECUTE ON FUNCTION public.save_market_messaging_config(jsonb, jsonb, jsonb, jsonb, uuid, text) TO authenticated;
+
+-- ══════════════════════════════════════════════════════════
+-- B3. Guard: Paystack plan-code keys are orchestration-only authority
+-- ══════════════════════════════════════════════════════════
+
+CREATE OR REPLACE FUNCTION public.guard_paystack_plan_code_authority()
+RETURNS TRIGGER AS $$
+DECLARE
+  v_trusted_owner TEXT;
+  v_old_growth TEXT;
+  v_new_growth TEXT;
+  v_old_business TEXT;
+  v_new_business TEXT;
+  v_auth_marker TEXT;
+BEGIN
+  -- Extract old and new plan codes
+  IF TG_OP = 'INSERT' THEN
+    v_old_growth := NULL;
+    v_old_business := NULL;
+  ELSE
+    v_old_growth := OLD.pricing -> 'growth' ->> 'paystack_plan_code';
+    v_old_business := OLD.pricing -> 'business' ->> 'paystack_plan_code';
+  END IF;
+  v_new_growth := NEW.pricing -> 'growth' ->> 'paystack_plan_code';
+  v_new_business := NEW.pricing -> 'business' ->> 'paystack_plan_code';
+
+  -- If plan codes unchanged (or both NULL on INSERT without codes), allow
+  IF v_old_growth IS NOT DISTINCT FROM v_new_growth
+     AND v_old_business IS NOT DISTINCT FROM v_new_business THEN
+    RETURN NEW;
+  END IF;
+
+  -- Plan codes changed — require trusted orchestration function owner + auth marker
+  SELECT r.rolname INTO v_trusted_owner
+    FROM pg_proc p JOIN pg_roles r ON p.proowner = r.oid
+   WHERE p.oid = to_regprocedure(
+     'public.save_market_messaging_config(jsonb,jsonb,jsonb,jsonb,uuid,text)');
+
+  IF v_trusted_owner IS NULL OR current_user != v_trusted_owner THEN
+    RAISE EXCEPTION 'Paystack plan codes may only be modified via save_market_messaging_config()';
+  END IF;
+
+  -- Also require the transaction-local authorization marker
+  v_auth_marker := current_setting('waaiio.plan_code_auth', true);
+  IF v_auth_marker IS NULL OR v_auth_marker <> 'true' THEN
+    RAISE EXCEPTION 'Paystack plan code modification requires active orchestration authorization';
+  END IF;
+
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_guard_paystack_plan_codes
+  BEFORE INSERT OR UPDATE ON public.countries
+  FOR EACH ROW EXECUTE FUNCTION public.guard_paystack_plan_code_authority();
 
 -- ══════════════════════════════════════════════════════════
 -- C. Update guard_commercial_settings for 18-key allowlist + dual owner

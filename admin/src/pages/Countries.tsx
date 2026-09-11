@@ -605,8 +605,10 @@ function MessagingFinancialControls({ countries, canMutate, onSaved }: { countri
   useEffect(() => {
     (async () => {
       try {
+        // Load effective config version using production CAS semantics
         const { data: ver } = await adminDb.from('platform_config_versions')
           .select('id, config_snapshot')
+          .lte('effective_from', new Date().toISOString())
           .order('effective_from', { ascending: false })
           .limit(1)
           .single();
@@ -676,16 +678,17 @@ function MessagingFinancialControls({ countries, canMutate, onSaved }: { countri
         if (bi > 0) tierIncluded.business[c.currency_code] = bi;
       }
 
-      // Build Paystack plan-code bundle for atomic save
-      const paystackPlanCodes: Record<string, { growth?: string; business?: string }> = {};
+      // Build Paystack plan-code bundle — require both growth+business per market
+      const paystackPlanCodes: Record<string, { growth: string; business: string }> = {};
       for (const c of countries) {
         if (c.payment_gateway !== 'paystack') continue;
         const cfg = msgConfig[c.code];
         if (!cfg?.paystackGrowthPlan && !cfg?.paystackBusinessPlan) continue;
-        const entry: { growth?: string; business?: string } = {};
-        if (cfg.paystackGrowthPlan) entry.growth = cfg.paystackGrowthPlan;
-        if (cfg.paystackBusinessPlan) entry.business = cfg.paystackBusinessPlan;
-        paystackPlanCodes[c.code] = entry;
+        // Both required if either is provided
+        if (!cfg.paystackGrowthPlan || !cfg.paystackBusinessPlan) {
+          throw new Error(`${c.code}: Both Growth and Business Paystack plan codes are required`);
+        }
+        paystackPlanCodes[c.code] = { growth: cfg.paystackGrowthPlan, business: cfg.paystackBusinessPlan };
       }
 
       // Single atomic RPC: three messaging maps + Paystack plan codes + CAS
@@ -697,9 +700,14 @@ function MessagingFinancialControls({ countries, canMutate, onSaved }: { countri
         p_expected_version_id: configVersionId,
       });
 
-      if (rpcError) throw new Error(rpcError.message);
+      if (rpcError) {
+        if (rpcError.message?.includes('config_version_conflict')) {
+          throw new Error('Configuration was modified by another admin. Please reload the page and try again.');
+        }
+        throw new Error(rpcError.message);
+      }
 
-      setConfigVersionId(data as string);
+      setConfigVersionId(data as string); // Adopt returned version for next save
       setSuccess('Messaging configuration saved successfully');
       await onSaved();
     } catch (err: unknown) {
