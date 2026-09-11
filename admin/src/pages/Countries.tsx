@@ -612,7 +612,7 @@ export function buildMessagingPayload(
   currencyState: Record<string, { spendCap: string; trialCredit: string; growthIncluded: string; businessIncluded: string; defaultCostMinor: string }>,
   countryState: Record<string, { rates: Record<string, string>; paystackGrowthPlan: string; paystackBusinessPlan: string }>,
 ) {
-  const messagingPricing: Record<string, { rates: Record<string, Record<string, number>>; default_cost_minor: number; default_spend_cap_minor: number }> = {};
+  const messagingPricing: Record<string, { rates: Record<string, Record<string, number>>; default_cost_minor?: number; default_spend_cap_minor: number }> = {};
   const trialCredit: Record<string, number> = {};
   const tierIncluded: Record<string, Record<string, number>> = { growth: {}, business: {} };
 
@@ -625,11 +625,16 @@ export function buildMessagingPayload(
     if (!cap) continue;
 
     configuredCurrencies.add(currency);
-    const dcm = parseMinorInt(cs.defaultCostMinor);
-    if (dcm === null && cs.defaultCostMinor.trim()) {
-      throw new Error(`${currency} Default Cost: must be a non-negative integer (no decimals)`);
+    // Preserve absence distinctly: '' (absent) → omit key; '0' → explicit 0; positive → exact value
+    const dcmStr = cs.defaultCostMinor;
+    const bucket: typeof messagingPricing[string] = { rates: {}, default_spend_cap_minor: cap };
+    if (dcmStr.trim() !== '') {
+      const dcm = parseMinorInt(dcmStr);
+      if (dcm === null) throw new Error(`${currency} Default Cost: must be a non-negative integer (no decimals)`);
+      bucket.default_cost_minor = dcm;
     }
-    messagingPricing[currency] = { rates: {}, default_cost_minor: dcm ?? 0, default_spend_cap_minor: cap };
+    // If dcmStr is empty, default_cost_minor is omitted (absent preserved as absent)
+    messagingPricing[currency] = bucket;
 
     const tc = parsePositiveMinorInt(cs.trialCredit);
     if (tc === null && cs.trialCredit.trim()) throw new Error(`${currency} Trial Credit: must be a positive integer (no decimals)`);
@@ -655,8 +660,14 @@ export function buildMessagingPayload(
       if (rate === null) throw new Error(`${c.code} ${cat} rate: must be a non-negative integer (no decimals)`);
       countryRateMap[cat] = rate;
     }
-    if (Object.keys(countryRateMap).length === 0 && c.is_active) {
-      throw new Error(`${c.code}: At least one messaging rate (Utility or Marketing) is required for active markets`);
+    // Active markets require both utility AND marketing rates explicitly
+    if (c.is_active) {
+      if (countryRateMap.utility === undefined) {
+        throw new Error(`${c.code}: Utility rate is required for active markets`);
+      }
+      if (countryRateMap.marketing === undefined) {
+        throw new Error(`${c.code}: Marketing rate is required for active markets`);
+      }
     }
     if (Object.keys(countryRateMap).length > 0) {
       messagingPricing[c.currency_code].rates[c.code] = countryRateMap;

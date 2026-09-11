@@ -111,18 +111,9 @@ describe('buildMessagingPayload — Admin serialization', () => {
     expect(result.messagingPricing.NGN.rates.NG.authentication).toBe(200); // Preserved
   });
 
-  it('does not synthesize wildcard when none existed — no rates for active market fails', () => {
-    const currState = {
-      NGN: { spendCap: '1200000', trialCredit: '700000', growthIncluded: '150000', businessIncluded: '600000', defaultCostMinor: '0' },
-    };
-    const ctryState = {
-      NG: { rates: { utility: '', marketing: '' }, paystackGrowthPlan: 'PLN_g', paystackBusinessPlan: 'PLN_b' },
-    };
-    expect(() => buildMessagingPayload([NG], currState, ctryState))
-      .toThrow('NG: At least one messaging rate');
-  });
+  // ── default_cost_minor absence semantics ──
 
-  it('empty default_cost_minor string serializes as 0 (not NaN)', () => {
+  it('absent default_cost_minor (empty string) → key omitted from bucket', () => {
     const currState = {
       NGN: { spendCap: '1200000', trialCredit: '700000', growthIncluded: '150000', businessIncluded: '600000', defaultCostMinor: '' },
     };
@@ -130,6 +121,77 @@ describe('buildMessagingPayload — Admin serialization', () => {
       NG: { rates: { utility: '890', marketing: '6850' }, paystackGrowthPlan: 'PLN_g', paystackBusinessPlan: 'PLN_b' },
     };
     const result = buildMessagingPayload([NG], currState, ctryState);
+    expect('default_cost_minor' in result.messagingPricing.NGN).toBe(false);
+  });
+
+  it('explicit zero default_cost_minor → preserved as 0', () => {
+    const currState = {
+      NGN: { spendCap: '1200000', trialCredit: '700000', growthIncluded: '150000', businessIncluded: '600000', defaultCostMinor: '0' },
+    };
+    const ctryState = {
+      NG: { rates: { utility: '890', marketing: '6850' }, paystackGrowthPlan: 'PLN_g', paystackBusinessPlan: 'PLN_b' },
+    };
+    const result = buildMessagingPayload([NG], currState, ctryState);
     expect(result.messagingPricing.NGN.default_cost_minor).toBe(0);
+  });
+
+  it('non-zero default_cost_minor → preserved exactly', () => {
+    const currState = {
+      NGN: { spendCap: '1200000', trialCredit: '700000', growthIncluded: '150000', businessIncluded: '600000', defaultCostMinor: '42' },
+    };
+    const ctryState = {
+      NG: { rates: { utility: '890', marketing: '6850' }, paystackGrowthPlan: 'PLN_g', paystackBusinessPlan: 'PLN_b' },
+    };
+    const result = buildMessagingPayload([NG], currState, ctryState);
+    expect(result.messagingPricing.NGN.default_cost_minor).toBe(42);
+  });
+
+  // ── Active market category readiness ──
+
+  it('active market missing utility rate → fails visibly', () => {
+    const currState = {
+      NGN: { spendCap: '1200000', trialCredit: '700000', growthIncluded: '150000', businessIncluded: '600000', defaultCostMinor: '' },
+    };
+    const ctryState = {
+      NG: { rates: { utility: '', marketing: '6850' }, paystackGrowthPlan: 'PLN_g', paystackBusinessPlan: 'PLN_b' },
+    };
+    expect(() => buildMessagingPayload([NG], currState, ctryState))
+      .toThrow('NG: Utility rate is required');
+  });
+
+  it('active market missing marketing rate → fails visibly', () => {
+    const currState = {
+      NGN: { spendCap: '1200000', trialCredit: '700000', growthIncluded: '150000', businessIncluded: '600000', defaultCostMinor: '' },
+    };
+    const ctryState = {
+      NG: { rates: { utility: '890', marketing: '' }, paystackGrowthPlan: 'PLN_g', paystackBusinessPlan: 'PLN_b' },
+    };
+    expect(() => buildMessagingPayload([NG], currState, ctryState))
+      .toThrow('NG: Marketing rate is required');
+  });
+
+  it('active market with both utility + marketing succeeds; hidden categories preserved', () => {
+    const currState = {
+      NGN: { spendCap: '1200000', trialCredit: '700000', growthIncluded: '150000', businessIncluded: '600000', defaultCostMinor: '' },
+    };
+    const ctryState = {
+      NG: { rates: { utility: '890', marketing: '6850', '*': '400', service: '100' }, paystackGrowthPlan: 'PLN_g', paystackBusinessPlan: 'PLN_b' },
+    };
+    const result = buildMessagingPayload([NG], currState, ctryState);
+    expect(result.messagingPricing.NGN.rates.NG.utility).toBe(890);
+    expect(result.messagingPricing.NGN.rates.NG.marketing).toBe(6850);
+    expect(result.messagingPricing.NGN.rates.NG['*']).toBe(400);
+    expect(result.messagingPricing.NGN.rates.NG.service).toBe(100);
+  });
+
+  it('hidden categories alone do not satisfy active-market readiness', () => {
+    const currState = {
+      NGN: { spendCap: '1200000', trialCredit: '700000', growthIncluded: '150000', businessIncluded: '600000', defaultCostMinor: '' },
+    };
+    const ctryState = {
+      NG: { rates: { utility: '', marketing: '', '*': '400', authentication: '200' }, paystackGrowthPlan: 'PLN_g', paystackBusinessPlan: 'PLN_b' },
+    };
+    expect(() => buildMessagingPayload([NG], currState, ctryState))
+      .toThrow('NG: Utility rate is required');
   });
 });
