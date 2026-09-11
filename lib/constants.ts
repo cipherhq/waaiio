@@ -510,7 +510,7 @@ export const PRICING_TIERS: Record<SubscriptionTier, {
     maxBookings: 50,
     whitelabel: false,
     features: [
-      '30-day free trial (no fees)',
+      'Free trial (no fees)',
       'Up to 50 bookings/month',
       'WhatsApp automation',
       'Dashboard & analytics',
@@ -617,7 +617,7 @@ export const TIER_FEATURES: Record<SubscriptionTier, TierFeatureSet> = {
     capabilities: ['scheduling', 'payment', 'ordering', 'ticketing', 'feedback', 'chat'],
     broadcastLimits: { maxBroadcasts: 0, maxRecipients: 0 },
     highlights: [
-      '30-day free trial (no fees)',
+      'Free trial (no fees)',
       'Up to 50 bookings/month',
       'WhatsApp automation',
       'Dashboard & analytics',
@@ -662,14 +662,6 @@ export const TIER_FEATURES: Record<SubscriptionTier, TierFeatureSet> = {
   },
 };
 
-// ── Legacy pricing (kept for backward compatibility) ──
-export const PRICING = {
-  whatsapp_standalone: {
-    starter: { name: 'Starter', price: 15_000, maxBookings: 100, whitelabel: false },
-    professional: { name: 'Professional', price: 35_000, maxBookings: Infinity, whitelabel: true },
-    enterprise: { name: 'Enterprise', price: null, maxBookings: Infinity, whitelabel: true },
-  },
-} as const;
 
 // ── Default Appointments per Category (calendar-based, need date+time+staff) ──
 export const DEFAULT_APPOINTMENTS: Partial<Record<BusinessCategoryKey, Array<{

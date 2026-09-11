@@ -3,6 +3,35 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-09-10 — #270 W-1: Website / Commercial Presentation
+
+### What changed
+- **Public pricing projection API** (`app/api/public/pricing/route.ts`): New server-side route reads `platform_config_versions` snapshot and `countries` rows via service client, returns exact allowlisted DTO with trial_days, annual_discount_percentage, tier fees, category fees (with BYO 0% messaging), and country pricing. Fail-closed on any DB/config error (503, never hardcoded fallback).
+- **Pricing page** (`app/(marketing)/pricing/page.tsx`): Rewritten to fetch from `/api/public/pricing`. Regional prices, trial days, annual discount, and fee percentages all come from DB via projection. No hardcoded `COUNTRY_PRICING` or `getPricingTiers` for commercial values. Category fee section added.
+- **Subscribe route** (`app/api/onboarding/subscribe/route.ts`): Now reads DB regional price directly via service client (no `getPricingTiers` fallback). Rejects `billing_interval=year` before any provider interaction. Annual calculation branches removed.
+- **JSON-LD** (`app/(marketing)/page.tsx`): Stale $14.99/$39.99 replaced with DB US country prices fetched at SSR time.
+- **"30-day" trial copy removed**: All hardcoded "30-day free trial" text replaced with authoritative `trialDays` from config or generic "free trial" across: pricing page, help FAQ, features page, blog posts, refund policy, onboarding wizard side panels, StepPlan, StepFeatures.
+- **START_TRIAL / SUBSCRIBE_NOW CTAs** (`app/get-started/steps/StepPlan.tsx`): Free plan shows "Start Free Trial", paid plans show "Subscribe — {price}/mo".
+- **WhatsApp setup choices** (`app/get-started/steps/StepDetails.tsx`): 3 options for paid plans — shared (existing), own number via Embedded Signup (existing), dedicated Waaiio-managed (Coming Soon / Contact Sales, non-functional).
+- **Admin COMMERCIAL_KEYS fix** (`admin/src/pages/PlatformSettings.tsx`): 6 M376 keys added to `COMMERCIAL_KEYS` set + "Fee Policy" group added to `GROUPS`.
+- **Dead code removed**: Legacy `PRICING` export removed from `lib/constants.ts`.
+- **Help page** (`app/(marketing)/help/page.tsx`): Hardcoded ₦20,000/₦60,000 prices replaced with generic "check Pricing page" language.
+
+### Files changed
+- `app/api/public/pricing/route.ts` (NEW)
+- `app/api/onboarding/subscribe/route.ts`
+- `app/(marketing)/pricing/page.tsx`, `pricing/layout.tsx`
+- `app/(marketing)/page.tsx`, `HomeClient.tsx`, `help/page.tsx`, `features/page.tsx`, `blog/posts.ts`, `refund-policy/page.tsx`
+- `app/get-started/OnboardingWizard.tsx`, `steps/StepPlan.tsx`, `steps/StepDetails.tsx`, `steps/StepFeatures.tsx`
+- `lib/constants.ts`
+- `admin/src/pages/PlatformSettings.tsx`
+- `lib/__tests__/public-pricing-projection.test.ts` (NEW), `lib/__tests__/console-error-cleanup.test.ts`
+
+### What could break
+- Pricing page now requires the public pricing API to be reachable — if `platform_config_versions` has no rows or `countries` table is empty, the pricing page shows "temporarily unavailable" instead of hardcoded prices.
+- Subscribe route now queries `countries.pricing` directly — if a country's pricing JSONB is missing/malformed, subscription checkout fails closed with 503.
+- Annual billing is now rejected by both subscribe and verify routes — any client sending `billing_interval=year` gets 400.
+
 ## 2026-09-09 — #264 Fix: NULL-safe provider_init_state transition guard
 
 ### What changed

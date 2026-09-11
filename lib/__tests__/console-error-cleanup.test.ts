@@ -82,6 +82,7 @@ describe('Production console.error allowlist (exact counts)', () => {
     'app/get-started/OnboardingWizard.tsx': { count: 2, client: true, reason: 'Browser error debugging for signup/onboarding' },
     'app/sign/[token]/page.tsx': { count: 1, client: true, reason: 'Browser error debugging for PDF rendering' },
     'app/api/cron/trial-activation/route.ts': { count: 6, client: false, reason: 'Cron error logging for trial activation + legacy reconciliation failures' },
+    'app/api/public/pricing/route.ts': { count: 9, client: false, reason: 'Fail-closed error logging for public pricing projection (#270)' },
   };
 
   function collectTsFiles(dir: string, base: string): string[] {
@@ -140,9 +141,9 @@ describe('Production console.error allowlist (exact counts)', () => {
     }
   });
 
-  it('non-client allowances are only logger and cron routes', () => {
+  it('non-client allowances are only logger, cron routes, and public pricing', () => {
     const serverEntries = Object.entries(ALLOWLIST).filter(([, e]) => !e.client);
-    const allowedServerFiles = ['lib/logger.ts', 'app/api/cron/trial-activation/route.ts'];
+    const allowedServerFiles = ['lib/logger.ts', 'app/api/cron/trial-activation/route.ts', 'app/api/public/pricing/route.ts'];
     expect(serverEntries).toHaveLength(allowedServerFiles.length);
     for (const [file] of serverEntries) {
       expect(allowedServerFiles).toContain(file);

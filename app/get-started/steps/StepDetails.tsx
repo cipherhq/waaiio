@@ -186,15 +186,23 @@ export function StepDetails({
                 <p className="text-xs text-gray-500">Get started instantly — no setup needed</p>
               </div>
             </button>
-            <button type="button" onClick={() => setWaMethod('transfer')} className={`flex w-full items-center gap-3 rounded-xl border-2 p-3 text-left transition ${waMethod !== 'shared' ? 'border-brand bg-brand-50/50' : 'border-gray-200 hover:border-gray-300'}`}>
-              <div className={`flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full border-2 ${waMethod !== 'shared' ? 'border-brand bg-brand' : 'border-gray-300'}`}>
-                {waMethod !== 'shared' && <svg className="h-3 w-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>}
+            <button type="button" onClick={() => setWaMethod('transfer')} className={`flex w-full items-center gap-3 rounded-xl border-2 p-3 text-left transition ${waMethod === 'transfer' ? 'border-brand bg-brand-50/50' : 'border-gray-200 hover:border-gray-300'}`}>
+              <div className={`flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full border-2 ${waMethod === 'transfer' ? 'border-brand bg-brand' : 'border-gray-300'}`}>
+                {waMethod === 'transfer' && <svg className="h-3 w-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>}
               </div>
               <div>
                 <p className="text-sm font-medium text-gray-900">Connect my own WhatsApp number</p>
-                <p className="text-xs text-gray-500">Use your existing business or personal number</p>
+                <p className="text-xs text-gray-500">Use your existing business or personal number via Meta Embedded Signup</p>
               </div>
             </button>
+            <div className="flex w-full items-center gap-3 rounded-xl border-2 border-gray-100 bg-gray-50/50 p-3 text-left opacity-60 cursor-not-allowed">
+              <div className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full border-2 border-gray-200">
+              </div>
+              <div>
+                <p className="text-sm font-medium text-gray-400">Dedicated Waaiio-managed number <span className="ml-1.5 rounded-full bg-gray-200 px-2 py-0.5 text-[10px] font-bold text-gray-500">Coming Soon</span></p>
+                <p className="text-xs text-gray-400">Get a dedicated WhatsApp number managed by Waaiio. <a href="mailto:hello@waaiio.com" className="text-brand underline" onClick={e => e.stopPropagation()}>Contact sales</a></p>
+              </div>
+            </div>
           </div>
           {waMethod !== 'shared' && (
             <div className="mt-4 space-y-4">

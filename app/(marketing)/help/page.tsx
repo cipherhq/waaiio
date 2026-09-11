@@ -22,7 +22,7 @@ const HELP_ARTICLES: HelpArticle[] = [
   {
     category: 'Getting Started',
     question: 'How do I get started?',
-    answer: 'Sign up at waaiio.com/get-started, pick your industry, add your business details, and you are live. It takes about 5 minutes. Your 30-day free trial includes all features — your WhatsApp bot will be ready immediately.',
+    answer: 'Sign up at waaiio.com/get-started, pick your industry, add your business details, and you are live. It takes about 5 minutes. Your free trial includes all features — your WhatsApp bot will be ready immediately.',
   },
   {
     category: 'Getting Started',
@@ -47,7 +47,7 @@ const HELP_ARTICLES: HelpArticle[] = [
   {
     category: 'Getting Started',
     question: 'Can I try Waaiio before paying?',
-    answer: 'Yes! Every plan starts with a 30-day free trial. During the trial, there are zero fees on any transaction. After 30 days, the fees for your chosen plan kick in. No credit card needed to start.',
+    answer: 'Yes! Every plan starts with a free trial. During the trial, there are zero fees on any transaction. After the trial, the fees for your chosen plan kick in. No credit card needed to start.',
   },
 
   // ── Bookings & Appointments ──
@@ -86,7 +86,7 @@ const HELP_ARTICLES: HelpArticle[] = [
   {
     category: 'Payments & Payouts',
     question: 'How much does Waaiio cost?',
-    answer: 'Waaiio has 3 plans: Starter (free, 2.5% per transaction), Pro (\u20A620,000/month, 1.5% + free direct bank transfers), and Premium (\u20A660,000/month, 1.5% + free direct bank transfers). All plans include a 30-day free trial with zero fees. You can also check our Pricing page for prices in your currency.',
+    answer: 'Waaiio has 3 plans: Starter (free, per-transaction fee after trial), Pro (monthly subscription + lower per-transaction fee), and Premium (monthly subscription + lowest fees + whitelabel). All plans include a free trial with zero fees. Check our Pricing page for exact prices in your currency.',
   },
   {
     category: 'Payments & Payouts',

@@ -25,6 +25,10 @@ const GROUPS: GroupDef[] = [
     keys: ['pricing_tiers', 'conversation_limits', 'broadcast_limits', 'trial_days', 'annual_discount_percentage', 'default_platform_fee_percent'],
   },
   {
+    label: 'Fee Policy',
+    keys: ['fee_policy_enabled', 'category_fee_rates', 'messaging_financial_gate', 'messaging_reservation_ttl_seconds', 'trial_credit_minor_by_currency', 'subscription_included_minor_by_tier_currency'],
+  },
+  {
     label: 'Payments & Payouts',
     keys: ['transfer_expiry_hours', 'payout_cooling_period_days', 'minimum_payout', 'minimum_bank_transfer', 'fraud_velocity_threshold', 'invoice_expiry_days'],
   },
@@ -410,11 +414,15 @@ export default function PlatformSettings() {
   }
 
   // Commercial config keys — must use save_commercial_config() RPC
+  // Must match v_commercial_keys in save_commercial_config() (M376)
   const COMMERCIAL_KEYS = new Set([
     'pricing_tiers', 'trial_days', 'broadcast_limits', 'conversation_limits',
     'default_platform_fee_percent', 'annual_discount_percentage',
     'payout_cooling_period_days', 'minimum_payout', 'payout_verification_limits',
     'transfer_expiry_hours', 'minimum_bank_transfer',
+    'messaging_financial_gate', 'messaging_reservation_ttl_seconds',
+    'trial_credit_minor_by_currency', 'subscription_included_minor_by_tier_currency',
+    'fee_policy_enabled', 'category_fee_rates',
   ]);
 
   // Save a single setting
