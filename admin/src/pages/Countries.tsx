@@ -39,7 +39,7 @@ function emptyForm(): FormState {
     code: '', name: '', flag: '', dialing_code: '+',
     currency_code: '', currency_symbol: '', currency_locale: 'en-US',
     payment_gateway: 'stripe', phone_digits: 10, phone_pattern: '', phone_placeholder: '',
-    is_active: true, sort_order: 0,
+    is_active: false, sort_order: 0,
     cities: {},
     pricing: { free: { price: 0, feeFlat: 0 }, growth: { price: 0, feeFlat: 0 }, business: { price: 0, feeFlat: 0 } },
     verification_tiers: {
@@ -180,17 +180,17 @@ export default function Countries() {
     }
   }
 
-  async function handleDelete(code: string) {
-    if (!canMutate || !confirm(`Delete country ${code}? This cannot be undone.`)) return;
+  async function handleDeactivate(code: string) {
+    if (!canMutate || !confirm(`Deactivate country ${code}? It will be hidden from signup and pricing.`)) return;
     setDeleting(code);
     try {
-      const { error } = await adminDb.from('countries').delete().eq('code', code);
+      const { error } = await adminDb.from('countries').update({ is_active: false }).eq('code', code);
       if (error) throw error;
-      await logAudit({ action: 'country.delete', entity_type: 'country', entity_id: code });
+      await logAudit({ action: 'country.deactivate', entity_type: 'country', entity_id: code });
       invalidateCache();
       await load();
     } catch (err: unknown) {
-      alert(`Delete failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
+      alert(`Deactivate failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
     } finally {
       setDeleting(null);
     }
@@ -322,13 +322,16 @@ export default function Countries() {
                     <button onClick={() => openEdit(row)} className="mr-2 text-gray-400 hover:text-brand transition">
                       <Pencil className="w-4 h-4" />
                     </button>
-                    <button
-                      onClick={() => handleDelete(row.code)}
-                      disabled={deleting === row.code}
-                      className="text-gray-400 hover:text-red-500 transition disabled:opacity-50"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
+                    {row.is_active && (
+                      <button
+                        onClick={() => handleDeactivate(row.code)}
+                        disabled={deleting === row.code}
+                        className="text-gray-400 hover:text-red-500 transition disabled:opacity-50"
+                        title="Deactivate market"
+                      >
+                        <XCircle className="w-4 h-4" />
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}

@@ -5,11 +5,6 @@ import { formatCurrency, type SubscriptionTier, type CountryCode } from '@/lib/c
 
 const VALID_PLANS: SubscriptionTier[] = ['growth', 'business'];
 
-const PLAN_PAGE_SLUGS: Record<string, string | undefined> = {
-  growth: process.env.PAYSTACK_GROWTH_PLAN_CODE,
-  business: process.env.PAYSTACK_BUSINESS_PLAN_CODE,
-};
-
 export async function POST(request: NextRequest) {
   try {
     const supabase = await createClient();
@@ -114,7 +109,8 @@ export async function POST(request: NextRequest) {
     // Paystack path (NG, GH)
     if (gateway === 'paystack') {
       const paystackKey = process.env.PAYSTACK_SECRET_KEY;
-      const pageSlug = PLAN_PAGE_SLUGS[plan];
+      // Market+tier Paystack plan code — resolved from per-country pricing
+      const pageSlug = tierPricing.paystack_plan_code as string | undefined;
 
       if (!paystackKey) {
         return NextResponse.json({ message: 'Payment gateway not configured' }, { status: 500 });

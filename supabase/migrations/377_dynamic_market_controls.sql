@@ -112,7 +112,7 @@ BEGIN
     IF jsonb_typeof(p_value) <> 'number' THEN
       RAISE EXCEPTION 'messaging_reservation_ttl_seconds must be a positive integer, got %', jsonb_typeof(p_value);
     END IF;
-    IF (p_value::TEXT)::NUMERIC <= 0 THEN
+    IF (p_value::TEXT)::NUMERIC <= 0 OR (p_value::TEXT)::NUMERIC <> FLOOR((p_value::TEXT)::NUMERIC) THEN
       RAISE EXCEPTION 'messaging_reservation_ttl_seconds must be a positive integer, got %', p_value::TEXT;
     END IF;
   END IF;
@@ -121,7 +121,7 @@ BEGIN
     IF jsonb_typeof(p_value) <> 'number' THEN
       RAISE EXCEPTION 'trial_days must be a positive integer, got %', jsonb_typeof(p_value);
     END IF;
-    IF (p_value::TEXT)::NUMERIC <= 0 THEN
+    IF (p_value::TEXT)::NUMERIC <= 0 OR (p_value::TEXT)::NUMERIC <> FLOOR((p_value::TEXT)::NUMERIC) THEN
       RAISE EXCEPTION 'trial_days must be a positive integer, got %', p_value::TEXT;
     END IF;
   END IF;
@@ -281,7 +281,11 @@ BEGIN
   -- Acquire commercial-write lock
   PERFORM pg_advisory_xact_lock(hashtext('commercial_config_write'));
 
-  -- Mandatory CAS — no bypass
+  -- Mandatory CAS — explicit NULL rejection, no bypass
+  IF p_expected_version_id IS NULL THEN
+    RAISE EXCEPTION 'save_messaging_config requires a non-NULL expected_version_id for CAS';
+  END IF;
+
   SELECT id INTO v_latest_version_id
     FROM platform_config_versions
     WHERE effective_from <= clock_timestamp()
@@ -308,19 +312,31 @@ BEGIN
       RAISE EXCEPTION 'messaging_pricing[%] must be an object', v_currency;
     END IF;
 
-    -- default_spend_cap_minor required
+    -- default_spend_cap_minor required — must be positive integer
     IF v_bucket -> 'default_spend_cap_minor' IS NULL
-       OR jsonb_typeof(v_bucket -> 'default_spend_cap_minor') <> 'number'
-       OR (v_bucket ->> 'default_spend_cap_minor')::NUMERIC <= 0 THEN
+       OR jsonb_typeof(v_bucket -> 'default_spend_cap_minor') <> 'number' THEN
       RAISE EXCEPTION 'messaging_pricing[%].default_spend_cap_minor must be a positive integer', v_currency;
     END IF;
+    DECLARE v_cap NUMERIC;
+    BEGIN
+      v_cap := (v_bucket ->> 'default_spend_cap_minor')::NUMERIC;
+      IF v_cap <= 0 OR v_cap <> FLOOR(v_cap) THEN
+        RAISE EXCEPTION 'messaging_pricing[%].default_spend_cap_minor must be a positive integer, got %', v_currency, v_cap;
+      END IF;
+    END;
 
-    -- default_cost_minor optional but must be valid if present
+    -- default_cost_minor optional but must be non-negative integer if present
     IF v_bucket -> 'default_cost_minor' IS NOT NULL THEN
-      IF jsonb_typeof(v_bucket -> 'default_cost_minor') <> 'number'
-         OR (v_bucket ->> 'default_cost_minor')::NUMERIC < 0 THEN
+      IF jsonb_typeof(v_bucket -> 'default_cost_minor') <> 'number' THEN
         RAISE EXCEPTION 'messaging_pricing[%].default_cost_minor must be a non-negative integer', v_currency;
       END IF;
+      DECLARE v_cost NUMERIC;
+      BEGIN
+        v_cost := (v_bucket ->> 'default_cost_minor')::NUMERIC;
+        IF v_cost < 0 OR v_cost <> FLOOR(v_cost) THEN
+          RAISE EXCEPTION 'messaging_pricing[%].default_cost_minor must be a non-negative integer, got %', v_currency, v_cost;
+        END IF;
+      END;
     END IF;
 
     -- rates required
@@ -340,11 +356,28 @@ BEGIN
       END IF;
       v_seen_countries := array_append(v_seen_countries, v_country_key);
 
-      -- Rate values must be non-negative integers
+      -- Rate values must be an object with non-negative integer values
       v_rate_val := v_bucket -> 'rates' -> v_country_key;
       IF jsonb_typeof(v_rate_val) <> 'object' THEN
         RAISE EXCEPTION 'messaging_pricing[%].rates[%] must be an object with rate values', v_currency, v_country_key;
       END IF;
+
+      -- Validate every rate entry is a non-negative integer
+      DECLARE v_rate_entry_key TEXT; v_rate_entry_val JSONB; v_rate_num NUMERIC;
+      BEGIN
+        FOR v_rate_entry_key IN SELECT key FROM jsonb_each(v_rate_val) LOOP
+          v_rate_entry_val := v_rate_val -> v_rate_entry_key;
+          IF jsonb_typeof(v_rate_entry_val) <> 'number' THEN
+            RAISE EXCEPTION 'messaging_pricing[%].rates[%][%] must be a non-negative integer, got %',
+              v_currency, v_country_key, v_rate_entry_key, jsonb_typeof(v_rate_entry_val);
+          END IF;
+          v_rate_num := (v_rate_entry_val::TEXT)::NUMERIC;
+          IF v_rate_num < 0 OR v_rate_num <> FLOOR(v_rate_num) THEN
+            RAISE EXCEPTION 'messaging_pricing[%].rates[%][%] must be a non-negative integer, got %',
+              v_currency, v_country_key, v_rate_entry_key, v_rate_entry_val::TEXT;
+          END IF;
+        END LOOP;
+      END;
     END LOOP;
   END LOOP;
 
@@ -355,9 +388,16 @@ BEGIN
   END IF;
   FOR v_currency IN SELECT key FROM jsonb_each(p_trial_credit_minor_by_currency) LOOP
     v_bucket := p_trial_credit_minor_by_currency -> v_currency;
-    IF jsonb_typeof(v_bucket) <> 'number' OR (v_bucket::TEXT)::NUMERIC <= 0 THEN
+    IF jsonb_typeof(v_bucket) <> 'number' THEN
       RAISE EXCEPTION 'trial_credit_minor_by_currency[%] must be a positive integer', v_currency;
     END IF;
+    DECLARE v_tc NUMERIC;
+    BEGIN
+      v_tc := (v_bucket::TEXT)::NUMERIC;
+      IF v_tc <= 0 OR v_tc <> FLOOR(v_tc) THEN
+        RAISE EXCEPTION 'trial_credit_minor_by_currency[%] must be a positive integer, got %', v_currency, v_tc;
+      END IF;
+    END;
   END LOOP;
 
   -- ── Validate subscription_included_minor_by_tier_currency ──
@@ -374,9 +414,16 @@ BEGIN
       RAISE EXCEPTION 'subscription_included_minor_by_tier_currency[%] must be a currency→amount object', v_currency;
     END IF;
     FOR v_country_key IN SELECT jsonb_object_keys(v_bucket) LOOP
-      IF jsonb_typeof(v_bucket -> v_country_key) <> 'number' OR (v_bucket ->> v_country_key)::NUMERIC <= 0 THEN
+      IF jsonb_typeof(v_bucket -> v_country_key) <> 'number' THEN
         RAISE EXCEPTION 'subscription_included_minor_by_tier_currency[%][%] must be a positive integer', v_currency, v_country_key;
       END IF;
+      DECLARE v_inc NUMERIC;
+      BEGIN
+        v_inc := (v_bucket ->> v_country_key)::NUMERIC;
+        IF v_inc <= 0 OR v_inc <> FLOOR(v_inc) THEN
+          RAISE EXCEPTION 'subscription_included_minor_by_tier_currency[%][%] must be a positive integer, got %', v_currency, v_country_key, v_inc;
+        END IF;
+      END;
     END LOOP;
   END LOOP;
 
@@ -648,10 +695,12 @@ BEGIN
       NEW.code, v_bucket_currency, NEW.currency_code;
   END IF;
 
-  -- Spend cap
+  -- Spend cap — must be positive integer
   IF v_pricing -> v_bucket_currency -> 'default_spend_cap_minor' IS NULL
-     OR jsonb_typeof(v_pricing -> v_bucket_currency -> 'default_spend_cap_minor') != 'number' THEN
-    RAISE EXCEPTION 'Cannot activate market %: bucket % missing default_spend_cap_minor', NEW.code, v_bucket_currency;
+     OR jsonb_typeof(v_pricing -> v_bucket_currency -> 'default_spend_cap_minor') != 'number'
+     OR (v_pricing -> v_bucket_currency ->> 'default_spend_cap_minor')::NUMERIC <= 0
+     OR (v_pricing -> v_bucket_currency ->> 'default_spend_cap_minor')::NUMERIC <> FLOOR((v_pricing -> v_bucket_currency ->> 'default_spend_cap_minor')::NUMERIC) THEN
+    RAISE EXCEPTION 'Cannot activate market %: bucket % default_spend_cap_minor must be a positive integer', NEW.code, v_bucket_currency;
   END IF;
 
   -- Trial credit
