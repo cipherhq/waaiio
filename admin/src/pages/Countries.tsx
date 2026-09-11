@@ -583,6 +583,185 @@ export default function Countries() {
           </div>
         </div>
       )}
+
+      {/* ── Messaging Financial Controls ── */}
+      <MessagingFinancialControls countries={countries} canMutate={canMutate} onSaved={load} />
+    </div>
+  );
+}
+
+/** Messaging Financial Controls — compose + save the three bundle maps via save_messaging_config */
+function MessagingFinancialControls({ countries, canMutate, onSaved }: { countries: CountryRow[]; canMutate: boolean; onSaved: () => Promise<void> }) {
+  const [saving, setSaving] = useState(false);
+  const [configVersionId, setConfigVersionId] = useState<string | null>(null);
+  const [msgConfig, setMsgConfig] = useState<Record<string, {
+    defaultRate: string; spendCap: string; trialCredit: string;
+    growthIncluded: string; businessIncluded: string; paystackGrowthPlan: string; paystackBusinessPlan: string;
+  }>>({});
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
+
+  // Load current config version + existing messaging settings
+  useEffect(() => {
+    (async () => {
+      try {
+        const { data: ver } = await adminDb.from('platform_config_versions')
+          .select('id, config_snapshot')
+          .order('effective_from', { ascending: false })
+          .limit(1)
+          .single();
+        if (ver?.id) setConfigVersionId(ver.id);
+
+        // Pre-populate from existing config if present
+        const snapshot = ver?.config_snapshot as Record<string, unknown> | undefined;
+        const pricing = snapshot?.messaging_pricing as Record<string, { rates?: Record<string, Record<string, number>>; default_cost_minor?: number; default_spend_cap_minor?: number }> | undefined;
+        const trialCredit = snapshot?.trial_credit_minor_by_currency as Record<string, number> | undefined;
+        const included = snapshot?.subscription_included_minor_by_tier_currency as Record<string, Record<string, number>> | undefined;
+
+        const initial: typeof msgConfig = {};
+        for (const c of countries) {
+          // Find existing config for this country's currency
+          const bucket = pricing?.[c.currency_code];
+          const rate = bucket?.rates?.[c.code]?.['*'] ?? bucket?.default_cost_minor ?? '';
+          const cap = bucket?.default_spend_cap_minor ?? '';
+          const tc = trialCredit?.[c.currency_code] ?? '';
+          const gi = included?.growth?.[c.currency_code] ?? '';
+          const bi = included?.business?.[c.currency_code] ?? '';
+          // Paystack plan codes from countries.pricing
+          const countryPricing = c.pricing as Record<string, Record<string, unknown>> | undefined;
+          const gpCode = countryPricing?.growth?.paystack_plan_code as string ?? '';
+          const bpCode = countryPricing?.business?.paystack_plan_code as string ?? '';
+          initial[c.code] = {
+            defaultRate: String(rate), spendCap: String(cap),
+            trialCredit: String(tc), growthIncluded: String(gi), businessIncluded: String(bi),
+            paystackGrowthPlan: gpCode, paystackBusinessPlan: bpCode,
+          };
+        }
+        setMsgConfig(initial);
+      } catch {}
+    })();
+  }, [countries]);
+
+  async function handleSaveMessagingConfig() {
+    if (!canMutate || !configVersionId) return;
+    setSaving(true); setError(''); setSuccess('');
+    try {
+      // Build the three maps from form state
+      const messagingPricing: Record<string, { rates: Record<string, Record<string, number>>; default_cost_minor: number; default_spend_cap_minor: number }> = {};
+      const trialCredit: Record<string, number> = {};
+      const tierIncluded: Record<string, Record<string, number>> = { growth: {}, business: {} };
+
+      for (const c of countries) {
+        const cfg = msgConfig[c.code];
+        if (!cfg) continue;
+        const rate = parseInt(cfg.defaultRate, 10);
+        const cap = parseInt(cfg.spendCap, 10);
+        const tc = parseInt(cfg.trialCredit, 10);
+        const gi = parseInt(cfg.growthIncluded, 10);
+        const bi = parseInt(cfg.businessIncluded, 10);
+
+        if (!cap || cap <= 0) continue; // Skip unconfigured countries
+
+        // Add to messaging_pricing — group by currency
+        if (!messagingPricing[c.currency_code]) {
+          messagingPricing[c.currency_code] = { rates: {}, default_cost_minor: rate || 0, default_spend_cap_minor: cap };
+        }
+        messagingPricing[c.currency_code].rates[c.code] = { '*': rate || 0 };
+
+        // Trial credit (per currency — shared across countries with same currency)
+        if (tc > 0) trialCredit[c.currency_code] = tc;
+
+        // Tier included (per currency)
+        if (gi > 0) tierIncluded.growth[c.currency_code] = gi;
+        if (bi > 0) tierIncluded.business[c.currency_code] = bi;
+      }
+
+      // Call save_messaging_config RPC with CAS
+      const { data, error: rpcError } = await adminDb.rpc('save_messaging_config', {
+        p_messaging_pricing: messagingPricing,
+        p_trial_credit_minor_by_currency: trialCredit,
+        p_subscription_included_minor_by_tier_currency: tierIncluded,
+        p_expected_version_id: configVersionId,
+      });
+
+      if (rpcError) throw new Error(rpcError.message);
+
+      setConfigVersionId(data as string); // New version ID returned
+      setSuccess('Messaging configuration saved successfully');
+      await onSaved();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Save failed');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const activeCountries = countries.filter(c => c.is_active);
+
+  return (
+    <div className="mt-8 rounded-2xl border border-gray-200 bg-white p-6">
+      <h3 className="text-lg font-bold text-gray-900 mb-1">Messaging Financial Controls</h3>
+      <p className="text-sm text-gray-500 mb-4">Configure messaging rates, spend caps, trial credits, and tier included credits per market. All values in minor currency units. Saved atomically via versioned config.</p>
+
+      {error && <div className="mb-4 rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-700">{error}</div>}
+      {success && <div className="mb-4 rounded-lg bg-green-50 border border-green-200 p-3 text-sm text-green-700">{success}</div>}
+
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-gray-200">
+              <th className="py-2 text-left font-medium text-gray-500">Market</th>
+              <th className="px-2 py-2 text-left font-medium text-gray-500">Currency</th>
+              <th className="px-2 py-2 text-left font-medium text-gray-500">Default Rate</th>
+              <th className="px-2 py-2 text-left font-medium text-gray-500">Spend Cap</th>
+              <th className="px-2 py-2 text-left font-medium text-gray-500">Trial Credit</th>
+              <th className="px-2 py-2 text-left font-medium text-gray-500">Growth Incl.</th>
+              <th className="px-2 py-2 text-left font-medium text-gray-500">Business Incl.</th>
+              {activeCountries.some(c => c.payment_gateway === 'paystack') && (
+                <>
+                  <th className="px-2 py-2 text-left font-medium text-gray-500">PS Growth Plan</th>
+                  <th className="px-2 py-2 text-left font-medium text-gray-500">PS Business Plan</th>
+                </>
+              )}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100">
+            {countries.map(c => {
+              const cfg = msgConfig[c.code] || { defaultRate: '', spendCap: '', trialCredit: '', growthIncluded: '', businessIncluded: '', paystackGrowthPlan: '', paystackBusinessPlan: '' };
+              const update = (field: string, value: string) => setMsgConfig(prev => ({ ...prev, [c.code]: { ...cfg, [field]: value } }));
+              return (
+                <tr key={c.code} className={!c.is_active ? 'opacity-50' : ''}>
+                  <td className="py-2 font-medium">{c.flag} {c.code}</td>
+                  <td className="px-2 py-2 text-gray-500">{c.currency_code}</td>
+                  <td className="px-2 py-2"><input type="number" min="0" className="w-20 rounded border border-gray-300 px-2 py-1 text-xs" value={cfg.defaultRate} onChange={e => update('defaultRate', e.target.value)} disabled={!canMutate} /></td>
+                  <td className="px-2 py-2"><input type="number" min="1" className="w-24 rounded border border-gray-300 px-2 py-1 text-xs" value={cfg.spendCap} onChange={e => update('spendCap', e.target.value)} disabled={!canMutate} /></td>
+                  <td className="px-2 py-2"><input type="number" min="1" className="w-20 rounded border border-gray-300 px-2 py-1 text-xs" value={cfg.trialCredit} onChange={e => update('trialCredit', e.target.value)} disabled={!canMutate} /></td>
+                  <td className="px-2 py-2"><input type="number" min="1" className="w-20 rounded border border-gray-300 px-2 py-1 text-xs" value={cfg.growthIncluded} onChange={e => update('growthIncluded', e.target.value)} disabled={!canMutate} /></td>
+                  <td className="px-2 py-2"><input type="number" min="1" className="w-20 rounded border border-gray-300 px-2 py-1 text-xs" value={cfg.businessIncluded} onChange={e => update('businessIncluded', e.target.value)} disabled={!canMutate} /></td>
+                  {activeCountries.some(ac => ac.payment_gateway === 'paystack') && (
+                    <>
+                      <td className="px-2 py-2">{c.payment_gateway === 'paystack' ? <input type="text" className="w-28 rounded border border-gray-300 px-2 py-1 text-xs" value={cfg.paystackGrowthPlan} onChange={e => update('paystackGrowthPlan', e.target.value)} disabled={!canMutate} placeholder="PLN_..." /> : <span className="text-gray-300">—</span>}</td>
+                      <td className="px-2 py-2">{c.payment_gateway === 'paystack' ? <input type="text" className="w-28 rounded border border-gray-300 px-2 py-1 text-xs" value={cfg.paystackBusinessPlan} onChange={e => update('paystackBusinessPlan', e.target.value)} disabled={!canMutate} placeholder="PLN_..." /> : <span className="text-gray-300">—</span>}</td>
+                    </>
+                  )}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="mt-4 flex items-center justify-between">
+        <p className="text-xs text-gray-400">Config version: {configVersionId?.slice(0, 8) || 'none'}...</p>
+        <button
+          onClick={handleSaveMessagingConfig}
+          disabled={saving || !canMutate || !configVersionId}
+          className="flex items-center gap-2 rounded-xl bg-brand px-5 py-2.5 text-sm font-semibold text-white hover:bg-brand-600 transition disabled:opacity-50"
+        >
+          <CreditCard className="w-4 h-4" />
+          {saving ? 'Saving...' : 'Save Messaging Config'}
+        </button>
+      </div>
     </div>
   );
 }

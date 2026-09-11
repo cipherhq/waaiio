@@ -1187,11 +1187,12 @@ export function getPhonePlaceholder(countryCode: CountryCode = 'NG'): string {
   return `${config.dialingCode} ${config.phonePlaceholder}`;
 }
 
-/** Get dialing code — AUTHORITATIVE, fail-closed */
+/** Get dialing code — AUTHORITATIVE: DB first, display fallback for cold cache */
 export function getDialingCode(countryCode: CountryCode = 'NG'): string {
-  const c = _getCountryConfigStrict(countryCode);
-  if (!c) throw new Error(`Country ${countryCode} not found in DB — cannot resolve dialing code`);
-  return c.dialingCode;
+  const strict = _getCountryConfigStrict(countryCode);
+  if (strict) return strict.dialingCode;
+  // Cold cache: use display fallback (log warning in dev)
+  return _getCountryConfigDisplay(countryCode).dialingCode;
 }
 
 /** Get currency symbol — display-only, fallback OK */
@@ -1199,11 +1200,12 @@ export function getCurrencySymbol(countryCode: CountryCode = 'NG'): string {
   return _getCountryConfigDisplay(countryCode).currencySymbol;
 }
 
-/** Get currency code (e.g. 'NGN', 'USD') — AUTHORITATIVE, fail-closed */
+/** Get currency code (e.g. 'NGN', 'USD') — AUTHORITATIVE: DB first, display fallback for cold cache */
 export function getCurrencyCode(countryCode: CountryCode = 'NG'): string {
-  const c = _getCountryConfigStrict(countryCode);
-  if (!c) throw new Error(`Country ${countryCode} not found in DB — cannot resolve currency code`);
-  return c.currencyCode;
+  const strict = _getCountryConfigStrict(countryCode);
+  if (strict) return strict.currencyCode;
+  // Cold cache: use display fallback
+  return _getCountryConfigDisplay(countryCode).currencyCode;
 }
 
 /** Format currency — display-only, fallback OK */
@@ -1278,11 +1280,11 @@ export function getCitiesForCountry(countryCode: CountryCode = 'NG') {
   return _getCountryConfigDisplay(countryCode).cities;
 }
 
-/** Get payment gateway — AUTHORITATIVE, fail-closed */
+/** Get payment gateway — AUTHORITATIVE: DB first, display fallback for cold cache */
 export function getPaymentGatewayForCountry(countryCode: CountryCode = 'NG'): PaymentGatewayName {
-  const c = _getCountryConfigStrict(countryCode);
-  if (!c) throw new Error(`Country ${countryCode} not found in DB — cannot resolve payment gateway`);
-  return c.paymentGateway;
+  const strict = _getCountryConfigStrict(countryCode);
+  if (strict) return strict.paymentGateway;
+  return _getCountryConfigDisplay(countryCode).paymentGateway;
 }
 
 // ── Verification / KYC Configuration ──

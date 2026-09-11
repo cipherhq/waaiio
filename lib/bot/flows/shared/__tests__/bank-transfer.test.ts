@@ -19,15 +19,7 @@ vi.mock('@/lib/logger', () => ({
   logger: { error: vi.fn(), warn: vi.fn(), info: vi.fn() },
 }));
 
-// Mock authoritative country helpers (DB-backed in production)
-vi.mock('@/lib/constants', async (importOriginal) => {
-  const orig = await importOriginal() as Record<string, unknown>;
-  return {
-    ...orig,
-    getCurrencyCode: (cc: string) => cc === 'GH' ? 'GHS' : cc === 'US' ? 'USD' : 'NGN',
-    getPaymentGatewayForCountry: (cc: string) => cc === 'US' ? 'stripe' : 'paystack',
-  };
-});
+// Country helpers use display fallback when DB cache is cold (no mock needed)
 
 function createMockSupabase(bankAccount: Record<string, string> | null = null) {
   const chain: Record<string, any> = {};

@@ -106,11 +106,15 @@ export async function POST(request: NextRequest) {
       ? `${appUrl}${callback}`
       : `${appUrl}/get-started?step=success&business_id=${business_id}`;
 
-    // Paystack path (NG, GH)
+    // Paystack path
     if (gateway === 'paystack') {
       const paystackKey = process.env.PAYSTACK_SECRET_KEY;
-      // Market+tier Paystack plan code — resolved from per-country pricing
-      const pageSlug = tierPricing.paystack_plan_code as string | undefined;
+      // Market+tier Paystack plan code — resolved from per-country pricing DB,
+      // with env-var fallback for existing markets not yet migrated to DB plan codes
+      const dbPlanCode = tierPricing.paystack_plan_code as string | undefined;
+      const envFallback = plan === 'growth' ? process.env.PAYSTACK_GROWTH_PLAN_CODE
+        : plan === 'business' ? process.env.PAYSTACK_BUSINESS_PLAN_CODE : undefined;
+      const pageSlug = dbPlanCode || envFallback;
 
       if (!paystackKey) {
         return NextResponse.json({ message: 'Payment gateway not configured' }, { status: 500 });
