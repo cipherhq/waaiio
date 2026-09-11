@@ -46,10 +46,11 @@ describe.skipIf(!canRun)('M377 Dynamic Market Controls — PostgreSQL proofs', (
   let baseVersionId: string;
 
   beforeAll(() => {
-    // Ensure the CI stub auth.uid() user has admin role in raw_app_meta_data
+    // Ensure the CI stub auth.uid() user exists with admin role
     psqlMayFail(`
-      UPDATE auth.users SET raw_app_meta_data = '{"role":"admin"}'::jsonb
-      WHERE id = '${adminId}';
+      INSERT INTO auth.users (id, email, raw_app_meta_data)
+      VALUES ('${adminId}', 'm377-admin@test.com', '{"role":"admin"}'::jsonb)
+      ON CONFLICT (id) DO UPDATE SET raw_app_meta_data = '{"role":"admin"}'::jsonb;
     `);
 
     // Verify admin setup works
