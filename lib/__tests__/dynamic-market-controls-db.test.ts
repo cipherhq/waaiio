@@ -53,7 +53,15 @@ describe.skipIf(!canRun)('M377 Dynamic Market Controls — PostgreSQL proofs', (
       ON CONFLICT (id) DO UPDATE SET raw_app_meta_data = '{"role":"admin"}'::jsonb;
     `);
 
-    // Verify admin setup works
+    // Verify the user row exists and has admin role
+    const userCheck = psql(`SELECT id, raw_app_meta_data->>'role' as role FROM auth.users WHERE id = '${adminId}';`);
+    expect(userCheck).toContain('admin');
+
+    // Verify auth.uid() returns the expected ID
+    const uidCheck = psql('SELECT auth.uid()::text;');
+    expect(uidCheck).toBe(adminId);
+
+    // Verify is_admin() returns true with this setup
     const isAdmin = psql(`
       ${adminContext(adminId)}
       SELECT public.is_admin();
