@@ -22,6 +22,7 @@ const { mockCreate, mockIncrementAIUsage, mockLoggerWarn } = vi.hoisted(() => ({
 }));
 
 // Mock Anthropic SDK — the only external AI call
+vi.mock('@/lib/countries', () => ({ loadCountries: vi.fn().mockResolvedValue([]), getCountry: vi.fn(), getCountryList: vi.fn().mockReturnValue([]), isValidCountryCode: vi.fn().mockReturnValue(true), getDialingCodeMap: vi.fn().mockReturnValue({}) }));
 vi.mock('@anthropic-ai/sdk', () => {
   class MockAnthropic {
     messages = { create: mockCreate };

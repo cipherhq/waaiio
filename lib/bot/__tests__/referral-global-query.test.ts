@@ -5,6 +5,7 @@ import {
 } from '../handlers/global-queries';
 
 // ── Mocks ──────────────────────────────────────────────
+vi.mock('@/lib/countries', () => ({ loadCountries: vi.fn().mockResolvedValue([]), getCountry: vi.fn(), getCountryList: vi.fn().mockReturnValue([]), isValidCountryCode: vi.fn().mockReturnValue(true), getDialingCodeMap: vi.fn().mockReturnValue({}) }));
 vi.mock('@/lib/logger', () => ({ logger: { debug: vi.fn(), error: vi.fn(), warn: vi.fn(), info: vi.fn() } }));
 vi.mock('@/lib/capabilities/service', () => ({
   getEnabledCapabilities: vi.fn().mockResolvedValue([]),

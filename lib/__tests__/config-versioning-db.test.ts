@@ -676,17 +676,17 @@ describe.skipIf(!canRun)('Config Versioning DB Tests (#255 C-1)', () => {
   // ── 33-35. Explicit RPC EXECUTE privilege assertions ──
 
   it('33. anon CANNOT execute save_commercial_config', () => {
-    const canExec = psql("SELECT has_function_privilege('anon', 'save_commercial_config(text,jsonb,text)', 'EXECUTE');");
+    const canExec = psql("SELECT has_function_privilege('anon', 'save_commercial_config(text,jsonb,text,uuid)', 'EXECUTE');");
     expect(canExec).toBe('f');
   });
 
   it('34. authenticated CAN execute save_commercial_config', () => {
-    const canExec = psql("SELECT has_function_privilege('authenticated', 'save_commercial_config(text,jsonb,text)', 'EXECUTE');");
+    const canExec = psql("SELECT has_function_privilege('authenticated', 'save_commercial_config(text,jsonb,text,uuid)', 'EXECUTE');");
     expect(canExec).toBe('t');
   });
 
   it('35. service_role CANNOT execute save_commercial_config', () => {
-    const canExec = psql("SELECT has_function_privilege('service_role', 'save_commercial_config(text,jsonb,text)', 'EXECUTE');");
+    const canExec = psql("SELECT has_function_privilege('service_role', 'save_commercial_config(text,jsonb,text,uuid)', 'EXECUTE');");
     expect(canExec).toBe('f');
   });
 
@@ -858,7 +858,7 @@ describe.skipIf(!canRun)('Config Versioning — non-superuser authority proof (#
   it('NSU-2. Actual migration-created save_commercial_config is owned by the non-superuser role', () => {
     const owner = nsuPsql(`
       SELECT r.rolname FROM pg_proc p JOIN pg_roles r ON p.proowner = r.oid
-      WHERE p.oid = to_regprocedure('public.save_commercial_config(text,jsonb,text)');
+      WHERE p.oid = to_regprocedure('public.save_commercial_config(text,jsonb,text,uuid)');
     `);
     expect(owner).toBe(NSU_ROLE);
   });
@@ -903,12 +903,12 @@ describe.skipIf(!canRun)('Config Versioning — non-superuser authority proof (#
   });
 
   it('NSU-6. anon has no RPC EXECUTE', () => {
-    const canExec = nsuPsql("SELECT has_function_privilege('anon', 'save_commercial_config(text,jsonb,text)', 'EXECUTE');");
+    const canExec = nsuPsql("SELECT has_function_privilege('anon', 'save_commercial_config(text,jsonb,text,uuid)', 'EXECUTE');");
     expect(canExec).toBe('f');
   });
 
   it('NSU-7. service_role has no RPC EXECUTE', () => {
-    const canExec = nsuPsql("SELECT has_function_privilege('service_role', 'save_commercial_config(text,jsonb,text)', 'EXECUTE');");
+    const canExec = nsuPsql("SELECT has_function_privilege('service_role', 'save_commercial_config(text,jsonb,text,uuid)', 'EXECUTE');");
     expect(canExec).toBe('f');
   });
 
@@ -972,7 +972,7 @@ describe.skipIf(!canRun)('Config Versioning — non-superuser authority proof (#
     expect(err).toContain('save_commercial_config');
 
     // Verify the function was restored (transaction rolled back)
-    const exists = nsuPsql("SELECT count(*) FROM pg_proc WHERE oid = to_regprocedure('public.save_commercial_config(text,jsonb,text)');");
+    const exists = nsuPsql("SELECT count(*) FROM pg_proc WHERE oid = to_regprocedure('public.save_commercial_config(text,jsonb,text,uuid)');");
     expect(exists).toBe('1');
   });
 
