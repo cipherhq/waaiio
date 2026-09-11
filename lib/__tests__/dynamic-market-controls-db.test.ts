@@ -29,25 +29,37 @@ function psqlMayFail(sql: string): string {
 }
 
 // Helper: set up auth context for admin user
+// Uses the same JWT claims pattern as config-versioning-db.test.ts
 function adminContext(adminId: string): string {
   return `
     SELECT set_config('request.jwt.claims', json_build_object(
-      'sub', '${adminId}', 'role', 'authenticated', 'aud', 'authenticated',
-      'app_metadata', json_build_object('role', 'admin')
+      'sub', '${adminId}', 'role', 'admin', 'aud', 'authenticated'
     )::text, true);
     SELECT set_config('request.jwt.claim.sub', '${adminId}', true);
-    SELECT set_config('role', 'authenticated', true);
+    SET ROLE authenticated;
   `;
 }
 
 describe.skipIf(!canRun)('M377 Dynamic Market Controls — PostgreSQL proofs', () => {
-  let adminId: string;
+  const adminId = '00000000-0000-0000-0000-m377test0001';
   let baseVersionId: string;
 
   beforeAll(() => {
-    // Get an admin user
-    adminId = psql("SELECT id FROM auth.users WHERE raw_app_meta_data->>'role' = 'admin' LIMIT 1;");
-    expect(adminId).toBeTruthy();
+    // Create a test admin user with the correct raw_app_meta_data for M365 is_admin()
+    psqlMayFail(`
+      INSERT INTO auth.users (id, email, raw_app_meta_data, instance_id, aud, role)
+      VALUES ('${adminId}', 'm377-test-admin@test.com', '{"role":"admin"}'::jsonb,
+              '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated')
+      ON CONFLICT (id) DO NOTHING;
+    `);
+
+    // Verify admin setup works
+    const isAdmin = psql(`
+      ${adminContext(adminId)}
+      SELECT public.is_admin();
+      RESET ROLE;
+    `);
+    expect(isAdmin).toContain('t');
 
     // Get current effective config version
     baseVersionId = psql("SELECT id FROM platform_config_versions ORDER BY effective_from DESC LIMIT 1;");
