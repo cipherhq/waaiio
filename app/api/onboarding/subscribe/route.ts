@@ -5,6 +5,10 @@ import { formatCurrency, type SubscriptionTier, type CountryCode } from '@/lib/c
 
 const VALID_PLANS: SubscriptionTier[] = ['growth', 'business'];
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 export async function POST(request: NextRequest) {
   try {
     const supabase = await createClient();
@@ -66,17 +70,16 @@ export async function POST(request: NextRequest) {
       .eq('is_active', true)
       .single();
 
-    if (countryError || !countryRow?.pricing) {
+    if (countryError || !countryRow?.pricing || !isRecord(countryRow.pricing)) {
       return NextResponse.json(
         { message: 'Regional pricing is unavailable. Please try again later.' },
         { status: 503 },
       );
     }
 
-    const countryPricing = countryRow.pricing as Record<string, Record<string, number>>;
-    const tierPricing = countryPricing[plan as string];
+    const tierPricing = countryRow.pricing[plan as string];
 
-    if (!tierPricing || typeof tierPricing.price !== 'number' || tierPricing.price <= 0) {
+    if (!isRecord(tierPricing) || typeof tierPricing.price !== 'number' || tierPricing.price <= 0) {
       return NextResponse.json(
         { message: 'Plan pricing is unavailable for this region.' },
         { status: 503 },
@@ -109,12 +112,18 @@ export async function POST(request: NextRequest) {
     // Paystack path
     if (gateway === 'paystack') {
       const paystackKey = process.env.PAYSTACK_SECRET_KEY;
-      // Market+tier Paystack plan code — DB-only, no env var fallback
-      const pageSlug = (tierPricing as Record<string, unknown>).paystack_plan_code as string | undefined;
+      const rawPlanCode = tierPricing.paystack_plan_code;
 
       if (!paystackKey) {
         return NextResponse.json({ message: 'Payment gateway not configured' }, { status: 500 });
       }
+      if (typeof rawPlanCode !== 'string' || rawPlanCode.trim().length === 0) {
+        return NextResponse.json(
+          { message: 'Subscription plan is not configured for this region.' },
+          { status: 503 },
+        );
+      }
+      const pageSlug = rawPlanCode.trim();
 
       const amount = monthlyPrice * 100; // kobo/pesewa
 
@@ -122,6 +131,7 @@ export async function POST(request: NextRequest) {
         email,
         amount,
         currency,
+        plan: pageSlug,
         callback_url: callbackUrl,
         metadata: {
           business_id,
@@ -131,8 +141,6 @@ export async function POST(request: NextRequest) {
           user_id: user.id,
         },
       };
-
-      if (pageSlug) payload.plan = pageSlug;
 
       const response = await fetch('https://api.paystack.co/transaction/initialize', {
         method: 'POST',
