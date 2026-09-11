@@ -605,6 +605,78 @@ function parsePositiveMinorInt(value: string): number | null {
   return n;
 }
 
+/** Serialize Admin messaging state into the RPC payload shape.
+ *  Exported for testability — used by MessagingFinancialControls.handleSave. */
+export function buildMessagingPayload(
+  countries: CountryRow[],
+  currencyState: Record<string, { spendCap: string; trialCredit: string; growthIncluded: string; businessIncluded: string; defaultCostMinor: string }>,
+  countryState: Record<string, { rates: Record<string, string>; paystackGrowthPlan: string; paystackBusinessPlan: string }>,
+) {
+  const messagingPricing: Record<string, { rates: Record<string, Record<string, number>>; default_cost_minor: number; default_spend_cap_minor: number }> = {};
+  const trialCredit: Record<string, number> = {};
+  const tierIncluded: Record<string, Record<string, number>> = { growth: {}, business: {} };
+
+  const configuredCurrencies = new Set<string>();
+  for (const [currency, cs] of Object.entries(currencyState)) {
+    const cap = parsePositiveMinorInt(cs.spendCap);
+    if (cap === null && cs.spendCap.trim()) {
+      throw new Error(`${currency} Spend Cap: must be a positive integer (no decimals)`);
+    }
+    if (!cap) continue;
+
+    configuredCurrencies.add(currency);
+    const dcm = parseMinorInt(cs.defaultCostMinor);
+    if (dcm === null && cs.defaultCostMinor.trim()) {
+      throw new Error(`${currency} Default Cost: must be a non-negative integer (no decimals)`);
+    }
+    messagingPricing[currency] = { rates: {}, default_cost_minor: dcm ?? 0, default_spend_cap_minor: cap };
+
+    const tc = parsePositiveMinorInt(cs.trialCredit);
+    if (tc === null && cs.trialCredit.trim()) throw new Error(`${currency} Trial Credit: must be a positive integer (no decimals)`);
+    if (tc) trialCredit[currency] = tc;
+
+    const gi = parsePositiveMinorInt(cs.growthIncluded);
+    if (gi === null && cs.growthIncluded.trim()) throw new Error(`${currency} Growth Included: must be a positive integer (no decimals)`);
+    if (gi) tierIncluded.growth[currency] = gi;
+
+    const bi = parsePositiveMinorInt(cs.businessIncluded);
+    if (bi === null && cs.businessIncluded.trim()) throw new Error(`${currency} Business Included: must be a positive integer (no decimals)`);
+    if (bi) tierIncluded.business[currency] = bi;
+  }
+
+  for (const c of countries) {
+    if (!configuredCurrencies.has(c.currency_code)) continue;
+    const cs = countryState[c.code];
+    if (!cs) continue;
+    const countryRateMap: Record<string, number> = {};
+    for (const [cat, valStr] of Object.entries(cs.rates)) {
+      if (!valStr.trim()) continue;
+      const rate = parseMinorInt(valStr);
+      if (rate === null) throw new Error(`${c.code} ${cat} rate: must be a non-negative integer (no decimals)`);
+      countryRateMap[cat] = rate;
+    }
+    if (Object.keys(countryRateMap).length === 0 && c.is_active) {
+      throw new Error(`${c.code}: At least one messaging rate (Utility or Marketing) is required for active markets`);
+    }
+    if (Object.keys(countryRateMap).length > 0) {
+      messagingPricing[c.currency_code].rates[c.code] = countryRateMap;
+    }
+  }
+
+  const paystackPlanCodes: Record<string, { growth: string; business: string }> = {};
+  for (const c of countries) {
+    if (c.payment_gateway !== 'paystack') continue;
+    const cs = countryState[c.code];
+    if (!cs?.paystackGrowthPlan && !cs?.paystackBusinessPlan) continue;
+    if (!cs.paystackGrowthPlan || !cs.paystackBusinessPlan) {
+      throw new Error(`${c.code}: Both Growth and Business Paystack plan codes are required`);
+    }
+    paystackPlanCodes[c.code] = { growth: cs.paystackGrowthPlan, business: cs.paystackBusinessPlan };
+  }
+
+  return { messagingPricing, trialCredit, tierIncluded, paystackPlanCodes };
+}
+
 /** Messaging Financial Controls — currency-scoped shared values + country-scoped rates/plan codes */
 function MessagingFinancialControls({ countries, canMutate, onSaved }: { countries: CountryRow[]; canMutate: boolean; onSaved: () => Promise<void> }) {
   const [saving, setSaving] = useState(false);
@@ -618,9 +690,10 @@ function MessagingFinancialControls({ countries, canMutate, onSaved }: { countri
     rates: Record<string, string>; paystackGrowthPlan: string; paystackBusinessPlan: string;
   }>>({});
 
-  // Currency-scoped state: spend cap, trial credit, tier included (shared across countries with same currency)
+  // Currency-scoped state: spend cap, trial credit, tier included, default cost (shared across countries with same currency)
   const [currencyState, setCurrencyState] = useState<Record<string, {
     spendCap: string; trialCredit: string; growthIncluded: string; businessIncluded: string;
+    defaultCostMinor: string;
   }>>({});
 
   // Load current config via DB-authoritative RPC
@@ -649,6 +722,7 @@ function MessagingFinancialControls({ countries, canMutate, onSaved }: { countri
             trialCredit: String(trialCredit?.[c.currency_code] ?? ''),
             growthIncluded: String(included?.growth?.[c.currency_code] ?? ''),
             businessIncluded: String(included?.business?.[c.currency_code] ?? ''),
+            defaultCostMinor: String(bucket?.default_cost_minor ?? ''),
           };
         }
         setCurrencyState(currInit);
@@ -683,73 +757,8 @@ function MessagingFinancialControls({ countries, canMutate, onSaved }: { countri
     if (!canMutate || !configVersionId) return;
     setSaving(true); setError(''); setSuccess('');
     try {
-      const messagingPricing: Record<string, { rates: Record<string, Record<string, number>>; default_cost_minor: number; default_spend_cap_minor: number }> = {};
-      const trialCredit: Record<string, number> = {};
-      const tierIncluded: Record<string, Record<string, number>> = { growth: {}, business: {} };
-
-      // Validate and build currency-scoped values first
-      const configuredCurrencies = new Set<string>();
-      for (const [currency, cs] of Object.entries(currencyState)) {
-        const cap = parsePositiveMinorInt(cs.spendCap);
-        if (cap === null && cs.spendCap.trim()) {
-          throw new Error(`${currency} Spend Cap: must be a positive integer (no decimals)`);
-        }
-        if (!cap) continue; // Skip unconfigured currencies
-
-        configuredCurrencies.add(currency);
-        messagingPricing[currency] = { rates: {}, default_cost_minor: 0, default_spend_cap_minor: cap };
-
-        const tc = parsePositiveMinorInt(cs.trialCredit);
-        if (tc === null && cs.trialCredit.trim()) {
-          throw new Error(`${currency} Trial Credit: must be a positive integer (no decimals)`);
-        }
-        if (tc) trialCredit[currency] = tc;
-
-        const gi = parsePositiveMinorInt(cs.growthIncluded);
-        if (gi === null && cs.growthIncluded.trim()) {
-          throw new Error(`${currency} Growth Included: must be a positive integer (no decimals)`);
-        }
-        if (gi) tierIncluded.growth[currency] = gi;
-
-        const bi = parsePositiveMinorInt(cs.businessIncluded);
-        if (bi === null && cs.businessIncluded.trim()) {
-          throw new Error(`${currency} Business Included: must be a positive integer (no decimals)`);
-        }
-        if (bi) tierIncluded.business[currency] = bi;
-      }
-
-      // Add country-scoped category rates — preserve all existing category keys
-      for (const c of countries) {
-        if (!configuredCurrencies.has(c.currency_code)) continue;
-        const cs = countryState[c.code];
-        if (!cs) continue;
-        const countryRateMap: Record<string, number> = {};
-        for (const [cat, valStr] of Object.entries(cs.rates)) {
-          if (!valStr.trim()) continue; // Skip empty entries
-          const rate = parseMinorInt(valStr);
-          if (rate === null) {
-            throw new Error(`${c.code} ${cat} rate: must be a non-negative integer (no decimals)`);
-          }
-          countryRateMap[cat] = rate;
-        }
-        // Require at least one rate entry per configured country
-        if (Object.keys(countryRateMap).length === 0) {
-          countryRateMap['*'] = 0; // Fallback if no category rates provided
-        }
-        messagingPricing[c.currency_code].rates[c.code] = countryRateMap;
-      }
-
-      // Build Paystack plan-code bundle
-      const paystackPlanCodes: Record<string, { growth: string; business: string }> = {};
-      for (const c of countries) {
-        if (c.payment_gateway !== 'paystack') continue;
-        const cs = countryState[c.code];
-        if (!cs?.paystackGrowthPlan && !cs?.paystackBusinessPlan) continue;
-        if (!cs.paystackGrowthPlan || !cs.paystackBusinessPlan) {
-          throw new Error(`${c.code}: Both Growth and Business Paystack plan codes are required`);
-        }
-        paystackPlanCodes[c.code] = { growth: cs.paystackGrowthPlan, business: cs.paystackBusinessPlan };
-      }
+      const { messagingPricing, trialCredit, tierIncluded, paystackPlanCodes } =
+        buildMessagingPayload(countries, currencyState, countryState);
 
       const { data, error: rpcError } = await adminDb.rpc('save_market_messaging_config', {
         p_messaging_pricing: messagingPricing,
