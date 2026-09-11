@@ -858,7 +858,7 @@ describe.skipIf(!canRun)('Config Versioning — non-superuser authority proof (#
   it('NSU-2. Actual migration-created save_commercial_config is owned by the non-superuser role', () => {
     const owner = nsuPsql(`
       SELECT r.rolname FROM pg_proc p JOIN pg_roles r ON p.proowner = r.oid
-      WHERE p.oid = to_regprocedure('public.save_commercial_config(text,jsonb,text,uuid)');
+      WHERE p.oid = to_regprocedure('public.save_commercial_config(text,jsonb,text)');
     `);
     expect(owner).toBe(NSU_ROLE);
   });
@@ -903,12 +903,12 @@ describe.skipIf(!canRun)('Config Versioning — non-superuser authority proof (#
   });
 
   it('NSU-6. anon has no RPC EXECUTE', () => {
-    const canExec = nsuPsql("SELECT has_function_privilege('anon', 'save_commercial_config(text,jsonb,text,uuid)', 'EXECUTE');");
+    const canExec = nsuPsql("SELECT has_function_privilege('anon', 'save_commercial_config(text,jsonb,text)', 'EXECUTE');");
     expect(canExec).toBe('f');
   });
 
   it('NSU-7. service_role has no RPC EXECUTE', () => {
-    const canExec = nsuPsql("SELECT has_function_privilege('service_role', 'save_commercial_config(text,jsonb,text,uuid)', 'EXECUTE');");
+    const canExec = nsuPsql("SELECT has_function_privilege('service_role', 'save_commercial_config(text,jsonb,text)', 'EXECUTE');");
     expect(canExec).toBe('f');
   });
 
@@ -962,7 +962,7 @@ describe.skipIf(!canRun)('Config Versioning — non-superuser authority proof (#
     const err = nsuPsqlMayFail(`
       BEGIN;
       SET ROLE ${NSU_ROLE};
-      DROP FUNCTION save_commercial_config(text, jsonb, text, uuid);
+      DROP FUNCTION save_commercial_config(text, jsonb, text);
       INSERT INTO platform_config_versions (config_snapshot, effective_from)
       VALUES ('{"should_fail":true}'::jsonb, '2017-01-01T00:00:00Z'::timestamptz);
       RESET ROLE;
@@ -972,7 +972,7 @@ describe.skipIf(!canRun)('Config Versioning — non-superuser authority proof (#
     expect(err).toContain('save_commercial_config');
 
     // Verify the function was restored (transaction rolled back)
-    const exists = nsuPsql("SELECT count(*) FROM pg_proc WHERE oid = to_regprocedure('public.save_commercial_config(text,jsonb,text,uuid)');");
+    const exists = nsuPsql("SELECT count(*) FROM pg_proc WHERE oid = to_regprocedure('public.save_commercial_config(text,jsonb,text)');");
     expect(exists).toBe('1');
   });
 

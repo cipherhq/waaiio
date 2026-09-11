@@ -687,6 +687,18 @@ BEGIN
     RAISE EXCEPTION 'Cannot activate market %: business tier price must be a positive number', NEW.code;
   END IF;
 
+  -- Paystack market+tier provider readiness: Growth and Business plan codes required
+  IF NEW.payment_gateway = 'paystack' THEN
+    IF NEW.pricing -> 'growth' ->> 'paystack_plan_code' IS NULL
+       OR length(NEW.pricing -> 'growth' ->> 'paystack_plan_code') < 3 THEN
+      RAISE EXCEPTION 'Cannot activate Paystack market %: growth tier missing paystack_plan_code', NEW.code;
+    END IF;
+    IF NEW.pricing -> 'business' ->> 'paystack_plan_code' IS NULL
+       OR length(NEW.pricing -> 'business' ->> 'paystack_plan_code') < 3 THEN
+      RAISE EXCEPTION 'Cannot activate Paystack market %: business tier missing paystack_plan_code', NEW.code;
+    END IF;
+  END IF;
+
   -- Read latest effective config snapshot
   SELECT config_snapshot INTO v_snapshot
     FROM public.platform_config_versions
