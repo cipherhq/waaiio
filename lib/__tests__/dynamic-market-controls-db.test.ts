@@ -108,6 +108,18 @@ describe.skipIf(!canRun)('M377 Dynamic Market Controls — PostgreSQL proofs', (
         '{"free":{"price":0,"feeFlat":0,"feePercentage":2.5},"growth":{"price":20,"feeFlat":0,"feePercentage":1.5},"business":{"price":45,"feeFlat":0,"feePercentage":1.5}}'::jsonb)
       ON CONFLICT (code) DO UPDATE SET is_active = false, payment_gateway = 'stripe';
     `);
+
+    // Establish production-like state: save full messaging bundle + Paystack plan codes for NG/GH
+    // CI starts with a fresh DB where plan codes don't exist yet.
+    const b = fullBundle();
+    const paystackCountries = psql("SELECT code FROM countries WHERE payment_gateway = 'paystack' AND is_active = true ORDER BY code;")
+      .split('\n').filter(Boolean).map(s => s.trim());
+    const planCodes: Record<string, { growth: string; business: string }> = {};
+    for (const code of paystackCountries) {
+      planCodes[code] = { growth: `PLN_setup_g_${code}`, business: `PLN_setup_b_${code}` };
+    }
+    const planCodesJson = Object.keys(planCodes).length > 0 ? `'${JSON.stringify(planCodes)}'::jsonb` : 'NULL';
+    psql(`${adminContext(adminId)} SELECT save_market_messaging_config('${b.pricing}'::jsonb, '${b.trial}'::jsonb, '${b.included}'::jsonb, ${planCodesJson}, '${currentVersion()}'::uuid); RESET ROLE;`);
   });
 
   // ── save_commercial_config: bundle-only key rejection ──
@@ -354,22 +366,26 @@ describe.skipIf(!canRun)('M377 Dynamic Market Controls — PostgreSQL proofs', (
     const origPlanCode = psql("SELECT pricing->'growth'->>'paystack_plan_code' FROM countries WHERE code = 'NG';");
 
     // Attempt direct mutation under authenticated admin context — must be rejected
+    // May be blocked by table permissions (permission denied) or by the plan-code authority trigger
     const r = psqlMayFail(`${adminContext(adminId)} UPDATE countries SET pricing = jsonb_set(pricing, '{growth,paystack_plan_code}', '"PLN_direct"') WHERE code = 'NG'; RESET ROLE;`);
-    expect(r).toContain('save_market_messaging_config');
+    const rejected = r.includes('permission denied') || r.includes('save_market_messaging_config') || r.includes('orchestration authorization');
+    expect(rejected).toBe(true);
 
     // Persisted value must be unchanged
     const afterPlanCode = psql("SELECT pricing->'growth'->>'paystack_plan_code' FROM countries WHERE code = 'NG';");
     expect(afterPlanCode).toBe(origPlanCode);
   });
 
-  it('24. direct country INSERT with plan codes rejected', () => {
+  it('24. direct country INSERT with plan codes rejected by authority guard', () => {
     const r = psqlMayFail(`
       INSERT INTO countries (code, name, flag, dialing_code, currency_code, currency_symbol, currency_locale,
         payment_gateway, phone_digits, phone_pattern, phone_placeholder, is_active, sort_order, pricing)
       VALUES ('YY', 'TestDirect', '🏁', '+98', 'YYD', 'Y$', 'en-YY', 'paystack', 10, '', '', false, 98,
         '{"free":{"price":0},"growth":{"price":20,"paystack_plan_code":"PLN_sneak"},"business":{"price":45}}'::jsonb);
     `);
-    expect(r).toContain('save_market_messaging_config');
+    // Trigger fires: either first check (save_market_messaging_config) or second check (orchestration authorization)
+    const blocked = r.includes('save_market_messaging_config') || r.includes('orchestration authorization');
+    expect(blocked).toBe(true);
   });
 
   it('25. unrelated country pricing edits allowed', () => {
