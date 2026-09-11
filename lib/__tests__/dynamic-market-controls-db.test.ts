@@ -41,27 +41,22 @@ function adminContext(adminId: string): string {
 }
 
 describe.skipIf(!canRun)('M377 Dynamic Market Controls — PostgreSQL proofs', () => {
-  // CI auth.uid() stub returns this fixed UUID; ensure it has admin role
-  const adminId = '00000000-0000-0000-0000-000000000000';
+  let adminId: string;
   let baseVersionId: string;
 
   beforeAll(() => {
-    // Ensure the CI stub auth.uid() user exists with admin role
+    // Discover what auth.uid() actually returns in this environment
+    const rawUid = psql('SELECT auth.uid()::text;');
+    adminId = rawUid.trim();
+
+    // Ensure that user exists with admin role (INSERT or UPDATE)
     psqlMayFail(`
       INSERT INTO auth.users (id, email, raw_app_meta_data)
       VALUES ('${adminId}', 'm377-admin@test.com', '{"role":"admin"}'::jsonb)
       ON CONFLICT (id) DO UPDATE SET raw_app_meta_data = '{"role":"admin"}'::jsonb;
     `);
 
-    // Verify the user row exists and has admin role
-    const userCheck = psql(`SELECT id, raw_app_meta_data->>'role' as role FROM auth.users WHERE id = '${adminId}';`);
-    expect(userCheck).toContain('admin');
-
-    // Verify auth.uid() returns the expected ID
-    const uidCheck = psql('SELECT auth.uid()::text;');
-    expect(uidCheck).toBe(adminId);
-
-    // Verify is_admin() returns true with this setup
+    // Verify is_admin() returns true
     const isAdmin = psql(`
       ${adminContext(adminId)}
       SELECT public.is_admin();
