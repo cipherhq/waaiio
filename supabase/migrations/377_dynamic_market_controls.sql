@@ -681,6 +681,40 @@ REVOKE ALL ON FUNCTION public.save_market_messaging_config(jsonb, jsonb, jsonb, 
 GRANT EXECUTE ON FUNCTION public.save_market_messaging_config(jsonb, jsonb, jsonb, jsonb, uuid, text) TO authenticated;
 
 -- ══════════════════════════════════════════════════════════
+-- B2b. Admin-only read: current effective config using DB time
+-- ══════════════════════════════════════════════════════════
+
+CREATE OR REPLACE FUNCTION public.get_effective_commercial_config()
+RETURNS TABLE(id UUID, config_snapshot JSONB)
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+  IF auth.uid() IS NULL THEN
+    RAISE EXCEPTION 'get_effective_commercial_config requires authenticated caller';
+  END IF;
+  IF NOT public.is_admin() THEN
+    RAISE EXCEPTION 'get_effective_commercial_config requires admin role';
+  END IF;
+
+  RETURN QUERY
+    SELECT pcv.id, pcv.config_snapshot
+    FROM platform_config_versions pcv
+    WHERE pcv.effective_from <= clock_timestamp()
+    ORDER BY pcv.effective_from DESC
+    LIMIT 1;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.get_effective_commercial_config() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.get_effective_commercial_config() FROM anon;
+REVOKE ALL ON FUNCTION public.get_effective_commercial_config() FROM authenticated;
+REVOKE ALL ON FUNCTION public.get_effective_commercial_config() FROM service_role;
+GRANT EXECUTE ON FUNCTION public.get_effective_commercial_config() TO authenticated;
+
+-- ══════════════════════════════════════════════════════════
 -- B3. Guard: Paystack plan-code keys are orchestration-only authority
 -- ══════════════════════════════════════════════════════════
 
@@ -1032,6 +1066,14 @@ BEGIN
       AND pronamespace = 'public'::regnamespace;
   IF v_count = 0 THEN
     RAISE EXCEPTION 'M377: save_market_messaging_config not found';
+  END IF;
+
+  -- Verify get_effective_commercial_config exists
+  SELECT count(*) INTO v_count FROM pg_proc
+    WHERE proname = 'get_effective_commercial_config'
+      AND pronamespace = 'public'::regnamespace;
+  IF v_count = 0 THEN
+    RAISE EXCEPTION 'M377: get_effective_commercial_config not found';
   END IF;
 
   -- Verify save_commercial_config body contains messaging_pricing in snapshot keys

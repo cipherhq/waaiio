@@ -192,14 +192,41 @@ describe.skipIf(!canRun)('M377 Dynamic Market Controls — PostgreSQL proofs', (
     const v1 = psql(`${adminContext(adminId)} SELECT save_messaging_config('${b.pricing}'::jsonb, '${b.trial}'::jsonb, '${b.included}'::jsonb, '${currentVersion()}'::uuid);`);
     expect(v1).toBeTruthy();
 
+    // Capture the exact messaging map values after bundle save
+    const afterBundleSnapshot = psql(`
+      SELECT config_snapshot::text FROM platform_config_versions
+      WHERE effective_from <= clock_timestamp()
+      ORDER BY effective_from DESC LIMIT 1;
+    `);
+    const bundleSnap = JSON.parse(afterBundleSnapshot);
+    const origPricing = JSON.stringify(bundleSnap.messaging_pricing);
+    const origTrial = JSON.stringify(bundleSnap.trial_credit_minor_by_currency);
+    const origIncluded = JSON.stringify(bundleSnap.subscription_included_minor_by_tier_currency);
+
     // Scalar save must preserve messaging maps
     const v2 = psql(`${adminContext(adminId)} SELECT save_commercial_config('trial_days', '14'::jsonb);`);
     expect(v2).toBeTruthy();
 
-    const keys = psql("SELECT jsonb_object_keys(config_snapshot) FROM platform_config_versions WHERE effective_from <= clock_timestamp() ORDER BY effective_from DESC LIMIT 1;");
-    expect(keys).toContain('messaging_pricing');
-    expect(keys).toContain('trial_credit_minor_by_currency');
-    expect(keys).toContain('subscription_included_minor_by_tier_currency');
+    // Select the new version row first, then check keys and values
+    const afterScalarSnapshot = psql(`
+      SELECT config_snapshot::text FROM platform_config_versions
+      WHERE effective_from <= clock_timestamp()
+      ORDER BY effective_from DESC LIMIT 1;
+    `);
+    const scalarSnap = JSON.parse(afterScalarSnapshot);
+
+    // All three messaging map keys must exist
+    expect(scalarSnap).toHaveProperty('messaging_pricing');
+    expect(scalarSnap).toHaveProperty('trial_credit_minor_by_currency');
+    expect(scalarSnap).toHaveProperty('subscription_included_minor_by_tier_currency');
+
+    // Values must be exactly preserved
+    expect(JSON.stringify(scalarSnap.messaging_pricing)).toBe(origPricing);
+    expect(JSON.stringify(scalarSnap.trial_credit_minor_by_currency)).toBe(origTrial);
+    expect(JSON.stringify(scalarSnap.subscription_included_minor_by_tier_currency)).toBe(origIncluded);
+
+    // Scalar key must also be present
+    expect(scalarSnap.trial_days).toBe(14);
   });
 
   // ── Paystack activation readiness ──
@@ -212,41 +239,63 @@ describe.skipIf(!canRun)('M377 Dynamic Market Controls — PostgreSQL proofs', (
     psql("UPDATE countries SET payment_gateway = 'stripe' WHERE code = 'ZZ';");
   });
 
-  // ── NG readiness (hermetic) ──
+  // ── NG readiness (positive proof) ──
 
-  it('16. NG: deactivate → strip plan codes → REJECTED → restore exact original state', () => {
-    const origPricing = psql("SELECT pricing::text FROM countries WHERE code = 'NG';");
+  it('16. NG: exists, paystack gateway, plan codes present, deactivate/reactivate succeeds', () => {
+    // Assert country exists with paystack gateway
+    const gateway = psql("SELECT payment_gateway FROM countries WHERE code = 'NG';");
+    expect(gateway).toBe('paystack');
+
+    // Assert Growth and Business plan codes are present and nonblank
+    const growthCode = psql("SELECT pricing->'growth'->>'paystack_plan_code' FROM countries WHERE code = 'NG';");
+    const businessCode = psql("SELECT pricing->'business'->>'paystack_plan_code' FROM countries WHERE code = 'NG';");
+    expect(growthCode.length).toBeGreaterThanOrEqual(3);
+    expect(businessCode.length).toBeGreaterThanOrEqual(3);
+
     const origActive = psql("SELECT is_active FROM countries WHERE code = 'NG';");
 
-    try {
+    // Deactivate
+    psql("UPDATE countries SET is_active = false WHERE code = 'NG';");
+    expect(psql("SELECT is_active FROM countries WHERE code = 'NG';")).toBe('f');
+
+    // Reactivate — must succeed through guard_country_activation
+    const r = psqlMayFail("UPDATE countries SET is_active = true WHERE code = 'NG';");
+    expect(r).not.toContain('ERROR');
+    expect(psql("SELECT is_active FROM countries WHERE code = 'NG';")).toBe('t');
+
+    // Restore original active state if it was inactive
+    if (origActive === 'f') {
       psql("UPDATE countries SET is_active = false WHERE code = 'NG';");
-
-      // Strip plan codes
-      psql("UPDATE countries SET pricing = jsonb_set(jsonb_set(pricing, '{growth}', (pricing->'growth') - 'paystack_plan_code'), '{business}', (pricing->'business') - 'paystack_plan_code') WHERE code = 'NG';");
-
-      const r = psqlMayFail("UPDATE countries SET is_active = true WHERE code = 'NG';");
-      expect(r).toContain('paystack_plan_code');
-    } finally {
-      // Restore exact original state
-      psql(`UPDATE countries SET pricing = '${origPricing.replace(/'/g, "''")}'::jsonb, is_active = ${origActive === 't'} WHERE code = 'NG';`);
     }
   });
 
-  // ── GH readiness (hermetic) ──
+  // ── GH readiness (positive proof) ──
 
-  it('17. GH: deactivate → strip plan codes → REJECTED → restore exact original state', () => {
-    const origPricing = psql("SELECT pricing::text FROM countries WHERE code = 'GH';");
+  it('17. GH: exists, paystack gateway, plan codes present, deactivate/reactivate succeeds', () => {
+    // Assert country exists with paystack gateway
+    const gateway = psql("SELECT payment_gateway FROM countries WHERE code = 'GH';");
+    expect(gateway).toBe('paystack');
+
+    // Assert Growth and Business plan codes are present and nonblank
+    const growthCode = psql("SELECT pricing->'growth'->>'paystack_plan_code' FROM countries WHERE code = 'GH';");
+    const businessCode = psql("SELECT pricing->'business'->>'paystack_plan_code' FROM countries WHERE code = 'GH';");
+    expect(growthCode.length).toBeGreaterThanOrEqual(3);
+    expect(businessCode.length).toBeGreaterThanOrEqual(3);
+
     const origActive = psql("SELECT is_active FROM countries WHERE code = 'GH';");
 
-    try {
+    // Deactivate
+    psql("UPDATE countries SET is_active = false WHERE code = 'GH';");
+    expect(psql("SELECT is_active FROM countries WHERE code = 'GH';")).toBe('f');
+
+    // Reactivate — must succeed through guard_country_activation
+    const r = psqlMayFail("UPDATE countries SET is_active = true WHERE code = 'GH';");
+    expect(r).not.toContain('ERROR');
+    expect(psql("SELECT is_active FROM countries WHERE code = 'GH';")).toBe('t');
+
+    // Restore original active state if it was inactive
+    if (origActive === 'f') {
       psql("UPDATE countries SET is_active = false WHERE code = 'GH';");
-
-      psql("UPDATE countries SET pricing = jsonb_set(jsonb_set(COALESCE(pricing,'{}'::jsonb), '{growth}', COALESCE(pricing->'growth','{}'::jsonb) - 'paystack_plan_code'), '{business}', COALESCE(pricing->'business','{}'::jsonb) - 'paystack_plan_code') WHERE code = 'GH';");
-
-      const r = psqlMayFail("UPDATE countries SET is_active = true WHERE code = 'GH';");
-      expect(r).toContain('paystack_plan_code');
-    } finally {
-      psql(`UPDATE countries SET pricing = '${origPricing.replace(/'/g, "''")}'::jsonb, is_active = ${origActive === 't'} WHERE code = 'GH';`);
     }
   });
 
@@ -300,9 +349,17 @@ describe.skipIf(!canRun)('M377 Dynamic Market Controls — PostgreSQL proofs', (
 
   // ── Plan-code authority guard ──
 
-  it('23. direct country update cannot mutate plan codes', () => {
-    const r = psqlMayFail("UPDATE countries SET pricing = jsonb_set(pricing, '{growth,paystack_plan_code}', '\"PLN_direct\"') WHERE code = 'NG';");
+  it('23. direct country update cannot mutate plan codes (authenticated admin context)', () => {
+    // Capture original plan code before attempt
+    const origPlanCode = psql("SELECT pricing->'growth'->>'paystack_plan_code' FROM countries WHERE code = 'NG';");
+
+    // Attempt direct mutation under authenticated admin context — must be rejected
+    const r = psqlMayFail(`${adminContext(adminId)} UPDATE countries SET pricing = jsonb_set(pricing, '{growth,paystack_plan_code}', '"PLN_direct"') WHERE code = 'NG'; RESET ROLE;`);
     expect(r).toContain('save_market_messaging_config');
+
+    // Persisted value must be unchanged
+    const afterPlanCode = psql("SELECT pricing->'growth'->>'paystack_plan_code' FROM countries WHERE code = 'NG';");
+    expect(afterPlanCode).toBe(origPlanCode);
   });
 
   it('24. direct country INSERT with plan codes rejected', () => {
