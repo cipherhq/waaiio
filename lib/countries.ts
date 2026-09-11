@@ -1,6 +1,13 @@
 import { createClient } from '@/lib/supabase/client';
 import { COUNTRIES, registerCountryResolver, type CountryCode, type PaymentGatewayName } from '@/lib/constants';
 
+export interface CountryTierPricing {
+  price: number;
+  feeFlat: number;
+  feePercentage?: number;
+  paystack_plan_code?: string;
+}
+
 export interface CountryRow {
   code: string;
   name: string;
@@ -14,7 +21,7 @@ export interface CountryRow {
   phone_pattern: string;
   phone_placeholder: string;
   cities: Record<string, { name: string; neighborhoods: string[] }>;
-  pricing: Record<string, { price: number; feeFlat: number }>;
+  pricing: Record<string, CountryTierPricing>;
   verification_tiers: Record<string, { label: string; limit: number; requirements: string }>;
   doc_types: { key: string; label: string; desc: string }[];
   is_active: boolean;
