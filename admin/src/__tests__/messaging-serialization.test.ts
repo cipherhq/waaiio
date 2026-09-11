@@ -9,7 +9,29 @@
  *   - changing one visible rate does not destroy others
  *   - active market with no rates fails visibly
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+
+// Mock modules that Countries.tsx imports at module scope
+vi.mock('@/lib/supabase', () => ({
+  supabase: { auth: { getSession: vi.fn() } },
+  adminDb: { rpc: vi.fn(), from: vi.fn(() => ({ select: vi.fn(), update: vi.fn(), insert: vi.fn() })) },
+}));
+vi.mock('@/lib/countries', () => ({
+  loadCountries: vi.fn().mockResolvedValue([]),
+  invalidateCache: vi.fn(),
+}));
+vi.mock('@/lib/auditLog', () => ({ logAudit: vi.fn() }));
+vi.mock('@/components/AdminLayout', () => ({
+  useAdminSession: () => ({ userId: 'test', email: 'test@test.com', role: 'admin' }),
+}));
+vi.mock('@/lib/adminAuth', () => ({ isFullAdmin: () => true }));
+vi.mock('@/components/SummaryCard', () => ({ SummaryCard: () => null }));
+vi.mock('@/components/Pagination', () => ({ Pagination: () => null }));
+vi.mock('lucide-react', () => ({
+  Globe: () => null, Plus: () => null, Pencil: () => null, Trash2: () => null,
+  Save: () => null, X: () => null, CreditCard: () => null, CheckCircle: () => null, XCircle: () => null,
+}));
+
 import { buildMessagingPayload } from '../pages/Countries';
 import type { CountryRow } from '../lib/countries';
 
