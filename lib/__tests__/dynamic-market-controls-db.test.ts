@@ -42,14 +42,17 @@ function adminContext(adminId: string): string {
 
 describe.skipIf(!canRun)('M377 Dynamic Market Controls — PostgreSQL proofs', () => {
   let adminId: string;
-  let baseVersionId: string;
+
+  /** Get the current authoritative config version — call fresh before every CAS-guarded operation */
+  function currentVersion(): string {
+    return psql("SELECT id FROM platform_config_versions ORDER BY effective_from DESC LIMIT 1;").trim();
+  }
 
   beforeAll(() => {
     // Discover what auth.uid() actually returns in this environment
-    const rawUid = psql('SELECT auth.uid()::text;');
-    adminId = rawUid.trim();
+    adminId = psql('SELECT auth.uid()::text;').trim();
 
-    // Ensure that user exists with admin role (INSERT or UPDATE)
+    // Ensure that user exists with admin role
     psqlMayFail(`
       INSERT INTO auth.users (id, email, raw_app_meta_data)
       VALUES ('${adminId}', 'm377-admin@test.com', '{"role":"admin"}'::jsonb)
@@ -63,10 +66,7 @@ describe.skipIf(!canRun)('M377 Dynamic Market Controls — PostgreSQL proofs', (
       RESET ROLE;
     `);
     expect(isAdmin).toContain('t');
-
-    // Get current effective config version
-    baseVersionId = psql("SELECT id FROM platform_config_versions ORDER BY effective_from DESC LIMIT 1;");
-    expect(baseVersionId).toBeTruthy();
+    expect(currentVersion()).toBeTruthy();
   });
 
   // ── save_commercial_config: bundle-only key rejection ──
@@ -132,7 +132,7 @@ describe.skipIf(!canRun)('M377 Dynamic Market Controls — PostgreSQL proofs', (
         '{"NGN":{"rates":{"NG":{"*":400}},"default_spend_cap_minor":5000.5}}'::jsonb,
         '{"NGN":50000}'::jsonb,
         '{"growth":{"NGN":100000},"business":{"NGN":200000}}'::jsonb,
-        '${baseVersionId}'::uuid
+        '${currentVersion()}'::uuid
       );
     `);
     expect(result).toContain('positive integer');
@@ -145,7 +145,7 @@ describe.skipIf(!canRun)('M377 Dynamic Market Controls — PostgreSQL proofs', (
         '{"NGN":{"rates":{"NG":{"invalid_category":400}},"default_spend_cap_minor":5000000}}'::jsonb,
         '{"NGN":50000}'::jsonb,
         '{"growth":{"NGN":100000},"business":{"NGN":200000}}'::jsonb,
-        '${baseVersionId}'::uuid
+        '${currentVersion()}'::uuid
       );
     `);
     expect(result).toContain('unknown rate key');
@@ -158,7 +158,7 @@ describe.skipIf(!canRun)('M377 Dynamic Market Controls — PostgreSQL proofs', (
         '{"NGN":{"rates":{"NG":{"*":-1}},"default_spend_cap_minor":5000000}}'::jsonb,
         '{"NGN":50000}'::jsonb,
         '{"growth":{"NGN":100000},"business":{"NGN":200000}}'::jsonb,
-        '${baseVersionId}'::uuid
+        '${currentVersion()}'::uuid
       );
     `);
     expect(result).toContain('non-negative integer');
@@ -171,7 +171,7 @@ describe.skipIf(!canRun)('M377 Dynamic Market Controls — PostgreSQL proofs', (
         '{"NGN":{"rates":{"NG":{"*":400}},"default_spend_cap_minor":5000000},"USD":{"rates":{"NG":{"*":600}},"default_spend_cap_minor":10000000}}'::jsonb,
         '{"NGN":50000,"USD":500}'::jsonb,
         '{"growth":{"NGN":100000,"USD":1000},"business":{"NGN":200000,"USD":2000}}'::jsonb,
-        '${baseVersionId}'::uuid
+        '${currentVersion()}'::uuid
       );
     `);
     expect(result).toContain('multiple currency buckets');
@@ -224,7 +224,7 @@ describe.skipIf(!canRun)('M377 Dynamic Market Controls — PostgreSQL proofs', (
         '{"NGN":{"rates":{"NG":{"*":400}},"default_spend_cap_minor":5000000},"USD":{"rates":{"US":{"*":600}},"default_spend_cap_minor":10000000},"GBP":{"rates":{"GB":{"*":750}},"default_spend_cap_minor":8000000}}'::jsonb,
         '{"NGN":50000,"USD":500,"GBP":400}'::jsonb,
         '{"growth":{"NGN":100000,"USD":1000,"GBP":800},"business":{"NGN":200000,"USD":2000,"GBP":1600}}'::jsonb,
-        '${baseVersionId}'::uuid
+        '${currentVersion()}'::uuid
       );
     `);
     expect(v1).toBeTruthy();
@@ -262,7 +262,6 @@ describe.skipIf(!canRun)('M377 Dynamic Market Controls — PostgreSQL proofs', (
 
   it('16. Paystack market activation succeeds with both plan codes', () => {
     // First configure messaging for ZZ's currency (ZZD)
-    const latestVersion = psql("SELECT id FROM platform_config_versions ORDER BY effective_from DESC LIMIT 1;");
     // Add ZZ to messaging config
     const v = psql(`
       ${adminContext(adminId)}
@@ -270,7 +269,7 @@ describe.skipIf(!canRun)('M377 Dynamic Market Controls — PostgreSQL proofs', (
         '{"NGN":{"rates":{"NG":{"*":400}},"default_spend_cap_minor":5000000},"USD":{"rates":{"US":{"*":600}},"default_spend_cap_minor":10000000},"GBP":{"rates":{"GB":{"*":750}},"default_spend_cap_minor":8000000},"ZZD":{"rates":{"ZZ":{"*":100}},"default_spend_cap_minor":1000000}}'::jsonb,
         '{"NGN":50000,"USD":500,"GBP":400,"ZZD":10000}'::jsonb,
         '{"growth":{"NGN":100000,"USD":1000,"GBP":800,"ZZD":5000},"business":{"NGN":200000,"USD":2000,"GBP":1600,"ZZD":10000}}'::jsonb,
-        '${latestVersion}'::uuid
+        '${currentVersion()}'::uuid
       );
     `);
     expect(v).toBeTruthy();
@@ -383,12 +382,6 @@ describe.skipIf(!canRun)('M377 Dynamic Market Controls — PostgreSQL proofs', (
   // ── save_market_messaging_config orchestration RPC ──
 
   it('19. Orchestration: combined save updates maps + Paystack plan codes atomically', () => {
-    // Get current version
-    const ver = psql("SELECT id FROM platform_config_versions ORDER BY effective_from DESC LIMIT 1;");
-
-    // Save with plan codes for NG (already active Paystack market)
-    const origGrowthCode = psql("SELECT pricing->'growth'->>'paystack_plan_code' FROM countries WHERE code = 'NG';");
-
     const result = psql(`
       ${adminContext(adminId)}
       SELECT save_market_messaging_config(
@@ -396,7 +389,7 @@ describe.skipIf(!canRun)('M377 Dynamic Market Controls — PostgreSQL proofs', (
         '{"NGN":50000,"USD":500,"GBP":400}'::jsonb,
         '{"growth":{"NGN":100000,"USD":1000,"GBP":800},"business":{"NGN":200000,"USD":2000,"GBP":1600}}'::jsonb,
         '{"NG":{"growth":"PLN_orch_ng_g","business":"PLN_orch_ng_b"}}'::jsonb,
-        '${ver}'::uuid
+        '${currentVersion()}'::uuid
       );
     `);
     expect(result).toBeTruthy();
@@ -414,7 +407,7 @@ describe.skipIf(!canRun)('M377 Dynamic Market Controls — PostgreSQL proofs', (
 
   it('20. Orchestration: stale CAS → zero messaging-map, config-version, AND plan-code mutation', () => {
     // Record current state
-    const currentVer = psql("SELECT id FROM platform_config_versions ORDER BY effective_from DESC LIMIT 1;");
+    const currentVer = currentVersion();
     const currentNgCode = psql("SELECT pricing->'growth'->>'paystack_plan_code' FROM countries WHERE code = 'NG';");
 
     const result = psqlMayFail(`
@@ -430,14 +423,14 @@ describe.skipIf(!canRun)('M377 Dynamic Market Controls — PostgreSQL proofs', (
     expect(result).toContain('config_version_conflict');
 
     // Verify nothing changed
-    const afterVer = psql("SELECT id FROM platform_config_versions ORDER BY effective_from DESC LIMIT 1;");
+    const afterVer = currentVersion();
     expect(afterVer).toBe(currentVer);
     const afterNgCode = psql("SELECT pricing->'growth'->>'paystack_plan_code' FROM countries WHERE code = 'NG';");
     expect(afterNgCode).toBe(currentNgCode);
   });
 
   it('21. Orchestration: invalid country in plan-code bundle → complete rollback', () => {
-    const currentVer = psql("SELECT id FROM platform_config_versions ORDER BY effective_from DESC LIMIT 1;");
+    const currentVer = currentVersion();
     const currentNgCode = psql("SELECT pricing->'growth'->>'paystack_plan_code' FROM countries WHERE code = 'NG';");
 
     // XX does not exist — should fail and roll back everything
@@ -454,7 +447,7 @@ describe.skipIf(!canRun)('M377 Dynamic Market Controls — PostgreSQL proofs', (
     expect(result).toContain('unknown country');
 
     // Config version unchanged (rollback)
-    const afterVer = psql("SELECT id FROM platform_config_versions ORDER BY effective_from DESC LIMIT 1;");
+    const afterVer = currentVersion();
     expect(afterVer).toBe(currentVer);
     // NG plan codes unchanged (rollback)
     const afterNgCode = psql("SELECT pricing->'growth'->>'paystack_plan_code' FROM countries WHERE code = 'NG';");
@@ -462,8 +455,7 @@ describe.skipIf(!canRun)('M377 Dynamic Market Controls — PostgreSQL proofs', (
   });
 
   it('22. Orchestration: non-Paystack country in plan-code bundle → rejected', () => {
-    const ver = psql("SELECT id FROM platform_config_versions ORDER BY effective_from DESC LIMIT 1;");
-    // US is a Stripe market
+    // US is a Stripe market — plan codes should be rejected
     const result = psqlMayFail(`
       ${adminContext(adminId)}
       SELECT save_market_messaging_config(
@@ -471,7 +463,7 @@ describe.skipIf(!canRun)('M377 Dynamic Market Controls — PostgreSQL proofs', (
         '{"NGN":50000,"USD":500,"GBP":400}'::jsonb,
         '{"growth":{"NGN":100000,"USD":1000,"GBP":800},"business":{"NGN":200000,"USD":2000,"GBP":1600}}'::jsonb,
         '{"US":{"growth":"PLN_bad","business":"PLN_bad"}}'::jsonb,
-        '${ver}'::uuid
+        '${currentVersion()}'::uuid
       );
     `);
     expect(result).toContain('not "paystack"');
