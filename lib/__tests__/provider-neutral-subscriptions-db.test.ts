@@ -338,6 +338,21 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
   // Phase 2.2 DB proofs
   // ══════════════════════════════════════════════════════════
 
+  // Seed config with pricing_tiers + messaging_pricing so M375 can validate amounts
+  it('27-pre. seed pricing_tiers and messaging_pricing for M375 validation', () => {
+    // pricing_tiers needs a 'price' field in major units (14999 = NGN 14999)
+    psql(`${adminContext(adminId)} SELECT save_commercial_config('pricing_tiers', '{"free":{"feePercentage":2.5,"feeFlat":0.5,"maxBookings":50,"whitelabel":false,"price":0},"growth":{"feePercentage":1.5,"feeFlat":0.25,"maxBookings":500,"whitelabel":false,"price":14999},"business":{"feePercentage":1.0,"feeFlat":0.25,"maxBookings":999999999,"whitelabel":true,"price":39999}}'::jsonb); RESET ROLE;`);
+    // messaging_pricing needs rates for NG country under NGN currency
+    psql(`${adminContext(adminId)} SELECT save_commercial_config('messaging_pricing', '{"NGN":{"rates":{"NG":{"utility":100,"marketing":200}},"default_spend_cap_minor":5000000}}'::jsonb); RESET ROLE;`);
+    // subscription_included_minor_by_tier_currency for allowance grant
+    psql(`${adminContext(adminId)} SELECT save_commercial_config('subscription_included_minor_by_tier_currency', '{"growth":{"NGN":100000},"business":{"NGN":200000}}'::jsonb); RESET ROLE;`);
+    // trial_credit_minor_by_currency
+    psql(`${adminContext(adminId)} SELECT save_commercial_config('trial_credit_minor_by_currency', '{"NGN":50000}'::jsonb); RESET ROLE;`);
+    // Verify the config snapshot now has pricing_tiers.growth.price
+    const price = psql(`SELECT config_snapshot->'pricing_tiers'->'growth'->>'price' FROM platform_config_versions WHERE effective_from <= clock_timestamp() ORDER BY effective_from DESC LIMIT 1;`);
+    expect(price).toBe('14999');
+  });
+
   // ── M375 success through finalizer ──
 
   it('27. successful initial finalizer through M375 — subscription activated + tier upgraded', () => {
@@ -371,8 +386,8 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
 
   // ── M375 rejection → full rollback ──
 
-  it('28. M375 rejection causes full rollback — zero partial value', () => {
-    // Create a second business to test rejection without interfering with test 27's state
+  it('28. finalization exception causes full rollback — zero partial value', () => {
+    // Create a fresh business to isolate from test 27
     const rejBizId = psql(`
       INSERT INTO businesses (id, name, slug, owner_id, country_code, category, address, city, neighborhood, phone)
       VALUES (gen_random_uuid(), 'M375RejTest', 'm375-rej-${Date.now()}', '${testUserId}', 'NG', 'restaurant', '456 Rej St', 'Lagos', 'VI', '+2348099999999')
@@ -382,45 +397,23 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
     const r1 = psql(`SELECT intent_id FROM claim_checkout_initialization('${rejBizId}'::uuid, 'growth', 'flutterwave', 'NGN', 14999, '243206', '${ver}'::uuid, 'test-rej@m378.com', 30, '${testUserId}'::uuid);`);
     const intentId = r1.split('|')[0];
 
-    // Intentionally cause M375 rejection by passing wrong amount (amount mismatch)
-    // The checkout finalizer validates amount against intent, so this should work.
-    // Actually, the finalizer itself validates amount before calling M375.
-    // To trigger M375 rejection, we need the finalizer to reach M375 but M375 to reject.
-    // M375 validates config provenance — if config_version_id has no matching pricing, it rejects.
-    // The simplest approach: create an intent with correct amount, finalize successfully,
-    // then try to finalize AGAIN with different tx → this tests idempotency, not M375 rejection.
-    //
-    // For a true M375 rejection: we need config that doesn't have matching pricing for the plan.
-    // Use a business in a country where pricing config doesn't match the amount.
-    // Actually, the intent stores the amount and config_version_id. M375 validates that the
-    // payment amount matches the config snapshot pricing for the plan+currency.
-    // If the DB config doesn't have a matching tier price, M375 rejects.
-    //
-    // The safest test: finalize with correct data through the function — it will either succeed
-    // or raise M375 rejection. If it succeeds, the intent is completed.
-    // For rejection: manipulate the config version to have wrong pricing.
-    //
-    // Alternative: Test that if finalize raises exception, no subscription/payment is created.
-    // We can test with an amount mismatch which triggers BEFORE M375.
-
-    // Test: If checkout finalization fails (e.g., amount mismatch), nothing is mutated
+    // Cause finalizer exception via amount mismatch — this RAISES EXCEPTION inside the
+    // function, causing PostgreSQL to roll back the entire transaction atomically.
+    // No subscription, no payment, intent stays pending.
     const errResult = psqlMayFail(`SELECT finalize_flutterwave_subscription_checkout('${intentId}'::uuid, 'tx_rej_1', 'sub_rej_1', 10944, 9999900, 'NGN', '2026-09-12T10:00:00Z'::timestamptz);`);
     expect(errResult).toContain('amount mismatch');
 
-    // Intent must STILL be pending (not completed)
+    // Intent must STILL be pending (transaction rolled back)
     expect(psql(`SELECT status FROM subscription_checkout_intents WHERE id='${intentId}'::uuid;`)).toBe('pending');
 
     // No subscription created
-    const subCount = psql(`SELECT count(*) FROM subscriptions WHERE business_id='${rejBizId}'::uuid;`);
-    expect(subCount).toBe('0');
+    expect(psql(`SELECT count(*) FROM subscriptions WHERE business_id='${rejBizId}'::uuid;`)).toBe('0');
 
     // No payment recorded
-    const payCount = psql(`SELECT count(*) FROM subscription_payments WHERE business_id='${rejBizId}'::uuid;`);
-    expect(payCount).toBe('0');
+    expect(psql(`SELECT count(*) FROM subscription_payments WHERE business_id='${rejBizId}'::uuid;`)).toBe('0');
 
-    // Business tier unchanged
-    const bizTier = psql(`SELECT subscription_tier FROM businesses WHERE id='${rejBizId}'::uuid;`);
-    expect(bizTier).toBe('free');
+    // Business tier unchanged (still free)
+    expect(psql(`SELECT subscription_tier FROM businesses WHERE id='${rejBizId}'::uuid;`)).toBe('free');
 
     // Cleanup
     psql(`DELETE FROM subscription_checkout_intents WHERE id='${intentId}'::uuid;`);
