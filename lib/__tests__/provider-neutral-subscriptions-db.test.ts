@@ -261,7 +261,6 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
   // ── Renewal ordering protection (Blocker 4) ──
 
   it('22. renewal rejects NULL provider_paid_at', () => {
-    // Create a minimal subscription for testing
     const subId = psql(`
       INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval, billing_config_version_id, current_period_start, current_period_end)
       VALUES (gen_random_uuid(), '${testBizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month', '${currentVersion()}'::uuid, clock_timestamp(), clock_timestamp() + interval '30 days')
@@ -269,7 +268,6 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
     `);
     const r = psqlMayFail(`SELECT finalize_flutterwave_subscription_renewal('${subId}'::uuid, 'tx_null_test', 1499900, 'NGN', NULL);`);
     expect(r).toContain('must not be NULL');
-    // Cleanup
     psql(`DELETE FROM subscriptions WHERE id='${subId}'::uuid;`);
   });
 
@@ -279,7 +277,6 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
       VALUES (gen_random_uuid(), '${testBizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month', '${currentVersion()}'::uuid, '2026-09-01'::timestamptz, '2026-10-01'::timestamptz)
       RETURNING id::text;
     `);
-    // Try to finalize a renewal with timestamp BEFORE current_period_start
     const r = psqlMayFail(`SELECT finalize_flutterwave_subscription_renewal('${subId}'::uuid, 'tx_old', 1499900, 'NGN', '2026-08-15'::timestamptz);`);
     expect(r).toContain('out-of-order');
     psql(`DELETE FROM subscriptions WHERE id='${subId}'::uuid;`);
@@ -289,8 +286,8 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
 
   it('24. finalize_subscription_cancellation is idempotent', () => {
     const subId = psql(`
-      INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval)
-      VALUES (gen_random_uuid(), '${testBizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month')
+      INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval, current_period_start, current_period_end)
+      VALUES (gen_random_uuid(), '${testBizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month', clock_timestamp(), clock_timestamp() + interval '30 days')
       RETURNING id::text;
     `);
     // First cancellation
