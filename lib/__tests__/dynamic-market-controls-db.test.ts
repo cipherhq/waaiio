@@ -316,12 +316,12 @@ describe.skipIf(!canRun)('M377 Dynamic Market Controls — PostgreSQL proofs', (
   // ── Paystack activation readiness ──
 
   it('15. Paystack market rejected without plan codes', () => {
-    // M378 guard requires orchestration marker for gateway changes
-    psql("SELECT set_config('waaiio.gateway_switch_auth', 'true', true); SELECT set_config('waaiio.provider_ref_auth', 'true', true); UPDATE countries SET payment_gateway = 'paystack', pricing = jsonb_set(jsonb_set(pricing, '{growth}', (pricing->'growth') - 'paystack_plan_code'), '{business}', (pricing->'business') - 'paystack_plan_code') WHERE code = 'ZZ';");
+    // M378 guard requires orchestration marker for gateway changes — wrap in single transaction
+    psql("BEGIN; SELECT set_config('waaiio.gateway_switch_auth', 'true', true); SELECT set_config('waaiio.provider_ref_auth', 'true', true); UPDATE countries SET payment_gateway = 'paystack', pricing = jsonb_set(jsonb_set(pricing, '{growth}', (pricing->'growth') - 'paystack_plan_code'), '{business}', (pricing->'business') - 'paystack_plan_code') WHERE code = 'ZZ'; COMMIT;");
     const r = psqlMayFail("UPDATE countries SET is_active = true WHERE code = 'ZZ';");
     expect(r).toContain('plan ref missing');
     // Restore ZZ to stripe for later tests
-    psql("SELECT set_config('waaiio.gateway_switch_auth', 'true', true); SELECT set_config('waaiio.provider_ref_auth', 'true', true); UPDATE countries SET payment_gateway = 'stripe' WHERE code = 'ZZ';");
+    psql("BEGIN; SELECT set_config('waaiio.gateway_switch_auth', 'true', true); SELECT set_config('waaiio.provider_ref_auth', 'true', true); UPDATE countries SET payment_gateway = 'stripe' WHERE code = 'ZZ'; COMMIT;");
   });
 
   // ── NG readiness (positive proof) ──
