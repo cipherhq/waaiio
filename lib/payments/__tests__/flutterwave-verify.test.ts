@@ -19,7 +19,7 @@ beforeEach(() => { mockFetch.mockReset(); });
 
 describe('discoverAndVerifyTransaction', () => {
   const txRef = 'waaiiosub1234567890abcdef1234567890ab';
-  const flwKey = 'FLWSECK_TEST-xxx';
+  const flwKey = 'test_flw_secret_key';
 
   it('successful discovery + verification returns verified tx', async () => {
     // Step 1: list returns one match
@@ -146,7 +146,7 @@ describe('discoverAndVerifyTransaction', () => {
 });
 
 describe('verifyTransactionById', () => {
-  const flwKey = 'FLWSECK_TEST-xxx';
+  const flwKey = 'test_flw_secret_key';
 
   it('successful verification with matching tx_ref', async () => {
     mockFetch.mockResolvedValueOnce({
