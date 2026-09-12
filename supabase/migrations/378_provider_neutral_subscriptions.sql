@@ -649,8 +649,9 @@ BEGIN
   IF p_provider_event_id IS NOT NULL THEN
     SELECT count(*) INTO v_existing FROM processed_webhook_events WHERE event_id = p_provider_event_id;
     IF v_existing > 0 THEN RETURN; END IF;
-    INSERT INTO processed_webhook_events (event_id, processed_at)
-    VALUES (p_provider_event_id, clock_timestamp()) ON CONFLICT (event_id) DO NOTHING;
+    INSERT INTO processed_webhook_events (event_id, gateway, event_type, processed_at)
+    VALUES (p_provider_event_id, 'flutterwave', 'subscription.cancelled', clock_timestamp())
+    ON CONFLICT (event_id) DO NOTHING;
   END IF;
 
   SELECT * INTO v_sub FROM subscriptions WHERE id = p_subscription_id FOR UPDATE;
