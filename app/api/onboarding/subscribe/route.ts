@@ -252,30 +252,18 @@ export async function POST(request: NextRequest) {
         const { tx: verifiedTx } = verifyResult;
 
         if (verifiedTx.status === 'successful') {
-          // Customer paid — finalize the ORIGINAL intent idempotently via authoritative finalizer
-          // Resolve Flutterwave subscription
-          let providerSubId = '';
-          let providerPlanId = 0;
-          try {
-            const subLookup = await fetch(
-              `https://api.flutterwave.com/v3/subscriptions?transaction_id=${verifiedTx.id}`,
-              { headers: { 'Authorization': `Bearer ${flutterwaveKey}` }, signal: AbortSignal.timeout(10000) },
-            );
-            const subData = await subLookup.json() as { data?: { id: number; plan: number }[] };
-            // Require exactly one unambiguous match (Blocker C)
-            if (subData.data?.length === 1 && subData.data[0].id && subData.data[0].plan) {
-              providerSubId = String(subData.data[0].id);
-              providerPlanId = subData.data[0].plan;
-            }
-          } catch { /* handled below */ }
-
-          // Fail closed if subscription correlation unavailable/ambiguous/invalid (Blocker B+C)
-          if (!providerSubId || providerPlanId === 0) {
+          // Customer paid — finalize the ORIGINAL intent idempotently
+          // Resolve subscription via shared fail-closed contract (Blocker C)
+          const { correlateProviderSubscription } = await import('@/lib/payments/flutterwave-subscription');
+          const subCorrelation = await correlateProviderSubscription(verifiedTx.id, flutterwaveKey);
+          if (!subCorrelation.ok) {
             return NextResponse.json(
               { message: 'Payment completed but subscription setup pending. Please check your status.' },
               { status: 503 },
             );
           }
+          const providerSubId = subCorrelation.sub.subscriptionId;
+          const providerPlanId = subCorrelation.sub.planId;
 
           const verifiedAmountMinor = Math.round(verifiedTx.amount * 100);
           const { data: finResult, error: finErr } = await service.rpc('finalize_flutterwave_subscription_checkout', {

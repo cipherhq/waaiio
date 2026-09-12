@@ -10,6 +10,7 @@ import { sendProactiveConfirmation } from '@/lib/payments/send-confirmation';
 export const maxDuration = 60;
 
 import { verifyFlutterwaveSignature } from '@/lib/payments/flutterwave-signature';
+import { correlateProviderSubscription, verifySubscriptionStatus } from '@/lib/payments/flutterwave-subscription';
 
 const FLUTTERWAVE_SECRET_HASH = process.env.FLUTTERWAVE_WEBHOOK_HASH || '';
 
@@ -41,62 +42,87 @@ export async function POST(request: NextRequest) {
     // Platform subscription cancellation event
     if (event === 'subscription.cancelled' && data) {
       const supabase = createServiceClient();
+      const flwKey = process.env.FLUTTERWAVE_SECRET_KEY || '';
       const cancelPlanId = data.plan?.id as number | undefined;
       const cancelEmail = data.customer?.email as string | undefined;
+      // Use provider webhook/event ID when present (Blocker A)
+      const webhookEventId = (body.id || body.event_id) as string | undefined;
+
       if (!cancelPlanId || !cancelEmail) {
-        // Missing identifiers — durable reconciliation
-        const { error: qErr } = await supabase.from('subscription_payment_quarantine').insert({
+        await supabase.from('subscription_payment_quarantine').insert({
           provider_tx_ref: `cancel-unknown-${Date.now()}`,
           provider_status: 'missing_cancellation_identity',
           reason: `subscription.cancelled missing plan_id=${cancelPlanId} email=${cancelEmail}`,
+        }).then(({ error: qErr }) => {
+          if (qErr) logger.error('[FLW-WEBHOOK] Quarantine write failed', { error: qErr });
         });
-        if (qErr) {
-          logger.error('[FLW-WEBHOOK] Quarantine write failed for missing cancellation identity', { error: qErr });
-        }
         return NextResponse.json({ error: 'Missing cancellation identifiers' }, { status: 500 });
       }
 
-      if (cancelPlanId && cancelEmail) {
-        // Correlate without status filter — supports idempotent redelivery after cancellation
-        const { data: matchingSubs } = await supabase
-          .from('subscriptions')
-          .select('id, status')
-          .eq('gateway', 'flutterwave')
-          .eq('flutterwave_plan_id', cancelPlanId)
-          .eq('flutterwave_subscriber_email', cancelEmail);
+      // Correlate by stored flutterwave_plan_id + flutterwave_subscriber_email
+      const { data: matchingSubs, error: matchErr } = await supabase
+        .from('subscriptions')
+        .select('id, status, flutterwave_subscription_id')
+        .eq('gateway', 'flutterwave')
+        .eq('flutterwave_plan_id', cancelPlanId)
+        .eq('flutterwave_subscriber_email', cancelEmail);
 
-        if (matchingSubs?.length === 1) {
-          // Do NOT use plan+email as permanent dedupe key — it would block
-          // cancel→reactivate→cancel lifecycle. The finalizer RPC itself
-          // checks subscription state and returns idempotently for already-cancelled.
-          // Pass NULL event_id to rely on subscription-state idempotency.
-          const { error: cancelErr } = await supabase.rpc('finalize_subscription_cancellation', {
-            p_subscription_id: matchingSubs[0].id,
-            p_provider_event_id: null,
-            p_reason: 'provider_cancelled',
-          });
-          if (cancelErr) {
-            logger.error('[FLW-WEBHOOK] Cancellation RPC failed', { subId: matchingSubs[0].id, error: cancelErr });
-            return NextResponse.json({ error: 'Cancellation failed' }, { status: 500 });
-          }
-          // Already-cancelled subscription returns idempotently from the RPC
-          wh.processed({ durationMs: Math.round(performance.now() - startTime) });
-          return NextResponse.json({ message: 'Subscription cancelled' }, { status: 200 });
-        }
+      if (matchErr) {
+        logger.error('[FLW-WEBHOOK] Cancellation DB lookup error', { error: matchErr });
+        return NextResponse.json({ error: 'Cancellation lookup failed' }, { status: 500 });
+      }
 
-        // 0 or >1 matches — durable reconciliation evidence
-        const { error: qErr } = await supabase.from('subscription_payment_quarantine').insert({
+      if (!matchingSubs || matchingSubs.length !== 1) {
+        await supabase.from('subscription_payment_quarantine').insert({
           provider_tx_ref: `cancel-${cancelPlanId}`,
           provider_status: matchingSubs?.length ? 'ambiguous_cancellation' : 'unmatched_cancellation',
-          reason: `subscription.cancelled matched ${matchingSubs?.length || 0} subscriptions for plan_id=${cancelPlanId} email=${cancelEmail}`,
+          reason: `subscription.cancelled matched ${matchingSubs?.length || 0} for plan_id=${cancelPlanId} email=${cancelEmail}`,
         });
-        if (qErr) {
-          logger.error('[FLW-WEBHOOK] Quarantine write failed for ambiguous/unmatched cancellation', { error: qErr });
-        }
-        logger.error('[FLW-WEBHOOK] Cancellation correlation failed', { planId: cancelPlanId, email: cancelEmail, matchCount: matchingSubs?.length || 0 });
         return NextResponse.json({ error: 'Cancellation correlation failed' }, { status: 500 });
       }
-      return NextResponse.json({ message: 'Processed' }, { status: 200 });
+
+      const localSub = matchingSubs[0];
+
+      // Already cancelled locally → idempotent acknowledgment
+      if (localSub.status === 'cancelled') {
+        wh.processed({ durationMs: Math.round(performance.now() - startTime) });
+        return NextResponse.json({ message: 'Already cancelled' }, { status: 200 });
+      }
+
+      // Verify provider subscription is actually cancelled before applying (Blocker A)
+      // This prevents a delayed duplicate of an OLD cancellation from cancelling a reactivated subscription
+      if (localSub.flutterwave_subscription_id) {
+        const providerState = await verifySubscriptionStatus(localSub.flutterwave_subscription_id, flwKey);
+        if (!providerState.ok) {
+          // Provider unavailable — fail closed + reconciliation
+          await supabase.from('subscription_payment_quarantine').insert({
+            subscription_id: localSub.id,
+            provider_tx_ref: `cancel-verify-${cancelPlanId}`,
+            provider_status: 'verification_unavailable',
+            reason: `Cannot verify provider subscription status: ${providerState.reason}`,
+          });
+          return NextResponse.json({ error: 'Cancellation verification unavailable' }, { status: 500 });
+        }
+        // Only cancel if the provider subscription is actually cancelled/deactivated
+        if (providerState.status !== 'cancelled' && providerState.status !== 'deactivated') {
+          // Provider says subscription is still active — this is a stale/delayed duplicate
+          wh.ignored(`Provider subscription ${localSub.flutterwave_subscription_id} status is ${providerState.status}, not cancelled`);
+          return NextResponse.json({ message: 'Provider subscription not cancelled' }, { status: 200 });
+        }
+      }
+
+      // Provider confirmed cancelled — proceed with local cancellation
+      const { error: cancelErr } = await supabase.rpc('finalize_subscription_cancellation', {
+        p_subscription_id: localSub.id,
+        p_provider_event_id: webhookEventId || null,
+        p_reason: 'provider_cancelled',
+      });
+      if (cancelErr) {
+        logger.error('[FLW-WEBHOOK] Cancellation RPC failed', { subId: localSub.id, error: cancelErr });
+        return NextResponse.json({ error: 'Cancellation failed' }, { status: 500 });
+      }
+      wh.processed({ durationMs: Math.round(performance.now() - startTime) });
+      return NextResponse.json({ message: 'Subscription cancelled' }, { status: 200 });
     }
 
     if (event !== 'charge.completed' || !data) {
@@ -187,26 +213,14 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ error: 'Currency mismatch' }, { status: 500 });
           }
 
-          // Resolve subscription — require exactly one unambiguous match (Blocker C)
-          let providerSubId = '';
-          let providerPlanId = 0;
-          try {
-            const subLookup = await fetch(
-              `https://api.flutterwave.com/v3/subscriptions?transaction_id=${verified.id}`,
-              { headers: { 'Authorization': `Bearer ${flwKey}` }, signal: AbortSignal.timeout(10000) },
-            );
-            const subData = await subLookup.json() as { data?: { id: number; plan: number }[] };
-            if (subData.data?.length === 1 && subData.data[0].id && subData.data[0].plan) {
-              providerSubId = String(subData.data[0].id);
-              providerPlanId = subData.data[0].plan;
-            }
-          } catch { /* handled below */ }
-
-          // Fail closed on unavailable/ambiguous/invalid subscription identity
-          if (!providerSubId || providerPlanId === 0) {
-            wh.failed(new Error('Subscription correlation unavailable/ambiguous'));
-            return NextResponse.json({ error: 'Subscription correlation unavailable' }, { status: 500 });
+          // Resolve subscription — shared fail-closed contract (Blocker C)
+          const subCorrelation = await correlateProviderSubscription(verified.id, flwKey);
+          if (!subCorrelation.ok) {
+            wh.failed(new Error(`Subscription correlation failed: ${subCorrelation.reason}`));
+            return NextResponse.json({ error: 'Subscription correlation failed' }, { status: 500 });
           }
+          const providerSubId = subCorrelation.sub.subscriptionId;
+          const providerPlanId = subCorrelation.sub.planId;
 
           // Call authoritative finalizer
           const { data: finResult, error: finErr } = await supabase.rpc('finalize_flutterwave_subscription_checkout', {
