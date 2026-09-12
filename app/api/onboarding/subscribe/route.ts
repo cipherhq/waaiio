@@ -194,10 +194,9 @@ export async function POST(request: NextRequest) {
       // Provider preflight: verify plan exists, active, currency/amount/cadence match (Phase 2)
       const { verifyFlutterwavePlan } = await import('@/lib/payments/provider-preflight');
       const preflight = await verifyFlutterwavePlan({
-        planRef: planRef.trim(),
+        planId: planRef.trim(),
         expectedCurrency: currency,
         expectedAmountMajor: monthlyPrice,
-        expectedInterval: 'monthly',
         flutterwaveKey,
       });
       if (!preflight.ok) {
