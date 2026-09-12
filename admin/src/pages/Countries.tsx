@@ -936,3 +936,313 @@ function ProviderConfigPanel({ countries, canMutate, onSaved }: { countries: Cou
     </div>
   );
 }
+function parseMinorInt(value: string): number | null {
+  if (!value.trim()) return null;
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0 || !Number.isInteger(n)) return null;
+  return n;
+}
+
+/** Strictly parse a positive (>0) minor-unit integer. */
+function parsePositiveMinorInt(value: string): number | null {
+  const n = parseMinorInt(value);
+  if (n === null || n <= 0) return null;
+  return n;
+}
+
+/** Serialize Admin messaging state into the RPC payload shape.
+ *  Exported for testability — used by MessagingFinancialControls.handleSave. */
+export function buildMessagingPayload(
+  countries: CountryRow[],
+  currencyState: Record<string, { spendCap: string; trialCredit: string; growthIncluded: string; businessIncluded: string; defaultCostMinor: string }>,
+  countryState: Record<string, { rates: Record<string, string>; paystackGrowthPlan: string; paystackBusinessPlan: string }>,
+) {
+  const messagingPricing: Record<string, { rates: Record<string, Record<string, number>>; default_cost_minor?: number; default_spend_cap_minor: number }> = {};
+  const trialCredit: Record<string, number> = {};
+  const tierIncluded: Record<string, Record<string, number>> = { growth: {}, business: {} };
+
+  const configuredCurrencies = new Set<string>();
+  for (const [currency, cs] of Object.entries(currencyState)) {
+    const cap = parsePositiveMinorInt(cs.spendCap);
+    if (cap === null && cs.spendCap.trim()) {
+      throw new Error(`${currency} Spend Cap: must be a positive integer (no decimals)`);
+    }
+    if (!cap) continue;
+
+    configuredCurrencies.add(currency);
+    // Preserve absence distinctly: '' (absent) → omit key; '0' → explicit 0; positive → exact value
+    const dcmStr = cs.defaultCostMinor;
+    const bucket: typeof messagingPricing[string] = { rates: {}, default_spend_cap_minor: cap };
+    if (dcmStr.trim() !== '') {
+      const dcm = parseMinorInt(dcmStr);
+      if (dcm === null) throw new Error(`${currency} Default Cost: must be a non-negative integer (no decimals)`);
+      bucket.default_cost_minor = dcm;
+    }
+    // If dcmStr is empty, default_cost_minor is omitted (absent preserved as absent)
+    messagingPricing[currency] = bucket;
+
+    const tc = parsePositiveMinorInt(cs.trialCredit);
+    if (tc === null && cs.trialCredit.trim()) throw new Error(`${currency} Trial Credit: must be a positive integer (no decimals)`);
+    if (tc) trialCredit[currency] = tc;
+
+    const gi = parsePositiveMinorInt(cs.growthIncluded);
+    if (gi === null && cs.growthIncluded.trim()) throw new Error(`${currency} Growth Included: must be a positive integer (no decimals)`);
+    if (gi) tierIncluded.growth[currency] = gi;
+
+    const bi = parsePositiveMinorInt(cs.businessIncluded);
+    if (bi === null && cs.businessIncluded.trim()) throw new Error(`${currency} Business Included: must be a positive integer (no decimals)`);
+    if (bi) tierIncluded.business[currency] = bi;
+  }
+
+  for (const c of countries) {
+    if (!configuredCurrencies.has(c.currency_code)) continue;
+    const cs = countryState[c.code];
+    if (!cs) continue;
+    const countryRateMap: Record<string, number> = {};
+    for (const [cat, valStr] of Object.entries(cs.rates)) {
+      if (!valStr.trim()) continue;
+      const rate = parseMinorInt(valStr);
+      if (rate === null) throw new Error(`${c.code} ${cat} rate: must be a non-negative integer (no decimals)`);
+      countryRateMap[cat] = rate;
+    }
+    // Active markets require both utility AND marketing rates explicitly
+    if (c.is_active) {
+      if (countryRateMap.utility === undefined) {
+        throw new Error(`${c.code}: Utility rate is required for active markets`);
+      }
+      if (countryRateMap.marketing === undefined) {
+        throw new Error(`${c.code}: Marketing rate is required for active markets`);
+      }
+    }
+    if (Object.keys(countryRateMap).length > 0) {
+      messagingPricing[c.currency_code].rates[c.code] = countryRateMap;
+    }
+  }
+
+  const paystackPlanCodes: Record<string, { growth: string; business: string }> = {};
+  for (const c of countries) {
+    if (c.payment_gateway !== 'paystack') continue;
+    const cs = countryState[c.code];
+    if (!cs?.paystackGrowthPlan && !cs?.paystackBusinessPlan) continue;
+    if (!cs.paystackGrowthPlan || !cs.paystackBusinessPlan) {
+      throw new Error(`${c.code}: Both Growth and Business Paystack plan codes are required`);
+    }
+    paystackPlanCodes[c.code] = { growth: cs.paystackGrowthPlan, business: cs.paystackBusinessPlan };
+  }
+
+  return { messagingPricing, trialCredit, tierIncluded, paystackPlanCodes };
+}
+
+/** Messaging Financial Controls — currency-scoped shared values + country-scoped rates/plan codes */
+function MessagingFinancialControls({ countries, canMutate, onSaved }: { countries: CountryRow[]; canMutate: boolean; onSaved: () => Promise<void> }) {
+  const [saving, setSaving] = useState(false);
+  const [configVersionId, setConfigVersionId] = useState<string | null>(null);
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
+
+  // Country-scoped state: category rates + Paystack plan codes
+  // rates keyed by category (utility, marketing, *, authentication, service)
+  const [countryState, setCountryState] = useState<Record<string, {
+    rates: Record<string, string>; paystackGrowthPlan: string; paystackBusinessPlan: string;
+  }>>({});
+
+  // Currency-scoped state: spend cap, trial credit, tier included, default cost (shared across countries with same currency)
+  const [currencyState, setCurrencyState] = useState<Record<string, {
+    spendCap: string; trialCredit: string; growthIncluded: string; businessIncluded: string;
+    defaultCostMinor: string;
+  }>>({});
+
+  // Load current config via DB-authoritative RPC
+  useEffect(() => {
+    (async () => {
+      try {
+        // D: Use get_effective_commercial_config() RPC — DB clock_timestamp(), not browser Date
+        const { data: rows, error: rpcErr } = await adminDb.rpc('get_effective_commercial_config');
+        const ver = rpcErr ? null : (rows as { id: string; config_snapshot: Record<string, unknown> }[])?.[0];
+        if (ver?.id) setConfigVersionId(ver.id);
+
+        const snapshot = ver?.config_snapshot;
+        const pricing = snapshot?.messaging_pricing as Record<string, { rates?: Record<string, Record<string, number>>; default_cost_minor?: number; default_spend_cap_minor?: number }> | undefined;
+        const trialCredit = snapshot?.trial_credit_minor_by_currency as Record<string, number> | undefined;
+        const included = snapshot?.subscription_included_minor_by_tier_currency as Record<string, Record<string, number>> | undefined;
+
+        // Build currency-scoped state (one entry per unique currency)
+        const currInit: typeof currencyState = {};
+        const seenCurrencies = new Set<string>();
+        for (const c of countries) {
+          if (seenCurrencies.has(c.currency_code)) continue;
+          seenCurrencies.add(c.currency_code);
+          const bucket = pricing?.[c.currency_code];
+          currInit[c.currency_code] = {
+            spendCap: String(bucket?.default_spend_cap_minor ?? ''),
+            trialCredit: String(trialCredit?.[c.currency_code] ?? ''),
+            growthIncluded: String(included?.growth?.[c.currency_code] ?? ''),
+            businessIncluded: String(included?.business?.[c.currency_code] ?? ''),
+            defaultCostMinor: String(bucket?.default_cost_minor ?? ''),
+          };
+        }
+        setCurrencyState(currInit);
+
+        // Build country-scoped state — load all category-specific rates
+        const ctryInit: typeof countryState = {};
+        for (const c of countries) {
+          const bucket = pricing?.[c.currency_code];
+          const countryRates = bucket?.rates?.[c.code] as Record<string, number> | undefined;
+          const rateStrings: Record<string, string> = {};
+          if (countryRates) {
+            for (const [cat, val] of Object.entries(countryRates)) {
+              rateStrings[cat] = String(val);
+            }
+          }
+          // Ensure utility and marketing always have editable entries
+          if (!rateStrings.utility) rateStrings.utility = '';
+          if (!rateStrings.marketing) rateStrings.marketing = '';
+          const countryPricing = c.pricing as Record<string, Record<string, unknown>> | undefined;
+          ctryInit[c.code] = {
+            rates: rateStrings,
+            paystackGrowthPlan: (countryPricing?.growth?.paystack_plan_code as string) ?? '',
+            paystackBusinessPlan: (countryPricing?.business?.paystack_plan_code as string) ?? '',
+          };
+        }
+        setCountryState(ctryInit);
+      } catch {}
+    })();
+  }, [countries]);
+
+  async function handleSaveMessagingConfig() {
+    if (!canMutate || !configVersionId) return;
+    setSaving(true); setError(''); setSuccess('');
+    try {
+      const { messagingPricing, trialCredit, tierIncluded, paystackPlanCodes } =
+        buildMessagingPayload(countries, currencyState, countryState);
+
+      const { data, error: rpcError } = await adminDb.rpc('save_market_messaging_config', {
+        p_messaging_pricing: messagingPricing,
+        p_trial_credit_minor_by_currency: trialCredit,
+        p_subscription_included_minor_by_tier_currency: tierIncluded,
+        p_paystack_plan_codes: Object.keys(paystackPlanCodes).length > 0 ? paystackPlanCodes : null,
+        p_expected_version_id: configVersionId,
+      });
+
+      if (rpcError) {
+        if (rpcError.message?.includes('config_version_conflict')) {
+          throw new Error('Configuration was modified by another admin. Please reload the page and try again.');
+        }
+        throw new Error(rpcError.message);
+      }
+
+      setConfigVersionId(data as string);
+      setSuccess('Messaging configuration saved successfully');
+      await onSaved();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Save failed');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  // Group countries by currency for display
+  const currencyGroups: Record<string, CountryRow[]> = {};
+  for (const c of countries) {
+    if (!currencyGroups[c.currency_code]) currencyGroups[c.currency_code] = [];
+    currencyGroups[c.currency_code].push(c);
+  }
+
+  const hasPaystack = countries.some(c => c.payment_gateway === 'paystack');
+
+  return (
+    <div className="mt-8 rounded-2xl border border-gray-200 bg-white p-6">
+      <h3 className="text-lg font-bold text-gray-900 mb-1">Messaging Financial Controls</h3>
+      <p className="text-sm text-gray-500 mb-4">Configure messaging rates, spend caps, trial credits, and tier included credits. Currency-scoped values are shared across all countries using that currency. All values in minor currency units. Saved atomically via versioned config.</p>
+
+      {error && <div className="mb-4 rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-700">{error}</div>}
+      {success && <div className="mb-4 rounded-lg bg-green-50 border border-green-200 p-3 text-sm text-green-700">{success}</div>}
+
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-gray-200">
+              <th className="py-2 text-left font-medium text-gray-500">Currency</th>
+              <th className="px-2 py-2 text-left font-medium text-gray-500">Spend Cap</th>
+              <th className="px-2 py-2 text-left font-medium text-gray-500">Trial Credit</th>
+              <th className="px-2 py-2 text-left font-medium text-gray-500">Growth Incl.</th>
+              <th className="px-2 py-2 text-left font-medium text-gray-500">Business Incl.</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100">
+            {Object.entries(currencyGroups).map(([currency, cList]) => {
+              const cs = currencyState[currency] || { spendCap: '', trialCredit: '', growthIncluded: '', businessIncluded: '' };
+              const updateCurr = (field: string, value: string) => setCurrencyState(prev => ({ ...prev, [currency]: { ...cs, [field]: value } }));
+              return (
+                <tr key={currency}>
+                  <td className="py-2 font-medium">
+                    {currency} <span className="text-xs text-gray-400">({cList.map(c => c.code).join(', ')})</span>
+                  </td>
+                  <td className="px-2 py-2"><input type="text" inputMode="numeric" pattern="[0-9]*" className="w-24 rounded border border-gray-300 px-2 py-1 text-xs" value={cs.spendCap} onChange={e => updateCurr('spendCap', e.target.value)} disabled={!canMutate} /></td>
+                  <td className="px-2 py-2"><input type="text" inputMode="numeric" pattern="[0-9]*" className="w-20 rounded border border-gray-300 px-2 py-1 text-xs" value={cs.trialCredit} onChange={e => updateCurr('trialCredit', e.target.value)} disabled={!canMutate} /></td>
+                  <td className="px-2 py-2"><input type="text" inputMode="numeric" pattern="[0-9]*" className="w-20 rounded border border-gray-300 px-2 py-1 text-xs" value={cs.growthIncluded} onChange={e => updateCurr('growthIncluded', e.target.value)} disabled={!canMutate} /></td>
+                  <td className="px-2 py-2"><input type="text" inputMode="numeric" pattern="[0-9]*" className="w-20 rounded border border-gray-300 px-2 py-1 text-xs" value={cs.businessIncluded} onChange={e => updateCurr('businessIncluded', e.target.value)} disabled={!canMutate} /></td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      <h4 className="text-sm font-semibold text-gray-700 mt-6 mb-3">Per-Country Rates & Plan Codes</h4>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-gray-200">
+              <th className="py-2 text-left font-medium text-gray-500">Market</th>
+              <th className="px-2 py-2 text-left font-medium text-gray-500">Currency</th>
+              <th className="px-2 py-2 text-left font-medium text-gray-500">Utility Rate</th>
+              <th className="px-2 py-2 text-left font-medium text-gray-500">Marketing Rate</th>
+              {hasPaystack && (
+                <>
+                  <th className="px-2 py-2 text-left font-medium text-gray-500">PS Growth Plan</th>
+                  <th className="px-2 py-2 text-left font-medium text-gray-500">PS Business Plan</th>
+                </>
+              )}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100">
+            {countries.map(c => {
+              const cs = countryState[c.code] || { rates: { utility: '', marketing: '' }, paystackGrowthPlan: '', paystackBusinessPlan: '' };
+              const updateRate = (cat: string, value: string) => setCountryState(prev => ({
+                ...prev, [c.code]: { ...cs, rates: { ...cs.rates, [cat]: value } },
+              }));
+              const updateCtry = (field: string, value: string) => setCountryState(prev => ({ ...prev, [c.code]: { ...cs, [field]: value } }));
+              return (
+                <tr key={c.code} className={!c.is_active ? 'opacity-50' : ''}>
+                  <td className="py-2 font-medium">{c.flag} {c.code}</td>
+                  <td className="px-2 py-2 text-gray-500">{c.currency_code}</td>
+                  <td className="px-2 py-2"><input type="text" inputMode="numeric" pattern="[0-9]*" className="w-20 rounded border border-gray-300 px-2 py-1 text-xs" value={cs.rates.utility || ''} onChange={e => updateRate('utility', e.target.value)} disabled={!canMutate} /></td>
+                  <td className="px-2 py-2"><input type="text" inputMode="numeric" pattern="[0-9]*" className="w-20 rounded border border-gray-300 px-2 py-1 text-xs" value={cs.rates.marketing || ''} onChange={e => updateRate('marketing', e.target.value)} disabled={!canMutate} /></td>
+                  {hasPaystack && (
+                    <>
+                      <td className="px-2 py-2">{c.payment_gateway === 'paystack' ? <input type="text" className="w-28 rounded border border-gray-300 px-2 py-1 text-xs" value={cs.paystackGrowthPlan} onChange={e => updateCtry('paystackGrowthPlan', e.target.value)} disabled={!canMutate} placeholder="PLN_..." /> : <span className="text-gray-300">—</span>}</td>
+                      <td className="px-2 py-2">{c.payment_gateway === 'paystack' ? <input type="text" className="w-28 rounded border border-gray-300 px-2 py-1 text-xs" value={cs.paystackBusinessPlan} onChange={e => updateCtry('paystackBusinessPlan', e.target.value)} disabled={!canMutate} placeholder="PLN_..." /> : <span className="text-gray-300">—</span>}</td>
+                    </>
+                  )}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="mt-4 flex items-center justify-between">
+        <p className="text-xs text-gray-400">Config version: {configVersionId?.slice(0, 8) || 'none'}...</p>
+        <button
+          onClick={handleSaveMessagingConfig}
+          disabled={saving || !canMutate || !configVersionId}
+          className="flex items-center gap-2 rounded-xl bg-brand px-5 py-2.5 text-sm font-semibold text-white hover:bg-brand-600 transition disabled:opacity-50"
+        >
+          <CreditCard className="w-4 h-4" />
+          {saving ? 'Saving...' : 'Save Messaging Config'}
+        </button>
+      </div>
+    </div>
+  );
+}
