@@ -1,157 +1,302 @@
 /**
- * Provider Preflight Validation (M378 Phase 2).
+ * Provider preflight verification — checks plan/product configuration
+ * against the provider API BEFORE saving or switching.
  *
- * Validates that provider-side plan/configuration matches Waaiio's expectations
- * BEFORE initiating a checkout. Fail-closed on any provider unavailability.
- *
- * Flutterwave: GET /v3/payment-plans/{planId} — plan exists, active, currency/amount/cadence match.
- * Stripe: Validate API key reachable via GET /v1/balance (lightweight, no side effects).
+ * Each function returns a PreflightResult indicating whether the plan
+ * is valid and ready for use. Fail-closed: any ambiguity returns ok: false.
  */
 
 import { logger } from '@/lib/logger';
 
-// ═══ Types ═══
+// ────────────────────────────────────────────────────────────────────────────
+// Shared types
+// ────────────────────────────────────────────────────────────────────────────
 
-export type PreflightResult =
-  | { ok: true }
-  | { ok: false; reason: string };
+export interface PreflightResult {
+  ok: boolean;
+  reason?: string;
+  /** Provider-returned plan/product details (for audit logging) */
+  details?: Record<string, unknown>;
+}
 
-export interface FlutterwavePreflightInput {
-  planRef: string;
+// ────────────────────────────────────────────────────────────────────────────
+// Paystack
+// ────────────────────────────────────────────────────────────────────────────
+
+export interface PaystackPreflightInput {
+  planCode: string;
   expectedCurrency: string;
   expectedAmountMajor: number;
-  expectedInterval: 'monthly' | 'yearly';
-  flutterwaveKey: string;
+  paystackKey: string;
 }
-
-export interface StripePreflightInput {
-  stripeKey: string;
-}
-
-// ═══ Flutterwave Preflight ═══
 
 /**
- * Verify a Flutterwave payment plan exists, is active, and that its currency,
- * amount, and cadence exactly match the configured expectations.
+ * Verify a Paystack plan exists, is active, matches expected currency/amount/interval.
  *
- * Uses GET /v3/payment-plans/{id} — documented endpoint.
- * Fail-closed: any non-success, network error, or mismatch → rejection.
+ * Paystack plans store amounts in minor units (kobo/pesewas).
+ * Fail-closed: network errors, 4xx/5xx, missing data, or mismatches all return ok: false.
  */
-export async function verifyFlutterwavePlan(
-  input: FlutterwavePreflightInput,
-): Promise<PreflightResult> {
+export async function verifyPaystackPlan(input: PaystackPreflightInput): Promise<PreflightResult> {
+  const { planCode, expectedCurrency, expectedAmountMajor, paystackKey } = input;
+
   try {
-    const response = await fetch(
-      `https://api.flutterwave.com/v3/payment-plans/${input.planRef}`,
-      {
-        headers: { 'Authorization': `Bearer ${input.flutterwaveKey}` },
-        signal: AbortSignal.timeout(10000),
+    const response = await fetch(`https://api.paystack.co/plan/${planCode}`, {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${paystackKey}`,
+        'Content-Type': 'application/json',
       },
-    );
+      signal: AbortSignal.timeout(10_000),
+    });
 
     if (!response.ok) {
-      logger.error('[PREFLIGHT-FLW] Plan lookup HTTP error', {
-        planRef: input.planRef, status: response.status,
-      });
-      return { ok: false, reason: `provider_http_${response.status}` };
+      return {
+        ok: false,
+        reason: `Paystack plan fetch failed: HTTP ${response.status}`,
+      };
     }
 
-    const data = await response.json() as {
-      status?: string;
+    const json = await response.json() as {
+      status?: boolean;
       data?: {
-        id?: number;
-        name?: string;
-        amount?: number;
-        currency?: string;
+        is_archived?: boolean;
         interval?: string;
-        status?: string;
+        currency?: string;
+        amount?: number;
+        plan_code?: string;
+        name?: string;
       };
     };
 
-    if (data.status !== 'success' || !data.data) {
-      logger.error('[PREFLIGHT-FLW] Plan lookup non-success', {
-        planRef: input.planRef, status: data.status,
-      });
-      return { ok: false, reason: 'provider_non_success' };
+    if (json.status !== true || !json.data) {
+      return {
+        ok: false,
+        reason: 'Paystack plan response missing data or status !== true',
+      };
     }
 
-    const plan = data.data;
+    const plan = json.data;
 
-    // Plan must exist and be active
-    if (plan.status !== 'active') {
-      logger.error('[PREFLIGHT-FLW] Plan not active', {
-        planRef: input.planRef, planStatus: plan.status,
-      });
-      return { ok: false, reason: `plan_not_active:${plan.status}` };
+    // Must not be archived
+    if (plan.is_archived) {
+      return {
+        ok: false,
+        reason: `Paystack plan ${planCode} is archived`,
+        details: { planCode, is_archived: true },
+      };
     }
 
-    // Currency must exactly match (case-insensitive)
-    if (plan.currency?.toUpperCase() !== input.expectedCurrency.toUpperCase()) {
-      logger.error('[PREFLIGHT-FLW] Currency mismatch', {
-        planRef: input.planRef,
-        expected: input.expectedCurrency,
-        actual: plan.currency,
-      });
-      return { ok: false, reason: `currency_mismatch:expected=${input.expectedCurrency},actual=${plan.currency}` };
+    // Must be monthly interval
+    if (plan.interval !== 'monthly') {
+      return {
+        ok: false,
+        reason: `Paystack plan interval is "${plan.interval}", expected "monthly"`,
+        details: { planCode, interval: plan.interval },
+      };
     }
 
-    // Amount must exactly match (major units)
-    if (plan.amount !== input.expectedAmountMajor) {
-      logger.error('[PREFLIGHT-FLW] Amount mismatch', {
-        planRef: input.planRef,
-        expected: input.expectedAmountMajor,
-        actual: plan.amount,
-      });
-      return { ok: false, reason: `amount_mismatch:expected=${input.expectedAmountMajor},actual=${plan.amount}` };
+    // Currency must match (case-insensitive)
+    if (plan.currency?.toUpperCase() !== expectedCurrency.toUpperCase()) {
+      return {
+        ok: false,
+        reason: `Paystack plan currency is "${plan.currency}", expected "${expectedCurrency}"`,
+        details: { planCode, planCurrency: plan.currency, expectedCurrency },
+      };
     }
 
-    // Cadence must match
-    if (plan.interval !== input.expectedInterval) {
-      logger.error('[PREFLIGHT-FLW] Interval mismatch', {
-        planRef: input.planRef,
-        expected: input.expectedInterval,
-        actual: plan.interval,
-      });
-      return { ok: false, reason: `interval_mismatch:expected=${input.expectedInterval},actual=${plan.interval}` };
+    // Amount must match in minor units (expectedAmountMajor * 100)
+    const expectedMinor = expectedAmountMajor * 100;
+    if (plan.amount !== expectedMinor) {
+      return {
+        ok: false,
+        reason: `Paystack plan amount is ${plan.amount} minor units, expected ${expectedMinor} (${expectedAmountMajor} major)`,
+        details: { planCode, planAmount: plan.amount, expectedMinor, expectedAmountMajor },
+      };
     }
 
-    return { ok: true };
-  } catch (error) {
-    logger.error('[PREFLIGHT-FLW] Plan verification error', {
-      planRef: input.planRef, error: String(error),
-    });
-    return { ok: false, reason: 'provider_unavailable' };
+    return {
+      ok: true,
+      details: {
+        planCode: plan.plan_code,
+        name: plan.name,
+        currency: plan.currency,
+        amount: plan.amount,
+        interval: plan.interval,
+      },
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Unknown error';
+    logger.error('Paystack plan preflight failed', { planCode, error: message });
+    return {
+      ok: false,
+      reason: `Paystack plan preflight error: ${message}`,
+    };
   }
 }
 
-// ═══ Stripe Preflight ═══
+// ────────────────────────────────────────────────────────────────────────────
+// Flutterwave
+// ────────────────────────────────────────────────────────────────────────────
+
+export interface FlutterwavePreflightInput {
+  planId: string;
+  expectedCurrency: string;
+  expectedAmountMajor: number;
+  flutterwaveKey: string;
+}
 
 /**
- * Verify Stripe API key is valid and the API is reachable.
- * Uses GET /v1/balance — lightweight, read-only, no side effects.
- * This is a real runtime check, not a placeholder.
+ * Verify a Flutterwave payment plan exists, is active, matches expected currency/amount/interval.
+ *
+ * Flutterwave plans store amounts in major units.
+ * Fail-closed: network errors, 4xx/5xx, missing data, or mismatches all return ok: false.
  */
-export async function verifyStripeReadiness(
-  input: StripePreflightInput,
-): Promise<PreflightResult> {
+export async function verifyFlutterwavePlan(input: FlutterwavePreflightInput): Promise<PreflightResult> {
+  const { planId, expectedCurrency, expectedAmountMajor, flutterwaveKey } = input;
+
   try {
-    const response = await fetch('https://api.stripe.com/v1/balance', {
-      headers: { 'Authorization': `Bearer ${input.stripeKey}` },
-      signal: AbortSignal.timeout(10000),
+    const response = await fetch(`https://api.flutterwave.com/v3/payment-plans/${planId}`, {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${flutterwaveKey}`,
+        'Content-Type': 'application/json',
+      },
+      signal: AbortSignal.timeout(10_000),
     });
 
     if (!response.ok) {
-      const data = await response.json().catch(() => ({})) as { error?: { message?: string } };
-      logger.error('[PREFLIGHT-STRIPE] API check failed', {
-        status: response.status,
-        error: data.error?.message,
-      });
-      return { ok: false, reason: `stripe_http_${response.status}` };
+      return {
+        ok: false,
+        reason: `Flutterwave plan fetch failed: HTTP ${response.status}`,
+      };
     }
 
-    return { ok: true };
-  } catch (error) {
-    logger.error('[PREFLIGHT-STRIPE] API check error', { error: String(error) });
-    return { ok: false, reason: 'stripe_unavailable' };
+    const json = await response.json() as {
+      status?: string;
+      data?: {
+        status?: string;
+        interval?: string;
+        currency?: string;
+        amount?: number;
+        id?: number;
+        name?: string;
+      };
+    };
+
+    if (json.status !== 'success' || !json.data) {
+      return {
+        ok: false,
+        reason: 'Flutterwave plan response missing data or status !== "success"',
+      };
+    }
+
+    const plan = json.data;
+
+    // Must be active
+    if (plan.status !== 'active') {
+      return {
+        ok: false,
+        reason: `Flutterwave plan status is "${plan.status}", expected "active"`,
+        details: { planId, planStatus: plan.status },
+      };
+    }
+
+    // Must be monthly interval
+    if (plan.interval !== 'monthly') {
+      return {
+        ok: false,
+        reason: `Flutterwave plan interval is "${plan.interval}", expected "monthly"`,
+        details: { planId, interval: plan.interval },
+      };
+    }
+
+    // Currency must match (case-insensitive)
+    if (plan.currency?.toUpperCase() !== expectedCurrency.toUpperCase()) {
+      return {
+        ok: false,
+        reason: `Flutterwave plan currency is "${plan.currency}", expected "${expectedCurrency}"`,
+        details: { planId, planCurrency: plan.currency, expectedCurrency },
+      };
+    }
+
+    // Amount must match in major units
+    if (plan.amount !== expectedAmountMajor) {
+      return {
+        ok: false,
+        reason: `Flutterwave plan amount is ${plan.amount}, expected ${expectedAmountMajor}`,
+        details: { planId, planAmount: plan.amount, expectedAmountMajor },
+      };
+    }
+
+    return {
+      ok: true,
+      details: {
+        planId: plan.id,
+        name: plan.name,
+        currency: plan.currency,
+        amount: plan.amount,
+        interval: plan.interval,
+      },
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Unknown error';
+    logger.error('Flutterwave plan preflight failed', { planId, error: message });
+    return {
+      ok: false,
+      reason: `Flutterwave plan preflight error: ${message}`,
+    };
+  }
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Stripe
+// ────────────────────────────────────────────────────────────────────────────
+
+export interface StripeReadinessInput {
+  stripeKey: string;
+}
+
+/**
+ * Verify Stripe API key is valid and the account can accept charges.
+ * Stripe uses inline price_data for subscriptions, so there are no plan refs to verify.
+ */
+export async function verifyStripeReadiness(input: StripeReadinessInput): Promise<PreflightResult> {
+  const { stripeKey } = input;
+
+  try {
+    const response = await fetch('https://api.stripe.com/v1/balance', {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${stripeKey}`,
+      },
+      signal: AbortSignal.timeout(10_000),
+    });
+
+    if (!response.ok) {
+      return {
+        ok: false,
+        reason: `Stripe balance check failed: HTTP ${response.status}`,
+      };
+    }
+
+    const json = await response.json() as {
+      available?: Array<{ amount: number; currency: string }>;
+      livemode?: boolean;
+    };
+
+    return {
+      ok: true,
+      details: {
+        livemode: json.livemode,
+        currencies: json.available?.map(a => a.currency) ?? [],
+      },
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Unknown error';
+    logger.error('Stripe readiness preflight failed', { error: message });
+    return {
+      ok: false,
+      reason: `Stripe readiness preflight error: ${message}`,
+    };
   }
 }
