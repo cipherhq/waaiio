@@ -92,12 +92,14 @@ export async function findSubscriptionByStatus(
   email: string,
   statusFilter: 'cancelled' | 'active',
   flutterwaveKey: string,
-  maxPages: number = 10,
+  opts?: { planId?: number; maxPages?: number },
 ): Promise<{ ok: true; found: true; status: string } | { ok: true; found: false } | { ok: false; reason: string }> {
-  const PAGE_SIZE_HINT = 20; // Flutterwave default page size
+  const maxPages = opts?.maxPages ?? 50; // safety cap
   try {
     for (let page = 1; page <= maxPages; page++) {
-      const url = `https://api.flutterwave.com/v3/subscriptions?email=${encodeURIComponent(email)}&status=${statusFilter}&page=${page}`;
+      let url = `https://api.flutterwave.com/v3/subscriptions?email=${encodeURIComponent(email)}&status=${statusFilter}&page=${page}`;
+      if (opts?.planId) url += `&plan=${opts.planId}`;
+
       const response = await fetch(url, {
         headers: { 'Authorization': `Bearer ${flutterwaveKey}` },
         signal: AbortSignal.timeout(10000),
@@ -106,24 +108,24 @@ export async function findSubscriptionByStatus(
 
       const data = await response.json() as { status?: string; data?: { id: number; status: string }[] };
       if (data.status !== 'success') return { ok: false, reason: 'unavailable' };
+
+      // Empty page = provider-authoritative exhaustion
       if (!data.data || data.data.length === 0) {
-        // No more results — exhausted
         return { ok: true, found: false };
       }
 
-      // Check for exact match on this page
       const match = data.data.find(s => String(s.id) === targetSubscriptionId);
       if (match) {
         return { ok: true, found: true, status: match.status };
       }
 
-      // If fewer results than page size hint, this is the last page
-      if (data.data.length < PAGE_SIZE_HINT) {
-        return { ok: true, found: false };
-      }
+      // Continue to next page — do NOT use undocumented page-size heuristics
     }
-    // Exhausted max pages without finding
-    return { ok: true, found: false };
+    // Safety cap reached — fail closed as unavailable (NOT not_found)
+    logger.error('[FLW-SUB] Pagination cap reached without finding subscription', {
+      targetSubscriptionId, statusFilter, maxPages,
+    });
+    return { ok: false, reason: 'unavailable' };
   } catch {
     return { ok: false, reason: 'unavailable' };
   }
@@ -142,14 +144,19 @@ export async function verifySubscriptionStatus(
   subscriptionId: string,
   subscriberEmail: string,
   flutterwaveKey: string,
+  planId?: number,
 ): Promise<{ ok: true; status: string } | { ok: false; reason: string }> {
   // Step 1: Check cancelled subscriptions (explicit status=cancelled, paginated)
-  const cancelledResult = await findSubscriptionByStatus(subscriptionId, subscriberEmail, 'cancelled', flutterwaveKey);
+  const cancelledResult = await findSubscriptionByStatus(
+    subscriptionId, subscriberEmail, 'cancelled', flutterwaveKey, { planId },
+  );
   if (!cancelledResult.ok) return { ok: false, reason: cancelledResult.reason };
   if (cancelledResult.found) return { ok: true, status: 'cancelled' };
 
   // Step 2: Not found as cancelled — check active (explicit status=active, paginated)
-  const activeResult = await findSubscriptionByStatus(subscriptionId, subscriberEmail, 'active', flutterwaveKey);
+  const activeResult = await findSubscriptionByStatus(
+    subscriptionId, subscriberEmail, 'active', flutterwaveKey, { planId },
+  );
   if (!activeResult.ok) return { ok: false, reason: activeResult.reason };
   if (activeResult.found) return { ok: true, status: 'active' };
 

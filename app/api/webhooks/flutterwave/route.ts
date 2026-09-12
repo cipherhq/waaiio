@@ -88,7 +88,7 @@ export async function POST(request: NextRequest) {
       let providerState: { ok: true; status: string } | { ok: false; reason: string } | null = null;
       if (localSub.status !== 'cancelled' && localSub.flutterwave_subscription_id) {
         providerState = await verifySubscriptionStatus(
-          localSub.flutterwave_subscription_id, cancelEmail, flwKey,
+          localSub.flutterwave_subscription_id, cancelEmail, flwKey, cancelPlanId,
         );
       }
 
@@ -189,34 +189,30 @@ export async function POST(request: NextRequest) {
     }
 
     // Determine renewal lookup result (for non-waaiiosub tx_refs only)
-    let renewalLookupResult: 'matched' | 'not_subscription' | 'unavailable' | 'ambiguous' = 'not_subscription';
+    // Must check BOTH active and cancelled provider subscriptions before declaring not_subscription
+    let renewalLookupResult: 'matched' | 'not_subscription' | 'unavailable' | 'ambiguous' | 'not_checked' = 'not_checked';
     let renewalLocalSubId: string | null = null;
     if (!txRef.startsWith('waaiiosub') && webhookTxId) {
-      // Reuse the existing renewal correlation logic
       try {
-        const subLookup = await fetch(
-          `https://api.flutterwave.com/v3/subscriptions?transaction_id=${webhookTxId}`,
-          { headers: { 'Authorization': `Bearer ${flwKey}` }, signal: AbortSignal.timeout(10000) },
-        );
-        if (!subLookup.ok) {
-          renewalLookupResult = 'unavailable';
+        // Query with transaction_id — this endpoint defaults to status=active
+        // Also query cancelled to rule out both states
+        const subCorrelation = await correlateProviderSubscription(webhookTxId, flwKey);
+        if (subCorrelation.ok) {
+          // Provider found a subscription — check local match
+          const { data: localSub, error: localErr } = await supabase
+            .from('subscriptions').select('id')
+            .eq('flutterwave_subscription_id', subCorrelation.sub.subscriptionId)
+            .eq('gateway', 'flutterwave')
+            .maybeSingle();
+          if (localErr) renewalLookupResult = 'unavailable';
+          else if (localSub) { renewalLookupResult = 'matched'; renewalLocalSubId = localSub.id; }
+          else renewalLookupResult = 'matched'; // provider match, no local → decideChargeRouting handles
+        } else if (subCorrelation.reason === 'not_found') {
+          renewalLookupResult = 'not_subscription';
+        } else if (subCorrelation.reason === 'ambiguous') {
+          renewalLookupResult = 'ambiguous';
         } else {
-          const subData = await subLookup.json() as { status?: string; data?: { id: number }[] };
-          if (subData.status !== 'success' || !subData.data) {
-            renewalLookupResult = 'unavailable';
-          } else if (subData.data.length === 0) {
-            renewalLookupResult = 'not_subscription';
-          } else if (subData.data.length > 1) {
-            renewalLookupResult = 'ambiguous';
-          } else {
-            const flwSubId = String(subData.data[0].id);
-            const { data: localSub, error: localErr } = await supabase
-              .from('subscriptions').select('id')
-              .eq('flutterwave_subscription_id', flwSubId).eq('gateway', 'flutterwave')
-              .maybeSingle();
-            if (localErr) renewalLookupResult = 'unavailable';
-            else if (localSub) { renewalLookupResult = 'matched'; renewalLocalSubId = localSub.id; }
-          }
+          renewalLookupResult = 'unavailable';
         }
       } catch { renewalLookupResult = 'unavailable'; }
     }
@@ -224,10 +220,10 @@ export async function POST(request: NextRequest) {
     // Production routing decision
     const routingDecision = decideChargeRouting(txRef, webhookTxId, hasIntentMatch, renewalLookupResult, renewalLocalSubId || undefined);
 
-    // Fail closed for unknown routing (ambiguous/unavailable renewal)
+    // Fail closed for unknown routing
     if (routingDecision.route === 'unknown') {
-      wh.failed(new Error('Charge routing ambiguous/unavailable'));
-      return NextResponse.json({ error: 'Charge routing failed' }, { status: 500 });
+      wh.failed(new Error(`Charge routing failed: ${routingDecision.reason}`));
+      return NextResponse.json({ error: `Charge routing: ${routingDecision.reason}` }, { status: 500 });
     }
 
     // ── Platform renewal path ──

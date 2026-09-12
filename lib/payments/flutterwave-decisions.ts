@@ -14,34 +14,55 @@ export type ChargeRoutingDecision =
   | { route: 'platform_initial'; txRef: string }
   | { route: 'platform_renewal'; txId: number }
   | { route: 'business_payment'; txRef: string }
-  | { route: 'unknown' };
+  | { route: 'unknown'; reason: string };
 
 /**
  * Decide how to route a charge.completed webhook event.
- * This is the production routing logic called by the POST handler.
+ * Production routing authority — called by the actual POST handler.
  *
- * - tx_ref starting with 'waaiiosub' → platform subscription initial charge
- * - Otherwise, if provider subscription lookup finds a match → platform renewal
- * - Otherwise → ordinary business payment (existing path)
+ * Fail-closed rules:
+ * - waaiiosub + no local intent → unknown (orphaned platform event, reconcile)
+ * - Provider subscription match + no local subscription → unknown (orphaned)
+ * - Missing/invalid provider txId when subscription can't be classified → unknown
+ * - Only positively proven zero-subscription match may route to business_payment
+ * - Ambiguous/unavailable → unknown
  */
 export function decideChargeRouting(
   txRef: string,
   webhookTxId: number,
   hasIntentMatch: boolean,
-  renewalLookupResult: 'matched' | 'not_subscription' | 'unavailable' | 'ambiguous',
+  renewalLookupResult: 'matched' | 'not_subscription' | 'unavailable' | 'ambiguous' | 'not_checked',
   localSubId?: string,
 ): ChargeRoutingDecision {
-  if (txRef.startsWith('waaiiosub') && hasIntentMatch) {
-    return { route: 'platform_initial', txRef };
+  // waaiiosub prefix → platform subscription domain
+  if (txRef.startsWith('waaiiosub')) {
+    if (hasIntentMatch) return { route: 'platform_initial', txRef };
+    // waaiiosub without local intent → unknown/reconcile (never business_payment)
+    return { route: 'unknown', reason: 'waaiiosub_without_intent' };
   }
-  if (!txRef.startsWith('waaiiosub')) {
-    if (renewalLookupResult === 'matched' && localSubId) {
-      return { route: 'platform_renewal', txId: webhookTxId };
-    }
-    if (renewalLookupResult === 'unavailable' || renewalLookupResult === 'ambiguous') {
-      return { route: 'unknown' }; // fail closed
-    }
+
+  // Non-waaiiosub → need provider subscription evidence to classify
+  if (!webhookTxId) {
+    return { route: 'unknown', reason: 'missing_provider_tx_id' };
   }
+
+  if (renewalLookupResult === 'not_checked') {
+    return { route: 'unknown', reason: 'subscription_lookup_not_performed' };
+  }
+
+  if (renewalLookupResult === 'matched') {
+    if (!localSubId) {
+      // Provider says it's a subscription, but no local match → orphaned
+      return { route: 'unknown', reason: 'provider_match_without_local_subscription' };
+    }
+    return { route: 'platform_renewal', txId: webhookTxId };
+  }
+
+  if (renewalLookupResult === 'unavailable' || renewalLookupResult === 'ambiguous') {
+    return { route: 'unknown', reason: `subscription_lookup_${renewalLookupResult}` };
+  }
+
+  // renewalLookupResult === 'not_subscription' — positively proven zero matches
   return { route: 'business_payment', txRef };
 }
 

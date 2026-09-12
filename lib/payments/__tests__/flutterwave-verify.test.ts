@@ -131,18 +131,17 @@ describe('verifySubscriptionStatus', () => {
   });
 
   it('not cancelled but found as active → returns active', async () => {
-    // Step 1: cancelled query returns empty
+    // Cancelled: empty (exhausted)
     mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: [] }) });
-    // Step 2: active query finds it
+    // Active: found on page 1
     mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: [{ id: 42, status: 'active' }] }) });
     const r = await verifySubscriptionStatus('42', 'user@test.com', 'k');
     expect(r.ok && r.status).toBe('active');
-    expect(mockFetch).toHaveBeenCalledTimes(2);
   });
 
-  it('not found in either status → not_found', async () => {
-    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: [] }) });
-    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: [] }) });
+  it('not found in either status (both empty) → not_found', async () => {
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: [] }) }); // cancelled: empty
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: [] }) }); // active: empty
     const r = await verifySubscriptionStatus('42', 'user@test.com', 'k');
     expect(!r.ok && r.reason).toBe('not_found');
   });
@@ -169,10 +168,12 @@ describe('verifySubscriptionStatus', () => {
   });
 
   it('exact ID match only — different ID in results ignored', async () => {
-    // Cancelled query returns a different subscription ID
+    // Cancelled: one non-matching result, then empty (exhausted)
     mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: [{ id: 99, status: 'cancelled' }] }) });
-    // Active query returns a different ID too
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: [] }) }); // cancelled exhausted
+    // Active: one non-matching result, then empty (exhausted)
     mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: [{ id: 88, status: 'active' }] }) });
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: [] }) }); // active exhausted
     const r = await verifySubscriptionStatus('42', 'user@test.com', 'k');
     expect(!r.ok && r.reason).toBe('not_found');
   });
@@ -245,44 +246,55 @@ describe('decideFinalizerResult', () => {
   it('error → failed', () => expect(decideFinalizerResult(null, new Error('x')).action).toBe('failed'));
 });
 
-// ═════ findSubscriptionByStatus — pagination ═════
-describe('findSubscriptionByStatus — paginated lookup', () => {
-  it('found on page 1 → found', async () => {
+// ═════ findSubscriptionByStatus — paginated lookup ═════
+describe('findSubscriptionByStatus — pagination', () => {
+  it('found on page 1', async () => {
     mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: [{ id: 42, status: 'cancelled' }] }) });
     const r = await findSubscriptionByStatus('42', 'u@t.com', 'cancelled', 'k');
     expect(r.ok && r.found).toBe(true);
-    expect((mockFetch.mock.calls[0][0] as string)).toContain('status=cancelled');
-    expect((mockFetch.mock.calls[0][0] as string)).toContain('page=1');
+    expect((mockFetch.mock.calls[0][0] as string)).toContain('status=cancelled&page=1');
   });
 
-  it('found on page 2 → found (pagination works)', async () => {
-    // Page 1: 20 results, target not present
-    const page1 = Array.from({ length: 20 }, (_, i) => ({ id: i + 1, status: 'cancelled' }));
-    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: page1 }) });
-    // Page 2: target found
+  it('found on later page (page 3)', async () => {
+    // Pages 1-2: non-matching results (no page-size heuristic — continues)
+    for (let i = 0; i < 2; i++) {
+      mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: [{ id: i + 1, status: 'cancelled' }] }) });
+    }
+    // Page 3: target found
     mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: [{ id: 42, status: 'cancelled' }] }) });
     const r = await findSubscriptionByStatus('42', 'u@t.com', 'cancelled', 'k');
     expect(r.ok && r.found).toBe(true);
-    expect(mockFetch).toHaveBeenCalledTimes(2);
-    expect((mockFetch.mock.calls[1][0] as string)).toContain('page=2');
+    expect(mockFetch).toHaveBeenCalledTimes(3);
+    expect((mockFetch.mock.calls[2][0] as string)).toContain('page=3');
   });
 
-  it('exhausted (empty page) → not found', async () => {
+  it('empty page = exhausted → not found', async () => {
     mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: [] }) });
     const r = await findSubscriptionByStatus('42', 'u@t.com', 'cancelled', 'k');
     expect(r.ok && !r.found).toBe(true);
   });
 
-  it('exhausted (partial page) → not found', async () => {
-    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: [{ id: 99, status: 'cancelled' }] }) });
-    const r = await findSubscriptionByStatus('42', 'u@t.com', 'cancelled', 'k');
-    expect(r.ok && !r.found).toBe(true);
+  it('safety cap reached → fail closed (unavailable, NOT not_found)', async () => {
+    // Every page returns non-matching results
+    for (let i = 0; i < 3; i++) {
+      mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: [{ id: i + 100, status: 'cancelled' }] }) });
+    }
+    const r = await findSubscriptionByStatus('42', 'u@t.com', 'cancelled', 'k', { maxPages: 3 });
+    // Cap hit → fail closed, NOT { found: false }
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toBe('unavailable');
   });
 
   it('provider error → fail closed', async () => {
     mockFetch.mockResolvedValueOnce({ ok: false, status: 500 });
     const r = await findSubscriptionByStatus('42', 'u@t.com', 'cancelled', 'k');
     expect(r.ok).toBe(false);
+  });
+
+  it('includes plan filter when provided', async () => {
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: [] }) });
+    await findSubscriptionByStatus('42', 'u@t.com', 'cancelled', 'k', { planId: 999 });
+    expect((mockFetch.mock.calls[0][0] as string)).toContain('plan=999');
   });
 });
 
@@ -291,13 +303,20 @@ describe('decideChargeRouting — production routing authority', () => {
   it('waaiiosub + intent match → platform_initial', () => {
     expect(decideChargeRouting('waaiiosubtest123', 100, true, 'not_subscription').route).toBe('platform_initial');
   });
-  it('waaiiosub without intent → business_payment', () => {
-    expect(decideChargeRouting('waaiiosubtest123', 100, false, 'not_subscription').route).toBe('business_payment');
+  it('waaiiosub WITHOUT intent → unknown (NEVER business_payment)', () => {
+    const r = decideChargeRouting('waaiiosubtest123', 100, false, 'not_subscription');
+    expect(r.route).toBe('unknown');
+    if (r.route === 'unknown') expect(r.reason).toBe('waaiiosub_without_intent');
   });
-  it('non-waaiiosub + matched renewal → platform_renewal with real txId', () => {
+  it('non-waaiiosub + matched + local sub → platform_renewal with real txId', () => {
     const r = decideChargeRouting('flw_abc', 12345, false, 'matched', 'sub-uuid');
     expect(r.route).toBe('platform_renewal');
     if (r.route === 'platform_renewal') expect(r.txId).toBe(12345);
+  });
+  it('non-waaiiosub + matched WITHOUT local sub → unknown (orphaned)', () => {
+    const r = decideChargeRouting('flw_abc', 100, false, 'matched');
+    expect(r.route).toBe('unknown');
+    if (r.route === 'unknown') expect(r.reason).toBe('provider_match_without_local_subscription');
   });
   it('non-waaiiosub + unavailable → unknown (fail closed)', () => {
     expect(decideChargeRouting('flw_abc', 100, false, 'unavailable').route).toBe('unknown');
@@ -305,12 +324,17 @@ describe('decideChargeRouting — production routing authority', () => {
   it('non-waaiiosub + ambiguous → unknown (fail closed)', () => {
     expect(decideChargeRouting('flw_abc', 100, false, 'ambiguous').route).toBe('unknown');
   });
-  it('non-waaiiosub + not_subscription → business_payment', () => {
+  it('non-waaiiosub + not_subscription → business_payment (zero-subscription proof)', () => {
     const r = decideChargeRouting('flw_biz_charge_123', 100, false, 'not_subscription');
     expect(r.route).toBe('business_payment');
     if (r.route === 'business_payment') expect(r.txRef).toBe('flw_biz_charge_123');
   });
-  it('renewal matched without localSubId → business_payment (safety)', () => {
-    expect(decideChargeRouting('flw_abc', 100, false, 'matched').route).toBe('business_payment');
+  it('missing provider txId → unknown (fail closed)', () => {
+    const r = decideChargeRouting('flw_abc', 0, false, 'not_checked');
+    expect(r.route).toBe('unknown');
+  });
+  it('subscription lookup not performed → unknown (fail closed)', () => {
+    const r = decideChargeRouting('flw_abc', 100, false, 'not_checked');
+    expect(r.route).toBe('unknown');
   });
 });
