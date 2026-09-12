@@ -34,43 +34,60 @@ export type VerifyResult =
  * Uses bounded date range for the transaction list query, then verifies
  * the discovered transaction by exact ID.
  */
+/** Format a Date as YYYY-MM-DD for Flutterwave transaction list queries. */
+function toFlwDate(d: Date): string {
+  return d.toISOString().slice(0, 10); // YYYY-MM-DD
+}
+
 export async function discoverAndVerifyTransaction(
   txRef: string,
   flutterwaveKey: string,
   opts?: { fromDate?: string; toDate?: string }
 ): Promise<VerifyResult> {
   try {
-    // Step 1: Discover candidate transactions with bounded from/to
-    const from = opts?.fromDate || new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString(); // default: 48h ago
-    const to = opts?.toDate || new Date(Date.now() + 60 * 60 * 1000).toISOString(); // default: 1h in future
-    const listUrl = `${FLW_BASE}/v3/transactions?tx_ref=${encodeURIComponent(txRef)}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`;
+    // Step 1: Discover candidate transactions with bounded YYYY-MM-DD from/to
+    // Flutterwave documents from/to as YYYY-MM-DD format
+    const from = opts?.fromDate || toFlwDate(new Date(Date.now() - 48 * 60 * 60 * 1000));
+    const to = opts?.toDate || toFlwDate(new Date(Date.now() + 24 * 60 * 60 * 1000));
 
-    const listResponse = await fetch(listUrl, {
-      headers: { 'Authorization': `Bearer ${flutterwaveKey}` },
-      signal: AbortSignal.timeout(10000),
-    });
+    // Flutterwave defaults status to 'successful'. To discover both successful and failed
+    // terminal outcomes, query each status separately and combine.
+    const allMatches: { id: number; tx_ref: string }[] = [];
+    for (const status of ['successful', 'failed']) {
+      const listUrl = `${FLW_BASE}/v3/transactions?tx_ref=${encodeURIComponent(txRef)}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&status=${status}`;
+      const listResponse = await fetch(listUrl, {
+        headers: { 'Authorization': `Bearer ${flutterwaveKey}` },
+        signal: AbortSignal.timeout(10000),
+      });
 
-    if (!listResponse.ok) {
-      logger.error('[FLW-VERIFY] Transaction list request failed', { status: listResponse.status, txRef });
-      return { ok: false, reason: 'unavailable' };
-    }
+      if (!listResponse.ok) {
+        logger.error('[FLW-VERIFY] Transaction list request failed', { status: listResponse.status, txRef, queryStatus: status });
+        return { ok: false, reason: 'unavailable' };
+      }
 
-    const listData = await listResponse.json() as { status?: string; data?: { id: number; tx_ref: string }[] };
-    if (listData.status !== 'success' || !listData.data) {
-      return { ok: false, reason: 'unavailable' };
+      const listData = await listResponse.json() as { status?: string; data?: { id: number; tx_ref: string }[] };
+      if (listData.status !== 'success') {
+        return { ok: false, reason: 'unavailable' };
+      }
+      if (listData.data) {
+        for (const tx of listData.data) {
+          if (tx.tx_ref === txRef && !allMatches.some(m => m.id === tx.id)) {
+            allMatches.push(tx);
+          }
+        }
+      }
     }
 
     // Require unambiguous correlation — exactly one match with correct tx_ref
-    const matches = listData.data.filter(tx => tx.tx_ref === txRef);
-    if (matches.length === 0) {
+    if (allMatches.length === 0) {
       return { ok: false, reason: 'not_found' };
     }
-    if (matches.length > 1) {
-      logger.error('[FLW-VERIFY] Ambiguous: multiple transactions for tx_ref', { txRef, count: matches.length });
+    if (allMatches.length > 1) {
+      logger.error('[FLW-VERIFY] Ambiguous: multiple transactions for tx_ref', { txRef, count: allMatches.length });
       return { ok: false, reason: 'ambiguous' };
     }
 
-    const candidateId = matches[0].id;
+    const candidateId = allMatches[0].id;
 
     // Step 2: Verify by exact transaction ID
     const verifyUrl = `${FLW_BASE}/v3/transactions/${candidateId}/verify`;
