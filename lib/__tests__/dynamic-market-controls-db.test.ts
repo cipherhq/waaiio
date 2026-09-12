@@ -316,11 +316,12 @@ describe.skipIf(!canRun)('M377 Dynamic Market Controls — PostgreSQL proofs', (
   // ── Paystack activation readiness ──
 
   it('15. Paystack market rejected without plan codes', () => {
-    psql("UPDATE countries SET payment_gateway = 'paystack', pricing = jsonb_set(jsonb_set(pricing, '{growth}', (pricing->'growth') - 'paystack_plan_code'), '{business}', (pricing->'business') - 'paystack_plan_code') WHERE code = 'ZZ';");
+    // M378 guard requires orchestration marker for gateway changes
+    psql("SELECT set_config('waaiio.gateway_switch_auth', 'true', true); SELECT set_config('waaiio.provider_ref_auth', 'true', true); UPDATE countries SET payment_gateway = 'paystack', pricing = jsonb_set(jsonb_set(pricing, '{growth}', (pricing->'growth') - 'paystack_plan_code'), '{business}', (pricing->'business') - 'paystack_plan_code') WHERE code = 'ZZ';");
     const r = psqlMayFail("UPDATE countries SET is_active = true WHERE code = 'ZZ';");
-    expect(r).toContain('paystack_plan_code');
+    expect(r).toContain('plan ref missing');
     // Restore ZZ to stripe for later tests
-    psql("UPDATE countries SET payment_gateway = 'stripe' WHERE code = 'ZZ';");
+    psql("SELECT set_config('waaiio.gateway_switch_auth', 'true', true); SELECT set_config('waaiio.provider_ref_auth', 'true', true); UPDATE countries SET payment_gateway = 'stripe' WHERE code = 'ZZ';");
   });
 
   // ── NG readiness (positive proof) ──
@@ -443,18 +444,16 @@ describe.skipIf(!canRun)('M377 Dynamic Market Controls — PostgreSQL proofs', (
     expect(afterPlanCode).toBe(origPlanCode);
   });
 
-  it('23b. DB-owner direct UPDATE rejected by guard_paystack_plan_code_authority trigger', () => {
-    // Capture existing Growth plan code before attempt
+  it('23b. DB-owner direct UPDATE rejected by provider ref authority guard', () => {
     const origPlanCode = psql("SELECT pricing->'growth'->>'paystack_plan_code' FROM countries WHERE code = 'NG';");
-    expect(origPlanCode.length).toBeGreaterThanOrEqual(3); // precondition: plan code exists
+    expect(origPlanCode.length).toBeGreaterThanOrEqual(3);
 
-    // Direct UPDATE as DB owner — no SET ROLE, no waaiio.plan_code_auth marker
-    // DB owner = function owner in CI, so the trigger's first check (owner match) passes,
-    // but the second check (transaction-local orchestration marker) must reject
+    // Direct UPDATE as DB owner — no orchestration markers set
+    // M378 guard_provider_ref_authority rejects without provider_ref_auth or plan_code_auth marker
     const r = psqlMayFail("UPDATE countries SET pricing = jsonb_set(pricing, '{growth,paystack_plan_code}', '\"PLN_direct_dbowner\"') WHERE code = 'NG';");
-    expect(r).toContain('orchestration authorization');
+    const rejected = r.includes('save_provider_plan_refs') || r.includes('save_market_messaging_config') || r.includes('orchestration authorization');
+    expect(rejected).toBe(true);
 
-    // Stored value must be exactly unchanged
     const afterPlanCode = psql("SELECT pricing->'growth'->>'paystack_plan_code' FROM countries WHERE code = 'NG';");
     expect(afterPlanCode).toBe(origPlanCode);
   });
