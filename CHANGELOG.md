@@ -3,6 +3,27 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-09-12 — #315 Phase 3A: Provider Config Blockers
+
+### What changed
+- **Provider config API** (`app/api/admin/provider-config/route.ts`, NEW): Admin-only POST route with three actions: `get_version` (returns UUID CAS from `get_effective_config` RPC), `save_refs` (calls `save_provider_plan_refs` with exact M378 params: `p_country_code`, `p_plan_refs`, `p_expected_version_id`, `p_actor_id`), `switch_provider` (calls `switch_country_provider` with `p_new_gateway`). Flutterwave switching preflights BOTH Growth and Business plan refs against Flutterwave API before calling the RPC.
+- **Admin Countries page** (`admin/src/pages/Countries.tsx`): Added `ProviderConfigPanel` component with: country selector, active gateway badge, Flutterwave + Paystack plan ref inputs per tier, Stripe inline-price label, gateway switch buttons (Paystack disabled), UUID CAS load/update, conflict detection.
+- **Generic save narrowed** (Blocker 4): `handleSave` in edit mode now excludes `payment_gateway` and `currency_code` from the update payload. Pricing preserves `provider_plan_refs`, `paystack_plan_code`, and Growth/Business prices from existing DB data. Only non-provider fields (fees, trial days, Free price) come from the form.
+- **Tests** (`lib/payments/__tests__/admin-provider-config.test.ts`, NEW): Contract tests verify exact RPC parameter names, UUID CAS (not numeric), nested `p_plan_refs` structure, Flutterwave preflight rejection for missing refs and failed API calls.
+
+### Files changed
+- `app/api/admin/provider-config/route.ts` (NEW)
+- `admin/src/pages/Countries.tsx`
+- `lib/payments/__tests__/admin-provider-config.test.ts` (NEW)
+- `CHANGELOG.md`
+
+### What could break
+- If M378 migration is not yet deployed, the RPCs `save_provider_plan_refs` and `switch_country_provider` will not exist and calls will fail with 500. The `get_effective_config` RPC from M359 is required.
+- The generic country edit no longer updates `payment_gateway` or `currency_code` — these must be changed via the Provider Config panel.
+- Growth/Business tier prices are now read-only in the generic edit modal.
+
+---
+
 ## 2026-09-10 — #270 W-1: Website / Commercial Presentation
 
 ### What changed

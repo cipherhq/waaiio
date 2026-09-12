@@ -8,6 +8,7 @@ import { SummaryCard } from '@/components/SummaryCard';
 import { Pagination } from '@/components/Pagination';
 import {
   Globe, Plus, Pencil, Trash2, Save, X, CreditCard, CheckCircle, XCircle,
+  Settings, RefreshCw, AlertTriangle,
 } from 'lucide-react';
 
 const GATEWAYS = ['paystack', 'stripe', 'flutterwave'] as const;
@@ -139,32 +140,76 @@ export default function Countries() {
       const { data: session } = await supabase.auth.getSession();
       const userId = session?.session?.user?.id;
 
-      const payload = {
-        code: form.code.toUpperCase().trim(),
-        name: form.name.trim(),
-        flag: form.flag.trim(),
-        dialing_code: form.dialing_code.trim(),
-        currency_code: form.currency_code.toUpperCase().trim(),
-        currency_symbol: form.currency_symbol.trim(),
-        currency_locale: form.currency_locale.trim(),
-        payment_gateway: form.payment_gateway,
-        phone_digits: form.phone_digits,
-        phone_pattern: form.phone_pattern.trim(),
-        phone_placeholder: form.phone_placeholder.trim(),
-        is_active: form.is_active,
-        sort_order: form.sort_order,
-        cities: form.cities,
-        pricing: form.pricing,
-        verification_tiers: form.verification_tiers,
-        doc_types: form.doc_types,
-        updated_by: userId || null,
-      };
-
       if (editMode) {
-        const { error } = await adminDb.from('countries').update(payload).eq('code', form.code);
+        // Blocker 4: Narrow partial update — exclude provider-owned fields from generic edits.
+        // Structurally exclude: payment_gateway, currency_code, provider_plan_refs,
+        // paystack_plan_code, and Growth/Business prices. Only non-provider pricing
+        // fields (feeFlat, feePercentage, trialDays) come from the form.
+        const existingCountry = countries.find(c => c.code === form.code);
+        const existingPricing = (existingCountry?.pricing || {}) as Record<string, Record<string, unknown>>;
+
+        // Build safe pricing: preserve provider-owned keys from DB, take fees/trial from form
+        const safePricing: Record<string, Record<string, unknown>> = {};
+        for (const tier of PRICING_TIERS) {
+          const existing = existingPricing[tier] || {};
+          const formTier = form.pricing[tier] || { price: 0, feeFlat: 0 };
+          safePricing[tier] = {
+            ...existing, // preserves provider_plan_refs, paystack_plan_code, price
+            // Overwrite only non-provider fields from form
+            feeFlat: formTier.feeFlat,
+            feePercentage: (formTier as Record<string, unknown>).feePercentage ?? existing.feePercentage ?? 2.5,
+            trialDays: (formTier as Record<string, unknown>).trialDays ?? existing.trialDays ?? 14,
+          };
+          // Preserve Growth/Business price from DB (provider-owned), Free price from form
+          if (tier === 'free') {
+            safePricing[tier].price = formTier.price;
+          }
+          // growth/business prices kept from existing (spread above)
+        }
+
+        const editPayload = {
+          name: form.name.trim(),
+          flag: form.flag.trim(),
+          dialing_code: form.dialing_code.trim(),
+          // Exclude: currency_code, payment_gateway (provider-owned)
+          currency_symbol: form.currency_symbol.trim(),
+          currency_locale: form.currency_locale.trim(),
+          phone_digits: form.phone_digits,
+          phone_pattern: form.phone_pattern.trim(),
+          phone_placeholder: form.phone_placeholder.trim(),
+          is_active: form.is_active,
+          sort_order: form.sort_order,
+          cities: form.cities,
+          pricing: safePricing,
+          verification_tiers: form.verification_tiers,
+          doc_types: form.doc_types,
+          updated_by: userId || null,
+        };
+
+        const { error } = await adminDb.from('countries').update(editPayload).eq('code', form.code);
         if (error) throw error;
         await logAudit({ action: 'country.update', entity_type: 'country', entity_id: form.code, details: { name: form.name } });
       } else {
+        const payload = {
+          code: form.code.toUpperCase().trim(),
+          name: form.name.trim(),
+          flag: form.flag.trim(),
+          dialing_code: form.dialing_code.trim(),
+          currency_code: form.currency_code.toUpperCase().trim(),
+          currency_symbol: form.currency_symbol.trim(),
+          currency_locale: form.currency_locale.trim(),
+          payment_gateway: form.payment_gateway,
+          phone_digits: form.phone_digits,
+          phone_pattern: form.phone_pattern.trim(),
+          phone_placeholder: form.phone_placeholder.trim(),
+          is_active: form.is_active,
+          sort_order: form.sort_order,
+          cities: form.cities,
+          pricing: form.pricing,
+          verification_tiers: form.verification_tiers,
+          doc_types: form.doc_types,
+          updated_by: userId || null,
+        };
         const { error } = await adminDb.from('countries').insert(payload);
         if (error) throw error;
         await logAudit({ action: 'country.create', entity_type: 'country', entity_id: form.code, details: { name: form.name } });
@@ -395,10 +440,13 @@ export default function Countries() {
               {/* Section 2: Currency */}
               <section>
                 <h4 className="text-sm font-semibold text-gray-700 mb-3">Currency</h4>
+                {editMode && (
+                  <p className="text-xs text-amber-600 mb-2">Currency code is managed via Provider Configuration and cannot be changed here.</p>
+                )}
                 <div className="grid grid-cols-3 gap-4">
                   <div>
                     <label className={labelClass}>Code</label>
-                    <input className={inputClass} value={form.currency_code} onChange={e => setForm(f => ({ ...f, currency_code: e.target.value }))} placeholder="NGN" />
+                    <input className={inputClass} value={form.currency_code} onChange={e => setForm(f => ({ ...f, currency_code: e.target.value }))} placeholder="NGN" disabled={editMode} />
                   </div>
                   <div>
                     <label className={labelClass}>Symbol</label>
@@ -414,13 +462,20 @@ export default function Countries() {
               {/* Section 3: Payment Gateway */}
               <section>
                 <h4 className="text-sm font-semibold text-gray-700 mb-3">Payment Gateway</h4>
-                <select
-                  className={inputClass}
-                  value={form.payment_gateway}
-                  onChange={e => setForm(f => ({ ...f, payment_gateway: e.target.value }))}
-                >
-                  {GATEWAYS.map(gw => <option key={gw} value={gw}>{gw}</option>)}
-                </select>
+                {editMode ? (
+                  <div>
+                    <p className="text-xs text-amber-600 mb-2">Gateway switching is managed via Provider Configuration panel below.</p>
+                    <input className={inputClass} value={form.payment_gateway} disabled />
+                  </div>
+                ) : (
+                  <select
+                    className={inputClass}
+                    value={form.payment_gateway}
+                    onChange={e => setForm(f => ({ ...f, payment_gateway: e.target.value }))}
+                  >
+                    {GATEWAYS.map(gw => <option key={gw} value={gw}>{gw}</option>)}
+                  </select>
+                )}
               </section>
 
               {/* Section 4: Phone Format */}
@@ -510,9 +565,13 @@ export default function Countries() {
               {/* Section 7: Pricing Tiers */}
               <section>
                 <h4 className="text-sm font-semibold text-gray-700 mb-3">Pricing Tiers</h4>
+                {editMode && (
+                  <p className="text-xs text-amber-600 mb-2">Growth/Business prices are provider-owned and preserved from existing data.</p>
+                )}
                 <div className="space-y-3">
                   {PRICING_TIERS.map(tier => {
                     const p = form.pricing[tier] || { price: 0, feeFlat: 0, feePercentage: 2.5, trialDays: 14 };
+                    const priceReadOnly = editMode && (tier === 'growth' || tier === 'business');
                     return (
                       <div key={tier} className="grid grid-cols-5 gap-3 items-end">
                         <div>
@@ -521,7 +580,8 @@ export default function Countries() {
                         </div>
                         <div>
                           <label className={labelClass}>Monthly Price</label>
-                          <input type="number" step="0.01" className={inputClass} value={p.price}
+                          <input type="number" step="0.01" className={`${inputClass} ${priceReadOnly ? 'bg-gray-100 text-gray-500' : ''}`} value={p.price}
+                            disabled={priceReadOnly}
                             onChange={e => setForm(f => ({
                               ...f,
                               pricing: { ...f.pricing, [tier]: { ...p, price: Number(e.target.value) } },
@@ -579,6 +639,299 @@ export default function Countries() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Provider Configuration Panel */}
+      <ProviderConfigPanel countries={countries} canMutate={canMutate} onSaved={load} />
+    </div>
+  );
+}
+
+/** API base URL — admin panel talks to the main Next.js app */
+const API_BASE = import.meta.env.VITE_APP_URL || 'https://www.waaiio.com';
+
+function ProviderConfigPanel({ countries, canMutate, onSaved }: { countries: CountryRow[]; canMutate: boolean; onSaved: () => Promise<void> }) {
+  const [selectedCode, setSelectedCode] = useState('');
+  const [versionId, setVersionId] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+  const [loadingVersion, setLoadingVersion] = useState(false);
+
+  // Per-gateway per-tier ref inputs
+  const [flwGrowthRef, setFlwGrowthRef] = useState('');
+  const [flwBusinessRef, setFlwBusinessRef] = useState('');
+  const [pskGrowthRef, setPskGrowthRef] = useState('');
+  const [pskBusinessRef, setPskBusinessRef] = useState('');
+
+  const selectedCountry = countries.find(c => c.code === selectedCode);
+  const activeGateway = selectedCountry?.payment_gateway || '';
+
+  // Load CAS version on mount
+  useEffect(() => {
+    loadVersion();
+  }, []);
+
+  // Populate refs when country changes
+  useEffect(() => {
+    if (!selectedCountry) return;
+    const pricing = selectedCountry.pricing as Record<string, Record<string, unknown>> || {};
+    const growthRefs = (pricing.growth?.provider_plan_refs || {}) as Record<string, string>;
+    const businessRefs = (pricing.business?.provider_plan_refs || {}) as Record<string, string>;
+    setFlwGrowthRef(growthRefs.flutterwave || '');
+    setFlwBusinessRef(businessRefs.flutterwave || '');
+    setPskGrowthRef(growthRefs.paystack || '');
+    setPskBusinessRef(businessRefs.paystack || '');
+  }, [selectedCode, countries]);
+
+  async function loadVersion() {
+    setLoadingVersion(true);
+    try {
+      const { data: session } = await supabase.auth.getSession();
+      const token = session?.session?.access_token;
+      const res = await fetch(`${API_BASE}/api/admin/provider-config`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ action: 'get_version' }),
+      });
+      const data = await res.json();
+      if (data.version_id) setVersionId(data.version_id);
+    } catch {
+      setError('Failed to load config version');
+    } finally {
+      setLoadingVersion(false);
+    }
+  }
+
+  async function apiCall(body: Record<string, unknown>) {
+    const { data: session } = await supabase.auth.getSession();
+    const token = session?.session?.access_token;
+    const res = await fetch(`${API_BASE}/api/admin/provider-config`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify(body),
+    });
+    return res;
+  }
+
+  async function handleSaveRefs() {
+    if (!canMutate || !selectedCode || !versionId) return;
+    setSaving(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      // Build nested plan_refs: { growth: { provider: ref }, business: { provider: ref } }
+      const planRefs: Record<string, Record<string, string>> = { growth: {}, business: {} };
+      if (flwGrowthRef.trim()) planRefs.growth.flutterwave = flwGrowthRef.trim();
+      if (flwBusinessRef.trim()) planRefs.business.flutterwave = flwBusinessRef.trim();
+      if (pskGrowthRef.trim()) planRefs.growth.paystack = pskGrowthRef.trim();
+      if (pskBusinessRef.trim()) planRefs.business.paystack = pskBusinessRef.trim();
+
+      const res = await apiCall({
+        action: 'save_refs',
+        country_code: selectedCode,
+        plan_refs: planRefs,
+        expected_version_id: versionId,
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        if (data.error === 'config_version_conflict') {
+          setError('Configuration was modified by another admin. Please reload the page.');
+        } else {
+          setError(data.error || data.message || 'Save failed');
+        }
+        return;
+      }
+
+      if (data.version_id) setVersionId(data.version_id);
+      setSuccess('Plan refs saved successfully');
+      await onSaved();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Save failed');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleSwitchGateway(newGateway: string) {
+    if (!canMutate || !selectedCode || !versionId) return;
+    if (!confirm(`Switch ${selectedCode} gateway to ${newGateway}? This affects all future payments.`)) return;
+    setSaving(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      const res = await apiCall({
+        action: 'switch_provider',
+        country_code: selectedCode,
+        new_gateway: newGateway,
+        expected_version_id: versionId,
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        if (data.error === 'config_version_conflict') {
+          setError('Configuration was modified by another admin. Please reload the page.');
+        } else {
+          setError(data.error || data.message || 'Switch failed');
+        }
+        return;
+      }
+
+      if (data.version_id) setVersionId(data.version_id);
+      setSuccess(`Switched ${selectedCode} to ${newGateway}`);
+      await onSaved();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Switch failed');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const inputClass = 'w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-brand focus:ring-1 focus:ring-brand';
+  const labelClass = 'block text-xs font-medium text-gray-600 mb-1';
+
+  return (
+    <div className="mt-8 rounded-xl border border-gray-200 bg-white p-6">
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-2">
+          <Settings className="w-5 h-5 text-brand" />
+          <h3 className="text-lg font-semibold text-gray-900">Provider Configuration</h3>
+        </div>
+        <button
+          onClick={loadVersion}
+          disabled={loadingVersion}
+          className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-brand transition"
+        >
+          <RefreshCw className={`w-3.5 h-3.5 ${loadingVersion ? 'animate-spin' : ''}`} />
+          Reload CAS
+        </button>
+      </div>
+
+      {versionId && (
+        <p className="text-xs text-gray-400 mb-4 font-mono">CAS version: {versionId.slice(0, 8)}...</p>
+      )}
+
+      {error && (
+        <div className="flex items-center gap-2 mb-4 rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
+          <AlertTriangle className="w-4 h-4 shrink-0" />
+          {error}
+        </div>
+      )}
+      {success && (
+        <div className="mb-4 rounded-lg bg-green-50 border border-green-200 px-4 py-3 text-sm text-green-700">
+          {success}
+        </div>
+      )}
+
+      {/* Country selector */}
+      <div className="mb-6">
+        <label className={labelClass}>Country</label>
+        <select
+          className={inputClass}
+          value={selectedCode}
+          onChange={e => { setSelectedCode(e.target.value); setError(null); setSuccess(null); }}
+        >
+          <option value="">Select a country...</option>
+          {countries.map(c => (
+            <option key={c.code} value={c.code}>{c.flag} {c.code} — {c.name}</option>
+          ))}
+        </select>
+      </div>
+
+      {selectedCountry && (
+        <>
+          {/* Active gateway badge */}
+          <div className="mb-6">
+            <span className="text-xs font-medium text-gray-500">Active Gateway: </span>
+            <span className={`inline-block rounded-full px-2.5 py-0.5 text-xs font-medium ${
+              activeGateway === 'stripe' ? 'bg-purple-100 text-purple-700'
+                : activeGateway === 'paystack' ? 'bg-yellow-100 text-yellow-700'
+                  : activeGateway === 'flutterwave' ? 'bg-orange-100 text-orange-700'
+                    : 'bg-gray-100 text-gray-600'
+            }`}>
+              {activeGateway}
+            </span>
+          </div>
+
+          {/* Plan ref inputs */}
+          <div className="space-y-4 mb-6">
+            <h4 className="text-sm font-semibold text-gray-700">Flutterwave Plan Refs</h4>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className={labelClass}>Growth Plan ID</label>
+                <input className={inputClass} value={flwGrowthRef} onChange={e => setFlwGrowthRef(e.target.value)} placeholder="e.g. 243206" />
+              </div>
+              <div>
+                <label className={labelClass}>Business Plan ID</label>
+                <input className={inputClass} value={flwBusinessRef} onChange={e => setFlwBusinessRef(e.target.value)} placeholder="e.g. 243207" />
+              </div>
+            </div>
+
+            <h4 className="text-sm font-semibold text-gray-700">Paystack Plan Refs</h4>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className={labelClass}>Growth Plan Code</label>
+                <input className={inputClass} value={pskGrowthRef} onChange={e => setPskGrowthRef(e.target.value)} placeholder="e.g. PLN_abc123" />
+              </div>
+              <div>
+                <label className={labelClass}>Business Plan Code</label>
+                <input className={inputClass} value={pskBusinessRef} onChange={e => setPskBusinessRef(e.target.value)} placeholder="e.g. PLN_def456" />
+              </div>
+            </div>
+
+            <div>
+              <h4 className="text-sm font-semibold text-gray-700">Stripe</h4>
+              <p className="text-xs text-gray-500 mt-1">Inline price_data (no plan ref needed)</p>
+            </div>
+          </div>
+
+          {/* Save refs button */}
+          <div className="flex items-center gap-3 mb-6">
+            <button
+              onClick={handleSaveRefs}
+              disabled={saving || !canMutate || !versionId}
+              className="flex items-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-600 transition disabled:opacity-50"
+            >
+              <Save className="w-4 h-4" />
+              {saving ? 'Saving...' : 'Save Plan Refs'}
+            </button>
+          </div>
+
+          {/* Switch gateway buttons */}
+          <div className="border-t border-gray-200 pt-4">
+            <h4 className="text-sm font-semibold text-gray-700 mb-3">Switch Gateway</h4>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => handleSwitchGateway('stripe')}
+                disabled={saving || !canMutate || !versionId || activeGateway === 'stripe'}
+                className="rounded-xl border border-purple-300 bg-purple-50 px-4 py-2 text-sm font-medium text-purple-700 hover:bg-purple-100 transition disabled:opacity-50"
+              >
+                Stripe
+              </button>
+              <button
+                onClick={() => handleSwitchGateway('flutterwave')}
+                disabled={saving || !canMutate || !versionId || activeGateway === 'flutterwave'}
+                className="rounded-xl border border-orange-300 bg-orange-50 px-4 py-2 text-sm font-medium text-orange-700 hover:bg-orange-100 transition disabled:opacity-50"
+              >
+                Flutterwave
+              </button>
+              <button
+                disabled
+                className="rounded-xl border border-yellow-300 bg-yellow-50 px-4 py-2 text-sm font-medium text-yellow-700 opacity-50 cursor-not-allowed"
+                title="Paystack switching not yet supported"
+              >
+                Paystack (disabled)
+              </button>
+            </div>
+          </div>
+        </>
       )}
     </div>
   );
