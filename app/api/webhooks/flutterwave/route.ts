@@ -27,7 +27,7 @@ function verifyFlutterwaveSignature(
 ): boolean {
   // Current method: HMAC-SHA256 flutterwave-signature
   if (headers.flutterwaveSignature) {
-    const computed = createHmac('sha256', secretHash).update(rawBody).digest('hex');
+    const computed = createHmac('sha256', secretHash).update(rawBody).digest('base64');
     try {
       return timingSafeEqual(Buffer.from(computed), Buffer.from(headers.flutterwaveSignature));
     } catch {
@@ -86,7 +86,8 @@ export async function POST(request: NextRequest) {
           .eq('flutterwave_subscriber_email', cancelEmail);
 
         if (matchingSubs?.length === 1) {
-          const cancelEventId = `flw-cancel-${cancelPlanId}-${Date.now()}`;
+          // Provider-stable event identity: plan_id + subscriber_email (immutable per subscription)
+          const cancelEventId = `flw-cancel-${cancelPlanId}-${cancelEmail}`;
           const { error: cancelErr } = await supabase.rpc('finalize_subscription_cancellation', {
             p_subscription_id: matchingSubs[0].id,
             p_provider_event_id: cancelEventId,
@@ -99,8 +100,17 @@ export async function POST(request: NextRequest) {
           wh.processed({ durationMs: Math.round(performance.now() - startTime) });
           return NextResponse.json({ message: 'Subscription cancelled' }, { status: 200 });
         }
-        // 0 or >1 matches — fail closed, alert
-        wh.ignored(`Ambiguous subscription.cancelled: plan_id=${cancelPlanId} matches=${matchingSubs?.length || 0}`);
+        // 0 or >1 matches — fail closed with durable reconciliation evidence
+        if (matchingSubs && matchingSubs.length > 1) {
+          await supabase.from('subscription_payment_quarantine').insert({
+            provider_tx_ref: `cancel-${cancelPlanId}`,
+            provider_status: 'ambiguous_cancellation',
+            reason: `subscription.cancelled matched ${matchingSubs.length} subscriptions for plan_id=${cancelPlanId} email=${cancelEmail}`,
+          });
+          logger.error('[FLW-WEBHOOK] Ambiguous cancellation quarantined', { planId: cancelPlanId, email: cancelEmail, matchCount: matchingSubs.length });
+        }
+        // Return 500 so Flutterwave retries (ambiguous = not safely resolvable)
+        return NextResponse.json({ error: 'Cancellation correlation ambiguous' }, { status: 500 });
       }
       return NextResponse.json({ message: 'Processed' }, { status: 200 });
     }
@@ -193,7 +203,7 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ error: 'Currency mismatch' }, { status: 500 });
           }
 
-          // Resolve subscription — fail closed if unavailable
+          // Resolve subscription — require exactly one unambiguous match (Blocker C)
           let providerSubId = '';
           let providerPlanId = 0;
           try {
@@ -202,16 +212,16 @@ export async function POST(request: NextRequest) {
               { headers: { 'Authorization': `Bearer ${flwKey}` }, signal: AbortSignal.timeout(10000) },
             );
             const subData = await subLookup.json() as { data?: { id: number; plan: number }[] };
-            if (subData.data?.length) {
+            if (subData.data?.length === 1 && subData.data[0].id && subData.data[0].plan) {
               providerSubId = String(subData.data[0].id);
               providerPlanId = subData.data[0].plan;
             }
           } catch { /* handled below */ }
 
-          if (!providerSubId) {
-            // Subscription correlation unavailable — fail closed, Flutterwave retries
-            wh.failed(new Error('Subscription lookup unavailable'));
-            return NextResponse.json({ error: 'Subscription lookup unavailable' }, { status: 500 });
+          // Fail closed on unavailable/ambiguous/invalid subscription identity
+          if (!providerSubId || providerPlanId === 0) {
+            wh.failed(new Error('Subscription correlation unavailable/ambiguous'));
+            return NextResponse.json({ error: 'Subscription correlation unavailable' }, { status: 500 });
           }
 
           // Call authoritative finalizer
@@ -244,33 +254,43 @@ export async function POST(request: NextRequest) {
           return NextResponse.json({ message: 'Subscription activated' }, { status: 200 });
         }
 
-        // Intent is failed/superseded — late webhook for terminal intent
+        // Intent is failed/superseded — late webhook for terminal intent (Blocker E)
         if (intent.status === 'failed' || intent.status === 'superseded') {
-          // Provider-verify the late success before quarantining
           const webhookTxId = data.id as number;
-          if (webhookTxId && data.status === 'successful') {
-            const lateVerify = await verifyTransactionById(webhookTxId, txRef, flwKey);
-            if (lateVerify.ok && lateVerify.tx.status === 'successful') {
-              const { error: qErr } = await supabase.from('subscription_payment_quarantine').insert({
-                intent_id: intent.id,
-                provider_tx_ref: txRef,
-                provider_tx_id: String(lateVerify.tx.id),
-                provider_amount: Math.round(lateVerify.tx.amount * 100),
-                provider_currency: lateVerify.tx.currency,
-                provider_status: 'verified_late_success',
-                reason: 'late_webhook_for_terminal_intent',
-              });
-              if (qErr) {
-                logger.error('[FLW-WEBHOOK] Quarantine write failed for late success', { intentId: intent.id, error: qErr });
-                return NextResponse.json({ error: 'Quarantine failed' }, { status: 500 });
-              }
-              logger.error('[FLW-WEBHOOK] CRITICAL: Verified late success quarantined for reconciliation', {
-                intentId: intent.id, txId: lateVerify.tx.id, amount: lateVerify.tx.amount,
-              });
-            }
+          if (!webhookTxId || data.status !== 'successful') {
+            // Non-successful or missing ID — nothing to quarantine, acknowledge
+            wh.ignored(`Late non-successful webhook for ${intent.status} intent`);
+            return NextResponse.json({ message: 'Ignored' }, { status: 200 });
           }
-          wh.ignored(`Late webhook for ${intent.status} intent`);
-          return NextResponse.json({ message: 'Intent terminal, quarantined' }, { status: 200 });
+
+          // Provider-verify the late success before quarantining
+          const lateVerify = await verifyTransactionById(webhookTxId, txRef, flwKey);
+          if (!lateVerify.ok || lateVerify.tx.status !== 'successful') {
+            // Verification failed — fail closed, Flutterwave retries
+            wh.failed(new Error(`Late-success verification failed: ${!lateVerify.ok ? lateVerify.reason : lateVerify.tx.status}`));
+            return NextResponse.json({ error: 'Late-success verification failed' }, { status: 500 });
+          }
+
+          // Durable quarantine write — only claim quarantined if write succeeds
+          const { error: qErr } = await supabase.from('subscription_payment_quarantine').insert({
+            intent_id: intent.id,
+            provider_tx_ref: txRef,
+            provider_tx_id: String(lateVerify.tx.id),
+            provider_amount: Math.round(lateVerify.tx.amount * 100),
+            provider_currency: lateVerify.tx.currency,
+            provider_status: 'verified_late_success',
+            reason: 'late_webhook_for_terminal_intent',
+          });
+          if (qErr) {
+            logger.error('[FLW-WEBHOOK] Quarantine write failed for late success', { intentId: intent.id, error: qErr });
+            return NextResponse.json({ error: 'Quarantine write failed' }, { status: 500 });
+          }
+
+          logger.error('[FLW-WEBHOOK] CRITICAL: Verified late success quarantined for reconciliation', {
+            intentId: intent.id, txId: lateVerify.tx.id, amount: lateVerify.tx.amount,
+          });
+          wh.processed({ durationMs: Math.round(performance.now() - startTime) });
+          return NextResponse.json({ message: 'Late success quarantined' }, { status: 200 });
         }
       }
       // No intent match — fall through to renewal/business-payment check
@@ -318,14 +338,17 @@ export async function POST(request: NextRequest) {
                 return NextResponse.json({ error: renewErr.message }, { status: 500 });
               }
 
-              // Inspect structured result
+              // Inspect structured result — require finalized === true positively (Blocker D)
               const rResult = renewResult as Record<string, unknown> | null;
-              if (rResult && rResult.finalized !== true) {
-                if (rResult.quarantine) {
+              if (!rResult || rResult.finalized !== true) {
+                if (rResult?.quarantine) {
                   logger.error('[FLW-WEBHOOK] Renewal quarantined', { subId: localSub.id, result: rResult });
+                  // Quarantine persisted but no entitlement granted — acknowledge safely
+                  return NextResponse.json({ message: 'Renewal quarantined for reconciliation' }, { status: 200 });
                 }
-                // Quarantine persisted but no entitlement granted — acknowledge safely
-                return NextResponse.json({ message: 'Renewal quarantined for reconciliation' }, { status: 200 });
+                // NULL/malformed/non-finalized — not success
+                wh.failed(new Error(`Renewal not finalized: ${JSON.stringify(rResult)}`));
+                return NextResponse.json({ error: 'Renewal finalization failed' }, { status: 500 });
               }
 
               wh.processed({ durationMs: Math.round(performance.now() - startTime) });

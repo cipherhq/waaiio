@@ -253,22 +253,23 @@ export async function POST(request: NextRequest) {
               { headers: { 'Authorization': `Bearer ${flutterwaveKey}` }, signal: AbortSignal.timeout(10000) },
             );
             const subData = await subLookup.json() as { data?: { id: number; plan: number }[] };
-            if (subData.data?.length) {
+            // Require exactly one unambiguous match (Blocker C)
+            if (subData.data?.length === 1 && subData.data[0].id && subData.data[0].plan) {
               providerSubId = String(subData.data[0].id);
               providerPlanId = subData.data[0].plan;
             }
-          } catch { /* non-fatal */ }
+          } catch { /* handled below */ }
 
-          if (!providerSubId) {
-            // Cannot resolve subscription — fail closed for now
+          // Fail closed if subscription correlation unavailable/ambiguous/invalid (Blocker B+C)
+          if (!providerSubId || providerPlanId === 0) {
             return NextResponse.json(
               { message: 'Payment completed but subscription setup pending. Please check your status.' },
-              { status: 202 },
+              { status: 503 },
             );
           }
 
           const verifiedAmountMinor = Math.round(verifiedTx.amount * 100);
-          await service.rpc('finalize_flutterwave_subscription_checkout', {
+          const { data: finResult, error: finErr } = await service.rpc('finalize_flutterwave_subscription_checkout', {
             p_intent_id: claimRow.intent_id,
             p_provider_tx_id: String(verifiedTx.id),
             p_provider_subscription_id: providerSubId,
@@ -277,6 +278,15 @@ export async function POST(request: NextRequest) {
             p_verified_currency: verifiedTx.currency,
             p_provider_paid_at: verifiedTx.created_at,
           });
+
+          // Inspect RPC error AND structured result (Blocker B)
+          if (finErr) {
+            return NextResponse.json({ message: 'Activation failed. Please retry.' }, { status: 500 });
+          }
+          const finResultObj = finResult as Record<string, unknown> | null;
+          if (!finResultObj || finResultObj.finalized !== true) {
+            return NextResponse.json({ message: 'Activation pending. Please check your status.' }, { status: 500 });
+          }
 
           return NextResponse.json({
             message: 'Subscription activated.',
