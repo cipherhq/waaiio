@@ -5,6 +5,11 @@ export interface CountryTierPricing {
   feeFlat: number;
   feePercentage?: number;
   paystack_plan_code?: string;
+  provider_plan_refs?: {
+    paystack?: string;
+    flutterwave?: string;
+    stripe?: string;
+  };
 }
 
 export interface CountryRow {

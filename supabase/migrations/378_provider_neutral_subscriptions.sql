@@ -114,7 +114,8 @@ WHERE pricing -> 'growth' ->> 'paystack_plan_code' IS NOT NULL
 CREATE OR REPLACE FUNCTION public.save_provider_plan_refs(
   p_country_code TEXT,
   p_plan_refs JSONB,
-  p_expected_version_id UUID
+  p_expected_version_id UUID,
+  p_actor_id UUID DEFAULT NULL
 )
 RETURNS UUID
 LANGUAGE plpgsql
@@ -122,6 +123,7 @@ SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
 DECLARE
+  v_actor_id UUID;
   v_latest_version_id UUID;
   v_version_id UUID;
   v_now TIMESTAMPTZ;
@@ -141,8 +143,10 @@ DECLARE
   ];
   v_snapshot JSONB;
 BEGIN
-  IF auth.uid() IS NULL THEN RAISE EXCEPTION 'save_provider_plan_refs requires authenticated caller'; END IF;
-  IF NOT public.is_admin() THEN RAISE EXCEPTION 'save_provider_plan_refs requires admin role'; END IF;
+  -- Actor resolution: prefer explicit p_actor_id (server-side service_role path),
+  -- fall back to auth.uid() (authenticated path for backward compat)
+  v_actor_id := COALESCE(p_actor_id, auth.uid());
+  IF v_actor_id IS NULL THEN RAISE EXCEPTION 'save_provider_plan_refs requires actor identity'; END IF;
 
   PERFORM pg_advisory_xact_lock(hashtext('commercial_config_write'));
 
@@ -199,24 +203,26 @@ BEGIN
   v_now := clock_timestamp();
   v_version_id := gen_random_uuid();
   INSERT INTO platform_config_versions (id, config_snapshot, effective_from, created_by, created_at)
-  VALUES (v_version_id, COALESCE(v_snapshot, '{}'::jsonb), v_now, auth.uid(), v_now);
+  VALUES (v_version_id, COALESCE(v_snapshot, '{}'::jsonb), v_now, v_actor_id, v_now);
   RETURN v_version_id;
 END;
 $$;
 
-REVOKE ALL ON FUNCTION public.save_provider_plan_refs(text, jsonb, uuid) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.save_provider_plan_refs(text, jsonb, uuid) FROM anon;
-REVOKE ALL ON FUNCTION public.save_provider_plan_refs(text, jsonb, uuid) FROM authenticated;
-REVOKE ALL ON FUNCTION public.save_provider_plan_refs(text, jsonb, uuid) FROM service_role;
-GRANT EXECUTE ON FUNCTION public.save_provider_plan_refs(text, jsonb, uuid) TO service_role;
+REVOKE ALL ON FUNCTION public.save_provider_plan_refs(text, jsonb, uuid, uuid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.save_provider_plan_refs(text, jsonb, uuid, uuid) FROM anon;
+REVOKE ALL ON FUNCTION public.save_provider_plan_refs(text, jsonb, uuid, uuid) FROM authenticated;
+REVOKE ALL ON FUNCTION public.save_provider_plan_refs(text, jsonb, uuid, uuid) FROM service_role;
+GRANT EXECUTE ON FUNCTION public.save_provider_plan_refs(text, jsonb, uuid, uuid) TO service_role;
 
 -- C2. switch_country_provider
 CREATE OR REPLACE FUNCTION public.switch_country_provider(
-  p_country_code TEXT, p_new_gateway TEXT, p_expected_version_id UUID
+  p_country_code TEXT, p_new_gateway TEXT, p_expected_version_id UUID,
+  p_actor_id UUID DEFAULT NULL
 ) RETURNS UUID
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 DECLARE
+  v_actor_id UUID;
   v_latest_version_id UUID; v_version_id UUID; v_now TIMESTAMPTZ;
   v_country RECORD; v_growth_ref TEXT; v_business_ref TEXT;
   v_commercial_keys TEXT[] := ARRAY[
@@ -230,8 +236,8 @@ DECLARE
   ];
   v_snapshot JSONB;
 BEGIN
-  IF auth.uid() IS NULL THEN RAISE EXCEPTION 'requires authenticated caller'; END IF;
-  IF NOT public.is_admin() THEN RAISE EXCEPTION 'requires admin role'; END IF;
+  v_actor_id := COALESCE(p_actor_id, auth.uid());
+  IF v_actor_id IS NULL THEN RAISE EXCEPTION 'requires actor identity'; END IF;
   PERFORM pg_advisory_xact_lock(hashtext('commercial_config_write'));
   IF p_expected_version_id IS NULL THEN RAISE EXCEPTION 'requires non-NULL expected_version_id'; END IF;
   SELECT id INTO v_latest_version_id FROM platform_config_versions
@@ -266,16 +272,16 @@ BEGIN
   v_now := clock_timestamp();
   v_version_id := gen_random_uuid();
   INSERT INTO platform_config_versions (id, config_snapshot, effective_from, created_by, created_at)
-  VALUES (v_version_id, COALESCE(v_snapshot, '{}'::jsonb), v_now, auth.uid(), v_now);
+  VALUES (v_version_id, COALESCE(v_snapshot, '{}'::jsonb), v_now, v_actor_id, v_now);
   RETURN v_version_id;
 END;
 $$;
 
-REVOKE ALL ON FUNCTION public.switch_country_provider(text, text, uuid) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.switch_country_provider(text, text, uuid) FROM anon;
-REVOKE ALL ON FUNCTION public.switch_country_provider(text, text, uuid) FROM authenticated;
-REVOKE ALL ON FUNCTION public.switch_country_provider(text, text, uuid) FROM service_role;
-GRANT EXECUTE ON FUNCTION public.switch_country_provider(text, text, uuid) TO service_role;
+REVOKE ALL ON FUNCTION public.switch_country_provider(text, text, uuid, uuid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.switch_country_provider(text, text, uuid, uuid) FROM anon;
+REVOKE ALL ON FUNCTION public.switch_country_provider(text, text, uuid, uuid) FROM authenticated;
+REVOKE ALL ON FUNCTION public.switch_country_provider(text, text, uuid, uuid) FROM service_role;
+GRANT EXECUTE ON FUNCTION public.switch_country_provider(text, text, uuid, uuid) TO service_role;
 
 -- ══════════════════════════════════════════════════════════
 -- D. Checkout RPCs (service_role only)
@@ -285,7 +291,8 @@ CREATE OR REPLACE FUNCTION public.claim_checkout_initialization(
   p_business_id UUID, p_plan TEXT, p_gateway TEXT,
   p_currency TEXT, p_amount INTEGER, p_provider_plan_ref TEXT,
   p_config_version_id UUID, p_subscriber_email TEXT,
-  p_session_duration INTEGER DEFAULT 30
+  p_session_duration INTEGER DEFAULT 30,
+  p_actor_id UUID DEFAULT NULL
 )
 RETURNS TABLE(
   intent_id UUID, is_claimed BOOLEAN, provider_checkout_url TEXT,
@@ -294,8 +301,11 @@ RETURNS TABLE(
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 DECLARE
+  v_actor_id UUID;
   v_existing RECORD; v_new_id UUID; v_new_key TEXT;
 BEGIN
+  v_actor_id := COALESCE(p_actor_id, auth.uid());
+  IF v_actor_id IS NULL THEN RAISE EXCEPTION 'requires actor identity'; END IF;
   SELECT * INTO v_existing FROM subscription_checkout_intents sci
     WHERE sci.business_id = p_business_id AND sci.plan = p_plan
       AND sci.gateway = p_gateway AND sci.status = 'pending'
@@ -332,7 +342,7 @@ BEGIN
     provider_plan_ref, config_version_id, subscriber_email,
     idempotency_key, provider_session_duration_minutes, status, claimed_at, provider_tx_ref
   ) VALUES (
-    v_new_id, p_business_id, auth.uid(), p_plan, p_gateway,
+    v_new_id, p_business_id, v_actor_id, p_plan, p_gateway,
     (SELECT country_code FROM businesses WHERE id = p_business_id),
     p_currency, p_amount, p_provider_plan_ref, p_config_version_id,
     p_subscriber_email, v_new_key, p_session_duration, 'pending', clock_timestamp(), v_new_key
@@ -341,11 +351,11 @@ BEGIN
 END;
 $$;
 
-REVOKE ALL ON FUNCTION public.claim_checkout_initialization(uuid,text,text,text,integer,text,uuid,text,integer) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.claim_checkout_initialization(uuid,text,text,text,integer,text,uuid,text,integer) FROM anon;
-REVOKE ALL ON FUNCTION public.claim_checkout_initialization(uuid,text,text,text,integer,text,uuid,text,integer) FROM authenticated;
-REVOKE ALL ON FUNCTION public.claim_checkout_initialization(uuid,text,text,text,integer,text,uuid,text,integer) FROM service_role;
-GRANT EXECUTE ON FUNCTION public.claim_checkout_initialization(uuid,text,text,text,integer,text,uuid,text,integer) TO service_role;
+REVOKE ALL ON FUNCTION public.claim_checkout_initialization(uuid,text,text,text,integer,text,uuid,text,integer,uuid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.claim_checkout_initialization(uuid,text,text,text,integer,text,uuid,text,integer,uuid) FROM anon;
+REVOKE ALL ON FUNCTION public.claim_checkout_initialization(uuid,text,text,text,integer,text,uuid,text,integer,uuid) FROM authenticated;
+REVOKE ALL ON FUNCTION public.claim_checkout_initialization(uuid,text,text,text,integer,text,uuid,text,integer,uuid) FROM service_role;
+GRANT EXECUTE ON FUNCTION public.claim_checkout_initialization(uuid,text,text,text,integer,text,uuid,text,integer,uuid) TO service_role;
 
 CREATE OR REPLACE FUNCTION public.persist_checkout_provider_response(
   p_intent_id UUID, p_provider_checkout_url TEXT, p_idempotency_key TEXT
@@ -379,12 +389,15 @@ GRANT EXECUTE ON FUNCTION public.persist_checkout_provider_response(uuid,text,te
 CREATE OR REPLACE FUNCTION public.replace_terminal_checkout_intent(
   p_old_intent_id UUID, p_business_id UUID, p_plan TEXT, p_gateway TEXT,
   p_currency TEXT, p_amount INTEGER, p_provider_plan_ref TEXT,
-  p_config_version_id UUID, p_subscriber_email TEXT, p_session_duration INTEGER DEFAULT 30
+  p_config_version_id UUID, p_subscriber_email TEXT, p_session_duration INTEGER DEFAULT 30,
+  p_actor_id UUID DEFAULT NULL
 ) RETURNS TABLE(intent_id UUID, idempotency_key TEXT)
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
-DECLARE v_new_id UUID; v_new_key TEXT; v_rows INTEGER;
+DECLARE v_actor_id UUID; v_new_id UUID; v_new_key TEXT; v_rows INTEGER;
 BEGIN
+  v_actor_id := COALESCE(p_actor_id, auth.uid());
+  IF v_actor_id IS NULL THEN RAISE EXCEPTION 'requires actor identity'; END IF;
   UPDATE subscription_checkout_intents SET status = 'failed'
     WHERE id = p_old_intent_id AND status = 'pending';
   GET DIAGNOSTICS v_rows = ROW_COUNT;
@@ -401,7 +414,7 @@ BEGIN
     provider_plan_ref, config_version_id, subscriber_email,
     idempotency_key, provider_session_duration_minutes, status, claimed_at, provider_tx_ref
   ) VALUES (
-    v_new_id, p_business_id, auth.uid(), p_plan, p_gateway,
+    v_new_id, p_business_id, v_actor_id, p_plan, p_gateway,
     (SELECT country_code FROM businesses WHERE id = p_business_id),
     p_currency, p_amount, p_provider_plan_ref, p_config_version_id,
     p_subscriber_email, v_new_key, p_session_duration, 'pending', clock_timestamp(), v_new_key
@@ -410,11 +423,11 @@ BEGIN
 END;
 $$;
 
-REVOKE ALL ON FUNCTION public.replace_terminal_checkout_intent(uuid,uuid,text,text,text,integer,text,uuid,text,integer) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.replace_terminal_checkout_intent(uuid,uuid,text,text,text,integer,text,uuid,text,integer) FROM anon;
-REVOKE ALL ON FUNCTION public.replace_terminal_checkout_intent(uuid,uuid,text,text,text,integer,text,uuid,text,integer) FROM authenticated;
-REVOKE ALL ON FUNCTION public.replace_terminal_checkout_intent(uuid,uuid,text,text,text,integer,text,uuid,text,integer) FROM service_role;
-GRANT EXECUTE ON FUNCTION public.replace_terminal_checkout_intent(uuid,uuid,text,text,text,integer,text,uuid,text,integer) TO service_role;
+REVOKE ALL ON FUNCTION public.replace_terminal_checkout_intent(uuid,uuid,text,text,text,integer,text,uuid,text,integer,uuid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.replace_terminal_checkout_intent(uuid,uuid,text,text,text,integer,text,uuid,text,integer,uuid) FROM anon;
+REVOKE ALL ON FUNCTION public.replace_terminal_checkout_intent(uuid,uuid,text,text,text,integer,text,uuid,text,integer,uuid) FROM authenticated;
+REVOKE ALL ON FUNCTION public.replace_terminal_checkout_intent(uuid,uuid,text,text,text,integer,text,uuid,text,integer,uuid) FROM service_role;
+GRANT EXECUTE ON FUNCTION public.replace_terminal_checkout_intent(uuid,uuid,text,text,text,integer,text,uuid,text,integer,uuid) TO service_role;
 
 -- ══════════════════════════════════════════════════════════
 -- E. Subscription finalizers (service_role only)
@@ -431,13 +444,21 @@ DECLARE
   v_intent RECORD; v_sub_id UUID; v_payment_id UUID;
   v_period_start TIMESTAMPTZ; v_period_end TIMESTAMPTZ;
   v_existing_sub RECORD;
+  v_activation_result JSONB;
+  v_existing_payment RECORD;
 BEGIN
+  -- Require non-null provider timestamp
+  IF p_provider_paid_at IS NULL THEN
+    RAISE EXCEPTION 'finalize_checkout: p_provider_paid_at must not be NULL';
+  END IF;
+
   SELECT * INTO v_intent FROM subscription_checkout_intents WHERE id = p_intent_id FOR UPDATE;
   IF NOT FOUND THEN RAISE EXCEPTION 'intent % not found', p_intent_id; END IF;
 
+  -- Idempotent: already completed
   IF v_intent.status = 'completed' THEN
     SELECT id INTO v_sub_id FROM subscriptions
-      WHERE business_id = v_intent.business_id AND gateway = 'flutterwave'
+      WHERE business_id = v_intent.business_id
       ORDER BY created_at DESC LIMIT 1;
     RETURN v_sub_id;
   END IF;
@@ -446,6 +467,7 @@ BEGIN
     RAISE EXCEPTION 'intent % is %, not pending', p_intent_id, v_intent.status;
   END IF;
 
+  -- Validate against immutable intent evidence
   IF p_verified_amount_minor <> v_intent.amount * 100 THEN
     RAISE EXCEPTION 'amount mismatch: verified=% expected=%', p_verified_amount_minor, v_intent.amount * 100;
   END IF;
@@ -453,10 +475,11 @@ BEGIN
     RAISE EXCEPTION 'currency mismatch: verified=% expected=%', p_verified_currency, v_intent.currency;
   END IF;
 
-  v_period_start := COALESCE(p_provider_paid_at, clock_timestamp());
+  v_period_start := p_provider_paid_at;
   v_period_end := v_period_start + interval '30 days';
 
-  SELECT id INTO v_existing_sub FROM subscriptions WHERE business_id = v_intent.business_id;
+  -- Upsert subscription (unique on business_id)
+  SELECT * INTO v_existing_sub FROM subscriptions WHERE business_id = v_intent.business_id FOR UPDATE;
   IF v_existing_sub.id IS NOT NULL THEN
     UPDATE subscriptions SET
       plan = v_intent.plan, status = 'active', gateway = 'flutterwave',
@@ -483,6 +506,7 @@ BEGIN
     );
   END IF;
 
+  -- Insert payment evidence — distinguish exact-tx duplicate from period conflict
   BEGIN
     INSERT INTO subscription_payments (
       id, business_id, subscription_id, amount, currency, gateway,
@@ -495,12 +519,35 @@ BEGIN
       'month', v_intent.config_version_id, v_period_start, v_period_end
     ) RETURNING id INTO v_payment_id;
   EXCEPTION WHEN unique_violation THEN
-    SELECT id INTO v_payment_id FROM subscription_payments
+    -- Check if this is the SAME provider transaction (idempotent) or a DIFFERENT one (conflict)
+    SELECT * INTO v_existing_payment FROM subscription_payments
       WHERE gateway = 'flutterwave' AND provider_reference = p_provider_tx_id AND status = 'success';
+    IF FOUND THEN
+      -- Same provider transaction — idempotent
+      v_payment_id := v_existing_payment.id;
+    ELSE
+      -- Different transaction hit the period uniqueness constraint — quarantine
+      INSERT INTO subscription_payment_quarantine (
+        intent_id, subscription_id, provider_tx_ref, provider_tx_id,
+        provider_amount, provider_currency, provider_status, reason
+      ) VALUES (
+        p_intent_id, v_sub_id, v_intent.idempotency_key, p_provider_tx_id,
+        p_verified_amount_minor, p_verified_currency, 'conflict',
+        'different_provider_tx_for_occupied_period'
+      );
+      RAISE EXCEPTION 'payment evidence conflict: different provider tx for occupied period';
+    END IF;
   END;
 
+  -- Mark intent completed BEFORE M375 activation — if activation fails, whole tx rolls back
   UPDATE subscription_checkout_intents SET status = 'completed' WHERE id = p_intent_id;
-  PERFORM public.activate_paid_subscription(v_payment_id);
+
+  -- Call M375 and ENFORCE its result — rollback on rejection
+  v_activation_result := public.activate_paid_subscription(v_payment_id);
+  IF v_activation_result IS NULL OR (v_activation_result ->> 'activated')::BOOLEAN IS NOT TRUE THEN
+    RAISE EXCEPTION 'M375 activation rejected: %', COALESCE(v_activation_result ->> 'reason', 'unknown');
+  END IF;
+
   RETURN v_sub_id;
 END;
 $$;
@@ -518,14 +565,28 @@ CREATE OR REPLACE FUNCTION public.finalize_flutterwave_subscription_renewal(
 ) RETURNS VOID
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
-DECLARE v_sub RECORD; v_period_start TIMESTAMPTZ; v_period_end TIMESTAMPTZ; v_payment_id UUID;
+DECLARE
+  v_sub RECORD; v_period_start TIMESTAMPTZ; v_period_end TIMESTAMPTZ;
+  v_payment_id UUID; v_activation_result JSONB; v_existing_payment RECORD;
 BEGIN
+  -- Require non-null provider timestamp (Blocker 4)
+  IF p_provider_paid_at IS NULL THEN
+    RAISE EXCEPTION 'finalize_renewal: p_provider_paid_at must not be NULL';
+  END IF;
+
   SELECT * INTO v_sub FROM subscriptions WHERE id = p_subscription_id FOR UPDATE;
   IF NOT FOUND THEN RAISE EXCEPTION 'subscription % not found', p_subscription_id; END IF;
 
   v_period_start := p_provider_paid_at;
   v_period_end := v_period_start + interval '30 days';
 
+  -- Out-of-order protection: reject if provider timestamp would regress chronology (Blocker 4)
+  IF v_sub.current_period_start IS NOT NULL AND v_period_start < v_sub.current_period_start THEN
+    RAISE EXCEPTION 'renewal out-of-order: provider_paid_at % is before current_period_start %',
+      v_period_start, v_sub.current_period_start;
+  END IF;
+
+  -- Insert payment evidence — distinguish same-tx duplicate from period conflict (Blocker 3)
   BEGIN
     INSERT INTO subscription_payments (
       id, business_id, subscription_id, amount, currency, gateway,
@@ -537,15 +598,38 @@ BEGIN
       p_provider_tx_id, p_provider_tx_id, v_sub.plan, 'renewal', 'success',
       'month', v_sub.billing_config_version_id, v_period_start, v_period_end
     ) RETURNING id INTO v_payment_id;
-  EXCEPTION WHEN unique_violation THEN RETURN;
+  EXCEPTION WHEN unique_violation THEN
+    -- Check if exact same provider transaction (idempotent)
+    SELECT * INTO v_existing_payment FROM subscription_payments
+      WHERE gateway = 'flutterwave' AND provider_reference = p_provider_tx_id AND status = 'success';
+    IF FOUND THEN
+      -- Same provider tx — idempotent, no extension
+      RETURN;
+    ELSE
+      -- Different tx for occupied period — quarantine (Blocker 3)
+      INSERT INTO subscription_payment_quarantine (
+        subscription_id, provider_tx_ref, provider_tx_id,
+        provider_amount, provider_currency, provider_status, reason
+      ) VALUES (
+        p_subscription_id, p_provider_tx_id, p_provider_tx_id,
+        p_verified_amount_minor, p_verified_currency, 'conflict',
+        'different_renewal_tx_for_occupied_period'
+      );
+      RAISE EXCEPTION 'renewal conflict: different provider tx for occupied period';
+    END IF;
   END;
 
+  -- Extend subscription period
   UPDATE subscriptions SET
     current_period_start = v_period_start, current_period_end = v_period_end,
     status = 'active', updated_at = clock_timestamp()
   WHERE id = p_subscription_id;
 
-  PERFORM public.activate_paid_subscription(v_payment_id);
+  -- Call M375 and enforce result (Blocker 2)
+  v_activation_result := public.activate_paid_subscription(v_payment_id);
+  IF v_activation_result IS NULL OR (v_activation_result ->> 'activated')::BOOLEAN IS NOT TRUE THEN
+    RAISE EXCEPTION 'M375 renewal activation rejected: %', COALESCE(v_activation_result ->> 'reason', 'unknown');
+  END IF;
 END;
 $$;
 
@@ -854,10 +938,19 @@ BEGIN
       v_plan_obj := p_paystack_plan_codes -> v_country_code;
       v_growth_code := TRIM(v_plan_obj ->> 'growth');
       v_business_code := TRIM(v_plan_obj ->> 'business');
-      UPDATE public.countries SET pricing = jsonb_set(
-        jsonb_set(COALESCE(pricing, '{}'::jsonb), '{growth,paystack_plan_code}', to_jsonb(v_growth_code)),
-        '{business,paystack_plan_code}', to_jsonb(v_business_code)
-      ) WHERE code = v_country_code AND payment_gateway = 'paystack';
+      -- Update both legacy paystack_plan_code AND provider_plan_refs.paystack coherently (Blocker 6)
+      UPDATE public.countries SET pricing =
+        jsonb_set(
+          jsonb_set(
+            jsonb_set(
+              jsonb_set(COALESCE(pricing, '{}'::jsonb),
+                '{growth,paystack_plan_code}', to_jsonb(v_growth_code)),
+              '{business,paystack_plan_code}', to_jsonb(v_business_code)),
+            '{growth,provider_plan_refs}',
+            COALESCE(pricing -> 'growth' -> 'provider_plan_refs', '{}'::jsonb) || jsonb_build_object('paystack', v_growth_code)),
+          '{business,provider_plan_refs}',
+          COALESCE(pricing -> 'business' -> 'provider_plan_refs', '{}'::jsonb) || jsonb_build_object('paystack', v_business_code))
+      WHERE code = v_country_code AND payment_gateway = 'paystack';
       GET DIAGNOSTICS v_row_count = ROW_COUNT;
       IF v_row_count <> 1 THEN
         RAISE EXCEPTION 'paystack_plan_codes[%]: UPDATE affected % rows', v_country_code, v_row_count;

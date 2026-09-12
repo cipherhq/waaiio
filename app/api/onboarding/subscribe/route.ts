@@ -109,10 +109,14 @@ export async function POST(request: NextRequest) {
       ? `${appUrl}${callback}`
       : `${appUrl}/get-started?step=success&business_id=${business_id}`;
 
+    // Provider-neutral plan ref resolution
+    const providerRefs = (tierPricing as Record<string, unknown>).provider_plan_refs as Record<string, string> | undefined;
+
     // Paystack path
     if (gateway === 'paystack') {
       const paystackKey = process.env.PAYSTACK_SECRET_KEY;
-      const rawPlanCode = tierPricing.paystack_plan_code;
+      // Resolve from provider_plan_refs with legacy fallback
+      const rawPlanCode = providerRefs?.paystack || (tierPricing as Record<string, unknown>).paystack_plan_code as string | undefined;
 
       if (!paystackKey) {
         return NextResponse.json({ message: 'Payment gateway not configured' }, { status: 500 });
@@ -163,6 +167,130 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({
         authorization_url: data.data.authorization_url,
         reference: data.data.reference,
+      });
+    }
+
+    // Flutterwave path — durable intent + idempotent provider initialization
+    if (gateway === 'flutterwave') {
+      const flutterwaveKey = process.env.FLUTTERWAVE_SECRET_KEY;
+      const planRef = providerRefs?.flutterwave;
+
+      if (!flutterwaveKey) {
+        return NextResponse.json({ message: 'Payment gateway not configured' }, { status: 500 });
+      }
+      if (typeof planRef !== 'string' || planRef.trim().length === 0) {
+        return NextResponse.json(
+          { message: 'Subscription plan is not configured for this region.' },
+          { status: 503 },
+        );
+      }
+
+      // Get current config version for CAS
+      const { data: configVer } = await service.rpc('get_effective_commercial_config');
+      const configVersionId = (configVer as { id: string }[])?.[0]?.id;
+      if (!configVersionId) {
+        return NextResponse.json({ message: 'Configuration unavailable' }, { status: 503 });
+      }
+
+      // Atomic DB claim
+      const { data: claim, error: claimErr } = await service.rpc('claim_checkout_initialization', {
+        p_business_id: business_id,
+        p_plan: plan,
+        p_gateway: 'flutterwave',
+        p_currency: currency,
+        p_amount: monthlyPrice,
+        p_provider_plan_ref: planRef.trim(),
+        p_config_version_id: configVersionId,
+        p_subscriber_email: email,
+        p_session_duration: 30,
+        p_actor_id: user.id,
+      });
+
+      if (claimErr) {
+        return NextResponse.json({ message: 'Checkout initialization failed' }, { status: 500 });
+      }
+
+      const claimRow = (claim as Record<string, unknown>[])?.[0];
+      if (!claimRow) {
+        return NextResponse.json({ message: 'Checkout initialization failed' }, { status: 500 });
+      }
+
+      // Reuse existing checkout if available
+      if (!claimRow.is_claimed && claimRow.provider_checkout_url) {
+        return NextResponse.json({
+          authorization_url: claimRow.provider_checkout_url as string,
+          reference: claimRow.idempotency_key as string,
+        });
+      }
+
+      // If needs provider verification (timeout boundary elapsed), fail closed
+      if (claimRow.needs_provider_verification) {
+        return NextResponse.json(
+          { message: 'Previous checkout session may have expired. Please try again.' },
+          { status: 409 },
+        );
+      }
+
+      // If not claimed (another caller initializing), return polling response
+      if (!claimRow.is_claimed) {
+        return NextResponse.json(
+          { message: 'Checkout is being prepared. Please retry in a moment.' },
+          { status: 202 },
+        );
+      }
+
+      // This caller is the exclusive initializer — call Flutterwave
+      const flwResponse = await fetch('https://api.flutterwave.com/v3/payments', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${flutterwaveKey}`,
+          'Content-Type': 'application/json',
+          'X-Idempotency-Key': claimRow.idempotency_key as string,
+        },
+        body: JSON.stringify({
+          tx_ref: claimRow.idempotency_key as string,
+          amount: monthlyPrice, // major units for Flutterwave
+          currency,
+          payment_plan: planRef.trim(),
+          redirect_url: callbackUrl,
+          customer: { email },
+          meta: {
+            business_id,
+            plan,
+            intent_id: claimRow.intent_id,
+            type: 'whatsapp_subscription',
+          },
+          configurations: {
+            session_duration: 30, // minutes — provider-side expiry
+          },
+        }),
+      });
+
+      const flwData = await flwResponse.json() as Record<string, unknown>;
+
+      if (flwData.status !== 'success') {
+        // Mark intent as failed — frees the slot for retry
+        await service.from('subscription_checkout_intents')
+          .update({ status: 'failed' })
+          .eq('id', claimRow.intent_id as string);
+        return NextResponse.json(
+          { message: 'Failed to initialize payment', error: (flwData as Record<string, unknown>).message },
+          { status: 500 },
+        );
+      }
+
+      const flwDataInner = flwData.data as Record<string, string>;
+
+      // Persist provider response with DB-authoritative timeout
+      await service.rpc('persist_checkout_provider_response', {
+        p_intent_id: claimRow.intent_id,
+        p_provider_checkout_url: flwDataInner.link,
+        p_idempotency_key: claimRow.idempotency_key,
+      });
+
+      return NextResponse.json({
+        authorization_url: flwDataInner.link,
+        reference: claimRow.idempotency_key as string,
       });
     }
 
