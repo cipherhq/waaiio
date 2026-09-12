@@ -342,10 +342,36 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
   it('27-pre. seed pricing_tiers and messaging config for M375 validation', () => {
     // pricing_tiers is individually mutable — add 'price' fields needed by M375
     psql(`${adminContext(adminId)} SELECT save_commercial_config('pricing_tiers', '{"free":{"feePercentage":2.5,"feeFlat":0.5,"maxBookings":50,"whitelabel":false,"price":0},"growth":{"feePercentage":1.5,"feeFlat":0.25,"maxBookings":500,"whitelabel":false,"price":14999},"business":{"feePercentage":1.0,"feeFlat":0.25,"maxBookings":999999999,"whitelabel":true,"price":39999}}'::jsonb); RESET ROLE;`);
+
     // messaging_pricing, trial_credit, subscription_included are bundle-only keys —
-    // they must all go through save_market_messaging_config (or save_messaging_config)
+    // save_market_messaging_config requires ALL active markets to be included.
+    // Build the messaging config covering all active markets (same pattern as test 17).
+    const activeRows = psql("SELECT code, currency_code FROM countries WHERE is_active = true ORDER BY code;");
+    const markets = activeRows.split('\n').filter(Boolean).map(r => {
+      const [code, currency] = r.split('|');
+      return { code: code.trim(), currency: currency.trim() };
+    });
+    const buckets: Record<string, string[]> = {};
+    for (const m of markets) {
+      if (!buckets[m.currency]) buckets[m.currency] = [];
+      buckets[m.currency].push(m.code);
+    }
+    const pricingObj: Record<string, unknown> = {};
+    for (const [currency, codes] of Object.entries(buckets)) {
+      const rates: Record<string, Record<string, number>> = {};
+      for (const c of codes) rates[c] = { utility: 100, marketing: 200 };
+      pricingObj[currency] = { rates, default_spend_cap_minor: 5000000 };
+    }
+    const trialObj: Record<string, number> = {};
+    const includedObj: Record<string, Record<string, number>> = { growth: {}, business: {} };
+    for (const currency of Object.keys(buckets)) {
+      trialObj[currency] = 50000;
+      includedObj.growth[currency] = 100000;
+      includedObj.business[currency] = 200000;
+    }
     const ver = currentVersion();
-    psql(`${adminContext(adminId)} SELECT save_market_messaging_config('{"NGN":{"rates":{"NG":{"utility":100,"marketing":200}},"default_spend_cap_minor":5000000}}'::jsonb, '{"NGN":50000}'::jsonb, '{"growth":{"NGN":100000},"business":{"NGN":200000}}'::jsonb, '{"NG":{"growth":"243206","business":"243207"}}'::jsonb, '${ver}'::uuid); RESET ROLE;`);
+    psql(`${adminContext(adminId)} SELECT save_market_messaging_config('${JSON.stringify(pricingObj)}'::jsonb, '${JSON.stringify(trialObj)}'::jsonb, '${JSON.stringify(includedObj)}'::jsonb, '{"NG":{"growth":"243206","business":"243207"}}'::jsonb, '${ver}'::uuid); RESET ROLE;`);
+
     // Verify the config snapshot now has pricing_tiers.growth.price
     const price = psql(`SELECT config_snapshot->'pricing_tiers'->'growth'->>'price' FROM platform_config_versions WHERE effective_from <= clock_timestamp() ORDER BY effective_from DESC LIMIT 1;`);
     expect(price).toBe('14999');
