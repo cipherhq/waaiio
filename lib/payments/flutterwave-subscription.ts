@@ -140,6 +140,72 @@ export async function findSubscriptionByStatus(
  * 2. If not found as cancelled, query status=active to check if it's still active (stale duplicate)
  * 3. If not found in either → not_found (fail closed)
  */
+/**
+ * Exhaustively classify whether a Flutterwave transaction belongs to a subscription,
+ * checking BOTH active and cancelled provider subscriptions before declaring not_subscription.
+ *
+ * Required by Phase 1 Blocker A: a delayed charge whose provider subscription is now
+ * cancelled must not be misrouted as an ordinary business payment.
+ *
+ * Returns the same CorrelationResult shape as correlateProviderSubscription but with
+ * provider-authoritative dual-status evidence.
+ */
+export async function correlateProviderSubscriptionExhaustive(
+  transactionId: number,
+  flutterwaveKey: string,
+): Promise<CorrelationResult> {
+  // Step 1: Query default (active) subscriptions by transaction_id
+  const activeResult = await correlateProviderSubscription(transactionId, flutterwaveKey);
+  if (activeResult.ok) return activeResult; // Found as active subscription
+  if (activeResult.reason === 'ambiguous' || activeResult.reason === 'invalid') return activeResult;
+  if (activeResult.reason === 'unavailable') return activeResult; // Provider error — fail closed
+
+  // activeResult.reason === 'not_found' under default/active filter
+  // Step 2: Query cancelled subscriptions explicitly
+  try {
+    const response = await fetch(
+      `https://api.flutterwave.com/v3/subscriptions?transaction_id=${transactionId}&status=cancelled`,
+      {
+        headers: { 'Authorization': `Bearer ${flutterwaveKey}` },
+        signal: AbortSignal.timeout(10000),
+      },
+    );
+
+    if (!response.ok) {
+      logger.error('[FLW-SUB] Cancelled subscription lookup HTTP error', { status: response.status, txId: transactionId });
+      return { ok: false, reason: 'unavailable' };
+    }
+
+    const data = await response.json() as { status?: string; data?: { id: number; plan: number }[] };
+
+    if (data.status !== 'success' || !data.data) {
+      logger.error('[FLW-SUB] Cancelled subscription lookup non-success', { status: data.status, txId: transactionId });
+      return { ok: false, reason: 'unavailable' };
+    }
+
+    if (data.data.length === 0) {
+      // Zero across both active and cancelled — genuinely not a subscription
+      return { ok: false, reason: 'not_found' };
+    }
+
+    if (data.data.length > 1) {
+      logger.error('[FLW-SUB] Ambiguous: multiple cancelled subscriptions for transaction', { txId: transactionId, count: data.data.length });
+      return { ok: false, reason: 'ambiguous' };
+    }
+
+    const sub = data.data[0];
+    if (!sub.id || !sub.plan || sub.plan === 0) {
+      logger.error('[FLW-SUB] Invalid cancelled subscription identity', { txId: transactionId, subId: sub.id, planId: sub.plan });
+      return { ok: false, reason: 'invalid' };
+    }
+
+    return { ok: true, sub: { subscriptionId: String(sub.id), planId: sub.plan } };
+  } catch (error) {
+    logger.error('[FLW-SUB] Cancelled subscription lookup error', { txId: transactionId, error: String(error) });
+    return { ok: false, reason: 'unavailable' };
+  }
+}
+
 export async function verifySubscriptionStatus(
   subscriptionId: string,
   subscriberEmail: string,

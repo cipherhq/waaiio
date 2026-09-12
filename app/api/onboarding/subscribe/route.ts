@@ -367,24 +367,28 @@ export async function POST(request: NextRequest) {
       }
 
       if (!flwResponse.ok || flwData.status !== 'success') {
-        if (flwResponse.status >= 500) {
-          // 5xx — ambiguous, retain intent + same idempotency key for retry
-          return NextResponse.json(
-            { message: 'Payment service temporarily unavailable. Please retry.' },
-            { status: 503 },
-          );
-        }
-        if (flwResponse.status >= 400 && flwResponse.status < 500) {
-          // Definitive 4xx rejection — mark failed, free slot
-          await service.from('subscription_checkout_intents')
+        // Use production evidence-aware classifier (Blocker B)
+        const { decideInitResponse } = await import('@/lib/payments/flutterwave-decisions');
+        const initDecision = decideInitResponse(flwResponse.status, flwData.status === 'success');
+
+        if (initDecision.action === 'mark_failed') {
+          // Definitive rejection — mark failed, free slot; check persistence error
+          const { error: markErr } = await service.from('subscription_checkout_intents')
             .update({ status: 'failed' })
             .eq('id', claimRow.intent_id as string);
+          if (markErr) {
+            // Failed to mark terminal — retain intent so next retry can re-evaluate
+            return NextResponse.json(
+              { message: 'Payment initialization failed. Please retry.' },
+              { status: 500 },
+            );
+          }
           return NextResponse.json(
             { message: 'Failed to initialize payment', error: flwData.message },
             { status: 400 },
           );
         }
-        // Other non-ok status — ambiguous, retain intent
+        // retain_key: 429, 409, 5xx, network, unknown — retain intent + same idempotency key
         return NextResponse.json(
           { message: 'Payment service temporarily unavailable. Please retry.' },
           { status: 503 },

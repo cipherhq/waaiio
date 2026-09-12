@@ -10,7 +10,7 @@ import { sendProactiveConfirmation } from '@/lib/payments/send-confirmation';
 export const maxDuration = 60;
 
 import { verifyFlutterwaveSignature } from '@/lib/payments/flutterwave-signature';
-import { correlateProviderSubscription, verifySubscriptionStatus } from '@/lib/payments/flutterwave-subscription';
+import { correlateProviderSubscription, correlateProviderSubscriptionExhaustive, verifySubscriptionStatus } from '@/lib/payments/flutterwave-subscription';
 import { decideCancellation, decideFinalizerResult, decideSubscriptionCorrelation, decideChargeRouting } from '@/lib/payments/flutterwave-decisions';
 
 const FLUTTERWAVE_SECRET_HASH = process.env.FLUTTERWAVE_WEBHOOK_HASH || '';
@@ -74,11 +74,16 @@ export async function POST(request: NextRequest) {
       }
 
       if (!matchingSubs || matchingSubs.length !== 1) {
-        await supabase.from('subscription_payment_quarantine').insert({
+        const { error: qWriteErr } = await supabase.from('subscription_payment_quarantine').insert({
           provider_tx_ref: `cancel-${cancelPlanId}`,
           provider_status: matchingSubs?.length ? 'ambiguous_cancellation' : 'unmatched_cancellation',
           reason: `subscription.cancelled matched ${matchingSubs?.length || 0} for plan_id=${cancelPlanId} email=${cancelEmail}`,
         });
+        if (qWriteErr) {
+          logger.error('[FLW-WEBHOOK] CRITICAL: Cancellation quarantine write failed — no durable reconciliation evidence', {
+            cancelPlanId, cancelEmail, matchCount: matchingSubs?.length || 0, error: qWriteErr,
+          });
+        }
         return NextResponse.json({ error: 'Cancellation correlation failed' }, { status: 500 });
       }
 
@@ -108,12 +113,17 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ message: 'Provider subscription not cancelled' }, { status: 200 });
       }
       if (cancelDecision.action === 'fail_closed') {
-        await supabase.from('subscription_payment_quarantine').insert({
+        const { error: qFailErr } = await supabase.from('subscription_payment_quarantine').insert({
           subscription_id: localSub.id,
           provider_tx_ref: `cancel-fail-${cancelPlanId}`,
           provider_status: cancelDecision.reason,
           reason: `Cancellation failed closed: ${cancelDecision.reason}`,
         });
+        if (qFailErr) {
+          logger.error('[FLW-WEBHOOK] CRITICAL: Cancellation fail_closed quarantine write failed — no durable reconciliation evidence', {
+            subId: localSub.id, cancelPlanId, reason: cancelDecision.reason, error: qFailErr,
+          });
+        }
         return NextResponse.json({ error: `Cancellation verification failed: ${cancelDecision.reason}` }, { status: 500 });
       }
       // cancelDecision.action === 'cancel' — proceed
@@ -194,9 +204,8 @@ export async function POST(request: NextRequest) {
     let renewalLocalSubId: string | null = null;
     if (!txRef.startsWith('waaiiosub') && webhookTxId) {
       try {
-        // Query with transaction_id — this endpoint defaults to status=active
-        // Also query cancelled to rule out both states
-        const subCorrelation = await correlateProviderSubscription(webhookTxId, flwKey);
+        // Query BOTH active and cancelled provider subscriptions before declaring not_subscription (Blocker A)
+        const subCorrelation = await correlateProviderSubscriptionExhaustive(webhookTxId, flwKey);
         if (subCorrelation.ok) {
           // Provider found a subscription — check local match
           const { data: localSub, error: localErr } = await supabase
@@ -256,13 +265,25 @@ export async function POST(request: NextRequest) {
 
     // ── Platform initial subscription path ──
     if (routingDecision.route === 'platform_initial' && txRef.startsWith('waaiiosub')) {
-      const { data: intent } = await supabase
+      const { data: intent, error: intentReadErr } = await supabase
         .from('subscription_checkout_intents')
         .select('id, status, business_id, plan, amount, currency, idempotency_key, config_version_id, subscriber_email')
         .eq('idempotency_key', txRef)
         .maybeSingle();
 
-      if (intent) {
+      // Blocker C: Once classified platform_initial, a missing/error second intent read
+      // is an inconsistent/orphaned platform state — NEVER ordinary business payment
+      if (intentReadErr || !intent) {
+        logger.error('[FLW-WEBHOOK] CRITICAL: platform_initial classified but intent unreadable', {
+          txRef, intentReadErr, hasIntent: !!intent,
+        });
+        return NextResponse.json(
+          { error: 'Platform subscription state inconsistent — reconciliation required' },
+          { status: 500 },
+        );
+      }
+
+      {
         if (intent.status === 'completed') {
           wh.duplicate({ webhookEventId: `flw-sub-${txRef}` });
           return NextResponse.json({ message: 'Already finalized' }, { status: 200 });
@@ -378,7 +399,6 @@ export async function POST(request: NextRequest) {
           return NextResponse.json({ message: 'Late success quarantined' }, { status: 200 });
         }
       }
-      // No intent match — fall through to renewal/business-payment check
     }
 
     // ── Existing business-payment path (routingDecision.route === 'business_payment') ──

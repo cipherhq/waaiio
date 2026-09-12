@@ -96,11 +96,29 @@ export type InitDecision =
   | { action: 'mark_failed' }
   | { action: 'retain_key' };
 
+/**
+ * Evidence-aware provider initialization response classifier.
+ *
+ * Only a documented response that proves NO provider transaction/session was created
+ * may transition the intent terminal (mark_failed). Specifically:
+ * - 400 Bad Request, 401/403 Auth, 404 Not Found, 422 Validation → definitive rejection
+ * - 429 Too Many Requests → retryable, retain key
+ * - 409 Conflict / requery → ambiguous, retain key
+ * - Unknown/other 4xx → ambiguous, retain key (fail closed)
+ * - 5xx, network, timeout → ambiguous, retain key
+ */
 export function decideInitResponse(httpStatus: number, providerSuccess: boolean): InitDecision {
   if (providerSuccess) return { action: 'success' };
   if (httpStatus >= 500) return { action: 'retain_key' }; // ambiguous 5xx
-  if (httpStatus >= 400 && httpStatus < 500) return { action: 'mark_failed' }; // definitive 4xx
-  return { action: 'retain_key' }; // other non-ok
+  // Evidence-aware 4xx classification (Blocker B)
+  if (httpStatus >= 400 && httpStatus < 500) {
+    // Definitive rejections — provider provably did NOT create a transaction
+    const definitiveRejections = [400, 401, 403, 404, 422];
+    if (definitiveRejections.includes(httpStatus)) return { action: 'mark_failed' };
+    // 429 (rate limit), 409 (conflict/requery), other ambiguous 4xx → retain key
+    return { action: 'retain_key' };
+  }
+  return { action: 'retain_key' }; // network/timeout/other non-ok
 }
 
 // ═══ Cancellation decision ═══
