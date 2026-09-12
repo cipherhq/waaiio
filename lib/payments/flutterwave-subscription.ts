@@ -80,42 +80,66 @@ export async function correlateProviderSubscription(
  * Does NOT use undocumented GET /v3/subscriptions/{id} endpoint.
  * Requires: HTTP 2xx, status=success, exact match to stored ID, exactly one match.
  */
+/**
+ * Query Flutterwave subscriptions with explicit status filter.
+ * Returns matching subscriptions or error.
+ */
+async function querySubscriptions(
+  email: string,
+  statusFilter: 'cancelled' | 'active',
+  flutterwaveKey: string,
+): Promise<{ ok: true; data: { id: number; status: string }[] } | { ok: false; reason: string }> {
+  try {
+    const url = `https://api.flutterwave.com/v3/subscriptions?email=${encodeURIComponent(email)}&status=${statusFilter}`;
+    const response = await fetch(url, {
+      headers: { 'Authorization': `Bearer ${flutterwaveKey}` },
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!response.ok) return { ok: false, reason: 'unavailable' };
+    const data = await response.json() as { status?: string; data?: { id: number; status: string }[] };
+    if (data.status !== 'success' || !data.data) return { ok: false, reason: 'unavailable' };
+    return { ok: true, data: data.data };
+  } catch {
+    return { ok: false, reason: 'unavailable' };
+  }
+}
+
+/**
+ * Verify a Flutterwave subscription's current status using the documented
+ * GET /v3/subscriptions endpoint with explicit status filters.
+ *
+ * For cancellation verification:
+ * 1. Query status=cancelled with email filter, exact-match stored subscription ID
+ * 2. If not found as cancelled, query status=active to check if it's still active (stale duplicate)
+ * 3. If not found in either → not_found (fail closed)
+ */
 export async function verifySubscriptionStatus(
   subscriptionId: string,
   subscriberEmail: string,
   flutterwaveKey: string,
 ): Promise<{ ok: true; status: string } | { ok: false; reason: string }> {
-  try {
-    // Use documented list endpoint with email filter
-    const response = await fetch(
-      `https://api.flutterwave.com/v3/subscriptions?email=${encodeURIComponent(subscriberEmail)}`,
-      {
-        headers: { 'Authorization': `Bearer ${flutterwaveKey}` },
-        signal: AbortSignal.timeout(10000),
-      },
-    );
+  // Step 1: Check cancelled subscriptions first (explicit status=cancelled)
+  const cancelledResult = await querySubscriptions(subscriberEmail, 'cancelled', flutterwaveKey);
+  if (!cancelledResult.ok) return cancelledResult;
 
-    if (!response.ok) {
-      return { ok: false, reason: 'unavailable' };
-    }
-
-    const data = await response.json() as { status?: string; data?: { id: number; status: string }[] };
-    if (data.status !== 'success' || !data.data) {
-      return { ok: false, reason: 'unavailable' };
-    }
-
-    // Exact match to stored flutterwave_subscription_id
-    const match = data.data.filter(s => String(s.id) === subscriptionId);
-    if (match.length === 0) {
-      return { ok: false, reason: 'not_found' };
-    }
-    if (match.length > 1) {
-      logger.error('[FLW-SUB] Ambiguous subscription status lookup', { subscriptionId, matchCount: match.length });
-      return { ok: false, reason: 'ambiguous' };
-    }
-
-    return { ok: true, status: match[0].status };
-  } catch {
-    return { ok: false, reason: 'unavailable' };
+  const cancelledMatch = cancelledResult.data.filter(s => String(s.id) === subscriptionId);
+  if (cancelledMatch.length === 1) return { ok: true, status: 'cancelled' };
+  if (cancelledMatch.length > 1) {
+    logger.error('[FLW-SUB] Ambiguous cancelled subscription', { subscriptionId, count: cancelledMatch.length });
+    return { ok: false, reason: 'ambiguous' };
   }
+
+  // Step 2: Not found as cancelled — check active (explicit status=active)
+  const activeResult = await querySubscriptions(subscriberEmail, 'active', flutterwaveKey);
+  if (!activeResult.ok) return activeResult;
+
+  const activeMatch = activeResult.data.filter(s => String(s.id) === subscriptionId);
+  if (activeMatch.length === 1) return { ok: true, status: 'active' };
+  if (activeMatch.length > 1) {
+    logger.error('[FLW-SUB] Ambiguous active subscription', { subscriptionId, count: activeMatch.length });
+    return { ok: false, reason: 'ambiguous' };
+  }
+
+  // Not found in either status
+  return { ok: false, reason: 'not_found' };
 }

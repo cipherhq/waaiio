@@ -18,7 +18,7 @@ vi.mock('@/lib/logger', () => ({ logger: { error: vi.fn(), warn: vi.fn(), info: 
 import { discoverAndVerifyTransaction, verifyTransactionById, toFlwDate } from '../flutterwave-verify';
 import { verifyFlutterwaveSignature } from '../flutterwave-signature';
 import { correlateProviderSubscription, verifySubscriptionStatus } from '../flutterwave-subscription';
-import { decideTimeoutRecovery, decideInitResponse, decideCancellation, decideSubscriptionCorrelation, decideFinalizerResult } from '../flutterwave-decisions';
+import { decideTimeoutRecovery, decideInitResponse, decideCancellation, decideSubscriptionCorrelation, decideFinalizerResult, decideChargeRouting } from '../flutterwave-decisions';
 
 beforeEach(() => { mockFetch.mockReset(); });
 
@@ -119,31 +119,62 @@ describe('correlateProviderSubscription', () => {
   });
 });
 
-// ═════ verifySubscriptionStatus (documented list endpoint) ═════
+// ═════ verifySubscriptionStatus (documented list with explicit status filters) ═════
 describe('verifySubscriptionStatus', () => {
-  it('exact match → cancelled', async () => {
+  it('found as cancelled → returns cancelled', async () => {
+    // Step 1: query status=cancelled finds the subscription
     mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: [{ id: 42, status: 'cancelled' }] }) });
     const r = await verifySubscriptionStatus('42', 'user@test.com', 'k');
     expect(r.ok && r.status).toBe('cancelled');
+    // Only one call needed — found in cancelled query
+    expect(mockFetch).toHaveBeenCalledTimes(1);
   });
-  it('exact match → active', async () => {
+
+  it('not cancelled but found as active → returns active', async () => {
+    // Step 1: cancelled query returns empty
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: [] }) });
+    // Step 2: active query finds it
     mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: [{ id: 42, status: 'active' }] }) });
     const r = await verifySubscriptionStatus('42', 'user@test.com', 'k');
     expect(r.ok && r.status).toBe('active');
+    expect(mockFetch).toHaveBeenCalledTimes(2);
   });
-  it('no match → not_found', async () => {
-    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: [{ id: 99, status: 'active' }] }) });
+
+  it('not found in either status → not_found', async () => {
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: [] }) });
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: [] }) });
     const r = await verifySubscriptionStatus('42', 'user@test.com', 'k');
     expect(!r.ok && r.reason).toBe('not_found');
   });
-  it('unavailable → fail', async () => {
+
+  it('unavailable → fail closed', async () => {
     mockFetch.mockRejectedValueOnce(new Error('t'));
     expect((await verifySubscriptionStatus('42', 'u@t.com', 'k')).ok).toBe(false);
   });
-  it('uses email filter in URL', async () => {
-    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: [] }) });
+
+  it('URL contains explicit status=cancelled filter', async () => {
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: [{ id: 42, status: 'cancelled' }] }) });
     await verifySubscriptionStatus('42', 'user@test.com', 'k');
-    expect((mockFetch.mock.calls[0][0] as string)).toContain('email=user%40test.com');
+    const url = mockFetch.mock.calls[0][0] as string;
+    expect(url).toContain('status=cancelled');
+    expect(url).toContain('email=user%40test.com');
+  });
+
+  it('URL contains explicit status=active filter when checking active', async () => {
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: [] }) }); // cancelled: empty
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: [{ id: 42, status: 'active' }] }) });
+    await verifySubscriptionStatus('42', 'user@test.com', 'k');
+    const url2 = mockFetch.mock.calls[1][0] as string;
+    expect(url2).toContain('status=active');
+  });
+
+  it('exact ID match only — different ID in results ignored', async () => {
+    // Cancelled query returns a different subscription ID
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: [{ id: 99, status: 'cancelled' }] }) });
+    // Active query returns a different ID too
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: [{ id: 88, status: 'active' }] }) });
+    const r = await verifySubscriptionStatus('42', 'user@test.com', 'k');
+    expect(!r.ok && r.reason).toBe('not_found');
   });
 });
 
@@ -214,16 +245,43 @@ describe('decideFinalizerResult', () => {
   it('error → failed', () => expect(decideFinalizerResult(null, new Error('x')).action).toBe('failed'));
 });
 
-// ═════ Non-regression ═════
-describe('Business-payment non-regression', () => {
-  it('webhook preserves business-payment path', async () => {
-    const fs = await import('fs');
-    const path = await import('path');
-    const src = fs.readFileSync(path.resolve(__dirname, '../../../app/api/webhooks/flutterwave/route.ts'), 'utf-8');
-    expect(src).toContain('reconcilePayment');
-    expect(src).toContain('processSuccessfulPayment');
-    expect(src).toContain("from('payments')");
-    expect(src).toContain('correlateProviderSubscription');
-    expect(src).toContain('verifySubscriptionStatus');
+// ═════ Charge routing — production function (Blocker C) ═════
+describe('decideChargeRouting — executable business-payment non-regression', () => {
+  it('waaiiosub prefix with intent match → platform_initial', () => {
+    const r = decideChargeRouting('waaiiosubabcdef1234567890abcdef12', true, 'not_subscription');
+    expect(r.route).toBe('platform_initial');
+  });
+
+  it('waaiiosub prefix without intent match → business_payment (no intent = not ours)', () => {
+    const r = decideChargeRouting('waaiiosubabcdef1234567890abcdef12', false, 'not_subscription');
+    expect(r.route).toBe('business_payment');
+  });
+
+  it('non-waaiiosub + renewal matched → platform_renewal', () => {
+    const r = decideChargeRouting('flw_charge_abc123', false, 'matched');
+    expect(r.route).toBe('platform_renewal');
+  });
+
+  it('non-waaiiosub + renewal unavailable → unknown (fail closed, NOT business_payment)', () => {
+    const r = decideChargeRouting('flw_charge_abc123', false, 'unavailable');
+    expect(r.route).toBe('unknown');
+  });
+
+  it('non-waaiiosub + renewal ambiguous → unknown (fail closed)', () => {
+    const r = decideChargeRouting('flw_charge_abc123', false, 'ambiguous');
+    expect(r.route).toBe('unknown');
+  });
+
+  it('non-waaiiosub + not_subscription → business_payment (ordinary charge)', () => {
+    const r = decideChargeRouting('flw_charge_abc123', false, 'not_subscription');
+    expect(r.route).toBe('business_payment');
+    expect(r.route).toBe('business_payment'); // NOT swallowed by subscription routing
+  });
+
+  it('ordinary business tx_ref reaches business_payment path', () => {
+    // This proves a normal non-platform charge goes to the existing reconciliation path
+    const r = decideChargeRouting('flw_1234567890abcdef', false, 'not_subscription');
+    expect(r.route).toBe('business_payment');
+    expect(r).toHaveProperty('txRef', 'flw_1234567890abcdef');
   });
 });

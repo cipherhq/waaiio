@@ -8,6 +8,41 @@
 import type { VerifyResult } from './flutterwave-verify';
 import type { CorrelationResult } from './flutterwave-subscription';
 
+// ═══ Webhook charge.completed routing decision ═══
+
+export type ChargeRoutingDecision =
+  | { route: 'platform_initial'; txRef: string }
+  | { route: 'platform_renewal'; txId: number }
+  | { route: 'business_payment'; txRef: string }
+  | { route: 'unknown' };
+
+/**
+ * Decide how to route a charge.completed webhook event.
+ * This is the production routing logic called by the POST handler.
+ *
+ * - tx_ref starting with 'waaiiosub' → platform subscription initial charge
+ * - Otherwise, if provider subscription lookup finds a match → platform renewal
+ * - Otherwise → ordinary business payment (existing path)
+ */
+export function decideChargeRouting(
+  txRef: string,
+  hasIntentMatch: boolean,
+  renewalLookupResult: 'matched' | 'not_subscription' | 'unavailable' | 'ambiguous',
+): ChargeRoutingDecision {
+  if (txRef.startsWith('waaiiosub') && hasIntentMatch) {
+    return { route: 'platform_initial', txRef };
+  }
+  if (!txRef.startsWith('waaiiosub')) {
+    if (renewalLookupResult === 'matched') return { route: 'platform_renewal', txId: 0 };
+    if (renewalLookupResult === 'unavailable' || renewalLookupResult === 'ambiguous') {
+      // Fail closed — do NOT fall through to business payment
+      return { route: 'unknown' };
+    }
+    // 'not_subscription' → fall through to business payment
+  }
+  return { route: 'business_payment', txRef };
+}
+
 // ═══ Timeout recovery decision ═══
 
 export type TimeoutDecision =

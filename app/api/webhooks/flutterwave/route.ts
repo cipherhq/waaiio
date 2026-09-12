@@ -11,6 +11,7 @@ export const maxDuration = 60;
 
 import { verifyFlutterwaveSignature } from '@/lib/payments/flutterwave-signature';
 import { correlateProviderSubscription, verifySubscriptionStatus } from '@/lib/payments/flutterwave-subscription';
+import { decideCancellation, decideFinalizerResult, decideSubscriptionCorrelation } from '@/lib/payments/flutterwave-decisions';
 
 const FLUTTERWAVE_SECRET_HASH = process.env.FLUTTERWAVE_WEBHOOK_HASH || '';
 
@@ -83,42 +84,39 @@ export async function POST(request: NextRequest) {
 
       const localSub = matchingSubs[0];
 
-      // Already cancelled locally → idempotent acknowledgment
-      if (localSub.status === 'cancelled') {
+      // Provider state verification for cancellation decision
+      let providerState: { ok: true; status: string } | { ok: false; reason: string } | null = null;
+      if (localSub.status !== 'cancelled' && localSub.flutterwave_subscription_id) {
+        providerState = await verifySubscriptionStatus(
+          localSub.flutterwave_subscription_id, cancelEmail, flwKey,
+        );
+      }
+
+      // Use production decision function (Blocker B)
+      const cancelDecision = decideCancellation(
+        localSub.status,
+        !!localSub.flutterwave_subscription_id,
+        providerState,
+      );
+
+      if (cancelDecision.action === 'already_cancelled') {
         wh.processed({ durationMs: Math.round(performance.now() - startTime) });
         return NextResponse.json({ message: 'Already cancelled' }, { status: 200 });
       }
-
-      // Missing flutterwave_subscription_id → FAIL CLOSED, never bypass verification
-      if (!localSub.flutterwave_subscription_id) {
-        await supabase.from('subscription_payment_quarantine').insert({
-          subscription_id: localSub.id,
-          provider_tx_ref: `cancel-noid-${cancelPlanId}`,
-          provider_status: 'missing_subscription_id',
-          reason: 'Cannot verify cancellation: no stored flutterwave_subscription_id',
-        });
-        return NextResponse.json({ error: 'Missing subscription identity for verification' }, { status: 500 });
-      }
-
-      // Verify provider subscription is actually cancelled via documented list endpoint
-      const providerState = await verifySubscriptionStatus(
-        localSub.flutterwave_subscription_id,
-        cancelEmail, // subscriber email for list query
-        flwKey,
-      );
-      if (!providerState.ok) {
-        await supabase.from('subscription_payment_quarantine').insert({
-          subscription_id: localSub.id,
-          provider_tx_ref: `cancel-verify-${cancelPlanId}`,
-          provider_status: 'verification_unavailable',
-          reason: `Cannot verify provider subscription status: ${providerState.reason}`,
-        });
-        return NextResponse.json({ error: 'Cancellation verification unavailable' }, { status: 500 });
-      }
-      if (providerState.status !== 'cancelled' && providerState.status !== 'deactivated') {
-        wh.ignored(`Provider subscription ${localSub.flutterwave_subscription_id} status is ${providerState.status}, not cancelled`);
+      if (cancelDecision.action === 'stale_duplicate') {
+        wh.ignored(`Stale cancellation: provider subscription is not cancelled`);
         return NextResponse.json({ message: 'Provider subscription not cancelled' }, { status: 200 });
       }
+      if (cancelDecision.action === 'fail_closed') {
+        await supabase.from('subscription_payment_quarantine').insert({
+          subscription_id: localSub.id,
+          provider_tx_ref: `cancel-fail-${cancelPlanId}`,
+          provider_status: cancelDecision.reason,
+          reason: `Cancellation failed closed: ${cancelDecision.reason}`,
+        });
+        return NextResponse.json({ error: `Cancellation verification failed: ${cancelDecision.reason}` }, { status: 500 });
+      }
+      // cancelDecision.action === 'cancel' — proceed
 
       // Provider confirmed cancelled — proceed with local cancellation
       const { error: cancelErr } = await supabase.rpc('finalize_subscription_cancellation', {
@@ -222,14 +220,15 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ error: 'Currency mismatch' }, { status: 500 });
           }
 
-          // Resolve subscription — shared fail-closed contract (Blocker C)
+          // Resolve subscription — production decision function (Blocker B)
           const subCorrelation = await correlateProviderSubscription(verified.id, flwKey);
-          if (!subCorrelation.ok) {
-            wh.failed(new Error(`Subscription correlation failed: ${subCorrelation.reason}`));
+          const subDecision = decideSubscriptionCorrelation(subCorrelation);
+          if (subDecision.action === 'fail_closed') {
+            wh.failed(new Error(`Subscription correlation failed: ${subDecision.reason}`));
             return NextResponse.json({ error: 'Subscription correlation failed' }, { status: 500 });
           }
-          const providerSubId = subCorrelation.sub.subscriptionId;
-          const providerPlanId = subCorrelation.sub.planId;
+          const providerSubId = subDecision.subscriptionId;
+          const providerPlanId = subDecision.planId;
 
           // Call authoritative finalizer
           const { data: finResult, error: finErr } = await supabase.rpc('finalize_flutterwave_subscription_checkout', {
@@ -247,14 +246,15 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ error: finErr.message }, { status: 500 });
           }
 
-          // Inspect structured result — finalized !== true is not success
-          const result = finResult as Record<string, unknown> | null;
-          if (!result || result.finalized !== true) {
-            if (result?.quarantine) {
-              logger.error('[FLW-WEBHOOK] Checkout finalization quarantined', { intentId: intent.id, result });
-            }
-            wh.failed(new Error(`Finalization not successful: ${JSON.stringify(result)}`));
-            return NextResponse.json({ error: 'Finalization conflict' }, { status: 500 });
+          // Production decision function for finalizer result (Blocker B)
+          const finDecision = decideFinalizerResult(finResult as Record<string, unknown> | null, finErr);
+          if (finDecision.action === 'quarantined') {
+            logger.error('[FLW-WEBHOOK] Checkout finalization quarantined', { intentId: intent.id });
+            return NextResponse.json({ error: 'Finalization quarantined' }, { status: 500 });
+          }
+          if (finDecision.action === 'failed') {
+            wh.failed(new Error(`Finalization failed: ${finDecision.reason}`));
+            return NextResponse.json({ error: 'Finalization failed' }, { status: 500 });
           }
 
           wh.processed({ durationMs: Math.round(performance.now() - startTime) });
