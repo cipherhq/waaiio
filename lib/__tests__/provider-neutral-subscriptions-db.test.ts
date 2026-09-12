@@ -7,7 +7,7 @@
  *   TEST_DATABASE_URL=postgresql://localhost:5432/waaiio_test \
  *     npx vitest run lib/__tests__/provider-neutral-subscriptions-db.test.ts
  */
-import { execSync } from 'child_process';
+import { execSync, spawn } from 'child_process';
 import { describe, it, expect, beforeAll } from 'vitest';
 
 const dbUrl = process.env.TEST_DATABASE_URL || '';
@@ -36,6 +36,22 @@ function adminContext(adminId: string): string {
 
 function currentVersion(): string {
   return psql("SELECT id FROM platform_config_versions WHERE effective_from <= clock_timestamp() ORDER BY effective_from DESC LIMIT 1;").trim();
+}
+
+/** Async psql for true concurrent multi-session tests */
+function psqlAsync(sql: string): Promise<{ ok: boolean; result: string; error: string }> {
+  return new Promise((resolve) => {
+    const proc = spawn('psql', [dbUrl, '-tAXq', '-v', 'ON_ERROR_STOP=1'], { timeout: 30000 });
+    let stdout = '';
+    let stderr = '';
+    proc.stdin.write(sql);
+    proc.stdin.end();
+    proc.stdout.on('data', (d: Buffer) => { stdout += d.toString(); });
+    proc.stderr.on('data', (d: Buffer) => { stderr += d.toString(); });
+    proc.on('close', (code: number) => {
+      resolve({ ok: code === 0, result: stdout.trim(), error: stderr.trim() });
+    });
+  });
 }
 
 describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL proofs', () => {
@@ -653,45 +669,153 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
     expect(payCount).toBe('1');
   });
 
-  // ── Stale CAS/TOCTOU resistance (Phase 2) ──
+  // ── Stale CAS/TOCTOU at claim boundary (M379) ──
 
-  it('36. stale config version in claim_checkout_initialization rejected by CAS', () => {
-    // Get an old version ID
-    const oldVer = currentVersion();
-    // Advance config version
-    psql(`SELECT save_provider_plan_refs('NG', '{"growth": {"flutterwave": "243206"}, "business": {"flutterwave": "243207"}}'::jsonb, '${oldVer}'::uuid, '${adminId}'::uuid);`);
-
-    // Now try to claim with the stale version
-    const newBizId = psql(`
+  it('36. stale config version rejected at claim boundary — zero intent created', () => {
+    const casBizId = psql(`
       INSERT INTO businesses (id, name, slug, owner_id, country_code, category, address, city, neighborhood, phone)
       VALUES (gen_random_uuid(), 'CASTest', 'cas-${Date.now()}', '${testUserId}', 'NG', 'restaurant', '111 CAS St', 'Lagos', 'VI', '+2348033333333')
       RETURNING id::text;
     `);
 
-    // claim_checkout_initialization stores config_version_id but does not itself enforce CAS.
-    // The CAS enforcement is at save_provider_plan_refs/switch_country_provider level.
-    // The intent captures the config version at claim time. If the config changed between
-    // preflight and claim, the intent still records the original version, which M375 later
-    // validates against the config snapshot pricing. This is the TOCTOU resistance —
-    // the intent is bound to a specific config version and M375 validates it.
-    //
-    // Prove: an intent with a stale config version that has wrong pricing will be rejected
-    // by M375 when the finalizer runs.
-    // This is already proven by test 28 (amount mismatch causes rollback).
-    // The CAS at save_provider_plan_refs level is proven by test 9.
+    // Capture V1
+    const v1 = currentVersion();
+    // Advance config to V2
+    psql(`SELECT save_provider_plan_refs('NG', '{"growth": {"flutterwave": "243206"}, "business": {"flutterwave": "243207"}}'::jsonb, '${v1}'::uuid, '${adminId}'::uuid);`);
+    const v2 = currentVersion();
+    expect(v2).not.toBe(v1);
 
-    // Prove the positive: claim with current version succeeds
-    const freshVer = currentVersion();
-    const r = psql(`SELECT intent_id, is_claimed FROM claim_checkout_initialization('${newBizId}'::uuid, 'growth', 'flutterwave', 'NGN', 14999, '243206', '${freshVer}'::uuid, 'cas-test@m378.com', 30, '${testUserId}'::uuid);`);
-    const [intentId, claimed] = r.split('|');
+    // Attempt claim with stale V1 — must be rejected
+    const staleResult = psqlMayFail(`SELECT claim_checkout_initialization('${casBizId}'::uuid, 'growth', 'flutterwave', 'NGN', 14999, '243206', '${v1}'::uuid, 'cas@m378.com', 30, '${testUserId}'::uuid);`);
+    expect(staleResult).toContain('config_version_conflict');
+
+    // Zero intent created
+    expect(psql(`SELECT count(*) FROM subscription_checkout_intents WHERE business_id='${casBizId}'::uuid;`)).toBe('0');
+
+    // Fresh V2 claim succeeds
+    const freshResult = psql(`SELECT intent_id, is_claimed FROM claim_checkout_initialization('${casBizId}'::uuid, 'growth', 'flutterwave', 'NGN', 14999, '243206', '${v2}'::uuid, 'cas@m378.com', 30, '${testUserId}'::uuid);`);
+    const [intentId, claimed] = freshResult.split('|');
     expect(claimed).toBe('t');
-
-    // The intent has the fresh config version
-    const intentVer = psql(`SELECT config_version_id::text FROM subscription_checkout_intents WHERE id='${intentId}'::uuid;`);
-    expect(intentVer).toBe(freshVer);
+    expect(intentId).toBeTruthy();
 
     // Cleanup
     psql(`DELETE FROM subscription_checkout_intents WHERE id='${intentId}'::uuid;`);
-    psql(`DELETE FROM businesses WHERE id='${newBizId}'::uuid;`);
+    psql(`DELETE FROM businesses WHERE id='${casBizId}'::uuid;`);
+  });
+
+  // ══════════════════════════════════════════════════════════
+  // True multi-session concurrent PostgreSQL proofs
+  //
+  // These tests launch SEPARATE SIMULTANEOUS psql sessions via
+  // psqlAsync + Promise.all, creating genuine overlapping transactions.
+  // ══════════════════════════════════════════════════════════
+
+  it('37. TRUE CONCURRENT checkout claims — exactly one pending intent, no unique-violation crash', async () => {
+    const ver = currentVersion();
+    const concBizId = psql(`
+      INSERT INTO businesses (id, name, slug, owner_id, country_code, category, address, city, neighborhood, phone)
+      VALUES (gen_random_uuid(), 'TrueConcClaim', 'true-conc-${Date.now()}', '${testUserId}', 'NG', 'restaurant', '100 TrueConc St', 'Lagos', 'VI', '+2348044444444')
+      RETURNING id::text;
+    `);
+
+    // Launch TWO separate DB sessions simultaneously — genuine overlapping transactions
+    const claimSql = `SELECT intent_id, is_claimed FROM claim_checkout_initialization('${concBizId}'::uuid, 'growth', 'flutterwave', 'NGN', 14999, '243206', '${ver}'::uuid, 'trueconc@m378.com', 30, '${testUserId}'::uuid);`;
+    const [s1, s2] = await Promise.all([psqlAsync(claimSql), psqlAsync(claimSql)]);
+
+    // Both must succeed (no crash/uncaught unique violation)
+    expect(s1.ok).toBe(true);
+    expect(s2.ok).toBe(true);
+
+    // Both return the SAME intent ID (serialized by FOR UPDATE + partial unique index)
+    const id1 = s1.result.split('|')[0];
+    const id2 = s2.result.split('|')[0];
+    expect(id1).toBe(id2);
+
+    // Exactly one pending intent exists
+    expect(psql(`SELECT count(*) FROM subscription_checkout_intents WHERE business_id='${concBizId}'::uuid AND status='pending';`)).toBe('1');
+
+    // Cleanup
+    psql(`DELETE FROM subscription_checkout_intents WHERE business_id='${concBizId}'::uuid;`);
+    psql(`DELETE FROM businesses WHERE id='${concBizId}'::uuid;`);
+  });
+
+  it('38. TRUE CONCURRENT terminal replacement — exactly one pending replacement', async () => {
+    const ver = currentVersion();
+    const replBizId = psql(`
+      INSERT INTO businesses (id, name, slug, owner_id, country_code, category, address, city, neighborhood, phone)
+      VALUES (gen_random_uuid(), 'TrueConcRepl', 'true-repl-${Date.now()}', '${testUserId}', 'NG', 'restaurant', '200 TrueRepl St', 'Lagos', 'VI', '+2348055555555')
+      RETURNING id::text;
+    `);
+
+    // Create initial intent
+    const r1 = psql(`SELECT intent_id FROM claim_checkout_initialization('${replBizId}'::uuid, 'growth', 'flutterwave', 'NGN', 14999, '243206', '${ver}'::uuid, 'truerepl@m378.com', 30, '${testUserId}'::uuid);`);
+    const oldIntentId = r1.split('|')[0];
+
+    // Launch TWO simultaneous replacement sessions
+    const replaceSql = `SELECT intent_id FROM replace_terminal_checkout_intent('${oldIntentId}'::uuid, '${replBizId}'::uuid, 'growth', 'flutterwave', 'NGN', 14999, '243206', '${ver}'::uuid, 'truerepl@m378.com', 30, '${testUserId}'::uuid);`;
+    const [s1, s2] = await Promise.all([psqlAsync(replaceSql), psqlAsync(replaceSql)]);
+
+    // Both must complete without crash
+    expect(s1.ok).toBe(true);
+    expect(s2.ok).toBe(true);
+
+    // Both return the SAME new intent ID (serialized by partial unique index)
+    const newId1 = s1.result.split('|')[0];
+    const newId2 = s2.result.split('|')[0];
+    expect(newId1).toBe(newId2);
+
+    // Exactly one pending intent exists
+    expect(psql(`SELECT count(*) FROM subscription_checkout_intents WHERE business_id='${replBizId}'::uuid AND status='pending';`)).toBe('1');
+
+    // Old intent is failed
+    expect(psql(`SELECT status FROM subscription_checkout_intents WHERE id='${oldIntentId}'::uuid;`)).toBe('failed');
+
+    // Cleanup
+    psql(`DELETE FROM subscription_checkout_intents WHERE business_id='${replBizId}'::uuid;`);
+    psql(`DELETE FROM businesses WHERE id='${replBizId}'::uuid;`);
+  });
+
+  it('39. TRUE CONCURRENT duplicate renewals — one success, one quarantine, no duplicate value', async () => {
+    // Create a fresh subscription for concurrent renewal testing
+    const renBizId = psql(`
+      INSERT INTO businesses (id, name, slug, owner_id, country_code, category, address, city, neighborhood, phone)
+      VALUES (gen_random_uuid(), 'TrueConcRen', 'true-ren-${Date.now()}', '${testUserId}', 'NG', 'restaurant', '300 TrueRen St', 'Lagos', 'VI', '+2348066666666')
+      RETURNING id::text;
+    `);
+    const ver = currentVersion();
+    // Create subscription via checkout flow
+    const cr = psql(`SELECT intent_id FROM claim_checkout_initialization('${renBizId}'::uuid, 'growth', 'flutterwave', 'NGN', 14999, '243206', '${ver}'::uuid, 'trueren@m378.com', 30, '${testUserId}'::uuid);`);
+    const intentId = cr.split('|')[0];
+    psql(`SELECT finalize_flutterwave_subscription_checkout('${intentId}'::uuid, 'tx_ren_setup', 'sub_ren_setup', 10944, 1499900, 'NGN', '2026-09-12T20:00:00Z'::timestamptz);`);
+
+    const subId = psql(`SELECT id::text FROM subscriptions WHERE business_id='${renBizId}'::uuid AND gateway='flutterwave' LIMIT 1;`);
+    const periodEnd = psql(`SELECT current_period_end::text FROM subscriptions WHERE id='${subId}'::uuid;`);
+
+    // Launch TWO simultaneous renewal sessions with DIFFERENT tx refs for the SAME period
+    const ren1Sql = `SELECT finalize_flutterwave_subscription_renewal('${subId}'::uuid, 'tx_conc_ren_A', 1499900, 'NGN', '${periodEnd}'::timestamptz);`;
+    const ren2Sql = `SELECT finalize_flutterwave_subscription_renewal('${subId}'::uuid, 'tx_conc_ren_B', 1499900, 'NGN', '${periodEnd}'::timestamptz);`;
+    const [s1, s2] = await Promise.all([psqlAsync(ren1Sql), psqlAsync(ren2Sql)]);
+
+    // Both must complete (one succeeds, one quarantines — neither crashes)
+    expect(s1.ok).toBe(true);
+    expect(s2.ok).toBe(true);
+
+    // Exactly one successful finalization and one quarantine
+    const results = [s1.result, s2.result];
+    const successes = results.filter(r => r.includes('"finalized": true') && !r.includes('idempotent'));
+    const quarantines = results.filter(r => r.includes('"quarantine": true'));
+    expect(successes.length).toBe(1);
+    expect(quarantines.length).toBe(1);
+
+    // Exactly one successful payment for the period
+    expect(psql(`SELECT count(*) FROM subscription_payments WHERE subscription_id='${subId}'::uuid AND provider_reference IN ('tx_conc_ren_A','tx_conc_ren_B') AND status='success';`)).toBe('1');
+
+    // One quarantine record
+    expect(psql(`SELECT count(*) FROM subscription_payment_quarantine WHERE provider_tx_id IN ('tx_conc_ren_A','tx_conc_ren_B');`)).toBe('1');
+
+    // Cleanup
+    psql(`DELETE FROM subscription_payment_quarantine WHERE provider_tx_id IN ('tx_conc_ren_A','tx_conc_ren_B');`);
+    psql(`DELETE FROM subscription_checkout_intents WHERE business_id='${renBizId}'::uuid;`);
+    psql(`DELETE FROM businesses WHERE id='${renBizId}'::uuid;`);
   });
 });
