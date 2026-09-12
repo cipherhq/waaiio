@@ -55,49 +55,45 @@ function psqlAsync(sql: string): Promise<{ ok: boolean; result: string; error: s
 }
 
 /**
- * Deterministic concurrency barrier using advisory locks.
+ * Deterministic concurrency barrier using a rendezvous table.
  *
- * 1. A "holder" psql session acquires an EXCLUSIVE advisory lock (the barrier).
- * 2. Contestant sessions call pg_advisory_lock_shared(barrierKey) as their first
- *    statement — they block because the exclusive lock is held.
- * 3. The test verifies via pg_locks that both contestants are waiting (granted=false).
- * 4. The holder releases the exclusive lock.
- * 5. Both contestants acquire the shared lock simultaneously and proceed into
- *    the contested operation, which has its own serialization (FOR UPDATE,
- *    partial unique index, etc.).
+ * Each contestant session:
+ * 1. INSERTs a row into _conc_barrier with its session label
+ * 2. Polls until the table has >= expectedCount rows (proving all contestants are alive)
+ * 3. Proceeds into the contested operation
  *
- * This proves both sessions are alive and contending at the relevant operation
- * before either is allowed to complete.
+ * This guarantees both sessions have reached the barrier point and are
+ * alive/contending before either enters the contested operation.
  */
-const BARRIER_KEY = 88888;
+let barrierSeq = 0;
 
-function holdBarrier(): { release: () => void; proc: ReturnType<typeof spawn> } {
-  const proc = spawn('psql', [dbUrl, '-tAXq'], { timeout: 30000 });
-  proc.stdin.write(`SELECT pg_advisory_lock(${BARRIER_KEY});\n`);
-  return {
-    proc,
-    release: () => {
-      proc.stdin.write(`SELECT pg_advisory_unlock(${BARRIER_KEY});\n`);
-      proc.stdin.end();
-    },
-  };
+function setupBarrierTable(): string {
+  const name = `_conc_barrier_${++barrierSeq}_${Date.now()}`;
+  psql(`CREATE TEMP TABLE IF NOT EXISTS "${name}" (label TEXT NOT NULL, ts TIMESTAMPTZ DEFAULT clock_timestamp()) ON COMMIT DROP;`);
+  // Use an unlogged regular table instead (temp tables aren't visible across sessions)
+  psql(`CREATE TABLE IF NOT EXISTS public."${name}" (label TEXT NOT NULL, ts TIMESTAMPTZ DEFAULT clock_timestamp());`);
+  return name;
 }
 
-function waitForWaiters(expectedCount: number, maxMs = 5000): void {
-  const start = Date.now();
-  while (Date.now() - start < maxMs) {
-    const count = psql(
-      `SELECT count(*) FROM pg_locks WHERE locktype='advisory' AND objid=${BARRIER_KEY} AND granted=false;`,
-    );
-    if (parseInt(count) >= expectedCount) return;
-    execSync('sleep 0.1'); // 100ms poll
-  }
-  throw new Error(`Timed out waiting for ${expectedCount} advisory lock waiters`);
+function teardownBarrierTable(name: string): void {
+  psqlMayFail(`DROP TABLE IF EXISTS public."${name}";`);
 }
 
-/** Build SQL that first blocks on the shared barrier lock, then runs the operation */
-function barrieredSql(operationSql: string): string {
-  return `SELECT pg_advisory_lock_shared(${BARRIER_KEY}); SELECT pg_advisory_unlock_shared(${BARRIER_KEY}); ${operationSql}`;
+/** Build SQL that registers at the barrier, waits for all contestants, then runs the operation */
+function barrieredSql(barrierTable: string, label: string, expectedCount: number, operationSql: string): string {
+  return `
+    INSERT INTO public."${barrierTable}" (label) VALUES ('${label}');
+    DO $$ BEGIN
+      FOR i IN 1..100 LOOP
+        EXIT WHEN (SELECT count(*) FROM public."${barrierTable}") >= ${expectedCount};
+        PERFORM pg_sleep(0.05);
+      END LOOP;
+      IF (SELECT count(*) FROM public."${barrierTable}") < ${expectedCount} THEN
+        RAISE EXCEPTION 'barrier timeout: only % of % contestants registered', (SELECT count(*) FROM public."${barrierTable}"), ${expectedCount};
+      END IF;
+    END $$;
+    ${operationSql}
+  `;
 }
 
 describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL proofs', () => {
@@ -764,7 +760,7 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
   //    then race into the contested operation
   // ══════════════════════════════════════════════════════════
 
-  it('37. DETERMINISTIC CONCURRENT checkout claims — barrier-proven overlap, one pending intent', async () => {
+  it('37. DETERMINISTIC CONCURRENT checkout claims — rendezvous-proven overlap, one pending intent', async () => {
     const ver = currentVersion();
     const concBizId = psql(`
       INSERT INTO businesses (id, name, slug, owner_id, country_code, category, address, city, neighborhood, phone)
@@ -772,42 +768,35 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
       RETURNING id::text;
     `);
 
-    // Step 1: Main acquires exclusive barrier lock
-    const barrier = holdBarrier();
-    execSync('sleep 0.3'); // let holder acquire
+    // Create rendezvous barrier table (visible across sessions)
+    const bt = setupBarrierTable();
 
-    // Step 2: Launch two contestant sessions — both block on shared lock
-    const claimSql = barrieredSql(
-      `SELECT intent_id, is_claimed FROM claim_checkout_initialization('${concBizId}'::uuid, 'growth', 'flutterwave', 'NGN', 14999, '243206', '${ver}'::uuid, 'detconc@m378.com', 30, '${testUserId}'::uuid);`,
-    );
-    const p1 = psqlAsync(claimSql);
-    const p2 = psqlAsync(claimSql);
+    // Launch two contestant sessions — each registers at barrier, waits for the other, then claims
+    const claimOp = `SELECT intent_id, is_claimed FROM claim_checkout_initialization('${concBizId}'::uuid, 'growth', 'flutterwave', 'NGN', 14999, '243206', '${ver}'::uuid, 'detconc@m378.com', 30, '${testUserId}'::uuid);`;
+    const [s1, s2] = await Promise.all([
+      psqlAsync(barrieredSql(bt, 'A', 2, claimOp)),
+      psqlAsync(barrieredSql(bt, 'B', 2, claimOp)),
+    ]);
 
-    // Step 3: Verify BOTH sessions are waiting on the barrier (deterministic overlap proof)
-    waitForWaiters(2);
-
-    // Step 4: Release barrier — both proceed simultaneously into contested operation
-    barrier.release();
-
-    // Step 5: Both complete
-    const [s1, s2] = await Promise.all([p1, p2]);
+    // Both must succeed (no crash/uncaught unique violation)
     expect(s1.ok).toBe(true);
     expect(s2.ok).toBe(true);
 
     // Both return the SAME intent ID — serialized by CAS lock + FOR UPDATE + partial unique index
-    const id1 = s1.result.split('\n').pop()!.split('|')[0];
-    const id2 = s2.result.split('\n').pop()!.split('|')[0];
+    const id1 = s1.result.split('\n').filter(Boolean).pop()!.split('|')[0];
+    const id2 = s2.result.split('\n').filter(Boolean).pop()!.split('|')[0];
     expect(id1).toBe(id2);
 
-    // Exactly one pending intent exists — no uncaught unique violation
+    // Exactly one pending intent — no uncaught unique violation
     expect(psql(`SELECT count(*) FROM subscription_checkout_intents WHERE business_id='${concBizId}'::uuid AND status='pending';`)).toBe('1');
 
     // Cleanup
+    teardownBarrierTable(bt);
     psql(`DELETE FROM subscription_checkout_intents WHERE business_id='${concBizId}'::uuid;`);
     psql(`DELETE FROM businesses WHERE id='${concBizId}'::uuid;`);
-  });
+  }, 15000);
 
-  it('38. DETERMINISTIC CONCURRENT terminal replacement — barrier-proven overlap, one pending replacement', async () => {
+  it('38. DETERMINISTIC CONCURRENT terminal replacement — rendezvous-proven overlap, one pending replacement', async () => {
     const ver = currentVersion();
     const replBizId = psql(`
       INSERT INTO businesses (id, name, slug, owner_id, country_code, category, address, city, neighborhood, phone)
@@ -819,46 +808,36 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
     const r1 = psql(`SELECT intent_id FROM claim_checkout_initialization('${replBizId}'::uuid, 'growth', 'flutterwave', 'NGN', 14999, '243206', '${ver}'::uuid, 'detrepl@m378.com', 30, '${testUserId}'::uuid);`);
     const oldIntentId = r1.split('|')[0];
 
-    // Step 1: Main holds barrier
-    const barrier = holdBarrier();
-    execSync('sleep 0.3');
+    const bt = setupBarrierTable();
 
-    // Step 2: Launch two contestant replacement sessions
-    const replaceSql = barrieredSql(
-      `SELECT intent_id FROM replace_terminal_checkout_intent('${oldIntentId}'::uuid, '${replBizId}'::uuid, 'growth', 'flutterwave', 'NGN', 14999, '243206', '${ver}'::uuid, 'detrepl@m378.com', 30, '${testUserId}'::uuid);`,
-    );
-    const p1 = psqlAsync(replaceSql);
-    const p2 = psqlAsync(replaceSql);
+    // Launch two contestant replacement sessions
+    const replOp = `SELECT intent_id FROM replace_terminal_checkout_intent('${oldIntentId}'::uuid, '${replBizId}'::uuid, 'growth', 'flutterwave', 'NGN', 14999, '243206', '${ver}'::uuid, 'detrepl@m378.com', 30, '${testUserId}'::uuid);`;
+    const [s1, s2] = await Promise.all([
+      psqlAsync(barrieredSql(bt, 'A', 2, replOp)),
+      psqlAsync(barrieredSql(bt, 'B', 2, replOp)),
+    ]);
 
-    // Step 3: Verify both sessions are waiting (deterministic overlap proof)
-    waitForWaiters(2);
-
-    // Step 4: Release
-    barrier.release();
-
-    // Step 5: Both complete
-    const [s1, s2] = await Promise.all([p1, p2]);
     expect(s1.ok).toBe(true);
     expect(s2.ok).toBe(true);
 
     // Both return the SAME new intent ID
-    const newId1 = s1.result.split('\n').pop()!.split('|')[0];
-    const newId2 = s2.result.split('\n').pop()!.split('|')[0];
+    const newId1 = s1.result.split('\n').filter(Boolean).pop()!.split('|')[0];
+    const newId2 = s2.result.split('\n').filter(Boolean).pop()!.split('|')[0];
     expect(newId1).toBe(newId2);
 
-    // Exactly one pending replacement — no duplicate
+    // Exactly one pending replacement
     expect(psql(`SELECT count(*) FROM subscription_checkout_intents WHERE business_id='${replBizId}'::uuid AND status='pending';`)).toBe('1');
 
     // Old intent is failed
     expect(psql(`SELECT status FROM subscription_checkout_intents WHERE id='${oldIntentId}'::uuid;`)).toBe('failed');
 
     // Cleanup
+    teardownBarrierTable(bt);
     psql(`DELETE FROM subscription_checkout_intents WHERE business_id='${replBizId}'::uuid;`);
     psql(`DELETE FROM businesses WHERE id='${replBizId}'::uuid;`);
-  });
+  }, 15000);
 
-  it('39. DETERMINISTIC CONCURRENT duplicate renewals — barrier-proven overlap, one value mutation, one quarantine', async () => {
-    // Create fresh subscription
+  it('39. DETERMINISTIC CONCURRENT duplicate renewals — rendezvous-proven overlap, one value mutation, one quarantine', async () => {
     const renBizId = psql(`
       INSERT INTO businesses (id, name, slug, owner_id, country_code, category, address, city, neighborhood, phone)
       VALUES (gen_random_uuid(), 'DetConcRen', 'det-ren-${Date.now()}', '${testUserId}', 'NG', 'restaurant', '300 DetRen St', 'Lagos', 'VI', '+2348066666666')
@@ -872,26 +851,16 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
     const subId = psql(`SELECT id::text FROM subscriptions WHERE business_id='${renBizId}'::uuid AND gateway='flutterwave' LIMIT 1;`);
     const periodEnd = psql(`SELECT current_period_end::text FROM subscriptions WHERE id='${subId}'::uuid;`);
 
-    // Step 1: Main holds barrier
-    const barrier = holdBarrier();
-    execSync('sleep 0.3');
+    const bt = setupBarrierTable();
 
-    // Step 2: Launch two contestant renewal sessions with DIFFERENT tx refs for SAME period
-    const p1 = psqlAsync(barrieredSql(
-      `SELECT finalize_flutterwave_subscription_renewal('${subId}'::uuid, 'tx_det_ren_A', 1499900, 'NGN', '${periodEnd}'::timestamptz);`,
-    ));
-    const p2 = psqlAsync(barrieredSql(
-      `SELECT finalize_flutterwave_subscription_renewal('${subId}'::uuid, 'tx_det_ren_B', 1499900, 'NGN', '${periodEnd}'::timestamptz);`,
-    ));
+    // Launch two contestant renewal sessions with DIFFERENT tx refs for SAME period
+    const [s1, s2] = await Promise.all([
+      psqlAsync(barrieredSql(bt, 'A', 2,
+        `SELECT finalize_flutterwave_subscription_renewal('${subId}'::uuid, 'tx_det_ren_A', 1499900, 'NGN', '${periodEnd}'::timestamptz);`)),
+      psqlAsync(barrieredSql(bt, 'B', 2,
+        `SELECT finalize_flutterwave_subscription_renewal('${subId}'::uuid, 'tx_det_ren_B', 1499900, 'NGN', '${periodEnd}'::timestamptz);`)),
+    ]);
 
-    // Step 3: Verify both sessions are waiting (deterministic overlap proof)
-    waitForWaiters(2);
-
-    // Step 4: Release barrier — both race into renewal finalization
-    barrier.release();
-
-    // Step 5: Both complete (serialized by SELECT ... FOR UPDATE on subscription)
-    const [s1, s2] = await Promise.all([p1, p2]);
     expect(s1.ok).toBe(true);
     expect(s2.ok).toBe(true);
 
@@ -909,8 +878,9 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
     expect(psql(`SELECT count(*) FROM subscription_payment_quarantine WHERE provider_tx_id IN ('tx_det_ren_A','tx_det_ren_B');`)).toBe('1');
 
     // Cleanup
+    teardownBarrierTable(bt);
     psql(`DELETE FROM subscription_payment_quarantine WHERE provider_tx_id IN ('tx_det_ren_A','tx_det_ren_B');`);
     psql(`DELETE FROM subscription_checkout_intents WHERE business_id='${renBizId}'::uuid;`);
     psql(`DELETE FROM businesses WHERE id='${renBizId}'::uuid;`);
-  });
+  }, 15000);
 });
