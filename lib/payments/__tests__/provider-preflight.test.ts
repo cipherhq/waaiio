@@ -170,7 +170,7 @@ describe('verifyFlutterwavePlan', () => {
     planId: '12345',
     expectedCurrency: 'NGN',
     expectedAmountMajor: 5000,
-    flutterwaveKey: 'FLWSECK_TEST-key',
+    flutterwaveKey: 'FAKE_FLW_KEY_TEST',
   };
 
   async function verify(input = BASE_INPUT) {

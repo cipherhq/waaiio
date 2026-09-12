@@ -53,7 +53,7 @@ vi.stubGlobal('fetch', mockFetch);
 // Set env vars
 process.env.PAYSTACK_SECRET_KEY = 'test_placeholder_not_real_ps';
 process.env.STRIPE_SECRET_KEY = 'test_placeholder_not_real_stripe';
-process.env.FLUTTERWAVE_SECRET_KEY = 'FLWSECK_TEST';
+process.env.FLUTTERWAVE_SECRET_KEY = 'FAKE_FLW_KEY_TEST';
 
 import { POST } from '@/app/api/admin/provider-config/route';
 
