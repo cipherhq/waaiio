@@ -38,6 +38,37 @@ export async function POST(request: NextRequest) {
     const event = body.event;
     const data = body.data;
 
+    // Platform subscription cancellation event
+    if (event === 'subscription.cancelled' && data) {
+      const supabase = createServiceClient();
+      const cancelPlanId = data.plan?.id as number | undefined;
+      const cancelEmail = data.customer?.email as string | undefined;
+      if (cancelPlanId && cancelEmail) {
+        // Correlate via stored flutterwave_plan_id + flutterwave_subscriber_email
+        const { data: matchingSubs } = await supabase
+          .from('subscriptions')
+          .select('id')
+          .eq('gateway', 'flutterwave')
+          .eq('status', 'active')
+          .eq('flutterwave_plan_id', cancelPlanId)
+          .eq('flutterwave_subscriber_email', cancelEmail);
+
+        if (matchingSubs?.length === 1) {
+          const cancelEventId = `flw-cancel-${cancelPlanId}-${Date.now()}`;
+          await supabase.rpc('finalize_subscription_cancellation', {
+            p_subscription_id: matchingSubs[0].id,
+            p_provider_event_id: cancelEventId,
+            p_reason: 'provider_cancelled',
+          });
+          wh.processed({ durationMs: Math.round(performance.now() - startTime) });
+          return NextResponse.json({ message: 'Subscription cancelled' }, { status: 200 });
+        }
+        // 0 or >1 matches — fail closed, alert
+        wh.ignored(`Ambiguous subscription.cancelled: plan_id=${cancelPlanId} matches=${matchingSubs?.length || 0}`);
+      }
+      return NextResponse.json({ message: 'Processed' }, { status: 200 });
+    }
+
     if (event !== 'charge.completed' || !data) {
       wh.ignored(`Unhandled event: ${event || 'unknown'}`);
       return NextResponse.json({ message: 'Ignored' }, { status: 200 });
@@ -78,6 +109,136 @@ export async function POST(request: NextRequest) {
 
     const supabase = createServiceClient();
 
+    // ── Platform subscription routing (M378) ──
+    // Checkout intents use tx_ref starting with 'waaiiosub'
+    if (txRef.startsWith('waaiiosub')) {
+      // Platform subscription initial charge — correlate via durable intent
+      const { data: intent } = await supabase
+        .from('subscription_checkout_intents')
+        .select('id, status, business_id, plan, amount, currency, idempotency_key, config_version_id, subscriber_email')
+        .eq('idempotency_key', txRef)
+        .maybeSingle();
+
+      if (intent) {
+        if (intent.status === 'completed') {
+          wh.duplicate({ webhookEventId: `flw-sub-${txRef}` });
+          return NextResponse.json({ message: 'Already finalized' }, { status: 200 });
+        }
+        if (intent.status === 'pending') {
+          const providerTxId = String(data.id || '');
+          const providerAmount = Math.round((data.amount as number) * 100); // → minor units
+          const providerCurrency = ((data.currency as string) || '').toUpperCase();
+          const providerPaidAt = data.created_at as string || new Date().toISOString();
+
+          // Resolve Flutterwave subscription ID via documented lookup
+          let providerSubId = '';
+          let providerPlanId = 0;
+          try {
+            const subLookup = await fetch(
+              `https://api.flutterwave.com/v3/subscriptions?transaction_id=${data.id}`,
+              { headers: { 'Authorization': `Bearer ${process.env.FLUTTERWAVE_SECRET_KEY}` }, signal: AbortSignal.timeout(10000) },
+            );
+            const subData = await subLookup.json() as { data?: { id: number; plan: number }[] };
+            if (subData.data?.length) {
+              providerSubId = String(subData.data[0].id);
+              providerPlanId = subData.data[0].plan;
+            }
+          } catch { /* subscription lookup failure is non-fatal */ }
+
+          const { data: result, error: finErr } = await supabase.rpc('finalize_flutterwave_subscription_checkout', {
+            p_intent_id: intent.id,
+            p_provider_tx_id: providerTxId,
+            p_provider_subscription_id: providerSubId,
+            p_provider_plan_id: providerPlanId,
+            p_verified_amount_minor: providerAmount,
+            p_verified_currency: providerCurrency,
+            p_provider_paid_at: providerPaidAt,
+          });
+
+          if (finErr) {
+            wh.failed(finErr, { durationMs: Math.round(performance.now() - startTime) });
+            // Return 500 for subscription events so Flutterwave retries
+            return NextResponse.json({ error: finErr.message }, { status: 500 });
+          }
+
+          wh.processed({ durationMs: Math.round(performance.now() - startTime) });
+          return NextResponse.json({ message: 'Subscription activated' }, { status: 200 });
+        }
+        // Intent is failed/superseded — late webhook for terminal intent
+        if (intent.status === 'failed' || intent.status === 'superseded') {
+          // Quarantine: do not silently lose a captured payment
+          if (data.status === 'successful') {
+            await supabase.from('subscription_payment_quarantine').insert({
+              intent_id: intent.id,
+              provider_tx_ref: txRef,
+              provider_tx_id: String(data.id || ''),
+              provider_amount: Math.round((data.amount as number) * 100),
+              provider_currency: ((data.currency as string) || '').toUpperCase(),
+              provider_status: 'late_success_for_terminal_intent',
+              reason: 'late_webhook_for_terminal_intent',
+            });
+          }
+          wh.ignored(`Late webhook for ${intent.status} intent`);
+          return NextResponse.json({ message: 'Intent terminal, quarantined' }, { status: 200 });
+        }
+      }
+
+      // No intent match for waaiiosub prefix — could be a renewal from Flutterwave auto-charge
+      // Renewals don't have our tx_ref — they're generated by Flutterwave
+      // Fall through to check if it's a known subscription renewal
+    }
+
+    // ── Flutterwave subscription renewal routing ──
+    // For non-waaiiosub tx_refs, check if this is a subscription renewal
+    // by looking up the Flutterwave subscription via transaction_id
+    if (!txRef.startsWith('waaiiosub')) {
+      // Check if this transaction belongs to a known Flutterwave subscription
+      try {
+        const subLookup = await fetch(
+          `https://api.flutterwave.com/v3/subscriptions?transaction_id=${data.id}`,
+          { headers: { 'Authorization': `Bearer ${process.env.FLUTTERWAVE_SECRET_KEY}` }, signal: AbortSignal.timeout(10000) },
+        );
+        const subData = await subLookup.json() as { data?: { id: number }[] };
+        if (subData.data?.length) {
+          const flwSubId = String(subData.data[0].id);
+          // Look up local subscription by flutterwave_subscription_id
+          const { data: localSub } = await supabase
+            .from('subscriptions')
+            .select('id')
+            .eq('flutterwave_subscription_id', flwSubId)
+            .eq('gateway', 'flutterwave')
+            .maybeSingle();
+
+          if (localSub) {
+            // This is a renewal for a known platform subscription
+            const providerAmount = Math.round((data.amount as number) * 100);
+            const providerCurrency = ((data.currency as string) || '').toUpperCase();
+            const providerPaidAt = data.created_at as string || new Date().toISOString();
+
+            const { error: renewErr } = await supabase.rpc('finalize_flutterwave_subscription_renewal', {
+              p_subscription_id: localSub.id,
+              p_provider_tx_id: String(data.id || ''),
+              p_verified_amount_minor: providerAmount,
+              p_verified_currency: providerCurrency,
+              p_provider_paid_at: providerPaidAt,
+            });
+
+            if (renewErr) {
+              wh.failed(renewErr, { durationMs: Math.round(performance.now() - startTime) });
+              return NextResponse.json({ error: renewErr.message }, { status: 500 });
+            }
+
+            wh.processed({ durationMs: Math.round(performance.now() - startTime) });
+            return NextResponse.json({ message: 'Subscription renewed' }, { status: 200 });
+          }
+        }
+      } catch {
+        // Subscription lookup failed — fall through to business-payment path
+      }
+    }
+
+    // ── Existing business-payment path (preserved) ──
+
     // Idempotency: check if already processed (mark AFTER processing succeeds)
     const eventId = `flw-${txRef}`;
     const { data: existingEvent } = await supabase
@@ -99,10 +260,7 @@ export async function POST(request: NextRequest) {
       .single();
 
     if (!payment) {
-      // Waaiio manages Flutterwave recurring via token billing (cron-initiated).
-      // No provider-side subscription exists, so no provider-generated renewals.
-      // Unknown tx_ref without a pre-existing payment → ignore safely.
-      wh.ignored('Payment not found (no Flutterwave provider subscriptions)');
+      wh.ignored('Payment not found');
       return NextResponse.json({ message: 'Payment not found' }, { status: 404 });
     }
 
@@ -183,9 +341,8 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     wh.failed(error, { durationMs: Math.round(performance.now() - startTime) });
     Sentry.captureException(error);
-    // Acknowledge receipt to prevent infinite retries, but don't mark as processed
-    // so retries will reprocess the event
-    return NextResponse.json({ received: true }, { status: 200 });
+    // Return 500 so Flutterwave retries — do not acknowledge with 200 on unhandled errors
+    return NextResponse.json({ received: true }, { status: 500 });
   }
 }
 

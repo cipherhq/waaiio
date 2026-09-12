@@ -108,6 +108,27 @@ WHERE pricing -> 'growth' ->> 'paystack_plan_code' IS NOT NULL
    OR pricing -> 'business' ->> 'paystack_plan_code' IS NOT NULL;
 
 -- ══════════════════════════════════════════════════════════
+-- B2. Service-role config version helper (Blocker A)
+-- Narrow read-only helper — does not weaken the admin-only get_effective_commercial_config
+-- ══════════════════════════════════════════════════════════
+
+CREATE OR REPLACE FUNCTION public.get_effective_config_version_id()
+RETURNS UUID
+LANGUAGE sql STABLE SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+  SELECT id FROM platform_config_versions
+  WHERE effective_from <= clock_timestamp()
+  ORDER BY effective_from DESC LIMIT 1;
+$$;
+
+REVOKE ALL ON FUNCTION public.get_effective_config_version_id() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.get_effective_config_version_id() FROM anon;
+REVOKE ALL ON FUNCTION public.get_effective_config_version_id() FROM authenticated;
+REVOKE ALL ON FUNCTION public.get_effective_config_version_id() FROM service_role;
+GRANT EXECUTE ON FUNCTION public.get_effective_config_version_id() TO service_role;
+
+-- ══════════════════════════════════════════════════════════
 -- C. Provider-config RPCs (service_role only)
 -- ══════════════════════════════════════════════════════════
 
@@ -437,7 +458,7 @@ CREATE OR REPLACE FUNCTION public.finalize_flutterwave_subscription_checkout(
   p_intent_id UUID, p_provider_tx_id TEXT, p_provider_subscription_id TEXT,
   p_provider_plan_id INTEGER, p_verified_amount_minor INTEGER,
   p_verified_currency TEXT, p_provider_paid_at TIMESTAMPTZ
-) RETURNS UUID
+) RETURNS JSONB
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 DECLARE
@@ -446,8 +467,8 @@ DECLARE
   v_existing_sub RECORD;
   v_activation_result JSONB;
   v_existing_payment RECORD;
+  v_conflict_check INTEGER;
 BEGIN
-  -- Require non-null provider timestamp
   IF p_provider_paid_at IS NULL THEN
     RAISE EXCEPTION 'finalize_checkout: p_provider_paid_at must not be NULL';
   END IF;
@@ -455,19 +476,16 @@ BEGIN
   SELECT * INTO v_intent FROM subscription_checkout_intents WHERE id = p_intent_id FOR UPDATE;
   IF NOT FOUND THEN RAISE EXCEPTION 'intent % not found', p_intent_id; END IF;
 
-  -- Idempotent: already completed
   IF v_intent.status = 'completed' THEN
     SELECT id INTO v_sub_id FROM subscriptions
-      WHERE business_id = v_intent.business_id
-      ORDER BY created_at DESC LIMIT 1;
-    RETURN v_sub_id;
+      WHERE business_id = v_intent.business_id ORDER BY created_at DESC LIMIT 1;
+    RETURN jsonb_build_object('finalized', true, 'idempotent', true, 'subscription_id', v_sub_id);
   END IF;
 
   IF v_intent.status <> 'pending' THEN
     RAISE EXCEPTION 'intent % is %, not pending', p_intent_id, v_intent.status;
   END IF;
 
-  -- Validate against immutable intent evidence
   IF p_verified_amount_minor <> v_intent.amount * 100 THEN
     RAISE EXCEPTION 'amount mismatch: verified=% expected=%', p_verified_amount_minor, v_intent.amount * 100;
   END IF;
@@ -478,8 +496,36 @@ BEGIN
   v_period_start := p_provider_paid_at;
   v_period_end := v_period_start + interval '30 days';
 
-  -- Upsert subscription (unique on business_id)
+  -- PRE-CHECK: detect exact-tx duplicate or period conflict BEFORE mutating entitlement (Blocker E)
+  SELECT * INTO v_existing_payment FROM subscription_payments
+    WHERE gateway = 'flutterwave' AND provider_reference = p_provider_tx_id AND status = 'success';
+  IF FOUND THEN
+    -- Exact same provider tx already finalized — idempotent
+    RETURN jsonb_build_object('finalized', true, 'idempotent', true,
+      'subscription_id', v_existing_payment.subscription_id);
+  END IF;
+
+  -- Check for period conflict (different tx for same subscription+period)
   SELECT * INTO v_existing_sub FROM subscriptions WHERE business_id = v_intent.business_id FOR UPDATE;
+  IF v_existing_sub.id IS NOT NULL THEN
+    SELECT count(*) INTO v_conflict_check FROM subscription_payments
+      WHERE subscription_id = v_existing_sub.id AND period_start = v_period_start AND status = 'success';
+    IF v_conflict_check > 0 THEN
+      -- Different tx for occupied period — quarantine WITHOUT mutating entitlement
+      INSERT INTO subscription_payment_quarantine (
+        intent_id, subscription_id, provider_tx_ref, provider_tx_id,
+        provider_amount, provider_currency, provider_status, reason
+      ) VALUES (
+        p_intent_id, v_existing_sub.id, v_intent.idempotency_key, p_provider_tx_id,
+        p_verified_amount_minor, p_verified_currency, 'conflict',
+        'different_provider_tx_for_occupied_period'
+      );
+      RETURN jsonb_build_object('finalized', false, 'reason', 'period_conflict',
+        'quarantine', true, 'subscription_id', v_existing_sub.id);
+    END IF;
+  END IF;
+
+  -- No conflict — proceed with entitlement mutation
   IF v_existing_sub.id IS NOT NULL THEN
     UPDATE subscriptions SET
       plan = v_intent.plan, status = 'active', gateway = 'flutterwave',
@@ -506,70 +552,47 @@ BEGIN
     );
   END IF;
 
-  -- Insert payment evidence — distinguish exact-tx duplicate from period conflict
-  BEGIN
-    INSERT INTO subscription_payments (
-      id, business_id, subscription_id, amount, currency, gateway,
-      gateway_reference, provider_reference, plan, action, status,
-      billing_interval, config_version_id, period_start, period_end
-    ) VALUES (
-      gen_random_uuid(), v_intent.business_id, v_sub_id,
-      p_verified_amount_minor, upper(v_intent.currency), 'flutterwave',
-      p_provider_tx_id, p_provider_tx_id, v_intent.plan, 'upgrade', 'success',
-      'month', v_intent.config_version_id, v_period_start, v_period_end
-    ) RETURNING id INTO v_payment_id;
-  EXCEPTION WHEN unique_violation THEN
-    -- Check if this is the SAME provider transaction (idempotent) or a DIFFERENT one (conflict)
-    SELECT * INTO v_existing_payment FROM subscription_payments
-      WHERE gateway = 'flutterwave' AND provider_reference = p_provider_tx_id AND status = 'success';
-    IF FOUND THEN
-      -- Same provider transaction — idempotent
-      v_payment_id := v_existing_payment.id;
-    ELSE
-      -- Different transaction hit the period uniqueness constraint — quarantine
-      INSERT INTO subscription_payment_quarantine (
-        intent_id, subscription_id, provider_tx_ref, provider_tx_id,
-        provider_amount, provider_currency, provider_status, reason
-      ) VALUES (
-        p_intent_id, v_sub_id, v_intent.idempotency_key, p_provider_tx_id,
-        p_verified_amount_minor, p_verified_currency, 'conflict',
-        'different_provider_tx_for_occupied_period'
-      );
-      RAISE EXCEPTION 'payment evidence conflict: different provider tx for occupied period';
-    END IF;
-  END;
+  INSERT INTO subscription_payments (
+    id, business_id, subscription_id, amount, currency, gateway,
+    gateway_reference, provider_reference, plan, action, status,
+    billing_interval, config_version_id, period_start, period_end
+  ) VALUES (
+    gen_random_uuid(), v_intent.business_id, v_sub_id,
+    p_verified_amount_minor, upper(v_intent.currency), 'flutterwave',
+    p_provider_tx_id, p_provider_tx_id, v_intent.plan, 'upgrade', 'success',
+    'month', v_intent.config_version_id, v_period_start, v_period_end
+  ) RETURNING id INTO v_payment_id;
 
-  -- Mark intent completed BEFORE M375 activation — if activation fails, whole tx rolls back
   UPDATE subscription_checkout_intents SET status = 'completed' WHERE id = p_intent_id;
 
-  -- Call M375 and ENFORCE its result — rollback on rejection
   v_activation_result := public.activate_paid_subscription(v_payment_id);
   IF v_activation_result IS NULL OR (v_activation_result ->> 'activated')::BOOLEAN IS NOT TRUE THEN
     RAISE EXCEPTION 'M375 activation rejected: %', COALESCE(v_activation_result ->> 'reason', 'unknown');
   END IF;
 
-  RETURN v_sub_id;
+  RETURN jsonb_build_object('finalized', true, 'subscription_id', v_sub_id);
 END;
 $$;
 
-REVOKE ALL ON FUNCTION public.finalize_flutterwave_subscription_checkout(uuid,text,text,integer,integer,text,timestamptz) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.finalize_flutterwave_subscription_checkout(uuid,text,text,integer,integer,text,timestamptz) FROM anon;
-REVOKE ALL ON FUNCTION public.finalize_flutterwave_subscription_checkout(uuid,text,text,integer,integer,text,timestamptz) FROM authenticated;
-REVOKE ALL ON FUNCTION public.finalize_flutterwave_subscription_checkout(uuid,text,text,integer,integer,text,timestamptz) FROM service_role;
-GRANT EXECUTE ON FUNCTION public.finalize_flutterwave_subscription_checkout(uuid,text,text,integer,integer,text,timestamptz) TO service_role;
+-- ACL uses overloaded resolution — PostgreSQL matches by name+args
+REVOKE ALL ON FUNCTION public.finalize_flutterwave_subscription_checkout FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.finalize_flutterwave_subscription_checkout FROM anon;
+REVOKE ALL ON FUNCTION public.finalize_flutterwave_subscription_checkout FROM authenticated;
+REVOKE ALL ON FUNCTION public.finalize_flutterwave_subscription_checkout FROM service_role;
+GRANT EXECUTE ON FUNCTION public.finalize_flutterwave_subscription_checkout TO service_role;
 
 CREATE OR REPLACE FUNCTION public.finalize_flutterwave_subscription_renewal(
   p_subscription_id UUID, p_provider_tx_id TEXT,
   p_verified_amount_minor INTEGER, p_verified_currency TEXT,
   p_provider_paid_at TIMESTAMPTZ
-) RETURNS VOID
+) RETURNS JSONB
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 DECLARE
   v_sub RECORD; v_period_start TIMESTAMPTZ; v_period_end TIMESTAMPTZ;
   v_payment_id UUID; v_activation_result JSONB; v_existing_payment RECORD;
+  v_conflict_check INTEGER;
 BEGIN
-  -- Require non-null provider timestamp (Blocker 4)
   IF p_provider_paid_at IS NULL THEN
     RAISE EXCEPTION 'finalize_renewal: p_provider_paid_at must not be NULL';
   END IF;
@@ -580,64 +603,79 @@ BEGIN
   v_period_start := p_provider_paid_at;
   v_period_end := v_period_start + interval '30 days';
 
-  -- Out-of-order protection: reject if provider timestamp would regress chronology (Blocker 4)
+  -- PRE-CHECK: exact-tx idempotency
+  SELECT * INTO v_existing_payment FROM subscription_payments
+    WHERE gateway = 'flutterwave' AND provider_reference = p_provider_tx_id AND status = 'success';
+  IF FOUND THEN
+    RETURN jsonb_build_object('finalized', true, 'idempotent', true);
+  END IF;
+
+  -- Reject out-of-order: before current_period_start (Blocker 4)
   IF v_sub.current_period_start IS NOT NULL AND v_period_start < v_sub.current_period_start THEN
     RAISE EXCEPTION 'renewal out-of-order: provider_paid_at % is before current_period_start %',
       v_period_start, v_sub.current_period_start;
   END IF;
 
-  -- Insert payment evidence — distinguish same-tx duplicate from period conflict (Blocker 3)
-  BEGIN
-    INSERT INTO subscription_payments (
-      id, business_id, subscription_id, amount, currency, gateway,
-      gateway_reference, provider_reference, plan, action, status,
-      billing_interval, config_version_id, period_start, period_end
+  -- Reject overlapping: within current active period (Blocker F)
+  IF v_sub.current_period_end IS NOT NULL AND v_period_start < v_sub.current_period_end THEN
+    -- Overlapping period — quarantine WITHOUT mutating entitlement (Blocker E)
+    INSERT INTO subscription_payment_quarantine (
+      subscription_id, provider_tx_ref, provider_tx_id,
+      provider_amount, provider_currency, provider_status, reason
     ) VALUES (
-      gen_random_uuid(), v_sub.business_id, p_subscription_id,
-      p_verified_amount_minor, upper(p_verified_currency), 'flutterwave',
-      p_provider_tx_id, p_provider_tx_id, v_sub.plan, 'renewal', 'success',
-      'month', v_sub.billing_config_version_id, v_period_start, v_period_end
-    ) RETURNING id INTO v_payment_id;
-  EXCEPTION WHEN unique_violation THEN
-    -- Check if exact same provider transaction (idempotent)
-    SELECT * INTO v_existing_payment FROM subscription_payments
-      WHERE gateway = 'flutterwave' AND provider_reference = p_provider_tx_id AND status = 'success';
-    IF FOUND THEN
-      -- Same provider tx — idempotent, no extension
-      RETURN;
-    ELSE
-      -- Different tx for occupied period — quarantine (Blocker 3)
-      INSERT INTO subscription_payment_quarantine (
-        subscription_id, provider_tx_ref, provider_tx_id,
-        provider_amount, provider_currency, provider_status, reason
-      ) VALUES (
-        p_subscription_id, p_provider_tx_id, p_provider_tx_id,
-        p_verified_amount_minor, p_verified_currency, 'conflict',
-        'different_renewal_tx_for_occupied_period'
-      );
-      RAISE EXCEPTION 'renewal conflict: different provider tx for occupied period';
-    END IF;
-  END;
+      p_subscription_id, p_provider_tx_id, p_provider_tx_id,
+      p_verified_amount_minor, p_verified_currency, 'overlap',
+      'renewal_paid_at_within_current_period'
+    );
+    RETURN jsonb_build_object('finalized', false, 'reason', 'overlapping_period', 'quarantine', true);
+  END IF;
 
-  -- Extend subscription period
+  -- Check period conflict (different tx for same period_start)
+  SELECT count(*) INTO v_conflict_check FROM subscription_payments
+    WHERE subscription_id = p_subscription_id AND period_start = v_period_start AND status = 'success';
+  IF v_conflict_check > 0 THEN
+    INSERT INTO subscription_payment_quarantine (
+      subscription_id, provider_tx_ref, provider_tx_id,
+      provider_amount, provider_currency, provider_status, reason
+    ) VALUES (
+      p_subscription_id, p_provider_tx_id, p_provider_tx_id,
+      p_verified_amount_minor, p_verified_currency, 'conflict',
+      'different_renewal_tx_for_occupied_period'
+    );
+    RETURN jsonb_build_object('finalized', false, 'reason', 'period_conflict', 'quarantine', true);
+  END IF;
+
+  -- No conflict — proceed
+  INSERT INTO subscription_payments (
+    id, business_id, subscription_id, amount, currency, gateway,
+    gateway_reference, provider_reference, plan, action, status,
+    billing_interval, config_version_id, period_start, period_end
+  ) VALUES (
+    gen_random_uuid(), v_sub.business_id, p_subscription_id,
+    p_verified_amount_minor, upper(p_verified_currency), 'flutterwave',
+    p_provider_tx_id, p_provider_tx_id, v_sub.plan, 'renewal', 'success',
+    'month', v_sub.billing_config_version_id, v_period_start, v_period_end
+  ) RETURNING id INTO v_payment_id;
+
   UPDATE subscriptions SET
     current_period_start = v_period_start, current_period_end = v_period_end,
     status = 'active', updated_at = clock_timestamp()
   WHERE id = p_subscription_id;
 
-  -- Call M375 and enforce result (Blocker 2)
   v_activation_result := public.activate_paid_subscription(v_payment_id);
   IF v_activation_result IS NULL OR (v_activation_result ->> 'activated')::BOOLEAN IS NOT TRUE THEN
     RAISE EXCEPTION 'M375 renewal activation rejected: %', COALESCE(v_activation_result ->> 'reason', 'unknown');
   END IF;
+
+  RETURN jsonb_build_object('finalized', true);
 END;
 $$;
 
-REVOKE ALL ON FUNCTION public.finalize_flutterwave_subscription_renewal(uuid,text,integer,text,timestamptz) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.finalize_flutterwave_subscription_renewal(uuid,text,integer,text,timestamptz) FROM anon;
-REVOKE ALL ON FUNCTION public.finalize_flutterwave_subscription_renewal(uuid,text,integer,text,timestamptz) FROM authenticated;
-REVOKE ALL ON FUNCTION public.finalize_flutterwave_subscription_renewal(uuid,text,integer,text,timestamptz) FROM service_role;
-GRANT EXECUTE ON FUNCTION public.finalize_flutterwave_subscription_renewal(uuid,text,integer,text,timestamptz) TO service_role;
+REVOKE ALL ON FUNCTION public.finalize_flutterwave_subscription_renewal FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.finalize_flutterwave_subscription_renewal FROM anon;
+REVOKE ALL ON FUNCTION public.finalize_flutterwave_subscription_renewal FROM authenticated;
+REVOKE ALL ON FUNCTION public.finalize_flutterwave_subscription_renewal FROM service_role;
+GRANT EXECUTE ON FUNCTION public.finalize_flutterwave_subscription_renewal TO service_role;
 
 CREATE OR REPLACE FUNCTION public.finalize_subscription_cancellation(
   p_subscription_id UUID, p_provider_event_id TEXT, p_reason TEXT DEFAULT 'provider_cancelled'
@@ -979,6 +1017,10 @@ BEGIN
   SELECT count(*) INTO v_count FROM information_schema.tables
     WHERE table_schema = 'public' AND table_name = 'subscription_payment_quarantine';
   IF v_count = 0 THEN RAISE EXCEPTION 'M378: subscription_payment_quarantine not found'; END IF;
+
+  SELECT count(*) INTO v_count FROM pg_proc
+    WHERE proname = 'get_effective_config_version_id' AND pronamespace = 'public'::regnamespace;
+  IF v_count = 0 THEN RAISE EXCEPTION 'M378: get_effective_config_version_id not found'; END IF;
 
   SELECT count(*) INTO v_count FROM pg_proc
     WHERE proname = 'save_provider_plan_refs' AND pronamespace = 'public'::regnamespace;

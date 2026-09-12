@@ -192,12 +192,12 @@ describe('Webhook behavior unchanged', () => {
     expect(flutterwaveWebhook).toContain("'Invalid hash'");
   });
 
-  it('Flutterwave acknowledges with 200 on error (not changed)', () => {
-    // Flutterwave webhook acknowledges even on error to prevent infinite retries
+  it('Flutterwave returns 500 on error so provider retries (M378)', () => {
+    // M378: return 500 on unhandled errors so Flutterwave retries subscription webhooks
     const catchSection = flutterwaveWebhook.substring(
       flutterwaveWebhook.lastIndexOf('catch (error)'),
     );
-    expect(catchSection).toContain("{ status: 200 }");
+    expect(catchSection).toContain("{ status: 500 }");
   });
 
   it('Paystack preserves Sentry.captureException in catch', () => {

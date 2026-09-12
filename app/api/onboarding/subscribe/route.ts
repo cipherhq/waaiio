@@ -185,10 +185,9 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      // Get current config version for CAS
-      const { data: configVer } = await service.rpc('get_effective_commercial_config');
-      const configVersionId = (configVer as { id: string }[])?.[0]?.id;
-      if (!configVersionId) {
+      // Get current config version for CAS — service-role-accessible helper (M378)
+      const { data: configVersionId, error: configErr } = await service.rpc('get_effective_config_version_id');
+      if (configErr || !configVersionId) {
         return NextResponse.json({ message: 'Configuration unavailable' }, { status: 503 });
       }
 
@@ -223,12 +222,65 @@ export async function POST(request: NextRequest) {
         });
       }
 
-      // If needs provider verification (timeout boundary elapsed), fail closed
+      // Timeout boundary elapsed — verify original provider state (Blocker B)
       if (claimRow.needs_provider_verification) {
-        return NextResponse.json(
-          { message: 'Previous checkout session may have expired. Please try again.' },
-          { status: 409 },
-        );
+        try {
+          // Discover original provider transaction by tx_ref
+          const txLookup = await fetch(
+            `https://api.flutterwave.com/v3/transactions?tx_ref=${encodeURIComponent(claimRow.idempotency_key as string)}`,
+            { headers: { 'Authorization': `Bearer ${flutterwaveKey}` }, signal: AbortSignal.timeout(10000) },
+          );
+          const txLookupData = await txLookup.json() as { status?: string; data?: { id: number; status: string }[] };
+
+          if (txLookupData.status === 'success' && txLookupData.data?.length) {
+            const providerTx = txLookupData.data[0];
+            if (providerTx.status === 'successful') {
+              // Customer paid — finalize original intent, never replace
+              // (webhook or reconciliation will handle finalization)
+              return NextResponse.json({
+                authorization_url: claimRow.provider_checkout_url as string,
+                reference: claimRow.idempotency_key as string,
+                message: 'Payment may have been completed. Check your subscription status.',
+              });
+            }
+            if (providerTx.status === 'failed' || providerTx.status === 'cancelled') {
+              // Provider confirmed terminal — replace intent
+              const { data: replacement } = await service.rpc('replace_terminal_checkout_intent', {
+                p_old_intent_id: claimRow.intent_id,
+                p_business_id: business_id, p_plan: plan, p_gateway: 'flutterwave',
+                p_currency: currency, p_amount: monthlyPrice,
+                p_provider_plan_ref: planRef.trim(),
+                p_config_version_id: configVersionId as string,
+                p_subscriber_email: email, p_session_duration: 30, p_actor_id: user.id,
+              });
+              const newClaim = (replacement as Record<string, unknown>[])?.[0];
+              if (!newClaim) {
+                return NextResponse.json({ message: 'Checkout replacement failed' }, { status: 500 });
+              }
+              // Caller should retry — new intent created
+              return NextResponse.json(
+                { message: 'Previous checkout expired. Please retry.' },
+                { status: 409 },
+              );
+            }
+            // pending — checkout still live despite our timeout estimate
+            return NextResponse.json({
+              authorization_url: claimRow.provider_checkout_url as string,
+              reference: claimRow.idempotency_key as string,
+            });
+          }
+          // No transaction found — ambiguous, fail closed (Blocker C)
+          return NextResponse.json(
+            { message: 'Payment status unavailable. Please try again later.' },
+            { status: 503 },
+          );
+        } catch {
+          // Provider unavailable — fail closed, retain original intent (Blocker C)
+          return NextResponse.json(
+            { message: 'Payment status unavailable. Please try again later.' },
+            { status: 503 },
+          );
+        }
       }
 
       // If not claimed (another caller initializing), return polling response
@@ -266,27 +318,54 @@ export async function POST(request: NextRequest) {
         }),
       });
 
-      const flwData = await flwResponse.json() as Record<string, unknown>;
+      let flwData: Record<string, unknown>;
+      try {
+        const rawResponse = await flwResponse.json();
+        flwData = rawResponse as Record<string, unknown>;
+      } catch {
+        // Malformed response — ambiguous, retain intent with same key (Blocker C)
+        return NextResponse.json(
+          { message: 'Payment initialization failed. Please retry.' },
+          { status: 503 },
+        );
+      }
 
-      if (flwData.status !== 'success') {
-        // Mark intent as failed — frees the slot for retry
+      if (!flwResponse.ok || flwData.status !== 'success') {
+        // Distinguish definitive rejection from ambiguous 5xx (Blocker C)
+        if (flwResponse.status >= 500 || !flwResponse.ok) {
+          // Ambiguous — retain intent, same idempotency key for retry
+          return NextResponse.json(
+            { message: 'Payment service temporarily unavailable. Please retry.' },
+            { status: 503 },
+          );
+        }
+        // Definitive 4xx rejection — mark failed, free slot
         await service.from('subscription_checkout_intents')
           .update({ status: 'failed' })
           .eq('id', claimRow.intent_id as string);
         return NextResponse.json(
-          { message: 'Failed to initialize payment', error: (flwData as Record<string, unknown>).message },
+          { message: 'Failed to initialize payment', error: flwData.message },
           { status: 500 },
         );
       }
 
       const flwDataInner = flwData.data as Record<string, string>;
 
-      // Persist provider response with DB-authoritative timeout
-      await service.rpc('persist_checkout_provider_response', {
+      // Persist provider response with DB-authoritative timeout (Blocker D)
+      const { error: persistErr } = await service.rpc('persist_checkout_provider_response', {
         p_intent_id: claimRow.intent_id,
         p_provider_checkout_url: flwDataInner.link,
         p_idempotency_key: claimRow.idempotency_key,
       });
+
+      if (persistErr) {
+        // Persistence failed — do NOT expose checkout URL (Blocker D)
+        // Intent retains same key; next retry will re-call provider with same idempotency key
+        return NextResponse.json(
+          { message: 'Checkout initialization failed. Please retry.' },
+          { status: 500 },
+        );
+      }
 
       return NextResponse.json({
         authorization_url: flwDataInner.link,
