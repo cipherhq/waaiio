@@ -81,24 +81,49 @@ export async function correlateProviderSubscription(
  * Requires: HTTP 2xx, status=success, exact match to stored ID, exactly one match.
  */
 /**
- * Query Flutterwave subscriptions with explicit status filter.
- * Returns matching subscriptions or error.
+ * Query Flutterwave subscriptions with explicit status filter, paginating until
+ * the target subscription ID is found or results are demonstrably exhausted.
+ *
+ * Documented GET /v3/subscriptions supports: email, status (cancelled|active), page.
+ * Default page=1. Exhaustion: empty data array or fewer results than a reasonable page size.
  */
-async function querySubscriptions(
+export async function findSubscriptionByStatus(
+  targetSubscriptionId: string,
   email: string,
   statusFilter: 'cancelled' | 'active',
   flutterwaveKey: string,
-): Promise<{ ok: true; data: { id: number; status: string }[] } | { ok: false; reason: string }> {
+  maxPages: number = 10,
+): Promise<{ ok: true; found: true; status: string } | { ok: true; found: false } | { ok: false; reason: string }> {
+  const PAGE_SIZE_HINT = 20; // Flutterwave default page size
   try {
-    const url = `https://api.flutterwave.com/v3/subscriptions?email=${encodeURIComponent(email)}&status=${statusFilter}`;
-    const response = await fetch(url, {
-      headers: { 'Authorization': `Bearer ${flutterwaveKey}` },
-      signal: AbortSignal.timeout(10000),
-    });
-    if (!response.ok) return { ok: false, reason: 'unavailable' };
-    const data = await response.json() as { status?: string; data?: { id: number; status: string }[] };
-    if (data.status !== 'success' || !data.data) return { ok: false, reason: 'unavailable' };
-    return { ok: true, data: data.data };
+    for (let page = 1; page <= maxPages; page++) {
+      const url = `https://api.flutterwave.com/v3/subscriptions?email=${encodeURIComponent(email)}&status=${statusFilter}&page=${page}`;
+      const response = await fetch(url, {
+        headers: { 'Authorization': `Bearer ${flutterwaveKey}` },
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!response.ok) return { ok: false, reason: 'unavailable' };
+
+      const data = await response.json() as { status?: string; data?: { id: number; status: string }[] };
+      if (data.status !== 'success') return { ok: false, reason: 'unavailable' };
+      if (!data.data || data.data.length === 0) {
+        // No more results — exhausted
+        return { ok: true, found: false };
+      }
+
+      // Check for exact match on this page
+      const match = data.data.find(s => String(s.id) === targetSubscriptionId);
+      if (match) {
+        return { ok: true, found: true, status: match.status };
+      }
+
+      // If fewer results than page size hint, this is the last page
+      if (data.data.length < PAGE_SIZE_HINT) {
+        return { ok: true, found: false };
+      }
+    }
+    // Exhausted max pages without finding
+    return { ok: true, found: false };
   } catch {
     return { ok: false, reason: 'unavailable' };
   }
@@ -118,28 +143,16 @@ export async function verifySubscriptionStatus(
   subscriberEmail: string,
   flutterwaveKey: string,
 ): Promise<{ ok: true; status: string } | { ok: false; reason: string }> {
-  // Step 1: Check cancelled subscriptions first (explicit status=cancelled)
-  const cancelledResult = await querySubscriptions(subscriberEmail, 'cancelled', flutterwaveKey);
-  if (!cancelledResult.ok) return cancelledResult;
+  // Step 1: Check cancelled subscriptions (explicit status=cancelled, paginated)
+  const cancelledResult = await findSubscriptionByStatus(subscriptionId, subscriberEmail, 'cancelled', flutterwaveKey);
+  if (!cancelledResult.ok) return { ok: false, reason: cancelledResult.reason };
+  if (cancelledResult.found) return { ok: true, status: 'cancelled' };
 
-  const cancelledMatch = cancelledResult.data.filter(s => String(s.id) === subscriptionId);
-  if (cancelledMatch.length === 1) return { ok: true, status: 'cancelled' };
-  if (cancelledMatch.length > 1) {
-    logger.error('[FLW-SUB] Ambiguous cancelled subscription', { subscriptionId, count: cancelledMatch.length });
-    return { ok: false, reason: 'ambiguous' };
-  }
+  // Step 2: Not found as cancelled — check active (explicit status=active, paginated)
+  const activeResult = await findSubscriptionByStatus(subscriptionId, subscriberEmail, 'active', flutterwaveKey);
+  if (!activeResult.ok) return { ok: false, reason: activeResult.reason };
+  if (activeResult.found) return { ok: true, status: 'active' };
 
-  // Step 2: Not found as cancelled — check active (explicit status=active)
-  const activeResult = await querySubscriptions(subscriberEmail, 'active', flutterwaveKey);
-  if (!activeResult.ok) return activeResult;
-
-  const activeMatch = activeResult.data.filter(s => String(s.id) === subscriptionId);
-  if (activeMatch.length === 1) return { ok: true, status: 'active' };
-  if (activeMatch.length > 1) {
-    logger.error('[FLW-SUB] Ambiguous active subscription', { subscriptionId, count: activeMatch.length });
-    return { ok: false, reason: 'ambiguous' };
-  }
-
-  // Not found in either status
+  // Not found in either status after exhaustive pagination
   return { ok: false, reason: 'not_found' };
 }

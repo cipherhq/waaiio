@@ -26,19 +26,21 @@ export type ChargeRoutingDecision =
  */
 export function decideChargeRouting(
   txRef: string,
+  webhookTxId: number,
   hasIntentMatch: boolean,
   renewalLookupResult: 'matched' | 'not_subscription' | 'unavailable' | 'ambiguous',
+  localSubId?: string,
 ): ChargeRoutingDecision {
   if (txRef.startsWith('waaiiosub') && hasIntentMatch) {
     return { route: 'platform_initial', txRef };
   }
   if (!txRef.startsWith('waaiiosub')) {
-    if (renewalLookupResult === 'matched') return { route: 'platform_renewal', txId: 0 };
-    if (renewalLookupResult === 'unavailable' || renewalLookupResult === 'ambiguous') {
-      // Fail closed — do NOT fall through to business payment
-      return { route: 'unknown' };
+    if (renewalLookupResult === 'matched' && localSubId) {
+      return { route: 'platform_renewal', txId: webhookTxId };
     }
-    // 'not_subscription' → fall through to business payment
+    if (renewalLookupResult === 'unavailable' || renewalLookupResult === 'ambiguous') {
+      return { route: 'unknown' }; // fail closed
+    }
   }
   return { route: 'business_payment', txRef };
 }

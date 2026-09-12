@@ -17,7 +17,7 @@ vi.mock('@/lib/logger', () => ({ logger: { error: vi.fn(), warn: vi.fn(), info: 
 
 import { discoverAndVerifyTransaction, verifyTransactionById, toFlwDate } from '../flutterwave-verify';
 import { verifyFlutterwaveSignature } from '../flutterwave-signature';
-import { correlateProviderSubscription, verifySubscriptionStatus } from '../flutterwave-subscription';
+import { correlateProviderSubscription, verifySubscriptionStatus, findSubscriptionByStatus } from '../flutterwave-subscription';
 import { decideTimeoutRecovery, decideInitResponse, decideCancellation, decideSubscriptionCorrelation, decideFinalizerResult, decideChargeRouting } from '../flutterwave-decisions';
 
 beforeEach(() => { mockFetch.mockReset(); });
@@ -245,43 +245,72 @@ describe('decideFinalizerResult', () => {
   it('error → failed', () => expect(decideFinalizerResult(null, new Error('x')).action).toBe('failed'));
 });
 
-// ═════ Charge routing — production function (Blocker C) ═════
-describe('decideChargeRouting — executable business-payment non-regression', () => {
-  it('waaiiosub prefix with intent match → platform_initial', () => {
-    const r = decideChargeRouting('waaiiosubabcdef1234567890abcdef12', true, 'not_subscription');
-    expect(r.route).toBe('platform_initial');
+// ═════ findSubscriptionByStatus — pagination ═════
+describe('findSubscriptionByStatus — paginated lookup', () => {
+  it('found on page 1 → found', async () => {
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: [{ id: 42, status: 'cancelled' }] }) });
+    const r = await findSubscriptionByStatus('42', 'u@t.com', 'cancelled', 'k');
+    expect(r.ok && r.found).toBe(true);
+    expect((mockFetch.mock.calls[0][0] as string)).toContain('status=cancelled');
+    expect((mockFetch.mock.calls[0][0] as string)).toContain('page=1');
   });
 
-  it('waaiiosub prefix without intent match → business_payment (no intent = not ours)', () => {
-    const r = decideChargeRouting('waaiiosubabcdef1234567890abcdef12', false, 'not_subscription');
-    expect(r.route).toBe('business_payment');
+  it('found on page 2 → found (pagination works)', async () => {
+    // Page 1: 20 results, target not present
+    const page1 = Array.from({ length: 20 }, (_, i) => ({ id: i + 1, status: 'cancelled' }));
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: page1 }) });
+    // Page 2: target found
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: [{ id: 42, status: 'cancelled' }] }) });
+    const r = await findSubscriptionByStatus('42', 'u@t.com', 'cancelled', 'k');
+    expect(r.ok && r.found).toBe(true);
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect((mockFetch.mock.calls[1][0] as string)).toContain('page=2');
   });
 
-  it('non-waaiiosub + renewal matched → platform_renewal', () => {
-    const r = decideChargeRouting('flw_charge_abc123', false, 'matched');
+  it('exhausted (empty page) → not found', async () => {
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: [] }) });
+    const r = await findSubscriptionByStatus('42', 'u@t.com', 'cancelled', 'k');
+    expect(r.ok && !r.found).toBe(true);
+  });
+
+  it('exhausted (partial page) → not found', async () => {
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: [{ id: 99, status: 'cancelled' }] }) });
+    const r = await findSubscriptionByStatus('42', 'u@t.com', 'cancelled', 'k');
+    expect(r.ok && !r.found).toBe(true);
+  });
+
+  it('provider error → fail closed', async () => {
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 500 });
+    const r = await findSubscriptionByStatus('42', 'u@t.com', 'cancelled', 'k');
+    expect(r.ok).toBe(false);
+  });
+});
+
+// ═════ decideChargeRouting — wired into actual POST webhook ═════
+describe('decideChargeRouting — production routing authority', () => {
+  it('waaiiosub + intent match → platform_initial', () => {
+    expect(decideChargeRouting('waaiiosubtest123', 100, true, 'not_subscription').route).toBe('platform_initial');
+  });
+  it('waaiiosub without intent → business_payment', () => {
+    expect(decideChargeRouting('waaiiosubtest123', 100, false, 'not_subscription').route).toBe('business_payment');
+  });
+  it('non-waaiiosub + matched renewal → platform_renewal with real txId', () => {
+    const r = decideChargeRouting('flw_abc', 12345, false, 'matched', 'sub-uuid');
     expect(r.route).toBe('platform_renewal');
+    if (r.route === 'platform_renewal') expect(r.txId).toBe(12345);
   });
-
-  it('non-waaiiosub + renewal unavailable → unknown (fail closed, NOT business_payment)', () => {
-    const r = decideChargeRouting('flw_charge_abc123', false, 'unavailable');
-    expect(r.route).toBe('unknown');
+  it('non-waaiiosub + unavailable → unknown (fail closed)', () => {
+    expect(decideChargeRouting('flw_abc', 100, false, 'unavailable').route).toBe('unknown');
   });
-
-  it('non-waaiiosub + renewal ambiguous → unknown (fail closed)', () => {
-    const r = decideChargeRouting('flw_charge_abc123', false, 'ambiguous');
-    expect(r.route).toBe('unknown');
+  it('non-waaiiosub + ambiguous → unknown (fail closed)', () => {
+    expect(decideChargeRouting('flw_abc', 100, false, 'ambiguous').route).toBe('unknown');
   });
-
-  it('non-waaiiosub + not_subscription → business_payment (ordinary charge)', () => {
-    const r = decideChargeRouting('flw_charge_abc123', false, 'not_subscription');
+  it('non-waaiiosub + not_subscription → business_payment', () => {
+    const r = decideChargeRouting('flw_biz_charge_123', 100, false, 'not_subscription');
     expect(r.route).toBe('business_payment');
-    expect(r.route).toBe('business_payment'); // NOT swallowed by subscription routing
+    if (r.route === 'business_payment') expect(r.txRef).toBe('flw_biz_charge_123');
   });
-
-  it('ordinary business tx_ref reaches business_payment path', () => {
-    // This proves a normal non-platform charge goes to the existing reconciliation path
-    const r = decideChargeRouting('flw_1234567890abcdef', false, 'not_subscription');
-    expect(r.route).toBe('business_payment');
-    expect(r).toHaveProperty('txRef', 'flw_1234567890abcdef');
+  it('renewal matched without localSubId → business_payment (safety)', () => {
+    expect(decideChargeRouting('flw_abc', 100, false, 'matched').route).toBe('business_payment');
   });
 });

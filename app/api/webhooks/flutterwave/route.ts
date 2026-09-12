@@ -11,7 +11,7 @@ export const maxDuration = 60;
 
 import { verifyFlutterwaveSignature } from '@/lib/payments/flutterwave-signature';
 import { correlateProviderSubscription, verifySubscriptionStatus } from '@/lib/payments/flutterwave-subscription';
-import { decideCancellation, decideFinalizerResult, decideSubscriptionCorrelation } from '@/lib/payments/flutterwave-decisions';
+import { decideCancellation, decideFinalizerResult, decideSubscriptionCorrelation, decideChargeRouting } from '@/lib/payments/flutterwave-decisions';
 
 const FLUTTERWAVE_SECRET_HASH = process.env.FLUTTERWAVE_WEBHOOK_HASH || '';
 
@@ -172,12 +172,94 @@ export async function POST(request: NextRequest) {
 
     const supabase = createServiceClient();
 
-    // ── Platform subscription routing (M378) ──
+    // ── Routing decision using production decideChargeRouting (Blocker B) ──
     const flwKey = process.env.FLUTTERWAVE_SECRET_KEY || '';
     const { verifyTransactionById } = await import('@/lib/payments/flutterwave-verify');
+    const webhookTxId = data.id as number;
 
-    // Initial checkout charges use tx_ref starting with 'waaiiosub'
+    // Determine intent match
+    let hasIntentMatch = false;
     if (txRef.startsWith('waaiiosub')) {
+      const { data: intentCheck } = await supabase
+        .from('subscription_checkout_intents')
+        .select('id')
+        .eq('idempotency_key', txRef)
+        .maybeSingle();
+      hasIntentMatch = !!intentCheck;
+    }
+
+    // Determine renewal lookup result (for non-waaiiosub tx_refs only)
+    let renewalLookupResult: 'matched' | 'not_subscription' | 'unavailable' | 'ambiguous' = 'not_subscription';
+    let renewalLocalSubId: string | null = null;
+    if (!txRef.startsWith('waaiiosub') && webhookTxId) {
+      // Reuse the existing renewal correlation logic
+      try {
+        const subLookup = await fetch(
+          `https://api.flutterwave.com/v3/subscriptions?transaction_id=${webhookTxId}`,
+          { headers: { 'Authorization': `Bearer ${flwKey}` }, signal: AbortSignal.timeout(10000) },
+        );
+        if (!subLookup.ok) {
+          renewalLookupResult = 'unavailable';
+        } else {
+          const subData = await subLookup.json() as { status?: string; data?: { id: number }[] };
+          if (subData.status !== 'success' || !subData.data) {
+            renewalLookupResult = 'unavailable';
+          } else if (subData.data.length === 0) {
+            renewalLookupResult = 'not_subscription';
+          } else if (subData.data.length > 1) {
+            renewalLookupResult = 'ambiguous';
+          } else {
+            const flwSubId = String(subData.data[0].id);
+            const { data: localSub, error: localErr } = await supabase
+              .from('subscriptions').select('id')
+              .eq('flutterwave_subscription_id', flwSubId).eq('gateway', 'flutterwave')
+              .maybeSingle();
+            if (localErr) renewalLookupResult = 'unavailable';
+            else if (localSub) { renewalLookupResult = 'matched'; renewalLocalSubId = localSub.id; }
+          }
+        }
+      } catch { renewalLookupResult = 'unavailable'; }
+    }
+
+    // Production routing decision
+    const routingDecision = decideChargeRouting(txRef, webhookTxId, hasIntentMatch, renewalLookupResult, renewalLocalSubId || undefined);
+
+    // Fail closed for unknown routing (ambiguous/unavailable renewal)
+    if (routingDecision.route === 'unknown') {
+      wh.failed(new Error('Charge routing ambiguous/unavailable'));
+      return NextResponse.json({ error: 'Charge routing failed' }, { status: 500 });
+    }
+
+    // ── Platform renewal path ──
+    if (routingDecision.route === 'platform_renewal' && renewalLocalSubId) {
+      const renewVerify = await verifyTransactionById(webhookTxId, txRef, flwKey);
+      if (!renewVerify.ok || renewVerify.tx.status !== 'successful') {
+        wh.failed(new Error(`Renewal verification failed`));
+        return NextResponse.json({ error: 'Renewal verification failed' }, { status: 500 });
+      }
+      const { tx: renewTx } = renewVerify;
+      const { data: renewResult, error: renewErr } = await supabase.rpc('finalize_flutterwave_subscription_renewal', {
+        p_subscription_id: renewalLocalSubId,
+        p_provider_tx_id: String(renewTx.id),
+        p_verified_amount_minor: Math.round(renewTx.amount * 100),
+        p_verified_currency: renewTx.currency,
+        p_provider_paid_at: renewTx.created_at,
+      });
+      const rDecision = decideFinalizerResult(renewResult as Record<string, unknown> | null, renewErr);
+      if (rDecision.action === 'quarantined') {
+        logger.error('[FLW-WEBHOOK] Renewal quarantined', { subId: renewalLocalSubId });
+        return NextResponse.json({ message: 'Renewal quarantined' }, { status: 200 });
+      }
+      if (rDecision.action !== 'success') {
+        wh.failed(new Error(`Renewal failed: ${rDecision.reason}`));
+        return NextResponse.json({ error: 'Renewal failed' }, { status: 500 });
+      }
+      wh.processed({ durationMs: Math.round(performance.now() - startTime) });
+      return NextResponse.json({ message: 'Subscription renewed' }, { status: 200 });
+    }
+
+    // ── Platform initial subscription path ──
+    if (routingDecision.route === 'platform_initial' && txRef.startsWith('waaiiosub')) {
       const { data: intent } = await supabase
         .from('subscription_checkout_intents')
         .select('id, status, business_id, plan, amount, currency, idempotency_key, config_version_id, subscriber_email')
@@ -303,108 +385,7 @@ export async function POST(request: NextRequest) {
       // No intent match — fall through to renewal/business-payment check
     }
 
-    // ── Flutterwave subscription renewal routing ──
-    // For charges without waaiiosub prefix, check if they belong to a known subscription
-    if (!txRef.startsWith('waaiiosub')) {
-      const webhookTxId = data.id as number;
-      if (webhookTxId) {
-        let renewalSubLookupResult: 'not_subscription' | 'matched' | 'unavailable' | 'ambiguous' = 'not_subscription';
-        let localSubId: string | null = null;
-
-        try {
-          const subLookup = await fetch(
-            `https://api.flutterwave.com/v3/subscriptions?transaction_id=${webhookTxId}`,
-            { headers: { 'Authorization': `Bearer ${flwKey}` }, signal: AbortSignal.timeout(10000) },
-          );
-
-          // Non-2xx provider response → fail closed (Blocker C)
-          if (!subLookup.ok) {
-            renewalSubLookupResult = 'unavailable';
-          } else {
-            const subData = await subLookup.json() as { status?: string; data?: { id: number }[] };
-
-            // Non-success status or missing data → fail closed (Blocker C)
-            if (subData.status !== 'success' || !subData.data) {
-              renewalSubLookupResult = 'unavailable';
-            } else if (subData.data.length === 0) {
-              // Positively successful lookup with zero matches → not a subscription
-              renewalSubLookupResult = 'not_subscription';
-            } else if (subData.data.length > 1) {
-              renewalSubLookupResult = 'ambiguous';
-            } else {
-              // Exactly one match
-              const flwSubId = String(subData.data[0].id);
-              const { data: localSub, error: localErr } = await supabase
-                .from('subscriptions')
-                .select('id')
-                .eq('flutterwave_subscription_id', flwSubId)
-                .eq('gateway', 'flutterwave')
-                .maybeSingle();
-
-              // Local DB lookup error → fail closed (Blocker C)
-              if (localErr) {
-                renewalSubLookupResult = 'unavailable';
-              } else if (localSub) {
-                renewalSubLookupResult = 'matched';
-                localSubId = localSub.id;
-              }
-              // No local match with valid provider lookup → not our subscription
-            }
-          }
-        } catch {
-          renewalSubLookupResult = 'unavailable';
-        }
-
-        // Fail closed on ambiguous/unavailable — do NOT fall through to business-payment
-        if (renewalSubLookupResult === 'ambiguous') {
-          wh.failed(new Error('Ambiguous renewal subscription correlation'));
-          return NextResponse.json({ error: 'Renewal correlation ambiguous' }, { status: 500 });
-        }
-        if (renewalSubLookupResult === 'unavailable') {
-          wh.failed(new Error('Renewal subscription lookup unavailable'));
-          return NextResponse.json({ error: 'Renewal lookup unavailable' }, { status: 500 });
-        }
-
-        if (renewalSubLookupResult === 'matched' && localSubId) {
-          // Verify transaction before granting renewal value
-          const renewVerify = await verifyTransactionById(webhookTxId, txRef, flwKey);
-          if (!renewVerify.ok || renewVerify.tx.status !== 'successful') {
-            wh.failed(new Error(`Renewal verification failed: ${!renewVerify.ok ? renewVerify.reason : renewVerify.tx.status}`));
-            return NextResponse.json({ error: 'Renewal verification failed' }, { status: 500 });
-          }
-
-          const { tx: renewTx } = renewVerify;
-          const { data: renewResult, error: renewErr } = await supabase.rpc('finalize_flutterwave_subscription_renewal', {
-            p_subscription_id: localSubId,
-            p_provider_tx_id: String(renewTx.id),
-            p_verified_amount_minor: Math.round(renewTx.amount * 100),
-            p_verified_currency: renewTx.currency,
-            p_provider_paid_at: renewTx.created_at,
-          });
-
-          if (renewErr) {
-            wh.failed(renewErr, { durationMs: Math.round(performance.now() - startTime) });
-            return NextResponse.json({ error: renewErr.message }, { status: 500 });
-          }
-
-          const rResult = renewResult as Record<string, unknown> | null;
-          if (!rResult || rResult.finalized !== true) {
-            if (rResult?.quarantine) {
-              logger.error('[FLW-WEBHOOK] Renewal quarantined', { subId: localSubId, result: rResult });
-              return NextResponse.json({ message: 'Renewal quarantined for reconciliation' }, { status: 200 });
-            }
-            wh.failed(new Error(`Renewal not finalized: ${JSON.stringify(rResult)}`));
-            return NextResponse.json({ error: 'Renewal finalization failed' }, { status: 500 });
-          }
-
-          wh.processed({ durationMs: Math.round(performance.now() - startTime) });
-          return NextResponse.json({ message: 'Subscription renewed' }, { status: 200 });
-        }
-        // renewalSubLookupResult === 'not_subscription' — fall through to business-payment path
-      }
-    }
-
-    // ── Existing business-payment path (preserved) ──
+    // ── Existing business-payment path (routingDecision.route === 'business_payment') ──
 
     // Idempotency: check if already processed (mark AFTER processing succeeds)
     const eventId = `flw-${txRef}`;
