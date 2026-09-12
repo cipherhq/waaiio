@@ -224,8 +224,6 @@ export async function POST(request: NextRequest) {
 
       // Timeout boundary elapsed — verify original provider state via bounded discovery + exact-ID verify
       if (claimRow.needs_provider_verification) {
-        const { discoverAndVerifyTransaction } = await import('@/lib/payments/flutterwave-verify');
-        const { decideTimeoutRecovery } = await import('@/lib/payments/flutterwave-decisions');
         // Look up intent created_at for deterministic recovery window
         const { data: intentRow, error: intentErr } = await service
           .from('subscription_checkout_intents')
@@ -239,84 +237,58 @@ export async function POST(request: NextRequest) {
             { status: 503 },
           );
         }
-        const verifyResult = await discoverAndVerifyTransaction(
-          claimRow.idempotency_key as string,
+
+        // Production timeout-recovery orchestration (extracted for testability)
+        const { executeTimeoutRecovery } = await import('@/lib/payments/flutterwave-timeout-recovery');
+        const recoveryResult = await executeTimeoutRecovery(service, {
+          intentId: claimRow.intent_id as string,
+          idempotencyKey: claimRow.idempotency_key as string,
+          intentCreatedAt: intentRow.created_at,
+          providerCheckoutUrl: claimRow.provider_checkout_url as string,
           flutterwaveKey,
-          {
-            fromDate: intentRow.created_at,
-            toDate: new Date(Date.now() + 24 * 60 * 60 * 1000),
+          replaceParams: {
+            businessId: business_id,
+            plan,
+            currency,
+            amount: monthlyPrice,
+            providerPlanRef: planRef.trim(),
+            configVersionId: configVersionId as string,
+            subscriberEmail: email,
+            actorId: user.id,
           },
-        );
+        });
 
-        // Production decision function for timeout recovery (Blocker B)
-        const timeoutDecision = decideTimeoutRecovery(verifyResult);
-
-        if (timeoutDecision.action === 'fail_closed') {
-          return NextResponse.json(
-            { message: 'Payment status unavailable. Please try again later.' },
-            { status: 503 },
-          );
-        }
-
-        if (timeoutDecision.action === 'finalize') {
-          // Customer paid — finalize the ORIGINAL intent idempotently
-          const { correlateProviderSubscription } = await import('@/lib/payments/flutterwave-subscription');
-          const { decideSubscriptionCorrelation, decideFinalizerResult } = await import('@/lib/payments/flutterwave-decisions');
-          const subCorrelation = await correlateProviderSubscription(timeoutDecision.tx.id, flutterwaveKey);
-          const subDecision = decideSubscriptionCorrelation(subCorrelation);
-          if (subDecision.action === 'fail_closed') {
+        switch (recoveryResult.outcome) {
+          case 'finalized':
+            return NextResponse.json({
+              message: 'Subscription activated.',
+              reference: recoveryResult.reference,
+            });
+          case 'replaced':
+            return NextResponse.json(
+              { message: 'Previous checkout expired. Please retry.' },
+              { status: 409 },
+            );
+          case 'replacement_failed':
+            return NextResponse.json({ message: 'Checkout replacement failed' }, { status: 500 });
+          case 'retained':
+            return NextResponse.json({
+              authorization_url: recoveryResult.checkoutUrl,
+              reference: recoveryResult.reference,
+            });
+          case 'unavailable':
+            return NextResponse.json(
+              { message: 'Payment status unavailable. Please try again later.' },
+              { status: 503 },
+            );
+          case 'finalization_failed':
+            return NextResponse.json({ message: 'Activation failed. Please retry.' }, { status: 500 });
+          case 'subscription_pending':
             return NextResponse.json(
               { message: 'Payment completed but subscription setup pending.' },
               { status: 503 },
             );
-          }
-
-          const verifiedAmountMinor = Math.round(timeoutDecision.tx.amount * 100);
-          const { data: finResult, error: finErr } = await service.rpc('finalize_flutterwave_subscription_checkout', {
-            p_intent_id: claimRow.intent_id,
-            p_provider_tx_id: String(timeoutDecision.tx.id),
-            p_provider_subscription_id: subDecision.subscriptionId,
-            p_provider_plan_id: subDecision.planId,
-            p_verified_amount_minor: verifiedAmountMinor,
-            p_verified_currency: timeoutDecision.tx.currency,
-            p_provider_paid_at: timeoutDecision.tx.created_at,
-          });
-
-          const finDecision = decideFinalizerResult(finResult as Record<string, unknown> | null, finErr);
-          if (finDecision.action !== 'success') {
-            return NextResponse.json({ message: 'Activation failed. Please retry.' }, { status: 500 });
-          }
-
-          return NextResponse.json({
-            message: 'Subscription activated.',
-            reference: claimRow.idempotency_key as string,
-          });
         }
-
-        if (timeoutDecision.action === 'replace') {
-          const { data: replacement } = await service.rpc('replace_terminal_checkout_intent', {
-            p_old_intent_id: claimRow.intent_id,
-            p_business_id: business_id, p_plan: plan, p_gateway: 'flutterwave',
-            p_currency: currency, p_amount: monthlyPrice,
-            p_provider_plan_ref: planRef.trim(),
-            p_config_version_id: configVersionId as string,
-            p_subscriber_email: email, p_session_duration: 30, p_actor_id: user.id,
-          });
-          const newClaim = (replacement as Record<string, unknown>[])?.[0];
-          if (!newClaim) {
-            return NextResponse.json({ message: 'Checkout replacement failed' }, { status: 500 });
-          }
-          return NextResponse.json(
-            { message: 'Previous checkout expired. Please retry.' },
-            { status: 409 },
-          );
-        }
-
-        // timeoutDecision.action === 'retain' — checkout may still be live
-        return NextResponse.json({
-          authorization_url: claimRow.provider_checkout_url as string,
-          reference: claimRow.idempotency_key as string,
-        });
       }
 
       // If not claimed (another caller initializing), return polling response
