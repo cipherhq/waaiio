@@ -339,15 +339,17 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
   // ══════════════════════════════════════════════════════════
 
   // Seed config with pricing_tiers + messaging_pricing so M375 can validate amounts
-  it('27-pre. seed pricing_tiers and messaging_pricing for M375 validation', () => {
+  it('27-pre. seed pricing_tiers and messaging config for M375 validation', () => {
     // pricing_tiers needs a 'price' field in major units (14999 = NGN 14999)
     psql(`${adminContext(adminId)} SELECT save_commercial_config('pricing_tiers', '{"free":{"feePercentage":2.5,"feeFlat":0.5,"maxBookings":50,"whitelabel":false,"price":0},"growth":{"feePercentage":1.5,"feeFlat":0.25,"maxBookings":500,"whitelabel":false,"price":14999},"business":{"feePercentage":1.0,"feeFlat":0.25,"maxBookings":999999999,"whitelabel":true,"price":39999}}'::jsonb); RESET ROLE;`);
-    // messaging_pricing needs rates for NG country under NGN currency
-    psql(`${adminContext(adminId)} SELECT save_commercial_config('messaging_pricing', '{"NGN":{"rates":{"NG":{"utility":100,"marketing":200}},"default_spend_cap_minor":5000000}}'::jsonb); RESET ROLE;`);
     // subscription_included_minor_by_tier_currency for allowance grant
     psql(`${adminContext(adminId)} SELECT save_commercial_config('subscription_included_minor_by_tier_currency', '{"growth":{"NGN":100000},"business":{"NGN":200000}}'::jsonb); RESET ROLE;`);
     // trial_credit_minor_by_currency
     psql(`${adminContext(adminId)} SELECT save_commercial_config('trial_credit_minor_by_currency', '{"NGN":50000}'::jsonb); RESET ROLE;`);
+    // messaging_pricing is a bundle-only key — use save_market_messaging_config
+    // (test 17 already seeds this; re-seed to ensure fresh config version includes pricing_tiers)
+    const ver = currentVersion();
+    psql(`${adminContext(adminId)} SELECT save_market_messaging_config('{"NGN":{"rates":{"NG":{"utility":100,"marketing":200}},"default_spend_cap_minor":5000000}}'::jsonb, '{"NGN":50000}'::jsonb, '{"growth":{"NGN":100000},"business":{"NGN":200000}}'::jsonb, '{"NG":{"growth":"243206","business":"243207"}}'::jsonb, '${ver}'::uuid); RESET ROLE;`);
     // Verify the config snapshot now has pricing_tiers.growth.price
     const price = psql(`SELECT config_snapshot->'pricing_tiers'->'growth'->>'price' FROM platform_config_versions WHERE effective_from <= clock_timestamp() ORDER BY effective_from DESC LIMIT 1;`);
     expect(price).toBe('14999');
@@ -448,19 +450,25 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
   // ── Different provider tx same period → quarantine ──
 
   it('30. different provider tx for same period → quarantine, no duplicate value', () => {
+    // Use a fresh business to avoid interference with earlier test subscriptions
+    const conflictBizId = psql(`
+      INSERT INTO businesses (id, name, slug, owner_id, country_code, category, address, city, neighborhood, phone)
+      VALUES (gen_random_uuid(), 'ConflictTest', 'conflict-${Date.now()}', '${testUserId}', 'NG', 'restaurant', '789 Conflict St', 'Lagos', 'VI', '+2348077777777')
+      RETURNING id::text;
+    `);
     const ver = currentVersion();
-    // First: successful checkout creates subscription with a period
-    const r1 = psql(`SELECT intent_id FROM claim_checkout_initialization('${testBizId}'::uuid, 'growth', 'flutterwave', 'NGN', 14999, '243206', '${ver}'::uuid, 'test-conflict@m378.com', 30, '${testUserId}'::uuid);`);
-    const intentId1 = r1.split('|')[0];
 
+    // First intent + finalization — creates subscription with a period_start
+    const r1 = psql(`SELECT intent_id FROM claim_checkout_initialization('${conflictBizId}'::uuid, 'growth', 'flutterwave', 'NGN', 14999, '243206', '${ver}'::uuid, 'conflict@m378.com', 30, '${testUserId}'::uuid);`);
+    const intentId1 = r1.split('|')[0];
     const fin1 = psql(`SELECT finalize_flutterwave_subscription_checkout('${intentId1}'::uuid, 'tx_period_a', 'sub_period', 10944, 1499900, 'NGN', '2026-09-12T12:00:00Z'::timestamptz);`);
     expect(fin1).toContain('"finalized": true');
 
-    // Clean up first intent, create second for same business/plan
-    // We need the second intent to try finalizing with same period_start but different tx
-    // Use replace to get a new pending intent
-    const r2 = psql(`SELECT intent_id FROM replace_terminal_checkout_intent('${intentId1}'::uuid, '${testBizId}'::uuid, 'growth', 'flutterwave', 'NGN', 14999, '243206', '${ver}'::uuid, 'test-conflict@m378.com', 30, '${testUserId}'::uuid);`);
+    // Create a SECOND fresh intent directly (not via replace, since the first is completed)
+    // Clean up old intent's pending status first — it's completed so claim will create new
+    const r2 = psql(`SELECT intent_id FROM claim_checkout_initialization('${conflictBizId}'::uuid, 'growth', 'flutterwave', 'NGN', 14999, '243206', '${ver}'::uuid, 'conflict2@m378.com', 30, '${testUserId}'::uuid);`);
     const intentId2 = r2.split('|')[0];
+    expect(intentId2).toBeTruthy();
 
     // Finalize with DIFFERENT tx but same period_start → quarantine
     const fin2 = psql(`SELECT finalize_flutterwave_subscription_checkout('${intentId2}'::uuid, 'tx_period_b', 'sub_period2', 10944, 1499900, 'NGN', '2026-09-12T12:00:00Z'::timestamptz);`);
@@ -476,8 +484,9 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
     expect(qCount).toBe('1');
 
     // Cleanup
-    psql(`DELETE FROM subscription_checkout_intents WHERE id IN ('${intentId1}'::uuid, '${intentId2}'::uuid);`);
     psql(`DELETE FROM subscription_payment_quarantine WHERE provider_tx_id='tx_period_b';`);
+    psql(`DELETE FROM subscription_checkout_intents WHERE business_id='${conflictBizId}'::uuid;`);
+    psql(`DELETE FROM businesses WHERE id='${conflictBizId}'::uuid;`);
   });
 
   // ── Pinned-contract renewal ──
