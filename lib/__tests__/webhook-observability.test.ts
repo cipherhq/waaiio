@@ -112,8 +112,8 @@ describe('Flutterwave webhook observability', () => {
     expect(flutterwaveWebhook).toContain("wh.rejected('Webhook secret not configured')");
   });
 
-  it('emits webhook.rejected on invalid hash', () => {
-    expect(flutterwaveWebhook).toContain("wh.rejected('Invalid hash')");
+  it('emits webhook.rejected on invalid signature', () => {
+    expect(flutterwaveWebhook).toContain("wh.rejected('Invalid signature')");
   });
 
   it('emits webhook.verified after hash passes', () => {
@@ -187,9 +187,9 @@ describe('Webhook behavior unchanged', () => {
     expect(paystackWebhook).toContain("'Processing failed'");
   });
 
-  it('Flutterwave returns 401 on invalid hash (not changed)', () => {
+  it('Flutterwave returns 401 on invalid signature', () => {
     expect(flutterwaveWebhook).toContain("{ status: 401 }");
-    expect(flutterwaveWebhook).toContain("'Invalid hash'");
+    expect(flutterwaveWebhook).toContain("'Invalid signature'");
   });
 
   it('Flutterwave returns 500 on error so provider retries (M378)', () => {

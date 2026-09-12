@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { timingSafeEqual } from 'crypto';
+import { timingSafeEqual, createHmac } from 'crypto';
 import * as Sentry from '@sentry/nextjs';
 import { createServiceClient } from '@/lib/supabase/service';
 import { logger } from '@/lib/logger';
@@ -12,29 +12,61 @@ export const maxDuration = 60;
 
 const FLUTTERWAVE_SECRET_HASH = process.env.FLUTTERWAVE_WEBHOOK_HASH || '';
 
+/**
+ * Verify Flutterwave webhook signature.
+ * Supports both:
+ * - Current: HMAC-SHA256 via `flutterwave-signature` header (hashed raw body)
+ * - Legacy: Direct `verif-hash` header comparison against dashboard secret
+ *
+ * Returns true if either method validates successfully.
+ */
+function verifyFlutterwaveSignature(
+  rawBody: string,
+  headers: { verifHash?: string; flutterwaveSignature?: string },
+  secretHash: string,
+): boolean {
+  // Current method: HMAC-SHA256 flutterwave-signature
+  if (headers.flutterwaveSignature) {
+    const computed = createHmac('sha256', secretHash).update(rawBody).digest('hex');
+    try {
+      return timingSafeEqual(Buffer.from(computed), Buffer.from(headers.flutterwaveSignature));
+    } catch {
+      return false;
+    }
+  }
+  // Legacy method: direct verif-hash comparison
+  if (headers.verifHash) {
+    try {
+      return timingSafeEqual(Buffer.from(headers.verifHash), Buffer.from(secretHash));
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
 export async function POST(request: NextRequest) {
   const wh = createWebhookLogger('flutterwave', getRequestId(request));
   const startTime = performance.now();
   try {
-    // Validate webhook signature (timing-safe)
-    const verifHash = request.headers.get('verif-hash') || '';
     if (!FLUTTERWAVE_SECRET_HASH) {
       wh.rejected('Webhook secret not configured');
       return NextResponse.json({ message: 'Webhook not configured' }, { status: 500 });
     }
-    try {
-      if (!verifHash || !timingSafeEqual(Buffer.from(verifHash), Buffer.from(FLUTTERWAVE_SECRET_HASH))) {
-        wh.rejected('Invalid hash');
-        return NextResponse.json({ message: 'Invalid hash' }, { status: 401 });
-      }
-    } catch {
-      wh.rejected('Hash comparison failed');
-      return NextResponse.json({ message: 'Invalid hash' }, { status: 401 });
+
+    // Read raw body for HMAC signature verification
+    const rawBody = await request.text();
+    const verifHash = request.headers.get('verif-hash') || '';
+    const flutterwaveSignature = request.headers.get('flutterwave-signature') || '';
+
+    if (!verifyFlutterwaveSignature(rawBody, { verifHash, flutterwaveSignature }, FLUTTERWAVE_SECRET_HASH)) {
+      wh.rejected('Invalid signature');
+      return NextResponse.json({ message: 'Invalid signature' }, { status: 401 });
     }
 
     wh.verified();
 
-    const body = await request.json();
+    const body = JSON.parse(rawBody);
     const event = body.event;
     const data = body.data;
 
@@ -55,11 +87,15 @@ export async function POST(request: NextRequest) {
 
         if (matchingSubs?.length === 1) {
           const cancelEventId = `flw-cancel-${cancelPlanId}-${Date.now()}`;
-          await supabase.rpc('finalize_subscription_cancellation', {
+          const { error: cancelErr } = await supabase.rpc('finalize_subscription_cancellation', {
             p_subscription_id: matchingSubs[0].id,
             p_provider_event_id: cancelEventId,
             p_reason: 'provider_cancelled',
           });
+          if (cancelErr) {
+            logger.error('[FLW-WEBHOOK] Cancellation RPC failed', { subId: matchingSubs[0].id, error: cancelErr });
+            return NextResponse.json({ error: 'Cancellation failed' }, { status: 500 });
+          }
           wh.processed({ durationMs: Math.round(performance.now() - startTime) });
           return NextResponse.json({ message: 'Subscription cancelled' }, { status: 200 });
         }
@@ -110,9 +146,11 @@ export async function POST(request: NextRequest) {
     const supabase = createServiceClient();
 
     // ── Platform subscription routing (M378) ──
-    // Checkout intents use tx_ref starting with 'waaiiosub'
+    const flwKey = process.env.FLUTTERWAVE_SECRET_KEY || '';
+    const { verifyTransactionById } = await import('@/lib/payments/flutterwave-verify');
+
+    // Initial checkout charges use tx_ref starting with 'waaiiosub'
     if (txRef.startsWith('waaiiosub')) {
-      // Platform subscription initial charge — correlate via durable intent
       const { data: intent } = await supabase
         .from('subscription_checkout_intents')
         .select('id, status, business_id, plan, amount, currency, idempotency_key, config_version_id, subscriber_email')
@@ -124,116 +162,179 @@ export async function POST(request: NextRequest) {
           wh.duplicate({ webhookEventId: `flw-sub-${txRef}` });
           return NextResponse.json({ message: 'Already finalized' }, { status: 200 });
         }
-        if (intent.status === 'pending') {
-          const providerTxId = String(data.id || '');
-          const providerAmount = Math.round((data.amount as number) * 100); // → minor units
-          const providerCurrency = ((data.currency as string) || '').toUpperCase();
-          const providerPaidAt = data.created_at as string || new Date().toISOString();
 
-          // Resolve Flutterwave subscription ID via documented lookup
+        if (intent.status === 'pending') {
+          const webhookTxId = data.id as number;
+          if (!webhookTxId) {
+            return NextResponse.json({ error: 'Missing transaction ID' }, { status: 500 });
+          }
+
+          // Verify transaction by exact provider ID before granting value
+          const verifyResult = await verifyTransactionById(webhookTxId, txRef, flwKey);
+          if (!verifyResult.ok) {
+            wh.failed(new Error(`Transaction verification failed: ${verifyResult.reason}`));
+            return NextResponse.json({ error: 'Transaction verification failed' }, { status: 500 });
+          }
+
+          const { tx: verified } = verifyResult;
+          if (verified.status !== 'successful') {
+            wh.ignored(`Verified tx status: ${verified.status}`);
+            return NextResponse.json({ message: 'Transaction not successful' }, { status: 200 });
+          }
+
+          // Validate amount/currency against intent
+          const verifiedAmountMinor = Math.round(verified.amount * 100);
+          if (verifiedAmountMinor !== intent.amount * 100) {
+            wh.failed(new Error(`Amount mismatch: verified=${verifiedAmountMinor} expected=${intent.amount * 100}`));
+            return NextResponse.json({ error: 'Amount mismatch' }, { status: 500 });
+          }
+          if (verified.currency !== intent.currency.toUpperCase()) {
+            wh.failed(new Error(`Currency mismatch: verified=${verified.currency} expected=${intent.currency}`));
+            return NextResponse.json({ error: 'Currency mismatch' }, { status: 500 });
+          }
+
+          // Resolve subscription — fail closed if unavailable
           let providerSubId = '';
           let providerPlanId = 0;
           try {
             const subLookup = await fetch(
-              `https://api.flutterwave.com/v3/subscriptions?transaction_id=${data.id}`,
-              { headers: { 'Authorization': `Bearer ${process.env.FLUTTERWAVE_SECRET_KEY}` }, signal: AbortSignal.timeout(10000) },
+              `https://api.flutterwave.com/v3/subscriptions?transaction_id=${verified.id}`,
+              { headers: { 'Authorization': `Bearer ${flwKey}` }, signal: AbortSignal.timeout(10000) },
             );
             const subData = await subLookup.json() as { data?: { id: number; plan: number }[] };
             if (subData.data?.length) {
               providerSubId = String(subData.data[0].id);
               providerPlanId = subData.data[0].plan;
             }
-          } catch { /* subscription lookup failure is non-fatal */ }
+          } catch { /* handled below */ }
 
-          const { data: result, error: finErr } = await supabase.rpc('finalize_flutterwave_subscription_checkout', {
+          if (!providerSubId) {
+            // Subscription correlation unavailable — fail closed, Flutterwave retries
+            wh.failed(new Error('Subscription lookup unavailable'));
+            return NextResponse.json({ error: 'Subscription lookup unavailable' }, { status: 500 });
+          }
+
+          // Call authoritative finalizer
+          const { data: finResult, error: finErr } = await supabase.rpc('finalize_flutterwave_subscription_checkout', {
             p_intent_id: intent.id,
-            p_provider_tx_id: providerTxId,
+            p_provider_tx_id: String(verified.id),
             p_provider_subscription_id: providerSubId,
             p_provider_plan_id: providerPlanId,
-            p_verified_amount_minor: providerAmount,
-            p_verified_currency: providerCurrency,
-            p_provider_paid_at: providerPaidAt,
+            p_verified_amount_minor: verifiedAmountMinor,
+            p_verified_currency: verified.currency,
+            p_provider_paid_at: verified.created_at, // verified provider timestamp only
           });
 
           if (finErr) {
             wh.failed(finErr, { durationMs: Math.round(performance.now() - startTime) });
-            // Return 500 for subscription events so Flutterwave retries
             return NextResponse.json({ error: finErr.message }, { status: 500 });
+          }
+
+          // Inspect structured result — finalized !== true is not success
+          const result = finResult as Record<string, unknown> | null;
+          if (!result || result.finalized !== true) {
+            if (result?.quarantine) {
+              logger.error('[FLW-WEBHOOK] Checkout finalization quarantined', { intentId: intent.id, result });
+            }
+            wh.failed(new Error(`Finalization not successful: ${JSON.stringify(result)}`));
+            return NextResponse.json({ error: 'Finalization conflict' }, { status: 500 });
           }
 
           wh.processed({ durationMs: Math.round(performance.now() - startTime) });
           return NextResponse.json({ message: 'Subscription activated' }, { status: 200 });
         }
+
         // Intent is failed/superseded — late webhook for terminal intent
         if (intent.status === 'failed' || intent.status === 'superseded') {
-          // Quarantine: do not silently lose a captured payment
-          if (data.status === 'successful') {
-            await supabase.from('subscription_payment_quarantine').insert({
-              intent_id: intent.id,
-              provider_tx_ref: txRef,
-              provider_tx_id: String(data.id || ''),
-              provider_amount: Math.round((data.amount as number) * 100),
-              provider_currency: ((data.currency as string) || '').toUpperCase(),
-              provider_status: 'late_success_for_terminal_intent',
-              reason: 'late_webhook_for_terminal_intent',
-            });
+          // Provider-verify the late success before quarantining
+          const webhookTxId = data.id as number;
+          if (webhookTxId && data.status === 'successful') {
+            const lateVerify = await verifyTransactionById(webhookTxId, txRef, flwKey);
+            if (lateVerify.ok && lateVerify.tx.status === 'successful') {
+              const { error: qErr } = await supabase.from('subscription_payment_quarantine').insert({
+                intent_id: intent.id,
+                provider_tx_ref: txRef,
+                provider_tx_id: String(lateVerify.tx.id),
+                provider_amount: Math.round(lateVerify.tx.amount * 100),
+                provider_currency: lateVerify.tx.currency,
+                provider_status: 'verified_late_success',
+                reason: 'late_webhook_for_terminal_intent',
+              });
+              if (qErr) {
+                logger.error('[FLW-WEBHOOK] Quarantine write failed for late success', { intentId: intent.id, error: qErr });
+                return NextResponse.json({ error: 'Quarantine failed' }, { status: 500 });
+              }
+              logger.error('[FLW-WEBHOOK] CRITICAL: Verified late success quarantined for reconciliation', {
+                intentId: intent.id, txId: lateVerify.tx.id, amount: lateVerify.tx.amount,
+              });
+            }
           }
           wh.ignored(`Late webhook for ${intent.status} intent`);
           return NextResponse.json({ message: 'Intent terminal, quarantined' }, { status: 200 });
         }
       }
-
-      // No intent match for waaiiosub prefix — could be a renewal from Flutterwave auto-charge
-      // Renewals don't have our tx_ref — they're generated by Flutterwave
-      // Fall through to check if it's a known subscription renewal
+      // No intent match — fall through to renewal/business-payment check
     }
 
     // ── Flutterwave subscription renewal routing ──
-    // For non-waaiiosub tx_refs, check if this is a subscription renewal
-    // by looking up the Flutterwave subscription via transaction_id
+    // For charges without waaiiosub prefix, check if they belong to a known subscription
     if (!txRef.startsWith('waaiiosub')) {
-      // Check if this transaction belongs to a known Flutterwave subscription
-      try {
-        const subLookup = await fetch(
-          `https://api.flutterwave.com/v3/subscriptions?transaction_id=${data.id}`,
-          { headers: { 'Authorization': `Bearer ${process.env.FLUTTERWAVE_SECRET_KEY}` }, signal: AbortSignal.timeout(10000) },
-        );
-        const subData = await subLookup.json() as { data?: { id: number }[] };
-        if (subData.data?.length) {
-          const flwSubId = String(subData.data[0].id);
-          // Look up local subscription by flutterwave_subscription_id
-          const { data: localSub } = await supabase
-            .from('subscriptions')
-            .select('id')
-            .eq('flutterwave_subscription_id', flwSubId)
-            .eq('gateway', 'flutterwave')
-            .maybeSingle();
+      const webhookTxId = data.id as number;
+      if (webhookTxId) {
+        try {
+          const subLookup = await fetch(
+            `https://api.flutterwave.com/v3/subscriptions?transaction_id=${webhookTxId}`,
+            { headers: { 'Authorization': `Bearer ${flwKey}` }, signal: AbortSignal.timeout(10000) },
+          );
+          const subData = await subLookup.json() as { data?: { id: number }[] };
+          if (subData.data?.length) {
+            const flwSubId = String(subData.data[0].id);
+            const { data: localSub } = await supabase
+              .from('subscriptions')
+              .select('id')
+              .eq('flutterwave_subscription_id', flwSubId)
+              .eq('gateway', 'flutterwave')
+              .maybeSingle();
 
-          if (localSub) {
-            // This is a renewal for a known platform subscription
-            const providerAmount = Math.round((data.amount as number) * 100);
-            const providerCurrency = ((data.currency as string) || '').toUpperCase();
-            const providerPaidAt = data.created_at as string || new Date().toISOString();
+            if (localSub) {
+              // Verify transaction before granting renewal value
+              const renewVerify = await verifyTransactionById(webhookTxId, txRef, flwKey);
+              if (!renewVerify.ok || renewVerify.tx.status !== 'successful') {
+                wh.failed(new Error(`Renewal verification failed: ${!renewVerify.ok ? renewVerify.reason : renewVerify.tx.status}`));
+                return NextResponse.json({ error: 'Renewal verification failed' }, { status: 500 });
+              }
 
-            const { error: renewErr } = await supabase.rpc('finalize_flutterwave_subscription_renewal', {
-              p_subscription_id: localSub.id,
-              p_provider_tx_id: String(data.id || ''),
-              p_verified_amount_minor: providerAmount,
-              p_verified_currency: providerCurrency,
-              p_provider_paid_at: providerPaidAt,
-            });
+              const { tx: renewTx } = renewVerify;
+              const { data: renewResult, error: renewErr } = await supabase.rpc('finalize_flutterwave_subscription_renewal', {
+                p_subscription_id: localSub.id,
+                p_provider_tx_id: String(renewTx.id),
+                p_verified_amount_minor: Math.round(renewTx.amount * 100),
+                p_verified_currency: renewTx.currency,
+                p_provider_paid_at: renewTx.created_at, // verified provider timestamp
+              });
 
-            if (renewErr) {
-              wh.failed(renewErr, { durationMs: Math.round(performance.now() - startTime) });
-              return NextResponse.json({ error: renewErr.message }, { status: 500 });
+              if (renewErr) {
+                wh.failed(renewErr, { durationMs: Math.round(performance.now() - startTime) });
+                return NextResponse.json({ error: renewErr.message }, { status: 500 });
+              }
+
+              // Inspect structured result
+              const rResult = renewResult as Record<string, unknown> | null;
+              if (rResult && rResult.finalized !== true) {
+                if (rResult.quarantine) {
+                  logger.error('[FLW-WEBHOOK] Renewal quarantined', { subId: localSub.id, result: rResult });
+                }
+                // Quarantine persisted but no entitlement granted — acknowledge safely
+                return NextResponse.json({ message: 'Renewal quarantined for reconciliation' }, { status: 200 });
+              }
+
+              wh.processed({ durationMs: Math.round(performance.now() - startTime) });
+              return NextResponse.json({ message: 'Subscription renewed' }, { status: 200 });
             }
-
-            wh.processed({ durationMs: Math.round(performance.now() - startTime) });
-            return NextResponse.json({ message: 'Subscription renewed' }, { status: 200 });
           }
+        } catch {
+          // Subscription lookup failed — fall through to business-payment path
         }
-      } catch {
-        // Subscription lookup failed — fall through to business-payment path
       }
     }
 

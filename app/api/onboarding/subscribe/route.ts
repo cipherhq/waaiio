@@ -222,65 +222,93 @@ export async function POST(request: NextRequest) {
         });
       }
 
-      // Timeout boundary elapsed — verify original provider state (Blocker B)
+      // Timeout boundary elapsed — verify original provider state via bounded discovery + exact-ID verify
       if (claimRow.needs_provider_verification) {
-        try {
-          // Discover original provider transaction by tx_ref
-          const txLookup = await fetch(
-            `https://api.flutterwave.com/v3/transactions?tx_ref=${encodeURIComponent(claimRow.idempotency_key as string)}`,
-            { headers: { 'Authorization': `Bearer ${flutterwaveKey}` }, signal: AbortSignal.timeout(10000) },
-          );
-          const txLookupData = await txLookup.json() as { status?: string; data?: { id: number; status: string }[] };
+        const { discoverAndVerifyTransaction } = await import('@/lib/payments/flutterwave-verify');
+        const intentCreatedAt = claimRow.intent_id ? undefined : undefined; // intent created_at not in claim result
+        const verifyResult = await discoverAndVerifyTransaction(
+          claimRow.idempotency_key as string,
+          flutterwaveKey,
+          { fromDate: new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString() },
+        );
 
-          if (txLookupData.status === 'success' && txLookupData.data?.length) {
-            const providerTx = txLookupData.data[0];
-            if (providerTx.status === 'successful') {
-              // Customer paid — finalize original intent, never replace
-              // (webhook or reconciliation will handle finalization)
-              return NextResponse.json({
-                authorization_url: claimRow.provider_checkout_url as string,
-                reference: claimRow.idempotency_key as string,
-                message: 'Payment may have been completed. Check your subscription status.',
-              });
-            }
-            if (providerTx.status === 'failed' || providerTx.status === 'cancelled') {
-              // Provider confirmed terminal — replace intent
-              const { data: replacement } = await service.rpc('replace_terminal_checkout_intent', {
-                p_old_intent_id: claimRow.intent_id,
-                p_business_id: business_id, p_plan: plan, p_gateway: 'flutterwave',
-                p_currency: currency, p_amount: monthlyPrice,
-                p_provider_plan_ref: planRef.trim(),
-                p_config_version_id: configVersionId as string,
-                p_subscriber_email: email, p_session_duration: 30, p_actor_id: user.id,
-              });
-              const newClaim = (replacement as Record<string, unknown>[])?.[0];
-              if (!newClaim) {
-                return NextResponse.json({ message: 'Checkout replacement failed' }, { status: 500 });
-              }
-              // Caller should retry — new intent created
-              return NextResponse.json(
-                { message: 'Previous checkout expired. Please retry.' },
-                { status: 409 },
-              );
-            }
-            // pending — checkout still live despite our timeout estimate
-            return NextResponse.json({
-              authorization_url: claimRow.provider_checkout_url as string,
-              reference: claimRow.idempotency_key as string,
-            });
-          }
-          // No transaction found — ambiguous, fail closed (Blocker C)
-          return NextResponse.json(
-            { message: 'Payment status unavailable. Please try again later.' },
-            { status: 503 },
-          );
-        } catch {
-          // Provider unavailable — fail closed, retain original intent (Blocker C)
+        if (!verifyResult.ok) {
+          // Not found / ambiguous / unavailable — fail closed, retain original intent/key
           return NextResponse.json(
             { message: 'Payment status unavailable. Please try again later.' },
             { status: 503 },
           );
         }
+
+        const { tx: verifiedTx } = verifyResult;
+
+        if (verifiedTx.status === 'successful') {
+          // Customer paid — finalize the ORIGINAL intent idempotently via authoritative finalizer
+          // Resolve Flutterwave subscription
+          let providerSubId = '';
+          let providerPlanId = 0;
+          try {
+            const subLookup = await fetch(
+              `https://api.flutterwave.com/v3/subscriptions?transaction_id=${verifiedTx.id}`,
+              { headers: { 'Authorization': `Bearer ${flutterwaveKey}` }, signal: AbortSignal.timeout(10000) },
+            );
+            const subData = await subLookup.json() as { data?: { id: number; plan: number }[] };
+            if (subData.data?.length) {
+              providerSubId = String(subData.data[0].id);
+              providerPlanId = subData.data[0].plan;
+            }
+          } catch { /* non-fatal */ }
+
+          if (!providerSubId) {
+            // Cannot resolve subscription — fail closed for now
+            return NextResponse.json(
+              { message: 'Payment completed but subscription setup pending. Please check your status.' },
+              { status: 202 },
+            );
+          }
+
+          const verifiedAmountMinor = Math.round(verifiedTx.amount * 100);
+          await service.rpc('finalize_flutterwave_subscription_checkout', {
+            p_intent_id: claimRow.intent_id,
+            p_provider_tx_id: String(verifiedTx.id),
+            p_provider_subscription_id: providerSubId,
+            p_provider_plan_id: providerPlanId,
+            p_verified_amount_minor: verifiedAmountMinor,
+            p_verified_currency: verifiedTx.currency,
+            p_provider_paid_at: verifiedTx.created_at,
+          });
+
+          return NextResponse.json({
+            message: 'Subscription activated.',
+            reference: claimRow.idempotency_key as string,
+          });
+        }
+
+        if (verifiedTx.status === 'failed' || verifiedTx.status === 'cancelled') {
+          // Provider confirmed terminal — replace intent with exactly one new intent
+          const { data: replacement } = await service.rpc('replace_terminal_checkout_intent', {
+            p_old_intent_id: claimRow.intent_id,
+            p_business_id: business_id, p_plan: plan, p_gateway: 'flutterwave',
+            p_currency: currency, p_amount: monthlyPrice,
+            p_provider_plan_ref: planRef.trim(),
+            p_config_version_id: configVersionId as string,
+            p_subscriber_email: email, p_session_duration: 30, p_actor_id: user.id,
+          });
+          const newClaim = (replacement as Record<string, unknown>[])?.[0];
+          if (!newClaim) {
+            return NextResponse.json({ message: 'Checkout replacement failed' }, { status: 500 });
+          }
+          return NextResponse.json(
+            { message: 'Previous checkout expired. Please retry.' },
+            { status: 409 },
+          );
+        }
+
+        // pending/unknown — checkout may still be live, retain original intent
+        return NextResponse.json({
+          authorization_url: claimRow.provider_checkout_url as string,
+          reference: claimRow.idempotency_key as string,
+        });
       }
 
       // If not claimed (another caller initializing), return polling response
@@ -331,21 +359,27 @@ export async function POST(request: NextRequest) {
       }
 
       if (!flwResponse.ok || flwData.status !== 'success') {
-        // Distinguish definitive rejection from ambiguous 5xx (Blocker C)
-        if (flwResponse.status >= 500 || !flwResponse.ok) {
-          // Ambiguous — retain intent, same idempotency key for retry
+        if (flwResponse.status >= 500) {
+          // 5xx — ambiguous, retain intent + same idempotency key for retry
           return NextResponse.json(
             { message: 'Payment service temporarily unavailable. Please retry.' },
             { status: 503 },
           );
         }
-        // Definitive 4xx rejection — mark failed, free slot
-        await service.from('subscription_checkout_intents')
-          .update({ status: 'failed' })
-          .eq('id', claimRow.intent_id as string);
+        if (flwResponse.status >= 400 && flwResponse.status < 500) {
+          // Definitive 4xx rejection — mark failed, free slot
+          await service.from('subscription_checkout_intents')
+            .update({ status: 'failed' })
+            .eq('id', claimRow.intent_id as string);
+          return NextResponse.json(
+            { message: 'Failed to initialize payment', error: flwData.message },
+            { status: 400 },
+          );
+        }
+        // Other non-ok status — ambiguous, retain intent
         return NextResponse.json(
-          { message: 'Failed to initialize payment', error: flwData.message },
-          { status: 500 },
+          { message: 'Payment service temporarily unavailable. Please retry.' },
+          { status: 503 },
         );
       }
 
