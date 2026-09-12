@@ -8,6 +8,7 @@ import { SummaryCard } from '@/components/SummaryCard';
 import { Pagination } from '@/components/Pagination';
 import {
   Globe, Plus, Pencil, Trash2, Save, X, CreditCard, CheckCircle, XCircle,
+  Settings, RefreshCw, AlertTriangle,
 } from 'lucide-react';
 
 const GATEWAYS = ['paystack', 'stripe', 'flutterwave'] as const;
@@ -39,7 +40,7 @@ function emptyForm(): FormState {
     code: '', name: '', flag: '', dialing_code: '+',
     currency_code: '', currency_symbol: '', currency_locale: 'en-US',
     payment_gateway: 'stripe', phone_digits: 10, phone_pattern: '', phone_placeholder: '',
-    is_active: false, sort_order: 0,
+    is_active: true, sort_order: 0,
     cities: {},
     pricing: { free: { price: 0, feeFlat: 0 }, growth: { price: 0, feeFlat: 0 }, business: { price: 0, feeFlat: 0 } },
     verification_tiers: {
@@ -115,7 +116,6 @@ export default function Countries() {
   const active = countries.filter(c => c.is_active).length;
   const stripeCount = countries.filter(c => c.payment_gateway === 'stripe').length;
   const paystackCount = countries.filter(c => c.payment_gateway === 'paystack').length;
-  const flutterwaveCount = countries.filter(c => c.payment_gateway === 'flutterwave').length;
 
   // Pagination
   const totalPages = Math.ceil(total / perPage);
@@ -140,56 +140,76 @@ export default function Countries() {
       const { data: session } = await supabase.auth.getSession();
       const userId = session?.session?.user?.id;
 
-      // In edit mode, exclude provider-owned fields (gateway, currency, paid tier prices)
-      // These are managed via Provider Configuration to prevent accidental drift.
-      const existingCountry = editMode ? countries.find(c => c.code === form.code) : null;
-
-      const pricingPayload = (() => {
-        if (!editMode) return form.pricing;
-        // Preserve provider_plan_refs and paystack_plan_code from existing data
-        const existing = existingCountry?.pricing || {};
-        const merged: Record<string, Record<string, unknown>> = {};
-        for (const [tier, vals] of Object.entries(form.pricing)) {
-          const existingTier = (existing as Record<string, Record<string, unknown>>)[tier] || {};
-          merged[tier] = {
-            ...vals,
-            ...(existingTier.provider_plan_refs ? { provider_plan_refs: existingTier.provider_plan_refs } : {}),
-            ...(existingTier.paystack_plan_code ? { paystack_plan_code: existingTier.paystack_plan_code } : {}),
-          };
-        }
-        return merged;
-      })();
-
-      const payload: Record<string, unknown> = {
-        code: form.code.toUpperCase().trim(),
-        name: form.name.trim(),
-        flag: form.flag.trim(),
-        dialing_code: form.dialing_code.trim(),
-        currency_symbol: form.currency_symbol.trim(),
-        currency_locale: form.currency_locale.trim(),
-        phone_digits: form.phone_digits,
-        phone_pattern: form.phone_pattern.trim(),
-        phone_placeholder: form.phone_placeholder.trim(),
-        is_active: form.is_active,
-        sort_order: form.sort_order,
-        cities: form.cities,
-        pricing: pricingPayload,
-        verification_tiers: form.verification_tiers,
-        doc_types: form.doc_types,
-        updated_by: userId || null,
-      };
-
-      // Only include gateway and currency on create (not edit)
-      if (!editMode) {
-        payload.currency_code = form.currency_code.toUpperCase().trim();
-        payload.payment_gateway = form.payment_gateway;
-      }
-
       if (editMode) {
-        const { error } = await adminDb.from('countries').update(payload).eq('code', form.code);
+        // Blocker 4: Narrow partial update — exclude provider-owned fields from generic edits.
+        // Structurally exclude: payment_gateway, currency_code, provider_plan_refs,
+        // paystack_plan_code, and Growth/Business prices. Only non-provider pricing
+        // fields (feeFlat, feePercentage, trialDays) come from the form.
+        const existingCountry = countries.find(c => c.code === form.code);
+        const existingPricing = (existingCountry?.pricing || {}) as Record<string, Record<string, unknown>>;
+
+        // Build safe pricing: preserve provider-owned keys from DB, take fees/trial from form
+        const safePricing: Record<string, Record<string, unknown>> = {};
+        for (const tier of PRICING_TIERS) {
+          const existing = existingPricing[tier] || {};
+          const formTier = form.pricing[tier] || { price: 0, feeFlat: 0 };
+          safePricing[tier] = {
+            ...existing, // preserves provider_plan_refs, paystack_plan_code, price
+            // Overwrite only non-provider fields from form
+            feeFlat: formTier.feeFlat,
+            feePercentage: (formTier as Record<string, unknown>).feePercentage ?? existing.feePercentage ?? 2.5,
+            trialDays: (formTier as Record<string, unknown>).trialDays ?? existing.trialDays ?? 14,
+          };
+          // Preserve Growth/Business price from DB (provider-owned), Free price from form
+          if (tier === 'free') {
+            safePricing[tier].price = formTier.price;
+          }
+          // growth/business prices kept from existing (spread above)
+        }
+
+        const editPayload = {
+          name: form.name.trim(),
+          flag: form.flag.trim(),
+          dialing_code: form.dialing_code.trim(),
+          // Exclude: currency_code, payment_gateway (provider-owned)
+          currency_symbol: form.currency_symbol.trim(),
+          currency_locale: form.currency_locale.trim(),
+          phone_digits: form.phone_digits,
+          phone_pattern: form.phone_pattern.trim(),
+          phone_placeholder: form.phone_placeholder.trim(),
+          is_active: form.is_active,
+          sort_order: form.sort_order,
+          cities: form.cities,
+          pricing: safePricing,
+          verification_tiers: form.verification_tiers,
+          doc_types: form.doc_types,
+          updated_by: userId || null,
+        };
+
+        const { error } = await adminDb.from('countries').update(editPayload).eq('code', form.code);
         if (error) throw error;
         await logAudit({ action: 'country.update', entity_type: 'country', entity_id: form.code, details: { name: form.name } });
       } else {
+        const payload = {
+          code: form.code.toUpperCase().trim(),
+          name: form.name.trim(),
+          flag: form.flag.trim(),
+          dialing_code: form.dialing_code.trim(),
+          currency_code: form.currency_code.toUpperCase().trim(),
+          currency_symbol: form.currency_symbol.trim(),
+          currency_locale: form.currency_locale.trim(),
+          payment_gateway: form.payment_gateway,
+          phone_digits: form.phone_digits,
+          phone_pattern: form.phone_pattern.trim(),
+          phone_placeholder: form.phone_placeholder.trim(),
+          is_active: form.is_active,
+          sort_order: form.sort_order,
+          cities: form.cities,
+          pricing: form.pricing,
+          verification_tiers: form.verification_tiers,
+          doc_types: form.doc_types,
+          updated_by: userId || null,
+        };
         const { error } = await adminDb.from('countries').insert(payload);
         if (error) throw error;
         await logAudit({ action: 'country.create', entity_type: 'country', entity_id: form.code, details: { name: form.name } });
@@ -205,17 +225,17 @@ export default function Countries() {
     }
   }
 
-  async function handleDeactivate(code: string) {
-    if (!canMutate || !confirm(`Deactivate country ${code}? It will be hidden from signup and pricing.`)) return;
+  async function handleDelete(code: string) {
+    if (!canMutate || !confirm(`Delete country ${code}? This cannot be undone.`)) return;
     setDeleting(code);
     try {
-      const { error } = await adminDb.from('countries').update({ is_active: false }).eq('code', code);
+      const { error } = await adminDb.from('countries').delete().eq('code', code);
       if (error) throw error;
-      await logAudit({ action: 'country.deactivate', entity_type: 'country', entity_id: code });
+      await logAudit({ action: 'country.delete', entity_type: 'country', entity_id: code });
       invalidateCache();
       await load();
     } catch (err: unknown) {
-      alert(`Deactivate failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
+      alert(`Delete failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
     } finally {
       setDeleting(null);
     }
@@ -288,12 +308,11 @@ export default function Countries() {
       </div>
 
       {/* Summary Cards */}
-      <div className="grid grid-cols-2 gap-4 mb-6 lg:grid-cols-5">
+      <div className="grid grid-cols-2 gap-4 mb-6 lg:grid-cols-4">
         <SummaryCard label="Total Countries" value={total} icon={Globe} color="blue" />
         <SummaryCard label="Active" value={active} icon={CheckCircle} color="green" />
         <SummaryCard label="Stripe" value={stripeCount} icon={CreditCard} color="purple" />
         <SummaryCard label="Paystack" value={paystackCount} icon={CreditCard} color="yellow" />
-        <SummaryCard label="Flutterwave" value={flutterwaveCount} icon={CreditCard} color="orange" />
       </div>
 
       {/* Table */}
@@ -348,16 +367,13 @@ export default function Countries() {
                     <button onClick={() => openEdit(row)} className="mr-2 text-gray-400 hover:text-brand transition">
                       <Pencil className="w-4 h-4" />
                     </button>
-                    {row.is_active && (
-                      <button
-                        onClick={() => handleDeactivate(row.code)}
-                        disabled={deleting === row.code}
-                        className="text-gray-400 hover:text-red-500 transition disabled:opacity-50"
-                        title="Deactivate market"
-                      >
-                        <XCircle className="w-4 h-4" />
-                      </button>
-                    )}
+                    <button
+                      onClick={() => handleDelete(row.code)}
+                      disabled={deleting === row.code}
+                      className="text-gray-400 hover:text-red-500 transition disabled:opacity-50"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
                   </td>
                 </tr>
               ))}
@@ -424,6 +440,9 @@ export default function Countries() {
               {/* Section 2: Currency */}
               <section>
                 <h4 className="text-sm font-semibold text-gray-700 mb-3">Currency</h4>
+                {editMode && (
+                  <p className="text-xs text-amber-600 mb-2">Currency code is managed via Provider Configuration and cannot be changed here.</p>
+                )}
                 <div className="grid grid-cols-3 gap-4">
                   <div>
                     <label className={labelClass}>Code</label>
@@ -445,12 +464,8 @@ export default function Countries() {
                 <h4 className="text-sm font-semibold text-gray-700 mb-3">Payment Gateway</h4>
                 {editMode ? (
                   <div>
-                    <div className={`${inputClass} bg-gray-50 text-gray-600 cursor-not-allowed`}>
-                      {form.payment_gateway}
-                    </div>
-                    <p className="text-xs text-gray-400 mt-1">
-                      Gateway changes are managed via Provider Configuration to prevent subscription drift.
-                    </p>
+                    <p className="text-xs text-amber-600 mb-2">Gateway switching is managed via Provider Configuration panel below.</p>
+                    <input className={inputClass} value={form.payment_gateway} disabled />
                   </div>
                 ) : (
                   <select
@@ -550,9 +565,13 @@ export default function Countries() {
               {/* Section 7: Pricing Tiers */}
               <section>
                 <h4 className="text-sm font-semibold text-gray-700 mb-3">Pricing Tiers</h4>
+                {editMode && (
+                  <p className="text-xs text-amber-600 mb-2">Growth/Business prices are provider-owned and preserved from existing data.</p>
+                )}
                 <div className="space-y-3">
                   {PRICING_TIERS.map(tier => {
                     const p = form.pricing[tier] || { price: 0, feeFlat: 0, feePercentage: 2.5, trialDays: 14 };
+                    const priceReadOnly = editMode && (tier === 'growth' || tier === 'business');
                     return (
                       <div key={tier} className="grid grid-cols-5 gap-3 items-end">
                         <div>
@@ -561,8 +580,8 @@ export default function Countries() {
                         </div>
                         <div>
                           <label className={labelClass}>Monthly Price</label>
-                          <input type="number" step="0.01" className={inputClass} value={p.price}
-                            disabled={editMode && tier !== 'free'}
+                          <input type="number" step="0.01" className={`${inputClass} ${priceReadOnly ? 'bg-gray-100 text-gray-500' : ''}`} value={p.price}
+                            disabled={priceReadOnly}
                             onChange={e => setForm(f => ({
                               ...f,
                               pricing: { ...f.pricing, [tier]: { ...p, price: Number(e.target.value) } },
@@ -622,320 +641,298 @@ export default function Countries() {
         </div>
       )}
 
-      {/* ── Messaging Financial Controls ── */}
-      <MessagingFinancialControls countries={countries} canMutate={canMutate} onSaved={load} />
+      {/* Provider Configuration Panel */}
+      <ProviderConfigPanel countries={countries} canMutate={canMutate} onSaved={load} />
     </div>
   );
 }
 
-/** Parse a string as a positive integer in minor units. Returns the integer or null if invalid/fractional. */
-function parseMinorInt(value: string): number | null {
-  if (!value.trim()) return null;
-  const n = Number(value);
-  if (!Number.isFinite(n) || n < 0 || !Number.isInteger(n)) return null;
-  return n;
-}
+/** API base URL — admin panel talks to the main Next.js app */
+const API_BASE = import.meta.env.VITE_APP_URL || 'https://www.waaiio.com';
 
-/** Strictly parse a positive (>0) minor-unit integer. */
-function parsePositiveMinorInt(value: string): number | null {
-  const n = parseMinorInt(value);
-  if (n === null || n <= 0) return null;
-  return n;
-}
-
-/** Serialize Admin messaging state into the RPC payload shape.
- *  Exported for testability — used by MessagingFinancialControls.handleSave. */
-export function buildMessagingPayload(
-  countries: CountryRow[],
-  currencyState: Record<string, { spendCap: string; trialCredit: string; growthIncluded: string; businessIncluded: string; defaultCostMinor: string }>,
-  countryState: Record<string, { rates: Record<string, string>; paystackGrowthPlan: string; paystackBusinessPlan: string }>,
-) {
-  const messagingPricing: Record<string, { rates: Record<string, Record<string, number>>; default_cost_minor?: number; default_spend_cap_minor: number }> = {};
-  const trialCredit: Record<string, number> = {};
-  const tierIncluded: Record<string, Record<string, number>> = { growth: {}, business: {} };
-
-  const configuredCurrencies = new Set<string>();
-  for (const [currency, cs] of Object.entries(currencyState)) {
-    const cap = parsePositiveMinorInt(cs.spendCap);
-    if (cap === null && cs.spendCap.trim()) {
-      throw new Error(`${currency} Spend Cap: must be a positive integer (no decimals)`);
-    }
-    if (!cap) continue;
-
-    configuredCurrencies.add(currency);
-    // Preserve absence distinctly: '' (absent) → omit key; '0' → explicit 0; positive → exact value
-    const dcmStr = cs.defaultCostMinor;
-    const bucket: typeof messagingPricing[string] = { rates: {}, default_spend_cap_minor: cap };
-    if (dcmStr.trim() !== '') {
-      const dcm = parseMinorInt(dcmStr);
-      if (dcm === null) throw new Error(`${currency} Default Cost: must be a non-negative integer (no decimals)`);
-      bucket.default_cost_minor = dcm;
-    }
-    // If dcmStr is empty, default_cost_minor is omitted (absent preserved as absent)
-    messagingPricing[currency] = bucket;
-
-    const tc = parsePositiveMinorInt(cs.trialCredit);
-    if (tc === null && cs.trialCredit.trim()) throw new Error(`${currency} Trial Credit: must be a positive integer (no decimals)`);
-    if (tc) trialCredit[currency] = tc;
-
-    const gi = parsePositiveMinorInt(cs.growthIncluded);
-    if (gi === null && cs.growthIncluded.trim()) throw new Error(`${currency} Growth Included: must be a positive integer (no decimals)`);
-    if (gi) tierIncluded.growth[currency] = gi;
-
-    const bi = parsePositiveMinorInt(cs.businessIncluded);
-    if (bi === null && cs.businessIncluded.trim()) throw new Error(`${currency} Business Included: must be a positive integer (no decimals)`);
-    if (bi) tierIncluded.business[currency] = bi;
-  }
-
-  for (const c of countries) {
-    if (!configuredCurrencies.has(c.currency_code)) continue;
-    const cs = countryState[c.code];
-    if (!cs) continue;
-    const countryRateMap: Record<string, number> = {};
-    for (const [cat, valStr] of Object.entries(cs.rates)) {
-      if (!valStr.trim()) continue;
-      const rate = parseMinorInt(valStr);
-      if (rate === null) throw new Error(`${c.code} ${cat} rate: must be a non-negative integer (no decimals)`);
-      countryRateMap[cat] = rate;
-    }
-    // Active markets require both utility AND marketing rates explicitly
-    if (c.is_active) {
-      if (countryRateMap.utility === undefined) {
-        throw new Error(`${c.code}: Utility rate is required for active markets`);
-      }
-      if (countryRateMap.marketing === undefined) {
-        throw new Error(`${c.code}: Marketing rate is required for active markets`);
-      }
-    }
-    if (Object.keys(countryRateMap).length > 0) {
-      messagingPricing[c.currency_code].rates[c.code] = countryRateMap;
-    }
-  }
-
-  const paystackPlanCodes: Record<string, { growth: string; business: string }> = {};
-  for (const c of countries) {
-    if (c.payment_gateway !== 'paystack') continue;
-    const cs = countryState[c.code];
-    if (!cs?.paystackGrowthPlan && !cs?.paystackBusinessPlan) continue;
-    if (!cs.paystackGrowthPlan || !cs.paystackBusinessPlan) {
-      throw new Error(`${c.code}: Both Growth and Business Paystack plan codes are required`);
-    }
-    paystackPlanCodes[c.code] = { growth: cs.paystackGrowthPlan, business: cs.paystackBusinessPlan };
-  }
-
-  return { messagingPricing, trialCredit, tierIncluded, paystackPlanCodes };
-}
-
-/** Messaging Financial Controls — currency-scoped shared values + country-scoped rates/plan codes */
-function MessagingFinancialControls({ countries, canMutate, onSaved }: { countries: CountryRow[]; canMutate: boolean; onSaved: () => Promise<void> }) {
+function ProviderConfigPanel({ countries, canMutate, onSaved }: { countries: CountryRow[]; canMutate: boolean; onSaved: () => Promise<void> }) {
+  const [selectedCode, setSelectedCode] = useState('');
+  const [versionId, setVersionId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const [configVersionId, setConfigVersionId] = useState<string | null>(null);
-  const [error, setError] = useState('');
-  const [success, setSuccess] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+  const [loadingVersion, setLoadingVersion] = useState(false);
 
-  // Country-scoped state: category rates + Paystack plan codes
-  // rates keyed by category (utility, marketing, *, authentication, service)
-  const [countryState, setCountryState] = useState<Record<string, {
-    rates: Record<string, string>; paystackGrowthPlan: string; paystackBusinessPlan: string;
-  }>>({});
+  // Per-gateway per-tier ref inputs
+  const [flwGrowthRef, setFlwGrowthRef] = useState('');
+  const [flwBusinessRef, setFlwBusinessRef] = useState('');
+  const [pskGrowthRef, setPskGrowthRef] = useState('');
+  const [pskBusinessRef, setPskBusinessRef] = useState('');
 
-  // Currency-scoped state: spend cap, trial credit, tier included, default cost (shared across countries with same currency)
-  const [currencyState, setCurrencyState] = useState<Record<string, {
-    spendCap: string; trialCredit: string; growthIncluded: string; businessIncluded: string;
-    defaultCostMinor: string;
-  }>>({});
+  const selectedCountry = countries.find(c => c.code === selectedCode);
+  const activeGateway = selectedCountry?.payment_gateway || '';
 
-  // Load current config via DB-authoritative RPC
+  // Load CAS version on mount
   useEffect(() => {
-    (async () => {
-      try {
-        // D: Use get_effective_commercial_config() RPC — DB clock_timestamp(), not browser Date
-        const { data: rows, error: rpcErr } = await adminDb.rpc('get_effective_commercial_config');
-        const ver = rpcErr ? null : (rows as { id: string; config_snapshot: Record<string, unknown> }[])?.[0];
-        if (ver?.id) setConfigVersionId(ver.id);
+    loadVersion();
+  }, []);
 
-        const snapshot = ver?.config_snapshot;
-        const pricing = snapshot?.messaging_pricing as Record<string, { rates?: Record<string, Record<string, number>>; default_cost_minor?: number; default_spend_cap_minor?: number }> | undefined;
-        const trialCredit = snapshot?.trial_credit_minor_by_currency as Record<string, number> | undefined;
-        const included = snapshot?.subscription_included_minor_by_tier_currency as Record<string, Record<string, number>> | undefined;
+  // Populate refs when country changes
+  useEffect(() => {
+    if (!selectedCountry) return;
+    const pricing = selectedCountry.pricing as Record<string, Record<string, unknown>> || {};
+    const growthRefs = (pricing.growth?.provider_plan_refs || {}) as Record<string, string>;
+    const businessRefs = (pricing.business?.provider_plan_refs || {}) as Record<string, string>;
+    setFlwGrowthRef(growthRefs.flutterwave || '');
+    setFlwBusinessRef(businessRefs.flutterwave || '');
+    setPskGrowthRef(growthRefs.paystack || '');
+    setPskBusinessRef(businessRefs.paystack || '');
+  }, [selectedCode, countries]);
 
-        // Build currency-scoped state (one entry per unique currency)
-        const currInit: typeof currencyState = {};
-        const seenCurrencies = new Set<string>();
-        for (const c of countries) {
-          if (seenCurrencies.has(c.currency_code)) continue;
-          seenCurrencies.add(c.currency_code);
-          const bucket = pricing?.[c.currency_code];
-          currInit[c.currency_code] = {
-            spendCap: String(bucket?.default_spend_cap_minor ?? ''),
-            trialCredit: String(trialCredit?.[c.currency_code] ?? ''),
-            growthIncluded: String(included?.growth?.[c.currency_code] ?? ''),
-            businessIncluded: String(included?.business?.[c.currency_code] ?? ''),
-            defaultCostMinor: String(bucket?.default_cost_minor ?? ''),
-          };
-        }
-        setCurrencyState(currInit);
-
-        // Build country-scoped state — load all category-specific rates
-        const ctryInit: typeof countryState = {};
-        for (const c of countries) {
-          const bucket = pricing?.[c.currency_code];
-          const countryRates = bucket?.rates?.[c.code] as Record<string, number> | undefined;
-          const rateStrings: Record<string, string> = {};
-          if (countryRates) {
-            for (const [cat, val] of Object.entries(countryRates)) {
-              rateStrings[cat] = String(val);
-            }
-          }
-          // Ensure utility and marketing always have editable entries
-          if (!rateStrings.utility) rateStrings.utility = '';
-          if (!rateStrings.marketing) rateStrings.marketing = '';
-          const countryPricing = c.pricing as Record<string, Record<string, unknown>> | undefined;
-          ctryInit[c.code] = {
-            rates: rateStrings,
-            paystackGrowthPlan: (countryPricing?.growth?.paystack_plan_code as string) ?? '',
-            paystackBusinessPlan: (countryPricing?.business?.paystack_plan_code as string) ?? '',
-          };
-        }
-        setCountryState(ctryInit);
-      } catch {}
-    })();
-  }, [countries]);
-
-  async function handleSaveMessagingConfig() {
-    if (!canMutate || !configVersionId) return;
-    setSaving(true); setError(''); setSuccess('');
+  async function loadVersion() {
+    setLoadingVersion(true);
     try {
-      const { messagingPricing, trialCredit, tierIncluded, paystackPlanCodes } =
-        buildMessagingPayload(countries, currencyState, countryState);
+      const { data: session } = await supabase.auth.getSession();
+      const token = session?.session?.access_token;
+      const res = await fetch(`${API_BASE}/api/admin/provider-config`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ action: 'get_version' }),
+      });
+      const data = await res.json();
+      if (data.version_id) setVersionId(data.version_id);
+    } catch {
+      setError('Failed to load config version');
+    } finally {
+      setLoadingVersion(false);
+    }
+  }
 
-      const { data, error: rpcError } = await adminDb.rpc('save_market_messaging_config', {
-        p_messaging_pricing: messagingPricing,
-        p_trial_credit_minor_by_currency: trialCredit,
-        p_subscription_included_minor_by_tier_currency: tierIncluded,
-        p_paystack_plan_codes: Object.keys(paystackPlanCodes).length > 0 ? paystackPlanCodes : null,
-        p_expected_version_id: configVersionId,
+  async function apiCall(body: Record<string, unknown>) {
+    const { data: session } = await supabase.auth.getSession();
+    const token = session?.session?.access_token;
+    const res = await fetch(`${API_BASE}/api/admin/provider-config`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify(body),
+    });
+    return res;
+  }
+
+  async function handleSaveRefs() {
+    if (!canMutate || !selectedCode || !versionId) return;
+    setSaving(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      // Build nested plan_refs: { growth: { provider: ref }, business: { provider: ref } }
+      const planRefs: Record<string, Record<string, string>> = { growth: {}, business: {} };
+      if (flwGrowthRef.trim()) planRefs.growth.flutterwave = flwGrowthRef.trim();
+      if (flwBusinessRef.trim()) planRefs.business.flutterwave = flwBusinessRef.trim();
+      if (pskGrowthRef.trim()) planRefs.growth.paystack = pskGrowthRef.trim();
+      if (pskBusinessRef.trim()) planRefs.business.paystack = pskBusinessRef.trim();
+
+      const res = await apiCall({
+        action: 'save_refs',
+        country_code: selectedCode,
+        plan_refs: planRefs,
+        expected_version_id: versionId,
       });
 
-      if (rpcError) {
-        if (rpcError.message?.includes('config_version_conflict')) {
-          throw new Error('Configuration was modified by another admin. Please reload the page and try again.');
+      const data = await res.json();
+      if (!res.ok) {
+        if (data.error === 'config_version_conflict') {
+          setError('Configuration was modified by another admin. Please reload the page.');
+        } else {
+          setError(data.error || data.message || 'Save failed');
         }
-        throw new Error(rpcError.message);
+        return;
       }
 
-      setConfigVersionId(data as string);
-      setSuccess('Messaging configuration saved successfully');
+      if (data.version_id) setVersionId(data.version_id);
+      setSuccess('Plan refs saved successfully');
       await onSaved();
-    } catch (err: unknown) {
+    } catch (err) {
       setError(err instanceof Error ? err.message : 'Save failed');
     } finally {
       setSaving(false);
     }
   }
 
-  // Group countries by currency for display
-  const currencyGroups: Record<string, CountryRow[]> = {};
-  for (const c of countries) {
-    if (!currencyGroups[c.currency_code]) currencyGroups[c.currency_code] = [];
-    currencyGroups[c.currency_code].push(c);
+  async function handleSwitchGateway(newGateway: string) {
+    if (!canMutate || !selectedCode || !versionId) return;
+    if (!confirm(`Switch ${selectedCode} gateway to ${newGateway}? This affects all future payments.`)) return;
+    setSaving(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      const res = await apiCall({
+        action: 'switch_provider',
+        country_code: selectedCode,
+        new_gateway: newGateway,
+        expected_version_id: versionId,
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        if (data.error === 'config_version_conflict') {
+          setError('Configuration was modified by another admin. Please reload the page.');
+        } else {
+          setError(data.error || data.message || 'Switch failed');
+        }
+        return;
+      }
+
+      if (data.version_id) setVersionId(data.version_id);
+      setSuccess(`Switched ${selectedCode} to ${newGateway}`);
+      await onSaved();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Switch failed');
+    } finally {
+      setSaving(false);
+    }
   }
 
-  const hasPaystack = countries.some(c => c.payment_gateway === 'paystack');
+  const inputClass = 'w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-brand focus:ring-1 focus:ring-brand';
+  const labelClass = 'block text-xs font-medium text-gray-600 mb-1';
 
   return (
-    <div className="mt-8 rounded-2xl border border-gray-200 bg-white p-6">
-      <h3 className="text-lg font-bold text-gray-900 mb-1">Messaging Financial Controls</h3>
-      <p className="text-sm text-gray-500 mb-4">Configure messaging rates, spend caps, trial credits, and tier included credits. Currency-scoped values are shared across all countries using that currency. All values in minor currency units. Saved atomically via versioned config.</p>
-
-      {error && <div className="mb-4 rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-700">{error}</div>}
-      {success && <div className="mb-4 rounded-lg bg-green-50 border border-green-200 p-3 text-sm text-green-700">{success}</div>}
-
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-gray-200">
-              <th className="py-2 text-left font-medium text-gray-500">Currency</th>
-              <th className="px-2 py-2 text-left font-medium text-gray-500">Spend Cap</th>
-              <th className="px-2 py-2 text-left font-medium text-gray-500">Trial Credit</th>
-              <th className="px-2 py-2 text-left font-medium text-gray-500">Growth Incl.</th>
-              <th className="px-2 py-2 text-left font-medium text-gray-500">Business Incl.</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-100">
-            {Object.entries(currencyGroups).map(([currency, cList]) => {
-              const cs = currencyState[currency] || { spendCap: '', trialCredit: '', growthIncluded: '', businessIncluded: '' };
-              const updateCurr = (field: string, value: string) => setCurrencyState(prev => ({ ...prev, [currency]: { ...cs, [field]: value } }));
-              return (
-                <tr key={currency}>
-                  <td className="py-2 font-medium">
-                    {currency} <span className="text-xs text-gray-400">({cList.map(c => c.code).join(', ')})</span>
-                  </td>
-                  <td className="px-2 py-2"><input type="text" inputMode="numeric" pattern="[0-9]*" className="w-24 rounded border border-gray-300 px-2 py-1 text-xs" value={cs.spendCap} onChange={e => updateCurr('spendCap', e.target.value)} disabled={!canMutate} /></td>
-                  <td className="px-2 py-2"><input type="text" inputMode="numeric" pattern="[0-9]*" className="w-20 rounded border border-gray-300 px-2 py-1 text-xs" value={cs.trialCredit} onChange={e => updateCurr('trialCredit', e.target.value)} disabled={!canMutate} /></td>
-                  <td className="px-2 py-2"><input type="text" inputMode="numeric" pattern="[0-9]*" className="w-20 rounded border border-gray-300 px-2 py-1 text-xs" value={cs.growthIncluded} onChange={e => updateCurr('growthIncluded', e.target.value)} disabled={!canMutate} /></td>
-                  <td className="px-2 py-2"><input type="text" inputMode="numeric" pattern="[0-9]*" className="w-20 rounded border border-gray-300 px-2 py-1 text-xs" value={cs.businessIncluded} onChange={e => updateCurr('businessIncluded', e.target.value)} disabled={!canMutate} /></td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-
-      <h4 className="text-sm font-semibold text-gray-700 mt-6 mb-3">Per-Country Rates & Plan Codes</h4>
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-gray-200">
-              <th className="py-2 text-left font-medium text-gray-500">Market</th>
-              <th className="px-2 py-2 text-left font-medium text-gray-500">Currency</th>
-              <th className="px-2 py-2 text-left font-medium text-gray-500">Utility Rate</th>
-              <th className="px-2 py-2 text-left font-medium text-gray-500">Marketing Rate</th>
-              {hasPaystack && (
-                <>
-                  <th className="px-2 py-2 text-left font-medium text-gray-500">PS Growth Plan</th>
-                  <th className="px-2 py-2 text-left font-medium text-gray-500">PS Business Plan</th>
-                </>
-              )}
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-100">
-            {countries.map(c => {
-              const cs = countryState[c.code] || { rates: { utility: '', marketing: '' }, paystackGrowthPlan: '', paystackBusinessPlan: '' };
-              const updateRate = (cat: string, value: string) => setCountryState(prev => ({
-                ...prev, [c.code]: { ...cs, rates: { ...cs.rates, [cat]: value } },
-              }));
-              const updateCtry = (field: string, value: string) => setCountryState(prev => ({ ...prev, [c.code]: { ...cs, [field]: value } }));
-              return (
-                <tr key={c.code} className={!c.is_active ? 'opacity-50' : ''}>
-                  <td className="py-2 font-medium">{c.flag} {c.code}</td>
-                  <td className="px-2 py-2 text-gray-500">{c.currency_code}</td>
-                  <td className="px-2 py-2"><input type="text" inputMode="numeric" pattern="[0-9]*" className="w-20 rounded border border-gray-300 px-2 py-1 text-xs" value={cs.rates.utility || ''} onChange={e => updateRate('utility', e.target.value)} disabled={!canMutate} /></td>
-                  <td className="px-2 py-2"><input type="text" inputMode="numeric" pattern="[0-9]*" className="w-20 rounded border border-gray-300 px-2 py-1 text-xs" value={cs.rates.marketing || ''} onChange={e => updateRate('marketing', e.target.value)} disabled={!canMutate} /></td>
-                  {hasPaystack && (
-                    <>
-                      <td className="px-2 py-2">{c.payment_gateway === 'paystack' ? <input type="text" className="w-28 rounded border border-gray-300 px-2 py-1 text-xs" value={cs.paystackGrowthPlan} onChange={e => updateCtry('paystackGrowthPlan', e.target.value)} disabled={!canMutate} placeholder="PLN_..." /> : <span className="text-gray-300">—</span>}</td>
-                      <td className="px-2 py-2">{c.payment_gateway === 'paystack' ? <input type="text" className="w-28 rounded border border-gray-300 px-2 py-1 text-xs" value={cs.paystackBusinessPlan} onChange={e => updateCtry('paystackBusinessPlan', e.target.value)} disabled={!canMutate} placeholder="PLN_..." /> : <span className="text-gray-300">—</span>}</td>
-                    </>
-                  )}
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-
-      <div className="mt-4 flex items-center justify-between">
-        <p className="text-xs text-gray-400">Config version: {configVersionId?.slice(0, 8) || 'none'}...</p>
+    <div className="mt-8 rounded-xl border border-gray-200 bg-white p-6">
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-2">
+          <Settings className="w-5 h-5 text-brand" />
+          <h3 className="text-lg font-semibold text-gray-900">Provider Configuration</h3>
+        </div>
         <button
-          onClick={handleSaveMessagingConfig}
-          disabled={saving || !canMutate || !configVersionId}
-          className="flex items-center gap-2 rounded-xl bg-brand px-5 py-2.5 text-sm font-semibold text-white hover:bg-brand-600 transition disabled:opacity-50"
+          onClick={loadVersion}
+          disabled={loadingVersion}
+          className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-brand transition"
         >
-          <CreditCard className="w-4 h-4" />
-          {saving ? 'Saving...' : 'Save Messaging Config'}
+          <RefreshCw className={`w-3.5 h-3.5 ${loadingVersion ? 'animate-spin' : ''}`} />
+          Reload CAS
         </button>
       </div>
+
+      {versionId && (
+        <p className="text-xs text-gray-400 mb-4 font-mono">CAS version: {versionId.slice(0, 8)}...</p>
+      )}
+
+      {error && (
+        <div className="flex items-center gap-2 mb-4 rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
+          <AlertTriangle className="w-4 h-4 shrink-0" />
+          {error}
+        </div>
+      )}
+      {success && (
+        <div className="mb-4 rounded-lg bg-green-50 border border-green-200 px-4 py-3 text-sm text-green-700">
+          {success}
+        </div>
+      )}
+
+      {/* Country selector */}
+      <div className="mb-6">
+        <label className={labelClass}>Country</label>
+        <select
+          className={inputClass}
+          value={selectedCode}
+          onChange={e => { setSelectedCode(e.target.value); setError(null); setSuccess(null); }}
+        >
+          <option value="">Select a country...</option>
+          {countries.map(c => (
+            <option key={c.code} value={c.code}>{c.flag} {c.code} — {c.name}</option>
+          ))}
+        </select>
+      </div>
+
+      {selectedCountry && (
+        <>
+          {/* Active gateway badge */}
+          <div className="mb-6">
+            <span className="text-xs font-medium text-gray-500">Active Gateway: </span>
+            <span className={`inline-block rounded-full px-2.5 py-0.5 text-xs font-medium ${
+              activeGateway === 'stripe' ? 'bg-purple-100 text-purple-700'
+                : activeGateway === 'paystack' ? 'bg-yellow-100 text-yellow-700'
+                  : activeGateway === 'flutterwave' ? 'bg-orange-100 text-orange-700'
+                    : 'bg-gray-100 text-gray-600'
+            }`}>
+              {activeGateway}
+            </span>
+          </div>
+
+          {/* Plan ref inputs */}
+          <div className="space-y-4 mb-6">
+            <h4 className="text-sm font-semibold text-gray-700">Flutterwave Plan Refs</h4>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className={labelClass}>Growth Plan ID</label>
+                <input className={inputClass} value={flwGrowthRef} onChange={e => setFlwGrowthRef(e.target.value)} placeholder="e.g. 243206" />
+              </div>
+              <div>
+                <label className={labelClass}>Business Plan ID</label>
+                <input className={inputClass} value={flwBusinessRef} onChange={e => setFlwBusinessRef(e.target.value)} placeholder="e.g. 243207" />
+              </div>
+            </div>
+
+            <h4 className="text-sm font-semibold text-gray-700">Paystack Plan Refs</h4>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className={labelClass}>Growth Plan Code</label>
+                <input className={inputClass} value={pskGrowthRef} onChange={e => setPskGrowthRef(e.target.value)} placeholder="e.g. PLN_abc123" />
+              </div>
+              <div>
+                <label className={labelClass}>Business Plan Code</label>
+                <input className={inputClass} value={pskBusinessRef} onChange={e => setPskBusinessRef(e.target.value)} placeholder="e.g. PLN_def456" />
+              </div>
+            </div>
+
+            <div>
+              <h4 className="text-sm font-semibold text-gray-700">Stripe</h4>
+              <p className="text-xs text-gray-500 mt-1">Inline price_data (no plan ref needed)</p>
+            </div>
+          </div>
+
+          {/* Save refs button */}
+          <div className="flex items-center gap-3 mb-6">
+            <button
+              onClick={handleSaveRefs}
+              disabled={saving || !canMutate || !versionId}
+              className="flex items-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-600 transition disabled:opacity-50"
+            >
+              <Save className="w-4 h-4" />
+              {saving ? 'Saving...' : 'Save Plan Refs'}
+            </button>
+          </div>
+
+          {/* Switch gateway buttons */}
+          <div className="border-t border-gray-200 pt-4">
+            <h4 className="text-sm font-semibold text-gray-700 mb-3">Switch Gateway</h4>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => handleSwitchGateway('stripe')}
+                disabled={saving || !canMutate || !versionId || activeGateway === 'stripe'}
+                className="rounded-xl border border-purple-300 bg-purple-50 px-4 py-2 text-sm font-medium text-purple-700 hover:bg-purple-100 transition disabled:opacity-50"
+              >
+                Stripe
+              </button>
+              <button
+                onClick={() => handleSwitchGateway('flutterwave')}
+                disabled={saving || !canMutate || !versionId || activeGateway === 'flutterwave'}
+                className="rounded-xl border border-orange-300 bg-orange-50 px-4 py-2 text-sm font-medium text-orange-700 hover:bg-orange-100 transition disabled:opacity-50"
+              >
+                Flutterwave
+              </button>
+              <button
+                disabled
+                className="rounded-xl border border-yellow-300 bg-yellow-50 px-4 py-2 text-sm font-medium text-yellow-700 opacity-50 cursor-not-allowed"
+                title="Paystack switching not yet supported"
+              >
+                Paystack (disabled)
+              </button>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }

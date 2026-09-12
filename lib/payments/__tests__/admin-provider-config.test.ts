@@ -1,223 +1,258 @@
 /**
- * Admin provider-config route tests — Phase 3A.
+ * Admin Provider Config — Route Contract Tests
  *
- * Proves: preflight blocks save/switch on mismatch, Stripe ref rejection,
- * Paystack switch disabled, CAS conflict, and fail-closed on provider errors.
+ * Validates the API contract for save_refs and switch_provider actions,
+ * including exact M378 RPC parameter names and UUID CAS.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { NextRequest } from 'next/server';
-
-// ── Mock state ──
-
-let mockAdminUser: { id: string; userId: string; email: string; role: string } | null = null;
-let mockCountryRow: Record<string, unknown> | null = null;
-let rpcCalls: Array<{ fn: string; args: Record<string, unknown> }> = [];
-let rpcShouldFail = false;
-let rpcErrorMessage = '';
 
 vi.mock('@/lib/logger', () => ({
-  logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+  logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), withContext: () => ({ error: vi.fn(), warn: vi.fn(), info: vi.fn() }) },
 }));
+vi.mock('@sentry/nextjs', () => ({ captureException: vi.fn() }));
 vi.mock('@/lib/errors', () => ({ safeLogErrorContext: () => ({}) }));
 
-vi.mock('@/lib/admin-auth', () => ({
-  requirePlatformAdmin: vi.fn(async () => mockAdminUser),
-}));
+// Track RPC calls to verify exact parameter names
+const rpcCalls: Array<{ fn: string; params: Record<string, unknown> }> = [];
+const mockServiceClient = {
+  rpc: vi.fn(async (fn: string, params: Record<string, unknown>) => {
+    rpcCalls.push({ fn, params });
+    return { data: 'new-version-uuid', error: null };
+  }),
+  from: vi.fn(() => ({
+    select: vi.fn().mockReturnThis(),
+    eq: vi.fn().mockReturnThis(),
+    single: vi.fn().mockResolvedValue({
+      data: {
+        pricing: {
+          growth: { price: 5000, provider_plan_refs: { flutterwave: '243206' } },
+          business: { price: 10000, provider_plan_refs: { flutterwave: '243207' } },
+        },
+        currency_code: 'NGN',
+      },
+      error: null,
+    }),
+  })),
+};
 
 vi.mock('@/lib/supabase/service', () => ({
-  createServiceClient: () => ({
-    from: vi.fn().mockImplementation(() => ({
-      select: vi.fn().mockReturnValue({
-        eq: vi.fn().mockReturnValue({
-          single: vi.fn().mockResolvedValue({
-            data: mockCountryRow,
-            error: mockCountryRow ? null : { message: 'Not found' },
-          }),
-        }),
-      }),
-    })),
-    rpc: vi.fn().mockImplementation(async (fn: string, args: Record<string, unknown>) => {
-      rpcCalls.push({ fn, args });
-      if (rpcShouldFail) {
-        return { data: null, error: { message: rpcErrorMessage || 'RPC failed' } };
-      }
-      return { data: { success: true }, error: null };
-    }),
-  }),
+  createServiceClient: () => mockServiceClient,
 }));
 
-// Mock fetch for preflight calls
+vi.mock('@/lib/admin-auth', () => ({
+  requirePlatformAdmin: vi.fn(async () => ({
+    id: 'admin-uuid-1',
+    userId: 'admin-uuid-1',
+    email: 'admin@test.com',
+    role: 'admin',
+  })),
+}));
+
+// Mock fetch for Flutterwave plan verification
 const mockFetch = vi.fn();
 vi.stubGlobal('fetch', mockFetch);
 
-// Set env vars
-process.env.PAYSTACK_SECRET_KEY = 'test_placeholder_not_real_ps';
-process.env.STRIPE_SECRET_KEY = 'test_placeholder_not_real_stripe';
-process.env.FLUTTERWAVE_SECRET_KEY = 'FAKE_FLW_KEY_TEST';
-
-import { POST } from '@/app/api/admin/provider-config/route';
-
-function makeRequest(body: unknown): NextRequest {
-  return new NextRequest('http://localhost:3000/api/admin/provider-config', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-}
-
-function jsonResponse(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'Content-Type': 'application/json' },
-  });
-}
-
-const ADMIN = { id: 'admin-1', userId: 'admin-1', email: 'admin@waaiio.com', role: 'admin' };
-
-const COUNTRY_NG = {
-  code: 'NG',
-  currency_code: 'NGN',
-  pricing: {
-    free: { price: 0, feeFlat: 0 },
-    growth: { price: 5000, feeFlat: 100 },
-    business: { price: 15000, feeFlat: 200 },
-  },
-  payment_gateway: 'paystack',
-  config_version: 1,
-};
-
-beforeEach(() => {
-  vi.clearAllMocks();
-  mockAdminUser = ADMIN;
-  mockCountryRow = COUNTRY_NG;
-  rpcCalls = [];
-  rpcShouldFail = false;
-  rpcErrorMessage = '';
-  mockFetch.mockReset();
-});
-
-// ═══════════════════════════════════════════════════════════
-// save_refs
-// ═══════════════════════════════════════════════════════════
-
-describe('save_refs', () => {
-  it('Paystack currency mismatch -> 400, no RPC', async () => {
-    // Paystack returns GHS plan but country is NGN
-    mockFetch.mockResolvedValueOnce(jsonResponse({
-      status: true,
-      data: {
-        plan_code: 'PLN_growth',
-        currency: 'GHS', // Mismatch!
-        amount: 500000,
-        interval: 'monthly',
-        is_archived: false,
-      },
-    }));
-
-    const res = await POST(makeRequest({
-      action: 'save_refs',
-      country_code: 'NG',
-      provider: 'paystack',
-      tier_refs: { growth: 'PLN_growth' },
-    }));
-
-    expect(res.status).toBe(400);
-    const json = await res.json();
-    expect(json.error).toContain('currency');
-    expect(rpcCalls).toHaveLength(0);
+describe('Admin Provider Config Route', () => {
+  beforeEach(() => {
+    rpcCalls.length = 0;
+    vi.clearAllMocks();
+    mockServiceClient.rpc.mockImplementation(async (fn: string, params: Record<string, unknown>) => {
+      rpcCalls.push({ fn, params });
+      return { data: 'new-version-uuid', error: null };
+    });
   });
 
-  it('Flutterwave verifyFlutterwavePlan failure -> 400, no RPC', async () => {
-    mockCountryRow = { ...COUNTRY_NG, payment_gateway: 'flutterwave' };
+  describe('RPC parameter contracts', () => {
+    it('save_refs uses exact M378 parameter names: p_country_code, p_plan_refs, p_expected_version_id, p_actor_id', async () => {
+      const { POST } = await import('@/app/api/admin/provider-config/route');
 
-    // Flutterwave returns inactive plan
-    mockFetch.mockResolvedValueOnce(jsonResponse({
-      status: 'success',
-      data: {
-        id: 999,
-        currency: 'NGN',
-        amount: 5000,
-        interval: 'monthly',
-        status: 'cancelled', // Not active!
-      },
-    }));
+      const request = new Request('http://localhost/api/admin/provider-config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'save_refs',
+          country_code: 'NG',
+          plan_refs: { growth: { flutterwave: '243206' }, business: { flutterwave: '243207' } },
+          expected_version_id: 'uuid-version-1',
+        }),
+      });
 
-    const res = await POST(makeRequest({
-      action: 'save_refs',
-      country_code: 'NG',
-      provider: 'flutterwave',
-      tier_refs: { growth: '999' },
-    }));
+      const response = await POST(request as never);
+      const data = await response.json();
 
-    expect(res.status).toBe(400);
-    const json = await res.json();
-    expect(json.error).toContain('Preflight failed');
-    expect(rpcCalls).toHaveLength(0);
+      expect(data.success).toBe(true);
+      expect(rpcCalls).toHaveLength(1);
+      expect(rpcCalls[0].fn).toBe('save_provider_plan_refs');
+
+      // Verify exact parameter names — NOT p_provider, p_tier_refs, p_admin_id
+      const params = rpcCalls[0].params;
+      expect(params).toHaveProperty('p_country_code', 'NG');
+      expect(params).toHaveProperty('p_plan_refs');
+      expect(params).toHaveProperty('p_expected_version_id', 'uuid-version-1');
+      expect(params).toHaveProperty('p_actor_id', 'admin-uuid-1');
+
+      // Verify nested plan_refs structure
+      expect(params.p_plan_refs).toEqual({
+        growth: { flutterwave: '243206' },
+        business: { flutterwave: '243207' },
+      });
+
+      // Must NOT have old wrong parameter names
+      expect(params).not.toHaveProperty('p_provider');
+      expect(params).not.toHaveProperty('p_tier_refs');
+      expect(params).not.toHaveProperty('p_admin_id');
+    });
+
+    it('switch_provider uses exact M378 parameter names: p_country_code, p_new_gateway, p_expected_version_id, p_actor_id', async () => {
+      // Mock the Flutterwave plan verification
+      mockFetch.mockResolvedValue({
+        json: async () => ({
+          status: 'success',
+          data: { amount: 5000, currency: 'NGN' },
+        }),
+      });
+
+      const { POST } = await import('@/app/api/admin/provider-config/route');
+
+      const request = new Request('http://localhost/api/admin/provider-config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'switch_provider',
+          country_code: 'NG',
+          new_gateway: 'flutterwave',
+          expected_version_id: 'uuid-version-2',
+        }),
+      });
+
+      const response = await POST(request as never);
+      const data = await response.json();
+
+      expect(data.success).toBe(true);
+
+      // Find the switch RPC call (last one, after any preflight)
+      const switchCall = rpcCalls.find(c => c.fn === 'switch_country_provider');
+      expect(switchCall).toBeDefined();
+
+      const params = switchCall!.params;
+      expect(params).toHaveProperty('p_country_code', 'NG');
+      expect(params).toHaveProperty('p_new_gateway', 'flutterwave');
+      expect(params).toHaveProperty('p_expected_version_id', 'uuid-version-2');
+      expect(params).toHaveProperty('p_actor_id', 'admin-uuid-1');
+
+      // Must NOT have old wrong parameter names
+      expect(params).not.toHaveProperty('p_new_provider');
+      expect(params).not.toHaveProperty('p_expected_version');
+      expect(params).not.toHaveProperty('p_admin_id');
+    });
+
+    it('uses UUID version IDs, not numeric config_version', async () => {
+      const { POST } = await import('@/app/api/admin/provider-config/route');
+
+      const request = new Request('http://localhost/api/admin/provider-config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'save_refs',
+          country_code: 'NG',
+          plan_refs: { growth: { flutterwave: '111' } },
+          expected_version_id: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890',
+        }),
+      });
+
+      await POST(request as never);
+
+      const params = rpcCalls[0].params;
+      // p_expected_version_id must be the UUID string, not a number
+      expect(typeof params.p_expected_version_id).toBe('string');
+      expect(params.p_expected_version_id).toBe('a1b2c3d4-e5f6-7890-abcd-ef1234567890');
+    });
   });
 
-  it('Stripe ref -> 400 rejection (no Stripe plan refs)', async () => {
-    const res = await POST(makeRequest({
-      action: 'save_refs',
-      country_code: 'NG',
-      provider: 'stripe',
-      tier_refs: { growth: 'price_abc123' },
-    }));
+  describe('Flutterwave switch preflight', () => {
+    it('rejects switch to flutterwave when Growth ref is missing', async () => {
+      // Override country to have no Growth ref
+      mockServiceClient.from.mockReturnValueOnce({
+        select: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(),
+        single: vi.fn().mockResolvedValue({
+          data: {
+            pricing: {
+              growth: { price: 5000 },
+              business: { price: 10000, provider_plan_refs: { flutterwave: '243207' } },
+            },
+            currency_code: 'NGN',
+          },
+          error: null,
+        }),
+      });
 
-    expect(res.status).toBe(400);
-    const json = await res.json();
-    expect(json.error).toContain('Stripe uses inline price_data');
-    // No fetch calls should have been made
-    expect(mockFetch).not.toHaveBeenCalled();
-    expect(rpcCalls).toHaveLength(0);
+      const { POST } = await import('@/app/api/admin/provider-config/route');
+
+      const request = new Request('http://localhost/api/admin/provider-config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'switch_provider',
+          country_code: 'NG',
+          new_gateway: 'flutterwave',
+          expected_version_id: 'uuid-version-3',
+        }),
+      });
+
+      const response = await POST(request as never);
+      expect(response.status).toBe(400);
+      const data = await response.json();
+      expect(data.error).toContain('Growth');
+    });
+
+    it('rejects switch to flutterwave when preflight API call fails', async () => {
+      mockFetch.mockResolvedValue({
+        json: async () => ({
+          status: 'error',
+          message: 'Plan not found',
+        }),
+      });
+
+      const { POST } = await import('@/app/api/admin/provider-config/route');
+
+      const request = new Request('http://localhost/api/admin/provider-config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'switch_provider',
+          country_code: 'NG',
+          new_gateway: 'flutterwave',
+          expected_version_id: 'uuid-version-4',
+        }),
+      });
+
+      const response = await POST(request as never);
+      expect(response.status).toBe(503);
+      const data = await response.json();
+      expect(data.error).toContain('preflight failed');
+    });
   });
-});
 
-// ═══════════════════════════════════════════════════════════
-// switch_provider
-// ═══════════════════════════════════════════════════════════
+  describe('get_version action', () => {
+    it('returns UUID version from get_effective_config RPC', async () => {
+      mockServiceClient.rpc.mockResolvedValueOnce({
+        data: 'a1b2c3d4-uuid-version',
+        error: null,
+      });
 
-describe('switch_provider', () => {
-  it('switch to paystack -> 400 fail-closed', async () => {
-    const res = await POST(makeRequest({
-      action: 'switch_provider',
-      country_code: 'NG',
-      provider: 'paystack',
-    }));
+      const { POST } = await import('@/app/api/admin/provider-config/route');
 
-    expect(res.status).toBe(400);
-    const json = await res.json();
-    expect(json.error).toContain('Paystack platform subscription lifecycle is not yet implemented');
-    expect(rpcCalls).toHaveLength(0);
-  });
+      const request = new Request('http://localhost/api/admin/provider-config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'get_version' }),
+      });
 
-  it('switch to stripe with verifyStripeReadiness failure -> 503, no switch RPC', async () => {
-    // Stripe balance check fails
-    mockFetch.mockResolvedValueOnce(jsonResponse({ error: { message: 'Invalid API Key' } }, 401));
+      const response = await POST(request as never);
+      const data = await response.json();
 
-    const res = await POST(makeRequest({
-      action: 'switch_provider',
-      country_code: 'NG',
-      provider: 'stripe',
-    }));
-
-    expect(res.status).toBe(503);
-    const json = await res.json();
-    expect(json.error).toContain('Stripe is not ready');
-    expect(rpcCalls).toHaveLength(0);
-  });
-
-  it('switch with stale CAS -> config_version_conflict', async () => {
-    // Country has config_version 1, but request sends version 0
-    const res = await POST(makeRequest({
-      action: 'switch_provider',
-      country_code: 'NG',
-      provider: 'stripe',
-      config_version: 0,
-    }));
-
-    expect(res.status).toBe(409);
-    const json = await res.json();
-    expect(json.error).toBe('config_version_conflict');
-    expect(rpcCalls).toHaveLength(0);
+      expect(data.version_id).toBe('a1b2c3d4-uuid-version');
+    });
   });
 });

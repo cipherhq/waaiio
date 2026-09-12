@@ -1,363 +1,235 @@
 /**
- * POST /api/admin/provider-config
+ * Admin Provider Configuration API
  *
- * Admin-only route for provider configuration: saving plan refs and switching providers.
+ * Manages payment gateway provider plan refs and gateway switching per country.
+ * Uses M378 RPCs with exact signatures:
+ *   - save_provider_plan_refs(p_country_code, p_plan_refs JSONB, p_expected_version_id UUID, p_actor_id UUID)
+ *   - switch_country_provider(p_country_code, p_new_gateway TEXT, p_expected_version_id UUID, p_actor_id UUID)
  *
- * Actions:
- * - save_refs: Save provider plan references after preflight verification
- * - switch_provider: Switch a country's payment provider after preflight verification
- *
- * All currency/pricing data is read from DB (authoritative), never browser-supplied.
+ * CAS via UUID version from platform_config_versions (get_effective_config RPC).
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { createServiceClient } from '@/lib/supabase/service';
 import { requirePlatformAdmin } from '@/lib/admin-auth';
+import { createServiceClient } from '@/lib/supabase/service';
 import { logger } from '@/lib/logger';
-import { safeLogErrorContext } from '@/lib/errors';
-import {
-  verifyPaystackPlan,
-  verifyFlutterwavePlan,
-  verifyStripeReadiness,
-} from '@/lib/payments/provider-preflight';
 
-function corsHeaders(origin?: string | null) {
-  const allowedOrigins = [
-    process.env.ADMIN_ORIGIN || 'https://admin.waaiio.com',
-    'http://localhost:8083',
-  ];
-  const allowed = origin && allowedOrigins.includes(origin) ? origin : allowedOrigins[0];
-  return {
-    'Access-Control-Allow-Origin': allowed,
-    'Access-Control-Allow-Methods': 'POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-  };
-}
+const FLUTTERWAVE_SECRET_KEY = process.env.FLUTTERWAVE_SECRET_KEY || '';
 
-export async function OPTIONS(request: NextRequest) {
-  return new NextResponse(null, { status: 204, headers: corsHeaders(request.headers.get('origin')) });
-}
-
-/** Read authoritative country row from DB (currency_code, pricing, payment_gateway, config_version). */
-async function readCountryFromDb(countryCode: string) {
-  const supabase = createServiceClient();
-  const { data, error } = await supabase
-    .from('countries')
-    .select('code, currency_code, pricing, payment_gateway, config_version')
-    .eq('code', countryCode)
-    .single();
-
-  if (error || !data) {
-    return null;
-  }
-  return data as {
-    code: string;
-    currency_code: string;
-    pricing: Record<string, { price: number; feeFlat: number }>;
-    payment_gateway: string;
-    config_version: number | null;
-  };
-}
-
-export async function POST(request: NextRequest) {
-  const origin = request.headers.get('origin');
-  const cors = corsHeaders(origin);
-
-  const admin = await requirePlatformAdmin(request);
-  if (!admin) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 403, headers: cors });
+/**
+ * Verify a Flutterwave payment plan exists and matches expected currency/amount.
+ * GET /v3/payment-plans/{id}
+ */
+async function verifyFlutterwavePlan(
+  planId: string,
+  expectedCurrency: string,
+  expectedAmount: number,
+): Promise<{ ok: boolean; reason?: string }> {
+  if (!FLUTTERWAVE_SECRET_KEY) {
+    if (process.env.NODE_ENV === 'production') {
+      return { ok: false, reason: 'Flutterwave secret key not configured' };
+    }
+    // Dev/test: allow mock plans
+    return { ok: true };
   }
 
   try {
-    const body = await request.json() as {
-      action: string;
-      country_code: string;
-      provider?: string;
-      tier_refs?: Record<string, string>;
-      config_version?: number;
-    };
-
-    const { action, country_code } = body;
-
-    if (!action || !country_code) {
-      return NextResponse.json(
-        { error: 'Missing required fields: action, country_code' },
-        { status: 400, headers: cors },
-      );
-    }
-
-    // Read authoritative country data from DB
-    const country = await readCountryFromDb(country_code);
-    if (!country) {
-      return NextResponse.json(
-        { error: `Country "${country_code}" not found` },
-        { status: 404, headers: cors },
-      );
-    }
-
-    if (action === 'save_refs') {
-      return handleSaveRefs(body, country, admin.userId, cors);
-    }
-
-    if (action === 'switch_provider') {
-      return handleSwitchProvider(body, country, admin.userId, cors);
-    }
-
-    return NextResponse.json(
-      { error: `Unknown action: ${action}` },
-      { status: 400, headers: cors },
-    );
-  } catch (err) {
-    logger.error('provider-config route error', safeLogErrorContext(err));
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500, headers: cors },
-    );
-  }
-}
-
-// ────────────────────────────────────────────────────────────────────────────
-// save_refs — Save provider plan references after preflight verification
-// ────────────────────────────────────────────────────────────────────────────
-
-async function handleSaveRefs(
-  body: { country_code: string; provider?: string; tier_refs?: Record<string, string> },
-  country: { code: string; currency_code: string; pricing: Record<string, { price: number; feeFlat: number }>; payment_gateway: string },
-  adminUserId: string,
-  cors: Record<string, string>,
-) {
-  const provider = body.provider || country.payment_gateway;
-  const tierRefs = body.tier_refs;
-
-  // Stripe uses inline price_data — no plan refs to save
-  if (provider === 'stripe') {
-    return NextResponse.json(
-      { error: 'Stripe uses inline price_data and does not require plan refs' },
-      { status: 400, headers: cors },
-    );
-  }
-
-  if (!tierRefs || Object.keys(tierRefs).length === 0) {
-    return NextResponse.json(
-      { error: 'Missing tier_refs' },
-      { status: 400, headers: cors },
-    );
-  }
-
-  const dbCurrency = country.currency_code;
-  const dbPricing = country.pricing;
-
-  // Preflight: verify each tier ref against the provider
-  for (const [tier, ref] of Object.entries(tierRefs)) {
-    const tierPricing = dbPricing[tier];
-    if (!tierPricing) {
-      return NextResponse.json(
-        { error: `No pricing found for tier "${tier}" in country ${country.code}` },
-        { status: 400, headers: cors },
-      );
-    }
-
-    let preflight;
-
-    if (provider === 'paystack') {
-      const paystackKey = process.env.PAYSTACK_SECRET_KEY;
-      if (!paystackKey) {
-        return NextResponse.json(
-          { error: 'PAYSTACK_SECRET_KEY not configured' },
-          { status: 503, headers: cors },
-        );
-      }
-      preflight = await verifyPaystackPlan({
-        planCode: ref,
-        expectedCurrency: dbCurrency,
-        expectedAmountMajor: tierPricing.price,
-        paystackKey,
-      });
-    } else if (provider === 'flutterwave') {
-      const flwKey = process.env.FLUTTERWAVE_SECRET_KEY;
-      if (!flwKey) {
-        return NextResponse.json(
-          { error: 'FLUTTERWAVE_SECRET_KEY not configured' },
-          { status: 503, headers: cors },
-        );
-      }
-      preflight = await verifyFlutterwavePlan({
-        planId: ref,
-        expectedCurrency: dbCurrency,
-        expectedAmountMajor: tierPricing.price,
-        flutterwaveKey: flwKey,
-      });
-    } else {
-      return NextResponse.json(
-        { error: `Unsupported provider for plan refs: ${provider}` },
-        { status: 400, headers: cors },
-      );
-    }
-
-    if (!preflight.ok) {
-      logger.warn('Provider preflight failed for save_refs', {
-        country: country.code,
-        provider,
-        tier,
-        ref,
-        reason: preflight.reason,
-      });
-      return NextResponse.json(
-        { error: `Preflight failed for tier "${tier}": ${preflight.reason}` },
-        { status: 400, headers: cors },
-      );
-    }
-  }
-
-  // All preflights passed — save via RPC
-  const supabase = createServiceClient();
-  const { error: rpcError } = await supabase.rpc('save_provider_plan_refs', {
-    p_country_code: country.code,
-    p_provider: provider,
-    p_tier_refs: tierRefs,
-    p_admin_id: adminUserId,
-  });
-
-  if (rpcError) {
-    logger.error('save_provider_plan_refs RPC failed', { country: country.code, provider, error: rpcError.message });
-    return NextResponse.json(
-      { error: `Failed to save plan refs: ${rpcError.message}` },
-      { status: 500, headers: cors },
-    );
-  }
-
-  return NextResponse.json({ success: true, provider, tiers_saved: Object.keys(tierRefs) }, { headers: cors });
-}
-
-// ────────────────────────────────────────────────────────────────────────────
-// switch_provider — Switch a country's payment provider
-// ────────────────────────────────────────────────────────────────────────────
-
-async function handleSwitchProvider(
-  body: { country_code: string; provider?: string; config_version?: number },
-  country: { code: string; currency_code: string; pricing: Record<string, { price: number; feeFlat: number }>; payment_gateway: string; config_version: number | null },
-  adminUserId: string,
-  cors: Record<string, string>,
-) {
-  const targetProvider = body.provider;
-
-  if (!targetProvider) {
-    return NextResponse.json(
-      { error: 'Missing required field: provider' },
-      { status: 400, headers: cors },
-    );
-  }
-
-  // CAS: config_version must match DB
-  if (body.config_version !== undefined && body.config_version !== country.config_version) {
-    return NextResponse.json(
+    const response = await fetch(
+      `https://api.flutterwave.com/v3/payment-plans/${encodeURIComponent(planId)}`,
       {
-        error: 'config_version_conflict',
-        message: 'Country configuration has been modified since you loaded it. Refresh and retry.',
-        expected: body.config_version,
-        actual: country.config_version,
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${FLUTTERWAVE_SECRET_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        signal: AbortSignal.timeout(10000),
       },
-      { status: 409, headers: cors },
     );
+    const data = await response.json();
+
+    if (data.status !== 'success') {
+      return { ok: false, reason: `Plan ${planId} not found or API error: ${data.message || 'unknown'}` };
+    }
+
+    const plan = data.data as Record<string, unknown>;
+    const planAmount = plan.amount as number;
+    const planCurrency = (plan.currency as string) || '';
+
+    // Verify currency matches
+    if (planCurrency && expectedCurrency && planCurrency.toUpperCase() !== expectedCurrency.toUpperCase()) {
+      return { ok: false, reason: `Plan ${planId} currency ${planCurrency} does not match country currency ${expectedCurrency}` };
+    }
+
+    // Verify amount matches tier price
+    if (planAmount !== expectedAmount) {
+      return { ok: false, reason: `Plan ${planId} amount ${planAmount} does not match expected tier price ${expectedAmount}` };
+    }
+
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, reason: `Flutterwave API error: ${err instanceof Error ? err.message : 'unknown'}` };
+  }
+}
+
+/**
+ * POST /api/admin/provider-config
+ *
+ * Actions:
+ * - save_refs: Save provider plan refs for a country
+ * - switch_provider: Switch active payment gateway for a country
+ * - get_version: Get current CAS version ID
+ */
+export async function POST(request: NextRequest) {
+  const admin = await requirePlatformAdmin(request, { requiredRole: 'admin' });
+  if (!admin) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
   }
 
-  // Paystack platform subscription lifecycle not yet implemented
-  if (targetProvider === 'paystack') {
-    return NextResponse.json(
-      { error: 'Paystack platform subscription lifecycle is not yet implemented. Gateway switching to Paystack is disabled.' },
-      { status: 400, headers: cors },
-    );
+  const body = await request.json();
+  const { action } = body;
+
+  const service = createServiceClient();
+
+  if (action === 'get_version') {
+    // Return the current effective config version UUID
+    const { data, error } = await service.rpc('get_effective_config');
+    if (error) {
+      logger.error('[provider-config] get_effective_config RPC failed', { error: error.message });
+      return NextResponse.json({ error: 'Failed to get config version' }, { status: 500 });
+    }
+    return NextResponse.json({ version_id: data });
   }
 
-  const dbCurrency = country.currency_code;
-  const dbPricing = country.pricing;
+  if (action === 'save_refs') {
+    const { country_code, plan_refs, expected_version_id } = body;
 
-  // Preflight BEFORE switching
-  if (targetProvider === 'flutterwave') {
-    const flwKey = process.env.FLUTTERWAVE_SECRET_KEY;
-    if (!flwKey) {
+    if (!country_code || !plan_refs || !expected_version_id) {
       return NextResponse.json(
-        { error: 'FLUTTERWAVE_SECRET_KEY not configured' },
-        { status: 503, headers: cors },
+        { error: 'Missing required fields: country_code, plan_refs, expected_version_id' },
+        { status: 400 },
       );
     }
 
-    // Verify all paid tier refs
-    for (const [tier, pricing] of Object.entries(dbPricing)) {
-      if (pricing.price === 0) continue; // Skip free tier
+    // plan_refs expected shape: { growth: { flutterwave: "123" }, business: { flutterwave: "456" } }
+    // Validate it's a proper nested object
+    if (typeof plan_refs !== 'object') {
+      return NextResponse.json({ error: 'plan_refs must be an object' }, { status: 400 });
+    }
 
-      // Flutterwave requires pre-created plan refs — check provider_plan_refs
-      // For switch_provider, the refs must already exist. Read from country data.
-      // This will be validated by the RPC itself; the preflight here checks
-      // that Flutterwave is reachable and properly configured.
-      const testPreflight = await verifyFlutterwavePlan({
-        planId: '0', // Placeholder — actual refs validated by RPC
-        expectedCurrency: dbCurrency,
-        expectedAmountMajor: pricing.price,
-        flutterwaveKey: flwKey,
-      });
+    // Call the M378 RPC with exact parameter names
+    const { data, error } = await service.rpc('save_provider_plan_refs', {
+      p_country_code: country_code,
+      p_plan_refs: plan_refs,
+      p_expected_version_id: expected_version_id,
+      p_actor_id: admin.userId,
+    });
 
-      // We only care about connectivity/auth failures here, not plan-not-found
-      if (testPreflight.reason?.includes('HTTP 401') || testPreflight.reason?.includes('HTTP 403')) {
+    if (error) {
+      // Check for CAS conflict
+      if (error.message?.includes('version') || error.message?.includes('conflict') || error.message?.includes('stale')) {
         return NextResponse.json(
-          { error: `Flutterwave authentication failed: ${testPreflight.reason}` },
-          { status: 503, headers: cors },
+          { error: 'config_version_conflict', message: 'Configuration has been modified. Please reload and try again.' },
+          { status: 409 },
+        );
+      }
+      logger.error('[provider-config] save_provider_plan_refs RPC failed', { error: error.message, country_code });
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+
+    return NextResponse.json({ success: true, version_id: data });
+  }
+
+  if (action === 'switch_provider') {
+    const { country_code, new_gateway, expected_version_id } = body;
+
+    if (!country_code || !new_gateway || !expected_version_id) {
+      return NextResponse.json(
+        { error: 'Missing required fields: country_code, new_gateway, expected_version_id' },
+        { status: 400 },
+      );
+    }
+
+    // For flutterwave: preflight verify both Growth and Business plan refs exist and are valid
+    if (new_gateway === 'flutterwave') {
+      // Read the country to get stored plan refs and currency
+      const { data: country, error: countryErr } = await service
+        .from('countries')
+        .select('pricing, currency_code')
+        .eq('code', country_code)
+        .single();
+
+      if (countryErr || !country) {
+        return NextResponse.json({ error: 'Country not found' }, { status: 404 });
+      }
+
+      const pricing = country.pricing as Record<string, Record<string, unknown>> | null;
+      const currency = country.currency_code as string;
+
+      // Check Growth tier ref
+      const growthRefs = pricing?.growth?.provider_plan_refs as Record<string, string> | undefined;
+      const growthFlwRef = growthRefs?.flutterwave;
+      if (!growthFlwRef) {
+        return NextResponse.json(
+          { error: 'Flutterwave plan ref not configured for tier Growth' },
+          { status: 400 },
+        );
+      }
+
+      // Check Business tier ref
+      const businessRefs = pricing?.business?.provider_plan_refs as Record<string, string> | undefined;
+      const businessFlwRef = businessRefs?.flutterwave;
+      if (!businessFlwRef) {
+        return NextResponse.json(
+          { error: 'Flutterwave plan ref not configured for tier Business' },
+          { status: 400 },
+        );
+      }
+
+      // Preflight verify both plans at Flutterwave
+      const growthPrice = (pricing?.growth?.price as number) || 0;
+      const businessPrice = (pricing?.business?.price as number) || 0;
+
+      const [growthCheck, businessCheck] = await Promise.all([
+        verifyFlutterwavePlan(growthFlwRef, currency, growthPrice),
+        verifyFlutterwavePlan(businessFlwRef, currency, businessPrice),
+      ]);
+
+      if (!growthCheck.ok) {
+        return NextResponse.json(
+          { error: `Flutterwave Growth plan preflight failed: ${growthCheck.reason}` },
+          { status: 503 },
+        );
+      }
+
+      if (!businessCheck.ok) {
+        return NextResponse.json(
+          { error: `Flutterwave Business plan preflight failed: ${businessCheck.reason}` },
+          { status: 503 },
         );
       }
     }
-  } else if (targetProvider === 'stripe') {
-    const stripeKey = process.env.STRIPE_SECRET_KEY;
-    if (!stripeKey) {
-      return NextResponse.json(
-        { error: 'STRIPE_SECRET_KEY not configured' },
-        { status: 503, headers: cors },
-      );
+
+    // Call the M378 RPC with exact parameter names
+    const { data, error } = await service.rpc('switch_country_provider', {
+      p_country_code: country_code,
+      p_new_gateway: new_gateway,
+      p_expected_version_id: expected_version_id,
+      p_actor_id: admin.userId,
+    });
+
+    if (error) {
+      if (error.message?.includes('version') || error.message?.includes('conflict') || error.message?.includes('stale')) {
+        return NextResponse.json(
+          { error: 'config_version_conflict', message: 'Configuration has been modified. Please reload and try again.' },
+          { status: 409 },
+        );
+      }
+      logger.error('[provider-config] switch_country_provider RPC failed', { error: error.message, country_code, new_gateway });
+      return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    const readiness = await verifyStripeReadiness({ stripeKey });
-    if (!readiness.ok) {
-      logger.warn('Stripe readiness check failed for switch_provider', {
-        country: country.code,
-        reason: readiness.reason,
-      });
-      return NextResponse.json(
-        { error: `Stripe is not ready: ${readiness.reason}` },
-        { status: 503, headers: cors },
-      );
-    }
-  } else {
-    return NextResponse.json(
-      { error: `Unsupported target provider: ${targetProvider}` },
-      { status: 400, headers: cors },
-    );
+    return NextResponse.json({ success: true, version_id: data });
   }
 
-  // Preflight passed — execute the switch via RPC
-  const supabase = createServiceClient();
-  const { data: switchResult, error: rpcError } = await supabase.rpc('switch_country_provider', {
-    p_country_code: country.code,
-    p_new_provider: targetProvider,
-    p_expected_version: body.config_version ?? country.config_version,
-    p_admin_id: adminUserId,
-  });
-
-  if (rpcError) {
-    // Check for CAS conflict from RPC
-    if (rpcError.message?.includes('config_version')) {
-      return NextResponse.json(
-        { error: 'config_version_conflict', message: rpcError.message },
-        { status: 409, headers: cors },
-      );
-    }
-    logger.error('switch_country_provider RPC failed', { country: country.code, targetProvider, error: rpcError.message });
-    return NextResponse.json(
-      { error: `Failed to switch provider: ${rpcError.message}` },
-      { status: 500, headers: cors },
-    );
-  }
-
-  return NextResponse.json(
-    { success: true, provider: targetProvider, result: switchResult },
-    { headers: cors },
-  );
+  return NextResponse.json({ error: `Unknown action: ${action}` }, { status: 400 });
 }
