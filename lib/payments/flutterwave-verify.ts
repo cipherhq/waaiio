@@ -48,7 +48,11 @@ export async function discoverAndVerifyTransaction(
   try {
     // Step 1: Discover candidate transactions with bounded YYYY-MM-DD from/to
     // Flutterwave documents from/to as YYYY-MM-DD format — normalize ALL inputs
-    const from = toFlwDate(opts?.fromDate || new Date(Date.now() - 48 * 60 * 60 * 1000));
+    if (!opts?.fromDate) {
+      logger.error('[FLW-VERIFY] fromDate is required for bounded discovery');
+      return { ok: false, reason: 'unavailable' };
+    }
+    const from = toFlwDate(opts.fromDate);
     const to = toFlwDate(opts?.toDate || new Date(Date.now() + 24 * 60 * 60 * 1000));
 
     // Flutterwave defaults status to 'successful'. To discover both successful and failed

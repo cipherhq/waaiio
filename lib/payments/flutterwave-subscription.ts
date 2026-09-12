@@ -74,16 +74,21 @@ export async function correlateProviderSubscription(
 }
 
 /**
- * Verify a Flutterwave subscription's current status by its ID.
- * Used for cancellation verification — confirms the provider subscription is actually cancelled.
+ * Verify a Flutterwave subscription's current status using the documented
+ * GET /v3/subscriptions list endpoint, matching by exact stored subscription ID.
+ *
+ * Does NOT use undocumented GET /v3/subscriptions/{id} endpoint.
+ * Requires: HTTP 2xx, status=success, exact match to stored ID, exactly one match.
  */
 export async function verifySubscriptionStatus(
   subscriptionId: string,
+  subscriberEmail: string,
   flutterwaveKey: string,
 ): Promise<{ ok: true; status: string } | { ok: false; reason: string }> {
   try {
+    // Use documented list endpoint with email filter
     const response = await fetch(
-      `https://api.flutterwave.com/v3/subscriptions/${encodeURIComponent(subscriptionId)}`,
+      `https://api.flutterwave.com/v3/subscriptions?email=${encodeURIComponent(subscriberEmail)}`,
       {
         headers: { 'Authorization': `Bearer ${flutterwaveKey}` },
         signal: AbortSignal.timeout(10000),
@@ -94,12 +99,22 @@ export async function verifySubscriptionStatus(
       return { ok: false, reason: 'unavailable' };
     }
 
-    const data = await response.json() as { status?: string; data?: { id: number; status: string } };
+    const data = await response.json() as { status?: string; data?: { id: number; status: string }[] };
     if (data.status !== 'success' || !data.data) {
       return { ok: false, reason: 'unavailable' };
     }
 
-    return { ok: true, status: data.data.status };
+    // Exact match to stored flutterwave_subscription_id
+    const match = data.data.filter(s => String(s.id) === subscriptionId);
+    if (match.length === 0) {
+      return { ok: false, reason: 'not_found' };
+    }
+    if (match.length > 1) {
+      logger.error('[FLW-SUB] Ambiguous subscription status lookup', { subscriptionId, matchCount: match.length });
+      return { ok: false, reason: 'ambiguous' };
+    }
+
+    return { ok: true, status: match[0].status };
   } catch {
     return { ok: false, reason: 'unavailable' };
   }

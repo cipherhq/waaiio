@@ -89,26 +89,35 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ message: 'Already cancelled' }, { status: 200 });
       }
 
-      // Verify provider subscription is actually cancelled before applying (Blocker A)
-      // This prevents a delayed duplicate of an OLD cancellation from cancelling a reactivated subscription
-      if (localSub.flutterwave_subscription_id) {
-        const providerState = await verifySubscriptionStatus(localSub.flutterwave_subscription_id, flwKey);
-        if (!providerState.ok) {
-          // Provider unavailable — fail closed + reconciliation
-          await supabase.from('subscription_payment_quarantine').insert({
-            subscription_id: localSub.id,
-            provider_tx_ref: `cancel-verify-${cancelPlanId}`,
-            provider_status: 'verification_unavailable',
-            reason: `Cannot verify provider subscription status: ${providerState.reason}`,
-          });
-          return NextResponse.json({ error: 'Cancellation verification unavailable' }, { status: 500 });
-        }
-        // Only cancel if the provider subscription is actually cancelled/deactivated
-        if (providerState.status !== 'cancelled' && providerState.status !== 'deactivated') {
-          // Provider says subscription is still active — this is a stale/delayed duplicate
-          wh.ignored(`Provider subscription ${localSub.flutterwave_subscription_id} status is ${providerState.status}, not cancelled`);
-          return NextResponse.json({ message: 'Provider subscription not cancelled' }, { status: 200 });
-        }
+      // Missing flutterwave_subscription_id → FAIL CLOSED, never bypass verification
+      if (!localSub.flutterwave_subscription_id) {
+        await supabase.from('subscription_payment_quarantine').insert({
+          subscription_id: localSub.id,
+          provider_tx_ref: `cancel-noid-${cancelPlanId}`,
+          provider_status: 'missing_subscription_id',
+          reason: 'Cannot verify cancellation: no stored flutterwave_subscription_id',
+        });
+        return NextResponse.json({ error: 'Missing subscription identity for verification' }, { status: 500 });
+      }
+
+      // Verify provider subscription is actually cancelled via documented list endpoint
+      const providerState = await verifySubscriptionStatus(
+        localSub.flutterwave_subscription_id,
+        cancelEmail, // subscriber email for list query
+        flwKey,
+      );
+      if (!providerState.ok) {
+        await supabase.from('subscription_payment_quarantine').insert({
+          subscription_id: localSub.id,
+          provider_tx_ref: `cancel-verify-${cancelPlanId}`,
+          provider_status: 'verification_unavailable',
+          reason: `Cannot verify provider subscription status: ${providerState.reason}`,
+        });
+        return NextResponse.json({ error: 'Cancellation verification unavailable' }, { status: 500 });
+      }
+      if (providerState.status !== 'cancelled' && providerState.status !== 'deactivated') {
+        wh.ignored(`Provider subscription ${localSub.flutterwave_subscription_id} status is ${providerState.status}, not cancelled`);
+        return NextResponse.json({ message: 'Provider subscription not cancelled' }, { status: 200 });
       }
 
       // Provider confirmed cancelled — proceed with local cancellation

@@ -225,18 +225,24 @@ export async function POST(request: NextRequest) {
       // Timeout boundary elapsed — verify original provider state via bounded discovery + exact-ID verify
       if (claimRow.needs_provider_verification) {
         const { discoverAndVerifyTransaction } = await import('@/lib/payments/flutterwave-verify');
-        // Look up intent created_at for deterministic recovery window (Blocker A)
-        const { data: intentRow } = await service
+        // Look up intent created_at for deterministic recovery window
+        const { data: intentRow, error: intentErr } = await service
           .from('subscription_checkout_intents')
           .select('created_at')
           .eq('id', claimRow.intent_id as string)
           .single();
-        // Recovery window: from intent creation day to tomorrow (YYYY-MM-DD normalized by helper)
+        // Fail closed if intent created_at cannot be read — no approximate window
+        if (intentErr || !intentRow?.created_at) {
+          return NextResponse.json(
+            { message: 'Payment status unavailable. Please try again later.' },
+            { status: 503 },
+          );
+        }
         const verifyResult = await discoverAndVerifyTransaction(
           claimRow.idempotency_key as string,
           flutterwaveKey,
           {
-            fromDate: intentRow?.created_at || new Date(Date.now() - 48 * 60 * 60 * 1000),
+            fromDate: intentRow.created_at,
             toDate: new Date(Date.now() + 24 * 60 * 60 * 1000),
           },
         );

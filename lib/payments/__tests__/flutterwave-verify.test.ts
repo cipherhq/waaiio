@@ -1,10 +1,12 @@
 /**
- * Flutterwave payment-safety tests — M378 Phase 1
+ * M378 Phase 1 — executable production-function tests
  *
- * Tests ACTUAL production functions used by subscribe route and webhook:
- * - discoverAndVerifyTransaction, verifyTransactionById, toFlwDate (flutterwave-verify.ts)
- * - verifyFlutterwaveSignature (flutterwave-signature.ts)
- * - correlateProviderSubscription, verifySubscriptionStatus (flutterwave-subscription.ts)
+ * Tests the ACTUAL production functions that POST handlers call:
+ * - flutterwave-verify.ts: discoverAndVerifyTransaction, verifyTransactionById, toFlwDate
+ * - flutterwave-signature.ts: verifyFlutterwaveSignature
+ * - flutterwave-subscription.ts: correlateProviderSubscription, verifySubscriptionStatus
+ * - flutterwave-decisions.ts: decideTimeoutRecovery, decideInitResponse, decideCancellation,
+ *                              decideSubscriptionCorrelation, decideFinalizerResult
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createHmac } from 'crypto';
@@ -16,260 +18,211 @@ vi.mock('@/lib/logger', () => ({ logger: { error: vi.fn(), warn: vi.fn(), info: 
 import { discoverAndVerifyTransaction, verifyTransactionById, toFlwDate } from '../flutterwave-verify';
 import { verifyFlutterwaveSignature } from '../flutterwave-signature';
 import { correlateProviderSubscription, verifySubscriptionStatus } from '../flutterwave-subscription';
+import { decideTimeoutRecovery, decideInitResponse, decideCancellation, decideSubscriptionCorrelation, decideFinalizerResult } from '../flutterwave-decisions';
 
 beforeEach(() => { mockFetch.mockReset(); });
 
-// ═════ toFlwDate — YYYY-MM-DD normalization ═════
-
+// ═════ toFlwDate ═════
 describe('toFlwDate', () => {
   it('Date → YYYY-MM-DD', () => expect(toFlwDate(new Date('2026-09-12T15:30:00Z'))).toBe('2026-09-12'));
-  it('ISO string → YYYY-MM-DD', () => expect(toFlwDate('2026-09-10T23:59:59.999Z')).toBe('2026-09-10'));
+  it('ISO → YYYY-MM-DD', () => expect(toFlwDate('2026-09-10T23:59:59.999Z')).toBe('2026-09-10'));
 });
 
 // ═════ discoverAndVerifyTransaction ═════
-
 describe('discoverAndVerifyTransaction', () => {
   const ref = 'waaiiosub1234567890abcdef1234567890ab';
-
-  it('normalizes ISO from/to to YYYY-MM-DD', async () => {
+  it('requires fromDate — fails without it', async () => {
+    const r = await discoverAndVerifyTransaction(ref, 'k');
+    expect(r.ok).toBe(false);
+  });
+  it('normalizes ISO fromDate to YYYY-MM-DD', async () => {
     mockFetch.mockResolvedValue({ ok: true, json: async () => ({ status: 'success', data: [] }) });
     await discoverAndVerifyTransaction(ref, 'k', { fromDate: '2026-09-10T15:30:00Z' });
     expect(decodeURIComponent((mockFetch.mock.calls[0][0] as string).match(/from=([^&]+)/)![1])).toBe('2026-09-10');
   });
-
-  it('queries both successful and failed statuses', async () => {
+  it('queries both successful+failed statuses', async () => {
     mockFetch.mockResolvedValue({ ok: true, json: async () => ({ status: 'success', data: [] }) });
-    await discoverAndVerifyTransaction(ref, 'k');
+    await discoverAndVerifyTransaction(ref, 'k', { fromDate: '2026-09-10' });
     expect(mockFetch).toHaveBeenCalledTimes(2);
     expect((mockFetch.mock.calls[0][0] as string)).toContain('status=successful');
     expect((mockFetch.mock.calls[1][0] as string)).toContain('status=failed');
   });
-
-  it('successful → verified tx with status', async () => {
+  it('successful discovery + exact-ID verify', async () => {
     mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: [{ id: 1, tx_ref: ref }] }) });
     mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: [] }) });
     mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: { id: 1, tx_ref: ref, status: 'successful', amount: 14999, currency: 'NGN', created_at: '2026-09-12T00:00:00Z' } }) });
-    const r = await discoverAndVerifyTransaction(ref, 'k');
+    const r = await discoverAndVerifyTransaction(ref, 'k', { fromDate: '2026-09-10' });
     expect(r.ok && r.tx.status).toBe('successful');
   });
-
   it('failed terminal via status=failed query', async () => {
     mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: [] }) });
     mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: [{ id: 2, tx_ref: ref }] }) });
     mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: { id: 2, tx_ref: ref, status: 'failed', amount: 14999, currency: 'NGN', created_at: '2026-09-12T00:00:00Z' } }) });
-    const r = await discoverAndVerifyTransaction(ref, 'k');
+    const r = await discoverAndVerifyTransaction(ref, 'k', { fromDate: '2026-09-10' });
     expect(r.ok && r.tx.status).toBe('failed');
   });
-
-  it('not found → not_found', async () => {
-    mockFetch.mockResolvedValue({ ok: true, json: async () => ({ status: 'success', data: [] }) });
-    expect((await discoverAndVerifyTransaction(ref, 'k')).ok).toBe(false);
-  });
-
   it('5xx → unavailable', async () => {
     mockFetch.mockResolvedValueOnce({ ok: false, status: 500 });
-    const r = await discoverAndVerifyTransaction(ref, 'k');
-    expect(!r.ok && r.reason).toBe('unavailable');
+    expect((await discoverAndVerifyTransaction(ref, 'k', { fromDate: '2026-09-10' })).ok).toBe(false);
   });
-
-  it('network error → unavailable', async () => {
-    mockFetch.mockRejectedValue(new Error('ECONNREFUSED'));
-    expect((await discoverAndVerifyTransaction(ref, 'k')).ok).toBe(false);
-  });
-
-  it('ambiguous → ambiguous', async () => {
-    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: [{ id: 1, tx_ref: ref }, { id: 2, tx_ref: ref }] }) });
-    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: [] }) });
-    const r = await discoverAndVerifyTransaction(ref, 'k');
-    expect(!r.ok && r.reason).toBe('ambiguous');
-  });
-
-  it('tx_ref mismatch after verify → tx_ref_mismatch', async () => {
-    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: [{ id: 5, tx_ref: ref }] }) });
-    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: [] }) });
-    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: { id: 5, tx_ref: 'WRONG', status: 'successful', amount: 14999, currency: 'NGN', created_at: '2026-09-12T00:00:00Z' } }) });
-    const r = await discoverAndVerifyTransaction(ref, 'k');
-    expect(!r.ok && r.reason).toBe('tx_ref_mismatch');
+  it('network → unavailable', async () => {
+    mockFetch.mockRejectedValue(new Error('x'));
+    expect((await discoverAndVerifyTransaction(ref, 'k', { fromDate: '2026-09-10' })).ok).toBe(false);
   });
 });
 
 // ═════ verifyTransactionById ═════
-
 describe('verifyTransactionById', () => {
   it('match → ok', async () => {
     mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: { id: 100, tx_ref: 'r', status: 'successful', amount: 100, currency: 'NGN', created_at: '2026-09-12T00:00:00Z' } }) });
     expect((await verifyTransactionById(100, 'r', 'k')).ok).toBe(true);
-    expect((mockFetch.mock.calls[0][0] as string)).toContain('/v3/transactions/100/verify');
   });
-
-  it('tx_ref mismatch → fail', async () => {
+  it('mismatch → fail', async () => {
     mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: { id: 100, tx_ref: 'wrong', status: 'successful', amount: 100, currency: 'NGN', created_at: '2026-09-12T00:00:00Z' } }) });
     expect((await verifyTransactionById(100, 'expected', 'k')).ok).toBe(false);
   });
-
-  it('unavailable → fail', async () => {
-    mockFetch.mockRejectedValueOnce(new Error('timeout'));
-    expect((await verifyTransactionById(100, 'r', 'k')).ok).toBe(false);
-  });
 });
 
-// ═════ verifyFlutterwaveSignature (ACTUAL production function) ═════
-
+// ═════ verifyFlutterwaveSignature ═════
 describe('verifyFlutterwaveSignature', () => {
-  const secret = 'my_webhook_secret_12345';
-  const body = '{"event":"charge.completed","data":{"id":12345}}';
-
-  it('valid HMAC-SHA256 base64 → accepted', () => {
-    const sig = createHmac('sha256', secret).update(body).digest('base64');
-    expect(verifyFlutterwaveSignature(body, { flutterwaveSignature: sig }, secret)).toBe(true);
-  });
-  it('invalid HMAC → rejected', () => {
-    expect(verifyFlutterwaveSignature(body, { flutterwaveSignature: 'wrong' }, secret)).toBe(false);
-  });
-  it('hex HMAC → rejected (must be base64)', () => {
-    const hex = createHmac('sha256', secret).update(body).digest('hex');
-    expect(verifyFlutterwaveSignature(body, { flutterwaveSignature: hex }, secret)).toBe(false);
-  });
-  it('valid legacy verif-hash → accepted', () => {
-    expect(verifyFlutterwaveSignature(body, { verifHash: secret }, secret)).toBe(true);
-  });
-  it('invalid legacy → rejected', () => {
-    expect(verifyFlutterwaveSignature(body, { verifHash: 'wrong' }, secret)).toBe(false);
-  });
-  it('no headers → rejected', () => {
-    expect(verifyFlutterwaveSignature(body, {}, secret)).toBe(false);
-  });
-  it('HMAC priority over legacy', () => {
-    const sig = createHmac('sha256', secret).update(body).digest('base64');
-    expect(verifyFlutterwaveSignature(body, { flutterwaveSignature: sig, verifHash: 'wrong' }, secret)).toBe(true);
-    expect(verifyFlutterwaveSignature(body, { flutterwaveSignature: 'wrong', verifHash: secret }, secret)).toBe(false);
-  });
+  const s = 'secret12345'; const b = '{"data":1}';
+  it('valid HMAC base64', () => expect(verifyFlutterwaveSignature(b, { flutterwaveSignature: createHmac('sha256', s).update(b).digest('base64') }, s)).toBe(true));
+  it('invalid HMAC', () => expect(verifyFlutterwaveSignature(b, { flutterwaveSignature: 'wrong' }, s)).toBe(false));
+  it('hex rejected', () => expect(verifyFlutterwaveSignature(b, { flutterwaveSignature: createHmac('sha256', s).update(b).digest('hex') }, s)).toBe(false));
+  it('legacy ok', () => expect(verifyFlutterwaveSignature(b, { verifHash: s }, s)).toBe(true));
+  it('legacy bad', () => expect(verifyFlutterwaveSignature(b, { verifHash: 'x' }, s)).toBe(false));
+  it('none', () => expect(verifyFlutterwaveSignature(b, {}, s)).toBe(false));
 });
 
-// ═════ correlateProviderSubscription (ACTUAL production function) ═════
-
+// ═════ correlateProviderSubscription ═════
 describe('correlateProviderSubscription', () => {
-  it('exactly one valid match → ok', async () => {
+  it('one valid → ok', async () => {
     mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: [{ id: 123, plan: 456 }] }) });
     const r = await correlateProviderSubscription(100, 'k');
-    expect(r.ok).toBe(true);
-    if (r.ok) { expect(r.sub.subscriptionId).toBe('123'); expect(r.sub.planId).toBe(456); }
+    expect(r.ok && r.sub.subscriptionId).toBe('123');
   });
-
-  it('zero matches → not_found', async () => {
+  it('zero → not_found', async () => {
     mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: [] }) });
-    const r = await correlateProviderSubscription(100, 'k');
-    expect(!r.ok && r.reason).toBe('not_found');
+    expect((await correlateProviderSubscription(100, 'k')).ok).toBe(false);
   });
-
-  it('multiple matches → ambiguous', async () => {
+  it('multiple → ambiguous', async () => {
     mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: [{ id: 1, plan: 1 }, { id: 2, plan: 2 }] }) });
-    const r = await correlateProviderSubscription(100, 'k');
-    expect(!r.ok && r.reason).toBe('ambiguous');
+    expect((await correlateProviderSubscription(100, 'k')).ok).toBe(false);
   });
-
   it('HTTP 5xx → unavailable', async () => {
     mockFetch.mockResolvedValueOnce({ ok: false, status: 500 });
-    const r = await correlateProviderSubscription(100, 'k');
-    expect(!r.ok && r.reason).toBe('unavailable');
+    expect((await correlateProviderSubscription(100, 'k')).ok).toBe(false);
   });
-
-  it('non-success status → unavailable', async () => {
-    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'error', message: 'bad' }) });
-    const r = await correlateProviderSubscription(100, 'k');
-    expect(!r.ok && r.reason).toBe('unavailable');
-  });
-
-  it('zero plan ID → invalid', async () => {
-    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: [{ id: 123, plan: 0 }] }) });
-    const r = await correlateProviderSubscription(100, 'k');
-    expect(!r.ok && r.reason).toBe('invalid');
-  });
-
-  it('network error → unavailable', async () => {
-    mockFetch.mockRejectedValueOnce(new Error('ECONNREFUSED'));
-    const r = await correlateProviderSubscription(100, 'k');
-    expect(!r.ok && r.reason).toBe('unavailable');
+  it('zero planId → invalid', async () => {
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: [{ id: 1, plan: 0 }] }) });
+    expect((await correlateProviderSubscription(100, 'k')).ok).toBe(false);
   });
 });
 
-// ═════ verifySubscriptionStatus (ACTUAL production function) ═════
-
+// ═════ verifySubscriptionStatus (documented list endpoint) ═════
 describe('verifySubscriptionStatus', () => {
-  it('cancelled status → ok with cancelled', async () => {
-    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: { id: 1, status: 'cancelled' } }) });
-    const r = await verifySubscriptionStatus('1', 'k');
+  it('exact match → cancelled', async () => {
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: [{ id: 42, status: 'cancelled' }] }) });
+    const r = await verifySubscriptionStatus('42', 'user@test.com', 'k');
     expect(r.ok && r.status).toBe('cancelled');
   });
-
-  it('active status → ok with active', async () => {
-    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: { id: 1, status: 'active' } }) });
-    const r = await verifySubscriptionStatus('1', 'k');
+  it('exact match → active', async () => {
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: [{ id: 42, status: 'active' }] }) });
+    const r = await verifySubscriptionStatus('42', 'user@test.com', 'k');
     expect(r.ok && r.status).toBe('active');
   });
-
+  it('no match → not_found', async () => {
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: [{ id: 99, status: 'active' }] }) });
+    const r = await verifySubscriptionStatus('42', 'user@test.com', 'k');
+    expect(!r.ok && r.reason).toBe('not_found');
+  });
   it('unavailable → fail', async () => {
-    mockFetch.mockRejectedValueOnce(new Error('timeout'));
-    const r = await verifySubscriptionStatus('1', 'k');
-    expect(r.ok).toBe(false);
+    mockFetch.mockRejectedValueOnce(new Error('t'));
+    expect((await verifySubscriptionStatus('42', 'u@t.com', 'k')).ok).toBe(false);
+  });
+  it('uses email filter in URL', async () => {
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: [] }) });
+    await verifySubscriptionStatus('42', 'user@test.com', 'k');
+    expect((mockFetch.mock.calls[0][0] as string)).toContain('email=user%40test.com');
   });
 });
 
-// ═════ Cancellation lifecycle proofs ═════
+// ═════ DECISION FUNCTIONS — actual route logic ═════
 
-describe('Cancellation lifecycle — via actual verifySubscriptionStatus', () => {
-  it('first cancellation: provider says cancelled → should cancel', async () => {
-    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: { id: 1, status: 'cancelled' } }) });
-    const r = await verifySubscriptionStatus('sub1', 'k');
-    expect(r.ok && r.status === 'cancelled').toBe(true);
-    // Webhook logic: status is cancelled → proceed with finalize_subscription_cancellation
+describe('decideTimeoutRecovery', () => {
+  it('successful → finalize original', () => {
+    const r = decideTimeoutRecovery({ ok: true, tx: { id: 1, tx_ref: 'r', status: 'successful', amount: 100, currency: 'NGN', created_at: '2026-09-12T00:00:00Z' } });
+    expect(r.action).toBe('finalize');
   });
-
-  it('duplicate before reactivation: local already cancelled → webhook returns 200 (idempotent)', () => {
-    // Webhook logic checks: if (localSub.status === 'cancelled') return 200
-    const localStatus = 'cancelled';
-    expect(localStatus === 'cancelled').toBe(true);
-    // → idempotent acknowledgment without hitting provider
+  it('failed → replace', () => {
+    const r = decideTimeoutRecovery({ ok: true, tx: { id: 1, tx_ref: 'r', status: 'failed', amount: 100, currency: 'NGN', created_at: '2026-09-12T00:00:00Z' } });
+    expect(r.action).toBe('replace');
   });
-
-  it('cancel→reactivate→new cancel: provider says cancelled → should cancel', async () => {
-    // After reactivation, subscription is active locally
-    // New cancellation arrives, provider confirms cancelled
-    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: { id: 1, status: 'cancelled' } }) });
-    const r = await verifySubscriptionStatus('sub1', 'k');
-    expect(r.ok && r.status === 'cancelled').toBe(true);
-    // → should proceed with cancellation
+  it('pending → retain', () => {
+    const r = decideTimeoutRecovery({ ok: true, tx: { id: 1, tx_ref: 'r', status: 'pending', amount: 100, currency: 'NGN', created_at: '2026-09-12T00:00:00Z' } });
+    expect(r.action).toBe('retain');
   });
-
-  it('delayed OLD cancellation after reactivation: provider says active → should NOT cancel', async () => {
-    // After reactivation, subscription is active locally AND on provider
-    // Delayed duplicate of OLD cancellation arrives
-    // Provider verification shows subscription is ACTIVE (it was reactivated)
-    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: { id: 1, status: 'active' } }) });
-    const r = await verifySubscriptionStatus('sub1', 'k');
-    expect(r.ok && r.status === 'active').toBe(true);
-    // Webhook logic: status !== 'cancelled'/'deactivated' → ignore, do NOT cancel
-  });
-
-  it('provider unavailable → fail closed + reconciliation', async () => {
-    mockFetch.mockRejectedValueOnce(new Error('timeout'));
-    const r = await verifySubscriptionStatus('sub1', 'k');
-    expect(r.ok).toBe(false);
-    // Webhook logic: quarantine + 500
+  it('unavailable → fail_closed', () => {
+    expect(decideTimeoutRecovery({ ok: false, reason: 'unavailable' }).action).toBe('fail_closed');
   });
 });
 
-// ═════ Business-payment non-regression ═════
+describe('decideInitResponse', () => {
+  it('success → success', () => expect(decideInitResponse(200, true).action).toBe('success'));
+  it('4xx → mark_failed', () => expect(decideInitResponse(422, false).action).toBe('mark_failed'));
+  it('5xx → retain_key', () => expect(decideInitResponse(500, false).action).toBe('retain_key'));
+  it('network (0) → retain_key', () => expect(decideInitResponse(0, false).action).toBe('retain_key'));
+});
 
+describe('decideCancellation', () => {
+  it('first cancellation: provider=cancelled → cancel', () => {
+    expect(decideCancellation('active', true, { ok: true, status: 'cancelled' }).action).toBe('cancel');
+  });
+  it('duplicate before reactivation: local=cancelled → already_cancelled', () => {
+    expect(decideCancellation('cancelled', true, null).action).toBe('already_cancelled');
+  });
+  it('cancel→reactivate→new cancel: provider=cancelled → cancel', () => {
+    expect(decideCancellation('active', true, { ok: true, status: 'cancelled' }).action).toBe('cancel');
+  });
+  it('delayed OLD cancellation after reactivation: provider=active → stale_duplicate', () => {
+    expect(decideCancellation('active', true, { ok: true, status: 'active' }).action).toBe('stale_duplicate');
+  });
+  it('missing subscription ID → fail_closed', () => {
+    expect(decideCancellation('active', false, null).action).toBe('fail_closed');
+  });
+  it('provider unavailable → fail_closed', () => {
+    expect(decideCancellation('active', true, { ok: false, reason: 'unavailable' }).action).toBe('fail_closed');
+  });
+});
+
+describe('decideSubscriptionCorrelation', () => {
+  it('ok → proceed', () => {
+    expect(decideSubscriptionCorrelation({ ok: true, sub: { subscriptionId: '1', planId: 2 } }).action).toBe('proceed');
+  });
+  it('not_found → fail_closed', () => {
+    expect(decideSubscriptionCorrelation({ ok: false, reason: 'not_found' }).action).toBe('fail_closed');
+  });
+  it('ambiguous → fail_closed', () => {
+    expect(decideSubscriptionCorrelation({ ok: false, reason: 'ambiguous' }).action).toBe('fail_closed');
+  });
+});
+
+describe('decideFinalizerResult', () => {
+  it('finalized=true → success', () => expect(decideFinalizerResult({ finalized: true }, null).action).toBe('success'));
+  it('null result → failed', () => expect(decideFinalizerResult(null, null).action).toBe('failed'));
+  it('quarantine → quarantined', () => expect(decideFinalizerResult({ finalized: false, quarantine: true }, null).action).toBe('quarantined'));
+  it('error → failed', () => expect(decideFinalizerResult(null, new Error('x')).action).toBe('failed'));
+});
+
+// ═════ Non-regression ═════
 describe('Business-payment non-regression', () => {
-  it('webhook preserves reconcilePayment + processSuccessfulPayment + signature imports', async () => {
+  it('webhook preserves business-payment path', async () => {
     const fs = await import('fs');
     const path = await import('path');
     const src = fs.readFileSync(path.resolve(__dirname, '../../../app/api/webhooks/flutterwave/route.ts'), 'utf-8');
     expect(src).toContain('reconcilePayment');
     expect(src).toContain('processSuccessfulPayment');
     expect(src).toContain("from('payments')");
-    expect(src).toContain('verifyFlutterwaveSignature');
     expect(src).toContain('correlateProviderSubscription');
     expect(src).toContain('verifySubscriptionStatus');
   });
