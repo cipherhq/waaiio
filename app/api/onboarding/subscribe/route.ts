@@ -191,6 +191,22 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ message: 'Configuration unavailable' }, { status: 503 });
       }
 
+      // Provider preflight: verify plan exists, active, currency/amount/cadence match (Phase 2)
+      const { verifyFlutterwavePlan } = await import('@/lib/payments/provider-preflight');
+      const preflight = await verifyFlutterwavePlan({
+        planRef: planRef.trim(),
+        expectedCurrency: currency,
+        expectedAmountMajor: monthlyPrice,
+        expectedInterval: 'monthly',
+        flutterwaveKey,
+      });
+      if (!preflight.ok) {
+        return NextResponse.json(
+          { message: 'Subscription plan validation failed. Please try again later.', reason: preflight.reason },
+          { status: 503 },
+        );
+      }
+
       // Atomic DB claim
       const { data: claim, error: claimErr } = await service.rpc('claim_checkout_initialization', {
         p_business_id: business_id,
@@ -403,6 +419,16 @@ export async function POST(request: NextRequest) {
     const stripeKey = process.env.STRIPE_SECRET_KEY;
     if (!stripeKey) {
       return NextResponse.json({ message: 'Payment gateway not configured' }, { status: 500 });
+    }
+
+    // Stripe runtime readiness preflight: verify API key valid + reachable (Phase 2)
+    const { verifyStripeReadiness } = await import('@/lib/payments/provider-preflight');
+    const stripePreflight = await verifyStripeReadiness({ stripeKey });
+    if (!stripePreflight.ok) {
+      return NextResponse.json(
+        { message: 'Payment service temporarily unavailable. Please try again later.', reason: stripePreflight.reason },
+        { status: 503 },
+      );
     }
 
     const amountInCents = Math.round(monthlyPrice * 100);
