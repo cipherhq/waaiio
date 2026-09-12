@@ -225,11 +225,20 @@ export async function POST(request: NextRequest) {
       // Timeout boundary elapsed — verify original provider state via bounded discovery + exact-ID verify
       if (claimRow.needs_provider_verification) {
         const { discoverAndVerifyTransaction } = await import('@/lib/payments/flutterwave-verify');
-        const intentCreatedAt = claimRow.intent_id ? undefined : undefined; // intent created_at not in claim result
+        // Look up intent created_at for deterministic recovery window (Blocker A)
+        const { data: intentRow } = await service
+          .from('subscription_checkout_intents')
+          .select('created_at')
+          .eq('id', claimRow.intent_id as string)
+          .single();
+        // Recovery window: from intent creation day to tomorrow (YYYY-MM-DD normalized by helper)
         const verifyResult = await discoverAndVerifyTransaction(
           claimRow.idempotency_key as string,
           flutterwaveKey,
-          { fromDate: new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString() },
+          {
+            fromDate: intentRow?.created_at || new Date(Date.now() - 48 * 60 * 60 * 1000),
+            toDate: new Date(Date.now() + 24 * 60 * 60 * 1000),
+          },
         );
 
         if (!verifyResult.ok) {

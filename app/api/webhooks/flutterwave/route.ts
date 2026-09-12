@@ -1,5 +1,4 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { timingSafeEqual, createHmac } from 'crypto';
 import * as Sentry from '@sentry/nextjs';
 import { createServiceClient } from '@/lib/supabase/service';
 import { logger } from '@/lib/logger';
@@ -10,40 +9,9 @@ import { processSuccessfulPayment } from '@/lib/payments/process-success';
 import { sendProactiveConfirmation } from '@/lib/payments/send-confirmation';
 export const maxDuration = 60;
 
-const FLUTTERWAVE_SECRET_HASH = process.env.FLUTTERWAVE_WEBHOOK_HASH || '';
+import { verifyFlutterwaveSignature } from '@/lib/payments/flutterwave-signature';
 
-/**
- * Verify Flutterwave webhook signature.
- * Supports both:
- * - Current: HMAC-SHA256 via `flutterwave-signature` header (hashed raw body)
- * - Legacy: Direct `verif-hash` header comparison against dashboard secret
- *
- * Returns true if either method validates successfully.
- */
-function verifyFlutterwaveSignature(
-  rawBody: string,
-  headers: { verifHash?: string; flutterwaveSignature?: string },
-  secretHash: string,
-): boolean {
-  // Current method: HMAC-SHA256 flutterwave-signature
-  if (headers.flutterwaveSignature) {
-    const computed = createHmac('sha256', secretHash).update(rawBody).digest('base64');
-    try {
-      return timingSafeEqual(Buffer.from(computed), Buffer.from(headers.flutterwaveSignature));
-    } catch {
-      return false;
-    }
-  }
-  // Legacy method: direct verif-hash comparison
-  if (headers.verifHash) {
-    try {
-      return timingSafeEqual(Buffer.from(headers.verifHash), Buffer.from(secretHash));
-    } catch {
-      return false;
-    }
-  }
-  return false;
-}
+const FLUTTERWAVE_SECRET_HASH = process.env.FLUTTERWAVE_WEBHOOK_HASH || '';
 
 export async function POST(request: NextRequest) {
   const wh = createWebhookLogger('flutterwave', getRequestId(request));
@@ -98,11 +66,13 @@ export async function POST(request: NextRequest) {
           .eq('flutterwave_subscriber_email', cancelEmail);
 
         if (matchingSubs?.length === 1) {
-          // Provider-stable event identity
-          const cancelEventId = `flw-cancel-${cancelPlanId}-${cancelEmail}`;
+          // Do NOT use plan+email as permanent dedupe key — it would block
+          // cancel→reactivate→cancel lifecycle. The finalizer RPC itself
+          // checks subscription state and returns idempotently for already-cancelled.
+          // Pass NULL event_id to rely on subscription-state idempotency.
           const { error: cancelErr } = await supabase.rpc('finalize_subscription_cancellation', {
             p_subscription_id: matchingSubs[0].id,
-            p_provider_event_id: cancelEventId,
+            p_provider_event_id: null,
             p_reason: 'provider_cancelled',
           });
           if (cancelErr) {
@@ -323,27 +293,40 @@ export async function POST(request: NextRequest) {
             `https://api.flutterwave.com/v3/subscriptions?transaction_id=${webhookTxId}`,
             { headers: { 'Authorization': `Bearer ${flwKey}` }, signal: AbortSignal.timeout(10000) },
           );
-          const subData = await subLookup.json() as { data?: { id: number }[] };
 
-          if (!subData.data || subData.data.length === 0) {
-            renewalSubLookupResult = 'not_subscription';
-          } else if (subData.data.length > 1) {
-            renewalSubLookupResult = 'ambiguous';
+          // Non-2xx provider response → fail closed (Blocker C)
+          if (!subLookup.ok) {
+            renewalSubLookupResult = 'unavailable';
           } else {
-            // Exactly one match
-            const flwSubId = String(subData.data[0].id);
-            const { data: localSub } = await supabase
-              .from('subscriptions')
-              .select('id')
-              .eq('flutterwave_subscription_id', flwSubId)
-              .eq('gateway', 'flutterwave')
-              .maybeSingle();
+            const subData = await subLookup.json() as { status?: string; data?: { id: number }[] };
 
-            if (localSub) {
-              renewalSubLookupResult = 'matched';
-              localSubId = localSub.id;
+            // Non-success status or missing data → fail closed (Blocker C)
+            if (subData.status !== 'success' || !subData.data) {
+              renewalSubLookupResult = 'unavailable';
+            } else if (subData.data.length === 0) {
+              // Positively successful lookup with zero matches → not a subscription
+              renewalSubLookupResult = 'not_subscription';
+            } else if (subData.data.length > 1) {
+              renewalSubLookupResult = 'ambiguous';
+            } else {
+              // Exactly one match
+              const flwSubId = String(subData.data[0].id);
+              const { data: localSub, error: localErr } = await supabase
+                .from('subscriptions')
+                .select('id')
+                .eq('flutterwave_subscription_id', flwSubId)
+                .eq('gateway', 'flutterwave')
+                .maybeSingle();
+
+              // Local DB lookup error → fail closed (Blocker C)
+              if (localErr) {
+                renewalSubLookupResult = 'unavailable';
+              } else if (localSub) {
+                renewalSubLookupResult = 'matched';
+                localSubId = localSub.id;
+              }
+              // No local match with valid provider lookup → not our subscription
             }
-            // If no local subscription matches, this isn't our renewal — fall through
           }
         } catch {
           renewalSubLookupResult = 'unavailable';

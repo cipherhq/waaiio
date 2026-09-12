@@ -34,21 +34,22 @@ export type VerifyResult =
  * Uses bounded date range for the transaction list query, then verifies
  * the discovered transaction by exact ID.
  */
-/** Format a Date as YYYY-MM-DD for Flutterwave transaction list queries. */
-function toFlwDate(d: Date): string {
-  return d.toISOString().slice(0, 10); // YYYY-MM-DD
+/** Format any date string or Date to YYYY-MM-DD for Flutterwave transaction list queries. */
+export function toFlwDate(d: Date | string): string {
+  const date = typeof d === 'string' ? new Date(d) : d;
+  return date.toISOString().slice(0, 10); // YYYY-MM-DD
 }
 
 export async function discoverAndVerifyTransaction(
   txRef: string,
   flutterwaveKey: string,
-  opts?: { fromDate?: string; toDate?: string }
+  opts?: { fromDate?: string | Date; toDate?: string | Date }
 ): Promise<VerifyResult> {
   try {
     // Step 1: Discover candidate transactions with bounded YYYY-MM-DD from/to
-    // Flutterwave documents from/to as YYYY-MM-DD format
-    const from = opts?.fromDate || toFlwDate(new Date(Date.now() - 48 * 60 * 60 * 1000));
-    const to = opts?.toDate || toFlwDate(new Date(Date.now() + 24 * 60 * 60 * 1000));
+    // Flutterwave documents from/to as YYYY-MM-DD format — normalize ALL inputs
+    const from = toFlwDate(opts?.fromDate || new Date(Date.now() - 48 * 60 * 60 * 1000));
+    const to = toFlwDate(opts?.toDate || new Date(Date.now() + 24 * 60 * 60 * 1000));
 
     // Flutterwave defaults status to 'successful'. To discover both successful and failed
     // terminal outcomes, query each status separately and combine.
