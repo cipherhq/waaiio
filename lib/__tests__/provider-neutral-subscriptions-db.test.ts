@@ -340,14 +340,10 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
 
   // Seed config with pricing_tiers + messaging_pricing so M375 can validate amounts
   it('27-pre. seed pricing_tiers and messaging config for M375 validation', () => {
-    // pricing_tiers needs a 'price' field in major units (14999 = NGN 14999)
+    // pricing_tiers is individually mutable — add 'price' fields needed by M375
     psql(`${adminContext(adminId)} SELECT save_commercial_config('pricing_tiers', '{"free":{"feePercentage":2.5,"feeFlat":0.5,"maxBookings":50,"whitelabel":false,"price":0},"growth":{"feePercentage":1.5,"feeFlat":0.25,"maxBookings":500,"whitelabel":false,"price":14999},"business":{"feePercentage":1.0,"feeFlat":0.25,"maxBookings":999999999,"whitelabel":true,"price":39999}}'::jsonb); RESET ROLE;`);
-    // subscription_included_minor_by_tier_currency for allowance grant
-    psql(`${adminContext(adminId)} SELECT save_commercial_config('subscription_included_minor_by_tier_currency', '{"growth":{"NGN":100000},"business":{"NGN":200000}}'::jsonb); RESET ROLE;`);
-    // trial_credit_minor_by_currency
-    psql(`${adminContext(adminId)} SELECT save_commercial_config('trial_credit_minor_by_currency', '{"NGN":50000}'::jsonb); RESET ROLE;`);
-    // messaging_pricing is a bundle-only key — use save_market_messaging_config
-    // (test 17 already seeds this; re-seed to ensure fresh config version includes pricing_tiers)
+    // messaging_pricing, trial_credit, subscription_included are bundle-only keys —
+    // they must all go through save_market_messaging_config (or save_messaging_config)
     const ver = currentVersion();
     psql(`${adminContext(adminId)} SELECT save_market_messaging_config('{"NGN":{"rates":{"NG":{"utility":100,"marketing":200}},"default_spend_cap_minor":5000000}}'::jsonb, '{"NGN":50000}'::jsonb, '{"growth":{"NGN":100000},"business":{"NGN":200000}}'::jsonb, '{"NG":{"growth":"243206","business":"243207"}}'::jsonb, '${ver}'::uuid); RESET ROLE;`);
     // Verify the config snapshot now has pricing_tiers.growth.price
