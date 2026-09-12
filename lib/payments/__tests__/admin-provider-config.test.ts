@@ -6,6 +6,11 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
+// Set env vars BEFORE module loads
+process.env.FLUTTERWAVE_SECRET_KEY = 'FAKE_FLW_KEY_FOR_TEST';
+process.env.STRIPE_SECRET_KEY = 'FAKE_STRIPE_KEY_FOR_TEST';
+process.env.PAYSTACK_SECRET_KEY = 'FAKE_PS_KEY_FOR_TEST';
+
 vi.mock('@/lib/logger', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), withContext: () => ({ error: vi.fn(), warn: vi.fn(), info: vi.fn() }) },
 }));
@@ -104,13 +109,10 @@ describe('Admin Provider Config Route', () => {
     });
 
     it('switch_provider uses exact M378 parameter names: p_country_code, p_new_gateway, p_expected_version_id, p_actor_id', async () => {
-      // Mock the Flutterwave plan verification
-      mockFetch.mockResolvedValue({
-        json: async () => ({
-          status: 'success',
-          data: { amount: 5000, currency: 'NGN' },
-        }),
-      });
+      // Mock the Flutterwave plan verification for BOTH tiers (growth=5000, business=10000)
+      mockFetch
+        .mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: { id: 243206, status: 'active', amount: 5000, currency: 'NGN', interval: 'monthly' } }) })
+        .mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: { id: 243207, status: 'active', amount: 10000, currency: 'NGN', interval: 'monthly' } }) });
 
       const { POST } = await import('@/app/api/admin/provider-config/route');
 

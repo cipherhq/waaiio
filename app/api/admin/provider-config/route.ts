@@ -14,61 +14,18 @@ import { requirePlatformAdmin } from '@/lib/admin-auth';
 import { createServiceClient } from '@/lib/supabase/service';
 import { logger } from '@/lib/logger';
 
-const FLUTTERWAVE_SECRET_KEY = process.env.FLUTTERWAVE_SECRET_KEY || '';
+import {
+  verifyFlutterwavePlan as preflightFlutterwaveAccepted,
+  verifyStripeReadiness as preflightStripeAccepted,
+} from '@/lib/payments/provider-preflight';
 
-/**
- * Verify a Flutterwave payment plan exists and matches expected currency/amount.
- * GET /v3/payment-plans/{id}
- */
+/** Wrapper: use accepted verifyFlutterwavePlan from provider-preflight */
 async function verifyFlutterwavePlan(
-  planId: string,
-  expectedCurrency: string,
-  expectedAmount: number,
+  planId: string, expectedCurrency: string, expectedAmount: number,
 ): Promise<{ ok: boolean; reason?: string }> {
-  if (!FLUTTERWAVE_SECRET_KEY) {
-    if (process.env.NODE_ENV === 'production') {
-      return { ok: false, reason: 'Flutterwave secret key not configured' };
-    }
-    // Dev/test: allow mock plans
-    return { ok: true };
-  }
-
-  try {
-    const response = await fetch(
-      `https://api.flutterwave.com/v3/payment-plans/${encodeURIComponent(planId)}`,
-      {
-        method: 'GET',
-        headers: {
-          Authorization: `Bearer ${FLUTTERWAVE_SECRET_KEY}`,
-          'Content-Type': 'application/json',
-        },
-        signal: AbortSignal.timeout(10000),
-      },
-    );
-    const data = await response.json();
-
-    if (data.status !== 'success') {
-      return { ok: false, reason: `Plan ${planId} not found or API error: ${data.message || 'unknown'}` };
-    }
-
-    const plan = data.data as Record<string, unknown>;
-    const planAmount = plan.amount as number;
-    const planCurrency = (plan.currency as string) || '';
-
-    // Verify currency matches
-    if (planCurrency && expectedCurrency && planCurrency.toUpperCase() !== expectedCurrency.toUpperCase()) {
-      return { ok: false, reason: `Plan ${planId} currency ${planCurrency} does not match country currency ${expectedCurrency}` };
-    }
-
-    // Verify amount matches tier price
-    if (planAmount !== expectedAmount) {
-      return { ok: false, reason: `Plan ${planId} amount ${planAmount} does not match expected tier price ${expectedAmount}` };
-    }
-
-    return { ok: true };
-  } catch (err) {
-    return { ok: false, reason: `Flutterwave API error: ${err instanceof Error ? err.message : 'unknown'}` };
-  }
+  const flwKey = process.env.FLUTTERWAVE_SECRET_KEY;
+  if (!flwKey) return { ok: false, reason: 'FLUTTERWAVE_SECRET_KEY not configured' };
+  return preflightFlutterwaveAccepted({ planId, expectedCurrency, expectedAmountMajor: expectedAmount, flutterwaveKey: flwKey });
 }
 
 /**
