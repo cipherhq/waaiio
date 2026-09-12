@@ -17,7 +17,7 @@ vi.mock('@/lib/logger', () => ({ logger: { error: vi.fn(), warn: vi.fn(), info: 
 
 import { discoverAndVerifyTransaction, verifyTransactionById, toFlwDate } from '../flutterwave-verify';
 import { verifyFlutterwaveSignature } from '../flutterwave-signature';
-import { correlateProviderSubscription, verifySubscriptionStatus, findSubscriptionByStatus } from '../flutterwave-subscription';
+import { correlateProviderSubscription, correlateProviderSubscriptionExhaustive, querySubscriptionsByTxId, verifySubscriptionStatus, findSubscriptionByStatus } from '../flutterwave-subscription';
 import { decideTimeoutRecovery, decideInitResponse, decideCancellation, decideSubscriptionCorrelation, decideFinalizerResult, decideChargeRouting } from '../flutterwave-decisions';
 
 beforeEach(() => { mockFetch.mockReset(); });
@@ -336,5 +336,142 @@ describe('decideChargeRouting — production routing authority', () => {
   it('subscription lookup not performed → unknown (fail closed)', () => {
     const r = decideChargeRouting('flw_abc', 100, false, 'not_checked');
     expect(r.route).toBe('unknown');
+  });
+});
+
+// ═════ querySubscriptionsByTxId — explicit status filter ═════
+describe('querySubscriptionsByTxId', () => {
+  it('explicit status=active in URL', async () => {
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: [] }) });
+    await querySubscriptionsByTxId(100, 'active', 'k');
+    expect((mockFetch.mock.calls[0][0] as string)).toContain('status=active');
+    expect((mockFetch.mock.calls[0][0] as string)).toContain('transaction_id=100');
+  });
+  it('explicit status=cancelled in URL', async () => {
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: [] }) });
+    await querySubscriptionsByTxId(100, 'cancelled', 'k');
+    expect((mockFetch.mock.calls[0][0] as string)).toContain('status=cancelled');
+  });
+  it('returns subs on success', async () => {
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: [{ id: 1, plan: 2 }] }) });
+    const r = await querySubscriptionsByTxId(100, 'active', 'k');
+    expect(r.ok && r.subs).toEqual([{ id: 1, plan: 2 }]);
+  });
+  it('HTTP error → unavailable', async () => {
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 500 });
+    expect((await querySubscriptionsByTxId(100, 'active', 'k')).ok).toBe(false);
+  });
+  it('network error → unavailable', async () => {
+    mockFetch.mockRejectedValueOnce(new Error('net'));
+    expect((await querySubscriptionsByTxId(100, 'active', 'k')).ok).toBe(false);
+  });
+});
+
+// ═════ correlateProviderSubscriptionExhaustive — dual-query ═════
+describe('correlateProviderSubscriptionExhaustive — dual-query classification', () => {
+  it('active-only match → subscription', async () => {
+    // active: one sub; cancelled: zero
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: [{ id: 10, plan: 20 }] }) });
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: [] }) });
+    const r = await correlateProviderSubscriptionExhaustive(100, 'k');
+    expect(r.ok && r.sub.subscriptionId).toBe('10');
+    // Verify both queries were made with explicit status params
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect((mockFetch.mock.calls[0][0] as string)).toContain('status=active');
+    expect((mockFetch.mock.calls[1][0] as string)).toContain('status=cancelled');
+  });
+
+  it('cancelled-only match → subscription', async () => {
+    // active: zero; cancelled: one sub
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: [] }) });
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: [{ id: 30, plan: 40 }] }) });
+    const r = await correlateProviderSubscriptionExhaustive(100, 'k');
+    expect(r.ok && r.sub.subscriptionId).toBe('30');
+  });
+
+  it('zero across both active AND cancelled → not_found (not_subscription)', async () => {
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: [] }) });
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: [] }) });
+    const r = await correlateProviderSubscriptionExhaustive(100, 'k');
+    expect(!r.ok && r.reason).toBe('not_found');
+  });
+
+  it('same identity in both queries → deduped to one subscription', async () => {
+    // Same sub appears in both active and cancelled (edge case)
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: [{ id: 50, plan: 60 }] }) });
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: [{ id: 50, plan: 60 }] }) });
+    const r = await correlateProviderSubscriptionExhaustive(100, 'k');
+    expect(r.ok && r.sub.subscriptionId).toBe('50');
+    expect(r.ok && r.sub.planId).toBe(60);
+  });
+
+  it('different identities across queries → ambiguous (fail closed)', async () => {
+    // active: sub A; cancelled: sub B — conflicting identities
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: [{ id: 70, plan: 80 }] }) });
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: [{ id: 90, plan: 100 }] }) });
+    const r = await correlateProviderSubscriptionExhaustive(100, 'k');
+    expect(!r.ok && r.reason).toBe('ambiguous');
+  });
+
+  it('active query error → fail closed (unavailable)', async () => {
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 500 }); // active fails
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: [{ id: 1, plan: 2 }] }) });
+    const r = await correlateProviderSubscriptionExhaustive(100, 'k');
+    expect(!r.ok && r.reason).toBe('unavailable');
+  });
+
+  it('cancelled query error → fail closed (unavailable)', async () => {
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: [] }) }); // active ok
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 500 }); // cancelled fails
+    const r = await correlateProviderSubscriptionExhaustive(100, 'k');
+    expect(!r.ok && r.reason).toBe('unavailable');
+  });
+
+  it('both queries error → fail closed (unavailable)', async () => {
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 503 });
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 503 });
+    const r = await correlateProviderSubscriptionExhaustive(100, 'k');
+    expect(!r.ok && r.reason).toBe('unavailable');
+  });
+
+  it('ambiguity within active query → fail closed', async () => {
+    // active: multiple subs; cancelled: zero
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: [{ id: 1, plan: 2 }, { id: 3, plan: 4 }] }) });
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: [] }) });
+    const r = await correlateProviderSubscriptionExhaustive(100, 'k');
+    expect(!r.ok && r.reason).toBe('ambiguous');
+  });
+
+  it('ambiguity within cancelled query → fail closed', async () => {
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: [] }) });
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: [{ id: 5, plan: 6 }, { id: 7, plan: 8 }] }) });
+    const r = await correlateProviderSubscriptionExhaustive(100, 'k');
+    expect(!r.ok && r.reason).toBe('ambiguous');
+  });
+
+  it('invalid identity (zero plan) in active → fail closed', async () => {
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: [{ id: 1, plan: 0 }] }) });
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: [] }) });
+    const r = await correlateProviderSubscriptionExhaustive(100, 'k');
+    expect(!r.ok && r.reason).toBe('invalid');
+  });
+
+  it('invalid identity (zero id) in cancelled → fail closed', async () => {
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: [] }) });
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: [{ id: 0, plan: 5 }] }) });
+    const r = await correlateProviderSubscriptionExhaustive(100, 'k');
+    expect(!r.ok && r.reason).toBe('invalid');
+  });
+
+  it('both queries fire with explicit status params (never default)', async () => {
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: [] }) });
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'success', data: [] }) });
+    await correlateProviderSubscriptionExhaustive(999, 'k');
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    const url0 = mockFetch.mock.calls[0][0] as string;
+    const url1 = mockFetch.mock.calls[1][0] as string;
+    // Both must have explicit status — one active, one cancelled (order from Promise.all)
+    const statuses = [url0.match(/status=(\w+)/)?.[1], url1.match(/status=(\w+)/)?.[1]].sort();
+    expect(statuses).toEqual(['active', 'cancelled']);
   });
 });

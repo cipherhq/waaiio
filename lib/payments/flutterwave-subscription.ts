@@ -132,39 +132,24 @@ export async function findSubscriptionByStatus(
 }
 
 /**
- * Verify a Flutterwave subscription's current status using the documented
- * GET /v3/subscriptions endpoint with explicit status filters.
+ * Query Flutterwave subscriptions by transaction_id with explicit status filter.
+ * Returns the raw parsed subscription rows or a structured failure.
  *
- * For cancellation verification:
- * 1. Query status=cancelled with email filter, exact-match stored subscription ID
- * 2. If not found as cancelled, query status=active to check if it's still active (stale duplicate)
- * 3. If not found in either → not_found (fail closed)
+ * This is the atomic building block for exhaustive classification — it always sends
+ * an explicit `status` parameter, never relying on provider defaults.
  */
-/**
- * Exhaustively classify whether a Flutterwave transaction belongs to a subscription,
- * checking BOTH active and cancelled provider subscriptions before declaring not_subscription.
- *
- * Required by Phase 1 Blocker A: a delayed charge whose provider subscription is now
- * cancelled must not be misrouted as an ordinary business payment.
- *
- * Returns the same CorrelationResult shape as correlateProviderSubscription but with
- * provider-authoritative dual-status evidence.
- */
-export async function correlateProviderSubscriptionExhaustive(
-  transactionId: number,
-  flutterwaveKey: string,
-): Promise<CorrelationResult> {
-  // Step 1: Query default (active) subscriptions by transaction_id
-  const activeResult = await correlateProviderSubscription(transactionId, flutterwaveKey);
-  if (activeResult.ok) return activeResult; // Found as active subscription
-  if (activeResult.reason === 'ambiguous' || activeResult.reason === 'invalid') return activeResult;
-  if (activeResult.reason === 'unavailable') return activeResult; // Provider error — fail closed
+export type TxSubQueryResult =
+  | { ok: true; subs: { id: number; plan: number }[] }
+  | { ok: false; reason: 'unavailable' };
 
-  // activeResult.reason === 'not_found' under default/active filter
-  // Step 2: Query cancelled subscriptions explicitly
+export async function querySubscriptionsByTxId(
+  transactionId: number,
+  statusFilter: 'active' | 'cancelled',
+  flutterwaveKey: string,
+): Promise<TxSubQueryResult> {
   try {
     const response = await fetch(
-      `https://api.flutterwave.com/v3/subscriptions?transaction_id=${transactionId}&status=cancelled`,
+      `https://api.flutterwave.com/v3/subscriptions?transaction_id=${transactionId}&status=${statusFilter}`,
       {
         headers: { 'Authorization': `Bearer ${flutterwaveKey}` },
         signal: AbortSignal.timeout(10000),
@@ -172,38 +157,89 @@ export async function correlateProviderSubscriptionExhaustive(
     );
 
     if (!response.ok) {
-      logger.error('[FLW-SUB] Cancelled subscription lookup HTTP error', { status: response.status, txId: transactionId });
+      logger.error('[FLW-SUB] Subscription tx lookup HTTP error', { status: response.status, txId: transactionId, statusFilter });
       return { ok: false, reason: 'unavailable' };
     }
 
     const data = await response.json() as { status?: string; data?: { id: number; plan: number }[] };
-
     if (data.status !== 'success' || !data.data) {
-      logger.error('[FLW-SUB] Cancelled subscription lookup non-success', { status: data.status, txId: transactionId });
+      logger.error('[FLW-SUB] Subscription tx lookup non-success', { status: data.status, txId: transactionId, statusFilter });
       return { ok: false, reason: 'unavailable' };
     }
 
-    if (data.data.length === 0) {
-      // Zero across both active and cancelled — genuinely not a subscription
-      return { ok: false, reason: 'not_found' };
-    }
-
-    if (data.data.length > 1) {
-      logger.error('[FLW-SUB] Ambiguous: multiple cancelled subscriptions for transaction', { txId: transactionId, count: data.data.length });
-      return { ok: false, reason: 'ambiguous' };
-    }
-
-    const sub = data.data[0];
-    if (!sub.id || !sub.plan || sub.plan === 0) {
-      logger.error('[FLW-SUB] Invalid cancelled subscription identity', { txId: transactionId, subId: sub.id, planId: sub.plan });
-      return { ok: false, reason: 'invalid' };
-    }
-
-    return { ok: true, sub: { subscriptionId: String(sub.id), planId: sub.plan } };
+    return { ok: true, subs: data.data };
   } catch (error) {
-    logger.error('[FLW-SUB] Cancelled subscription lookup error', { txId: transactionId, error: String(error) });
+    logger.error('[FLW-SUB] Subscription tx lookup error', { txId: transactionId, statusFilter, error: String(error) });
     return { ok: false, reason: 'unavailable' };
   }
+}
+
+/**
+ * Exhaustively classify whether a Flutterwave transaction belongs to a subscription
+ * by querying BOTH explicit status=active AND explicit status=cancelled for the exact
+ * transaction_id, evaluating both results before classification.
+ *
+ * Required by Phase 1 Blocker A — both queries run before any classification decision.
+ *
+ * Classification rules (applied AFTER both queries complete):
+ * 1. Provider error/malformed/ambiguous in EITHER query → fail closed (unavailable)
+ * 2. Combine all valid subscription rows from both queries
+ * 3. Zero total across both → not_subscription (only path to business-payment)
+ * 4. Dedupe by exact provider subscription identity (id + plan)
+ * 5. Exactly one consistent identity → subscription match
+ * 6. Multiple different/conflicting identities → fail closed (ambiguous)
+ * 7. Invalid identity (zero id/plan) → fail closed (invalid)
+ */
+export async function correlateProviderSubscriptionExhaustive(
+  transactionId: number,
+  flutterwaveKey: string,
+): Promise<CorrelationResult> {
+  // Fire both queries — both must succeed before classification
+  const [activeResult, cancelledResult] = await Promise.all([
+    querySubscriptionsByTxId(transactionId, 'active', flutterwaveKey),
+    querySubscriptionsByTxId(transactionId, 'cancelled', flutterwaveKey),
+  ]);
+
+  // Rule 1: provider error in either query → fail closed
+  if (!activeResult.ok || !cancelledResult.ok) {
+    logger.error('[FLW-SUB] Exhaustive correlation: provider error in at least one query', {
+      txId: transactionId, activeOk: activeResult.ok, cancelledOk: cancelledResult.ok,
+    });
+    return { ok: false, reason: 'unavailable' };
+  }
+
+  // Rule 2: combine all rows from both queries
+  const allSubs = [...activeResult.subs, ...cancelledResult.subs];
+
+  // Rule 3: zero across both → genuinely not a subscription
+  if (allSubs.length === 0) {
+    return { ok: false, reason: 'not_found' };
+  }
+
+  // Rule 4+7: validate all identities and dedupe by (id, plan)
+  const identityMap = new Map<string, { id: number; plan: number }>();
+  for (const sub of allSubs) {
+    if (!sub.id || !sub.plan || sub.plan === 0) {
+      logger.error('[FLW-SUB] Invalid subscription identity in exhaustive correlation', {
+        txId: transactionId, subId: sub.id, planId: sub.plan,
+      });
+      return { ok: false, reason: 'invalid' };
+    }
+    identityMap.set(`${sub.id}:${sub.plan}`, { id: sub.id, plan: sub.plan });
+  }
+
+  // Rule 5: exactly one unique identity → subscription match
+  if (identityMap.size === 1) {
+    const [, sub] = [...identityMap.entries()][0];
+    return { ok: true, sub: { subscriptionId: String(sub.id), planId: sub.plan } };
+  }
+
+  // Rule 6: multiple different identities → fail closed
+  logger.error('[FLW-SUB] Conflicting subscription identities in exhaustive correlation', {
+    txId: transactionId, identityCount: identityMap.size,
+    identities: [...identityMap.keys()],
+  });
+  return { ok: false, reason: 'ambiguous' };
 }
 
 export async function verifySubscriptionStatus(
