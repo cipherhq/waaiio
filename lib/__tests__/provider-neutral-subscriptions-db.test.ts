@@ -56,12 +56,12 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
 
     testUserId = adminId;
 
-    // Seed a test business (hermetic — use unique slug to avoid conflicts)
+    // Seed a test business (hermetic — include all NOT NULL columns)
     const bizSlug = `m378-test-${Date.now()}`;
     const bizName = `M378TestBiz_${Date.now()}`;
     testBizId = psql(`
-      INSERT INTO businesses (id, name, slug, owner_id, country_code, category)
-      VALUES (gen_random_uuid(), '${bizName}', '${bizSlug}', '${testUserId}', 'NG', 'restaurant')
+      INSERT INTO businesses (id, name, slug, owner_id, country_code, category, address, city, neighborhood, phone)
+      VALUES (gen_random_uuid(), '${bizName}', '${bizSlug}', '${testUserId}', 'NG', 'restaurant', '123 Test St', 'Lagos', 'VI', '+2348012345678')
       RETURNING id::text;
     `).trim();
     expect(testBizId).toBeTruthy();
