@@ -115,6 +115,7 @@ export default function Countries() {
   const active = countries.filter(c => c.is_active).length;
   const stripeCount = countries.filter(c => c.payment_gateway === 'stripe').length;
   const paystackCount = countries.filter(c => c.payment_gateway === 'paystack').length;
+  const flutterwaveCount = countries.filter(c => c.payment_gateway === 'flutterwave').length;
 
   // Pagination
   const totalPages = Math.ceil(total / perPage);
@@ -139,26 +140,50 @@ export default function Countries() {
       const { data: session } = await supabase.auth.getSession();
       const userId = session?.session?.user?.id;
 
-      const payload = {
+      // In edit mode, exclude provider-owned fields (gateway, currency, paid tier prices)
+      // These are managed via Provider Configuration to prevent accidental drift.
+      const existingCountry = editMode ? countries.find(c => c.code === form.code) : null;
+
+      const pricingPayload = (() => {
+        if (!editMode) return form.pricing;
+        // Preserve provider_plan_refs and paystack_plan_code from existing data
+        const existing = existingCountry?.pricing || {};
+        const merged: Record<string, Record<string, unknown>> = {};
+        for (const [tier, vals] of Object.entries(form.pricing)) {
+          const existingTier = (existing as Record<string, Record<string, unknown>>)[tier] || {};
+          merged[tier] = {
+            ...vals,
+            ...(existingTier.provider_plan_refs ? { provider_plan_refs: existingTier.provider_plan_refs } : {}),
+            ...(existingTier.paystack_plan_code ? { paystack_plan_code: existingTier.paystack_plan_code } : {}),
+          };
+        }
+        return merged;
+      })();
+
+      const payload: Record<string, unknown> = {
         code: form.code.toUpperCase().trim(),
         name: form.name.trim(),
         flag: form.flag.trim(),
         dialing_code: form.dialing_code.trim(),
-        currency_code: form.currency_code.toUpperCase().trim(),
         currency_symbol: form.currency_symbol.trim(),
         currency_locale: form.currency_locale.trim(),
-        payment_gateway: form.payment_gateway,
         phone_digits: form.phone_digits,
         phone_pattern: form.phone_pattern.trim(),
         phone_placeholder: form.phone_placeholder.trim(),
         is_active: form.is_active,
         sort_order: form.sort_order,
         cities: form.cities,
-        pricing: form.pricing,
+        pricing: pricingPayload,
         verification_tiers: form.verification_tiers,
         doc_types: form.doc_types,
         updated_by: userId || null,
       };
+
+      // Only include gateway and currency on create (not edit)
+      if (!editMode) {
+        payload.currency_code = form.currency_code.toUpperCase().trim();
+        payload.payment_gateway = form.payment_gateway;
+      }
 
       if (editMode) {
         const { error } = await adminDb.from('countries').update(payload).eq('code', form.code);
@@ -263,11 +288,12 @@ export default function Countries() {
       </div>
 
       {/* Summary Cards */}
-      <div className="grid grid-cols-2 gap-4 mb-6 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-4 mb-6 lg:grid-cols-5">
         <SummaryCard label="Total Countries" value={total} icon={Globe} color="blue" />
         <SummaryCard label="Active" value={active} icon={CheckCircle} color="green" />
         <SummaryCard label="Stripe" value={stripeCount} icon={CreditCard} color="purple" />
         <SummaryCard label="Paystack" value={paystackCount} icon={CreditCard} color="yellow" />
+        <SummaryCard label="Flutterwave" value={flutterwaveCount} icon={CreditCard} color="orange" />
       </div>
 
       {/* Table */}
@@ -398,7 +424,7 @@ export default function Countries() {
                 <div className="grid grid-cols-3 gap-4">
                   <div>
                     <label className={labelClass}>Code</label>
-                    <input className={inputClass} value={form.currency_code} onChange={e => setForm(f => ({ ...f, currency_code: e.target.value }))} placeholder="NGN" />
+                    <input className={inputClass} value={form.currency_code} onChange={e => setForm(f => ({ ...f, currency_code: e.target.value }))} placeholder="NGN" disabled={editMode} />
                   </div>
                   <div>
                     <label className={labelClass}>Symbol</label>
@@ -414,13 +440,24 @@ export default function Countries() {
               {/* Section 3: Payment Gateway */}
               <section>
                 <h4 className="text-sm font-semibold text-gray-700 mb-3">Payment Gateway</h4>
-                <select
-                  className={inputClass}
-                  value={form.payment_gateway}
-                  onChange={e => setForm(f => ({ ...f, payment_gateway: e.target.value }))}
-                >
-                  {GATEWAYS.map(gw => <option key={gw} value={gw}>{gw}</option>)}
-                </select>
+                {editMode ? (
+                  <div>
+                    <div className={`${inputClass} bg-gray-50 text-gray-600 cursor-not-allowed`}>
+                      {form.payment_gateway}
+                    </div>
+                    <p className="text-xs text-gray-400 mt-1">
+                      Gateway changes are managed via Provider Configuration to prevent subscription drift.
+                    </p>
+                  </div>
+                ) : (
+                  <select
+                    className={inputClass}
+                    value={form.payment_gateway}
+                    onChange={e => setForm(f => ({ ...f, payment_gateway: e.target.value }))}
+                  >
+                    {GATEWAYS.map(gw => <option key={gw} value={gw}>{gw}</option>)}
+                  </select>
+                )}
               </section>
 
               {/* Section 4: Phone Format */}
@@ -522,6 +559,7 @@ export default function Countries() {
                         <div>
                           <label className={labelClass}>Monthly Price</label>
                           <input type="number" step="0.01" className={inputClass} value={p.price}
+                            disabled={editMode && tier !== 'free'}
                             onChange={e => setForm(f => ({
                               ...f,
                               pricing: { ...f.pricing, [tier]: { ...p, price: Number(e.target.value) } },
