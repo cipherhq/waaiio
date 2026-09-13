@@ -68,6 +68,12 @@ function buildStripeInvoicePaidEvent(overrides: Record<string, unknown> = {}): R
         period_start: now,
         period_end: now + 30 * 86400,
         payment_intent: 'pi_test_1',
+        lines: {
+          data: [{
+            subscription: 'sub_stripe_1',
+            period: { start: now, end: now + 30 * 86400 },
+          }],
+        },
         ...overrides,
       },
     },
@@ -381,6 +387,13 @@ describe('Stripe webhook: paid subscription failure paths', () => {
         return { type: 'not_subscription', reason: 'no subscription' };
       }),
       extractInvoicePaymentIdentity: vi.fn(() => ({ paymentIntentId: 'pi_test' })),
+      extractSubscriptionLinePeriod: vi.fn((invoiceData: Record<string, unknown>) => {
+        const lines = invoiceData.lines as { data?: Array<{ period?: { start?: number; end?: number } }> } | undefined;
+        if (!lines?.data?.[0]?.period?.start || !lines?.data?.[0]?.period?.end) {
+          return { error: 'no_lines', detail: 'Missing lines data' };
+        }
+        return { periodStart: lines.data[0].period.start, periodEnd: lines.data[0].period.end };
+      }),
     }));
     vi.doMock('@sentry/nextjs', () => ({ captureException: vi.fn() }));
 
@@ -467,7 +480,7 @@ describe('Stripe webhook: paid subscription failure paths', () => {
   });
 
   it('renewal: missing provider period_start → returns 500', async () => {
-    const event = buildStripeInvoicePaidEvent({ period_start: undefined, period_end: undefined });
+    const event = buildStripeInvoicePaidEvent({ period_start: undefined, period_end: undefined, lines: undefined });
     const { status, json } = await callStripeWebhook(event, {
       platformSub: { id: 'sub-1', business_id: 'biz-1', plan: 'growth', status: 'active' },
     });
