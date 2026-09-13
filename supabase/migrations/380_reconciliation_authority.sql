@@ -370,7 +370,11 @@ BEGIN
   END IF;
 
   -- Resolve provider subscription ID
-  v_provider_sub_id := COALESCE(v_sub.flutterwave_subscription_id, v_sub.stripe_subscription_id);
+  v_provider_sub_id := CASE v_sub.gateway
+    WHEN 'flutterwave' THEN v_sub.flutterwave_subscription_id
+    WHEN 'stripe' THEN v_sub.stripe_subscription_id
+    ELSE NULL
+  END;
 
   IF v_provider_sub_id IS NULL OR length(trim(v_provider_sub_id)) = 0 THEN
     RETURN 'no_evidence';

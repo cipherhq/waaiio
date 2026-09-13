@@ -1664,6 +1664,35 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
     psql(`DELETE FROM businesses WHERE id='${bizId}'::uuid;`);
   });
 
+  // ── Gate with dual provider IDs: current gateway selects correct evidence ──
+
+  it('77b. gate uses current gateway (stripe), not historical flutterwave ID', () => {
+    const bizId = m380Biz('t77b');
+    // Subscription has BOTH flutterwave and stripe IDs, current gateway = stripe
+    const subId = psql(`
+      INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
+        billing_config_version_id, flutterwave_subscription_id, stripe_subscription_id, current_period_start, current_period_end)
+      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'stripe', 'USD', 29, 'month',
+        '${currentVersion()}'::uuid, 'old_flw_sub_id', 'stripe_sub_current', clock_timestamp(), clock_timestamp() + interval '30 days')
+      RETURNING id::text;
+    `);
+
+    // Record evidence for current Stripe provider identity
+    psql(`SELECT record_reconciliation_evidence('${subId}'::uuid, 'stripe', 'stripe_sub_current', '2026-10-01T00:00:00Z'::timestamptz, 'paid_finalized', 'run_77b');`);
+
+    // Gate should find the Stripe evidence (current gateway)
+    expect(psql(`SELECT check_reconciliation_authority('${subId}'::uuid, '2026-10-01T00:00:00Z'::timestamptz);`)).toBe('paid_finalized');
+
+    // Old Flutterwave evidence for the same period should be ignored by the gate
+    psql(`SELECT record_reconciliation_evidence('${subId}'::uuid, 'flutterwave', 'old_flw_sub_id', '2026-10-01T00:00:00Z'::timestamptz, 'terminal_no_payment', 'run_77b_old');`);
+    // Gate still returns Stripe evidence (current gateway), not the old FLW terminal evidence
+    expect(psql(`SELECT check_reconciliation_authority('${subId}'::uuid, '2026-10-01T00:00:00Z'::timestamptz);`)).toBe('paid_finalized');
+
+    psql(`DELETE FROM subscription_reconciliation_evidence WHERE subscription_id='${subId}'::uuid;`);
+    psql(`DELETE FROM subscriptions WHERE id='${subId}'::uuid;`);
+    psql(`DELETE FROM businesses WHERE id='${bizId}'::uuid;`);
+  });
+
   // ══════════════════════════════════════════════════════════
   // M380: ACL tests
   // ══════════════════════════════════════════════════════════

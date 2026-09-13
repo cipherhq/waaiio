@@ -128,10 +128,19 @@ export async function POST(request: NextRequest) {
       }
       // cancelDecision.action === 'cancel' — proceed
 
-      // Provider confirmed cancelled — proceed with local cancellation
+      // Provider confirmed cancelled — proceed with canonical 5-arg cancellation finalizer
+      // Requires non-null event ID and exact provider subscription identity
+      if (!webhookEventId || !localSub.flutterwave_subscription_id) {
+        logger.error('[FLW-WEBHOOK] Missing event ID or provider sub ID for canonical cancellation', {
+          subId: localSub.id, webhookEventId, flwSubId: localSub.flutterwave_subscription_id,
+        });
+        return NextResponse.json({ error: 'Missing cancellation identity' }, { status: 500 });
+      }
       const { error: cancelErr } = await supabase.rpc('finalize_subscription_cancellation', {
         p_subscription_id: localSub.id,
-        p_provider_event_id: webhookEventId || null,
+        p_gateway: 'flutterwave',
+        p_provider_subscription_id: localSub.flutterwave_subscription_id,
+        p_provider_event_id: webhookEventId,
         p_reason: 'provider_cancelled',
       });
       if (cancelErr) {
