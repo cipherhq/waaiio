@@ -3,6 +3,28 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-09-12 — #267 Bot Flow Message Instrumentation (V2 corrections)
+
+### What changed (V2 corrections)
+- **Correction 1: Executor renderer routes through scoped sender.** Previously only `ctx.sender` (used by flow callbacks) went through the instrumentation proxy. Now the executor's own send methods (`sendSingleMessage`, `sendText`, `showPostCompletionMenu`) also route through the scoped sender by temporarily swapping `this.sender` for the duration of `execute()`, restored in `finally`.
+- **Correction 2: Atomic transaction for summary + aggregates.** Replaced two separate Supabase JS inserts with a single `persist_flow_execution` SECURITY DEFINER RPC that inserts summary + aggregates atomically in one PostgreSQL transaction. Idempotent on duplicate `execution_id`.
+- **Correction 3: Normalize absent active_capability.** Changed `active_capability` column from nullable to `NOT NULL DEFAULT '__none__'`. Collector normalizes `null`/empty to `'__none__'` before recording. RPC normalizes via `COALESCE(NULLIF(..., ''), '__none__')`. Eliminates non-deterministic unique constraint behavior with NULLs.
+- **Correction 4: Await the flush.** Changed fire-and-forget `.catch()` flush to `await` with try/catch. Telemetry now completes before `execute()` resolves. Errors still never propagate.
+- **Correction 5: V2-T11 through V2-T13 tests.** Added atomic idempotent batch tests (RPC insert, duplicate detection, capability normalization), RLS role restriction tests (authenticated/anon denied, function privilege checks), and no-pre-send-I/O proof tests.
+
+### Files changed
+- `lib/bot/flows/executor.ts` — sender swap/restore in execute(), await flush
+- `lib/bot/flows/analytics-flush.ts` — rewritten to use `persist_flow_execution` RPC, added `normalizeCapability` helper
+- `lib/bot/flows/instrumentation.ts` — normalize `activeCapability` to `'__none__'` in `record()`
+- `supabase/migrations/382_flow_execution_analytics.sql` — `active_capability` NOT NULL DEFAULT, `persist_flow_execution` RPC with REVOKE/GRANT
+- `lib/bot/flows/__tests__/instrumentation.test.ts` — updated V2-T07 for RPC, added V2-T13
+- `lib/bot/flows/__tests__/analytics-db.test.ts` — added V2-T11 (atomic idempotent batch), expanded V2-T12 (role restrictions)
+
+### What could break
+- `this.sender` is temporarily swapped during `execute()`. If a concurrent call to the same executor instance happens (shouldn't — executor is per-request), the sender swap could interleave. Mitigated: restored in `finally`, and executor instances are not shared across requests.
+- The `persist_flow_execution` RPC is SECURITY DEFINER. It sets `search_path = public, pg_temp` to prevent search_path injection.
+- Existing code that passes `{ from: ... }` mock to `flushExecutionAnalytics` will break — now expects `{ rpc: ... }`.
+
 ## 2026-09-12 — #267 Bot Flow Message Instrumentation
 
 ### What changed

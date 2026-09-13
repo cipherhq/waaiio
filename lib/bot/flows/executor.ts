@@ -77,6 +77,12 @@ export class FlowExecutor {
     // #267: Track whether execution reached a terminal state
     let executionReachedTerminal = false;
 
+    // Correction 1: Swap sender before try so finally can restore it.
+    // Create scoped sender early — it's a zero-cost Proxy, no DB I/O.
+    const originalSender = this.sender;
+    const scopedSender = createScopedSender(originalSender as unknown as Record<string, unknown>, collector) as unknown as typeof this.sender;
+    (this as unknown as { sender: MessageSender }).sender = scopedSender;
+
     try { // #267: try/finally for instrumentation flush
 
     // CAS-007: Verify active_capability is authorized (in session's effective set).
@@ -211,8 +217,7 @@ export class FlowExecutor {
     // Build flow context (no DB calls — synchronous)
     // ctx.t reads _detected_language at call time so a mid-execute language switch
     // (e.g. "switch to french") is immediately reflected in the re-prompt.
-    // #267: Wrap sender with scoped instrumentation proxy (records invocations, no behavior change)
-    const scopedSender = createScopedSender(this.sender as unknown as Record<string, unknown>, collector) as unknown as typeof this.sender;
+    // #267: scopedSender created before try block (Correction 1) — used for both ctx and executor sends
     const ctx: FlowContext = {
       supabase: this.supabase,
       sender: scopedSender,
@@ -656,15 +661,21 @@ export class FlowExecutor {
     }
 
     } finally { // #267: Instrumentation flush — off critical path, never throws
+      // Correction 1: Restore original sender so the executor instance is reusable
+      (this as unknown as { sender: MessageSender }).sender = originalSender;
+
       if (executionReachedTerminal) {
         collector.markComplete();
       } else {
         collector.markIncomplete();
       }
-      // Non-blocking flush: caught errors logged, never thrown to caller
-      flushExecutionAnalytics(collector, this.supabase).catch(err =>
-        logger.warn('[FLOW-ANALYTICS] Background flush failed', { error: String(err) })
-      );
+      // Correction 4: Await flush so telemetry completes before execute() resolves.
+      // Errors are caught internally — never propagates to caller.
+      try {
+        await flushExecutionAnalytics(collector, this.supabase);
+      } catch (err) {
+        logger.warn('[FLOW-ANALYTICS] Background flush failed', { error: String(err) });
+      }
     }
   }
 

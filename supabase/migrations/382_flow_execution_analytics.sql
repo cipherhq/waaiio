@@ -42,7 +42,7 @@ CREATE TABLE IF NOT EXISTS public.flow_execution_aggregates (
   step_name TEXT NOT NULL,
   message_type TEXT NOT NULL CHECK (message_type IN ('text', 'buttons', 'list', 'image', 'document', 'template', 'other')),
   is_template BOOLEAN NOT NULL DEFAULT false,
-  active_capability TEXT,
+  active_capability TEXT NOT NULL DEFAULT '__none__',
   logical_count INTEGER NOT NULL DEFAULT 0,
   resolved_count INTEGER NOT NULL DEFAULT 0,
   failure_count INTEGER NOT NULL DEFAULT 0,
@@ -70,6 +70,68 @@ CREATE POLICY "flow_agg_admin_read" ON flow_execution_aggregates
   FOR SELECT USING (
     EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('admin', 'finance'))
   );
+
+-- Atomic persist RPC: summary + aggregates in one transaction (Correction 2)
+CREATE OR REPLACE FUNCTION public.persist_flow_execution(
+  p_execution_id TEXT,
+  p_business_id UUID,
+  p_completeness TEXT,
+  p_total_messages INTEGER,
+  p_resolved_count INTEGER,
+  p_failure_count INTEGER,
+  p_error_count INTEGER,
+  p_started_at TIMESTAMPTZ,
+  p_completed_at TIMESTAMPTZ,
+  p_aggregates JSONB DEFAULT NULL
+) RETURNS JSONB
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_agg JSONB;
+  v_rows_affected INTEGER;
+BEGIN
+  -- Idempotent: if execution already exists, return without error
+  INSERT INTO flow_execution_summaries (
+    execution_id, business_id, completeness, total_messages,
+    resolved_count, failure_count, error_count, started_at, completed_at
+  ) VALUES (
+    p_execution_id, p_business_id, p_completeness, p_total_messages,
+    p_resolved_count, p_failure_count, p_error_count, p_started_at, p_completed_at
+  ) ON CONFLICT (execution_id) DO NOTHING;
+
+  GET DIAGNOSTICS v_rows_affected = ROW_COUNT;
+  IF v_rows_affected = 0 THEN
+    RETURN jsonb_build_object('persisted', false, 'reason', 'duplicate');
+  END IF;
+
+  -- Insert aggregates atomically with the summary
+  IF p_aggregates IS NOT NULL AND jsonb_typeof(p_aggregates) = 'array' THEN
+    FOR v_agg IN SELECT * FROM jsonb_array_elements(p_aggregates)
+    LOOP
+      INSERT INTO flow_execution_aggregates (
+        execution_id, flow_type, step_name, message_type, is_template, active_capability,
+        logical_count, resolved_count, failure_count, error_count
+      ) VALUES (
+        p_execution_id,
+        v_agg->>'flow_type',
+        v_agg->>'step_name',
+        v_agg->>'message_type',
+        (v_agg->>'is_template')::BOOLEAN,
+        COALESCE(NULLIF(v_agg->>'active_capability', ''), '__none__'),
+        (v_agg->>'logical_count')::INTEGER,
+        (v_agg->>'resolved_count')::INTEGER,
+        (v_agg->>'failure_count')::INTEGER,
+        (v_agg->>'error_count')::INTEGER
+      ) ON CONFLICT (execution_id, flow_type, step_name, message_type, is_template, active_capability) DO NOTHING;
+    END LOOP;
+  END IF;
+
+  RETURN jsonb_build_object('persisted', true);
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.persist_flow_execution FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.persist_flow_execution TO service_role;
 
 -- Self-verification
 DO $$

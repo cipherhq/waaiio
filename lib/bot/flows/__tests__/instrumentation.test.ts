@@ -69,13 +69,13 @@ describe('V2-T02: Context freezing and record attribution', () => {
     expect(keys[1]).toContain('payment|enter_amount|buttons');
   });
 
-  it('null capability is serialized as empty string in key', () => {
+  it('null capability is normalized to __none__ in key', () => {
     const c = new FlowExecutionCollector('exec_t02b', 'biz_001');
     c.freezeContext('scheduling', 'step1', null);
     c.record('text', false, 'resolved');
 
     const keys = [...c.rawAggregates.keys()];
-    expect(keys[0]).toBe('scheduling|step1|text|false|');
+    expect(keys[0]).toBe('scheduling|step1|text|false|__none__');
   });
 });
 
@@ -255,20 +255,16 @@ describe('V2-T06: generateExecutionId', () => {
   });
 });
 
-// ── V2-T07: flushExecutionAnalytics with mock supabase ──────────
+// ── V2-T07: flushExecutionAnalytics with mock supabase (RPC-based) ──────────
 
 describe('V2-T07: flushExecutionAnalytics', () => {
-  function mockSupabase(summaryResult = { error: null }, aggResult = { error: null }) {
+  function mockSupabase(rpcResult: { data: unknown; error: unknown } = { data: { persisted: true }, error: null }) {
     return {
-      from: vi.fn((table: string) => ({
-        insert: vi.fn().mockResolvedValue(
-          table === 'flow_execution_summaries' ? summaryResult : aggResult
-        ),
-      })),
+      rpc: vi.fn().mockResolvedValue(rpcResult),
     };
   }
 
-  it('inserts summary and aggregates', async () => {
+  it('calls persist_flow_execution RPC with summary and aggregates', async () => {
     const c = new FlowExecutionCollector('exec_t07', 'biz_001');
     c.freezeContext('scheduling', 'step1', 'scheduling');
     c.record('text', false, 'resolved');
@@ -278,44 +274,50 @@ describe('V2-T07: flushExecutionAnalytics', () => {
     const sb = mockSupabase();
     await flushExecutionAnalytics(c, sb);
 
-    expect(sb.from).toHaveBeenCalledWith('flow_execution_summaries');
-    expect(sb.from).toHaveBeenCalledWith('flow_execution_aggregates');
+    expect(sb.rpc).toHaveBeenCalledTimes(1);
+    expect(sb.rpc).toHaveBeenCalledWith('persist_flow_execution', expect.objectContaining({
+      p_execution_id: 'exec_t07',
+      p_business_id: 'biz_001',
+      p_completeness: 'complete',
+      p_total_messages: 2,
+      p_resolved_count: 2,
+    }));
+    // Aggregates should be passed as array
+    const callArgs = sb.rpc.mock.calls[0][1];
+    expect(callArgs.p_aggregates).toBeInstanceOf(Array);
+    expect(callArgs.p_aggregates.length).toBe(2);
   });
 
-  it('skips aggregates when summary insert fails', async () => {
+  it('handles RPC error gracefully', async () => {
     const c = new FlowExecutionCollector('exec_t07b', 'biz_001');
     c.freezeContext('scheduling', 'step1', null);
     c.record('text', false, 'resolved');
     c.markComplete();
 
-    const sb = mockSupabase({ error: 'db error' });
+    const sb = mockSupabase({ data: null, error: 'db error' });
+    // Should not throw
     await flushExecutionAnalytics(c, sb);
-
-    // Only summary table accessed, not aggregates (short-circuited)
-    const calls = sb.from.mock.calls.map((c: unknown[]) => c[0]);
-    expect(calls).toContain('flow_execution_summaries');
-    expect(calls).not.toContain('flow_execution_aggregates');
+    expect(sb.rpc).toHaveBeenCalledTimes(1);
   });
 
   it('silently handles duplicate execution_id (23505)', async () => {
     const c = new FlowExecutionCollector('exec_t07c', 'biz_001');
     c.markComplete();
 
-    const sb = mockSupabase({ error: '23505 duplicate key' });
+    const sb = mockSupabase({ data: null, error: '23505 duplicate key' });
     // Should not throw
     await flushExecutionAnalytics(c, sb);
   });
 
-  it('skips aggregate insert when no records', async () => {
+  it('passes null aggregates when no records', async () => {
     const c = new FlowExecutionCollector('exec_t07d', 'biz_001');
     c.markComplete();
 
     const sb = mockSupabase();
     await flushExecutionAnalytics(c, sb);
 
-    const calls = sb.from.mock.calls.map((c: unknown[]) => c[0]);
-    expect(calls).toContain('flow_execution_summaries');
-    expect(calls).not.toContain('flow_execution_aggregates');
+    const callArgs = sb.rpc.mock.calls[0][1];
+    expect(callArgs.p_aggregates).toBeNull();
   });
 
   it('never throws even on unexpected errors', async () => {
@@ -324,11 +326,33 @@ describe('V2-T07: flushExecutionAnalytics', () => {
     c.markComplete();
 
     const sb = {
-      from: vi.fn(() => { throw new Error('unexpected'); }),
+      rpc: vi.fn(() => { throw new Error('unexpected'); }),
     };
 
     // Should not throw
     await flushExecutionAnalytics(c, sb);
+  });
+
+  it('handles duplicate response from RPC (persisted: false)', async () => {
+    const c = new FlowExecutionCollector('exec_t07f', 'biz_001');
+    c.markComplete();
+
+    const sb = mockSupabase({ data: { persisted: false, reason: 'duplicate' }, error: null });
+    // Should not throw — duplicate is a normal condition
+    await flushExecutionAnalytics(c, sb);
+  });
+
+  it('normalizes null active_capability to __none__ in aggregates', async () => {
+    const c = new FlowExecutionCollector('exec_t07g', 'biz_001');
+    c.freezeContext('scheduling', 'step1', null);
+    c.record('text', false, 'resolved');
+    c.markComplete();
+
+    const sb = mockSupabase();
+    await flushExecutionAnalytics(c, sb);
+
+    const callArgs = sb.rpc.mock.calls[0][1];
+    expect(callArgs.p_aggregates[0].active_capability).toBe('__none__');
   });
 });
 
@@ -381,5 +405,71 @@ describe('V2-T08: Multi-step execution scenario', () => {
     const paymentText = aggs.get('payment|enter_amount|text|false|payment');
     expect(paymentText).toBeDefined();
     expect(paymentText!.count).toBe(1);
+  });
+});
+
+// ── V2-T13: No pre-send I/O ──────────
+// Proves that the collector and scoped sender perform zero DB I/O before/during sends.
+// All persistence happens in the flush phase (after execution completes).
+
+describe('V2-T13: No pre-send I/O', () => {
+  it('collector constructor and record() perform zero DB calls', () => {
+    const rpcSpy = vi.fn();
+    const fromSpy = vi.fn();
+
+    // Simulate a full collector lifecycle — no supabase reference should be called
+    const c = new FlowExecutionCollector('exec_t13', 'biz_001');
+    c.freezeContext('scheduling', 'step1', 'scheduling');
+    c.record('text', false, 'resolved');
+    c.record('buttons', false, 'resolved');
+    c.record('list', false, 'explicit_failure');
+    c.markComplete();
+
+    // Verify no DB calls were made
+    expect(rpcSpy).not.toHaveBeenCalled();
+    expect(fromSpy).not.toHaveBeenCalled();
+  });
+
+  it('scoped sender proxy calls original sender, not supabase', async () => {
+    const c = new FlowExecutionCollector('exec_t13b', 'biz_001');
+    c.freezeContext('scheduling', 'step1', 'scheduling');
+
+    const dbCalls: string[] = [];
+    const original = {
+      sendText: vi.fn().mockResolvedValue({}),
+      sendButtons: vi.fn().mockResolvedValue({}),
+    };
+
+    const scoped = createScopedSender(original, c);
+
+    // Send multiple messages
+    await scoped.sendText({ to: '+1', text: 'Hello' });
+    await scoped.sendButtons({ to: '+1', body: 'Choose', buttons: [] });
+
+    // Original sender methods were called (message sends)
+    expect(original.sendText).toHaveBeenCalledTimes(1);
+    expect(original.sendButtons).toHaveBeenCalledTimes(1);
+
+    // Collector has records but no DB was touched
+    expect(c.summary.totalMessages).toBe(2);
+    expect(dbCalls).toHaveLength(0);
+  });
+
+  it('flush is the only phase that touches the database', async () => {
+    const c = new FlowExecutionCollector('exec_t13c', 'biz_001');
+    c.freezeContext('scheduling', 'step1', 'scheduling');
+    c.record('text', false, 'resolved');
+    c.markComplete();
+
+    const rpcSpy = vi.fn().mockResolvedValue({ data: { persisted: true }, error: null });
+    const sb = { rpc: rpcSpy };
+
+    // Before flush: no calls
+    expect(rpcSpy).not.toHaveBeenCalled();
+
+    // After flush: exactly one call
+    await flushExecutionAnalytics(c, sb);
+    expect(rpcSpy).toHaveBeenCalledTimes(1);
+    expect(rpcSpy).toHaveBeenCalledWith('persist_flow_execution', expect.any(Object));
   });
 });

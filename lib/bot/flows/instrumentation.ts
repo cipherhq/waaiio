@@ -56,7 +56,8 @@ export class FlowExecutionCollector {
       stepName: this._frozenStepName,
       messageType,
       isTemplate,
-      activeCapability: this._frozenCapability,
+      // Correction 3: Normalize null/empty capability to '__none__' for deterministic unique constraints
+      activeCapability: this._frozenCapability || '__none__',
       outcome,
     });
   }
