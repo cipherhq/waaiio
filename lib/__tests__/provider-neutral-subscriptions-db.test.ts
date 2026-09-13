@@ -1835,7 +1835,7 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
     psql(`DELETE FROM businesses WHERE id='${bizId}'::uuid;`);
   });
 
-  it('86. paid_finalized evidence prevents expiry; no evidence also prevents expiry', () => {
+  it('86. TRUE CONCURRENT: paid_finalized upgrade races expire — subscription stays active', async () => {
     const bizId = m380Biz('t86');
     const periodEnd = '2026-08-01T00:00:00Z';
     const subId = psql(`
@@ -1846,22 +1846,35 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
       RETURNING id::text;
     `);
 
-    // Case 1: No evidence → expiry denied (authority_no_evidence)
-    const r1 = psql(`SELECT expire_subscription_with_authority('${subId}'::uuid, '${periodEnd}'::timestamptz);`);
-    expect(r1).toContain('"expired": false');
+    // Pre-seed terminal_no_payment evidence (simulates earlier reconciliation finding no payment)
+    psql(`SELECT record_reconciliation_evidence('${subId}'::uuid, 'flutterwave', 'flw_sub_t86', '${periodEnd}'::timestamptz, 'terminal_no_payment', 'run_t86_preseed');`);
+
+    const bt = setupBarrierTable();
+
+    // Session A: upgrades evidence to paid_finalized (simulates late payment discovery)
+    // Session B: calls expire_subscription_with_authority (simulates expiry cron)
+    // Both use the same advisory lock → serialized. After both, subscription must be active.
+    const [sA, sB] = await Promise.all([
+      psqlAsync(barrieredSql(bt, 'A', 2,
+        `SELECT record_reconciliation_evidence('${subId}'::uuid, 'flutterwave', 'flw_sub_t86', '${periodEnd}'::timestamptz, 'paid_finalized', 'run_t86_upgrade');`)),
+      psqlAsync(barrieredSql(bt, 'B', 2,
+        `SELECT expire_subscription_with_authority('${subId}'::uuid, '${periodEnd}'::timestamptz);`)),
+    ]);
+
+    expect(sA.ok).toBe(true);
+    expect(sB.ok).toBe(true);
+
+    // Subscription must be active — paid_finalized prevents expiry regardless of ordering
     expect(psql(`SELECT status FROM subscriptions WHERE id='${subId}'::uuid;`)).toBe('active');
 
-    // Case 2: Record paid_finalized → expiry denied (authority_paid_finalized)
-    psql(`SELECT record_reconciliation_evidence('${subId}'::uuid, 'flutterwave', 'flw_sub_t86', '${periodEnd}'::timestamptz, 'paid_finalized', 'run_t86_paid');`);
-    const r2 = psql(`SELECT expire_subscription_with_authority('${subId}'::uuid, '${periodEnd}'::timestamptz);`);
-    expect(r2).toContain('"expired": false');
-    expect(psql(`SELECT status FROM subscriptions WHERE id='${subId}'::uuid;`)).toBe('active');
+    // Evidence must be paid_finalized (upgrade wins over terminal_no_payment)
+    expect(psql(`SELECT outcome FROM subscription_reconciliation_evidence WHERE subscription_id='${subId}'::uuid AND period_boundary = '${periodEnd}'::timestamptz;`)).toBe('paid_finalized');
 
-    // Both no-evidence and paid_finalized must prevent expiry — subscription stays active
+    teardownBarrierTable(bt);
     psql(`DELETE FROM subscription_reconciliation_evidence WHERE subscription_id='${subId}'::uuid;`);
     psql(`DELETE FROM subscriptions WHERE id='${subId}'::uuid;`);
     psql(`DELETE FROM businesses WHERE id='${bizId}'::uuid;`);
-  });
+  }, 15000);
 
   it('87. already non-active → expired=false', () => {
     const bizId = m380Biz('t87');

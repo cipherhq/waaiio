@@ -552,7 +552,7 @@ describe('Stripe webhook: paid subscription failure paths', () => {
       activationResult: { data: null, error: null },
     });
     expect(status).toBe(500);
-    expect(json.error).toMatch(/not confirmed/i);
+    expect(json.error).toMatch(/activation_rejected|not confirmed/i);
   });
 
   // ── Billing interval proofs ──

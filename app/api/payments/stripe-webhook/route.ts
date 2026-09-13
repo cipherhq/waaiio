@@ -10,6 +10,7 @@ import { subscriptionRenewalReceiptEmail } from '@/lib/email/templates';
 import { sendProactiveConfirmation } from '@/lib/payments/send-confirmation';
 import { notifyCustomerChargeFailed } from '@/lib/payments/notify-charge-failed';
 import { classifyInvoiceSubscription, extractInvoicePaymentIdentity } from '@/lib/payments/stripe-invoice-extractors';
+import { finalizeStripeRenewal } from '@/lib/payments/stripe-renewal-finalization';
 
 const stripeWebhookSecret = process.env.STRIPE_WEBHOOK_SECRET || '';
 
@@ -510,66 +511,24 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ error: 'Missing or invalid provider amount' }, { status: 500 });
           }
 
-          // Persist payment evidence BEFORE calling activation RPC
-          const { data: renewalEvidence, error: renewalEvidenceErr } = await supabase.from('subscription_payments').insert({
-            business_id: platformSub.business_id,
-            subscription_id: platformSub.id,
-            amount: renewalAmount,
-            currency: renewalCurrency,
-            gateway: 'stripe',
-            gateway_reference: renewalProviderRef,
-            provider_reference: renewalProviderRef,
+          // Shared renewal finalization: evidence insert + duplicate recovery + activation
+          const renewalResult = await finalizeStripeRenewal(supabase, {
+            subscriptionId: platformSub.id,
+            businessId: platformSub.business_id,
             plan: platformSub.plan,
-            action: 'renewal',
-            status: 'success',
-            config_version_id: renewalConfig.id,
-            billing_interval: 'month',
-            period_start: periodStart,
-            period_end: periodEnd,
-          }).select('id').single();
+            providerInvoiceId: data.id as string,
+            providerReference: renewalProviderRef,
+            amountMinor: renewalAmount,
+            currency: renewalCurrency,
+            periodStart,
+            periodEnd,
+            providerPaidAt: renewalProviderTimestamp,
+            configVersionId: renewalConfig.id,
+          });
 
-          let renewalEvidenceId: string | null = null;
-          if (renewalEvidenceErr) {
-            const isDuplicate = renewalEvidenceErr.code === '23505'
-              || renewalEvidenceErr.message?.includes('duplicate')
-              || renewalEvidenceErr.message?.includes('unique');
-            if (isDuplicate) {
-              const { data: existing } = await supabase
-                .from('subscription_payments')
-                .select('id')
-                .eq('subscription_id', platformSub.id)
-                .eq('provider_reference', renewalProviderRef)
-                .eq('gateway', 'stripe')
-                .eq('status', 'success')
-                .single();
-              if (existing) {
-                renewalEvidenceId = existing.id;
-              } else {
-                logger.error('[STRIPE-WEBHOOK] Duplicate renewal evidence but exact lookup failed:', renewalEvidenceErr);
-                return NextResponse.json({ error: 'Conflicting renewal evidence for period' }, { status: 500 });
-              }
-            } else {
-              logger.error('[STRIPE-WEBHOOK] Renewal evidence insert failed:', renewalEvidenceErr);
-              return NextResponse.json({ error: 'Renewal evidence insert failed' }, { status: 500 });
-            }
-          } else if (!renewalEvidence) {
-            logger.error('[STRIPE-WEBHOOK] Renewal evidence insert returned no data');
-            return NextResponse.json({ error: 'Renewal evidence insert failed' }, { status: 500 });
-          } else {
-            renewalEvidenceId = renewalEvidence.id;
-          }
-
-          // Atomic activation: restores tier if downgraded + grants period allowance
-          const { data: renewActivation, error: renewActivateErr } = await supabase.rpc(
-            'activate_paid_subscription', { p_payment_id: renewalEvidenceId },
-          );
-          if (renewActivateErr) {
-            logger.error('[STRIPE-WEBHOOK] Paid activation RPC error:', renewActivateErr);
-            return NextResponse.json({ error: 'Activation RPC failed' }, { status: 500 });
-          }
-          if (!renewActivation || renewActivation.activated !== true) {
-            logger.error('[STRIPE-WEBHOOK] Paid renewal activation not confirmed:', renewActivation);
-            return NextResponse.json({ error: 'Paid renewal activation not confirmed' }, { status: 500 });
+          if (!renewalResult.finalized) {
+            logger.error('[STRIPE-WEBHOOK] Renewal finalization failed:', { reason: renewalResult.reason, invoiceId: data.id });
+            return NextResponse.json({ error: renewalResult.reason || 'Renewal finalization failed' }, { status: 500 });
           }
 
           // Send renewal receipt email to business owner

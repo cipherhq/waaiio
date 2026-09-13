@@ -3,6 +3,34 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-09-12 — #315 Phase 3C Corrections: Renewal Recovery Rewrite, Stripe Helper Extraction, Stable Event IDs
+
+### What changed
+- **Renewal recovery cron** (`app/api/cron/subscription-renewal-recovery/route.ts`): Rewritten Flutterwave path to do bounded transaction search (GET /v3/transactions with from/to/status=successful) BEFORE recording terminal evidence when provider status is cancelled. Correlates candidates via `correlateProviderSubscription`, matches stored `flutterwave_subscription_id` + `flutterwave_plan_id`, validates amount. If valid candidate found: calls `finalize_flutterwave_subscription_renewal` RPC and records `paid_finalized`. If search error: records `unavailable` (never terminal). Rewritten Stripe path to search `GET /v1/invoices?subscription={id}&status=paid` for invoices with period_start >= current_period_end when canceled. If found: resolves config version and calls shared `finalizeStripeRenewal` helper. All source keys are now deterministic (`renewal_recovery_{gateway}_{subId}`) — no `Date.now()`.
+- **Stripe renewal finalization helper** (`lib/payments/stripe-renewal-finalization.ts`, NEW): Extracted canonical Stripe renewal logic (evidence insert + duplicate recovery + activation RPC) shared between webhook and cron. Handles `subscription_payments` insert, 23505 duplicate recovery, `activate_paid_subscription` RPC call.
+- **Stripe webhook** (`app/api/payments/stripe-webhook/route.ts`): Replaced inline renewal logic (lines 513-573) with call to shared `finalizeStripeRenewal` helper. Period extraction, config version resolution, and amount/currency validation remain webhook-specific. Added import.
+- **Cancellation reconciliation cron** (`app/api/cron/subscription-cancellation-reconciliation/route.ts`): Replaced bare `SELECT` with atomic `last_reconciliation_attempt_at` UPDATE before processing (24-hour cooldown). Stable event IDs: `reconciliation_cancel_{gateway}_{subscription_id}` — deterministic, idempotent across retries. Added graceful fallback if `claim_active_subscriptions_for_cancellation_check` RPC doesn't exist.
+- **DB test 86** (`lib/__tests__/provider-neutral-subscriptions-db.test.ts`): Replaced sequential test with TRUE CONCURRENT proof — pre-seeds `terminal_no_payment` evidence, races Session A (upgrade to `paid_finalized`) vs Session B (`expire_subscription_with_authority`). Both use advisory lock → serialized. Asserts subscription stays active.
+- **Route-level test** (`lib/payments/__tests__/renewal-recovery-cron.test.ts`, NEW): 6 tests covering stable source keys, Flutterwave cancelled+unavailable→unavailable, cancelled+no-tx→terminal_no_payment, Stripe canceled+no-invoice→terminal_no_payment, Stripe active→provider_active_or_retrying.
+- **Test fix** (`lib/__tests__/subscribe-now-handler.test.ts`): Updated activation rejection error message pattern to match new shared helper format.
+
+### Files changed
+- `app/api/cron/subscription-renewal-recovery/route.ts`
+- `app/api/cron/subscription-cancellation-reconciliation/route.ts`
+- `app/api/payments/stripe-webhook/route.ts`
+- `lib/payments/stripe-renewal-finalization.ts` (NEW)
+- `lib/payments/__tests__/renewal-recovery-cron.test.ts` (NEW)
+- `lib/__tests__/provider-neutral-subscriptions-db.test.ts`
+- `lib/__tests__/subscribe-now-handler.test.ts`
+- `CHANGELOG.md`
+
+### What could break
+- Flutterwave renewal recovery now does bounded tx search before terminal evidence. If Flutterwave's GET /v3/transactions endpoint changes its filter behavior, search results may be incorrect (fails closed to `unavailable`, not terminal).
+- Stripe webhook renewal error messages changed (from inline format to shared helper format). Any monitoring/alerting keyed on exact error strings may need updating.
+- Cancellation reconciliation now has 24-hour cooldown via `last_reconciliation_attempt_at`. Subscriptions won't be re-checked more frequently than every 24 hours.
+
+---
+
 ## 2026-09-12 — #315 Phase 3C: Atomic Expiry Authority & Claim RPCs
 
 ### What changed
