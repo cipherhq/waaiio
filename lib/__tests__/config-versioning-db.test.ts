@@ -676,17 +676,17 @@ describe.skipIf(!canRun)('Config Versioning DB Tests (#255 C-1)', () => {
   // ── 33-35. Explicit RPC EXECUTE privilege assertions ──
 
   it('33. anon CANNOT execute save_commercial_config', () => {
-    const canExec = psql("SELECT has_function_privilege('anon', 'save_commercial_config(text,jsonb,text)', 'EXECUTE');");
+    const canExec = psql("SELECT has_function_privilege('anon', 'save_commercial_config(text,jsonb,text,uuid)', 'EXECUTE');");
     expect(canExec).toBe('f');
   });
 
   it('34. authenticated CAN execute save_commercial_config', () => {
-    const canExec = psql("SELECT has_function_privilege('authenticated', 'save_commercial_config(text,jsonb,text)', 'EXECUTE');");
+    const canExec = psql("SELECT has_function_privilege('authenticated', 'save_commercial_config(text,jsonb,text,uuid)', 'EXECUTE');");
     expect(canExec).toBe('t');
   });
 
   it('35. service_role CANNOT execute save_commercial_config', () => {
-    const canExec = psql("SELECT has_function_privilege('service_role', 'save_commercial_config(text,jsonb,text)', 'EXECUTE');");
+    const canExec = psql("SELECT has_function_privilege('service_role', 'save_commercial_config(text,jsonb,text,uuid)', 'EXECUTE');");
     expect(canExec).toBe('f');
   });
 

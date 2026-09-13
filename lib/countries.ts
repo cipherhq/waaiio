@@ -1,6 +1,18 @@
 import { createClient } from '@/lib/supabase/client';
 import { COUNTRIES, registerCountryResolver, type CountryCode, type PaymentGatewayName } from '@/lib/constants';
 
+export interface CountryTierPricing {
+  price: number;
+  feeFlat: number;
+  feePercentage?: number;
+  paystack_plan_code?: string;
+  provider_plan_refs?: {
+    paystack?: string;
+    flutterwave?: string;
+    stripe?: string;
+  };
+}
+
 export interface CountryRow {
   code: string;
   name: string;
@@ -14,7 +26,7 @@ export interface CountryRow {
   phone_pattern: string;
   phone_placeholder: string;
   cities: Record<string, { name: string; neighborhoods: string[] }>;
-  pricing: Record<string, { price: number; feeFlat: number }>;
+  pricing: Record<string, CountryTierPricing>;
   verification_tiers: Record<string, { label: string; limit: number; requirements: string }>;
   doc_types: { key: string; label: string; desc: string }[];
   is_active: boolean;
@@ -56,53 +68,36 @@ export function invalidateCache(): void {
   cacheTime = 0;
 }
 
-/** Convert hardcoded COUNTRIES entry to CountryRow shape for fallback */
-function hardcodedFallback(code: string): CountryRow | null {
-  const c = COUNTRIES[code as keyof typeof COUNTRIES];
-  if (!c) return null;
-  return {
-    code,
-    name: c.name,
-    flag: c.flag,
-    dialing_code: c.dialingCode,
-    currency_code: c.currencyCode,
-    currency_symbol: c.currencySymbol,
-    currency_locale: c.currencyLocale,
-    payment_gateway: c.paymentGateway,
-    phone_digits: c.phoneDigits,
-    phone_pattern: c.phonePattern.source,
-    phone_placeholder: c.phonePlaceholder,
-    cities: c.cities,
-    pricing: {},
-    verification_tiers: {},
-    doc_types: [],
-    is_active: true,
-    sort_order: 0,
-  };
-}
-
-/** Sync: get a single country. Reads from cache, falls back to hardcoded. */
+/** Sync: get a single country from DB cache. Returns null if not cached. */
 export function getCountry(code: string): CountryRow | null {
   if (cache) {
-    const found = cache.find(c => c.code === code);
-    if (found) return found;
+    return cache.find(c => c.code === code) ?? null;
   }
-  return hardcodedFallback(code);
+  return null;
 }
 
-/** Sync: all countries sorted by sort_order */
+/** Sync: all active countries from DB cache. Returns empty if cache not populated. */
 export function getCountryList(): CountryRow[] {
-  if (cache && cache.length > 0) return cache;
-  // Fallback: convert hardcoded countries
-  return (Object.keys(COUNTRIES) as CountryCode[]).map(code => hardcodedFallback(code)!);
+  return cache ?? [];
 }
 
-/** Runtime validation */
+/** Runtime validation — fail-closed: returns false if cache not populated. */
 export function isValidCountryCode(code: string): boolean {
   if (cache && cache.length > 0) {
     return cache.some(c => c.code === code);
   }
-  return code in COUNTRIES;
+  return false;
+}
+
+/** Build dialing-code → country-code mapping from DB cache */
+export function getDialingCodeMap(): Record<string, string[]> {
+  const map: Record<string, string[]> = {};
+  for (const c of cache ?? []) {
+    if (!c.dialing_code) continue;
+    if (!map[c.dialing_code]) map[c.dialing_code] = [];
+    map[c.dialing_code].push(c.code);
+  }
+  return map;
 }
 
 // Register with constants.ts so helper functions can resolve DB-backed countries

@@ -289,14 +289,17 @@ describe('Cancel does not falsely update DB', () => {
 // 12. FLUTTERWAVE AUTOMATIC RENEWAL HANDLING
 // ═══════════════════════════════════════════════════════
 
-describe('Flutterwave webhook — Waaiio-managed model', () => {
-  it('webhook ignores unknown tx_refs (no provider subscriptions)', async () => {
+describe('Flutterwave webhook — platform subscription + business payment routing', () => {
+  it('webhook routes platform subscriptions via waaiiosub prefix and falls through to business payments', async () => {
     const fs = await import('fs');
     const path = await import('path');
     const source = fs.readFileSync(path.resolve(__dirname, '../../../app/api/webhooks/flutterwave/route.ts'), 'utf-8');
-    // Must NOT process unknown charges as renewals
-    expect(source).toContain('no Flutterwave provider subscriptions');
-    expect(source).not.toContain('Flutterwave automatic renewal');
+    // Platform subscriptions use waaiiosub prefix for initial charges
+    expect(source).toContain('waaiiosub');
+    // Unknown tx_refs still fall through to business-payment path
+    expect(source).toContain('Payment not found');
+    // Subscription cancellation is handled
+    expect(source).toContain('subscription.cancelled');
   });
 });
 

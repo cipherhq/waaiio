@@ -1153,53 +1153,62 @@ function _getCountryFromDb(code: string) {
   return _countryResolver?.(code) ?? null;
 }
 
-/** Get country config: DB cache first, then hardcoded COUNTRIES fallback */
-function _getCountryConfig(code: string): CountryConfig {
+/** Strict: DB-backed country config only. Returns null if not in DB cache.
+ *  Use for authoritative paths (payment routing, currency, dialing code). */
+function _getCountryConfigStrict(code: string): CountryConfig | null {
   const db = _getCountryFromDb(code);
-  if (db) {
-    return {
-      name: db.name,
-      flag: db.flag,
-      dialingCode: db.dialing_code,
-      currencyCode: db.currency_code,
-      currencySymbol: db.currency_symbol,
-      currencyLocale: db.currency_locale,
-      paymentGateway: db.payment_gateway as PaymentGatewayName,
-      phoneDigits: db.phone_digits,
-      phonePattern: db.phone_pattern ? new RegExp(db.phone_pattern) : /./,
-      phonePlaceholder: db.phone_placeholder,
-      cities: db.cities,
-    };
-  }
-  return COUNTRIES[code as keyof typeof COUNTRIES] ?? COUNTRIES.NG;
+  if (!db) return null;
+  return {
+    name: db.name,
+    flag: db.flag,
+    dialingCode: db.dialing_code,
+    currencyCode: db.currency_code,
+    currencySymbol: db.currency_symbol,
+    currencyLocale: db.currency_locale,
+    paymentGateway: db.payment_gateway as PaymentGatewayName,
+    phoneDigits: db.phone_digits,
+    phonePattern: db.phone_pattern ? new RegExp(db.phone_pattern) : /./,
+    phonePlaceholder: db.phone_placeholder,
+    cities: db.cities,
+  };
+}
+
+/** Display: DB cache first, hardcoded fallback for rendering resilience.
+ *  NEVER use for authoritative financial/routing decisions. */
+function _getCountryConfigDisplay(code: string): CountryConfig {
+  return _getCountryConfigStrict(code) ?? COUNTRIES[code as keyof typeof COUNTRIES] ?? COUNTRIES.NG;
 }
 
 // ── Multi-Country Helpers ──
 
-/** Get phone placeholder for a country code, e.g. "+234 8012345678" */
+/** Get phone placeholder — display-only, fallback OK */
 export function getPhonePlaceholder(countryCode: CountryCode = 'NG'): string {
-  const config = _getCountryConfig(countryCode);
+  const config = _getCountryConfigDisplay(countryCode);
   return `${config.dialingCode} ${config.phonePlaceholder}`;
 }
 
-/** Get dialing code for a country code, e.g. "+234" */
+/** Get dialing code — AUTHORITATIVE, fail-closed. DB cache must be loaded. */
 export function getDialingCode(countryCode: CountryCode = 'NG'): string {
-  return _getCountryConfig(countryCode).dialingCode;
+  const c = _getCountryConfigStrict(countryCode);
+  if (!c) throw new Error(`[AUTHORITATIVE] Country ${countryCode} not resolved from DB — ensure loadCountries() completed`);
+  return c.dialingCode;
 }
 
-/** Get currency symbol for a country code */
+/** Get currency symbol — display-only, fallback OK */
 export function getCurrencySymbol(countryCode: CountryCode = 'NG'): string {
-  return _getCountryConfig(countryCode).currencySymbol;
+  return _getCountryConfigDisplay(countryCode).currencySymbol;
 }
 
-/** Get currency code (e.g. 'NGN', 'USD') for a country */
+/** Get currency code (e.g. 'NGN', 'USD') — AUTHORITATIVE, fail-closed. DB cache must be loaded. */
 export function getCurrencyCode(countryCode: CountryCode = 'NG'): string {
-  return _getCountryConfig(countryCode).currencyCode;
+  const c = _getCountryConfigStrict(countryCode);
+  if (!c) throw new Error(`[AUTHORITATIVE] Country ${countryCode} not resolved from DB — ensure loadCountries() completed`);
+  return c.currencyCode;
 }
 
-/** Format currency for a given country */
+/** Format currency — display-only, fallback OK */
 export function formatCurrency(amount: number, countryCode: CountryCode = 'NG'): string {
-  const c = _getCountryConfig(countryCode);
+  const c = _getCountryConfigDisplay(countryCode);
   // Show whole numbers by default; only show decimals if amount has cents
   const hasCents = amount % 1 !== 0;
   return new Intl.NumberFormat(c.currencyLocale, {
@@ -1220,10 +1229,11 @@ export function getPricingTiers(countryCode: CountryCode = 'NG'): Record<Subscri
   whitelabel: boolean;
   features: string[];
 }> {
+  // Display-only pricing: DB cache first, per-code display fallback (no NG default)
   const dbCountry = _getCountryFromDb(countryCode);
   const cp = dbCountry?.pricing && Object.keys(dbCountry.pricing).length > 0
     ? dbCountry.pricing as Record<string, { price: number; feeFlat: number }>
-    : COUNTRY_PRICING[countryCode as keyof typeof COUNTRY_PRICING] ?? COUNTRY_PRICING.NG;
+    : COUNTRY_PRICING[countryCode as keyof typeof COUNTRY_PRICING] ?? { free: { price: 0, feeFlat: 0 }, growth: { price: 0, feeFlat: 0 }, business: { price: 0, feeFlat: 0 } };
   const fmt = (amt: number) => formatCurrency(amt, countryCode);
 
   return {
@@ -1257,23 +1267,23 @@ export function getPricingTiers(countryCode: CountryCode = 'NG'): Record<Subscri
   };
 }
 
-/** Get locale string for date formatting */
+/** Get locale — display-only, fallback OK */
 export function getLocale(countryCode: CountryCode = 'NG'): string {
-  return _getCountryConfig(countryCode).currencyLocale;
+  return _getCountryConfigDisplay(countryCode).currencyLocale;
 }
 
-/** Get cities for a country */
+/** Get cities — display-only, fallback OK */
 export function getCitiesForCountry(countryCode: CountryCode = 'NG') {
   const dbCountry = _getCountryFromDb(countryCode);
   if (dbCountry?.cities && Object.keys(dbCountry.cities).length > 0) return dbCountry.cities;
-  return _getCountryConfig(countryCode).cities;
+  return _getCountryConfigDisplay(countryCode).cities;
 }
 
-/** Get the payment gateway for a country */
+/** Get payment gateway — AUTHORITATIVE, fail-closed. DB cache must be loaded. */
 export function getPaymentGatewayForCountry(countryCode: CountryCode = 'NG'): PaymentGatewayName {
-  const dbCountry = _getCountryFromDb(countryCode);
-  if (dbCountry) return dbCountry.payment_gateway as PaymentGatewayName;
-  return _getCountryConfig(countryCode).paymentGateway;
+  const c = _getCountryConfigStrict(countryCode);
+  if (!c) throw new Error(`[AUTHORITATIVE] Country ${countryCode} not resolved from DB — ensure loadCountries() completed`);
+  return c.paymentGateway;
 }
 
 // ── Verification / KYC Configuration ──

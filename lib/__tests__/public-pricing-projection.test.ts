@@ -331,7 +331,7 @@ describe('Subscribe Route — runtime proofs', () => {
               eq: () => ({
                 single: async () => ({
                   data: {
-                    pricing: { growth: { price: DB_GROWTH_PRICE, feeFlat: 50, feePercentage: 1.5 } },
+                    pricing: { growth: { price: DB_GROWTH_PRICE, feeFlat: 50, feePercentage: 1.5, paystack_plan_code: 'PLN_test_growth' } },
                     currency_code: 'NGN',
                     payment_gateway: 'paystack',
                   },
@@ -525,19 +525,22 @@ describe('WhatsApp Setup — 3 Options for Paid Plans', () => {
 });
 
 describe('Admin COMMERCIAL_KEYS includes all M376 keys', () => {
-  it('D11: all 17 DB commercial keys present', () => {
+  it('D11: scalar commercial keys present in PlatformSettings, bundle keys excluded', () => {
     const source = readFileSync(join(process.cwd(), 'admin/src/pages/PlatformSettings.tsx'), 'utf-8');
+    // 14 scalar commercial keys routed through save_commercial_config
     for (const key of [
       'pricing_tiers', 'trial_days', 'broadcast_limits', 'conversation_limits',
       'default_platform_fee_percent', 'annual_discount_percentage',
       'payout_cooling_period_days', 'minimum_payout', 'payout_verification_limits',
       'transfer_expiry_hours', 'minimum_bank_transfer',
       'messaging_financial_gate', 'messaging_reservation_ttl_seconds',
-      'trial_credit_minor_by_currency', 'subscription_included_minor_by_tier_currency',
       'fee_policy_enabled', 'category_fee_rates',
     ]) {
       expect(source).toContain(`'${key}'`);
     }
+    // Bundle-only keys managed via save_messaging_config / Countries page
+    expect(source).not.toMatch(/COMMERCIAL_KEYS.*trial_credit_minor_by_currency/s);
+    expect(source).not.toMatch(/COMMERCIAL_KEYS.*subscription_included_minor_by_tier_currency/s);
   });
 
   it('D11: Fee Policy group exists', () => {

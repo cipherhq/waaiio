@@ -18,6 +18,7 @@ vi.mock('@/lib/trial-status', () => ({
 vi.mock('@/lib/rate-limit', () => ({
   checkRateLimitAsync: vi.fn().mockResolvedValue({ allowed: true, remaining: 10 }),
 }));
+vi.mock('@/lib/countries', () => ({ loadCountries: vi.fn().mockResolvedValue([]), getCountry: vi.fn(), getCountryList: vi.fn().mockReturnValue([]), isValidCountryCode: vi.fn().mockReturnValue(true), getDialingCodeMap: vi.fn().mockReturnValue({}) }));
 vi.mock('@/lib/platformSettings', () => ({
   loadPlatformSettings: vi.fn().mockResolvedValue({ bot_rate_limit_per_minute: 30 }),
 }));
