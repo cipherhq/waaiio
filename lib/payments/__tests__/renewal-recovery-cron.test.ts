@@ -496,6 +496,71 @@ describe('Renewal Recovery Cron — Decision Paths', () => {
     expect(evidenceCall!.args.p_outcome).toBe('paid_finalized');
   });
 
+  it('Stripe cancelled + paid invoice with malformed line → unavailable (not terminal)', async () => {
+    const subId = 'sub-stripe-anomaly-001';
+    mockService = buildMockService({
+      claim_overdue_subscription_batch: {
+        data: [{
+          sub_id: subId,
+          gateway: 'stripe',
+          current_period_end: '2026-10-01T00:00:00Z',
+          stripe_subscription_id: 'sub_stripe_anomaly_123',
+          business_id: 'biz-anomaly',
+          plan: 'growth',
+          currency: 'USD',
+        }],
+        error: null,
+      },
+    });
+    (createServiceClient as unknown as ReturnType<typeof vi.fn>).mockReturnValue(mockService);
+
+    const periodEndUnix = Math.floor(new Date('2026-10-01T00:00:00Z').getTime() / 1000);
+
+    // Stripe sub → canceled; invoice search → one paid invoice but with malformed lines (no lines.data)
+    globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+      if (url.includes('/v1/subscriptions/')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ status: 'canceled' }),
+        });
+      }
+      if (url.includes('/v1/invoices')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            data: [{
+              id: 'in_anomaly_001',
+              payment_intent: 'pi_anomaly_001',
+              amount_paid: 9900,
+              currency: 'usd',
+              period_start: periodEndUnix,
+              period_end: periodEndUnix + 30 * 86400,
+              created: periodEndUnix + 100,
+              status_transitions: { paid_at: periodEndUnix + 100 },
+              // Malformed: no lines.data → extractSubscriptionLinePeriod returns error
+              lines: { data: [] },
+            }],
+            has_more: false,
+          }),
+        });
+      }
+      return Promise.resolve({ ok: false });
+    });
+
+    process.env.STRIPE_SECRET_KEY = 'test_stripe_key_mock';
+
+    const { GET } = await import('@/app/api/cron/subscription-renewal-recovery/route');
+    const req = new Request('http://localhost/api/cron/subscription-renewal-recovery') as any;
+    await GET(req);
+
+    const evidenceCall = mockService._rpcCalls.find(c => c.fn === 'record_reconciliation_evidence');
+    expect(evidenceCall).toBeTruthy();
+    // Anomaly tainted the search — must be 'unavailable', NOT 'terminal_no_payment'
+    expect(evidenceCall!.args.p_outcome).toBe('unavailable');
+
+    process.env.STRIPE_SECRET_KEY = '';
+  });
+
   it('Stripe paid finalization: matching invoice → finalizeStripeRenewal → paid_finalized', async () => {
     const subId = 'sub-stripe-paid-001';
     const periodEndUnix = Math.floor(new Date('2026-10-01T00:00:00Z').getTime() / 1000);

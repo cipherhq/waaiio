@@ -368,11 +368,20 @@ export async function GET(request: NextRequest) {
       }
 
       // No matching invoice found
-      if (providerCancelled && invoiceResult.exhaustive) {
-        // Cancelled + exhaustive search → terminal
+      if (providerCancelled && invoiceResult.exhaustive && !invoiceResult.anomaly) {
+        // Cancelled + exhaustive search + no anomalies → terminal
         await svc.rpc('record_reconciliation_evidence', {
           p_subscription_id: subId, p_gateway: 'stripe', p_provider_subscription_id: stripeSubId,
           p_period_boundary: periodEnd, p_outcome: 'terminal_no_payment',
+          p_source_key: sourceKey,
+          p_evidence_provider_status: 'canceled',
+        });
+        evidenceRecorded++;
+      } else if (providerCancelled && invoiceResult.exhaustive && invoiceResult.anomaly) {
+        // Cancelled + exhaustive but anomalies taint the search → unavailable
+        await svc.rpc('record_reconciliation_evidence', {
+          p_subscription_id: subId, p_gateway: 'stripe', p_provider_subscription_id: stripeSubId,
+          p_period_boundary: periodEnd, p_outcome: 'unavailable',
           p_source_key: sourceKey,
           p_evidence_provider_status: 'canceled',
         });
@@ -487,6 +496,7 @@ interface StripeInvoiceSearchResult {
   outcome: 'found' | 'not_found' | 'search_error';
   invoice?: Record<string, unknown>;
   exhaustive: boolean;
+  anomaly?: boolean;
 }
 
 async function searchStripePaidInvoicesExhaustive(
@@ -497,6 +507,7 @@ async function searchStripePaidInvoicesExhaustive(
   try {
     let startingAfter: string | null = null;
     let exhaustive = false;
+    let lineAnomalyCount = 0;
 
     // eslint-disable-next-line no-constant-condition
     while (true) {
@@ -524,7 +535,7 @@ async function searchStripePaidInvoicesExhaustive(
       for (const inv of data.data) {
         // Line-item period extraction only — no top-level fallback
         const linePeriod = extractSubscriptionLinePeriod(inv, stripeSubId);
-        if ('error' in linePeriod) continue; // Skip invoices where line extraction fails
+        if ('error' in linePeriod) { lineAnomalyCount++; continue; } // Skip invoices where line extraction fails
         const invPeriodStart: number = linePeriod.periodStart;
 
         // Find invoice whose period starts at or after the subscription's current_period_end
@@ -542,7 +553,7 @@ async function searchStripePaidInvoicesExhaustive(
       startingAfter = data.data[data.data.length - 1].id as string;
     }
 
-    return { outcome: 'not_found', exhaustive };
+    return { outcome: 'not_found', exhaustive, anomaly: lineAnomalyCount > 0 };
   } catch {
     return { outcome: 'search_error', exhaustive: false };
   }

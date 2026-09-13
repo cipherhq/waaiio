@@ -2094,7 +2094,7 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
     expect(r).toContain('permission denied');
   });
 
-  it('99. TRUE CONCURRENT renewal vs stale expiry — period_boundary_moved', async () => {
+  it('99. TRUE CONCURRENT renewal finalizer vs stale expiry — subscription stays active', async () => {
     const bizId = m380Biz('t99');
     const ver = currentVersion();
     // Create an active subscription with period_end in the past
@@ -2115,50 +2115,63 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
       VALUES ('${subId}'::uuid, 'flutterwave', 'flw_sub_t99', '${oldPeriodEnd}'::timestamptz, 'terminal_no_payment', 'test_t99');
     `);
 
-    // Session A: Simulate renewal by advancing period_end (as activate_paid_subscription would)
-    const newPeriodEnd = '2026-08-01T00:00:00Z';
+    // Use real finalize_flutterwave_subscription_renewal vs expire_subscription_with_authority
+    // Both do SELECT ... FOR UPDATE on the subscription row — they serialize at the row lock.
+    //
+    // If renewal wins lock first:
+    //   → advances period, sets status=active, commits → releases lock
+    //   → expiry gets lock → sees current_period_end has moved → returns period_boundary_moved
+    //
+    // If expiry wins lock first:
+    //   → checks period boundary (matches) → checks evidence → expires subscription → commits
+    //   → renewal gets lock → sees status=expired → renewal finalizer does NOT check status,
+    //     it proceeds and sets status=active, advances period → commits
+    //
+    // Either ordering: final state = active + period advanced
     const barrierName = setupBarrierTable();
 
     const sessionA = psqlAsync(barrieredSql(barrierName, 'renewal', 2, `
-      UPDATE subscriptions SET current_period_end = '${newPeriodEnd}'::timestamptz WHERE id = '${subId}'::uuid;
-      SELECT 'renewal_done' AS result;
+      SELECT finalize_flutterwave_subscription_renewal('${subId}'::uuid, 'tx_t99_renew', 1499900, 'NGN', '2026-07-01T12:00:00Z'::timestamptz);
     `));
 
-    // Session B: Try to expire with the OLD period boundary
     const sessionB = psqlAsync(barrieredSql(barrierName, 'expiry', 2, `
       SELECT expire_subscription_with_authority('${subId}'::uuid, '${oldPeriodEnd}'::timestamptz);
     `));
 
     const [rA, rB] = await Promise.all([sessionA, sessionB]);
 
-    // One scenario: renewal completes first, then expire sees period_boundary_moved
-    // The other: expire completes first, then renewal... but either way the subscription should be active
-    // because the period boundary moved.
-    // Session B must return period_boundary_moved (if renewal went first) or expire succeeds but renewal restores
-    // The key proof: if Session A completed first, Session B returns period_boundary_moved
-    if (rA.ok && rA.result.includes('renewal_done')) {
-      // Renewal completed — check subscription is still active with new period
-      const status = psql(`SELECT status FROM subscriptions WHERE id = '${subId}'::uuid;`);
-      const currentEnd = psql(`SELECT current_period_end::text FROM subscriptions WHERE id = '${subId}'::uuid;`);
-      // If expire ran after renewal, it would see period_boundary_moved and not expire
-      if (status === 'active') {
-        expect(currentEnd).toContain('2026-08');
-        expect(rB.result).toContain('period_boundary_moved');
-      }
-      // If expire ran first (before renewal), subscription got expired then renewal updated period
-      // In either case: the key invariant is that period_boundary_moved prevents stale expiry
+    // Unconditional assertion: regardless of which session won the FOR UPDATE lock,
+    // the final state must be active with an advanced period.
+    const status = psql(`SELECT status FROM subscriptions WHERE id = '${subId}'::uuid;`);
+    expect(status).toBe('active');
+
+    const currentEnd = psql(`SELECT current_period_end::text FROM subscriptions WHERE id = '${subId}'::uuid;`);
+    // Period must have advanced beyond 2026-07-01
+    expect(currentEnd).not.toContain('2026-07-01');
+
+    // Session B should return period_boundary_moved OR not_active (depending on ordering)
+    if (rB.ok) {
+      const bResult = rB.result;
+      const validExpiryOutcome = bResult.includes('period_boundary_moved') || bResult.includes('not_active');
+      expect(validExpiryOutcome).toBe(true);
     }
+    // If rB errored, that's also acceptable — expiry failed, renewal won
 
     teardownBarrierTable(barrierName);
+    psql(`DELETE FROM subscription_payments WHERE subscription_id = '${subId}'::uuid;`);
     psql(`DELETE FROM subscription_reconciliation_evidence WHERE subscription_id = '${subId}'::uuid;`);
     psql(`DELETE FROM subscriptions WHERE id='${subId}'::uuid;`);
     psql(`DELETE FROM businesses WHERE id='${bizId}'::uuid;`);
-  });
+  }, 15000);
 
   it('100. forced rollback — business UPDATE trigger failure rolls back subscription expiry', async () => {
     const bizId = m380Biz('t100');
     const ver = currentVersion();
     const oldPeriodEnd = '2026-07-01T00:00:00Z';
+
+    // Set business to growth tier BEFORE the test — proves rollback restores it
+    psql(`UPDATE businesses SET subscription_tier = 'growth' WHERE id = '${bizId}'::uuid;`);
+
     const subId = psql(`
       INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
         billing_config_version_id, flutterwave_subscription_id, flutterwave_subscriber_email, flutterwave_plan_id,
@@ -2194,9 +2207,9 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
     const status = psql(`SELECT status FROM subscriptions WHERE id = '${subId}'::uuid;`);
     expect(status).toBe('active');
 
-    // Verify business tier is unchanged
+    // Verify business tier is unchanged — was 'growth' before, must still be 'growth' (NOT 'free')
     const tier = psql(`SELECT subscription_tier FROM businesses WHERE id = '${bizId}'::uuid;`);
-    expect(tier).toBe('free'); // was free from creation, never changed
+    expect(tier).toBe('growth'); // NOT 'free' — proves rollback preserved the tier
 
     // Cleanup: drop trigger and function
     psql(`DROP TRIGGER IF EXISTS _test_block_biz_trg_t100 ON businesses;`);
@@ -2205,4 +2218,55 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
     psql(`DELETE FROM subscriptions WHERE id='${subId}'::uuid;`);
     psql(`DELETE FROM businesses WHERE id='${bizId}'::uuid;`);
   });
+
+  it('101. TRUE CONCURRENT cancellation claim — disjoint worker batches', async () => {
+    // Create two eligible subscriptions for cancellation check
+    const biz1 = m380Biz('t101a');
+    const biz2 = m380Biz('t101b');
+    const ver = currentVersion();
+
+    const sub1 = psql(`
+      INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
+        billing_config_version_id, flutterwave_subscription_id, flutterwave_subscriber_email, flutterwave_plan_id,
+        current_period_start, current_period_end)
+      VALUES (gen_random_uuid(), '${biz1}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+        '${ver}'::uuid, 'flw_sub_t101a', 't101a@m381.com', 243206,
+        '2026-06-01T00:00:00Z'::timestamptz, '2026-07-01T00:00:00Z'::timestamptz)
+      RETURNING id::text;
+    `);
+
+    const sub2 = psql(`
+      INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
+        billing_config_version_id, flutterwave_subscription_id, flutterwave_subscriber_email, flutterwave_plan_id,
+        current_period_start, current_period_end)
+      VALUES (gen_random_uuid(), '${biz2}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+        '${ver}'::uuid, 'flw_sub_t101b', 't101b@m381.com', 243207,
+        '2026-06-01T00:00:00Z'::timestamptz, '2026-07-01T00:00:00Z'::timestamptz)
+      RETURNING id::text;
+    `);
+
+    // Use rendezvous barrier for concurrent claims — each worker claims batch of 1
+    const bt = setupBarrierTable();
+    const claimSql = `SELECT sub_id FROM claim_active_subscriptions_for_cancellation_check(1);`;
+
+    const [s1, s2] = await Promise.all([
+      psqlAsync(barrieredSql(bt, 'W1', 2, claimSql)),
+      psqlAsync(barrieredSql(bt, 'W2', 2, claimSql)),
+    ]);
+
+    expect(s1.ok).toBe(true);
+    expect(s2.ok).toBe(true);
+
+    // Each worker gets exactly one row (batch size 1)
+    const id1 = s1.result.split('\n').filter(Boolean).pop()!.trim();
+    const id2 = s2.result.split('\n').filter(Boolean).pop()!.trim();
+    expect(id1).toBeTruthy();
+    expect(id2).toBeTruthy();
+    // IDs must differ — disjoint claim (SKIP LOCKED ensures no overlap)
+    expect(id1).not.toBe(id2);
+
+    teardownBarrierTable(bt);
+    psql(`DELETE FROM subscriptions WHERE id IN ('${sub1}'::uuid, '${sub2}'::uuid);`);
+    psql(`DELETE FROM businesses WHERE id IN ('${biz1}'::uuid, '${biz2}'::uuid);`);
+  }, 15000);
 });
