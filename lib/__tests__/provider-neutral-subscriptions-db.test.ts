@@ -884,6 +884,19 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
     psql(`DELETE FROM businesses WHERE id='${renBizId}'::uuid;`);
   }, 15000);
 
+  // ── Helper: fresh isolated business for M380 tests ──
+  // The UNIQUE INDEX idx_subscriptions_business_unique allows only one subscription per business.
+  // Each test that inserts a subscription must use its own business to avoid unique violations.
+  function m380Biz(suffix: string): string {
+    return psql(`
+      INSERT INTO businesses (id, name, slug, owner_id, country_code, category, address, city, neighborhood, phone)
+      VALUES (gen_random_uuid(), 'M380_${suffix}', 'm380-${suffix}-' || extract(epoch from clock_timestamp())::text,
+        '${testUserId}', 'NG', 'restaurant', '999 M380 St', 'Lagos', 'VI',
+        '+23480' || lpad(floor(random()*100000000)::text, 8, '0'))
+      RETURNING id::text;
+    `);
+  }
+
   // ══════════════════════════════════════════════════════════
   // M380: Reconciliation Authority — Stale Terminalization
   // ══════════════════════════════════════════════════════════
@@ -1017,10 +1030,11 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
   // ══════════════════════════════════════════════════════════
 
   it('48. FLW cancellation with correct provider sub ID succeeds', () => {
+    const bizId = m380Biz('t48');
     const subId = psql(`
       INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
         billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
-      VALUES (gen_random_uuid(), '${testBizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
         '${currentVersion()}'::uuid, 'flw_sub_t48', clock_timestamp(), clock_timestamp() + interval '30 days')
       RETURNING id::text;
     `);
@@ -1033,6 +1047,7 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
 
     psql(`DELETE FROM processed_webhook_events WHERE event_id = 'flutterwave:cancel:evt_t48_cancel';`);
     psql(`DELETE FROM subscriptions WHERE id='${subId}'::uuid;`);
+    psql(`DELETE FROM businesses WHERE id='${bizId}'::uuid;`);
   });
 
   it('49. Stripe cancellation with correct provider sub ID succeeds', () => {
@@ -1058,10 +1073,11 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
   });
 
   it('50. same provider+event replay returns already_processed', () => {
+    const bizId = m380Biz('t50');
     const subId = psql(`
       INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
         billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
-      VALUES (gen_random_uuid(), '${testBizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
         '${currentVersion()}'::uuid, 'flw_sub_t50', clock_timestamp(), clock_timestamp() + interval '30 days')
       RETURNING id::text;
     `);
@@ -1073,21 +1089,19 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
 
     psql(`DELETE FROM processed_webhook_events WHERE event_id = 'flutterwave:cancel:evt_t50_replay';`);
     psql(`DELETE FROM subscriptions WHERE id='${subId}'::uuid;`);
+    psql(`DELETE FROM businesses WHERE id='${bizId}'::uuid;`);
   });
 
   it('51. same raw event ID across FLW+Stripe both succeed (different composite keys)', () => {
+    const flwBizId = m380Biz('t51flw');
     const flwSubId = psql(`
       INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
         billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
-      VALUES (gen_random_uuid(), '${testBizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+      VALUES (gen_random_uuid(), '${flwBizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
         '${currentVersion()}'::uuid, 'flw_sub_t51', clock_timestamp(), clock_timestamp() + interval '30 days')
       RETURNING id::text;
     `);
-    const stripeBizId = psql(`
-      INSERT INTO businesses (id, name, slug, owner_id, country_code, category, address, city, neighborhood, phone)
-      VALUES (gen_random_uuid(), 'XGwCancel', 'xgw-cancel-${Date.now()}', '${testUserId}', 'US', 'restaurant', '51 XGW St', 'NYC', 'Manhattan', '+12125551251')
-      RETURNING id::text;
-    `);
+    const stripeBizId = m380Biz('t51stripe');
     const stripeSubId = psql(`
       INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
         billing_config_version_id, stripe_subscription_id, current_period_start, current_period_end)
@@ -1104,22 +1118,19 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
 
     psql(`DELETE FROM processed_webhook_events WHERE event_id IN ('flutterwave:cancel:shared_evt_51', 'stripe:cancel:shared_evt_51');`);
     psql(`DELETE FROM subscriptions WHERE id IN ('${flwSubId}'::uuid, '${stripeSubId}'::uuid);`);
-    psql(`DELETE FROM businesses WHERE id='${stripeBizId}'::uuid;`);
+    psql(`DELETE FROM businesses WHERE id IN ('${flwBizId}'::uuid, '${stripeBizId}'::uuid);`);
   });
 
   it('52. same provider+event against different subscription — second NOT mutated', () => {
+    const biz1Id = m380Biz('t52a');
     const sub1Id = psql(`
       INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
         billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
-      VALUES (gen_random_uuid(), '${testBizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+      VALUES (gen_random_uuid(), '${biz1Id}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
         '${currentVersion()}'::uuid, 'flw_sub_t52a', clock_timestamp(), clock_timestamp() + interval '30 days')
       RETURNING id::text;
     `);
-    const biz2Id = psql(`
-      INSERT INTO businesses (id, name, slug, owner_id, country_code, category, address, city, neighborhood, phone)
-      VALUES (gen_random_uuid(), 'T52Biz2', 't52biz2-${Date.now()}', '${testUserId}', 'NG', 'restaurant', '52 T52 St', 'Lagos', 'VI', '+2348012345652')
-      RETURNING id::text;
-    `);
+    const biz2Id = m380Biz('t52b');
     const sub2Id = psql(`
       INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
         billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
@@ -1139,14 +1150,15 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
 
     psql(`DELETE FROM processed_webhook_events WHERE event_id = 'flutterwave:cancel:evt_t52_shared';`);
     psql(`DELETE FROM subscriptions WHERE id IN ('${sub1Id}'::uuid, '${sub2Id}'::uuid);`);
-    psql(`DELETE FROM businesses WHERE id='${biz2Id}'::uuid;`);
+    psql(`DELETE FROM businesses WHERE id IN ('${biz1Id}'::uuid, '${biz2Id}'::uuid);`);
   });
 
   it('53. already cancelled subscription returns already_cancelled, event NOT consumed', () => {
+    const bizId = m380Biz('t53');
     const subId = psql(`
       INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
         billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end, cancelled_at)
-      VALUES (gen_random_uuid(), '${testBizId}', 'growth', 'cancelled', 'flutterwave', 'NGN', 14999, 'month',
+      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'cancelled', 'flutterwave', 'NGN', 14999, 'month',
         '${currentVersion()}'::uuid, 'flw_sub_t53', clock_timestamp(), clock_timestamp() + interval '30 days', clock_timestamp())
       RETURNING id::text;
     `);
@@ -1156,13 +1168,15 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
     expect(psql(`SELECT count(*) FROM processed_webhook_events WHERE event_id = 'flutterwave:cancel:evt_t53_nocons';`)).toBe('0');
 
     psql(`DELETE FROM subscriptions WHERE id='${subId}'::uuid;`);
+    psql(`DELETE FROM businesses WHERE id='${bizId}'::uuid;`);
   });
 
   it('54. invalid gateway (paystack) raises exception', () => {
+    const bizId = m380Biz('t54');
     const subId = psql(`
       INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
         billing_config_version_id, current_period_start, current_period_end)
-      VALUES (gen_random_uuid(), '${testBizId}', 'growth', 'active', 'paystack', 'NGN', 14999, 'month',
+      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'paystack', 'NGN', 14999, 'month',
         '${currentVersion()}'::uuid, clock_timestamp(), clock_timestamp() + interval '30 days')
       RETURNING id::text;
     `);
@@ -1170,13 +1184,15 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
     expect(result).toContain('unsupported gateway');
 
     psql(`DELETE FROM subscriptions WHERE id='${subId}'::uuid;`);
+    psql(`DELETE FROM businesses WHERE id='${bizId}'::uuid;`);
   });
 
   it('55. NULL event ID raises exception', () => {
+    const bizId = m380Biz('t55');
     const subId = psql(`
       INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
         billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
-      VALUES (gen_random_uuid(), '${testBizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
         '${currentVersion()}'::uuid, 'flw_sub_t55', clock_timestamp(), clock_timestamp() + interval '30 days')
       RETURNING id::text;
     `);
@@ -1184,13 +1200,15 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
     expect(result).toContain('must not be NULL or empty');
 
     psql(`DELETE FROM subscriptions WHERE id='${subId}'::uuid;`);
+    psql(`DELETE FROM businesses WHERE id='${bizId}'::uuid;`);
   });
 
   it('56. empty event ID raises exception', () => {
+    const bizId = m380Biz('t56');
     const subId = psql(`
       INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
         billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
-      VALUES (gen_random_uuid(), '${testBizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
         '${currentVersion()}'::uuid, 'flw_sub_t56', clock_timestamp(), clock_timestamp() + interval '30 days')
       RETURNING id::text;
     `);
@@ -1198,13 +1216,15 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
     expect(result).toContain('must not be NULL or empty');
 
     psql(`DELETE FROM subscriptions WHERE id='${subId}'::uuid;`);
+    psql(`DELETE FROM businesses WHERE id='${bizId}'::uuid;`);
   });
 
   it('57. gateway mismatch returns gateway_mismatch, event NOT consumed', () => {
+    const bizId = m380Biz('t57');
     const subId = psql(`
       INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
         billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
-      VALUES (gen_random_uuid(), '${testBizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
         '${currentVersion()}'::uuid, 'flw_sub_t57', clock_timestamp(), clock_timestamp() + interval '30 days')
       RETURNING id::text;
     `);
@@ -1216,13 +1236,15 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
     expect(psql(`SELECT count(*) FROM processed_webhook_events WHERE event_id = 'stripe:cancel:evt_t57';`)).toBe('0');
 
     psql(`DELETE FROM subscriptions WHERE id='${subId}'::uuid;`);
+    psql(`DELETE FROM businesses WHERE id='${bizId}'::uuid;`);
   });
 
   it('58. wrong provider subscription ID returns provider_subscription_mismatch, event NOT consumed', () => {
+    const bizId = m380Biz('t58');
     const subId = psql(`
       INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
         billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
-      VALUES (gen_random_uuid(), '${testBizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
         '${currentVersion()}'::uuid, 'flw_sub_t58_real', clock_timestamp(), clock_timestamp() + interval '30 days')
       RETURNING id::text;
     `);
@@ -1232,13 +1254,15 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
     expect(psql(`SELECT count(*) FROM processed_webhook_events WHERE event_id = 'flutterwave:cancel:evt_t58';`)).toBe('0');
 
     psql(`DELETE FROM subscriptions WHERE id='${subId}'::uuid;`);
+    psql(`DELETE FROM businesses WHERE id='${bizId}'::uuid;`);
   });
 
   it('59. same gateway different provider sub ID cannot cross-cancel', () => {
+    const bizId = m380Biz('t59');
     const sub1Id = psql(`
       INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
         billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
-      VALUES (gen_random_uuid(), '${testBizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
         '${currentVersion()}'::uuid, 'flw_sub_t59a', clock_timestamp(), clock_timestamp() + interval '30 days')
       RETURNING id::text;
     `);
@@ -1248,6 +1272,7 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
     expect(psql(`SELECT status FROM subscriptions WHERE id='${sub1Id}'::uuid;`)).toBe('active');
 
     psql(`DELETE FROM subscriptions WHERE id='${sub1Id}'::uuid;`);
+    psql(`DELETE FROM businesses WHERE id='${bizId}'::uuid;`);
   });
 
   it('60. TRUE CONCURRENT: two calls same provider+event — exactly one cancelled: true', async () => {
@@ -1293,10 +1318,11 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
   // ══════════════════════════════════════════════════════════
 
   it('61. INSERT evidence returns recorded: true, action: created', () => {
+    const bizId = m380Biz('t61');
     const subId = psql(`
       INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
         billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
-      VALUES (gen_random_uuid(), '${testBizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
         '${currentVersion()}'::uuid, 'flw_sub_t61', clock_timestamp(), clock_timestamp() + interval '30 days')
       RETURNING id::text;
     `);
@@ -1306,13 +1332,15 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
 
     psql(`DELETE FROM subscription_reconciliation_evidence WHERE subscription_id='${subId}'::uuid;`);
     psql(`DELETE FROM subscriptions WHERE id='${subId}'::uuid;`);
+    psql(`DELETE FROM businesses WHERE id='${bizId}'::uuid;`);
   });
 
   it('62. duplicate INSERT same key returns recorded: false, no_change', () => {
+    const bizId = m380Biz('t62');
     const subId = psql(`
       INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
         billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
-      VALUES (gen_random_uuid(), '${testBizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
         '${currentVersion()}'::uuid, 'flw_sub_t62', clock_timestamp(), clock_timestamp() + interval '30 days')
       RETURNING id::text;
     `);
@@ -1323,13 +1351,15 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
 
     psql(`DELETE FROM subscription_reconciliation_evidence WHERE subscription_id='${subId}'::uuid;`);
     psql(`DELETE FROM subscriptions WHERE id='${subId}'::uuid;`);
+    psql(`DELETE FROM businesses WHERE id='${bizId}'::uuid;`);
   });
 
   it('63. different period creates separate row', () => {
+    const bizId = m380Biz('t63');
     const subId = psql(`
       INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
         billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
-      VALUES (gen_random_uuid(), '${testBizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
         '${currentVersion()}'::uuid, 'flw_sub_t63', clock_timestamp(), clock_timestamp() + interval '30 days')
       RETURNING id::text;
     `);
@@ -1342,13 +1372,15 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
 
     psql(`DELETE FROM subscription_reconciliation_evidence WHERE subscription_id='${subId}'::uuid;`);
     psql(`DELETE FROM subscriptions WHERE id='${subId}'::uuid;`);
+    psql(`DELETE FROM businesses WHERE id='${bizId}'::uuid;`);
   });
 
   it('64. different gateway creates separate row', () => {
+    const bizId = m380Biz('t64');
     const subId = psql(`
       INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
         billing_config_version_id, flutterwave_subscription_id, stripe_subscription_id, current_period_start, current_period_end)
-      VALUES (gen_random_uuid(), '${testBizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
         '${currentVersion()}'::uuid, 'flw_sub_t64', 'stripe_sub_t64', clock_timestamp(), clock_timestamp() + interval '30 days')
       RETURNING id::text;
     `);
@@ -1361,13 +1393,15 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
 
     psql(`DELETE FROM subscription_reconciliation_evidence WHERE subscription_id='${subId}'::uuid;`);
     psql(`DELETE FROM subscriptions WHERE id='${subId}'::uuid;`);
+    psql(`DELETE FROM businesses WHERE id='${bizId}'::uuid;`);
   });
 
   it('65. upgrade unavailable to paid_finalized succeeds', () => {
+    const bizId = m380Biz('t65');
     const subId = psql(`
       INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
         billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
-      VALUES (gen_random_uuid(), '${testBizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
         '${currentVersion()}'::uuid, 'flw_sub_t65', clock_timestamp(), clock_timestamp() + interval '30 days')
       RETURNING id::text;
     `);
@@ -1383,13 +1417,15 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
 
     psql(`DELETE FROM subscription_reconciliation_evidence WHERE subscription_id='${subId}'::uuid;`);
     psql(`DELETE FROM subscriptions WHERE id='${subId}'::uuid;`);
+    psql(`DELETE FROM businesses WHERE id='${bizId}'::uuid;`);
   });
 
   it('66. no downgrade paid_finalized to unavailable', () => {
+    const bizId = m380Biz('t66');
     const subId = psql(`
       INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
         billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
-      VALUES (gen_random_uuid(), '${testBizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
         '${currentVersion()}'::uuid, 'flw_sub_t66', clock_timestamp(), clock_timestamp() + interval '30 days')
       RETURNING id::text;
     `);
@@ -1401,13 +1437,15 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
 
     psql(`DELETE FROM subscription_reconciliation_evidence WHERE subscription_id='${subId}'::uuid;`);
     psql(`DELETE FROM subscriptions WHERE id='${subId}'::uuid;`);
+    psql(`DELETE FROM businesses WHERE id='${bizId}'::uuid;`);
   });
 
   it('67. no downgrade terminal_no_payment to ambiguous', () => {
+    const bizId = m380Biz('t67');
     const subId = psql(`
       INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
         billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
-      VALUES (gen_random_uuid(), '${testBizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
         '${currentVersion()}'::uuid, 'flw_sub_t67', clock_timestamp(), clock_timestamp() + interval '30 days')
       RETURNING id::text;
     `);
@@ -1419,13 +1457,15 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
 
     psql(`DELETE FROM subscription_reconciliation_evidence WHERE subscription_id='${subId}'::uuid;`);
     psql(`DELETE FROM subscriptions WHERE id='${subId}'::uuid;`);
+    psql(`DELETE FROM businesses WHERE id='${bizId}'::uuid;`);
   });
 
   it('68. empty source_key raises exception', () => {
+    const bizId = m380Biz('t68');
     const subId = psql(`
       INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
         billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
-      VALUES (gen_random_uuid(), '${testBizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
         '${currentVersion()}'::uuid, 'flw_sub_t68', clock_timestamp(), clock_timestamp() + interval '30 days')
       RETURNING id::text;
     `);
@@ -1433,13 +1473,15 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
     expect(result).toContain('source_key must not be empty');
 
     psql(`DELETE FROM subscriptions WHERE id='${subId}'::uuid;`);
+    psql(`DELETE FROM businesses WHERE id='${bizId}'::uuid;`);
   });
 
   it('69. invalid gateway/outcome raises exception', () => {
+    const bizId = m380Biz('t69');
     const subId = psql(`
       INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
         billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
-      VALUES (gen_random_uuid(), '${testBizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
         '${currentVersion()}'::uuid, 'flw_sub_t69', clock_timestamp(), clock_timestamp() + interval '30 days')
       RETURNING id::text;
     `);
@@ -1450,13 +1492,15 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
     expect(r2).toContain('invalid outcome');
 
     psql(`DELETE FROM subscriptions WHERE id='${subId}'::uuid;`);
+    psql(`DELETE FROM businesses WHERE id='${bizId}'::uuid;`);
   });
 
   it('70. TRUE CONCURRENT first-write: two sessions, no existing row — one row, strongest outcome', async () => {
+    const bizId = m380Biz('t70');
     const subId = psql(`
       INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
         billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
-      VALUES (gen_random_uuid(), '${testBizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
         '${currentVersion()}'::uuid, 'flw_sub_t70', clock_timestamp(), clock_timestamp() + interval '30 days')
       RETURNING id::text;
     `);
@@ -1483,6 +1527,7 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
     teardownBarrierTable(bt);
     psql(`DELETE FROM subscription_reconciliation_evidence WHERE subscription_id='${subId}'::uuid;`);
     psql(`DELETE FROM subscriptions WHERE id='${subId}'::uuid;`);
+    psql(`DELETE FROM businesses WHERE id='${bizId}'::uuid;`);
   }, 15000);
 
   // ══════════════════════════════════════════════════════════
@@ -1490,10 +1535,11 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
   // ══════════════════════════════════════════════════════════
 
   it('71. no evidence returns no_evidence', () => {
+    const bizId = m380Biz('t71');
     const subId = psql(`
       INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
         billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
-      VALUES (gen_random_uuid(), '${testBizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
         '${currentVersion()}'::uuid, 'flw_sub_t71', clock_timestamp(), clock_timestamp() + interval '30 days')
       RETURNING id::text;
     `);
@@ -1501,13 +1547,15 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
     expect(result).toBe('no_evidence');
 
     psql(`DELETE FROM subscriptions WHERE id='${subId}'::uuid;`);
+    psql(`DELETE FROM businesses WHERE id='${bizId}'::uuid;`);
   });
 
   it('72. paid_finalized evidence returns paid_finalized', () => {
+    const bizId = m380Biz('t72');
     const subId = psql(`
       INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
         billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
-      VALUES (gen_random_uuid(), '${testBizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
         '${currentVersion()}'::uuid, 'flw_sub_t72', clock_timestamp(), clock_timestamp() + interval '30 days')
       RETURNING id::text;
     `);
@@ -1517,13 +1565,15 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
 
     psql(`DELETE FROM subscription_reconciliation_evidence WHERE subscription_id='${subId}'::uuid;`);
     psql(`DELETE FROM subscriptions WHERE id='${subId}'::uuid;`);
+    psql(`DELETE FROM businesses WHERE id='${bizId}'::uuid;`);
   });
 
   it('73. terminal_no_payment evidence returns terminal_no_payment', () => {
+    const bizId = m380Biz('t73');
     const subId = psql(`
       INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
         billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
-      VALUES (gen_random_uuid(), '${testBizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
         '${currentVersion()}'::uuid, 'flw_sub_t73', clock_timestamp(), clock_timestamp() + interval '30 days')
       RETURNING id::text;
     `);
@@ -1533,13 +1583,15 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
 
     psql(`DELETE FROM subscription_reconciliation_evidence WHERE subscription_id='${subId}'::uuid;`);
     psql(`DELETE FROM subscriptions WHERE id='${subId}'::uuid;`);
+    psql(`DELETE FROM businesses WHERE id='${bizId}'::uuid;`);
   });
 
   it('74. provider_active_or_retrying evidence returned as-is', () => {
+    const bizId = m380Biz('t74');
     const subId = psql(`
       INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
         billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
-      VALUES (gen_random_uuid(), '${testBizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
         '${currentVersion()}'::uuid, 'flw_sub_t74', clock_timestamp(), clock_timestamp() + interval '30 days')
       RETURNING id::text;
     `);
@@ -1549,13 +1601,15 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
 
     psql(`DELETE FROM subscription_reconciliation_evidence WHERE subscription_id='${subId}'::uuid;`);
     psql(`DELETE FROM subscriptions WHERE id='${subId}'::uuid;`);
+    psql(`DELETE FROM businesses WHERE id='${bizId}'::uuid;`);
   });
 
   it('75. unavailable/ambiguous evidence returned as-is', () => {
+    const bizId = m380Biz('t75');
     const subId = psql(`
       INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
         billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
-      VALUES (gen_random_uuid(), '${testBizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
         '${currentVersion()}'::uuid, 'flw_sub_t75', clock_timestamp(), clock_timestamp() + interval '30 days')
       RETURNING id::text;
     `);
@@ -1569,13 +1623,15 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
 
     psql(`DELETE FROM subscription_reconciliation_evidence WHERE subscription_id='${subId}'::uuid;`);
     psql(`DELETE FROM subscriptions WHERE id='${subId}'::uuid;`);
+    psql(`DELETE FROM businesses WHERE id='${bizId}'::uuid;`);
   });
 
   it('76. wrong gateway evidence returns no_evidence', () => {
+    const bizId = m380Biz('t76');
     const subId = psql(`
       INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
         billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
-      VALUES (gen_random_uuid(), '${testBizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
         '${currentVersion()}'::uuid, 'flw_sub_t76', clock_timestamp(), clock_timestamp() + interval '30 days')
       RETURNING id::text;
     `);
@@ -1588,13 +1644,15 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
 
     psql(`DELETE FROM subscription_reconciliation_evidence WHERE subscription_id='${subId}'::uuid;`);
     psql(`DELETE FROM subscriptions WHERE id='${subId}'::uuid;`);
+    psql(`DELETE FROM businesses WHERE id='${bizId}'::uuid;`);
   });
 
   it('77. paystack subscription (no provider sub ID) returns no_evidence (fail-closed)', () => {
+    const bizId = m380Biz('t77');
     const subId = psql(`
       INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
         billing_config_version_id, current_period_start, current_period_end)
-      VALUES (gen_random_uuid(), '${testBizId}', 'growth', 'active', 'paystack', 'NGN', 14999, 'month',
+      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'paystack', 'NGN', 14999, 'month',
         '${currentVersion()}'::uuid, clock_timestamp(), clock_timestamp() + interval '30 days')
       RETURNING id::text;
     `);
@@ -1602,6 +1660,7 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
     expect(result).toBe('no_evidence');
 
     psql(`DELETE FROM subscriptions WHERE id='${subId}'::uuid;`);
+    psql(`DELETE FROM businesses WHERE id='${bizId}'::uuid;`);
   });
 
   // ══════════════════════════════════════════════════════════
