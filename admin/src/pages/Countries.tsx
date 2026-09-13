@@ -141,53 +141,34 @@ export default function Countries() {
       const userId = session?.session?.user?.id;
 
       if (editMode) {
-        // Blocker 4: Narrow partial update — exclude provider-owned fields from generic edits.
-        // Structurally exclude: payment_gateway, currency_code, provider_plan_refs,
-        // paystack_plan_code, and Growth/Business prices. Only non-provider pricing
-        // fields (feeFlat, feePercentage, trialDays) come from the form.
-        const existingCountry = countries.find(c => c.code === form.code);
-        const existingPricing = (existingCountry?.pricing || {}) as Record<string, Record<string, unknown>>;
-
-        // Build safe pricing: preserve provider-owned keys from DB, take fees/trial from form
-        const safePricing: Record<string, Record<string, unknown>> = {};
-        for (const tier of PRICING_TIERS) {
-          const existing = existingPricing[tier] || {};
-          const formTier = form.pricing[tier] || { price: 0, feeFlat: 0 };
-          safePricing[tier] = {
-            ...existing, // preserves provider_plan_refs, paystack_plan_code, price
-            // Overwrite only non-provider fields from form
-            feeFlat: formTier.feeFlat,
-            feePercentage: (formTier as Record<string, unknown>).feePercentage ?? existing.feePercentage ?? 2.5,
-            trialDays: (formTier as Record<string, unknown>).trialDays ?? existing.trialDays ?? 14,
-          };
-          // Preserve Growth/Business price from DB (provider-owned), Free price from form
-          if (tier === 'free') {
-            safePricing[tier].price = formTier.price;
-          }
-          // growth/business prices kept from existing (spread above)
-        }
-
-        const editPayload = {
-          name: form.name.trim(),
-          flag: form.flag.trim(),
-          dialing_code: form.dialing_code.trim(),
-          // Exclude: currency_code, payment_gateway (provider-owned)
-          currency_symbol: form.currency_symbol.trim(),
-          currency_locale: form.currency_locale.trim(),
-          phone_digits: form.phone_digits,
-          phone_pattern: form.phone_pattern.trim(),
-          phone_placeholder: form.phone_placeholder.trim(),
-          is_active: form.is_active,
-          sort_order: form.sort_order,
-          cities: form.cities,
-          pricing: safePricing,
-          verification_tiers: form.verification_tiers,
-          doc_types: form.doc_types,
-          updated_by: userId || null,
-        };
-
-        const { error } = await adminDb.from('countries').update(editPayload).eq('code', form.code);
-        if (error) throw error;
+        // Narrow server-side partial update via /api/admin/provider-config update_country action.
+        // This NEVER sends pricing, payment_gateway, currency_code, or provider-owned fields.
+        // Provider refs survive concurrent edits untouched.
+        const res = await fetch('/api/admin/provider-config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'update_country',
+            country_code: form.code,
+            fields: {
+              name: form.name.trim(),
+              flag: form.flag.trim(),
+              dialing_code: form.dialing_code.trim(),
+              currency_symbol: form.currency_symbol.trim(),
+              currency_locale: form.currency_locale.trim(),
+              phone_digits: form.phone_digits,
+              phone_pattern: form.phone_pattern.trim(),
+              phone_placeholder: form.phone_placeholder.trim(),
+              is_active: form.is_active,
+              sort_order: form.sort_order,
+              cities: form.cities,
+              verification_tiers: form.verification_tiers,
+              doc_types: form.doc_types,
+            },
+          }),
+        });
+        const resData = await res.json();
+        if (!res.ok) throw new Error(resData.error || 'Update failed');
         await logAudit({ action: 'country.update', entity_type: 'country', entity_id: form.code, details: { name: form.name } });
       } else {
         const payload = {
@@ -1116,11 +1097,13 @@ function MessagingFinancialControls({ countries, canMutate, onSaved }: { countri
       const { messagingPricing, trialCredit, tierIncluded, paystackPlanCodes } =
         buildMessagingPayload(countries, currencyState, countryState);
 
+      // Paystack plan codes are now managed ONLY through /api/admin/provider-config
+      // → save_provider_plan_refs with provider preflight. Never submit them here.
       const { data, error: rpcError } = await adminDb.rpc('save_market_messaging_config', {
         p_messaging_pricing: messagingPricing,
         p_trial_credit_minor_by_currency: trialCredit,
         p_subscription_included_minor_by_tier_currency: tierIncluded,
-        p_paystack_plan_codes: Object.keys(paystackPlanCodes).length > 0 ? paystackPlanCodes : null,
+        p_paystack_plan_codes: null,
         p_expected_version_id: configVersionId,
       });
 
@@ -1221,8 +1204,8 @@ function MessagingFinancialControls({ countries, canMutate, onSaved }: { countri
                   <td className="px-2 py-2"><input type="text" inputMode="numeric" pattern="[0-9]*" className="w-20 rounded border border-gray-300 px-2 py-1 text-xs" value={cs.rates.marketing || ''} onChange={e => updateRate('marketing', e.target.value)} disabled={!canMutate} /></td>
                   {hasPaystack && (
                     <>
-                      <td className="px-2 py-2">{c.payment_gateway === 'paystack' ? <input type="text" className="w-28 rounded border border-gray-300 px-2 py-1 text-xs" value={cs.paystackGrowthPlan} onChange={e => updateCtry('paystackGrowthPlan', e.target.value)} disabled={!canMutate} placeholder="PLN_..." /> : <span className="text-gray-300">—</span>}</td>
-                      <td className="px-2 py-2">{c.payment_gateway === 'paystack' ? <input type="text" className="w-28 rounded border border-gray-300 px-2 py-1 text-xs" value={cs.paystackBusinessPlan} onChange={e => updateCtry('paystackBusinessPlan', e.target.value)} disabled={!canMutate} placeholder="PLN_..." /> : <span className="text-gray-300">—</span>}</td>
+                      <td className="px-2 py-2">{c.payment_gateway === 'paystack' ? <input type="text" className="w-28 rounded border border-gray-200 bg-gray-50 px-2 py-1 text-xs text-gray-500" value={cs.paystackGrowthPlan} readOnly disabled title="Manage via Provider Configuration panel" /> : <span className="text-gray-300">—</span>}</td>
+                      <td className="px-2 py-2">{c.payment_gateway === 'paystack' ? <input type="text" className="w-28 rounded border border-gray-200 bg-gray-50 px-2 py-1 text-xs text-gray-500" value={cs.paystackBusinessPlan} readOnly disabled title="Manage via Provider Configuration panel" /> : <span className="text-gray-300">—</span>}</td>
                     </>
                   )}
                 </tr>
