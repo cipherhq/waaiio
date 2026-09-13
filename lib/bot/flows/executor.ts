@@ -77,11 +77,11 @@ export class FlowExecutor {
     // #267: Track whether execution reached a terminal state
     let executionReachedTerminal = false;
 
-    // Correction 1: Swap sender before try so finally can restore it.
-    // Create scoped sender early — it's a zero-cost Proxy, no DB I/O.
-    const originalSender = this.sender;
-    const scopedSender = createScopedSender(originalSender as unknown as Record<string, unknown>, collector) as unknown as typeof this.sender;
-    (this as unknown as { sender: MessageSender }).sender = scopedSender;
+    // #267: Execution-local scoped sender — NO mutation of this.sender.
+    // Two overlapping execute() calls on the same FlowExecutor instance each
+    // get their own collector-backed proxy. Private send methods accept an
+    // optional sender parameter so they use the execution-local proxy.
+    const scopedSender = createScopedSender(this.sender as unknown as Record<string, unknown>, collector) as unknown as MessageSender;
 
     try { // #267: try/finally for instrumentation flush
 
@@ -116,7 +116,7 @@ export class FlowExecutor {
         });
         if (!recovered) return; // stale worker — send nothing
 
-        await this.sendText(from, msg);
+        await this.sendText(from, msg, scopedSender);
         return;
       }
     }
@@ -162,7 +162,7 @@ export class FlowExecutor {
       if (!session.conversation_log) session.conversation_log = [];
       session.conversation_log.push({ role: 'bot', content: errMsg, timestamp: new Date().toISOString() });
       if (!await this.persistConversationLog(session, session.conversation_log)) return;
-      await this.sendText(from, errMsg);
+      await this.sendText(from, errMsg, scopedSender);
       await this.deactivateSession(session.id);
       logDropoff(this.supabase, { businessId: session.business_id || undefined, flowType, stepId, reason: 'error' });
       return;
@@ -210,7 +210,7 @@ export class FlowExecutor {
 
     // Check conversation limit result
     if (!convLimitResult.allowed) {
-      await this.sendText(from, getConversationLimitMessage());
+      await this.sendText(from, getConversationLimitMessage(), scopedSender);
       return;
     }
 
@@ -243,7 +243,7 @@ export class FlowExecutor {
     if (shouldSkip) {
       const nextStepId = await step.next(ctx);
       if (nextStepId) {
-        await this.advanceToStep(session, nextStepId, from, ctx, translationCtx);
+        await this.advanceToStep(session, nextStepId, from, ctx, translationCtx, scopedSender);
       } else {
         await this.deactivateSession(session.id);
       }
@@ -258,7 +258,7 @@ export class FlowExecutor {
         session.conversation_log.push({ role: 'bot', content: override.customPrompt, timestamp: new Date().toISOString() });
         if (!await this.persistConversationLog(session, session.conversation_log)) return;
         _fmark('cas_persist');
-        await this.sendText(from, override.customPrompt);
+        await this.sendText(from, override.customPrompt, scopedSender);
         _fmark('meta_send');
       } else {
         const messages = await step.prompt(ctx);
@@ -284,7 +284,7 @@ export class FlowExecutor {
         });
         if (!promptSaved) return; // stale — another worker already advanced
         _fmark('cas_persist');
-        await this.sendMessages(from, messages, session, translationCtx);
+        await this.sendMessages(from, messages, session, translationCtx, scopedSender);
         _fmark('meta_send');
       }
       logger.info('[EXECUTOR-PERF] timings_ms', _ftimings);
@@ -325,14 +325,14 @@ export class FlowExecutor {
           const prevMessages = await prevStepDef.prompt(ctx);
           this.logPromptMessages(session, prevMessages);
           if (!await this.persistConversationLog(session, session.conversation_log)) return;
-          await this.sendMessages(from, prevMessages, session, translationCtx);
+          await this.sendMessages(from, prevMessages, session, translationCtx, scopedSender);
         }
         return;
       } else {
         const noBackMsg = await this.maybeTranslate('You\'re at the beginning. Type *menu* to see the main menu.', session, translationCtx);
         session.conversation_log.push({ role: 'bot', content: noBackMsg, timestamp: new Date().toISOString() });
         if (!await this.persistConversationLog(session, session.conversation_log)) return;
-        await this.sendText(from, noBackMsg);
+        await this.sendText(from, noBackMsg, scopedSender);
         return;
       }
     }
@@ -356,7 +356,7 @@ export class FlowExecutor {
       session.conversation_log.push({ role: 'bot', content: cancelMsg, timestamp: new Date().toISOString() });
       if (!await this.persistConversationLog(session, session.conversation_log)) return;
       await this.deactivateSession(session.id);
-      await this.sendText(from, cancelMsg);
+      await this.sendText(from, cancelMsg, scopedSender);
       logDropoff(this.supabase, { businessId: session.business_id || undefined, flowType, stepId, reason: 'cancelled', capability: session.session_data?.active_capability as string });
       return;
     }
@@ -374,7 +374,7 @@ export class FlowExecutor {
       session.conversation_log.push({ role: 'bot', content: restartMsg, timestamp: new Date().toISOString() });
       if (!await this.persistConversationLog(session, session.conversation_log)) return;
       await this.deactivateSession(session.id);
-      await this.sendText(from, restartMsg);
+      await this.sendText(from, restartMsg, scopedSender);
       logDropoff(this.supabase, { businessId: session.business_id || undefined, flowType, stepId, reason: 'restarted', capability: session.session_data?.active_capability as string });
       return;
     }
@@ -396,7 +396,7 @@ export class FlowExecutor {
             session_data: session.session_data,
           });
           if (!langSaved) return;
-          await this.sendText(from, 'Switched to English. ✅');
+          await this.sendText(from, 'Switched to English. ✅', scopedSender);
         } else {
           // Validate target language against entitlement + certification before persisting
           const { CERTIFIED_LANGUAGES } = await import('@/lib/bot/language-policy');
@@ -404,10 +404,10 @@ export class FlowExecutor {
               || !entitlement.allowedLanguages.includes(targetLang)
               || !CERTIFIED_LANGUAGES.includes(targetLang)) {
             const langName = getLanguageName(targetLang);
-            await this.sendText(from, `${langName} is not available for this business right now.`);
+            await this.sendText(from, `${langName} is not available for this business right now.`, scopedSender);
             // Re-prompt current step without changing language
             const retryMsgs = await step.prompt(ctx);
-            await this.sendMessages(from, retryMsgs, session, translationCtx);
+            await this.sendMessages(from, retryMsgs, session, translationCtx, scopedSender);
             return;
           }
           session.session_data._detected_language = targetLang;
@@ -418,11 +418,11 @@ export class FlowExecutor {
           if (!langSaved) return;
           const { translateBotResponse: translateFn } = await import('@/lib/bot/translate');
           const msg = await translateFn(`Switched to ${getLanguageName(targetLang)}. ✅`, targetLang, translationCtx);
-          await this.sendText(from, msg);
+          await this.sendText(from, msg, scopedSender);
         }
         // Re-prompt current step in new language
         const retryMsgs = await step.prompt(ctx);
-        await this.sendMessages(from, retryMsgs, session, translationCtx);
+        await this.sendMessages(from, retryMsgs, session, translationCtx, scopedSender);
         return;
       }
     }
@@ -468,7 +468,7 @@ export class FlowExecutor {
           );
           session.conversation_log.push({ role: 'bot', content: failMsg, timestamp: new Date().toISOString() });
           if (!await this.persistConversationLog(session, session.conversation_log || [])) return;
-          await this.sendText(from, failMsg);
+          await this.sendText(from, failMsg, scopedSender);
         } else {
           if (!await this.persistConversationLog(session, session.conversation_log || [])) return;
         }
@@ -482,7 +482,7 @@ export class FlowExecutor {
         );
         session.conversation_log.push({ role: 'bot', content: unavailableMsg, timestamp: new Date().toISOString() });
         if (!await this.persistConversationLog(session, session.conversation_log || [])) return;
-        await this.sendText(from, unavailableMsg);
+        await this.sendText(from, unavailableMsg, scopedSender);
         return;
       }
     }
@@ -508,9 +508,9 @@ export class FlowExecutor {
         this.logPromptMessages(session, retryMessages);
       }
       if (!await this.persistConversationLog(session, session.conversation_log)) return;
-      await this.sendText(from, errText);
+      await this.sendText(from, errText, scopedSender);
       if (retryMessages.some(m => m.type === 'buttons' || m.type === 'list')) {
-        await this.sendMessages(from, retryMessages, undefined, translationCtx);
+        await this.sendMessages(from, retryMessages, undefined, translationCtx, scopedSender);
       }
       return;
     }
@@ -597,8 +597,8 @@ export class FlowExecutor {
       }
 
       // Send responses AFTER successful persistence
-      if (errText) await this.sendText(from, errText);
-      if (hasInteractive) await this.sendMessages(from, retryMessages, undefined, translationCtx);
+      if (errText) await this.sendText(from, errText, scopedSender);
+      if (hasInteractive) await this.sendMessages(from, retryMessages, undefined, translationCtx, scopedSender);
       executionReachedTerminal = true; // #267: validation error handled
       return;
     }
@@ -630,7 +630,7 @@ export class FlowExecutor {
     _fmark('step_next');
 
     if (nextStepId) {
-      await this.advanceToStep(session, nextStepId, from, ctx, translationCtx);
+      await this.advanceToStep(session, nextStepId, from, ctx, translationCtx, scopedSender);
       _fmark('advance_done');
       executionReachedTerminal = true; // #267: advanced to next step
       logger.info('[EXECUTOR-PERF] timings_ms', _ftimings);
@@ -651,7 +651,7 @@ export class FlowExecutor {
       const isPaymentPending = hasPaymentRef && !isPaymentConfirmed;
 
       if (!isCancellation && !isPaymentPending && session.business_id) {
-        await this.showPostCompletionMenu(from, session, ctx, translationCtx);
+        await this.showPostCompletionMenu(from, session, ctx, translationCtx, scopedSender);
         logDropoff(this.supabase, { businessId: session.business_id || undefined, flowType, stepId, reason: 'completed', capability: sd.active_capability as string });
       } else {
         await this.deactivateSession(session.id);
@@ -661,8 +661,8 @@ export class FlowExecutor {
     }
 
     } finally { // #267: Instrumentation flush — off critical path, never throws
-      // Correction 1: Restore original sender so the executor instance is reusable
-      (this as unknown as { sender: MessageSender }).sender = originalSender;
+      // No sender restoration needed — scopedSender is execution-local,
+      // this.sender was never mutated.
 
       if (executionReachedTerminal) {
         collector.markComplete();
@@ -685,6 +685,7 @@ export class FlowExecutor {
     from: string,
     ctx: FlowContext,
     tCtx: TranslationContext,
+    sender?: MessageSender,
   ): Promise<void> {
     session.current_step = nextStepId;
     const advanceSaved = await this.casUpdateSession(session, {
@@ -728,7 +729,7 @@ export class FlowExecutor {
     if (shouldSkipNext) {
       const afterNext = await nextStep.next(ctx);
       if (afterNext) {
-        await this.advanceToStep(session, afterNext, from, ctx, tCtx);
+        await this.advanceToStep(session, afterNext, from, ctx, tCtx, sender);
       } else {
         await this.deactivateSession(session.id);
       }
@@ -742,7 +743,7 @@ export class FlowExecutor {
       const translatedCustom = await this.maybeTranslate(nextOverride.customPrompt, session, tCtx);
       session.conversation_log.push({ role: 'bot', content: translatedCustom, timestamp: new Date().toISOString() });
       if (!await this.persistConversationLog(session, session.conversation_log)) return;
-      await this.sendText(from, translatedCustom);
+      await this.sendText(from, translatedCustom, sender);
     } else {
       const messages = await nextStep.prompt(ctx);
       if (messages.length > 0) {
@@ -757,7 +758,7 @@ export class FlowExecutor {
         session.current_step = advNap;
       }
       if (!await this.persistConversationLog(session, session.conversation_log || [])) return;
-      await this.sendMessages(from, messages, undefined, tCtx);
+      await this.sendMessages(from, messages, undefined, tCtx, sender);
     }
   }
 
@@ -775,7 +776,7 @@ export class FlowExecutor {
     }
   }
 
-  private async sendMessages(to: string, messages: PromptMessage[], session: { session_data: Record<string, unknown> } | undefined, tCtx: TranslationContext): Promise<void> {
+  private async sendMessages(to: string, messages: PromptMessage[], session: { session_data: Record<string, unknown> } | undefined, tCtx: TranslationContext, sender?: MessageSender): Promise<void> {
     if (messages.length === 0) return;
 
     // Inject navigation footer on interactive messages (buttons/list) if not already set
@@ -794,7 +795,7 @@ export class FlowExecutor {
     for (let i = 0; i < messages.length; i++) {
       try {
         const msg = shouldTranslate ? await this.translateMessage(messages[i], lang!, tCtx) : messages[i];
-        await this.sendSingleMessage(to, msg);
+        await this.sendSingleMessage(to, msg, sender);
         // Sequential sends preserve ordering — no artificial delay needed
       } catch (err) {
         logger.error('[EXECUTOR] Failed to send message', i + 1, 'of', messages.length, 'to', to, ':', err);
@@ -841,16 +842,17 @@ export class FlowExecutor {
     }
   }
 
-  private async sendSingleMessage(to: string, msg: PromptMessage): Promise<void> {
+  private async sendSingleMessage(to: string, msg: PromptMessage, sender?: MessageSender): Promise<void> {
+    const s = sender || this.sender;
     switch (msg.type) {
       case 'text':
-        await this.sender.sendText({ to, text: msg.text });
+        await s.sendText({ to, text: msg.text });
         break;
       case 'list':
-        await this.sender.sendList({ to, title: msg.title, body: msg.body, buttonLabel: msg.buttonLabel, items: msg.items, sections: msg.sections, footer: msg.footer });
+        await s.sendList({ to, title: msg.title, body: msg.body, buttonLabel: msg.buttonLabel, items: msg.items, sections: msg.sections, footer: msg.footer });
         break;
       case 'buttons':
-        await this.sender.sendButtons({ to, body: msg.body, buttons: msg.buttons, footer: msg.footer });
+        await s.sendButtons({ to, body: msg.body, buttons: msg.buttons, footer: msg.footer });
         break;
       case 'image': {
         // WhatsApp doesn't support WebP — convert via our API proxy
@@ -859,17 +861,18 @@ export class FlowExecutor {
           const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
           imageUrl = `${appUrl}/api/images/convert?url=${encodeURIComponent(imageUrl)}`;
         }
-        await this.sender.sendImage({ to, imageUrl, caption: msg.caption });
+        await s.sendImage({ to, imageUrl, caption: msg.caption });
         break;
       }
       case 'document':
-        await this.sender.sendDocument({ to, documentUrl: msg.url, filename: msg.filename, caption: msg.caption });
+        await s.sendDocument({ to, documentUrl: msg.url, filename: msg.filename, caption: msg.caption });
         break;
     }
   }
 
-  private async sendText(to: string, text: string): Promise<void> {
-    await this.sender.sendText({ to, text });
+  private async sendText(to: string, text: string, sender?: MessageSender): Promise<void> {
+    const s = sender || this.sender;
+    await s.sendText({ to, text });
   }
 
   /** Translate text if session has a detected non-English language */
@@ -937,6 +940,7 @@ export class FlowExecutor {
     session: { id: string; session_data: Record<string, unknown>; business_id: string | null; version: number },
     ctx: FlowContext,
     tCtx: TranslationContext,
+    sender?: MessageSender,
   ): Promise<void> {
     const cap = (session.session_data.active_capability as string) || '';
     const flowType = ctx.business?.flow_type || 'scheduling';
@@ -989,7 +993,8 @@ export class FlowExecutor {
     });
     if (!saved) return; // stale — another worker owns this session
 
-    await this.sender.sendButtons({ to: from, body, buttons });
+    const s = sender || this.sender;
+    await s.sendButtons({ to: from, body, buttons });
   }
 
   /** Map a capability to its corresponding FlowType */

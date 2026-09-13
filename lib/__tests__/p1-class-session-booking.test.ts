@@ -2271,7 +2271,7 @@ describe('P1-CLASS-COPY: party size copy + deterministic routing', () => {
     const executor = readFileSync('lib/bot/flows/executor.ts', 'utf-8');
     expect(executor).not.toContain('setTimeout(resolve, 300)');
     // Sequential sends are preserved — just no sleep between them
-    expect(executor).toContain('sendSingleMessage(to, msg)');
+    expect(executor).toContain('sendSingleMessage(to, msg, sender)');
   });
 
   it('OPT-2: select_quantity class prompt is single message', () => {
@@ -2302,7 +2302,7 @@ describe('P1-CLASS-COPY: party size copy + deterministic routing', () => {
     const executor = readFileSync('lib/bot/flows/executor.ts', 'utf-8');
     // Messages sent in a for loop with await — order guaranteed
     expect(executor).toContain('for (let i = 0; i < messages.length; i++)');
-    expect(executor).toContain('await this.sendSingleMessage(to, msg)');
+    expect(executor).toContain('await this.sendSingleMessage(to, msg, sender)');
     // No artificial delay between sends
     expect(executor).not.toContain('setTimeout(resolve, 300)');
   });

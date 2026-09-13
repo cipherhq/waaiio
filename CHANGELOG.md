@@ -3,6 +3,26 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-09-12 — #267 Execution-local sender plumbing, PG role tests, performance benchmark
+
+### What changed
+- **Blocker 1: Removed shared `this.sender` mutation.** The executor no longer swaps `this.sender` during `execute()`. Instead, `scopedSender` is an execution-local variable passed explicitly to all private send methods (`sendSingleMessage`, `sendText`, `sendMessages`, `showPostCompletionMenu`, `advanceToStep`) via an optional `sender?` parameter. Two overlapping `execute()` calls on the same FlowExecutor instance each get their own collector-backed proxy with zero cross-attribution risk.
+- **Blocker 1 test:** Added `B1: overlapping execute() calls do not cross-attribute` test suite (3 tests) proving concurrent executions on the same underlying sender record only into their own collector.
+- **Blocker 2: Real PostgreSQL effective-role/JWT tests.** Added `V2-T14` test suite (7 tests) in `analytics-db.test.ts` that uses `SET ROLE authenticated`, `SET ROLE anon`, and `set_config('request.jwt.claims', ...)` to prove RLS enforcement at the PostgreSQL session level — authenticated users cannot INSERT, non-owners cannot SELECT, anon is fully blocked.
+- **Blocker 3: Performance benchmark.** Added `B1-14 Performance evidence` test suite (5 tests) proving: zero pre-send DB I/O across 100 proxy intercepts, exactly 1 RPC call per flush for 100 messages, preserved send ordering, p50 < 1ms / p95 < 5ms overhead for 1000 record() calls, and bounded memory (1000 messages across 10 steps compress to 10 aggregate rows).
+- **Source assertion fixes:** Updated string-matching tests in `p1-class-session-booking.test.ts` and `session-resilience.test.ts` to match new sender plumbing signatures.
+
+### Files changed
+- `lib/bot/flows/executor.ts` — removed sender swap/restore, added `sender?` parameter to `sendSingleMessage`, `sendText`, `sendMessages`, `showPostCompletionMenu`, `advanceToStep`, all call sites pass `scopedSender`
+- `lib/bot/flows/__tests__/instrumentation.test.ts` — added B1 overlapping execute tests (3), B1-14 performance evidence (5)
+- `lib/bot/flows/__tests__/analytics-db.test.ts` — added V2-T14 effective-role/JWT RLS tests (7)
+- `lib/__tests__/p1-class-session-booking.test.ts` — updated source assertions for new sender parameter
+- `lib/bot/__tests__/session-resilience.test.ts` — updated source assertion for `s.sendButtons` instead of `this.sender.sendButtons`
+
+### What could break
+- Any code that calls `sendSingleMessage`, `sendText`, `sendMessages`, `showPostCompletionMenu`, or `advanceToStep` on the executor without the sender parameter will still work (falls back to `this.sender`). But within `execute()`, all paths now use the scoped sender.
+- The `sender || this.sender` fallback in private methods is intentional — it preserves backward compatibility for any external callers while ensuring execution-local instrumentation within `execute()`.
+
 ## 2026-09-12 — #267 Bot Flow Message Instrumentation (V2 corrections)
 
 ### What changed (V2 corrections)

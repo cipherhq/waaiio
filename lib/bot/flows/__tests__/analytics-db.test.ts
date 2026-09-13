@@ -315,3 +315,171 @@ describe.skipIf(!canRun)('V2-T12: M382 RLS policy verification', () => {
     expect(result).toContain('false');
   });
 });
+
+// ── V2-T14: Effective-role/JWT RLS enforcement ──────────
+// These tests SET ROLE and configure JWT claims to prove RLS enforcement
+// at the PostgreSQL session level — not just policy introspection.
+
+describe.skipIf(!canRun)('V2-T14: Effective-role/JWT RLS enforcement', () => {
+  let testBusinessId: string;
+  let testUserId: string;
+  const testExecId = `test_role_${Date.now()}`;
+
+  beforeAll(() => {
+    // Get or create a business and user for testing
+    testBusinessId = psql(`SELECT id FROM businesses LIMIT 1;`);
+    if (!testBusinessId) {
+      testBusinessId = psql(`
+        INSERT INTO businesses (name, slug, category, flow_type, subscription_tier, trial_ends_at, owner_id)
+        VALUES ('RLS Role Test Biz', 'rls-role-test', 'other', 'scheduling', 'free',
+                NOW() + interval '30 days',
+                COALESCE((SELECT id FROM auth.users LIMIT 1), gen_random_uuid()))
+        RETURNING id;
+      `);
+    }
+    // Get the owner of that business
+    testUserId = psql(`SELECT owner_id FROM businesses WHERE id = '${testBusinessId}';`);
+
+    // Seed a test row via superuser so we can test reads
+    psql(`
+      SELECT persist_flow_execution(
+        '${testExecId}',
+        '${testBusinessId}'::UUID,
+        'complete',
+        1, 1, 0, 0,
+        NOW(), NOW(),
+        '[{"flow_type":"scheduling","step_name":"test_step","message_type":"text","is_template":false,"active_capability":"scheduling","logical_count":1,"resolved_count":1,"failure_count":0,"error_count":0}]'::JSONB
+      );
+    `);
+  });
+
+  afterAll(() => {
+    try {
+      psql(`DELETE FROM flow_execution_aggregates WHERE execution_id = '${testExecId}';`);
+      psql(`DELETE FROM flow_execution_summaries WHERE execution_id = '${testExecId}';`);
+    } catch { /* cleanup best-effort */ }
+  });
+
+  it('authenticated role with valid JWT CANNOT insert into flow_execution_summaries', () => {
+    // SET ROLE to authenticated with JWT claims — INSERT should be blocked by RLS
+    try {
+      psql(`
+        BEGIN;
+        SELECT set_config('request.jwt.claims', '{"sub":"${testUserId}","role":"authenticated"}', true);
+        SET LOCAL ROLE authenticated;
+        INSERT INTO flow_execution_summaries (
+          execution_id, business_id, completeness,
+          total_messages, resolved_count, failure_count, error_count,
+          started_at
+        ) VALUES (
+          'rls_blocked_${Date.now()}', '${testBusinessId}', 'complete',
+          1, 1, 0, 0, NOW()
+        );
+        ROLLBACK;
+      `);
+      // If we get here without error, the insert was allowed — that's a failure
+      expect('INSERT should have been blocked').toBe('but it was allowed');
+    } catch (err) {
+      // Expected: RLS blocks the insert
+      expect(String(err)).toMatch(/permission denied|new row violates|policy/i);
+    }
+  });
+
+  it('authenticated role with valid JWT CANNOT insert into flow_execution_aggregates', () => {
+    try {
+      psql(`
+        BEGIN;
+        SELECT set_config('request.jwt.claims', '{"sub":"${testUserId}","role":"authenticated"}', true);
+        SET LOCAL ROLE authenticated;
+        INSERT INTO flow_execution_aggregates (
+          execution_id, flow_type, step_name, message_type,
+          is_template, active_capability,
+          logical_count, resolved_count, failure_count, error_count
+        ) VALUES (
+          '${testExecId}', 'scheduling', 'blocked_step', 'text',
+          false, 'scheduling',
+          1, 1, 0, 0
+        );
+        ROLLBACK;
+      `);
+      expect('INSERT should have been blocked').toBe('but it was allowed');
+    } catch (err) {
+      expect(String(err)).toMatch(/permission denied|new row violates|policy/i);
+    }
+  });
+
+  it('authenticated owner CAN read their own business summaries', () => {
+    const count = psql(`
+      BEGIN;
+      SELECT set_config('request.jwt.claims', '{"sub":"${testUserId}","role":"authenticated"}', true);
+      SET LOCAL ROLE authenticated;
+      SELECT count(*) FROM flow_execution_summaries
+      WHERE execution_id = '${testExecId}';
+      ROLLBACK;
+    `);
+    // Owner should see the row (owner_read policy: business_id in user's businesses)
+    // Note: The result may include ROLLBACK noise; parse the number
+    const parsed = count.split('\n').find(l => /^\d+$/.test(l.trim()));
+    expect(parseInt(parsed || '0')).toBeGreaterThanOrEqual(1);
+  });
+
+  it('authenticated non-owner CANNOT read other business summaries', () => {
+    // Use a random UUID that is not the owner of testBusinessId
+    const fakeUserId = '00000000-0000-0000-0000-000000000099';
+    const count = psql(`
+      BEGIN;
+      SELECT set_config('request.jwt.claims', '{"sub":"${fakeUserId}","role":"authenticated"}', true);
+      SET LOCAL ROLE authenticated;
+      SELECT count(*) FROM flow_execution_summaries
+      WHERE execution_id = '${testExecId}';
+      ROLLBACK;
+    `);
+    const parsed = count.split('\n').find(l => /^\d+$/.test(l.trim()));
+    expect(parseInt(parsed || '0')).toBe(0);
+  });
+
+  it('anon role CANNOT read flow_execution_summaries', () => {
+    const count = psql(`
+      BEGIN;
+      SET LOCAL ROLE anon;
+      SELECT count(*) FROM flow_execution_summaries
+      WHERE execution_id = '${testExecId}';
+      ROLLBACK;
+    `);
+    const parsed = count.split('\n').find(l => /^\d+$/.test(l.trim()));
+    expect(parseInt(parsed || '0')).toBe(0);
+  });
+
+  it('anon role CANNOT read flow_execution_aggregates', () => {
+    const count = psql(`
+      BEGIN;
+      SET LOCAL ROLE anon;
+      SELECT count(*) FROM flow_execution_aggregates
+      WHERE execution_id = '${testExecId}';
+      ROLLBACK;
+    `);
+    const parsed = count.split('\n').find(l => /^\d+$/.test(l.trim()));
+    expect(parseInt(parsed || '0')).toBe(0);
+  });
+
+  it('anon role CANNOT insert into flow_execution_summaries', () => {
+    try {
+      psql(`
+        BEGIN;
+        SET LOCAL ROLE anon;
+        INSERT INTO flow_execution_summaries (
+          execution_id, business_id, completeness,
+          total_messages, resolved_count, failure_count, error_count,
+          started_at
+        ) VALUES (
+          'anon_blocked_${Date.now()}', '${testBusinessId}', 'complete',
+          1, 1, 0, 0, NOW()
+        );
+        ROLLBACK;
+      `);
+      expect('INSERT should have been blocked').toBe('but it was allowed');
+    } catch (err) {
+      expect(String(err)).toMatch(/permission denied|new row violates|policy/i);
+    }
+  });
+});
