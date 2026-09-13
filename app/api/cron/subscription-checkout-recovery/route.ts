@@ -39,7 +39,7 @@ export async function GET(request: NextRequest) {
           continue;
         }
         const verifiedAmountMinor = Math.round(verifyResult.tx.amount * 100);
-        const { error: finErr } = await supabase.rpc('finalize_flutterwave_subscription_checkout', {
+        const { data: finResult, error: finErr } = await supabase.rpc('finalize_flutterwave_subscription_checkout', {
           p_intent_id: intent.intent_id,
           p_provider_tx_id: String(verifyResult.tx.id),
           p_provider_subscription_id: subDecision.subscriptionId,
@@ -48,7 +48,7 @@ export async function GET(request: NextRequest) {
           p_verified_currency: verifyResult.tx.currency,
           p_provider_paid_at: verifyResult.tx.created_at,
         });
-        if (!finErr) recovered++;
+        if (!finErr && (finResult as Record<string, unknown>)?.finalized === true) recovered++;
         else skipped++;
       } else if (verifyResult.ok && (verifyResult.tx.status === 'failed' || verifyResult.tx.status === 'cancelled')) {
         // Provider-proven terminal — terminalize without replacement

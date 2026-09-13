@@ -15,45 +15,20 @@ export async function GET(request: NextRequest) {
   const flwKey = process.env.FLUTTERWAVE_SECRET_KEY || '';
   let cancelled = 0, skipped = 0;
 
-  // Atomic claim: UPDATE + SELECT with SKIP LOCKED to prevent concurrent processing.
-  // Active subscriptions are not "overdue" so we use last_reconciliation_attempt_at
-  // with a 24-hour cooldown directly.
-  const { data: subs, error: queryErr } = await supabase.rpc('claim_active_subscriptions_for_cancellation_check', { p_batch_size: 50 });
+  // Atomic claim via dedicated cancellation RPC (separate cooldown from renewal recovery)
+  const { data: subs, error: claimErr } = await supabase.rpc('claim_active_subscriptions_for_cancellation_check', { p_batch_size: 50 });
 
-  // Fallback: if the RPC doesn't exist yet, use the original query pattern
-  let subsList: Array<Record<string, unknown>>;
-  if (queryErr || !subs) {
-    // Graceful fallback: atomic UPDATE + re-SELECT
-    const { data: claimed, error: claimErr } = await supabase
-      .from('subscriptions')
-      .select('id, gateway, flutterwave_subscription_id, flutterwave_subscriber_email, flutterwave_plan_id, stripe_subscription_id')
-      .eq('status', 'active')
-      .in('gateway', ['flutterwave', 'stripe'])
-      .or('last_reconciliation_attempt_at.is.null,last_reconciliation_attempt_at.lt.' + new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
-      .order('last_reconciliation_attempt_at', { ascending: true, nullsFirst: true })
-      .limit(50);
-
-    if (claimErr || !claimed) {
-      return NextResponse.json({ error: 'Query failed' }, { status: 500 });
-    }
-    subsList = claimed as Array<Record<string, unknown>>;
-
-    // Update last_reconciliation_attempt_at for claimed rows
-    if (subsList.length > 0) {
-      const ids = subsList.map(s => s.id as string);
-      await supabase
-        .from('subscriptions')
-        .update({ last_reconciliation_attempt_at: new Date().toISOString() })
-        .in('id', ids);
-    }
-  } else {
-    subsList = subs as Array<Record<string, unknown>>;
+  if (claimErr || !subs) {
+    logger.error('[CRON:CANCEL-RECON] Claim RPC failed', { error: claimErr?.message });
+    return NextResponse.json({ error: 'Claim failed' }, { status: 500 });
   }
+
+  const subsList = subs as Array<Record<string, unknown>>;
 
   for (const sub of subsList) {
     try {
       const subGateway = (sub.gateway as string) || '';
-      const subId = (sub.id as string) || '';
+      const subId = (sub.sub_id as string) || '';
 
       if (subGateway === 'flutterwave' && sub.flutterwave_subscription_id) {
         const { verifySubscriptionStatus } = await import('@/lib/payments/flutterwave-subscription');
@@ -108,7 +83,7 @@ export async function GET(request: NextRequest) {
         skipped++;
       }
     } catch (err) {
-      logger.error('[CRON:CANCEL-RECON] Error', { subId: sub.id, error: String(err) });
+      logger.error('[CRON:CANCEL-RECON] Error', { subId: sub.sub_id, error: String(err) });
       skipped++;
     }
   }

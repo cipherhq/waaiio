@@ -3,6 +3,35 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-09-12 — #315 Phase 3C Findings 1-9
+
+### What changed
+- **Renewal recovery rewrite (Findings 1+2):** Flutterwave path now does bounded paginated tx search (page=1..N, empty=exhausted, cap=50=unavailable) for ALL overdue subs, with strict per-candidate verification via `verifyTransactionById` + `correlateProviderSubscription` + pinned amount/currency validation. Exactly one valid=finalize, multiple=ambiguous, zero+cancelled+exhaustive=terminal. Stripe path now uses exhaustive `has_more` pagination for invoice search and `extractSubscriptionLinePeriod` for period extraction.
+- **Cancellation claim RPC (Finding 3):** New `claim_active_subscriptions_for_cancellation_check` RPC in M381 with separate `cancellation_checked_at` column (24h cooldown, SKIP LOCKED, service_role only). Cancellation cron now uses this RPC exclusively.
+- **Route-level tests (Finding 4):** 11 tests covering checkout quarantine check, FLW/Stripe paid finalization, pagination cap=unavailable, cancellation basic flow, stable source keys.
+- **Cron scheduling (Finding 5):** Added checkout recovery (every 4h offset 2), renewal recovery (every 4h offset 3), cancellation reconciliation (daily 5am) to vercel.json.
+- **Checkout recovery structured check (Finding 6):** Changed to check `finResult?.finalized === true` instead of just `!finErr`.
+- **claim_overdue_subscription_batch includes business_id + plan (Finding 8):** RETURNS TABLE updated.
+- **extractSubscriptionLinePeriod (Finding 9):** New dual-shape line-item period extractor in stripe-invoice-extractors.ts. Stripe webhook updated to use it with top-level fallback. stripe-renewal-finalization.ts: gateway_reference now uses providerInvoiceId. 10 unit tests.
+
+### Files changed
+- `app/api/cron/subscription-renewal-recovery/route.ts` (REWRITTEN)
+- `app/api/cron/subscription-checkout-recovery/route.ts`
+- `app/api/cron/subscription-cancellation-reconciliation/route.ts` (REWRITTEN)
+- `app/api/payments/stripe-webhook/route.ts`
+- `lib/payments/stripe-invoice-extractors.ts`
+- `lib/payments/stripe-renewal-finalization.ts`
+- `lib/payments/__tests__/stripe-line-extractor.test.ts` (NEW)
+- `lib/payments/__tests__/renewal-recovery-cron.test.ts` (REWRITTEN)
+- `supabase/migrations/381_reconciliation_cron_support.sql`
+- `vercel.json`
+
+### What could break
+- Renewal recovery now verifies every candidate individually instead of taking the first match. If there are legitimate duplicate transactions, the `ambiguous` outcome prevents finalization (safe fail-closed).
+- Stripe webhook period extraction now prefers line-item periods over top-level. Falls back to top-level if line extraction fails, so backward compatible.
+- `gateway_reference` in stripe-renewal-finalization.ts now uses invoice ID instead of payment intent ID. This is correct for refund targeting but changes the lookup key.
+- Cancellation cron now requires the `claim_active_subscriptions_for_cancellation_check` RPC (M381). Migration must be applied first.
+
 ## 2026-09-12 — #315 Phase 3C Corrections: Renewal Recovery Rewrite, Stripe Helper Extraction, Stable Event IDs
 
 ### What changed

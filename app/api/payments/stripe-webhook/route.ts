@@ -9,7 +9,7 @@ import { sendEmail } from '@/lib/email/client';
 import { subscriptionRenewalReceiptEmail } from '@/lib/email/templates';
 import { sendProactiveConfirmation } from '@/lib/payments/send-confirmation';
 import { notifyCustomerChargeFailed } from '@/lib/payments/notify-charge-failed';
-import { classifyInvoiceSubscription, extractInvoicePaymentIdentity } from '@/lib/payments/stripe-invoice-extractors';
+import { classifyInvoiceSubscription, extractInvoicePaymentIdentity, extractSubscriptionLinePeriod } from '@/lib/payments/stripe-invoice-extractors';
 import { finalizeStripeRenewal } from '@/lib/payments/stripe-renewal-finalization';
 
 const stripeWebhookSecret = process.env.STRIPE_WEBHOOK_SECRET || '';
@@ -461,22 +461,34 @@ export async function POST(request: NextRequest) {
 
         if (platformSub) {
           // ── Platform subscription renewal ──
-          // Require provider-derived period timestamps — no wall-clock fallbacks
-          const invoicePeriodStartUnix = data.period_start as number | undefined;
-          const invoicePeriodEndUnix = data.period_end as number | undefined;
-          if (!invoicePeriodStartUnix || !invoicePeriodEndUnix) {
-            logger.error('[STRIPE-WEBHOOK] Missing invoice period_start or period_end', { invoiceId: data.id });
-            return NextResponse.json({ error: 'Missing provider period timestamps' }, { status: 500 });
+          // Extract period from line items (not top-level) for version-tolerant accuracy
+          let periodStart: string;
+          let periodEnd: string;
+          const linePeriod = extractSubscriptionLinePeriod(data, subscriptionId);
+          if ('error' in linePeriod) {
+            // Fallback to top-level period_start/period_end for backward compatibility
+            const invoicePeriodStartUnix = data.period_start as number | undefined;
+            const invoicePeriodEndUnix = data.period_end as number | undefined;
+            if (!invoicePeriodStartUnix || !invoicePeriodEndUnix) {
+              logger.error('[STRIPE-WEBHOOK] Line-period extraction failed and no top-level fallback', {
+                invoiceId: data.id, lineError: linePeriod.error, lineDetail: linePeriod.detail,
+              });
+              return NextResponse.json({ error: 'Missing provider period timestamps' }, { status: 500 });
+            }
+            periodStart = new Date(invoicePeriodStartUnix * 1000).toISOString();
+            periodEnd = new Date(invoicePeriodEndUnix * 1000).toISOString();
+          } else {
+            periodStart = new Date(linePeriod.periodStart * 1000).toISOString();
+            periodEnd = new Date(linePeriod.periodEnd * 1000).toISOString();
           }
-          const periodStart = new Date(invoicePeriodStartUnix * 1000).toISOString();
-          const periodEnd = new Date(invoicePeriodEndUnix * 1000).toISOString();
 
           // NO pre-write of periods to subscriptions — activate_paid_subscription RPC
           // performs authoritative period synchronization after all validation succeeds.
 
           // Use provider payment timestamp (invoice created or period_start)
           const invoiceCreated = data.created as number | undefined;
-          const renewalProviderTs = invoiceCreated || invoicePeriodStartUnix;
+          const periodStartUnix = 'error' in linePeriod ? (data.period_start as number | undefined) : linePeriod.periodStart;
+          const renewalProviderTs = invoiceCreated || periodStartUnix;
           if (!renewalProviderTs) {
             logger.error('[STRIPE-WEBHOOK] Missing invoice provider timestamp', { invoiceId: data.id });
             return NextResponse.json({ error: 'Missing provider timestamp' }, { status: 500 });
@@ -545,7 +557,7 @@ export async function POST(request: NextRequest) {
                 .eq('id', biz.owner_id)
                 .single();
               if (profile?.email) {
-                const periodEndDate = new Date(invoicePeriodEndUnix * 1000);
+                const periodEndDate = new Date(periodEnd);
                 const amountDisplay = String(renewalAmount);
                 const curr = renewalCurrency;
                 const { subject, html } = subscriptionRenewalReceiptEmail(

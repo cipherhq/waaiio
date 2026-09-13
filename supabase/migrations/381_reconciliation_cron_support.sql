@@ -4,9 +4,11 @@
 -- Additive over M380. New surfaces:
 --   COLUMN: subscription_checkout_intents.reconciliation_claimed_at
 --   COLUMN: subscriptions.last_reconciliation_attempt_at
+--   COLUMN: subscriptions.cancellation_checked_at
 --   RPC: expire_subscription_with_authority (service_role)
 --   RPC: claim_stale_checkout_batch (service_role)
---   RPC: claim_overdue_subscription_batch (service_role)
+--   RPC: claim_overdue_subscription_batch (service_role) — returns business_id, plan
+--   RPC: claim_active_subscriptions_for_cancellation_check (service_role)
 -- ═══════════════════════════════════════════════════════
 
 -- ══════════════════════════════════════════════════════════
@@ -15,6 +17,7 @@
 
 ALTER TABLE subscription_checkout_intents ADD COLUMN IF NOT EXISTS reconciliation_claimed_at TIMESTAMPTZ;
 ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS last_reconciliation_attempt_at TIMESTAMPTZ;
+ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS cancellation_checked_at TIMESTAMPTZ;
 
 -- ══════════════════════════════════════════════════════════
 -- B. expire_subscription_with_authority
@@ -167,7 +170,9 @@ RETURNS TABLE(
   stripe_subscription_id TEXT,
   currency TEXT,
   amount INTEGER,
-  billing_config_version_id UUID
+  billing_config_version_id UUID,
+  business_id UUID,
+  plan TEXT
 )
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -193,7 +198,8 @@ BEGIN
   RETURNING s2.id, s2.gateway, s2.current_period_end,
     s2.flutterwave_subscription_id, s2.flutterwave_subscriber_email,
     s2.flutterwave_plan_id, s2.stripe_subscription_id,
-    s2.currency, s2.amount, s2.billing_config_version_id;
+    s2.currency, s2.amount, s2.billing_config_version_id,
+    s2.business_id, s2.plan;
 END;
 $$;
 
@@ -204,7 +210,54 @@ REVOKE ALL ON FUNCTION public.claim_overdue_subscription_batch(INTEGER) FROM ser
 GRANT EXECUTE ON FUNCTION public.claim_overdue_subscription_batch(INTEGER) TO service_role;
 
 -- ══════════════════════════════════════════════════════════
--- E. Self-verification
+-- E. claim_active_subscriptions_for_cancellation_check (Finding 3)
+-- ══════════════════════════════════════════════════════════
+
+CREATE OR REPLACE FUNCTION public.claim_active_subscriptions_for_cancellation_check(
+  p_batch_size INTEGER DEFAULT 50
+)
+RETURNS TABLE(
+  sub_id UUID,
+  gateway TEXT,
+  flutterwave_subscription_id TEXT,
+  flutterwave_subscriber_email TEXT,
+  flutterwave_plan_id INTEGER,
+  stripe_subscription_id TEXT
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+  RETURN QUERY
+  WITH candidates AS (
+    SELECT s.id
+      FROM subscriptions s
+      WHERE s.status = 'active'
+        AND s.gateway IN ('flutterwave', 'stripe')
+        AND (s.cancellation_checked_at IS NULL OR s.cancellation_checked_at < clock_timestamp() - interval '24 hours')
+      ORDER BY COALESCE(s.cancellation_checked_at, '1970-01-01'::timestamptz) ASC
+      LIMIT p_batch_size
+      FOR UPDATE SKIP LOCKED
+  )
+  UPDATE subscriptions s2
+    SET cancellation_checked_at = clock_timestamp()
+    FROM candidates c
+    WHERE s2.id = c.id
+  RETURNING s2.id, s2.gateway,
+    s2.flutterwave_subscription_id, s2.flutterwave_subscriber_email,
+    s2.flutterwave_plan_id, s2.stripe_subscription_id;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.claim_active_subscriptions_for_cancellation_check(INTEGER) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.claim_active_subscriptions_for_cancellation_check(INTEGER) FROM anon;
+REVOKE ALL ON FUNCTION public.claim_active_subscriptions_for_cancellation_check(INTEGER) FROM authenticated;
+REVOKE ALL ON FUNCTION public.claim_active_subscriptions_for_cancellation_check(INTEGER) FROM service_role;
+GRANT EXECUTE ON FUNCTION public.claim_active_subscriptions_for_cancellation_check(INTEGER) TO service_role;
+
+-- ══════════════════════════════════════════════════════════
+-- F. Self-verification
 -- ══════════════════════════════════════════════════════════
 
 DO $$
@@ -234,5 +287,15 @@ BEGIN
   SELECT count(*) INTO v_count FROM pg_proc
     WHERE proname = 'claim_overdue_subscription_batch' AND pronamespace = 'public'::regnamespace;
   IF v_count = 0 THEN RAISE EXCEPTION 'M381: claim_overdue_subscription_batch not found'; END IF;
+
+  -- cancellation_checked_at column on subscriptions
+  SELECT count(*) INTO v_count FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'subscriptions' AND column_name = 'cancellation_checked_at';
+  IF v_count = 0 THEN RAISE EXCEPTION 'M381: subscriptions.cancellation_checked_at not found'; END IF;
+
+  -- claim_active_subscriptions_for_cancellation_check
+  SELECT count(*) INTO v_count FROM pg_proc
+    WHERE proname = 'claim_active_subscriptions_for_cancellation_check' AND pronamespace = 'public'::regnamespace;
+  IF v_count = 0 THEN RAISE EXCEPTION 'M381: claim_active_subscriptions_for_cancellation_check not found'; END IF;
 END;
 $$;

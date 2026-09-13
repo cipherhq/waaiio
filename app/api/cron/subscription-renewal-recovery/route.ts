@@ -7,6 +7,9 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
+/** Max pages for Flutterwave tx search pagination before declaring unavailable */
+const FLW_TX_PAGE_CAP = 50;
+
 export async function GET(request: NextRequest) {
   const authError = verifyCronAuth(request);
   if (authError) return authError;
@@ -43,7 +46,9 @@ export async function GET(request: NextRequest) {
 
   return NextResponse.json({ ok: true, finalized, evidenceRecorded, skipped, batchSize: (batch as unknown[]).length });
 
-  // ── Flutterwave renewal recovery ──
+  // ═══════════════════════════════════════════════════════════
+  // Flutterwave renewal recovery — exhaustive paginated search
+  // ═══════════════════════════════════════════════════════════
   async function processFlutterwaveRenewal(
     svc: ReturnType<typeof createServiceClient>,
     sub: Record<string, unknown>,
@@ -54,96 +59,151 @@ export async function GET(request: NextRequest) {
     const flwSubId = sub.flutterwave_subscription_id as string;
     const flwEmail = sub.flutterwave_subscriber_email as string;
     const flwPlanId = sub.flutterwave_plan_id as number;
+    const subAmount = sub.amount as number;
+    const subCurrency = (sub.currency as string) || 'NGN';
+    const sourceKey = `renewal_recovery_flw_${subId}`;
 
     if (!flwSubId || !flwEmail) { skipped++; return; }
 
-    // Step 1: Verify subscription status
+    // Step 1: Verify subscription status (separate check from tx search)
     const { verifySubscriptionStatus } = await import('@/lib/payments/flutterwave-subscription');
     const statusResult = await verifySubscriptionStatus(flwSubId, flwEmail, flwSecretKey, flwPlanId);
 
-    if (!statusResult.ok) {
-      // Provider unavailable — never terminal
+    const providerCancelled = statusResult.ok && (statusResult.status === 'cancelled' || statusResult.status === 'deactivated');
+    const providerActive = statusResult.ok && !providerCancelled;
+
+    // Step 2: Bounded paginated transaction search for ALL overdue subs
+    const searchResult = await searchFlutterwavePaginatedTransactions(
+      flwEmail, subCurrency, periodEnd, flwSecretKey,
+    );
+
+    if (searchResult.outcome === 'search_error' || searchResult.outcome === 'page_cap') {
+      // Search failed or page cap reached — unavailable, never terminal
       await svc.rpc('record_reconciliation_evidence', {
         p_subscription_id: subId, p_gateway: 'flutterwave', p_provider_subscription_id: flwSubId,
         p_period_boundary: periodEnd, p_outcome: 'unavailable',
-        p_source_key: `renewal_recovery_flw_${subId}`,
+        p_source_key: sourceKey,
+        p_evidence_provider_status: statusResult.ok ? statusResult.status : 'unknown',
       });
       evidenceRecorded++; return;
     }
 
-    if (statusResult.status === 'cancelled' || statusResult.status === 'deactivated') {
-      // Step 2: Cancelled/deactivated — do bounded tx search BEFORE recording terminal
-      const paidCandidate = await searchFlutterwaveBoundedTransactions(
-        flwEmail, sub.currency as string || 'NGN', periodEnd, flwSecretKey,
-      );
+    // Step 3: Verify and correlate each candidate
+    const { verifyTransactionById } = await import('@/lib/payments/flutterwave-verify');
+    const { correlateProviderSubscription } = await import('@/lib/payments/flutterwave-subscription');
 
-      if (paidCandidate === 'search_error') {
-        // Search failed — record unavailable, never terminal
+    const validCandidates: Array<{ id: number; tx_ref: string; amount: number; currency: string; created_at: string }> = [];
+
+    for (const candidate of searchResult.candidates) {
+      try {
+        // Strict verification by exact ID + tx_ref
+        const verifyResult = await verifyTransactionById(candidate.id, candidate.tx_ref, flwSecretKey);
+        if (!verifyResult.ok || verifyResult.tx.status !== 'successful') continue;
+
+        // Correlate: match stored flutterwave_subscription_id + flutterwave_plan_id
+        const correlation = await correlateProviderSubscription(candidate.id, flwSecretKey);
+        if (!correlation.ok) continue;
+        if (correlation.sub.subscriptionId !== flwSubId) continue;
+        if (flwPlanId && correlation.sub.planId !== flwPlanId) continue;
+
+        // Pinned validation: amount and currency must match
+        const verifiedAmountMinor = Math.round(verifyResult.tx.amount * 100);
+        const expectedAmountMinor = subAmount * 100;
+        if (verifiedAmountMinor !== expectedAmountMinor) continue;
+        if (verifyResult.tx.currency.toUpperCase() !== subCurrency.toUpperCase()) continue;
+
+        validCandidates.push({
+          id: candidate.id,
+          tx_ref: candidate.tx_ref,
+          amount: verifyResult.tx.amount,
+          currency: verifyResult.tx.currency,
+          created_at: verifyResult.tx.created_at,
+        });
+      } catch {
+        // Verification/correlation failure for this candidate — skip it, try next
+        continue;
+      }
+    }
+
+    // Step 4: Decision based on valid candidates
+    if (validCandidates.length === 1) {
+      // Exactly one valid → finalize
+      const valid = validCandidates[0];
+      const { data: finResult, error: finErr } = await svc.rpc('finalize_flutterwave_subscription_renewal', {
+        p_subscription_id: subId,
+        p_provider_tx_id: String(valid.id),
+        p_verified_amount_minor: Math.round(valid.amount * 100),
+        p_verified_currency: valid.currency,
+        p_provider_paid_at: valid.created_at,
+      });
+
+      if (!finErr && (finResult as Record<string, unknown>)?.finalized === true) {
         await svc.rpc('record_reconciliation_evidence', {
           p_subscription_id: subId, p_gateway: 'flutterwave', p_provider_subscription_id: flwSubId,
-          p_period_boundary: periodEnd, p_outcome: 'unavailable',
-          p_source_key: `renewal_recovery_flw_${subId}`,
-          p_evidence_provider_status: statusResult.status,
+          p_period_boundary: periodEnd, p_outcome: 'paid_finalized',
+          p_source_key: sourceKey,
+          p_evidence_provider_status: statusResult.ok ? statusResult.status : 'unknown',
+          p_evidence_tx_count: searchResult.candidates.length, p_evidence_matched_count: 1,
         });
-        evidenceRecorded++; return;
+        finalized++; return;
       }
+      // Finalization RPC failed — record unavailable (not terminal)
+      logger.error('[CRON:RENEWAL-RECOVERY] FLW renewal finalization failed', { subId, err: String(finErr) });
+      await svc.rpc('record_reconciliation_evidence', {
+        p_subscription_id: subId, p_gateway: 'flutterwave', p_provider_subscription_id: flwSubId,
+        p_period_boundary: periodEnd, p_outcome: 'unavailable',
+        p_source_key: sourceKey,
+      });
+      evidenceRecorded++; return;
+    }
 
-      if (paidCandidate) {
-        // Verify candidate: correlate via provider subscription lookup, match stored IDs
-        const { correlateProviderSubscription } = await import('@/lib/payments/flutterwave-subscription');
-        const correlation = await correlateProviderSubscription(paidCandidate.id, flwSecretKey);
+    if (validCandidates.length > 1) {
+      // Multiple valid → ambiguous
+      await svc.rpc('record_reconciliation_evidence', {
+        p_subscription_id: subId, p_gateway: 'flutterwave', p_provider_subscription_id: flwSubId,
+        p_period_boundary: periodEnd, p_outcome: 'ambiguous',
+        p_source_key: sourceKey,
+        p_evidence_provider_status: statusResult.ok ? statusResult.status : 'unknown',
+        p_evidence_tx_count: searchResult.candidates.length, p_evidence_matched_count: validCandidates.length,
+      });
+      evidenceRecorded++; return;
+    }
 
-        if (correlation.ok
-          && correlation.sub.subscriptionId === flwSubId
-          && (flwPlanId ? correlation.sub.planId === flwPlanId : true)
-          && paidCandidate.amount > 0
-        ) {
-          // Valid renewal payment found after cancellation — finalize
-          const { error: renewErr } = await svc.rpc('finalize_flutterwave_subscription_renewal', {
-            p_subscription_id: subId,
-            p_provider_tx_id: String(paidCandidate.id),
-            p_verified_amount_minor: paidCandidate.amount,
-            p_verified_currency: paidCandidate.currency,
-            p_provider_paid_at: paidCandidate.created_at,
-          });
-
-          if (!renewErr) {
-            await svc.rpc('record_reconciliation_evidence', {
-              p_subscription_id: subId, p_gateway: 'flutterwave', p_provider_subscription_id: flwSubId,
-              p_period_boundary: periodEnd, p_outcome: 'paid_finalized',
-              p_source_key: `renewal_recovery_flw_${subId}`,
-              p_evidence_provider_status: statusResult.status,
-              p_evidence_tx_count: 1, p_evidence_matched_count: 1,
-            });
-            finalized++; return;
-          }
-          // Renewal RPC failed — fall through to terminal_no_payment
-          logger.error('[CRON:RENEWAL-RECOVERY] FLW renewal RPC failed', { subId, err: String(renewErr) });
-        }
-        // Correlation failed or mismatch — no valid candidate, fall through to terminal
-      }
-
-      // Zero valid candidates + cancelled → terminal_no_payment
+    // Zero valid candidates
+    if (providerCancelled && searchResult.exhaustive) {
+      // Provider cancelled + exhaustive search completed + zero valid → terminal
       await svc.rpc('record_reconciliation_evidence', {
         p_subscription_id: subId, p_gateway: 'flutterwave', p_provider_subscription_id: flwSubId,
         p_period_boundary: periodEnd, p_outcome: 'terminal_no_payment',
-        p_source_key: `renewal_recovery_flw_${subId}`,
+        p_source_key: sourceKey,
         p_evidence_provider_status: statusResult.status,
       });
       evidenceRecorded++; return;
     }
 
-    // Provider active — may still be retrying
+    if (providerActive) {
+      // Provider still active → may be retrying
+      await svc.rpc('record_reconciliation_evidence', {
+        p_subscription_id: subId, p_gateway: 'flutterwave', p_provider_subscription_id: flwSubId,
+        p_period_boundary: periodEnd, p_outcome: 'provider_active_or_retrying',
+        p_source_key: sourceKey,
+        p_evidence_provider_status: statusResult.status,
+      });
+      evidenceRecorded++; return;
+    }
+
+    // Status check failed or not found — unavailable
     await svc.rpc('record_reconciliation_evidence', {
       p_subscription_id: subId, p_gateway: 'flutterwave', p_provider_subscription_id: flwSubId,
-      p_period_boundary: periodEnd, p_outcome: 'provider_active_or_retrying',
-      p_source_key: `renewal_recovery_flw_${subId}`,
-      p_evidence_provider_status: statusResult.status,
+      p_period_boundary: periodEnd, p_outcome: 'unavailable',
+      p_source_key: sourceKey,
     });
     evidenceRecorded++;
   }
 
-  // ── Stripe renewal recovery ──
+  // ═══════════════════════════════════════════════════════════
+  // Stripe renewal recovery — exhaustive invoice search
+  // ═══════════════════════════════════════════════════════════
   async function processStripeRenewal(
     svc: ReturnType<typeof createServiceClient>,
     sub: Record<string, unknown>,
@@ -151,6 +211,7 @@ export async function GET(request: NextRequest) {
     periodEnd: string,
   ) {
     const stripeSubId = sub.stripe_subscription_id as string;
+    const sourceKey = `renewal_recovery_stripe_${subId}`;
     if (!stripeSubId) { skipped++; return; }
 
     const stripeKey = process.env.STRIPE_SECRET_KEY;
@@ -166,88 +227,138 @@ export async function GET(request: NextRequest) {
         await svc.rpc('record_reconciliation_evidence', {
           p_subscription_id: subId, p_gateway: 'stripe', p_provider_subscription_id: stripeSubId,
           p_period_boundary: periodEnd, p_outcome: 'unavailable',
-          p_source_key: `renewal_recovery_stripe_${subId}`,
+          p_source_key: sourceKey,
         });
         evidenceRecorded++; return;
       }
 
       const stripeSub = await stripeRes.json() as { status?: string };
+      const providerCancelled = stripeSub.status === 'canceled';
 
-      if (stripeSub.status === 'canceled') {
-        // Step 2: Cancelled — search for paid invoices for the next period
-        const invoiceResult = await searchStripePaidInvoices(stripeSubId, periodEnd, stripeKey);
+      // Step 2: Exhaustive invoice search with has_more pagination
+      const periodEndUnix = Math.floor(new Date(periodEnd).getTime() / 1000);
+      const invoiceResult = await searchStripePaidInvoicesExhaustive(stripeSubId, periodEndUnix, stripeKey);
 
-        if (invoiceResult === 'search_error') {
-          await svc.rpc('record_reconciliation_evidence', {
-            p_subscription_id: subId, p_gateway: 'stripe', p_provider_subscription_id: stripeSubId,
-            p_period_boundary: periodEnd, p_outcome: 'unavailable',
-            p_source_key: `renewal_recovery_stripe_${subId}`,
-            p_evidence_provider_status: 'canceled',
-          });
-          evidenceRecorded++; return;
-        }
+      if (invoiceResult.outcome === 'search_error') {
+        await svc.rpc('record_reconciliation_evidence', {
+          p_subscription_id: subId, p_gateway: 'stripe', p_provider_subscription_id: stripeSubId,
+          p_period_boundary: periodEnd, p_outcome: 'unavailable',
+          p_source_key: sourceKey,
+          p_evidence_provider_status: stripeSub.status || 'unknown',
+        });
+        evidenceRecorded++; return;
+      }
 
-        if (invoiceResult) {
-          // Found a paid invoice for the renewal period — finalize
-          // Resolve config version at provider payment time
-          const providerPaidAt = invoiceResult.created
-            ? new Date(invoiceResult.created * 1000).toISOString()
-            : new Date(invoiceResult.period_start * 1000).toISOString();
+      if (invoiceResult.invoice) {
+        // Found a paid invoice for the renewal period — use extractSubscriptionLinePeriod
+        const { extractSubscriptionLinePeriod } = await import('@/lib/payments/stripe-invoice-extractors');
+        let invPeriodStart: string;
+        let invPeriodEnd: string;
 
-          const { data: renewalConfig } = await svc
-            .from('platform_config_versions')
-            .select('id')
-            .lte('effective_from', providerPaidAt)
-            .order('effective_from', { ascending: false })
-            .limit(1)
-            .single();
-
-          if (renewalConfig) {
-            const { finalizeStripeRenewal } = await import('@/lib/payments/stripe-renewal-finalization');
-            const result = await finalizeStripeRenewal(svc, {
-              subscriptionId: subId,
-              businessId: sub.business_id as string || '',
-              plan: sub.plan as string || 'growth',
-              providerInvoiceId: invoiceResult.id,
-              providerReference: invoiceResult.payment_intent || invoiceResult.id,
-              amountMinor: invoiceResult.amount_paid,
-              currency: (invoiceResult.currency || 'usd').toUpperCase(),
-              periodStart: new Date(invoiceResult.period_start * 1000).toISOString(),
-              periodEnd: new Date(invoiceResult.period_end * 1000).toISOString(),
-              providerPaidAt,
-              configVersionId: renewalConfig.id,
+        const linePeriod = extractSubscriptionLinePeriod(invoiceResult.invoice, stripeSubId);
+        if ('error' in linePeriod) {
+          // Fallback to top-level period_start/period_end
+          const topStart = invoiceResult.invoice.period_start as number | undefined;
+          const topEnd = invoiceResult.invoice.period_end as number | undefined;
+          if (!topStart || !topEnd) {
+            await svc.rpc('record_reconciliation_evidence', {
+              p_subscription_id: subId, p_gateway: 'stripe', p_provider_subscription_id: stripeSubId,
+              p_period_boundary: periodEnd, p_outcome: 'unavailable',
+              p_source_key: sourceKey,
+              p_evidence_provider_status: stripeSub.status || 'unknown',
             });
-
-            if (result.finalized) {
-              await svc.rpc('record_reconciliation_evidence', {
-                p_subscription_id: subId, p_gateway: 'stripe', p_provider_subscription_id: stripeSubId,
-                p_period_boundary: periodEnd, p_outcome: 'paid_finalized',
-                p_source_key: `renewal_recovery_stripe_${subId}`,
-                p_evidence_provider_status: 'canceled',
-                p_evidence_tx_count: 1, p_evidence_matched_count: 1,
-              });
-              finalized++; return;
-            }
-            logger.error('[CRON:RENEWAL-RECOVERY] Stripe finalization failed', { subId, reason: result.reason });
+            evidenceRecorded++; return;
           }
-          // Config version missing or finalization failed — fall through to terminal
+          invPeriodStart = new Date(topStart * 1000).toISOString();
+          invPeriodEnd = new Date(topEnd * 1000).toISOString();
+        } else {
+          invPeriodStart = new Date(linePeriod.periodStart * 1000).toISOString();
+          invPeriodEnd = new Date(linePeriod.periodEnd * 1000).toISOString();
         }
 
-        // Zero valid invoices + canceled → terminal_no_payment
+        // Resolve config version at provider payment time
+        const invoiceCreated = invoiceResult.invoice.created as number | undefined;
+        const effectivePeriodStart = 'error' in linePeriod
+          ? (invoiceResult.invoice.period_start as number)
+          : linePeriod.periodStart;
+        const providerPaidAt = invoiceCreated
+          ? new Date(invoiceCreated * 1000).toISOString()
+          : new Date(effectivePeriodStart * 1000).toISOString();
+
+        const { data: renewalConfig } = await svc
+          .from('platform_config_versions')
+          .select('id')
+          .lte('effective_from', providerPaidAt)
+          .order('effective_from', { ascending: false })
+          .limit(1)
+          .single();
+
+        if (renewalConfig) {
+          const { finalizeStripeRenewal } = await import('@/lib/payments/stripe-renewal-finalization');
+          const invoiceId = invoiceResult.invoice.id as string;
+          const paymentIntent = invoiceResult.invoice.payment_intent as string;
+          const result = await finalizeStripeRenewal(svc, {
+            subscriptionId: subId,
+            businessId: sub.business_id as string || '',
+            plan: sub.plan as string || 'growth',
+            providerInvoiceId: invoiceId,
+            providerReference: paymentIntent || invoiceId,
+            amountMinor: invoiceResult.invoice.amount_paid as number,
+            currency: ((invoiceResult.invoice.currency as string) || 'usd').toUpperCase(),
+            periodStart: invPeriodStart,
+            periodEnd: invPeriodEnd,
+            providerPaidAt,
+            configVersionId: renewalConfig.id,
+          });
+
+          if (result.finalized) {
+            await svc.rpc('record_reconciliation_evidence', {
+              p_subscription_id: subId, p_gateway: 'stripe', p_provider_subscription_id: stripeSubId,
+              p_period_boundary: periodEnd, p_outcome: 'paid_finalized',
+              p_source_key: sourceKey,
+              p_evidence_provider_status: stripeSub.status || 'unknown',
+              p_evidence_tx_count: 1, p_evidence_matched_count: 1,
+            });
+            finalized++; return;
+          }
+          logger.error('[CRON:RENEWAL-RECOVERY] Stripe finalization failed', { subId, reason: result.reason });
+        }
+        // Config version missing or finalization failed — unavailable (not terminal)
+        await svc.rpc('record_reconciliation_evidence', {
+          p_subscription_id: subId, p_gateway: 'stripe', p_provider_subscription_id: stripeSubId,
+          p_period_boundary: periodEnd, p_outcome: 'unavailable',
+          p_source_key: sourceKey,
+          p_evidence_provider_status: stripeSub.status || 'unknown',
+        });
+        evidenceRecorded++; return;
+      }
+
+      // No matching invoice found
+      if (providerCancelled && invoiceResult.exhaustive) {
+        // Cancelled + exhaustive search → terminal
         await svc.rpc('record_reconciliation_evidence', {
           p_subscription_id: subId, p_gateway: 'stripe', p_provider_subscription_id: stripeSubId,
           p_period_boundary: periodEnd, p_outcome: 'terminal_no_payment',
-          p_source_key: `renewal_recovery_stripe_${subId}`,
+          p_source_key: sourceKey,
           p_evidence_provider_status: 'canceled',
         });
         evidenceRecorded++;
-      } else {
+      } else if (!providerCancelled) {
         // active/past_due/unpaid/trialing — provider still managing
         await svc.rpc('record_reconciliation_evidence', {
           p_subscription_id: subId, p_gateway: 'stripe', p_provider_subscription_id: stripeSubId,
           p_period_boundary: periodEnd, p_outcome: 'provider_active_or_retrying',
-          p_source_key: `renewal_recovery_stripe_${subId}`,
+          p_source_key: sourceKey,
           p_evidence_provider_status: stripeSub.status || 'active',
+        });
+        evidenceRecorded++;
+      } else {
+        // Cancelled but search was not exhaustive → unavailable
+        await svc.rpc('record_reconciliation_evidence', {
+          p_subscription_id: subId, p_gateway: 'stripe', p_provider_subscription_id: stripeSubId,
+          p_period_boundary: periodEnd, p_outcome: 'unavailable',
+          p_source_key: sourceKey,
+          p_evidence_provider_status: 'canceled',
         });
         evidenceRecorded++;
       }
@@ -255,26 +366,36 @@ export async function GET(request: NextRequest) {
       await svc.rpc('record_reconciliation_evidence', {
         p_subscription_id: subId, p_gateway: 'stripe', p_provider_subscription_id: stripeSubId,
         p_period_boundary: periodEnd, p_outcome: 'unavailable',
-        p_source_key: `renewal_recovery_stripe_${subId}`,
+        p_source_key: sourceKey,
       });
       evidenceRecorded++;
     }
   }
 }
 
-/**
- * Bounded Flutterwave transaction search: GET /v3/transactions with
- * from/to date range and status=successful, filtered by email+currency.
- *
- * Used for renewal recovery when the subscription is cancelled but we
- * need to check if a payment was made in the period window.
- */
-async function searchFlutterwaveBoundedTransactions(
+// ═══════════════════════════════════════════════════════════
+// Flutterwave paginated transaction search
+// ═══════════════════════════════════════════════════════════
+
+interface FlwTxCandidate {
+  id: number;
+  tx_ref: string;
+  amount: number;
+  currency: string;
+  created_at: string;
+}
+
+type FlwSearchResult =
+  | { outcome: 'found'; candidates: FlwTxCandidate[]; exhaustive: boolean }
+  | { outcome: 'search_error' }
+  | { outcome: 'page_cap' };
+
+async function searchFlutterwavePaginatedTransactions(
   email: string,
   currency: string,
   periodEnd: string,
   flwKey: string,
-): Promise<{ id: number; amount: number; currency: string; created_at: string } | null | 'search_error'> {
+): Promise<FlwSearchResult> {
   try {
     const periodEndDate = new Date(periodEnd);
     const fromDate = new Date(periodEndDate.getTime() - 24 * 60 * 60 * 1000); // period_end - 1 day
@@ -283,78 +404,116 @@ async function searchFlutterwaveBoundedTransactions(
     const fromStr = fromDate.toISOString().split('T')[0];
     const toStr = toDate.toISOString().split('T')[0];
 
-    const url = `https://api.flutterwave.com/v3/transactions?from=${fromStr}&to=${toStr}&status=successful&currency=${encodeURIComponent(currency)}&customer_email=${encodeURIComponent(email)}`;
+    const allCandidates: FlwTxCandidate[] = [];
 
-    const res = await fetch(url, {
-      headers: { Authorization: `Bearer ${flwKey}` },
-      signal: AbortSignal.timeout(10000),
-    });
+    for (let page = 1; page <= FLW_TX_PAGE_CAP; page++) {
+      const url = `https://api.flutterwave.com/v3/transactions?customer_email=${encodeURIComponent(email)}&from=${fromStr}&to=${toStr}&status=successful&currency=${encodeURIComponent(currency)}&page=${page}`;
 
-    if (!res.ok) return 'search_error';
+      const res = await fetch(url, {
+        headers: { Authorization: `Bearer ${flwKey}` },
+        signal: AbortSignal.timeout(10000),
+      });
 
-    const data = await res.json() as {
-      status?: string;
-      data?: { id: number; amount: number; currency: string; created_at: string }[];
-    };
-    if (data.status !== 'success' || !data.data) return 'search_error';
+      if (!res.ok) return { outcome: 'search_error' };
 
-    // Return the first successful transaction candidate (caller verifies via correlation)
-    if (data.data.length === 0) return null;
+      const data = await res.json() as {
+        status?: string;
+        data?: { id: number; tx_ref: string; amount: number; currency: string; created_at: string }[];
+      };
+      if (data.status !== 'success' || !data.data) return { outcome: 'search_error' };
 
-    // If multiple candidates, return the most recent
-    return data.data[0];
+      // Empty page = exhausted
+      if (data.data.length === 0) {
+        return { outcome: 'found', candidates: allCandidates, exhaustive: true };
+      }
+
+      for (const tx of data.data) {
+        allCandidates.push({
+          id: tx.id,
+          tx_ref: tx.tx_ref,
+          amount: tx.amount,
+          currency: tx.currency,
+          created_at: tx.created_at,
+        });
+      }
+    }
+
+    // Page cap reached → unavailable
+    return { outcome: 'page_cap' };
   } catch {
-    return 'search_error';
+    return { outcome: 'search_error' };
   }
 }
 
-/**
- * Bounded Stripe invoice search: GET /v1/invoices with subscription filter
- * and status=paid. Returns the first invoice whose period_start >= the
- * subscription's current_period_end (i.e., a renewal for the next period).
- */
-async function searchStripePaidInvoices(
+// ═══════════════════════════════════════════════════════════
+// Stripe exhaustive invoice search with has_more pagination
+// ═══════════════════════════════════════════════════════════
+
+interface StripeInvoiceSearchResult {
+  outcome: 'found' | 'not_found' | 'search_error';
+  invoice?: Record<string, unknown>;
+  exhaustive: boolean;
+}
+
+async function searchStripePaidInvoicesExhaustive(
   stripeSubId: string,
-  periodEnd: string,
+  periodEndUnix: number,
   stripeKey: string,
-): Promise<{
-  id: string;
-  payment_intent: string;
-  amount_paid: number;
-  currency: string;
-  period_start: number;
-  period_end: number;
-  created: number;
-} | null | 'search_error'> {
+): Promise<StripeInvoiceSearchResult> {
   try {
-    const periodEndUnix = Math.floor(new Date(periodEnd).getTime() / 1000);
+    let startingAfter: string | null = null;
+    let exhaustive = false;
 
-    const url = `https://api.stripe.com/v1/invoices?subscription=${encodeURIComponent(stripeSubId)}&status=paid&limit=10`;
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      let url = `https://api.stripe.com/v1/invoices?subscription=${encodeURIComponent(stripeSubId)}&status=paid&limit=100`;
+      if (startingAfter) {
+        url += `&starting_after=${encodeURIComponent(startingAfter)}`;
+      }
 
-    const res = await fetch(url, {
-      headers: { Authorization: `Bearer ${stripeKey}` },
-      signal: AbortSignal.timeout(10000),
-    });
+      const res = await fetch(url, {
+        headers: { Authorization: `Bearer ${stripeKey}` },
+        signal: AbortSignal.timeout(10000),
+      });
 
-    if (!res.ok) return 'search_error';
+      if (!res.ok) return { outcome: 'search_error', exhaustive: false };
 
-    const data = await res.json() as {
-      data?: {
-        id: string;
-        payment_intent: string;
-        amount_paid: number;
-        currency: string;
-        period_start: number;
-        period_end: number;
-        created: number;
-      }[];
-    };
-    if (!data.data) return 'search_error';
+      const data = await res.json() as {
+        data?: Array<Record<string, unknown>>;
+        has_more?: boolean;
+      };
+      if (!data.data) return { outcome: 'search_error', exhaustive: false };
 
-    // Find an invoice with period_start >= current_period_end (renewal for next period)
-    const renewalInvoice = data.data.find(inv => inv.period_start >= periodEndUnix);
-    return renewalInvoice || null;
+      // Use extractSubscriptionLinePeriod for each invoice to find matching period
+      const { extractSubscriptionLinePeriod } = await import('@/lib/payments/stripe-invoice-extractors');
+
+      for (const inv of data.data) {
+        // Try line-item period extraction first, fall back to top-level
+        const linePeriod = extractSubscriptionLinePeriod(inv, stripeSubId);
+        let invPeriodStart: number;
+        if ('error' in linePeriod) {
+          invPeriodStart = (inv.period_start as number) || 0;
+        } else {
+          invPeriodStart = linePeriod.periodStart;
+        }
+
+        // Find invoice whose period starts at or after the subscription's current_period_end
+        if (invPeriodStart >= periodEndUnix) {
+          return { outcome: 'found', invoice: inv, exhaustive: true };
+        }
+      }
+
+      if (!data.has_more || data.data.length === 0) {
+        exhaustive = true;
+        break;
+      }
+
+      // Paginate: use last invoice ID as starting_after
+      startingAfter = data.data[data.data.length - 1].id as string;
+    }
+
+    return { outcome: 'not_found', exhaustive };
   } catch {
-    return 'search_error';
+    return { outcome: 'search_error', exhaustive: false };
   }
 }

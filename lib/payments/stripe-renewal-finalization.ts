@@ -39,7 +39,7 @@ export async function finalizeStripeRenewal(
     amount: params.amountMinor,
     currency: params.currency.toUpperCase(),
     gateway: 'stripe',
-    gateway_reference: params.providerReference,
+    gateway_reference: params.providerInvoiceId,
     provider_reference: params.providerReference,
     plan: params.plan,
     action: 'renewal',
