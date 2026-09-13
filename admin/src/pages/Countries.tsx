@@ -624,32 +624,8 @@ export default function Countries() {
   );
 }
 
-/** API base URL — admin panel talks to the main Next.js app */
-/** Canonical Admin API base — uses VITE_API_URL per admin/.env.example.
- * Never silently falls back to production in Preview/Staging.
- * Local dev (localhost:3000) is the only implicit fallback. */
-function getAdminApiBase(): string {
-  const configured = import.meta.env.VITE_API_URL;
-  if (configured) return configured;
-  // Local dev: Vite dev server on 8083, Next.js on 3000
-  if (typeof window !== 'undefined' && window.location.hostname === 'localhost') {
-    return 'http://localhost:3000';
-  }
-  throw new Error('VITE_API_URL is not configured. Set it in your .env file.');
-}
-
-/** Authenticated fetch to main-app Admin API. Attaches Bearer token. */
-async function adminApiFetch(path: string, body: Record<string, unknown>): Promise<Response> {
-  const base = getAdminApiBase();
-  const { data: session } = await supabase.auth.getSession();
-  const token = session?.session?.access_token;
-  if (!token) throw new Error('Not authenticated — please sign in again.');
-  return fetch(`${base}${path}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-    body: JSON.stringify(body),
-  });
-}
+// Admin API helpers imported from canonical lib
+import { adminApiFetch } from '@/lib/adminApi';
 
 function ProviderConfigPanel({ countries, canMutate, onSaved }: { countries: CountryRow[]; canMutate: boolean; onSaved: () => Promise<void> }) {
   const [selectedCode, setSelectedCode] = useState('');
