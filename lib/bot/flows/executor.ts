@@ -14,6 +14,8 @@ import { loadOverrides, evaluateBranchConditions, type StepOverride } from '@/li
 import { logger } from '@/lib/logger';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 import { logDropoff } from '@/lib/bot/flow-analytics';
+import { FlowExecutionCollector, createScopedSender, generateExecutionId } from './instrumentation';
+import { flushExecutionAnalytics } from './analytics-flush';
 
 export class FlowExecutor {
   private currentBusinessId: string | null = null;
@@ -65,6 +67,17 @@ export class FlowExecutor {
       ? this.capabilityToFlowType(activeCap)
       : (business?.flow_type || 'scheduling');
     const stepId = session.current_step;
+
+    // #267: Per-execution instrumentation collector (in-memory, no DB I/O yet)
+    const executionId = generateExecutionId();
+    const instrumentBusinessId = business?.id || session.business_id || '';
+    const collector = new FlowExecutionCollector(executionId, instrumentBusinessId);
+    collector.freezeContext(flowType, stepId, activeCap || null);
+
+    // #267: Track whether execution reached a terminal state
+    let executionReachedTerminal = false;
+
+    try { // #267: try/finally for instrumentation flush
 
     // CAS-007: Verify active_capability is authorized (in session's effective set).
     // Prevents defective/pre-filled session state from starting an unauthorized flow.
@@ -198,9 +211,11 @@ export class FlowExecutor {
     // Build flow context (no DB calls — synchronous)
     // ctx.t reads _detected_language at call time so a mid-execute language switch
     // (e.g. "switch to french") is immediately reflected in the re-prompt.
+    // #267: Wrap sender with scoped instrumentation proxy (records invocations, no behavior change)
+    const scopedSender = createScopedSender(this.sender as unknown as Record<string, unknown>, collector) as unknown as typeof this.sender;
     const ctx: FlowContext = {
       supabase: this.supabase,
-      sender: this.sender,
+      sender: scopedSender,
       standalone: this.standalone,
       intelligence: this.intelligence,
       from,
@@ -268,6 +283,7 @@ export class FlowExecutor {
         _fmark('meta_send');
       }
       logger.info('[EXECUTOR-PERF] timings_ms', _ftimings);
+      executionReachedTerminal = true; // #267: prompt shown
       return;
     }
 
@@ -578,6 +594,7 @@ export class FlowExecutor {
       // Send responses AFTER successful persistence
       if (errText) await this.sendText(from, errText);
       if (hasInteractive) await this.sendMessages(from, retryMessages, undefined, translationCtx);
+      executionReachedTerminal = true; // #267: validation error handled
       return;
     }
 
@@ -610,6 +627,7 @@ export class FlowExecutor {
     if (nextStepId) {
       await this.advanceToStep(session, nextStepId, from, ctx, translationCtx);
       _fmark('advance_done');
+      executionReachedTerminal = true; // #267: advanced to next step
       logger.info('[EXECUTOR-PERF] timings_ms', _ftimings);
     } else {
       // Flow complete — persist log before deactivating
@@ -634,6 +652,19 @@ export class FlowExecutor {
         await this.deactivateSession(session.id);
         logDropoff(this.supabase, { businessId: session.business_id || undefined, flowType, stepId, reason: 'cancelled', capability: sd.active_capability as string });
       }
+      executionReachedTerminal = true; // #267: flow completed or cancelled
+    }
+
+    } finally { // #267: Instrumentation flush — off critical path, never throws
+      if (executionReachedTerminal) {
+        collector.markComplete();
+      } else {
+        collector.markIncomplete();
+      }
+      // Non-blocking flush: caught errors logged, never thrown to caller
+      flushExecutionAnalytics(collector, this.supabase).catch(err =>
+        logger.warn('[FLOW-ANALYTICS] Background flush failed', { error: String(err) })
+      );
     }
   }
 

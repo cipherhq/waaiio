@@ -3,6 +3,28 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-09-12 — #267 Bot Flow Message Instrumentation
+
+### What changed
+- **In-memory collector.** `FlowExecutionCollector` counts customer-facing bot-flow messages per execution with flow/step/capability attribution. No DB I/O during the execution path.
+- **Scoped sender proxy.** `createScopedSender` wraps the MessageSender with a Proxy that records logical send invocations (resolved/failure/error) without modifying behavior.
+- **M382 migration.** Two new tables: `flow_execution_summaries` (execution-level totals) and `flow_execution_aggregates` (per-flow+step+type breakdowns). RLS: service-only writes, tenant-scoped + admin reads.
+- **Atomic flush.** `flushExecutionAnalytics` persists summary + aggregates in one bounded batch after execution completes. Off critical path, errors caught and logged.
+- **Executor wiring.** Minimal changes to `executor.ts`: collector created at execute() start, sender wrapped via scoped proxy, try/finally flushes after completion.
+- **23 unit tests + 12 DB tests.** Covers collector lifecycle, context freezing, outcome counting, aggregate dedup, scoped sender proxy, flush logic, and multi-step scenarios.
+
+### Files changed
+- `lib/bot/flows/instrumentation.ts` — NEW: collector + scoped sender + execution ID generator
+- `lib/bot/flows/analytics-flush.ts` — NEW: atomic flush to DB
+- `lib/bot/flows/executor.ts` — wired instrumentation (imports, collector, scoped sender, try/finally flush)
+- `supabase/migrations/382_flow_execution_analytics.sql` — NEW: M382 schema
+- `lib/bot/flows/__tests__/instrumentation.test.ts` — NEW: 23 unit tests (V2-T01 through V2-T08)
+- `lib/bot/flows/__tests__/analytics-db.test.ts` — NEW: 12 DB tests (V2-T11, V2-T12)
+
+### What could break
+- If a flow step accesses `ctx.sender` and checks its identity (e.g. `instanceof`), the Proxy wrapper could cause issues. Mitigated: Proxy is transparent — all methods pass through.
+- The executor try/finally adds minimal overhead. If an exception occurs between try-open and the first return, the flush runs with an empty collector (harmless).
+
 ## 2026-09-12 — #315 Phase 3C Blockers 1-5
 
 ### What changed
