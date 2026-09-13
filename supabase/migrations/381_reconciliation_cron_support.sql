@@ -199,7 +199,7 @@ BEGIN
     s2.flutterwave_subscription_id, s2.flutterwave_subscriber_email,
     s2.flutterwave_plan_id, s2.stripe_subscription_id,
     s2.currency, s2.amount, s2.billing_config_version_id,
-    s2.business_id, s2.plan;
+    s2.business_id, s2.plan::TEXT;
 END;
 $$;
 
