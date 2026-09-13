@@ -883,4 +883,746 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
     psql(`DELETE FROM subscription_checkout_intents WHERE business_id='${renBizId}'::uuid;`);
     psql(`DELETE FROM businesses WHERE id='${renBizId}'::uuid;`);
   }, 15000);
+
+  // ══════════════════════════════════════════════════════════
+  // M380: Reconciliation Authority — Stale Terminalization
+  // ══════════════════════════════════════════════════════════
+
+  it('40. terminalize recent pending (within timeout) returns not_stale', () => {
+    const ver = currentVersion();
+    const r = psql(`SELECT intent_id FROM claim_checkout_initialization('${testBizId}'::uuid, 'growth', 'flutterwave', 'NGN', 14999, '243206', '${ver}'::uuid, 't40@m380.com', 30, '${testUserId}'::uuid);`);
+    const intentId = r.split('|')[0];
+    // Set provider_timeout_not_before to 1 hour in the future (not stale)
+    psql(`UPDATE subscription_checkout_intents SET provider_timeout_not_before = clock_timestamp() + interval '1 hour' WHERE id = '${intentId}'::uuid;`);
+
+    const result = psql(`SELECT terminalize_stale_checkout_intent('${intentId}'::uuid);`);
+    expect(result).toContain('not_stale');
+    expect(psql(`SELECT status FROM subscription_checkout_intents WHERE id='${intentId}'::uuid;`)).toBe('pending');
+
+    psql(`DELETE FROM subscription_checkout_intents WHERE id='${intentId}'::uuid;`);
+  });
+
+  it('41. terminalize stale pending (past provider_timeout_not_before) succeeds', () => {
+    const ver = currentVersion();
+    const r = psql(`SELECT intent_id FROM claim_checkout_initialization('${testBizId}'::uuid, 'growth', 'flutterwave', 'NGN', 14999, '243206', '${ver}'::uuid, 't41@m380.com', 30, '${testUserId}'::uuid);`);
+    const intentId = r.split('|')[0];
+    // Set provider_timeout_not_before to 1 hour in the past (stale)
+    psql(`UPDATE subscription_checkout_intents SET provider_timeout_not_before = clock_timestamp() - interval '1 hour' WHERE id = '${intentId}'::uuid;`);
+
+    const result = psql(`SELECT terminalize_stale_checkout_intent('${intentId}'::uuid);`);
+    expect(result).toContain('"terminalized": true');
+    expect(psql(`SELECT status FROM subscription_checkout_intents WHERE id='${intentId}'::uuid;`)).toBe('failed');
+
+    psql(`DELETE FROM subscription_checkout_intents WHERE id='${intentId}'::uuid;`);
+  });
+
+  it('42. terminalize stale pending (no provider response, past 2x session duration) succeeds', () => {
+    const ver = currentVersion();
+    const r = psql(`SELECT intent_id FROM claim_checkout_initialization('${testBizId}'::uuid, 'growth', 'flutterwave', 'NGN', 14999, '243206', '${ver}'::uuid, 't42@m380.com', 30, '${testUserId}'::uuid);`);
+    const intentId = r.split('|')[0];
+    // No provider response — set created_at to 2 hours ago (session=30min, 2x=60min, well past)
+    psql(`UPDATE subscription_checkout_intents SET provider_timeout_not_before = NULL, created_at = clock_timestamp() - interval '2 hours' WHERE id = '${intentId}'::uuid;`);
+
+    const result = psql(`SELECT terminalize_stale_checkout_intent('${intentId}'::uuid);`);
+    expect(result).toContain('"terminalized": true');
+    expect(psql(`SELECT status FROM subscription_checkout_intents WHERE id='${intentId}'::uuid;`)).toBe('failed');
+
+    psql(`DELETE FROM subscription_checkout_intents WHERE id='${intentId}'::uuid;`);
+  });
+
+  it('43. terminalize already completed intent returns already_completed, zero mutation', () => {
+    const ver = currentVersion();
+    const r = psql(`SELECT intent_id FROM claim_checkout_initialization('${testBizId}'::uuid, 'growth', 'flutterwave', 'NGN', 14999, '243206', '${ver}'::uuid, 't43@m380.com', 30, '${testUserId}'::uuid);`);
+    const intentId = r.split('|')[0];
+    psql(`UPDATE subscription_checkout_intents SET status = 'completed' WHERE id = '${intentId}'::uuid;`);
+
+    const result = psql(`SELECT terminalize_stale_checkout_intent('${intentId}'::uuid);`);
+    expect(result).toContain('already_completed');
+    expect(psql(`SELECT status FROM subscription_checkout_intents WHERE id='${intentId}'::uuid;`)).toBe('completed');
+
+    psql(`DELETE FROM subscription_checkout_intents WHERE id='${intentId}'::uuid;`);
+  });
+
+  it('44. terminalize already failed intent returns already_failed', () => {
+    const ver = currentVersion();
+    const r = psql(`SELECT intent_id FROM claim_checkout_initialization('${testBizId}'::uuid, 'growth', 'flutterwave', 'NGN', 14999, '243206', '${ver}'::uuid, 't44@m380.com', 30, '${testUserId}'::uuid);`);
+    const intentId = r.split('|')[0];
+    psql(`UPDATE subscription_checkout_intents SET status = 'failed' WHERE id = '${intentId}'::uuid;`);
+
+    const result = psql(`SELECT terminalize_stale_checkout_intent('${intentId}'::uuid);`);
+    expect(result).toContain('already_failed');
+
+    psql(`DELETE FROM subscription_checkout_intents WHERE id='${intentId}'::uuid;`);
+  });
+
+  it('45. terminalize not found intent returns not_found', () => {
+    const fakeId = psql(`SELECT gen_random_uuid()::text;`);
+    const result = psql(`SELECT terminalize_stale_checkout_intent('${fakeId}'::uuid);`);
+    expect(result).toContain('not_found');
+  });
+
+  it('46. no replacement intent created after terminalization', () => {
+    const ver = currentVersion();
+    const r = psql(`SELECT intent_id FROM claim_checkout_initialization('${testBizId}'::uuid, 'growth', 'flutterwave', 'NGN', 14999, '243206', '${ver}'::uuid, 't46@m380.com', 30, '${testUserId}'::uuid);`);
+    const intentId = r.split('|')[0];
+    psql(`UPDATE subscription_checkout_intents SET provider_timeout_not_before = clock_timestamp() - interval '1 hour' WHERE id = '${intentId}'::uuid;`);
+
+    psql(`SELECT terminalize_stale_checkout_intent('${intentId}'::uuid);`);
+
+    // Count all intents for this business+plan — should be exactly 1 (the failed one), no replacement
+    const count = psql(`SELECT count(*) FROM subscription_checkout_intents WHERE business_id='${testBizId}'::uuid AND plan='growth' AND gateway='flutterwave' AND created_at >= clock_timestamp() - interval '1 minute';`);
+    // Only the original (now failed) intent exists; no new pending replacement
+    const pendingCount = psql(`SELECT count(*) FROM subscription_checkout_intents WHERE business_id='${testBizId}'::uuid AND plan='growth' AND gateway='flutterwave' AND status='pending';`);
+    expect(pendingCount).toBe('0');
+
+    psql(`DELETE FROM subscription_checkout_intents WHERE id='${intentId}'::uuid;`);
+  });
+
+  it('47. TRUE CONCURRENT: two terminalizers on same stale intent — one true, one already_failed', async () => {
+    const ver = currentVersion();
+    const concBizId = psql(`
+      INSERT INTO businesses (id, name, slug, owner_id, country_code, category, address, city, neighborhood, phone)
+      VALUES (gen_random_uuid(), 'ConcTerm', 'conc-term-${Date.now()}', '${testUserId}', 'NG', 'restaurant', '400 ConcTerm St', 'Lagos', 'VI', '+2348077770047')
+      RETURNING id::text;
+    `);
+    const r = psql(`SELECT intent_id FROM claim_checkout_initialization('${concBizId}'::uuid, 'growth', 'flutterwave', 'NGN', 14999, '243206', '${ver}'::uuid, 't47@m380.com', 30, '${testUserId}'::uuid);`);
+    const intentId = r.split('|')[0];
+    psql(`UPDATE subscription_checkout_intents SET provider_timeout_not_before = clock_timestamp() - interval '1 hour' WHERE id = '${intentId}'::uuid;`);
+
+    const bt = setupBarrierTable();
+    const termOp = `SELECT terminalize_stale_checkout_intent('${intentId}'::uuid);`;
+    const [s1, s2] = await Promise.all([
+      psqlAsync(barrieredSql(bt, 'A', 2, termOp)),
+      psqlAsync(barrieredSql(bt, 'B', 2, termOp)),
+    ]);
+
+    expect(s1.ok).toBe(true);
+    expect(s2.ok).toBe(true);
+
+    const results = [s1.result, s2.result];
+    const terminated = results.filter(r => r.includes('"terminalized": true'));
+    const alreadyFailed = results.filter(r => r.includes('already_failed'));
+    expect(terminated.length).toBe(1);
+    expect(alreadyFailed.length).toBe(1);
+
+    expect(psql(`SELECT status FROM subscription_checkout_intents WHERE id='${intentId}'::uuid;`)).toBe('failed');
+
+    teardownBarrierTable(bt);
+    psql(`DELETE FROM subscription_checkout_intents WHERE business_id='${concBizId}'::uuid;`);
+    psql(`DELETE FROM businesses WHERE id='${concBizId}'::uuid;`);
+  }, 15000);
+
+  // ══════════════════════════════════════════════════════════
+  // M380: Provider-Neutral Cancellation (5-arg)
+  // ══════════════════════════════════════════════════════════
+
+  it('48. FLW cancellation with correct provider sub ID succeeds', () => {
+    const subId = psql(`
+      INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
+        billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
+      VALUES (gen_random_uuid(), '${testBizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+        '${currentVersion()}'::uuid, 'flw_sub_t48', clock_timestamp(), clock_timestamp() + interval '30 days')
+      RETURNING id::text;
+    `);
+    const result = psql(`SELECT finalize_subscription_cancellation('${subId}'::uuid, 'flutterwave', 'flw_sub_t48', 'evt_t48_cancel', 'provider_cancelled');`);
+    expect(result).toContain('"cancelled": true');
+    expect(psql(`SELECT status FROM subscriptions WHERE id='${subId}'::uuid;`)).toBe('cancelled');
+
+    // Verify event consumed
+    expect(psql(`SELECT count(*) FROM processed_webhook_events WHERE event_id = 'flutterwave:cancel:evt_t48_cancel';`)).toBe('1');
+
+    psql(`DELETE FROM processed_webhook_events WHERE event_id = 'flutterwave:cancel:evt_t48_cancel';`);
+    psql(`DELETE FROM subscriptions WHERE id='${subId}'::uuid;`);
+  });
+
+  it('49. Stripe cancellation with correct provider sub ID succeeds', () => {
+    const stripeBizId = psql(`
+      INSERT INTO businesses (id, name, slug, owner_id, country_code, category, address, city, neighborhood, phone)
+      VALUES (gen_random_uuid(), 'StripeCancel', 'stripe-cancel-${Date.now()}', '${testUserId}', 'US', 'restaurant', '500 Stripe St', 'NYC', 'Manhattan', '+12125551234')
+      RETURNING id::text;
+    `);
+    const subId = psql(`
+      INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
+        billing_config_version_id, stripe_subscription_id, current_period_start, current_period_end)
+      VALUES (gen_random_uuid(), '${stripeBizId}', 'growth', 'active', 'stripe', 'USD', 1999, 'month',
+        '${currentVersion()}'::uuid, 'sub_stripe_t49', clock_timestamp(), clock_timestamp() + interval '30 days')
+      RETURNING id::text;
+    `);
+    const result = psql(`SELECT finalize_subscription_cancellation('${subId}'::uuid, 'stripe', 'sub_stripe_t49', 'evt_t49_cancel', 'provider_cancelled');`);
+    expect(result).toContain('"cancelled": true');
+    expect(psql(`SELECT status FROM subscriptions WHERE id='${subId}'::uuid;`)).toBe('cancelled');
+
+    psql(`DELETE FROM processed_webhook_events WHERE event_id = 'stripe:cancel:evt_t49_cancel';`);
+    psql(`DELETE FROM subscriptions WHERE id='${subId}'::uuid;`);
+    psql(`DELETE FROM businesses WHERE id='${stripeBizId}'::uuid;`);
+  });
+
+  it('50. same provider+event replay returns already_processed', () => {
+    const subId = psql(`
+      INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
+        billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
+      VALUES (gen_random_uuid(), '${testBizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+        '${currentVersion()}'::uuid, 'flw_sub_t50', clock_timestamp(), clock_timestamp() + interval '30 days')
+      RETURNING id::text;
+    `);
+    // First call
+    psql(`SELECT finalize_subscription_cancellation('${subId}'::uuid, 'flutterwave', 'flw_sub_t50', 'evt_t50_replay', 'provider_cancelled');`);
+    // Replay
+    const result = psql(`SELECT finalize_subscription_cancellation('${subId}'::uuid, 'flutterwave', 'flw_sub_t50', 'evt_t50_replay', 'provider_cancelled');`);
+    expect(result).toContain('already_processed');
+
+    psql(`DELETE FROM processed_webhook_events WHERE event_id = 'flutterwave:cancel:evt_t50_replay';`);
+    psql(`DELETE FROM subscriptions WHERE id='${subId}'::uuid;`);
+  });
+
+  it('51. same raw event ID across FLW+Stripe both succeed (different composite keys)', () => {
+    const flwSubId = psql(`
+      INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
+        billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
+      VALUES (gen_random_uuid(), '${testBizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+        '${currentVersion()}'::uuid, 'flw_sub_t51', clock_timestamp(), clock_timestamp() + interval '30 days')
+      RETURNING id::text;
+    `);
+    const stripeBizId = psql(`
+      INSERT INTO businesses (id, name, slug, owner_id, country_code, category, address, city, neighborhood, phone)
+      VALUES (gen_random_uuid(), 'XGwCancel', 'xgw-cancel-${Date.now()}', '${testUserId}', 'US', 'restaurant', '51 XGW St', 'NYC', 'Manhattan', '+12125551251')
+      RETURNING id::text;
+    `);
+    const stripeSubId = psql(`
+      INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
+        billing_config_version_id, stripe_subscription_id, current_period_start, current_period_end)
+      VALUES (gen_random_uuid(), '${stripeBizId}', 'growth', 'active', 'stripe', 'USD', 1999, 'month',
+        '${currentVersion()}'::uuid, 'sub_stripe_t51', clock_timestamp(), clock_timestamp() + interval '30 days')
+      RETURNING id::text;
+    `);
+
+    // Same raw event ID but different gateways => different composite event_id
+    const r1 = psql(`SELECT finalize_subscription_cancellation('${flwSubId}'::uuid, 'flutterwave', 'flw_sub_t51', 'shared_evt_51', 'provider_cancelled');`);
+    expect(r1).toContain('"cancelled": true');
+    const r2 = psql(`SELECT finalize_subscription_cancellation('${stripeSubId}'::uuid, 'stripe', 'sub_stripe_t51', 'shared_evt_51', 'provider_cancelled');`);
+    expect(r2).toContain('"cancelled": true');
+
+    psql(`DELETE FROM processed_webhook_events WHERE event_id IN ('flutterwave:cancel:shared_evt_51', 'stripe:cancel:shared_evt_51');`);
+    psql(`DELETE FROM subscriptions WHERE id IN ('${flwSubId}'::uuid, '${stripeSubId}'::uuid);`);
+    psql(`DELETE FROM businesses WHERE id='${stripeBizId}'::uuid;`);
+  });
+
+  it('52. same provider+event against different subscription — second NOT mutated', () => {
+    const sub1Id = psql(`
+      INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
+        billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
+      VALUES (gen_random_uuid(), '${testBizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+        '${currentVersion()}'::uuid, 'flw_sub_t52a', clock_timestamp(), clock_timestamp() + interval '30 days')
+      RETURNING id::text;
+    `);
+    const biz2Id = psql(`
+      INSERT INTO businesses (id, name, slug, owner_id, country_code, category, address, city, neighborhood, phone)
+      VALUES (gen_random_uuid(), 'T52Biz2', 't52biz2-${Date.now()}', '${testUserId}', 'NG', 'restaurant', '52 T52 St', 'Lagos', 'VI', '+2348012345652')
+      RETURNING id::text;
+    `);
+    const sub2Id = psql(`
+      INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
+        billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
+      VALUES (gen_random_uuid(), '${biz2Id}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+        '${currentVersion()}'::uuid, 'flw_sub_t52b', clock_timestamp(), clock_timestamp() + interval '30 days')
+      RETURNING id::text;
+    `);
+
+    // First cancellation succeeds, consuming event
+    psql(`SELECT finalize_subscription_cancellation('${sub1Id}'::uuid, 'flutterwave', 'flw_sub_t52a', 'evt_t52_shared', 'provider_cancelled');`);
+    expect(psql(`SELECT status FROM subscriptions WHERE id='${sub1Id}'::uuid;`)).toBe('cancelled');
+
+    // Second cancellation with same event — already_processed, sub2 NOT cancelled
+    const r2 = psql(`SELECT finalize_subscription_cancellation('${sub2Id}'::uuid, 'flutterwave', 'flw_sub_t52b', 'evt_t52_shared', 'provider_cancelled');`);
+    expect(r2).toContain('already_processed');
+    expect(psql(`SELECT status FROM subscriptions WHERE id='${sub2Id}'::uuid;`)).toBe('active');
+
+    psql(`DELETE FROM processed_webhook_events WHERE event_id = 'flutterwave:cancel:evt_t52_shared';`);
+    psql(`DELETE FROM subscriptions WHERE id IN ('${sub1Id}'::uuid, '${sub2Id}'::uuid);`);
+    psql(`DELETE FROM businesses WHERE id='${biz2Id}'::uuid;`);
+  });
+
+  it('53. already cancelled subscription returns already_cancelled, event NOT consumed', () => {
+    const subId = psql(`
+      INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
+        billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end, cancelled_at)
+      VALUES (gen_random_uuid(), '${testBizId}', 'growth', 'cancelled', 'flutterwave', 'NGN', 14999, 'month',
+        '${currentVersion()}'::uuid, 'flw_sub_t53', clock_timestamp(), clock_timestamp() + interval '30 days', clock_timestamp())
+      RETURNING id::text;
+    `);
+    const result = psql(`SELECT finalize_subscription_cancellation('${subId}'::uuid, 'flutterwave', 'flw_sub_t53', 'evt_t53_nocons', 'provider_cancelled');`);
+    expect(result).toContain('already_cancelled');
+    // Event NOT consumed
+    expect(psql(`SELECT count(*) FROM processed_webhook_events WHERE event_id = 'flutterwave:cancel:evt_t53_nocons';`)).toBe('0');
+
+    psql(`DELETE FROM subscriptions WHERE id='${subId}'::uuid;`);
+  });
+
+  it('54. invalid gateway (paystack) raises exception', () => {
+    const subId = psql(`
+      INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
+        billing_config_version_id, current_period_start, current_period_end)
+      VALUES (gen_random_uuid(), '${testBizId}', 'growth', 'active', 'paystack', 'NGN', 14999, 'month',
+        '${currentVersion()}'::uuid, clock_timestamp(), clock_timestamp() + interval '30 days')
+      RETURNING id::text;
+    `);
+    const result = psqlMayFail(`SELECT finalize_subscription_cancellation('${subId}'::uuid, 'paystack', 'ps_sub_t54', 'evt_t54', 'provider_cancelled');`);
+    expect(result).toContain('unsupported gateway');
+
+    psql(`DELETE FROM subscriptions WHERE id='${subId}'::uuid;`);
+  });
+
+  it('55. NULL event ID raises exception', () => {
+    const subId = psql(`
+      INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
+        billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
+      VALUES (gen_random_uuid(), '${testBizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+        '${currentVersion()}'::uuid, 'flw_sub_t55', clock_timestamp(), clock_timestamp() + interval '30 days')
+      RETURNING id::text;
+    `);
+    const result = psqlMayFail(`SELECT finalize_subscription_cancellation('${subId}'::uuid, 'flutterwave', 'flw_sub_t55', NULL, 'provider_cancelled');`);
+    expect(result).toContain('must not be NULL or empty');
+
+    psql(`DELETE FROM subscriptions WHERE id='${subId}'::uuid;`);
+  });
+
+  it('56. empty event ID raises exception', () => {
+    const subId = psql(`
+      INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
+        billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
+      VALUES (gen_random_uuid(), '${testBizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+        '${currentVersion()}'::uuid, 'flw_sub_t56', clock_timestamp(), clock_timestamp() + interval '30 days')
+      RETURNING id::text;
+    `);
+    const result = psqlMayFail(`SELECT finalize_subscription_cancellation('${subId}'::uuid, 'flutterwave', 'flw_sub_t56', '   ', 'provider_cancelled');`);
+    expect(result).toContain('must not be NULL or empty');
+
+    psql(`DELETE FROM subscriptions WHERE id='${subId}'::uuid;`);
+  });
+
+  it('57. gateway mismatch returns gateway_mismatch, event NOT consumed', () => {
+    const subId = psql(`
+      INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
+        billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
+      VALUES (gen_random_uuid(), '${testBizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+        '${currentVersion()}'::uuid, 'flw_sub_t57', clock_timestamp(), clock_timestamp() + interval '30 days')
+      RETURNING id::text;
+    `);
+    // Try to cancel with stripe gateway but sub is flutterwave
+    const result = psql(`SELECT finalize_subscription_cancellation('${subId}'::uuid, 'stripe', 'flw_sub_t57', 'evt_t57', 'provider_cancelled');`);
+    expect(result).toContain('gateway_mismatch');
+    expect(psql(`SELECT status FROM subscriptions WHERE id='${subId}'::uuid;`)).toBe('active');
+    // Event NOT consumed
+    expect(psql(`SELECT count(*) FROM processed_webhook_events WHERE event_id = 'stripe:cancel:evt_t57';`)).toBe('0');
+
+    psql(`DELETE FROM subscriptions WHERE id='${subId}'::uuid;`);
+  });
+
+  it('58. wrong provider subscription ID returns provider_subscription_mismatch, event NOT consumed', () => {
+    const subId = psql(`
+      INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
+        billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
+      VALUES (gen_random_uuid(), '${testBizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+        '${currentVersion()}'::uuid, 'flw_sub_t58_real', clock_timestamp(), clock_timestamp() + interval '30 days')
+      RETURNING id::text;
+    `);
+    const result = psql(`SELECT finalize_subscription_cancellation('${subId}'::uuid, 'flutterwave', 'flw_sub_t58_WRONG', 'evt_t58', 'provider_cancelled');`);
+    expect(result).toContain('provider_subscription_mismatch');
+    expect(psql(`SELECT status FROM subscriptions WHERE id='${subId}'::uuid;`)).toBe('active');
+    expect(psql(`SELECT count(*) FROM processed_webhook_events WHERE event_id = 'flutterwave:cancel:evt_t58';`)).toBe('0');
+
+    psql(`DELETE FROM subscriptions WHERE id='${subId}'::uuid;`);
+  });
+
+  it('59. same gateway different provider sub ID cannot cross-cancel', () => {
+    const sub1Id = psql(`
+      INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
+        billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
+      VALUES (gen_random_uuid(), '${testBizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+        '${currentVersion()}'::uuid, 'flw_sub_t59a', clock_timestamp(), clock_timestamp() + interval '30 days')
+      RETURNING id::text;
+    `);
+    // Try to cancel sub1 with sub2's provider ID
+    const result = psql(`SELECT finalize_subscription_cancellation('${sub1Id}'::uuid, 'flutterwave', 'flw_sub_t59b', 'evt_t59', 'provider_cancelled');`);
+    expect(result).toContain('provider_subscription_mismatch');
+    expect(psql(`SELECT status FROM subscriptions WHERE id='${sub1Id}'::uuid;`)).toBe('active');
+
+    psql(`DELETE FROM subscriptions WHERE id='${sub1Id}'::uuid;`);
+  });
+
+  it('60. TRUE CONCURRENT: two calls same provider+event — exactly one cancelled: true', async () => {
+    const concBizId = psql(`
+      INSERT INTO businesses (id, name, slug, owner_id, country_code, category, address, city, neighborhood, phone)
+      VALUES (gen_random_uuid(), 'ConcCancel', 'conc-cancel-${Date.now()}', '${testUserId}', 'NG', 'restaurant', '600 ConcCancel St', 'Lagos', 'VI', '+2348077770060')
+      RETURNING id::text;
+    `);
+    const subId = psql(`
+      INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
+        billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
+      VALUES (gen_random_uuid(), '${concBizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+        '${currentVersion()}'::uuid, 'flw_sub_t60', clock_timestamp(), clock_timestamp() + interval '30 days')
+      RETURNING id::text;
+    `);
+
+    const bt = setupBarrierTable();
+    const cancelOp = `SELECT finalize_subscription_cancellation('${subId}'::uuid, 'flutterwave', 'flw_sub_t60', 'evt_t60_conc', 'provider_cancelled');`;
+    const [s1, s2] = await Promise.all([
+      psqlAsync(barrieredSql(bt, 'A', 2, cancelOp)),
+      psqlAsync(barrieredSql(bt, 'B', 2, cancelOp)),
+    ]);
+
+    expect(s1.ok).toBe(true);
+    expect(s2.ok).toBe(true);
+
+    const results = [s1.result, s2.result];
+    const cancelled = results.filter(r => r.includes('"cancelled": true'));
+    const notCancelled = results.filter(r => r.includes('already_processed') || r.includes('already_cancelled'));
+    expect(cancelled.length).toBe(1);
+    expect(notCancelled.length).toBe(1);
+
+    expect(psql(`SELECT status FROM subscriptions WHERE id='${subId}'::uuid;`)).toBe('cancelled');
+
+    teardownBarrierTable(bt);
+    psql(`DELETE FROM processed_webhook_events WHERE event_id = 'flutterwave:cancel:evt_t60_conc';`);
+    psql(`DELETE FROM subscriptions WHERE id='${subId}'::uuid;`);
+    psql(`DELETE FROM businesses WHERE id='${concBizId}'::uuid;`);
+  }, 15000);
+
+  // ══════════════════════════════════════════════════════════
+  // M380: Reconciliation Evidence + Writer
+  // ══════════════════════════════════════════════════════════
+
+  it('61. INSERT evidence returns recorded: true, action: created', () => {
+    const subId = psql(`
+      INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
+        billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
+      VALUES (gen_random_uuid(), '${testBizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+        '${currentVersion()}'::uuid, 'flw_sub_t61', clock_timestamp(), clock_timestamp() + interval '30 days')
+      RETURNING id::text;
+    `);
+    const result = psql(`SELECT record_reconciliation_evidence('${subId}'::uuid, 'flutterwave', 'flw_sub_t61', '2026-10-01T00:00:00Z'::timestamptz, 'paid_finalized', 'cron_run_001', 5, 3, 'active', 'reconciliation_cron');`);
+    expect(result).toContain('"recorded": true');
+    expect(result).toContain('"action": "created"');
+
+    psql(`DELETE FROM subscription_reconciliation_evidence WHERE subscription_id='${subId}'::uuid;`);
+    psql(`DELETE FROM subscriptions WHERE id='${subId}'::uuid;`);
+  });
+
+  it('62. duplicate INSERT same key returns recorded: false, no_change', () => {
+    const subId = psql(`
+      INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
+        billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
+      VALUES (gen_random_uuid(), '${testBizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+        '${currentVersion()}'::uuid, 'flw_sub_t62', clock_timestamp(), clock_timestamp() + interval '30 days')
+      RETURNING id::text;
+    `);
+    psql(`SELECT record_reconciliation_evidence('${subId}'::uuid, 'flutterwave', 'flw_sub_t62', '2026-10-01T00:00:00Z'::timestamptz, 'paid_finalized', 'run_001');`);
+    const result = psql(`SELECT record_reconciliation_evidence('${subId}'::uuid, 'flutterwave', 'flw_sub_t62', '2026-10-01T00:00:00Z'::timestamptz, 'paid_finalized', 'run_002');`);
+    expect(result).toContain('"recorded": false');
+    expect(result).toContain('no_change');
+
+    psql(`DELETE FROM subscription_reconciliation_evidence WHERE subscription_id='${subId}'::uuid;`);
+    psql(`DELETE FROM subscriptions WHERE id='${subId}'::uuid;`);
+  });
+
+  it('63. different period creates separate row', () => {
+    const subId = psql(`
+      INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
+        billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
+      VALUES (gen_random_uuid(), '${testBizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+        '${currentVersion()}'::uuid, 'flw_sub_t63', clock_timestamp(), clock_timestamp() + interval '30 days')
+      RETURNING id::text;
+    `);
+    psql(`SELECT record_reconciliation_evidence('${subId}'::uuid, 'flutterwave', 'flw_sub_t63', '2026-10-01T00:00:00Z'::timestamptz, 'paid_finalized', 'run_001');`);
+    const r2 = psql(`SELECT record_reconciliation_evidence('${subId}'::uuid, 'flutterwave', 'flw_sub_t63', '2026-11-01T00:00:00Z'::timestamptz, 'paid_finalized', 'run_002');`);
+    expect(r2).toContain('"action": "created"');
+
+    const count = psql(`SELECT count(*) FROM subscription_reconciliation_evidence WHERE subscription_id='${subId}'::uuid;`);
+    expect(count).toBe('2');
+
+    psql(`DELETE FROM subscription_reconciliation_evidence WHERE subscription_id='${subId}'::uuid;`);
+    psql(`DELETE FROM subscriptions WHERE id='${subId}'::uuid;`);
+  });
+
+  it('64. different gateway creates separate row', () => {
+    const subId = psql(`
+      INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
+        billing_config_version_id, flutterwave_subscription_id, stripe_subscription_id, current_period_start, current_period_end)
+      VALUES (gen_random_uuid(), '${testBizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+        '${currentVersion()}'::uuid, 'flw_sub_t64', 'stripe_sub_t64', clock_timestamp(), clock_timestamp() + interval '30 days')
+      RETURNING id::text;
+    `);
+    psql(`SELECT record_reconciliation_evidence('${subId}'::uuid, 'flutterwave', 'flw_sub_t64', '2026-10-01T00:00:00Z'::timestamptz, 'paid_finalized', 'run_001');`);
+    const r2 = psql(`SELECT record_reconciliation_evidence('${subId}'::uuid, 'stripe', 'stripe_sub_t64', '2026-10-01T00:00:00Z'::timestamptz, 'unavailable', 'run_001');`);
+    expect(r2).toContain('"action": "created"');
+
+    const count = psql(`SELECT count(*) FROM subscription_reconciliation_evidence WHERE subscription_id='${subId}'::uuid;`);
+    expect(count).toBe('2');
+
+    psql(`DELETE FROM subscription_reconciliation_evidence WHERE subscription_id='${subId}'::uuid;`);
+    psql(`DELETE FROM subscriptions WHERE id='${subId}'::uuid;`);
+  });
+
+  it('65. upgrade unavailable to paid_finalized succeeds', () => {
+    const subId = psql(`
+      INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
+        billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
+      VALUES (gen_random_uuid(), '${testBizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+        '${currentVersion()}'::uuid, 'flw_sub_t65', clock_timestamp(), clock_timestamp() + interval '30 days')
+      RETURNING id::text;
+    `);
+    psql(`SELECT record_reconciliation_evidence('${subId}'::uuid, 'flutterwave', 'flw_sub_t65', '2026-10-01T00:00:00Z'::timestamptz, 'unavailable', 'run_001');`);
+    const result = psql(`SELECT record_reconciliation_evidence('${subId}'::uuid, 'flutterwave', 'flw_sub_t65', '2026-10-01T00:00:00Z'::timestamptz, 'paid_finalized', 'run_002', 5, 3);`);
+    expect(result).toContain('"recorded": true');
+    expect(result).toContain('"action": "upgraded"');
+    expect(result).toContain('"from": "unavailable"');
+    expect(result).toContain('"to": "paid_finalized"');
+
+    // Verify the row was actually updated
+    expect(psql(`SELECT outcome FROM subscription_reconciliation_evidence WHERE subscription_id='${subId}'::uuid AND period_boundary = '2026-10-01T00:00:00Z'::timestamptz;`)).toBe('paid_finalized');
+
+    psql(`DELETE FROM subscription_reconciliation_evidence WHERE subscription_id='${subId}'::uuid;`);
+    psql(`DELETE FROM subscriptions WHERE id='${subId}'::uuid;`);
+  });
+
+  it('66. no downgrade paid_finalized to unavailable', () => {
+    const subId = psql(`
+      INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
+        billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
+      VALUES (gen_random_uuid(), '${testBizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+        '${currentVersion()}'::uuid, 'flw_sub_t66', clock_timestamp(), clock_timestamp() + interval '30 days')
+      RETURNING id::text;
+    `);
+    psql(`SELECT record_reconciliation_evidence('${subId}'::uuid, 'flutterwave', 'flw_sub_t66', '2026-10-01T00:00:00Z'::timestamptz, 'paid_finalized', 'run_001');`);
+    const result = psql(`SELECT record_reconciliation_evidence('${subId}'::uuid, 'flutterwave', 'flw_sub_t66', '2026-10-01T00:00:00Z'::timestamptz, 'unavailable', 'run_002');`);
+    expect(result).toContain('no_change');
+
+    expect(psql(`SELECT outcome FROM subscription_reconciliation_evidence WHERE subscription_id='${subId}'::uuid AND period_boundary = '2026-10-01T00:00:00Z'::timestamptz;`)).toBe('paid_finalized');
+
+    psql(`DELETE FROM subscription_reconciliation_evidence WHERE subscription_id='${subId}'::uuid;`);
+    psql(`DELETE FROM subscriptions WHERE id='${subId}'::uuid;`);
+  });
+
+  it('67. no downgrade terminal_no_payment to ambiguous', () => {
+    const subId = psql(`
+      INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
+        billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
+      VALUES (gen_random_uuid(), '${testBizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+        '${currentVersion()}'::uuid, 'flw_sub_t67', clock_timestamp(), clock_timestamp() + interval '30 days')
+      RETURNING id::text;
+    `);
+    psql(`SELECT record_reconciliation_evidence('${subId}'::uuid, 'flutterwave', 'flw_sub_t67', '2026-10-01T00:00:00Z'::timestamptz, 'terminal_no_payment', 'run_001');`);
+    const result = psql(`SELECT record_reconciliation_evidence('${subId}'::uuid, 'flutterwave', 'flw_sub_t67', '2026-10-01T00:00:00Z'::timestamptz, 'ambiguous', 'run_002');`);
+    expect(result).toContain('no_change');
+
+    expect(psql(`SELECT outcome FROM subscription_reconciliation_evidence WHERE subscription_id='${subId}'::uuid AND period_boundary = '2026-10-01T00:00:00Z'::timestamptz;`)).toBe('terminal_no_payment');
+
+    psql(`DELETE FROM subscription_reconciliation_evidence WHERE subscription_id='${subId}'::uuid;`);
+    psql(`DELETE FROM subscriptions WHERE id='${subId}'::uuid;`);
+  });
+
+  it('68. empty source_key raises exception', () => {
+    const subId = psql(`
+      INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
+        billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
+      VALUES (gen_random_uuid(), '${testBizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+        '${currentVersion()}'::uuid, 'flw_sub_t68', clock_timestamp(), clock_timestamp() + interval '30 days')
+      RETURNING id::text;
+    `);
+    const result = psqlMayFail(`SELECT record_reconciliation_evidence('${subId}'::uuid, 'flutterwave', 'flw_sub_t68', '2026-10-01T00:00:00Z'::timestamptz, 'paid_finalized', '');`);
+    expect(result).toContain('source_key must not be empty');
+
+    psql(`DELETE FROM subscriptions WHERE id='${subId}'::uuid;`);
+  });
+
+  it('69. invalid gateway/outcome raises exception', () => {
+    const subId = psql(`
+      INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
+        billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
+      VALUES (gen_random_uuid(), '${testBizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+        '${currentVersion()}'::uuid, 'flw_sub_t69', clock_timestamp(), clock_timestamp() + interval '30 days')
+      RETURNING id::text;
+    `);
+    const r1 = psqlMayFail(`SELECT record_reconciliation_evidence('${subId}'::uuid, 'invalid_gw', 'flw_sub_t69', '2026-10-01T00:00:00Z'::timestamptz, 'paid_finalized', 'run_001');`);
+    expect(r1).toContain('invalid gateway');
+
+    const r2 = psqlMayFail(`SELECT record_reconciliation_evidence('${subId}'::uuid, 'flutterwave', 'flw_sub_t69', '2026-10-01T00:00:00Z'::timestamptz, 'invalid_outcome', 'run_001');`);
+    expect(r2).toContain('invalid outcome');
+
+    psql(`DELETE FROM subscriptions WHERE id='${subId}'::uuid;`);
+  });
+
+  it('70. TRUE CONCURRENT first-write: two sessions, no existing row — one row, strongest outcome', async () => {
+    const subId = psql(`
+      INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
+        billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
+      VALUES (gen_random_uuid(), '${testBizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+        '${currentVersion()}'::uuid, 'flw_sub_t70', clock_timestamp(), clock_timestamp() + interval '30 days')
+      RETURNING id::text;
+    `);
+
+    const bt = setupBarrierTable();
+    const period = '2026-10-15T00:00:00Z';
+    // Session A writes paid_finalized (rank 5), Session B writes unavailable (rank 1)
+    const [s1, s2] = await Promise.all([
+      psqlAsync(barrieredSql(bt, 'A', 2,
+        `SELECT record_reconciliation_evidence('${subId}'::uuid, 'flutterwave', 'flw_sub_t70', '${period}'::timestamptz, 'paid_finalized', 'run_A');`)),
+      psqlAsync(barrieredSql(bt, 'B', 2,
+        `SELECT record_reconciliation_evidence('${subId}'::uuid, 'flutterwave', 'flw_sub_t70', '${period}'::timestamptz, 'unavailable', 'run_B');`)),
+    ]);
+
+    expect(s1.ok).toBe(true);
+    expect(s2.ok).toBe(true);
+
+    // Exactly one row
+    expect(psql(`SELECT count(*) FROM subscription_reconciliation_evidence WHERE subscription_id='${subId}'::uuid AND period_boundary = '${period}'::timestamptz;`)).toBe('1');
+
+    // Strongest outcome wins
+    expect(psql(`SELECT outcome FROM subscription_reconciliation_evidence WHERE subscription_id='${subId}'::uuid AND period_boundary = '${period}'::timestamptz;`)).toBe('paid_finalized');
+
+    teardownBarrierTable(bt);
+    psql(`DELETE FROM subscription_reconciliation_evidence WHERE subscription_id='${subId}'::uuid;`);
+    psql(`DELETE FROM subscriptions WHERE id='${subId}'::uuid;`);
+  }, 15000);
+
+  // ══════════════════════════════════════════════════════════
+  // M380: Expiry Gate (check_reconciliation_authority)
+  // ══════════════════════════════════════════════════════════
+
+  it('71. no evidence returns no_evidence', () => {
+    const subId = psql(`
+      INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
+        billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
+      VALUES (gen_random_uuid(), '${testBizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+        '${currentVersion()}'::uuid, 'flw_sub_t71', clock_timestamp(), clock_timestamp() + interval '30 days')
+      RETURNING id::text;
+    `);
+    const result = psql(`SELECT check_reconciliation_authority('${subId}'::uuid, '2026-10-01T00:00:00Z'::timestamptz);`);
+    expect(result).toBe('no_evidence');
+
+    psql(`DELETE FROM subscriptions WHERE id='${subId}'::uuid;`);
+  });
+
+  it('72. paid_finalized evidence returns paid_finalized', () => {
+    const subId = psql(`
+      INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
+        billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
+      VALUES (gen_random_uuid(), '${testBizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+        '${currentVersion()}'::uuid, 'flw_sub_t72', clock_timestamp(), clock_timestamp() + interval '30 days')
+      RETURNING id::text;
+    `);
+    psql(`SELECT record_reconciliation_evidence('${subId}'::uuid, 'flutterwave', 'flw_sub_t72', '2026-10-01T00:00:00Z'::timestamptz, 'paid_finalized', 'run_001');`);
+    const result = psql(`SELECT check_reconciliation_authority('${subId}'::uuid, '2026-10-01T00:00:00Z'::timestamptz);`);
+    expect(result).toBe('paid_finalized');
+
+    psql(`DELETE FROM subscription_reconciliation_evidence WHERE subscription_id='${subId}'::uuid;`);
+    psql(`DELETE FROM subscriptions WHERE id='${subId}'::uuid;`);
+  });
+
+  it('73. terminal_no_payment evidence returns terminal_no_payment', () => {
+    const subId = psql(`
+      INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
+        billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
+      VALUES (gen_random_uuid(), '${testBizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+        '${currentVersion()}'::uuid, 'flw_sub_t73', clock_timestamp(), clock_timestamp() + interval '30 days')
+      RETURNING id::text;
+    `);
+    psql(`SELECT record_reconciliation_evidence('${subId}'::uuid, 'flutterwave', 'flw_sub_t73', '2026-10-01T00:00:00Z'::timestamptz, 'terminal_no_payment', 'run_001');`);
+    const result = psql(`SELECT check_reconciliation_authority('${subId}'::uuid, '2026-10-01T00:00:00Z'::timestamptz);`);
+    expect(result).toBe('terminal_no_payment');
+
+    psql(`DELETE FROM subscription_reconciliation_evidence WHERE subscription_id='${subId}'::uuid;`);
+    psql(`DELETE FROM subscriptions WHERE id='${subId}'::uuid;`);
+  });
+
+  it('74. provider_active_or_retrying evidence returned as-is', () => {
+    const subId = psql(`
+      INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
+        billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
+      VALUES (gen_random_uuid(), '${testBizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+        '${currentVersion()}'::uuid, 'flw_sub_t74', clock_timestamp(), clock_timestamp() + interval '30 days')
+      RETURNING id::text;
+    `);
+    psql(`SELECT record_reconciliation_evidence('${subId}'::uuid, 'flutterwave', 'flw_sub_t74', '2026-10-01T00:00:00Z'::timestamptz, 'provider_active_or_retrying', 'run_001');`);
+    const result = psql(`SELECT check_reconciliation_authority('${subId}'::uuid, '2026-10-01T00:00:00Z'::timestamptz);`);
+    expect(result).toBe('provider_active_or_retrying');
+
+    psql(`DELETE FROM subscription_reconciliation_evidence WHERE subscription_id='${subId}'::uuid;`);
+    psql(`DELETE FROM subscriptions WHERE id='${subId}'::uuid;`);
+  });
+
+  it('75. unavailable/ambiguous evidence returned as-is', () => {
+    const subId = psql(`
+      INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
+        billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
+      VALUES (gen_random_uuid(), '${testBizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+        '${currentVersion()}'::uuid, 'flw_sub_t75', clock_timestamp(), clock_timestamp() + interval '30 days')
+      RETURNING id::text;
+    `);
+    psql(`SELECT record_reconciliation_evidence('${subId}'::uuid, 'flutterwave', 'flw_sub_t75', '2026-10-01T00:00:00Z'::timestamptz, 'ambiguous', 'run_001');`);
+    expect(psql(`SELECT check_reconciliation_authority('${subId}'::uuid, '2026-10-01T00:00:00Z'::timestamptz);`)).toBe('ambiguous');
+
+    // Verify unavailable too
+    psql(`DELETE FROM subscription_reconciliation_evidence WHERE subscription_id='${subId}'::uuid;`);
+    psql(`SELECT record_reconciliation_evidence('${subId}'::uuid, 'flutterwave', 'flw_sub_t75', '2026-10-01T00:00:00Z'::timestamptz, 'unavailable', 'run_002');`);
+    expect(psql(`SELECT check_reconciliation_authority('${subId}'::uuid, '2026-10-01T00:00:00Z'::timestamptz);`)).toBe('unavailable');
+
+    psql(`DELETE FROM subscription_reconciliation_evidence WHERE subscription_id='${subId}'::uuid;`);
+    psql(`DELETE FROM subscriptions WHERE id='${subId}'::uuid;`);
+  });
+
+  it('76. wrong gateway evidence returns no_evidence', () => {
+    const subId = psql(`
+      INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
+        billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
+      VALUES (gen_random_uuid(), '${testBizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+        '${currentVersion()}'::uuid, 'flw_sub_t76', clock_timestamp(), clock_timestamp() + interval '30 days')
+      RETURNING id::text;
+    `);
+    // Write evidence under stripe gateway (wrong for this subscription)
+    psql(`SELECT record_reconciliation_evidence('${subId}'::uuid, 'stripe', 'stripe_sub_fake', '2026-10-01T00:00:00Z'::timestamptz, 'paid_finalized', 'run_001');`);
+    // check_reconciliation_authority resolves gateway from subscription (flutterwave) and provider_sub_id (flw_sub_t76)
+    // It won't find evidence matching those dimensions
+    const result = psql(`SELECT check_reconciliation_authority('${subId}'::uuid, '2026-10-01T00:00:00Z'::timestamptz);`);
+    expect(result).toBe('no_evidence');
+
+    psql(`DELETE FROM subscription_reconciliation_evidence WHERE subscription_id='${subId}'::uuid;`);
+    psql(`DELETE FROM subscriptions WHERE id='${subId}'::uuid;`);
+  });
+
+  it('77. paystack subscription (no provider sub ID) returns no_evidence (fail-closed)', () => {
+    const subId = psql(`
+      INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
+        billing_config_version_id, current_period_start, current_period_end)
+      VALUES (gen_random_uuid(), '${testBizId}', 'growth', 'active', 'paystack', 'NGN', 14999, 'month',
+        '${currentVersion()}'::uuid, clock_timestamp(), clock_timestamp() + interval '30 days')
+      RETURNING id::text;
+    `);
+    const result = psql(`SELECT check_reconciliation_authority('${subId}'::uuid, '2026-10-01T00:00:00Z'::timestamptz);`);
+    expect(result).toBe('no_evidence');
+
+    psql(`DELETE FROM subscriptions WHERE id='${subId}'::uuid;`);
+  });
+
+  // ══════════════════════════════════════════════════════════
+  // M380: ACL tests
+  // ══════════════════════════════════════════════════════════
+
+  it('78. authenticated denied on terminalize_stale_checkout_intent', () => {
+    const fakeId = psql(`SELECT gen_random_uuid()::text;`);
+    const r = psqlMayFail(`${adminContext(adminId)} SELECT terminalize_stale_checkout_intent('${fakeId}'::uuid); RESET ROLE;`);
+    expect(r).toContain('permission denied');
+  });
+
+  it('79. authenticated denied INSERT on subscription_reconciliation_evidence', () => {
+    const fakeSubId = psql(`SELECT gen_random_uuid()::text;`);
+    const r = psqlMayFail(`${adminContext(adminId)} INSERT INTO subscription_reconciliation_evidence (subscription_id, gateway, provider_subscription_id, period_boundary, outcome, source_key) VALUES ('${fakeSubId}'::uuid, 'flutterwave', 'test', clock_timestamp(), 'paid_finalized', 'test'); RESET ROLE;`);
+    expect(r).toContain('permission denied');
+  });
+
+  it('80. authenticated denied on check_reconciliation_authority', () => {
+    const fakeId = psql(`SELECT gen_random_uuid()::text;`);
+    const r = psqlMayFail(`${adminContext(adminId)} SELECT check_reconciliation_authority('${fakeId}'::uuid, clock_timestamp()); RESET ROLE;`);
+    expect(r).toContain('permission denied');
+  });
 });
