@@ -2094,10 +2094,22 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
     expect(r).toContain('permission denied');
   });
 
-  it('99. TRUE CONCURRENT renewal finalizer vs stale expiry — subscription stays active', async () => {
+  it('99. TRUE CONCURRENT renewal finalizer vs stale expiry — deterministic period_boundary_moved', async () => {
+    // Deterministic lock-contention proof:
+    //
+    // Session A: holds subscription row lock via BEGIN + FOR UPDATE, waits for Session B
+    //   to be blocked on the same lock (proven via pg_stat_activity), then runs the REAL
+    //   renewal finalizer within the same transaction and COMMITs.
+    // Session B: calls expire_subscription_with_authority — blocks on FOR UPDATE until
+    //   A commits, then sees the advanced period → period_boundary_moved.
+    //
+    // This proves:
+    // 1. Both sessions genuinely contend on the subscription row lock
+    // 2. Renewal commits first (deterministic ordering via lock + pg_stat_activity proof)
+    // 3. Expiry returns exactly period_boundary_moved (unconditional)
+
     const bizId = m380Biz('t99');
     const ver = currentVersion();
-    // Create an active subscription with period_end in the past
     const oldPeriodEnd = '2026-07-01T00:00:00Z';
     const subId = psql(`
       INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
@@ -2109,60 +2121,80 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
       RETURNING id::text;
     `);
 
-    // Plant terminal_no_payment evidence so expire has authority
+    // Plant terminal_no_payment evidence so expire has authority for the old period
     psql(`
       INSERT INTO subscription_reconciliation_evidence (subscription_id, gateway, provider_subscription_id, period_boundary, outcome, source_key)
       VALUES ('${subId}'::uuid, 'flutterwave', 'flw_sub_t99', '${oldPeriodEnd}'::timestamptz, 'terminal_no_payment', 'test_t99');
     `);
 
-    // Use real finalize_flutterwave_subscription_renewal vs expire_subscription_with_authority
-    // Both do SELECT ... FOR UPDATE on the subscription row — they serialize at the row lock.
-    //
-    // If renewal wins lock first:
-    //   → advances period, sets status=active, commits → releases lock
-    //   → expiry gets lock → sees current_period_end has moved → returns period_boundary_moved
-    //
-    // If expiry wins lock first:
-    //   → checks period boundary (matches) → checks evidence → expires subscription → commits
-    //   → renewal gets lock → sees status=expired → renewal finalizer does NOT check status,
-    //     it proceeds and sets status=active, advances period → commits
-    //
-    // Either ordering: final state = active + period advanced
-    const barrierName = setupBarrierTable();
-
-    const sessionA = psqlAsync(barrieredSql(barrierName, 'renewal', 2, `
+    // Session A: multi-statement script that holds the lock, waits for B to block, runs renewal, commits
+    // Uses application_name to identify Session B in pg_stat_activity
+    const sessionASql = `
+      BEGIN;
+      SELECT id FROM subscriptions WHERE id = '${subId}'::uuid FOR UPDATE;
+      -- Now we hold the row lock. Wait for Session B to be blocked on it.
+      DO $wait$
+      DECLARE v_attempts INTEGER := 0;
+      BEGIN
+        LOOP
+          EXIT WHEN EXISTS (
+            SELECT 1 FROM pg_stat_activity
+            WHERE application_name = 'test99_expiry'
+              AND wait_event_type = 'Lock'
+              AND state = 'active'
+          );
+          v_attempts := v_attempts + 1;
+          IF v_attempts > 100 THEN
+            RAISE EXCEPTION 'Timeout waiting for expiry session to block on lock';
+          END IF;
+          PERFORM pg_sleep(0.1);
+        END LOOP;
+      END $wait$;
+      -- Session B is proven blocked on the subscription row lock.
+      -- Now run the REAL renewal finalizer within this transaction.
       SELECT finalize_flutterwave_subscription_renewal('${subId}'::uuid, 'tx_t99_renew', 1499900, 'NGN', '2026-07-01T12:00:00Z'::timestamptz);
-    `));
+      COMMIT;
+    `;
 
-    const sessionB = psqlAsync(barrieredSql(barrierName, 'expiry', 2, `
+    // Session B: sets application_name for identification, then calls expiry
+    const sessionBSql = `
+      SET application_name = 'test99_expiry';
       SELECT expire_subscription_with_authority('${subId}'::uuid, '${oldPeriodEnd}'::timestamptz);
-    `));
+    `;
 
-    const [rA, rB] = await Promise.all([sessionA, sessionB]);
+    // Launch both sessions — A holds lock, B blocks on it
+    const [rA, rB] = await Promise.all([
+      psqlAsync(sessionASql),
+      psqlAsync(sessionBSql),
+    ]);
 
-    // Unconditional assertion: regardless of which session won the FOR UPDATE lock,
-    // the final state must be active with an advanced period.
-    const status = psql(`SELECT status FROM subscriptions WHERE id = '${subId}'::uuid;`);
-    expect(status).toBe('active');
+    // Unconditional assertions — no conditional branches, no alternate accepted outcomes
 
-    const currentEnd = psql(`SELECT current_period_end::text FROM subscriptions WHERE id = '${subId}'::uuid;`);
-    // Period must have advanced beyond 2026-07-01
-    expect(currentEnd).not.toContain('2026-07-01');
+    // Session A (renewal) must succeed
+    expect(rA.ok).toBe(true);
+    expect(rA.result).toContain('"finalized": true');
 
-    // Session B should return period_boundary_moved OR not_active (depending on ordering)
-    if (rB.ok) {
-      const bResult = rB.result;
-      const validExpiryOutcome = bResult.includes('period_boundary_moved') || bResult.includes('not_active');
-      expect(validExpiryOutcome).toBe(true);
-    }
-    // If rB errored, that's also acceptable — expiry failed, renewal won
+    // Session B (expiry) must succeed and return exactly period_boundary_moved
+    expect(rB.ok).toBe(true);
+    expect(rB.result).toContain('period_boundary_moved');
 
-    teardownBarrierTable(barrierName);
+    // Final subscription state: active with advanced period
+    const finalStatus = psql(`SELECT status FROM subscriptions WHERE id = '${subId}'::uuid;`);
+    expect(finalStatus).toBe('active');
+
+    const finalEnd = psql(`SELECT current_period_end::text FROM subscriptions WHERE id = '${subId}'::uuid;`);
+    expect(finalEnd).not.toContain('2026-07-01');
+
+    // No duplicate payment state
+    const payCount = psql(`SELECT count(*) FROM subscription_payments WHERE subscription_id = '${subId}'::uuid AND provider_reference = 'tx_t99_renew' AND status = 'success';`);
+    expect(payCount).toBe('1');
+
+    // Cleanup
     psql(`DELETE FROM subscription_payments WHERE subscription_id = '${subId}'::uuid;`);
     psql(`DELETE FROM subscription_reconciliation_evidence WHERE subscription_id = '${subId}'::uuid;`);
     psql(`DELETE FROM subscriptions WHERE id='${subId}'::uuid;`);
     psql(`DELETE FROM businesses WHERE id='${bizId}'::uuid;`);
-  }, 15000);
+  }, 30000);
 
   it('100. forced rollback — business UPDATE trigger failure rolls back subscription expiry', async () => {
     const bizId = m380Biz('t100');
