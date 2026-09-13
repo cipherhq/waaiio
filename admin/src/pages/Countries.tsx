@@ -144,10 +144,7 @@ export default function Countries() {
         // Narrow server-side partial update via /api/admin/provider-config update_country action.
         // This NEVER sends pricing, payment_gateway, currency_code, or provider-owned fields.
         // Provider refs survive concurrent edits untouched.
-        const res = await fetch('/api/admin/provider-config', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
+        const res = await adminApiFetch('/api/admin/provider-config', {
             action: 'update_country',
             country_code: form.code,
             fields: {
@@ -165,7 +162,6 @@ export default function Countries() {
               verification_tiers: form.verification_tiers,
               doc_types: form.doc_types,
             },
-          }),
         });
         const resData = await res.json();
         if (!res.ok) throw new Error(resData.error || 'Update failed');
@@ -629,7 +625,31 @@ export default function Countries() {
 }
 
 /** API base URL — admin panel talks to the main Next.js app */
-const API_BASE = import.meta.env.VITE_APP_URL || 'https://www.waaiio.com';
+/** Canonical Admin API base — uses VITE_API_URL per admin/.env.example.
+ * Never silently falls back to production in Preview/Staging.
+ * Local dev (localhost:3000) is the only implicit fallback. */
+function getAdminApiBase(): string {
+  const configured = import.meta.env.VITE_API_URL;
+  if (configured) return configured;
+  // Local dev: Vite dev server on 8083, Next.js on 3000
+  if (typeof window !== 'undefined' && window.location.hostname === 'localhost') {
+    return 'http://localhost:3000';
+  }
+  throw new Error('VITE_API_URL is not configured. Set it in your .env file.');
+}
+
+/** Authenticated fetch to main-app Admin API. Attaches Bearer token. */
+async function adminApiFetch(path: string, body: Record<string, unknown>): Promise<Response> {
+  const base = getAdminApiBase();
+  const { data: session } = await supabase.auth.getSession();
+  const token = session?.session?.access_token;
+  if (!token) throw new Error('Not authenticated — please sign in again.');
+  return fetch(`${base}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify(body),
+  });
+}
 
 function ProviderConfigPanel({ countries, canMutate, onSaved }: { countries: CountryRow[]; canMutate: boolean; onSaved: () => Promise<void> }) {
   const [selectedCode, setSelectedCode] = useState('');
@@ -668,16 +688,7 @@ function ProviderConfigPanel({ countries, canMutate, onSaved }: { countries: Cou
   async function loadVersion() {
     setLoadingVersion(true);
     try {
-      const { data: session } = await supabase.auth.getSession();
-      const token = session?.session?.access_token;
-      const res = await fetch(`${API_BASE}/api/admin/provider-config`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify({ action: 'get_version' }),
-      });
+      const res = await adminApiFetch('/api/admin/provider-config', { action: 'get_version' });
       const data = await res.json();
       if (data.version_id) setVersionId(data.version_id);
     } catch {
@@ -688,17 +699,7 @@ function ProviderConfigPanel({ countries, canMutate, onSaved }: { countries: Cou
   }
 
   async function apiCall(body: Record<string, unknown>) {
-    const { data: session } = await supabase.auth.getSession();
-    const token = session?.session?.access_token;
-    const res = await fetch(`${API_BASE}/api/admin/provider-config`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-      body: JSON.stringify(body),
-    });
-    return res;
+    return adminApiFetch('/api/admin/provider-config', body);
   }
 
   async function handleSaveRefs() {
