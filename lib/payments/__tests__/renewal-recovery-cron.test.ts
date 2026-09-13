@@ -42,7 +42,13 @@ vi.mock('@/lib/payments/stripe-renewal-finalization', () => ({
 }));
 
 vi.mock('@/lib/payments/stripe-invoice-extractors', () => ({
-  extractSubscriptionLinePeriod: vi.fn(() => ({ error: 'no_lines', detail: 'test' })),
+  extractSubscriptionLinePeriod: vi.fn((invoiceData: Record<string, unknown>) => {
+    const lines = invoiceData.lines as { data?: Array<{ period?: { start?: number; end?: number } }> } | undefined;
+    if (!lines?.data?.[0]?.period?.start || !lines?.data?.[0]?.period?.end) {
+      return { error: 'no_lines', detail: 'Missing lines data' };
+    }
+    return { periodStart: lines.data[0].period.start, periodEnd: lines.data[0].period.end };
+  }),
   classifyInvoiceSubscription: vi.fn(),
   extractInvoicePaymentIdentity: vi.fn(),
 }));
@@ -172,6 +178,7 @@ describe('Renewal Recovery Cron — Decision Paths', () => {
           stripe_subscription_id: 'sub_stripe_123',
           business_id: 'biz-001',
           plan: 'growth',
+          currency: 'USD',
         }],
         error: null,
       },
@@ -293,6 +300,7 @@ describe('Renewal Recovery Cron — Decision Paths', () => {
           stripe_subscription_id: 'sub_stripe_456',
           business_id: 'biz-002',
           plan: 'growth',
+          currency: 'USD',
         }],
         error: null,
       },
@@ -339,6 +347,7 @@ describe('Renewal Recovery Cron — Decision Paths', () => {
           stripe_subscription_id: 'sub_stripe_789',
           business_id: 'biz-003',
           plan: 'growth',
+          currency: 'USD',
         }],
         error: null,
       },
@@ -500,6 +509,7 @@ describe('Renewal Recovery Cron — Decision Paths', () => {
           stripe_subscription_id: 'sub_stripe_paid_123',
           business_id: 'biz-stripe-paid',
           plan: 'growth',
+          currency: 'USD',
         }],
         error: null,
       },
@@ -525,6 +535,13 @@ describe('Renewal Recovery Cron — Decision Paths', () => {
               period_start: periodEndUnix,
               period_end: periodEndUnix + 30 * 86400,
               created: periodEndUnix + 100,
+              status_transitions: { paid_at: periodEndUnix + 100 },
+              lines: {
+                data: [{
+                  subscription: 'sub_stripe_paid_123',
+                  period: { start: periodEndUnix, end: periodEndUnix + 30 * 86400 },
+                }],
+              },
             }],
             has_more: false,
           }),

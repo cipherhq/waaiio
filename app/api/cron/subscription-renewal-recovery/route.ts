@@ -29,6 +29,12 @@ export async function GET(request: NextRequest) {
       const gateway = sub.gateway as string;
       const periodEnd = sub.current_period_end as string;
 
+      // Blocker 2: No synthetic defaults — skip if required fields are missing
+      const subCurrency = sub.currency as string;
+      const bizId = sub.business_id as string;
+      const plan = sub.plan as string;
+      if (!subCurrency || !bizId || !plan) { skipped++; continue; }
+
       if (gateway === 'flutterwave') {
         await processFlutterwaveRenewal(supabase, sub, subId, periodEnd, flwKey);
       } else if (gateway === 'stripe') {
@@ -60,7 +66,7 @@ export async function GET(request: NextRequest) {
     const flwEmail = sub.flutterwave_subscriber_email as string;
     const flwPlanId = sub.flutterwave_plan_id as number;
     const subAmount = sub.amount as number;
-    const subCurrency = (sub.currency as string) || 'NGN';
+    const subCurrency = sub.currency as string;
     const sourceKey = `renewal_recovery_flw_${subId}`;
 
     if (!flwSubId || !flwEmail) { skipped++; return; }
@@ -88,29 +94,35 @@ export async function GET(request: NextRequest) {
       evidenceRecorded++; return;
     }
 
-    // Step 3: Verify and correlate each candidate
+    // Step 3: Verify and correlate each candidate (with anomaly tracking)
     const { verifyTransactionById } = await import('@/lib/payments/flutterwave-verify');
     const { correlateProviderSubscription } = await import('@/lib/payments/flutterwave-subscription');
 
     const validCandidates: Array<{ id: number; tx_ref: string; amount: number; currency: string; created_at: string }> = [];
+    let anomalyCount = 0;
 
     for (const candidate of searchResult.candidates) {
       try {
         // Strict verification by exact ID + tx_ref
         const verifyResult = await verifyTransactionById(candidate.id, candidate.tx_ref, flwSecretKey);
-        if (!verifyResult.ok || verifyResult.tx.status !== 'successful') continue;
+        if (!verifyResult.ok || verifyResult.tx.status !== 'successful') { anomalyCount++; continue; }
 
         // Correlate: match stored flutterwave_subscription_id + flutterwave_plan_id
         const correlation = await correlateProviderSubscription(candidate.id, flwSecretKey);
-        if (!correlation.ok) continue;
-        if (correlation.sub.subscriptionId !== flwSubId) continue;
-        if (flwPlanId && correlation.sub.planId !== flwPlanId) continue;
+        if (!correlation.ok) { anomalyCount++; continue; }
+        if (correlation.sub.subscriptionId !== flwSubId) { anomalyCount++; continue; }
+        if (flwPlanId && correlation.sub.planId !== flwPlanId) { anomalyCount++; continue; }
 
         // Pinned validation: amount and currency must match
         const verifiedAmountMinor = Math.round(verifyResult.tx.amount * 100);
         const expectedAmountMinor = subAmount * 100;
-        if (verifiedAmountMinor !== expectedAmountMinor) continue;
-        if (verifyResult.tx.currency.toUpperCase() !== subCurrency.toUpperCase()) continue;
+        if (verifiedAmountMinor !== expectedAmountMinor) { anomalyCount++; continue; }
+        if (verifyResult.tx.currency.toUpperCase() !== subCurrency.toUpperCase()) { anomalyCount++; continue; }
+
+        // Period window validation — transactions before period_end - 24h are outside window, not anomalies
+        const txTimestamp = new Date(verifyResult.tx.created_at).getTime();
+        const periodEndMs = new Date(periodEnd).getTime();
+        if (txTimestamp < periodEndMs - 24 * 60 * 60 * 1000) { continue; } // outside window, not an anomaly
 
         validCandidates.push({
           id: candidate.id,
@@ -120,8 +132,7 @@ export async function GET(request: NextRequest) {
           created_at: verifyResult.tx.created_at,
         });
       } catch {
-        // Verification/correlation failure for this candidate — skip it, try next
-        continue;
+        anomalyCount++; continue;
       }
     }
 
@@ -169,9 +180,20 @@ export async function GET(request: NextRequest) {
       evidenceRecorded++; return;
     }
 
-    // Zero valid candidates
-    if (providerCancelled && searchResult.exhaustive) {
-      // Provider cancelled + exhaustive search completed + zero valid → terminal
+    // Zero valid candidates — anomaly-aware decision
+    if (validCandidates.length === 0 && anomalyCount > 0) {
+      // Tainted search — anomalies prevent proving zero payment
+      await svc.rpc('record_reconciliation_evidence', {
+        p_subscription_id: subId, p_gateway: 'flutterwave', p_provider_subscription_id: flwSubId,
+        p_period_boundary: periodEnd, p_outcome: 'unavailable',
+        p_source_key: sourceKey,
+        p_evidence_provider_status: statusResult.ok ? statusResult.status : 'unknown',
+      });
+      evidenceRecorded++; return;
+    }
+
+    if (providerCancelled && searchResult.exhaustive && anomalyCount === 0) {
+      // Provider cancelled + exhaustive search + zero valid + zero anomalies → terminal
       await svc.rpc('record_reconciliation_evidence', {
         p_subscription_id: subId, p_gateway: 'flutterwave', p_provider_subscription_id: flwSubId,
         p_period_boundary: periodEnd, p_outcome: 'terminal_no_payment',
@@ -250,40 +272,39 @@ export async function GET(request: NextRequest) {
       }
 
       if (invoiceResult.invoice) {
-        // Found a paid invoice for the renewal period — use extractSubscriptionLinePeriod
+        // Found a paid invoice — extract line period (fail closed, no top-level fallback)
         const { extractSubscriptionLinePeriod } = await import('@/lib/payments/stripe-invoice-extractors');
-        let invPeriodStart: string;
-        let invPeriodEnd: string;
-
         const linePeriod = extractSubscriptionLinePeriod(invoiceResult.invoice, stripeSubId);
         if ('error' in linePeriod) {
-          // Fallback to top-level period_start/period_end
-          const topStart = invoiceResult.invoice.period_start as number | undefined;
-          const topEnd = invoiceResult.invoice.period_end as number | undefined;
-          if (!topStart || !topEnd) {
-            await svc.rpc('record_reconciliation_evidence', {
-              p_subscription_id: subId, p_gateway: 'stripe', p_provider_subscription_id: stripeSubId,
-              p_period_boundary: periodEnd, p_outcome: 'unavailable',
-              p_source_key: sourceKey,
-              p_evidence_provider_status: stripeSub.status || 'unknown',
-            });
-            evidenceRecorded++; return;
-          }
-          invPeriodStart = new Date(topStart * 1000).toISOString();
-          invPeriodEnd = new Date(topEnd * 1000).toISOString();
-        } else {
-          invPeriodStart = new Date(linePeriod.periodStart * 1000).toISOString();
-          invPeriodEnd = new Date(linePeriod.periodEnd * 1000).toISOString();
+          // Line extraction failed — record unavailable evidence and skip
+          logger.error('[CRON:RENEWAL-RECOVERY] Stripe line-period extraction failed', {
+            subId, error: linePeriod.error, detail: linePeriod.detail,
+          });
+          await svc.rpc('record_reconciliation_evidence', {
+            p_subscription_id: subId, p_gateway: 'stripe', p_provider_subscription_id: stripeSubId,
+            p_period_boundary: periodEnd, p_outcome: 'unavailable',
+            p_source_key: sourceKey,
+            p_evidence_provider_status: stripeSub.status || 'unknown',
+          });
+          evidenceRecorded++; return;
         }
+        const invPeriodStart = new Date(linePeriod.periodStart * 1000).toISOString();
+        const invPeriodEnd = new Date(linePeriod.periodEnd * 1000).toISOString();
 
-        // Resolve config version at provider payment time
-        const invoiceCreated = invoiceResult.invoice.created as number | undefined;
-        const effectivePeriodStart = 'error' in linePeriod
-          ? (invoiceResult.invoice.period_start as number)
-          : linePeriod.periodStart;
-        const providerPaidAt = invoiceCreated
-          ? new Date(invoiceCreated * 1000).toISOString()
-          : new Date(effectivePeriodStart * 1000).toISOString();
+        // Blocker 3: Use status_transitions.paid_at — fail closed if missing
+        const invStatusTransitions = invoiceResult.invoice.status_transitions as Record<string, unknown> | undefined;
+        const invPaidAtUnix = invStatusTransitions?.paid_at as number | undefined;
+        if (!invPaidAtUnix) {
+          logger.error('[CRON:RENEWAL-RECOVERY] Stripe invoice missing status_transitions.paid_at', { subId });
+          await svc.rpc('record_reconciliation_evidence', {
+            p_subscription_id: subId, p_gateway: 'stripe', p_provider_subscription_id: stripeSubId,
+            p_period_boundary: periodEnd, p_outcome: 'unavailable',
+            p_source_key: sourceKey,
+            p_evidence_provider_status: stripeSub.status || 'unknown',
+          });
+          evidenceRecorded++; return;
+        }
+        const providerPaidAt = new Date(invPaidAtUnix * 1000).toISOString();
 
         const { data: renewalConfig } = await svc
           .from('platform_config_versions')
@@ -293,18 +314,31 @@ export async function GET(request: NextRequest) {
           .limit(1)
           .single();
 
+        // Blocker 2: No synthetic defaults — currency must come from provider
+        const invCurrency = invoiceResult.invoice.currency as string | undefined;
+        if (!invCurrency) {
+          logger.error('[CRON:RENEWAL-RECOVERY] Stripe invoice missing currency', { subId });
+          await svc.rpc('record_reconciliation_evidence', {
+            p_subscription_id: subId, p_gateway: 'stripe', p_provider_subscription_id: stripeSubId,
+            p_period_boundary: periodEnd, p_outcome: 'unavailable',
+            p_source_key: sourceKey,
+            p_evidence_provider_status: stripeSub.status || 'unknown',
+          });
+          evidenceRecorded++; return;
+        }
+
         if (renewalConfig) {
           const { finalizeStripeRenewal } = await import('@/lib/payments/stripe-renewal-finalization');
           const invoiceId = invoiceResult.invoice.id as string;
           const paymentIntent = invoiceResult.invoice.payment_intent as string;
           const result = await finalizeStripeRenewal(svc, {
             subscriptionId: subId,
-            businessId: sub.business_id as string || '',
-            plan: sub.plan as string || 'growth',
+            businessId: sub.business_id as string,
+            plan: sub.plan as string,
             providerInvoiceId: invoiceId,
             providerReference: paymentIntent || invoiceId,
             amountMinor: invoiceResult.invoice.amount_paid as number,
-            currency: ((invoiceResult.invoice.currency as string) || 'usd').toUpperCase(),
+            currency: invCurrency.toUpperCase(),
             periodStart: invPeriodStart,
             periodEnd: invPeriodEnd,
             providerPaidAt,
@@ -488,14 +522,10 @@ async function searchStripePaidInvoicesExhaustive(
       const { extractSubscriptionLinePeriod } = await import('@/lib/payments/stripe-invoice-extractors');
 
       for (const inv of data.data) {
-        // Try line-item period extraction first, fall back to top-level
+        // Line-item period extraction only — no top-level fallback
         const linePeriod = extractSubscriptionLinePeriod(inv, stripeSubId);
-        let invPeriodStart: number;
-        if ('error' in linePeriod) {
-          invPeriodStart = (inv.period_start as number) || 0;
-        } else {
-          invPeriodStart = linePeriod.periodStart;
-        }
+        if ('error' in linePeriod) continue; // Skip invoices where line extraction fails
+        const invPeriodStart: number = linePeriod.periodStart;
 
         // Find invoice whose period starts at or after the subscription's current_period_end
         if (invPeriodStart >= periodEndUnix) {

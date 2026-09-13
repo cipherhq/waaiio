@@ -461,39 +461,27 @@ export async function POST(request: NextRequest) {
 
         if (platformSub) {
           // ── Platform subscription renewal ──
-          // Extract period from line items (not top-level) for version-tolerant accuracy
-          let periodStart: string;
-          let periodEnd: string;
+          // Extract period from line items — fail closed, no top-level fallback
           const linePeriod = extractSubscriptionLinePeriod(data, subscriptionId);
           if ('error' in linePeriod) {
-            // Fallback to top-level period_start/period_end for backward compatibility
-            const invoicePeriodStartUnix = data.period_start as number | undefined;
-            const invoicePeriodEndUnix = data.period_end as number | undefined;
-            if (!invoicePeriodStartUnix || !invoicePeriodEndUnix) {
-              logger.error('[STRIPE-WEBHOOK] Line-period extraction failed and no top-level fallback', {
-                invoiceId: data.id, lineError: linePeriod.error, lineDetail: linePeriod.detail,
-              });
-              return NextResponse.json({ error: 'Missing provider period timestamps' }, { status: 500 });
-            }
-            periodStart = new Date(invoicePeriodStartUnix * 1000).toISOString();
-            periodEnd = new Date(invoicePeriodEndUnix * 1000).toISOString();
-          } else {
-            periodStart = new Date(linePeriod.periodStart * 1000).toISOString();
-            periodEnd = new Date(linePeriod.periodEnd * 1000).toISOString();
+            logger.error('[STRIPE-WEBHOOK] Subscription line-period extraction failed', {
+              invoiceId: data.id, error: linePeriod.error, detail: linePeriod.detail,
+            });
+            return NextResponse.json({ error: 'Missing provider period — line extraction failed' }, { status: 500 });
           }
+          const periodStart = new Date(linePeriod.periodStart * 1000).toISOString();
+          const periodEnd = new Date(linePeriod.periodEnd * 1000).toISOString();
 
           // NO pre-write of periods to subscriptions — activate_paid_subscription RPC
           // performs authoritative period synchronization after all validation succeeds.
 
-          // Use provider payment timestamp (invoice created or period_start)
-          const invoiceCreated = data.created as number | undefined;
-          const periodStartUnix = 'error' in linePeriod ? (data.period_start as number | undefined) : linePeriod.periodStart;
-          const renewalProviderTs = invoiceCreated || periodStartUnix;
-          if (!renewalProviderTs) {
-            logger.error('[STRIPE-WEBHOOK] Missing invoice provider timestamp', { invoiceId: data.id });
-            return NextResponse.json({ error: 'Missing provider timestamp' }, { status: 500 });
+          // Use provider paid timestamp from status_transitions.paid_at — fail closed
+          const paidAtUnix = (data.status_transitions as Record<string, unknown>)?.paid_at as number | undefined;
+          if (!paidAtUnix) {
+            logger.error('[STRIPE-WEBHOOK] Missing status_transitions.paid_at', { invoiceId: data.id });
+            return NextResponse.json({ error: 'Missing provider paid timestamp' }, { status: 500 });
           }
-          const renewalProviderTimestamp = new Date(renewalProviderTs * 1000).toISOString();
+          const renewalProviderTimestamp = new Date(paidAtUnix * 1000).toISOString();
 
           // Resolve effective config version at provider payment time
           const { data: renewalConfig } = await supabase

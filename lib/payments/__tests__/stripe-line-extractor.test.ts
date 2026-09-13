@@ -124,4 +124,22 @@ describe('extractSubscriptionLinePeriod', () => {
     expect('error' in result).toBe(true);
     expect((result as { error: string }).error).toBe('invalid_line_period');
   });
+
+  it('11. equal periods (start === end) → malformed_period', () => {
+    const invoice = makeInvoice([
+      { subscription: SUB_ID, period: { start: 1700000000, end: 1700000000 } },
+    ]);
+    const result = extractSubscriptionLinePeriod(invoice, SUB_ID);
+    expect('error' in result).toBe(true);
+    expect((result as { error: string }).error).toBe('malformed_period');
+  });
+
+  it('12. reversed periods (start > end) → malformed_period', () => {
+    const invoice = makeInvoice([
+      { subscription: SUB_ID, period: { start: 1702592000, end: 1700000000 } },
+    ]);
+    const result = extractSubscriptionLinePeriod(invoice, SUB_ID);
+    expect('error' in result).toBe(true);
+    expect((result as { error: string }).error).toBe('malformed_period');
+  });
 });

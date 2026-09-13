@@ -354,6 +354,10 @@ export function extractSubscriptionLinePeriod(
         detail: `Line ${i}: period.start=${periodStart}, period.end=${periodEnd}` };
     }
 
+    if (periodStart >= periodEnd) {
+      return { error: 'malformed_period', detail: `Line ${i}: period.start >= period.end` };
+    }
+
     matchingPeriods.push({ periodStart, periodEnd, lineIndex: i });
   }
 

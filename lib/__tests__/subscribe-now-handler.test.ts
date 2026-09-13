@@ -68,6 +68,7 @@ function buildStripeInvoicePaidEvent(overrides: Record<string, unknown> = {}): R
         period_start: now,
         period_end: now + 30 * 86400,
         payment_intent: 'pi_test_1',
+        status_transitions: { paid_at: now },
         lines: {
           data: [{
             subscription: 'sub_stripe_1',

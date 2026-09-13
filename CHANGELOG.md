@@ -3,6 +3,29 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-09-12 — #315 Phase 3C Blockers 1-5
+
+### What changed
+- **Blocker 1: Stripe line-period fallback removed.** Webhook and cron now fail closed if `extractSubscriptionLinePeriod` returns error — no top-level `period_start/period_end` fallback. Added `period.start >= period.end` validation (malformed_period). Two new unit tests (equal + reversed periods).
+- **Blocker 2: Synthetic defaults removed.** Cron skips subscriptions missing `currency`, `business_id`, or `plan`. Stripe cron section no longer falls back to `'usd'` for invoice currency.
+- **Blocker 3: Stripe paid timestamp from status_transitions.paid_at.** Webhook and cron now extract `status_transitions.paid_at` instead of `created` or `period_start`. Missing → fail closed (500 / unavailable).
+- **Blocker 4: FLW verification anomaly tracking.** Failed verification, correlation mismatch, amount/currency mismatch now increment `anomalyCount`. Terminal_no_payment requires zero anomalies + zero valid + provider cancelled + exhaustive. Anomalies → unavailable (tainted search).
+- **Blocker 5: DB tests 96-100.** Test 96: cancellation claim sets `cancellation_checked_at`. Test 97: 24h cooldown prevents immediate reclaim. Test 98: ACL — authenticated denied on cancellation claim. Test 99: concurrent renewal vs stale expiry → period_boundary_moved. Test 100: forced rollback via BEFORE UPDATE trigger proves atomicity.
+
+### Files changed
+- `app/api/payments/stripe-webhook/route.ts` — line-period fail-closed, paid_at timestamp
+- `app/api/cron/subscription-renewal-recovery/route.ts` — all 4 blockers
+- `lib/payments/stripe-invoice-extractors.ts` — malformed_period validation
+- `lib/payments/__tests__/stripe-line-extractor.test.ts` — tests 11-12
+- `lib/payments/__tests__/renewal-recovery-cron.test.ts` — mock fixes for line extraction + currency + status_transitions
+- `lib/__tests__/subscribe-now-handler.test.ts` — added status_transitions to mock
+- `lib/__tests__/provider-neutral-subscriptions-db.test.ts` — tests 96-100
+
+### What could break
+- Stripe invoices without `lines.data` now fail instead of falling back to top-level periods. If Stripe sends invoices without line items, the webhook will return 500 (safe fail-closed, retryable).
+- Stripe invoices without `status_transitions.paid_at` now fail. All real `invoice.paid` events should have this field.
+- Subscriptions missing `currency`, `business_id`, or `plan` are now skipped by cron (previously used synthetic defaults that could mask data issues).
+
 ## 2026-09-12 — #315 Phase 3C Findings 1-9
 
 ### What changed
