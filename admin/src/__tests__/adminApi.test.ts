@@ -64,24 +64,16 @@ describe('getAdminApiBase', () => {
 
   it('throws visibly when VITE_API_URL is missing on non-local runtime', async () => {
     import.meta.env.VITE_API_URL = '';
-    // Simulate non-local runtime by temporarily overriding window
-    const savedHostname = window.location.hostname;
-    // We can't easily change window.location.hostname in jsdom,
-    // so we test the code path via the function's logic:
-    // When VITE_API_URL is empty AND hostname is NOT localhost → must throw
     const { getAdminApiBase } = await import('../lib/adminApi');
 
-    // In jsdom, hostname IS localhost, so this won't throw.
-    // To prove the non-local path, we test the function logic directly:
-    // The function checks: if (configured) return configured; if (localhost) return localhost; throw.
-    // With VITE_API_URL='' and NOT localhost, it MUST throw.
-    // We can verify by checking the thrown message does NOT contain 'waaiio.com'
-    // (proving there's no hardcoded production fallback)
+    // Execute the actual failure path with a non-local hostname
+    expect(() => getAdminApiBase('admin-preview.example.test'))
+      .toThrow('VITE_API_URL is not configured');
 
-    // Parse the function source to verify no 'waaiio.com' fallback
-    const fnSrc = getAdminApiBase.toString();
-    expect(fnSrc).not.toContain('waaiio.com');
-    expect(fnSrc).toContain('VITE_API_URL is not configured');
+    // Verify no production URL fallback — the throw is the only outcome
+    let result: string | undefined;
+    try { result = getAdminApiBase('admin-preview.example.test'); } catch { /* expected */ }
+    expect(result).toBeUndefined();
   });
 });
 
