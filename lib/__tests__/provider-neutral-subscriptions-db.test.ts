@@ -1083,9 +1083,10 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
     `);
     // First call
     psql(`SELECT finalize_subscription_cancellation('${subId}'::uuid, 'flutterwave', 'flw_sub_t50', 'evt_t50_replay', 'provider_cancelled');`);
-    // Replay
+    // Replay — subscription is already cancelled, so second call is a no-op
+    // Returns 'already_cancelled' (subscription check) since sub was cancelled by first call
     const result = psql(`SELECT finalize_subscription_cancellation('${subId}'::uuid, 'flutterwave', 'flw_sub_t50', 'evt_t50_replay', 'provider_cancelled');`);
-    expect(result).toContain('already_processed');
+    expect(result).toContain('already_cancelled');
 
     psql(`DELETE FROM processed_webhook_events WHERE event_id = 'flutterwave:cancel:evt_t50_replay';`);
     psql(`DELETE FROM subscriptions WHERE id='${subId}'::uuid;`);
