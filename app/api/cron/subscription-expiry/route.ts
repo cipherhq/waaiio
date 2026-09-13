@@ -42,6 +42,7 @@ export async function GET(request: NextRequest) {
       business_id,
       plan,
       current_period_end,
+      gateway,
       businesses!inner (
         id,
         name,
@@ -101,29 +102,22 @@ export async function GET(request: NextRequest) {
 
       if (!profile?.email) continue;
 
-      // ── Expired: downgrade to free ──
+      // ── Expired: downgrade to free via authority-gated RPC ──
       if (daysUntilExpiry < 0) {
-        // Update subscription status to expired
-        const { error: subError } = await supabase
-          .from('subscriptions')
-          .update({ status: 'expired' })
-          .eq('id', sub.id);
+        const { data: expiryResult, error: expiryErr } = await supabase.rpc('expire_subscription_with_authority', {
+          p_subscription_id: sub.id,
+          p_period_boundary: sub.current_period_end,
+        });
 
-        if (subError) {
-          logger.error(`[CRON:SUBSCRIPTION-EXPIRY] Failed to expire subscription ${sub.id}:`, subError.message);
+        if (expiryErr) {
+          logger.error(`[CRON:SUBSCRIPTION-EXPIRY] Expiry RPC failed for ${sub.id}:`, expiryErr.message);
           errors++;
           continue;
         }
 
-        // Downgrade business to free tier
-        const { error: bizError } = await supabase
-          .from('businesses')
-          .update({ subscription_tier: 'free' })
-          .eq('id', business.id);
-
-        if (bizError) {
-          logger.error(`[CRON:SUBSCRIPTION-EXPIRY] Failed to downgrade business ${business.id}:`, bizError.message);
-          errors++;
+        const result = expiryResult as { expired: boolean; reason?: string } | null;
+        if (!result?.expired) {
+          // Authority denied or period moved — skip, don't count as expired
           continue;
         }
 

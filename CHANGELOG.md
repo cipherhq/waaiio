@@ -3,6 +3,26 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-09-12 — #315 Phase 3C: Atomic Expiry Authority & Claim RPCs
+
+### What changed
+- **Migration 381** (`supabase/migrations/381_reconciliation_cron_support.sql`, NEW): Adds `reconciliation_claimed_at` column to `subscription_checkout_intents` and `last_reconciliation_attempt_at` to `subscriptions`. Creates three new RPCs: `expire_subscription_with_authority` (authority-gated expiry requiring `terminal_no_payment` evidence for provider-managed subscriptions, period boundary safety check, advisory lock coordination), `claim_stale_checkout_batch` (SKIP LOCKED batch claim for stale Flutterwave checkout intents with 15-min lease), `claim_overdue_subscription_batch` (SKIP LOCKED batch claim for overdue FLW/Stripe subscriptions with 4-hour lease). All service_role only.
+- **Subscription expiry cron** (`app/api/cron/subscription-expiry/route.ts`): Replaced direct `subscriptions.update` + `businesses.update` with `expire_subscription_with_authority` RPC call. Added `gateway` to the subscription select query. Authority-denied or period-moved subscriptions are silently skipped. Email/alert/notification logic only fires on `expired=true`.
+- **15 DB tests** (`lib/__tests__/provider-neutral-subscriptions-db.test.ts`): Tests 81-95 covering expiry authority (terminal_no_payment, no_evidence, paystack fail-closed, null gateway passthrough, period boundary moved, concurrent paid_finalized vs expiry race, already non-active), claim fairness (batch claim, SKIP LOCKED isolation, lease expiry re-eligibility, overdue subscription claim, non-FLW exclusion), and ACL (authenticated denied on all three new RPCs).
+
+### Files changed
+- `supabase/migrations/381_reconciliation_cron_support.sql` (NEW)
+- `app/api/cron/subscription-expiry/route.ts`
+- `lib/__tests__/provider-neutral-subscriptions-db.test.ts`
+- `CHANGELOG.md`
+
+### What could break
+- If M380 migration is not deployed, the `subscription_reconciliation_evidence` table and `record_reconciliation_evidence` RPC won't exist, and `expire_subscription_with_authority` will fail on evidence lookups.
+- Provider-managed subscriptions (FLW/Stripe) will no longer expire without reconciliation evidence. If the reconciliation cron (Phase 3D) is not yet running, these subscriptions will stay active past their period end until evidence is recorded.
+- Paystack subscriptions with a gateway set but no provider subscription ID will be blocked from expiry (`no_provider_identity`). This is intentional fail-closed behavior.
+
+---
+
 ## 2026-09-12 — #315 Phase 3A: Provider Config Blockers
 
 ### What changed

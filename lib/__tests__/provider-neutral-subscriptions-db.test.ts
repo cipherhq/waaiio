@@ -1714,4 +1714,327 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
     const r = psqlMayFail(`${adminContext(adminId)} SELECT check_reconciliation_authority('${fakeId}'::uuid, clock_timestamp()); RESET ROLE;`);
     expect(r).toContain('permission denied');
   });
+
+  // ══════════════════════════════════════════════════════════
+  // M381: Expiry Authority — expire_subscription_with_authority
+  // ══════════════════════════════════════════════════════════
+
+  it('81. terminal_no_payment evidence → expired=true, status=expired, tier=free', () => {
+    const bizId = m380Biz('t81');
+    const periodEnd = '2026-08-01T00:00:00Z';
+    const subId = psql(`
+      INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
+        billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
+      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+        '${currentVersion()}'::uuid, 'flw_sub_t81', '2026-07-01T00:00:00Z'::timestamptz, '${periodEnd}'::timestamptz)
+      RETURNING id::text;
+    `);
+
+    // Record terminal_no_payment evidence
+    psql(`SELECT record_reconciliation_evidence('${subId}'::uuid, 'flutterwave', 'flw_sub_t81', '${periodEnd}'::timestamptz, 'terminal_no_payment', 'run_t81');`);
+
+    const result = psql(`SELECT expire_subscription_with_authority('${subId}'::uuid, '${periodEnd}'::timestamptz);`);
+    expect(result).toContain('"expired": true');
+    expect(psql(`SELECT status FROM subscriptions WHERE id='${subId}'::uuid;`)).toBe('expired');
+    expect(psql(`SELECT subscription_tier FROM businesses WHERE id='${bizId}'::uuid;`)).toBe('free');
+
+    psql(`DELETE FROM subscription_reconciliation_evidence WHERE subscription_id='${subId}'::uuid;`);
+    psql(`DELETE FROM subscriptions WHERE id='${subId}'::uuid;`);
+    psql(`DELETE FROM businesses WHERE id='${bizId}'::uuid;`);
+  });
+
+  it('82. no evidence → expired=false (authority_no_evidence)', () => {
+    const bizId = m380Biz('t82');
+    const periodEnd = '2026-08-01T00:00:00Z';
+    const subId = psql(`
+      INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
+        billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
+      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+        '${currentVersion()}'::uuid, 'flw_sub_t82', '2026-07-01T00:00:00Z'::timestamptz, '${periodEnd}'::timestamptz)
+      RETURNING id::text;
+    `);
+
+    // No evidence recorded
+    const result = psql(`SELECT expire_subscription_with_authority('${subId}'::uuid, '${periodEnd}'::timestamptz);`);
+    expect(result).toContain('"expired": false');
+    expect(result).toContain('authority_no_evidence');
+    expect(psql(`SELECT status FROM subscriptions WHERE id='${subId}'::uuid;`)).toBe('active');
+
+    psql(`DELETE FROM subscriptions WHERE id='${subId}'::uuid;`);
+    psql(`DELETE FROM businesses WHERE id='${bizId}'::uuid;`);
+  });
+
+  it('83. paystack gateway → expired=false (no_provider_identity)', () => {
+    const bizId = m380Biz('t83');
+    const periodEnd = '2026-08-01T00:00:00Z';
+    const subId = psql(`
+      INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
+        billing_config_version_id, current_period_start, current_period_end)
+      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'paystack', 'NGN', 14999, 'month',
+        '${currentVersion()}'::uuid, '2026-07-01T00:00:00Z'::timestamptz, '${periodEnd}'::timestamptz)
+      RETURNING id::text;
+    `);
+
+    const result = psql(`SELECT expire_subscription_with_authority('${subId}'::uuid, '${periodEnd}'::timestamptz);`);
+    expect(result).toContain('"expired": false');
+    expect(result).toContain('no_provider_identity');
+    expect(psql(`SELECT status FROM subscriptions WHERE id='${subId}'::uuid;`)).toBe('active');
+
+    psql(`DELETE FROM subscriptions WHERE id='${subId}'::uuid;`);
+    psql(`DELETE FROM businesses WHERE id='${bizId}'::uuid;`);
+  });
+
+  it('84. non-provider (null gateway) → expired=true (existing behavior)', () => {
+    const bizId = m380Biz('t84');
+    const periodEnd = '2026-08-01T00:00:00Z';
+    // Set business tier to growth first
+    psql(`UPDATE businesses SET subscription_tier = 'growth' WHERE id = '${bizId}'::uuid;`);
+    const subId = psql(`
+      INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
+        billing_config_version_id, current_period_start, current_period_end)
+      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', NULL, 'NGN', 14999, 'month',
+        '${currentVersion()}'::uuid, '2026-07-01T00:00:00Z'::timestamptz, '${periodEnd}'::timestamptz)
+      RETURNING id::text;
+    `);
+
+    const result = psql(`SELECT expire_subscription_with_authority('${subId}'::uuid, '${periodEnd}'::timestamptz);`);
+    expect(result).toContain('"expired": true');
+    expect(psql(`SELECT status FROM subscriptions WHERE id='${subId}'::uuid;`)).toBe('expired');
+    expect(psql(`SELECT subscription_tier FROM businesses WHERE id='${bizId}'::uuid;`)).toBe('free');
+
+    psql(`DELETE FROM subscriptions WHERE id='${subId}'::uuid;`);
+    psql(`DELETE FROM businesses WHERE id='${bizId}'::uuid;`);
+  });
+
+  it('85. period boundary moved → expired=false, reason=period_boundary_moved', () => {
+    const bizId = m380Biz('t85');
+    const oldPeriodEnd = '2026-08-01T00:00:00Z';
+    const newPeriodEnd = '2026-09-01T00:00:00Z';
+    const subId = psql(`
+      INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
+        billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
+      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+        '${currentVersion()}'::uuid, 'flw_sub_t85', '2026-07-01T00:00:00Z'::timestamptz, '${oldPeriodEnd}'::timestamptz)
+      RETURNING id::text;
+    `);
+
+    // Record terminal evidence for old period
+    psql(`SELECT record_reconciliation_evidence('${subId}'::uuid, 'flutterwave', 'flw_sub_t85', '${oldPeriodEnd}'::timestamptz, 'terminal_no_payment', 'run_t85');`);
+
+    // Simulate renewal advancing period end
+    psql(`UPDATE subscriptions SET current_period_end = '${newPeriodEnd}'::timestamptz WHERE id = '${subId}'::uuid;`);
+
+    // Call expire with OLD period → should fail with period_boundary_moved
+    const result = psql(`SELECT expire_subscription_with_authority('${subId}'::uuid, '${oldPeriodEnd}'::timestamptz);`);
+    expect(result).toContain('"expired": false');
+    expect(result).toContain('period_boundary_moved');
+    expect(psql(`SELECT status FROM subscriptions WHERE id='${subId}'::uuid;`)).toBe('active');
+
+    psql(`DELETE FROM subscription_reconciliation_evidence WHERE subscription_id='${subId}'::uuid;`);
+    psql(`DELETE FROM subscriptions WHERE id='${subId}'::uuid;`);
+    psql(`DELETE FROM businesses WHERE id='${bizId}'::uuid;`);
+  });
+
+  it('86. TRUE CONCURRENT: paid_finalized evidence writer races expiry → paid wins, NOT expired', async () => {
+    const bizId = m380Biz('t86');
+    const periodEnd = '2026-08-01T00:00:00Z';
+    const subId = psql(`
+      INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
+        billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
+      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+        '${currentVersion()}'::uuid, 'flw_sub_t86', '2026-07-01T00:00:00Z'::timestamptz, '${periodEnd}'::timestamptz)
+      RETURNING id::text;
+    `);
+
+    const bt = setupBarrierTable();
+
+    // Session A: records paid_finalized evidence (runs first under advisory lock)
+    const evidenceOp = `SELECT record_reconciliation_evidence('${subId}'::uuid, 'flutterwave', 'flw_sub_t86', '${periodEnd}'::timestamptz, 'paid_finalized', 'run_t86_paid');`;
+    // Session B: tries to expire
+    const expiryOp = `SELECT expire_subscription_with_authority('${subId}'::uuid, '${periodEnd}'::timestamptz);`;
+
+    const [sA, sB] = await Promise.all([
+      psqlAsync(barrieredSql(bt, 'A', 2, evidenceOp)),
+      psqlAsync(barrieredSql(bt, 'B', 2, expiryOp)),
+    ]);
+
+    expect(sA.ok).toBe(true);
+    expect(sB.ok).toBe(true);
+
+    // Regardless of who acquires the advisory lock first:
+    // - If evidence writer wins: evidence is paid_finalized → expiry sees it → denies
+    // - If expiry wins: no evidence yet → returns authority_no_evidence → denies
+    // Either way, the subscription must NOT be expired
+    expect(psql(`SELECT status FROM subscriptions WHERE id='${subId}'::uuid;`)).toBe('active');
+
+    // The expiry result must show expired=false
+    expect(sB.result).toContain('"expired": false');
+
+    teardownBarrierTable(bt);
+    psql(`DELETE FROM subscription_reconciliation_evidence WHERE subscription_id='${subId}'::uuid;`);
+    psql(`DELETE FROM subscriptions WHERE id='${subId}'::uuid;`);
+    psql(`DELETE FROM businesses WHERE id='${bizId}'::uuid;`);
+  }, 15000);
+
+  it('87. already non-active → expired=false', () => {
+    const bizId = m380Biz('t87');
+    const periodEnd = '2026-08-01T00:00:00Z';
+    const subId = psql(`
+      INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
+        billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
+      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'cancelled', 'flutterwave', 'NGN', 14999, 'month',
+        '${currentVersion()}'::uuid, 'flw_sub_t87', '2026-07-01T00:00:00Z'::timestamptz, '${periodEnd}'::timestamptz)
+      RETURNING id::text;
+    `);
+
+    const result = psql(`SELECT expire_subscription_with_authority('${subId}'::uuid, '${periodEnd}'::timestamptz);`);
+    expect(result).toContain('"expired": false');
+    expect(result).toContain('not_active');
+
+    psql(`DELETE FROM subscriptions WHERE id='${subId}'::uuid;`);
+    psql(`DELETE FROM businesses WHERE id='${bizId}'::uuid;`);
+  });
+
+  // ══════════════════════════════════════════════════════════
+  // M381: Claim Fairness — claim_stale_checkout_batch & claim_overdue_subscription_batch
+  // ══════════════════════════════════════════════════════════
+
+  it('88. claim_stale_checkout_batch returns rows with reconciliation_claimed_at set', () => {
+    const bizId = m380Biz('t88');
+    const ver = currentVersion();
+    // Create a stale checkout intent
+    const r = psql(`SELECT intent_id FROM claim_checkout_initialization('${bizId}'::uuid, 'growth', 'flutterwave', 'NGN', 14999, '243206', '${ver}'::uuid, 't88@m381.com', 30, '${testUserId}'::uuid);`);
+    const intentId = r.split('|')[0];
+    // Make it stale
+    psql(`UPDATE subscription_checkout_intents SET provider_timeout_not_before = clock_timestamp() - interval '3 hours' WHERE id = '${intentId}'::uuid;`);
+
+    const result = psql(`SELECT intent_id FROM claim_stale_checkout_batch(20);`);
+    expect(result).toContain(intentId);
+
+    // Verify reconciliation_claimed_at was set
+    const claimedAt = psql(`SELECT reconciliation_claimed_at IS NOT NULL FROM subscription_checkout_intents WHERE id = '${intentId}'::uuid;`);
+    expect(claimedAt).toBe('t');
+
+    psql(`DELETE FROM subscription_checkout_intents WHERE id='${intentId}'::uuid;`);
+    psql(`DELETE FROM businesses WHERE id='${bizId}'::uuid;`);
+  });
+
+  it('89. second immediate claim returns DIFFERENT rows (SKIP LOCKED)', async () => {
+    const bizId1 = m380Biz('t89a');
+    const bizId2 = m380Biz('t89b');
+    const ver = currentVersion();
+
+    // Create two stale intents
+    const r1 = psql(`SELECT intent_id FROM claim_checkout_initialization('${bizId1}'::uuid, 'growth', 'flutterwave', 'NGN', 14999, '243206', '${ver}'::uuid, 't89a@m381.com', 30, '${testUserId}'::uuid);`);
+    const intentId1 = r1.split('|')[0];
+    psql(`UPDATE subscription_checkout_intents SET provider_timeout_not_before = clock_timestamp() - interval '3 hours' WHERE id = '${intentId1}'::uuid;`);
+
+    const r2 = psql(`SELECT intent_id FROM claim_checkout_initialization('${bizId2}'::uuid, 'growth', 'flutterwave', 'NGN', 14999, '243206', '${ver}'::uuid, 't89b@m381.com', 30, '${testUserId}'::uuid);`);
+    const intentId2 = r2.split('|')[0];
+    psql(`UPDATE subscription_checkout_intents SET provider_timeout_not_before = clock_timestamp() - interval '3 hours' WHERE id = '${intentId2}'::uuid;`);
+
+    // First claim: get 1 row
+    const claim1 = psql(`SELECT intent_id FROM claim_stale_checkout_batch(1);`);
+    // Second claim: get 1 row — should be the other
+    const claim2 = psql(`SELECT intent_id FROM claim_stale_checkout_batch(1);`);
+
+    // They claimed different intents (both were eligible, lease not expired yet)
+    // Since the first claim updates reconciliation_claimed_at to now, the second call
+    // won't see it as eligible (lease < 15 min old), so it returns the other
+    expect(claim1).toBeTruthy();
+    expect(claim2).toBeTruthy();
+    expect(claim1).not.toBe(claim2);
+
+    psql(`DELETE FROM subscription_checkout_intents WHERE id IN ('${intentId1}'::uuid, '${intentId2}'::uuid);`);
+    psql(`DELETE FROM businesses WHERE id IN ('${bizId1}'::uuid, '${bizId2}'::uuid);`);
+  });
+
+  it('90. lease expired (>15 min) → row becomes eligible again', () => {
+    const bizId = m380Biz('t90');
+    const ver = currentVersion();
+    const r = psql(`SELECT intent_id FROM claim_checkout_initialization('${bizId}'::uuid, 'growth', 'flutterwave', 'NGN', 14999, '243206', '${ver}'::uuid, 't90@m381.com', 30, '${testUserId}'::uuid);`);
+    const intentId = r.split('|')[0];
+    // Make it stale
+    psql(`UPDATE subscription_checkout_intents SET provider_timeout_not_before = clock_timestamp() - interval '3 hours' WHERE id = '${intentId}'::uuid;`);
+
+    // First claim
+    psql(`SELECT intent_id FROM claim_stale_checkout_batch(20);`);
+
+    // Second immediate claim should NOT return the same row (lease is fresh)
+    const claim2 = psql(`SELECT intent_id FROM claim_stale_checkout_batch(20);`);
+    expect(claim2).not.toContain(intentId);
+
+    // Expire the lease by backdating reconciliation_claimed_at
+    psql(`UPDATE subscription_checkout_intents SET reconciliation_claimed_at = clock_timestamp() - interval '20 minutes' WHERE id = '${intentId}'::uuid;`);
+
+    // Now it should be eligible again
+    const claim3 = psql(`SELECT intent_id FROM claim_stale_checkout_batch(20);`);
+    expect(claim3).toContain(intentId);
+
+    psql(`DELETE FROM subscription_checkout_intents WHERE id='${intentId}'::uuid;`);
+    psql(`DELETE FROM businesses WHERE id='${bizId}'::uuid;`);
+  });
+
+  it('91. claim_overdue_subscription_batch returns rows with last_reconciliation_attempt_at set', () => {
+    const bizId = m380Biz('t91');
+    const subId = psql(`
+      INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
+        billing_config_version_id, flutterwave_subscription_id, flutterwave_subscriber_email, flutterwave_plan_id,
+        current_period_start, current_period_end)
+      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+        '${currentVersion()}'::uuid, 'flw_sub_t91', 't91@m381.com', 243206,
+        '2026-07-01T00:00:00Z'::timestamptz, clock_timestamp() - interval '1 day')
+      RETURNING id::text;
+    `);
+
+    const result = psql(`SELECT sub_id FROM claim_overdue_subscription_batch(20);`);
+    expect(result).toContain(subId);
+
+    // Verify last_reconciliation_attempt_at was set
+    const attemptAt = psql(`SELECT last_reconciliation_attempt_at IS NOT NULL FROM subscriptions WHERE id = '${subId}'::uuid;`);
+    expect(attemptAt).toBe('t');
+
+    psql(`DELETE FROM subscriptions WHERE id='${subId}'::uuid;`);
+    psql(`DELETE FROM businesses WHERE id='${bizId}'::uuid;`);
+  });
+
+  it('92. non-FLW intents NOT returned by claim_stale_checkout_batch', () => {
+    const bizId = m380Biz('t92');
+    // Create a paystack intent (not flutterwave)
+    const intentId = psql(`
+      INSERT INTO subscription_checkout_intents (id, business_id, user_id, plan, gateway, country_code, currency, amount,
+        config_version_id, subscriber_email, idempotency_key, status, provider_timeout_not_before, created_at)
+      VALUES (gen_random_uuid(), '${bizId}', '${testUserId}', 'growth', 'paystack', 'NG', 'NGN', 14999,
+        '${currentVersion()}'::uuid, 't92@m381.com', 'idem_t92_' || extract(epoch from clock_timestamp())::text,
+        'pending', clock_timestamp() - interval '3 hours', clock_timestamp() - interval '4 hours')
+      RETURNING id::text;
+    `);
+
+    // claim_stale_checkout_batch only returns flutterwave
+    const result = psqlMayFail(`SELECT intent_id FROM claim_stale_checkout_batch(100);`);
+    expect(result).not.toContain(intentId);
+
+    psql(`DELETE FROM subscription_checkout_intents WHERE id='${intentId}'::uuid;`);
+    psql(`DELETE FROM businesses WHERE id='${bizId}'::uuid;`);
+  });
+
+  // ══════════════════════════════════════════════════════════
+  // M381: ACL tests
+  // ══════════════════════════════════════════════════════════
+
+  it('93. authenticated denied on expire_subscription_with_authority', () => {
+    const fakeId = psql(`SELECT gen_random_uuid()::text;`);
+    const r = psqlMayFail(`${adminContext(adminId)} SELECT expire_subscription_with_authority('${fakeId}'::uuid, clock_timestamp()); RESET ROLE;`);
+    expect(r).toContain('permission denied');
+  });
+
+  it('94. authenticated denied on claim_stale_checkout_batch', () => {
+    const r = psqlMayFail(`${adminContext(adminId)} SELECT * FROM claim_stale_checkout_batch(10); RESET ROLE;`);
+    expect(r).toContain('permission denied');
+  });
+
+  it('95. authenticated denied on claim_overdue_subscription_batch', () => {
+    const r = psqlMayFail(`${adminContext(adminId)} SELECT * FROM claim_overdue_subscription_batch(10); RESET ROLE;`);
+    expect(r).toContain('permission denied');
+  });
 });
