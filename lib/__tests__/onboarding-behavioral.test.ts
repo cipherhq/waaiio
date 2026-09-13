@@ -45,6 +45,7 @@ vi.mock('@/lib/supabase/service', () => ({
 vi.mock('@/lib/countries', () => ({
   loadCountries: () => Promise.resolve(),
   isValidCountryCode: () => true,
+  getDialingCodeMap: () => ({ '+234': ['NG'], '+1': ['US', 'CA'], '+44': ['GB'], '+233': ['GH'] }),
 }));
 
 vi.mock('@/lib/categoryConfig', () => ({

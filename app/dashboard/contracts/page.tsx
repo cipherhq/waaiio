@@ -5,19 +5,20 @@ import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { CONTRACT_TEMPLATES, COMMON_QUESTIONS, fillTemplatePlaceholders, generateContractFromAnswers } from '@/lib/contract-templates';
 import { PhoneInput } from '@/components/auth/PhoneInput';
-import { COUNTRIES, type CountryCode } from '@/lib/constants';
+import { type CountryCode } from '@/lib/constants';
+import { getCountryList } from '@/lib/countries';
 import { QRCodeSVG } from 'qrcode.react';
 import { PageHelp } from '@/components/dashboard/PageHelp';
 
 /** Detect country code from an E.164 phone number by matching dialing code prefixes */
 function detectCountryFromPhone(phone: string): CountryCode | null {
   if (!phone || !phone.startsWith('+')) return null;
-  const digits = phone.slice(1); // remove '+'
-  // Try longest dialing codes first (3-digit, 2-digit, 1-digit)
+  const digits = phone.slice(1);
+  const countries = getCountryList();
   for (const len of [3, 2, 1]) {
     const prefix = '+' + digits.slice(0, len);
-    for (const [code, config] of Object.entries(COUNTRIES)) {
-      if (config.dialingCode === prefix) return code as CountryCode;
+    for (const c of countries) {
+      if (c.dialing_code === prefix) return c.code as CountryCode;
     }
   }
   return null;

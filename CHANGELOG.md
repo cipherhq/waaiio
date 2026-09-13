@@ -3,6 +3,127 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-09-12 — #315 Phase 3C Blockers 1-5
+
+### What changed
+- **Blocker 1: Stripe line-period fallback removed.** Webhook and cron now fail closed if `extractSubscriptionLinePeriod` returns error — no top-level `period_start/period_end` fallback. Added `period.start >= period.end` validation (malformed_period). Two new unit tests (equal + reversed periods).
+- **Blocker 2: Synthetic defaults removed.** Cron skips subscriptions missing `currency`, `business_id`, or `plan`. Stripe cron section no longer falls back to `'usd'` for invoice currency.
+- **Blocker 3: Stripe paid timestamp from status_transitions.paid_at.** Webhook and cron now extract `status_transitions.paid_at` instead of `created` or `period_start`. Missing → fail closed (500 / unavailable).
+- **Blocker 4: FLW verification anomaly tracking.** Failed verification, correlation mismatch, amount/currency mismatch now increment `anomalyCount`. Terminal_no_payment requires zero anomalies + zero valid + provider cancelled + exhaustive. Anomalies → unavailable (tainted search).
+- **Blocker 5: DB tests 96-100.** Test 96: cancellation claim sets `cancellation_checked_at`. Test 97: 24h cooldown prevents immediate reclaim. Test 98: ACL — authenticated denied on cancellation claim. Test 99: concurrent renewal vs stale expiry → period_boundary_moved. Test 100: forced rollback via BEFORE UPDATE trigger proves atomicity.
+
+### Files changed
+- `app/api/payments/stripe-webhook/route.ts` — line-period fail-closed, paid_at timestamp
+- `app/api/cron/subscription-renewal-recovery/route.ts` — all 4 blockers
+- `lib/payments/stripe-invoice-extractors.ts` — malformed_period validation
+- `lib/payments/__tests__/stripe-line-extractor.test.ts` — tests 11-12
+- `lib/payments/__tests__/renewal-recovery-cron.test.ts` — mock fixes for line extraction + currency + status_transitions
+- `lib/__tests__/subscribe-now-handler.test.ts` — added status_transitions to mock
+- `lib/__tests__/provider-neutral-subscriptions-db.test.ts` — tests 96-100
+
+### What could break
+- Stripe invoices without `lines.data` now fail instead of falling back to top-level periods. If Stripe sends invoices without line items, the webhook will return 500 (safe fail-closed, retryable).
+- Stripe invoices without `status_transitions.paid_at` now fail. All real `invoice.paid` events should have this field.
+- Subscriptions missing `currency`, `business_id`, or `plan` are now skipped by cron (previously used synthetic defaults that could mask data issues).
+
+## 2026-09-12 — #315 Phase 3C Findings 1-9
+
+### What changed
+- **Renewal recovery rewrite (Findings 1+2):** Flutterwave path now does bounded paginated tx search (page=1..N, empty=exhausted, cap=50=unavailable) for ALL overdue subs, with strict per-candidate verification via `verifyTransactionById` + `correlateProviderSubscription` + pinned amount/currency validation. Exactly one valid=finalize, multiple=ambiguous, zero+cancelled+exhaustive=terminal. Stripe path now uses exhaustive `has_more` pagination for invoice search and `extractSubscriptionLinePeriod` for period extraction.
+- **Cancellation claim RPC (Finding 3):** New `claim_active_subscriptions_for_cancellation_check` RPC in M381 with separate `cancellation_checked_at` column (24h cooldown, SKIP LOCKED, service_role only). Cancellation cron now uses this RPC exclusively.
+- **Route-level tests (Finding 4):** 11 tests covering checkout quarantine check, FLW/Stripe paid finalization, pagination cap=unavailable, cancellation basic flow, stable source keys.
+- **Cron scheduling (Finding 5):** Added checkout recovery (every 4h offset 2), renewal recovery (every 4h offset 3), cancellation reconciliation (daily 5am) to vercel.json.
+- **Checkout recovery structured check (Finding 6):** Changed to check `finResult?.finalized === true` instead of just `!finErr`.
+- **claim_overdue_subscription_batch includes business_id + plan (Finding 8):** RETURNS TABLE updated.
+- **extractSubscriptionLinePeriod (Finding 9):** New dual-shape line-item period extractor in stripe-invoice-extractors.ts. Stripe webhook updated to use it with top-level fallback. stripe-renewal-finalization.ts: gateway_reference now uses providerInvoiceId. 10 unit tests.
+
+### Files changed
+- `app/api/cron/subscription-renewal-recovery/route.ts` (REWRITTEN)
+- `app/api/cron/subscription-checkout-recovery/route.ts`
+- `app/api/cron/subscription-cancellation-reconciliation/route.ts` (REWRITTEN)
+- `app/api/payments/stripe-webhook/route.ts`
+- `lib/payments/stripe-invoice-extractors.ts`
+- `lib/payments/stripe-renewal-finalization.ts`
+- `lib/payments/__tests__/stripe-line-extractor.test.ts` (NEW)
+- `lib/payments/__tests__/renewal-recovery-cron.test.ts` (REWRITTEN)
+- `supabase/migrations/381_reconciliation_cron_support.sql`
+- `vercel.json`
+
+### What could break
+- Renewal recovery now verifies every candidate individually instead of taking the first match. If there are legitimate duplicate transactions, the `ambiguous` outcome prevents finalization (safe fail-closed).
+- Stripe webhook period extraction now prefers line-item periods over top-level. Falls back to top-level if line extraction fails, so backward compatible.
+- `gateway_reference` in stripe-renewal-finalization.ts now uses invoice ID instead of payment intent ID. This is correct for refund targeting but changes the lookup key.
+- Cancellation cron now requires the `claim_active_subscriptions_for_cancellation_check` RPC (M381). Migration must be applied first.
+
+## 2026-09-12 — #315 Phase 3C Corrections: Renewal Recovery Rewrite, Stripe Helper Extraction, Stable Event IDs
+
+### What changed
+- **Renewal recovery cron** (`app/api/cron/subscription-renewal-recovery/route.ts`): Rewritten Flutterwave path to do bounded transaction search (GET /v3/transactions with from/to/status=successful) BEFORE recording terminal evidence when provider status is cancelled. Correlates candidates via `correlateProviderSubscription`, matches stored `flutterwave_subscription_id` + `flutterwave_plan_id`, validates amount. If valid candidate found: calls `finalize_flutterwave_subscription_renewal` RPC and records `paid_finalized`. If search error: records `unavailable` (never terminal). Rewritten Stripe path to search `GET /v1/invoices?subscription={id}&status=paid` for invoices with period_start >= current_period_end when canceled. If found: resolves config version and calls shared `finalizeStripeRenewal` helper. All source keys are now deterministic (`renewal_recovery_{gateway}_{subId}`) — no `Date.now()`.
+- **Stripe renewal finalization helper** (`lib/payments/stripe-renewal-finalization.ts`, NEW): Extracted canonical Stripe renewal logic (evidence insert + duplicate recovery + activation RPC) shared between webhook and cron. Handles `subscription_payments` insert, 23505 duplicate recovery, `activate_paid_subscription` RPC call.
+- **Stripe webhook** (`app/api/payments/stripe-webhook/route.ts`): Replaced inline renewal logic (lines 513-573) with call to shared `finalizeStripeRenewal` helper. Period extraction, config version resolution, and amount/currency validation remain webhook-specific. Added import.
+- **Cancellation reconciliation cron** (`app/api/cron/subscription-cancellation-reconciliation/route.ts`): Replaced bare `SELECT` with atomic `last_reconciliation_attempt_at` UPDATE before processing (24-hour cooldown). Stable event IDs: `reconciliation_cancel_{gateway}_{subscription_id}` — deterministic, idempotent across retries. Added graceful fallback if `claim_active_subscriptions_for_cancellation_check` RPC doesn't exist.
+- **DB test 86** (`lib/__tests__/provider-neutral-subscriptions-db.test.ts`): Replaced sequential test with TRUE CONCURRENT proof — pre-seeds `terminal_no_payment` evidence, races Session A (upgrade to `paid_finalized`) vs Session B (`expire_subscription_with_authority`). Both use advisory lock → serialized. Asserts subscription stays active.
+- **Route-level test** (`lib/payments/__tests__/renewal-recovery-cron.test.ts`, NEW): 6 tests covering stable source keys, Flutterwave cancelled+unavailable→unavailable, cancelled+no-tx→terminal_no_payment, Stripe canceled+no-invoice→terminal_no_payment, Stripe active→provider_active_or_retrying.
+- **Test fix** (`lib/__tests__/subscribe-now-handler.test.ts`): Updated activation rejection error message pattern to match new shared helper format.
+
+### Files changed
+- `app/api/cron/subscription-renewal-recovery/route.ts`
+- `app/api/cron/subscription-cancellation-reconciliation/route.ts`
+- `app/api/payments/stripe-webhook/route.ts`
+- `lib/payments/stripe-renewal-finalization.ts` (NEW)
+- `lib/payments/__tests__/renewal-recovery-cron.test.ts` (NEW)
+- `lib/__tests__/provider-neutral-subscriptions-db.test.ts`
+- `lib/__tests__/subscribe-now-handler.test.ts`
+- `CHANGELOG.md`
+
+### What could break
+- Flutterwave renewal recovery now does bounded tx search before terminal evidence. If Flutterwave's GET /v3/transactions endpoint changes its filter behavior, search results may be incorrect (fails closed to `unavailable`, not terminal).
+- Stripe webhook renewal error messages changed (from inline format to shared helper format). Any monitoring/alerting keyed on exact error strings may need updating.
+- Cancellation reconciliation now has 24-hour cooldown via `last_reconciliation_attempt_at`. Subscriptions won't be re-checked more frequently than every 24 hours.
+
+---
+
+## 2026-09-12 — #315 Phase 3C: Atomic Expiry Authority & Claim RPCs
+
+### What changed
+- **Migration 381** (`supabase/migrations/381_reconciliation_cron_support.sql`, NEW): Adds `reconciliation_claimed_at` column to `subscription_checkout_intents` and `last_reconciliation_attempt_at` to `subscriptions`. Creates three new RPCs: `expire_subscription_with_authority` (authority-gated expiry requiring `terminal_no_payment` evidence for provider-managed subscriptions, period boundary safety check, advisory lock coordination), `claim_stale_checkout_batch` (SKIP LOCKED batch claim for stale Flutterwave checkout intents with 15-min lease), `claim_overdue_subscription_batch` (SKIP LOCKED batch claim for overdue FLW/Stripe subscriptions with 4-hour lease). All service_role only.
+- **Subscription expiry cron** (`app/api/cron/subscription-expiry/route.ts`): Replaced direct `subscriptions.update` + `businesses.update` with `expire_subscription_with_authority` RPC call. Added `gateway` to the subscription select query. Authority-denied or period-moved subscriptions are silently skipped. Email/alert/notification logic only fires on `expired=true`.
+- **15 DB tests** (`lib/__tests__/provider-neutral-subscriptions-db.test.ts`): Tests 81-95 covering expiry authority (terminal_no_payment, no_evidence, paystack fail-closed, null gateway passthrough, period boundary moved, concurrent paid_finalized vs expiry race, already non-active), claim fairness (batch claim, SKIP LOCKED isolation, lease expiry re-eligibility, overdue subscription claim, non-FLW exclusion), and ACL (authenticated denied on all three new RPCs).
+
+### Files changed
+- `supabase/migrations/381_reconciliation_cron_support.sql` (NEW)
+- `app/api/cron/subscription-expiry/route.ts`
+- `lib/__tests__/provider-neutral-subscriptions-db.test.ts`
+- `CHANGELOG.md`
+
+### What could break
+- If M380 migration is not deployed, the `subscription_reconciliation_evidence` table and `record_reconciliation_evidence` RPC won't exist, and `expire_subscription_with_authority` will fail on evidence lookups.
+- Provider-managed subscriptions (FLW/Stripe) will no longer expire without reconciliation evidence. If the reconciliation cron (Phase 3D) is not yet running, these subscriptions will stay active past their period end until evidence is recorded.
+- Paystack subscriptions with a gateway set but no provider subscription ID will be blocked from expiry (`no_provider_identity`). This is intentional fail-closed behavior.
+
+---
+
+## 2026-09-12 — #315 Phase 3A: Provider Config Blockers
+
+### What changed
+- **Provider config API** (`app/api/admin/provider-config/route.ts`, NEW): Admin-only POST route with three actions: `get_version` (returns UUID CAS from `get_effective_config` RPC), `save_refs` (calls `save_provider_plan_refs` with exact M378 params: `p_country_code`, `p_plan_refs`, `p_expected_version_id`, `p_actor_id`), `switch_provider` (calls `switch_country_provider` with `p_new_gateway`). Flutterwave switching preflights BOTH Growth and Business plan refs against Flutterwave API before calling the RPC.
+- **Admin Countries page** (`admin/src/pages/Countries.tsx`): Added `ProviderConfigPanel` component with: country selector, active gateway badge, Flutterwave + Paystack plan ref inputs per tier, Stripe inline-price label, gateway switch buttons (Paystack disabled), UUID CAS load/update, conflict detection.
+- **Generic save narrowed** (Blocker 4): `handleSave` in edit mode now excludes `payment_gateway` and `currency_code` from the update payload. Pricing preserves `provider_plan_refs`, `paystack_plan_code`, and Growth/Business prices from existing DB data. Only non-provider fields (fees, trial days, Free price) come from the form.
+- **Tests** (`lib/payments/__tests__/admin-provider-config.test.ts`, NEW): Contract tests verify exact RPC parameter names, UUID CAS (not numeric), nested `p_plan_refs` structure, Flutterwave preflight rejection for missing refs and failed API calls.
+
+### Files changed
+- `app/api/admin/provider-config/route.ts` (NEW)
+- `admin/src/pages/Countries.tsx`
+- `lib/payments/__tests__/admin-provider-config.test.ts` (NEW)
+- `CHANGELOG.md`
+
+### What could break
+- If M378 migration is not yet deployed, the RPCs `save_provider_plan_refs` and `switch_country_provider` will not exist and calls will fail with 500. The `get_effective_config` RPC from M359 is required.
+- The generic country edit no longer updates `payment_gateway` or `currency_code` — these must be changed via the Provider Config panel.
+- Growth/Business tier prices are now read-only in the generic edit modal.
+
+---
+
 ## 2026-09-10 — #270 W-1: Website / Commercial Presentation
 
 ### What changed

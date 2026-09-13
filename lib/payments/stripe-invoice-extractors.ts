@@ -264,3 +264,116 @@ export function extractInvoicePaymentIdentity(
   return { error: 'no_payment_identity',
     detail: 'No payment_intent and no payments object' };
 }
+
+// ═══════════════════════════════════════════════════════════
+// 3. Subscription Line-Item Period Extraction
+// ═══════════════════════════════════════════════════════════
+
+export interface LinePeriodResult {
+  periodStart: number;  // unix seconds
+  periodEnd: number;    // unix seconds
+}
+
+export interface LinePeriodError {
+  error: string;
+  detail?: string;
+}
+
+/**
+ * Extract the subscription line-item period from a Stripe invoice.
+ *
+ * Dual-shape support:
+ * - Legacy: line.subscription (string sub_xxx)
+ * - Modern (Basil 2025-03-31+): line.parent.subscription_item_details.subscription (string sub_xxx)
+ *
+ * Rules:
+ * - One-time items (no subscription reference) are skipped
+ * - If both legacy and modern present on the same line, they must agree; conflict → fail closed
+ * - Exactly one matching line with valid period → success
+ * - Zero or multiple matching lines → fail closed
+ */
+export function extractSubscriptionLinePeriod(
+  invoiceData: Record<string, unknown>,
+  targetSubscriptionId: string,
+): LinePeriodResult | LinePeriodError {
+  const lines = invoiceData.lines as Record<string, unknown> | undefined;
+  if (!lines || !Array.isArray(lines.data)) {
+    return { error: 'no_lines', detail: 'Invoice has no lines.data array' };
+  }
+
+  const lineItems = lines.data as Array<Record<string, unknown>>;
+  const matchingPeriods: Array<{ periodStart: number; periodEnd: number; lineIndex: number }> = [];
+
+  for (let i = 0; i < lineItems.length; i++) {
+    const line = lineItems[i];
+
+    // ── Extract legacy subscription reference ──
+    const legacyLineSub = line.subscription as string | undefined;
+    const hasLegacyRef = typeof legacyLineSub === 'string' && legacyLineSub.startsWith('sub_');
+
+    // ── Extract modern parent subscription reference ──
+    const lineParent = line.parent as Record<string, unknown> | undefined;
+    let modernLineSub: string | null = null;
+    if (lineParent && lineParent.type === 'subscription_item_details') {
+      const subItemDetails = lineParent.subscription_item_details as Record<string, unknown> | undefined;
+      const subRef = subItemDetails?.subscription;
+      if (typeof subRef === 'string' && subRef.startsWith('sub_')) {
+        modernLineSub = subRef;
+      }
+    }
+    const hasModernRef = modernLineSub !== null;
+
+    // ── Skip one-time items (no subscription reference at all) ──
+    if (!hasLegacyRef && !hasModernRef) {
+      continue;
+    }
+
+    // ── Conflict check: both present but disagree ──
+    if (hasLegacyRef && hasModernRef && legacyLineSub !== modernLineSub) {
+      return { error: 'line_subscription_conflict',
+        detail: `Line ${i}: legacy=${legacyLineSub}, modern=${modernLineSub}` };
+    }
+
+    // ── Resolve which subscription this line belongs to ──
+    const lineSubId = modernLineSub || legacyLineSub;
+    if (lineSubId !== targetSubscriptionId) {
+      continue; // different subscription, skip
+    }
+
+    // ── Extract period ──
+    const period = line.period as Record<string, unknown> | undefined;
+    if (!period) {
+      return { error: 'missing_line_period',
+        detail: `Line ${i} matches subscription but has no period` };
+    }
+
+    const periodStart = period.start as number | undefined;
+    const periodEnd = period.end as number | undefined;
+    if (!periodStart || !periodEnd || typeof periodStart !== 'number' || typeof periodEnd !== 'number') {
+      return { error: 'invalid_line_period',
+        detail: `Line ${i}: period.start=${periodStart}, period.end=${periodEnd}` };
+    }
+
+    if (periodStart >= periodEnd) {
+      return { error: 'malformed_period', detail: `Line ${i}: period.start >= period.end` };
+    }
+
+    matchingPeriods.push({ periodStart, periodEnd, lineIndex: i });
+  }
+
+  // ── Exactly one match required ──
+  if (matchingPeriods.length === 0) {
+    return { error: 'no_matching_line',
+      detail: `No line items match subscription ${targetSubscriptionId}` };
+  }
+
+  if (matchingPeriods.length > 1) {
+    return { error: 'multiple_matching_lines',
+      detail: `${matchingPeriods.length} lines match subscription ${targetSubscriptionId}` };
+  }
+
+  return {
+    periodStart: matchingPeriods[0].periodStart,
+    periodEnd: matchingPeriods[0].periodEnd,
+  };
+}

@@ -9,7 +9,7 @@ import {
   type BusinessCategoryKey,
   type CountryCode,
 } from '@/lib/constants';
-import { loadCountries, isValidCountryCode } from '@/lib/countries';
+import { loadCountries, isValidCountryCode, getDialingCodeMap } from '@/lib/countries';
 import { loadCategories, getAllCategoryKeys } from '@/lib/categoryConfig';
 import { initCapabilities } from '@/lib/capabilities/service';
 import type { CapabilityId } from '@/lib/capabilities/types';
@@ -106,17 +106,22 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ message: `Maximum number of businesses reached (${settings.max_businesses_per_user}). Contact support to increase.` }, { status: 400 });
     }
 
-    const countryCode: CountryCode = isValidCountryCode(country) ? country : 'NG';
+    // Fail-closed country validation — no hardcoded fallback
+    if (!isValidCountryCode(country)) {
+      return NextResponse.json(
+        { message: 'Invalid or unsupported country. Please select a valid country.' },
+        { status: 400 },
+      );
+    }
+    const countryCode = country as CountryCode;
 
-    // Validate country matches phone number to prevent fee arbitrage
-    const phoneDialingCodes: Record<string, CountryCode[]> = {
-      '+234': ['NG'], '+233': ['GH'], '+1': ['US', 'CA'], '+44': ['GB'],
-    };
+    // Validate country matches phone number to prevent fee arbitrage (DB-derived)
+    const phoneDialingCodes = getDialingCodeMap();
     if (phone) {
-      const matchedCountries = Object.entries(phoneDialingCodes).find(([code]) => phone.startsWith(code));
-      if (matchedCountries && !matchedCountries[1].includes(countryCode)) {
+      const matchedEntry = Object.entries(phoneDialingCodes).find(([code]) => phone.startsWith(code));
+      if (matchedEntry && !matchedEntry[1].includes(countryCode)) {
         return NextResponse.json(
-          { message: `Phone number doesn't match selected country. A ${phone.slice(0, 4)} number should use ${matchedCountries[1].join(' or ')}.` },
+          { message: `Phone number doesn't match selected country. A ${phone.slice(0, 4)} number should use ${matchedEntry[1].join(' or ')}.` },
           { status: 400 },
         );
       }

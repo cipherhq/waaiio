@@ -9,7 +9,8 @@ import { sendEmail } from '@/lib/email/client';
 import { subscriptionRenewalReceiptEmail } from '@/lib/email/templates';
 import { sendProactiveConfirmation } from '@/lib/payments/send-confirmation';
 import { notifyCustomerChargeFailed } from '@/lib/payments/notify-charge-failed';
-import { classifyInvoiceSubscription, extractInvoicePaymentIdentity } from '@/lib/payments/stripe-invoice-extractors';
+import { classifyInvoiceSubscription, extractInvoicePaymentIdentity, extractSubscriptionLinePeriod } from '@/lib/payments/stripe-invoice-extractors';
+import { finalizeStripeRenewal } from '@/lib/payments/stripe-renewal-finalization';
 
 const stripeWebhookSecret = process.env.STRIPE_WEBHOOK_SECRET || '';
 
@@ -460,27 +461,27 @@ export async function POST(request: NextRequest) {
 
         if (platformSub) {
           // ── Platform subscription renewal ──
-          // Require provider-derived period timestamps — no wall-clock fallbacks
-          const invoicePeriodStartUnix = data.period_start as number | undefined;
-          const invoicePeriodEndUnix = data.period_end as number | undefined;
-          if (!invoicePeriodStartUnix || !invoicePeriodEndUnix) {
-            logger.error('[STRIPE-WEBHOOK] Missing invoice period_start or period_end', { invoiceId: data.id });
-            return NextResponse.json({ error: 'Missing provider period timestamps' }, { status: 500 });
+          // Extract period from line items — fail closed, no top-level fallback
+          const linePeriod = extractSubscriptionLinePeriod(data, subscriptionId);
+          if ('error' in linePeriod) {
+            logger.error('[STRIPE-WEBHOOK] Subscription line-period extraction failed', {
+              invoiceId: data.id, error: linePeriod.error, detail: linePeriod.detail,
+            });
+            return NextResponse.json({ error: 'Missing provider period — line extraction failed' }, { status: 500 });
           }
-          const periodStart = new Date(invoicePeriodStartUnix * 1000).toISOString();
-          const periodEnd = new Date(invoicePeriodEndUnix * 1000).toISOString();
+          const periodStart = new Date(linePeriod.periodStart * 1000).toISOString();
+          const periodEnd = new Date(linePeriod.periodEnd * 1000).toISOString();
 
           // NO pre-write of periods to subscriptions — activate_paid_subscription RPC
           // performs authoritative period synchronization after all validation succeeds.
 
-          // Use provider payment timestamp (invoice created or period_start)
-          const invoiceCreated = data.created as number | undefined;
-          const renewalProviderTs = invoiceCreated || invoicePeriodStartUnix;
-          if (!renewalProviderTs) {
-            logger.error('[STRIPE-WEBHOOK] Missing invoice provider timestamp', { invoiceId: data.id });
-            return NextResponse.json({ error: 'Missing provider timestamp' }, { status: 500 });
+          // Use provider paid timestamp from status_transitions.paid_at — fail closed
+          const paidAtUnix = (data.status_transitions as Record<string, unknown>)?.paid_at as number | undefined;
+          if (!paidAtUnix) {
+            logger.error('[STRIPE-WEBHOOK] Missing status_transitions.paid_at', { invoiceId: data.id });
+            return NextResponse.json({ error: 'Missing provider paid timestamp' }, { status: 500 });
           }
-          const renewalProviderTimestamp = new Date(renewalProviderTs * 1000).toISOString();
+          const renewalProviderTimestamp = new Date(paidAtUnix * 1000).toISOString();
 
           // Resolve effective config version at provider payment time
           const { data: renewalConfig } = await supabase
@@ -510,66 +511,24 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ error: 'Missing or invalid provider amount' }, { status: 500 });
           }
 
-          // Persist payment evidence BEFORE calling activation RPC
-          const { data: renewalEvidence, error: renewalEvidenceErr } = await supabase.from('subscription_payments').insert({
-            business_id: platformSub.business_id,
-            subscription_id: platformSub.id,
-            amount: renewalAmount,
-            currency: renewalCurrency,
-            gateway: 'stripe',
-            gateway_reference: renewalProviderRef,
-            provider_reference: renewalProviderRef,
+          // Shared renewal finalization: evidence insert + duplicate recovery + activation
+          const renewalResult = await finalizeStripeRenewal(supabase, {
+            subscriptionId: platformSub.id,
+            businessId: platformSub.business_id,
             plan: platformSub.plan,
-            action: 'renewal',
-            status: 'success',
-            config_version_id: renewalConfig.id,
-            billing_interval: 'month',
-            period_start: periodStart,
-            period_end: periodEnd,
-          }).select('id').single();
+            providerInvoiceId: data.id as string,
+            providerReference: renewalProviderRef,
+            amountMinor: renewalAmount,
+            currency: renewalCurrency,
+            periodStart,
+            periodEnd,
+            providerPaidAt: renewalProviderTimestamp,
+            configVersionId: renewalConfig.id,
+          });
 
-          let renewalEvidenceId: string | null = null;
-          if (renewalEvidenceErr) {
-            const isDuplicate = renewalEvidenceErr.code === '23505'
-              || renewalEvidenceErr.message?.includes('duplicate')
-              || renewalEvidenceErr.message?.includes('unique');
-            if (isDuplicate) {
-              const { data: existing } = await supabase
-                .from('subscription_payments')
-                .select('id')
-                .eq('subscription_id', platformSub.id)
-                .eq('provider_reference', renewalProviderRef)
-                .eq('gateway', 'stripe')
-                .eq('status', 'success')
-                .single();
-              if (existing) {
-                renewalEvidenceId = existing.id;
-              } else {
-                logger.error('[STRIPE-WEBHOOK] Duplicate renewal evidence but exact lookup failed:', renewalEvidenceErr);
-                return NextResponse.json({ error: 'Conflicting renewal evidence for period' }, { status: 500 });
-              }
-            } else {
-              logger.error('[STRIPE-WEBHOOK] Renewal evidence insert failed:', renewalEvidenceErr);
-              return NextResponse.json({ error: 'Renewal evidence insert failed' }, { status: 500 });
-            }
-          } else if (!renewalEvidence) {
-            logger.error('[STRIPE-WEBHOOK] Renewal evidence insert returned no data');
-            return NextResponse.json({ error: 'Renewal evidence insert failed' }, { status: 500 });
-          } else {
-            renewalEvidenceId = renewalEvidence.id;
-          }
-
-          // Atomic activation: restores tier if downgraded + grants period allowance
-          const { data: renewActivation, error: renewActivateErr } = await supabase.rpc(
-            'activate_paid_subscription', { p_payment_id: renewalEvidenceId },
-          );
-          if (renewActivateErr) {
-            logger.error('[STRIPE-WEBHOOK] Paid activation RPC error:', renewActivateErr);
-            return NextResponse.json({ error: 'Activation RPC failed' }, { status: 500 });
-          }
-          if (!renewActivation || renewActivation.activated !== true) {
-            logger.error('[STRIPE-WEBHOOK] Paid renewal activation not confirmed:', renewActivation);
-            return NextResponse.json({ error: 'Paid renewal activation not confirmed' }, { status: 500 });
+          if (!renewalResult.finalized) {
+            logger.error('[STRIPE-WEBHOOK] Renewal finalization failed:', { reason: renewalResult.reason, invoiceId: data.id });
+            return NextResponse.json({ error: renewalResult.reason || 'Renewal finalization failed' }, { status: 500 });
           }
 
           // Send renewal receipt email to business owner
@@ -586,7 +545,7 @@ export async function POST(request: NextRequest) {
                 .eq('id', biz.owner_id)
                 .single();
               if (profile?.email) {
-                const periodEndDate = new Date(invoicePeriodEndUnix * 1000);
+                const periodEndDate = new Date(periodEnd);
                 const amountDisplay = String(renewalAmount);
                 const curr = renewalCurrency;
                 const { subject, html } = subscriptionRenewalReceiptEmail(

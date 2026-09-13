@@ -23,6 +23,7 @@
  */
 
 // ── Module-level mocks required for BotService to boot ──
+vi.mock('@/lib/countries', () => ({ loadCountries: vi.fn().mockResolvedValue([]), getCountry: vi.fn(), getCountryList: vi.fn().mockReturnValue([]), isValidCountryCode: vi.fn().mockReturnValue(true), getDialingCodeMap: vi.fn().mockReturnValue({}) }));
 // vi.mock calls are hoisted by Vitest and must appear before any imports
 // that transitively load the mocked modules.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';

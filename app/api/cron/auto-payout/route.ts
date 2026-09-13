@@ -7,6 +7,7 @@ import { safeLogErrorContext } from '@/lib/errors';
 import { verifyCronAuth } from '@/lib/cron-auth';
 import { createCronLogger } from '@/lib/observability/cron';
 import { getCurrencyCode, type CountryCode } from '@/lib/constants';
+import { loadCountries } from '@/lib/countries';
 import { sendEmail } from '@/lib/email/client';
 import { payoutFailedEmail } from '@/lib/email/templates';
 import { loadPlatformSettings } from '@/lib/platformSettings';
@@ -44,6 +45,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Payouts are currently disabled' }, { status: 503 });
   }
 
+  await loadCountries(); // Ensure DB-backed country cache before authoritative helpers
   const cron = createCronLogger('auto-payout');
   cron.started();
 
@@ -279,7 +281,7 @@ export async function GET(request: NextRequest) {
                 name: payoutAccount.account_name,
                 account_number: payoutAccount.account_number,
                 bank_code: payoutAccount.bank_code,
-                currency: getCurrencyCode((biz.country_code || 'NG') as CountryCode),
+                currency: getCurrencyCode(biz.country_code as CountryCode),
               }),
             });
 
