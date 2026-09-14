@@ -127,7 +127,8 @@ export async function handleSavedCardInput(
   // ── Awaiting PIN but non-digit input ──
   if (d._awaiting_card_pin) {
     if (action === 'cancel' || action === 'go_back') {
-      return { valid: true, data: { _skip_saved_card: true, _awaiting_card_pin: false } };
+      // R3-B1: PIN-stage cancel = full transaction cancel, not pay-new fallback
+      return { valid: true, data: { _saved_card_cancelled: true, _awaiting_card_pin: false } };
     }
     await ctx.sender.sendText({
       to: ctx.from,

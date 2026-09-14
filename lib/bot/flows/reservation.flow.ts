@@ -1204,8 +1204,13 @@ export const reservationFlow: FlowDefinition = {
             }
             if (!cancelResult?.length) {
               const { data: res } = await ctx.supabase.from('reservations')
-                .select('status, payment_status').eq('id', cancelResId).single();
-              if (res?.payment_status === 'paid' || res?.status === 'confirmed') {
+                .select('status, deposit_status').eq('id', cancelResId).single();
+              if (!res) {
+                // R3-B2: Re-read failed — fail closed
+                logger.error('[RESERVATION] Saved-card cancel re-read failed');
+                return null;
+              }
+              if (res.deposit_status === 'paid' || res.status === 'confirmed') {
                 await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('✅ Your reservation has been confirmed! Type *my bookings* to view details.') });
                 return null;
               }
