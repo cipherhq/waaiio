@@ -141,6 +141,11 @@ export async function handleSavedCardInput(
     return { valid: true, data: { _skip_saved_card: true } };
   }
 
+  // ── Cancel from saved-card offer (Blocker 5) ──
+  if (action === 'cancel' || action === 'go_back') {
+    return { valid: true, data: { _skip_saved_card: true, _saved_card_cancelled: true } };
+  }
+
   // Not a saved-card input — let the flow handle it
   return null;
 }
@@ -197,12 +202,17 @@ async function chargeSavedCard(
     };
   }
   if (result.status === 'requires_provider_auth' && 'authUrl' in result) {
+    // Blocker 4: Send auth URL to customer and route to payment-await step
+    await ctx.sender.sendText({
+      to: ctx.from,
+      text: await ctx.t(`🔒 Your bank requires verification.\n\nPlease complete here 👇\n${result.authUrl}\n\n⚠️ Return to WhatsApp after verifying.`),
+    });
     return {
       valid: true,
       data: {
         _saved_card_requires_auth: true,
-        _saved_card_auth_url: result.authUrl,
         _saved_card_payment_id: result.paymentId,
+        payment_reference: opts.reference,
         ...clearPinData,
       },
     };

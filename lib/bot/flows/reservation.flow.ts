@@ -18,6 +18,7 @@ import { getCalendarLinksText } from '@/lib/calendar/generate-links';
 import type { SubscriptionTier } from '@/lib/constants';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 import { buildSavedCardOffer, handleSavedCardInput } from './shared/saved-card-flow';
+import { safeButtons } from './shared/safe-interactive';
 
 export const reservationFlow: FlowDefinition = {
   type: 'reservation',
@@ -1166,10 +1167,7 @@ export const reservationFlow: FlowDefinition = {
       },
       async next(ctx: FlowContext) {
         const d = ctx.session.session_data;
-        if (d._terms_accepted || d._terms_cancelled) {
-          return 'create_reservation';
-        }
-        // #268: Saved-card outcomes
+        // Blocker 1: Saved-card outcomes BEFORE legacy terms loop
         if (d._saved_card_paid) {
           const paymentId = d._saved_card_payment_id as string;
           if (paymentId) {
@@ -1186,14 +1184,24 @@ export const reservationFlow: FlowDefinition = {
           }
           return null;
         }
-        if (d._saved_card_indeterminate) {
+        if (d._saved_card_indeterminate || d._saved_card_requires_auth) {
           d.payment_reference = `${d.reference_code as string}-saved`;
-          await ctx.sender.sendText({ to: ctx.from, text: '⏳ Payment is being verified. Confirmation arriving shortly.' });
           return 'reservation_payment';
+        }
+        if (d._saved_card_cancelled) {
+          await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('Reservation cancelled. Send *Hi* to start over.') });
+          return null;
         }
         if (d._skip_saved_card && d._saved_method_id) {
           delete d._saved_method_id;
+          delete d._skip_saved_card;
           return 'create_reservation';
+        }
+        if (d._terms_accepted || d._terms_cancelled) {
+          if (!d._terms_loop_consumed) {
+            d._terms_loop_consumed = true;
+            return 'create_reservation';
+          }
         }
         return null;
       },

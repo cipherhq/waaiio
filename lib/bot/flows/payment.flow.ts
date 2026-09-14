@@ -15,6 +15,7 @@ import { analyzeReceipt, receiptMatchesExpected } from '@/lib/bot/receipt-ocr';
 import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
 import { buildSavedCardOffer, handleSavedCardInput } from './shared/saved-card-flow';
+import { safeButtons } from './shared/safe-interactive';
 
 export const paymentFlow: FlowDefinition = {
   type: 'payment',
@@ -331,37 +332,44 @@ export const paymentFlow: FlowDefinition = {
           }
         }
 
-        // Create a booking record for payment tracking
-        const { data: booking, error } = await ctx.supabase
-          .from('bookings')
-          .insert({
-            business_id: ctx.business!.id,
-            user_id: userId,
-            service_id: (d.service_id as string) || null,
-            date: new Date().toISOString().split('T')[0],
-            time: new Date().toTimeString().split(' ')[0].slice(0, 5),
-            party_size: 1,
-            flow_type: 'payment',
-            channel: 'whatsapp',
-            payment_source: 'payment_request',
-            deposit_amount: amount,
-            deposit_status: 'pending',
-            status: 'pending',
-            total_amount: amount,
-            quantity: 1,
-            guest_name: `${d.first_name || ''} ${d.last_name || ''}`.trim(),
-            guest_phone: ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`,
-            notes: `${d.service_name} payment`,
-          })
-          .select('id, reference_code')
-          .single();
+        // Blocker 2: Reuse existing booking on re-entry (pay-new, decline, PIN fallback)
+        let bookingId = d.booking_id as string | undefined;
+        let referenceCode = d.reference_code as string | undefined;
+        if (!bookingId || !referenceCode) {
+          // Create a booking record for payment tracking (first entry only)
+          const { data: booking, error } = await ctx.supabase
+            .from('bookings')
+            .insert({
+              business_id: ctx.business!.id,
+              user_id: userId,
+              service_id: (d.service_id as string) || null,
+              date: new Date().toISOString().split('T')[0],
+              time: new Date().toTimeString().split(' ')[0].slice(0, 5),
+              party_size: 1,
+              flow_type: 'payment',
+              channel: 'whatsapp',
+              payment_source: 'payment_request',
+              deposit_amount: amount,
+              deposit_status: 'pending',
+              status: 'pending',
+              total_amount: amount,
+              quantity: 1,
+              guest_name: `${d.first_name || ''} ${d.last_name || ''}`.trim(),
+              guest_phone: ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`,
+              notes: `${d.service_name} payment`,
+            })
+            .select('id, reference_code')
+            .single();
 
-        if (error || !booking) {
-          return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start over.' }];
+          if (error || !booking) {
+            return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start over.' }];
+          }
+
+          bookingId = bookingId!;
+          referenceCode = referenceCode!;
+          d.booking_id = bookingId;
+          d.reference_code = referenceCode;
         }
-
-        d.booking_id = booking.id;
-        d.reference_code = booking.reference_code;
 
         // Platform fee is recorded AFTER payment verification in await_payment.validate()
 
@@ -378,10 +386,10 @@ export const paymentFlow: FlowDefinition = {
           return [savedCardOffer.prompt];
         }
         const paymentResult = await initializePayment(ctx.supabase, {
-          bookingId: booking.id,
+          bookingId: bookingId!,
           userId,
           amount,
-          referenceCode: booking.reference_code,
+          referenceCode: referenceCode!,
           businessName: ctx.business?.name || 'Business',
           phone: ctx.from,
           countryCode: cc,
@@ -406,7 +414,7 @@ export const paymentFlow: FlowDefinition = {
           if (bankAccount) {
             const transferRef = await createPendingTransfer(ctx.supabase, {
               businessId: ctx.business!.id,
-              entityId: { booking_id: booking.id },
+              entityId: { booking_id: bookingId! },
               customerPhone: ctx.from,
               customerName: `${d.first_name || ''} ${d.last_name || ''}`.trim(),
               amount,
@@ -429,7 +437,7 @@ export const paymentFlow: FlowDefinition = {
               `${getCategoryLabels(ctx.business?.category || 'church').confirmationEmoji} ${ctx.business?.name}`,
               `📌 ${d.service_name as string}`,
               `💰 ${formatCurrency(amount, cc)}`,
-              `🔑 Ref: *${booking.reference_code}*`,
+              `🔑 Ref: *${referenceCode!}*`,
               '',
               `*Option 1 — Pay Online* 👇`,
               paymentResult.url,
@@ -438,15 +446,11 @@ export const paymentFlow: FlowDefinition = {
               formatBankTransferBlock(bankAccount, formatCurrency(amount, cc), transferRef),
             ];
 
-            return [{
-              type: 'buttons',
-              body: paymentLines.join('\n'),
-              buttons: [
-                { id: d.payment_reference ? `i_paid_ref:${d.payment_reference}` : 'i_paid_online', title: "I've Paid Online" },
-                { id: 'sent_transfer', title: "I've Sent Transfer" },
-                { id: 'go_back', title: 'Cancel' },
-              ],
-            }];
+            return safeButtons(paymentLines.join('\n'), [
+              { id: d.payment_reference ? `i_paid_ref:${d.payment_reference}` : 'i_paid_online', title: "I've Paid Online" },
+              { id: 'sent_transfer', title: "I've Sent Transfer" },
+              { id: 'go_back', title: 'Cancel' },
+            ]);
           }
 
           // Standard payment flow (no bank transfer option) — consolidated into 1 message
@@ -461,7 +465,7 @@ export const paymentFlow: FlowDefinition = {
             `${getCategoryLabels(ctx.business?.category || 'church').confirmationEmoji} ${ctx.business?.name}`,
             `📌 ${d.service_name as string}`,
             `💰 ${formatCurrency(amount, cc)}`,
-            `🔑 Ref: *${booking.reference_code}*`,
+            `🔑 Ref: *${referenceCode!}*`,
             '',
             `Pay here 👇`,
             paymentResult.url,
@@ -473,21 +477,18 @@ export const paymentFlow: FlowDefinition = {
 
           paymentLines.push('', '⚠️ Confirmation arrives automatically after payment.');
 
-          return [{
-            type: 'buttons',
-            body: paymentLines.join('\n'),
-            buttons: [
-              { id: d.payment_reference ? `i_paid_ref:${d.payment_reference}` : 'i_paid', title: "I've Paid" },
-              { id: 'go_back', title: 'Cancel' },
-            ],
-          }];
+          // Blocker 6: Safe interactive body — falls back to text+buttons if >1024 chars
+          return safeButtons(paymentLines.join('\n'), [
+            { id: d.payment_reference ? `i_paid_ref:${d.payment_reference}` : 'i_paid', title: "I've Paid" },
+            { id: 'go_back', title: 'Cancel' },
+          ]);
         }
 
         // Payment gateway failed — but bank transfer may still be available
         if (bankAccount) {
           const transferRef = await createPendingTransfer(ctx.supabase, {
             businessId: ctx.business!.id,
-            entityId: { booking_id: booking.id },
+            entityId: { booking_id: bookingId! },
             customerPhone: ctx.from,
             customerName: `${d.first_name || ''} ${d.last_name || ''}`.trim(),
             amount,
@@ -509,7 +510,7 @@ export const paymentFlow: FlowDefinition = {
             `${getCategoryLabels(ctx.business?.category || 'church').confirmationEmoji} ${ctx.business?.name}`,
             `📌 ${d.service_name as string}`,
             `💰 ${formatCurrency(amount, cc)}`,
-            `🔑 Ref: *${booking.reference_code}*`,
+            `🔑 Ref: *${referenceCode!}*`,
             '',
             `Transfer to:`,
             formatBankTransferBlock(bankAccount, formatCurrency(amount, cc), transferRef),
@@ -559,10 +560,7 @@ export const paymentFlow: FlowDefinition = {
       },
       async next(ctx: FlowContext) {
         const d = ctx.session.session_data;
-        if (d._terms_accepted || d._terms_cancelled) {
-          return 'process_payment';
-        }
-        // #268: Saved-card outcomes
+        // Blocker 1: Saved-card outcomes BEFORE legacy terms loop
         if (d._saved_card_paid) {
           const paymentId = d._saved_card_payment_id as string;
           if (paymentId) {
@@ -579,15 +577,27 @@ export const paymentFlow: FlowDefinition = {
           }
           return null;
         }
-        if (d._saved_card_indeterminate) {
+        if (d._saved_card_indeterminate || d._saved_card_requires_auth) {
           d.payment_reference = `${d.reference_code as string}-saved`;
-          await ctx.sender.sendText({ to: ctx.from, text: '⏳ Payment is being verified. Confirmation arriving shortly.' });
           return 'await_payment';
         }
+        if (d._saved_card_cancelled) {
+          // Blocker 5: Cancel from saved-card offer — end session cleanly
+          await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('Payment cancelled. No charges were made. Send *Hi* to start over.') });
+          return null;
+        }
         if (d._skip_saved_card && d._saved_method_id) {
-          // User chose "Use different card" or saved-card failed — re-enter for payment link
           delete d._saved_method_id;
+          delete d._skip_saved_card;
           return 'process_payment';
+        }
+        // Legacy standalone T&C loop (only reached if T&C was triggered from process_payment directly)
+        if (d._terms_accepted || d._terms_cancelled) {
+          // Consume the terms flag to prevent loop
+          if (!d._terms_loop_consumed) {
+            d._terms_loop_consumed = true;
+            return 'process_payment';
+          }
         }
         return null;
       },

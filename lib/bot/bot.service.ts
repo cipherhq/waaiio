@@ -1420,7 +1420,7 @@ export class BotService {
         ? {
             business_id: businessId, business_name: business.name, business_category: business.category, capabilities,
             ...(directCanonicalCap ? { active_capability: directCanonicalCap } : {}),
-            ...(deepLinkCapability ? { _deep_link_capability: deepLinkCapability, ...(!directCanonicalCap ? { active_capability: deepLinkCapability } : {}) } : {}),
+            ...(deepLinkCapability ? { _deep_link_capability: deepLinkCapability, ...(!directCanonicalCap && capabilities.includes(deepLinkCapability as CapabilityId) ? { active_capability: deepLinkCapability } : {}) } : {}),
             ...(inboundChannelId ? { _inbound_channel_id: inboundChannelId } : {}),
             ...(forceCapabilityMenu ? { _force_capability_menu: true } : {}),
             ...(canonicalActivatedLanguage ? { _detected_language: canonicalActivatedLanguage } : {}),

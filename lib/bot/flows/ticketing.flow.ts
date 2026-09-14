@@ -17,6 +17,7 @@ import { analyzeReceipt, receiptMatchesExpected } from '@/lib/bot/receipt-ocr';
 import { parseIvePaidInput, isIvePaidInput } from '@/lib/bot/flows/shared/ive-paid-input';
 import { checkBankTransferEligibility, createPendingTransfer, formatBankTransferBlock, BANK_ONLY_BUTTONS } from './shared/bank-transfer';
 import { buildSavedCardOffer, handleSavedCardInput } from './shared/saved-card-flow';
+import { safeButtons } from './shared/safe-interactive';
 
 export const ticketingFlow: FlowDefinition = {
   type: 'ticketing',
@@ -843,10 +844,7 @@ export const ticketingFlow: FlowDefinition = {
       },
       async next(ctx: FlowContext) {
         const d = ctx.session.session_data;
-        if (d._terms_accepted || d._terms_cancelled) {
-          return 'process_tickets';
-        }
-        // #268: Saved-card outcomes
+        // Blocker 1: Saved-card outcomes BEFORE legacy terms loop
         if (d._saved_card_paid) {
           const paymentId = d._saved_card_payment_id as string;
           if (paymentId) {
@@ -863,14 +861,24 @@ export const ticketingFlow: FlowDefinition = {
           }
           return null;
         }
-        if (d._saved_card_indeterminate) {
+        if (d._saved_card_indeterminate || d._saved_card_requires_auth) {
           d.payment_reference = `${d.reference_code as string}-saved`;
-          await ctx.sender.sendText({ to: ctx.from, text: '⏳ Payment is being verified. Confirmation arriving shortly.' });
           return 'await_ticket_payment';
+        }
+        if (d._saved_card_cancelled) {
+          await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('Ticket order cancelled. Send *Hi* to start over.') });
+          return null;
         }
         if (d._skip_saved_card && d._saved_method_id) {
           delete d._saved_method_id;
+          delete d._skip_saved_card;
           return 'process_tickets';
+        }
+        if (d._terms_accepted || d._terms_cancelled) {
+          if (!d._terms_loop_consumed) {
+            d._terms_loop_consumed = true;
+            return 'process_tickets';
+          }
         }
         return null;
       },

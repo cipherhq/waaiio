@@ -8,6 +8,7 @@ import { initializePayment } from './shared/payment';
 import { truncTitle } from '../utils/truncate';
 import { savedPaymentAdapter } from '@/lib/payments/saved-payment-adapter';
 import type { ChargeOutcome } from '@/lib/payments/saved-payment-adapter';
+import { safeButtons } from './shared/safe-interactive';
 import { createNotification } from './shared/notifications';
 import { getConfirmationMessage } from './shared/templates';
 import { handlePostCompletion } from './shared/post-completion';

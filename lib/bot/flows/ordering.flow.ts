@@ -16,6 +16,7 @@ import { parseIvePaidInput, isIvePaidInput } from '@/lib/bot/flows/shared/ive-pa
 import { checkTierLimit } from '@/lib/tier-limits';
 import { logger } from '@/lib/logger';
 import { buildSavedCardOffer, handleSavedCardInput } from './shared/saved-card-flow';
+import { safeButtons } from './shared/safe-interactive';
 
 /** Generic labels for ordering flow */
 function getOrderingLabels(_category: string): { noun: string; emoji: string; browseLabel: string } {
@@ -2677,14 +2678,19 @@ export const orderingFlow: FlowDefinition = {
           const orderSendMsg = async (to: string, txt: string) => {
             await ctx.sender.sendText({ to, text: txt });
           };
-          evaluateRules(ctx.supabase, ctx.business.id, 'order_created', orderRuleCtx, orderSendMsg)
-            .catch(err => logger.error('[ORDERING] order_created rule error:', err));
-          triggerSequences(ctx.supabase, ctx.business.id, 'after_order', ctx.from, orderRuleCtx)
-            .catch(err => logger.error('[ORDERING] after_order sequence error:', err));
+          // Blocker 3: Guard creation-only side effects — only fire for newly created orders
+          if (!d._order_side_effects_fired) {
+            d._order_side_effects_fired = true;
+            evaluateRules(ctx.supabase, ctx.business.id, 'order_created', orderRuleCtx, orderSendMsg)
+              .catch(err => logger.error('[ORDERING] order_created rule error:', err));
+            triggerSequences(ctx.supabase, ctx.business.id, 'after_order', ctx.from, orderRuleCtx)
+              .catch(err => logger.error('[ORDERING] after_order sequence error:', err));
+          }
         }
 
-        // Notify business owner via email + WhatsApp (non-blocking)
-        if (ctx.business) {
+        // Notify business owner via email + WhatsApp (non-blocking, guarded same way)
+        if (ctx.business && !d._order_owner_notified) {
+          d._order_owner_notified = true;
           notifyOwnerNewOrder({
             supabase: ctx.supabase,
             sender: ctx.sender,
@@ -3014,10 +3020,7 @@ export const orderingFlow: FlowDefinition = {
         if (d._action === 'cancelled') {
           return null;
         }
-        if (d._terms_accepted || d._terms_cancelled) {
-          return 'process_order';
-        }
-        // #268: Saved-card outcomes
+        // Blocker 1: Saved-card outcomes BEFORE legacy terms loop
         if (d._saved_card_paid) {
           const paymentId = d._saved_card_payment_id as string;
           if (paymentId) {
@@ -3034,14 +3037,29 @@ export const orderingFlow: FlowDefinition = {
           }
           return null;
         }
-        if (d._saved_card_indeterminate) {
+        if (d._saved_card_indeterminate || d._saved_card_requires_auth) {
           d.payment_reference = `${d.reference_code as string}-saved`;
-          await ctx.sender.sendText({ to: ctx.from, text: '⏳ Payment is being verified. Confirmation arriving shortly.' });
           return 'await_order_payment';
+        }
+        if (d._saved_card_cancelled) {
+          const orderId = d.order_id as string;
+          if (orderId) {
+            await ctx.supabase.from('orders').update({ status: 'cancelled' }).eq('id', orderId);
+            try { await ctx.supabase.rpc('release_promo_reservation', { p_order_id: orderId }); } catch { /* non-critical */ }
+          }
+          await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('Order cancelled. Send *Hi* to start over.') });
+          return null;
         }
         if (d._skip_saved_card && d._saved_method_id) {
           delete d._saved_method_id;
+          delete d._skip_saved_card;
           return 'process_order';
+        }
+        if (d._terms_accepted || d._terms_cancelled) {
+          if (!d._terms_loop_consumed) {
+            d._terms_loop_consumed = true;
+            return 'process_order';
+          }
         }
         if (d._retry_payment) {
           delete d._retry_payment;
