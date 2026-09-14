@@ -6,7 +6,8 @@ import { safeLogErrorContext } from '@/lib/errors';
 import { createWhatsAppUser, findUserByPhone } from './shared/user';
 import { initializePayment } from './shared/payment';
 import { truncTitle } from '../utils/truncate';
-import { getSavedPaymentMethod, chargeSavedCard } from '@/lib/payments/charge-saved';
+import { savedPaymentAdapter } from '@/lib/payments/saved-payment-adapter';
+import type { ChargeOutcome } from '@/lib/payments/saved-payment-adapter';
 import { createNotification } from './shared/notifications';
 import { getConfirmationMessage } from './shared/templates';
 import { handlePostCompletion } from './shared/post-completion';
@@ -2741,12 +2742,13 @@ export const schedulingFlow: FlowDefinition = {
         });
 
         if (totalDeposit > 0) {
-          // Check for saved payment method — one-tap payment
-          const savedMethod = ctx.business ? await getSavedPaymentMethod(ctx.supabase, ctx.business.id, ctx.from) : null;
+          // Check for saved payment method — one-tap payment (via provider-neutral adapter)
+          const savedMethods = ctx.business ? await savedPaymentAdapter.getSavedMethods(ctx.supabase, ctx.business.id, ctx.from) : [];
+          const savedDisplay = savedMethods.length > 0 ? savedMethods[0] : null;
 
-          if (savedMethod && !d._skip_saved_card) {
+          if (savedDisplay && !d._skip_saved_card) {
             // Offer one-tap payment with saved card
-            d._saved_method_id = savedMethod.id;
+            d._saved_method_id = savedDisplay.id;
             d._pending_deposit = totalDeposit;
             d.booking_id = booking.id;
             d.reference_code = booking.reference_code;
@@ -2754,13 +2756,12 @@ export const schedulingFlow: FlowDefinition = {
               .update({ session_data: d, current_step: 'saved_card_prompt' })
               .eq('id', ctx.session.id);
 
-            const cardLabel = `${(savedMethod.card_brand || 'Card').toUpperCase()} ****${savedMethod.card_last4 || '????'}`;
             return [
               {
                 type: 'buttons',
-                body: `💳 Pay ${formatCurrency(totalDeposit, (ctx.business?.country_code || 'NG') as CountryCode)} with your saved card?\n\n${cardLabel}`,
+                body: `💳 Pay ${formatCurrency(totalDeposit, (ctx.business?.country_code || 'NG') as CountryCode)} with your saved card?\n\n${savedDisplay.displayLabel}`,
                 buttons: [
-                  { id: 'pay_saved', title: `Pay with ${savedMethod.card_last4 || 'card'}` },
+                  { id: 'pay_saved', title: `Pay with ${savedDisplay.last4 || 'card'}` },
                   { id: 'pay_new', title: 'Use different card' },
                   { id: 'go_back', title: 'Cancel' },
                 ],
@@ -3190,39 +3191,34 @@ export const schedulingFlow: FlowDefinition = {
         const action = input.toLowerCase().trim();
 
         if (action === 'pay_saved') {
-          // Check if saved card has a PIN — require verification
-          const savedMethod = await getSavedPaymentMethod(ctx.supabase, ctx.business!.id, ctx.from);
-          if (!savedMethod) {
+          // Check if saved card has a PIN — require verification (via provider-neutral adapter)
+          const methodId = d._saved_method_id as string;
+          if (!methodId) {
             return { valid: true, data: { _skip_saved_card: true } };
           }
 
-          // Check if card has a PIN set
-          const { data: cardWithPin } = await ctx.supabase
-            .from('saved_payment_methods')
-            .select('pin_hash, pin_attempts, pin_locked_until')
-            .eq('id', savedMethod.id)
-            .single();
+          const pinStatus = await savedPaymentAdapter.requiresPin(ctx.supabase, methodId, ctx.business!.id, ctx.from);
 
-          if (cardWithPin?.pin_hash) {
-            // Card has a PIN — ask for verification
-            if (cardWithPin.pin_locked_until && new Date(cardWithPin.pin_locked_until) > new Date()) {
+          if (pinStatus.required) {
+            if (pinStatus.locked) {
               await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('🔒 This card is locked due to too many wrong PIN attempts. Type *remove card* to delete it and save again.') });
               return { valid: true, data: { _skip_saved_card: true } };
             }
             // Move to PIN verification step
             await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('🔒 Enter your *4-digit card PIN* to confirm payment:') });
-            return { valid: true, data: { _awaiting_card_pin: true, _saved_method_id: savedMethod.id } };
+            return { valid: true, data: { _awaiting_card_pin: true, _saved_method_id: methodId } };
           }
 
-          // No PIN (legacy saved card) — charge directly
+          // No PIN (legacy saved card) — charge directly via adapter
           const amount = d._pending_deposit as number;
           const bookingId = d.booking_id as string;
           const refCode = d.reference_code as string;
           const phone = ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`;
           const email = (d.email as string) || `${phone.replace('+', '')}@${process.env.FALLBACK_EMAIL_DOMAIN || 'whatsapp.waaiio.com'}`;
 
-          const result = await chargeSavedCard(ctx.supabase, {
-            savedMethod,
+          const result: ChargeOutcome = await savedPaymentAdapter.chargeSavedMethod(ctx.supabase, {
+            methodId,
+            customerPhone: ctx.from,
             amount,
             currency: getCurrencyCode((ctx.business?.country_code || 'NG') as CountryCode),
             email,
@@ -3232,66 +3228,48 @@ export const schedulingFlow: FlowDefinition = {
             transactionCategory: 'scheduling',
           });
 
-          if (result.outcome === 'charged' || result.outcome === 'already_charged') {
+          if (result.status === 'charged' || result.status === 'already_charged') {
             return { valid: true, data: { _saved_card_paid: true, _saved_card_payment_id: result.paymentId, _action: 'payment_confirmed' } };
           }
-          if (result.outcome === 'indeterminate') {
+          if (result.status === 'indeterminate') {
             return { valid: true, data: { _saved_card_indeterminate: true, _saved_card_payment_id: result.paymentId } };
           }
           return { valid: true, data: { _skip_saved_card: true, _saved_card_error: 'message' in result ? result.message : 'Card charge failed' } };
         }
 
-        // Handle PIN verification for saved card
+        // Handle PIN verification for saved card (via provider-neutral adapter)
         if (d._awaiting_card_pin && /^\d{4}$/.test(action)) {
-          const phone = ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`;
-          const { createHash } = await import('crypto');
-          const pinHash = createHash('sha256').update(`${action}:${phone}`).digest('hex');
+          const methodId = d._saved_method_id as string;
+          const pinResult = await savedPaymentAdapter.verifyPin(ctx.supabase, methodId, ctx.business!.id, ctx.from, action);
 
-          const { data: card } = await ctx.supabase
-            .from('saved_payment_methods')
-            .select('id, pin_hash, pin_attempts')
-            .eq('id', d._saved_method_id as string)
-            .single();
-
-          if (!card || card.pin_hash !== pinHash) {
-            const attempts = (card?.pin_attempts || 0) + 1;
-            if (card) {
-              const lockUntil = attempts >= 3 ? new Date(Date.now() + 30 * 60 * 1000).toISOString() : null;
-              await ctx.supabase.from('saved_payment_methods')
-                .update({ pin_attempts: attempts, ...(lockUntil ? { pin_locked_until: lockUntil } : {}) })
-                .eq('id', card.id);
-            }
-            if (attempts >= 3) {
+          if (!pinResult.valid) {
+            if (pinResult.locked) {
               await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('🔒 Too many wrong attempts. Card locked for 30 minutes. Type *remove card* to delete and re-save.') });
               return { valid: true, data: { _skip_saved_card: true, _awaiting_card_pin: false } };
             }
-            await ctx.sender.sendText({ to: ctx.from, text: await ctx.t(`Wrong PIN. ${3 - attempts} attempt${3 - attempts !== 1 ? 's' : ''} remaining. Try again:`) });
+            await ctx.sender.sendText({ to: ctx.from, text: await ctx.t(`Wrong PIN. ${pinResult.attemptsRemaining} attempt${pinResult.attemptsRemaining !== 1 ? 's' : ''} remaining. Try again:`) });
             return { valid: false };
           }
 
-          // PIN correct — reset attempts and charge
-          await ctx.supabase.from('saved_payment_methods').update({ pin_attempts: 0 }).eq('id', card.id);
-
-          const savedMethod = await getSavedPaymentMethod(ctx.supabase, ctx.business!.id, ctx.from);
-          if (!savedMethod) return { valid: true, data: { _skip_saved_card: true, _awaiting_card_pin: false } };
-
+          // PIN correct — charge via adapter
           const amount = d._pending_deposit as number;
           const bookingId = d.booking_id as string;
           const refCode = d.reference_code as string;
+          const phone = ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`;
           const email = (d.email as string) || `${phone.replace('+', '')}@${process.env.FALLBACK_EMAIL_DOMAIN || 'whatsapp.waaiio.com'}`;
 
-          const result = await chargeSavedCard(ctx.supabase, {
-            savedMethod, amount,
+          const result: ChargeOutcome = await savedPaymentAdapter.chargeSavedMethod(ctx.supabase, {
+            methodId, customerPhone: ctx.from, amount,
             currency: getCurrencyCode((ctx.business?.country_code || 'NG') as CountryCode),
             email, reference: `${refCode}-saved`,
             businessId: ctx.business!.id, bookingId,
             transactionCategory: 'scheduling',
           });
 
-          if (result.outcome === 'charged' || result.outcome === 'already_charged') {
+          if (result.status === 'charged' || result.status === 'already_charged') {
             return { valid: true, data: { _saved_card_paid: true, _saved_card_payment_id: result.paymentId, _action: 'payment_confirmed', _awaiting_card_pin: false } };
           }
-          if (result.outcome === 'indeterminate') {
+          if (result.status === 'indeterminate') {
             return { valid: true, data: { _saved_card_indeterminate: true, _saved_card_payment_id: result.paymentId, _awaiting_card_pin: false } };
           }
           return { valid: true, data: { _skip_saved_card: true, _saved_card_error: 'message' in result ? result.message : 'Card charge failed', _awaiting_card_pin: false } };
