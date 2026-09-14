@@ -708,6 +708,118 @@ describe('R7: Reservation cancellation races', () => {
   });
 });
 
+// ── R8: Missing durable entity ID — fail closed ──
+
+describe('R8: Missing durable entity ID — fail closed', () => {
+  it('Payment/Giving: no booking_id → fail closed, no cancellation message', async () => {
+    const { paymentFlow } = await import('../payment.flow');
+    const step = paymentFlow.steps.find(s => s.id === 'process_payment')!;
+    const m = createCancelRaceMock({
+      updateResult: { data: [], error: null },
+      rereadResult: { data: null, error: null },
+    });
+    // No booking_id in session — durable entity identity missing
+    const sd = { _saved_card_cancelled: true } as Record<string, unknown>;
+    const result = await step.next(m.ctx(sd));
+    expect(result).toBeNull();
+    // Must NOT claim cancellation
+    expect(m.sentTexts.some(t => t.includes('cancelled'))).toBe(false);
+    // Must NOT cancel transfers
+    expect(m.wasTransferCancelCalled()).toBe(false);
+  });
+
+  it('Ticketing: no booking_id → fail closed, no cancellation message', async () => {
+    const { ticketingFlow } = await import('../ticketing.flow');
+    const step = ticketingFlow.steps.find(s => s.id === 'process_tickets')!;
+    const m = createCancelRaceMock({
+      updateResult: { data: [], error: null },
+      rereadResult: { data: null, error: null },
+    });
+    const sd = { _saved_card_cancelled: true } as Record<string, unknown>;
+    const result = await step.next(m.ctx(sd));
+    expect(result).toBeNull();
+    expect(m.sentTexts.some(t => t.includes('cancelled'))).toBe(false);
+    expect(m.wasTransferCancelCalled()).toBe(false);
+  });
+
+  it('Reservation: no reservation_id → fail closed, no cancellation message', async () => {
+    const { reservationFlow } = await import('../reservation.flow');
+    const step = reservationFlow.steps.find(s => s.id === 'create_reservation')!;
+    const m = createCancelRaceMock({
+      updateResult: { data: [], error: null },
+      rereadResult: { data: null, error: null },
+    });
+    const sd = { _saved_card_cancelled: true } as Record<string, unknown>;
+    const result = await step.next(m.ctx(sd));
+    expect(result).toBeNull();
+    expect(m.sentTexts.some(t => t.includes('cancelled'))).toBe(false);
+    expect(m.wasTransferCancelCalled()).toBe(false);
+  });
+});
+
+// ── R8: Ticketing already-cancelled + unknown state fail-closed ──
+
+describe('R8: Ticketing additional race coverage', () => {
+  let step: FlowStepConfig;
+  beforeEach(async () => {
+    const { ticketingFlow } = await import('../ticketing.flow');
+    step = ticketingFlow.steps.find(s => s.id === 'process_tickets')!;
+  });
+
+  it('already cancelled → idempotent cancellation', async () => {
+    const m = createCancelRaceMock({
+      updateResult: { data: [], error: null },
+      rereadResult: { data: { status: 'cancelled', deposit_status: 'pending' }, error: null },
+    });
+    const sd = { booking_id: 'bk-1', _saved_card_cancelled: true } as Record<string, unknown>;
+    await step.next(m.ctx(sd));
+    expect(m.sentTexts.some(t => t.includes('cancelled'))).toBe(true);
+  });
+
+  it('unknown state → fail closed, no cancellation message', async () => {
+    const m = createCancelRaceMock({
+      updateResult: { data: [], error: null },
+      rereadResult: { data: { status: 'processing', deposit_status: 'pending' }, error: null },
+    });
+    const sd = { booking_id: 'bk-1', _saved_card_cancelled: true } as Record<string, unknown>;
+    await step.next(m.ctx(sd));
+    expect(m.sentTexts.some(t => t.includes('cancelled'))).toBe(false);
+    expect(m.sentTexts.some(t => t.includes('confirmed'))).toBe(false);
+  });
+});
+
+// ── R8: Payment/Giving + Reservation unknown state fail-closed ──
+
+describe('R8: Unknown state fail-closed coverage', () => {
+  it('Payment/Giving: unknown state → fail closed', async () => {
+    const { paymentFlow } = await import('../payment.flow');
+    const step = paymentFlow.steps.find(s => s.id === 'process_payment')!;
+    const m = createCancelRaceMock({
+      updateResult: { data: [], error: null },
+      rereadResult: { data: { status: 'processing', deposit_status: 'pending' }, error: null },
+    });
+    const sd = { booking_id: 'bk-1', _saved_card_cancelled: true } as Record<string, unknown>;
+    await step.next(m.ctx(sd));
+    expect(m.sentTexts.some(t => t.includes('cancelled'))).toBe(false);
+    expect(m.sentTexts.some(t => t.includes('confirmed'))).toBe(false);
+    expect(m.wasTransferCancelCalled()).toBe(false);
+  });
+
+  it('Reservation: unknown state → fail closed', async () => {
+    const { reservationFlow } = await import('../reservation.flow');
+    const step = reservationFlow.steps.find(s => s.id === 'create_reservation')!;
+    const m = createCancelRaceMock({
+      updateResult: { data: [], error: null },
+      rereadResult: { data: { status: 'processing', deposit_status: 'pending' }, error: null },
+    });
+    const sd = { reservation_id: 'res-1', _saved_card_cancelled: true } as Record<string, unknown>;
+    await step.next(m.ctx(sd));
+    expect(m.sentTexts.some(t => t.includes('cancelled'))).toBe(false);
+    expect(m.sentTexts.some(t => t.includes('confirmed'))).toBe(false);
+    expect(m.wasTransferCancelCalled()).toBe(false);
+  });
+});
+
 // ── R7: Reservation availability — cancelled excluded from active ──
 
 describe('Reservation availability — cancelled excluded', () => {

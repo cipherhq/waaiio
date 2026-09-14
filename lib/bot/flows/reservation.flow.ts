@@ -1232,7 +1232,8 @@ export const reservationFlow: FlowDefinition = {
             logger.warn('[RESERVATION] Saved-card cancel: unexpected reservation state', res.status);
             return null;
           }
-          await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('Reservation cancelled. Send *Hi* to start over.') });
+          // R8: Missing durable entity ID — fail closed, no cancellation claim
+          logger.warn('[RESERVATION] Saved-card cancel: no reservation_id — fail closed');
           return null;
         }
         if (d._skip_saved_card && d._saved_method_id) {
