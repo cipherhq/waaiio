@@ -871,7 +871,7 @@ describe('Post-completion stale worker suppression', () => {
     expect(source).toContain("if (!saved) return; // stale — another worker owns this session");
     // sendButtons must come AFTER the CAS check
     const savedIdx = source.indexOf('if (!saved) return; // stale — another worker owns this session');
-    const sendBtnIdx = source.indexOf('await this.sender.sendButtons({ to: from, body, buttons })', savedIdx);
+    const sendBtnIdx = source.indexOf('await s.sendButtons({ to: from, body, buttons })', savedIdx);
     expect(savedIdx).toBeGreaterThan(-1);
     expect(sendBtnIdx).toBeGreaterThan(savedIdx);
   });

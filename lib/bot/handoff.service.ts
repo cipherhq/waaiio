@@ -13,6 +13,8 @@ interface EscalateParams {
   sessionData: Record<string, unknown>;
   currentStep: string;
   customerName: string | null;
+  /** #267: Optional raw sender for owner/staff notifications (excluded from instrumentation counting) */
+  notificationSender?: MessageSender;
 }
 
 export interface EscalateResult {
@@ -32,7 +34,11 @@ export async function escalateToHuman(params: EscalateParams): Promise<EscalateR
   const {
     supabase, sender, from, businessId, businessName,
     sessionId, sessionData, currentStep, customerName,
+    notificationSender,
   } = params;
+  // #267: Use notificationSender (raw/unwrapped) for owner/staff sends so they
+  // are excluded from instrumentation counting. Falls back to sender if not provided.
+  const ownerSender = notificationSender || sender;
 
   // Atomic handoff: session update + conversation upsert in one transaction
   const { data: rpcResult, error: rpcErr } = await supabase.rpc('atomic_escalate_to_human', {
@@ -118,7 +124,8 @@ export async function escalateToHuman(params: EscalateParams): Promise<EscalateR
     if (biz?.phone) {
       const ownerPhone = biz.phone.startsWith('+') ? biz.phone.slice(1) : biz.phone;
       const displayName = customerName || from;
-      await sender.sendText({
+      // #267: Use ownerSender (raw/unwrapped) so owner notifications are excluded from flow instrumentation
+      await ownerSender.sendText({
         to: ownerPhone,
         text: `🔔 *Live chat request*\n\n${displayName} wants to speak with someone at ${businessName}.\n\nCheck your dashboard → Chat to respond.`,
       });

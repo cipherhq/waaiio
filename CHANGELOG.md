@@ -3,6 +3,89 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-09-12 — #267 Handoff scoped sender, overlapping execute test, CI-wired DB tests, enabled-vs-disabled benchmark
+
+### What changed
+- **Blocker 1: Handoff scoped sender.** `escalateToHuman` in executor now receives `scopedSender` (instrumented) for customer-facing sends, plus `this.sender` as `notificationSender` for owner/staff notifications. Owner/staff sends are excluded from instrumentation counting. Handoff service interface gained optional `notificationSender` parameter; callers that don't pass it fall back to the main sender (backward compatible).
+- **Blocker 2: Same-FlowExecutor overlapping execute() test.** Added `B1-EX` test suite (2 tests) with a `simulatedExecute()` function that mirrors the real executor pattern: create collector, create scopedSender from shared executor.sender, send messages, mark complete. Two concurrent calls on the same instance prove zero cross-attribution, including mid-execution context switches.
+- **Blocker 3: CI-wired DB tests.** Created `lib/__tests__/flow-analytics-db.test.ts` (mirrored from `lib/bot/flows/__tests__/analytics-db.test.ts`) in the path CI migration shards execute. Added CI step to `.github/workflows/ci.yml` shard-b with non-skippable enforcement (skip count check + pass check).
+- **Blocker 4: Enabled-vs-disabled benchmark.** Replaced collector-only microbenchmark with same-flow comparison: raw sender (disabled) vs scoped sender (enabled). Measures p50/p95 overhead across 100 iterations x 10 sends. Also includes: zero DB I/O during sends, one-flush-per-execution, preserved send ordering, bounded memory compression.
+
+### Files changed
+- `lib/bot/handoff.service.ts` — added optional `notificationSender` to `EscalateParams`, owner notification uses `ownerSender` (raw)
+- `lib/bot/flows/executor.ts` — `escalateToHuman` call passes `scopedSender` for customer, `this.sender` as `notificationSender`
+- `lib/bot/flows/__tests__/instrumentation.test.ts` — added B1-EX same-FlowExecutor tests (2), replaced B1-14 with enabled-vs-disabled benchmark (5)
+- `lib/__tests__/flow-analytics-db.test.ts` — new CI-wired DB test file (schema, RLS, RPC, effective-role enforcement)
+- `.github/workflows/ci.yml` — added #267 flow analytics DB test step to shard-b
+
+### What could break
+- `escalateToHuman` callers that don't pass `notificationSender` continue to work unchanged (falls back to `sender`). Only the executor passes the split sender.
+- The keyword-actions handler in `bot.service.ts` does NOT pass `notificationSender` — this is intentional since that handler is outside the flow executor and has no collector.
+
+## 2026-09-12 — #267 Execution-local sender plumbing, PG role tests, performance benchmark
+
+### What changed
+- **Blocker 1: Removed shared `this.sender` mutation.** The executor no longer swaps `this.sender` during `execute()`. Instead, `scopedSender` is an execution-local variable passed explicitly to all private send methods (`sendSingleMessage`, `sendText`, `sendMessages`, `showPostCompletionMenu`, `advanceToStep`) via an optional `sender?` parameter. Two overlapping `execute()` calls on the same FlowExecutor instance each get their own collector-backed proxy with zero cross-attribution risk.
+- **Blocker 1 test:** Added `B1: overlapping execute() calls do not cross-attribute` test suite (3 tests) proving concurrent executions on the same underlying sender record only into their own collector.
+- **Blocker 2: Real PostgreSQL effective-role/JWT tests.** Added `V2-T14` test suite (7 tests) in `analytics-db.test.ts` that uses `SET ROLE authenticated`, `SET ROLE anon`, and `set_config('request.jwt.claims', ...)` to prove RLS enforcement at the PostgreSQL session level — authenticated users cannot INSERT, non-owners cannot SELECT, anon is fully blocked.
+- **Blocker 3: Performance benchmark.** Added `B1-14 Performance evidence` test suite (5 tests) proving: zero pre-send DB I/O across 100 proxy intercepts, exactly 1 RPC call per flush for 100 messages, preserved send ordering, p50 < 1ms / p95 < 5ms overhead for 1000 record() calls, and bounded memory (1000 messages across 10 steps compress to 10 aggregate rows).
+- **Source assertion fixes:** Updated string-matching tests in `p1-class-session-booking.test.ts` and `session-resilience.test.ts` to match new sender plumbing signatures.
+
+### Files changed
+- `lib/bot/flows/executor.ts` — removed sender swap/restore, added `sender?` parameter to `sendSingleMessage`, `sendText`, `sendMessages`, `showPostCompletionMenu`, `advanceToStep`, all call sites pass `scopedSender`
+- `lib/bot/flows/__tests__/instrumentation.test.ts` — added B1 overlapping execute tests (3), B1-14 performance evidence (5)
+- `lib/bot/flows/__tests__/analytics-db.test.ts` — added V2-T14 effective-role/JWT RLS tests (7)
+- `lib/__tests__/p1-class-session-booking.test.ts` — updated source assertions for new sender parameter
+- `lib/bot/__tests__/session-resilience.test.ts` — updated source assertion for `s.sendButtons` instead of `this.sender.sendButtons`
+
+### What could break
+- Any code that calls `sendSingleMessage`, `sendText`, `sendMessages`, `showPostCompletionMenu`, or `advanceToStep` on the executor without the sender parameter will still work (falls back to `this.sender`). But within `execute()`, all paths now use the scoped sender.
+- The `sender || this.sender` fallback in private methods is intentional — it preserves backward compatibility for any external callers while ensuring execution-local instrumentation within `execute()`.
+
+## 2026-09-12 — #267 Bot Flow Message Instrumentation (V2 corrections)
+
+### What changed (V2 corrections)
+- **Correction 1: Executor renderer routes through scoped sender.** Previously only `ctx.sender` (used by flow callbacks) went through the instrumentation proxy. Now the executor's own send methods (`sendSingleMessage`, `sendText`, `showPostCompletionMenu`) also route through the scoped sender by temporarily swapping `this.sender` for the duration of `execute()`, restored in `finally`.
+- **Correction 2: Atomic transaction for summary + aggregates.** Replaced two separate Supabase JS inserts with a single `persist_flow_execution` SECURITY DEFINER RPC that inserts summary + aggregates atomically in one PostgreSQL transaction. Idempotent on duplicate `execution_id`.
+- **Correction 3: Normalize absent active_capability.** Changed `active_capability` column from nullable to `NOT NULL DEFAULT '__none__'`. Collector normalizes `null`/empty to `'__none__'` before recording. RPC normalizes via `COALESCE(NULLIF(..., ''), '__none__')`. Eliminates non-deterministic unique constraint behavior with NULLs.
+- **Correction 4: Await the flush.** Changed fire-and-forget `.catch()` flush to `await` with try/catch. Telemetry now completes before `execute()` resolves. Errors still never propagate.
+- **Correction 5: V2-T11 through V2-T13 tests.** Added atomic idempotent batch tests (RPC insert, duplicate detection, capability normalization), RLS role restriction tests (authenticated/anon denied, function privilege checks), and no-pre-send-I/O proof tests.
+
+### Files changed
+- `lib/bot/flows/executor.ts` — sender swap/restore in execute(), await flush
+- `lib/bot/flows/analytics-flush.ts` — rewritten to use `persist_flow_execution` RPC, added `normalizeCapability` helper
+- `lib/bot/flows/instrumentation.ts` — normalize `activeCapability` to `'__none__'` in `record()`
+- `supabase/migrations/382_flow_execution_analytics.sql` — `active_capability` NOT NULL DEFAULT, `persist_flow_execution` RPC with REVOKE/GRANT
+- `lib/bot/flows/__tests__/instrumentation.test.ts` — updated V2-T07 for RPC, added V2-T13
+- `lib/bot/flows/__tests__/analytics-db.test.ts` — added V2-T11 (atomic idempotent batch), expanded V2-T12 (role restrictions)
+
+### What could break
+- `this.sender` is temporarily swapped during `execute()`. If a concurrent call to the same executor instance happens (shouldn't — executor is per-request), the sender swap could interleave. Mitigated: restored in `finally`, and executor instances are not shared across requests.
+- The `persist_flow_execution` RPC is SECURITY DEFINER. It sets `search_path = public, pg_temp` to prevent search_path injection.
+- Existing code that passes `{ from: ... }` mock to `flushExecutionAnalytics` will break — now expects `{ rpc: ... }`.
+
+## 2026-09-12 — #267 Bot Flow Message Instrumentation
+
+### What changed
+- **In-memory collector.** `FlowExecutionCollector` counts customer-facing bot-flow messages per execution with flow/step/capability attribution. No DB I/O during the execution path.
+- **Scoped sender proxy.** `createScopedSender` wraps the MessageSender with a Proxy that records logical send invocations (resolved/failure/error) without modifying behavior.
+- **M382 migration.** Two new tables: `flow_execution_summaries` (execution-level totals) and `flow_execution_aggregates` (per-flow+step+type breakdowns). RLS: service-only writes, tenant-scoped + admin reads.
+- **Atomic flush.** `flushExecutionAnalytics` persists summary + aggregates in one bounded batch after execution completes. Off critical path, errors caught and logged.
+- **Executor wiring.** Minimal changes to `executor.ts`: collector created at execute() start, sender wrapped via scoped proxy, try/finally flushes after completion.
+- **23 unit tests + 12 DB tests.** Covers collector lifecycle, context freezing, outcome counting, aggregate dedup, scoped sender proxy, flush logic, and multi-step scenarios.
+
+### Files changed
+- `lib/bot/flows/instrumentation.ts` — NEW: collector + scoped sender + execution ID generator
+- `lib/bot/flows/analytics-flush.ts` — NEW: atomic flush to DB
+- `lib/bot/flows/executor.ts` — wired instrumentation (imports, collector, scoped sender, try/finally flush)
+- `supabase/migrations/382_flow_execution_analytics.sql` — NEW: M382 schema
+- `lib/bot/flows/__tests__/instrumentation.test.ts` — NEW: 23 unit tests (V2-T01 through V2-T08)
+- `lib/bot/flows/__tests__/analytics-db.test.ts` — NEW: 12 DB tests (V2-T11, V2-T12)
+
+### What could break
+- If a flow step accesses `ctx.sender` and checks its identity (e.g. `instanceof`), the Proxy wrapper could cause issues. Mitigated: Proxy is transparent — all methods pass through.
+- The executor try/finally adds minimal overhead. If an exception occurs between try-open and the first return, the flush runs with an empty collector (harmless).
+
 ## 2026-09-12 — #315 Phase 3C Blockers 1-5
 
 ### What changed
