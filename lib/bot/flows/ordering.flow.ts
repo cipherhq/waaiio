@@ -15,6 +15,7 @@ import { checkBankTransferEligibility, createPendingTransfer, formatBankTransfer
 import { parseIvePaidInput, isIvePaidInput } from '@/lib/bot/flows/shared/ive-paid-input';
 import { checkTierLimit } from '@/lib/tier-limits';
 import { logger } from '@/lib/logger';
+import { buildSavedCardOffer, handleSavedCardInput } from './shared/saved-card-flow';
 
 /** Generic labels for ordering flow */
 function getOrderingLabels(_category: string): { noun: string; emoji: string; browseLabel: string } {
@@ -2155,21 +2156,35 @@ export const orderingFlow: FlowDefinition = {
               { id: 'edit_order', title: 'Edit Order' },
             ];
 
-        return [
-          { type: 'text', text: summary.join('\n') },
-          {
-            type: 'buttons',
-            body: isForceQuote
-              ? 'This is a custom order. Submit a price request for the maker to review:'
-              : hasNegotiable
-              ? 'Some items have negotiable pricing. Request a price or confirm at listed prices?'
-              : 'Ready to place your order?',
-            buttons,
-          },
-        ];
+        // #268: Consolidated summary + confirm into 1 buttons message
+        // Add T&C link if terms are required for paid orders
+        const meta268 = (ctx.business?.metadata || {}) as Record<string, unknown>;
+        const requireTerms268 = total > 0 && meta268.require_terms_before_payment !== false;
+        const termsUrl268 = (meta268.terms_url as string) || (ctx.business?.slug ? `https://www.waaiio.com/t/${ctx.business.slug}` : 'https://www.waaiio.com/terms');
+        if (requireTerms268 && !isForceQuote) {
+          summary.push('', `📎 Terms: ${termsUrl268}`);
+        }
+
+        const bodyText = isForceQuote
+          ? summary.join('\n') + '\n\nThis is a custom order. Submit a price request:'
+          : hasNegotiable
+          ? summary.join('\n') + '\n\nSome items have negotiable pricing.'
+          : summary.join('\n');
+
+        // When confirming an order with terms, the button includes acceptance
+        if (requireTerms268 && !isForceQuote) {
+          const confirmBtn = buttons.find((b: { id: string }) => b.id === 'confirm_order');
+          if (confirmBtn) confirmBtn.title = 'I Accept & Confirm';
+        }
+
+        return [{
+          type: 'buttons',
+          body: bodyText,
+          buttons,
+        }];
       },
       async validate(input: string): Promise<ValidationResult> {
-        if (input === 'confirm_order' || /\b(confirm|yes|checkout|done)\b/i.test(input)) return { valid: true, data: { _order_action: 'confirm' } };
+        if (input === 'confirm_order' || /\b(confirm|yes|checkout|done)\b/i.test(input)) return { valid: true, data: { _order_action: 'confirm', _terms_accepted: true } };
         if (input === 'request_quote' || /\b(quote)\b/i.test(input)) return { valid: true, data: { _order_action: 'quote' } };
         if (input === 'add_more_items' || /\b(add more|more items|browse|keep shopping)\b/i.test(input)) return { valid: true, data: { _order_action: 'add_more' } };
         if (input === 'edit_order' || /\b(edit|change|modify)\b/i.test(input)) return { valid: true, data: { _order_action: 'edit' } };
@@ -2705,8 +2720,20 @@ export const orderingFlow: FlowDefinition = {
         // — NOT here before payment. See processSuccessfulPayment in process-success.ts.
 
         if (total > 0) {
-          // Initialize payment (uses correct gateway per country: Paystack, Stripe, Square, etc.)
           const cc = (ctx.business?.country_code || 'NG') as CountryCode;
+
+          // #268: Saved-card offer — check BEFORE payment link
+          // Note: No direct current_step write (ACC-008). Step stays at process_order.
+          const savedCardOffer = await buildSavedCardOffer(ctx, total);
+          if (savedCardOffer) {
+            d._saved_method_id = savedCardOffer.display.id;
+            d._pending_deposit = total;
+            d.order_id = order.id;
+            d.reference_code = order.reference_code;
+            return [savedCardOffer.prompt];
+          }
+
+          // Initialize payment (uses correct gateway per country: Paystack, Stripe, Square, etc.)
           const paymentResult = await initializePayment(ctx.supabase, {
             orderId: order.id,
             userId,
@@ -2794,34 +2821,31 @@ export const orderingFlow: FlowDefinition = {
 
             // ACC-008: Transition handled by nextAfterPrompt (reads payment_reference/bank_transfer_reference)
 
-            return [
-              {
-                type: 'text',
-                text: getOrderConfirmationMessage({
-                  businessName: ctx.business?.name || 'Shop',
-                  items: cart,
-                  totalAmount: total,
-                  referenceCode: order.reference_code,
-                  deliveryAddress: d.delivery_address as string | undefined,
-                  shippingCost: zoneName ? undefined : (shippingCost || undefined),
-                  deliveryZoneName: zoneName,
-                  deliveryZonePrice: zoneName ? zonePrice : undefined,
-                  addonsTotal: addonsTotal || undefined,
-                  volumeDiscountAmount: volumeDiscountTotal || undefined,
-                  countryCode: cc,
-                  subscriptionTier: ctx.business?.subscription_tier,
-                }) + `\n\n💳 Pay here 👇\n${paymentResult.url}\n\n❗ After completing payment, *come back to this chat* and tap *I've Paid* to confirm your order.`,
-              },
-              {
-                type: 'buttons',
-                body: "🔔 Completed payment? Return here and tap *I've Paid* to confirm:",
-                buttons: [
-                  { id: `i_paid_ref:${d.payment_reference || ''}`, title: "I've Paid" },
-                  { id: 'retry_payment', title: 'Get New Link' },
-                  { id: 'go_back', title: 'Cancel' },
-                ],
-              },
-            ];
+            // #268: Consolidated into 1 message
+            const orderConfirmBody = getOrderConfirmationMessage({
+              businessName: ctx.business?.name || 'Shop',
+              items: cart,
+              totalAmount: total,
+              referenceCode: order.reference_code,
+              deliveryAddress: d.delivery_address as string | undefined,
+              shippingCost: zoneName ? undefined : (shippingCost || undefined),
+              deliveryZoneName: zoneName,
+              deliveryZonePrice: zoneName ? zonePrice : undefined,
+              addonsTotal: addonsTotal || undefined,
+              volumeDiscountAmount: volumeDiscountTotal || undefined,
+              countryCode: cc,
+              subscriptionTier: ctx.business?.subscription_tier,
+            }) + `\n\n💳 Pay here 👇\n${paymentResult.url}\n\n⚠️ Confirmation arrives automatically after payment.`;
+
+            return [{
+              type: 'buttons',
+              body: orderConfirmBody,
+              buttons: [
+                { id: `i_paid_ref:${d.payment_reference || ''}`, title: "I've Paid" },
+                { id: 'retry_payment', title: 'Get New Link' },
+                { id: 'go_back', title: 'Cancel' },
+              ],
+            }];
           }
 
           // Payment gateway failed — but bank transfer may still be available
@@ -2952,6 +2976,17 @@ export const orderingFlow: FlowDefinition = {
         if (input === 'cancel_terms') {
           return { valid: true, data: { _terms_cancelled: true } };
         }
+        // #268: Handle saved-card input
+        const d = ctx.session.session_data;
+        if (d._saved_method_id || d._awaiting_card_pin) {
+          const savedResult = await handleSavedCardInput(input, ctx, {
+            amount: d._pending_deposit as number || d._order_total as number,
+            reference: `${d.reference_code as string}-saved`,
+            entityId: { orderId: d.order_id as string },
+            transactionCategory: 'ordering',
+          });
+          if (savedResult) return savedResult;
+        }
         if (input === 'retry_payment') {
           return { valid: true, data: { _retry_payment: true } };
         }
@@ -2980,6 +3015,32 @@ export const orderingFlow: FlowDefinition = {
           return null;
         }
         if (d._terms_accepted || d._terms_cancelled) {
+          return 'process_order';
+        }
+        // #268: Saved-card outcomes
+        if (d._saved_card_paid) {
+          const paymentId = d._saved_card_payment_id as string;
+          if (paymentId) {
+            const { reconcilePayment } = await import('@/lib/payments/reconcile');
+            const result = await reconcilePayment(ctx.supabase, paymentId, 'saved_card');
+            const isComplete = result.lifecycle?.status === 'completed'
+              || result.lifecycle?.status === 'already_completed'
+              || result.lifecycle?.status === 'not_deliverable';
+            if (!isComplete) {
+              d.payment_reference = `${d.reference_code as string}-saved`;
+              await ctx.sender.sendText({ to: ctx.from, text: '✅ Card charged! Processing your order.\n\nConfirmation arriving shortly.' });
+              return 'await_order_payment';
+            }
+          }
+          return null;
+        }
+        if (d._saved_card_indeterminate) {
+          d.payment_reference = `${d.reference_code as string}-saved`;
+          await ctx.sender.sendText({ to: ctx.from, text: '⏳ Payment is being verified. Confirmation arriving shortly.' });
+          return 'await_order_payment';
+        }
+        if (d._skip_saved_card && d._saved_method_id) {
+          delete d._saved_method_id;
           return 'process_order';
         }
         if (d._retry_payment) {

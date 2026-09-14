@@ -2838,21 +2838,16 @@ export const schedulingFlow: FlowDefinition = {
                 formatBankTransferBlock(bankAccount, formatCurrency(totalDeposit, cc2), transferRef),
               ].filter(Boolean);
 
-              return [
-                {
-                  type: 'text',
-                  text: dualPaymentLines.join('\n'),
-                },
-                {
-                  type: 'buttons',
-                  body: 'Tap below after paying:',
-                  buttons: [
-                      { id: d.payment_reference ? `i_paid_ref:${d.payment_reference}` : 'i_paid_online', title: "I've Paid Online" },
-                      { id: 'sent_transfer', title: "I've Sent Transfer" },
-                      { id: 'go_back', title: 'Cancel' },
-                    ],
-                },
-              ];
+              // #268: Consolidated into 1 message
+              return [{
+                type: 'buttons',
+                body: dualPaymentLines.join('\n'),
+                buttons: [
+                  { id: d.payment_reference ? `i_paid_ref:${d.payment_reference}` : 'i_paid_online', title: "I've Paid Online" },
+                  { id: 'sent_transfer', title: "I've Sent Transfer" },
+                  { id: 'go_back', title: 'Cancel' },
+                ],
+              }];
             }
 
             // Standard payment flow (no bank transfer option)
@@ -2861,38 +2856,33 @@ export const schedulingFlow: FlowDefinition = {
               .update({ session_data: d, current_step: 'payment' })
               .eq('id', ctx.session.id);
 
-            return [
-              {
-                type: 'text',
-                text: [
-                  `📋 *${labels.receiptTitle}!*`,
-                  '',
-                  `${labels.confirmationEmoji} ${ctx.business?.name}`,
-                  d._location_name ? `📍 ${d._location_name as string}` : '',
-                  d.staff_name ? `👤 With: ${d.staff_name as string}` : '',
-                  `📅 ${dateLabel}`,
-                  `🕐 ${d.time as string}`,
-                  `👥 ${partySize} ${labels.quantityLabel}`,
-                  `🔑 Ref: *${booking.reference_code}*`,
-                  '',
-                  `💳 *${isPrepay ? 'Payment' : 'Deposit'} Required: ${formatCurrency(totalDeposit, (ctx.business?.country_code || 'NG') as CountryCode)}*`,
-                  '',
-                  `Pay here 👇`,
-                  paymentResult.url,
-                  '',
-                  `⚠️ Your confirmation will arrive automatically after payment.`,
-                ].join('\n'),
-              },
-              {
-                type: 'buttons',
-                body: "Your confirmation will arrive automatically after payment. If it doesn't, tap below:",
-                buttons: [
-                  { id: d.payment_reference ? `i_paid_ref:${d.payment_reference}` : 'i_paid', title: "I've Paid" },
-                  { id: 'retry_payment', title: 'Get New Link' },
-                  { id: 'go_back', title: 'Cancel' },
-                ],
-              },
-            ];
+            // #268: Consolidated into 1 message
+            return [{
+              type: 'buttons',
+              body: [
+                `📋 *${labels.receiptTitle}!*`,
+                '',
+                `${labels.confirmationEmoji} ${ctx.business?.name}`,
+                d._location_name ? `📍 ${d._location_name as string}` : '',
+                d.staff_name ? `👤 With: ${d.staff_name as string}` : '',
+                `📅 ${dateLabel}`,
+                `🕐 ${d.time as string}`,
+                `👥 ${partySize} ${labels.quantityLabel}`,
+                `🔑 Ref: *${booking.reference_code}*`,
+                '',
+                `💳 *${isPrepay ? 'Payment' : 'Deposit'}: ${formatCurrency(totalDeposit, (ctx.business?.country_code || 'NG') as CountryCode)}*`,
+                '',
+                `Pay here 👇`,
+                paymentResult.url,
+                '',
+                `⚠️ Confirmation arrives automatically after payment.`,
+              ].filter(Boolean).join('\n'),
+              buttons: [
+                { id: d.payment_reference ? `i_paid_ref:${d.payment_reference}` : 'i_paid', title: "I've Paid" },
+                { id: 'retry_payment', title: 'Get New Link' },
+                { id: 'go_back', title: 'Cancel' },
+              ],
+            }];
           }
 
           // Payment gateway failed — but bank transfer may still be available

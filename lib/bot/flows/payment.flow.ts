@@ -14,6 +14,7 @@ import { parseIvePaidInput, isIvePaidInput } from '@/lib/bot/flows/shared/ive-pa
 import { analyzeReceipt, receiptMatchesExpected } from '@/lib/bot/receipt-ocr';
 import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
+import { buildSavedCardOffer, handleSavedCardInput } from './shared/saved-card-flow';
 
 export const paymentFlow: FlowDefinition = {
   type: 'payment',
@@ -191,7 +192,7 @@ export const paymentFlow: FlowDefinition = {
       async next() { return 'confirm_amount'; },
     },
 
-    // ── Confirm Amount ──
+    // ── Confirm Amount (consolidated: summary + T&C in one message) ──
     {
       id: 'confirm_amount',
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
@@ -200,34 +201,40 @@ export const paymentFlow: FlowDefinition = {
         const cc = (ctx.business?.country_code || 'NG') as CountryCode;
         const summaryTitle = isGiving ? 'Giving Summary' : 'Payment Summary';
 
-        return [
-          {
-            type: 'text',
-            text: [
-              `📋 *${summaryTitle}*`,
-              '',
-              `${isGiving ? '🙏' : '🏢'} ${ctx.business?.name}`,
-              `📌 ${d.service_name as string}`,
-              `💰 ${formatCurrency(d.amount as number, cc)}`,
-            ].join('\n'),
-          },
-          {
-            type: 'buttons',
-            body: 'Confirm this payment?',
-            buttons: [
-              { id: 'confirm', title: 'Confirm ✓' },
-              { id: 'go_back', title: 'Cancel' },
-            ],
-          },
+        const amount = d.amount as number;
+        const meta = (ctx.business?.metadata || {}) as Record<string, unknown>;
+        const requireTerms = amount > 0 && meta.require_terms_before_payment !== false;
+        const termsUrl = (meta.terms_url as string) || (ctx.business?.slug ? `https://www.waaiio.com/t/${ctx.business.slug}` : 'https://www.waaiio.com/terms');
+
+        const summaryLines = [
+          `📋 *${summaryTitle}*`,
+          '',
+          `${isGiving ? '🙏' : '🏢'} ${ctx.business?.name}`,
+          `📌 ${d.service_name as string}`,
+          `💰 ${formatCurrency(amount, cc)}`,
         ];
+
+        if (requireTerms) {
+          summaryLines.push('', `📎 Terms: ${termsUrl}`);
+        }
+
+        return [{
+          type: 'buttons',
+          body: summaryLines.join('\n'),
+          buttons: [
+            { id: 'confirm', title: requireTerms ? 'I Accept & Confirm' : 'Confirm ✓' },
+            { id: 'go_back', title: 'Cancel' },
+          ],
+        }];
       },
-      async validate(input: string): Promise<ValidationResult> {
+      async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
         const response = input.toLowerCase();
         if ((response === 'cancel' || response === 'go_back') || response === 'no') {
           return { valid: true, data: { _action: 'cancel' } };
         }
         if (response === 'confirm' || response === 'yes') {
-          return { valid: true, data: { _action: 'confirm' } };
+          // T&C accepted via consolidated confirm button
+          return { valid: true, data: { _action: 'confirm', _terms_accepted: true } };
         }
         return { valid: false, errorMessage: 'Please tap *Confirm* or *Cancel*.' };
       },
@@ -359,6 +366,17 @@ export const paymentFlow: FlowDefinition = {
         // Platform fee is recorded AFTER payment verification in await_payment.validate()
 
         const cc = (ctx.business?.country_code || 'NG') as CountryCode;
+
+        // #268: Saved-card offer — check BEFORE initializing payment link
+        const savedCardOffer = await buildSavedCardOffer(ctx, amount);
+        if (savedCardOffer) {
+          d._saved_method_id = savedCardOffer.display.id;
+          d._pending_deposit = amount;
+          await ctx.supabase.from('bot_sessions')
+            .update({ session_data: d, current_step: 'process_payment' })
+            .eq('id', ctx.session.id);
+          return [savedCardOffer.prompt];
+        }
         const paymentResult = await initializePayment(ctx.supabase, {
           bookingId: booking.id,
           userId,
@@ -404,7 +422,7 @@ export const paymentFlow: FlowDefinition = {
               .update({ session_data: d, current_step: 'await_payment' })
               .eq('id', ctx.session.id);
 
-            // Dual-option payment message: online + bank transfer
+            // Dual-option payment — consolidated into 1 message
             const paymentLines = [
               `💳 *Payment Options*`,
               '',
@@ -420,32 +438,25 @@ export const paymentFlow: FlowDefinition = {
               formatBankTransferBlock(bankAccount, formatCurrency(amount, cc), transferRef),
             ];
 
-            return [
-              {
-                type: 'text',
-                text: paymentLines.join('\n'),
-              },
-              {
-                type: 'buttons',
-                body: 'Tap below after paying:',
-                buttons: [
-                    { id: d.payment_reference ? `i_paid_ref:${d.payment_reference}` : 'i_paid_online', title: "I've Paid Online" },
-                    { id: 'sent_transfer', title: "I've Sent Transfer" },
-                    { id: 'go_back', title: 'Cancel' },
-                  ],
-              },
-            ];
+            return [{
+              type: 'buttons',
+              body: paymentLines.join('\n'),
+              buttons: [
+                { id: d.payment_reference ? `i_paid_ref:${d.payment_reference}` : 'i_paid_online', title: "I've Paid Online" },
+                { id: 'sent_transfer', title: "I've Sent Transfer" },
+                { id: 'go_back', title: 'Cancel' },
+              ],
+            }];
           }
 
-          // Standard payment flow (no bank transfer option)
+          // Standard payment flow (no bank transfer option) — consolidated into 1 message
           await ctx.supabase
             .from('bot_sessions')
             .update({ session_data: d, current_step: 'await_payment' })
             .eq('id', ctx.session.id);
 
-          // Build payment message — include bank transfer hint for Nigerian businesses
           const paymentLines = [
-            `💳 *Payment Link Ready*`,
+            `💳 *Payment Link*`,
             '',
             `${getCategoryLabels(ctx.business?.category || 'church').confirmationEmoji} ${ctx.business?.name}`,
             `📌 ${d.service_name as string}`,
@@ -457,27 +468,19 @@ export const paymentFlow: FlowDefinition = {
           ];
 
           if (cc === 'NG' || cc === 'GH') {
-            paymentLines.push('');
-            paymentLines.push('💡 _You can pay with card, bank transfer, or USSD on the payment page._');
+            paymentLines.push('', '💡 _Card, bank transfer, or USSD accepted._');
           }
 
-          paymentLines.push('');
-          paymentLines.push('⚠️ Your confirmation will arrive automatically after payment.');
+          paymentLines.push('', '⚠️ Confirmation arrives automatically after payment.');
 
-          return [
-            {
-              type: 'text',
-              text: paymentLines.join('\n'),
-            },
-            {
-              type: 'buttons',
-              body: "Your confirmation will arrive automatically after payment. If it doesn't, tap below:",
-              buttons: [
-                { id: d.payment_reference ? `i_paid_ref:${d.payment_reference}` : 'i_paid', title: "I've Paid" },
-                { id: 'go_back', title: 'Cancel' },
-              ],
-            },
-          ];
+          return [{
+            type: 'buttons',
+            body: paymentLines.join('\n'),
+            buttons: [
+              { id: d.payment_reference ? `i_paid_ref:${d.payment_reference}` : 'i_paid', title: "I've Paid" },
+              { id: 'go_back', title: 'Cancel' },
+            ],
+          }];
         }
 
         // Payment gateway failed — but bank transfer may still be available
@@ -534,17 +537,56 @@ export const paymentFlow: FlowDefinition = {
         }
         return [{ type: 'text', text: "We couldn't set up your payment right now. Please send *Hi* to try again." }];
       },
-      async validate(input: string): Promise<ValidationResult> {
+      async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
         if (input === 'accept_terms') {
           return { valid: true, data: { _terms_accepted: true } };
         }
         if (input === 'cancel_terms') {
           return { valid: true, data: { _terms_cancelled: true } };
         }
+        // #268: Handle saved-card input (pay_saved, PIN, pay_new)
+        const d = ctx.session.session_data;
+        if (d._saved_method_id || d._awaiting_card_pin) {
+          const savedResult = await handleSavedCardInput(input, ctx, {
+            amount: d._pending_deposit as number || d.amount as number,
+            reference: `${d.reference_code as string}-saved`,
+            entityId: { bookingId: d.booking_id as string },
+            transactionCategory: 'payment',
+          });
+          if (savedResult) return savedResult;
+        }
         return { valid: true };
       },
       async next(ctx: FlowContext) {
-        if (ctx.session.session_data._terms_accepted || ctx.session.session_data._terms_cancelled) {
+        const d = ctx.session.session_data;
+        if (d._terms_accepted || d._terms_cancelled) {
+          return 'process_payment';
+        }
+        // #268: Saved-card outcomes
+        if (d._saved_card_paid) {
+          const paymentId = d._saved_card_payment_id as string;
+          if (paymentId) {
+            const { reconcilePayment } = await import('@/lib/payments/reconcile');
+            const result = await reconcilePayment(ctx.supabase, paymentId, 'saved_card');
+            const isComplete = result.lifecycle?.status === 'completed'
+              || result.lifecycle?.status === 'already_completed'
+              || result.lifecycle?.status === 'not_deliverable';
+            if (!isComplete) {
+              d.payment_reference = `${d.reference_code as string}-saved`;
+              await ctx.sender.sendText({ to: ctx.from, text: '✅ Card charged! Processing your payment.\n\nConfirmation arriving shortly.' });
+              return 'await_payment';
+            }
+          }
+          return null;
+        }
+        if (d._saved_card_indeterminate) {
+          d.payment_reference = `${d.reference_code as string}-saved`;
+          await ctx.sender.sendText({ to: ctx.from, text: '⏳ Payment is being verified. Confirmation arriving shortly.' });
+          return 'await_payment';
+        }
+        if (d._skip_saved_card && d._saved_method_id) {
+          // User chose "Use different card" or saved-card failed — re-enter for payment link
+          delete d._saved_method_id;
           return 'process_payment';
         }
         return null;
