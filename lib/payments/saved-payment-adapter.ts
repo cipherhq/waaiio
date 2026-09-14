@@ -54,6 +54,8 @@ export type PinVerifyResult =
 /** Options for charging a saved payment method. */
 export interface ChargeOptions {
   methodId: string;
+  /** Customer phone — required for business+customer+method tuple authorization. */
+  customerPhone: string;
   amount: number;
   currency: string;
   email: string;
@@ -86,18 +88,23 @@ export interface SavedPaymentAdapter {
 
   /**
    * Check whether a saved method requires PIN verification.
-   * Returns true if a PIN is set and not currently locked out.
-   * Returns false if no PIN is set (legacy card) or method not found.
+   * Returns required: false (not found) if method does not belong to the given business+customer.
    */
   requiresPin(
     supabase: SupabaseClient,
     methodId: string,
+    businessId: string,
+    customerPhone: string,
   ): Promise<{ required: boolean; locked: boolean }>;
 
-  /** Verify a PIN for a saved method. Handles attempt counting and lockout. */
+  /**
+   * Verify a PIN for a saved method. Handles attempt counting and lockout.
+   * Fails closed if method does not belong to the given business+customer.
+   */
   verifyPin(
     supabase: SupabaseClient,
     methodId: string,
+    businessId: string,
     customerPhone: string,
     pin: string,
   ): Promise<PinVerifyResult>;
@@ -147,6 +154,54 @@ function mapOutcome(result: SavedCardOutcome): ChargeOutcome {
 const MAX_PIN_ATTEMPTS = 3;
 const PIN_LOCKOUT_MINUTES = 30;
 
+/**
+ * Normalize phone to '+' prefix for consistent DB lookups.
+ * Matches the canonical format used by getSavedPaymentMethod in charge-saved.ts.
+ */
+function normalizePhone(phone: string): string {
+  return phone.startsWith('+') ? phone : `+${phone}`;
+}
+
+/**
+ * Canonical saved-method lookup by the full (business + customer + method + active) tuple.
+ * Reuses the same columns as getSavedPaymentMethod but adds the methodId constraint.
+ * Fail-closed: returns null if any part of the tuple does not match.
+ *
+ * This is the ONLY path through which chargeSavedMethod, requiresPin, and verifyPin
+ * reach the saved_payment_methods table. A foreign method ID (wrong business or wrong
+ * customer) will never match, preventing cross-customer object authorization.
+ */
+async function lookupAuthorizedMethod(
+  supabase: SupabaseClient,
+  methodId: string,
+  businessId: string,
+  customerPhone: string,
+): Promise<{
+  id: string;
+  gateway: string;
+  authorization_code: string | null;
+  customer_code: string | null;
+  stripe_payment_method_id: string | null;
+  stripe_customer_id: string | null;
+  card_last4: string | null;
+  card_brand: string | null;
+  pin_hash: string | null;
+  pin_attempts: number;
+  pin_locked_until: string | null;
+} | null> {
+  const phone = normalizePhone(customerPhone);
+  const { data } = await supabase
+    .from('saved_payment_methods')
+    .select('id, gateway, authorization_code, customer_code, stripe_payment_method_id, stripe_customer_id, card_last4, card_brand, pin_hash, pin_attempts, pin_locked_until')
+    .eq('id', methodId)
+    .eq('business_id', businessId)
+    .eq('customer_phone', phone)
+    .eq('is_active', true)
+    .maybeSingle();
+
+  return data || null;
+}
+
 class PaystackSavedPaymentAdapter implements SavedPaymentAdapter {
   async getSavedMethods(
     supabase: SupabaseClient,
@@ -162,23 +217,14 @@ class PaystackSavedPaymentAdapter implements SavedPaymentAdapter {
     supabase: SupabaseClient,
     opts: ChargeOptions,
   ): Promise<ChargeOutcome> {
-    // Look up the internal saved method by opaque ID
-    const method = await getSavedPaymentMethod(supabase, opts.businessId, '');
-    // We need to find by ID, not by phone — use direct query
-    const { data: internalMethod } = await supabase
-      .from('saved_payment_methods')
-      .select('id, gateway, authorization_code, customer_code, stripe_payment_method_id, stripe_customer_id, card_last4, card_brand')
-      .eq('id', opts.methodId)
-      .eq('business_id', opts.businessId)
-      .eq('is_active', true)
-      .maybeSingle();
-
-    if (!internalMethod) {
+    // Canonical tuple authorization: method must belong to this business + customer
+    const method = await lookupAuthorizedMethod(supabase, opts.methodId, opts.businessId, opts.customerPhone);
+    if (!method) {
       return { status: 'method_not_found' };
     }
 
     const result = await chargeSavedCard(supabase, {
-      savedMethod: internalMethod,
+      savedMethod: method,
       amount: opts.amount,
       currency: opts.currency,
       email: opts.email,
@@ -199,48 +245,51 @@ class PaystackSavedPaymentAdapter implements SavedPaymentAdapter {
   async requiresPin(
     supabase: SupabaseClient,
     methodId: string,
+    businessId: string,
+    customerPhone: string,
   ): Promise<{ required: boolean; locked: boolean }> {
-    const { data } = await supabase
-      .from('saved_payment_methods')
-      .select('pin_hash, pin_locked_until')
-      .eq('id', methodId)
-      .single();
-
-    if (!data || !data.pin_hash) {
+    // Canonical tuple authorization: fail closed if method doesn't belong to this business+customer
+    const method = await lookupAuthorizedMethod(supabase, methodId, businessId, customerPhone);
+    if (!method) {
       return { required: false, locked: false };
     }
 
-    const locked = !!(data.pin_locked_until && new Date(data.pin_locked_until) > new Date());
+    if (!method.pin_hash) {
+      return { required: false, locked: false };
+    }
+
+    const locked = !!(method.pin_locked_until && new Date(method.pin_locked_until) > new Date());
     return { required: true, locked };
   }
 
   async verifyPin(
     supabase: SupabaseClient,
     methodId: string,
+    businessId: string,
     customerPhone: string,
     pin: string,
   ): Promise<PinVerifyResult> {
+    // Canonical tuple authorization: fail closed if method doesn't belong to this business+customer
+    const method = await lookupAuthorizedMethod(supabase, methodId, businessId, customerPhone);
+    if (!method) {
+      // Foreign method — do not reveal PIN state, do not mutate anything
+      return { valid: false, attemptsRemaining: 0, locked: true };
+    }
+
     const { createHash } = await import('crypto');
-    const phone = customerPhone.startsWith('+') ? customerPhone : `+${customerPhone}`;
+    const phone = normalizePhone(customerPhone);
     const pinHash = createHash('sha256').update(`${pin}:${phone}`).digest('hex');
 
-    const { data: card } = await supabase
-      .from('saved_payment_methods')
-      .select('id, pin_hash, pin_attempts')
-      .eq('id', methodId)
-      .single();
-
-    if (!card || card.pin_hash !== pinHash) {
-      const attempts = (card?.pin_attempts || 0) + 1;
+    if (method.pin_hash !== pinHash) {
+      const attempts = (method.pin_attempts || 0) + 1;
       const locked = attempts >= MAX_PIN_ATTEMPTS;
-      if (card) {
-        const lockUntil = locked
-          ? new Date(Date.now() + PIN_LOCKOUT_MINUTES * 60 * 1000).toISOString()
-          : null;
-        await supabase.from('saved_payment_methods')
-          .update({ pin_attempts: attempts, ...(lockUntil ? { pin_locked_until: lockUntil } : {}) })
-          .eq('id', card.id);
-      }
+      const lockUntil = locked
+        ? new Date(Date.now() + PIN_LOCKOUT_MINUTES * 60 * 1000).toISOString()
+        : null;
+      await supabase.from('saved_payment_methods')
+        .update({ pin_attempts: attempts, ...(lockUntil ? { pin_locked_until: lockUntil } : {}) })
+        .eq('id', method.id);
+
       return {
         valid: false,
         attemptsRemaining: Math.max(0, MAX_PIN_ATTEMPTS - attempts),
@@ -251,7 +300,7 @@ class PaystackSavedPaymentAdapter implements SavedPaymentAdapter {
     // PIN correct — reset attempts
     await supabase.from('saved_payment_methods')
       .update({ pin_attempts: 0 })
-      .eq('id', card.id);
+      .eq('id', method.id);
 
     return { valid: true };
   }

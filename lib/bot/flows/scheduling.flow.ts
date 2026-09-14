@@ -3197,7 +3197,7 @@ export const schedulingFlow: FlowDefinition = {
             return { valid: true, data: { _skip_saved_card: true } };
           }
 
-          const pinStatus = await savedPaymentAdapter.requiresPin(ctx.supabase, methodId);
+          const pinStatus = await savedPaymentAdapter.requiresPin(ctx.supabase, methodId, ctx.business!.id, ctx.from);
 
           if (pinStatus.required) {
             if (pinStatus.locked) {
@@ -3218,6 +3218,7 @@ export const schedulingFlow: FlowDefinition = {
 
           const result: ChargeOutcome = await savedPaymentAdapter.chargeSavedMethod(ctx.supabase, {
             methodId,
+            customerPhone: ctx.from,
             amount,
             currency: getCurrencyCode((ctx.business?.country_code || 'NG') as CountryCode),
             email,
@@ -3239,7 +3240,7 @@ export const schedulingFlow: FlowDefinition = {
         // Handle PIN verification for saved card (via provider-neutral adapter)
         if (d._awaiting_card_pin && /^\d{4}$/.test(action)) {
           const methodId = d._saved_method_id as string;
-          const pinResult = await savedPaymentAdapter.verifyPin(ctx.supabase, methodId, ctx.from, action);
+          const pinResult = await savedPaymentAdapter.verifyPin(ctx.supabase, methodId, ctx.business!.id, ctx.from, action);
 
           if (!pinResult.valid) {
             if (pinResult.locked) {
@@ -3258,7 +3259,7 @@ export const schedulingFlow: FlowDefinition = {
           const email = (d.email as string) || `${phone.replace('+', '')}@${process.env.FALLBACK_EMAIL_DOMAIN || 'whatsapp.waaiio.com'}`;
 
           const result: ChargeOutcome = await savedPaymentAdapter.chargeSavedMethod(ctx.supabase, {
-            methodId, amount,
+            methodId, customerPhone: ctx.from, amount,
             currency: getCurrencyCode((ctx.business?.country_code || 'NG') as CountryCode),
             email, reference: `${refCode}-saved`,
             businessId: ctx.business!.id, bookingId,
