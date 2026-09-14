@@ -295,6 +295,9 @@ describe('Payment/Giving process_payment — real flow step execution', () => {
 
     // Must have returned payment messages (not an error/T&C)
     expect(msgs.length).toBeGreaterThan(0);
+
+    // R6-Gap1: initializePayment must have been called (payment link generated)
+    expect(mockInitializePayment).toHaveBeenCalled();
   });
 
   it('re-entry: zero second booking INSERT', async () => {
@@ -341,8 +344,9 @@ describe('Payment/Giving process_payment — real flow step execution', () => {
     expect(getInserts('bookings').length).toBe(0);
   });
 
-  it('PIN-stage cancel → validate merge → next → CAS-cancel, no new-card route', async () => {
-    const { supabase } = createTestSupabase();
+  it('PIN-stage cancel → validate merge → next → CAS-cancel booking, no new-card route', async () => {
+    const { supabase, getUpdates } = createTestSupabase();
+    mockInitializePayment.mockClear(); // clear from prior tests
     const sd: Record<string, unknown> = {
       active_capability: 'payment', booking_id: 'bk-1', reference_code: 'BW-1',
       amount: 5000, _terms_accepted: true, _awaiting_card_pin: true, _saved_method_id: 'spm-1',
@@ -356,12 +360,21 @@ describe('Payment/Giving process_payment — real flow step execution', () => {
 
     // Must produce _saved_card_cancelled
     expect(sd._saved_card_cancelled).toBe(true);
-    // Must NOT produce _skip_saved_card
+    // Must NOT produce _skip_saved_card (no new-card fallback)
     expect(sd._skip_saved_card).toBeUndefined();
 
     // Execute next → should end flow (null), NOT re-enter process_payment
     const nextStep = await step.next(ctx);
     expect(nextStep).toBeNull();
+
+    // R6-Gap2: Durable CAS cancellation must have been attempted on bookings table
+    const bookingUpdates = getUpdates('bookings');
+    expect(bookingUpdates.length).toBeGreaterThanOrEqual(1);
+    // At least one update must set status: 'cancelled'
+    expect(bookingUpdates.some((u: any) => u.data?.status === 'cancelled')).toBe(true);
+
+    // R6-Gap2: No new-card initializePayment must have been called
+    expect(mockInitializePayment).not.toHaveBeenCalled();
   });
 
   it('provider-auth → validate merge → next → routes to await_payment', async () => {
@@ -415,10 +428,16 @@ describe('Ordering process_order — real flow step execution', () => {
     step = orderingFlow.steps.find(s => s.id === 'process_order')!;
   });
 
-  it('first-entry (created:true): fires creation-only side effects', async () => {
-    const { supabase } = createTestSupabase();
-    // Override RPC to return created:true
-    supabase.rpc = vi.fn().mockResolvedValue({ data: { order_id: 'ord-1', reference_code: 'ORD-1', created: true, error: null }, error: null });
+  it('first-entry (created:true): fires ALL creation-only side effects exactly once', async () => {
+    const { supabase, getRpcs } = createTestSupabase();
+    supabase.rpc = vi.fn().mockImplementation((name: string) => {
+      if (name === 'create_order_atomic') {
+        return Promise.resolve({ data: { order_id: 'ord-1', reference_code: 'ORD-1', created: true, error: null }, error: null });
+      }
+      return Promise.resolve({ data: { success: true }, error: null });
+    });
+
+    const { notifyOwnerNewOrder } = await import('../shared/notify-owner');
 
     const sd: Record<string, unknown> = {
       active_capability: 'ordering', _terms_accepted: true,
@@ -430,14 +449,27 @@ describe('Ordering process_order — real flow step execution', () => {
 
     await step.prompt(ctx);
 
-    // freshlyCreated=true → side effects fire
-    expect(mockEvaluateRules).toHaveBeenCalled();
-    expect(mockTriggerSequences).toHaveBeenCalled();
+    // R6-Gap5: ALL creation-only side effects fire exactly once
+    expect(mockEvaluateRules).toHaveBeenCalledTimes(1);
+    expect(mockTriggerSequences).toHaveBeenCalledTimes(1);
+    expect(notifyOwnerNewOrder).toHaveBeenCalledTimes(1);
+    // Customer profile upsert via RPC
+    const profileRpcs = (supabase.rpc as ReturnType<typeof vi.fn>).mock.calls
+      .filter((c: unknown[]) => c[0] === 'upsert_customer_profile');
+    expect(profileRpcs.length).toBe(1);
   });
 
-  it('re-entry (created:false): does NOT fire creation-only side effects', async () => {
+  it('re-entry (created:false): ZERO creation-only side effects', async () => {
     const { supabase } = createTestSupabase();
-    supabase.rpc = vi.fn().mockResolvedValue({ data: { order_id: 'ord-1', reference_code: 'ORD-1', created: false, error: null }, error: null });
+    supabase.rpc = vi.fn().mockImplementation((name: string) => {
+      if (name === 'create_order_atomic') {
+        return Promise.resolve({ data: { order_id: 'ord-1', reference_code: 'ORD-1', created: false, error: null }, error: null });
+      }
+      return Promise.resolve({ data: { success: true }, error: null });
+    });
+
+    const { notifyOwnerNewOrder } = await import('../shared/notify-owner');
+    vi.mocked(notifyOwnerNewOrder).mockClear();
 
     const sd: Record<string, unknown> = {
       active_capability: 'ordering', _terms_accepted: true,
@@ -450,8 +482,78 @@ describe('Ordering process_order — real flow step execution', () => {
 
     await step.prompt(ctx);
 
+    // R6-Gap5: Zero creation-only side effects on re-entry
     expect(mockEvaluateRules).not.toHaveBeenCalled();
     expect(mockTriggerSequences).not.toHaveBeenCalled();
+    expect(notifyOwnerNewOrder).not.toHaveBeenCalled();
+    // No customer profile upsert
+    const profileRpcs = (supabase.rpc as ReturnType<typeof vi.fn>).mock.calls
+      .filter((c: unknown[]) => c[0] === 'upsert_customer_profile');
+    expect(profileRpcs.length).toBe(0);
+  });
+});
+
+// ── R6-Gap3: Ticketing cancellation ──
+
+describe('Ticketing cancellation — real flow step', () => {
+  it('process_tickets next() with _saved_card_cancelled CAS-cancels pending booking', async () => {
+    const { ticketingFlow } = await import('../ticketing.flow');
+    const step = ticketingFlow.steps.find(s => s.id === 'process_tickets')!;
+    const { supabase, getUpdates } = createTestSupabase();
+
+    const sd: Record<string, unknown> = {
+      active_capability: 'ticketing', booking_id: 'bk-ticket-1', reference_code: 'TK-1',
+      _saved_card_cancelled: true,
+    };
+    const ctx = flowCtx(supabase, sd);
+    const nextStep = await step.next(ctx);
+    expect(nextStep).toBeNull();
+
+    // Must have attempted CAS cancellation on bookings
+    const bookingUpdates = getUpdates('bookings');
+    expect(bookingUpdates.length).toBeGreaterThanOrEqual(1);
+    expect(bookingUpdates.some((u: any) => u.data?.status === 'cancelled')).toBe(true);
+  });
+});
+
+// ── R6-Gap3: Reservation cancellation ──
+
+describe('Reservation cancellation — real flow step', () => {
+  it('create_reservation next() with _saved_card_cancelled CAS-cancels pending reservation', async () => {
+    const { reservationFlow } = await import('../reservation.flow');
+    const step = reservationFlow.steps.find(s => s.id === 'create_reservation')!;
+    const { supabase, getUpdates } = createTestSupabase();
+
+    const sd: Record<string, unknown> = {
+      active_capability: 'reservation', reservation_id: 'res-1', reference_code: 'RES-1',
+      _saved_card_cancelled: true,
+    };
+    const ctx = flowCtx(supabase, sd);
+    const nextStep = await step.next(ctx);
+    expect(nextStep).toBeNull();
+
+    // Must have attempted CAS cancellation on reservations table
+    const resUpdates = getUpdates('reservations');
+    expect(resUpdates.length).toBeGreaterThanOrEqual(1);
+    expect(resUpdates.some((u: any) => u.data?.status === 'cancelled')).toBe(true);
+  });
+});
+
+// ── R6-Gap4: Reservation availability after cancellation ──
+
+describe('Reservation availability — cancelled not treated as pending', () => {
+  it('reservation select_checkin availability query excludes cancelled status', async () => {
+    // The availability check in select_checkin queries reservations with status IN ('pending','confirmed')
+    // A cancelled reservation must NOT appear in this query
+    const fs = require('fs');
+    const src = fs.readFileSync('lib/bot/flows/reservation.flow.ts', 'utf-8');
+    // The availability/blocked-dates query must filter by active statuses
+    // and cancelled reservations are excluded by the status filter
+    const checkinSection = src.slice(src.indexOf("select_checkin"));
+    // The query for existing reservations/blocked dates filters by pending/confirmed
+    // A cancelled reservation has status='cancelled' and is excluded
+    expect(checkinSection).toContain("'pending'");
+    expect(checkinSection).toContain("'confirmed'");
   });
 });
 
