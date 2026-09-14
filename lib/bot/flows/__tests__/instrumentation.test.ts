@@ -921,8 +921,8 @@ describe('B1-14: Same-flow FlowExecutor benchmark', () => {
     // --- Disabled (no instrumentation — temporarily remove the import) ---
     // Since instrumentation is always enabled in the executor, we measure with
     // a no-op flush (rpc returns immediately) which is the minimal overhead.
-    // The comparison is: baseline (rpc mock instant) vs real flush (rpc mock instant).
-    // This proves the collector/proxy overhead is bounded.
+    // Genuine OFF vs ON: _skipInstrumentation test seam bypasses collector/proxy/flush.
+    // Production default is false (instrumentation ON). This seam is test-only.
 
     const disabledTotal: number[] = [];
     const disabledTTLS: number[] = [];
@@ -930,49 +930,50 @@ describe('B1-14: Same-flow FlowExecutor benchmark', () => {
     const enabledTTLS: number[] = [];
     const disabledSendCounts: number[] = [];
     const enabledSendCounts: number[] = [];
+    let disabledFlushCount = 0;
+    let enabledFlushCount = 0;
 
-    // Run ITERATIONS times each way
+    // --- DISABLED: _skipInstrumentation = true (no collector, no proxy, no flush) ---
+    mockSupabase.rpc.mockClear();
     for (let i = 0; i < ITERATIONS; i++) {
       setupMocks();
-      sendTrace.length = 0;
       mockSender.sendText.mockClear();
       const executor = createExecutor();
       const start = performance.now();
-      await executor.execute('+2348012345678', 'hello', session as any, business as any);
+      await executor.execute('+2348012345678', 'hello', session as any, business as any, undefined, undefined, undefined, true);
       const end = performance.now();
-      const lastSend = mockSender.sendText.mock.results.length > 0 ? performance.now() : end;
       disabledTotal.push(end - start);
-      disabledTTLS.push(lastSend - start);
+      disabledTTLS.push(end - start); // time-to-last-send ≈ total (no post-send flush)
       disabledSendCounts.push(mockSender.sendText.mock.calls.length);
     }
+    disabledFlushCount = mockSupabase.rpc.mock.calls.filter(
+      (c: unknown[]) => (c[0] as string) === 'persist_flow_execution'
+    ).length;
 
-    // "Enabled" — same executor, same mocks, instrumentation is always on
+    // --- ENABLED: _skipInstrumentation = false (default — collector + proxy + flush) ---
+    mockSupabase.rpc.mockClear();
     for (let i = 0; i < ITERATIONS; i++) {
       setupMocks();
-      sendTrace.length = 0;
       mockSender.sendText.mockClear();
       const executor = createExecutor();
       const start = performance.now();
       await executor.execute('+2348012345678', 'hello', session as any, business as any);
       const end = performance.now();
-      const lastSend = mockSender.sendText.mock.results.length > 0 ? performance.now() : end;
       enabledTotal.push(end - start);
-      enabledTTLS.push(lastSend - start);
+      enabledTTLS.push(end - start);
       enabledSendCounts.push(mockSender.sendText.mock.calls.length);
     }
+    enabledFlushCount = mockSupabase.rpc.mock.calls.filter(
+      (c: unknown[]) => (c[0] as string) === 'persist_flow_execution'
+    ).length;
 
     // --- Identical send traces ---
-    // Both runs should have the same send count pattern
-    expect(disabledSendCounts[0]).toBeGreaterThan(0); // At least one send (error message)
-    expect(enabledSendCounts[0]).toBe(disabledSendCounts[0]); // Identical
+    expect(disabledSendCounts[0]).toBeGreaterThan(0); // At least one send
+    expect(enabledSendCounts[0]).toBe(disabledSendCounts[0]); // Identical send count
 
-    // --- Zero pre-send telemetry DB I/O ---
-    // The rpc mock tracks all calls — they should only be flush calls AFTER sends
-    const rpcCalls = mockSupabase.rpc.mock.calls.filter(
-      (c: unknown[]) => (c[0] as string) === 'persist_flow_execution'
-    );
-    // Each execution should produce exactly one flush call
-    expect(rpcCalls.length).toBe(ITERATIONS * 2); // ITERATIONS disabled + ITERATIONS enabled
+    // --- Flush counts: zero when disabled, one per execution when enabled ---
+    expect(disabledFlushCount).toBe(0); // No persist_flow_execution calls when disabled
+    expect(enabledFlushCount).toBe(ITERATIONS); // Exactly one flush per enabled execution
 
     // --- Metrics ---
     const dp50 = percentile(disabledTotal, 50);
@@ -984,8 +985,8 @@ describe('B1-14: Same-flow FlowExecutor benchmark', () => {
     const etlp50 = percentile(enabledTTLS, 50);
     const etlp95 = percentile(enabledTTLS, 95);
 
-    console.log('[B1-14] === Real FlowExecutor.execute() Benchmark ===');
-    console.log(`[B1-14] Total  — Run1 p50=${dp50.toFixed(3)}ms p95=${dp95.toFixed(3)}ms`);
+    console.log('[B1-14] === Real FlowExecutor.execute() Benchmark: OFF vs ON ===');
+    console.log(`[B1-14] Total  — Disabled p50=${dp50.toFixed(3)}ms p95=${dp95.toFixed(3)}ms`);
     console.log(`[B1-14] Total  — Run2 p50=${ep50.toFixed(3)}ms p95=${ep95.toFixed(3)}ms`);
     console.log(`[B1-14] TTLS   — Run1 p50=${dtlp50.toFixed(3)}ms p95=${dtlp95.toFixed(3)}ms`);
     console.log(`[B1-14] TTLS   — Run2 p50=${etlp50.toFixed(3)}ms p95=${etlp95.toFixed(3)}ms`);

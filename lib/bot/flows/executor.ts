@@ -60,6 +60,8 @@ export class FlowExecutor {
     mediaType?: string,
     /** CAS-004: Ephemeral current-message canonical understanding */
     currentCanonical?: import('@/lib/bot/canonical-understanding').CanonicalUnderstanding,
+    /** @internal Test-only seam: skip instrumentation for benchmark comparison. Production default: false. */
+    _skipInstrumentation?: boolean,
   ): Promise<void> {
     // Determine which flow to use: active_capability takes priority
     const activeCap = session.session_data.active_capability as CapabilityId | undefined;
@@ -69,10 +71,12 @@ export class FlowExecutor {
     const stepId = session.current_step;
 
     // #267: Per-execution instrumentation collector (in-memory, no DB I/O yet)
-    const executionId = generateExecutionId();
+    // Test seam: _skipInstrumentation bypasses collector/scoped-sender/flush for benchmark comparison
+    const instrumentationEnabled = !_skipInstrumentation;
+    const executionId = instrumentationEnabled ? generateExecutionId() : '';
     const instrumentBusinessId = business?.id || session.business_id || '';
-    const collector = new FlowExecutionCollector(executionId, instrumentBusinessId);
-    collector.freezeContext(flowType, stepId, activeCap || null);
+    const collector = instrumentationEnabled ? new FlowExecutionCollector(executionId, instrumentBusinessId) : null;
+    if (collector) collector.freezeContext(flowType, stepId, activeCap || null);
 
     // #267: Track whether execution reached a terminal state
     let executionReachedTerminal = false;
@@ -81,7 +85,9 @@ export class FlowExecutor {
     // Two overlapping execute() calls on the same FlowExecutor instance each
     // get their own collector-backed proxy. Private send methods accept an
     // optional sender parameter so they use the execution-local proxy.
-    const scopedSender = createScopedSender(this.sender as unknown as Record<string, unknown>, collector) as unknown as MessageSender;
+    const scopedSender = collector
+      ? createScopedSender(this.sender as unknown as Record<string, unknown>, collector) as unknown as MessageSender
+      : this.sender;
 
     try { // #267: try/finally for instrumentation flush
 
@@ -665,17 +671,19 @@ export class FlowExecutor {
       // No sender restoration needed — scopedSender is execution-local,
       // this.sender was never mutated.
 
-      if (executionReachedTerminal) {
-        collector.markComplete();
-      } else {
-        collector.markIncomplete();
-      }
-      // Correction 4: Await flush so telemetry completes before execute() resolves.
-      // Errors are caught internally — never propagates to caller.
-      try {
-        await flushExecutionAnalytics(collector, this.supabase);
-      } catch (err) {
-        logger.warn('[FLOW-ANALYTICS] Background flush failed', { error: String(err) });
+      if (collector) {
+        if (executionReachedTerminal) {
+          collector.markComplete();
+        } else {
+          collector.markIncomplete();
+        }
+        // Correction 4: Await flush so telemetry completes before execute() resolves.
+        // Errors are caught internally — never propagates to caller.
+        try {
+          await flushExecutionAnalytics(collector, this.supabase);
+        } catch (err) {
+          logger.warn('[FLOW-ANALYTICS] Background flush failed', { error: String(err) });
+        }
       }
     }
   }
