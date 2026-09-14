@@ -296,24 +296,25 @@ describe.skipIf(!canRun)('M382: effective-role RLS enforcement (V2-T12)', () => 
     adminId = psql(`SELECT gen_random_uuid()::text;`);
     financeId = psql(`SELECT gen_random_uuid()::text;`);
 
-    // Insert auth.users rows with appropriate raw_app_meta_data
+    // Insert auth.users + profiles (matching existing provider-neutral test pattern)
     const ts = Date.now();
     psqlMayFail(`
-      INSERT INTO auth.users (id, email, raw_app_meta_data, aud, role)
+      INSERT INTO auth.users (id, email, raw_app_meta_data)
       VALUES
-        ('${ownerId}', 'owner-m382-${ts}@test.com', '{}'::jsonb, 'authenticated', 'authenticated'),
-        ('${nonOwnerId}', 'nonowner-m382-${ts}@test.com', '{}'::jsonb, 'authenticated', 'authenticated'),
-        ('${adminId}', 'admin-m382-${ts}@test.com', '{"role":"admin"}'::jsonb, 'authenticated', 'authenticated'),
-        ('${financeId}', 'finance-m382-${ts}@test.com', '{"role":"finance"}'::jsonb, 'authenticated', 'authenticated')
-      ON CONFLICT (id) DO NOTHING;
+        ('${ownerId}', 'owner-m382-${ts}@test.com', '{}'::jsonb),
+        ('${nonOwnerId}', 'nonowner-m382-${ts}@test.com', '{}'::jsonb),
+        ('${adminId}', 'admin-m382-${ts}@test.com', '{"role":"admin"}'::jsonb),
+        ('${financeId}', 'finance-m382-${ts}@test.com', '{"role":"finance"}'::jsonb)
+      ON CONFLICT (id) DO UPDATE SET raw_app_meta_data = EXCLUDED.raw_app_meta_data;
     `);
 
-    // Create profiles for the test users (businesses FK requires profiles)
+    // Create profiles for test users (businesses FK requires profiles)
+    // profiles.role is user_role enum: restaurant_owner, admin, finance, etc.
     psqlMayFail(`
       INSERT INTO profiles (id, email, role)
       VALUES
-        ('${ownerId}', 'owner-m382-${ts}@test.com', 'user'),
-        ('${nonOwnerId}', 'nonowner-m382-${ts}@test.com', 'user'),
+        ('${ownerId}', 'owner-m382-${ts}@test.com', 'restaurant_owner'),
+        ('${nonOwnerId}', 'nonowner-m382-${ts}@test.com', 'restaurant_owner'),
         ('${adminId}', 'admin-m382-${ts}@test.com', 'admin'),
         ('${financeId}', 'finance-m382-${ts}@test.com', 'finance')
       ON CONFLICT (id) DO NOTHING;
