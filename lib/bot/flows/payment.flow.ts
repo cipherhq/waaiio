@@ -582,7 +582,7 @@ export const paymentFlow: FlowDefinition = {
           return 'await_payment';
         }
         if (d._saved_card_cancelled) {
-          // R2 Blocker 2: CAS-cancel pending booking — never overwrite paid/confirmed
+          // R7: CAS-cancel pending booking with authoritative race handling
           const cancelBookingId = d.booking_id as string;
           if (cancelBookingId) {
             const { data: cancelResult, error: cancelErr } = await ctx.supabase
@@ -593,25 +593,39 @@ export const paymentFlow: FlowDefinition = {
               .select('id');
             if (cancelErr) {
               logger.error('[PAYMENT] Saved-card cancel DB error', cancelErr);
-              return null; // fail closed
+              return null; // fail closed — no cancellation claim
             }
-            if (!cancelResult?.length) {
-              // Booking no longer pending — Payment Authority may have confirmed it
-              const { data: bk } = await ctx.supabase.from('bookings')
-                .select('status, deposit_status').eq('id', cancelBookingId).single();
-              if (bk?.deposit_status === 'paid' || bk?.status === 'confirmed') {
-                const isGiving = d.active_capability === 'giving';
-                await ctx.sender.sendText({ to: ctx.from, text: await ctx.t(`✅ Your ${isGiving ? 'giving' : 'payment'} has been confirmed! Type *my bookings* to view details.`) });
-                return null;
+            if (cancelResult?.length) {
+              // CAS succeeded — cancellation established. Safe to cancel dependent transfers.
+              if (d.bank_transfer_reference) {
+                await ctx.supabase.from('pending_transfers')
+                  .update({ status: 'cancelled' })
+                  .eq('reference_code', d.bank_transfer_reference as string)
+                  .eq('status', 'pending');
               }
+              await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('Payment cancelled. No charges were made. Send *Hi* to start over.') });
+              return null;
             }
-            // Cancel pending bank transfer if exists
-            if (d.bank_transfer_reference) {
-              await ctx.supabase.from('pending_transfers')
-                .update({ status: 'cancelled' })
-                .eq('reference_code', d.bank_transfer_reference as string)
-                .eq('status', 'pending');
+            // Zero rows affected — re-read authoritative durable state
+            const { data: bk, error: readErr } = await ctx.supabase.from('bookings')
+              .select('status, deposit_status').eq('id', cancelBookingId).single();
+            if (readErr || !bk) {
+              logger.error('[PAYMENT] Saved-card cancel re-read failed', readErr);
+              return null; // fail closed — no cancellation claim, no transfer cancel
             }
+            if (bk.deposit_status === 'paid' || bk.status === 'confirmed') {
+              const isGiving = d.active_capability === 'giving';
+              await ctx.sender.sendText({ to: ctx.from, text: await ctx.t(`✅ Your ${isGiving ? 'giving' : 'payment'} has been confirmed! Type *my bookings* to view details.`) });
+              return null;
+            }
+            if (bk.status === 'cancelled') {
+              // Already cancelled — idempotent, safe to claim
+              await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('Payment cancelled. No charges were made. Send *Hi* to start over.') });
+              return null;
+            }
+            // Unexpected state — fail closed
+            logger.warn('[PAYMENT] Saved-card cancel: unexpected booking state', bk.status);
+            return null;
           }
           await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('Payment cancelled. No charges were made. Send *Hi* to start over.') });
           return null;

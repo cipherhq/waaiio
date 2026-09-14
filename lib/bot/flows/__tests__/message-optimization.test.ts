@@ -296,8 +296,14 @@ describe('Payment/Giving process_payment — real flow step execution', () => {
     // Must have returned payment messages (not an error/T&C)
     expect(msgs.length).toBeGreaterThan(0);
 
-    // R6-Gap1: initializePayment must have been called (payment link generated)
+    // R6-Gap1 + R7: initializePayment called with the durable booking identity
     expect(mockInitializePayment).toHaveBeenCalled();
+    const initCall = mockInitializePayment.mock.calls[0];
+    if (initCall) {
+      const initOpts = initCall[1]; // second arg to initializePayment(supabase, opts)
+      expect(initOpts.bookingId).toBe('bk-TEST-001');
+      expect(initOpts.referenceCode).toBe('BW-TEST-001');
+    }
   });
 
   it('re-entry: zero second booking INSERT', async () => {
@@ -493,67 +499,229 @@ describe('Ordering process_order — real flow step execution', () => {
   });
 });
 
-// ── R6-Gap3: Ticketing cancellation ──
+// ── R7: Cancellation race tests with modeled CAS outcomes ──
 
-describe('Ticketing cancellation — real flow step', () => {
-  it('process_tickets next() with _saved_card_cancelled CAS-cancels pending booking', async () => {
+/**
+ * Creates a supabase mock that models specific CAS return values for cancellation race testing.
+ * updateResult: what .update().in().select() returns (affected rows)
+ * rereadResult: what the follow-up .select().single() returns on re-read
+ */
+function createCancelRaceMock(config: {
+  updateResult: { data: unknown[] | null; error: unknown | null };
+  rereadResult: { data: unknown | null; error: unknown | null };
+}) {
+  const sentTexts: string[] = [];
+  let transferUpdateCalled = false;
+
+  const supabase = {
+    from: vi.fn().mockImplementation((table: string) => {
+      // Each from() call gets a fresh chain that tracks whether it's an update or select path
+      let isUpdatePath = false;
+
+      const c: Record<string, any> = {};
+      for (const m of ['eq', 'in', 'not', 'neq', 'order', 'limit']) c[m] = vi.fn().mockReturnValue(c);
+
+      c.update = vi.fn().mockImplementation(() => {
+        if (table === 'pending_transfers') {
+          transferUpdateCalled = true;
+        }
+        isUpdatePath = true;
+        return c;
+      });
+
+      c.select = vi.fn().mockImplementation(() => {
+        if (isUpdatePath) {
+          // This is .update().eq().in().select('id') — return CAS result as Promise
+          return Promise.resolve(config.updateResult);
+        }
+        // This is a fresh .select() for re-read
+        return c;
+      });
+
+      c.single = vi.fn().mockResolvedValue(config.rereadResult);
+      c.maybeSingle = vi.fn().mockResolvedValue(config.rereadResult);
+
+      return c;
+    }),
+    rpc: vi.fn().mockResolvedValue({ data: { success: true }, error: null }),
+  } as any;
+
+  const ctx = (sd: Record<string, unknown>) => ({
+    supabase,
+    sender: {
+      sendText: vi.fn().mockImplementation(({ text }: { text: string }) => { sentTexts.push(text); return Promise.resolve(); }),
+    },
+    from: '+2348012345678',
+    session: { id: 's-1', user_id: 'u-1', business_id: 'biz-1', current_step: 'x', session_data: sd, version: 1 },
+    business: { id: 'biz-1', name: 'Biz', slug: 'biz', category: 'other', flow_type: 'payment', subscription_tier: 'free', trial_ends_at: '', metadata: {}, country_code: 'NG', payment_gateway: null },
+    t: (t: string) => Promise.resolve(t),
+  } as unknown as FlowContext);
+
+  return { supabase, sentTexts, ctx, wasTransferCancelCalled: () => transferUpdateCalled };
+}
+
+describe('R7: Payment/Giving cancellation races', () => {
+  let step: FlowStepConfig;
+  beforeEach(async () => {
+    const { paymentFlow } = await import('../payment.flow');
+    step = paymentFlow.steps.find(s => s.id === 'process_payment')!;
+  });
+
+  it('pending → CAS succeeds → cancellation claimed', async () => {
+    const m = createCancelRaceMock({
+      updateResult: { data: [{ id: 'bk-1' }], error: null },
+      rereadResult: { data: null, error: null },
+    });
+    const sd = { booking_id: 'bk-1', _saved_card_cancelled: true } as Record<string, unknown>;
+    const result = await step.next(m.ctx(sd));
+    expect(result).toBeNull();
+    expect(m.sentTexts.some(t => t.includes('cancelled'))).toBe(true);
+  });
+
+  it('paid/confirmed race → zero CAS rows → reports confirmed', async () => {
+    const m = createCancelRaceMock({
+      updateResult: { data: [], error: null },
+      rereadResult: { data: { status: 'confirmed', deposit_status: 'paid' }, error: null },
+    });
+    const sd = { booking_id: 'bk-1', _saved_card_cancelled: true } as Record<string, unknown>;
+    const result = await step.next(m.ctx(sd));
+    expect(result).toBeNull();
+    expect(m.sentTexts.some(t => t.includes('confirmed'))).toBe(true);
+    expect(m.sentTexts.some(t => t.includes('cancelled'))).toBe(false);
+    expect(m.wasTransferCancelCalled()).toBe(false);
+  });
+
+  it('already cancelled → zero CAS rows → idempotent cancellation', async () => {
+    const m = createCancelRaceMock({
+      updateResult: { data: [], error: null },
+      rereadResult: { data: { status: 'cancelled', deposit_status: 'pending' }, error: null },
+    });
+    const sd = { booking_id: 'bk-1', _saved_card_cancelled: true } as Record<string, unknown>;
+    const result = await step.next(m.ctx(sd));
+    expect(result).toBeNull();
+    expect(m.sentTexts.some(t => t.includes('cancelled'))).toBe(true);
+  });
+
+  it('re-read error → fail closed, no cancellation claim', async () => {
+    const m = createCancelRaceMock({
+      updateResult: { data: [], error: null },
+      rereadResult: { data: null, error: { message: 'DB error' } },
+    });
+    const sd = { booking_id: 'bk-1', _saved_card_cancelled: true } as Record<string, unknown>;
+    const result = await step.next(m.ctx(sd));
+    expect(result).toBeNull();
+    expect(m.sentTexts.some(t => t.includes('cancelled'))).toBe(false);
+    expect(m.sentTexts.some(t => t.includes('confirmed'))).toBe(false);
+    expect(m.wasTransferCancelCalled()).toBe(false);
+  });
+});
+
+describe('R7: Ticketing cancellation races', () => {
+  let step: FlowStepConfig;
+  beforeEach(async () => {
     const { ticketingFlow } = await import('../ticketing.flow');
-    const step = ticketingFlow.steps.find(s => s.id === 'process_tickets')!;
-    const { supabase, getUpdates } = createTestSupabase();
+    step = ticketingFlow.steps.find(s => s.id === 'process_tickets')!;
+  });
 
-    const sd: Record<string, unknown> = {
-      active_capability: 'ticketing', booking_id: 'bk-ticket-1', reference_code: 'TK-1',
-      _saved_card_cancelled: true,
-    };
-    const ctx = flowCtx(supabase, sd);
-    const nextStep = await step.next(ctx);
-    expect(nextStep).toBeNull();
+  it('pending → CAS succeeds → cancellation claimed', async () => {
+    const m = createCancelRaceMock({
+      updateResult: { data: [{ id: 'bk-1' }], error: null },
+      rereadResult: { data: null, error: null },
+    });
+    const sd = { booking_id: 'bk-1', _saved_card_cancelled: true } as Record<string, unknown>;
+    const result = await step.next(m.ctx(sd));
+    expect(result).toBeNull();
+    expect(m.sentTexts.some(t => t.includes('cancelled'))).toBe(true);
+  });
 
-    // Must have attempted CAS cancellation on bookings
-    const bookingUpdates = getUpdates('bookings');
-    expect(bookingUpdates.length).toBeGreaterThanOrEqual(1);
-    expect(bookingUpdates.some((u: any) => u.data?.status === 'cancelled')).toBe(true);
+  it('paid/confirmed race → reports confirmed', async () => {
+    const m = createCancelRaceMock({
+      updateResult: { data: [], error: null },
+      rereadResult: { data: { status: 'confirmed', deposit_status: 'paid' }, error: null },
+    });
+    const sd = { booking_id: 'bk-1', _saved_card_cancelled: true } as Record<string, unknown>;
+    await step.next(m.ctx(sd));
+    expect(m.sentTexts.some(t => t.includes('confirmed'))).toBe(true);
+    expect(m.wasTransferCancelCalled()).toBe(false);
+  });
+
+  it('re-read error → fail closed', async () => {
+    const m = createCancelRaceMock({
+      updateResult: { data: [], error: null },
+      rereadResult: { data: null, error: { message: 'DB error' } },
+    });
+    const sd = { booking_id: 'bk-1', _saved_card_cancelled: true } as Record<string, unknown>;
+    await step.next(m.ctx(sd));
+    expect(m.sentTexts).toHaveLength(0);
+    expect(m.wasTransferCancelCalled()).toBe(false);
   });
 });
 
-// ── R6-Gap3: Reservation cancellation ──
-
-describe('Reservation cancellation — real flow step', () => {
-  it('create_reservation next() with _saved_card_cancelled CAS-cancels pending reservation', async () => {
+describe('R7: Reservation cancellation races', () => {
+  let step: FlowStepConfig;
+  beforeEach(async () => {
     const { reservationFlow } = await import('../reservation.flow');
-    const step = reservationFlow.steps.find(s => s.id === 'create_reservation')!;
-    const { supabase, getUpdates } = createTestSupabase();
+    step = reservationFlow.steps.find(s => s.id === 'create_reservation')!;
+  });
 
-    const sd: Record<string, unknown> = {
-      active_capability: 'reservation', reservation_id: 'res-1', reference_code: 'RES-1',
-      _saved_card_cancelled: true,
-    };
-    const ctx = flowCtx(supabase, sd);
-    const nextStep = await step.next(ctx);
-    expect(nextStep).toBeNull();
+  it('pending → CAS succeeds → cancellation claimed', async () => {
+    const m = createCancelRaceMock({
+      updateResult: { data: [{ id: 'res-1' }], error: null },
+      rereadResult: { data: null, error: null },
+    });
+    const sd = { reservation_id: 'res-1', _saved_card_cancelled: true } as Record<string, unknown>;
+    const result = await step.next(m.ctx(sd));
+    expect(result).toBeNull();
+    expect(m.sentTexts.some(t => t.includes('cancelled'))).toBe(true);
+  });
 
-    // Must have attempted CAS cancellation on reservations table
-    const resUpdates = getUpdates('reservations');
-    expect(resUpdates.length).toBeGreaterThanOrEqual(1);
-    expect(resUpdates.some((u: any) => u.data?.status === 'cancelled')).toBe(true);
+  it('paid/confirmed race → reports confirmed', async () => {
+    const m = createCancelRaceMock({
+      updateResult: { data: [], error: null },
+      rereadResult: { data: { status: 'confirmed', deposit_status: 'paid' }, error: null },
+    });
+    const sd = { reservation_id: 'res-1', _saved_card_cancelled: true } as Record<string, unknown>;
+    await step.next(m.ctx(sd));
+    expect(m.sentTexts.some(t => t.includes('confirmed'))).toBe(true);
+    expect(m.wasTransferCancelCalled()).toBe(false);
+  });
+
+  it('already cancelled → idempotent cancellation', async () => {
+    const m = createCancelRaceMock({
+      updateResult: { data: [], error: null },
+      rereadResult: { data: { status: 'cancelled', deposit_status: 'pending' }, error: null },
+    });
+    const sd = { reservation_id: 'res-1', _saved_card_cancelled: true } as Record<string, unknown>;
+    await step.next(m.ctx(sd));
+    expect(m.sentTexts.some(t => t.includes('cancelled'))).toBe(true);
+  });
+
+  it('re-read error → fail closed', async () => {
+    const m = createCancelRaceMock({
+      updateResult: { data: [], error: null },
+      rereadResult: { data: null, error: { message: 'DB error' } },
+    });
+    const sd = { reservation_id: 'res-1', _saved_card_cancelled: true } as Record<string, unknown>;
+    await step.next(m.ctx(sd));
+    expect(m.sentTexts).toHaveLength(0);
+    expect(m.wasTransferCancelCalled()).toBe(false);
   });
 });
 
-// ── R6-Gap4: Reservation availability after cancellation ──
+// ── R7: Reservation availability — cancelled excluded from active ──
 
-describe('Reservation availability — cancelled not treated as pending', () => {
-  it('reservation select_checkin availability query excludes cancelled status', async () => {
-    // The availability check in select_checkin queries reservations with status IN ('pending','confirmed')
-    // A cancelled reservation must NOT appear in this query
+describe('Reservation availability — cancelled excluded', () => {
+  it('select_checkin availability query uses .in(status) filter that excludes cancelled', () => {
+    // The reservation flow's select_checkin step queries existing reservations to find
+    // blocked dates. The query filters by status IN ('pending', 'confirmed').
+    // A cancelled reservation (status='cancelled') is excluded by this filter.
     const fs = require('fs');
     const src = fs.readFileSync('lib/bot/flows/reservation.flow.ts', 'utf-8');
-    // The availability/blocked-dates query must filter by active statuses
-    // and cancelled reservations are excluded by the status filter
-    const checkinSection = src.slice(src.indexOf("select_checkin"));
-    // The query for existing reservations/blocked dates filters by pending/confirmed
-    // A cancelled reservation has status='cancelled' and is excluded
-    expect(checkinSection).toContain("'pending'");
-    expect(checkinSection).toContain("'confirmed'");
+    const checkinSection = src.slice(src.indexOf("'select_checkin'"), src.indexOf("'select_checkout'"));
+    // Must use .in('status', [...]) with pending/confirmed — cancelled excluded
+    expect(checkinSection).toContain('.in(');
+    expect(checkinSection).toContain('pending');
+    expect(checkinSection).toContain('confirmed');
   });
 });
 

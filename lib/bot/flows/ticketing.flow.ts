@@ -866,7 +866,7 @@ export const ticketingFlow: FlowDefinition = {
           return 'await_ticket_payment';
         }
         if (d._saved_card_cancelled) {
-          // R2: CAS-cancel pending ticket booking — never overwrite paid/confirmed
+          // R7: CAS-cancel pending ticket booking with authoritative race handling
           const cancelBookingId = d.booking_id as string;
           if (cancelBookingId) {
             const { data: cancelResult, error: cancelErr } = await ctx.supabase
@@ -877,22 +877,37 @@ export const ticketingFlow: FlowDefinition = {
               .select('id');
             if (cancelErr) {
               logger.error('[TICKETING] Saved-card cancel DB error', cancelErr);
+              return null; // fail closed
+            }
+            if (cancelResult?.length) {
+              // CAS succeeded — cancellation established
+              if (d.bank_transfer_reference) {
+                await ctx.supabase.from('pending_transfers')
+                  .update({ status: 'cancelled' })
+                  .eq('reference_code', d.bank_transfer_reference as string)
+                  .eq('status', 'pending');
+              }
+              await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('Ticket order cancelled. Send *Hi* to start over.') });
               return null;
             }
-            if (!cancelResult?.length) {
-              const { data: bk } = await ctx.supabase.from('bookings')
-                .select('status, deposit_status').eq('id', cancelBookingId).single();
-              if (bk?.deposit_status === 'paid' || bk?.status === 'confirmed') {
-                await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('✅ Your tickets have been confirmed! Type *my tickets* to view them.') });
-                return null;
-              }
+            // Zero rows — re-read authoritative state
+            const { data: bk, error: readErr } = await ctx.supabase.from('bookings')
+              .select('status, deposit_status').eq('id', cancelBookingId).single();
+            if (readErr || !bk) {
+              logger.error('[TICKETING] Saved-card cancel re-read failed', readErr);
+              return null; // fail closed
             }
-            if (d.bank_transfer_reference) {
-              await ctx.supabase.from('pending_transfers')
-                .update({ status: 'cancelled' })
-                .eq('reference_code', d.bank_transfer_reference as string)
-                .eq('status', 'pending');
+            if (bk.deposit_status === 'paid' || bk.status === 'confirmed') {
+              await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('✅ Your tickets have been confirmed! Type *my tickets* to view them.') });
+              return null;
             }
+            if (bk.status === 'cancelled') {
+              await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('Ticket order cancelled. Send *Hi* to start over.') });
+              return null;
+            }
+            // Unexpected state — fail closed
+            logger.warn('[TICKETING] Saved-card cancel: unexpected booking state', bk.status);
+            return null;
           }
           await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('Ticket order cancelled. Send *Hi* to start over.') });
           return null;
