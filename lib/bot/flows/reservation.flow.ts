@@ -1189,6 +1189,34 @@ export const reservationFlow: FlowDefinition = {
           return 'reservation_payment';
         }
         if (d._saved_card_cancelled) {
+          // R2: CAS-cancel pending reservation — never overwrite paid/confirmed
+          const cancelResId = d.reservation_id as string;
+          if (cancelResId) {
+            const { data: cancelResult, error: cancelErr } = await ctx.supabase
+              .from('reservations')
+              .update({ status: 'cancelled', cancelled_at: new Date().toISOString() })
+              .eq('id', cancelResId)
+              .in('status', ['pending'])
+              .select('id');
+            if (cancelErr) {
+              logger.error('[RESERVATION] Saved-card cancel DB error', cancelErr);
+              return null;
+            }
+            if (!cancelResult?.length) {
+              const { data: res } = await ctx.supabase.from('reservations')
+                .select('status, payment_status').eq('id', cancelResId).single();
+              if (res?.payment_status === 'paid' || res?.status === 'confirmed') {
+                await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('✅ Your reservation has been confirmed! Type *my bookings* to view details.') });
+                return null;
+              }
+            }
+            if (d.bank_transfer_reference) {
+              await ctx.supabase.from('pending_transfers')
+                .update({ status: 'cancelled' })
+                .eq('reference_code', d.bank_transfer_reference as string)
+                .eq('status', 'pending');
+            }
+          }
           await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('Reservation cancelled. Send *Hi* to start over.') });
           return null;
         }

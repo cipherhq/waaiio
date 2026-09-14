@@ -2678,9 +2678,8 @@ export const orderingFlow: FlowDefinition = {
           const orderSendMsg = async (to: string, txt: string) => {
             await ctx.sender.sendText({ to, text: txt });
           };
-          // Blocker 3: Guard creation-only side effects — only fire for newly created orders
-          if (!d._order_side_effects_fired) {
-            d._order_side_effects_fired = true;
+          // R2 Blocker 3: Guard creation-only side effects with authoritative freshlyCreated
+          if (freshlyCreated) {
             evaluateRules(ctx.supabase, ctx.business.id, 'order_created', orderRuleCtx, orderSendMsg)
               .catch(err => logger.error('[ORDERING] order_created rule error:', err));
             triggerSequences(ctx.supabase, ctx.business.id, 'after_order', ctx.from, orderRuleCtx)
@@ -2688,9 +2687,8 @@ export const orderingFlow: FlowDefinition = {
           }
         }
 
-        // Notify business owner via email + WhatsApp (non-blocking, guarded same way)
-        if (ctx.business && !d._order_owner_notified) {
-          d._order_owner_notified = true;
+        // Notify business owner (guarded by freshlyCreated — authoritative creation evidence)
+        if (ctx.business && freshlyCreated) {
           notifyOwnerNewOrder({
             supabase: ctx.supabase,
             sender: ctx.sender,
@@ -2711,16 +2709,16 @@ export const orderingFlow: FlowDefinition = {
         // Finalized on payment success via finalize_promo_reservation().
         // Released on cancellation via release_promo_reservation().
 
-        // ACC-008: Customer profile upsert — for paid orders, defer p_booking_amount
-        // to payment.completed so unpaid amounts don't inflate total_spent/LTV.
-        // Create the profile (for visit tracking) but without the order amount.
-        await ctx.supabase.rpc('upsert_customer_profile', {
-          p_business_id: ctx.business!.id,
-          p_phone: ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`,
-          p_name: `${d.first_name || ''} ${d.last_name || ''}`.trim() || null,
-          p_booking_amount: total > 0 ? 0 : total, // Defer amount to payment.completed
-          p_is_order: true,
-        });
+        // R2 Blocker 3: Customer profile upsert only on fresh creation — not on re-entry
+        if (freshlyCreated) {
+          await ctx.supabase.rpc('upsert_customer_profile', {
+            p_business_id: ctx.business!.id,
+            p_phone: ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`,
+            p_name: `${d.first_name || ''} ${d.last_name || ''}`.trim() || null,
+            p_booking_amount: total > 0 ? 0 : total,
+            p_is_order: true,
+          });
+        }
 
         // Platform fee is recorded AFTER payment verification (by webhook or "I've Paid" flow)
         // — NOT here before payment. See processSuccessfulPayment in process-success.ts.

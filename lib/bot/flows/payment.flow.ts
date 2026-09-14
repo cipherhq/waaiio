@@ -365,8 +365,8 @@ export const paymentFlow: FlowDefinition = {
             return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start over.' }];
           }
 
-          bookingId = bookingId!;
-          referenceCode = referenceCode!;
+          bookingId = booking.id;
+          referenceCode = booking.reference_code;
           d.booking_id = bookingId;
           d.reference_code = referenceCode;
         }
@@ -582,7 +582,37 @@ export const paymentFlow: FlowDefinition = {
           return 'await_payment';
         }
         if (d._saved_card_cancelled) {
-          // Blocker 5: Cancel from saved-card offer — end session cleanly
+          // R2 Blocker 2: CAS-cancel pending booking — never overwrite paid/confirmed
+          const cancelBookingId = d.booking_id as string;
+          if (cancelBookingId) {
+            const { data: cancelResult, error: cancelErr } = await ctx.supabase
+              .from('bookings')
+              .update({ status: 'cancelled', cancelled_at: new Date().toISOString() })
+              .eq('id', cancelBookingId)
+              .in('status', ['pending'])
+              .select('id');
+            if (cancelErr) {
+              logger.error('[PAYMENT] Saved-card cancel DB error', cancelErr);
+              return null; // fail closed
+            }
+            if (!cancelResult?.length) {
+              // Booking no longer pending — Payment Authority may have confirmed it
+              const { data: bk } = await ctx.supabase.from('bookings')
+                .select('status, deposit_status').eq('id', cancelBookingId).single();
+              if (bk?.deposit_status === 'paid' || bk?.status === 'confirmed') {
+                const isGiving = d.active_capability === 'giving';
+                await ctx.sender.sendText({ to: ctx.from, text: await ctx.t(`✅ Your ${isGiving ? 'giving' : 'payment'} has been confirmed! Type *my bookings* to view details.`) });
+                return null;
+              }
+            }
+            // Cancel pending bank transfer if exists
+            if (d.bank_transfer_reference) {
+              await ctx.supabase.from('pending_transfers')
+                .update({ status: 'cancelled' })
+                .eq('reference_code', d.bank_transfer_reference as string)
+                .eq('status', 'pending');
+            }
+          }
           await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('Payment cancelled. No charges were made. Send *Hi* to start over.') });
           return null;
         }
