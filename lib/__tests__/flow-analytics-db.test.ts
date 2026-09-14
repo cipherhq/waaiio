@@ -520,22 +520,51 @@ describe.skipIf(!canRun)('M382: effective-role RLS enforcement (V2-T12)', () => 
 
   // --- Service role CAN write (bypasses RLS) ---
 
-  it('service_role CAN write via persist_flow_execution', () => {
-    const svcExecId = `ci_svc_${Date.now()}`;
+  it('service_role CAN write via persist_flow_execution under SET LOCAL ROLE', () => {
+    const svcExecId = `ci_svc_role_${Date.now()}`;
+    // Execute the RPC under effective service_role — proves the GRANT is correct
     const result = psql(`
+      BEGIN;
+      SET LOCAL ROLE service_role;
       SELECT persist_flow_execution(
         '${svcExecId}',
         '${testBusinessId}'::UUID,
         'complete',
         1, 1, 0, 0,
         NOW(), NOW(),
-        NULL
+        '[{"flow_type":"test","step_name":"s1","message_type":"text","is_template":false,"active_capability":"__none__","logical_count":1,"resolved_count":1,"failure_count":0,"error_count":0}]'::JSONB
       );
+      COMMIT;
     `);
-    const parsed = JSON.parse(result);
-    expect(parsed.persisted).toBe(true);
+    expect(result).toContain('"persisted": true');
+
+    // Verify the row exists (read as superuser)
+    const count = psql(`SELECT count(*) FROM flow_execution_summaries WHERE execution_id = '${svcExecId}';`);
+    expect(count.trim()).toBe('1');
+
+    const aggCount = psql(`SELECT count(*) FROM flow_execution_aggregates WHERE execution_id = '${svcExecId}';`);
+    expect(aggCount.trim()).toBe('1');
 
     // Cleanup
+    psql(`DELETE FROM flow_execution_aggregates WHERE execution_id = '${svcExecId}';`);
     psql(`DELETE FROM flow_execution_summaries WHERE execution_id = '${svcExecId}';`);
+  });
+
+  it('authenticated user CANNOT call persist_flow_execution', () => {
+    const blockedExecId = `ci_auth_blocked_${Date.now()}`;
+    const result = psqlMayFail(`
+      BEGIN;
+      ${authContext(ownerId)}
+      SELECT persist_flow_execution(
+        '${blockedExecId}',
+        '${testBusinessId}'::UUID,
+        'complete',
+        0, 0, 0, 0,
+        NOW(), NOW(),
+        NULL
+      );
+      ROLLBACK;
+    `);
+    expect(result).toMatch(/permission denied/i);
   });
 });
