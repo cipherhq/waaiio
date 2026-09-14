@@ -821,17 +821,25 @@ describe('B1-14: Same-flow FlowExecutor benchmark', () => {
     return sorted[Math.floor(sorted.length * p / 100)];
   };
 
-  it('actual FlowExecutor.execute() enabled vs disabled: identical sends, p50/p95, time-to-last-send', async () => {
-    // Use the real FlowExecutor class with deeply-mocked dependencies.
-    // The executor's "step not found" path exercises the full send chain
-    // (error message send + flush) which is representative of real usage.
+  it('actual FlowExecutor.execute() OFF vs ON: ordered trace, TTLS, flush-after-send', async () => {
+    // Genuine instrumentation-OFF vs ON comparison using the real FlowExecutor.
+    // Records an ordered event trace with timestamps for every provider send and flush.
 
     const { FlowExecutor } = await import('../executor');
 
-    const sendTrace: string[] = [];
+    // Event trace: records method, abbreviated payload, and high-res timestamp
+    type TraceEvent = { type: 'send' | 'flush'; method: string; payload: string; ts: number };
+    let eventTrace: TraceEvent[] = [];
+
     const mockSender = {
-      sendText: vi.fn(async (...args: unknown[]) => { sendTrace.push(`sendText:${JSON.stringify(args[0])?.slice(0, 30)}`); return { success: true }; }),
-      sendButtons: vi.fn().mockResolvedValue({ success: true }),
+      sendText: vi.fn(async (...args: unknown[]) => {
+        eventTrace.push({ type: 'send', method: 'sendText', payload: JSON.stringify(args[0])?.slice(0, 50) || '', ts: performance.now() });
+        return { success: true };
+      }),
+      sendButtons: vi.fn(async (...args: unknown[]) => {
+        eventTrace.push({ type: 'send', method: 'sendButtons', payload: JSON.stringify(args[0])?.slice(0, 50) || '', ts: performance.now() });
+        return { success: true };
+      }),
       sendList: vi.fn().mockResolvedValue({ success: true }),
       sendImage: vi.fn().mockResolvedValue({ success: true }),
       sendDocument: vi.fn().mockResolvedValue({ success: true }),
@@ -871,6 +879,7 @@ describe('B1-14: Same-flow FlowExecutor benchmark', () => {
           return Promise.resolve({ data: { success: true, new_version: 2 }, error: null });
         }
         if (fn === 'persist_flow_execution') {
+          eventTrace.push({ type: 'flush', method: 'persist_flow_execution', payload: '', ts: performance.now() });
           return Promise.resolve({ data: { persisted: true }, error: null });
         }
         return Promise.resolve({ data: null, error: null });
@@ -918,61 +927,67 @@ describe('B1-14: Same-flow FlowExecutor benchmark', () => {
       });
     };
 
-    // --- Disabled (no instrumentation — temporarily remove the import) ---
-    // Since instrumentation is always enabled in the executor, we measure with
-    // a no-op flush (rpc returns immediately) which is the minimal overhead.
-    // Genuine OFF vs ON: _skipInstrumentation test seam bypasses collector/proxy/flush.
-    // Production default is false (instrumentation ON). This seam is test-only.
+    // Collect per-run traces and timing for N iterations OFF and ON.
 
     const disabledTotal: number[] = [];
     const disabledTTLS: number[] = [];
     const enabledTotal: number[] = [];
     const enabledTTLS: number[] = [];
-    const disabledSendCounts: number[] = [];
-    const enabledSendCounts: number[] = [];
+    const disabledTraces: string[][] = [];
+    const enabledTraces: string[][] = [];
     let disabledFlushCount = 0;
     let enabledFlushCount = 0;
 
-    // --- DISABLED: _skipInstrumentation = true (no collector, no proxy, no flush) ---
-    mockSupabase.rpc.mockClear();
+    // --- DISABLED: _skipInstrumentation = true ---
     for (let i = 0; i < ITERATIONS; i++) {
       setupMocks();
-      mockSender.sendText.mockClear();
+      eventTrace = [];
       const executor = createExecutor();
       const start = performance.now();
       await executor.execute('+2348012345678', 'hello', session as any, business as any, undefined, undefined, undefined, true);
       const end = performance.now();
+      // Extract ordered send trace (method:payload) and TTLS from last send timestamp
+      const sends = eventTrace.filter(e => e.type === 'send');
+      const flushes = eventTrace.filter(e => e.type === 'flush');
+      const lastSendTs = sends.length > 0 ? sends[sends.length - 1].ts : start;
       disabledTotal.push(end - start);
-      disabledTTLS.push(end - start); // time-to-last-send ≈ total (no post-send flush)
-      disabledSendCounts.push(mockSender.sendText.mock.calls.length);
+      disabledTTLS.push(lastSendTs - start);
+      disabledTraces.push(sends.map(s => `${s.method}:${s.payload}`));
+      disabledFlushCount += flushes.length;
     }
-    disabledFlushCount = mockSupabase.rpc.mock.calls.filter(
-      (c: unknown[]) => (c[0] as string) === 'persist_flow_execution'
-    ).length;
 
-    // --- ENABLED: _skipInstrumentation = false (default — collector + proxy + flush) ---
-    mockSupabase.rpc.mockClear();
+    // --- ENABLED: _skipInstrumentation = false (default) ---
     for (let i = 0; i < ITERATIONS; i++) {
       setupMocks();
-      mockSender.sendText.mockClear();
+      eventTrace = [];
       const executor = createExecutor();
       const start = performance.now();
       await executor.execute('+2348012345678', 'hello', session as any, business as any);
       const end = performance.now();
+      const sends = eventTrace.filter(e => e.type === 'send');
+      const flushes = eventTrace.filter(e => e.type === 'flush');
+      const lastSendTs = sends.length > 0 ? sends[sends.length - 1].ts : start;
       enabledTotal.push(end - start);
-      enabledTTLS.push(end - start);
-      enabledSendCounts.push(mockSender.sendText.mock.calls.length);
+      enabledTTLS.push(lastSendTs - start);
+      enabledTraces.push(sends.map(s => `${s.method}:${s.payload}`));
+      enabledFlushCount += flushes.length;
+
+      // --- CRITICAL: flush must occur strictly AFTER the final customer send ---
+      if (flushes.length > 0 && sends.length > 0) {
+        expect(flushes[0].ts).toBeGreaterThan(sends[sends.length - 1].ts);
+      }
     }
-    enabledFlushCount = mockSupabase.rpc.mock.calls.filter(
-      (c: unknown[]) => (c[0] as string) === 'persist_flow_execution'
-    ).length;
 
-    // --- Identical send traces ---
-    expect(disabledSendCounts[0]).toBeGreaterThan(0); // At least one send
-    expect(enabledSendCounts[0]).toBe(disabledSendCounts[0]); // Identical send count
+    // --- Identical ordered provider-send traces ---
+    expect(disabledTraces[0].length).toBeGreaterThan(0); // At least one send
+    // Compare first run's ordered trace between OFF and ON
+    expect(enabledTraces[0]).toEqual(disabledTraces[0]);
+    // Spot-check a middle iteration too
+    const midIdx = Math.floor(ITERATIONS / 2);
+    expect(enabledTraces[midIdx]).toEqual(disabledTraces[midIdx]);
 
-    // --- Flush counts: zero when disabled, one per execution when enabled ---
-    expect(disabledFlushCount).toBe(0); // No persist_flow_execution calls when disabled
+    // --- Flush counts ---
+    expect(disabledFlushCount).toBe(0); // Zero flushes when disabled
     expect(enabledFlushCount).toBe(ITERATIONS); // Exactly one flush per enabled execution
 
     // --- Metrics ---
@@ -985,14 +1000,17 @@ describe('B1-14: Same-flow FlowExecutor benchmark', () => {
     const etlp50 = percentile(enabledTTLS, 50);
     const etlp95 = percentile(enabledTTLS, 95);
 
-    console.log('[B1-14] === Real FlowExecutor.execute() Benchmark: OFF vs ON ===');
-    console.log(`[B1-14] Total  — Disabled p50=${dp50.toFixed(3)}ms p95=${dp95.toFixed(3)}ms`);
-    console.log(`[B1-14] Total  — Run2 p50=${ep50.toFixed(3)}ms p95=${ep95.toFixed(3)}ms`);
-    console.log(`[B1-14] TTLS   — Run1 p50=${dtlp50.toFixed(3)}ms p95=${dtlp95.toFixed(3)}ms`);
-    console.log(`[B1-14] TTLS   — Run2 p50=${etlp50.toFixed(3)}ms p95=${etlp95.toFixed(3)}ms`);
+    console.log('[B1-14] === Real FlowExecutor.execute() OFF vs ON Benchmark ===');
+    console.log(`[B1-14] Total  — OFF p50=${dp50.toFixed(3)}ms p95=${dp95.toFixed(3)}ms`);
+    console.log(`[B1-14] Total  — ON  p50=${ep50.toFixed(3)}ms p95=${ep95.toFixed(3)}ms`);
+    console.log(`[B1-14] Total  — Δ   p50=${(ep50 - dp50).toFixed(3)}ms p95=${(ep95 - dp95).toFixed(3)}ms`);
+    console.log(`[B1-14] TTLS   — OFF p50=${dtlp50.toFixed(3)}ms p95=${dtlp95.toFixed(3)}ms`);
+    console.log(`[B1-14] TTLS   — ON  p50=${etlp50.toFixed(3)}ms p95=${etlp95.toFixed(3)}ms`);
+    console.log(`[B1-14] TTLS   — Δ   p50=${(etlp50 - dtlp50).toFixed(3)}ms p95=${(etlp95 - dtlp95).toFixed(3)}ms`);
+    console.log(`[B1-14] Sends  — OFF trace[0]=${disabledTraces[0].length} items, ON trace[0]=${enabledTraces[0].length} items`);
+    console.log(`[B1-14] Flush  — OFF=${disabledFlushCount}, ON=${enabledFlushCount}`);
 
-    // Overhead between two identical runs should be minimal (< 10ms at p95)
-    // This proves instrumentation doesn't add significant overhead
+    // Overhead must be bounded
     expect(Math.abs(ep95 - dp95)).toBeLessThan(20);
     expect(Math.abs(etlp95 - dtlp95)).toBeLessThan(15);
   });
