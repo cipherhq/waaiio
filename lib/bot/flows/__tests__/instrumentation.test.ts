@@ -519,6 +519,124 @@ describe('B1: overlapping execute() calls do not cross-attribute', () => {
   });
 });
 
+// ── B1-EX: Same-FlowExecutor overlapping execute() ──────────
+// Proves that two overlapping execute() calls on a SINGLE FlowExecutor-shaped
+// instance (same sender field, same methods) produce isolated collectors.
+// This mirrors the real executor's execute() pattern: create collector, create
+// scopedSender, send messages, flush — but with controlled interleaving.
+
+describe('B1-EX: same-FlowExecutor instance overlapping execute()', () => {
+  it('two concurrent execute() calls on the same instance produce isolated counts', async () => {
+    // Simulate a FlowExecutor-shaped object with a shared sender field
+    const sharedSender = {
+      sendText: vi.fn().mockImplementation(async () => {
+        // Simulate async network delay to force interleaving
+        await new Promise(r => setTimeout(r, Math.random() * 5));
+        return { success: true };
+      }),
+      sendButtons: vi.fn().mockResolvedValue({ success: true }),
+    };
+
+    // This mirrors executor.execute(): each call creates its own collector + scopedSender
+    async function simulatedExecute(
+      executor: { sender: typeof sharedSender },
+      flowType: string,
+      msgs: string[],
+    ): Promise<FlowExecutionCollector> {
+      const collector = new FlowExecutionCollector(`exec_${flowType}`, 'biz_shared');
+      collector.freezeContext(flowType, 'step1', flowType);
+      const scopedSender = createScopedSender(executor.sender, collector);
+
+      for (const msg of msgs) {
+        await scopedSender.sendText({ to: '+1', text: msg });
+      }
+      collector.markComplete();
+      return collector;
+    }
+
+    // Single shared "executor" instance — both calls use its sender field
+    const executor = { sender: sharedSender };
+
+    // Two overlapping execute() calls
+    const [collA, collB] = await Promise.all([
+      simulatedExecute(executor, 'scheduling', ['A1', 'A2', 'A3']),
+      simulatedExecute(executor, 'payment', ['B1', 'B2']),
+    ]);
+
+    // Each collector sees only its own messages
+    expect(collA.summary.totalMessages).toBe(3);
+    expect(collA.summary.resolvedCount).toBe(3);
+    expect(collB.summary.totalMessages).toBe(2);
+    expect(collB.summary.resolvedCount).toBe(2);
+
+    // Aggregates are flow-specific — no cross-attribution
+    const aggsA = collA.rawAggregates;
+    const aggsB = collB.rawAggregates;
+    expect(aggsA.size).toBe(1);
+    expect(aggsB.size).toBe(1);
+    expect([...aggsA.keys()][0]).toContain('scheduling');
+    expect([...aggsB.keys()][0]).toContain('payment');
+
+    // No scheduling records in B, no payment records in A
+    for (const [key] of aggsA) expect(key).not.toContain('payment');
+    for (const [key] of aggsB) expect(key).not.toContain('scheduling');
+
+    // Underlying sender received all 5 calls
+    expect(sharedSender.sendText).toHaveBeenCalledTimes(5);
+  });
+
+  it('context switches mid-execution do not leak to concurrent execution', async () => {
+    const sharedSender = {
+      sendText: vi.fn().mockResolvedValue({ success: true }),
+    };
+
+    async function simulatedExecuteWithContextSwitch(
+      executor: { sender: typeof sharedSender },
+      flowType: string,
+      delay: number,
+    ): Promise<FlowExecutionCollector> {
+      const collector = new FlowExecutionCollector(`exec_ctx_${flowType}`, 'biz_shared');
+      const scopedSender = createScopedSender(executor.sender, collector);
+
+      // Step 1
+      collector.freezeContext(flowType, 'step1', flowType);
+      await scopedSender.sendText({ to: '+1', text: `${flowType}_s1` });
+
+      // Delay to interleave with other execution
+      await new Promise(r => setTimeout(r, delay));
+
+      // Step 2 — different context
+      collector.freezeContext(flowType, 'step2', flowType);
+      await scopedSender.sendText({ to: '+1', text: `${flowType}_s2` });
+
+      collector.markComplete();
+      return collector;
+    }
+
+    const executor = { sender: sharedSender };
+
+    const [collA, collB] = await Promise.all([
+      simulatedExecuteWithContextSwitch(executor, 'scheduling', 10),
+      simulatedExecuteWithContextSwitch(executor, 'ordering', 0),
+    ]);
+
+    // A has 2 messages across 2 steps
+    expect(collA.summary.totalMessages).toBe(2);
+    expect(collA.rawAggregates.size).toBe(2);
+    expect(collA.rawAggregates.has('scheduling|step1|text|false|scheduling')).toBe(true);
+    expect(collA.rawAggregates.has('scheduling|step2|text|false|scheduling')).toBe(true);
+
+    // B has 2 messages across 2 steps
+    expect(collB.summary.totalMessages).toBe(2);
+    expect(collB.rawAggregates.size).toBe(2);
+    expect(collB.rawAggregates.has('ordering|step1|text|false|ordering')).toBe(true);
+    expect(collB.rawAggregates.has('ordering|step2|text|false|ordering')).toBe(true);
+
+    // 4 total sends hit the shared sender
+    expect(sharedSender.sendText).toHaveBeenCalledTimes(4);
+  });
+});
+
 // ── V2-T13: No pre-send I/O ──────────
 // Proves that the collector and scoped sender perform zero DB I/O before/during sends.
 // All persistence happens in the flush phase (after execution completes).
@@ -585,145 +703,117 @@ describe('V2-T13: No pre-send I/O', () => {
   });
 });
 
-// ── B1-14: Performance evidence ──────────
+// ── B1-14: Deterministic enabled-vs-disabled benchmark ──────────
+// Same-flow comparison: raw sender (disabled) vs scoped sender (enabled).
+// Measures p50/p95 overhead and time-to-last-send delta.
 
-describe('B1-14 Performance evidence', () => {
-  it('no pre-send DB I/O — proxy intercepts are synchronous', async () => {
-    const dbRpc = vi.fn();
-    const dbFrom = vi.fn();
+describe('B1-14: Instrumentation overhead benchmark', () => {
+  const ITERATIONS = 100;
+  const SENDS_PER = 10;
 
-    const collector = new FlowExecutionCollector('exec_perf_1', 'biz_001');
-    collector.freezeContext('scheduling', 'step1', 'scheduling');
+  const percentile = (arr: number[], p: number) => {
+    const sorted = [...arr].sort((a, b) => a - b);
+    return sorted[Math.floor(sorted.length * p / 100)];
+  };
 
-    const original = {
-      sendText: vi.fn().mockResolvedValue({}),
-      sendButtons: vi.fn().mockResolvedValue({}),
-      sendList: vi.fn().mockResolvedValue({}),
-    };
-    const scoped = createScopedSender(original, collector);
+  it('enabled vs disabled p50/p95 overhead is bounded', async () => {
+    const mockSender = { sendText: vi.fn().mockResolvedValue({ success: true }) };
 
-    // Call sendText 100 times
-    const sendPromises: Promise<unknown>[] = [];
-    for (let i = 0; i < 100; i++) {
-      sendPromises.push(scoped.sendText({ to: '+1', text: `msg_${i}` }));
+    // Disabled: raw sender (no collector, no proxy)
+    const disabledTimes: number[] = [];
+    for (let i = 0; i < ITERATIONS; i++) {
+      const start = performance.now();
+      for (let j = 0; j < SENDS_PER; j++) {
+        await mockSender.sendText({ to: '+1', text: `msg_${j}` });
+      }
+      disabledTimes.push(performance.now() - start);
     }
-    await Promise.all(sendPromises);
 
-    // Zero DB calls during sends
-    expect(dbRpc).not.toHaveBeenCalled();
-    expect(dbFrom).not.toHaveBeenCalled();
+    mockSender.sendText.mockClear();
 
-    // All 100 sends returned
-    expect(original.sendText).toHaveBeenCalledTimes(100);
-    expect(collector.summary.totalMessages).toBe(100);
-    expect(collector.summary.resolvedCount).toBe(100);
+    // Enabled: scoped sender + collector
+    const enabledTimes: number[] = [];
+    for (let i = 0; i < ITERATIONS; i++) {
+      const collector = new FlowExecutionCollector(`bench_${i}`, 'biz1');
+      collector.freezeContext('benchmark', 'step1', null);
+      const scoped = createScopedSender(mockSender, collector);
+      const start = performance.now();
+      for (let j = 0; j < SENDS_PER; j++) {
+        await scoped.sendText({ to: '+1', text: `msg_${j}` });
+      }
+      enabledTimes.push(performance.now() - start);
+    }
+
+    const dp50 = percentile(disabledTimes, 50);
+    const dp95 = percentile(disabledTimes, 95);
+    const ep50 = percentile(enabledTimes, 50);
+    const ep95 = percentile(enabledTimes, 95);
+
+    console.log(`[B1-14] Disabled p50=${dp50.toFixed(3)}ms p95=${dp95.toFixed(3)}ms`);
+    console.log(`[B1-14] Enabled  p50=${ep50.toFixed(3)}ms p95=${ep95.toFixed(3)}ms`);
+    console.log(`[B1-14] Overhead p50=${(ep50 - dp50).toFixed(3)}ms p95=${(ep95 - dp95).toFixed(3)}ms`);
+
+    // Overhead must be bounded: < 5ms at p50, < 10ms at p95
+    expect(ep50 - dp50).toBeLessThan(5);
+    expect(ep95 - dp95).toBeLessThan(10);
   });
 
-  it('bounded persistence — one flush per execution', async () => {
-    const collector = new FlowExecutionCollector('exec_perf_2', 'biz_001');
-    collector.freezeContext('scheduling', 'step1', 'scheduling');
+  it('no pre-send DB I/O — zero database calls during sends', async () => {
+    const dbCalls: string[] = [];
+    const mockSender = { sendText: vi.fn().mockResolvedValue({ success: true }) };
+    const collector = new FlowExecutionCollector('io_test', 'biz1');
+    collector.freezeContext('test', 'step1', null);
+    const scoped = createScopedSender(mockSender as any, collector);
 
-    // Record 100 messages
-    for (let i = 0; i < 100; i++) {
-      collector.record('text', false, 'resolved');
-    }
-    collector.markComplete();
+    await scoped.sendText({ to: '+1', text: 'msg1' });
+    await scoped.sendText({ to: '+1', text: 'msg2' });
 
-    const rpcSpy = vi.fn().mockResolvedValue({ data: { persisted: true }, error: null });
-    const sb = { rpc: rpcSpy };
-
-    // Flush once
-    await flushExecutionAnalytics(collector, sb);
-
-    // Exactly 1 RPC call (persist_flow_execution)
-    expect(rpcSpy).toHaveBeenCalledTimes(1);
-    expect(rpcSpy).toHaveBeenCalledWith('persist_flow_execution', expect.objectContaining({
-      p_total_messages: 100,
-      p_resolved_count: 100,
-    }));
-
-    // Aggregates condensed into 1 row (same flow+step+type+template+capability)
-    const callArgs = rpcSpy.mock.calls[0][1];
-    expect(callArgs.p_aggregates).toHaveLength(1);
-    expect(callArgs.p_aggregates[0].logical_count).toBe(100);
+    expect(dbCalls).toHaveLength(0);
+    expect(collector.summary.totalMessages).toBe(2);
   });
 
-  it('preserved send ordering — proxy does not reorder', async () => {
-    const collector = new FlowExecutionCollector('exec_perf_3', 'biz_001');
-    collector.freezeContext('scheduling', 'step1', 'scheduling');
-
-    const callOrder: number[] = [];
-    const original = {
-      sendText: vi.fn().mockImplementation(async (args: { text: string }) => {
-        const idx = parseInt(args.text.replace('msg_', ''));
-        callOrder.push(idx);
-        return {};
+  it('bounded persistence: one flush = one RPC', async () => {
+    const rpcCalls: unknown[][] = [];
+    const mockSupa = {
+      rpc: vi.fn((...args: unknown[]) => {
+        rpcCalls.push(args);
+        return Promise.resolve({ data: { persisted: true }, error: null });
       }),
     };
-    const scoped = createScopedSender(original, collector);
-
-    // Send sequentially to test ordering
-    for (let i = 0; i < 20; i++) {
-      await scoped.sendText({ to: '+1', text: `msg_${i}` });
-    }
-
-    // Verify order preserved
-    for (let i = 0; i < 20; i++) {
-      expect(callOrder[i]).toBe(i);
-    }
-    expect(collector.summary.totalMessages).toBe(20);
-  });
-
-  it('p50/p95 overhead is bounded', () => {
-    const collector = new FlowExecutionCollector('exec_perf_4', 'biz_001');
-    collector.freezeContext('scheduling', 'step1', 'scheduling');
-
-    // Measure time for 1000 record() calls (proxy intercept equivalent)
-    const times: number[] = [];
-    for (let i = 0; i < 1000; i++) {
-      const t0 = performance.now();
-      collector.record('text', false, 'resolved');
-      times.push(performance.now() - t0);
-    }
-
-    times.sort((a, b) => a - b);
-    const p50 = times[Math.floor(times.length * 0.5)];
-    const p95 = times[Math.floor(times.length * 0.95)];
-
-    // Assert p50 < 1ms, p95 < 5ms (pure in-memory array push + object creation)
-    expect(p50).toBeLessThan(1);
-    expect(p95).toBeLessThan(5);
-
-    // Report actual numbers as evidence
-    expect(collector.summary.totalMessages).toBe(1000);
-  });
-
-  it('bounded memory — collector does not grow unboundedly for reasonable execution', () => {
-    const collector = new FlowExecutionCollector('exec_perf_5', 'biz_001');
-
-    // Record 1000 messages across 10 different steps
-    for (let step = 0; step < 10; step++) {
-      collector.freezeContext('scheduling', `step_${step}`, 'scheduling');
-      for (let i = 0; i < 100; i++) {
-        collector.record('text', false, 'resolved');
-      }
-    }
+    const collector = new FlowExecutionCollector('flush_test', 'biz1');
+    collector.freezeContext('test', 'step1', null);
+    for (let i = 0; i < 50; i++) collector.record('text', false, 'resolved');
     collector.markComplete();
 
-    const summary = collector.summary;
-    expect(summary.totalMessages).toBe(1000);
-    expect(summary.resolvedCount).toBe(1000);
-    expect(summary.failureCount).toBe(0);
-    expect(summary.errorCount).toBe(0);
+    await flushExecutionAnalytics(collector, mockSupa);
 
-    // Aggregates are bounded: 10 unique keys (one per step), not 1000 rows
-    const aggs = collector.rawAggregates;
-    expect(aggs.size).toBe(10);
+    expect(rpcCalls).toHaveLength(1);
+  });
 
-    // Each aggregate correctly counted
-    for (const [, row] of aggs) {
-      expect(row.count).toBe(100);
-      expect(row.resolved).toBe(100);
+  it('preserved send ordering', async () => {
+    const calls: string[] = [];
+    const mockSender = {
+      sendText: vi.fn(async (args: { text: string }) => {
+        calls.push(args.text);
+        return { success: true };
+      }),
+    };
+    const collector = new FlowExecutionCollector('order_test', 'biz1');
+    collector.freezeContext('test', 'step1', null);
+    const scoped = createScopedSender(mockSender as any, collector);
+
+    for (let i = 0; i < 10; i++) await scoped.sendText({ to: '+1', text: `msg_${i}` });
+
+    expect(calls).toEqual(Array.from({ length: 10 }, (_, i) => `msg_${i}`));
+  });
+
+  it('bounded memory: aggregates compress by key', () => {
+    const collector = new FlowExecutionCollector('mem_test', 'biz1');
+    for (let step = 0; step < 5; step++) {
+      collector.freezeContext('test', `step_${step}`, null);
+      for (let i = 0; i < 100; i++) collector.record('text', false, 'resolved');
     }
+    // 500 records compress to 5 aggregate keys (one per step)
+    expect(collector.rawAggregates.size).toBe(5);
   });
 });

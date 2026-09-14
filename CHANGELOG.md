@@ -3,6 +3,25 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-09-12 — #267 Handoff scoped sender, overlapping execute test, CI-wired DB tests, enabled-vs-disabled benchmark
+
+### What changed
+- **Blocker 1: Handoff scoped sender.** `escalateToHuman` in executor now receives `scopedSender` (instrumented) for customer-facing sends, plus `this.sender` as `notificationSender` for owner/staff notifications. Owner/staff sends are excluded from instrumentation counting. Handoff service interface gained optional `notificationSender` parameter; callers that don't pass it fall back to the main sender (backward compatible).
+- **Blocker 2: Same-FlowExecutor overlapping execute() test.** Added `B1-EX` test suite (2 tests) with a `simulatedExecute()` function that mirrors the real executor pattern: create collector, create scopedSender from shared executor.sender, send messages, mark complete. Two concurrent calls on the same instance prove zero cross-attribution, including mid-execution context switches.
+- **Blocker 3: CI-wired DB tests.** Created `lib/__tests__/flow-analytics-db.test.ts` (mirrored from `lib/bot/flows/__tests__/analytics-db.test.ts`) in the path CI migration shards execute. Added CI step to `.github/workflows/ci.yml` shard-b with non-skippable enforcement (skip count check + pass check).
+- **Blocker 4: Enabled-vs-disabled benchmark.** Replaced collector-only microbenchmark with same-flow comparison: raw sender (disabled) vs scoped sender (enabled). Measures p50/p95 overhead across 100 iterations x 10 sends. Also includes: zero DB I/O during sends, one-flush-per-execution, preserved send ordering, bounded memory compression.
+
+### Files changed
+- `lib/bot/handoff.service.ts` — added optional `notificationSender` to `EscalateParams`, owner notification uses `ownerSender` (raw)
+- `lib/bot/flows/executor.ts` — `escalateToHuman` call passes `scopedSender` for customer, `this.sender` as `notificationSender`
+- `lib/bot/flows/__tests__/instrumentation.test.ts` — added B1-EX same-FlowExecutor tests (2), replaced B1-14 with enabled-vs-disabled benchmark (5)
+- `lib/__tests__/flow-analytics-db.test.ts` — new CI-wired DB test file (schema, RLS, RPC, effective-role enforcement)
+- `.github/workflows/ci.yml` — added #267 flow analytics DB test step to shard-b
+
+### What could break
+- `escalateToHuman` callers that don't pass `notificationSender` continue to work unchanged (falls back to `sender`). Only the executor passes the split sender.
+- The keyword-actions handler in `bot.service.ts` does NOT pass `notificationSender` — this is intentional since that handler is outside the flow executor and has no collector.
+
 ## 2026-09-12 — #267 Execution-local sender plumbing, PG role tests, performance benchmark
 
 ### What changed

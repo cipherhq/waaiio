@@ -450,7 +450,7 @@ export class FlowExecutor {
         }
         const result = await escalateToHuman({
           supabase: this.supabase,
-          sender: this.sender,
+          sender: scopedSender,
           from,
           businessId: business.id,
           businessName: business.name,
@@ -458,6 +458,7 @@ export class FlowExecutor {
           sessionData: session.session_data,
           currentStep: session.current_step,
           customerName,
+          notificationSender: this.sender, // #267: raw sender for owner/staff (excluded from counting)
         });
         if (!result.success) {
           // Escalation failed — send recoverable message, do not leave false state
