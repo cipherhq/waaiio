@@ -16,6 +16,8 @@ import { checkTierLimit } from '@/lib/tier-limits';
 import { analyzeReceipt, receiptMatchesExpected } from '@/lib/bot/receipt-ocr';
 import { parseIvePaidInput, isIvePaidInput } from '@/lib/bot/flows/shared/ive-paid-input';
 import { checkBankTransferEligibility, createPendingTransfer, formatBankTransferBlock, BANK_ONLY_BUTTONS } from './shared/bank-transfer';
+import { buildSavedCardOffer, handleSavedCardInput } from './shared/saved-card-flow';
+import { safeButtons } from './shared/safe-interactive';
 
 export const ticketingFlow: FlowDefinition = {
   type: 'ticketing',
@@ -383,41 +385,46 @@ export const ticketingFlow: FlowDefinition = {
       },
     },
 
-    // ── Confirmation ──
+    // ── Confirmation (consolidated: summary + T&C in one message) ──
     {
       id: 'ticket_confirmation',
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
         const d = ctx.session.session_data;
-        const dateLabel = new Date((d.event_date as string) + 'T00:00').toLocaleDateString(getLocale((ctx.business?.country_code || 'NG') as CountryCode), {
+        const cc = (ctx.business?.country_code || 'NG') as CountryCode;
+        const dateLabel = new Date((d.event_date as string) + 'T00:00').toLocaleDateString(getLocale(cc), {
           weekday: 'long', day: 'numeric', month: 'long',
         });
+        const total = d.total_amount as number;
+        const meta = (ctx.business?.metadata || {}) as Record<string, unknown>;
+        const requireTerms = total > 0 && meta.require_terms_before_payment !== false;
+        const termsUrl = (meta.terms_url as string) || (ctx.business?.slug ? `https://www.waaiio.com/t/${ctx.business.slug}` : 'https://www.waaiio.com/terms');
 
-        return [
-          {
-            type: 'text',
-            text: [
-              `📋 *Ticket Summary*`,
-              '',
-              `🎪 ${d.event_name}`,
-              `📅 ${dateLabel}`,
-              d.event_venue ? `📍 ${d.event_venue}` : '',
-              `🎟️ ${d.ticket_quantity} ticket${(d.ticket_quantity as number) > 1 ? 's' : ''}`,
-              `💰 Total: ${formatCurrency(d.total_amount as number, (ctx.business?.country_code || 'NG') as CountryCode)}`,
-            ].filter(Boolean).join('\n'),
-          },
-          {
-            type: 'buttons',
-            body: 'Confirm purchase?',
-            buttons: [
-              { id: 'confirm', title: 'Confirm ✓' },
-              { id: 'go_back', title: 'Cancel' },
-            ],
-          },
-        ];
+        const lines = [
+          `📋 *Ticket Summary*`,
+          '',
+          `🎪 ${d.event_name}`,
+          `📅 ${dateLabel}`,
+          d.event_venue ? `📍 ${d.event_venue}` : '',
+          `🎟️ ${d.ticket_quantity} ticket${(d.ticket_quantity as number) > 1 ? 's' : ''}`,
+          `💰 Total: ${formatCurrency(total, cc)}`,
+        ].filter(Boolean);
+
+        if (requireTerms) {
+          lines.push('', `📎 Terms: ${termsUrl}`);
+        }
+
+        return [{
+          type: 'buttons',
+          body: lines.join('\n'),
+          buttons: [
+            { id: 'confirm', title: requireTerms ? 'I Accept & Confirm' : 'Confirm ✓' },
+            { id: 'go_back', title: 'Cancel' },
+          ],
+        }];
       },
       async validate(input: string): Promise<ValidationResult> {
         if ((input.toLowerCase() === 'cancel' || input.toLowerCase() === 'go_back')) return { valid: true, data: { _action: 'cancel' } };
-        if (input.toLowerCase() === 'confirm') return { valid: true, data: { _action: 'confirm' } };
+        if (input.toLowerCase() === 'confirm') return { valid: true, data: { _action: 'confirm', _terms_accepted: true } };
         return { valid: false, errorMessage: 'Please tap *Confirm* or *Cancel*.' };
       },
       async next(ctx: FlowContext) {
@@ -588,6 +595,17 @@ export const ticketingFlow: FlowDefinition = {
         });
 
         if (total > 0) {
+          // #268: Saved-card offer — check BEFORE payment link
+          const savedCardOffer = await buildSavedCardOffer(ctx, total);
+          if (savedCardOffer) {
+            d._saved_method_id = savedCardOffer.display.id;
+            d._pending_deposit = total;
+            await ctx.supabase.from('bot_sessions')
+              .update({ session_data: d, current_step: 'process_tickets' })
+              .eq('id', ctx.session.id);
+            return [savedCardOffer.prompt];
+          }
+
           const paymentResult = await initializePayment(ctx.supabase, {
             bookingId: booking.id,
             userId,
@@ -635,35 +653,30 @@ export const ticketingFlow: FlowDefinition = {
                 .update({ session_data: d, current_step: 'await_ticket_payment' })
                 .eq('id', ctx.session.id);
 
-              return [
-                {
-                  type: 'text',
-                  text: [
-                    `🎫 *Tickets Reserved!*`,
-                    '',
-                    `🎟️ ${d.event_name}`,
-                    `📅 ${dateLabel}`,
-                    `🎟️ ${qty} ticket${qty > 1 ? 's' : ''}`,
-                    `💰 ${formatCurrency(total, cc)}`,
-                    `🔑 Ref: *${booking.reference_code}*`,
-                    '',
-                    `*Option 1 — Pay Online* 👇`,
-                    paymentResult.url,
-                    '',
-                    `*Option 2 — Bank Transfer* 🏦`,
-                    formatBankTransferBlock(bankAccount, formatCurrency(total, cc), transferRef),
-                  ].join('\n'),
-                },
-                {
-                  type: 'buttons',
-                  body: "After paying, tap below:",
-                  buttons: [
-                      { id: d.payment_reference ? `i_paid_ref:${d.payment_reference}` : 'i_paid_online', title: "I've Paid Online" },
-                      { id: 'sent_transfer', title: "I've Sent Transfer" },
-                      { id: 'go_back', title: 'Cancel' },
-                    ],
-                },
-              ];
+              // #268: Consolidated into 1 message
+              return [{
+                type: 'buttons',
+                body: [
+                  `🎫 *Tickets Reserved!*`,
+                  '',
+                  `🎟️ ${d.event_name}`,
+                  `📅 ${dateLabel}`,
+                  `🎟️ ${qty} ticket${qty > 1 ? 's' : ''}`,
+                  `💰 ${formatCurrency(total, cc)}`,
+                  `🔑 Ref: *${booking.reference_code}*`,
+                  '',
+                  `*Option 1 — Pay Online* 👇`,
+                  paymentResult.url,
+                  '',
+                  `*Option 2 — Bank Transfer* 🏦`,
+                  formatBankTransferBlock(bankAccount, formatCurrency(total, cc), transferRef),
+                ].join('\n'),
+                buttons: [
+                  { id: d.payment_reference ? `i_paid_ref:${d.payment_reference}` : 'i_paid_online', title: "I've Paid Online" },
+                  { id: 'sent_transfer', title: "I've Sent Transfer" },
+                  { id: 'go_back', title: 'Cancel' },
+                ],
+              }];
             }
 
             // Standard Paystack-only flow
@@ -672,21 +685,16 @@ export const ticketingFlow: FlowDefinition = {
               .update({ session_data: d, current_step: 'await_ticket_payment' })
               .eq('id', ctx.session.id);
 
-            return [
-              {
-                type: 'text',
-                text: `🎫 *Tickets Reserved!*\n\n🎟️ ${d.event_name}\n📅 ${dateLabel}\n🎟️ ${qty} ticket${qty > 1 ? 's' : ''}\n💰 ${formatCurrency(total, cc)}\n🔑 Ref: *${booking.reference_code}*\n\n💳 Pay here 👇\n${paymentResult.url}\n\n⚠️ Your confirmation will arrive automatically after payment.`,
-              },
-              {
-                type: 'buttons',
-                body: "Your confirmation will arrive automatically after payment. If it doesn't, tap below:",
-                buttons: [
-                  { id: d.payment_reference ? `i_paid_ref:${d.payment_reference}` : 'i_paid', title: "I've Paid" },
-                  { id: 'retry_payment', title: 'Get New Link' },
-                  { id: 'go_back', title: 'Cancel' },
-                ],
-              },
-            ];
+            // #268: Consolidated into 1 message
+            return [{
+              type: 'buttons',
+              body: `🎫 *Tickets Reserved!*\n\n🎟️ ${d.event_name}\n📅 ${dateLabel}\n🎟️ ${qty} ticket${qty > 1 ? 's' : ''}\n💰 ${formatCurrency(total, cc)}\n🔑 Ref: *${booking.reference_code}*\n\n💳 Pay here 👇\n${paymentResult.url}\n\n⚠️ Confirmation arrives automatically after payment.`,
+              buttons: [
+                { id: d.payment_reference ? `i_paid_ref:${d.payment_reference}` : 'i_paid', title: "I've Paid" },
+                { id: 'retry_payment', title: 'Get New Link' },
+                { id: 'go_back', title: 'Cancel' },
+              ],
+            }];
           }
 
           // Payment gateway failed — but bank transfer may still be available
@@ -814,18 +822,107 @@ export const ticketingFlow: FlowDefinition = {
           }),
         }];
       },
-      async validate(input: string): Promise<ValidationResult> {
+      async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
         if (input === 'accept_terms') {
           return { valid: true, data: { _terms_accepted: true } };
         }
         if (input === 'cancel_terms') {
           return { valid: true, data: { _terms_cancelled: true } };
         }
+        // #268: Handle saved-card input
+        const d = ctx.session.session_data;
+        if (d._saved_method_id || d._awaiting_card_pin) {
+          const savedResult = await handleSavedCardInput(input, ctx, {
+            amount: d._pending_deposit as number || d.total_amount as number,
+            reference: `${d.reference_code as string}-saved`,
+            entityId: { bookingId: d.booking_id as string },
+            transactionCategory: 'ticketing',
+          });
+          if (savedResult) return savedResult;
+        }
         return { valid: true };
       },
       async next(ctx: FlowContext) {
-        if (ctx.session.session_data._terms_accepted || ctx.session.session_data._terms_cancelled) {
+        const d = ctx.session.session_data;
+        // Blocker 1: Saved-card outcomes BEFORE legacy terms loop
+        if (d._saved_card_paid) {
+          const paymentId = d._saved_card_payment_id as string;
+          if (paymentId) {
+            const { reconcilePayment } = await import('@/lib/payments/reconcile');
+            const result = await reconcilePayment(ctx.supabase, paymentId, 'saved_card');
+            const isComplete = result.lifecycle?.status === 'completed'
+              || result.lifecycle?.status === 'already_completed'
+              || result.lifecycle?.status === 'not_deliverable';
+            if (!isComplete) {
+              d.payment_reference = `${d.reference_code as string}-saved`;
+              await ctx.sender.sendText({ to: ctx.from, text: '✅ Card charged! Processing your tickets.\n\nConfirmation arriving shortly.' });
+              return 'await_ticket_payment';
+            }
+          }
+          return null;
+        }
+        if (d._saved_card_indeterminate || d._saved_card_requires_auth) {
+          d.payment_reference = `${d.reference_code as string}-saved`;
+          return 'await_ticket_payment';
+        }
+        if (d._saved_card_cancelled) {
+          // R7: CAS-cancel pending ticket booking with authoritative race handling
+          const cancelBookingId = d.booking_id as string;
+          if (cancelBookingId) {
+            const { data: cancelResult, error: cancelErr } = await ctx.supabase
+              .from('bookings')
+              .update({ status: 'cancelled', cancelled_at: new Date().toISOString() })
+              .eq('id', cancelBookingId)
+              .in('status', ['pending'])
+              .select('id');
+            if (cancelErr) {
+              logger.error('[TICKETING] Saved-card cancel DB error', cancelErr);
+              return null; // fail closed
+            }
+            if (cancelResult?.length) {
+              // CAS succeeded — cancellation established
+              if (d.bank_transfer_reference) {
+                await ctx.supabase.from('pending_transfers')
+                  .update({ status: 'cancelled' })
+                  .eq('reference_code', d.bank_transfer_reference as string)
+                  .eq('status', 'pending');
+              }
+              await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('Ticket order cancelled. Send *Hi* to start over.') });
+              return null;
+            }
+            // Zero rows — re-read authoritative state
+            const { data: bk, error: readErr } = await ctx.supabase.from('bookings')
+              .select('status, deposit_status').eq('id', cancelBookingId).single();
+            if (readErr || !bk) {
+              logger.error('[TICKETING] Saved-card cancel re-read failed', readErr);
+              return null; // fail closed
+            }
+            if (bk.deposit_status === 'paid' || bk.status === 'confirmed') {
+              await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('✅ Your tickets have been confirmed! Type *my tickets* to view them.') });
+              return null;
+            }
+            if (bk.status === 'cancelled') {
+              await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('Ticket order cancelled. Send *Hi* to start over.') });
+              return null;
+            }
+            // Unexpected state — fail closed
+            logger.warn('[TICKETING] Saved-card cancel: unexpected booking state', bk.status);
+            return null;
+          }
+          // R8: Missing durable entity ID — fail closed, no cancellation claim
+          logger.warn('[TICKETING] Saved-card cancel: no booking_id — fail closed');
+          return null;
+        }
+        if (d._skip_saved_card && d._saved_method_id) {
+          delete d._saved_method_id;
+          delete d._skip_saved_card;
           return 'process_tickets';
+        }
+        if (d._terms_accepted || d._terms_cancelled) {
+          if (!d._terms_loop_consumed) {
+            d._terms_loop_consumed = true;
+            return 'process_tickets';
+          }
         }
         return null;
       },

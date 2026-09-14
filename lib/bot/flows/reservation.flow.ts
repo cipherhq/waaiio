@@ -17,6 +17,8 @@ import { getTermsPrompt } from './shared/terms';
 import { getCalendarLinksText } from '@/lib/calendar/generate-links';
 import type { SubscriptionTier } from '@/lib/constants';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
+import { buildSavedCardOffer, handleSavedCardInput } from './shared/saved-card-flow';
+import { safeButtons } from './shared/safe-interactive';
 
 export const reservationFlow: FlowDefinition = {
   type: 'reservation',
@@ -582,7 +584,7 @@ export const reservationFlow: FlowDefinition = {
       async next() { return 'reservation_confirmation'; },
     },
 
-    // ── Step 6: Confirmation ──
+    // ── Step 6: Confirmation (consolidated: summary + T&C in one message) ──
     {
       id: 'reservation_confirmation',
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
@@ -592,6 +594,7 @@ export const reservationFlow: FlowDefinition = {
         const nightlyRate = d.nightly_rate as number;
         const totalAmount = nights * nightlyRate;
         const depositAmount = (d.service_deposit as number) || 0;
+        const payableAmount = depositAmount > 0 ? depositAmount : totalAmount;
 
         const checkInLabel = new Date((d.check_in as string) + 'T00:00').toLocaleDateString(getLocale(cc), {
           weekday: 'short', day: 'numeric', month: 'short',
@@ -615,18 +618,21 @@ export const reservationFlow: FlowDefinition = {
           subscriptionTier: ctx.business?.subscription_tier,
         });
 
-        // Send summary first, then buttons — so customer reads details before acting
-        await ctx.sender.sendText({ to: ctx.from, text: await ctx.t(summary) });
-        return [
-          {
-            type: 'buttons',
-            body: 'Confirm this reservation?',
-            buttons: [
-              { id: 'confirm', title: 'Confirm ✓' },
-              { id: 'go_back', title: 'Cancel' },
-            ],
-          },
-        ];
+        // #268: Add T&C if required
+        const meta = (ctx.business?.metadata || {}) as Record<string, unknown>;
+        const requireTerms = payableAmount > 0 && meta.require_terms_before_payment !== false;
+        const termsUrl = (meta.terms_url as string) || (ctx.business?.slug ? `https://www.waaiio.com/t/${ctx.business.slug}` : 'https://www.waaiio.com/terms');
+        const termsLine = requireTerms ? `\n\n📎 Terms: ${termsUrl}` : '';
+
+        // #268: Consolidated into 1 buttons message (no sendText side-effect)
+        return [{
+          type: 'buttons',
+          body: summary + termsLine,
+          buttons: [
+            { id: 'confirm', title: requireTerms ? 'I Accept & Confirm' : 'Confirm ✓' },
+            { id: 'go_back', title: 'Cancel' },
+          ],
+        }];
       },
       async validate(input: string): Promise<ValidationResult> {
         const response = input.toLowerCase();
@@ -634,7 +640,7 @@ export const reservationFlow: FlowDefinition = {
           return { valid: true, data: { _action: 'cancel' } };
         }
         if (response === 'confirm' || response === 'yes') {
-          return { valid: true, data: { _action: 'confirm' } };
+          return { valid: true, data: { _action: 'confirm', _terms_accepted: true } };
         }
         return { valid: false, errorMessage: 'Please tap *Confirm* or *Cancel*.' };
       },
@@ -867,6 +873,17 @@ export const reservationFlow: FlowDefinition = {
         });
 
         if (payableAmount > 0) {
+          // #268: Saved-card offer — check BEFORE payment link
+          const savedCardOffer = await buildSavedCardOffer(ctx, payableAmount);
+          if (savedCardOffer) {
+            d._saved_method_id = savedCardOffer.display.id;
+            d._pending_deposit = payableAmount;
+            await ctx.supabase.from('bot_sessions')
+              .update({ session_data: d, current_step: 'create_reservation' })
+              .eq('id', ctx.session.id);
+            return [savedCardOffer.prompt];
+          }
+
           const paymentResult = await initializePayment(ctx.supabase, {
             reservationId: reservation.id,
             userId,
@@ -929,31 +946,26 @@ export const reservationFlow: FlowDefinition = {
                 subscriptionTier: ctx.business?.subscription_tier,
               });
 
-              return [
-                {
-                  type: 'text',
-                  text: [
-                    summary,
-                    '',
-                    `💳 *${depositAmount > 0 ? 'Deposit' : 'Payment'} Required: ${formatCurrency(payableAmount, cc)}*`,
-                    '',
-                    `*Option 1 — Pay Online* 👇`,
-                    paymentResult.url,
-                    '',
-                    `*Option 2 — Bank Transfer* 🏦`,
-                    formatBankTransferBlock(bankAccount, formatCurrency(payableAmount, cc), transferRef),
-                  ].join('\n'),
-                },
-                {
-                  type: 'buttons',
-                  body: "After paying, tap below:",
-                  buttons: [
-                      { id: d.payment_reference ? `i_paid_ref:${d.payment_reference}` : 'i_paid_online', title: "I've Paid Online" },
-                      { id: 'sent_transfer', title: "I've Sent Transfer" },
-                      { id: 'go_back', title: 'Cancel' },
-                    ],
-                },
-              ];
+              // #268: Consolidated dual-option into 1 message
+              return [{
+                type: 'buttons',
+                body: [
+                  summary,
+                  '',
+                  `💳 *${depositAmount > 0 ? 'Deposit' : 'Payment'}: ${formatCurrency(payableAmount, cc)}*`,
+                  '',
+                  `*Option 1 — Pay Online* 👇`,
+                  paymentResult.url,
+                  '',
+                  `*Option 2 — Bank Transfer* 🏦`,
+                  formatBankTransferBlock(bankAccount, formatCurrency(payableAmount, cc), transferRef),
+                ].join('\n'),
+                buttons: [
+                  { id: d.payment_reference ? `i_paid_ref:${d.payment_reference}` : 'i_paid_online', title: "I've Paid Online" },
+                  { id: 'sent_transfer', title: "I've Sent Transfer" },
+                  { id: 'go_back', title: 'Cancel' },
+                ],
+              }];
             }
 
             // Standard online-only flow
@@ -977,29 +989,24 @@ export const reservationFlow: FlowDefinition = {
               subscriptionTier: ctx.business?.subscription_tier,
             });
 
-            return [
-              {
-                type: 'text',
-                text: [
-                  summary,
-                  '',
-                  `💳 *${depositAmount > 0 ? 'Deposit' : 'Payment'} Required: ${formatCurrency(payableAmount, cc)}*`,
-                  '',
-                  `Pay here 👇`,
-                  paymentResult.url,
-                  '',
-                  `⚠️ Your confirmation will arrive automatically after payment.`,
-                ].join('\n'),
-              },
-              {
-                type: 'buttons',
-                body: "Paid already? Tap below to confirm:",
-                buttons: [
-                  { id: d.payment_reference ? `i_paid_ref:${d.payment_reference}` : 'i_paid', title: "I've Paid" },
-                  { id: 'go_back', title: 'Cancel' },
-                ],
-              },
-            ];
+            // #268: Consolidated into 1 message
+            return [{
+              type: 'buttons',
+              body: [
+                summary,
+                '',
+                `💳 *${depositAmount > 0 ? 'Deposit' : 'Payment'}: ${formatCurrency(payableAmount, cc)}*`,
+                '',
+                `Pay here 👇`,
+                paymentResult.url,
+                '',
+                `⚠️ Confirmation arrives automatically after payment.`,
+              ].join('\n'),
+              buttons: [
+                { id: d.payment_reference ? `i_paid_ref:${d.payment_reference}` : 'i_paid', title: "I've Paid" },
+                { id: 'go_back', title: 'Cancel' },
+              ],
+            }];
           }
 
           // Payment gateway failed — but bank transfer may still be available
@@ -1138,18 +1145,107 @@ export const reservationFlow: FlowDefinition = {
           ].filter(Boolean).join('\n'),
         }];
       },
-      async validate(input: string): Promise<ValidationResult> {
+      async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
         if (input === 'accept_terms') {
           return { valid: true, data: { _terms_accepted: true } };
         }
         if (input === 'cancel_terms') {
           return { valid: true, data: { _terms_cancelled: true } };
         }
+        // #268: Handle saved-card input
+        const d = ctx.session.session_data;
+        if (d._saved_method_id || d._awaiting_card_pin) {
+          const savedResult = await handleSavedCardInput(input, ctx, {
+            amount: d._pending_deposit as number,
+            reference: `${d.reference_code as string}-saved`,
+            entityId: { reservationId: d.reservation_id as string },
+            transactionCategory: 'reservation',
+          });
+          if (savedResult) return savedResult;
+        }
         return { valid: true };
       },
       async next(ctx: FlowContext) {
-        if (ctx.session.session_data._terms_accepted || ctx.session.session_data._terms_cancelled) {
+        const d = ctx.session.session_data;
+        // Blocker 1: Saved-card outcomes BEFORE legacy terms loop
+        if (d._saved_card_paid) {
+          const paymentId = d._saved_card_payment_id as string;
+          if (paymentId) {
+            const { reconcilePayment } = await import('@/lib/payments/reconcile');
+            const result = await reconcilePayment(ctx.supabase, paymentId, 'saved_card');
+            const isComplete = result.lifecycle?.status === 'completed'
+              || result.lifecycle?.status === 'already_completed'
+              || result.lifecycle?.status === 'not_deliverable';
+            if (!isComplete) {
+              d.payment_reference = `${d.reference_code as string}-saved`;
+              await ctx.sender.sendText({ to: ctx.from, text: '✅ Card charged! Processing your reservation.\n\nConfirmation arriving shortly.' });
+              return 'reservation_payment';
+            }
+          }
+          return null;
+        }
+        if (d._saved_card_indeterminate || d._saved_card_requires_auth) {
+          d.payment_reference = `${d.reference_code as string}-saved`;
+          return 'reservation_payment';
+        }
+        if (d._saved_card_cancelled) {
+          // R7: CAS-cancel pending reservation with authoritative race handling
+          const cancelResId = d.reservation_id as string;
+          if (cancelResId) {
+            const { data: cancelResult, error: cancelErr } = await ctx.supabase
+              .from('reservations')
+              .update({ status: 'cancelled', cancelled_at: new Date().toISOString() })
+              .eq('id', cancelResId)
+              .in('status', ['pending'])
+              .select('id');
+            if (cancelErr) {
+              logger.error('[RESERVATION] Saved-card cancel DB error', cancelErr);
+              return null; // fail closed
+            }
+            if (cancelResult?.length) {
+              // CAS succeeded — cancellation established
+              if (d.bank_transfer_reference) {
+                await ctx.supabase.from('pending_transfers')
+                  .update({ status: 'cancelled' })
+                  .eq('reference_code', d.bank_transfer_reference as string)
+                  .eq('status', 'pending');
+              }
+              await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('Reservation cancelled. Send *Hi* to start over.') });
+              return null;
+            }
+            // Zero rows — re-read authoritative state
+            const { data: res, error: readErr } = await ctx.supabase.from('reservations')
+              .select('status, deposit_status').eq('id', cancelResId).single();
+            if (readErr || !res) {
+              logger.error('[RESERVATION] Saved-card cancel re-read failed', readErr);
+              return null; // fail closed
+            }
+            if (res.deposit_status === 'paid' || res.status === 'confirmed') {
+              await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('✅ Your reservation has been confirmed! Type *my bookings* to view details.') });
+              return null;
+            }
+            if (res.status === 'cancelled') {
+              await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('Reservation cancelled. Send *Hi* to start over.') });
+              return null;
+            }
+            // Unexpected state — fail closed
+            logger.warn('[RESERVATION] Saved-card cancel: unexpected reservation state', res.status);
+            return null;
+          }
+          // R8: Missing durable entity ID — fail closed, no cancellation claim
+          logger.warn('[RESERVATION] Saved-card cancel: no reservation_id — fail closed');
+          return null;
+        }
+        if (d._skip_saved_card && d._saved_method_id) {
+          delete d._saved_method_id;
+          delete d._skip_saved_card;
           return 'create_reservation';
+        }
+        if (d._terms_accepted || d._terms_cancelled) {
+          if (!d._terms_loop_consumed) {
+            d._terms_loop_consumed = true;
+            return 'create_reservation';
+          }
         }
         return null;
       },

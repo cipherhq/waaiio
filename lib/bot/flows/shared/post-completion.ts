@@ -5,7 +5,7 @@ import { safeLogErrorContext } from '@/lib/errors';
 import { getEnabledCapabilities } from '@/lib/capabilities/service';
 import type { CapabilityId } from '@/lib/capabilities/types';
 import { generateReceiptPdf } from '@/lib/pdf/receipt-generator';
-import { getCurrencySymbol, PRICING_TIERS, type CountryCode, type SubscriptionTier } from '@/lib/constants';
+import { PRICING_TIERS, type CountryCode, type SubscriptionTier } from '@/lib/constants';
 import { triggerSequences } from '@/lib/bot/automation/sequence-service';
 import { evaluateRules } from '@/lib/bot/automation/rules-engine';
 import { calculateLtvTier } from '@/lib/bot/customer-intelligence';
@@ -130,29 +130,12 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
     logger.warn('[POST-COMPLETION] Referral handling failed (non-critical):', err);
   }
 
-  // 0. Auto-receipt — send payment confirmation with receipt details
+  // 0. Auto-receipt — send PDF receipt (text receipt removed in #268 — PDF is sufficient,
+  // and sendProactiveConfirmation already sends a confirmation text with amount/ref/tips)
   if (amountPaid && amountPaid > 0) {
     try {
       const cc = (biz?.country_code || 'NG') as CountryCode;
-      const currencySymbol = getCurrencySymbol(cc);
       const isWhitelabel = PRICING_TIERS[(biz?.subscription_tier || 'free') as SubscriptionTier]?.whitelabel === true;
-      const formattedAmount = `${currencySymbol}${amountPaid.toLocaleString()}`;
-      const date = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
-      const time = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-
-      const receiptLines = [
-        `✅ *Payment Receipt*`,
-        ``,
-        `🏢 *${bizName}*`,
-        serviceName ? `📎 ${serviceName}` : null,
-        referenceCode ? `🔑 Ref: ${referenceCode}` : null,
-        `💰 Amount: *${formattedAmount}*`,
-        `📅 ${date} at ${time}`,
-        ``,
-        `Thank you for your payment, ${customerName || 'there'}! 🙏`,
-      ].filter(Boolean).join('\n');
-
-      if (sender) await sender.sendText({ to: phone, text: await t(receiptLines) });
 
       // Send PDF receipt as WhatsApp document attachment
       try {
