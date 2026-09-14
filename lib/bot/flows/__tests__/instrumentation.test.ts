@@ -822,7 +822,7 @@ describe('B1-14: Same-flow FlowExecutor benchmark', () => {
   };
 
   it('same-flow enabled vs disabled: p50/p95 overhead and time-to-last-send', async () => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
     const mockSender: Record<string, any> = {
       sendText: vi.fn().mockResolvedValue({ success: true }),
       sendButtons: vi.fn().mockResolvedValue({ success: true }),
@@ -904,14 +904,14 @@ describe('B1-14: Same-flow FlowExecutor benchmark', () => {
     const disabledCalls: string[] = [];
     const enabledCalls: string[] = [];
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
     const disabledSender: Record<string, any> = {
       sendText: vi.fn(async (a: { text: string }) => { disabledCalls.push(a.text); return { success: true }; }),
       sendButtons: vi.fn(async (a: { text: string }) => { disabledCalls.push(a.text); return { success: true }; }),
       sendList: vi.fn(async (a: { text: string }) => { disabledCalls.push(a.text); return { success: true }; }),
       sendImage: vi.fn(async (a: { text: string }) => { disabledCalls.push(a.text); return { success: true }; }),
     };
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
     const enabledSender: Record<string, any> = {
       sendText: vi.fn(async (a: { text: string }) => { enabledCalls.push(a.text); return { success: true }; }),
       sendButtons: vi.fn(async (a: { text: string }) => { enabledCalls.push(a.text); return { success: true }; }),
@@ -946,7 +946,7 @@ describe('B1-14: Same-flow FlowExecutor benchmark', () => {
 
   it('no pre-send DB I/O — zero database calls during sends', async () => {
     const dbCalls: string[] = [];
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
     const mockSender: Record<string, any> = {
       sendText: vi.fn().mockResolvedValue({ success: true }),
       sendButtons: vi.fn().mockResolvedValue({ success: true }),

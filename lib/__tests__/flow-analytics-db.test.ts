@@ -297,13 +297,25 @@ describe.skipIf(!canRun)('M382: effective-role RLS enforcement (V2-T12)', () => 
     financeId = psql(`SELECT gen_random_uuid()::text;`);
 
     // Insert auth.users rows with appropriate raw_app_meta_data
+    const ts = Date.now();
     psqlMayFail(`
       INSERT INTO auth.users (id, email, raw_app_meta_data, aud, role)
       VALUES
-        ('${ownerId}', 'owner-m382-${Date.now()}@test.com', '{}'::jsonb, 'authenticated', 'authenticated'),
-        ('${nonOwnerId}', 'nonowner-m382-${Date.now()}@test.com', '{}'::jsonb, 'authenticated', 'authenticated'),
-        ('${adminId}', 'admin-m382-${Date.now()}@test.com', '{"role":"admin"}'::jsonb, 'authenticated', 'authenticated'),
-        ('${financeId}', 'finance-m382-${Date.now()}@test.com', '{"role":"finance"}'::jsonb, 'authenticated', 'authenticated')
+        ('${ownerId}', 'owner-m382-${ts}@test.com', '{}'::jsonb, 'authenticated', 'authenticated'),
+        ('${nonOwnerId}', 'nonowner-m382-${ts}@test.com', '{}'::jsonb, 'authenticated', 'authenticated'),
+        ('${adminId}', 'admin-m382-${ts}@test.com', '{"role":"admin"}'::jsonb, 'authenticated', 'authenticated'),
+        ('${financeId}', 'finance-m382-${ts}@test.com', '{"role":"finance"}'::jsonb, 'authenticated', 'authenticated')
+      ON CONFLICT (id) DO NOTHING;
+    `);
+
+    // Create profiles for the test users (businesses FK requires profiles)
+    psqlMayFail(`
+      INSERT INTO profiles (id, email, role)
+      VALUES
+        ('${ownerId}', 'owner-m382-${ts}@test.com', 'user'),
+        ('${nonOwnerId}', 'nonowner-m382-${ts}@test.com', 'user'),
+        ('${adminId}', 'admin-m382-${ts}@test.com', 'admin'),
+        ('${financeId}', 'finance-m382-${ts}@test.com', 'finance')
       ON CONFLICT (id) DO NOTHING;
     `);
 
@@ -334,6 +346,7 @@ describe.skipIf(!canRun)('M382: effective-role RLS enforcement (V2-T12)', () => 
       psql(`DELETE FROM flow_execution_aggregates WHERE execution_id = '${testExecId}';`);
       psql(`DELETE FROM flow_execution_summaries WHERE execution_id = '${testExecId}';`);
       psql(`DELETE FROM businesses WHERE id = '${testBusinessId}';`);
+      psqlMayFail(`DELETE FROM profiles WHERE id IN ('${ownerId}','${nonOwnerId}','${adminId}','${financeId}');`);
       psqlMayFail(`DELETE FROM auth.users WHERE id IN ('${ownerId}','${nonOwnerId}','${adminId}','${financeId}');`);
     } catch { /* cleanup best-effort */ }
   });
