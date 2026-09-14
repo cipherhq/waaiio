@@ -29,11 +29,9 @@ CREATE POLICY "flow_exec_owner_read" ON flow_execution_summaries
     business_id IN (SELECT id FROM businesses WHERE owner_id = auth.uid())
   );
 
--- Admin reads
+-- Admin reads (canonical authority: is_admin_or_finance per M374)
 CREATE POLICY "flow_exec_admin_read" ON flow_execution_summaries
-  FOR SELECT USING (
-    EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('admin', 'finance'))
-  );
+  FOR SELECT USING (public.is_admin_or_finance());
 
 CREATE TABLE IF NOT EXISTS public.flow_execution_aggregates (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -67,9 +65,7 @@ CREATE POLICY "flow_agg_owner_read" ON flow_execution_aggregates
   );
 
 CREATE POLICY "flow_agg_admin_read" ON flow_execution_aggregates
-  FOR SELECT USING (
-    EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('admin', 'finance'))
-  );
+  FOR SELECT USING (public.is_admin_or_finance());
 
 -- Atomic persist RPC: summary + aggregates in one transaction (Correction 2)
 CREATE OR REPLACE FUNCTION public.persist_flow_execution(

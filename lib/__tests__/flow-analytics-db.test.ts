@@ -269,35 +269,62 @@ describe.skipIf(!canRun)('M382: persist_flow_execution atomic batch', () => {
   });
 });
 
-// ── Effective-role/JWT RLS Enforcement ──────────
+// ── V2-T12: Effective-role/JWT RLS Enforcement ──────────
+// Real SET LOCAL ROLE + JWT claims tests — no policy inspection fallbacks.
+// Pattern from provider-neutral-subscriptions-db.test.ts.
 
-describe.skipIf(!canRun)('M382: effective-role RLS enforcement', () => {
+describe.skipIf(!canRun)('M382: effective-role RLS enforcement (V2-T12)', () => {
   let testBusinessId: string;
-  let testUserId: string;
+  let ownerId: string;
+  let nonOwnerId: string;
+  let adminId: string;
+  let financeId: string;
   const testExecId = `ci_role_${Date.now()}`;
 
-  beforeAll(() => {
-    testBusinessId = psql(`SELECT id FROM businesses LIMIT 1;`);
-    if (!testBusinessId) {
-      testBusinessId = psql(`
-        INSERT INTO businesses (name, slug, category, flow_type, subscription_tier, trial_ends_at, owner_id)
-        VALUES ('CI RLS Biz', 'ci-rls-biz-${Date.now()}', 'other', 'scheduling', 'free',
-                NOW() + interval '30 days',
-                COALESCE((SELECT id FROM auth.users LIMIT 1), gen_random_uuid()))
-        RETURNING id;
-      `);
-    }
-    testUserId = psql(`SELECT owner_id FROM businesses WHERE id = '${testBusinessId}';`);
+  function authContext(userId: string, role = 'authenticated'): string {
+    return `
+      SELECT set_config('request.jwt.claims', '{"sub":"${userId}","role":"${role}","aud":"authenticated"}', true);
+      SELECT set_config('request.jwt.claim.sub', '${userId}', true);
+      SET LOCAL ROLE authenticated;
+    `;
+  }
 
-    // Seed test row via superuser
+  beforeAll(() => {
+    // Create dedicated test users in auth.users with specific app_metadata roles
+    ownerId = psql(`SELECT gen_random_uuid()::text;`);
+    nonOwnerId = psql(`SELECT gen_random_uuid()::text;`);
+    adminId = psql(`SELECT gen_random_uuid()::text;`);
+    financeId = psql(`SELECT gen_random_uuid()::text;`);
+
+    // Insert auth.users rows with appropriate raw_app_meta_data
+    psqlMayFail(`
+      INSERT INTO auth.users (id, email, raw_app_meta_data, aud, role)
+      VALUES
+        ('${ownerId}', 'owner-m382-${Date.now()}@test.com', '{}'::jsonb, 'authenticated', 'authenticated'),
+        ('${nonOwnerId}', 'nonowner-m382-${Date.now()}@test.com', '{}'::jsonb, 'authenticated', 'authenticated'),
+        ('${adminId}', 'admin-m382-${Date.now()}@test.com', '{"role":"admin"}'::jsonb, 'authenticated', 'authenticated'),
+        ('${financeId}', 'finance-m382-${Date.now()}@test.com', '{"role":"finance"}'::jsonb, 'authenticated', 'authenticated')
+      ON CONFLICT (id) DO NOTHING;
+    `);
+
+    // Create a test business owned by ownerId
+    const bizSlug = `m382-rls-${Date.now()}`;
+    testBusinessId = psql(`
+      INSERT INTO businesses (id, name, slug, owner_id, country_code, category, address, city, neighborhood, phone)
+      VALUES (gen_random_uuid(), 'M382 RLS Biz', '${bizSlug}', '${ownerId}', 'NG', 'other', '1 Test', 'Lagos', 'VI', '+2348000000000')
+      RETURNING id::text;
+    `).trim();
+    expect(testBusinessId).toBeTruthy();
+
+    // Seed test execution data via superuser
     psql(`
       SELECT persist_flow_execution(
         '${testExecId}',
         '${testBusinessId}'::UUID,
         'complete',
-        1, 1, 0, 0,
+        2, 2, 0, 0,
         NOW(), NOW(),
-        '[{"flow_type":"scheduling","step_name":"test_step","message_type":"text","is_template":false,"active_capability":"scheduling","logical_count":1,"resolved_count":1,"failure_count":0,"error_count":0}]'::JSONB
+        '[{"flow_type":"scheduling","step_name":"test_step","message_type":"text","is_template":false,"active_capability":"scheduling","logical_count":1,"resolved_count":1,"failure_count":0,"error_count":0},{"flow_type":"scheduling","step_name":"confirm","message_type":"buttons","is_template":false,"active_capability":"scheduling","logical_count":1,"resolved_count":1,"failure_count":0,"error_count":0}]'::JSONB
       );
     `);
   });
@@ -306,104 +333,195 @@ describe.skipIf(!canRun)('M382: effective-role RLS enforcement', () => {
     try {
       psql(`DELETE FROM flow_execution_aggregates WHERE execution_id = '${testExecId}';`);
       psql(`DELETE FROM flow_execution_summaries WHERE execution_id = '${testExecId}';`);
+      psql(`DELETE FROM businesses WHERE id = '${testBusinessId}';`);
+      psqlMayFail(`DELETE FROM auth.users WHERE id IN ('${ownerId}','${nonOwnerId}','${adminId}','${financeId}');`);
     } catch { /* cleanup best-effort */ }
   });
 
-  it('authenticated role CANNOT insert into flow_execution_summaries', () => {
+  // --- Owner reads own data ---
+
+  it('owner CAN read own summaries', () => {
+    const result = psql(`
+      BEGIN;
+      ${authContext(ownerId)}
+      SELECT count(*) FROM flow_execution_summaries WHERE execution_id = '${testExecId}';
+      ROLLBACK;
+    `);
+    const lines = result.split('\n').filter(l => /^\d+$/.test(l.trim()));
+    const count = parseInt(lines[lines.length - 1] || '0');
+    expect(count).toBe(1);
+  });
+
+  it('owner CAN read own aggregates', () => {
+    const result = psql(`
+      BEGIN;
+      ${authContext(ownerId)}
+      SELECT count(*) FROM flow_execution_aggregates WHERE execution_id = '${testExecId}';
+      ROLLBACK;
+    `);
+    const lines = result.split('\n').filter(l => /^\d+$/.test(l.trim()));
+    const count = parseInt(lines[lines.length - 1] || '0');
+    expect(count).toBe(2);
+  });
+
+  // --- Non-owner isolation ---
+
+  it('non-owner CANNOT read other business summaries (0 rows)', () => {
+    const result = psql(`
+      BEGIN;
+      ${authContext(nonOwnerId)}
+      SELECT count(*) FROM flow_execution_summaries WHERE execution_id = '${testExecId}';
+      ROLLBACK;
+    `);
+    const lines = result.split('\n').filter(l => /^\d+$/.test(l.trim()));
+    const count = parseInt(lines[lines.length - 1] || '0');
+    expect(count).toBe(0);
+  });
+
+  it('non-owner CANNOT read other business aggregates (0 rows)', () => {
+    const result = psql(`
+      BEGIN;
+      ${authContext(nonOwnerId)}
+      SELECT count(*) FROM flow_execution_aggregates WHERE execution_id = '${testExecId}';
+      ROLLBACK;
+    `);
+    const lines = result.split('\n').filter(l => /^\d+$/.test(l.trim()));
+    const count = parseInt(lines[lines.length - 1] || '0');
+    expect(count).toBe(0);
+  });
+
+  // --- Admin role via is_admin_or_finance() ---
+
+  it('admin CAN read all summaries via is_admin_or_finance()', () => {
+    const result = psql(`
+      BEGIN;
+      ${authContext(adminId)}
+      SELECT count(*) FROM flow_execution_summaries WHERE execution_id = '${testExecId}';
+      ROLLBACK;
+    `);
+    const lines = result.split('\n').filter(l => /^\d+$/.test(l.trim()));
+    const count = parseInt(lines[lines.length - 1] || '0');
+    expect(count).toBe(1);
+  });
+
+  it('admin CAN read all aggregates via is_admin_or_finance()', () => {
+    const result = psql(`
+      BEGIN;
+      ${authContext(adminId)}
+      SELECT count(*) FROM flow_execution_aggregates WHERE execution_id = '${testExecId}';
+      ROLLBACK;
+    `);
+    const lines = result.split('\n').filter(l => /^\d+$/.test(l.trim()));
+    const count = parseInt(lines[lines.length - 1] || '0');
+    expect(count).toBe(2);
+  });
+
+  // --- Finance role via is_admin_or_finance() ---
+
+  it('finance CAN read all summaries via is_admin_or_finance()', () => {
+    const result = psql(`
+      BEGIN;
+      ${authContext(financeId)}
+      SELECT count(*) FROM flow_execution_summaries WHERE execution_id = '${testExecId}';
+      ROLLBACK;
+    `);
+    const lines = result.split('\n').filter(l => /^\d+$/.test(l.trim()));
+    const count = parseInt(lines[lines.length - 1] || '0');
+    expect(count).toBe(1);
+  });
+
+  it('finance CAN read all aggregates via is_admin_or_finance()', () => {
+    const result = psql(`
+      BEGIN;
+      ${authContext(financeId)}
+      SELECT count(*) FROM flow_execution_aggregates WHERE execution_id = '${testExecId}';
+      ROLLBACK;
+    `);
+    const lines = result.split('\n').filter(l => /^\d+$/.test(l.trim()));
+    const count = parseInt(lines[lines.length - 1] || '0');
+    expect(count).toBe(2);
+  });
+
+  // --- Anon denied ---
+
+  it('anon role gets permission denied on summaries SELECT', () => {
     const result = psqlMayFail(`
       BEGIN;
-      SELECT set_config('request.jwt.claims', '{"sub":"${testUserId}","role":"authenticated"}', true);
-      SET LOCAL ROLE authenticated;
+      SET LOCAL ROLE anon;
+      SELECT count(*) FROM flow_execution_summaries WHERE execution_id = '${testExecId}';
+      ROLLBACK;
+    `);
+    // Anon should get permission denied or 0 rows (RLS blocks)
+    const denied = result.toLowerCase().includes('permission denied');
+    const zeroRows = /\b0\b/.test(result) && !/[1-9]/.test(result.replace(/\d{5,}/g, ''));
+    expect(denied || zeroRows).toBe(true);
+  });
+
+  it('anon role gets permission denied on aggregates SELECT', () => {
+    const result = psqlMayFail(`
+      BEGIN;
+      SET LOCAL ROLE anon;
+      SELECT count(*) FROM flow_execution_aggregates WHERE execution_id = '${testExecId}';
+      ROLLBACK;
+    `);
+    const denied = result.toLowerCase().includes('permission denied');
+    const zeroRows = /\b0\b/.test(result) && !/[1-9]/.test(result.replace(/\d{5,}/g, ''));
+    expect(denied || zeroRows).toBe(true);
+  });
+
+  // --- Authenticated write denied ---
+
+  it('authenticated user CANNOT insert into flow_execution_summaries', () => {
+    const result = psqlMayFail(`
+      BEGIN;
+      ${authContext(ownerId)}
       INSERT INTO flow_execution_summaries (
         execution_id, business_id, completeness,
-        total_messages, resolved_count, failure_count, error_count,
-        started_at
+        total_messages, resolved_count, failure_count, error_count, started_at
       ) VALUES (
-        'ci_blocked_${Date.now()}', '${testBusinessId}', 'complete',
+        'ci_blocked_write_${Date.now()}', '${testBusinessId}', 'complete',
         1, 1, 0, 0, NOW()
       );
       ROLLBACK;
     `);
-    // Either the insert fails with a policy violation, or we check that it was blocked
     expect(result).toMatch(/permission denied|new row violates|policy|false/i);
   });
 
-  it('authenticated role CANNOT insert into flow_execution_aggregates', () => {
+  it('authenticated user CANNOT insert into flow_execution_aggregates', () => {
     const result = psqlMayFail(`
       BEGIN;
-      SELECT set_config('request.jwt.claims', '{"sub":"${testUserId}","role":"authenticated"}', true);
-      SET LOCAL ROLE authenticated;
+      ${authContext(ownerId)}
       INSERT INTO flow_execution_aggregates (
         execution_id, flow_type, step_name, message_type,
         is_template, active_capability,
         logical_count, resolved_count, failure_count, error_count
       ) VALUES (
         '${testExecId}', 'scheduling', 'blocked_step', 'text',
-        false, 'scheduling',
-        1, 1, 0, 0
+        false, 'scheduling', 1, 1, 0, 0
       );
       ROLLBACK;
     `);
     expect(result).toMatch(/permission denied|new row violates|policy|false/i);
   });
 
-  it('authenticated owner CAN read their own business summaries', () => {
-    const count = psql(`
-      BEGIN;
-      SELECT set_config('request.jwt.claims', '{"sub":"${testUserId}","role":"authenticated"}', true);
-      SET LOCAL ROLE authenticated;
-      SELECT count(*) FROM flow_execution_summaries
-      WHERE execution_id = '${testExecId}';
-    `);
-    // Parse the count from potentially multi-line output (BEGIN, set_config, SET, count, etc.)
-    const lines = count.split('\n').filter(l => /^\d+$/.test(l.trim()));
-    const parsed = parseInt(lines[lines.length - 1] || '0');
-    expect(parsed).toBeGreaterThanOrEqual(1);
-  });
+  // --- Service role CAN write (bypasses RLS) ---
 
-  it('authenticated non-owner isolation: RLS policy references auth.uid() owner check', () => {
-    // The flow_exec_owner_read policy restricts authenticated reads to business owners.
-    // Direct psql role switching cannot fully simulate Supabase PostgREST auth context,
-    // so verify the policy's SQL references the correct owner check.
-    const policyDef = psql(`
-      SELECT pg_get_expr(polqual, polrelid)
-      FROM pg_policy
-      WHERE polrelid = 'flow_execution_summaries'::regclass
-        AND polname = 'flow_exec_owner_read';
-    `);
-    // Policy must reference auth.uid() and businesses.owner_id
-    expect(policyDef).toContain('auth.uid()');
-    expect(policyDef).toContain('owner_id');
-  });
-
-  it('anon role CANNOT read flow_execution_summaries', () => {
-    const result = psqlMayFail(`
-      BEGIN;
-      SET LOCAL ROLE anon;
-      SELECT count(*) FROM flow_execution_summaries
-        WHERE execution_id = '${testExecId}';
-      ROLLBACK;
-    `);
-    // Anon should get permission denied or 0 rows
-    const hasError = result.toLowerCase().includes('permission denied') || result.toLowerCase().includes('denied');
-    const hasZero = result.includes('0') && !result.includes('1');
-    expect(hasError || hasZero).toBe(true);
-  });
-
-  it('anon role CANNOT insert into flow_execution_summaries', () => {
-    const result = psqlMayFail(`
-      BEGIN;
-      SET LOCAL ROLE anon;
-      INSERT INTO flow_execution_summaries (
-        execution_id, business_id, completeness,
-        total_messages, resolved_count, failure_count, error_count,
-        started_at
-      ) VALUES (
-        'ci_anon_blocked_${Date.now()}', '${testBusinessId}', 'complete',
-        1, 1, 0, 0, NOW()
+  it('service_role CAN write via persist_flow_execution', () => {
+    const svcExecId = `ci_svc_${Date.now()}`;
+    const result = psql(`
+      SELECT persist_flow_execution(
+        '${svcExecId}',
+        '${testBusinessId}'::UUID,
+        'complete',
+        1, 1, 0, 0,
+        NOW(), NOW(),
+        NULL
       );
-      ROLLBACK;
     `);
-    expect(result).toMatch(/permission denied|new row violates|policy|false/i);
+    const parsed = JSON.parse(result);
+    expect(parsed.persisted).toBe(true);
+
+    // Cleanup
+    psql(`DELETE FROM flow_execution_summaries WHERE execution_id = '${svcExecId}';`);
   });
 });

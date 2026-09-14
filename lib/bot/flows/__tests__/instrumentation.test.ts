@@ -519,70 +519,152 @@ describe('B1: overlapping execute() calls do not cross-attribute', () => {
   });
 });
 
-// ── B1-EX: Same-FlowExecutor overlapping execute() ──────────
-// Proves that two overlapping execute() calls on a SINGLE FlowExecutor-shaped
-// instance (same sender field, same methods) produce isolated collectors.
-// This mirrors the real executor's execute() pattern: create collector, create
-// scopedSender, send messages, flush — but with controlled interleaving.
+// ── B1-EX: Real FlowExecutor overlapping execute() ──────────
+// Proves that two overlapping execute() calls on a SINGLE real FlowExecutor
+// instance produce isolated instrumentation collectors. Uses the actual
+// FlowExecutor class with fully mocked dependencies.
 
-describe('B1-EX: same-FlowExecutor instance overlapping execute()', () => {
-  it('two concurrent execute() calls on the same instance produce isolated counts', async () => {
-    // Simulate a FlowExecutor-shaped object with a shared sender field
-    const sharedSender = {
-      sendText: vi.fn().mockImplementation(async () => {
+describe('B1-EX: real FlowExecutor overlapping execute()', () => {
+  // Build a deeply-mocked supabase that satisfies FlowExecutor.execute()'s
+  // DB reads: bot_sessions.update (last_active_at), checkConversationLimit,
+  // loadOverrides, loadBusinessLanguages, casUpdateSession, deactivateSession.
+  function buildMockSupabase() {
+    // A deeply-chainable mock where every method returns the chain itself,
+    // and the chain is also a thenable (resolves to { data: null, error: null }).
+    const chainable = (): Record<string, unknown> => {
+      const result = { data: null, error: null };
+      const chain: Record<string, unknown> = {};
+      const self = () => chain;
+      chain.select = vi.fn(self);
+      chain.eq = vi.fn(self);
+      chain.neq = vi.fn(self);
+      chain.gte = vi.fn(self);
+      chain.lte = vi.fn(self);
+      chain.single = vi.fn().mockResolvedValue(result);
+      chain.maybeSingle = vi.fn().mockResolvedValue(result);
+      chain.update = vi.fn(self);
+      chain.insert = vi.fn(self);
+      chain.delete = vi.fn(self);
+      chain.limit = vi.fn(self);
+      chain.order = vi.fn(self);
+      // Make the chain itself thenable so .then() works (for fire-and-forget patterns)
+      chain.then = vi.fn((resolve?: (v: typeof result) => unknown) => Promise.resolve(result).then(resolve));
+      return chain;
+    };
+
+    return {
+      from: vi.fn().mockImplementation(() => chainable()),
+      rpc: vi.fn().mockImplementation((fn: string) => {
+        if (fn === 'update_session_cas') {
+          return Promise.resolve({ data: { success: true, version: 2 }, error: null });
+        }
+        if (fn === 'persist_flow_execution') {
+          return Promise.resolve({ data: { persisted: true }, error: null });
+        }
+        return Promise.resolve({ data: null, error: null });
+      }),
+    };
+  }
+
+  it('two concurrent execute() calls on one FlowExecutor instance produce isolated counts', async () => {
+    // Import real FlowExecutor
+    const { FlowExecutor } = await import('../executor');
+
+    const sendCalls: { from: string; text: string }[] = [];
+    const mockSender = {
+      sendText: vi.fn().mockImplementation(async (args: { to: string; text: string }) => {
+        sendCalls.push({ from: args.to, text: args.text });
         // Simulate async network delay to force interleaving
         await new Promise(r => setTimeout(r, Math.random() * 5));
         return { success: true };
       }),
       sendButtons: vi.fn().mockResolvedValue({ success: true }),
+      sendList: vi.fn().mockResolvedValue({ success: true }),
+      sendImage: vi.fn().mockResolvedValue({ success: true }),
+      sendDocument: vi.fn().mockResolvedValue({ success: true }),
+      sendTemplate: vi.fn().mockResolvedValue({ success: true }),
+      sendMessage: vi.fn().mockResolvedValue({ success: true }),
     };
 
-    // This mirrors executor.execute(): each call creates its own collector + scopedSender
-    async function simulatedExecute(
-      executor: { sender: typeof sharedSender },
-      flowType: string,
-      msgs: string[],
-    ): Promise<FlowExecutionCollector> {
-      const collector = new FlowExecutionCollector(`exec_${flowType}`, 'biz_shared');
-      collector.freezeContext(flowType, 'step1', flowType);
-      const scopedSender = createScopedSender(executor.sender, collector);
+    const mockStandalone = {} as any;
+    const mockIntelligence = {} as any;
+    const mockSupabase = buildMockSupabase();
 
-      for (const msg of msgs) {
-        await scopedSender.sendText({ to: '+1', text: msg });
-      }
-      collector.markComplete();
-      return collector;
-    }
+    // Create ONE real FlowExecutor instance (shared)
+    const executor = new FlowExecutor(
+      mockSupabase as any,
+      mockSender as any,
+      mockStandalone,
+      mockIntelligence,
+    );
 
-    // Single shared "executor" instance — both calls use its sender field
-    const executor = { sender: sharedSender };
+    // Two sessions with different business contexts.
+    // Use a step that does NOT exist in the flow → executor hits the
+    // "step not found" path which sends exactly ONE text message via
+    // the scoped sender, then deactivates. This is the simplest path
+    // through execute() that exercises the instrumentation chain.
+    const sessionA = {
+      id: 'session_A',
+      user_id: 'user_A',
+      business_id: 'biz_A',
+      current_step: '__nonexistent_step_A__',
+      session_data: { capabilities: ['scheduling'] },
+      conversation_log: [],
+      version: 1,
+    };
+    const sessionB = {
+      id: 'session_B',
+      user_id: 'user_B',
+      business_id: 'biz_B',
+      current_step: '__nonexistent_step_B__',
+      session_data: { capabilities: ['payment'] },
+      conversation_log: [],
+      version: 1,
+    };
 
-    // Two overlapping execute() calls
-    const [collA, collB] = await Promise.all([
-      simulatedExecute(executor, 'scheduling', ['A1', 'A2', 'A3']),
-      simulatedExecute(executor, 'payment', ['B1', 'B2']),
+    const businessA = {
+      id: 'biz_A', name: 'Biz A', slug: 'biz-a',
+      category: 'other' as const, flow_type: 'scheduling' as const,
+      subscription_tier: 'free', trial_ends_at: new Date(Date.now() + 86400000).toISOString(),
+      metadata: {},
+    };
+    const businessB = {
+      id: 'biz_B', name: 'Biz B', slug: 'biz-b',
+      category: 'other' as const, flow_type: 'scheduling' as const,
+      subscription_tier: 'free', trial_ends_at: new Date(Date.now() + 86400000).toISOString(),
+      metadata: {},
+    };
+
+    // Run two concurrent execute() calls on the SAME FlowExecutor instance
+    await Promise.all([
+      executor.execute('+1111', '', sessionA, businessA),
+      executor.execute('+2222', '', sessionB, businessB),
     ]);
 
-    // Each collector sees only its own messages
-    expect(collA.summary.totalMessages).toBe(3);
-    expect(collA.summary.resolvedCount).toBe(3);
-    expect(collB.summary.totalMessages).toBe(2);
-    expect(collB.summary.resolvedCount).toBe(2);
+    // Both calls should have sent text messages (step-not-found error message)
+    // The key property: the underlying sender was called for BOTH executions
+    expect(mockSender.sendText.mock.calls.length).toBeGreaterThanOrEqual(2);
 
-    // Aggregates are flow-specific — no cross-attribution
-    const aggsA = collA.rawAggregates;
-    const aggsB = collB.rawAggregates;
-    expect(aggsA.size).toBe(1);
-    expect(aggsB.size).toBe(1);
-    expect([...aggsA.keys()][0]).toContain('scheduling');
-    expect([...aggsB.keys()][0]).toContain('payment');
+    // Verify that persist_flow_execution was called twice (once per execution)
+    const flushCalls = mockSupabase.rpc.mock.calls.filter(
+      (c: unknown[]) => c[0] === 'persist_flow_execution'
+    );
+    expect(flushCalls.length).toBe(2);
 
-    // No scheduling records in B, no payment records in A
-    for (const [key] of aggsA) expect(key).not.toContain('payment');
-    for (const [key] of aggsB) expect(key).not.toContain('scheduling');
+    // Each flush should reference a different execution_id
+    const execIds = flushCalls.map((c: unknown[]) => (c[1] as Record<string, unknown>).p_execution_id);
+    expect(new Set(execIds).size).toBe(2);
 
-    // Underlying sender received all 5 calls
-    expect(sharedSender.sendText).toHaveBeenCalledTimes(5);
+    // Each flush should reference the correct business_id
+    const bizIds = flushCalls.map((c: unknown[]) => (c[1] as Record<string, unknown>).p_business_id);
+    expect(bizIds.sort()).toEqual(['biz_A', 'biz_B']);
+
+    // Verify message counts: each execution sends exactly 1 error message
+    for (const call of flushCalls) {
+      const params = call[1] as Record<string, unknown>;
+      expect(params.p_total_messages).toBe(1);
+      expect(params.p_completeness).toBe('incomplete'); // step-not-found → incomplete
+    }
   });
 
   it('context switches mid-execution do not leak to concurrent execution', async () => {
@@ -703,76 +785,187 @@ describe('V2-T13: No pre-send I/O', () => {
   });
 });
 
-// ── B1-14: Deterministic enabled-vs-disabled benchmark ──────────
-// Same-flow comparison: raw sender (disabled) vs scoped sender (enabled).
-// Measures p50/p95 overhead and time-to-last-send delta.
+// ── B1-14: Same-flow FlowExecutor benchmark ──────────
+// Runs the same representative flow send sequence through the real
+// instrumentation path (scoped sender + collector + flush) vs raw sender
+// (no instrumentation). Measures p50/p95 overhead and time-to-last-send.
 
-describe('B1-14: Instrumentation overhead benchmark', () => {
+describe('B1-14: Same-flow FlowExecutor benchmark', () => {
   const ITERATIONS = 100;
   const SENDS_PER = 10;
+
+  // Representative multi-step flow: greeting (text) → select_service (list) →
+  // confirm (buttons) → payment prompt (text) × multiple. Mirrors a real
+  // scheduling+payment flow execution.
+  const FLOW_STEPS: Array<{
+    flowType: string;
+    step: string;
+    cap: string | null;
+    method: string;
+    type: string;
+  }> = [
+    { flowType: 'scheduling', step: 'greeting', cap: 'scheduling', method: 'sendText', type: 'text' },
+    { flowType: 'scheduling', step: 'greeting', cap: 'scheduling', method: 'sendButtons', type: 'buttons' },
+    { flowType: 'scheduling', step: 'select_service', cap: 'scheduling', method: 'sendList', type: 'list' },
+    { flowType: 'scheduling', step: 'select_date', cap: 'scheduling', method: 'sendText', type: 'text' },
+    { flowType: 'scheduling', step: 'select_time', cap: 'scheduling', method: 'sendButtons', type: 'buttons' },
+    { flowType: 'payment', step: 'enter_amount', cap: 'payment', method: 'sendText', type: 'text' },
+    { flowType: 'payment', step: 'confirm', cap: 'payment', method: 'sendButtons', type: 'buttons' },
+    { flowType: 'payment', step: 'receipt', cap: 'payment', method: 'sendText', type: 'text' },
+    { flowType: 'payment', step: 'receipt', cap: 'payment', method: 'sendImage', type: 'image' },
+    { flowType: 'scheduling', step: 'confirmation', cap: 'scheduling', method: 'sendText', type: 'text' },
+  ];
 
   const percentile = (arr: number[], p: number) => {
     const sorted = [...arr].sort((a, b) => a - b);
     return sorted[Math.floor(sorted.length * p / 100)];
   };
 
-  it('enabled vs disabled p50/p95 overhead is bounded', async () => {
-    const mockSender = { sendText: vi.fn().mockResolvedValue({ success: true }) };
+  it('same-flow enabled vs disabled: p50/p95 overhead and time-to-last-send', async () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const mockSender: Record<string, any> = {
+      sendText: vi.fn().mockResolvedValue({ success: true }),
+      sendButtons: vi.fn().mockResolvedValue({ success: true }),
+      sendList: vi.fn().mockResolvedValue({ success: true }),
+      sendImage: vi.fn().mockResolvedValue({ success: true }),
+      sendDocument: vi.fn().mockResolvedValue({ success: true }),
+      sendTemplate: vi.fn().mockResolvedValue({ success: true }),
+    };
 
-    // Disabled: raw sender (no collector, no proxy)
-    const disabledTimes: number[] = [];
+    // --- DISABLED: raw sender, no instrumentation ---
+    const disabledTotal: number[] = [];
+    const disabledTTLS: number[] = []; // time-to-last-send
     for (let i = 0; i < ITERATIONS; i++) {
       const start = performance.now();
-      for (let j = 0; j < SENDS_PER; j++) {
-        await mockSender.sendText({ to: '+1', text: `msg_${j}` });
+      let lastSendTime = start;
+      for (const step of FLOW_STEPS) {
+        await mockSender[step.method]({ to: '+1', text: `msg_${step.step}` });
+        lastSendTime = performance.now();
       }
-      disabledTimes.push(performance.now() - start);
+      disabledTotal.push(performance.now() - start);
+      disabledTTLS.push(lastSendTime - start);
     }
 
-    mockSender.sendText.mockClear();
+    // Reset all mock call counts
+    Object.values(mockSender).forEach((m: any) => m.mockClear());
 
-    // Enabled: scoped sender + collector
-    const enabledTimes: number[] = [];
+    // --- ENABLED: scoped sender + collector + flush ---
+    const enabledTotal: number[] = [];
+    const enabledTTLS: number[] = [];
+    const mockSupa = {
+      rpc: vi.fn().mockResolvedValue({ data: { persisted: true }, error: null }),
+    };
     for (let i = 0; i < ITERATIONS; i++) {
       const collector = new FlowExecutionCollector(`bench_${i}`, 'biz1');
-      collector.freezeContext('benchmark', 'step1', null);
       const scoped = createScopedSender(mockSender, collector);
       const start = performance.now();
-      for (let j = 0; j < SENDS_PER; j++) {
-        await scoped.sendText({ to: '+1', text: `msg_${j}` });
+      let lastSendTime = start;
+      for (const step of FLOW_STEPS) {
+        collector.freezeContext(step.flowType, step.step, step.cap);
+        await (scoped as any)[step.method]({ to: '+1', text: `msg_${step.step}` });
+        lastSendTime = performance.now();
       }
-      enabledTimes.push(performance.now() - start);
+      collector.markComplete();
+      // Include flush in total time (mirrors real executor finally block)
+      await flushExecutionAnalytics(collector, mockSupa);
+      enabledTotal.push(performance.now() - start);
+      enabledTTLS.push(lastSendTime - start);
     }
 
-    const dp50 = percentile(disabledTimes, 50);
-    const dp95 = percentile(disabledTimes, 95);
-    const ep50 = percentile(enabledTimes, 50);
-    const ep95 = percentile(enabledTimes, 95);
+    // --- Metrics ---
+    const dp50 = percentile(disabledTotal, 50);
+    const dp95 = percentile(disabledTotal, 95);
+    const ep50 = percentile(enabledTotal, 50);
+    const ep95 = percentile(enabledTotal, 95);
+    const dtlp50 = percentile(disabledTTLS, 50);
+    const dtlp95 = percentile(disabledTTLS, 95);
+    const etlp50 = percentile(enabledTTLS, 50);
+    const etlp95 = percentile(enabledTTLS, 95);
 
-    console.log(`[B1-14] Disabled p50=${dp50.toFixed(3)}ms p95=${dp95.toFixed(3)}ms`);
-    console.log(`[B1-14] Enabled  p50=${ep50.toFixed(3)}ms p95=${ep95.toFixed(3)}ms`);
-    console.log(`[B1-14] Overhead p50=${(ep50 - dp50).toFixed(3)}ms p95=${(ep95 - dp95).toFixed(3)}ms`);
+    console.log('[B1-14] === Same-flow FlowExecutor Benchmark ===');
+    console.log(`[B1-14] Total  — Disabled p50=${dp50.toFixed(3)}ms p95=${dp95.toFixed(3)}ms`);
+    console.log(`[B1-14] Total  — Enabled  p50=${ep50.toFixed(3)}ms p95=${ep95.toFixed(3)}ms`);
+    console.log(`[B1-14] Total  — Overhead p50=${(ep50 - dp50).toFixed(3)}ms p95=${(ep95 - dp95).toFixed(3)}ms`);
+    console.log(`[B1-14] TTLS   — Disabled p50=${dtlp50.toFixed(3)}ms p95=${dtlp95.toFixed(3)}ms`);
+    console.log(`[B1-14] TTLS   — Enabled  p50=${etlp50.toFixed(3)}ms p95=${etlp95.toFixed(3)}ms`);
+    console.log(`[B1-14] TTLS   — Overhead p50=${(etlp50 - dtlp50).toFixed(3)}ms p95=${(etlp95 - dtlp95).toFixed(3)}ms`);
 
-    // Overhead must be bounded: < 5ms at p50, < 10ms at p95
+    // --- Assertions ---
+    // Total overhead (including flush) must be bounded: < 5ms at p50, < 15ms at p95
     expect(ep50 - dp50).toBeLessThan(5);
-    expect(ep95 - dp95).toBeLessThan(10);
+    expect(ep95 - dp95).toBeLessThan(15);
+
+    // Time-to-last-send overhead (user-facing latency) must be tighter: < 3ms at p50, < 8ms at p95
+    expect(etlp50 - dtlp50).toBeLessThan(3);
+    expect(etlp95 - dtlp95).toBeLessThan(8);
+  });
+
+  it('identical send count and order between enabled and disabled', async () => {
+    const disabledCalls: string[] = [];
+    const enabledCalls: string[] = [];
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const disabledSender: Record<string, any> = {
+      sendText: vi.fn(async (a: { text: string }) => { disabledCalls.push(a.text); return { success: true }; }),
+      sendButtons: vi.fn(async (a: { text: string }) => { disabledCalls.push(a.text); return { success: true }; }),
+      sendList: vi.fn(async (a: { text: string }) => { disabledCalls.push(a.text); return { success: true }; }),
+      sendImage: vi.fn(async (a: { text: string }) => { disabledCalls.push(a.text); return { success: true }; }),
+    };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const enabledSender: Record<string, any> = {
+      sendText: vi.fn(async (a: { text: string }) => { enabledCalls.push(a.text); return { success: true }; }),
+      sendButtons: vi.fn(async (a: { text: string }) => { enabledCalls.push(a.text); return { success: true }; }),
+      sendList: vi.fn(async (a: { text: string }) => { enabledCalls.push(a.text); return { success: true }; }),
+      sendImage: vi.fn(async (a: { text: string }) => { enabledCalls.push(a.text); return { success: true }; }),
+    };
+
+    // Disabled run
+    for (const step of FLOW_STEPS) {
+      await disabledSender[step.method]({ to: '+1', text: `${step.flowType}:${step.step}` });
+    }
+
+    // Enabled run
+    const collector = new FlowExecutionCollector('order_test', 'biz1');
+    const scoped = createScopedSender(enabledSender, collector);
+    for (const step of FLOW_STEPS) {
+      collector.freezeContext(step.flowType, step.step, step.cap);
+      await (scoped as any)[step.method]({ to: '+1', text: `${step.flowType}:${step.step}` });
+    }
+
+    // Identical count
+    expect(enabledCalls.length).toBe(disabledCalls.length);
+    expect(enabledCalls.length).toBe(FLOW_STEPS.length);
+
+    // Identical order
+    expect(enabledCalls).toEqual(disabledCalls);
+
+    // Collector recorded all sends
+    expect(collector.summary.totalMessages).toBe(FLOW_STEPS.length);
+    expect(collector.summary.resolvedCount).toBe(FLOW_STEPS.length);
   });
 
   it('no pre-send DB I/O — zero database calls during sends', async () => {
     const dbCalls: string[] = [];
-    const mockSender = { sendText: vi.fn().mockResolvedValue({ success: true }) };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const mockSender: Record<string, any> = {
+      sendText: vi.fn().mockResolvedValue({ success: true }),
+      sendButtons: vi.fn().mockResolvedValue({ success: true }),
+      sendList: vi.fn().mockResolvedValue({ success: true }),
+      sendImage: vi.fn().mockResolvedValue({ success: true }),
+    };
     const collector = new FlowExecutionCollector('io_test', 'biz1');
-    collector.freezeContext('test', 'step1', null);
-    const scoped = createScopedSender(mockSender as any, collector);
+    const scoped = createScopedSender(mockSender, collector);
 
-    await scoped.sendText({ to: '+1', text: 'msg1' });
-    await scoped.sendText({ to: '+1', text: 'msg2' });
+    for (const step of FLOW_STEPS) {
+      collector.freezeContext(step.flowType, step.step, step.cap);
+      await (scoped as any)[step.method]({ to: '+1', text: `msg_${step.step}` });
+    }
 
     expect(dbCalls).toHaveLength(0);
-    expect(collector.summary.totalMessages).toBe(2);
+    expect(collector.summary.totalMessages).toBe(FLOW_STEPS.length);
   });
 
-  it('bounded persistence: one flush = one RPC', async () => {
+  it('bounded persistence: one flush = one RPC regardless of message count', async () => {
     const rpcCalls: unknown[][] = [];
     const mockSupa = {
       rpc: vi.fn((...args: unknown[]) => {
@@ -781,39 +974,35 @@ describe('B1-14: Instrumentation overhead benchmark', () => {
       }),
     };
     const collector = new FlowExecutionCollector('flush_test', 'biz1');
-    collector.freezeContext('test', 'step1', null);
-    for (let i = 0; i < 50; i++) collector.record('text', false, 'resolved');
+    // Record a representative flow's worth of messages
+    for (const step of FLOW_STEPS) {
+      collector.freezeContext(step.flowType, step.step, step.cap);
+      collector.record(step.type as any, false, 'resolved');
+    }
     collector.markComplete();
 
     await flushExecutionAnalytics(collector, mockSupa);
 
+    // One RPC call regardless of message count
     expect(rpcCalls).toHaveLength(1);
+    // Aggregates should be compressed (multiple sends to same step aggregate)
+    const aggArray = (rpcCalls[0][1] as Record<string, unknown>).p_aggregates as unknown[];
+    expect(aggArray.length).toBeLessThanOrEqual(FLOW_STEPS.length);
   });
 
-  it('preserved send ordering', async () => {
-    const calls: string[] = [];
-    const mockSender = {
-      sendText: vi.fn(async (args: { text: string }) => {
-        calls.push(args.text);
-        return { success: true };
-      }),
-    };
-    const collector = new FlowExecutionCollector('order_test', 'biz1');
-    collector.freezeContext('test', 'step1', null);
-    const scoped = createScopedSender(mockSender as any, collector);
-
-    for (let i = 0; i < 10; i++) await scoped.sendText({ to: '+1', text: `msg_${i}` });
-
-    expect(calls).toEqual(Array.from({ length: 10 }, (_, i) => `msg_${i}`));
-  });
-
-  it('bounded memory: aggregates compress by key', () => {
+  it('bounded memory: aggregates compress by flow+step+type key', () => {
     const collector = new FlowExecutionCollector('mem_test', 'biz1');
-    for (let step = 0; step < 5; step++) {
-      collector.freezeContext('test', `step_${step}`, null);
-      for (let i = 0; i < 100; i++) collector.record('text', false, 'resolved');
+    // Run the same flow 10 times — aggregates should not grow linearly
+    for (let run = 0; run < 10; run++) {
+      for (const step of FLOW_STEPS) {
+        collector.freezeContext(step.flowType, step.step, step.cap);
+        collector.record(step.type as any, false, 'resolved');
+      }
     }
-    // 500 records compress to 5 aggregate keys (one per step)
-    expect(collector.rawAggregates.size).toBe(5);
+    // 100 records (10 runs × 10 steps) compress to unique flow+step+type keys
+    expect(collector.summary.totalMessages).toBe(100);
+    // Unique keys: each distinct (flowType, step, type, isTemplate, cap) combination
+    const uniqueKeys = new Set(FLOW_STEPS.map(s => `${s.flowType}|${s.step}|${s.type}|false|${s.cap}`));
+    expect(collector.rawAggregates.size).toBe(uniqueKeys.size);
   });
 });
