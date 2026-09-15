@@ -162,8 +162,8 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
         ON CONFLICT (id) DO NOTHING;
 
       -- Property blocked dates
-      INSERT INTO property_blocked_dates (id, property_id, date_from, date_to, reason)
-        VALUES ('${BLOCKED_DATE}', '${PROPERTY_A}', CURRENT_DATE + 60, CURRENT_DATE + 65, 'Maintenance')
+      INSERT INTO property_blocked_dates (id, property_id, business_id, date_from, date_to, reason)
+        VALUES ('${BLOCKED_DATE}', '${PROPERTY_A}', '${BIZ_ID}', CURRENT_DATE + 60, CURRENT_DATE + 65, 'Maintenance')
         ON CONFLICT (id) DO NOTHING;
     `);
 
