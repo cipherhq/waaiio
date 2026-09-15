@@ -103,68 +103,89 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
       INSERT INTO auth.users (id) VALUES ('${USER_ID}')
         ON CONFLICT (id) DO NOTHING;
       INSERT INTO profiles (id, phone) VALUES ('${USER_ID}', '${CUSTOMER_PHONE}')
-        ON CONFLICT (id) DO NOTHING;
+        ON CONFLICT (id) DO UPDATE SET phone = EXCLUDED.phone;
 
-      -- Business
+      -- Business (UPSERT: ensure exact metadata/status)
       INSERT INTO businesses (id, name, slug, address, city, neighborhood, phone, country_code, owner_id, status, metadata)
         VALUES ('${BIZ_ID}', 'ECR Test Biz', 'ecr-test-biz-0383', '1 Test St', 'Lagos', 'VI', '+2340000000000', 'NG', '${USER_ID}', 'active',
                 '{"custom_order_config":{"deposit_percentage":50}}'::jsonb)
-        ON CONFLICT (id) DO NOTHING;
+        ON CONFLICT (id) DO UPDATE SET status = 'active', metadata = EXCLUDED.metadata;
       INSERT INTO businesses (id, name, slug, address, city, neighborhood, phone, country_code, owner_id, status)
         VALUES ('${BIZ_OTHER}', 'Other Biz', 'other-biz-0383', '2 Test St', 'Accra', 'East', '+2330000000000', 'GH', '${USER_ID}', 'active')
-        ON CONFLICT (id) DO NOTHING;
+        ON CONFLICT (id) DO UPDATE SET status = 'active';
 
-      -- Products
-      INSERT INTO products (id, business_id, name, price, stock_quantity, track_inventory, is_active)
+      -- Products (UPSERT: ensure exact prices/stock/status for test determinism)
+      INSERT INTO products (id, business_id, name, price, stock_quantity, track_inventory, is_active, deleted_at)
         VALUES
-          ('${PRODUCT_A}', '${BIZ_ID}', 'Widget A', 1000, 50, true, true),
-          ('${PRODUCT_B}', '${BIZ_ID}', 'Widget B', 2000, 30, true, true),
-          ('${PRODUCT_OFF}', '${BIZ_ID}', 'Inactive Widget', 500, 10, true, false),
-          ('${PRODUCT_X}', '${BIZ_OTHER}', 'Cross-Biz Widget', 1500, 20, true, true)
-        ON CONFLICT (id) DO NOTHING;
+          ('${PRODUCT_A}', '${BIZ_ID}', 'Widget A', 1000, 50, true, true, NULL),
+          ('${PRODUCT_B}', '${BIZ_ID}', 'Widget B', 2000, 30, true, true, NULL),
+          ('${PRODUCT_OFF}', '${BIZ_ID}', 'Inactive Widget', 500, 10, true, false, NULL),
+          ('${PRODUCT_X}', '${BIZ_OTHER}', 'Cross-Biz Widget', 1500, 20, true, true, NULL)
+        ON CONFLICT (id) DO UPDATE SET
+          business_id = EXCLUDED.business_id, name = EXCLUDED.name, price = EXCLUDED.price,
+          stock_quantity = EXCLUDED.stock_quantity, track_inventory = EXCLUDED.track_inventory,
+          is_active = EXCLUDED.is_active, deleted_at = EXCLUDED.deleted_at;
 
-      -- Variant
+      -- Variant (UPSERT)
       INSERT INTO product_variants (id, product_id, label, price, stock_quantity, is_active)
         VALUES ('${VARIANT_A1}', '${PRODUCT_A}', 'Large', 1200, 15, true)
-        ON CONFLICT (id) DO NOTHING;
+        ON CONFLICT (id) DO UPDATE SET
+          product_id = EXCLUDED.product_id, label = EXCLUDED.label, price = EXCLUDED.price,
+          stock_quantity = EXCLUDED.stock_quantity, is_active = EXCLUDED.is_active;
 
-      -- Addons
+      -- Addons (UPSERT)
       INSERT INTO product_addons (id, business_id, product_id, name, price, price_type, is_active)
         VALUES
           ('${ADDON_FIXED}', '${BIZ_ID}', NULL, 'Gift Wrap', 200, 'fixed', true),
           ('${ADDON_PERUNIT}', '${BIZ_ID}', NULL, 'Extra Sauce', 100, 'per_unit', true),
           ('${ADDON_QUOTE}', '${BIZ_ID}', NULL, 'Custom Engraving', 0, 'quote', true),
           ('${ADDON_WRONGP}', '${BIZ_ID}', '${PRODUCT_B}', 'B-Only Addon', 150, 'fixed', true)
-        ON CONFLICT (id) DO NOTHING;
+        ON CONFLICT (id) DO UPDATE SET
+          business_id = EXCLUDED.business_id, product_id = EXCLUDED.product_id,
+          name = EXCLUDED.name, price = EXCLUDED.price, price_type = EXCLUDED.price_type,
+          is_active = EXCLUDED.is_active;
 
-      -- Services
+      -- Services (UPSERT)
       INSERT INTO services (id, business_id, name, price, deposit_amount, is_active, max_capacity, duration_minutes, metadata)
         VALUES
           ('${SERVICE_A}', '${BIZ_ID}', 'Haircut', 5000, 2000, true, 1, 30, '{"buffer_minutes": 10}'::jsonb),
           ('${SERVICE_OFF}', '${BIZ_ID}', 'Inactive Svc', 3000, 0, false, 5, 60, '{}'::jsonb)
-        ON CONFLICT (id) DO NOTHING;
+        ON CONFLICT (id) DO UPDATE SET
+          business_id = EXCLUDED.business_id, name = EXCLUDED.name, price = EXCLUDED.price,
+          deposit_amount = EXCLUDED.deposit_amount, is_active = EXCLUDED.is_active,
+          max_capacity = EXCLUDED.max_capacity, duration_minutes = EXCLUDED.duration_minutes,
+          metadata = EXCLUDED.metadata;
 
-      -- Events
+      -- Events (UPSERT)
       INSERT INTO events (id, business_id, name, date, time, price, total_tickets, tickets_sold, status)
         VALUES ('${EVENT_A}', '${BIZ_ID}', 'Concert', CURRENT_DATE + 30, '19:00', 3000, 100, 95, 'published')
-        ON CONFLICT (id) DO NOTHING;
+        ON CONFLICT (id) DO UPDATE SET
+          business_id = EXCLUDED.business_id, name = EXCLUDED.name, date = EXCLUDED.date,
+          price = EXCLUDED.price, total_tickets = EXCLUDED.total_tickets,
+          tickets_sold = EXCLUDED.tickets_sold, status = EXCLUDED.status;
 
-      -- Event ticket types
+      -- Event ticket types (UPSERT)
       INSERT INTO event_ticket_types (id, event_id, name, price, total_tickets, tickets_sold)
         VALUES ('${TICKET_TYPE}', '${EVENT_A}', 'VIP', 5000, 20, 18)
-        ON CONFLICT (id) DO NOTHING;
+        ON CONFLICT (id) DO UPDATE SET
+          event_id = EXCLUDED.event_id, name = EXCLUDED.name, price = EXCLUDED.price,
+          total_tickets = EXCLUDED.total_tickets, tickets_sold = EXCLUDED.tickets_sold;
 
-      -- Properties
+      -- Properties (UPSERT)
       INSERT INTO properties (id, business_id, name, price, deposit_amount, is_active)
         VALUES
           ('${PROPERTY_A}', '${BIZ_ID}', 'Beach House', 15000, 5000, true),
           ('${PROPERTY_OFF}', '${BIZ_ID}', 'Under Renovation', 10000, 3000, false)
-        ON CONFLICT (id) DO NOTHING;
+        ON CONFLICT (id) DO UPDATE SET
+          business_id = EXCLUDED.business_id, name = EXCLUDED.name, price = EXCLUDED.price,
+          deposit_amount = EXCLUDED.deposit_amount, is_active = EXCLUDED.is_active;
 
-      -- Property blocked dates
+      -- Property blocked dates (UPSERT)
       INSERT INTO property_blocked_dates (id, property_id, business_id, date_from, date_to, reason)
         VALUES ('${BLOCKED_DATE}', '${PROPERTY_A}', '${BIZ_ID}', CURRENT_DATE + 60, CURRENT_DATE + 65, 'Maintenance')
-        ON CONFLICT (id) DO NOTHING;
+        ON CONFLICT (id) DO UPDATE SET
+          property_id = EXCLUDED.property_id, business_id = EXCLUDED.business_id,
+          date_from = EXCLUDED.date_from, date_to = EXCLUDED.date_to, reason = EXCLUDED.reason;
     `);
 
     // Seed quote_requests: v1 row first (before trigger fires, using ALTER to set snapshot_version)
@@ -177,11 +198,14 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
         'quoted',
         '[{"product_id":"${PRODUCT_A}","quantity":2,"price":1000,"name":"Widget A","addons":[{"id":"${ADDON_FIXED}","name":"Gift Wrap","price":200,"quantity":1}]}]'::jsonb,
         2400, 2400, NOW() + INTERVAL '24 hours', 2, NOW()
-      ) ON CONFLICT (id) DO NOTHING;
+      ) ON CONFLICT (id) DO UPDATE SET
+          status = 'quoted', cart_snapshot = EXCLUDED.cart_snapshot,
+          estimated_subtotal = EXCLUDED.estimated_subtotal, quoted_amount = EXCLUDED.quoted_amount,
+          expires_at = EXCLUDED.expires_at, snapshot_version = EXCLUDED.snapshot_version,
+          quoted_at = EXCLUDED.quoted_at, order_id = NULL, responded_at = NULL;
     `);
 
-    // For v1 quote: insert as v2 then use direct UPDATE (trigger allows same or higher version)
-    // Actually we need to bypass the trigger for the v1 seed. Use ALTER TABLE to disable trigger temporarily.
+    // For v1 quote: bypass trigger to seed snapshot_version=1 (genuine legacy row)
     psql(`
       ALTER TABLE quote_requests DISABLE TRIGGER trg_snapshot_version_guard;
       INSERT INTO quote_requests (id, business_id, user_id, customer_phone, customer_name,
@@ -191,7 +215,11 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
         'quoted',
         '[{"product_id":"${PRODUCT_A}","quantity":1,"price":1000,"name":"Widget A","addons":[{"name":"No-ID Addon","price":100,"quantity":1}]}]'::jsonb,
         1100, 1100, NOW() + INTERVAL '24 hours', 1, NOW()
-      ) ON CONFLICT (id) DO NOTHING;
+      ) ON CONFLICT (id) DO UPDATE SET
+          status = 'quoted', cart_snapshot = EXCLUDED.cart_snapshot,
+          estimated_subtotal = EXCLUDED.estimated_subtotal, quoted_amount = EXCLUDED.quoted_amount,
+          expires_at = EXCLUDED.expires_at, snapshot_version = 1,
+          quoted_at = EXCLUDED.quoted_at, order_id = NULL, responded_at = NULL;
       ALTER TABLE quote_requests ENABLE TRIGGER trg_snapshot_version_guard;
     `);
   });
