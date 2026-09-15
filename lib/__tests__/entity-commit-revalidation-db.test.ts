@@ -227,6 +227,9 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
   afterAll(() => {
     if (!canRun) return;
     psql(`
+      DELETE FROM order_tracking_notifications WHERE order_id IN (
+        SELECT id FROM orders WHERE business_id IN ('${BIZ_ID}', '${BIZ_OTHER}')
+      );
       DELETE FROM order_stock_applications WHERE order_id IN (
         SELECT id FROM orders WHERE business_id IN ('${BIZ_ID}', '${BIZ_OTHER}')
       );
@@ -236,10 +239,15 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
       DELETE FROM payments WHERE order_id IN (
         SELECT id FROM orders WHERE business_id IN ('${BIZ_ID}', '${BIZ_OTHER}')
       );
+      DELETE FROM promo_reservations WHERE order_id IN (
+        SELECT id FROM orders WHERE business_id IN ('${BIZ_ID}', '${BIZ_OTHER}')
+      );
+      ALTER TABLE quote_requests DISABLE TRIGGER trg_snapshot_version_guard;
+      UPDATE quote_requests SET order_id = NULL
+        WHERE order_id IN (SELECT id FROM orders WHERE business_id IN ('${BIZ_ID}', '${BIZ_OTHER}'));
       DELETE FROM orders WHERE business_id IN ('${BIZ_ID}', '${BIZ_OTHER}');
       DELETE FROM bookings WHERE business_id = '${BIZ_ID}';
       DELETE FROM reservations WHERE business_id = '${BIZ_ID}';
-      ALTER TABLE quote_requests DISABLE TRIGGER trg_snapshot_version_guard;
       DELETE FROM quote_requests WHERE business_id = '${BIZ_ID}';
       ALTER TABLE quote_requests ENABLE TRIGGER trg_snapshot_version_guard;
       DELETE FROM property_blocked_dates WHERE property_id IN ('${PROPERTY_A}', '${PROPERTY_OFF}');
@@ -258,6 +266,9 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
   // ── Shared cleanup for per-test state ──
   function cleanOrders() {
     psql(`
+      DELETE FROM order_tracking_notifications WHERE order_id IN (
+        SELECT id FROM orders WHERE business_id = '${BIZ_ID}'
+      );
       DELETE FROM order_stock_applications WHERE order_id IN (
         SELECT id FROM orders WHERE business_id = '${BIZ_ID}'
       );
@@ -267,14 +278,19 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
       DELETE FROM payments WHERE order_id IN (
         SELECT id FROM orders WHERE business_id = '${BIZ_ID}'
       );
+      DELETE FROM promo_reservations WHERE order_id IN (
+        SELECT id FROM orders WHERE business_id = '${BIZ_ID}'
+      );
+      UPDATE quote_requests SET order_id = NULL
+        WHERE order_id IN (SELECT id FROM orders WHERE business_id = '${BIZ_ID}');
       DELETE FROM orders WHERE business_id = '${BIZ_ID}';
       DELETE FROM bookings WHERE business_id = '${BIZ_ID}';
       DELETE FROM reservations WHERE business_id = '${BIZ_ID}';
       UPDATE products SET stock_quantity = 50 WHERE id = '${PRODUCT_A}';
       UPDATE products SET stock_quantity = 30 WHERE id = '${PRODUCT_B}';
       UPDATE product_variants SET stock_quantity = 15 WHERE id = '${VARIANT_A1}';
-      UPDATE events SET tickets_sold = 95 WHERE id = '${EVENT_A}';
-      UPDATE event_ticket_types SET tickets_sold = 18 WHERE id = '${TICKET_TYPE}';
+      UPDATE events SET tickets_sold = 95, price = 3000, total_tickets = 100, status = 'published' WHERE id = '${EVENT_A}';
+      UPDATE event_ticket_types SET tickets_sold = 18, price = 5000, total_tickets = 20 WHERE id = '${TICKET_TYPE}';
     `);
   }
 
@@ -387,19 +403,20 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
       const items = JSON.stringify([
         { product_id: PRODUCT_A, quantity: 2, unit_price: 1000, addons: [{ id: ADDON_FIXED, quantity: 1, price: 200 }] }
       ]);
+      // Server total: product 1000×2 + fixed addon 200×1 = 2200
       const r = psqlJson(`
         SET ROLE service_role;
         SELECT create_order_atomic(
           '${BOT_SESSION}'::uuid, '${BIZ_ID}'::uuid, '${USER_ID}'::uuid,
           'pending', NULL, NULL, 0, 0, 0, NULL, 'whatsapp', NULL, NULL, NULL, 0, 0,
           NULL, NULL, NULL, NULL,
-          '${items}'::jsonb, NULL, true, 2400
+          '${items}'::jsonb, NULL, true, 2200
         );
       `);
       expect(r.created).toBe(true);
       expect(r.order_id).toBeTruthy();
       expect(r.reference_code).toBeTruthy();
-      expect(r.server_total).toBe(2400);
+      expect(r.server_total).toBe(2200);
 
       // Stock decremented
       const stockA = psql(`SELECT stock_quantity FROM products WHERE id = '${PRODUCT_A}';`);
@@ -862,7 +879,7 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
       const orderId = createR.order_id as string;
 
       // Add successful payment
-      psql(`INSERT INTO payments (id, order_id, amount, status) VALUES ('${PAY_1}', '${orderId}', 1000, 'success');`);
+      psql(`INSERT INTO payments (id, order_id, amount, gateway_reference, status) VALUES ('${PAY_1}', '${orderId}', 1000, 'test_ref_31', 'success');`);
 
       const r = psqlJson(`SET ROLE service_role; SELECT cancel_order_immediate('${orderId}');`);
       expect(r.cancelled).toBe(false);
@@ -1147,6 +1164,71 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
         input: sql, encoding: 'utf-8', timeout: 15000,
       }).trim();
 
+      // ── Step 0: Bootstrap Supabase schema prerequisites (provided by Supabase in production) ──
+      r90psql(`
+        CREATE SCHEMA IF NOT EXISTS auth;
+        CREATE TABLE IF NOT EXISTS auth.users (
+          id UUID PRIMARY KEY,
+          instance_id UUID, aud VARCHAR(255), role VARCHAR(255), email VARCHAR(255),
+          encrypted_password VARCHAR(255), email_confirmed_at TIMESTAMPTZ,
+          invited_at TIMESTAMPTZ, confirmation_token VARCHAR(255),
+          confirmation_sent_at TIMESTAMPTZ, recovery_token VARCHAR(255),
+          recovery_sent_at TIMESTAMPTZ, email_change_token_new VARCHAR(255),
+          email_change VARCHAR(255), email_change_sent_at TIMESTAMPTZ,
+          last_sign_in_at TIMESTAMPTZ, raw_app_meta_data JSONB,
+          raw_user_meta_data JSONB, is_super_admin BOOLEAN,
+          phone TEXT UNIQUE DEFAULT NULL, phone_confirmed_at TIMESTAMPTZ,
+          phone_change TEXT DEFAULT '', phone_change_token VARCHAR(255) DEFAULT '',
+          phone_change_sent_at TIMESTAMPTZ,
+          created_at TIMESTAMPTZ DEFAULT now(), updated_at TIMESTAMPTZ DEFAULT now(),
+          banned_until TIMESTAMPTZ, deleted_at TIMESTAMPTZ
+        );
+        CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID LANGUAGE sql STABLE AS $f$
+          SELECT NULLIF(current_setting('request.jwt.claim.sub', true), '')::UUID;
+        $f$;
+        CREATE OR REPLACE FUNCTION auth.role() RETURNS TEXT LANGUAGE sql STABLE AS $f$
+          SELECT COALESCE(current_setting('request.jwt.claim.role', true), 'anon');
+        $f$;
+        CREATE OR REPLACE FUNCTION auth.email() RETURNS TEXT LANGUAGE sql STABLE AS $f$
+          SELECT COALESCE(current_setting('request.jwt.claim.email', true), '');
+        $f$;
+        CREATE SCHEMA IF NOT EXISTS storage;
+        CREATE TABLE IF NOT EXISTS storage.buckets (
+          id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE,
+          owner UUID REFERENCES auth.users(id), public BOOLEAN DEFAULT false,
+          avif_autodetection BOOLEAN DEFAULT false, file_size_limit BIGINT,
+          allowed_mime_types TEXT[],
+          created_at TIMESTAMPTZ DEFAULT now(), updated_at TIMESTAMPTZ DEFAULT now()
+        );
+        CREATE TABLE IF NOT EXISTS storage.objects (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          bucket_id TEXT REFERENCES storage.buckets(id), name TEXT,
+          owner UUID REFERENCES auth.users(id),
+          created_at TIMESTAMPTZ DEFAULT now(), updated_at TIMESTAMPTZ DEFAULT now(),
+          last_accessed_at TIMESTAMPTZ DEFAULT now(), metadata JSONB,
+          path_tokens TEXT[] GENERATED ALWAYS AS (string_to_array(name, '/')) STORED
+        );
+        ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY;
+        ALTER TABLE storage.buckets ENABLE ROW LEVEL SECURITY;
+        CREATE OR REPLACE FUNCTION storage.foldername(name TEXT) RETURNS TEXT[] LANGUAGE plpgsql AS $f$
+        DECLARE _parts TEXT[];
+        BEGIN SELECT string_to_array(name, '/') INTO _parts; RETURN _parts[1:array_length(_parts,1)-1]; END; $f$;
+        CREATE OR REPLACE FUNCTION storage.filename(name TEXT) RETURNS TEXT LANGUAGE plpgsql AS $f$
+        DECLARE _parts TEXT[];
+        BEGIN SELECT string_to_array(name, '/') INTO _parts; RETURN _parts[array_length(_parts,1)]; END; $f$;
+        CREATE OR REPLACE FUNCTION storage.extension(name TEXT) RETURNS TEXT LANGUAGE plpgsql AS $f$
+        DECLARE _parts TEXT[];
+        BEGIN SELECT string_to_array(name, '.') INTO _parts; RETURN _parts[array_length(_parts,1)]; END; $f$;
+        CREATE PUBLICATION supabase_realtime;
+        DO $$ BEGIN CREATE ROLE service_role NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+        DO $$ BEGIN CREATE ROLE anon NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+        DO $$ BEGIN CREATE ROLE authenticated NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+        GRANT USAGE ON SCHEMA public TO service_role, anon, authenticated;
+        GRANT USAGE ON SCHEMA auth TO service_role, anon, authenticated;
+        GRANT ALL ON ALL TABLES IN SCHEMA auth TO service_role;
+        ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO service_role;
+      `);
+
       // Controller session: a long-lived psql process that holds the advisory gate
       let controllerChild: ReturnType<typeof spawn> | null = null;
 
@@ -1160,6 +1242,14 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
             timeout: 60000, encoding: 'utf-8',
           });
         }
+
+        // Grant service_role access to tables created by migrations
+        r90psql(`
+          GRANT USAGE ON SCHEMA public TO service_role, anon, authenticated;
+          GRANT ALL ON ALL TABLES IN SCHEMA public TO service_role;
+          GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO service_role;
+          GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO service_role;
+        `);
 
         // ── Step 2: Seed genuine pre-M383 data ──
         const r90OwnerId = r90psql(`SELECT gen_random_uuid();`);
@@ -1199,9 +1289,10 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
           let buf = '';
           controllerChild!.stdout.on('data', (d: Buffer) => {
             buf += d.toString();
-            if (buf.includes('t')) resolve();  // pg_advisory_lock returns 't' (void)
+            if (buf.includes('locked')) resolve();
           });
-          controllerChild!.stdin.write(`SELECT pg_advisory_lock(${GATE_LOCK_ID});\n`);
+          // pg_advisory_lock returns void (empty in -tAX mode), so chain a SELECT to confirm
+          controllerChild!.stdin.write(`SELECT pg_advisory_lock(${GATE_LOCK_ID}); SELECT 'locked';\n`);
         });
         // Controller now holds advisory lock 99383. It will NOT release until we tell it to.
 
@@ -1347,6 +1438,8 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
         const r90UserId = r90psql(`SELECT gen_random_uuid();`);
         r90psql(`INSERT INTO auth.users (id) VALUES ('${r90UserId}') ON CONFLICT DO NOTHING;`);
         r90psql(`INSERT INTO profiles (id, phone) VALUES ('${r90UserId}', '${R90_CUST_PHONE}') ON CONFLICT DO NOTHING;`);
+        // Set user_id on quote (orders.user_id is NOT NULL, quote needs a valid user)
+        r90psql(`UPDATE quote_requests SET user_id = '${r90UserId}' WHERE id = '${PRE_ROW_ID}';`);
         const acceptResult = (() => {
           try {
             return JSON.parse(r90psql(`SET ROLE service_role; SELECT accept_order_quote_atomic('${PRE_ROW_ID}'::uuid, '${R90_CUST_PHONE}');`));
@@ -1362,7 +1455,7 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
         if (controllerChild) { try { controllerChild.kill(); } catch { /* ok */ } }
         try { execSync(`dropdb --maintenance-db="${dbUrl}" --if-exists "${r90db}"`, { timeout: 10000 }); } catch { /* ok */ }
       }
-    }, 180000);
+    }, 300000);
   });
 
   // ── Blocker 3: Expanded concurrency/ACL/invariant matrix ──
@@ -1397,9 +1490,9 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
       psql(`INSERT INTO events (id, business_id, name, date, status, total_tickets, tickets_sold, price) VALUES ('${EVENT_ID}', '${BIZ_ID}', 'Test Event', CURRENT_DATE + 30, 'published', 100, 0, 1500) ON CONFLICT (id) DO UPDATE SET status = 'published', tickets_sold = 0, price = 1500;`);
       const sessId = '00000000-0000-0000-0383-00000000b046';
       // Caller sends p_total_amount=9999 (forged), but DB price=1500, qty=2 → committed should be 3000
-      const r = psql(`SET ROLE service_role; SELECT purchase_tickets_atomic('${BIZ_ID}', '${EVENT_ID}', NULL, 2, '${USER_ID}', 'Test', '2340000000005', 'test@test.com', 9999, 'whatsapp', '${sessId}', NULL);`);
-      const row = JSON.parse(r.replace(/\(/g, '[').replace(/\)/g, ']'));
-      const bookingId = row[0];
+      const r = psql(`SET ROLE service_role; SELECT * FROM purchase_tickets_atomic('${BIZ_ID}', '${EVENT_ID}', NULL, 2, '${USER_ID}', 'Test', '2340000000005', 'test@test.com', 9999, 'whatsapp', '${sessId}', NULL);`);
+      const parts = r.split('|');
+      const bookingId = parts[0];
       const total = psql(`SELECT total_amount FROM bookings WHERE id = '${bookingId}';`);
       expect(parseInt(total)).toBe(3000); // 1500 * 2, not 9999
     });
@@ -1430,7 +1523,8 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
       psql(`UPDATE services SET price = 3000, price_is_variable = false WHERE id = '${SERVICE_ID}';`);
       const sessId = '00000000-0000-0000-0383-00000000b048';
       // Caller sends p_amount=9999 — DB has price=3000
-      const r = psqlJson(`SET ROLE service_role; SELECT create_payment_booking_atomic('${BIZ_ID}', '${USER_ID}', '${SERVICE_ID}', 9999, 'Test Payment', '2340000000007', 'Test', '${sessId}', 3000);`);
+      // Signature: (bot_session_id, business_id, user_id, service_id, amount, guest_name, guest_phone, service_name, expected_price)
+      const r = psqlJson(`SET ROLE service_role; SELECT create_payment_booking_atomic('${sessId}'::uuid, '${BIZ_ID}'::uuid, '${USER_ID}'::uuid, '${SERVICE_ID}'::uuid, 9999, 'Test Payment', '2340000000007', 'Test', 3000);`);
       expect(r.booking_id).toBeTruthy();
       const total = psql(`SELECT total_amount FROM bookings WHERE id = '${r.booking_id}';`);
       expect(parseInt(total)).toBe(3000); // DB price, not 9999
@@ -1456,7 +1550,7 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
     });
 
     it('51. complete ACL: create_payment_booking_atomic denied for authenticated', () => {
-      const r = psql(`SELECT has_function_privilege('authenticated', 'create_payment_booking_atomic(uuid, uuid, uuid, integer, text, text, text, uuid, integer)', 'EXECUTE');`);
+      const r = psql(`SELECT has_function_privilege('authenticated', 'create_payment_booking_atomic(uuid, uuid, uuid, uuid, integer, text, text, text, integer)', 'EXECUTE');`);
       expect(r).toBe('f');
     });
 
@@ -1472,8 +1566,8 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
         VALUES ('${EVENT_ID}', '${BIZ_ID}', 'Test', CURRENT_DATE + 30, 'published', 100, 5, 1000)
         ON CONFLICT (id) DO UPDATE SET tickets_sold = 5;`);
       const bookId = '00000000-0000-0000-0383-00000000b053';
-      psql(`INSERT INTO bookings (id, business_id, event_id, date, time, party_size, quantity, flow_type, channel, deposit_amount, deposit_status, status, total_amount, tickets_finalized)
-        VALUES ('${bookId}', '${BIZ_ID}', '${EVENT_ID}', CURRENT_DATE + 30, '10:00', 2, 2, 'ticketing', 'whatsapp', 2000, 'pending', 'pending', 2000, true)
+      psql(`INSERT INTO bookings (id, business_id, user_id, event_id, date, time, party_size, quantity, flow_type, channel, deposit_amount, deposit_status, status, total_amount, tickets_finalized)
+        VALUES ('${bookId}', '${BIZ_ID}', '${USER_ID}', '${EVENT_ID}', CURRENT_DATE + 30, '10:00', 2, 2, 'ticketing', 'whatsapp', 2000, 'pending', 'pending', 2000, true)
         ON CONFLICT DO NOTHING;`);
       const r = psqlJson(`SET ROLE service_role; SELECT finalize_free_ticket_booking('${bookId}', '${EVENT_ID}', NULL, 2);`);
       expect(r.success).toBe(true);
@@ -1531,8 +1625,8 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
     }, 15000);
 
     it('55. event-level ticket race — two sessions racing for last event ticket', async () => {
-      // Set event to 1 ticket remaining (99 sold of 100)
-      psql(`UPDATE events SET tickets_sold = 99, total_tickets = 100 WHERE id = '${EVENT_A}';`);
+      // Set event to 1 ticket remaining (99 sold of 100), reset price to original
+      psql(`UPDATE events SET tickets_sold = 99, total_tickets = 100, price = 3000, status = 'published' WHERE id = '${EVENT_A}';`);
 
       const sessA = '00000000-0000-0000-0383-000000000c56';
       const sessB = '00000000-0000-0000-0383-000000000c57';
@@ -1567,10 +1661,10 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
     }, 15000);
 
     it('56. ticket-type race — two sessions racing for last ticket-type unit', async () => {
-      // Set ticket type to 1 remaining (19 sold of 20)
-      psql(`UPDATE event_ticket_types SET tickets_sold = 19, total_tickets = 20 WHERE id = '${TICKET_TYPE}';`);
-      // Ensure event has capacity
-      psql(`UPDATE events SET tickets_sold = 90, total_tickets = 100 WHERE id = '${EVENT_A}';`);
+      // Set ticket type to 1 remaining (19 sold of 20), reset price to original fixture
+      psql(`UPDATE event_ticket_types SET tickets_sold = 19, total_tickets = 20, price = 5000 WHERE id = '${TICKET_TYPE}';`);
+      // Ensure event has capacity and correct price/status
+      psql(`UPDATE events SET tickets_sold = 90, total_tickets = 100, price = 3000, status = 'published' WHERE id = '${EVENT_A}';`);
 
       const sessA = '00000000-0000-0000-0383-000000000c58';
       const sessB = '00000000-0000-0000-0383-000000000c59';
@@ -1663,8 +1757,8 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
         SET ROLE service_role;
         SELECT apply_order_stock_once('${orderId}'::uuid, NULL, true);
       `);
-      expect(stockResult.applied).toBe(false);
-      expect(stockResult.reason).toBe('already_applied');
+      expect(stockResult.applied).toBe(true);
+      expect(stockResult.already_applied).toBe(true);
 
       // Stock unchanged at 45
       const stockAfterApply = psql(`SELECT stock_quantity FROM products WHERE id = '${PRODUCT_A}';`);

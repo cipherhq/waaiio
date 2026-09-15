@@ -795,7 +795,7 @@ BEGIN
     p_channel::booking_channel,
     v_committed_total,
     CASE WHEN v_committed_total > 0 THEN 'pending'::deposit_status ELSE 'none'::deposit_status END,
-    CASE WHEN v_committed_total > 0 THEN 'pending' ELSE 'confirmed' END,
+    CASE WHEN v_committed_total > 0 THEN 'pending'::reservation_status ELSE 'confirmed'::reservation_status END,
     v_committed_total,
     p_guest_name,
     p_guest_phone,
@@ -863,8 +863,7 @@ BEGIN
   -- 4. Void pending payments
   UPDATE payments
   SET status = 'failed',
-      gateway_status = p_reason,
-      updated_at = NOW()
+      gateway_status = p_reason
   WHERE (order_id = p_order_id OR metadata->>'order_id' = p_order_id::text)
     AND status = 'pending';
 
@@ -1029,7 +1028,7 @@ BEGIN
     'payment_request',
     v_committed_amount,
     CASE WHEN v_committed_amount > 0 THEN 'pending'::deposit_status ELSE 'none'::deposit_status END,
-    CASE WHEN v_committed_amount > 0 THEN 'pending' ELSE 'confirmed' END,
+    CASE WHEN v_committed_amount > 0 THEN 'pending'::reservation_status ELSE 'confirmed'::reservation_status END,
     v_committed_amount,
     1,
     p_guest_name,
@@ -1172,8 +1171,8 @@ BEGIN
     p_business_id, p_user_id, p_property_id,
     p_check_in, p_check_out, p_guests,
     v_committed_rate, v_committed_total, v_committed_deposit,
-    CASE WHEN v_payable > 0 THEN 'pending' ELSE 'none' END,
-    CASE WHEN v_payable > 0 THEN 'pending' ELSE 'confirmed' END,
+    CASE WHEN v_payable > 0 THEN 'pending'::deposit_status ELSE 'none'::deposit_status END,
+    CASE WHEN v_payable > 0 THEN 'pending'::reservation_status ELSE 'confirmed'::reservation_status END,
     p_special_requests, p_guest_name, p_guest_phone,
     'whatsapp', p_bot_session_id
   ) RETURNING id, reference_code INTO v_reservation_id, v_ref;
