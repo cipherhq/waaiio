@@ -1076,82 +1076,92 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
     }, 15000);
   });
 
-  // ── R90: Genuine pre-M383 cutover race proof ──
-  // Creates a FRESH isolated database with 001-382 (NOT 383).
-  // Uses pg_advisory_lock as a deterministic barrier:
-  //   Session A (migration): acquires advisory lock 99383, then applies M383 with psql -1,
-  //     then releases the lock. Session B's INSERT uses pg_advisory_lock(99383) BEFORE
-  //     the INSERT — it blocks until Session A releases (after M383 commits).
-  //   This proves Session B was demonstrably in-flight during the cutover.
-  describe('R90: genuine pre-M383 cutover race proof', () => {
-    it('42. concurrent INSERT across M383 cutover cannot commit as v1', async () => {
+  // ── R90: Genuine pre-M383 cutover race + grandfather v1 end-to-end ──
+  // Creates a FRESH isolated database with 001-382, seeds a genuine pre-M383
+  // quote with legacy addons (no addon.id), then applies canonical M383 via
+  // psql -1 while a concurrent INSERT races the cutover.
+  //
+  // Deterministic barrier: the migration SQL is prepended with
+  //   SELECT pg_advisory_lock(99383);
+  // which the migration session acquires INSIDE the -1 transaction.
+  // The test harness polls pg_locks from a THIRD connection to positively
+  // confirm the migration holds the lock (= cutover is in progress),
+  // THEN launches the racer. No timing inference.
+  describe('R90: genuine pre-M383 cutover race + grandfather v1 proof', () => {
+    it('42. cutover race + genuine v1 grandfather end-to-end', async () => {
       const r90db = 'waaiio_r90_test';
       const r90url = dbUrl.replace(/\/[^/]+$/, '/' + r90db);
       const fs = require('fs');
-      const path = require('path');
-      const migDir = path.resolve('supabase/migrations');
+      const pathMod = require('path');
+      const migDir = pathMod.resolve('supabase/migrations');
 
       const PRE_ROW_ID  = '00000000-0000-0000-0383-a00000000001';
       const RACE_ROW_ID = '00000000-0000-0000-0383-a00000000002';
       const POST_ROW_ID = '00000000-0000-0000-0383-a00000000003';
+      const R90_CUST_PHONE = '2349999990383';
 
       try { execSync(`dropdb --maintenance-db="${dbUrl}" --if-exists "${r90db}"`, { timeout: 10000 }); } catch { /* ok */ }
       execSync(`createdb --maintenance-db="${dbUrl}" "${r90db}"`, { timeout: 10000 });
 
+      // Helper to run SQL on the R90 database
+      const r90psql = (sql: string) => execSync(`psql "${r90url}" -tAXq -v ON_ERROR_STOP=1`, {
+        input: sql, encoding: 'utf-8', timeout: 15000,
+      }).trim();
+
       try {
-        // Apply 001-382 (skip 383)
+        // ── Step 1: Apply 001-382 (skip 383) ──
         const files = fs.readdirSync(migDir)
           .filter((f: string) => f.endsWith('.sql') && !f.startsWith('383'))
           .sort();
         for (const f of files) {
-          execSync(`psql "${r90url}" -q -v ON_ERROR_STOP=1 -f "${path.join(migDir, f)}"`, {
+          execSync(`psql "${r90url}" -q -v ON_ERROR_STOP=1 -f "${pathMod.join(migDir, f)}"`, {
             timeout: 60000, encoding: 'utf-8',
           });
         }
 
-        // Seed business for FK
-        execSync(`psql "${r90url}" -tAXq -v ON_ERROR_STOP=1`, {
-          input: `INSERT INTO businesses (id, name, slug, owner_id, status) VALUES ('${BIZ_ID}', 'R90 Biz', 'r90biz', gen_random_uuid(), 'active') ON CONFLICT DO NOTHING;`,
-          encoding: 'utf-8', timeout: 5000,
-        });
+        // ── Step 2: Seed genuine pre-M383 data ──
+        r90psql(`
+          INSERT INTO businesses (id, name, slug, owner_id, status, country_code, metadata)
+          VALUES ('${BIZ_ID}', 'R90 Biz', 'r90biz', gen_random_uuid(), 'active', 'NG',
+                  '{"custom_order_config":{"deposit_percentage":0}}'::jsonb)
+          ON CONFLICT DO NOTHING;
 
-        // Insert pre-M383 quote row
-        execSync(`psql "${r90url}" -tAXq -v ON_ERROR_STOP=1`, {
-          input: `INSERT INTO quote_requests (id, business_id, customer_phone, status, estimated_subtotal) VALUES ('${PRE_ROW_ID}', '${BIZ_ID}', '2341111111111', 'pending', 1000);`,
-          encoding: 'utf-8', timeout: 5000,
-        });
+          INSERT INTO products (id, business_id, name, price, stock_quantity, track_inventory, is_active)
+          VALUES ('${PRODUCT_A}', '${BIZ_ID}', 'R90 Widget', 1000, 50, true, true)
+          ON CONFLICT DO NOTHING;
+        `);
 
-        // Acquire advisory lock 99383 on a SEPARATE connection BEFORE migration starts.
-        // This lock will be held until we explicitly release it.
-        // Session B will attempt this same lock BEFORE its INSERT, blocking until release.
-        execSync(`psql "${r90url}" -tAXq -v ON_ERROR_STOP=1`, {
-          input: `SELECT pg_advisory_lock(99383);`,
-          encoding: 'utf-8', timeout: 5000,
-        });
-        // NOTE: pg_advisory_lock (non-transactional, session-level) persists across statements
-        // in the same connection. But execSync creates a new connection each time, so the lock
-        // is released when the connection closes. We need a different approach.
+        // Insert a genuine pre-M383 quote with legacy addons (NO addon.id)
+        // This row exists BEFORE M383 runs — it's a real grandfather row
+        r90psql(`
+          INSERT INTO quote_requests (id, business_id, customer_phone, customer_name,
+            status, cart_snapshot, estimated_subtotal, quoted_amount, quoted_at, expires_at)
+          VALUES (
+            '${PRE_ROW_ID}', '${BIZ_ID}', '${R90_CUST_PHONE}', 'R90 Customer',
+            'quoted',
+            '[{"product_id":"${PRODUCT_A}","quantity":2,"price":1000,"name":"R90 Widget",
+              "addons":[{"name":"Legacy Addon","price":150,"quantity":1}]}]'::jsonb,
+            2150, 2150, NOW(), NOW() + INTERVAL '24 hours'
+          );
+        `);
 
-        // Deterministic approach: Session B's SQL first acquires advisory lock 99383 (blocking
-        // until Session A releases it), THEN inserts. Session A's SQL is M383 + release of
-        // advisory lock 99383 at the END (after all M383 DDL commits). This guarantees
-        // Session B's INSERT executes AFTER Session A's migration commits.
-        //
-        // But wait — we want to prove Session B BLOCKS during migration, not just after.
-        // The ACCESS EXCLUSIVE from ALTER TABLE IS the barrier. Session B's INSERT on
-        // quote_requests will block until ALTER TABLE's transaction commits.
-        //
-        // The proof: Session B starts a transaction, inserts into quote_requests (blocks on
-        // ACCESS EXCLUSIVE), then reports the snapshot_version it got. If it got v2, the
-        // cutover was complete before the INSERT proceeded.
+        // Verify: pre-M383 quote_requests has NO snapshot_version column
+        const hasCol = r90psql(`
+          SELECT count(*) FROM information_schema.columns
+          WHERE table_name = 'quote_requests' AND column_name = 'snapshot_version';
+        `);
+        expect(parseInt(hasCol)).toBe(0);
 
-        // Read canonical M383
+        // ── Step 3: Apply canonical M383 with deterministic lock barrier ──
         const m383File = fs.readdirSync(migDir).find((f: string) => f.startsWith('383') && f.endsWith('.sql'));
         if (!m383File) throw new Error('M383 migration file not found');
-        const m383Sql = fs.readFileSync(path.join(migDir, m383File), 'utf-8');
+        const m383Sql = fs.readFileSync(pathMod.join(migDir, m383File), 'utf-8');
 
-        // Session A: apply M383 with psql -1 + pg_sleep(3) to hold ACCESS EXCLUSIVE
-        // The pg_sleep ensures Session B's INSERT is demonstrably blocked (not just fast)
+        // Prepend advisory lock acquisition + append hold (pg_sleep keeps transaction open)
+        // The advisory lock is acquired INSIDE the -1 transaction, so it's held until commit
+        const m383WithBarrier = 'SELECT pg_advisory_lock(99383);\n' + m383Sql + '\nSELECT pg_sleep(5);\n';
+
+        // Launch migration (Session A) — acquires ACCESS EXCLUSIVE + advisory lock 99383
         const sessionA = new Promise<{ stdout: string; stderr: string; code: number }>((resolve) => {
           const child = spawn('psql', [r90url, '-1', '-q', '-v', 'ON_ERROR_STOP=1'], {
             stdio: ['pipe', 'pipe', 'pipe'],
@@ -1160,13 +1170,29 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
           child.stdout.on('data', (d: Buffer) => { stdout += d.toString(); });
           child.stderr.on('data', (d: Buffer) => { stderr += d.toString(); });
           child.on('close', (code: number) => resolve({ stdout: stdout.trim(), stderr: stderr.trim(), code: code ?? 0 }));
-          // M383 DDL + sleep to hold lock, all in one -1 transaction
-          child.stdin.write(m383Sql + '\nSELECT pg_sleep(3);\n');
+          child.stdin.write(m383WithBarrier);
           child.stdin.end();
         });
 
-        // Session B: INSERT that will block on ACCESS EXCLUSIVE from ALTER TABLE.
-        // Wraps in a timing measurement via clock_timestamp() to prove blocking.
+        // ── Step 4: Poll pg_locks to positively confirm migration holds the lock ──
+        // This is the deterministic barrier — no timing inference
+        let lockConfirmed = false;
+        for (let i = 0; i < 60; i++) {  // poll for up to 30 seconds
+          await new Promise(r => setTimeout(r, 500));
+          try {
+            const lockHeld = r90psql(`
+              SELECT count(*) FROM pg_locks
+              WHERE locktype = 'advisory' AND objid = 99383 AND granted = true;
+            `);
+            if (parseInt(lockHeld) > 0) {
+              lockConfirmed = true;
+              break;
+            }
+          } catch { /* connection may briefly fail during ALTER TABLE */ }
+        }
+        expect(lockConfirmed).toBe(true);  // Migration is confirmed holding the lock
+
+        // ── Step 5: Launch racer (Session B) while migration is confirmed in-flight ──
         const sessionB = new Promise<{ stdout: string; stderr: string; code: number }>((resolve) => {
           const child = spawn('psql', [r90url, '-tAXq', '-v', 'ON_ERROR_STOP=1'], {
             stdio: ['pipe', 'pipe', 'pipe'],
@@ -1175,66 +1201,76 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
           child.stdout.on('data', (d: Buffer) => { stdout += d.toString(); });
           child.stderr.on('data', (d: Buffer) => { stderr += d.toString(); });
           child.on('close', (code: number) => resolve({ stdout: stdout.trim(), stderr: stderr.trim(), code: code ?? 0 }));
-          // Record wall-clock start, then INSERT (blocks on ACCESS EXCLUSIVE), then record end
           child.stdin.write(`
-            SELECT clock_timestamp() AS t_start \\gset
             INSERT INTO quote_requests (id, business_id, customer_phone, status, estimated_subtotal)
-              VALUES ('${RACE_ROW_ID}', '${BIZ_ID}', '2342222222222', 'pending', 2000)
-              RETURNING snapshot_version;
-            SELECT extract(epoch FROM clock_timestamp() - :'t_start')::int AS blocked_seconds;
+            VALUES ('${RACE_ROW_ID}', '${BIZ_ID}', '2342222222222', 'pending', 2000)
+            RETURNING snapshot_version;
           `);
           child.stdin.end();
         });
 
+        // Wait for both sessions to complete
         const [migResult, insertResult] = await Promise.all([sessionA, sessionB]);
 
-        // Migration must succeed
+        // ── Step 6: Verify results ──
+        // Migration succeeded
         expect(migResult.code).toBe(0);
 
-        // Session B must succeed
+        // Racer got v2 (cannot cross cutover as v1)
         expect(insertResult.code).toBe(0);
+        expect(insertResult.stdout.trim()).toBe('2');
 
-        // Parse Session B output: first line = snapshot_version, second line = blocked_seconds
-        const lines = insertResult.stdout.split('\n').map((l: string) => l.trim()).filter(Boolean);
-        const snapshotVersion = lines[0];
-        expect(snapshotVersion).toBe('2');
-
-        // If blocked_seconds is available, verify it was blocked ≥2s
-        if (lines.length > 1) {
-          const blockedSec = parseInt(lines[1]);
-          if (!isNaN(blockedSec)) {
-            expect(blockedSec).toBeGreaterThanOrEqual(2);
-          }
-        }
-
-        // Pre-migration row was grandfathered to v1
-        const preV = execSync(`psql "${r90url}" -tAXq -v ON_ERROR_STOP=1`, {
-          input: `SELECT snapshot_version FROM quote_requests WHERE id = '${PRE_ROW_ID}';`,
-          encoding: 'utf-8', timeout: 5000,
-        }).trim();
+        // Pre-migration row grandfathered to v1
+        const preV = r90psql(`SELECT snapshot_version FROM quote_requests WHERE id = '${PRE_ROW_ID}';`);
         expect(preV).toBe('1');
 
         // Post-cutover: omitted version → v2
-        const postV = execSync(`psql "${r90url}" -tAXq -v ON_ERROR_STOP=1`, {
-          input: `INSERT INTO quote_requests (id, business_id, customer_phone, status, estimated_subtotal)
-            VALUES ('${POST_ROW_ID}', '${BIZ_ID}', '2343333333333', 'pending', 3000)
-            RETURNING snapshot_version;`,
-          encoding: 'utf-8', timeout: 5000,
-        }).trim();
+        const postV = r90psql(`
+          INSERT INTO quote_requests (id, business_id, customer_phone, status, estimated_subtotal)
+          VALUES ('${POST_ROW_ID}', '${BIZ_ID}', '2343333333333', 'pending', 3000)
+          RETURNING snapshot_version;
+        `);
         expect(postV).toBe('2');
 
-        // Post-cutover: explicit v1 → rejected by trigger
+        // Post-cutover: explicit v1 → rejected
         const forgeR = (() => {
           try {
-            execSync(`psql "${r90url}" -tAXq -v ON_ERROR_STOP=1`, {
-              input: `INSERT INTO quote_requests (id, business_id, customer_phone, status, estimated_subtotal, snapshot_version) VALUES (gen_random_uuid(), '${BIZ_ID}', '2344444444444', 'pending', 4000, 1);`,
-              encoding: 'utf-8', timeout: 5000,
-            });
+            r90psql(`INSERT INTO quote_requests (id, business_id, customer_phone, status, estimated_subtotal, snapshot_version)
+              VALUES (gen_random_uuid(), '${BIZ_ID}', '2344444444444', 'pending', 4000, 1);`);
             return { ok: true, output: '' };
           } catch (e: any) { return { ok: false, output: e.message || '' }; }
         })();
         expect(forgeR.ok).toBe(false);
         expect(forgeR.output).toContain('snapshot_version_forge');
+
+        // ── Step 7: Genuine pre-M383 grandfather v1 end-to-end ──
+        // The PRE_ROW_ID quote was created BEFORE M383 with legacy addons (no addon.id).
+        // Now accept it through the real accept_order_quote_atomic path.
+        // This proves v1 quotes with legacy addons still work end-to-end.
+
+        // Create profile for customer identity
+        r90psql(`INSERT INTO profiles (id, phone) VALUES (gen_random_uuid(), '${R90_CUST_PHONE}') ON CONFLICT DO NOTHING;`);
+
+        const acceptResult = (() => {
+          try {
+            const raw = r90psql(`SET ROLE service_role; SELECT accept_order_quote_atomic('${PRE_ROW_ID}'::uuid, '${R90_CUST_PHONE}');`);
+            return JSON.parse(raw);
+          } catch (e: any) {
+            return { error: e.message || 'unknown' };
+          }
+        })();
+
+        expect(acceptResult.accepted).toBe(true);
+        expect(acceptResult.order_id).toBeTruthy();
+        expect(acceptResult.total).toBe(2150);  // quoted_amount from pre-M383 seed
+
+        // Verify order was created with the correct total
+        const orderTotal = r90psql(`SELECT total_amount FROM orders WHERE id = '${acceptResult.order_id}';`);
+        expect(parseInt(orderTotal)).toBe(2150);
+
+        // Verify quote status updated
+        const quoteStatus = r90psql(`SELECT status FROM quote_requests WHERE id = '${PRE_ROW_ID}';`);
+        expect(quoteStatus).toBe('accepted');
 
       } finally {
         try { execSync(`dropdb --maintenance-db="${dbUrl}" --if-exists "${r90db}"`, { timeout: 10000 }); } catch { /* ok */ }
