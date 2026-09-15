@@ -99,6 +99,10 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
     // Seed all test data into the already-migrated database.
     // Tables exist from migrations 001→383.
     psql(`
+      -- Profile (must precede businesses due to owner_id FK)
+      INSERT INTO profiles (id, phone) VALUES ('${USER_ID}', '${CUSTOMER_PHONE}')
+        ON CONFLICT (id) DO NOTHING;
+
       -- Business
       INSERT INTO businesses (id, name, slug, address, city, neighborhood, phone, country_code, owner_id, status, metadata)
         VALUES ('${BIZ_ID}', 'ECR Test Biz', 'ecr-test-biz-0383', '1 Test St', 'Lagos', 'VI', '+2340000000000', 'NG', '${USER_ID}', 'active',
@@ -106,10 +110,6 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
         ON CONFLICT (id) DO NOTHING;
       INSERT INTO businesses (id, name, slug, address, city, neighborhood, phone, country_code, owner_id, status)
         VALUES ('${BIZ_OTHER}', 'Other Biz', 'other-biz-0383', '2 Test St', 'Accra', 'East', '+2330000000000', 'GH', '${USER_ID}', 'active')
-        ON CONFLICT (id) DO NOTHING;
-
-      -- Profile
-      INSERT INTO profiles (id, phone) VALUES ('${USER_ID}', '${CUSTOMER_PHONE}')
         ON CONFLICT (id) DO NOTHING;
 
       -- Products
