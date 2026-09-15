@@ -100,12 +100,12 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
     // Tables exist from migrations 001→383.
     psql(`
       -- Business
-      INSERT INTO businesses (id, name, country_code, owner_id, metadata)
-        VALUES ('${BIZ_ID}', 'ECR Test Biz', 'NG', '${USER_ID}',
+      INSERT INTO businesses (id, name, slug, country_code, owner_id, status, metadata)
+        VALUES ('${BIZ_ID}', 'ECR Test Biz', 'ecr-test-biz-0383', 'NG', '${USER_ID}', 'active',
                 '{"custom_order_config":{"deposit_percentage":50}}'::jsonb)
         ON CONFLICT (id) DO NOTHING;
-      INSERT INTO businesses (id, name, country_code, owner_id)
-        VALUES ('${BIZ_OTHER}', 'Other Biz', 'GH', '${USER_ID}')
+      INSERT INTO businesses (id, name, slug, country_code, owner_id, status)
+        VALUES ('${BIZ_OTHER}', 'Other Biz', 'other-biz-0383', 'GH', '${USER_ID}', 'active')
         ON CONFLICT (id) DO NOTHING;
 
       -- Profile
