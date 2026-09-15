@@ -641,10 +641,14 @@ BEGIN
     IF v_buffer_count > 0 THEN RETURN QUERY SELECT NULL::uuid, NULL::text, false; RETURN; END IF;
   END IF;
   -- Use DB-authoritative deposit/total when revalidation succeeded
-  v_committed_deposit := CASE WHEN v_service_validated
-    THEN v_service.deposit_amount ELSE p_deposit_amount END;
-  v_committed_total := CASE WHEN v_service_validated
-    THEN v_service.price ELSE p_total_amount END;
+  -- Procedural branching: v_service is ONLY dereferenced when v_service_validated is true
+  IF v_service_validated THEN
+    v_committed_deposit := v_service.deposit_amount;
+    v_committed_total := v_service.price;
+  ELSE
+    v_committed_deposit := p_deposit_amount;
+    v_committed_total := p_total_amount;
+  END IF;
 
   INSERT INTO bookings (business_id, user_id, service_id, appointment_id, staff_id, staff_name, date, time, party_size, flow_type, channel, deposit_amount, deposit_status, status, guest_name, guest_phone, guest_email, special_requests, venue_address, end_date, addons_snapshot, promo_code_id, total_amount, quantity, location_id, bot_session_id)
   VALUES (p_business_id, p_user_id, CASE WHEN p_appointment_id IS NOT NULL THEN NULL ELSE p_service_id END, p_appointment_id, p_staff_id, p_staff_name, p_date, p_time::time, p_party_size, p_flow_type::flow_type, 'whatsapp'::booking_channel, v_committed_deposit, p_deposit_status::deposit_status, p_status::reservation_status, p_guest_name, p_guest_phone, p_guest_email, p_special_requests, p_venue_address, p_end_date, p_addons_snapshot, p_promo_code_id, v_committed_total, p_party_size, p_location_id, p_bot_session_id)

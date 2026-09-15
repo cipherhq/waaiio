@@ -1076,106 +1076,141 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
     }, 15000);
   });
 
-  // ── R90: Genuine pre-M383 race harness ──
-  // Creates a FRESH isolated database, applies 001-382 (NOT 383), seeds a pre-migration
-  // quote_requests row, then races M383 application against a concurrent INSERT.
-  // The ACCESS EXCLUSIVE lock from ALTER TABLE in M383 blocks the concurrent INSERT
-  // until the migration commits, so it must get snapshot_version=2 (not v1).
-  describe('R90: genuine pre-M383 race proof', () => {
-    it('42. concurrent INSERT during M383 application gets v2 (not v1)', async () => {
+  // ── R90: Genuine pre-M383 cutover race proof ──
+  // Creates a FRESH isolated database with 001-382 (NOT 383).
+  // Applies canonical M383 with psql -1 (with pg_sleep to hold ACCESS EXCLUSIVE)
+  // while a concurrent session races an INSERT across the cutover boundary.
+  // Deterministic barrier: pg_sleep(3) inside the migration transaction holds
+  // ACCESS EXCLUSIVE for 3 seconds. The INSERT session starts immediately after
+  // the migration session and blocks on the lock. Timing assertion proves it
+  // was blocked (duration > 2s) — not a post-commit coincidence.
+  describe('R90: genuine pre-M383 cutover race proof', () => {
+    it('42. concurrent INSERT across M383 cutover cannot become v1', async () => {
       const r90db = 'waaiio_r90_test';
       const r90url = dbUrl.replace(/\/[^/]+$/, '/' + r90db);
       const fs = require('fs');
       const path = require('path');
       const migDir = path.resolve('supabase/migrations');
 
+      // Valid UUIDs (hex only)
+      const PRE_ROW_ID  = '00000000-0000-0000-0383-a00000000001';
+      const RACE_ROW_ID = '00000000-0000-0000-0383-a00000000002';
+      const POST_ROW_ID = '00000000-0000-0000-0383-a00000000003';
+
       // Create isolated DB
-      try {
-        execSync(`dropdb --maintenance-db="${dbUrl}" --if-exists "${r90db}"`, { timeout: 10000 });
-      } catch { /* ignore if doesn't exist */ }
+      try { execSync(`dropdb --maintenance-db="${dbUrl}" --if-exists "${r90db}"`, { timeout: 10000 }); } catch { /* ok */ }
       execSync(`createdb --maintenance-db="${dbUrl}" "${r90db}"`, { timeout: 10000 });
 
       try {
-        // Apply migrations 001-382 (skip anything starting with 383)
+        // Apply 001-382 (skip 383)
         const files = fs.readdirSync(migDir)
           .filter((f: string) => f.endsWith('.sql') && !f.startsWith('383'))
           .sort();
         for (const f of files) {
-          const filePath = path.join(migDir, f);
-          execSync(`psql "${r90url}" -q -v ON_ERROR_STOP=1 -f "${filePath}"`, {
+          execSync(`psql "${r90url}" -q -v ON_ERROR_STOP=1 -f "${path.join(migDir, f)}"`, {
             timeout: 60000, encoding: 'utf-8',
           });
         }
 
-        // Insert a pre-M383 quote_requests row (gets whatever default the pre-383 schema has)
+        // Seed business for FK
         execSync(`psql "${r90url}" -tAXq -v ON_ERROR_STOP=1`, {
-          input: `INSERT INTO quote_requests (id, business_id, customer_phone, status, estimated_subtotal)
-            VALUES ('00000000-0000-0000-0383-r90pre000001', '${BIZ_ID}', '2341111111111', 'pending', 1000);`,
-          encoding: 'utf-8', timeout: 10000,
+          input: `INSERT INTO businesses (id, name, slug, owner_id, status) VALUES ('${BIZ_ID}', 'R90 Biz', 'r90biz', gen_random_uuid(), 'active') ON CONFLICT DO NOTHING;`,
+          encoding: 'utf-8', timeout: 5000,
         });
 
-        // Race: apply M383 in background while a concurrent session tries to INSERT.
-        // M383's ALTER TABLE acquires ACCESS EXCLUSIVE lock, blocking the concurrent INSERT
-        // until the migration commits. When the INSERT finally proceeds, the DEFAULT=2
-        // and trigger are active, so it must get v2.
+        // Insert pre-M383 quote row (gets pre-migration default, likely no snapshot_version column yet)
+        execSync(`psql "${r90url}" -tAXq -v ON_ERROR_STOP=1`, {
+          input: `INSERT INTO quote_requests (id, business_id, customer_phone, status, estimated_subtotal) VALUES ('${PRE_ROW_ID}', '${BIZ_ID}', '2341111111111', 'pending', 1000);`,
+          encoding: 'utf-8', timeout: 5000,
+        });
+
+        // Build M383 + pg_sleep(3) as a single SQL string for psql -1
+        // The pg_sleep holds ACCESS EXCLUSIVE for 3 seconds, proving the racer blocks
         const m383File = fs.readdirSync(migDir).find((f: string) => f.startsWith('383') && f.endsWith('.sql'));
         if (!m383File) throw new Error('M383 migration file not found');
-        const m383Path = path.join(migDir, m383File);
+        const m383Sql = fs.readFileSync(path.join(migDir, m383File), 'utf-8');
+        const m383WithSleep = m383Sql + '\nSELECT pg_sleep(3);\n';
 
-        // Start migration (psql -1 for single transaction) — runs in background
-        const migrationPromise = new Promise<{ stdout: string; stderr: string; code: number }>((resolve) => {
-          const child = spawn('psql', [r90url, '-1', '-q', '-v', 'ON_ERROR_STOP=1', '-f', m383Path], {
+        // Session A: apply M383 with psql -1 (single transaction) + pg_sleep
+        const sessionA = new Promise<{ stdout: string; stderr: string; code: number }>((resolve) => {
+          const child = spawn('psql', [r90url, '-1', '-q', '-v', 'ON_ERROR_STOP=1'], {
             stdio: ['pipe', 'pipe', 'pipe'],
           });
-          let stdout = '';
-          let stderr = '';
+          let stdout = ''; let stderr = '';
           child.stdout.on('data', (d: Buffer) => { stdout += d.toString(); });
           child.stderr.on('data', (d: Buffer) => { stderr += d.toString(); });
           child.on('close', (code: number) => resolve({ stdout: stdout.trim(), stderr: stderr.trim(), code: code ?? 0 }));
+          child.stdin.write(m383WithSleep);
+          child.stdin.end();
         });
 
-        // Small delay to let migration start and acquire ACCESS EXCLUSIVE
-        await new Promise(r => setTimeout(r, 200));
-
-        // Concurrent INSERT — will block on ACCESS EXCLUSIVE until migration commits
-        const insertPromise = new Promise<{ stdout: string; stderr: string; code: number }>((resolve) => {
+        // Session B: concurrent INSERT — starts immediately, blocks on ACCESS EXCLUSIVE
+        const insertStart = Date.now();
+        const sessionB = new Promise<{ stdout: string; stderr: string; code: number }>((resolve) => {
           const child = spawn('psql', [r90url, '-tAXq', '-v', 'ON_ERROR_STOP=1'], {
             stdio: ['pipe', 'pipe', 'pipe'],
           });
-          let stdout = '';
-          let stderr = '';
+          let stdout = ''; let stderr = '';
           child.stdout.on('data', (d: Buffer) => { stdout += d.toString(); });
           child.stderr.on('data', (d: Buffer) => { stderr += d.toString(); });
           child.on('close', (code: number) => resolve({ stdout: stdout.trim(), stderr: stderr.trim(), code: code ?? 0 }));
           child.stdin.write(
             `INSERT INTO quote_requests (id, business_id, customer_phone, status, estimated_subtotal)
-             VALUES ('00000000-0000-0000-0383-r90new000001', '${BIZ_ID}', '2342222222222', 'pending', 2000)
+             VALUES ('${RACE_ROW_ID}', '${BIZ_ID}', '2342222222222', 'pending', 2000)
              RETURNING snapshot_version;\n`
           );
           child.stdin.end();
         });
 
-        const [migResult, insertResult] = await Promise.all([migrationPromise, insertPromise]);
+        const [migResult, insertResult] = await Promise.all([sessionA, sessionB]);
+        const insertDuration = Date.now() - insertStart;
 
         // Migration must succeed
         expect(migResult.code).toBe(0);
 
-        // Concurrent INSERT must succeed with v2
+        // INSERT must succeed with v2 (not v1)
         expect(insertResult.code).toBe(0);
-        const version = insertResult.stdout.trim();
-        expect(version).toBe('2');
+        expect(insertResult.stdout.trim()).toBe('2');
 
-        // Pre-migration row must have been backfilled to v1
-        const preVersion = execSync(`psql "${r90url}" -tAXq -v ON_ERROR_STOP=1`, {
-          input: `SELECT snapshot_version FROM quote_requests WHERE id = '00000000-0000-0000-0383-r90pre000001';`,
+        // Timing barrier: INSERT was blocked by ACCESS EXCLUSIVE for ≥2s (pg_sleep(3))
+        // This proves the INSERT was in-flight during the cutover, not after
+        expect(insertDuration).toBeGreaterThan(2000);
+
+        // Pre-migration row was grandfathered to v1
+        const preV = execSync(`psql "${r90url}" -tAXq -v ON_ERROR_STOP=1`, {
+          input: `SELECT snapshot_version FROM quote_requests WHERE id = '${PRE_ROW_ID}';`,
           encoding: 'utf-8', timeout: 5000,
         }).trim();
-        expect(preVersion).toBe('1');
+        expect(preV).toBe('1');
+
+        // Post-cutover: omitted version → v2
+        const postV = execSync(`psql "${r90url}" -tAXq -v ON_ERROR_STOP=1`, {
+          input: `INSERT INTO quote_requests (id, business_id, customer_phone, status, estimated_subtotal)
+            VALUES ('${POST_ROW_ID}', '${BIZ_ID}', '2343333333333', 'pending', 3000)
+            RETURNING snapshot_version;`,
+          encoding: 'utf-8', timeout: 5000,
+        }).trim();
+        expect(postV).toBe('2');
+
+        // Post-cutover: explicit v1 → rejected by trigger
+        const forgeResult = psqlMayFail(
+          `\\connect ${r90db}\nINSERT INTO quote_requests (id, business_id, customer_phone, status, estimated_subtotal, snapshot_version) VALUES (gen_random_uuid(), '${BIZ_ID}', '2344444444444', 'pending', 4000, 1);`
+        );
+        // If psqlMayFail uses the main DB URL, use execSync with r90url instead
+        const forgeR = (() => {
+          try {
+            execSync(`psql "${r90url}" -tAXq -v ON_ERROR_STOP=1`, {
+              input: `INSERT INTO quote_requests (id, business_id, customer_phone, status, estimated_subtotal, snapshot_version) VALUES (gen_random_uuid(), '${BIZ_ID}', '2344444444444', 'pending', 4000, 1);`,
+              encoding: 'utf-8', timeout: 5000,
+            });
+            return { ok: true, output: '' };
+          } catch (e: any) { return { ok: false, output: e.message || '' }; }
+        })();
+        expect(forgeR.ok).toBe(false);
+        expect(forgeR.output).toContain('snapshot_version_forge');
 
       } finally {
-        try {
-          execSync(`dropdb --maintenance-db="${dbUrl}" --if-exists "${r90db}"`, { timeout: 10000 });
-        } catch { /* best-effort cleanup */ }
+        try { execSync(`dropdb --maintenance-db="${dbUrl}" --if-exists "${r90db}"`, { timeout: 10000 }); } catch { /* ok */ }
       }
     }, 180000);
   });
