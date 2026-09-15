@@ -88,6 +88,10 @@ const BOT_SESSION6 = '00000000-0000-0000-0383-000000000075';
 const BOT_SESSION7 = '00000000-0000-0000-0383-000000000076';
 const PAY_1        = '00000000-0000-0000-0383-000000000080';
 const ORDER_1      = '00000000-0000-0000-0383-000000000090';
+// Aliases for tests 43-53 (use consistent naming)
+const EVENT_ID     = EVENT_A;
+const TT_ID        = TICKET_TYPE;
+const SERVICE_ID   = SERVICE_A;
 const CUSTOMER_PHONE = '+2348099990383';
 
 describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
@@ -1072,50 +1076,108 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
     }, 15000);
   });
 
-  // ── R90: Canonical-artifact pre-M383 race proof ──
-  // This test creates a FRESH database without M383, applies the canonical M383
-  // artifact with psql -1, and proves a concurrent INSERT cannot become v1.
-  describe('R90: canonical M383 race proof', () => {
-    it('42. concurrent INSERT during M383 application gets v2 (not v1)', () => {
-      // We test this by verifying that AFTER M383 is applied (which it already is in CI),
-      // the snapshot_version trigger and default are active, and no insert can forge v1.
-      // This is the post-migration proof — the pre-M383 boundary is guaranteed by
-      // psql -1 and ACCESS EXCLUSIVE from ALTER TABLE.
+  // ── R90: Genuine pre-M383 race harness ──
+  // Creates a FRESH isolated database, applies 001-382 (NOT 383), seeds a pre-migration
+  // quote_requests row, then races M383 application against a concurrent INSERT.
+  // The ACCESS EXCLUSIVE lock from ALTER TABLE in M383 blocks the concurrent INSERT
+  // until the migration commits, so it must get snapshot_version=2 (not v1).
+  describe('R90: genuine pre-M383 race proof', () => {
+    it('42. concurrent INSERT during M383 application gets v2 (not v1)', async () => {
+      const r90db = 'waaiio_r90_test';
+      const r90url = dbUrl.replace(/\/[^/]+$/, '/' + r90db);
+      const fs = require('fs');
+      const path = require('path');
+      const migDir = path.resolve('supabase/migrations');
 
-      // Verify trigger is active
-      const triggerExists = psql(`
-        SELECT count(*) FROM pg_trigger t
-        JOIN pg_class c ON t.tgrelid = c.oid
-        WHERE c.relname = 'quote_requests' AND t.tgname = 'trg_snapshot_version_guard';
-      `);
-      expect(parseInt(triggerExists)).toBe(1);
+      // Create isolated DB
+      try {
+        execSync(`dropdb --maintenance-db="${dbUrl}" --if-exists "${r90db}"`, { timeout: 10000 });
+      } catch { /* ignore if doesn't exist */ }
+      execSync(`createdb --maintenance-db="${dbUrl}" "${r90db}"`, { timeout: 10000 });
 
-      // Verify DEFAULT is 2
-      const defaultVal = psql(`
-        SELECT column_default FROM information_schema.columns
-        WHERE table_name = 'quote_requests' AND column_name = 'snapshot_version';
-      `);
-      expect(defaultVal).toBe('2');
+      try {
+        // Apply migrations 001-382 (skip anything starting with 383)
+        const files = fs.readdirSync(migDir)
+          .filter((f: string) => f.endsWith('.sql') && !f.startsWith('383'))
+          .sort();
+        for (const f of files) {
+          const filePath = path.join(migDir, f);
+          execSync(`psql "${r90url}" -q -v ON_ERROR_STOP=1 -f "${filePath}"`, {
+            timeout: 60000, encoding: 'utf-8',
+          });
+        }
 
-      // Verify v1 INSERT is blocked
-      const forgeResult = psqlMayFail(`
-        INSERT INTO quote_requests (id, business_id, customer_phone, status, estimated_subtotal, snapshot_version)
-        VALUES (gen_random_uuid(), '${BIZ_ID}', '2340000000000', 'pending', 0, 1);
-      `);
-      expect(forgeResult.ok).toBe(false);
-      expect(forgeResult.output).toContain('snapshot_version_forge');
+        // Insert a pre-M383 quote_requests row (gets whatever default the pre-383 schema has)
+        execSync(`psql "${r90url}" -tAXq -v ON_ERROR_STOP=1`, {
+          input: `INSERT INTO quote_requests (id, business_id, customer_phone, status, estimated_subtotal)
+            VALUES ('00000000-0000-0000-0383-r90pre000001', '${BIZ_ID}', '2341111111111', 'pending', 1000);`,
+          encoding: 'utf-8', timeout: 10000,
+        });
 
-      // Verify omitted version → 2
-      const newId = psql(`
-        INSERT INTO quote_requests (id, business_id, customer_phone, status, estimated_subtotal)
-        VALUES (gen_random_uuid(), '${BIZ_ID}', '2340000000001', 'pending', 0)
-        RETURNING snapshot_version;
-      `);
-      expect(parseInt(newId)).toBe(2);
+        // Race: apply M383 in background while a concurrent session tries to INSERT.
+        // M383's ALTER TABLE acquires ACCESS EXCLUSIVE lock, blocking the concurrent INSERT
+        // until the migration commits. When the INSERT finally proceeds, the DEFAULT=2
+        // and trigger are active, so it must get v2.
+        const m383File = fs.readdirSync(migDir).find((f: string) => f.startsWith('383') && f.endsWith('.sql'));
+        if (!m383File) throw new Error('M383 migration file not found');
+        const m383Path = path.join(migDir, m383File);
 
-      // Cleanup
-      psql(`DELETE FROM quote_requests WHERE customer_phone IN ('2340000000000', '2340000000001');`);
-    });
+        // Start migration (psql -1 for single transaction) — runs in background
+        const migrationPromise = new Promise<{ stdout: string; stderr: string; code: number }>((resolve) => {
+          const child = spawn('psql', [r90url, '-1', '-q', '-v', 'ON_ERROR_STOP=1', '-f', m383Path], {
+            stdio: ['pipe', 'pipe', 'pipe'],
+          });
+          let stdout = '';
+          let stderr = '';
+          child.stdout.on('data', (d: Buffer) => { stdout += d.toString(); });
+          child.stderr.on('data', (d: Buffer) => { stderr += d.toString(); });
+          child.on('close', (code: number) => resolve({ stdout: stdout.trim(), stderr: stderr.trim(), code: code ?? 0 }));
+        });
+
+        // Small delay to let migration start and acquire ACCESS EXCLUSIVE
+        await new Promise(r => setTimeout(r, 200));
+
+        // Concurrent INSERT — will block on ACCESS EXCLUSIVE until migration commits
+        const insertPromise = new Promise<{ stdout: string; stderr: string; code: number }>((resolve) => {
+          const child = spawn('psql', [r90url, '-tAXq', '-v', 'ON_ERROR_STOP=1'], {
+            stdio: ['pipe', 'pipe', 'pipe'],
+          });
+          let stdout = '';
+          let stderr = '';
+          child.stdout.on('data', (d: Buffer) => { stdout += d.toString(); });
+          child.stderr.on('data', (d: Buffer) => { stderr += d.toString(); });
+          child.on('close', (code: number) => resolve({ stdout: stdout.trim(), stderr: stderr.trim(), code: code ?? 0 }));
+          child.stdin.write(
+            `INSERT INTO quote_requests (id, business_id, customer_phone, status, estimated_subtotal)
+             VALUES ('00000000-0000-0000-0383-r90new000001', '${BIZ_ID}', '2342222222222', 'pending', 2000)
+             RETURNING snapshot_version;\n`
+          );
+          child.stdin.end();
+        });
+
+        const [migResult, insertResult] = await Promise.all([migrationPromise, insertPromise]);
+
+        // Migration must succeed
+        expect(migResult.code).toBe(0);
+
+        // Concurrent INSERT must succeed with v2
+        expect(insertResult.code).toBe(0);
+        const version = insertResult.stdout.trim();
+        expect(version).toBe('2');
+
+        // Pre-migration row must have been backfilled to v1
+        const preVersion = execSync(`psql "${r90url}" -tAXq -v ON_ERROR_STOP=1`, {
+          input: `SELECT snapshot_version FROM quote_requests WHERE id = '00000000-0000-0000-0383-r90pre000001';`,
+          encoding: 'utf-8', timeout: 5000,
+        }).trim();
+        expect(preVersion).toBe('1');
+
+      } finally {
+        try {
+          execSync(`dropdb --maintenance-db="${dbUrl}" --if-exists "${r90db}"`, { timeout: 10000 });
+        } catch { /* best-effort cleanup */ }
+      }
+    }, 180000);
   });
 
   // ── Blocker 3: Expanded concurrency/ACL/invariant matrix ──
@@ -1234,6 +1296,340 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
       // tickets_sold should NOT have increased
       const sold = psql(`SELECT tickets_sold FROM events WHERE id = '${EVENT_ID}';`);
       expect(parseInt(sold)).toBe(5); // unchanged
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════
+  // ADDITIONAL RACE TESTS
+  // ═══════════════════════════════════════════════════════
+  describe('additional concurrency races', () => {
+    beforeEach(() => cleanOrders());
+
+    it('54. last VARIANT unit race — two sessions racing for variant stock=1', async () => {
+      // Set variant stock to 1
+      psql(`UPDATE product_variants SET stock_quantity = 1 WHERE id = '${VARIANT_A1}';`);
+
+      const sessA = '00000000-0000-0000-0383-000000000c54';
+      const sessB = '00000000-0000-0000-0383-000000000c55';
+      const items = JSON.stringify([
+        { product_id: PRODUCT_A, quantity: 1, unit_price: 1200, variant_id: VARIANT_A1 }
+      ]);
+
+      const makeSql = (botId: string) => `
+        SET ROLE service_role;
+        SELECT create_order_atomic(
+          '${botId}'::uuid, '${BIZ_ID}'::uuid, '${USER_ID}'::uuid,
+          'pending', NULL, NULL, 0, 0, 0, NULL, 'whatsapp', NULL, NULL, NULL, 0, 0,
+          NULL, NULL, NULL, NULL,
+          '${items}'::jsonb, NULL, true, 1200
+        );
+      `;
+
+      const [resultA, resultB] = await Promise.all([
+        psqlAsync(makeSql(sessA)),
+        psqlAsync(makeSql(sessB)),
+      ]);
+
+      const aOk = resultA.code === 0 && !resultA.stderr.includes('insufficient_stock');
+      const bOk = resultB.code === 0 && !resultB.stderr.includes('insufficient_stock');
+
+      // Exactly one succeeds
+      expect(aOk !== bOk).toBe(true);
+
+      // Variant stock is exactly 0
+      const stock = psql(`SELECT stock_quantity FROM product_variants WHERE id = '${VARIANT_A1}';`);
+      expect(parseInt(stock)).toBe(0);
+
+      // Exactly one order exists
+      const orderCount = psql(`SELECT count(*) FROM orders WHERE business_id = '${BIZ_ID}' AND status = 'pending';`);
+      expect(parseInt(orderCount)).toBe(1);
+    }, 15000);
+
+    it('55. event-level ticket race — two sessions racing for last event ticket', async () => {
+      // Set event to 1 ticket remaining (99 sold of 100)
+      psql(`UPDATE events SET tickets_sold = 99, total_tickets = 100 WHERE id = '${EVENT_A}';`);
+
+      const sessA = '00000000-0000-0000-0383-000000000c56';
+      const sessB = '00000000-0000-0000-0383-000000000c57';
+
+      const makeSql = (botId: string) => `
+        SET ROLE service_role;
+        SELECT * FROM purchase_tickets_atomic(
+          '${BIZ_ID}'::uuid, '${EVENT_A}'::uuid, NULL,
+          1, '${USER_ID}'::uuid,
+          'Guest', '${CUSTOMER_PHONE}', NULL,
+          3000, 'whatsapp', '${botId}'::uuid, 3000
+        );
+      `;
+
+      const [resultA, resultB] = await Promise.all([
+        psqlAsync(makeSql(sessA)),
+        psqlAsync(makeSql(sessB)),
+      ]);
+
+      // Parse ticket availability from results
+      // Format: booking_id|ref|tickets_available|...
+      const aAvail = resultA.code === 0 && resultA.stdout.includes('|t');
+      const bAvail = resultB.code === 0 && resultB.stdout.includes('|t');
+
+      // At most one gets tickets_available=true
+      // (The other gets tickets_available=false since only 1 ticket left)
+      expect(aAvail && bAvail).toBe(false);
+
+      // Total sold should be exactly 100
+      const sold = psql(`SELECT tickets_sold FROM events WHERE id = '${EVENT_A}';`);
+      expect(parseInt(sold)).toBe(100);
+    }, 15000);
+
+    it('56. ticket-type race — two sessions racing for last ticket-type unit', async () => {
+      // Set ticket type to 1 remaining (19 sold of 20)
+      psql(`UPDATE event_ticket_types SET tickets_sold = 19, total_tickets = 20 WHERE id = '${TICKET_TYPE}';`);
+      // Ensure event has capacity
+      psql(`UPDATE events SET tickets_sold = 90, total_tickets = 100 WHERE id = '${EVENT_A}';`);
+
+      const sessA = '00000000-0000-0000-0383-000000000c58';
+      const sessB = '00000000-0000-0000-0383-000000000c59';
+
+      const makeSql = (botId: string) => `
+        SET ROLE service_role;
+        SELECT * FROM purchase_tickets_atomic(
+          '${BIZ_ID}'::uuid, '${EVENT_A}'::uuid, '${TICKET_TYPE}'::uuid,
+          1, '${USER_ID}'::uuid,
+          'Guest', '${CUSTOMER_PHONE}', NULL,
+          5000, 'whatsapp', '${botId}'::uuid, 5000
+        );
+      `;
+
+      const [resultA, resultB] = await Promise.all([
+        psqlAsync(makeSql(sessA)),
+        psqlAsync(makeSql(sessB)),
+      ]);
+
+      const aAvail = resultA.code === 0 && resultA.stdout.includes('|t');
+      const bAvail = resultB.code === 0 && resultB.stdout.includes('|t');
+
+      // At most one succeeds with tickets_available=true
+      expect(aAvail && bAvail).toBe(false);
+
+      // Ticket type sold out at 20
+      const sold = psql(`SELECT tickets_sold FROM event_ticket_types WHERE id = '${TICKET_TYPE}';`);
+      expect(parseInt(sold)).toBe(20);
+    }, 15000);
+
+    it('57. overlapping property reservation race — two sessions racing for same dates', async () => {
+      const sessA = '00000000-0000-0000-0383-000000000c60';
+      const sessB = '00000000-0000-0000-0383-000000000c61';
+
+      const makeSql = (botId: string) => `
+        SET ROLE service_role;
+        SELECT create_reservation_atomic(
+          '${botId}'::uuid, '${BIZ_ID}'::uuid, '${USER_ID}'::uuid, '${PROPERTY_A}'::uuid,
+          (CURRENT_DATE + 80)::date, (CURRENT_DATE + 83)::date,
+          2, 15000, 45000, 5000, NULL, 'Guest', '${CUSTOMER_PHONE}'
+        );
+      `;
+
+      const [resultA, resultB] = await Promise.all([
+        psqlAsync(makeSql(sessA)),
+        psqlAsync(makeSql(sessB)),
+      ]);
+
+      const aOk = resultA.code === 0 && !resultA.stderr.includes('dates_unavailable');
+      const bOk = resultB.code === 0 && !resultB.stderr.includes('dates_unavailable');
+
+      // Exactly one succeeds — the other gets dates_unavailable
+      expect(aOk !== bOk).toBe(true);
+
+      // Exactly one reservation exists for those dates
+      const resCount = psql(`
+        SELECT count(*) FROM reservations
+        WHERE property_id = '${PROPERTY_A}'
+          AND check_in = (CURRENT_DATE + 80)
+          AND check_out = (CURRENT_DATE + 83);
+      `);
+      expect(parseInt(resCount)).toBe(1);
+    }, 15000);
+
+    it('58. stock-reserving order + apply_order_stock_once no-double-decrement', () => {
+      // Create order with validate_products=true (stock decremented at creation + marker)
+      const items = JSON.stringify([{ product_id: PRODUCT_A, quantity: 5, unit_price: 1000 }]);
+      const createR = psqlJson(`
+        SET ROLE service_role;
+        SELECT create_order_atomic(
+          '${BOT_SESSION}'::uuid, '${BIZ_ID}'::uuid, '${USER_ID}'::uuid,
+          'pending', NULL, NULL, 0, 0, 0, NULL, 'whatsapp', NULL, NULL, NULL, 0, 0,
+          NULL, NULL, NULL, NULL,
+          '${items}'::jsonb, NULL, true, 5000
+        );
+      `);
+      expect(createR.created).toBe(true);
+      const orderId = createR.order_id as string;
+
+      // Stock should be 45 (50 - 5)
+      const stockAfterCreate = psql(`SELECT stock_quantity FROM products WHERE id = '${PRODUCT_A}';`);
+      expect(parseInt(stockAfterCreate)).toBe(45);
+
+      // Marker should exist
+      const markerBefore = psql(`SELECT count(*) FROM order_stock_applications WHERE order_id = '${orderId}';`);
+      expect(parseInt(markerBefore)).toBe(1);
+
+      // Call apply_order_stock_once — should return already_applied, not decrement again
+      const stockResult = psqlJson(`
+        SET ROLE service_role;
+        SELECT apply_order_stock_once('${orderId}'::uuid, NULL, true);
+      `);
+      expect(stockResult.applied).toBe(false);
+      expect(stockResult.reason).toBe('already_applied');
+
+      // Stock unchanged at 45
+      const stockAfterApply = psql(`SELECT stock_quantity FROM products WHERE id = '${PRODUCT_A}';`);
+      expect(parseInt(stockAfterApply)).toBe(45);
+    });
+
+    it('59. genuine v1 grandfather proof — v1 row stays v1 and is accepted by accept_order_quote_atomic', () => {
+      // The QUOTE_V1 row was seeded in beforeAll with snapshot_version=1
+      // Verify it still has v1
+      const v = psql(`SELECT snapshot_version FROM quote_requests WHERE id = '${QUOTE_V1}';`);
+      expect(parseInt(v)).toBe(1);
+
+      // Reset quote status for acceptance
+      psql(`
+        ALTER TABLE quote_requests DISABLE TRIGGER trg_snapshot_version_guard;
+        UPDATE quote_requests SET status = 'quoted', order_id = NULL, responded_at = NULL
+        WHERE id = '${QUOTE_V1}';
+        ALTER TABLE quote_requests ENABLE TRIGGER trg_snapshot_version_guard;
+      `);
+
+      // accept_order_quote_atomic should accept the v1 quote (v1 addons lack IDs,
+      // but v1 path skips addon validation)
+      const r = psqlJson(`
+        SET ROLE service_role;
+        SELECT accept_order_quote_atomic('${QUOTE_V1}'::uuid, '${CUSTOMER_PHONE}');
+      `);
+      expect(r.accepted).toBe(true);
+      expect(r.order_id).toBeTruthy();
+      expect(r.total).toBe(1100);
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════
+  // COMPLETE ACL MATRIX
+  // ═══════════════════════════════════════════════════════
+  describe('complete ACL matrix', () => {
+    // Exact type signatures from M383 ACL blocks
+    const COA_SIG = 'uuid, uuid, uuid, text, text, text, int, int, int, uuid, text, text, uuid, text, int, int, text, text, text, text, jsonb, uuid, boolean, int';
+    const BSA_SIG = 'uuid,uuid,uuid,uuid,date,text,int,int,text,int,text,text,text,text,text,text,text,date,jsonb,uuid,int,text,uuid,uuid,integer,integer,uuid,uuid,int,int';
+    const PTA_SIG = 'uuid, uuid, uuid, integer, uuid, text, text, text, integer, text, uuid, int';
+    const COI_SIG = 'uuid, text';
+    const CPBA_SIG = 'uuid, uuid, uuid, uuid, int, text, text, text, int';
+    const CRA_SIG = 'uuid, uuid, uuid, uuid, date, date, int, int, int, int, text, text, text';
+    const AOQA_SIG = 'uuid, text';
+
+    it('60. create_order_atomic: anon denied, authenticated denied, service_role allowed', () => {
+      const anonR = psql(`SELECT has_function_privilege('anon', 'create_order_atomic(${COA_SIG})', 'EXECUTE');`);
+      expect(anonR).toBe('f');
+      const authR = psql(`SELECT has_function_privilege('authenticated', 'create_order_atomic(${COA_SIG})', 'EXECUTE');`);
+      expect(authR).toBe('f');
+      const srR = psql(`SELECT has_function_privilege('service_role', 'create_order_atomic(${COA_SIG})', 'EXECUTE');`);
+      expect(srR).toBe('t');
+    });
+
+    it('61. book_slot_atomic: anon denied, authenticated denied, service_role allowed', () => {
+      const anonR = psql(`SELECT has_function_privilege('anon', 'book_slot_atomic(${BSA_SIG})', 'EXECUTE');`);
+      expect(anonR).toBe('f');
+      const authR = psql(`SELECT has_function_privilege('authenticated', 'book_slot_atomic(${BSA_SIG})', 'EXECUTE');`);
+      expect(authR).toBe('f');
+      const srR = psql(`SELECT has_function_privilege('service_role', 'book_slot_atomic(${BSA_SIG})', 'EXECUTE');`);
+      expect(srR).toBe('t');
+    });
+
+    it('62. purchase_tickets_atomic: anon denied, authenticated denied, service_role allowed', () => {
+      const anonR = psql(`SELECT has_function_privilege('anon', 'purchase_tickets_atomic(${PTA_SIG})', 'EXECUTE');`);
+      expect(anonR).toBe('f');
+      const authR = psql(`SELECT has_function_privilege('authenticated', 'purchase_tickets_atomic(${PTA_SIG})', 'EXECUTE');`);
+      expect(authR).toBe('f');
+      const srR = psql(`SELECT has_function_privilege('service_role', 'purchase_tickets_atomic(${PTA_SIG})', 'EXECUTE');`);
+      expect(srR).toBe('t');
+    });
+
+    it('63. cancel_order_immediate: anon denied, authenticated denied, service_role allowed', () => {
+      const anonR = psql(`SELECT has_function_privilege('anon', 'cancel_order_immediate(${COI_SIG})', 'EXECUTE');`);
+      expect(anonR).toBe('f');
+      const authR = psql(`SELECT has_function_privilege('authenticated', 'cancel_order_immediate(${COI_SIG})', 'EXECUTE');`);
+      expect(authR).toBe('f');
+      const srR = psql(`SELECT has_function_privilege('service_role', 'cancel_order_immediate(${COI_SIG})', 'EXECUTE');`);
+      expect(srR).toBe('t');
+    });
+
+    it('64. create_payment_booking_atomic: anon denied, authenticated denied, service_role allowed', () => {
+      const anonR = psql(`SELECT has_function_privilege('anon', 'create_payment_booking_atomic(${CPBA_SIG})', 'EXECUTE');`);
+      expect(anonR).toBe('f');
+      const authR = psql(`SELECT has_function_privilege('authenticated', 'create_payment_booking_atomic(${CPBA_SIG})', 'EXECUTE');`);
+      expect(authR).toBe('f');
+      const srR = psql(`SELECT has_function_privilege('service_role', 'create_payment_booking_atomic(${CPBA_SIG})', 'EXECUTE');`);
+      expect(srR).toBe('t');
+    });
+
+    it('65. create_reservation_atomic: anon denied, authenticated denied, service_role allowed', () => {
+      const anonR = psql(`SELECT has_function_privilege('anon', 'create_reservation_atomic(${CRA_SIG})', 'EXECUTE');`);
+      expect(anonR).toBe('f');
+      const authR = psql(`SELECT has_function_privilege('authenticated', 'create_reservation_atomic(${CRA_SIG})', 'EXECUTE');`);
+      expect(authR).toBe('f');
+      const srR = psql(`SELECT has_function_privilege('service_role', 'create_reservation_atomic(${CRA_SIG})', 'EXECUTE');`);
+      expect(srR).toBe('t');
+    });
+
+    it('66. accept_order_quote_atomic: anon denied, authenticated denied, service_role allowed', () => {
+      const anonR = psql(`SELECT has_function_privilege('anon', 'accept_order_quote_atomic(${AOQA_SIG})', 'EXECUTE');`);
+      expect(anonR).toBe('f');
+      const authR = psql(`SELECT has_function_privilege('authenticated', 'accept_order_quote_atomic(${AOQA_SIG})', 'EXECUTE');`);
+      expect(authR).toBe('f');
+      const srR = psql(`SELECT has_function_privilege('service_role', 'accept_order_quote_atomic(${AOQA_SIG})', 'EXECUTE');`);
+      expect(srR).toBe('t');
+    });
+
+    it('67. prevent_snapshot_version_downgrade trigger is not service_role-restricted (fires for all roles)', () => {
+      // The trigger function prevent_snapshot_version_downgrade must exist
+      const exists = psql(`
+        SELECT count(*) FROM pg_proc p
+        JOIN pg_namespace n ON n.oid = p.pronamespace
+        WHERE p.proname = 'prevent_snapshot_version_downgrade';
+      `);
+      expect(parseInt(exists)).toBeGreaterThanOrEqual(1);
+
+      // It should be a trigger function, not an RPC — verify it's used by a trigger
+      const triggerCount = psql(`
+        SELECT count(*) FROM pg_trigger t
+        JOIN pg_class c ON t.tgrelid = c.oid
+        JOIN pg_proc p ON t.tgfoid = p.oid
+        WHERE p.proname = 'prevent_snapshot_version_downgrade';
+      `);
+      expect(parseInt(triggerCount)).toBeGreaterThanOrEqual(1);
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════
+  // STALE-OVERLOAD ABSENCE
+  // ═══════════════════════════════════════════════════════
+  describe('stale-overload absence', () => {
+    it('68. exactly 1 signature in pg_proc for each M383 RPC', () => {
+      const rpcs = [
+        'create_order_atomic',
+        'book_slot_atomic',
+        'purchase_tickets_atomic',
+        'cancel_order_immediate',
+        'create_payment_booking_atomic',
+        'create_reservation_atomic',
+        'accept_order_quote_atomic',
+      ];
+      for (const rpc of rpcs) {
+        const count = psql(`
+          SELECT COUNT(*) FROM pg_proc p
+          JOIN pg_namespace n ON n.oid = p.pronamespace
+          WHERE n.nspname = 'public' AND p.proname = '${rpc}';
+        `);
+        expect(parseInt(count)).toBe(1);
+      }
     });
   });
 });

@@ -528,6 +528,7 @@ DECLARE v_count int; v_buffer_count int; v_booking_id uuid; v_ref text;
   v_effective_duration int;
   v_committed_deposit int;
   v_committed_total int;
+  v_service_validated boolean := false;
 BEGIN
   -- ── Bot session idempotency ──
   IF p_bot_session_id IS NOT NULL THEN
@@ -563,6 +564,7 @@ BEGIN
     v_effective_max_capacity := COALESCE(v_service.max_capacity, p_max_capacity);
     v_effective_buffer := COALESCE((v_service.metadata->>'buffer_minutes')::int, p_buffer_minutes);
     v_effective_duration := COALESCE(v_service.duration_minutes, p_duration);
+    v_service_validated := true;
   ELSE
     -- Legacy: use caller-supplied values
     v_effective_max_capacity := p_max_capacity;
@@ -578,7 +580,8 @@ BEGIN
     PERFORM pg_advisory_xact_lock(v_lock_key);
     SELECT cs.id, cs.business_id, cs.service_id, cs.date, cs.start_time,
            cs.capacity, cs.status, cs.staff_id, cs.location_id,
-           s.is_class, s.requires_staff, s.duration_minutes, s.is_active AS svc_active
+           s.is_class, s.requires_staff, s.duration_minutes, s.is_active AS svc_active,
+           s.price AS svc_price, s.deposit_amount AS svc_deposit
     INTO v_cs FROM class_sessions cs JOIN services s ON s.id = cs.service_id
     WHERE cs.id = p_class_session_id;
     IF NOT FOUND THEN RETURN QUERY SELECT NULL::uuid, NULL::text, false; RETURN; END IF;
@@ -599,8 +602,13 @@ BEGIN
     END IF;
     SELECT COALESCE(SUM(b.party_size), 0) INTO v_occupied FROM bookings b WHERE b.class_session_id = p_class_session_id AND b.status IN ('confirmed', 'pending', 'in_progress');
     IF v_occupied + p_party_size > v_cs.capacity THEN RETURN QUERY SELECT NULL::uuid, NULL::text, false; RETURN; END IF;
+    -- Class-session monetary authority: use service price from DB when revalidation active
+    v_committed_deposit := CASE WHEN p_expected_price IS NOT NULL
+      THEN COALESCE(v_cs.svc_deposit, 0) ELSE p_deposit_amount END;
+    v_committed_total := CASE WHEN p_expected_price IS NOT NULL
+      THEN COALESCE(v_cs.svc_price, 0) ELSE p_total_amount END;
     INSERT INTO bookings (business_id, user_id, service_id, appointment_id, staff_id, staff_name, date, time, party_size, flow_type, channel, deposit_amount, deposit_status, status, guest_name, guest_phone, guest_email, special_requests, venue_address, end_date, addons_snapshot, promo_code_id, total_amount, quantity, location_id, bot_session_id, class_session_id)
-    VALUES (p_business_id, p_user_id, v_cs.service_id, NULL, v_cs.staff_id, v_canonical_staff_name, v_cs.date, v_cs.start_time, p_party_size, p_flow_type::flow_type, 'whatsapp'::booking_channel, p_deposit_amount, p_deposit_status::deposit_status, p_status::reservation_status, p_guest_name, p_guest_phone, p_guest_email, p_special_requests, p_venue_address, p_end_date, p_addons_snapshot, p_promo_code_id, p_total_amount, p_party_size, v_cs.location_id, p_bot_session_id, p_class_session_id)
+    VALUES (p_business_id, p_user_id, v_cs.service_id, NULL, v_cs.staff_id, v_canonical_staff_name, v_cs.date, v_cs.start_time, p_party_size, p_flow_type::flow_type, 'whatsapp'::booking_channel, v_committed_deposit, p_deposit_status::deposit_status, p_status::reservation_status, p_guest_name, p_guest_phone, p_guest_email, p_special_requests, p_venue_address, p_end_date, p_addons_snapshot, p_promo_code_id, v_committed_total, p_party_size, v_cs.location_id, p_bot_session_id, p_class_session_id)
     RETURNING id, bookings.reference_code INTO v_booking_id, v_ref;
     RETURN QUERY SELECT v_booking_id, v_ref, true; RETURN;
   END IF;
@@ -632,10 +640,10 @@ BEGIN
     SELECT COUNT(*) INTO v_buffer_count FROM bookings WHERE business_id = p_business_id AND date = p_date AND status IN ('pending', 'confirmed', 'in_progress') AND (p_staff_id IS NULL OR staff_id = p_staff_id) AND time != p_time::time AND (p_time::time < (time + make_interval(mins => COALESCE(v_effective_duration, 30) + v_effective_buffer)) AND (p_time::time + make_interval(mins => COALESCE(v_effective_duration, 30))) > (time - make_interval(mins => v_effective_buffer)));
     IF v_buffer_count > 0 THEN RETURN QUERY SELECT NULL::uuid, NULL::text, false; RETURN; END IF;
   END IF;
-  -- Use DB-authoritative deposit/total when revalidation is active
-  v_committed_deposit := CASE WHEN p_expected_price IS NOT NULL AND v_service.id IS NOT NULL
+  -- Use DB-authoritative deposit/total when revalidation succeeded
+  v_committed_deposit := CASE WHEN v_service_validated
     THEN v_service.deposit_amount ELSE p_deposit_amount END;
-  v_committed_total := CASE WHEN p_expected_price IS NOT NULL AND v_service.id IS NOT NULL
+  v_committed_total := CASE WHEN v_service_validated
     THEN v_service.price ELSE p_total_amount END;
 
   INSERT INTO bookings (business_id, user_id, service_id, appointment_id, staff_id, staff_name, date, time, party_size, flow_type, channel, deposit_amount, deposit_status, status, guest_name, guest_phone, guest_email, special_requests, venue_address, end_date, addons_snapshot, promo_code_id, total_amount, quantity, location_id, bot_session_id)
