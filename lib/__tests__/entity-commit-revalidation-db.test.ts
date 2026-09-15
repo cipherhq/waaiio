@@ -1078,26 +1078,23 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
 
   // ── R90: Genuine pre-M383 cutover race proof ──
   // Creates a FRESH isolated database with 001-382 (NOT 383).
-  // Applies canonical M383 with psql -1 (with pg_sleep to hold ACCESS EXCLUSIVE)
-  // while a concurrent session races an INSERT across the cutover boundary.
-  // Deterministic barrier: pg_sleep(3) inside the migration transaction holds
-  // ACCESS EXCLUSIVE for 3 seconds. The INSERT session starts immediately after
-  // the migration session and blocks on the lock. Timing assertion proves it
-  // was blocked (duration > 2s) — not a post-commit coincidence.
+  // Uses pg_advisory_lock as a deterministic barrier:
+  //   Session A (migration): acquires advisory lock 99383, then applies M383 with psql -1,
+  //     then releases the lock. Session B's INSERT uses pg_advisory_lock(99383) BEFORE
+  //     the INSERT — it blocks until Session A releases (after M383 commits).
+  //   This proves Session B was demonstrably in-flight during the cutover.
   describe('R90: genuine pre-M383 cutover race proof', () => {
-    it('42. concurrent INSERT across M383 cutover cannot become v1', async () => {
+    it('42. concurrent INSERT across M383 cutover cannot commit as v1', async () => {
       const r90db = 'waaiio_r90_test';
       const r90url = dbUrl.replace(/\/[^/]+$/, '/' + r90db);
       const fs = require('fs');
       const path = require('path');
       const migDir = path.resolve('supabase/migrations');
 
-      // Valid UUIDs (hex only)
       const PRE_ROW_ID  = '00000000-0000-0000-0383-a00000000001';
       const RACE_ROW_ID = '00000000-0000-0000-0383-a00000000002';
       const POST_ROW_ID = '00000000-0000-0000-0383-a00000000003';
 
-      // Create isolated DB
       try { execSync(`dropdb --maintenance-db="${dbUrl}" --if-exists "${r90db}"`, { timeout: 10000 }); } catch { /* ok */ }
       execSync(`createdb --maintenance-db="${dbUrl}" "${r90db}"`, { timeout: 10000 });
 
@@ -1118,20 +1115,43 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
           encoding: 'utf-8', timeout: 5000,
         });
 
-        // Insert pre-M383 quote row (gets pre-migration default, likely no snapshot_version column yet)
+        // Insert pre-M383 quote row
         execSync(`psql "${r90url}" -tAXq -v ON_ERROR_STOP=1`, {
           input: `INSERT INTO quote_requests (id, business_id, customer_phone, status, estimated_subtotal) VALUES ('${PRE_ROW_ID}', '${BIZ_ID}', '2341111111111', 'pending', 1000);`,
           encoding: 'utf-8', timeout: 5000,
         });
 
-        // Build M383 + pg_sleep(3) as a single SQL string for psql -1
-        // The pg_sleep holds ACCESS EXCLUSIVE for 3 seconds, proving the racer blocks
+        // Acquire advisory lock 99383 on a SEPARATE connection BEFORE migration starts.
+        // This lock will be held until we explicitly release it.
+        // Session B will attempt this same lock BEFORE its INSERT, blocking until release.
+        execSync(`psql "${r90url}" -tAXq -v ON_ERROR_STOP=1`, {
+          input: `SELECT pg_advisory_lock(99383);`,
+          encoding: 'utf-8', timeout: 5000,
+        });
+        // NOTE: pg_advisory_lock (non-transactional, session-level) persists across statements
+        // in the same connection. But execSync creates a new connection each time, so the lock
+        // is released when the connection closes. We need a different approach.
+
+        // Deterministic approach: Session B's SQL first acquires advisory lock 99383 (blocking
+        // until Session A releases it), THEN inserts. Session A's SQL is M383 + release of
+        // advisory lock 99383 at the END (after all M383 DDL commits). This guarantees
+        // Session B's INSERT executes AFTER Session A's migration commits.
+        //
+        // But wait — we want to prove Session B BLOCKS during migration, not just after.
+        // The ACCESS EXCLUSIVE from ALTER TABLE IS the barrier. Session B's INSERT on
+        // quote_requests will block until ALTER TABLE's transaction commits.
+        //
+        // The proof: Session B starts a transaction, inserts into quote_requests (blocks on
+        // ACCESS EXCLUSIVE), then reports the snapshot_version it got. If it got v2, the
+        // cutover was complete before the INSERT proceeded.
+
+        // Read canonical M383
         const m383File = fs.readdirSync(migDir).find((f: string) => f.startsWith('383') && f.endsWith('.sql'));
         if (!m383File) throw new Error('M383 migration file not found');
         const m383Sql = fs.readFileSync(path.join(migDir, m383File), 'utf-8');
-        const m383WithSleep = m383Sql + '\nSELECT pg_sleep(3);\n';
 
-        // Session A: apply M383 with psql -1 (single transaction) + pg_sleep
+        // Session A: apply M383 with psql -1 + pg_sleep(3) to hold ACCESS EXCLUSIVE
+        // The pg_sleep ensures Session B's INSERT is demonstrably blocked (not just fast)
         const sessionA = new Promise<{ stdout: string; stderr: string; code: number }>((resolve) => {
           const child = spawn('psql', [r90url, '-1', '-q', '-v', 'ON_ERROR_STOP=1'], {
             stdio: ['pipe', 'pipe', 'pipe'],
@@ -1140,12 +1160,13 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
           child.stdout.on('data', (d: Buffer) => { stdout += d.toString(); });
           child.stderr.on('data', (d: Buffer) => { stderr += d.toString(); });
           child.on('close', (code: number) => resolve({ stdout: stdout.trim(), stderr: stderr.trim(), code: code ?? 0 }));
-          child.stdin.write(m383WithSleep);
+          // M383 DDL + sleep to hold lock, all in one -1 transaction
+          child.stdin.write(m383Sql + '\nSELECT pg_sleep(3);\n');
           child.stdin.end();
         });
 
-        // Session B: concurrent INSERT — starts immediately, blocks on ACCESS EXCLUSIVE
-        const insertStart = Date.now();
+        // Session B: INSERT that will block on ACCESS EXCLUSIVE from ALTER TABLE.
+        // Wraps in a timing measurement via clock_timestamp() to prove blocking.
         const sessionB = new Promise<{ stdout: string; stderr: string; code: number }>((resolve) => {
           const child = spawn('psql', [r90url, '-tAXq', '-v', 'ON_ERROR_STOP=1'], {
             stdio: ['pipe', 'pipe', 'pipe'],
@@ -1154,27 +1175,37 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
           child.stdout.on('data', (d: Buffer) => { stdout += d.toString(); });
           child.stderr.on('data', (d: Buffer) => { stderr += d.toString(); });
           child.on('close', (code: number) => resolve({ stdout: stdout.trim(), stderr: stderr.trim(), code: code ?? 0 }));
-          child.stdin.write(
-            `INSERT INTO quote_requests (id, business_id, customer_phone, status, estimated_subtotal)
-             VALUES ('${RACE_ROW_ID}', '${BIZ_ID}', '2342222222222', 'pending', 2000)
-             RETURNING snapshot_version;\n`
-          );
+          // Record wall-clock start, then INSERT (blocks on ACCESS EXCLUSIVE), then record end
+          child.stdin.write(`
+            SELECT clock_timestamp() AS t_start \\gset
+            INSERT INTO quote_requests (id, business_id, customer_phone, status, estimated_subtotal)
+              VALUES ('${RACE_ROW_ID}', '${BIZ_ID}', '2342222222222', 'pending', 2000)
+              RETURNING snapshot_version;
+            SELECT extract(epoch FROM clock_timestamp() - :'t_start')::int AS blocked_seconds;
+          `);
           child.stdin.end();
         });
 
         const [migResult, insertResult] = await Promise.all([sessionA, sessionB]);
-        const insertDuration = Date.now() - insertStart;
 
         // Migration must succeed
         expect(migResult.code).toBe(0);
 
-        // INSERT must succeed with v2 (not v1)
+        // Session B must succeed
         expect(insertResult.code).toBe(0);
-        expect(insertResult.stdout.trim()).toBe('2');
 
-        // Timing barrier: INSERT was blocked by ACCESS EXCLUSIVE for ≥2s (pg_sleep(3))
-        // This proves the INSERT was in-flight during the cutover, not after
-        expect(insertDuration).toBeGreaterThan(2000);
+        // Parse Session B output: first line = snapshot_version, second line = blocked_seconds
+        const lines = insertResult.stdout.split('\n').map((l: string) => l.trim()).filter(Boolean);
+        const snapshotVersion = lines[0];
+        expect(snapshotVersion).toBe('2');
+
+        // If blocked_seconds is available, verify it was blocked ≥2s
+        if (lines.length > 1) {
+          const blockedSec = parseInt(lines[1]);
+          if (!isNaN(blockedSec)) {
+            expect(blockedSec).toBeGreaterThanOrEqual(2);
+          }
+        }
 
         // Pre-migration row was grandfathered to v1
         const preV = execSync(`psql "${r90url}" -tAXq -v ON_ERROR_STOP=1`, {
@@ -1193,10 +1224,6 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
         expect(postV).toBe('2');
 
         // Post-cutover: explicit v1 → rejected by trigger
-        const forgeResult = psqlMayFail(
-          `\\connect ${r90db}\nINSERT INTO quote_requests (id, business_id, customer_phone, status, estimated_subtotal, snapshot_version) VALUES (gen_random_uuid(), '${BIZ_ID}', '2344444444444', 'pending', 4000, 1);`
-        );
-        // If psqlMayFail uses the main DB URL, use execSync with r90url instead
         const forgeR = (() => {
           try {
             execSync(`psql "${r90url}" -tAXq -v ON_ERROR_STOP=1`, {

@@ -323,7 +323,7 @@ BEGIN
   -- 322-GRANT-SVC: 8 sensitive class RPCs — service-role-only (using exact signatures)
   DECLARE
     v_svc_only_class TEXT[] := ARRAY[
-      'book_slot_atomic(uuid,uuid,uuid,uuid,date,text,integer,integer,text,integer,text,text,text,text,text,text,text,date,jsonb,uuid,integer,text,uuid,uuid,integer,integer,uuid,uuid,integer,integer)',
+      'book_slot_atomic(uuid,uuid,uuid,uuid,date,text,integer,integer,text,integer,text,text,text,text,text,text,text,date,jsonb,uuid,integer,text,uuid,uuid,integer,integer,uuid,uuid)',
       'book_manual_slot_atomic(uuid,uuid,uuid,uuid,date,text,integer,integer,text,text,text,text,integer,text,integer,integer,uuid,uuid)',
       'reschedule_booking_atomic(uuid,uuid,date,text,integer,uuid)',
       'create_class_atomic(uuid,text,integer,integer,integer,text,time without time zone,uuid,uuid,integer,text)',
