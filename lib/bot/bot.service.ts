@@ -1253,6 +1253,7 @@ export class BotService {
           this.supabase, this.sendText.bind(this), from, text,
           business.id, messageId, capabilities as string[],
           bizResolution, // ACC-204: trusted provenance for CLAIM/STATUS self-service
+          messageType, // Interactive button/list replies are never promo codes
         );
         if (promoResult.handled) {
           promoHandledFirstMessage = true;
@@ -2220,6 +2221,7 @@ export class BotService {
         messageId, // ACC-180: request-scoped provider message ID, not stale session state
         sessionCapabilities,
         sessionProvenance, // Original authoritative provenance from session creation
+        messageType, // Interactive button/list replies are never promo codes
       );
       if (promoResult.handled) return;
     }

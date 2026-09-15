@@ -42,10 +42,18 @@ export async function handlePromoVerification(
   inboundMessageId?: string,
   effectiveCapabilities?: string[],
   bizResolution?: string, // ACC-204: trusted provenance for CLAIM/STATUS self-service
+  messageType?: string, // Interactive reply type — 'button'/'list' replies are machine postback IDs, never promo codes
 ): Promise<PromoHandlerResult> {
   const text = messageText.trim();
 
   if (!effectiveCapabilities || !effectiveCapabilities.includes('promo_verification')) {
+    return { handled: false };
+  }
+
+  // Interactive button/list replies carry machine-generated postback IDs (e.g. date_2026-09-17,
+  // confirm, i_paid, go_back). These are never user-typed promo codes. Skip promo verification
+  // entirely — the flow executor will handle them downstream.
+  if (messageType === 'button' || messageType === 'list') {
     return { handled: false };
   }
 

@@ -3,6 +3,22 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-09-15 — Promo verification intercepting scheduling button replies (production UAT)
+
+### What changed
+- **Root cause.** `handlePromoVerification` runs before the flow executor in `bot.service.ts`. When a customer taps a quick-date button (postback ID `date_2026-09-17`), `looksLikePromoCode()` returns true because after stripping underscores and hyphens the result is a 12-char alphanumeric string with digits. If the business has an active bare-code promo campaign, the handler intercepts the message and sends the campaign's `invalid_message` ("That code is not valid") — the flow executor never runs.
+- **Fix.** Added `messageType` parameter to `handlePromoVerification`. Interactive button/list replies (`messageType='button'`/`'list'`) short-circuit with `{ handled: false }` since postback IDs are machine-generated, never user-typed promo codes. Both call sites in `bot.service.ts` now pass `messageType`.
+- **Payment link.** The missing payment-link symptom is downstream of the date failure — the flow executor never reaches the booking/payment step because the promo handler intercepts the date selection. No independent payment-link defect exists.
+
+### Files changed
+- `lib/bot/handlers/promo-verification.ts` — added `messageType` parameter, short-circuits on `'button'`/`'list'`
+- `lib/bot/bot.service.ts` — passes `messageType` at both `handlePromoVerification` call sites (first-message L1255, in-session L2222)
+- `lib/__tests__/promo-button-interception.test.ts` — new: 24 regression tests covering exact production case, all scheduling postback IDs, backward compatibility
+
+### What could break
+- The promo handler now skips interactive button/list replies entirely. A legitimate promo code submitted via button/list reply would not be processed — but promo codes are always user-typed text, never machine-generated button taps.
+- Existing text-mode promo verification is unchanged (no regression).
+
 ## 2026-09-15 — #258/#261/#286 WhatsApp Messaging section on Billing page
 
 ### What changed
