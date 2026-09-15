@@ -12,6 +12,12 @@ import {
   type SubscriptionTier,
 } from '@/lib/constants';
 import Link from 'next/link';
+import {
+  buildMessagingSummaries,
+  type MessagingAllowanceRow,
+  type MessagingSpendPeriodRow,
+  type CurrencyMessagingSummary,
+} from './messaging-utils';
 
 interface SubscriptionRow {
   id: string;
@@ -77,13 +83,21 @@ export default function BillingPage() {
   const [broadcastCount, setBroadcastCount] = useState(0);
   const [aiCallCount, setAiCallCount] = useState(0);
 
+  // Messaging allowance state
+  const [messagingSummaries, setMessagingSummaries] = useState<CurrencyMessagingSummary[]>([]);
+  const [messagingError, setMessagingError] = useState<string | null>(null);
+
   useEffect(() => {
     async function load() {
       setLoading(true);
       const supabase = createClient();
       const monthKey = new Date().toISOString().slice(0, 7);
 
-      const [subRes, paymentsRes, convRes, broadcastRes, aiRes, feeInvoicesRes] = await Promise.all([
+      // Current month start in UTC for spend period lookup
+      const now = new Date();
+      const currentPeriodStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString();
+
+      const [subRes, paymentsRes, convRes, broadcastRes, aiRes, feeInvoicesRes, allowancesRes, spendPeriodsRes] = await Promise.all([
         // Current subscription
         supabase
           .from('subscriptions')
@@ -130,6 +144,20 @@ export default function BillingPage() {
           .eq('business_id', business.id)
           .order('created_at', { ascending: false })
           .limit(50),
+
+        // Messaging allowances — all for this business (RLS-enforced)
+        supabase
+          .from('messaging_allowances')
+          .select('id, type, amount_minor, currency_code, remaining_minor, source_ref, expires_at, created_at')
+          .eq('business_id', business.id)
+          .order('created_at', { ascending: true }),
+
+        // Messaging spend periods — current month only (RLS-enforced)
+        supabase
+          .from('messaging_spend_periods')
+          .select('id, currency_code, period_start, cap_minor, reserved_minor, spent_minor')
+          .eq('business_id', business.id)
+          .eq('period_start', currentPeriodStart),
       ]);
 
       setSubscription(subRes.data || null);
@@ -138,6 +166,22 @@ export default function BillingPage() {
       setBroadcastCount(broadcastRes.data?.broadcast_count ?? 0);
       setAiCallCount(aiRes.count ?? 0);
       setFeeInvoices(feeInvoicesRes.data || []);
+
+      // Build messaging summaries — handle read errors gracefully
+      if (allowancesRes.error || spendPeriodsRes.error) {
+        setMessagingError(
+          allowancesRes.error?.message || spendPeriodsRes.error?.message || 'Failed to load messaging data'
+        );
+        setMessagingSummaries([]);
+      } else {
+        setMessagingError(null);
+        const allowances: MessagingAllowanceRow[] = allowancesRes.data || [];
+        const spendPeriods: MessagingSpendPeriodRow[] = spendPeriodsRes.data || [];
+
+        setMessagingSummaries(
+          buildMessagingSummaries(allowances, spendPeriods)
+        );
+      }
 
       setLoading(false);
     }
@@ -271,6 +315,41 @@ export default function BillingPage() {
           <p className="mt-2 text-2xl font-bold text-gray-900">{aiCallCount.toLocaleString()}</p>
           <p className="mt-1 text-xs text-gray-400">Bot sessions this month</p>
         </div>
+      </div>
+
+      {/* WhatsApp Messaging Allowance */}
+      <div className="mt-6 rounded-xl border border-gray-100 bg-white">
+        <div className="border-b border-gray-100 px-6 py-4">
+          <h2 className="text-sm font-semibold text-gray-900">WhatsApp Messaging</h2>
+          <p className="mt-0.5 text-xs text-gray-400">
+            Messaging allowance, usage, and in-flight reservations
+          </p>
+        </div>
+        {messagingError ? (
+          <div className="px-6 py-8 text-center">
+            <svg className="mx-auto h-8 w-8 text-red-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <p className="mt-2 text-sm text-red-600">Unable to load messaging data</p>
+            <p className="mt-1 text-xs text-gray-400">{messagingError}</p>
+          </div>
+        ) : messagingSummaries.length === 0 ? (
+          <div className="px-6 py-12 text-center">
+            <svg className="mx-auto h-10 w-10 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+            </svg>
+            <p className="mt-2 text-sm text-gray-500">No messaging allowance</p>
+            <p className="mt-1 text-xs text-gray-400">
+              Messaging allowances are granted with your plan or trial.
+            </p>
+          </div>
+        ) : (
+          <div className="divide-y divide-gray-50">
+            {messagingSummaries.map((summary) => (
+              <MessagingCurrencySection key={summary.currency} summary={summary} />
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Payment History */}
@@ -544,6 +623,170 @@ function FeeStatusBadge({ status }: { status: string }) {
     <span className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium capitalize ${styles[status] || 'bg-gray-100 text-gray-600'}`}>
       {status}
     </span>
+  );
+}
+
+/* ── Messaging Section ───────────────────────────────────────── */
+
+const ALLOWANCE_TYPE_LABELS: Record<string, string> = {
+  trial_grant: 'Trial',
+  subscription_included: 'Plan Included',
+  purchased: 'Purchased',
+  promotional: 'Promotional',
+};
+
+function MessagingCurrencySection({ summary }: { summary: CurrencyMessagingSummary }) {
+  const now = new Date();
+  const hasActivity = summary.charged > 0 || summary.reserved > 0 || summary.available > 0 || summary.totalAllocated > 0;
+
+  // Find earliest non-expired expiry for renewal display
+  const nextExpiry = summary.allowances
+    .filter((a) => a.expires_at && new Date(a.expires_at) > now)
+    .map((a) => new Date(a.expires_at!))
+    .sort((a, b) => a.getTime() - b.getTime())[0];
+
+  // Check if all allowances are expired
+  const allExpired = summary.allowances.length > 0 &&
+    summary.allowances.every((a) => a.expires_at && new Date(a.expires_at) <= now);
+
+  return (
+    <div className="px-6 py-5">
+      {/* Currency header */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-semibold text-gray-900">{summary.currency}</span>
+          {allExpired && (
+            <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700">
+              Expired
+            </span>
+          )}
+        </div>
+        {nextExpiry && !allExpired && (
+          <span className="text-xs text-gray-400">
+            Renews/expires {formatDateShort(nextExpiry.toISOString())}
+          </span>
+        )}
+      </div>
+
+      {/* Financial summary grid */}
+      {hasActivity && (
+        <div className="mt-4 grid gap-3 sm:grid-cols-3">
+          {/* Available */}
+          <div className="rounded-lg border border-gray-100 bg-gray-50 p-3">
+            <p className="text-xs font-medium text-gray-500">Available</p>
+            <p className="mt-1 text-lg font-bold text-gray-900">
+              {formatSmallestUnit(summary.available, summary.currency)}
+            </p>
+            <p className="mt-0.5 text-xs text-gray-400">Ready to spend</p>
+          </div>
+
+          {/* Charged / Used */}
+          <div className="rounded-lg border border-gray-100 bg-gray-50 p-3">
+            <p className="text-xs font-medium text-gray-500">Charged</p>
+            <p className="mt-1 text-lg font-bold text-gray-900">
+              {summary.hasSpendPeriod
+                ? formatSmallestUnit(summary.charged, summary.currency)
+                : '--'}
+            </p>
+            <p className="mt-0.5 text-xs text-gray-400">
+              {summary.hasSpendPeriod ? 'Confirmed this month' : 'No activity this month'}
+            </p>
+          </div>
+
+          {/* Reserved / Pending */}
+          <div className="rounded-lg border border-gray-100 bg-gray-50 p-3">
+            <p className="text-xs font-medium text-gray-500">Reserved</p>
+            <p className={`mt-1 text-lg font-bold ${summary.reserved > 0 ? 'text-amber-600' : 'text-gray-900'}`}>
+              {summary.hasSpendPeriod
+                ? formatSmallestUnit(summary.reserved, summary.currency)
+                : '--'}
+            </p>
+            <p className="mt-0.5 text-xs text-gray-400">
+              {summary.reserved > 0 ? 'In-flight, pending settlement' : summary.hasSpendPeriod ? 'No pending reservations' : 'No activity this month'}
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Spend cap indicator (only if spend period exists) */}
+      {summary.hasSpendPeriod && summary.cap > 0 && (
+        <div className="mt-3">
+          <div className="flex items-center justify-between text-xs text-gray-500">
+            <span>Monthly spend cap</span>
+            <span>
+              {formatSmallestUnit(summary.charged + summary.reserved, summary.currency)}
+              {' / '}
+              {formatSmallestUnit(summary.cap, summary.currency)}
+            </span>
+          </div>
+          <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-gray-100">
+            <div
+              className={`h-full rounded-full transition-all ${
+                summary.charged + summary.reserved >= summary.cap
+                  ? 'bg-red-500'
+                  : summary.charged + summary.reserved >= summary.cap * 0.8
+                    ? 'bg-amber-500'
+                    : 'bg-brand'
+              }`}
+              style={{
+                width: `${Math.min(((summary.charged + summary.reserved) / summary.cap) * 100, 100)}%`,
+              }}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Allowance breakdown */}
+      {summary.allowances.length > 0 && (
+        <div className="mt-4">
+          <p className="text-xs font-medium text-gray-500">Allowance Sources</p>
+          <div className="mt-2 space-y-1.5">
+            {summary.allowances.map((a) => {
+              const isExpired = a.expires_at ? new Date(a.expires_at) <= now : false;
+              return (
+                <div
+                  key={a.id}
+                  className={`flex items-center justify-between rounded-md px-3 py-1.5 text-xs ${
+                    isExpired ? 'bg-gray-50 text-gray-400' : 'bg-white text-gray-700'
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${
+                      isExpired
+                        ? 'bg-gray-100 text-gray-400'
+                        : a.type === 'trial_grant'
+                          ? 'bg-purple-50 text-purple-700'
+                          : a.type === 'purchased'
+                            ? 'bg-blue-50 text-blue-700'
+                            : 'bg-green-50 text-green-700'
+                    }`}>
+                      {ALLOWANCE_TYPE_LABELS[a.type] || a.type}
+                    </span>
+                    {isExpired && (
+                      <span className="text-xs text-red-400">Expired</span>
+                    )}
+                    {a.expires_at && !isExpired && (
+                      <span className="text-gray-400">
+                        expires {formatDateShort(a.expires_at)}
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-right">
+                    <span className={isExpired ? 'line-through' : 'font-medium'}>
+                      {formatSmallestUnit(a.remaining_minor, a.currency_code)}
+                    </span>
+                    <span className="text-gray-400">
+                      {' / '}
+                      {formatSmallestUnit(a.amount_minor, a.currency_code)}
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
