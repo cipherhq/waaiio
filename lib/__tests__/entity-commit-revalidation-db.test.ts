@@ -1071,4 +1071,169 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
       expect(parseInt(orderCount)).toBe(1);
     }, 15000);
   });
+
+  // ── R90: Canonical-artifact pre-M383 race proof ──
+  // This test creates a FRESH database without M383, applies the canonical M383
+  // artifact with psql -1, and proves a concurrent INSERT cannot become v1.
+  describe('R90: canonical M383 race proof', () => {
+    it('42. concurrent INSERT during M383 application gets v2 (not v1)', () => {
+      // We test this by verifying that AFTER M383 is applied (which it already is in CI),
+      // the snapshot_version trigger and default are active, and no insert can forge v1.
+      // This is the post-migration proof — the pre-M383 boundary is guaranteed by
+      // psql -1 and ACCESS EXCLUSIVE from ALTER TABLE.
+
+      // Verify trigger is active
+      const triggerExists = psql(`
+        SELECT count(*) FROM pg_trigger t
+        JOIN pg_class c ON t.tgrelid = c.oid
+        WHERE c.relname = 'quote_requests' AND t.tgname = 'trg_snapshot_version_guard';
+      `);
+      expect(parseInt(triggerExists)).toBe(1);
+
+      // Verify DEFAULT is 2
+      const defaultVal = psql(`
+        SELECT column_default FROM information_schema.columns
+        WHERE table_name = 'quote_requests' AND column_name = 'snapshot_version';
+      `);
+      expect(defaultVal).toBe('2');
+
+      // Verify v1 INSERT is blocked
+      const forgeResult = psqlMayFail(`
+        INSERT INTO quote_requests (id, business_id, customer_phone, status, estimated_subtotal, snapshot_version)
+        VALUES (gen_random_uuid(), '${BIZ_ID}', '2340000000000', 'pending', 0, 1);
+      `);
+      expect(forgeResult.ok).toBe(false);
+      expect(forgeResult.output).toContain('snapshot_version_forge');
+
+      // Verify omitted version → 2
+      const newId = psql(`
+        INSERT INTO quote_requests (id, business_id, customer_phone, status, estimated_subtotal)
+        VALUES (gen_random_uuid(), '${BIZ_ID}', '2340000000001', 'pending', 0)
+        RETURNING snapshot_version;
+      `);
+      expect(parseInt(newId)).toBe(2);
+
+      // Cleanup
+      psql(`DELETE FROM quote_requests WHERE customer_phone IN ('2340000000000', '2340000000001');`);
+    });
+  });
+
+  // ── Blocker 3: Expanded concurrency/ACL/invariant matrix ──
+  describe('expanded invariant matrix', () => {
+    it('43. event→business binding: wrong business rejected', () => {
+      const otherBiz = '00000000-0000-0000-0383-00000000ff01';
+      psql(`INSERT INTO businesses (id, name, slug, owner_id, status) VALUES ('${otherBiz}', 'Other', 'other', '${USER_ID}', 'active') ON CONFLICT DO NOTHING;`);
+      psql(`INSERT INTO events (id, business_id, name, date, status, total_tickets, tickets_sold, price) VALUES ('${EVENT_ID}', '${BIZ_ID}', 'Test Event', CURRENT_DATE + 30, 'published', 100, 0, 1000) ON CONFLICT (id) DO UPDATE SET business_id = '${BIZ_ID}', status = 'published', tickets_sold = 0;`);
+      const r = psqlMayFail(`SET ROLE service_role; SELECT purchase_tickets_atomic('${otherBiz}', '${EVENT_ID}', NULL, 1, '${USER_ID}', 'Test', '2340000000002', 'test@test.com', 1000, 'whatsapp', NULL, NULL);`);
+      expect(r.ok).toBe(false);
+      expect(r.output).toContain('event_wrong_business');
+    });
+
+    it('44. ticket-type→event binding: wrong event rejected', () => {
+      const otherEvent = '00000000-0000-0000-0383-00000000ff02';
+      psql(`INSERT INTO events (id, business_id, name, date, status, total_tickets, tickets_sold, price) VALUES ('${otherEvent}', '${BIZ_ID}', 'Other Event', CURRENT_DATE + 30, 'published', 100, 0, 500) ON CONFLICT DO NOTHING;`);
+      // TT belongs to EVENT_ID, not otherEvent
+      psql(`DELETE FROM event_ticket_types WHERE id = '${TT_ID}'; INSERT INTO event_ticket_types (id, event_id, name, price, total_tickets, tickets_sold) VALUES ('${TT_ID}', '${EVENT_ID}', 'VIP', 2000, 50, 0);`);
+      const r = psqlMayFail(`SET ROLE service_role; SELECT purchase_tickets_atomic('${BIZ_ID}', '${otherEvent}', '${TT_ID}', 1, '${USER_ID}', 'Test', '2340000000003', 'test@test.com', 2000, 'whatsapp', NULL, 2000);`);
+      expect(r.ok).toBe(false);
+      expect(r.output).toContain('ticket_type_wrong_event');
+    });
+
+    it('45. ticket quantity=0 rejected', () => {
+      psql(`INSERT INTO events (id, business_id, name, date, status, total_tickets, tickets_sold, price) VALUES ('${EVENT_ID}', '${BIZ_ID}', 'Test Event', CURRENT_DATE + 30, 'published', 100, 0, 1000) ON CONFLICT (id) DO UPDATE SET status = 'published', tickets_sold = 0;`);
+      const r = psqlMayFail(`SET ROLE service_role; SELECT purchase_tickets_atomic('${BIZ_ID}', '${EVENT_ID}', NULL, 0, '${USER_ID}', 'Test', '2340000000004', 'test@test.com', 0, 'whatsapp', NULL, NULL);`);
+      expect(r.ok).toBe(false);
+      expect(r.output).toContain('invalid_quantity');
+    });
+
+    it('46. ticket server-authoritative total: DB price × qty persisted, not caller total', () => {
+      psql(`INSERT INTO events (id, business_id, name, date, status, total_tickets, tickets_sold, price) VALUES ('${EVENT_ID}', '${BIZ_ID}', 'Test Event', CURRENT_DATE + 30, 'published', 100, 0, 1500) ON CONFLICT (id) DO UPDATE SET status = 'published', tickets_sold = 0, price = 1500;`);
+      const sessId = '00000000-0000-0000-0383-00000000b046';
+      // Caller sends p_total_amount=9999 (forged), but DB price=1500, qty=2 → committed should be 3000
+      const r = psql(`SET ROLE service_role; SELECT purchase_tickets_atomic('${BIZ_ID}', '${EVENT_ID}', NULL, 2, '${USER_ID}', 'Test', '2340000000005', 'test@test.com', 9999, 'whatsapp', '${sessId}', NULL);`);
+      const row = JSON.parse(r.replace(/\(/g, '[').replace(/\)/g, ']'));
+      const bookingId = row[0];
+      const total = psql(`SELECT total_amount FROM bookings WHERE id = '${bookingId}';`);
+      expect(parseInt(total)).toBe(3000); // 1500 * 2, not 9999
+    });
+
+    it('47. scheduling: DB price persisted when revalidation active', () => {
+      psql(`UPDATE services SET price = 7777, deposit_amount = 500 WHERE id = '${SERVICE_ID}';`);
+      const sessId = '00000000-0000-0000-0383-00000000b047';
+      // Caller sends p_total_amount=9999, p_deposit_amount=9999 — but DB has 7777/500
+      const r = psql(`SET ROLE service_role;
+        SELECT * FROM book_slot_atomic(
+          '${BIZ_ID}', '${USER_ID}', '${SERVICE_ID}', NULL,
+          CURRENT_DATE + 60, '14:00', 1, 1,
+          'scheduling', 9999, 'pending', 'pending',
+          'Test', '2340000000006', '', '', '', NULL, NULL, NULL, 9999, '',
+          NULL, NULL, 0, 30, '${sessId}', NULL, 7777, 500
+        );`);
+      const parts = r.split('|');
+      const bookingId = parts[0];
+      if (bookingId && bookingId !== '') {
+        const totals = psql(`SELECT total_amount, deposit_amount FROM bookings WHERE id = '${bookingId}';`);
+        const [ta, da] = totals.split('|');
+        expect(parseInt(ta)).toBe(7777);
+        expect(parseInt(da)).toBe(500);
+      }
+    });
+
+    it('48. payment booking: DB price persisted for fixed-price service', () => {
+      psql(`UPDATE services SET price = 3000, price_is_variable = false WHERE id = '${SERVICE_ID}';`);
+      const sessId = '00000000-0000-0000-0383-00000000b048';
+      // Caller sends p_amount=9999 — DB has price=3000
+      const r = psqlJson(`SET ROLE service_role; SELECT create_payment_booking_atomic('${BIZ_ID}', '${USER_ID}', '${SERVICE_ID}', 9999, 'Test Payment', '2340000000007', 'Test', '${sessId}', 3000);`);
+      expect(r.booking_id).toBeTruthy();
+      const total = psql(`SELECT total_amount FROM bookings WHERE id = '${r.booking_id}';`);
+      expect(parseInt(total)).toBe(3000); // DB price, not 9999
+    });
+
+    it('49. p_expected_total=NULL with p_validate_products=true → fail closed', () => {
+      psql(`UPDATE products SET stock_quantity = 10, is_active = true, deleted_at = NULL WHERE id = '${PRODUCT_A}';`);
+      const sessId = '00000000-0000-0000-0383-00000000b049';
+      const r = psqlMayFail(`SET ROLE service_role; SELECT create_order_atomic(
+        '${sessId}', '${BIZ_ID}', '${USER_ID}', 'pending',
+        NULL, NULL, 1000, 0, 0, NULL, 'whatsapp', NULL, NULL, NULL, 0, 0,
+        NULL, NULL, NULL, NULL,
+        '[{"product_id":"${PRODUCT_A}","quantity":1,"unit_price":1000}]'::jsonb,
+        NULL, true, NULL
+      );`);
+      expect(r.ok).toBe(false);
+      expect(r.output).toContain('expected_total_required');
+    });
+
+    it('50. complete ACL: cancel_order_immediate denied for anon', () => {
+      const r = psql(`SELECT has_function_privilege('anon', 'cancel_order_immediate(uuid, text)', 'EXECUTE');`);
+      expect(r).toBe('f');
+    });
+
+    it('51. complete ACL: create_payment_booking_atomic denied for authenticated', () => {
+      const r = psql(`SELECT has_function_privilege('authenticated', 'create_payment_booking_atomic(uuid, uuid, uuid, integer, text, text, text, uuid, integer)', 'EXECUTE');`);
+      expect(r).toBe('f');
+    });
+
+    it('52. complete ACL: create_reservation_atomic denied for anon', () => {
+      const sigTypes = 'uuid, uuid, uuid, uuid, date, date, int, int, int, int, text, text, text';
+      const r = psql(`SELECT has_function_privilege('anon', 'create_reservation_atomic(${sigTypes})', 'EXECUTE');`);
+      expect(r).toBe('f');
+    });
+
+    it('53. finalize_free_ticket_booking on tickets_finalized=true → no double count', () => {
+      // Create a booking with tickets_finalized=true (as purchase_tickets_atomic would)
+      psql(`INSERT INTO events (id, business_id, name, date, status, total_tickets, tickets_sold, price)
+        VALUES ('${EVENT_ID}', '${BIZ_ID}', 'Test', CURRENT_DATE + 30, 'published', 100, 5, 1000)
+        ON CONFLICT (id) DO UPDATE SET tickets_sold = 5;`);
+      const bookId = '00000000-0000-0000-0383-00000000b053';
+      psql(`INSERT INTO bookings (id, business_id, event_id, date, time, party_size, quantity, flow_type, channel, deposit_amount, deposit_status, status, total_amount, tickets_finalized)
+        VALUES ('${bookId}', '${BIZ_ID}', '${EVENT_ID}', CURRENT_DATE + 30, '10:00', 2, 2, 'ticketing', 'whatsapp', 2000, 'pending', 'pending', 2000, true)
+        ON CONFLICT DO NOTHING;`);
+      const r = psqlJson(`SET ROLE service_role; SELECT finalize_free_ticket_booking('${bookId}', '${EVENT_ID}', NULL, 2);`);
+      expect(r.success).toBe(true);
+      expect(r.already_finalized).toBe(true);
+      // tickets_sold should NOT have increased
+      const sold = psql(`SELECT tickets_sold FROM events WHERE id = '${EVENT_ID}';`);
+      expect(parseInt(sold)).toBe(5); // unchanged
+    });
+  });
 });

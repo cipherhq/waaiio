@@ -329,7 +329,11 @@ BEGIN
                     - COALESCE(p_volume_discount_amount, 0)
                     + COALESCE(p_shipping_cost, 0);
 
-    IF p_expected_total IS NOT NULL AND v_server_total != p_expected_total THEN
+    -- When p_validate_products=true, p_expected_total is REQUIRED (fail-closed)
+    IF p_expected_total IS NULL THEN
+      RAISE EXCEPTION 'expected_total_required:p_expected_total must be provided when p_validate_products=true';
+    END IF;
+    IF v_server_total != p_expected_total THEN
       RAISE EXCEPTION 'total_mismatch:Server total % does not match expected total %',
         v_server_total, p_expected_total;
     END IF;
@@ -413,7 +417,7 @@ BEGIN
   ) VALUES (
     p_bot_session_id, p_business_id, p_user_id, p_status::order_status,
     p_delivery_address, p_delivery_phone,
-    CASE WHEN p_validate_products AND p_expected_total IS NOT NULL THEN v_server_total ELSE p_total_amount END,
+    CASE WHEN p_validate_products THEN v_server_total ELSE p_total_amount END,
     p_discount_amount, p_shipping_cost, p_promo_code_id, p_channel, p_notes,
     p_delivery_zone_id, p_delivery_zone_name, p_addons_total, p_volume_discount_amount,
     p_pickup_address, p_dropoff_address, p_package_description, p_package_photo_url,
@@ -522,6 +526,8 @@ DECLARE v_count int; v_buffer_count int; v_booking_id uuid; v_ref text;
   v_effective_max_capacity int;
   v_effective_buffer int;
   v_effective_duration int;
+  v_committed_deposit int;
+  v_committed_total int;
 BEGIN
   -- ── Bot session idempotency ──
   IF p_bot_session_id IS NOT NULL THEN
@@ -626,8 +632,14 @@ BEGIN
     SELECT COUNT(*) INTO v_buffer_count FROM bookings WHERE business_id = p_business_id AND date = p_date AND status IN ('pending', 'confirmed', 'in_progress') AND (p_staff_id IS NULL OR staff_id = p_staff_id) AND time != p_time::time AND (p_time::time < (time + make_interval(mins => COALESCE(v_effective_duration, 30) + v_effective_buffer)) AND (p_time::time + make_interval(mins => COALESCE(v_effective_duration, 30))) > (time - make_interval(mins => v_effective_buffer)));
     IF v_buffer_count > 0 THEN RETURN QUERY SELECT NULL::uuid, NULL::text, false; RETURN; END IF;
   END IF;
+  -- Use DB-authoritative deposit/total when revalidation is active
+  v_committed_deposit := CASE WHEN p_expected_price IS NOT NULL AND v_service.id IS NOT NULL
+    THEN v_service.deposit_amount ELSE p_deposit_amount END;
+  v_committed_total := CASE WHEN p_expected_price IS NOT NULL AND v_service.id IS NOT NULL
+    THEN v_service.price ELSE p_total_amount END;
+
   INSERT INTO bookings (business_id, user_id, service_id, appointment_id, staff_id, staff_name, date, time, party_size, flow_type, channel, deposit_amount, deposit_status, status, guest_name, guest_phone, guest_email, special_requests, venue_address, end_date, addons_snapshot, promo_code_id, total_amount, quantity, location_id, bot_session_id)
-  VALUES (p_business_id, p_user_id, CASE WHEN p_appointment_id IS NOT NULL THEN NULL ELSE p_service_id END, p_appointment_id, p_staff_id, p_staff_name, p_date, p_time::time, p_party_size, p_flow_type::flow_type, 'whatsapp'::booking_channel, p_deposit_amount, p_deposit_status::deposit_status, p_status::reservation_status, p_guest_name, p_guest_phone, p_guest_email, p_special_requests, p_venue_address, p_end_date, p_addons_snapshot, p_promo_code_id, p_total_amount, p_party_size, p_location_id, p_bot_session_id)
+  VALUES (p_business_id, p_user_id, CASE WHEN p_appointment_id IS NOT NULL THEN NULL ELSE p_service_id END, p_appointment_id, p_staff_id, p_staff_name, p_date, p_time::time, p_party_size, p_flow_type::flow_type, 'whatsapp'::booking_channel, v_committed_deposit, p_deposit_status::deposit_status, p_status::reservation_status, p_guest_name, p_guest_phone, p_guest_email, p_special_requests, p_venue_address, p_end_date, p_addons_snapshot, p_promo_code_id, v_committed_total, p_party_size, p_location_id, p_bot_session_id)
   RETURNING id, bookings.reference_code INTO v_booking_id, v_ref;
   RETURN QUERY SELECT v_booking_id, v_ref, true;
 END;
@@ -659,6 +671,10 @@ DECLARE
   v_event_time TIME;
   v_event_name TEXT;
   v_event_status TEXT;
+  v_event_biz UUID;
+  v_event_price INT;
+  v_tt_event_id UUID;
+  v_committed_total INT;
   v_existing_booking_id UUID;
   v_existing_ref TEXT;
   v_ticket_price INT;
@@ -676,8 +692,14 @@ BEGIN
     END IF;
   END IF;
 
+  -- Quantity validation
+  IF p_quantity < 1 THEN
+    RAISE EXCEPTION 'invalid_quantity:Quantity must be at least 1';
+  END IF;
+
   -- Lock event row to prevent overselling
-  SELECT date, time, name, status::text INTO v_event_date, v_event_time, v_event_name, v_event_status
+  SELECT date, time, name, status::text, business_id, price
+  INTO v_event_date, v_event_time, v_event_name, v_event_status, v_event_biz, v_event_price
   FROM events WHERE id = p_event_id FOR UPDATE;
 
   IF NOT FOUND THEN
@@ -685,30 +707,46 @@ BEGIN
     RETURN;
   END IF;
 
+  -- Event→business binding
+  IF v_event_biz != p_business_id THEN
+    RAISE EXCEPTION 'event_wrong_business:Event % does not belong to business %', p_event_id, p_business_id;
+  END IF;
+
   -- Event must be published
   IF v_event_status != 'published' THEN
     RAISE EXCEPTION 'event_not_published:Event % is not published (status=%)', p_event_id, v_event_status;
   END IF;
 
-  -- Price validation
+  -- Price validation + server-authoritative total
+  v_committed_total := v_event_price * p_quantity;  -- default: event base price × qty
+
+  IF p_ticket_type_id IS NOT NULL THEN
+    -- Ticket-type→event binding: must belong to this event
+    SELECT price, event_id INTO v_ticket_price, v_tt_event_id
+    FROM event_ticket_types WHERE id = p_ticket_type_id FOR UPDATE;
+    IF v_ticket_price IS NULL THEN
+      RAISE EXCEPTION 'ticket_type_not_found:Ticket type % does not exist', p_ticket_type_id;
+    END IF;
+    IF v_tt_event_id != p_event_id THEN
+      RAISE EXCEPTION 'ticket_type_wrong_event:Ticket type % does not belong to event %', p_ticket_type_id, p_event_id;
+    END IF;
+    v_committed_total := v_ticket_price * p_quantity;  -- override with ticket-type price
+  END IF;
+
   IF p_expected_price IS NOT NULL THEN
     IF p_ticket_type_id IS NOT NULL THEN
-      SELECT price INTO v_ticket_price FROM event_ticket_types WHERE id = p_ticket_type_id;
-      IF v_ticket_price IS NULL THEN
-        RAISE EXCEPTION 'ticket_type_not_found:Ticket type % does not exist', p_ticket_type_id;
+      IF v_ticket_price != p_expected_price THEN
+        RAISE EXCEPTION 'price_changed:Ticket price changed from % to %', p_expected_price, v_ticket_price;
       END IF;
     ELSE
-      SELECT price INTO v_ticket_price FROM events WHERE id = p_event_id;
-    END IF;
-
-    IF v_ticket_price != p_expected_price THEN
-      RAISE EXCEPTION 'price_changed:Ticket price changed from % to %', p_expected_price, v_ticket_price;
+      IF v_event_price != p_expected_price THEN
+        RAISE EXCEPTION 'price_changed:Event price changed from % to %', p_expected_price, v_event_price;
+      END IF;
     END IF;
   END IF;
 
   -- Check availability
   IF p_ticket_type_id IS NOT NULL THEN
-    PERFORM id FROM event_ticket_types WHERE id = p_ticket_type_id FOR UPDATE;
     SELECT (total_tickets - tickets_sold) INTO v_available
     FROM event_ticket_types WHERE id = p_ticket_type_id;
   ELSE
@@ -727,7 +765,7 @@ BEGIN
     UPDATE event_ticket_types SET tickets_sold = tickets_sold + p_quantity WHERE id = p_ticket_type_id;
   END IF;
 
-  -- Create booking
+  -- Create booking with server-authoritative total
   INSERT INTO bookings (
     business_id, user_id, event_id, date, time, party_size, quantity,
     flow_type, channel, deposit_amount, deposit_status, status,
@@ -743,10 +781,10 @@ BEGIN
     p_quantity,
     'ticketing'::flow_type,
     p_channel::booking_channel,
-    p_total_amount,
-    CASE WHEN p_total_amount > 0 THEN 'pending'::deposit_status ELSE 'none'::deposit_status END,
-    CASE WHEN p_total_amount > 0 THEN 'pending' ELSE 'confirmed' END,
-    p_total_amount,
+    v_committed_total,
+    CASE WHEN v_committed_total > 0 THEN 'pending'::deposit_status ELSE 'none'::deposit_status END,
+    CASE WHEN v_committed_total > 0 THEN 'pending' ELSE 'confirmed' END,
+    v_committed_total,
     p_guest_name,
     p_guest_phone,
     p_guest_email,
@@ -905,7 +943,10 @@ DECLARE
   v_existing_id UUID;
   v_existing_ref TEXT;
   v_service RECORD;
+  v_committed_amount INT;
 BEGIN
+  v_committed_amount := p_amount;  -- default: caller amount (variable/donation/no service)
+
   -- Advisory lock on bot_session_id
   PERFORM pg_advisory_xact_lock(abs(hashtext(p_bot_session_id::text)));
 
@@ -945,7 +986,15 @@ BEGIN
       IF p_expected_price IS NOT NULL AND v_service.price != p_expected_price THEN
         RAISE EXCEPTION 'price_changed:Service price changed from % to %', p_expected_price, v_service.price;
       END IF;
+      -- Use DB-authoritative price for fixed-price services
+      v_committed_amount := v_service.price;
+    ELSE
+      -- Variable/donation: caller amount is the accepted value
+      v_committed_amount := p_amount;
     END IF;
+  ELSE
+    -- No service_id: use caller amount
+    v_committed_amount := p_amount;
   END IF;
 
   -- Create booking
@@ -966,10 +1015,10 @@ BEGIN
     'payment'::flow_type,
     'whatsapp'::booking_channel,
     'payment_request',
-    p_amount,
-    CASE WHEN p_amount > 0 THEN 'pending'::deposit_status ELSE 'none'::deposit_status END,
-    CASE WHEN p_amount > 0 THEN 'pending' ELSE 'confirmed' END,
-    p_amount,
+    v_committed_amount,
+    CASE WHEN v_committed_amount > 0 THEN 'pending'::deposit_status ELSE 'none'::deposit_status END,
+    CASE WHEN v_committed_amount > 0 THEN 'pending' ELSE 'confirmed' END,
+    v_committed_amount,
     1,
     p_guest_name,
     p_guest_phone,
@@ -1016,6 +1065,10 @@ DECLARE
   v_overlap_count INT;
   v_blocked_count INT;
   v_payable INT;
+  v_committed_rate INT;
+  v_committed_deposit INT;
+  v_committed_total INT;
+  v_nights INT;
 BEGIN
   -- Advisory lock on business_id + property_id
   PERFORM pg_advisory_xact_lock(abs(hashtext(p_business_id::text || '|' || p_property_id::text)));
@@ -1084,8 +1137,16 @@ BEGIN
     RAISE EXCEPTION 'dates_blocked:Property has blocked dates in the selected range';
   END IF;
 
-  -- Determine payable amount
-  v_payable := CASE WHEN p_deposit_amount > 0 THEN p_deposit_amount ELSE p_total_amount END;
+  -- Use DB-authoritative price/deposit when property was validated (non-variable)
+  v_committed_rate := CASE
+    WHEN v_property.id IS NOT NULL AND NOT COALESCE(v_property.price_is_variable, false)
+    THEN v_property.price::int ELSE p_nightly_rate END;
+  v_committed_deposit := CASE
+    WHEN v_property.id IS NOT NULL AND NOT COALESCE(v_property.price_is_variable, false)
+    THEN v_property.deposit_amount::int ELSE p_deposit_amount END;
+  v_nights := p_check_out - p_check_in;
+  v_committed_total := v_committed_rate * v_nights;
+  v_payable := CASE WHEN v_committed_deposit > 0 THEN v_committed_deposit ELSE v_committed_total END;
 
   -- INSERT reservation
   INSERT INTO reservations (
@@ -1098,7 +1159,7 @@ BEGIN
   ) VALUES (
     p_business_id, p_user_id, p_property_id,
     p_check_in, p_check_out, p_guests,
-    p_nightly_rate, p_total_amount, p_deposit_amount,
+    v_committed_rate, v_committed_total, v_committed_deposit,
     CASE WHEN v_payable > 0 THEN 'pending' ELSE 'none' END,
     CASE WHEN v_payable > 0 THEN 'pending' ELSE 'confirmed' END,
     p_special_requests, p_guest_name, p_guest_phone,
@@ -1109,8 +1170,8 @@ BEGIN
     'reservation_id', v_reservation_id,
     'reference_code', v_ref,
     'created', true,
-    'total_amount', p_total_amount,
-    'deposit_amount', p_deposit_amount,
+    'total_amount', v_committed_total,
+    'deposit_amount', v_committed_deposit,
     'payable', v_payable
   );
 END;
