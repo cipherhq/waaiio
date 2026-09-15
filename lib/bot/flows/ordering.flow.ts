@@ -36,7 +36,7 @@ interface CartItem {
   price: number;
   variant_id?: string;
   variant_label?: string;
-  addons?: Array<{ name: string; price: number; quantity?: number }>;
+  addons?: Array<{ id: string; name: string; price: number; quantity?: number }>;
 }
 
 interface AddonRecord {
@@ -1023,8 +1023,8 @@ export const orderingFlow: FlowDefinition = {
         }
 
         // Fixed price or quote — add directly
-        const addons = (d.current_addons as Array<{ name: string; price: number; quantity?: number }>) || [];
-        addons.push({ name: addon.name, price: addon.price, quantity: 1 });
+        const addons = (d.current_addons as Array<{ id: string; name: string; price: number; quantity?: number }>) || [];
+        addons.push({ id: addon.id, name: addon.name, price: addon.price, quantity: 1 });
         d.current_addons = addons;
         d._has_negotiable_addon = d._has_negotiable_addon || addon.is_negotiable;
         delete d._selected_addon;
@@ -1060,8 +1060,8 @@ export const orderingFlow: FlowDefinition = {
         }
 
         const d = ctx.session.session_data;
-        const addons = (d.current_addons as Array<{ name: string; price: number; quantity?: number }>) || [];
-        addons.push({ name: addon.name, price: addon.price, quantity: qty });
+        const addons = (d.current_addons as Array<{ id: string; name: string; price: number; quantity?: number }>) || [];
+        addons.push({ id: addon.id, name: addon.name, price: addon.price, quantity: qty });
         d.current_addons = addons;
         d._has_negotiable_addon = d._has_negotiable_addon || addon.is_negotiable;
         delete d._selected_addon;
@@ -1077,7 +1077,7 @@ export const orderingFlow: FlowDefinition = {
       id: 'addon_continue',
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
         const d = ctx.session.session_data;
-        const addons = (d.current_addons as Array<{ name: string; price: number; quantity?: number }>) || [];
+        const addons = (d.current_addons as Array<{ id: string; name: string; price: number; quantity?: number }>) || [];
         const cc = (ctx.business?.country_code || 'NG') as CountryCode;
         const lastAddon = addons[addons.length - 1];
         const addonCost = lastAddon ? formatCurrency(lastAddon.price * (lastAddon.quantity || 1), cc) : '';
@@ -1121,7 +1121,7 @@ export const orderingFlow: FlowDefinition = {
         }
 
         // Attach addons to cart item
-        const currentAddons = (d.current_addons as Array<{ name: string; price: number; quantity?: number }>) || [];
+        const currentAddons = (d.current_addons as Array<{ id: string; name: string; price: number; quantity?: number }>) || [];
         if (currentAddons.length > 0) {
           cartItem.addons = currentAddons;
         }
