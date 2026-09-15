@@ -100,12 +100,12 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
     // Tables exist from migrations 001→383.
     psql(`
       -- Business
-      INSERT INTO businesses (id, name, slug, country_code, owner_id, status, metadata)
-        VALUES ('${BIZ_ID}', 'ECR Test Biz', 'ecr-test-biz-0383', 'NG', '${USER_ID}', 'active',
+      INSERT INTO businesses (id, name, slug, address, city, neighborhood, phone, country_code, owner_id, status, metadata)
+        VALUES ('${BIZ_ID}', 'ECR Test Biz', 'ecr-test-biz-0383', '1 Test St', 'Lagos', 'VI', '+2340000000000', 'NG', '${USER_ID}', 'active',
                 '{"custom_order_config":{"deposit_percentage":50}}'::jsonb)
         ON CONFLICT (id) DO NOTHING;
-      INSERT INTO businesses (id, name, slug, country_code, owner_id, status)
-        VALUES ('${BIZ_OTHER}', 'Other Biz', 'other-biz-0383', 'GH', '${USER_ID}', 'active')
+      INSERT INTO businesses (id, name, slug, address, city, neighborhood, phone, country_code, owner_id, status)
+        VALUES ('${BIZ_OTHER}', 'Other Biz', 'other-biz-0383', '2 Test St', 'Accra', 'East', '+2330000000000', 'GH', '${USER_ID}', 'active')
         ON CONFLICT (id) DO NOTHING;
 
       -- Profile
@@ -1133,8 +1133,8 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
 
         // ── Step 2: Seed genuine pre-M383 data ──
         r90psql(`
-          INSERT INTO businesses (id, name, slug, owner_id, status, country_code, metadata)
-          VALUES ('${BIZ_ID}', 'R90 Biz', 'r90biz', gen_random_uuid(), 'active', 'NG',
+          INSERT INTO businesses (id, name, slug, address, city, neighborhood, phone, owner_id, status, country_code, metadata)
+          VALUES ('${BIZ_ID}', 'R90 Biz', 'r90biz', '1 R90 St', 'Lagos', 'VI', '+2340000000000', gen_random_uuid(), 'active', 'NG',
                   '{"custom_order_config":{"deposit_percentage":0}}'::jsonb)
           ON CONFLICT DO NOTHING;
           INSERT INTO products (id, business_id, name, price, stock_quantity, track_inventory, is_active)
@@ -1334,7 +1334,7 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
   describe('expanded invariant matrix', () => {
     it('43. event→business binding: wrong business rejected', () => {
       const otherBiz = '00000000-0000-0000-0383-00000000ff01';
-      psql(`INSERT INTO businesses (id, name, slug, owner_id, status) VALUES ('${otherBiz}', 'Other', 'other', '${USER_ID}', 'active') ON CONFLICT DO NOTHING;`);
+      psql(`INSERT INTO businesses (id, name, slug, address, city, neighborhood, phone, owner_id, status) VALUES ('${otherBiz}', 'Other', 'other-ff01', '3 Test St', 'Lagos', 'VI', '+2340000000001', '${USER_ID}', 'active') ON CONFLICT DO NOTHING;`);
       psql(`INSERT INTO events (id, business_id, name, date, status, total_tickets, tickets_sold, price) VALUES ('${EVENT_ID}', '${BIZ_ID}', 'Test Event', CURRENT_DATE + 30, 'published', 100, 0, 1000) ON CONFLICT (id) DO UPDATE SET business_id = '${BIZ_ID}', status = 'published', tickets_sold = 0;`);
       const r = psqlMayFail(`SET ROLE service_role; SELECT purchase_tickets_atomic('${otherBiz}', '${EVENT_ID}', NULL, 1, '${USER_ID}', 'Test', '2340000000002', 'test@test.com', 1000, 'whatsapp', NULL, NULL);`);
       expect(r.ok).toBe(false);
