@@ -124,7 +124,7 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
         ON CONFLICT (id) DO NOTHING;
 
       -- Variant
-      INSERT INTO product_variants (id, product_id, name, price, stock_quantity, is_active)
+      INSERT INTO product_variants (id, product_id, label, price, stock_quantity, is_active)
         VALUES ('${VARIANT_A1}', '${PRODUCT_A}', 'Large', 1200, 15, true)
         ON CONFLICT (id) DO NOTHING;
 
