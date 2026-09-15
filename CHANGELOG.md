@@ -3,6 +3,23 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-09-15 — #258/#261/#286 WhatsApp Messaging section on Billing page
+
+### What changed
+- **Billing page gap fix.** Added customer-facing WhatsApp Messaging section to `app/dashboard/billing/page.tsx` showing per-currency: Available balance (`remaining_minor`), Charged/Used (`spent_minor`), Reserved/Pending (`reserved_minor`), spend cap progress, and per-allowance breakdown with type labels and expiry states.
+- **Financial accuracy.** Available, Charged, and Reserved values come directly from authoritative DB columns (`messaging_allowances.remaining_minor`, `messaging_spend_periods.spent_minor`, `messaging_spend_periods.reserved_minor`). No derived arithmetic that conflates reserved vs charged amounts per #261 reserve→charge→release lifecycle.
+- **Multi-currency isolation.** Each currency is rendered in its own section with no cross-currency leakage. Currencies sorted alphabetically for deterministic order.
+- **Edge states.** Handles: expired allowances (excluded from available, marked visually), zero balance, no-allowance empty state, read-error state, spend period without allowances, allowances without current spend period.
+
+### Files changed
+- `app/dashboard/billing/page.tsx` — added messaging allowance/spend period queries, WhatsApp Messaging section, MessagingCurrencySection component
+- `app/dashboard/billing/messaging-utils.ts` — new: types + `buildMessagingSummaries()` aggregation (extracted for testability)
+- `app/dashboard/billing/__tests__/messaging-utils.test.ts` — new: 14 tests covering tenant isolation, empty state, financial accuracy, expiry, multi-currency, deterministic ordering
+
+### What could break
+- If `messaging_allowances` or `messaging_spend_periods` tables don't exist in the database (pre-migration-368), the queries will fail and the error state will show. Existing billing page sections are unaffected.
+- No new schema, migrations, pricing logic, or send-path behavior introduced.
+
 ## 2026-09-12 — #267 Handoff scoped sender, overlapping execute test, CI-wired DB tests, enabled-vs-disabled benchmark
 
 ### What changed
