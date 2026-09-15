@@ -49,7 +49,7 @@ const P1_FUNCTIONS = [
   { name: 'decrement_stock', sig: 'decrement_stock(uuid, integer)' },
   { name: 'decrement_variant_stock', sig: 'decrement_variant_stock(uuid, integer)' },
   { name: 'reset_low_stock_alerts', sig: 'reset_low_stock_alerts()' },
-  { name: 'purchase_tickets_atomic', sig: 'purchase_tickets_atomic(uuid, uuid, uuid, integer, uuid, text, text, text, integer, text)' },
+  { name: 'purchase_tickets_atomic', sig: 'purchase_tickets_atomic(uuid, uuid, uuid, integer, uuid, text, text, text, integer, text, uuid, integer)' },
   { name: 'reserve_booking_slot', sig: 'reserve_booking_slot(uuid, date, time, time, uuid, uuid, integer)' },
   { name: 'cancel_booking_with_release', sig: 'cancel_booking_with_release(uuid, text, uuid)' },
   { name: 'release_package_session', sig: 'release_package_session(uuid)' },
