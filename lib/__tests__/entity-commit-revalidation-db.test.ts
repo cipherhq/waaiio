@@ -99,7 +99,9 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
     // Seed all test data into the already-migrated database.
     // Tables exist from migrations 001→383.
     psql(`
-      -- Profile (must precede businesses due to owner_id FK)
+      -- Auth user + Profile (must precede businesses due to owner_id FK)
+      INSERT INTO auth.users (id) VALUES ('${USER_ID}')
+        ON CONFLICT (id) DO NOTHING;
       INSERT INTO profiles (id, phone) VALUES ('${USER_ID}', '${CUSTOMER_PHONE}')
         ON CONFLICT (id) DO NOTHING;
 
@@ -1132,9 +1134,12 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
         }
 
         // ── Step 2: Seed genuine pre-M383 data ──
+        const r90OwnerId = r90psql(`SELECT gen_random_uuid();`);
+        r90psql(`INSERT INTO auth.users (id) VALUES ('${r90OwnerId}') ON CONFLICT DO NOTHING;`);
+        r90psql(`INSERT INTO profiles (id, phone) VALUES ('${r90OwnerId}', '+2340000099999') ON CONFLICT DO NOTHING;`);
         r90psql(`
           INSERT INTO businesses (id, name, slug, address, city, neighborhood, phone, owner_id, status, country_code, metadata)
-          VALUES ('${BIZ_ID}', 'R90 Biz', 'r90biz', '1 R90 St', 'Lagos', 'VI', '+2340000000000', gen_random_uuid(), 'active', 'NG',
+          VALUES ('${BIZ_ID}', 'R90 Biz', 'r90biz', '1 R90 St', 'Lagos', 'VI', '+2340000000000', '${r90OwnerId}', 'active', 'NG',
                   '{"custom_order_config":{"deposit_percentage":0}}'::jsonb)
           ON CONFLICT DO NOTHING;
           INSERT INTO products (id, business_id, name, price, stock_quantity, track_inventory, is_active)
@@ -1311,7 +1316,9 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
         expect((forgeR as any).output).toContain('snapshot_version_forge');
 
         // ── Step 11: Genuine pre-M383 grandfather v1 end-to-end ──
-        r90psql(`INSERT INTO profiles (id, phone) VALUES (gen_random_uuid(), '${R90_CUST_PHONE}') ON CONFLICT DO NOTHING;`);
+        const r90UserId = r90psql(`SELECT gen_random_uuid();`);
+        r90psql(`INSERT INTO auth.users (id) VALUES ('${r90UserId}') ON CONFLICT DO NOTHING;`);
+        r90psql(`INSERT INTO profiles (id, phone) VALUES ('${r90UserId}', '${R90_CUST_PHONE}') ON CONFLICT DO NOTHING;`);
         const acceptResult = (() => {
           try {
             return JSON.parse(r90psql(`SET ROLE service_role; SELECT accept_order_quote_atomic('${PRE_ROW_ID}'::uuid, '${R90_CUST_PHONE}');`));
