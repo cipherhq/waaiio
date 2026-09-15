@@ -1077,16 +1077,24 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
   });
 
   // ── R90: Genuine pre-M383 cutover race + grandfather v1 end-to-end ──
-  // Creates a FRESH isolated database with 001-382, seeds a genuine pre-M383
-  // quote with legacy addons (no addon.id), then applies canonical M383 via
-  // psql -1 while a concurrent INSERT races the cutover.
   //
-  // Deterministic barrier: the migration SQL is prepended with
-  //   SELECT pg_advisory_lock(99383);
-  // which the migration session acquires INSIDE the -1 transaction.
-  // The test harness polls pg_locks from a THIRD connection to positively
-  // confirm the migration holds the lock (= cutover is in progress),
-  // THEN launches the racer. No timing inference.
+  // Deterministic cross-session handshake at the actual post-Part-1 cutover boundary:
+  //
+  // 1. Controller session acquires advisory gate lock (99383) BEFORE migration starts.
+  // 2. Canonical M383 is mechanically consumed and an advisory WAIT is injected at the
+  //    exact unique marker "-- Part 2: DROP old RPC signatures" — AFTER the snapshot_version
+  //    ALTER/DEFAULT/trigger cutover (Part 1) and BEFORE the RPC replacements (Part 2).
+  //    The marker is asserted to occur exactly once so the test cannot silently drift.
+  // 3. The entire assembled SQL runs under psql -1 -v ON_ERROR_STOP=1.
+  // 4. Observer connection positively proves the migration backend is waiting on advisory
+  //    lock 99383 (pg_stat_activity.wait_event = 'advisory') AND holds a granted
+  //    AccessExclusiveLock on the quote_requests relation (pg_locks).
+  // 5. Racer is launched and proven queued on the quote-table lock.
+  // 6. Controller releases the gate. Migration commits. Racer succeeds as v2.
+  // 7. Genuine pre-M383 grandfather v1 quote accepted end-to-end after cutover.
+  //
+  // No pg_sleep or elapsed-time assertion participates in correctness.
+  // A bounded poll timeout guards against hung tests only.
   describe('R90: genuine pre-M383 cutover race + grandfather v1 proof', () => {
     it('42. cutover race + genuine v1 grandfather end-to-end', async () => {
       const r90db = 'waaiio_r90_test';
@@ -1099,14 +1107,18 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
       const RACE_ROW_ID = '00000000-0000-0000-0383-a00000000002';
       const POST_ROW_ID = '00000000-0000-0000-0383-a00000000003';
       const R90_CUST_PHONE = '2349999990383';
+      const GATE_LOCK_ID = 99383;
+      const CUTOVER_MARKER = '-- Part 2: DROP old RPC signatures';
 
       try { execSync(`dropdb --maintenance-db="${dbUrl}" --if-exists "${r90db}"`, { timeout: 10000 }); } catch { /* ok */ }
       execSync(`createdb --maintenance-db="${dbUrl}" "${r90db}"`, { timeout: 10000 });
 
-      // Helper to run SQL on the R90 database
       const r90psql = (sql: string) => execSync(`psql "${r90url}" -tAXq -v ON_ERROR_STOP=1`, {
         input: sql, encoding: 'utf-8', timeout: 15000,
       }).trim();
+
+      // Controller session: a long-lived psql process that holds the advisory gate
+      let controllerChild: ReturnType<typeof spawn> | null = null;
 
       try {
         // ── Step 1: Apply 001-382 (skip 383) ──
@@ -1125,44 +1137,58 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
           VALUES ('${BIZ_ID}', 'R90 Biz', 'r90biz', gen_random_uuid(), 'active', 'NG',
                   '{"custom_order_config":{"deposit_percentage":0}}'::jsonb)
           ON CONFLICT DO NOTHING;
-
           INSERT INTO products (id, business_id, name, price, stock_quantity, track_inventory, is_active)
           VALUES ('${PRODUCT_A}', '${BIZ_ID}', 'R90 Widget', 1000, 50, true, true)
           ON CONFLICT DO NOTHING;
         `);
 
-        // Insert a genuine pre-M383 quote with legacy addons (NO addon.id)
-        // This row exists BEFORE M383 runs — it's a real grandfather row
+        // Genuine pre-M383 quote with legacy addons (NO addon.id)
         r90psql(`
           INSERT INTO quote_requests (id, business_id, customer_phone, customer_name,
             status, cart_snapshot, estimated_subtotal, quoted_amount, quoted_at, expires_at)
           VALUES (
-            '${PRE_ROW_ID}', '${BIZ_ID}', '${R90_CUST_PHONE}', 'R90 Customer',
-            'quoted',
+            '${PRE_ROW_ID}', '${BIZ_ID}', '${R90_CUST_PHONE}', 'R90 Customer', 'quoted',
             '[{"product_id":"${PRODUCT_A}","quantity":2,"price":1000,"name":"R90 Widget",
               "addons":[{"name":"Legacy Addon","price":150,"quantity":1}]}]'::jsonb,
             2150, 2150, NOW(), NOW() + INTERVAL '24 hours'
           );
         `);
 
-        // Verify: pre-M383 quote_requests has NO snapshot_version column
-        const hasCol = r90psql(`
+        // Verify: no snapshot_version column pre-M383
+        expect(parseInt(r90psql(`
           SELECT count(*) FROM information_schema.columns
           WHERE table_name = 'quote_requests' AND column_name = 'snapshot_version';
-        `);
-        expect(parseInt(hasCol)).toBe(0);
+        `))).toBe(0);
 
-        // ── Step 3: Apply canonical M383 with deterministic lock barrier ──
+        // ── Step 3: Controller acquires the advisory gate ──
+        controllerChild = spawn('psql', [r90url, '-tAXq'], { stdio: ['pipe', 'pipe', 'pipe'] });
+        await new Promise<void>((resolve) => {
+          let buf = '';
+          controllerChild!.stdout.on('data', (d: Buffer) => {
+            buf += d.toString();
+            if (buf.includes('t')) resolve();  // pg_advisory_lock returns 't' (void)
+          });
+          controllerChild!.stdin.write(`SELECT pg_advisory_lock(${GATE_LOCK_ID});\n`);
+        });
+        // Controller now holds advisory lock 99383. It will NOT release until we tell it to.
+
+        // ── Step 4: Assemble M383 with injection at the exact cutover boundary ──
         const m383File = fs.readdirSync(migDir).find((f: string) => f.startsWith('383') && f.endsWith('.sql'));
         if (!m383File) throw new Error('M383 migration file not found');
         const m383Sql = fs.readFileSync(pathMod.join(migDir, m383File), 'utf-8');
 
-        // Prepend advisory lock acquisition + append hold (pg_sleep keeps transaction open)
-        // The advisory lock is acquired INSIDE the -1 transaction, so it's held until commit
-        const m383WithBarrier = 'SELECT pg_advisory_lock(99383);\n' + m383Sql + '\nSELECT pg_sleep(5);\n';
+        // Assert the marker occurs exactly once (test cannot silently drift)
+        const markerCount = (m383Sql.match(new RegExp(CUTOVER_MARKER.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) || []).length;
+        expect(markerCount).toBe(1);
 
-        // Launch migration (Session A) — acquires ACCESS EXCLUSIVE + advisory lock 99383
-        const sessionA = new Promise<{ stdout: string; stderr: string; code: number }>((resolve) => {
+        // Inject advisory WAIT after Part 1 cutover, before Part 2
+        const m383Assembled = m383Sql.replace(
+          CUTOVER_MARKER,
+          `-- R90 test injection: wait on advisory gate (held by controller)\nSELECT pg_advisory_lock(${GATE_LOCK_ID});\n\n${CUTOVER_MARKER}`
+        );
+
+        // ── Step 5: Launch migration under psql -1 ──
+        const migrationPromise = new Promise<{ stdout: string; stderr: string; code: number }>((resolve) => {
           const child = spawn('psql', [r90url, '-1', '-q', '-v', 'ON_ERROR_STOP=1'], {
             stdio: ['pipe', 'pipe', 'pipe'],
           });
@@ -1170,30 +1196,44 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
           child.stdout.on('data', (d: Buffer) => { stdout += d.toString(); });
           child.stderr.on('data', (d: Buffer) => { stderr += d.toString(); });
           child.on('close', (code: number) => resolve({ stdout: stdout.trim(), stderr: stderr.trim(), code: code ?? 0 }));
-          child.stdin.write(m383WithBarrier);
+          child.stdin.write(m383Assembled);
           child.stdin.end();
         });
 
-        // ── Step 4: Poll pg_locks to positively confirm migration holds the lock ──
-        // This is the deterministic barrier — no timing inference
-        let lockConfirmed = false;
-        for (let i = 0; i < 60; i++) {  // poll for up to 30 seconds
+        // ── Step 6: Poll pg_stat_activity + pg_locks to confirm migration is waiting ──
+        // The migration will execute Part 1 (ALTER TABLE = ACCESS EXCLUSIVE on quote_requests)
+        // then hit the injected pg_advisory_lock(99383) and WAIT (controller holds it).
+        // We observe BOTH: (a) advisory wait AND (b) AccessExclusiveLock on quote_requests.
+        let migrationWaiting = false;
+        let migrationHoldsTableLock = false;
+        for (let i = 0; i < 120; i++) {
           await new Promise(r => setTimeout(r, 500));
           try {
-            const lockHeld = r90psql(`
-              SELECT count(*) FROM pg_locks
-              WHERE locktype = 'advisory' AND objid = 99383 AND granted = true;
+            // Check migration is waiting on advisory lock
+            const waitCount = r90psql(`
+              SELECT count(*) FROM pg_stat_activity
+              WHERE wait_event_type = 'Lock' AND wait_event = 'advisory'
+                AND state = 'active';
             `);
-            if (parseInt(lockHeld) > 0) {
-              lockConfirmed = true;
+            // Check migration holds AccessExclusiveLock on quote_requests
+            const aeLockCount = r90psql(`
+              SELECT count(*) FROM pg_locks l
+              JOIN pg_class c ON l.relation = c.oid
+              WHERE c.relname = 'quote_requests'
+                AND l.mode = 'AccessExclusiveLock' AND l.granted = true;
+            `);
+            if (parseInt(waitCount) > 0 && parseInt(aeLockCount) > 0) {
+              migrationWaiting = true;
+              migrationHoldsTableLock = true;
               break;
             }
-          } catch { /* connection may briefly fail during ALTER TABLE */ }
+          } catch { /* observer connection may briefly fail */ }
         }
-        expect(lockConfirmed).toBe(true);  // Migration is confirmed holding the lock
+        expect(migrationWaiting).toBe(true);
+        expect(migrationHoldsTableLock).toBe(true);
 
-        // ── Step 5: Launch racer (Session B) while migration is confirmed in-flight ──
-        const sessionB = new Promise<{ stdout: string; stderr: string; code: number }>((resolve) => {
+        // ── Step 7: Launch racer while migration is confirmed at cutover boundary ──
+        const racerPromise = new Promise<{ stdout: string; stderr: string; code: number }>((resolve) => {
           const child = spawn('psql', [r90url, '-tAXq', '-v', 'ON_ERROR_STOP=1'], {
             stdio: ['pipe', 'pipe', 'pipe'],
           });
@@ -1209,70 +1249,82 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
           child.stdin.end();
         });
 
-        // Wait for both sessions to complete
-        const [migResult, insertResult] = await Promise.all([sessionA, sessionB]);
+        // ── Step 8: Confirm racer is queued on quote_requests lock ──
+        let racerQueued = false;
+        for (let i = 0; i < 30; i++) {
+          await new Promise(r => setTimeout(r, 500));
+          try {
+            const queuedCount = r90psql(`
+              SELECT count(*) FROM pg_locks l
+              JOIN pg_class c ON l.relation = c.oid
+              WHERE c.relname = 'quote_requests'
+                AND l.granted = false;
+            `);
+            if (parseInt(queuedCount) > 0) {
+              racerQueued = true;
+              break;
+            }
+          } catch { /* ok */ }
+        }
+        expect(racerQueued).toBe(true);
 
-        // ── Step 6: Verify results ──
-        // Migration succeeded
+        // ── Step 9: Release the gate — migration finishes, racer proceeds ──
+        await new Promise<void>((resolve) => {
+          controllerChild!.stdout.removeAllListeners('data');
+          let buf = '';
+          controllerChild!.stdout.on('data', (d: Buffer) => {
+            buf += d.toString();
+            if (buf.includes('t') || buf.length > 0) resolve();
+          });
+          controllerChild!.stdin.write(`SELECT pg_advisory_unlock(${GATE_LOCK_ID});\n`);
+        });
+        // Close controller cleanly
+        controllerChild!.stdin.end();
+        controllerChild = null;
+
+        // Wait for migration and racer to complete
+        const [migResult, racerResult] = await Promise.all([migrationPromise, racerPromise]);
+
+        // ── Step 10: Verify results ──
         expect(migResult.code).toBe(0);
-
-        // Racer got v2 (cannot cross cutover as v1)
-        expect(insertResult.code).toBe(0);
-        expect(insertResult.stdout.trim()).toBe('2');
+        expect(racerResult.code).toBe(0);
+        expect(racerResult.stdout.trim()).toBe('2');  // racer cannot cross as v1
 
         // Pre-migration row grandfathered to v1
-        const preV = r90psql(`SELECT snapshot_version FROM quote_requests WHERE id = '${PRE_ROW_ID}';`);
-        expect(preV).toBe('1');
+        expect(r90psql(`SELECT snapshot_version FROM quote_requests WHERE id = '${PRE_ROW_ID}';`)).toBe('1');
 
         // Post-cutover: omitted version → v2
-        const postV = r90psql(`
+        expect(r90psql(`
           INSERT INTO quote_requests (id, business_id, customer_phone, status, estimated_subtotal)
           VALUES ('${POST_ROW_ID}', '${BIZ_ID}', '2343333333333', 'pending', 3000)
           RETURNING snapshot_version;
-        `);
-        expect(postV).toBe('2');
+        `)).toBe('2');
 
         // Post-cutover: explicit v1 → rejected
         const forgeR = (() => {
-          try {
-            r90psql(`INSERT INTO quote_requests (id, business_id, customer_phone, status, estimated_subtotal, snapshot_version)
-              VALUES (gen_random_uuid(), '${BIZ_ID}', '2344444444444', 'pending', 4000, 1);`);
-            return { ok: true, output: '' };
+          try { r90psql(`INSERT INTO quote_requests (id, business_id, customer_phone, status, estimated_subtotal, snapshot_version)
+            VALUES (gen_random_uuid(), '${BIZ_ID}', '2344444444444', 'pending', 4000, 1);`);
+            return { ok: true };
           } catch (e: any) { return { ok: false, output: e.message || '' }; }
         })();
         expect(forgeR.ok).toBe(false);
-        expect(forgeR.output).toContain('snapshot_version_forge');
+        expect((forgeR as any).output).toContain('snapshot_version_forge');
 
-        // ── Step 7: Genuine pre-M383 grandfather v1 end-to-end ──
-        // The PRE_ROW_ID quote was created BEFORE M383 with legacy addons (no addon.id).
-        // Now accept it through the real accept_order_quote_atomic path.
-        // This proves v1 quotes with legacy addons still work end-to-end.
-
-        // Create profile for customer identity
+        // ── Step 11: Genuine pre-M383 grandfather v1 end-to-end ──
         r90psql(`INSERT INTO profiles (id, phone) VALUES (gen_random_uuid(), '${R90_CUST_PHONE}') ON CONFLICT DO NOTHING;`);
-
         const acceptResult = (() => {
           try {
-            const raw = r90psql(`SET ROLE service_role; SELECT accept_order_quote_atomic('${PRE_ROW_ID}'::uuid, '${R90_CUST_PHONE}');`);
-            return JSON.parse(raw);
-          } catch (e: any) {
-            return { error: e.message || 'unknown' };
-          }
+            return JSON.parse(r90psql(`SET ROLE service_role; SELECT accept_order_quote_atomic('${PRE_ROW_ID}'::uuid, '${R90_CUST_PHONE}');`));
+          } catch (e: any) { return { error: e.message }; }
         })();
-
         expect(acceptResult.accepted).toBe(true);
         expect(acceptResult.order_id).toBeTruthy();
-        expect(acceptResult.total).toBe(2150);  // quoted_amount from pre-M383 seed
-
-        // Verify order was created with the correct total
-        const orderTotal = r90psql(`SELECT total_amount FROM orders WHERE id = '${acceptResult.order_id}';`);
-        expect(parseInt(orderTotal)).toBe(2150);
-
-        // Verify quote status updated
-        const quoteStatus = r90psql(`SELECT status FROM quote_requests WHERE id = '${PRE_ROW_ID}';`);
-        expect(quoteStatus).toBe('accepted');
+        expect(acceptResult.total).toBe(2150);
+        expect(parseInt(r90psql(`SELECT total_amount FROM orders WHERE id = '${acceptResult.order_id}';`))).toBe(2150);
+        expect(r90psql(`SELECT status FROM quote_requests WHERE id = '${PRE_ROW_ID}';`)).toBe('accepted');
 
       } finally {
+        if (controllerChild) { try { controllerChild.kill(); } catch { /* ok */ } }
         try { execSync(`dropdb --maintenance-db="${dbUrl}" --if-exists "${r90db}"`, { timeout: 10000 }); } catch { /* ok */ }
       }
     }, 180000);
