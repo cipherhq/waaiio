@@ -74,17 +74,17 @@ describe('Ticket purchase DB security', () => {
 
   // purchase_tickets_atomic ACL
   it('purchase_tickets_atomic: anon denied', () => {
-    const r = runSQL("SELECT has_function_privilege('anon', 'purchase_tickets_atomic(uuid, uuid, uuid, integer, uuid, text, text, text, integer, text)', 'EXECUTE') AS p;");
+    const r = runSQL("SELECT has_function_privilege('anon', 'purchase_tickets_atomic(uuid, uuid, uuid, integer, uuid, text, text, text, integer, text, uuid, integer)', 'EXECUTE') AS p;");
     expect(r.stdout).toBe('f');
   });
 
   it('purchase_tickets_atomic: authenticated denied', () => {
-    const r = runSQL("SELECT has_function_privilege('authenticated', 'purchase_tickets_atomic(uuid, uuid, uuid, integer, uuid, text, text, text, integer, text)', 'EXECUTE') AS p;");
+    const r = runSQL("SELECT has_function_privilege('authenticated', 'purchase_tickets_atomic(uuid, uuid, uuid, integer, uuid, text, text, text, integer, text, uuid, integer)', 'EXECUTE') AS p;");
     expect(r.stdout).toBe('f');
   });
 
   it('purchase_tickets_atomic: service_role allowed', () => {
-    const r = runSQL("SELECT has_function_privilege('service_role', 'purchase_tickets_atomic(uuid, uuid, uuid, integer, uuid, text, text, text, integer, text)', 'EXECUTE') AS p;");
+    const r = runSQL("SELECT has_function_privilege('service_role', 'purchase_tickets_atomic(uuid, uuid, uuid, integer, uuid, text, text, text, integer, text, uuid, integer)', 'EXECUTE') AS p;");
     expect(r.stdout).toBe('t');
   });
 
