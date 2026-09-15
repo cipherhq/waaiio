@@ -170,72 +170,198 @@ describe('Stable addon.id writer bridge', () => {
   });
 
   describe('submit_quote_request step — addon.id flows into cart_snapshot', () => {
-    it('quote request INSERT passes cart (with addon.id) as cart_snapshot', () => {
-      // The submit_quote_request step inserts cart_snapshot: cart (line ~2388).
-      // cart is the full CartItem[] from session_data.cart — which now carries addon.id.
-      // This is a structural proof: the cart_snapshot field receives the CartItem[] directly,
-      // so addon.id persists into the JSONB snapshot stored in quote_requests.
-      const src = require('fs').readFileSync('lib/bot/flows/ordering.flow.ts', 'utf-8');
+    it('executes real submit_quote_request and captures cart_snapshot with addon.id', async () => {
+      const step = getStep(orderingFlow, 'submit_quote_request');
 
-      // Verify cart_snapshot is set from the cart variable (which is CartItem[])
-      expect(src).toContain('cart_snapshot: cart,');
+      const cart = [
+        {
+          product_id: 'prod-1',
+          name: 'Widget',
+          quantity: 2,
+          price: 1000,
+          addons: [
+            { id: 'addon-uuid-fixed-001', name: 'Gift Wrap', price: 500, quantity: 1 },
+            { id: 'addon-uuid-perunit-002', name: 'Extra Topping', price: 200, quantity: 3 },
+          ],
+        },
+        {
+          product_id: 'prod-2',
+          name: 'Gadget',
+          quantity: 1,
+          price: 3000,
+        },
+      ];
 
-      // Verify CartItem.addons carries id
-      expect(src).toContain("addons?: Array<{ id: string; name: string; price: number; quantity?: number }>");
+      // Capture the payload passed to quote_requests INSERT
+      let capturedPayload: Record<string, unknown> | null = null;
 
-      // Therefore cart_snapshot inherits addon.id from CartItem.addons transitively.
+      // Build a mock supabase that:
+      // 1. Passes the capability guard (businesses SELECT returns active business)
+      // 2. Captures the quote_requests INSERT payload
+      // 3. Handles bot_sessions UPDATE and other incidental reads
+      const mockSupabase = {
+        from: vi.fn((table: string) => {
+          if (table === 'businesses') {
+            // Capability guard reads business state
+            return {
+              select: vi.fn().mockReturnValue({
+                eq: vi.fn().mockReturnValue({
+                  single: vi.fn().mockResolvedValue({
+                    data: { id: 'biz-1', status: 'active', subscription_tier: 'growth', trial_ends_at: null, category: 'retail' },
+                    error: null,
+                  }),
+                }),
+              }),
+            };
+          }
+          if (table === 'business_capabilities') {
+            // getConfiguredCapabilities reads from business_capabilities
+            const eqFn = vi.fn().mockReturnValue({
+              order: vi.fn().mockReturnValue({
+                order: vi.fn().mockResolvedValue({
+                  data: [{ capability: 'ordering', is_enabled: true, sort_order: 0 }],
+                  error: null,
+                }),
+              }),
+            });
+            return { select: vi.fn().mockReturnValue({ eq: eqFn }) };
+          }
+          if (table === 'capability_overrides') {
+            return {
+              select: vi.fn().mockReturnValue({
+                eq: vi.fn().mockResolvedValue({ data: [], error: null }),
+              }),
+            };
+          }
+          if (table === 'subscription_transactions') {
+            // resolveTrialCredit reads subscription_transactions
+            return {
+              select: vi.fn().mockReturnValue({
+                eq: vi.fn().mockReturnValue({
+                  eq: vi.fn().mockReturnValue({
+                    maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+                  }),
+                }),
+              }),
+            };
+          }
+          if (table === 'quote_requests') {
+            return {
+              insert: vi.fn((payload: Record<string, unknown>) => {
+                capturedPayload = payload;
+                return {
+                  select: vi.fn().mockReturnValue({
+                    single: vi.fn().mockResolvedValue({
+                      data: { id: 'quote-id-captured' },
+                      error: null,
+                    }),
+                  }),
+                };
+              }),
+            };
+          }
+          // Default: chainable no-op for bot_sessions, profiles, etc.
+          const chain: Record<string, any> = {};
+          for (const m of ['select', 'insert', 'update', 'delete', 'eq', 'neq', 'or', 'in', 'is', 'not', 'gte', 'lte', 'order', 'limit']) {
+            chain[m] = vi.fn().mockReturnValue(chain);
+          }
+          chain.single = vi.fn().mockResolvedValue({ data: null, error: null });
+          chain.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
+          return chain;
+        }),
+        rpc: vi.fn().mockResolvedValue({ data: null, error: null }),
+      };
+
+      const ctx = createMockContext({
+        supabase: mockSupabase as any,
+        session: {
+          id: 'sess-quote', user_id: 'user-1', business_id: 'biz-1',
+          current_step: 'submit_quote_request', session_data: {
+            cart,
+            active_capability: 'ordering',
+            capabilities: ['ordering'],
+            first_name: 'John',
+            last_name: 'Doe',
+          }, version: 1,
+        },
+        business: {
+          id: 'biz-1', name: 'Test Shop', slug: 'test-shop',
+          category: 'retail' as any, flow_type: 'ordering' as any,
+          subscription_tier: 'growth', trial_ends_at: null,
+          metadata: {},
+        },
+      });
+
+      await step.prompt!(ctx);
+
+      // ── Primary assertion: executable proof that cart_snapshot carries addon.id ──
+      expect(capturedPayload).not.toBeNull();
+
+      const snapshot = capturedPayload!.cart_snapshot as Array<Record<string, unknown>>;
+      expect(snapshot).toHaveLength(2);
+
+      // Item 1: Widget with two addons carrying stable IDs
+      const item1 = snapshot[0];
+      expect(item1.product_id).toBe('prod-1');
+      expect(item1.name).toBe('Widget');
+      expect(item1.quantity).toBe(2);
+      expect(item1.price).toBe(1000);
+
+      const item1Addons = item1.addons as Array<Record<string, unknown>>;
+      expect(item1Addons).toHaveLength(2);
+
+      expect(item1Addons[0].id).toBe('addon-uuid-fixed-001');
+      expect(item1Addons[0].name).toBe('Gift Wrap');
+      expect(item1Addons[0].price).toBe(500);
+      expect(item1Addons[0].quantity).toBe(1);
+
+      expect(item1Addons[1].id).toBe('addon-uuid-perunit-002');
+      expect(item1Addons[1].name).toBe('Extra Topping');
+      expect(item1Addons[1].price).toBe(200);
+      expect(item1Addons[1].quantity).toBe(3);
+
+      // Item 2: Gadget with no addons
+      const item2 = snapshot[1];
+      expect(item2.product_id).toBe('prod-2');
+      expect(item2.name).toBe('Gadget');
+      expect(item2.quantity).toBe(1);
+      expect(item2.price).toBe(3000);
+      expect(item2.addons).toBeUndefined();
+
+      // Verify other quote fields are present
+      expect(capturedPayload!.business_id).toBe('biz-1');
+      expect(capturedPayload!.status).toBe('pending');
+      expect(capturedPayload!.channel).toBe('whatsapp');
     });
 
-    it('addon.id survives full lifecycle: select → add_to_cart → cart → cart_snapshot', () => {
-      // End-to-end data flow proof:
-      // 1. AddonRecord.id is available (fetched from product_addons table)
-      // 2. Both push sites include addon.id in the pushed object
-      // 3. current_addons → CartItem.addons at add_to_cart step
-      // 4. CartItem[] is stored as session_data.cart
-      // 5. cart is passed directly as cart_snapshot in quote_requests INSERT
+    // Secondary structural guard — source-level regression check
+    it('[structural guard] cart_snapshot is assigned from cart variable', () => {
       const src = require('fs').readFileSync('lib/bot/flows/ordering.flow.ts', 'utf-8');
-
-      // Step 2: both write paths include id
-      const fixedPush = 'addons.push({ id: addon.id, name: addon.name, price: addon.price, quantity: 1 })';
-      const perUnitPush = 'addons.push({ id: addon.id, name: addon.name, price: addon.price, quantity: qty })';
-      expect(src).toContain(fixedPush);
-      expect(src).toContain(perUnitPush);
-
-      // Step 3: current_addons attached to cartItem.addons
-      expect(src).toContain('cartItem.addons = currentAddons;');
-
-      // Step 5: cart passed as cart_snapshot
       expect(src).toContain('cart_snapshot: cart,');
     });
   });
 
   describe('existing behavior preservation', () => {
-    it('calculateCartTotal still sums addon prices correctly with id field', async () => {
-      // Import the flow source and test the cart total calculation
+    it('[structural guard] calculateCartTotal still sums addon prices correctly with id field', () => {
       const src = require('fs').readFileSync('lib/bot/flows/ordering.flow.ts', 'utf-8');
-      // calculateCartTotal uses a.price * (a.quantity || 1) — id field is ignored
       expect(src).toContain('a.price * (a.quantity || 1)');
     });
 
-    it('CartItem.addons type includes id field', () => {
+    it('[structural guard] CartItem.addons type includes id field', () => {
       const src = require('fs').readFileSync('lib/bot/flows/ordering.flow.ts', 'utf-8');
       expect(src).toContain("addons?: Array<{ id: string; name: string; price: number; quantity?: number }>");
     });
 
-    it('both addon write paths include addon.id', () => {
+    it('[structural guard] both addon write paths include addon.id', () => {
       const src = require('fs').readFileSync('lib/bot/flows/ordering.flow.ts', 'utf-8');
-      // Fixed/quote direct-add path
       expect(src).toContain('addons.push({ id: addon.id, name: addon.name, price: addon.price, quantity: 1 })');
-      // Per-unit quantity path
       expect(src).toContain('addons.push({ id: addon.id, name: addon.name, price: addon.price, quantity: qty })');
     });
 
-    it('no addon write path omits id', () => {
+    it('[structural guard] no addon write path omits id', () => {
       const src = require('fs').readFileSync('lib/bot/flows/ordering.flow.ts', 'utf-8');
-      // Must NOT have the old pattern without id
       const oldPattern = /addons\.push\(\{\s*name:\s*addon\.name,\s*price:\s*addon\.price/;
-      const matches = src.match(oldPattern);
-      expect(matches).toBeNull();
+      expect(src.match(oldPattern)).toBeNull();
     });
   });
 });
