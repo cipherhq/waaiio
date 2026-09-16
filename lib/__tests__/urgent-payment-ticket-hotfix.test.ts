@@ -486,10 +486,13 @@ describe('Event publish + session', () => {
   it('bot filters by published', () => {
     expect(readSrc('../bot/flows/ticketing.flow.ts')).toContain("in('status', ['published'])");
   });
-  it('session deactivation targets all payment steps', () => {
+  it('session deactivation: exact-entity families use Stage 2.5 terminalization; invoice/campaign retain broad heuristic', () => {
     const src = readSrc('../payments/send-confirmation.ts');
-    for (const s of ['await_ticket_payment', 'payment', 'await_payment', 'await_order_payment', 'create_booking']) {
-      expect(src).toContain(`'${s}'`);
-    }
+    // Invoice/campaign steps remain in the broad heuristic
+    expect(src).toContain("'await_invoice_payment'");
+    expect(src).toContain("'await_donation_payment'");
+    // Exact-entity families (booking/order/reservation/ticketing) are handled by
+    // Stage 2.5 terminalization in authority.ts, not the broad heuristic
+    expect(src).toContain('exactEntityFamily');
   });
 });

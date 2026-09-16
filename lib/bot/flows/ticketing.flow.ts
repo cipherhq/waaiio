@@ -466,6 +466,11 @@ export const ticketingFlow: FlowDefinition = {
     // ── Process Tickets ──
     {
       id: 'process_tickets',
+      nextAfterPrompt(ctx: FlowContext) {
+        const d = ctx.session.session_data;
+        if (d.payment_reference || d.bank_transfer_reference) return 'await_ticket_payment';
+        return undefined;
+      },
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
         const d = ctx.session.session_data;
         const qty = d.ticket_quantity as number;
@@ -601,7 +606,7 @@ export const ticketingFlow: FlowDefinition = {
             d._saved_method_id = savedCardOffer.display.id;
             d._pending_deposit = total;
             await ctx.supabase.from('bot_sessions')
-              .update({ session_data: d, current_step: 'process_tickets' })
+              .update({ session_data: d })
               .eq('id', ctx.session.id);
             return [savedCardOffer.prompt];
           }
@@ -650,7 +655,7 @@ export const ticketingFlow: FlowDefinition = {
 
               await ctx.supabase
                 .from('bot_sessions')
-                .update({ session_data: d, current_step: 'await_ticket_payment' })
+                .update({ session_data: d })
                 .eq('id', ctx.session.id);
 
               // #268: Consolidated into 1 message
@@ -682,7 +687,7 @@ export const ticketingFlow: FlowDefinition = {
             // Standard Paystack-only flow
             await ctx.supabase
               .from('bot_sessions')
-              .update({ session_data: d, current_step: 'await_ticket_payment' })
+              .update({ session_data: d })
               .eq('id', ctx.session.id);
 
             // #268: Consolidated into 1 message
@@ -714,7 +719,7 @@ export const ticketingFlow: FlowDefinition = {
 
             await ctx.supabase
               .from('bot_sessions')
-              .update({ session_data: d, current_step: 'await_ticket_payment' })
+              .update({ session_data: d })
               .eq('id', ctx.session.id);
 
             return [

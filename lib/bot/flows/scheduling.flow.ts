@@ -2291,6 +2291,18 @@ export const schedulingFlow: FlowDefinition = {
     // ── Create Booking (processing step) ──
     {
       id: 'create_booking',
+      nextAfterPrompt(ctx: FlowContext) {
+        const d = ctx.session.session_data;
+        // Saved-card offer presented (separate step handles the button taps)
+        if (d._saved_method_id && !d._skip_saved_card && !d.payment_reference && !d.bank_transfer_reference) {
+          return 'saved_card_prompt';
+        }
+        // Hosted or bank payment initialized
+        if (d.payment_reference || d.bank_transfer_reference) {
+          return 'payment';
+        }
+        return undefined;
+      },
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
         const d = ctx.session.session_data;
 
@@ -2754,7 +2766,7 @@ export const schedulingFlow: FlowDefinition = {
             d.booking_id = booking.id;
             d.reference_code = booking.reference_code;
             await ctx.supabase.from('bot_sessions')
-              .update({ session_data: d, current_step: 'saved_card_prompt' })
+              .update({ session_data: d })
               .eq('id', ctx.session.id);
 
             return [
@@ -2815,7 +2827,7 @@ export const schedulingFlow: FlowDefinition = {
 
               await ctx.supabase
                 .from('bot_sessions')
-                .update({ session_data: d, current_step: 'payment' })
+                .update({ session_data: d })
                 .eq('id', ctx.session.id);
 
               // Dual-option payment message: online + bank transfer
@@ -2854,7 +2866,7 @@ export const schedulingFlow: FlowDefinition = {
             // Standard payment flow (no bank transfer option)
             await ctx.supabase
               .from('bot_sessions')
-              .update({ session_data: d, current_step: 'payment' })
+              .update({ session_data: d })
               .eq('id', ctx.session.id);
 
             // #268: Consolidated into 1 message
@@ -2903,7 +2915,7 @@ export const schedulingFlow: FlowDefinition = {
 
             await ctx.supabase
               .from('bot_sessions')
-              .update({ session_data: d, current_step: 'payment' })
+              .update({ session_data: d })
               .eq('id', ctx.session.id);
 
             const bankOnlyLines = [

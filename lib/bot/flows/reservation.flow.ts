@@ -712,6 +712,11 @@ export const reservationFlow: FlowDefinition = {
     // ── Step 9: Create Reservation ──
     {
       id: 'create_reservation',
+      nextAfterPrompt(ctx: FlowContext) {
+        const d = ctx.session.session_data;
+        if (d.payment_reference || d.bank_transfer_reference) return 'reservation_payment';
+        return undefined;
+      },
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
         const d = ctx.session.session_data;
         const cc = (ctx.business?.country_code || 'NG') as CountryCode;
@@ -879,7 +884,7 @@ export const reservationFlow: FlowDefinition = {
             d._saved_method_id = savedCardOffer.display.id;
             d._pending_deposit = payableAmount;
             await ctx.supabase.from('bot_sessions')
-              .update({ session_data: d, current_step: 'create_reservation' })
+              .update({ session_data: d })
               .eq('id', ctx.session.id);
             return [savedCardOffer.prompt];
           }
@@ -928,7 +933,7 @@ export const reservationFlow: FlowDefinition = {
 
               await ctx.supabase
                 .from('bot_sessions')
-                .update({ session_data: d, current_step: 'reservation_payment' })
+                .update({ session_data: d })
                 .eq('id', ctx.session.id);
 
               const summary = getReservationConfirmationMessage({
@@ -971,7 +976,7 @@ export const reservationFlow: FlowDefinition = {
             // Standard online-only flow
             await ctx.supabase
               .from('bot_sessions')
-              .update({ session_data: d, current_step: 'reservation_payment' })
+              .update({ session_data: d })
               .eq('id', ctx.session.id);
 
             const summary = getReservationConfirmationMessage({
@@ -1026,7 +1031,7 @@ export const reservationFlow: FlowDefinition = {
 
             await ctx.supabase
               .from('bot_sessions')
-              .update({ session_data: d, current_step: 'reservation_payment' })
+              .update({ session_data: d })
               .eq('id', ctx.session.id);
 
             const summary = getReservationConfirmationMessage({

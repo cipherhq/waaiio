@@ -99,8 +99,9 @@ export async function reconcilePayment(
   const sendConfirm = async (
     sb: SupabaseClient,
     pay: { id: string; amount: number; booking_id: string | null; invoice_id: string | null; campaign_id: string | null; reservation_id?: string | null; order_id?: string | null },
+    opts?: { exactEntityFamily?: boolean },
   ): Promise<ConfirmationResult> => {
-    return sendProactiveConfirmation(sb, pay, logPrefix);
+    return sendProactiveConfirmation(sb, pay, { logPrefix, exactEntityFamily: opts?.exactEntityFamily });
   };
 
   const lifecycle = await authorizeAndFinalize(supabase, verified, processPayment, sendConfirm);

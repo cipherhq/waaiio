@@ -840,9 +840,10 @@ describe('Reservation availability — cancelled excluded', () => {
 // ── Supplemental structural guards ──
 
 describe('Supplemental guards', () => {
-  it('booking.id assigned from INSERT (not self-reference)', () => {
+  it('booking.id assigned from INSERT or crash-recovery (not self-reference)', () => {
     const src = require('fs').readFileSync('lib/bot/flows/payment.flow.ts', 'utf-8');
-    expect(src).toContain('bookingId = booking.id');
+    // After idempotent crash-recovery, booking is assigned via resolvedBooking
+    expect(src).toContain('bookingId = resolvedBooking!.id');
     expect(src).not.toContain('bookingId = bookingId!');
   });
 

@@ -278,6 +278,11 @@ export const paymentFlow: FlowDefinition = {
     // ── Process Payment ──
     {
       id: 'process_payment',
+      nextAfterPrompt(ctx: FlowContext) {
+        const d = ctx.session.session_data;
+        if (d.payment_reference || d.bank_transfer_reference) return 'await_payment';
+        return undefined;
+      },
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
         const d = ctx.session.session_data;
         const amount = d.amount as number;
@@ -357,16 +362,32 @@ export const paymentFlow: FlowDefinition = {
               guest_name: `${d.first_name || ''} ${d.last_name || ''}`.trim(),
               guest_phone: ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`,
               notes: `${d.service_name} payment`,
+              bot_session_id: ctx.session.id,
             })
             .select('id, reference_code')
             .single();
 
-          if (error || !booking) {
+          let resolvedBooking = booking;
+          if (error?.code === '23505' && error?.message?.includes('bot_session_id')) {
+            // Crash-window recovery: find existing booking by exact session ID
+            const { data: existingBooking } = await ctx.supabase
+              .from('bookings')
+              .select('id, reference_code')
+              .eq('bot_session_id', ctx.session.id)
+              .eq('business_id', ctx.business!.id)
+              .in('status', ['pending', 'confirmed'])
+              .maybeSingle();
+            if (existingBooking) {
+              resolvedBooking = existingBooking;
+            } else {
+              return [{ type: 'text' as const, text: "Something went wrong. Send *Hi* to start over." }];
+            }
+          } else if (error || !booking) {
             return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start over.' }];
           }
 
-          bookingId = booking.id;
-          referenceCode = booking.reference_code;
+          bookingId = resolvedBooking!.id;
+          referenceCode = resolvedBooking!.reference_code;
           d.booking_id = bookingId;
           d.reference_code = referenceCode;
         }
@@ -381,7 +402,7 @@ export const paymentFlow: FlowDefinition = {
           d._saved_method_id = savedCardOffer.display.id;
           d._pending_deposit = amount;
           await ctx.supabase.from('bot_sessions')
-            .update({ session_data: d, current_step: 'process_payment' })
+            .update({ session_data: d })
             .eq('id', ctx.session.id);
           return [savedCardOffer.prompt];
         }
@@ -427,7 +448,7 @@ export const paymentFlow: FlowDefinition = {
 
             await ctx.supabase
               .from('bot_sessions')
-              .update({ session_data: d, current_step: 'await_payment' })
+              .update({ session_data: d })
               .eq('id', ctx.session.id);
 
             // Dual-option payment — consolidated into 1 message
@@ -456,7 +477,7 @@ export const paymentFlow: FlowDefinition = {
           // Standard payment flow (no bank transfer option) — consolidated into 1 message
           await ctx.supabase
             .from('bot_sessions')
-            .update({ session_data: d, current_step: 'await_payment' })
+            .update({ session_data: d })
             .eq('id', ctx.session.id);
 
           const paymentLines = [
@@ -501,7 +522,7 @@ export const paymentFlow: FlowDefinition = {
 
           await ctx.supabase
             .from('bot_sessions')
-            .update({ session_data: d, current_step: 'await_payment' })
+            .update({ session_data: d })
             .eq('id', ctx.session.id);
 
           const paymentLines = [
