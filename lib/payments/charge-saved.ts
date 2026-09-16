@@ -126,15 +126,17 @@ export async function getSavedPaymentMethod(
   const phoneP = customerPhone.startsWith('+') ? customerPhone : `+${customerPhone}`;
   const phoneN = customerPhone.startsWith('+') ? customerPhone.slice(1) : customerPhone;
 
-  // Fetch both phone-variant rows (at most 2 given the business_id + is_active fence).
-  // Select deterministically in code: canonical +E.164 first, legacy non-+ fallback.
-  // No collation/sort dependence.
+  // Fetch both phone-variant rows for the current gateway, constrained to
+  // business_id + is_active. Gateway filter ensures deterministic provider
+  // selection when multiple gateways coexist for the same customer.
+  // Select canonical +E.164 in code: no collation/sort dependence.
   const { data, error } = await supabase
     .from('saved_payment_methods')
     .select('id, gateway, authorization_code, customer_code, stripe_payment_method_id, stripe_customer_id, card_last4, card_brand, customer_phone')
     .eq('business_id', businessId)
     .in('customer_phone', [phoneP, phoneN])
     .eq('is_active', true)
+    .eq('gateway', 'paystack')
     .limit(2);
 
   if (error) {

@@ -68,18 +68,32 @@ function createTupleMockSupabase(opts: {
   const updateCalls: unknown[][] = [];
   const eqConstraints: Record<string, string> = {};
 
+  let inConstraints: Record<string, string[]> = {};
   const chainable = {
     select: vi.fn().mockReturnThis(),
     eq: vi.fn().mockImplementation(function (this: typeof chainable, col: string, val: string) {
       eqConstraints[col] = val;
       return this;
     }),
+    in: vi.fn().mockImplementation(function (this: typeof chainable, col: string, vals: string[]) {
+      inConstraints[col] = vals;
+      return this;
+    }),
     maybeSingle: vi.fn().mockImplementation(() => {
       // Check if all tuple constraints match
       const idMatch = !opts.methodId || eqConstraints['id'] === opts.methodId;
       const bizMatch = !opts.businessId || eqConstraints['business_id'] === opts.businessId;
-      const phoneMatch = !opts.customerPhone || eqConstraints['customer_phone'] === opts.customerPhone;
-      const activeMatch = eqConstraints['is_active'] === 'true' || eqConstraints['is_active'] === true as unknown as string;
+      // Phone match: check both .eq() and .in() constraints
+      let phoneMatch = true;
+      if (opts.customerPhone) {
+        if (eqConstraints['customer_phone']) {
+          phoneMatch = eqConstraints['customer_phone'] === opts.customerPhone;
+        } else if (inConstraints['customer_phone']) {
+          phoneMatch = inConstraints['customer_phone'].includes(opts.customerPhone);
+        } else {
+          phoneMatch = false;
+        }
+      }
 
       if (idMatch && bizMatch && phoneMatch) {
         return Promise.resolve({ data: opts.returnData ?? null, error: null });

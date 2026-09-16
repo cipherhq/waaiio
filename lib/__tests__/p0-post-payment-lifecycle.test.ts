@@ -223,10 +223,13 @@ describe('Blocker 1: Deterministic saved-card selection', () => {
             in: vi.fn().mockImplementation((field: string, values: string[]) => {
               opts.captureInArgs?.(field, values);
               return {
+                // .eq('is_active', true) -> .eq('gateway', 'paystack') -> .limit(2)
                 eq: vi.fn().mockReturnValue({
-                  limit: vi.fn().mockResolvedValue({
-                    data: opts.returnRows ?? null,
-                    error: opts.returnError ?? null,
+                  eq: vi.fn().mockReturnValue({
+                    limit: vi.fn().mockResolvedValue({
+                      data: opts.returnRows ?? null,
+                      error: opts.returnError ?? null,
+                    }),
                   }),
                 }),
               };
@@ -1038,5 +1041,139 @@ describe('Blocker 4: Real caller boundaries + explicit zero-reinit', () => {
     expect(result.data?._action).toBe('already_confirmed');
     // CRITICAL: initializePayment must NOT be called
     expect(mockInitializePayment).not.toHaveBeenCalled();
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// Area B: Saved-card listing → authorization consistency
+// ═══════════════════════════════════════════════════════════════
+describe('Area B: Saved-card listing → authorization consistency', () => {
+  let getSavedPaymentMethod: typeof import('@/lib/payments/charge-saved').getSavedPaymentMethod;
+
+  const CANONICAL_PHONE = '+2348012345678';
+  const RAW_PHONE = '2348012345678';
+
+  const PAYSTACK_METHOD = {
+    id: 'spm-ps-1',
+    gateway: 'paystack',
+    authorization_code: 'AUTH_ps1',
+    customer_code: 'CUS_ps1',
+    stripe_payment_method_id: null,
+    stripe_customer_id: null,
+    card_last4: '4242',
+    card_brand: 'visa',
+    customer_phone: CANONICAL_PHONE,
+  };
+
+  /**
+   * Build a supabase mock matching the exact chain in getSavedPaymentMethod:
+   * .from().select().eq(business_id).in(customer_phone).eq(is_active).eq(gateway).limit(2)
+   *
+   * Captures arguments at each chain position for assertion.
+   */
+  function buildListingSb(opts: {
+    returnRows?: any[];
+    returnError?: { message: string } | null;
+    captureInArgs?: (field: string, values: string[]) => void;
+    captureGateway?: (gateway: string) => void;
+  }) {
+    const sb: any = {
+      from: vi.fn().mockReturnValue({
+        select: vi.fn().mockReturnValue({
+          eq: vi.fn().mockReturnValue({
+            // .in(customer_phone, [...])
+            in: vi.fn().mockImplementation((field: string, values: string[]) => {
+              opts.captureInArgs?.(field, values);
+              return {
+                // .eq('is_active', true)
+                eq: vi.fn().mockReturnValue({
+                  // .eq('gateway', 'paystack')
+                  eq: vi.fn().mockImplementation((_field: string, value: string) => {
+                    opts.captureGateway?.(value);
+                    // Apply gateway filter on the rows
+                    const filtered = opts.returnRows
+                      ? opts.returnRows.filter((r: any) => r.gateway === value)
+                      : null;
+                    return {
+                      limit: vi.fn().mockResolvedValue({
+                        data: opts.returnError ? null : filtered,
+                        error: opts.returnError ?? null,
+                      }),
+                    };
+                  }),
+                }),
+              };
+            }),
+          }),
+        }),
+      }),
+    };
+    return sb;
+  }
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    getSavedPaymentMethod = (await import('@/lib/payments/charge-saved')).getSavedPaymentMethod;
+  });
+
+  it('B.1 Legacy non-+ stored method is listed — then same raw phone would pass authorization lookup', async () => {
+    // getSavedPaymentMethod queries with .in('customer_phone', ['+234...', '234...'])
+    // A legacy row stored without '+' is found because both variants are queried.
+    // The same phone normalization in lookupAuthorizedMethod ensures authorization
+    // would also succeed for the same raw phone.
+    const legacyRow = { ...PAYSTACK_METHOD, customer_phone: RAW_PHONE };
+
+    let capturedPhones: string[] = [];
+    const sb = buildListingSb({
+      returnRows: [legacyRow],
+      captureInArgs: (_field, values) => { capturedPhones = values; },
+    });
+
+    const listed = await getSavedPaymentMethod(sb, 'biz-1', RAW_PHONE);
+
+    // The method is found despite legacy storage
+    expect(listed).not.toBeNull();
+    expect(listed!.id).toBe('spm-ps-1');
+
+    // Both phone variants were queried — the same normalization used in lookupAuthorizedMethod
+    expect(capturedPhones).toContain('+2348012345678');
+    expect(capturedPhones).toContain('2348012345678');
+  });
+
+  it('B.2 Cross-tenant — empty result returns null for different business', async () => {
+    // getSavedPaymentMethod with a different business_id returns no rows
+    const sb = buildListingSb({ returnRows: [] });
+    const result = await getSavedPaymentMethod(sb, 'biz-FOREIGN', CANONICAL_PHONE);
+    expect(result).toBeNull();
+  });
+
+  it('B.3 Paystack+Stripe coexistence: getSavedPaymentMethod filters by gateway=paystack, only Paystack returned', async () => {
+    const stripeMethod = {
+      id: 'spm-stripe-1',
+      gateway: 'stripe',
+      authorization_code: null,
+      customer_code: null,
+      stripe_payment_method_id: 'pm_stripe_1',
+      stripe_customer_id: 'cus_stripe_1',
+      card_last4: '1234',
+      card_brand: 'mastercard',
+      customer_phone: CANONICAL_PHONE,
+    };
+
+    let capturedGateway: string | undefined;
+    const sb = buildListingSb({
+      returnRows: [PAYSTACK_METHOD, stripeMethod],
+      captureGateway: (g) => { capturedGateway = g; },
+    });
+
+    const result = await getSavedPaymentMethod(sb, 'biz-1', CANONICAL_PHONE);
+
+    // Verify the gateway filter was applied as 'paystack'
+    expect(capturedGateway).toBe('paystack');
+
+    // Only the Paystack method should be returned (Stripe filtered out by gateway eq)
+    expect(result).not.toBeNull();
+    expect(result!.id).toBe('spm-ps-1');
+    expect(result!.gateway).toBe('paystack');
   });
 });

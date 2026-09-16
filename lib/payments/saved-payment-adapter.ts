@@ -189,13 +189,17 @@ async function lookupAuthorizedMethod(
   pin_attempts: number;
   pin_locked_until: string | null;
 } | null> {
-  const phone = normalizePhone(customerPhone);
+  // Accept both phone variants so a legacy-stored method found by listing
+  // can also pass authorization. The methodId + businessId + is_active fencing
+  // ensures cross-tenant/cross-customer denial regardless of phone format.
+  const phoneP = customerPhone.startsWith('+') ? customerPhone : `+${customerPhone}`;
+  const phoneN = customerPhone.startsWith('+') ? customerPhone.slice(1) : customerPhone;
   const { data } = await supabase
     .from('saved_payment_methods')
     .select('id, gateway, authorization_code, customer_code, stripe_payment_method_id, stripe_customer_id, card_last4, card_brand, pin_hash, pin_attempts, pin_locked_until')
     .eq('id', methodId)
     .eq('business_id', businessId)
-    .eq('customer_phone', phone)
+    .in('customer_phone', [phoneP, phoneN])
     .eq('is_active', true)
     .maybeSingle();
 
