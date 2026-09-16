@@ -6,16 +6,50 @@
  *   → scheduling.flow select_date accepts the date
  *   → select_time is reachable and accepts a time
  *   → confirmation accepts 'confirm'
- *   → create_booking creates booking + initializes payment for paid/deposit service
- *   → WhatsApp response contains the payment link/action
+ *   → create_booking creates booking + calls initializePayment at the
+ *     shared/payment boundary with correct args
+ *   → WhatsApp response contains the exact checkout URL from initializePayment
+ *   → payment-error message is absent
  *
  * This test does NOT call the real database or payment providers.
- * It exercises the flow step validate/next/prompt functions with mocked context.
+ * It exercises the flow step validate/next/prompt functions with mocked context
+ * and spies on initializePayment at the module boundary.
+ *
+ * NOTE: This test proves the scheduling flow correctly calls initializePayment
+ * with the right args and surfaces the returned URL. It does NOT prove that
+ * initializePayment itself succeeds in production — a separate
+ * initializePayment THREW error observed in production may be an independent
+ * defect that this PR's promo-bypass fix does not address.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { FlowContext, FlowStepConfig, ValidationResult, PromptMessage } from '@/lib/bot/flows/types';
+import type { FlowContext, FlowStepConfig, PromptMessage } from '@/lib/bot/flows/types';
 
-// ── Mocks ──
+// ── Known test constants ──
+
+const KNOWN_CHECKOUT_URL = 'https://checkout.paystack.com/test-exact-abc123';
+const KNOWN_PAYMENT_REF = 'PAY-EXACT-REF-001';
+const PAYMENT_ERROR_MESSAGE = "couldn't set up payment";
+
+// ── Module-level mocks ──
+
+// Mock initializePayment at the shared/payment boundary.
+// This is the authoritative spy — we assert exact call args and return value.
+const initializePaymentSpy = vi.fn();
+vi.mock('@/lib/bot/flows/shared/payment', () => ({
+  initializePayment: initializePaymentSpy,
+}));
+
+// Mock bank transfer eligibility (not the focus; return no bank transfer)
+vi.mock('@/lib/bot/flows/shared/bank-transfer', () => ({
+  checkBankTransferEligibility: vi.fn(async () => ({
+    qualifies: false,
+    bankAccount: null,
+    platformSettings: { transfer_expiry_hours: 24 },
+  })),
+  createPendingTransfer: vi.fn(async () => 'TRF-TEST-001'),
+  formatBankTransferBlock: vi.fn(() => 'Bank details here'),
+  BANK_ONLY_BUTTONS: [{ id: 'sent_transfer', title: "I've Sent Transfer" }],
+}));
 
 vi.mock('@/lib/supabase/service', () => ({
   createServiceClient: vi.fn(() => mockSupabaseClient()),
@@ -39,28 +73,22 @@ vi.mock('@/lib/getPlatformFees', () => ({
 
 vi.mock('@/lib/trial-status', () => ({
   resolveTrialStatus: vi.fn(async () => ({ isInTrial: false, trialEndsAt: null })),
+  resolveTrialCredit: vi.fn(async () => false),
 }));
 
+// Mock the capability guard to always allow — we're testing initializePayment, not capabilities
+vi.mock('@/lib/bot/flows/shared/capability-guard', () => ({
+  requireCurrentCapability: vi.fn(async () => ({ allowed: true })),
+}));
+
+// Not needed — initializePayment is mocked at the boundary
 vi.mock('@/lib/payments/factory', () => ({
-  getPaymentGateway: vi.fn(async () => ({
-    initialize: vi.fn(async () => ({
-      authorizationUrl: 'https://paystack.com/pay/test123',
-      reference: 'PAY-TEST-REF-001',
-      accessCode: 'acc_test',
-    })),
-    name: 'paystack',
-  })),
-  getPaymentGatewayByName: vi.fn(async () => ({
-    initialize: vi.fn(async () => ({
-      authorizationUrl: 'https://paystack.com/pay/test123',
-      reference: 'PAY-TEST-REF-001',
-      accessCode: 'acc_test',
-    })),
-    name: 'paystack',
-  })),
+  getPaymentGateway: vi.fn(),
+  getPaymentGatewayByName: vi.fn(),
 }));
 
-// Shared mock builder
+// ── Shared mock builder ──
+
 function mockSupabaseClient() {
   const chainable: any = {
     select: vi.fn(() => chainable),
@@ -86,23 +114,24 @@ function mockSupabaseClient() {
     count: 0,
     head: true,
   };
-  // Make awaitable
   chainable.then = (resolve: (v: any) => void) => resolve({ data: null, error: null, count: 0 });
 
   return {
     from: vi.fn(() => chainable),
-    rpc: vi.fn(async (name: string) => {
-      if (name === 'book_slot_atomic') {
-        return {
-          data: {
-            booking_id: 'booking-uuid-001',
-            reference_code: 'WAA-TEST-001',
-            slot_available: true,
-          },
-          error: null,
-        };
-      }
-      return { data: null, error: null };
+    rpc: vi.fn((_name: string) => {
+      // RPC returns a chainable with .single()
+      const rpcResult = {
+        data: {
+          booking_id: 'booking-uuid-001',
+          reference_code: 'WAA-TEST-001',
+          slot_available: true,
+        },
+        error: null,
+      };
+      return {
+        single: vi.fn(async () => rpcResult),
+        then: (resolve: (v: any) => void) => resolve(rpcResult),
+      };
     }),
     auth: { getUser: vi.fn(async () => ({ data: { user: null }, error: null })) },
     _chainable: chainable,
@@ -112,11 +141,9 @@ function mockSupabaseClient() {
 function makeFlowContext(overrides?: Partial<FlowContext> & { sessionData?: Record<string, unknown> }): FlowContext {
   const supabase = mockSupabaseClient() as any;
 
-  // For time slot validation: need chainable to resolve with count: 0
   const fromFn = supabase.from;
   fromFn.mockImplementation(() => {
     const chain = supabase._chainable;
-    // Override the then for await-ability with count
     chain.then = (resolve: (v: any) => void) => resolve({ data: null, error: null, count: 0 });
     return chain;
   });
@@ -146,8 +173,8 @@ function makeFlowContext(overrides?: Partial<FlowContext> & { sessionData?: Reco
         flow_type: 'scheduling',
         service_id: 'svc-uuid-001',
         service_name: 'Meet the Aces',
-        service_price: 5000, // ₦50.00
-        service_deposit: 2000, // ₦20.00 deposit required
+        service_price: 5000,
+        service_deposit: 2000,
         party_size: 1,
         ...(overrides?.sessionData || {}),
       },
@@ -178,7 +205,7 @@ function makeFlowContext(overrides?: Partial<FlowContext> & { sessionData?: Reco
   } as unknown as FlowContext;
 }
 
-// ── Helpers to get flow steps ──
+// ── Helpers ──
 
 let schedulingSteps: FlowStepConfig[];
 
@@ -201,18 +228,16 @@ describe('Complete paid appointment regression path', () => {
     it('date_YYYY-MM-DD with messageType=button bypasses promo verification', async () => {
       const { handlePromoVerification } = await import('@/lib/bot/handlers/promo-verification');
 
-      // Compute tomorrow's date (same as production)
       const tomorrow = new Date();
       tomorrow.setDate(tomorrow.getDate() + 1);
       const dateStr = tomorrow.toISOString().split('T')[0];
-      const postbackId = `date_${dateStr}`;
 
       const result = await handlePromoVerification(
-        {} as any, vi.fn(), '+2348012345678', postbackId,
+        {} as any, vi.fn(), '+2348012345678', `date_${dateStr}`,
         'biz-uuid-001', undefined,
         ['scheduling', 'promo_verification'],
         'pre_resolved',
-        'button', // WhatsApp interactive button reply
+        'button',
       );
 
       expect(result.handled).toBe(false);
@@ -239,7 +264,6 @@ describe('Complete paid appointment regression path', () => {
       const ctx = makeFlowContext({ sessionData: { date: '2026-09-17' } });
 
       const nextStep = await step.next(ctx);
-
       expect(nextStep).toBe('select_staff');
     });
   });
@@ -254,7 +278,6 @@ describe('Complete paid appointment regression path', () => {
       const result = await step.validate('10:00', ctx);
 
       expect(result.valid).toBe(true);
-      expect(result.data).toBeDefined();
       expect(result.data!.time).toBe('10:00');
     });
 
@@ -267,7 +290,6 @@ describe('Complete paid appointment regression path', () => {
       const result = await step.validate('2pm', ctx);
 
       expect(result.valid).toBe(true);
-      expect(result.data).toBeDefined();
       expect(result.data!.time).toBe('14:00');
     });
 
@@ -277,9 +299,7 @@ describe('Complete paid appointment regression path', () => {
         sessionData: { date: '2026-09-17', time: '10:00' },
       });
 
-      const nextStep = await step.next(ctx);
-
-      expect(nextStep).toBe('select_addons');
+      expect(await step.next(ctx)).toBe('select_addons');
     });
   });
 
@@ -291,83 +311,28 @@ describe('Complete paid appointment regression path', () => {
       const result = await step.validate('confirm', ctx);
 
       expect(result.valid).toBe(true);
-      expect(result.data).toBeDefined();
       expect(result.data!._action).toBe('confirm');
     });
 
     it('next() returns collect_name on confirm (continues to booking)', async () => {
       const step = getStep('confirmation');
-      const ctx = makeFlowContext({
-        sessionData: { _action: 'confirm' },
-      });
+      const ctx = makeFlowContext({ sessionData: { _action: 'confirm' } });
 
-      const nextStep = await step.next(ctx);
-
-      expect(nextStep).toBe('collect_name');
+      expect(await step.next(ctx)).toBe('collect_name');
     });
   });
 
-  describe('Step 5: create_booking with paid service produces payment link', () => {
-    it('prompt() calls initializePayment and returns messages with payment URL', async () => {
-      const step = getStep('create_booking');
-
-      // Build context with all required session data for a paid booking
-      const tomorrow = new Date();
-      tomorrow.setDate(tomorrow.getDate() + 1);
-      const dateStr = tomorrow.toISOString().split('T')[0];
-
-      const ctx = makeFlowContext({
-        sessionData: {
-          service_id: 'svc-uuid-001',
-          service_name: 'Meet the Aces',
-          service_price: 5000,
-          service_deposit: 2000, // Deposit required — triggers payment path
-          party_size: 1,
-          date: dateStr,
-          time: '10:00',
-          user_id: 'user-uuid-001',
-          customer_name: 'Ade Testing',
-          email: 'ade@test.com',
-          staff_id: null,
-          location_id: null,
-          selected_addons: [],
-          _service_duration: 60,
-        },
-      });
-
-      // Mock the supabase.rpc for book_slot_atomic
-      (ctx.supabase.rpc as any).mockResolvedValueOnce({
-        data: {
-          booking_id: 'booking-uuid-001',
-          reference_code: 'WAA-TEST-001',
-          slot_available: true,
-        },
-        error: null,
-      });
-
-      // Mock supabase.from chains for:
-      // 1. User lookup/creation
-      // 2. Booking read-back
-      // 3. Session update
-      // 4. Payment insertion
-      // 5. URL shortener
+  describe('Step 5: create_booking calls initializePayment with correct args', () => {
+    // Shared mock setup for create_booking tests
+    function setupCreateBookingMocks(ctx: FlowContext) {
       const fromMock = ctx.supabase.from as any;
       const makeChain = () => {
         const c: any = {
-          select: vi.fn(() => c),
-          insert: vi.fn(() => c),
-          update: vi.fn(() => c),
-          upsert: vi.fn(() => c),
-          eq: vi.fn(() => c),
-          neq: vi.fn(() => c),
-          in: vi.fn(() => c),
-          gte: vi.fn(() => c),
-          lte: vi.fn(() => c),
-          is: vi.fn(() => c),
-          or: vi.fn(() => c),
-          not: vi.fn(() => c),
-          order: vi.fn(() => c),
-          limit: vi.fn(() => c),
+          select: vi.fn(() => c), insert: vi.fn(() => c), update: vi.fn(() => c),
+          upsert: vi.fn(() => c), eq: vi.fn(() => c), neq: vi.fn(() => c),
+          in: vi.fn(() => c), gte: vi.fn(() => c), lte: vi.fn(() => c),
+          is: vi.fn(() => c), or: vi.fn(() => c), not: vi.fn(() => c),
+          order: vi.fn(() => c), limit: vi.fn(() => c),
           single: vi.fn(async () => ({ data: null, error: null })),
           maybeSingle: vi.fn(async () => ({ data: null, error: null })),
         };
@@ -375,119 +340,103 @@ describe('Complete paid appointment regression path', () => {
         return c;
       };
 
+      const bizData = {
+        id: 'biz-uuid-001', status: 'active', subscription_tier: 'growth',
+        trial_ends_at: '2027-01-01T00:00:00Z', deposit_per_guest: null, category: 'health_beauty',
+      };
+
       fromMock.mockImplementation((table: string) => {
         const chain = makeChain();
-
         if (table === 'whatsapp_users') {
-          // createWhatsAppUser lookup — user exists
-          chain.maybeSingle.mockResolvedValue({
-            data: { id: 'user-uuid-001', phone: '+2348012345678' },
-            error: null,
-          });
-        } else if (table === 'bookings') {
-          // Booking read-back after creation
-          chain.single.mockResolvedValue({
-            data: {
-              id: 'booking-uuid-001',
-              reference_code: 'WAA-TEST-001',
-              status: 'pending',
-              amount: 5000,
-              deposit_amount: 2000,
-            },
-            error: null,
-          });
-        } else if (table === 'bot_sessions') {
-          // Session update (current_step = 'payment')
-          chain.then = (resolve: (v: any) => void) => resolve({ data: null, error: null });
-        } else if (table === 'payments') {
-          // Payment insertion + lookup
-          chain.maybeSingle.mockResolvedValue({ data: null, error: null });
-          chain.single.mockResolvedValue({
-            data: {
-              id: 'payment-uuid-001',
-              reference: 'PAY-TEST-REF-001',
-              checkout_url: 'https://paystack.com/pay/test123',
-              amount: 2000,
-              currency: 'NGN',
-              status: 'pending',
-            },
-            error: null,
-          });
-          // For insert().select().single()
-          chain.insert.mockReturnValue({
-            ...chain,
-            select: vi.fn(() => ({
-              ...chain,
-              single: vi.fn(async () => ({
-                data: {
-                  id: 'payment-uuid-001',
-                  reference: 'PAY-TEST-REF-001',
-                  checkout_url: 'https://paystack.com/pay/test123',
-                  amount: 2000,
-                  currency: 'NGN',
-                  status: 'pending',
-                },
-                error: null,
-              })),
-            })),
-          });
-        } else if (table === 'short_urls') {
-          // URL shortener
-          chain.then = (resolve: (v: any) => void) => resolve({ data: null, error: null });
-        } else if (table === 'platform_config_versions') {
-          // Fee policy config lookup
-          chain.maybeSingle.mockResolvedValue({
-            data: {
-              id: 'config-v1',
-              config_snapshot: { fee_policy_enabled: false },
-            },
-            error: null,
-          });
+          chain.maybeSingle.mockResolvedValue({ data: { id: 'user-uuid-001', phone: '+2348012345678' }, error: null });
+        } else if (table === 'businesses') {
+          chain.single.mockResolvedValue({ data: bizData, error: null });
+          chain.maybeSingle.mockResolvedValue({ data: bizData, error: null });
         } else if (table === 'saved_payment_methods') {
           chain.maybeSingle.mockResolvedValue({ data: null, error: null });
-        } else if (table === 'businesses') {
-          chain.single.mockResolvedValue({
-            data: {
-              id: 'biz-uuid-001',
-              subscription_tier: 'growth',
-              trial_ends_at: '2027-01-01T00:00:00Z',
-              deposit_per_guest: null,
-            },
-            error: null,
-          });
-          chain.maybeSingle.mockResolvedValue({
-            data: {
-              id: 'biz-uuid-001',
-              subscription_tier: 'growth',
-              trial_ends_at: '2027-01-01T00:00:00Z',
-              deposit_per_guest: null,
-            },
-            error: null,
-          });
+        } else if (table === 'bot_sessions') {
+          chain.then = (resolve: (v: any) => void) => resolve({ data: null, error: null });
+        } else if (table === 'business_capabilities') {
+          chain.then = (resolve: (v: any) => void) => resolve({ data: [{ capability_id: 'scheduling', is_enabled: true }], error: null });
+        } else if (table === 'capability_overrides') {
+          chain.then = (resolve: (v: any) => void) => resolve({ data: [], error: null });
         }
-
         return chain;
+      });
+    }
+
+    function makeCreateBookingSessionData() {
+      const tomorrow = new Date();
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      const dateStr = tomorrow.toISOString().split('T')[0];
+      return {
+        service_id: 'svc-uuid-001',
+        service_name: 'Meet the Aces',
+        service_price: 5000,
+        service_deposit: 2000,
+        party_size: 1,
+        date: dateStr,
+        time: '10:00',
+        user_id: 'user-uuid-001',
+        customer_name: 'Ade Testing',
+        email: 'ade@test.com',
+        staff_id: null,
+        location_id: null,
+        selected_addons: [],
+        _service_duration: 60,
+        _inbound_channel_id: 'ch-uuid-001',
+        _terms_accepted: true,
+      };
+    }
+
+    it('calls initializePayment exactly once with booking ID, deposit amount, business context, and scheduling category', async () => {
+      const step = getStep('create_booking');
+      const sessionData = makeCreateBookingSessionData();
+      const ctx = makeFlowContext({ sessionData });
+
+      initializePaymentSpy.mockResolvedValueOnce({
+        url: KNOWN_CHECKOUT_URL,
+        reference: KNOWN_PAYMENT_REF,
+      });
+
+      setupCreateBookingMocks(ctx);
+
+      (ctx.supabase.rpc as any).mockReturnValueOnce({
+        single: vi.fn(async () => ({
+          data: { booking_id: 'booking-uuid-001', reference_code: 'WAA-TEST-001', slot_available: true },
+          error: null,
+        })),
       });
 
       let messages: PromptMessage[];
       try {
         messages = await step.prompt(ctx);
       } catch (e: any) {
-        // If prompt throws due to deep mocking gaps, the test should fail
-        // with a clear message about what's missing
-        throw new Error(
-          `create_booking.prompt() threw: ${e.message}\n\n` +
-          'This may indicate a gap in the mocks. The test aims to verify that ' +
-          'the payment initialization path is reachable — if it throws before ' +
-          'reaching initializePayment, the promo interception fix alone does not ' +
-          'guarantee the payment link will be produced.'
-        );
+        throw new Error(`create_booking.prompt() threw: ${e.message}`);
       }
 
-      // The response must contain the payment URL or a payment action.
-      // create_booking produces either:
-      // a) A text message with the payment link URL
-      // b) A buttons message with "I've Paid" / "Get New Link" / "Cancel"
+      // ── Assert initializePayment was called exactly once ──
+      expect(initializePaymentSpy).toHaveBeenCalledTimes(1);
+
+      // ── Assert exact call args ──
+      const callArgs = initializePaymentSpy.mock.calls[0];
+      expect(callArgs[0]).toBeDefined(); // supabase client
+      const opts = callArgs[1];
+      expect(opts.bookingId).toBe('booking-uuid-001');
+      expect(opts.amount).toBe(2000); // deposit amount, not full price
+      expect(opts.businessId).toBe('biz-uuid-001');
+      expect(opts.countryCode).toBe('NG');
+      expect(opts.referenceCode).toBe('WAA-TEST-001');
+      expect(opts.phone).toBe('+2348012345678');
+      expect(opts.confirmationOrigin).toBe('whatsapp');
+      expect(opts.transactionCategory).toBe('scheduling');
+      expect(opts.inboundChannelId).toBe('ch-uuid-001');
+      expect(opts.gatewayOverride).toBeNull();
+      expect(opts.userEmail).toBe('ade@test.com');
+      expect(opts.userId).toBe('user-uuid-001');
+      expect(opts.businessName).toBe('Test Business');
+
+      // ── Assert the EXACT known checkout URL appears in response ──
       const allText = messages
         .map((m) => {
           if (m.type === 'text') return m.text;
@@ -496,28 +445,53 @@ describe('Complete paid appointment regression path', () => {
         })
         .join('\n');
 
+      expect(allText).toContain(KNOWN_CHECKOUT_URL);
+
+      // ── Assert the payment-error message is ABSENT ──
+      expect(allText.toLowerCase()).not.toContain(PAYMENT_ERROR_MESSAGE);
+
+      // ── Assert I've Paid button with correct payment reference ──
       const allButtonIds = messages
         .filter((m): m is Extract<PromptMessage, { type: 'buttons' }> => m.type === 'buttons')
         .flatMap((m) => m.buttons.map((b) => b.id));
 
-      // At minimum, the payment path should produce an "I've Paid" button
-      // or the payment URL in the message text
-      const hasPaymentButton = allButtonIds.some(
-        (id) => id.startsWith('i_paid') || id === 'retry_payment'
-      );
-      const hasPaymentUrl = /https?:\/\//.test(allText) || /pay/i.test(allText);
+      expect(allButtonIds).toContain(`i_paid_ref:${KNOWN_PAYMENT_REF}`);
+    });
 
-      expect(
-        hasPaymentButton || hasPaymentUrl,
-        `Expected payment link or "I've Paid" button in response.\n` +
-        `Messages: ${JSON.stringify(messages, null, 2)}\n` +
-        `Button IDs: ${allButtonIds}\n` +
-        `Text content: ${allText}`
-      ).toBe(true);
+    it('when initializePayment returns null, the failure message appears (not the checkout URL)', async () => {
+      const step = getStep('create_booking');
+      const sessionData = makeCreateBookingSessionData();
+      const ctx = makeFlowContext({ sessionData });
 
-      // Verify the booking creation path was reached.
-      // The RPC may be called via ctx.supabase or the service client.
-      // Either way, if we got messages back with payment content, the path worked.
+      initializePaymentSpy.mockResolvedValueOnce(null);
+
+      setupCreateBookingMocks(ctx);
+
+      (ctx.supabase.rpc as any).mockReturnValueOnce({
+        single: vi.fn(async () => ({
+          data: { booking_id: 'booking-uuid-002', reference_code: 'WAA-TEST-002', slot_available: true },
+          error: null,
+        })),
+      });
+
+      const messages = await step.prompt(ctx);
+
+      const allText = messages
+        .map((m) => { if (m.type === 'text') return m.text; if (m.type === 'buttons') return m.body; return ''; })
+        .join('\n');
+
+      // The failure message MUST appear when initializePayment returns null
+      expect(allText.toLowerCase()).toContain(PAYMENT_ERROR_MESSAGE);
+
+      // The checkout URL must NOT appear
+      expect(allText).not.toContain(KNOWN_CHECKOUT_URL);
+
+      // No i_paid button — only retry_payment
+      const allButtonIds = messages
+        .filter((m): m is Extract<PromptMessage, { type: 'buttons' }> => m.type === 'buttons')
+        .flatMap((m) => m.buttons.map((b) => b.id));
+      expect(allButtonIds.some((id) => id.startsWith('i_paid'))).toBe(false);
+      expect(allButtonIds).toContain('retry_payment');
     });
   });
 
@@ -528,14 +502,13 @@ describe('Complete paid appointment regression path', () => {
         sessionData: {
           booking_id: 'booking-uuid-001',
           reference_code: 'WAA-TEST-001',
-          payment_reference: 'PAY-TEST-REF-001',
+          payment_reference: KNOWN_PAYMENT_REF,
           deposit_amount: 2000,
         },
       });
 
       const messages = await step.prompt(ctx);
 
-      // Should have buttons with i_paid
       const buttonMessages = messages.filter(
         (m): m is Extract<PromptMessage, { type: 'buttons' }> => m.type === 'buttons'
       );
@@ -548,36 +521,21 @@ describe('Complete paid appointment regression path', () => {
 
   describe('End-to-end flow step reachability', () => {
     it('date → staff → time → addons → ... → booking is a reachable path', () => {
-      // Verify the step chain exists in the flow definition
       const stepIds = schedulingSteps.map((s) => s.id);
-
-      // All required steps for the paid path must exist
-      const requiredSteps = [
-        'select_date',
-        'select_time',
-        'confirmation',
-        'create_booking',
-        'payment',
-      ];
-
-      for (const id of requiredSteps) {
+      for (const id of ['select_date', 'select_time', 'confirmation', 'create_booking', 'payment']) {
         expect(stepIds, `Missing required step: ${id}`).toContain(id);
       }
     });
 
     it('select_date → select_staff → select_time chain is navigable', async () => {
-      // select_date.next() → select_staff
       const dateStep = getStep('select_date');
       const ctx1 = makeFlowContext({ sessionData: { date: '2026-09-17' } });
       expect(await dateStep.next(ctx1)).toBe('select_staff');
 
-      // select_staff exists and has next() → select_time
       const staffStep = getStep('select_staff');
       const ctx2 = makeFlowContext({ sessionData: { date: '2026-09-17', staff_id: null } });
-      const staffNext = await staffStep.next(ctx2);
-      expect(staffNext).toBe('select_time');
+      expect(await staffStep.next(ctx2)).toBe('select_time');
 
-      // select_time.next() → select_addons
       const timeStep = getStep('select_time');
       const ctx3 = makeFlowContext({ sessionData: { date: '2026-09-17', time: '10:00' } });
       expect(await timeStep.next(ctx3)).toBe('select_addons');
