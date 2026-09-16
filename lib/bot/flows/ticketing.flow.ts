@@ -849,6 +849,8 @@ export const ticketingFlow: FlowDefinition = {
       },
       async next(ctx: FlowContext) {
         const d = ctx.session.session_data;
+        // Stay on step while awaiting saved-card PIN — do not complete flow
+        if (d._awaiting_card_pin) return 'process_tickets';
         // Blocker 1: Saved-card outcomes BEFORE legacy terms loop
         if (d._saved_card_paid) {
           const paymentId = d._saved_card_payment_id as string;

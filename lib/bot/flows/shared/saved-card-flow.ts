@@ -85,7 +85,7 @@ export async function handleSavedCardInput(
       }
       await ctx.sender.sendText({
         to: ctx.from,
-        text: await ctx.t('🔒 Enter your *4-digit card PIN* to confirm payment:'),
+        text: await ctx.t('🔒 Enter your *4-digit Waaiio PIN* (not your bank/ATM PIN) to confirm payment.\n\nFor privacy, you can delete your PIN message from this chat after sending it.'),
       });
       return { valid: true, data: { _awaiting_card_pin: true, _saved_method_id: methodId } };
     }
@@ -130,9 +130,13 @@ export async function handleSavedCardInput(
       // R3-B1: PIN-stage cancel = full transaction cancel, not pay-new fallback
       return { valid: true, data: { _saved_card_cancelled: true, _awaiting_card_pin: false } };
     }
+    // Allow switching to a different card without cancelling the transaction
+    if (action === 'pay_new') {
+      return { valid: true, data: { _skip_saved_card: true, _awaiting_card_pin: false } };
+    }
     await ctx.sender.sendText({
       to: ctx.from,
-      text: await ctx.t('Please enter your *4-digit PIN* or type *cancel*:'),
+      text: await ctx.t('Please enter your *4-digit Waaiio PIN* or type *cancel*:'),
     });
     return { valid: false };
   }
