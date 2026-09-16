@@ -63,8 +63,16 @@ export async function initializePayment(
       ? getPaymentGatewayByName(opts.gatewayOverride as PaymentGatewayName)
       : getPaymentGateway(countryCode);
 
-    const { getCountry } = await import('@/lib/countries');
-    const currencyCode = getCountry(countryCode)?.currency_code ?? 'NGN';
+    // Currency resolution — fail closed on module resolution error
+    let currencyCode: string;
+    try {
+      const { getCountry } = await import('@/lib/countries');
+      currencyCode = getCountry(countryCode)?.currency_code ?? 'NGN';
+    } catch (currencyErr) {
+      logger.withContext({ op: 'payment.currency-resolution', ...safeLogErrorContext(currencyErr) })
+        .error('[PAYMENT] Currency resolution threw — fail closed');
+      return null;
+    }
 
     // ── Idempotent reuse: check for an existing pending payment for this entity.
     // Fail closed: if the lookup itself fails, do NOT proceed to the provider —
@@ -156,23 +164,30 @@ export async function initializePayment(
     // accepted the charge. Return null to prevent double-charge.
     // The reconciliation cron handles verify-first recovery for dispatched rows.
     if (entityId && opts.transactionCategory) {
-      const entityCol = opts.bookingId ? 'booking_id' : opts.orderId ? 'order_id' : opts.invoiceId ? 'invoice_id' : opts.reservationId ? 'reservation_id' : 'campaign_id';
-      const { data: dispatchedRow, error: dispatchLookupErr } = await supabase
-        .from('payments')
-        .select('id, provider_init_state, gateway_reference')
-        .eq(entityCol, entityId)
-        .eq('fee_policy_version', 1)
-        .eq('provider_init_state', 'dispatched')
-        .eq('status', 'pending')
-        .maybeSingle();
-      if (dispatchLookupErr) {
-        logger.error('[PAYMENT] Dispatched-row lookup error — fail closed', { dispatchLookupErr });
-        return null;
-      }
-      if (dispatchedRow) {
-        logger.warn('[PAYMENT] V1 dispatched row exists — blocking re-dispatch, needs verify-first recovery', {
-          paymentId: dispatchedRow.id, entityCol, entityId,
-        });
+      try {
+        const entityCol = opts.bookingId ? 'booking_id' : opts.orderId ? 'order_id' : opts.invoiceId ? 'invoice_id' : opts.reservationId ? 'reservation_id' : 'campaign_id';
+        const { data: dispatchedRow, error: dispatchLookupErr } = await supabase
+          .from('payments')
+          .select('id, provider_init_state, gateway_reference')
+          .eq(entityCol, entityId)
+          .eq('fee_policy_version', 1)
+          .eq('provider_init_state', 'dispatched')
+          .eq('status', 'pending')
+          .maybeSingle();
+        if (dispatchLookupErr) {
+          logger.withContext({ op: 'payment.v1-dispatched-recovery', ...safeLogErrorContext(dispatchLookupErr) })
+            .error('[PAYMENT] V1 dispatched-row recovery lookup failed — fail closed to prevent duplicate dispatch');
+          return null;
+        }
+        if (dispatchedRow) {
+          logger.warn('[PAYMENT] V1 dispatched row exists — blocking re-dispatch, needs verify-first recovery', {
+            paymentId: dispatchedRow.id, entityCol, entityId,
+          });
+          return null;
+        }
+      } catch (dispatchErr) {
+        logger.withContext({ op: 'payment.v1-dispatched-recovery-threw', ...safeLogErrorContext(dispatchErr) })
+          .error('[PAYMENT] V1 dispatched-row recovery lookup threw — fail closed to prevent duplicate dispatch');
         return null;
       }
     }
@@ -314,31 +329,35 @@ export async function initializePayment(
             return null;
           }
 
-          const { data: payout, error: payoutError } = await supabase
-            .from('payout_accounts')
-            .select('id, subaccount_code, stripe_account_id, square_merchant_id, square_access_token, platform_percentage, gateway')
-            .eq('business_id', opts.businessId)
-            .eq('is_active', true)
-            .maybeSingle();
+          // Only query payout_accounts when the payout mode actually requires split routing.
+          // platform_managed does not depend on the payout_accounts table — querying it
+          // and failing closed would unnecessarily block payments for platform-managed businesses.
+          if (biz?.payout_mode === 'direct_split') {
+            const { data: payout, error: payoutError } = await supabase
+              .from('payout_accounts')
+              .select('id, subaccount_code, stripe_account_id, square_merchant_id, square_access_token, platform_percentage, gateway')
+              .eq('business_id', opts.businessId)
+              .eq('is_active', true)
+              .maybeSingle();
 
-          if (payoutError) {
-            logger.withContext({ op: 'payment.payout-account-authority', ...safeLogErrorContext(payoutError) })
-              .error('[PAYMENT] Payout account authority lookup failed — fail closed to prevent split misattribution');
-            return null;
-          }
+            if (payoutError) {
+              logger.withContext({ op: 'payment.payout-account-authority', ...safeLogErrorContext(payoutError) })
+                .error('[PAYMENT] Payout account authority lookup failed — fail closed to prevent split misattribution');
+              return null;
+            }
 
-          // Only add split params if payout account gateway matches payment gateway
-          if (biz?.payout_mode === 'direct_split' && payout) {
-            const payoutGw = payout.gateway || 'paystack';
-            const paymentGw = gateway.name;
+            if (payout) {
+              const payoutGw = payout.gateway || 'paystack';
+              const paymentGw = gateway.name;
 
-            if (payoutGw === paymentGw || (payoutGw === 'paystack' && paymentGw === 'paystack') || (payoutGw === 'stripe' && paymentGw === 'stripe')) {
-              subaccountCode = payout.subaccount_code || undefined;
-              stripeAccountId = payout.stripe_account_id || undefined;
-              squareMerchantId = payout.square_merchant_id || undefined;
-              squareAccessToken = payout.square_access_token || undefined;
-              platformFeeAmount = Math.round(opts.amount * (payout.platform_percentage / 100));
-              payoutAccountId = payout.id;
+              if (payoutGw === paymentGw || (payoutGw === 'paystack' && paymentGw === 'paystack') || (payoutGw === 'stripe' && paymentGw === 'stripe')) {
+                subaccountCode = payout.subaccount_code || undefined;
+                stripeAccountId = payout.stripe_account_id || undefined;
+                squareMerchantId = payout.square_merchant_id || undefined;
+                squareAccessToken = payout.square_access_token || undefined;
+                platformFeeAmount = Math.round(opts.amount * (payout.platform_percentage / 100));
+                payoutAccountId = payout.id;
+              }
             }
           }
           // platform_managed or no split match: no split params, full amount goes to platform
