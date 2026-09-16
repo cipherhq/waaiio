@@ -122,11 +122,14 @@ export async function getSavedPaymentMethod(
   businessId: string,
   customerPhone: string,
 ): Promise<SavedMethod | null> {
+  const phoneP = customerPhone.startsWith('+') ? customerPhone : `+${customerPhone}`;
+  const phoneN = customerPhone.startsWith('+') ? customerPhone.slice(1) : customerPhone;
+
   const { data } = await supabase
     .from('saved_payment_methods')
     .select('id, gateway, authorization_code, customer_code, stripe_payment_method_id, stripe_customer_id, card_last4, card_brand')
     .eq('business_id', businessId)
-    .eq('customer_phone', customerPhone)
+    .in('customer_phone', [phoneP, phoneN])
     .eq('is_active', true)
     .maybeSingle();
 

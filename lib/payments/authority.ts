@@ -112,7 +112,7 @@ export async function authorizeAndFinalize(
     id: string; amount: number;
     booking_id: string | null; invoice_id: string | null; campaign_id: string | null;
     reservation_id?: string | null; order_id?: string | null;
-  }) => Promise<ConfirmationResult>,
+  }, sessionTerminalized?: boolean) => Promise<ConfirmationResult>,
 ): Promise<PaymentLifecycleResult> {
   const logPrefix = `[PAY-AUTHORITY ${verified.provider}]`;
 
@@ -210,13 +210,27 @@ export async function authorizeAndFinalize(
   // ── Stage 2: Business finalization ──
   // Check if already finalized
   if (payment.finalization_completed_at) {
+    // Stage 2.5: Exact-origin session terminalization (already-finalized path)
+    const { terminalizeOriginatingSession } = await import('./session-terminalization');
+    const termResult = await terminalizeOriginatingSession(supabase, {
+      bookingId: payment.booking_id,
+      orderId: payment.order_id,
+      reservationId: payment.reservation_id,
+      invoiceId: payment.invoice_id,
+      campaignId: payment.campaign_id,
+    });
+    if (termResult.status === 'error') {
+      return retryable('session_terminalization_failed', { ...stagesPaid, businessFinalized: true });
+    }
+    const sessionTerminalized = termResult.status === 'deactivated' || termResult.status === 'already_inactive';
+
     // Skip to Stage 3
     const confirmResult = await sendConfirmation(supabase, {
       id: payment.id, amount: payment.amount,
       booking_id: payment.booking_id, invoice_id: payment.invoice_id,
       campaign_id: payment.campaign_id, reservation_id: payment.reservation_id,
       order_id: payment.order_id,
-    });
+    }, sessionTerminalized);
     return mapConfirmationResult(supabase, payment.id, confirmResult, { ...stagesPaid, businessFinalized: true });
   }
 
@@ -232,13 +246,27 @@ export async function authorizeAndFinalize(
   }
   if (!claim?.claimed) {
     if (claim?.already_completed) {
+      // Stage 2.5: Exact-origin session terminalization (claim-already-completed path)
+      const { terminalizeOriginatingSession } = await import('./session-terminalization');
+      const termResult = await terminalizeOriginatingSession(supabase, {
+        bookingId: payment.booking_id,
+        orderId: payment.order_id,
+        reservationId: payment.reservation_id,
+        invoiceId: payment.invoice_id,
+        campaignId: payment.campaign_id,
+      });
+      if (termResult.status === 'error') {
+        return retryable('session_terminalization_failed', { ...stagesPaid, businessFinalized: true });
+      }
+      const sessionTerminalized = termResult.status === 'deactivated' || termResult.status === 'already_inactive';
+
       // Another worker completed finalization — skip to Stage 3
       const confirmResult = await sendConfirmation(supabase, {
         id: payment.id, amount: payment.amount,
         booking_id: payment.booking_id, invoice_id: payment.invoice_id,
         campaign_id: payment.campaign_id, reservation_id: payment.reservation_id,
         order_id: payment.order_id,
-      });
+      }, sessionTerminalized);
       return mapConfirmationResult(supabase, payment.id, confirmResult, { ...stagesPaid, businessFinalized: true });
     }
     return processing(claim?.reason || 'finalization_claim_not_granted', stagesPaid);
@@ -298,13 +326,28 @@ export async function authorizeAndFinalize(
 
   const stagesFinalized = { ...stagesPaid, businessFinalized: true };
 
+  // ── Stage 2.5: Exact-origin session terminalization ──
+  const { terminalizeOriginatingSession } = await import('./session-terminalization');
+  const termResult = await terminalizeOriginatingSession(supabase, {
+    bookingId: payment.booking_id,
+    orderId: payment.order_id,
+    reservationId: payment.reservation_id,
+    invoiceId: payment.invoice_id,
+    campaignId: payment.campaign_id,
+  });
+  if (termResult.status === 'error') {
+    // Terminalization failed — do NOT proceed to Stage 3 (durable session invariant unknown)
+    return retryable('session_terminalization_failed', stagesFinalized);
+  }
+  const sessionTerminalized = termResult.status === 'deactivated' || termResult.status === 'already_inactive';
+
   // ── Stage 3: Customer confirmation ──
   const confirmResult = await sendConfirmation(supabase, {
     id: payment.id, amount: payment.amount,
     booking_id: payment.booking_id, invoice_id: payment.invoice_id,
     campaign_id: payment.campaign_id, reservation_id: payment.reservation_id,
     order_id: payment.order_id,
-  });
+  }, sessionTerminalized);
 
   return mapConfirmationResult(supabase, payment.id, confirmResult, stagesFinalized);
 }

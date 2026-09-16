@@ -124,8 +124,10 @@ export type ConfirmationResult =
 export async function sendProactiveConfirmation(
   supabase: SupabaseClient,
   payment: PaymentForConfirmation,
-  logPrefix = '[WEBHOOK]',
+  logPrefixOrOpts: string | { logPrefix?: string; sessionTerminalized?: boolean } = '[WEBHOOK]',
 ): Promise<ConfirmationResult> {
+  const logPrefix = typeof logPrefixOrOpts === 'string' ? logPrefixOrOpts : (logPrefixOrOpts.logPrefix ?? '[WEBHOOK]');
+  const sessionTerminalized = typeof logPrefixOrOpts === 'object' ? (logPrefixOrOpts.sessionTerminalized ?? false) : false;
   // ── Atomic claim: only one concurrent caller wins processing rights ──
   const { data: claim, error: claimError } = await supabase.rpc('claim_payment_confirmation', {
     p_payment_id: payment.id,
@@ -1117,14 +1119,21 @@ export async function sendProactiveConfirmation(
     }
 
     // ── 9. Deactivate the payment-waiting session (webhook confirmed — user doesn't need to tap "I've Paid") ──
+    // When Stage 2.5 exact-origin terminalization already deactivated the session for
+    // booking/order/reservation families, limit the broad heuristic to invoice/campaign step names only.
     if (customerPhone) {
-      await supabase
-        .from('bot_sessions')
-        .update({ is_active: false, current_step: 'complete' })
-        .or(`whatsapp_number.eq.${stripPlus(customerPhone)},whatsapp_number.eq.+${stripPlus(customerPhone)}`)
-        .eq('business_id', businessId)
-        .eq('is_active', true)
-        .in('current_step', ['payment', 'await_payment', 'await_ticket_payment', 'await_order_payment', 'create_booking', 'reservation_payment', 'await_invoice_payment', 'await_donation_payment']);
+      const broadSteps = sessionTerminalized
+        ? ['await_invoice_payment', 'await_donation_payment']
+        : ['payment', 'await_payment', 'await_ticket_payment', 'await_order_payment', 'create_booking', 'reservation_payment', 'await_invoice_payment', 'await_donation_payment'];
+      if (broadSteps.length > 0) {
+        await supabase
+          .from('bot_sessions')
+          .update({ is_active: false, current_step: 'complete' })
+          .or(`whatsapp_number.eq.${stripPlus(customerPhone)},whatsapp_number.eq.+${stripPlus(customerPhone)}`)
+          .eq('business_id', businessId)
+          .eq('is_active', true)
+          .in('current_step', broadSteps);
+      }
     }
 
     // ── 10. Finalize: mark confirmation as successfully completed ──
