@@ -3,6 +3,20 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-09-16 — Shared payment routing authority guards (initializePayment THREW)
+
+### What changed
+- **Root cause.** `initializePayment` lines 196-337 (BYO/connect/payout credential resolution + payment channels) had no error inspection or try/catch. A Supabase transport error or query failure would throw to the outer catch (producing `[PAYMENT] initializePayment THREW`) with no payment row created and no structured log identifying the failing authority stage.
+- **Fix.** Every authority read now explicitly inspects `{error}` and fails closed with a stage-specific structured log. Successful query + no configured data continues the legitimate platform path. Query error or transport exception returns null immediately — never silently changes payment routing (e.g., a failed BYO lookup cannot fall through to platform collection).
+- **Scope.** Shared fix — protects all 17 callers of `initializePayment` across scheduling, ordering, reservation, ticketing, crowdfunding, invoice, payment, and 10 non-flow callers.
+
+### Files changed
+- `lib/bot/flows/shared/payment.ts` — added explicit `{error}` guards for BYO credential lookup, each BYO/connect branch's business tier lookup, payout-mode lookup, payout-account lookup, and payment-channels lookup. Added outer try/catch for transport exceptions in routing authority section + payment channels section.
+- `lib/__tests__/payment-routing-authority.test.ts` — new: 13 tests covering all 7 required scenarios
+
+### What could break
+- A transient Supabase error that previously fell through silently (producing a potentially misrouted payment) now returns null (no checkout URL). The customer sees "couldn't set up payment" instead of a payment link routed through the wrong account. This is the correct fail-closed behavior.
+
 ## 2026-09-15 — Promo verification intercepting scheduling button replies (production UAT)
 
 ### What changed
