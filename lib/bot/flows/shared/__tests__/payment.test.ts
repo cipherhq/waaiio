@@ -81,6 +81,16 @@ function createMockSupabase(overrides: Record<string, unknown> = {}) {
 
   return {
     from: vi.fn((table: string) => {
+      // Per-request country payment config resolution — return NG defaults
+      if (table === 'countries') {
+        const cq: Record<string, unknown> = {};
+        for (const m of ['select', 'eq', 'not', 'order', 'limit', 'in', 'neq', 'is', 'like']) {
+          cq[m] = vi.fn().mockReturnValue(cq);
+        }
+        cq.single = vi.fn().mockResolvedValue({ data: { payment_gateway: 'paystack', currency_code: 'NGN' }, error: null });
+        cq.maybeSingle = vi.fn().mockResolvedValue({ data: { payment_gateway: 'paystack', currency_code: 'NGN' }, error: null });
+        return cq;
+      }
       const q = createQuery(table);
       // Apply any test-specific overrides
       Object.assign(q, overrides);
@@ -98,6 +108,7 @@ describe('initializePayment', () => {
   it('initializes payment with correct parameters via Paystack', async () => {
     const gateway = createMockGateway();
     mockGetGateway.mockReturnValue(gateway);
+    mockGetGatewayByName.mockReturnValue(gateway);
 
     const supabase = createMockSupabase();
 
@@ -145,10 +156,12 @@ describe('initializePayment', () => {
   });
 
   it('returns null when gateway throws', async () => {
-    mockGetGateway.mockReturnValue({
+    const throwingGw = {
       name: 'paystack',
       initializePayment: vi.fn().mockRejectedValue(new Error('Gateway down')),
-    });
+    };
+    mockGetGateway.mockReturnValue(throwingGw);
+    mockGetGatewayByName.mockReturnValue(throwingGw);
 
     const supabase = createMockSupabase();
 
@@ -166,6 +179,7 @@ describe('initializePayment', () => {
   it('returns null when gateway returns null', async () => {
     const gateway = createMockGateway(null);
     mockGetGateway.mockReturnValue(gateway);
+    mockGetGatewayByName.mockReturnValue(gateway);
 
     const supabase = createMockSupabase();
 
@@ -186,6 +200,7 @@ describe('initializePayment', () => {
       reference: 'REF-20260509-ABCDEFGH',
     });
     mockGetGateway.mockReturnValue(gateway);
+    mockGetGatewayByName.mockReturnValue(gateway);
 
     const supabase = createMockSupabase();
 
@@ -204,6 +219,7 @@ describe('initializePayment', () => {
   it('links payment to campaign for donations', async () => {
     const gateway = createMockGateway();
     mockGetGateway.mockReturnValue(gateway);
+    mockGetGatewayByName.mockReturnValue(gateway);
 
     const updateFn = vi.fn().mockReturnValue({
       eq: vi.fn().mockResolvedValue({ data: null }),
@@ -212,6 +228,15 @@ describe('initializePayment', () => {
     // Deep proxy mock that handles any Supabase chain and returns { data: null, error: null }
     const supabase = {
       from: vi.fn((table: string) => {
+        if (table === 'countries') {
+          const cq: Record<string, unknown> = {};
+          for (const m of ['select', 'eq', 'not', 'order', 'limit', 'in', 'neq', 'is', 'like']) {
+            cq[m] = vi.fn().mockReturnValue(cq);
+          }
+          cq.single = vi.fn().mockResolvedValue({ data: { payment_gateway: 'paystack', currency_code: 'NGN' }, error: null });
+          cq.maybeSingle = vi.fn().mockResolvedValue({ data: { payment_gateway: 'paystack', currency_code: 'NGN' }, error: null });
+          return cq;
+        }
         if (table === 'campaign_donations') {
           return { insert: insertFn };
         }
@@ -251,6 +276,7 @@ describe('initializePayment', () => {
   it('defaults to NG country code when none provided', async () => {
     const gateway = createMockGateway();
     mockGetGateway.mockReturnValue(gateway);
+    mockGetGatewayByName.mockReturnValue(gateway);
 
     const supabase = createMockSupabase();
 

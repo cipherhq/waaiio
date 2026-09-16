@@ -3,20 +3,28 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
-## 2026-09-16 — Shared payment routing authority guards (initializePayment THREW)
+## 2026-09-16 — Country-cache regression + shared payment routing authority guards (initializePayment THREW)
 
 ### What changed
-- **Probable root cause.** Several unprotected pre-provider authority paths in `initializePayment` could produce the generic `[PAYMENT] initializePayment THREW` with no payment row and no stage-specific diagnostic: BYO/connect/payout credential resolution (lines 196-337), V1 dispatched-row recovery lookup (lines 158-178), currency resolution dynamic import (line 66), and payment-channel preferences (lines 327-337). The exact throwing line in the SnapaKit WA-BK-6948 incident cannot be determined without runtime stack traces.
-- **Fix.** Every pre-provider authority read now explicitly inspects `{error}` and fails closed with a stage-specific structured log. Transport exceptions are caught per-section. Successful query + no configured data continues the legitimate platform path. Query error or transport exception returns null immediately — never silently changes payment routing. `platform_managed` businesses do not query `payout_accounts` (only `direct_split` triggers that authority check).
-- **Scope.** Shared fix — protects all 17 callers of `initializePayment` across scheduling, ordering, reservation, ticketing, crowdfunding, invoice, payment, and 10 non-flow callers.
+- **Root cause (reproduced).** `initializePayment` called `getPaymentGateway(countryCode)` at line 64, which called `getPaymentGatewayForCountry()` → `_getCountryConfigStrict()` → `getCountry()`. This depended on a mutable module-global country cache that is only populated by `loadCountries()`. In the webhook path, `loadCountries()` is best-effort with `.catch(() => [])` and uses a browser Supabase client. When it fails (cold start, transient error), the cache stays null and `getPaymentGatewayForCountry('NG')` throws `new Error("[AUTHORITATIVE] Country NG not resolved from DB")`. This throw at line 64 is BEFORE every #325 guard, BEFORE `observe('payment.init')`, BEFORE any DB write — producing the exact production signature: `errorName: Error`, no stage ops, no payment row.
+- **Fix (country resolution).** Replaced the static module-cache dependency with a per-request DB query via the passed Supabase client. `initializePayment` now queries the `countries` table directly for `payment_gateway` and `currency_code`. No `loadCountries()` prerequisite, no static fallback. Missing/inactive/error fails closed with `payment.country-payment-config` stage log. Gateway override remains correctly honored (skips country gateway lookup but still resolves currency from DB).
+- **Fix (authority guards).** Every other pre-provider authority read (BYO credentials, payout mode, payout accounts, payment channels, V1 dispatched-row recovery) now explicitly inspects `{error}` and fails closed with stage-specific structured logs. `platform_managed` does not query `payout_accounts`.
+- **Scope.** Shared fix — protects all 17 callers of `initializePayment`.
 
 ### Files changed
 - `lib/bot/flows/shared/payment.ts` — added explicit `{error}` guards + try/catch for: BYO credential lookup, each BYO/connect branch's business tier lookup, payout-mode lookup, payout-account lookup (direct_split only), payment-channels lookup, V1 dispatched-row recovery lookup, and currency resolution. Each emits a stage-specific structured log op.
 - `lib/__tests__/payment-routing-authority.test.ts` — 15 tests: shared gateway spy with exact-URL/reference return assertions, provider-call-count=0 failure proofs, stage-specific logger op verification for every guarded path, platform_managed/direct_split payout isolation, V1 dispatched-row error/throw guards, cross-capability boundary (scheduling + ordering transactionCategory)
 - `lib/__tests__/payment-flow-caller-boundary.test.ts` — 2 tests: real scheduling.flow create_booking + ordering.flow process_order steps with initializePayment mocked at module boundary, asserting each caller supplies correct entity ID, authoritative amount, businessId, countryCode, gatewayOverride, inboundChannelId, confirmationOrigin, transactionCategory, and exact checkout URL in response
 
+### Files changed
+- `lib/bot/flows/shared/payment.ts` — replaced `getPaymentGateway(countryCode)` + dynamic `import('@/lib/countries')` with per-request `supabase.from('countries')` query for both `payment_gateway` and `currency_code`; all authority reads guarded with `{error}` + try/catch
+- `lib/__tests__/payment-country-cache-reproduction.test.ts` — actual-module reproduction proving cold-cache succeeds post-fix, DB error fails closed, and `loadCountries()` failure leaves authoritative resolver unable to resolve NG
+- `lib/__tests__/payment-country-resolution.test.ts` — 9 tests: NG→Paystack, alternate gateway, gateway override, missing/inactive/error/throw fail closed, scheduling+ordering cross-capability
+- `lib/__tests__/payment-routing-authority.test.ts` — authority guard tests (updated)
+- `lib/__tests__/payment-flow-caller-boundary.test.ts` — flow-level caller-boundary tests
+
 ### What could break
-- A transient Supabase error that previously threw to the outer catch with no diagnostic now returns null with a stage-specific log. The customer outcome is the same ("couldn't set up payment") but the operator now knows exactly which authority stage failed.
+- `initializePayment` now adds one DB query to the `countries` table per call. This is a single indexed `SELECT WHERE code = ? AND is_active = true` — negligible latency vs the existing 4-8 authority queries already in the function.
 
 ## 2026-09-15 — Promo verification intercepting scheduling button replies (production UAT)
 

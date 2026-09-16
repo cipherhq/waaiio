@@ -101,13 +101,30 @@ function makeThrowChain(err: Error) {
 
 type TableConfig = Record<string, { data?: unknown; error?: unknown; throw?: Error }>;
 
+/** Default NG country row for per-request resolution */
+const NG_COUNTRY_DATA = { payment_gateway: 'paystack', currency_code: 'NGN' };
+
 function buildSupabase(config: TableConfig) {
   return {
     from: vi.fn((table: string) => {
       const cfg = config[table];
-      if (!cfg) return makeChain({ data: null, error: null });
-      if (cfg.throw) return makeThrowChain(cfg.throw);
-      return makeChain({ data: cfg.data ?? null, error: cfg.error ?? null });
+      if (cfg) {
+        if (cfg.throw) return makeThrowChain(cfg.throw);
+        return makeChain({ data: cfg.data ?? null, error: cfg.error ?? null });
+      }
+      if (table === 'countries') return makeChain({ data: NG_COUNTRY_DATA, error: null });
+      return makeChain({ data: null, error: null });
+    }),
+    rpc: vi.fn(() => makeChain({ data: null, error: null })),
+  };
+}
+
+/** Build a supabase mock from a custom from-implementation, with countries default */
+function buildCustomSupabase(customFrom: (table: string) => any) {
+  return {
+    from: vi.fn((table: string) => {
+      if (table === 'countries') return makeChain({ data: NG_COUNTRY_DATA, error: null });
+      return customFrom(table);
     }),
     rpc: vi.fn(() => makeChain({ data: null, error: null })),
   };
@@ -196,6 +213,7 @@ describe('(3) Successful no-BYO platform path', () => {
     let businessCallCount = 0;
 
     fromMock.mockImplementation((table: string) => {
+      if (table === 'countries') return makeChain({ data: NG_COUNTRY_DATA, error: null });
       if (table === 'payments') {
         paymentsCallCount++;
         // 1-3: quarantine, pending reuse, V1 dispatched → empty
@@ -264,6 +282,7 @@ describe('(3) Successful no-BYO platform path', () => {
     const queriedTables: string[] = [];
 
     fromMock.mockImplementation((table: string) => {
+      if (table === 'countries') return makeChain({ data: NG_COUNTRY_DATA, error: null });
       queriedTables.push(table);
       if (table === 'business_payment_credentials') return makeChain({ data: null, error: null });
       if (table === 'businesses') return makeChain({ data: { payout_mode: 'platform_managed', payment_channels: null }, error: null });
@@ -300,6 +319,7 @@ describe('(4) Payout authority', () => {
   it('(4b) direct_split payout-account lookup error → fail closed', async () => {
     const fromMock = vi.fn();
     fromMock.mockImplementation((table: string) => {
+      if (table === 'countries') return makeChain({ data: NG_COUNTRY_DATA, error: null });
       if (table === 'business_payment_credentials') return makeChain({ data: null, error: null });
       if (table === 'businesses') return makeChain({ data: { payout_mode: 'direct_split' }, error: null });
       if (table === 'payout_accounts') return makeChain({ data: null, error: { message: 'connection reset' } });
@@ -317,6 +337,7 @@ describe('(4) Payout authority', () => {
   it('(4c) direct_split payout-account lookup throws → fail closed with stage log', async () => {
     const fromMock = vi.fn();
     fromMock.mockImplementation((table: string) => {
+      if (table === 'countries') return makeChain({ data: NG_COUNTRY_DATA, error: null });
       if (table === 'business_payment_credentials') return makeChain({ data: null, error: null });
       if (table === 'businesses') return makeChain({ data: { payout_mode: 'direct_split' }, error: null });
       if (table === 'payout_accounts') return makeThrowChain(new Error('TLS handshake failed'));
@@ -342,6 +363,7 @@ describe('(5) Payment channel authority', () => {
     let businessCallCount = 0;
 
     fromMock.mockImplementation((table: string) => {
+      if (table === 'countries') return makeChain({ data: NG_COUNTRY_DATA, error: null });
       if (table === 'business_payment_credentials') return makeChain({ data: null, error: null });
       if (table === 'businesses') {
         businessCallCount++;
@@ -364,6 +386,7 @@ describe('(5) Payment channel authority', () => {
     let businessCallCount = 0;
 
     fromMock.mockImplementation((table: string) => {
+      if (table === 'countries') return makeChain({ data: NG_COUNTRY_DATA, error: null });
       if (table === 'business_payment_credentials') return makeChain({ data: null, error: null });
       if (table === 'businesses') {
         businessCallCount++;
@@ -437,6 +460,7 @@ describe('(7) V1 dispatched-row + idempotency', () => {
     let paymentsCallCount = 0;
 
     fromMock.mockImplementation((table: string) => {
+      if (table === 'countries') return makeChain({ data: NG_COUNTRY_DATA, error: null });
       if (table === 'payments') {
         paymentsCallCount++;
         // 1st: quarantine → ok
@@ -462,6 +486,7 @@ describe('(7) V1 dispatched-row + idempotency', () => {
     let paymentsCallCount = 0;
 
     fromMock.mockImplementation((table: string) => {
+      if (table === 'countries') return makeChain({ data: NG_COUNTRY_DATA, error: null });
       if (table === 'payments') {
         paymentsCallCount++;
         if (paymentsCallCount <= 2) return makeChain({ data: null, error: null });
@@ -483,6 +508,7 @@ describe('(7) V1 dispatched-row + idempotency', () => {
     let paymentsCallCount = 0;
 
     fromMock.mockImplementation((table: string) => {
+      if (table === 'countries') return makeChain({ data: NG_COUNTRY_DATA, error: null });
       if (table === 'payments') {
         paymentsCallCount++;
         // 1st: quarantine → no match
@@ -512,24 +538,16 @@ describe('(7) V1 dispatched-row + idempotency', () => {
     expect(mockGatewayInitialize).not.toHaveBeenCalled();
   });
 
-  it('(7d) Currency resolution throws → fail closed with stage log, no provider call', async () => {
-    // Reset the countries mock to throw
-    const countriesMod = await import('@/lib/countries');
-    vi.spyOn(countriesMod, 'getCountry').mockImplementation(() => { throw new Error('Module cache corrupted'); });
-
-    const supabase = buildSupabase({ payments: { data: null } });
-
-    const result = await initializePayment(supabase as any, {
-      ...BASE_OPTS,
-      businessId: undefined, // skip BYO/payout section
-      transactionCategory: undefined, // skip V1 dispatched check
+  it('(7d) Country payment config throw → fail closed with stage log, no provider call', async () => {
+    const supabase = buildSupabase({
+      countries: { throw: new Error('Supabase transport error') },
+      payments: { data: null },
     });
+
+    const result = await initializePayment(supabase as any, BASE_OPTS);
 
     expect(result).toBeNull();
     expect(mockGatewayInitialize).not.toHaveBeenCalled();
-    assertLoggerOp('payment.currency-resolution');
-
-    // Restore
-    vi.spyOn(countriesMod, 'getCountry').mockImplementation(() => ({ currency_code: 'NGN' }) as any);
+    assertLoggerOp('payment.country-payment-config');
   });
 });
