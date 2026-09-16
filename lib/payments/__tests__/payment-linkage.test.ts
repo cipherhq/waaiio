@@ -46,25 +46,37 @@ function createTestSupabase() {
   });
 
   const client = {
-    from: vi.fn((table: string) => ({
-      insert: (r: Record<string, unknown>) => {
-        inserts.push({ table, row: r });
-        return insertFn(r);
-      },
-      select: vi.fn().mockReturnThis(),
-      eq: vi.fn().mockReturnThis(),
-      order: vi.fn().mockReturnThis(),
-      limit: vi.fn().mockReturnThis(),
-      like: vi.fn().mockReturnThis(),
-      single: vi.fn().mockResolvedValue({ data: null, error: null }),
-      maybeSingle: vi.fn()
-        .mockResolvedValueOnce({ data: null, error: null })
-        .mockResolvedValueOnce({ data: null, error: null })
-        .mockResolvedValue({ data: { id: 'pay-mock', metadata: {} }, error: null }),
-      update: vi.fn().mockReturnValue({
-        eq: vi.fn().mockResolvedValue({ data: null, error: null }),
-      }),
-    })),
+    from: vi.fn((table: string) => {
+      // Per-request country payment config resolution
+      if (table === 'countries') {
+        const cq: Record<string, any> = {};
+        for (const m of ['select', 'eq', 'not', 'order', 'limit', 'in', 'neq', 'is', 'like']) {
+          cq[m] = vi.fn().mockReturnValue(cq);
+        }
+        cq.single = vi.fn().mockResolvedValue({ data: { payment_gateway: 'paystack', currency_code: 'NGN' }, error: null });
+        cq.maybeSingle = vi.fn().mockResolvedValue({ data: { payment_gateway: 'paystack', currency_code: 'NGN' }, error: null });
+        return cq;
+      }
+      return {
+        insert: (r: Record<string, unknown>) => {
+          inserts.push({ table, row: r });
+          return insertFn(r);
+        },
+        select: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(),
+        order: vi.fn().mockReturnThis(),
+        limit: vi.fn().mockReturnThis(),
+        like: vi.fn().mockReturnThis(),
+        single: vi.fn().mockResolvedValue({ data: null, error: null }),
+        maybeSingle: vi.fn()
+          .mockResolvedValueOnce({ data: null, error: null })
+          .mockResolvedValueOnce({ data: null, error: null })
+          .mockResolvedValue({ data: { id: 'pay-mock', metadata: {} }, error: null }),
+        update: vi.fn().mockReturnValue({
+          eq: vi.fn().mockResolvedValue({ data: null, error: null }),
+        }),
+      };
+    }),
   } as unknown as SupabaseClient;
 
   return { client, inserts };
@@ -379,7 +391,7 @@ describe('Shared payment wrapper forwarding', () => {
 
     vi.doMock('@/lib/payments/factory', () => ({
       getPaymentGateway: vi.fn().mockReturnValue(mockGateway),
-      getPaymentGatewayByName: vi.fn(),
+      getPaymentGatewayByName: vi.fn().mockReturnValue(mockGateway),
     }));
     vi.doMock('@/lib/countries', () => ({
       getCountry: vi.fn().mockReturnValue({ currency_code: 'NGN' }),
@@ -421,7 +433,16 @@ describe('Shared payment wrapper forwarding', () => {
       q.insert = vi.fn().mockResolvedValue({ data: null, error: null });
       return q;
     };
-    const wrapperSupabase = { from: vi.fn((t: string) => createQuery(t)) };
+    const wrapperSupabase = { from: vi.fn((t: string) => {
+      if (t === 'countries') {
+        const cq: Record<string, unknown> = {};
+        for (const m of ['select', 'eq', 'not', 'order', 'limit', 'in', 'neq', 'is', 'like']) cq[m] = vi.fn(() => cq);
+        cq.single = vi.fn().mockResolvedValue({ data: { payment_gateway: 'paystack', currency_code: 'NGN' }, error: null });
+        cq.maybeSingle = vi.fn().mockResolvedValue({ data: { payment_gateway: 'paystack', currency_code: 'NGN' }, error: null });
+        return cq;
+      }
+      return createQuery(t);
+    }) };
 
     const result = await initializePayment(wrapperSupabase as unknown as SupabaseClient, {
       orderId: 'order-123',
@@ -455,7 +476,7 @@ describe('Shared payment wrapper forwarding', () => {
 
     vi.doMock('@/lib/payments/factory', () => ({
       getPaymentGateway: vi.fn().mockReturnValue(mockGateway),
-      getPaymentGatewayByName: vi.fn(),
+      getPaymentGatewayByName: vi.fn().mockReturnValue(mockGateway),
     }));
     vi.doMock('@/lib/countries', () => ({
       getCountry: vi.fn().mockReturnValue({ currency_code: 'NGN' }),
@@ -496,7 +517,16 @@ describe('Shared payment wrapper forwarding', () => {
       q.insert = vi.fn().mockResolvedValue({ data: null, error: null });
       return q;
     };
-    const wrapperSupabase = { from: vi.fn((t: string) => createQuery2(t)) };
+    const wrapperSupabase = { from: vi.fn((t: string) => {
+      if (t === 'countries') {
+        const cq: Record<string, unknown> = {};
+        for (const m of ['select', 'eq', 'not', 'order', 'limit', 'in', 'neq', 'is', 'like']) cq[m] = vi.fn(() => cq);
+        cq.single = vi.fn().mockResolvedValue({ data: { payment_gateway: 'paystack', currency_code: 'NGN' }, error: null });
+        cq.maybeSingle = vi.fn().mockResolvedValue({ data: { payment_gateway: 'paystack', currency_code: 'NGN' }, error: null });
+        return cq;
+      }
+      return createQuery2(t);
+    }) };
 
     const result = await initializePayment(wrapperSupabase as unknown as SupabaseClient, {
       userId: 'user-1',

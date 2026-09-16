@@ -1,5 +1,15 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { type SubscriptionTier, type CountryCode, type PaymentGatewayName } from '@/lib/constants';
+
+/** Runtime set of supported payment gateway names — must match PaymentGatewayName type */
+const SUPPORTED_GATEWAYS: ReadonlySet<string> = new Set<PaymentGatewayName>([
+  'paystack', 'stripe', 'flutterwave', 'square', 'paypal',
+]);
+
+/** Validate currency_code: non-empty, 3 uppercase letters (ISO 4217 canonical form) */
+function isValidCurrencyCode(code: unknown): code is string {
+  return typeof code === 'string' && /^[A-Z]{3}$/.test(code);
+}
 import { getPlatformFees } from '@/lib/getPlatformFees';
 import { getPaymentGateway, getPaymentGatewayByName } from '@/lib/payments/factory';
 import { observe } from '@/lib/observability';
@@ -58,20 +68,89 @@ export async function initializePayment(
 
     const countryCode = opts.countryCode || 'NG';
 
-    // Per-business gateway override takes priority
-    const gateway = opts.gatewayOverride
-      ? getPaymentGatewayByName(opts.gatewayOverride as PaymentGatewayName)
-      : getPaymentGateway(countryCode);
-
-    // Currency resolution — fail closed on module resolution error
+    // ── Per-request country payment config resolution ──
+    // Resolve payment_gateway and currency_code directly from the countries table
+    // via the passed Supabase client. No module-cache dependency, no static fallback.
+    // Fail closed on missing/inactive/error with stage-specific diagnostic.
+    let gateway: ReturnType<typeof getPaymentGatewayByName>;
     let currencyCode: string;
-    try {
-      const { getCountry } = await import('@/lib/countries');
-      currencyCode = getCountry(countryCode)?.currency_code ?? 'NGN';
-    } catch (currencyErr) {
-      logger.withContext({ op: 'payment.currency-resolution', ...safeLogErrorContext(currencyErr) })
-        .error('[PAYMENT] Currency resolution threw — fail closed');
-      return null;
+
+    if (opts.gatewayOverride) {
+      // Per-business gateway override — validate before routing
+      if (!SUPPORTED_GATEWAYS.has(opts.gatewayOverride)) {
+        logger.withContext({ op: 'payment.country-payment-config', gateway: opts.gatewayOverride })
+          .error('[PAYMENT] Business gateway override is not a supported gateway — fail closed');
+        return null;
+      }
+      gateway = getPaymentGatewayByName(opts.gatewayOverride as PaymentGatewayName);
+      // Still need authoritative currency from the countries table
+      try {
+        const { data: countryRow, error: countryErr } = await supabase
+          .from('countries')
+          .select('currency_code')
+          .eq('code', countryCode)
+          .eq('is_active', true)
+          .maybeSingle();
+
+        if (countryErr) {
+          logger.withContext({ op: 'payment.country-payment-config', countryCode, ...safeLogErrorContext(countryErr) })
+            .error('[PAYMENT] Country currency lookup failed — fail closed');
+          return null;
+        }
+        if (!countryRow) {
+          logger.withContext({ op: 'payment.country-payment-config', countryCode })
+            .error('[PAYMENT] Country not found or inactive — fail closed');
+          return null;
+        }
+        if (!isValidCurrencyCode(countryRow.currency_code)) {
+          logger.withContext({ op: 'payment.country-payment-config', countryCode, currency: countryRow.currency_code })
+            .error('[PAYMENT] Country has invalid currency_code — fail closed');
+          return null;
+        }
+        currencyCode = countryRow.currency_code;
+      } catch (countryThrow) {
+        logger.withContext({ op: 'payment.country-payment-config', countryCode, ...safeLogErrorContext(countryThrow) })
+          .error('[PAYMENT] Country payment config resolution threw — fail closed');
+        return null;
+      }
+    } else {
+      // No override — resolve both gateway and currency from the countries table
+      try {
+        const { data: countryRow, error: countryErr } = await supabase
+          .from('countries')
+          .select('payment_gateway, currency_code')
+          .eq('code', countryCode)
+          .eq('is_active', true)
+          .maybeSingle();
+
+        if (countryErr) {
+          logger.withContext({ op: 'payment.country-payment-config', countryCode, ...safeLogErrorContext(countryErr) })
+            .error('[PAYMENT] Country payment config lookup failed — fail closed');
+          return null;
+        }
+        if (!countryRow) {
+          logger.withContext({ op: 'payment.country-payment-config', countryCode })
+            .error('[PAYMENT] Country not found or inactive — fail closed');
+          return null;
+        }
+        if (!countryRow.payment_gateway || !SUPPORTED_GATEWAYS.has(countryRow.payment_gateway)) {
+          logger.withContext({ op: 'payment.country-payment-config', countryCode, gateway: countryRow.payment_gateway })
+            .error('[PAYMENT] Country has missing or unsupported payment_gateway — fail closed');
+          return null;
+        }
+        if (!isValidCurrencyCode(countryRow.currency_code)) {
+          logger.withContext({ op: 'payment.country-payment-config', countryCode, currency: countryRow.currency_code })
+            .error('[PAYMENT] Country has invalid currency_code — fail closed');
+          return null;
+        }
+
+        gateway = getPaymentGatewayByName(countryRow.payment_gateway as PaymentGatewayName);
+        currencyCode = countryRow.currency_code;
+      } catch (countryThrow) {
+        logger.withContext({ op: 'payment.country-payment-config', countryCode, ...safeLogErrorContext(countryThrow) })
+          .error('[PAYMENT] Country payment config resolution threw — fail closed');
+        return null;
+      }
     }
 
     // ── Idempotent reuse: check for an existing pending payment for this entity.

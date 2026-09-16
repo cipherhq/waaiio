@@ -511,9 +511,13 @@ describe('Campaign dispatched guard — real handler', () => {
     vi.doMock('@/lib/errors', () => ({ safeLogErrorContext: vi.fn(() => ({})) }));
 
     const filters: string[] = [];
+    let inCountriesQuery = false;
     const mp = (): Record<string, unknown> => new Proxy({} as Record<string, unknown>, {
       get(_, p: string) {
-        if (p === 'single' || p === 'maybeSingle') return vi.fn().mockResolvedValue({ data: null, error: null });
+        if (p === 'single' || p === 'maybeSingle') {
+          if (inCountriesQuery) { inCountriesQuery = false; return vi.fn().mockResolvedValue({ data: { payment_gateway: 'paystack', currency_code: 'NGN' }, error: null }); }
+          return vi.fn().mockResolvedValue({ data: null, error: null });
+        }
         if (p === 'then') return (r: (v: unknown) => void) => r({ data: null, error: null });
         if (p === 'eq') return vi.fn((c: string, v: unknown) => {
           filters.push(`${c}=${v}`);
@@ -523,7 +527,7 @@ describe('Campaign dispatched guard — real handler', () => {
         return vi.fn(() => mp());
       },
     });
-    const sb = { from: vi.fn(() => mp()) };
+    const sb = { from: vi.fn((table: string) => { if (table === 'countries') inCountriesQuery = true; return mp(); }) };
     const { initializePayment } = await import('@/lib/bot/flows/shared/payment');
     const result = await initializePayment(sb as any, { userId: 'u', amount: 5000, referenceCode: 'R', businessName: 'B', phone: '+234', campaignId: 'camp-1', businessId: 'b1', transactionCategory: 'giving' });
     expect(result).toBeNull();
