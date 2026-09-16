@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { logger } from '@/lib/logger';
+import { safeLogErrorContext } from '@/lib/errors';
 import { getPlatformFees } from '@/lib/getPlatformFees';
 import type { SubscriptionTier } from '@/lib/constants';
 import { observeProvider, logSplitResolved, logSplitMissing } from '@/lib/observability';
@@ -125,15 +126,25 @@ export async function getSavedPaymentMethod(
   const phoneP = customerPhone.startsWith('+') ? customerPhone : `+${customerPhone}`;
   const phoneN = customerPhone.startsWith('+') ? customerPhone.slice(1) : customerPhone;
 
-  const { data } = await supabase
+  // Use .order() + .limit(1) instead of .maybeSingle() to handle the case where
+  // both +E.164 and non-+ variants exist as active rows. Prefer the canonical +E.164
+  // form (sorts after digits-only) and take exactly one. Inspect errors.
+  const { data, error } = await supabase
     .from('saved_payment_methods')
     .select('id, gateway, authorization_code, customer_code, stripe_payment_method_id, stripe_customer_id, card_last4, card_brand')
     .eq('business_id', businessId)
     .in('customer_phone', [phoneP, phoneN])
     .eq('is_active', true)
-    .maybeSingle();
+    .order('customer_phone', { ascending: false }) // '+' prefix sorts after digits — prefer canonical
+    .limit(1);
 
-  return data || null;
+  if (error) {
+    logger.withContext({ op: 'payment.saved-method-lookup', businessId, ...safeLogErrorContext(error) })
+      .error('[PAYMENT] Saved method lookup failed');
+    return null;
+  }
+
+  return data && data.length > 0 ? data[0] : null;
 }
 
 /** Explicit saved-card charge outcomes for safe canonical convergence. */

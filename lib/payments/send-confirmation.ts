@@ -124,10 +124,14 @@ export type ConfirmationResult =
 export async function sendProactiveConfirmation(
   supabase: SupabaseClient,
   payment: PaymentForConfirmation,
-  logPrefixOrOpts: string | { logPrefix?: string; sessionTerminalized?: boolean } = '[WEBHOOK]',
+  logPrefixOrOpts: string | { logPrefix?: string; exactEntityFamily?: boolean } = '[WEBHOOK]',
 ): Promise<ConfirmationResult> {
   const logPrefix = typeof logPrefixOrOpts === 'string' ? logPrefixOrOpts : (logPrefixOrOpts.logPrefix ?? '[WEBHOOK]');
-  const sessionTerminalized = typeof logPrefixOrOpts === 'object' ? (logPrefixOrOpts.sessionTerminalized ?? false) : false;
+  // When true, this payment is linked to a booking/order/reservation family whose session
+  // lifecycle is owned by Stage 2.5 exact-origin terminalization. Stage 3 must NOT run the
+  // broad business+phone heuristic for these families — even for legacy_null origins.
+  // Only invoice/campaign families (exactEntityFamily=false) retain the broad heuristic.
+  const exactEntityFamily = typeof logPrefixOrOpts === 'object' ? (logPrefixOrOpts.exactEntityFamily ?? false) : false;
   // ── Atomic claim: only one concurrent caller wins processing rights ──
   const { data: claim, error: claimError } = await supabase.rpc('claim_payment_confirmation', {
     p_payment_id: payment.id,
@@ -1118,22 +1122,20 @@ export async function sendProactiveConfirmation(
       return { status: 'processing', retryable: true };
     }
 
-    // ── 9. Deactivate the payment-waiting session (webhook confirmed — user doesn't need to tap "I've Paid") ──
-    // When Stage 2.5 exact-origin terminalization already deactivated the session for
-    // booking/order/reservation families, limit the broad heuristic to invoice/campaign step names only.
-    if (customerPhone) {
-      const broadSteps = sessionTerminalized
-        ? ['await_invoice_payment', 'await_donation_payment']
-        : ['payment', 'await_payment', 'await_ticket_payment', 'await_order_payment', 'create_booking', 'reservation_payment', 'await_invoice_payment', 'await_donation_payment'];
-      if (broadSteps.length > 0) {
-        await supabase
-          .from('bot_sessions')
-          .update({ is_active: false, current_step: 'complete' })
-          .or(`whatsapp_number.eq.${stripPlus(customerPhone)},whatsapp_number.eq.+${stripPlus(customerPhone)}`)
-          .eq('business_id', businessId)
-          .eq('is_active', true)
-          .in('current_step', broadSteps);
-      }
+    // ── 9. Deactivate the payment-waiting session ──
+    // Booking/order/reservation families: Stage 2.5 exact-origin terminalization owns their
+    // session lifecycle. The broad heuristic must NOT run for these families — even for
+    // legacy_null origins — to avoid deactivating a newer unrelated active session.
+    // Invoice/campaign families: no entity-level bot_session_id exists, so the broad
+    // business+phone heuristic remains their only cleanup mechanism.
+    if (customerPhone && !exactEntityFamily) {
+      await supabase
+        .from('bot_sessions')
+        .update({ is_active: false, current_step: 'complete' })
+        .or(`whatsapp_number.eq.${stripPlus(customerPhone)},whatsapp_number.eq.+${stripPlus(customerPhone)}`)
+        .eq('business_id', businessId)
+        .eq('is_active', true)
+        .in('current_step', ['await_invoice_payment', 'await_donation_payment']);
     }
 
     // ── 10. Finalize: mark confirmation as successfully completed ──

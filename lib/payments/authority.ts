@@ -112,7 +112,7 @@ export async function authorizeAndFinalize(
     id: string; amount: number;
     booking_id: string | null; invoice_id: string | null; campaign_id: string | null;
     reservation_id?: string | null; order_id?: string | null;
-  }, sessionTerminalized?: boolean) => Promise<ConfirmationResult>,
+  }, opts?: { exactEntityFamily?: boolean }) => Promise<ConfirmationResult>,
 ): Promise<PaymentLifecycleResult> {
   const logPrefix = `[PAY-AUTHORITY ${verified.provider}]`;
 
@@ -222,15 +222,15 @@ export async function authorizeAndFinalize(
     if (termResult.status === 'error') {
       return retryable('session_terminalization_failed', { ...stagesPaid, businessFinalized: true });
     }
-    const sessionTerminalized = termResult.status === 'deactivated' || termResult.status === 'already_inactive';
+    // Booking/order/reservation families skip broad Stage-3 cleanup entirely
+    const exactEntityFamily = termResult.status !== 'no_origin';
 
-    // Skip to Stage 3
     const confirmResult = await sendConfirmation(supabase, {
       id: payment.id, amount: payment.amount,
       booking_id: payment.booking_id, invoice_id: payment.invoice_id,
       campaign_id: payment.campaign_id, reservation_id: payment.reservation_id,
       order_id: payment.order_id,
-    }, sessionTerminalized);
+    }, { exactEntityFamily });
     return mapConfirmationResult(supabase, payment.id, confirmResult, { ...stagesPaid, businessFinalized: true });
   }
 
@@ -258,7 +258,7 @@ export async function authorizeAndFinalize(
       if (termResult.status === 'error') {
         return retryable('session_terminalization_failed', { ...stagesPaid, businessFinalized: true });
       }
-      const sessionTerminalized = termResult.status === 'deactivated' || termResult.status === 'already_inactive';
+      const exactEntityFamily = termResult.status !== 'no_origin';
 
       // Another worker completed finalization — skip to Stage 3
       const confirmResult = await sendConfirmation(supabase, {
@@ -266,7 +266,7 @@ export async function authorizeAndFinalize(
         booking_id: payment.booking_id, invoice_id: payment.invoice_id,
         campaign_id: payment.campaign_id, reservation_id: payment.reservation_id,
         order_id: payment.order_id,
-      }, sessionTerminalized);
+      }, { exactEntityFamily });
       return mapConfirmationResult(supabase, payment.id, confirmResult, { ...stagesPaid, businessFinalized: true });
     }
     return processing(claim?.reason || 'finalization_claim_not_granted', stagesPaid);
@@ -339,7 +339,7 @@ export async function authorizeAndFinalize(
     // Terminalization failed — do NOT proceed to Stage 3 (durable session invariant unknown)
     return retryable('session_terminalization_failed', stagesFinalized);
   }
-  const sessionTerminalized = termResult.status === 'deactivated' || termResult.status === 'already_inactive';
+  const exactEntityFamily = termResult.status !== 'no_origin';
 
   // ── Stage 3: Customer confirmation ──
   const confirmResult = await sendConfirmation(supabase, {
@@ -347,7 +347,7 @@ export async function authorizeAndFinalize(
     booking_id: payment.booking_id, invoice_id: payment.invoice_id,
     campaign_id: payment.campaign_id, reservation_id: payment.reservation_id,
     order_id: payment.order_id,
-  }, sessionTerminalized);
+  }, { exactEntityFamily });
 
   return mapConfirmationResult(supabase, payment.id, confirmResult, stagesFinalized);
 }
