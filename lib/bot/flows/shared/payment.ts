@@ -1,5 +1,15 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { type SubscriptionTier, type CountryCode, type PaymentGatewayName } from '@/lib/constants';
+
+/** Runtime set of supported payment gateway names — must match PaymentGatewayName type */
+const SUPPORTED_GATEWAYS: ReadonlySet<string> = new Set<PaymentGatewayName>([
+  'paystack', 'stripe', 'flutterwave', 'square', 'paypal',
+]);
+
+/** Validate currency_code: non-empty, 3 uppercase letters (ISO 4217 canonical form) */
+function isValidCurrencyCode(code: unknown): code is string {
+  return typeof code === 'string' && /^[A-Z]{3}$/.test(code);
+}
 import { getPlatformFees } from '@/lib/getPlatformFees';
 import { getPaymentGateway, getPaymentGatewayByName } from '@/lib/payments/factory';
 import { observe } from '@/lib/observability';
@@ -87,6 +97,11 @@ export async function initializePayment(
             .error('[PAYMENT] Country not found or inactive — fail closed');
           return null;
         }
+        if (!isValidCurrencyCode(countryRow.currency_code)) {
+          logger.withContext({ op: 'payment.country-payment-config', countryCode, currency: countryRow.currency_code })
+            .error('[PAYMENT] Country has invalid currency_code — fail closed');
+          return null;
+        }
         currencyCode = countryRow.currency_code;
       } catch (countryThrow) {
         logger.withContext({ op: 'payment.country-payment-config', countryCode, ...safeLogErrorContext(countryThrow) })
@@ -113,9 +128,14 @@ export async function initializePayment(
             .error('[PAYMENT] Country not found or inactive — fail closed');
           return null;
         }
-        if (!countryRow.payment_gateway) {
-          logger.withContext({ op: 'payment.country-payment-config', countryCode })
-            .error('[PAYMENT] Country has no configured payment_gateway — fail closed');
+        if (!countryRow.payment_gateway || !SUPPORTED_GATEWAYS.has(countryRow.payment_gateway)) {
+          logger.withContext({ op: 'payment.country-payment-config', countryCode, gateway: countryRow.payment_gateway })
+            .error('[PAYMENT] Country has missing or unsupported payment_gateway — fail closed');
+          return null;
+        }
+        if (!isValidCurrencyCode(countryRow.currency_code)) {
+          logger.withContext({ op: 'payment.country-payment-config', countryCode, currency: countryRow.currency_code })
+            .error('[PAYMENT] Country has invalid currency_code — fail closed');
           return null;
         }
 

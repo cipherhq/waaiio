@@ -223,6 +223,83 @@ describe('Per-request country payment config resolution', () => {
     expect(mockGatewayInit).not.toHaveBeenCalled();
     assertLoggerOp('payment.country-payment-config');
   });
+
+  it('unknown gateway (e.g. "paystak" typo) → fail closed, no silent Paystack routing', async () => {
+    const supabase = buildSupabase({
+      data: { payment_gateway: 'paystak', currency_code: 'NGN' }, // typo
+    });
+
+    const result = await initializePayment(supabase as any, BASE_OPTS);
+
+    expect(result).toBeNull();
+    expect(mockGatewayInit).not.toHaveBeenCalled();
+    assertLoggerOp('payment.country-payment-config');
+  });
+
+  it('empty currency_code → fail closed, no default/fallback', async () => {
+    const supabase = buildSupabase({
+      data: { payment_gateway: 'paystack', currency_code: '' },
+    });
+
+    const result = await initializePayment(supabase as any, BASE_OPTS);
+
+    expect(result).toBeNull();
+    expect(mockGatewayInit).not.toHaveBeenCalled();
+    assertLoggerOp('payment.country-payment-config');
+  });
+
+  it('malformed currency_code (lowercase, wrong length) → fail closed', async () => {
+    const supabase = buildSupabase({
+      data: { payment_gateway: 'paystack', currency_code: 'ngn' }, // lowercase
+    });
+
+    const result = await initializePayment(supabase as any, BASE_OPTS);
+
+    expect(result).toBeNull();
+    expect(mockGatewayInit).not.toHaveBeenCalled();
+    assertLoggerOp('payment.country-payment-config');
+  });
+
+  it('valid alternate gateway (stripe) with valid currency → provider reached', async () => {
+    const supabase = buildSupabase({
+      data: { payment_gateway: 'stripe', currency_code: 'USD' },
+    });
+
+    const result = await initializePayment(supabase as any, {
+      ...BASE_OPTS, countryCode: 'US' as any,
+    });
+
+    expect(mockGatewayInit).toHaveBeenCalledTimes(1);
+    expect(mockGatewayInit.mock.calls[0][0].currency).toBe('USD');
+  });
+
+  it('gatewayOverride branch: empty currency_code → fail closed', async () => {
+    const supabase = buildSupabase({
+      data: { currency_code: '' },
+    });
+
+    const result = await initializePayment(supabase as any, {
+      ...BASE_OPTS, gatewayOverride: 'stripe',
+    });
+
+    expect(result).toBeNull();
+    expect(mockGatewayInit).not.toHaveBeenCalled();
+    assertLoggerOp('payment.country-payment-config');
+  });
+
+  it('gatewayOverride branch: malformed currency_code → fail closed', async () => {
+    const supabase = buildSupabase({
+      data: { currency_code: 'ng' }, // 2 chars, not ISO 4217
+    });
+
+    const result = await initializePayment(supabase as any, {
+      ...BASE_OPTS, gatewayOverride: 'paystack',
+    });
+
+    expect(result).toBeNull();
+    expect(mockGatewayInit).not.toHaveBeenCalled();
+    assertLoggerOp('payment.country-payment-config');
+  });
 });
 
 describe('Flow-level caller boundaries with per-request country resolution', () => {
