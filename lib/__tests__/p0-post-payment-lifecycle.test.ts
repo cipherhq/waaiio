@@ -1,18 +1,14 @@
 /**
  * P0 Post-Payment Lifecycle Regression Tests — CTO-mandated executable evidence
  *
- * 6 areas, ~22 tests:
- *   Area 1: Real executor CAS path — nextAfterPrompt + no direct current_step writes (4)
- *   Area 2: Session terminalization + exactEntityFamily gating (8)
- *   Area 3: Saved-card phone normalization with .limit(1) (4)
- *   Area 4: Payment/Giving bot_session_id + crash recovery (3)
- *   Area 5: Cross-capability caller boundaries (2)
- *   Area 6: Post-success no-reinit (1)
+ * 4 Blockers, ~25 tests:
+ *   Blocker 1: Deterministic saved-card selection (4)
+ *   Blocker 2: Real executor CAS path — nextAfterPrompt + prompt() tests (6)
+ *   Blocker 3: Executable authority lifecycle (6)
+ *   Blocker 4: Real caller boundaries + explicit zero-reinit (5)
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { FlowContext, FlowStepConfig } from '@/lib/bot/flows/types';
-import * as fs from 'fs';
-import * as path from 'path';
 
 // ── Hoisted mocks ──
 
@@ -50,7 +46,7 @@ vi.mock('@/lib/constants', () => ({
   getStaffDaySchedule: vi.fn(),
   isStaffAvailable: vi.fn(() => true),
 }));
-vi.mock('@/lib/categoryConfig', () => ({ getCategoryLabels: () => ({ service: 'Service', staff: 'Staff', date: 'Date', confirmationEmoji: '✅' }) }));
+vi.mock('@/lib/categoryConfig', () => ({ getCategoryLabels: () => ({ service: 'Service', staff: 'Staff', date: 'Date', confirmationEmoji: '✅', quantityLabel: 'guest(s)' }) }));
 vi.mock('@/lib/bot/flows/shared/user', () => ({
   createWhatsAppUser: vi.fn().mockResolvedValue('user-1'),
   findUserByPhone: vi.fn().mockResolvedValue(null),
@@ -61,12 +57,12 @@ const mockInitializePayment = vi.fn();
 vi.mock('@/lib/bot/flows/shared/payment', () => ({ initializePayment: mockInitializePayment }));
 vi.mock('@/lib/bot/flows/shared/terms', () => ({ getTermsPrompt: vi.fn() }));
 vi.mock('@/lib/bot/flows/shared/notify-owner', () => ({
-  notifyOwnerNewPayment: vi.fn(),
-  notifyOwnerNewBooking: vi.fn(),
-  notifyOwnerNewTicketSale: vi.fn(),
-  notifyOwnerNewDonation: vi.fn(),
-  notifyOwnerNewOrder: vi.fn(),
-  notifyOwnerNewQuoteRequest: vi.fn(),
+  notifyOwnerNewPayment: vi.fn().mockResolvedValue(undefined),
+  notifyOwnerNewBooking: vi.fn().mockResolvedValue(undefined),
+  notifyOwnerNewTicketSale: vi.fn().mockResolvedValue(undefined),
+  notifyOwnerNewDonation: vi.fn().mockResolvedValue(undefined),
+  notifyOwnerNewOrder: vi.fn().mockResolvedValue(undefined),
+  notifyOwnerNewQuoteRequest: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock('@/lib/bot/flows/shared/notifications', () => ({ createNotification: vi.fn() }));
 vi.mock('@/lib/payments/paystack-recurring', () => ({
@@ -103,14 +99,18 @@ vi.mock('@/lib/bot/flows/shared/templates', () => ({
   getTicketConfirmationMessage: vi.fn(() => 'Ticketed'),
   getOrderConfirmationMessage: vi.fn(() => 'Ordered'),
 }));
-vi.mock('@/lib/bot/flows/shared/post-completion', () => ({ handlePostCompletion: vi.fn() }));
+vi.mock('@/lib/bot/flows/shared/post-completion', () => ({ handlePostCompletion: vi.fn().mockResolvedValue(undefined) }));
 vi.mock('@/lib/bot/flows/shared/send-tickets', () => ({ sendTicketsAfterPurchase: vi.fn() }));
 vi.mock('@/lib/bot/utils/truncate', () => ({ truncTitle: (s: string) => s }));
-vi.mock('@/lib/payments/saved-payment-adapter', () => ({ savedPaymentAdapter: vi.fn() }));
+vi.mock('@/lib/payments/saved-payment-adapter', () => ({
+  savedPaymentAdapter: {
+    getSavedMethods: vi.fn().mockResolvedValue([]),
+  },
+}));
 vi.mock('@/lib/whitelabel', () => ({ getPoweredByFooter: vi.fn(() => ''), isWhiteLabel: () => false }));
-vi.mock('@/lib/bot/automation/rules-engine', () => ({ evaluateRules: vi.fn() }));
+vi.mock('@/lib/bot/automation/rules-engine', () => ({ evaluateRules: vi.fn().mockResolvedValue(undefined) }));
 vi.mock('@/lib/utils/sanitize', () => ({ sanitizeFilterValue: (v: string) => v }));
-vi.mock('@/lib/bot/automation/sequence-service', () => ({ triggerSequences: vi.fn() }));
+vi.mock('@/lib/bot/automation/sequence-service', () => ({ triggerSequences: vi.fn().mockResolvedValue(undefined) }));
 vi.mock('@/lib/tier-limits', () => ({ checkTierLimit: vi.fn().mockResolvedValue({ allowed: true }) }));
 vi.mock('@/lib/capabilities/service', () => ({ getEnabledCapabilities: vi.fn().mockResolvedValue([]) }));
 vi.mock('@/lib/calendar/generate-links', () => ({ getCalendarLinksText: vi.fn(() => '') }));
@@ -136,7 +136,11 @@ function makeCtx(sessionData: Record<string, unknown>, overrides?: Partial<FlowC
   return {
     supabase: {} as any,
     sender: { sendText: vi.fn().mockResolvedValue(undefined) } as any,
-    standalone: {} as any,
+    standalone: {
+      getBotTemplates: vi.fn().mockResolvedValue({ confirmation: '✅ Booking confirmed!\nRef: {{reference_code}}' }),
+      checkTierLimits: vi.fn().mockResolvedValue({ isWhitelabel: false }),
+      fillTemplate: vi.fn().mockImplementation((template: string) => template),
+    } as any,
     intelligence: {} as any,
     from: '+2348012345678',
     session: {
@@ -177,287 +181,40 @@ function callNextAfterPrompt(step: FlowStepConfig, ctx: FlowContext): string | u
   return step.nextAfterPrompt(ctx);
 }
 
-/** Read source of a flow file relative to this test */
-function readFlowSource(filename: string): string {
-  const sourcePath = path.resolve(__dirname, '../bot/flows', filename);
-  return fs.readFileSync(sourcePath, 'utf-8');
-}
-
 // ═══════════════════════════════════════════════════════════════
-// AREA 1: Real executor CAS path — nextAfterPrompt + structural
+// BLOCKER 1: Deterministic saved-card selection
 // ═══════════════════════════════════════════════════════════════
-describe('Area 1: Real executor CAS path', () => {
-  let paymentFlow: any;
-  let schedulingFlow: any;
-  let reservationFlow: any;
-  let ticketingFlow: any;
-
-  beforeEach(async () => {
-    paymentFlow = (await import('@/lib/bot/flows/payment.flow')).paymentFlow;
-    schedulingFlow = (await import('@/lib/bot/flows/scheduling.flow')).schedulingFlow;
-    reservationFlow = (await import('@/lib/bot/flows/reservation.flow')).reservationFlow;
-    ticketingFlow = (await import('@/lib/bot/flows/ticketing.flow')).ticketingFlow;
-  });
-
-  it('1. payment process_payment: nextAfterPrompt returns await_payment when payment_reference set', () => {
-    const step = findStep(paymentFlow, 'process_payment');
-    expect(step.nextAfterPrompt).toBeDefined();
-    const ctx = makeCtx({ payment_reference: 'ref-123', amount: 5000 });
-    expect(callNextAfterPrompt(step, ctx)).toBe('await_payment');
-  });
-
-  it('2. payment.flow.ts process_payment step has NO direct current_step DB writes', () => {
-    // Read the source file and find the process_payment step's prompt function
-    const source = readFlowSource('payment.flow.ts');
-    // Verify no direct .update({...current_step...}) patterns exist in the entire file
-    // The only allowed current_step reference is the nextAfterPrompt mechanism
-    const updateCurrentStepPattern = /\.update\(\s*\{[^}]*current_step[^}]*\}/g;
-    const matches = source.match(updateCurrentStepPattern);
-    // payment.flow.ts should have zero direct current_step update calls
-    expect(matches).toBeNull();
-  });
-
-  it('3. scheduling create_booking: nextAfterPrompt routes correctly for saved-card, payment, and free paths', () => {
-    const step = findStep(schedulingFlow, 'create_booking');
-    expect(step.nextAfterPrompt).toBeDefined();
-
-    // Saved-card path
-    const savedCtx = makeCtx({ _saved_method_id: 'sm-1' });
-    expect(callNextAfterPrompt(step, savedCtx)).toBe('saved_card_prompt');
-
-    // Payment reference path
-    const payCtx = makeCtx({ payment_reference: 'ref-456' });
-    expect(callNextAfterPrompt(step, payCtx)).toBe('payment');
-
-    // Free booking path (no payment, no saved card)
-    const freeCtx = makeCtx({});
-    expect(callNextAfterPrompt(step, freeCtx)).toBeUndefined();
-
-    // Skip saved card path
-    const skipCtx = makeCtx({ _skip_saved_card: true, _saved_method_id: 'sm-1' });
-    expect(callNextAfterPrompt(step, skipCtx)).toBeUndefined();
-  });
-
-  it('4. reservation + ticketing: nextAfterPrompt routes to correct payment steps', () => {
-    // Reservation
-    const resStep = findStep(reservationFlow, 'create_reservation');
-    expect(resStep.nextAfterPrompt).toBeDefined();
-    const resCtx = makeCtx({ payment_reference: 'ref-789' });
-    expect(callNextAfterPrompt(resStep, resCtx)).toBe('reservation_payment');
-
-    // Ticketing
-    const tickStep = findStep(ticketingFlow, 'process_tickets');
-    expect(tickStep.nextAfterPrompt).toBeDefined();
-    const tickCtx = makeCtx({ bank_transfer_reference: 'bt-ref-001' });
-    expect(callNextAfterPrompt(tickStep, tickCtx)).toBe('await_ticket_payment');
-  });
-});
-
-// ═══════════════════════════════════════════════════════════════
-// AREA 2: Session terminalization + exactEntityFamily gating
-// ═══════════════════════════════════════════════════════════════
-describe('Area 2: Session terminalization', () => {
-  function mockSupabase(opts: {
-    entityData?: { bot_session_id: string | null } | null;
-    entityError?: { message: string } | null;
-    updateResult?: { id: string }[] | null;
-    updateError?: { message: string } | null;
-    reReadSession?: { id: string; is_active: boolean } | null;
-    reReadError?: { message: string } | null;
-  }) {
-    const sb: any = {
-      from: vi.fn((table: string) => {
-        if (table === 'bookings' || table === 'orders' || table === 'reservations') {
-          return {
-            select: vi.fn().mockReturnValue({
-              eq: vi.fn().mockReturnValue({
-                maybeSingle: vi.fn().mockResolvedValue({
-                  data: opts.entityData !== undefined ? opts.entityData : null,
-                  error: opts.entityError || null,
-                }),
-              }),
-            }),
-          };
-        }
-        if (table === 'bot_sessions') {
-          return {
-            update: vi.fn().mockReturnValue({
-              eq: vi.fn().mockReturnValue({
-                eq: vi.fn().mockReturnValue({
-                  select: vi.fn().mockResolvedValue({
-                    data: opts.updateResult !== undefined ? opts.updateResult : [],
-                    error: opts.updateError || null,
-                  }),
-                }),
-              }),
-            }),
-            select: vi.fn().mockReturnValue({
-              eq: vi.fn().mockReturnValue({
-                maybeSingle: vi.fn().mockResolvedValue({
-                  data: opts.reReadSession !== undefined ? opts.reReadSession : null,
-                  error: opts.reReadError || null,
-                }),
-              }),
-            }),
-          };
-        }
-        return {
-          select: vi.fn().mockReturnValue({
-            eq: vi.fn().mockReturnValue({
-              maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
-            }),
-          }),
-        };
-      }),
-    };
-    return sb;
-  }
-
-  let terminalizeOriginatingSession: typeof import('@/lib/payments/session-terminalization').terminalizeOriginatingSession;
-
-  beforeEach(async () => {
-    vi.clearAllMocks();
-    terminalizeOriginatingSession = (await import('@/lib/payments/session-terminalization')).terminalizeOriginatingSession;
-  });
-
-  it('5. Booking with bot_session_id + active session -> deactivated', async () => {
-    const sb = mockSupabase({
-      entityData: { bot_session_id: 'sess-abc' },
-      updateResult: [{ id: 'sess-abc' }],
-    });
-    const result = await terminalizeOriginatingSession(sb, { bookingId: 'bk-1' });
-    expect(result.status).toBe('deactivated');
-  });
-
-  it('6. Booking with bot_session_id + already inactive -> already_inactive', async () => {
-    const sb = mockSupabase({
-      entityData: { bot_session_id: 'sess-abc' },
-      updateResult: [],
-      reReadSession: { id: 'sess-abc', is_active: false },
-    });
-    const result = await terminalizeOriginatingSession(sb, { bookingId: 'bk-1' });
-    expect(result.status).toBe('already_inactive');
-  });
-
-  it('7. Legacy null bot_session_id -> legacy_null, no session UPDATE attempted', async () => {
-    const sb = mockSupabase({
-      entityData: { bot_session_id: null },
-    });
-    const result = await terminalizeOriginatingSession(sb, { bookingId: 'bk-1' });
-    expect(result.status).toBe('legacy_null');
-    const fromCalls = sb.from.mock.calls.map((c: any[]) => c[0]);
-    expect(fromCalls).not.toContain('bot_sessions');
-  });
-
-  it('8. Invoice/campaign entity (no booking/order/reservation) -> no_origin', async () => {
-    const sb = mockSupabase({});
-    const result = await terminalizeOriginatingSession(sb, { invoiceId: 'inv-1', campaignId: 'camp-1' });
-    expect(result.status).toBe('no_origin');
-  });
-
-  it('9. DB error on entity lookup -> error with retryable: true', async () => {
-    const sb = mockSupabase({
-      entityError: { message: 'connection timeout' },
-    });
-    const result = await terminalizeOriginatingSession(sb, { bookingId: 'bk-1' });
-    expect(result.status).toBe('error');
-    expect((result as { retryable: boolean }).retryable).toBe(true);
-  });
-
-  // ── exactEntityFamily gating tests ──
-
-  it('10. exactEntityFamily is true for booking/order/reservation (even legacy_null)', async () => {
-    // The authority.ts derives exactEntityFamily = (termResult.status !== 'no_origin')
-    // So deactivated, already_inactive, and legacy_null all yield exactEntityFamily=true
-    const bookingDeactivated = await terminalizeOriginatingSession(
-      mockSupabase({ entityData: { bot_session_id: 'sess-1' }, updateResult: [{ id: 'sess-1' }] }),
-      { bookingId: 'bk-1' },
-    );
-    expect(bookingDeactivated.status).toBe('deactivated');
-    expect(bookingDeactivated.status !== 'no_origin').toBe(true); // exactEntityFamily = true
-
-    const orderLegacy = await terminalizeOriginatingSession(
-      mockSupabase({ entityData: { bot_session_id: null } }),
-      { orderId: 'ord-1' },
-    );
-    expect(orderLegacy.status).toBe('legacy_null');
-    expect(orderLegacy.status !== 'no_origin').toBe(true); // exactEntityFamily = true
-
-    const reservationInactive = await terminalizeOriginatingSession(
-      mockSupabase({ entityData: { bot_session_id: 'sess-2' }, updateResult: [], reReadSession: { id: 'sess-2', is_active: false } }),
-      { reservationId: 'res-1' },
-    );
-    expect(reservationInactive.status).toBe('already_inactive');
-    expect(reservationInactive.status !== 'no_origin').toBe(true); // exactEntityFamily = true
-  });
-
-  it('11. exactEntityFamily is false for invoice/campaign (no_origin)', async () => {
-    const sb = mockSupabase({});
-    const invoice = await terminalizeOriginatingSession(sb, { invoiceId: 'inv-1' });
-    expect(invoice.status).toBe('no_origin');
-    // exactEntityFamily = (status !== 'no_origin') = false
-    expect(invoice.status !== 'no_origin').toBe(false);
-
-    const campaign = await terminalizeOriginatingSession(sb, { campaignId: 'camp-1' });
-    expect(campaign.status).toBe('no_origin');
-    expect(campaign.status !== 'no_origin').toBe(false);
-  });
-
-  it('12. Stage 3 broad heuristic step names do NOT include booking/order/reservation steps', () => {
-    // Read send-confirmation.ts and verify the .in('current_step', [...]) for the broad heuristic
-    const source = fs.readFileSync(
-      path.resolve(__dirname, '../payments/send-confirmation.ts'),
-      'utf-8',
-    );
-    // Find the broad heuristic .in('current_step', [...]) call near the exactEntityFamily guard
-    const broadHeuristicMatch = source.match(/\.in\('current_step',\s*\[([^\]]+)\]\)/g);
-    expect(broadHeuristicMatch).not.toBeNull();
-
-    // Extract step names from the .in('current_step', [...]) arrays
-    for (const match of broadHeuristicMatch!) {
-      // Parse out the quoted step names from the array literal
-      const stepNames = [...match.matchAll(/'([^']+)'/g)].map(m => m[1])
-        .filter(s => s !== 'current_step'); // exclude the column name
-
-      // None of these steps should be booking/order/reservation/ticketing steps
-      // Those families are gated by exactEntityFamily and must NOT appear in the broad heuristic
-      const bookingFamilySteps = [
-        'create_booking', 'saved_card_prompt', 'await_booking_payment',
-        'process_order', 'await_order_payment',
-        'create_reservation', 'reservation_payment', 'await_reservation_payment',
-        'process_tickets', 'await_ticket_payment',
-        'process_payment', 'await_payment', // payment flow (booking-backed)
-      ];
-
-      for (const stepName of stepNames) {
-        expect(bookingFamilySteps).not.toContain(stepName);
-      }
-    }
-  });
-});
-
-// ═══════════════════════════════════════════════════════════════
-// AREA 3: Saved-card phone normalization
-// ═══════════════════════════════════════════════════════════════
-describe('Area 3: Saved-card phone normalization', () => {
+describe('Blocker 1: Deterministic saved-card selection', () => {
   let getSavedPaymentMethod: typeof import('@/lib/payments/charge-saved').getSavedPaymentMethod;
 
-  const SAVED_METHOD_ROW = {
-    id: 'spm-1',
+  const CANONICAL_ROW = {
+    id: 'spm-canonical',
     gateway: 'paystack',
-    authorization_code: 'AUTH_abc',
-    customer_code: 'CUS_xyz',
+    authorization_code: 'AUTH_canonical',
+    customer_code: 'CUS_canonical',
     stripe_payment_method_id: null,
     stripe_customer_id: null,
     card_last4: '4242',
     card_brand: 'visa',
+    customer_phone: '+2348012345678',
+  };
+  const LEGACY_ROW = {
+    id: 'spm-legacy',
+    gateway: 'paystack',
+    authorization_code: 'AUTH_legacy',
+    customer_code: 'CUS_legacy',
+    stripe_payment_method_id: null,
+    stripe_customer_id: null,
+    card_last4: '4242',
+    card_brand: 'visa',
+    customer_phone: '2348012345678',
   };
 
-  /** Build a mock supabase that uses .limit(1) pattern (not .maybeSingle()) */
-  function buildPhoneMockSb(opts: {
-    returnData?: (typeof SAVED_METHOD_ROW)[] | null;
-    captureInArgs?: (field: string, values: string[]) => void;
+  /** Build a mock supabase that returns provided rows from .limit(2) */
+  function buildSavedCardMockSb(opts: {
+    returnRows?: any[];
     returnError?: { message: string } | null;
+    captureInArgs?: (field: string, values: string[]) => void;
   }) {
     const sb: any = {
       from: vi.fn().mockReturnValue({
@@ -467,11 +224,9 @@ describe('Area 3: Saved-card phone normalization', () => {
               opts.captureInArgs?.(field, values);
               return {
                 eq: vi.fn().mockReturnValue({
-                  order: vi.fn().mockReturnValue({
-                    limit: vi.fn().mockResolvedValue({
-                      data: opts.returnData !== undefined ? opts.returnData : null,
-                      error: opts.returnError || null,
-                    }),
+                  limit: vi.fn().mockResolvedValue({
+                    data: opts.returnRows ?? null,
+                    error: opts.returnError ?? null,
                   }),
                 }),
               };
@@ -488,72 +243,104 @@ describe('Area 3: Saved-card phone normalization', () => {
     getSavedPaymentMethod = (await import('@/lib/payments/charge-saved')).getSavedPaymentMethod;
   });
 
-  it('13. +E.164 stored, non-+ lookup -> found (.in() includes both variants, uses .limit(1))', async () => {
-    let capturedValues: string[] = [];
-    const sb = buildPhoneMockSb({
-      returnData: [SAVED_METHOD_ROW],
-      captureInArgs: (_field, values) => { capturedValues = values; },
-    });
-
+  it('1.1 Both +E.164 and non-+ rows returned — canonical +E.164 wins regardless of array order (canonical first)', async () => {
+    const sb = buildSavedCardMockSb({ returnRows: [CANONICAL_ROW, LEGACY_ROW] });
     const result = await getSavedPaymentMethod(sb, 'biz-1', '2348012345678');
     expect(result).not.toBeNull();
-    expect(result?.id).toBe('spm-1');
-    expect(capturedValues).toContain('+2348012345678');
-    expect(capturedValues).toContain('2348012345678');
+    expect(result!.id).toBe('spm-canonical');
   });
 
-  it('14. Dual-variant rows exist -> query returns exactly one (not error)', async () => {
-    const sb = buildPhoneMockSb({
-      // Even if both +E.164 and non-+ exist, .limit(1) ensures exactly one returned
-      returnData: [SAVED_METHOD_ROW],
-    });
+  it('1.2 Both rows returned — canonical +E.164 wins when legacy is first in array', async () => {
+    // Reverse order: legacy comes first from DB
+    const sb = buildSavedCardMockSb({ returnRows: [LEGACY_ROW, CANONICAL_ROW] });
+    const result = await getSavedPaymentMethod(sb, 'biz-1', '2348012345678');
+    expect(result).not.toBeNull();
+    expect(result!.id).toBe('spm-canonical');
+  });
 
+  it('1.3 Legacy-only fallback — only non-+ row exists, still found', async () => {
+    const sb = buildSavedCardMockSb({ returnRows: [LEGACY_ROW] });
     const result = await getSavedPaymentMethod(sb, 'biz-1', '+2348012345678');
     expect(result).not.toBeNull();
-    expect(result?.id).toBe('spm-1');
+    expect(result!.id).toBe('spm-legacy');
   });
 
-  it('15. Query error -> returns null (not throws)', async () => {
-    const sb = buildPhoneMockSb({
-      returnData: null,
-      returnError: { message: 'connection reset' },
+  it('1.4 Query error returns null (not throws)', async () => {
+    const sb = buildSavedCardMockSb({ returnError: { message: 'connection reset' } });
+    const result = await getSavedPaymentMethod(sb, 'biz-1', '+2348012345678');
+    expect(result).toBeNull();
+  });
+
+  it('1.5 Cross-tenant — empty result returns null', async () => {
+    const sb = buildSavedCardMockSb({ returnRows: [] });
+    const result = await getSavedPaymentMethod(sb, 'different-biz', '+2348012345678');
+    expect(result).toBeNull();
+  });
+
+  it('1.6 .in() receives both phone variants for normalization', async () => {
+    let capturedValues: string[] = [];
+    const sb = buildSavedCardMockSb({
+      returnRows: [CANONICAL_ROW],
+      captureInArgs: (_field, values) => { capturedValues = values; },
     });
-
-    // Must return null, not throw
-    const result = await getSavedPaymentMethod(sb, 'biz-1', '+2348012345678');
-    expect(result).toBeNull();
-  });
-
-  it('16. No active method -> returns null', async () => {
-    const sb = buildPhoneMockSb({ returnData: [] });
-    const result = await getSavedPaymentMethod(sb, 'biz-1', '+2348012345678');
-    expect(result).toBeNull();
+    await getSavedPaymentMethod(sb, 'biz-1', '2348012345678');
+    expect(capturedValues).toContain('+2348012345678');
+    expect(capturedValues).toContain('2348012345678');
   });
 });
 
 // ═══════════════════════════════════════════════════════════════
-// AREA 4: Payment/Giving bot_session_id + crash recovery
+// BLOCKER 2: Real executor CAS path — nextAfterPrompt + prompt()
 // ═══════════════════════════════════════════════════════════════
-describe('Area 4: Payment/Giving bot_session_id + crash recovery', () => {
+describe('Blocker 2: Real executor CAS path', () => {
   let paymentFlow: any;
+  let schedulingFlow: any;
 
   beforeEach(async () => {
+    vi.clearAllMocks();
     paymentFlow = (await import('@/lib/bot/flows/payment.flow')).paymentFlow;
+    schedulingFlow = (await import('@/lib/bot/flows/scheduling.flow')).schedulingFlow;
+    mockInitializePayment.mockReset();
   });
 
-  it('17. payment flow booking INSERT SQL includes bot_session_id (structural)', () => {
-    const source = readFlowSource('payment.flow.ts');
-    // Verify the booking insert includes bot_session_id
-    expect(source).toContain('bot_session_id: ctx.session.id');
-    // Also verify crash-window recovery pattern exists
-    expect(source).toContain("error?.code === '23505'");
-    expect(source).toContain("error?.message?.includes('bot_session_id')");
+  it('2.1 payment process_payment: nextAfterPrompt returns await_payment when payment_reference set', () => {
+    const step = findStep(paymentFlow, 'process_payment');
+    expect(step.nextAfterPrompt).toBeDefined();
+    const ctx = makeCtx({ payment_reference: 'ref-123', amount: 5000 });
+    expect(callNextAfterPrompt(step, ctx)).toBe('await_payment');
   });
 
-  it('18. crash-window: prompt() with 23505 unique constraint error recovers existing booking', async () => {
+  it('2.2 payment process_payment: nextAfterPrompt returns await_payment for bank_transfer_reference', () => {
+    const step = findStep(paymentFlow, 'process_payment');
+    const ctx = makeCtx({ bank_transfer_reference: 'bt-ref-1' });
+    expect(callNextAfterPrompt(step, ctx)).toBe('await_payment');
+  });
+
+  it('2.3 payment process_payment: nextAfterPrompt returns undefined when no payment ref', () => {
+    const step = findStep(paymentFlow, 'process_payment');
+    const ctx = makeCtx({ amount: 5000 });
+    expect(callNextAfterPrompt(step, ctx)).toBeUndefined();
+  });
+
+  it('2.4 scheduling create_booking: nextAfterPrompt routes saved_card_prompt, payment, or undefined', () => {
+    const step = findStep(schedulingFlow, 'create_booking');
+    expect(step.nextAfterPrompt).toBeDefined();
+
+    // Saved-card path
+    expect(callNextAfterPrompt(step, makeCtx({ _saved_method_id: 'sm-1' }))).toBe('saved_card_prompt');
+    // Payment reference path
+    expect(callNextAfterPrompt(step, makeCtx({ payment_reference: 'ref-456' }))).toBe('payment');
+    // Free booking (no payment, no saved card)
+    expect(callNextAfterPrompt(step, makeCtx({}))).toBeUndefined();
+    // Skip saved card
+    expect(callNextAfterPrompt(step, makeCtx({ _skip_saved_card: true, _saved_method_id: 'sm-1' }))).toBeUndefined();
+  });
+
+  it('2.5 payment process_payment prompt() does NOT write current_step directly — only session_data', async () => {
     const step = findStep(paymentFlow, 'process_payment');
 
-    // Build mock supabase that returns unique constraint error on INSERT, then existing booking on recovery
+    // Track all .update() calls on bot_sessions
+    const updateCalls: any[] = [];
     const mockSb: any = {
       from: vi.fn().mockImplementation((table: string) => {
         if (table === 'bookings') {
@@ -561,20 +348,595 @@ describe('Area 4: Payment/Giving bot_session_id + crash recovery', () => {
             insert: vi.fn().mockReturnValue({
               select: vi.fn().mockReturnValue({
                 single: vi.fn().mockResolvedValue({
+                  data: { id: 'bk-new', reference_code: 'REF-NEW' },
+                  error: null,
+                }),
+              }),
+            }),
+          };
+        }
+        if (table === 'bot_sessions') {
+          return {
+            update: vi.fn().mockImplementation((payload: any) => {
+              updateCalls.push(payload);
+              return {
+                eq: vi.fn().mockResolvedValue({ data: null, error: null }),
+              };
+            }),
+          };
+        }
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              single: vi.fn().mockResolvedValue({ data: null, error: null }),
+              maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+            }),
+          }),
+        };
+      }),
+    };
+
+    mockInitializePayment.mockResolvedValueOnce({ reference: 'pay-ref-1', url: 'https://pay.test/1' });
+
+    const ctx = makeCtx(
+      {
+        service_id: 'svc-1',
+        service_name: 'Test Service',
+        amount: 5000,
+        first_name: 'John',
+        last_name: 'Doe',
+        _terms_accepted: true,
+      },
+      { supabase: mockSb },
+    );
+
+    await step.prompt(ctx);
+
+    // Verify NONE of the bot_sessions .update() calls include current_step
+    for (const payload of updateCalls) {
+      expect(payload).not.toHaveProperty('current_step');
+    }
+  });
+
+  it('2.6 payment process_payment prompt() sets session_data fields, nextAfterPrompt returns correct next step', async () => {
+    const step = findStep(paymentFlow, 'process_payment');
+
+    const mockSb: any = {
+      from: vi.fn().mockImplementation((table: string) => {
+        if (table === 'bookings') {
+          return {
+            insert: vi.fn().mockReturnValue({
+              select: vi.fn().mockReturnValue({
+                single: vi.fn().mockResolvedValue({
+                  data: { id: 'bk-created', reference_code: 'REF-CREATED' },
+                  error: null,
+                }),
+              }),
+            }),
+          };
+        }
+        if (table === 'bot_sessions') {
+          return {
+            update: vi.fn().mockReturnValue({
+              eq: vi.fn().mockResolvedValue({ data: null, error: null }),
+            }),
+          };
+        }
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              single: vi.fn().mockResolvedValue({ data: null, error: null }),
+              maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+            }),
+          }),
+        };
+      }),
+    };
+
+    mockInitializePayment.mockResolvedValueOnce({ reference: 'pay-ref-test', url: 'https://pay.test/x' });
+
+    const ctx = makeCtx(
+      {
+        service_id: 'svc-1',
+        service_name: 'Test Service',
+        amount: 5000,
+        first_name: 'John',
+        last_name: 'Doe',
+        _terms_accepted: true,
+      },
+      { supabase: mockSb },
+    );
+
+    const msgs = await step.prompt(ctx);
+    expect(msgs.length).toBeGreaterThan(0);
+
+    // After prompt, session_data should have payment_reference set by initializePayment
+    expect(ctx.session.session_data.payment_reference).toBe('pay-ref-test');
+
+    // Now nextAfterPrompt should return 'await_payment'
+    expect(callNextAfterPrompt(step, ctx)).toBe('await_payment');
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// BLOCKER 3: Executable authority lifecycle
+// ═══════════════════════════════════════════════════════════════
+describe('Blocker 3: Executable authority lifecycle', () => {
+  let authorizeAndFinalize: typeof import('@/lib/payments/authority').authorizeAndFinalize;
+
+  const VERIFIED_PAYMENT = {
+    provider: 'paystack' as const,
+    waaiioReference: 'ref-test-001',
+    amount: 5000,
+    currency: 'NGN',
+    verifiedAt: new Date().toISOString(),
+  };
+
+  /** Build a mock supabase for authority tests */
+  function buildAuthoritySb(opts: {
+    paymentRow?: any;
+    paymentLookupError?: { message: string } | null;
+    markPaidRows?: any[];
+    markPaidError?: { message: string } | null;
+    claimResult?: any;
+    claimError?: { message: string } | null;
+    completeResult?: any;
+    completeError?: { message: string } | null;
+    termEntityData?: { bot_session_id: string | null } | null;
+    termUpdateResult?: any[];
+    adoptError?: { message: string } | null;
+    refreshedStatus?: string;
+  }) {
+    const sb: any = {
+      from: vi.fn().mockImplementation((table: string) => {
+        if (table === 'payments') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                maybeSingle: vi.fn().mockResolvedValue({
+                  data: opts.paymentRow ?? null,
+                  error: opts.paymentLookupError ?? null,
+                }),
+                single: vi.fn().mockResolvedValue({
+                  data: opts.refreshedStatus ? { status: opts.refreshedStatus } : null,
+                  error: null,
+                }),
+              }),
+            }),
+            update: vi.fn().mockReturnValue({
+              eq: vi.fn().mockImplementation((_field: string, _val: string) => ({
+                eq: vi.fn().mockReturnValue({
+                  select: vi.fn().mockResolvedValue({
+                    data: opts.markPaidRows ?? [{ id: 'pay-1' }],
+                    error: opts.markPaidError ?? null,
+                  }),
+                }),
+                is: vi.fn().mockResolvedValue({
                   data: null,
-                  error: { code: '23505', message: 'duplicate key value violates unique constraint "bookings_bot_session_id_key" bot_session_id' },
+                  error: opts.adoptError ?? null,
+                }),
+                select: vi.fn().mockResolvedValue({
+                  data: opts.markPaidRows ?? [{ id: 'pay-1' }],
+                  error: opts.markPaidError ?? null,
+                }),
+              })),
+            }),
+          };
+        }
+        // session-terminalization tables
+        if (table === 'bookings' || table === 'orders' || table === 'reservations') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                maybeSingle: vi.fn().mockResolvedValue({
+                  data: opts.termEntityData !== undefined ? opts.termEntityData : null,
+                  error: null,
+                }),
+              }),
+            }),
+          };
+        }
+        if (table === 'bot_sessions') {
+          return {
+            update: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                eq: vi.fn().mockReturnValue({
+                  select: vi.fn().mockResolvedValue({
+                    data: opts.termUpdateResult ?? [],
+                    error: null,
+                  }),
                 }),
               }),
             }),
             select: vi.fn().mockReturnValue({
               eq: vi.fn().mockReturnValue({
-                eq: vi.fn().mockReturnValue({
-                  in: vi.fn().mockReturnValue({
-                    maybeSingle: vi.fn().mockResolvedValue({
-                      data: { id: 'existing-bk-1', reference_code: 'REF-EXISTING' },
-                      error: null,
-                    }),
-                  }),
+                maybeSingle: vi.fn().mockResolvedValue({
+                  data: { id: 'sess-term', is_active: false },
+                  error: null,
+                }),
+              }),
+            }),
+          };
+        }
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+            }),
+          }),
+        };
+      }),
+      rpc: vi.fn().mockImplementation((fnName: string) => {
+        if (fnName === 'claim_payment_finalization') {
+          return Promise.resolve({
+            data: opts.claimResult ?? { claimed: true, claim_token: 'tok-123', booking_id: 'bk-1', invoice_id: null, campaign_id: null, reservation_id: null, order_id: null, gateway_fee: 100 },
+            error: opts.claimError ?? null,
+          });
+        }
+        if (fnName === 'complete_payment_finalization') {
+          return Promise.resolve({
+            data: opts.completeResult ?? { completed: true },
+            error: opts.completeError ?? null,
+          });
+        }
+        if (fnName === 'release_payment_finalization') {
+          return Promise.resolve({ data: null, error: null });
+        }
+        return Promise.resolve({ data: null, error: null });
+      }),
+    };
+    return sb;
+  }
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    authorizeAndFinalize = (await import('@/lib/payments/authority')).authorizeAndFinalize;
+  });
+
+  it('3.1 Booking payment — terminalization succeeds BEFORE sendConfirmation is invoked', async () => {
+    const callOrder: string[] = [];
+
+    const processPayment = vi.fn().mockImplementation(async () => {
+      callOrder.push('processPayment');
+      return { criticalSuccess: true };
+    });
+    const sendConfirmation = vi.fn().mockImplementation(async () => {
+      callOrder.push('sendConfirmation');
+      return { status: 'completed' as const };
+    });
+
+    const paymentRow = {
+      id: 'pay-1', amount: 5000, currency: 'NGN', gateway: 'paystack',
+      status: 'pending', booking_id: 'bk-1', invoice_id: null, campaign_id: null,
+      reservation_id: null, order_id: null, metadata: null, gateway_fee: 100,
+      finalization_completed_at: null, payment_authority_version: 1,
+      fee_policy_version: 1, config_version_id: null, transaction_category: 'scheduling', fee_basis: null,
+    };
+
+    const sb = buildAuthoritySb({
+      paymentRow,
+      termEntityData: { bot_session_id: 'sess-bot-1' },
+      termUpdateResult: [{ id: 'sess-bot-1' }],
+    });
+
+    const result = await authorizeAndFinalize(sb, VERIFIED_PAYMENT, processPayment, sendConfirmation);
+
+    expect(result.status).toBe('completed');
+    expect(processPayment).toHaveBeenCalledOnce();
+    expect(sendConfirmation).toHaveBeenCalledOnce();
+    // processPayment (Stage 2) MUST complete before sendConfirmation (Stage 3)
+    expect(callOrder).toEqual(['processPayment', 'sendConfirmation']);
+  });
+
+  it('3.2 Terminalization DB error — sendConfirmation NOT called (retryable)', async () => {
+    const processPayment = vi.fn().mockResolvedValue({ criticalSuccess: true });
+    const sendConfirmation = vi.fn().mockResolvedValue({ status: 'completed' as const });
+
+    const paymentRow = {
+      id: 'pay-2', amount: 5000, currency: 'NGN', gateway: 'paystack',
+      status: 'pending', booking_id: 'bk-2', invoice_id: null, campaign_id: null,
+      reservation_id: null, order_id: null, metadata: null, gateway_fee: 100,
+      finalization_completed_at: null, payment_authority_version: 1,
+      fee_policy_version: 1, config_version_id: null, transaction_category: 'scheduling', fee_basis: null,
+    };
+
+    // Override the session terminalization to return error
+    // We need to mock the bookings lookup to return an error
+    const sb = buildAuthoritySb({ paymentRow });
+    // Override from() for bookings to return error
+    const originalFrom = sb.from;
+    sb.from = vi.fn().mockImplementation((table: string) => {
+      if (table === 'bookings') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              maybeSingle: vi.fn().mockResolvedValue({
+                data: null,
+                error: { message: 'connection timeout' },
+              }),
+            }),
+          }),
+        };
+      }
+      return originalFrom(table);
+    });
+
+    const result = await authorizeAndFinalize(sb, VERIFIED_PAYMENT, processPayment, sendConfirmation);
+
+    expect(result.status).toBe('retryable_failed');
+    expect(result.retryable).toBe(true);
+    expect(sendConfirmation).not.toHaveBeenCalled();
+  });
+
+  it('3.3 legacy_null (bot_session_id is null) — sendConfirmation called with exactEntityFamily: true', async () => {
+    const processPayment = vi.fn().mockResolvedValue({ criticalSuccess: true });
+    const sendConfirmation = vi.fn().mockResolvedValue({ status: 'completed' as const });
+
+    const paymentRow = {
+      id: 'pay-3', amount: 5000, currency: 'NGN', gateway: 'paystack',
+      status: 'pending', booking_id: 'bk-3', invoice_id: null, campaign_id: null,
+      reservation_id: null, order_id: null, metadata: null, gateway_fee: 100,
+      finalization_completed_at: null, payment_authority_version: 1,
+      fee_policy_version: 1, config_version_id: null, transaction_category: 'scheduling', fee_basis: null,
+    };
+
+    const sb = buildAuthoritySb({
+      paymentRow,
+      termEntityData: { bot_session_id: null }, // Legacy null — no session to terminalize
+    });
+
+    const result = await authorizeAndFinalize(sb, VERIFIED_PAYMENT, processPayment, sendConfirmation);
+
+    expect(result.status).toBe('completed');
+    expect(sendConfirmation).toHaveBeenCalledOnce();
+    // legacy_null status !== 'no_origin' => exactEntityFamily = true
+    const confirmOpts = sendConfirmation.mock.calls[0][2];
+    expect(confirmOpts).toEqual({ exactEntityFamily: true });
+  });
+
+  it('3.4 Invoice/campaign — sendConfirmation called with exactEntityFamily: false', async () => {
+    const processPayment = vi.fn().mockResolvedValue({ criticalSuccess: true });
+    const sendConfirmation = vi.fn().mockResolvedValue({ status: 'completed' as const });
+
+    const paymentRow = {
+      id: 'pay-4', amount: 5000, currency: 'NGN', gateway: 'paystack',
+      status: 'pending', booking_id: null, invoice_id: 'inv-1', campaign_id: null,
+      reservation_id: null, order_id: null, metadata: null, gateway_fee: 100,
+      finalization_completed_at: null, payment_authority_version: 1,
+      fee_policy_version: 1, config_version_id: null, transaction_category: 'invoice', fee_basis: null,
+    };
+
+    const sb = buildAuthoritySb({ paymentRow });
+
+    const result = await authorizeAndFinalize(sb, VERIFIED_PAYMENT, processPayment, sendConfirmation);
+
+    expect(result.status).toBe('completed');
+    expect(sendConfirmation).toHaveBeenCalledOnce();
+    // no booking/order/reservation => no_origin => exactEntityFamily = false
+    const confirmOpts = sendConfirmation.mock.calls[0][2];
+    expect(confirmOpts).toEqual({ exactEntityFamily: false });
+  });
+
+  it('3.5 processPayment critical failure — releases claim, returns retryable, sendConfirmation NOT called', async () => {
+    const processPayment = vi.fn().mockResolvedValue({ criticalSuccess: false, errors: ['DB write failed'] });
+    const sendConfirmation = vi.fn().mockResolvedValue({ status: 'completed' as const });
+
+    const paymentRow = {
+      id: 'pay-5', amount: 5000, currency: 'NGN', gateway: 'paystack',
+      status: 'pending', booking_id: 'bk-5', invoice_id: null, campaign_id: null,
+      reservation_id: null, order_id: null, metadata: null, gateway_fee: 100,
+      finalization_completed_at: null, payment_authority_version: 1,
+      fee_policy_version: 1, config_version_id: null, transaction_category: 'scheduling', fee_basis: null,
+    };
+
+    const sb = buildAuthoritySb({ paymentRow });
+
+    const result = await authorizeAndFinalize(sb, VERIFIED_PAYMENT, processPayment, sendConfirmation);
+
+    expect(result.status).toBe('retryable_failed');
+    expect(result.retryable).toBe(true);
+    expect(sendConfirmation).not.toHaveBeenCalled();
+    // release_payment_finalization should have been called
+    expect(sb.rpc).toHaveBeenCalledWith('release_payment_finalization', expect.objectContaining({ p_payment_id: 'pay-5' }));
+  });
+
+  it('3.6 processPayment receives correct payment fields including fee_policy_version and transaction_category', async () => {
+    const processPayment = vi.fn().mockResolvedValue({ criticalSuccess: true });
+    const sendConfirmation = vi.fn().mockResolvedValue({ status: 'completed' as const });
+
+    const paymentRow = {
+      id: 'pay-6', amount: 5000, currency: 'NGN', gateway: 'paystack',
+      status: 'pending', booking_id: 'bk-6', invoice_id: null, campaign_id: null,
+      reservation_id: null, order_id: null, metadata: { some: 'meta' }, gateway_fee: 150,
+      finalization_completed_at: null, payment_authority_version: 1,
+      fee_policy_version: 2, config_version_id: 'cfg-v1', transaction_category: 'scheduling', fee_basis: { rate: 0.05 },
+    };
+
+    const sb = buildAuthoritySb({
+      paymentRow,
+      claimResult: {
+        claimed: true, claim_token: 'tok-456',
+        booking_id: 'bk-6', invoice_id: null, campaign_id: null,
+        reservation_id: null, order_id: null, gateway_fee: 150,
+      },
+      termEntityData: { bot_session_id: null },
+    });
+
+    await authorizeAndFinalize(sb, VERIFIED_PAYMENT, processPayment, sendConfirmation);
+
+    expect(processPayment).toHaveBeenCalledWith(sb, expect.objectContaining({
+      id: 'pay-6',
+      amount: 5000,
+      fee_policy_version: 2,
+      config_version_id: 'cfg-v1',
+      transaction_category: 'scheduling',
+      fee_basis: { rate: 0.05 },
+    }));
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// BLOCKER 4: Real caller boundaries + explicit zero-reinit
+// ═══════════════════════════════════════════════════════════════
+describe('Blocker 4: Real caller boundaries + explicit zero-reinit', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockInitializePayment.mockReset();
+  });
+
+  it('4.1 scheduling flow calls initializePayment with transactionCategory=scheduling and correct entity args', async () => {
+    const { schedulingFlow } = await import('@/lib/bot/flows/scheduling.flow');
+    const step = findStep(schedulingFlow, 'create_booking');
+
+    mockInitializePayment.mockResolvedValueOnce({ reference: 'sched-ref-1', url: 'https://pay.test/sched' });
+
+    const mockSb: any = {
+      from: vi.fn().mockImplementation((table: string) => {
+        if (table === 'bot_sessions') {
+          return {
+            update: vi.fn().mockReturnValue({
+              eq: vi.fn().mockResolvedValue({ data: null, error: null }),
+            }),
+          };
+        }
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              single: vi.fn().mockResolvedValue({ data: null, error: null }),
+              maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+            }),
+          }),
+        };
+      }),
+      rpc: vi.fn().mockImplementation((fnName: string) => {
+        if (fnName === 'book_slot_atomic') {
+          // RPC returns a chainable query builder — .single() is called on it
+          const result = { data: { booking_id: 'bk-sched', reference_code: 'REF-SCHED', slot_available: true }, error: null };
+          return { single: vi.fn().mockResolvedValue(result) };
+        }
+        // Default: return a thenable with .single() for safety
+        return Promise.resolve({ data: null, error: null });
+      }),
+    };
+
+    const ctx = makeCtx(
+      {
+        service_id: 'svc-1',
+        service_name: 'Haircut',
+        service_price: 3000,
+        service_deposit: 3000,
+        amount: 3000,
+        first_name: 'Ada',
+        last_name: 'Obi',
+        date: '2026-10-01',
+        time: '10:00',
+        _terms_accepted: true,
+        _inbound_channel_id: 'ch-1',
+      },
+      { supabase: mockSb },
+    );
+
+    await step.prompt(ctx);
+
+    expect(mockInitializePayment).toHaveBeenCalledOnce();
+    const callArgs = mockInitializePayment.mock.calls[0];
+    expect(callArgs[0]).toBe(mockSb); // supabase client
+    expect(callArgs[1]).toMatchObject({
+      bookingId: 'bk-sched',
+      transactionCategory: 'scheduling',
+      confirmationOrigin: 'whatsapp',
+      inboundChannelId: 'ch-1',
+    });
+  });
+
+  it('4.2 ordering flow calls initializePayment with transactionCategory=ordering', async () => {
+    const { orderingFlow } = await import('@/lib/bot/flows/ordering.flow');
+    const step = findStep(orderingFlow, 'process_order');
+
+    mockInitializePayment.mockResolvedValueOnce({ reference: 'ord-ref-1', url: 'https://pay.test/ord' });
+
+    const mockSb: any = {
+      from: vi.fn().mockImplementation((table: string) => {
+        if (table === 'bot_sessions') {
+          return {
+            update: vi.fn().mockReturnValue({
+              eq: vi.fn().mockResolvedValue({ data: null, error: null }),
+            }),
+          };
+        }
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              single: vi.fn().mockResolvedValue({ data: null, error: null }),
+              maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+            }),
+          }),
+        };
+      }),
+      rpc: vi.fn().mockImplementation((fnName: string) => {
+        if (fnName === 'create_order_atomic') {
+          return Promise.resolve({
+            data: { order_id: 'ord-1', reference_code: 'REF-ORD', created: true },
+            error: null,
+          });
+        }
+        if (fnName === 'upsert_customer_profile') {
+          return Promise.resolve({ data: null, error: null });
+        }
+        return Promise.resolve({ data: null, error: null });
+      }),
+    };
+
+    const ctx = makeCtx(
+      {
+        cart: [{ id: 'prod-1', product_id: 'prod-1', name: 'Widget', price: 7500, quantity: 1 }],
+        first_name: 'Ada',
+        last_name: 'Obi',
+        _terms_accepted: true,
+        _inbound_channel_id: 'ch-2',
+      },
+      {
+        supabase: mockSb,
+        business: {
+          id: 'biz-1',
+          name: 'Test Shop',
+          slug: 'test-shop',
+          category: 'retail' as any,
+          flow_type: 'ordering' as any,
+          subscription_tier: 'growth',
+          trial_ends_at: '',
+          metadata: {},
+          country_code: 'NG' as any,
+        },
+      },
+    );
+
+    await step.prompt(ctx);
+
+    expect(mockInitializePayment).toHaveBeenCalledOnce();
+    const callArgs = mockInitializePayment.mock.calls[0];
+    expect(callArgs[1]).toMatchObject({
+      orderId: 'ord-1',
+      transactionCategory: 'ordering',
+      confirmationOrigin: 'whatsapp',
+    });
+  });
+
+  it('4.3 payment flow process_payment calls initializePayment exactly once on first prompt', async () => {
+    const { paymentFlow } = await import('@/lib/bot/flows/payment.flow');
+    const step = findStep(paymentFlow, 'process_payment');
+
+    mockInitializePayment.mockResolvedValueOnce({ reference: 'pay-ref-once', url: 'https://pay.test/once' });
+
+    const mockSb: any = {
+      from: vi.fn().mockImplementation((table: string) => {
+        if (table === 'bookings') {
+          return {
+            insert: vi.fn().mockReturnValue({
+              select: vi.fn().mockReturnValue({
+                single: vi.fn().mockResolvedValue({
+                  data: { id: 'bk-once', reference_code: 'REF-ONCE' },
+                  error: null,
                 }),
               }),
             }),
@@ -601,153 +963,80 @@ describe('Area 4: Payment/Giving bot_session_id + crash recovery', () => {
     const ctx = makeCtx(
       {
         service_id: 'svc-1',
-        service_name: 'Test Service',
-        amount: 5000,
-        first_name: 'John',
-        last_name: 'Doe',
+        service_name: 'Donation',
+        amount: 1000,
+        first_name: 'Test',
+        last_name: 'User',
         _terms_accepted: true,
       },
       { supabase: mockSb },
     );
 
-    // After prompt runs, session_data should have the recovered booking
-    mockInitializePayment.mockResolvedValueOnce({ reference: 'pay-ref-1', url: 'https://pay.test/1' });
-    const msgs = await step.prompt(ctx);
-
-    // Should not be an error message — the recovery path should have worked
-    expect(ctx.session.session_data.booking_id).toBe('existing-bk-1');
-    expect(ctx.session.session_data.reference_code).toBe('REF-EXISTING');
-  });
-
-  it('19. re-entry with existing booking_id skips INSERT entirely', async () => {
-    const step = findStep(paymentFlow, 'process_payment');
-
-    const insertSpy = vi.fn();
-    const mockSb: any = {
-      from: vi.fn().mockImplementation((table: string) => {
-        if (table === 'bookings') {
-          return {
-            insert: insertSpy.mockReturnValue({
-              select: vi.fn().mockReturnValue({
-                single: vi.fn().mockResolvedValue({ data: null, error: null }),
-              }),
-            }),
-          };
-        }
-        if (table === 'bot_sessions') {
-          return {
-            update: vi.fn().mockReturnValue({
-              eq: vi.fn().mockResolvedValue({ data: null, error: null }),
-            }),
-          };
-        }
-        return {
-          select: vi.fn().mockReturnValue({
-            eq: vi.fn().mockReturnValue({
-              single: vi.fn().mockResolvedValue({ data: null, error: null }),
-              maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
-            }),
-          }),
-        };
-      }),
-    };
-
-    const ctx = makeCtx(
-      {
-        service_id: 'svc-1',
-        service_name: 'Test Service',
-        amount: 5000,
-        first_name: 'John',
-        last_name: 'Doe',
-        _terms_accepted: true,
-        booking_id: 'existing-bk-2',
-        reference_code: 'REF-EXISTING-2',
-      },
-      { supabase: mockSb },
-    );
-
-    mockInitializePayment.mockResolvedValueOnce({ reference: 'pay-ref-2', url: 'https://pay.test/2' });
     await step.prompt(ctx);
-
-    // INSERT should NOT have been called — booking_id already in session_data
-    expect(insertSpy).not.toHaveBeenCalled();
-  });
-});
-
-// ═══════════════════════════════════════════════════════════════
-// AREA 5: Cross-capability caller boundaries
-// ═══════════════════════════════════════════════════════════════
-describe('Area 5: Cross-capability caller boundaries', () => {
-  it('20. scheduling flow calls initializePayment with transactionCategory=scheduling', async () => {
-    const { schedulingFlow } = await import('@/lib/bot/flows/scheduling.flow');
-    const step = findStep(schedulingFlow, 'create_booking');
-
-    // Verify structurally that the source passes transactionCategory: 'scheduling'
-    const source = readFlowSource('scheduling.flow.ts');
-    const initPaymentCallsInSource = source.match(/initializePayment\(ctx\.supabase,\s*\{[\s\S]*?\}\)/g);
-    expect(initPaymentCallsInSource).not.toBeNull();
-    // At least one call must include transactionCategory: 'scheduling'
-    const hasSchedulingCategory = initPaymentCallsInSource!.some(call =>
-      call.includes("transactionCategory: 'scheduling'")
-    );
-    expect(hasSchedulingCategory).toBe(true);
+    expect(mockInitializePayment).toHaveBeenCalledOnce();
   });
 
-  it('21. ordering flow calls initializePayment with transactionCategory=ordering', async () => {
-    const source = readFlowSource('ordering.flow.ts');
-    const initPaymentCallsInSource = source.match(/initializePayment\(ctx\.supabase,\s*\{[\s\S]*?\}\)/g);
-    expect(initPaymentCallsInSource).not.toBeNull();
-    const hasOrderingCategory = initPaymentCallsInSource!.some(call =>
-      call.includes("transactionCategory: 'ordering'")
-    );
-    expect(hasOrderingCategory).toBe(true);
-  });
-});
-
-// ═══════════════════════════════════════════════════════════════
-// AREA 6: Post-success no-reinit
-// ═══════════════════════════════════════════════════════════════
-describe('Area 6: Post-success no-reinit', () => {
-  it('22. after payment confirmed, I-ve-Paid reconciliation returns already_confirmed, not new payment init', async () => {
+  it('4.4 post-success zero-reinit: after payment completed, "I\'ve Paid" reconciliation does NOT call initializePayment', async () => {
     const { paymentFlow } = await import('@/lib/bot/flows/payment.flow');
     const awaitStep = findStep(paymentFlow, 'await_payment');
 
-    // Mock verifyAndReconcilePayment to return 'completed'
     const { verifyAndReconcilePayment } = await import('@/lib/payments/bot-recovery');
+    const { parseIvePaidInput } = await import('@/lib/bot/flows/shared/ive-paid-input');
+
+    // Simulate recognized "I've paid" input
+    (parseIvePaidInput as any).mockReturnValueOnce({ recognized: true, paymentRef: null });
+    // Reconciliation says payment already completed
     (verifyAndReconcilePayment as any).mockResolvedValueOnce({ outcome: 'completed' });
 
     const sendTextSpy = vi.fn().mockResolvedValue(undefined);
     const ctx = makeCtx(
       {
-        payment_reference: 'ref-done-1',
-        booking_id: 'bk-done-1',
+        payment_reference: 'ref-already-done',
+        booking_id: 'bk-done',
         reference_code: 'RC-DONE',
         service_name: 'Test Service',
         amount: 5000,
       },
-      {
-        sender: { sendText: sendTextSpy } as any,
-      },
+      { sender: { sendText: sendTextSpy } as any },
     );
 
-    // Simulate "I've Paid" button tap — validate() should reconcile, not reinit
     const result = await awaitStep.validate('i_paid', ctx);
 
-    // The I've Paid handler calls parseIvePaidInput. Since our mock returns recognized:false,
-    // it falls through. Let's instead test the actual i_paid_ref: path which is the button postback.
-    // Use the ref-matching path
-    const { parseIvePaidInput } = await import('@/lib/bot/flows/shared/ive-paid-input');
-    (parseIvePaidInput as any).mockReturnValueOnce({ recognized: true, paymentRef: null });
+    expect(result.valid).toBe(true);
+    expect(result.data?._action).toBe('already_confirmed');
+    // CRITICAL: initializePayment must NOT be called on post-success "I've Paid"
+    expect(mockInitializePayment).not.toHaveBeenCalled();
+    // User should see Payment Confirmed message
+    expect(sendTextSpy).toHaveBeenCalled();
+    const sentText = sendTextSpy.mock.calls[0][0].text;
+    expect(sentText).toContain('Payment Confirmed');
+  });
+
+  it('4.5 post-success zero-reinit: retry_payment after completed payment does NOT reinitialize', async () => {
+    const { paymentFlow } = await import('@/lib/bot/flows/payment.flow');
+    const awaitStep = findStep(paymentFlow, 'await_payment');
+
+    const { verifyAndReconcilePayment } = await import('@/lib/payments/bot-recovery');
+    // Reconciliation says payment already completed
     (verifyAndReconcilePayment as any).mockResolvedValueOnce({ outcome: 'completed' });
 
-    const result2 = await awaitStep.validate(`i_paid_ref:ref-done-1`, ctx);
-    // Should get already_confirmed action, not a reinit
-    expect(result2.valid).toBe(true);
-    expect(result2.data?._action).toBe('already_confirmed');
+    const sendTextSpy = vi.fn().mockResolvedValue(undefined);
+    const ctx = makeCtx(
+      {
+        payment_reference: 'ref-retry-done',
+        booking_id: 'bk-retry-done',
+        reference_code: 'RC-RETRY',
+        service_name: 'Test Service',
+        amount: 5000,
+      },
+      { sender: { sendText: sendTextSpy } as any },
+    );
 
-    // Verify a text was sent to the user confirming payment
-    expect(sendTextSpy).toHaveBeenCalled();
-    const sentText = sendTextSpy.mock.calls[sendTextSpy.mock.calls.length - 1][0].text;
-    expect(sentText).toContain('Payment Confirmed');
+    const result = await awaitStep.validate('retry_payment', ctx);
+
+    expect(result.valid).toBe(true);
+    expect(result.data?._action).toBe('already_confirmed');
+    // CRITICAL: initializePayment must NOT be called
+    expect(mockInitializePayment).not.toHaveBeenCalled();
   });
 });

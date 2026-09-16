@@ -126,17 +126,16 @@ export async function getSavedPaymentMethod(
   const phoneP = customerPhone.startsWith('+') ? customerPhone : `+${customerPhone}`;
   const phoneN = customerPhone.startsWith('+') ? customerPhone.slice(1) : customerPhone;
 
-  // Use .order() + .limit(1) instead of .maybeSingle() to handle the case where
-  // both +E.164 and non-+ variants exist as active rows. Prefer the canonical +E.164
-  // form (sorts after digits-only) and take exactly one. Inspect errors.
+  // Fetch both phone-variant rows (at most 2 given the business_id + is_active fence).
+  // Select deterministically in code: canonical +E.164 first, legacy non-+ fallback.
+  // No collation/sort dependence.
   const { data, error } = await supabase
     .from('saved_payment_methods')
-    .select('id, gateway, authorization_code, customer_code, stripe_payment_method_id, stripe_customer_id, card_last4, card_brand')
+    .select('id, gateway, authorization_code, customer_code, stripe_payment_method_id, stripe_customer_id, card_last4, card_brand, customer_phone')
     .eq('business_id', businessId)
     .in('customer_phone', [phoneP, phoneN])
     .eq('is_active', true)
-    .order('customer_phone', { ascending: false }) // '+' prefix sorts after digits — prefer canonical
-    .limit(1);
+    .limit(2);
 
   if (error) {
     logger.withContext({ op: 'payment.saved-method-lookup', businessId, ...safeLogErrorContext(error) })
@@ -144,7 +143,14 @@ export async function getSavedPaymentMethod(
     return null;
   }
 
-  return data && data.length > 0 ? data[0] : null;
+  if (!data || data.length === 0) return null;
+
+  // Deterministic selection: prefer canonical +E.164 form, fall back to legacy
+  const canonical = data.find(row => row.customer_phone === phoneP);
+  const selected = canonical || data[0];
+  // Strip customer_phone from the returned object (not part of SavedMethod)
+  const { customer_phone: _, ...method } = selected;
+  return method;
 }
 
 /** Explicit saved-card charge outcomes for safe canonical convergence. */
