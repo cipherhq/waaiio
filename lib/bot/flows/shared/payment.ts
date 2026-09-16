@@ -76,7 +76,12 @@ export async function initializePayment(
     let currencyCode: string;
 
     if (opts.gatewayOverride) {
-      // Per-business gateway override — no country lookup needed for gateway
+      // Per-business gateway override — validate before routing
+      if (!SUPPORTED_GATEWAYS.has(opts.gatewayOverride)) {
+        logger.withContext({ op: 'payment.country-payment-config', gateway: opts.gatewayOverride })
+          .error('[PAYMENT] Business gateway override is not a supported gateway — fail closed');
+        return null;
+      }
       gateway = getPaymentGatewayByName(opts.gatewayOverride as PaymentGatewayName);
       // Still need authoritative currency from the countries table
       try {

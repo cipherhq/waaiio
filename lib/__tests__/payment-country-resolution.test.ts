@@ -300,6 +300,77 @@ describe('Per-request country payment config resolution', () => {
     expect(mockGatewayInit).not.toHaveBeenCalled();
     assertLoggerOp('payment.country-payment-config');
   });
+
+  // ── Gateway override validation ──
+
+  it('valid override "stripe" → Stripe selected, authoritative country currency used', async () => {
+    const supabase = buildSupabase({
+      data: { currency_code: 'GBP' },
+    });
+
+    const result = await initializePayment(supabase as any, {
+      ...BASE_OPTS, gatewayOverride: 'stripe', countryCode: 'GB' as any,
+    });
+
+    expect(mockGatewayInit).toHaveBeenCalledTimes(1);
+    expect(mockGatewayInit.mock.calls[0][0].currency).toBe('GBP');
+  });
+
+  it('valid override "paystack" → Paystack selected', async () => {
+    const supabase = buildSupabase({
+      data: { currency_code: 'NGN' },
+    });
+
+    const result = await initializePayment(supabase as any, {
+      ...BASE_OPTS, gatewayOverride: 'paystack',
+    });
+
+    expect(mockGatewayInit).toHaveBeenCalledTimes(1);
+    expect(mockGatewayInit.mock.calls[0][0].currency).toBe('NGN');
+  });
+
+  it('unknown override "paystak" (typo) → fail closed, no silent Paystack routing', async () => {
+    const supabase = buildSupabase({
+      data: { currency_code: 'NGN' },
+    });
+
+    const result = await initializePayment(supabase as any, {
+      ...BASE_OPTS, gatewayOverride: 'paystak',
+    });
+
+    expect(result).toBeNull();
+    expect(mockGatewayInit).not.toHaveBeenCalled();
+    assertLoggerOp('payment.country-payment-config');
+  });
+
+  it('unknown override "strpe" (typo) → fail closed', async () => {
+    const supabase = buildSupabase({
+      data: { currency_code: 'USD' },
+    });
+
+    const result = await initializePayment(supabase as any, {
+      ...BASE_OPTS, gatewayOverride: 'strpe',
+    });
+
+    expect(result).toBeNull();
+    expect(mockGatewayInit).not.toHaveBeenCalled();
+    assertLoggerOp('payment.country-payment-config');
+  });
+
+  it('empty string override → treated as falsy (normal country path, not fail closed)', async () => {
+    // opts.gatewayOverride = '' is falsy, so the if(opts.gatewayOverride) branch
+    // is not entered — the normal country path runs instead
+    const supabase = buildSupabase({
+      data: { payment_gateway: 'paystack', currency_code: 'NGN' },
+    });
+
+    const result = await initializePayment(supabase as any, {
+      ...BASE_OPTS, gatewayOverride: '',
+    });
+
+    // Should reach provider via normal country path
+    expect(mockGatewayInit).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('Flow-level caller boundaries with per-request country resolution', () => {
