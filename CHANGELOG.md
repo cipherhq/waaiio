@@ -12,7 +12,8 @@ If something breaks, check this log to find what changed and when.
 
 ### Files changed
 - `lib/bot/flows/shared/payment.ts` — added explicit `{error}` guards + try/catch for: BYO credential lookup, each BYO/connect branch's business tier lookup, payout-mode lookup, payout-account lookup (direct_split only), payment-channels lookup, V1 dispatched-row recovery lookup, and currency resolution. Each emits a stage-specific structured log op.
-- `lib/__tests__/payment-routing-authority.test.ts` — new: 17 tests with shared gateway spy, exact-URL/provider-call-count assertions, stage-specific logger op verification, cross-capability caller-boundary evidence (scheduling + ordering), platform_managed/direct_split payout isolation proof
+- `lib/__tests__/payment-routing-authority.test.ts` — 15 tests: shared gateway spy with exact-URL/reference return assertions, provider-call-count=0 failure proofs, stage-specific logger op verification for every guarded path, platform_managed/direct_split payout isolation, V1 dispatched-row error/throw guards, cross-capability boundary (scheduling + ordering transactionCategory)
+- `lib/__tests__/payment-flow-caller-boundary.test.ts` — 2 tests: real scheduling.flow create_booking + ordering.flow process_order steps with initializePayment mocked at module boundary, asserting each caller supplies correct entity ID, authoritative amount, businessId, countryCode, gatewayOverride, inboundChannelId, confirmationOrigin, transactionCategory, and exact checkout URL in response
 
 ### What could break
 - A transient Supabase error that previously threw to the outer catch with no diagnostic now returns null with a stage-specific log. The customer outcome is the same ("couldn't set up payment") but the operator now knows exactly which authority stage failed.

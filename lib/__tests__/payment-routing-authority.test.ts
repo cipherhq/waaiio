@@ -190,7 +190,7 @@ describe('(2) BYO credential lookup returns {error}', () => {
 // ══════════════════════════════════════════════════════════
 
 describe('(3) Successful no-BYO platform path', () => {
-  it('reaches provider exactly once and returns exact checkout URL', async () => {
+  it('reaches provider exactly once and returns exact shortened checkout URL', async () => {
     const fromMock = vi.fn();
     let paymentsCallCount = 0;
     let businessCallCount = 0;
@@ -198,14 +198,20 @@ describe('(3) Successful no-BYO platform path', () => {
     fromMock.mockImplementation((table: string) => {
       if (table === 'payments') {
         paymentsCallCount++;
-        // Quarantine, pending reuse, V1 dispatched: all empty
-        return makeChain({ data: null, error: null });
+        // 1-3: quarantine, pending reuse, V1 dispatched → empty
+        if (paymentsCallCount <= 3) return makeChain({ data: null, error: null });
+        // 4+: post-provider payment lookup by gateway_reference → return the row
+        // so identity persistence + URL shortening can complete
+        return makeChain({
+          data: {
+            id: 'pay-v0-001',
+            metadata: {},
+          },
+          error: null,
+        });
       }
       if (table === 'business_payment_credentials') {
         return makeChain({ data: null, error: null }); // no BYO
-      }
-      if (table === 'payout_accounts') {
-        return makeChain({ data: null, error: null }); // no payout
       }
       if (table === 'businesses') {
         businessCallCount++;
@@ -221,6 +227,9 @@ describe('(3) Successful no-BYO platform path', () => {
           error: null,
         });
       }
+      if (table === 'short_urls') {
+        return makeChain({ data: null, error: null });
+      }
       return makeChain({ data: null, error: null });
     });
 
@@ -231,14 +240,23 @@ describe('(3) Successful no-BYO platform path', () => {
     // Provider must be called exactly once
     expect(mockGatewayInitialize).toHaveBeenCalledTimes(1);
 
-    // Result must be non-null (provider succeeded)
-    // The shared payment post-processes the URL, but the gateway mock returned our known values
-    // Either we get the exact URL or a shortened version — verify provider was called with correct args
+    // Result must be non-null — the complete V0 path succeeded
+    expect(result).not.toBeNull();
+
+    // Exact returned reference from the shared boundary
+    expect(result!.reference).toBe(KNOWN_REFERENCE);
+
+    // URL is the shortened form: {APP_URL}/api/pay?ref={last8chars}
+    const expectedShortRef = KNOWN_REFERENCE.slice(-8);
+    expect(result!.url).toContain(`/api/pay?ref=${expectedShortRef}`);
+
+    // Provider was called with correct args
     const providerArgs = mockGatewayInitialize.mock.calls[0][0];
     expect(providerArgs.bookingId).toBe('booking-001');
     expect(providerArgs.amount).toBe(5000);
     expect(providerArgs.currency).toBe('NGN');
     expect(providerArgs.businessId).toBe('biz-001');
+    expect(providerArgs.referenceCode).toBe('WAA-TEST-001');
   });
 
   it('platform_managed does NOT query payout_accounts', async () => {
@@ -296,7 +314,7 @@ describe('(4) Payout authority', () => {
     assertLoggerOp('payment.payout-account-authority');
   });
 
-  it('(4c) direct_split payout-account lookup throws → fail closed', async () => {
+  it('(4c) direct_split payout-account lookup throws → fail closed with stage log', async () => {
     const fromMock = vi.fn();
     fromMock.mockImplementation((table: string) => {
       if (table === 'business_payment_credentials') return makeChain({ data: null, error: null });
@@ -310,6 +328,7 @@ describe('(4) Payout authority', () => {
 
     expect(result).toBeNull();
     expect(mockGatewayInitialize).not.toHaveBeenCalled();
+    assertLoggerOp('payment.routing-authority-threw');
   });
 });
 
@@ -364,11 +383,16 @@ describe('(5) Payment channel authority', () => {
 });
 
 // ══════════════════════════════════════════════════════════
-// (6) Cross-capability caller-boundary evidence
+// (6) Cross-capability: direct initializePayment boundary evidence
+//
+// These supplement the flow-level caller tests in
+// payment-flow-caller-boundary.test.ts, which exercise real
+// scheduling.flow and ordering.flow steps with initializePayment
+// mocked at the module boundary.
 // ══════════════════════════════════════════════════════════
 
 describe('(6) Cross-capability shared boundary', () => {
-  it('(6a) scheduling caller: BYO error → fail closed, provider count = 0', async () => {
+  it('(6a) scheduling transactionCategory: BYO error → fail closed, provider count = 0', async () => {
     const supabase = buildSupabase({
       business_payment_credentials: { error: { message: 'timeout' } },
       payments: { data: null },
@@ -381,9 +405,10 @@ describe('(6) Cross-capability shared boundary', () => {
 
     expect(result).toBeNull();
     expect(mockGatewayInitialize).toHaveBeenCalledTimes(0);
+    assertLoggerOp('payment.byo-credential-lookup');
   });
 
-  it('(6b) ordering caller: same boundary, BYO error → fail closed', async () => {
+  it('(6b) ordering transactionCategory: same boundary, BYO error → fail closed', async () => {
     const supabase = buildSupabase({
       business_payment_credentials: { error: { message: 'timeout' } },
       payments: { data: null },
@@ -398,44 +423,7 @@ describe('(6) Cross-capability shared boundary', () => {
 
     expect(result).toBeNull();
     expect(mockGatewayInitialize).toHaveBeenCalledTimes(0);
-  });
-
-  it('(6c) scheduling: successful platform path reaches provider with scheduling category', async () => {
-    const fromMock = vi.fn();
-    fromMock.mockImplementation((table: string) => {
-      if (table === 'business_payment_credentials') return makeChain({ data: null, error: null });
-      if (table === 'businesses') return makeChain({ data: { payout_mode: 'platform_managed', payment_channels: null }, error: null });
-      if (table === 'platform_config_versions') return makeChain({ data: { id: 'cfg-001', config_snapshot: { fee_policy_enabled: false } }, error: null });
-      return makeChain({ data: null, error: null });
-    });
-    const supabase = { from: fromMock, rpc: vi.fn(() => makeChain({ data: null, error: null })) };
-
-    const result = await initializePayment(supabase as any, {
-      ...BASE_OPTS,
-      transactionCategory: 'scheduling',
-    });
-
-    expect(mockGatewayInitialize).toHaveBeenCalledTimes(1);
-  });
-
-  it('(6d) ordering: successful platform path reaches provider with ordering category', async () => {
-    const fromMock = vi.fn();
-    fromMock.mockImplementation((table: string) => {
-      if (table === 'business_payment_credentials') return makeChain({ data: null, error: null });
-      if (table === 'businesses') return makeChain({ data: { payout_mode: 'platform_managed', payment_channels: null }, error: null });
-      if (table === 'platform_config_versions') return makeChain({ data: { id: 'cfg-001', config_snapshot: { fee_policy_enabled: false } }, error: null });
-      return makeChain({ data: null, error: null });
-    });
-    const supabase = { from: fromMock, rpc: vi.fn(() => makeChain({ data: null, error: null })) };
-
-    const result = await initializePayment(supabase as any, {
-      ...BASE_OPTS,
-      orderId: 'order-001',
-      bookingId: undefined,
-      transactionCategory: 'ordering',
-    });
-
-    expect(mockGatewayInitialize).toHaveBeenCalledTimes(1);
+    assertLoggerOp('payment.byo-credential-lookup');
   });
 });
 
