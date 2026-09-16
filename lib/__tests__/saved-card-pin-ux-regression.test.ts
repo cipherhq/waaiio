@@ -477,8 +477,9 @@ describe('PIN creation copy', () => {
     expect(savedCardsSource).toContain('delete your PIN message');
   });
 
-  it('PIN validation error says "Waaiio PIN"', () => {
-    expect(savedCardsSource).toContain('Waaiio PIN (e.g. 1234)');
+  it('PIN validation error says "Waaiio PIN" without example PIN', () => {
+    expect(savedCardsSource).toContain('Waaiio PIN:');
+    expect(savedCardsSource).not.toContain('e.g. 1234');
   });
 });
 
@@ -577,5 +578,160 @@ describe('Message-count neutrality', () => {
       transactionCategory: 'payment',
     });
     expect(sendText).not.toHaveBeenCalled();
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// 9. Round-trip: validate(pay_new) → merge → next() → prompt()
+//    proves saved-card offer is bypassed and normal payment reached
+// ═══════════════════════════════════════════════════════════════
+describe('Round-trip: pay_new escape reaches normal payment path', () => {
+  beforeEach(() => {
+    mockGetSavedMethods.mockReset().mockResolvedValue([{ id: 'spm-1', displayLabel: 'VISA ****4242', brandHint: 'visa', last4: '4242', supportsDirectCharge: true }]);
+    mockInitializePayment.mockReset().mockResolvedValue({ url: 'https://pay.test/link', reference: 'ref-123' });
+  });
+
+  it('payment flow: validate(pay_new) → next() → prompt() calls initializePayment, not buildSavedCardOffer', async () => {
+    const { paymentFlow } = await import('@/lib/bot/flows/payment.flow');
+    const step = findStep(paymentFlow, 'process_payment');
+
+    // Step 1: validate('pay_new') during PIN wait
+    const sessionData: Record<string, unknown> = {
+      _awaiting_card_pin: true,
+      _saved_method_id: 'spm-1',
+      amount: 5000,
+      service_name: 'Test Service',
+      _terms_accepted: true,
+      booking_id: 'bk-1',
+      reference_code: 'REF-001',
+      first_name: 'Test',
+    };
+    const ctx = makeCtx(sessionData);
+    const { handleSavedCardInput } = await import('@/lib/bot/flows/shared/saved-card-flow');
+    const valResult = await handleSavedCardInput('pay_new', ctx, {
+      amount: 5000,
+      reference: 'REF-001-saved',
+      entityId: { bookingId: 'bk-1' },
+      transactionCategory: 'payment',
+    });
+    expect(valResult).toBeTruthy();
+    expect(valResult!.data!._skip_saved_card).toBe(true);
+    expect(valResult!.data!._awaiting_card_pin).toBe(false);
+
+    // Step 2: Executor merges validate data into session_data
+    Object.assign(sessionData, valResult!.data);
+    expect(sessionData._skip_saved_card).toBe(true);
+
+    // Step 3: next() routes back to process_payment
+    const nextStep = await step.next!(ctx);
+    expect(nextStep).toBe('process_payment');
+
+    // Step 4: After next(), _saved_method_id should be deleted but _skip_saved_card retained
+    expect(sessionData._saved_method_id).toBeUndefined();
+    expect(sessionData._skip_saved_card).toBe(true);
+
+    // Step 5: prompt() — buildSavedCardOffer checks _skip_saved_card and returns null
+    const msgs = await step.prompt(ctx);
+    // Should NOT have re-offered the saved card — should reach initializePayment
+    expect(mockInitializePayment).toHaveBeenCalled();
+    expect(msgs.length).toBeGreaterThan(0);
+  });
+
+  it('ordering flow: validate(pay_new) → next() retains _skip_saved_card → buildSavedCardOffer returns null', async () => {
+    const { orderingFlow } = await import('@/lib/bot/flows/ordering.flow');
+    const step = findStep(orderingFlow, 'process_order');
+
+    const sessionData: Record<string, unknown> = {
+      _awaiting_card_pin: true,
+      _saved_method_id: 'spm-1',
+      _terms_accepted: true,
+      order_id: 'ord-1',
+      reference_code: 'ORD-001',
+      order_total: 3000,
+      first_name: 'Test',
+      items: [],
+    };
+    const ctx = makeCtx(sessionData);
+    const { handleSavedCardInput, buildSavedCardOffer } = await import('@/lib/bot/flows/shared/saved-card-flow');
+    const valResult = await handleSavedCardInput('pay_new', ctx, {
+      amount: 3000,
+      reference: 'ORD-001-saved',
+      entityId: { orderId: 'ord-1' },
+      transactionCategory: 'ordering',
+    });
+
+    Object.assign(sessionData, valResult!.data);
+    const nextStep = await step.next!(ctx);
+    expect(nextStep).toBe('process_order');
+    expect(sessionData._saved_method_id).toBeUndefined();
+    expect(sessionData._skip_saved_card).toBe(true);
+
+    // Prove buildSavedCardOffer is bypassed with _skip_saved_card retained
+    const offer = await buildSavedCardOffer(ctx, 3000);
+    expect(offer).toBeNull();
+  });
+
+  it('reservation flow: validate(pay_new) → next() retains _skip_saved_card → buildSavedCardOffer returns null', async () => {
+    const { reservationFlow } = await import('@/lib/bot/flows/reservation.flow');
+    const step = findStep(reservationFlow, 'create_reservation');
+
+    const sessionData: Record<string, unknown> = {
+      _awaiting_card_pin: true,
+      _saved_method_id: 'spm-1',
+      _terms_accepted: true,
+      reservation_id: 'res-1',
+      reference_code: 'RES-001',
+      deposit_amount: 2000,
+      first_name: 'Test',
+    };
+    const ctx = makeCtx(sessionData);
+    const { handleSavedCardInput, buildSavedCardOffer } = await import('@/lib/bot/flows/shared/saved-card-flow');
+    const valResult = await handleSavedCardInput('pay_new', ctx, {
+      amount: 2000,
+      reference: 'RES-001-saved',
+      entityId: { reservationId: 'res-1' },
+      transactionCategory: 'reservation',
+    });
+
+    Object.assign(sessionData, valResult!.data);
+    const nextStep = await step.next!(ctx);
+    expect(nextStep).toBe('create_reservation');
+    expect(sessionData._saved_method_id).toBeUndefined();
+    expect(sessionData._skip_saved_card).toBe(true);
+
+    const offer = await buildSavedCardOffer(ctx, 2000);
+    expect(offer).toBeNull();
+  });
+
+  it('ticketing flow: validate(pay_new) → next() retains _skip_saved_card → buildSavedCardOffer returns null', async () => {
+    const { ticketingFlow } = await import('@/lib/bot/flows/ticketing.flow');
+    const step = findStep(ticketingFlow, 'process_tickets');
+
+    const sessionData: Record<string, unknown> = {
+      _awaiting_card_pin: true,
+      _saved_method_id: 'spm-1',
+      _terms_accepted: true,
+      booking_id: 'bk-2',
+      reference_code: 'TK-001',
+      ticket_total: 1500,
+      first_name: 'Test',
+    };
+    const ctx = makeCtx(sessionData);
+    const { handleSavedCardInput, buildSavedCardOffer } = await import('@/lib/bot/flows/shared/saved-card-flow');
+    const valResult = await handleSavedCardInput('pay_new', ctx, {
+      amount: 1500,
+      reference: 'TK-001-saved',
+      entityId: { bookingId: 'bk-2' },
+      transactionCategory: 'ticketing',
+    });
+
+    Object.assign(sessionData, valResult!.data);
+    const nextStep = await step.next!(ctx);
+    expect(nextStep).toBe('process_tickets');
+    expect(sessionData._saved_method_id).toBeUndefined();
+    expect(sessionData._skip_saved_card).toBe(true);
+
+    const offer = await buildSavedCardOffer(ctx, 1500);
+    expect(offer).toBeNull();
   });
 });

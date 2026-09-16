@@ -922,7 +922,7 @@ export const ticketingFlow: FlowDefinition = {
         }
         if (d._skip_saved_card && d._saved_method_id) {
           delete d._saved_method_id;
-          delete d._skip_saved_card;
+          // Retain _skip_saved_card so buildSavedCardOffer() is bypassed on re-prompt
           return 'process_tickets';
         }
         if (d._terms_accepted || d._terms_cancelled) {

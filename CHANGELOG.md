@@ -7,8 +7,8 @@ If something breaks, check this log to find what changed and when.
 
 ### What changed
 - **Bug 1 fix.** `_awaiting_card_pin` state in `next()` now returns to the current payment step instead of falling through to `null` (flow complete). This prevented the post-completion "What's next?" menu from firing before PIN entry was resolved. Patched in all 5 affected flows: payment, ordering, reservation, ticketing, scheduling.
-- **Bug 2 fix.** `pay_new` (stale "Use different card" button) during PIN wait now escapes to standard payment flow without cancelling the transaction or consuming a PIN attempt. Previously, it was rejected with a "enter your PIN" re-prompt, trapping the user.
-- **PIN copy.** All PIN prompts now say "Waaiio PIN (not your bank/ATM PIN)" to disambiguate from bank ATM PINs. Privacy notice "For privacy, you can delete your PIN message from this chat after sending it" folded into existing prompts (zero additional messages).
+- **Bug 2 fix.** `pay_new` (stale "Use different card" button) during PIN wait now escapes to standard payment flow without cancelling the transaction or consuming a PIN attempt. `_skip_saved_card` is retained through the `next()` → `prompt()` transition so `buildSavedCardOffer()` is bypassed and the normal payment link path is actually reached. Only `_saved_method_id` is deleted at transition.
+- **PIN copy.** All PIN prompts now say "Waaiio PIN (not your bank/ATM PIN)" to disambiguate from bank ATM PINs. Privacy notice "For privacy, you can delete your PIN message from this chat after sending it" folded into existing prompts (zero additional messages). Removed customer-facing `e.g. 1234` weak-PIN example.
 
 ### Files changed
 - `lib/bot/flows/shared/saved-card-flow.ts` — `pay_new` escape during `_awaiting_card_pin`; PIN prompt copy updated
