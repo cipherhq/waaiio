@@ -421,4 +421,84 @@ describe('SavedPaymentAdapter', () => {
       expect(mockChargeSavedCard).not.toHaveBeenCalled();
     });
   });
+
+  // ── Legacy phone listing→authorization regression ──
+  // Production incident: saved method stored with non-+ phone must be
+  // authorized by requiresPin/chargeSavedMethod when caller supplies + phone.
+
+  describe('legacy non-+ stored method → authorization with + caller phone', () => {
+    const LEGACY_PHONE = '2348012345678'; // stored without +
+    const CALLER_PHONE = '+2348012345678'; // caller supplies +
+
+    const LEGACY_METHOD = {
+      ...VALID_METHOD,
+      id: 'spm-legacy-1',
+      pin_hash: null, // no PIN set
+    };
+
+    it('requiresPin succeeds for legacy non-+ stored method with + caller phone', async () => {
+      const { supabase } = createTupleMockSupabase({
+        methodId: 'spm-legacy-1',
+        businessId: VALID_BUSINESS,
+        customerPhone: LEGACY_PHONE, // stored as non-+
+        returnData: LEGACY_METHOD,
+      });
+
+      const result = await savedPaymentAdapter.requiresPin(
+        supabase as any, 'spm-legacy-1', VALID_BUSINESS, CALLER_PHONE,
+      );
+
+      // Authorization succeeded (method found) — no PIN hash → not required
+      expect(result.required).toBe(false);
+    });
+
+    it('chargeSavedMethod succeeds and reaches mockChargeSavedCard exactly once', async () => {
+      const { supabase } = createTupleMockSupabase({
+        methodId: 'spm-legacy-1',
+        businessId: VALID_BUSINESS,
+        customerPhone: LEGACY_PHONE, // stored as non-+
+        returnData: LEGACY_METHOD,
+      });
+      mockChargeSavedCard.mockResolvedValue({
+        outcome: 'charged', paymentId: 'pay-legacy-001', reference: 'REF-legacy',
+      });
+
+      const result = await savedPaymentAdapter.chargeSavedMethod(supabase as any, {
+        methodId: 'spm-legacy-1',
+        customerPhone: CALLER_PHONE, // caller supplies + form
+        amount: 5000,
+        currency: 'NGN',
+        email: 'legacy@test.com',
+        reference: 'REF-legacy',
+        businessId: VALID_BUSINESS,
+        bookingId: 'bk-legacy-1',
+        transactionCategory: 'scheduling',
+      });
+
+      expect(result.status).toBe('charged');
+      expect(mockChargeSavedCard).toHaveBeenCalledTimes(1);
+    });
+
+    it('wrong business still denied for legacy phone method', async () => {
+      const { supabase } = createTupleMockSupabase({
+        methodId: 'spm-legacy-1',
+        businessId: VALID_BUSINESS,
+        customerPhone: LEGACY_PHONE,
+        returnData: LEGACY_METHOD,
+      });
+
+      const result = await savedPaymentAdapter.chargeSavedMethod(supabase as any, {
+        methodId: 'spm-legacy-1',
+        customerPhone: CALLER_PHONE,
+        amount: 5000,
+        currency: 'NGN',
+        email: 'legacy@test.com',
+        reference: 'REF-legacy',
+        businessId: WRONG_BUSINESS, // different business
+      });
+
+      expect(result.status).toBe('method_not_found');
+      expect(mockChargeSavedCard).not.toHaveBeenCalled();
+    });
+  });
 });
