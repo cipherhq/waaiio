@@ -3,6 +3,21 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-09-16 — Shared payment routing authority guards (initializePayment THREW)
+
+### What changed
+- **Probable root cause.** Several unprotected pre-provider authority paths in `initializePayment` could produce the generic `[PAYMENT] initializePayment THREW` with no payment row and no stage-specific diagnostic: BYO/connect/payout credential resolution (lines 196-337), V1 dispatched-row recovery lookup (lines 158-178), currency resolution dynamic import (line 66), and payment-channel preferences (lines 327-337). The exact throwing line in the SnapaKit WA-BK-6948 incident cannot be determined without runtime stack traces.
+- **Fix.** Every pre-provider authority read now explicitly inspects `{error}` and fails closed with a stage-specific structured log. Transport exceptions are caught per-section. Successful query + no configured data continues the legitimate platform path. Query error or transport exception returns null immediately — never silently changes payment routing. `platform_managed` businesses do not query `payout_accounts` (only `direct_split` triggers that authority check).
+- **Scope.** Shared fix — protects all 17 callers of `initializePayment` across scheduling, ordering, reservation, ticketing, crowdfunding, invoice, payment, and 10 non-flow callers.
+
+### Files changed
+- `lib/bot/flows/shared/payment.ts` — added explicit `{error}` guards + try/catch for: BYO credential lookup, each BYO/connect branch's business tier lookup, payout-mode lookup, payout-account lookup (direct_split only), payment-channels lookup, V1 dispatched-row recovery lookup, and currency resolution. Each emits a stage-specific structured log op.
+- `lib/__tests__/payment-routing-authority.test.ts` — 15 tests: shared gateway spy with exact-URL/reference return assertions, provider-call-count=0 failure proofs, stage-specific logger op verification for every guarded path, platform_managed/direct_split payout isolation, V1 dispatched-row error/throw guards, cross-capability boundary (scheduling + ordering transactionCategory)
+- `lib/__tests__/payment-flow-caller-boundary.test.ts` — 2 tests: real scheduling.flow create_booking + ordering.flow process_order steps with initializePayment mocked at module boundary, asserting each caller supplies correct entity ID, authoritative amount, businessId, countryCode, gatewayOverride, inboundChannelId, confirmationOrigin, transactionCategory, and exact checkout URL in response
+
+### What could break
+- A transient Supabase error that previously threw to the outer catch with no diagnostic now returns null with a stage-specific log. The customer outcome is the same ("couldn't set up payment") but the operator now knows exactly which authority stage failed.
+
 ## 2026-09-15 — Promo verification intercepting scheduling button replies (production UAT)
 
 ### What changed

@@ -63,8 +63,16 @@ export async function initializePayment(
       ? getPaymentGatewayByName(opts.gatewayOverride as PaymentGatewayName)
       : getPaymentGateway(countryCode);
 
-    const { getCountry } = await import('@/lib/countries');
-    const currencyCode = getCountry(countryCode)?.currency_code ?? 'NGN';
+    // Currency resolution — fail closed on module resolution error
+    let currencyCode: string;
+    try {
+      const { getCountry } = await import('@/lib/countries');
+      currencyCode = getCountry(countryCode)?.currency_code ?? 'NGN';
+    } catch (currencyErr) {
+      logger.withContext({ op: 'payment.currency-resolution', ...safeLogErrorContext(currencyErr) })
+        .error('[PAYMENT] Currency resolution threw — fail closed');
+      return null;
+    }
 
     // ── Idempotent reuse: check for an existing pending payment for this entity.
     // Fail closed: if the lookup itself fails, do NOT proceed to the provider —
@@ -156,23 +164,30 @@ export async function initializePayment(
     // accepted the charge. Return null to prevent double-charge.
     // The reconciliation cron handles verify-first recovery for dispatched rows.
     if (entityId && opts.transactionCategory) {
-      const entityCol = opts.bookingId ? 'booking_id' : opts.orderId ? 'order_id' : opts.invoiceId ? 'invoice_id' : opts.reservationId ? 'reservation_id' : 'campaign_id';
-      const { data: dispatchedRow, error: dispatchLookupErr } = await supabase
-        .from('payments')
-        .select('id, provider_init_state, gateway_reference')
-        .eq(entityCol, entityId)
-        .eq('fee_policy_version', 1)
-        .eq('provider_init_state', 'dispatched')
-        .eq('status', 'pending')
-        .maybeSingle();
-      if (dispatchLookupErr) {
-        logger.error('[PAYMENT] Dispatched-row lookup error — fail closed', { dispatchLookupErr });
-        return null;
-      }
-      if (dispatchedRow) {
-        logger.warn('[PAYMENT] V1 dispatched row exists — blocking re-dispatch, needs verify-first recovery', {
-          paymentId: dispatchedRow.id, entityCol, entityId,
-        });
+      try {
+        const entityCol = opts.bookingId ? 'booking_id' : opts.orderId ? 'order_id' : opts.invoiceId ? 'invoice_id' : opts.reservationId ? 'reservation_id' : 'campaign_id';
+        const { data: dispatchedRow, error: dispatchLookupErr } = await supabase
+          .from('payments')
+          .select('id, provider_init_state, gateway_reference')
+          .eq(entityCol, entityId)
+          .eq('fee_policy_version', 1)
+          .eq('provider_init_state', 'dispatched')
+          .eq('status', 'pending')
+          .maybeSingle();
+        if (dispatchLookupErr) {
+          logger.withContext({ op: 'payment.v1-dispatched-recovery', ...safeLogErrorContext(dispatchLookupErr) })
+            .error('[PAYMENT] V1 dispatched-row recovery lookup failed — fail closed to prevent duplicate dispatch');
+          return null;
+        }
+        if (dispatchedRow) {
+          logger.warn('[PAYMENT] V1 dispatched row exists — blocking re-dispatch, needs verify-first recovery', {
+            paymentId: dispatchedRow.id, entityCol, entityId,
+          });
+          return null;
+        }
+      } catch (dispatchErr) {
+        logger.withContext({ op: 'payment.v1-dispatched-recovery-threw', ...safeLogErrorContext(dispatchErr) })
+          .error('[PAYMENT] V1 dispatched-row recovery lookup threw — fail closed to prevent duplicate dispatch');
         return null;
       }
     }
@@ -194,145 +209,192 @@ export async function initializePayment(
     let payoutAccountId: string | undefined;
 
     if (opts.businessId) {
-      // Check for BYO (Bring Your Own) gateway credentials first
-      const { data: byoCreds } = await supabase
-        .from('business_payment_credentials')
-        .select('id, secret_key, platform_subaccount_code, gateway, connect_account_id, connection_type')
-        .eq('business_id', opts.businessId)
-        .eq('is_active', true)
-        .not('verified_at', 'is', null)
-        .maybeSingle();
-
-      if (byoCreds?.platform_subaccount_code && !byoCreds?.secret_key) {
-        // Subaccount-based connect: platform key + subaccount split
-        // (connect_account_id may also be set to satisfy DB constraint, but we use subaccount split)
-        subaccountCode = byoCreds.platform_subaccount_code;
-
-        const { data: business, error: bizError } = await supabase
-          .from('businesses')
-          .select('subscription_tier, trial_ends_at, custom_fee_percentage, custom_fee_flat')
-          .eq('id', opts.businessId)
-          .single();
-
-        if (bizError) {
-          logger.withContext({ op: 'payment.subaccount-split-fetch', ...safeLogErrorContext(bizError) }).error('[PAYMENT] Failed to fetch business for subaccount split');
-        }
-
-        if (business) {
-          const tier = (business.subscription_tier || 'free') as SubscriptionTier;
-          const isInTrial = await resolveTrialStatus(supabase, opts.businessId, tier, business.trial_ends_at);
-          const { getPlatformFees } = await import('@/lib/getPlatformFees');
-          const feeResult = await getPlatformFees(opts.amount, tier, isInTrial, {
-            feePercentage: business.custom_fee_percentage ?? undefined,
-            feeFlat: business.custom_fee_flat ?? undefined,
-          });
-          platformFeeAmount = feeResult.feeTotal;
-        }
-      } else if (byoCreds?.connect_account_id && !byoCreds?.platform_subaccount_code) {
-        // True Connect mode: use platform key + X-Connect-Account header
-        connectAccountId = byoCreds.connect_account_id;
-        byoBusinessId = opts.businessId;
-        providerConnectionId = byoCreds.id;
-
-        const { data: business, error: bizError2 } = await supabase
-          .from('businesses')
-          .select('subscription_tier, trial_ends_at, custom_fee_percentage, custom_fee_flat')
-          .eq('id', opts.businessId)
-          .single();
-
-        if (bizError2) {
-          logger.withContext({ op: 'payment.connect-split-fetch', ...safeLogErrorContext(bizError2) }).error('[PAYMENT] Failed to fetch business for connect split');
-        }
-
-        if (business) {
-          const tier = (business.subscription_tier || 'free') as SubscriptionTier;
-          const isInTrial = await resolveTrialStatus(supabase, opts.businessId, tier, business.trial_ends_at);
-          const { getPlatformFees } = await import('@/lib/getPlatformFees');
-          const feeResult = await getPlatformFees(opts.amount, tier, isInTrial, {
-            feePercentage: business.custom_fee_percentage ?? undefined,
-            feeFlat: business.custom_fee_flat ?? undefined,
-          });
-          platformFeeAmount = feeResult.feeTotal;
-        }
-      } else if (byoCreds?.secret_key && byoCreds?.platform_subaccount_code) {
-        // BYO mode: use business's own gateway key with reversed split
-        isByo = true;
-        byoSecretKey = byoCreds.secret_key;
-        byoPlatformSubaccount = byoCreds.platform_subaccount_code;
-        byoBusinessId = opts.businessId;
-        providerConnectionId = byoCreds.id;
-
-        // Calculate platform fee based on business tier
-        const { data: business, error: bizError3 } = await supabase
-          .from('businesses')
-          .select('subscription_tier, trial_ends_at, custom_fee_percentage, custom_fee_flat')
-          .eq('id', opts.businessId)
-          .single();
-
-        if (bizError3) {
-          logger.withContext({ op: 'payment.byo-split-fetch', ...safeLogErrorContext(bizError3) }).error('[PAYMENT] Failed to fetch business for BYO split');
-        }
-
-        if (business) {
-          const tier = (business.subscription_tier || 'free') as SubscriptionTier;
-          const isInTrial = await resolveTrialStatus(supabase, opts.businessId, tier, business.trial_ends_at);
-          const { getPlatformFees } = await import('@/lib/getPlatformFees');
-          const feeResult = await getPlatformFees(opts.amount, tier, isInTrial, {
-            feePercentage: business.custom_fee_percentage ?? undefined,
-            feeFlat: business.custom_fee_flat ?? undefined,
-          });
-          platformFeeAmount = feeResult.feeTotal;
-        }
-      } else {
-        // Normal platform flow: check payout mode
-        const { data: biz, error: bizError4 } = await supabase
-          .from('businesses')
-          .select('payout_mode')
-          .eq('id', opts.businessId)
-          .single();
-
-        if (bizError4) {
-          logger.withContext({ op: 'payment.payout-mode-fetch', ...safeLogErrorContext(bizError4) }).error('[PAYMENT] Failed to fetch business payout mode');
-        }
-
-        const { data: payout } = await supabase
-          .from('payout_accounts')
-          .select('id, subaccount_code, stripe_account_id, square_merchant_id, square_access_token, platform_percentage, gateway')
+      // ── Payment-routing authority resolution ──
+      // Lines 196-337 determine BYO/Connect/direct-split/platform routing.
+      // A failed authority lookup must NOT be interpreted as "configuration absent" —
+      // that would silently route a BYO/Connect transaction through the platform account.
+      // Successful query + no configured data → legitimate platform path.
+      // Query error / transport exception → fail closed with null.
+      try {
+        // Check for BYO (Bring Your Own) gateway credentials first
+        const { data: byoCreds, error: byoCredsError } = await supabase
+          .from('business_payment_credentials')
+          .select('id, secret_key, platform_subaccount_code, gateway, connect_account_id, connection_type')
           .eq('business_id', opts.businessId)
           .eq('is_active', true)
+          .not('verified_at', 'is', null)
           .maybeSingle();
 
-        // Only add split params if payout account gateway matches payment gateway
-        if (biz?.payout_mode === 'direct_split' && payout) {
-          const payoutGw = payout.gateway || 'paystack';
-          const paymentGw = gateway.name;
-
-          // Only apply split params if gateways match
-          if (payoutGw === paymentGw || (payoutGw === 'paystack' && paymentGw === 'paystack') || (payoutGw === 'stripe' && paymentGw === 'stripe')) {
-            subaccountCode = payout.subaccount_code || undefined;
-            stripeAccountId = payout.stripe_account_id || undefined;
-            squareMerchantId = payout.square_merchant_id || undefined;
-            squareAccessToken = payout.square_access_token || undefined;
-            platformFeeAmount = Math.round(opts.amount * (payout.platform_percentage / 100));
-            payoutAccountId = payout.id;
-          }
-          // If gateways don't match (e.g., Paystack payout but Stripe payment),
-          // skip split — platform collects full amount
+        if (byoCredsError) {
+          logger.withContext({ op: 'payment.byo-credential-lookup', ...safeLogErrorContext(byoCredsError) })
+            .error('[PAYMENT] BYO credential authority lookup failed — fail closed to prevent routing misattribution');
+          return null;
         }
-        // platform_managed: no split params, full amount goes to platform
+
+        if (byoCreds?.platform_subaccount_code && !byoCreds?.secret_key) {
+          // Subaccount-based connect: platform key + subaccount split
+          subaccountCode = byoCreds.platform_subaccount_code;
+
+          const { data: business, error: bizError } = await supabase
+            .from('businesses')
+            .select('subscription_tier, trial_ends_at, custom_fee_percentage, custom_fee_flat')
+            .eq('id', opts.businessId)
+            .single();
+
+          if (bizError) {
+            logger.withContext({ op: 'payment.subaccount-split-fee', ...safeLogErrorContext(bizError) })
+              .error('[PAYMENT] Business tier lookup failed for subaccount split — fail closed');
+            return null;
+          }
+
+          if (business) {
+            const tier = (business.subscription_tier || 'free') as SubscriptionTier;
+            const isInTrial = await resolveTrialStatus(supabase, opts.businessId, tier, business.trial_ends_at);
+            const { getPlatformFees } = await import('@/lib/getPlatformFees');
+            const feeResult = await getPlatformFees(opts.amount, tier, isInTrial, {
+              feePercentage: business.custom_fee_percentage ?? undefined,
+              feeFlat: business.custom_fee_flat ?? undefined,
+            });
+            platformFeeAmount = feeResult.feeTotal;
+          }
+        } else if (byoCreds?.connect_account_id && !byoCreds?.platform_subaccount_code) {
+          // True Connect mode: use platform key + X-Connect-Account header
+          connectAccountId = byoCreds.connect_account_id;
+          byoBusinessId = opts.businessId;
+          providerConnectionId = byoCreds.id;
+
+          const { data: business, error: bizError2 } = await supabase
+            .from('businesses')
+            .select('subscription_tier, trial_ends_at, custom_fee_percentage, custom_fee_flat')
+            .eq('id', opts.businessId)
+            .single();
+
+          if (bizError2) {
+            logger.withContext({ op: 'payment.connect-split-fee', ...safeLogErrorContext(bizError2) })
+              .error('[PAYMENT] Business tier lookup failed for connect split — fail closed');
+            return null;
+          }
+
+          if (business) {
+            const tier = (business.subscription_tier || 'free') as SubscriptionTier;
+            const isInTrial = await resolveTrialStatus(supabase, opts.businessId, tier, business.trial_ends_at);
+            const { getPlatformFees } = await import('@/lib/getPlatformFees');
+            const feeResult = await getPlatformFees(opts.amount, tier, isInTrial, {
+              feePercentage: business.custom_fee_percentage ?? undefined,
+              feeFlat: business.custom_fee_flat ?? undefined,
+            });
+            platformFeeAmount = feeResult.feeTotal;
+          }
+        } else if (byoCreds?.secret_key && byoCreds?.platform_subaccount_code) {
+          // BYO mode: use business's own gateway key with reversed split
+          isByo = true;
+          byoSecretKey = byoCreds.secret_key;
+          byoPlatformSubaccount = byoCreds.platform_subaccount_code;
+          byoBusinessId = opts.businessId;
+          providerConnectionId = byoCreds.id;
+
+          const { data: business, error: bizError3 } = await supabase
+            .from('businesses')
+            .select('subscription_tier, trial_ends_at, custom_fee_percentage, custom_fee_flat')
+            .eq('id', opts.businessId)
+            .single();
+
+          if (bizError3) {
+            logger.withContext({ op: 'payment.byo-split-fee', ...safeLogErrorContext(bizError3) })
+              .error('[PAYMENT] Business tier lookup failed for BYO split — fail closed');
+            return null;
+          }
+
+          if (business) {
+            const tier = (business.subscription_tier || 'free') as SubscriptionTier;
+            const isInTrial = await resolveTrialStatus(supabase, opts.businessId, tier, business.trial_ends_at);
+            const { getPlatformFees } = await import('@/lib/getPlatformFees');
+            const feeResult = await getPlatformFees(opts.amount, tier, isInTrial, {
+              feePercentage: business.custom_fee_percentage ?? undefined,
+              feeFlat: business.custom_fee_flat ?? undefined,
+            });
+            platformFeeAmount = feeResult.feeTotal;
+          }
+        } else {
+          // No BYO/Connect credentials → legitimate platform flow: check payout mode
+          const { data: biz, error: bizError4 } = await supabase
+            .from('businesses')
+            .select('payout_mode')
+            .eq('id', opts.businessId)
+            .single();
+
+          if (bizError4) {
+            logger.withContext({ op: 'payment.payout-mode-authority', ...safeLogErrorContext(bizError4) })
+              .error('[PAYMENT] Payout-mode authority lookup failed — fail closed to prevent split misattribution');
+            return null;
+          }
+
+          // Only query payout_accounts when the payout mode actually requires split routing.
+          // platform_managed does not depend on the payout_accounts table — querying it
+          // and failing closed would unnecessarily block payments for platform-managed businesses.
+          if (biz?.payout_mode === 'direct_split') {
+            const { data: payout, error: payoutError } = await supabase
+              .from('payout_accounts')
+              .select('id, subaccount_code, stripe_account_id, square_merchant_id, square_access_token, platform_percentage, gateway')
+              .eq('business_id', opts.businessId)
+              .eq('is_active', true)
+              .maybeSingle();
+
+            if (payoutError) {
+              logger.withContext({ op: 'payment.payout-account-authority', ...safeLogErrorContext(payoutError) })
+                .error('[PAYMENT] Payout account authority lookup failed — fail closed to prevent split misattribution');
+              return null;
+            }
+
+            if (payout) {
+              const payoutGw = payout.gateway || 'paystack';
+              const paymentGw = gateway.name;
+
+              if (payoutGw === paymentGw || (payoutGw === 'paystack' && paymentGw === 'paystack') || (payoutGw === 'stripe' && paymentGw === 'stripe')) {
+                subaccountCode = payout.subaccount_code || undefined;
+                stripeAccountId = payout.stripe_account_id || undefined;
+                squareMerchantId = payout.square_merchant_id || undefined;
+                squareAccessToken = payout.square_access_token || undefined;
+                platformFeeAmount = Math.round(opts.amount * (payout.platform_percentage / 100));
+                payoutAccountId = payout.id;
+              }
+            }
+          }
+          // platform_managed or no split match: no split params, full amount goes to platform
+        }
+      } catch (routingErr) {
+        // Transport-level exception in routing authority resolution.
+        // Fail closed: ambiguous routing state must not proceed to provider.
+        logger.withContext({ op: 'payment.routing-authority-threw', ...safeLogErrorContext(routingErr) })
+          .error('[PAYMENT] Payment routing authority resolution threw — fail closed');
+        return null;
       }
     }
 
     // Fetch business payment channel preferences
+    // Successful absence → use gateway defaults. Read failure → fail closed.
     let channels: string[] | undefined;
     if (opts.businessId) {
-      const { data: channelConfig } = await supabase
-        .from('businesses')
-        .select('payment_channels')
-        .eq('id', opts.businessId)
-        .single();
-      if (channelConfig?.payment_channels && Array.isArray(channelConfig.payment_channels) && channelConfig.payment_channels.length > 0) {
-        channels = channelConfig.payment_channels;
+      try {
+        const { data: channelConfig, error: channelError } = await supabase
+          .from('businesses')
+          .select('payment_channels')
+          .eq('id', opts.businessId)
+          .single();
+
+        if (channelError) {
+          logger.withContext({ op: 'payment.channel-preference-authority', ...safeLogErrorContext(channelError) })
+            .error('[PAYMENT] Payment channel preference lookup failed — fail closed');
+          return null;
+        }
+
+        if (channelConfig?.payment_channels && Array.isArray(channelConfig.payment_channels) && channelConfig.payment_channels.length > 0) {
+          channels = channelConfig.payment_channels;
+        }
+      } catch (channelErr) {
+        logger.withContext({ op: 'payment.channel-preference-threw', ...safeLogErrorContext(channelErr) })
+          .error('[PAYMENT] Payment channel preference resolution threw — fail closed');
+        return null;
       }
     }
 
