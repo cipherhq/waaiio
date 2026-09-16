@@ -3208,7 +3208,7 @@ export const schedulingFlow: FlowDefinition = {
               return { valid: true, data: { _skip_saved_card: true } };
             }
             // Move to PIN verification step
-            await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('🔒 Enter your *4-digit card PIN* to confirm payment:') });
+            await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('🔒 Enter your *4-digit Waaiio PIN* (not your bank/ATM PIN) to confirm payment.\n\nFor privacy, you can delete your PIN message from this chat after sending it.') });
             return { valid: true, data: { _awaiting_card_pin: true, _saved_method_id: methodId } };
           }
 
@@ -3283,7 +3283,11 @@ export const schedulingFlow: FlowDefinition = {
           if (action === 'cancel' || action === 'go_back') {
             return { valid: true, data: { _skip_saved_card: true, _awaiting_card_pin: false } };
           }
-          await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('Please enter your *4-digit PIN* or type *cancel*:') });
+          // Allow switching to a different card without cancelling the transaction
+          if (action === 'pay_new') {
+            return { valid: true, data: { _skip_saved_card: true, _awaiting_card_pin: false } };
+          }
+          await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('Please enter your *4-digit Waaiio PIN* or type *cancel*:') });
           return { valid: false };
         }
 
@@ -3300,6 +3304,8 @@ export const schedulingFlow: FlowDefinition = {
       async next(ctx: FlowContext) {
         const d = ctx.session.session_data;
         if (d._action === 'cancel') return 'select_capability';
+        // Stay on step while awaiting saved-card PIN — do not fall through to create_booking
+        if (d._awaiting_card_pin) return 'saved_card_prompt';
         if (d._saved_card_paid) {
           // Route saved-card success through canonical Payment Authority.
           const paymentId = d._saved_card_payment_id as string;

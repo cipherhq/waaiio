@@ -3,6 +3,27 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-09-16 — Saved-card PIN UX bugs: premature completion, stale button escape, Waaiio PIN copy
+
+### What changed
+- **Bug 1 fix.** `_awaiting_card_pin` state in `next()` now returns to the current payment step instead of falling through to `null` (flow complete). This prevented the post-completion "What's next?" menu from firing before PIN entry was resolved. Patched in all 5 affected flows: payment, ordering, reservation, ticketing, scheduling.
+- **Bug 2 fix.** `pay_new` (stale "Use different card" button) during PIN wait now escapes to standard payment flow without cancelling the transaction or consuming a PIN attempt. `_skip_saved_card` is retained through the `next()` → `prompt()` transition so `buildSavedCardOffer()` is bypassed and the normal payment link path is actually reached. Only `_saved_method_id` is deleted at transition.
+- **PIN copy.** All PIN prompts now say "Waaiio PIN (not your bank/ATM PIN)" to disambiguate from bank ATM PINs. Privacy notice "For privacy, you can delete your PIN message from this chat after sending it" folded into existing prompts (zero additional messages). Removed customer-facing `e.g. 1234` weak-PIN example.
+
+### Files changed
+- `lib/bot/flows/shared/saved-card-flow.ts` — `pay_new` escape during `_awaiting_card_pin`; PIN prompt copy updated
+- `lib/bot/flows/payment.flow.ts` — `_awaiting_card_pin` guard in `process_payment.next()`
+- `lib/bot/flows/ordering.flow.ts` — `_awaiting_card_pin` guard in `process_order.next()`
+- `lib/bot/flows/reservation.flow.ts` — `_awaiting_card_pin` guard in `create_reservation.next()`
+- `lib/bot/flows/ticketing.flow.ts` — `_awaiting_card_pin` guard in `process_tickets.next()`
+- `lib/bot/flows/scheduling.flow.ts` — `_awaiting_card_pin` guard in `saved_card_prompt.next()`, `pay_new` escape during PIN wait, PIN copy updated
+- `lib/bot/handlers/saved-cards.ts` — PIN creation/success/validation copy updated to "Waaiio PIN"
+- `lib/__tests__/saved-card-pin-ux-regression.test.ts` — 27 regression tests
+
+### What could break
+- Flows that check `_awaiting_card_pin` in custom ways would need the same guard. All 5 affected flows verified.
+- SHA-256 PIN hardening deferred to separate #286 follow-up (no schema/hashing changes in this PR).
+
 ## 2026-09-16 — Country-cache regression + shared payment routing authority guards (initializePayment THREW)
 
 ### What changed

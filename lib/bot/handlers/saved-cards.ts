@@ -121,7 +121,7 @@ export async function handleSaveCard(
   }
 
   const cardLabel = `${((auth.brand as string) || 'Card').toUpperCase()} ****${(auth.last4 as string) || '????'}`;
-  await sendText(from, `💳 Saving *${cardLabel}*\n\nCreate a *4-digit PIN* to secure this card.\nYou'll need this PIN every time you use the saved card.\n\nType your 4-digit PIN now:`);
+  await sendText(from, `💳 Saving *${cardLabel}*\n\nCreate a *4-digit Waaiio PIN* (not your bank/ATM PIN) to secure this card.\nYou'll need this Waaiio PIN every time you use the saved card.\n\nType your 4-digit PIN now:`);
 }
 
 /**
@@ -195,7 +195,7 @@ export async function handleCardPinStep(
   }
 
   if (!/^\d{4}$/.test(pin)) {
-    await sendText(from, 'Please enter exactly *4 digits* for your PIN (e.g. 1234):');
+    await sendText(from, 'Please enter exactly *4 digits* for your Waaiio PIN:');
     return;
   }
 
@@ -264,5 +264,5 @@ export async function handleCardPinStep(
     .update({ current_step: 'select_capability', session_data: cleanData })
     .eq('id', session.id);
 
-  await sendText(from, `💳 Card saved! *${cardLabel}*\n\n🔒 PIN set successfully. You'll need this PIN when using your saved card.\n\nType *remove card* anytime to delete it.`);
+  await sendText(from, `💳 Card saved! *${cardLabel}*\n\n🔒 Waaiio PIN set successfully. You'll need this Waaiio PIN when using your saved card.\n\nFor privacy, you can delete your PIN message from this chat. Type *remove card* anytime to delete this card.`);
 }
