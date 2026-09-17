@@ -136,6 +136,7 @@ export async function initializeManifest(
 
   if (error) return { ok: false, error: error.message };
   if (data?.error) return { ok: false, error: data.error };
+  if (!data?.initialized) return { ok: false, error: 'initialization_not_confirmed' };
   return { ok: true, alreadyInitialized: data?.already_initialized === true };
 }
 

@@ -433,4 +433,96 @@ describe.skipIf(!canRun)('Phase A v15: Terminal effect manifest', () => {
       expect(priv).toBe('t');
     }
   });
+
+  // ─── LIFECYCLE AUTHORITY RUNTIME PROOFS ────────────────
+
+  it('LIFE-01: external effect cannot complete before emission fence', () => {
+    // Initialize manifest + reserve effect + try to complete WITHOUT emission fence
+    resetPayment(PAY_1, CLAIM_1);
+    psql(`
+      SELECT initialize_terminal_effects('${PAY_1}', '${CLAIM_1}',
+        ARRAY['owner_notif_whatsapp', 'owner_notif_email'],
+        ARRAY['required_external', 'required_external'],
+        ARRAY['external', 'external'],
+        ARRAY['meta_whatsapp', 'resend']);
+    `);
+    const reserveResult = psql(`SELECT reserve_terminal_effect('${PAY_1}', 'owner_notif_whatsapp', '${CLAIM_1}');`);
+    expect(reserveResult).toContain('"reserved": true');
+    // Extract effect token
+    const effectToken = reserveResult.match(/"effect_token": "([^"]+)"/)?.[1] || '';
+
+    // Try to complete WITHOUT emission fence (emission_started_at IS NULL)
+    const completeResult = psql(`SELECT complete_external_effect('${PAY_1}', 'owner_notif_whatsapp', '${effectToken}');`);
+    expect(completeResult).toContain('emission_not_started');
+  });
+
+  it('LIFE-02: provider throw after emission fence → indeterminate, never completed', () => {
+    resetPayment(PAY_1, CLAIM_1);
+    psql(`
+      SELECT initialize_terminal_effects('${PAY_1}', '${CLAIM_1}',
+        ARRAY['owner_notif_whatsapp', 'owner_notif_email'],
+        ARRAY['required_external', 'required_external'],
+        ARRAY['external', 'external'],
+        ARRAY['meta_whatsapp', 'resend']);
+    `);
+    const reserveResult = psql(`SELECT reserve_terminal_effect('${PAY_1}', 'owner_notif_whatsapp', '${CLAIM_1}');`);
+    const effectToken = reserveResult.match(/"effect_token": "([^"]+)"/)?.[1] || '';
+
+    // Begin emission fence
+    psql(`SELECT begin_terminal_external_emission('${PAY_1}', 'owner_notif_whatsapp', '${CLAIM_1}', '${effectToken}');`);
+
+    // Simulate provider throw → mark indeterminate (not completed)
+    const markResult = psql(`SELECT mark_effect_indeterminate('${PAY_1}', 'owner_notif_whatsapp', '${effectToken}');`);
+    expect(markResult).toContain('"marked": true');
+
+    // Verify status is indeterminate
+    const status = psql(`SELECT status FROM payment_terminal_effects WHERE payment_id = '${PAY_1}' AND effect_key = 'owner_notif_whatsapp';`);
+    expect(status).toBe('indeterminate');
+
+    // Cannot change to completed after indeterminate
+    const completeAttempt = psql(`SELECT complete_external_effect('${PAY_1}', 'owner_notif_whatsapp', '${effectToken}');`);
+    expect(completeAttempt).toContain('not_claimed');
+  });
+
+  it('LIFE-03: failed internal mutation → effect not completed', () => {
+    resetPayment(PAY_1, CLAIM_1);
+    psql(`
+      SELECT initialize_terminal_effects('${PAY_1}', '${CLAIM_1}',
+        ARRAY['session_deactivation', 'owner_notif_whatsapp', 'owner_notif_email'],
+        ARRAY['required_internal', 'required_external', 'required_external'],
+        ARRAY['internal', 'external', 'external'],
+        ARRAY[NULL, 'meta_whatsapp', 'resend']);
+    `);
+    const reserveResult = psql(`SELECT reserve_terminal_effect('${PAY_1}', 'session_deactivation', '${CLAIM_1}');`);
+    const effectToken = reserveResult.match(/"effect_token": "([^"]+)"/)?.[1] || '';
+
+    // Effect is claimed but NOT completed — simulates mutation failure
+    const status = psql(`SELECT status FROM payment_terminal_effects WHERE payment_id = '${PAY_1}' AND effect_key = 'session_deactivation';`);
+    expect(status).toBe('claimed');
+
+    // Verify finalization is blocked because required_internal is not completed
+    const finalizeResult = psql(`SELECT finalize_payment_confirmation('${PAY_1}', '${CLAIM_1}');`);
+    expect(finalizeResult).toContain('incomplete_required_internal');
+  });
+
+  it('LIFE-04: retry of terminal external effect does not re-emit', () => {
+    resetPayment(PAY_1, CLAIM_1);
+    psql(`
+      SELECT initialize_terminal_effects('${PAY_1}', '${CLAIM_1}',
+        ARRAY['owner_notif_whatsapp', 'owner_notif_email'],
+        ARRAY['required_external', 'required_external'],
+        ARRAY['external', 'external'],
+        ARRAY['meta_whatsapp', 'resend']);
+    `);
+    // Complete the effect through full lifecycle
+    const res = psql(`SELECT reserve_terminal_effect('${PAY_1}', 'owner_notif_whatsapp', '${CLAIM_1}');`);
+    const token = res.match(/"effect_token": "([^"]+)"/)?.[1] || '';
+    psql(`SELECT begin_terminal_external_emission('${PAY_1}', 'owner_notif_whatsapp', '${CLAIM_1}', '${token}');`);
+    psql(`SELECT complete_external_effect('${PAY_1}', 'owner_notif_whatsapp', '${token}');`);
+
+    // Retry: reserve again → should get already_terminal
+    const retryReserve = psql(`SELECT reserve_terminal_effect('${PAY_1}', 'owner_notif_whatsapp', '${CLAIM_1}');`);
+    expect(retryReserve).toContain('already_terminal');
+    expect(retryReserve).toContain('"current_status": "completed"');
+  });
 });

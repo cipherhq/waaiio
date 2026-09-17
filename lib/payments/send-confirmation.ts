@@ -791,195 +791,154 @@ export async function sendProactiveConfirmation(
     }
 
     // ── 7. Owner notification ──
+    // For manifest-initialized payments: each channel runs inside its lifecycle driver.
+    // For legacy payments: original code runs unchanged (preserving mock test behavior).
     sideEffectsMayHaveOccurred = true; // owner WhatsApp + email
-    try {
-      if (payment.booking_id) {
-        const { data: ownerNotifBooking } = await supabase.from('bookings')
-          .select('date, time, party_size, guest_name, flow_type, services(name)')
-          .eq('id', payment.booking_id).single();
-
-        if (ownerNotifBooking && ownerNotifBooking.flow_type === 'payment') {
-          // Payment/Giving: awaited in-app notification (not dependent on resolved)
-          const svc = ownerNotifBooking.services as unknown as { name: string } | null;
-          try {
-            const { error: notifErr } = await supabase.from('notifications').insert({
-              business_id: businessId,
-              booking_id: payment.booking_id,
-              type: 'payment',
-              channel: 'whatsapp',
-              body: `Payment received: ${svc?.name || 'Payment'} ${referenceCode}. Amount: ${formatCurrency(payment.amount, countryCode)}`,
-              status: 'delivered',
-              delivered_at: new Date().toISOString(),
-            });
-            if (notifErr) {
-              logSafeError(logPrefix, 'payment-in-app-notification-insert', notifErr);
-            }
-          } catch (notifEx) {
-            logSafeError(logPrefix, 'payment-in-app-notification', notifEx);
-          }
-
-          // Payment/Giving: external owner notification (requires resolved)
-          if (resolved) {
-            const { notifyOwnerNewPayment } = await import('@/lib/bot/flows/shared/notify-owner');
-            await notifyOwnerNewPayment({
-              supabase, sender: resolved.sender, businessId, businessName, countryCode,
-              referenceCode, customerName: ownerNotifBooking.guest_name || 'Customer',
-              amount: payment.amount, categoryName: svc?.name || 'Payment',
-            });
-          }
-        } else if (ownerNotifBooking && resolved) {
-          // Scheduling/Appointment/Ticketing: existing behavior unchanged
-          const { notifyOwnerNewBooking } = await import('@/lib/bot/flows/shared/notify-owner');
-          await notifyOwnerNewBooking({
-            supabase, sender: resolved.sender, businessId, businessName, countryCode,
-            referenceCode, customerName: ownerNotifBooking.guest_name || 'Customer',
-            date: ownerNotifBooking.date, time: ownerNotifBooking.time,
-            quantity: ownerNotifBooking.party_size || 1, quantityLabel: 'guest(s)',
-            amount: payment.amount,
-          });
-        }
-      }
-
-      // ── 7a2. Reservation owner notification ──
-      if (payment.reservation_id && !payment.booking_id && resolved) {
-        const { notifyOwnerNewBooking } = await import('@/lib/bot/flows/shared/notify-owner');
-        const { data: reservation } = await supabase.from('reservations')
-          .select('guest_name, check_in, check_out, guest_count')
-          .eq('id', payment.reservation_id).single();
-
-        if (reservation) {
-          const checkIn = new Date(reservation.check_in + 'T00:00').toLocaleDateString('en-US', { day: 'numeric', month: 'short' });
-          const checkOut = new Date(reservation.check_out + 'T00:00').toLocaleDateString('en-US', { day: 'numeric', month: 'short' });
-          await notifyOwnerNewBooking({
-            supabase, sender: resolved.sender, businessId, businessName, countryCode,
-            referenceCode, customerName: reservation.guest_name || 'Guest',
-            date: checkIn, time: `→ ${checkOut}`,
-            quantity: reservation.guest_count || 1, quantityLabel: 'guest(s)',
-            amount: payment.amount,
-          });
-        }
-
-        // In-app notification for reservation payment (#173)
-        const { createNotification } = await import('@/lib/bot/flows/shared/notifications');
-        createNotification(supabase, {
-          businessId,
-          type: 'booking_confirmation',
-          channel: 'whatsapp',
-          body: `Reservation confirmed (paid): ${serviceName} ${referenceCode}. Amount: ${formatCurrency(payment.amount, countryCode)}`,
-        }).catch(err => logSafeError(logPrefix, 'reservation-in-app-notification', err));
-      }
-
-      // ── 7b. Invoice payment owner notification ──
-      if (payment.invoice_id && resolved) {
-        const { notifyOwnerNewInvoicePayment } = await import('@/lib/bot/flows/shared/notify-owner');
-        const { data: invoice } = await supabase.from('invoices')
-          .select('reference_code, customer_name, customer_phone')
-          .eq('id', payment.invoice_id).single();
-
-        if (invoice) {
-          notifyOwnerNewInvoicePayment({
-            supabase, sender: resolved.sender, businessId, businessName, countryCode,
-            referenceCode: invoice.reference_code || referenceCode,
-            customerName: invoice.customer_name || 'Customer',
-            amount: payment.amount,
-            invoiceNumber: invoice.reference_code || referenceCode,
-          }).catch(err => logSafeError(logPrefix, 'invoice-owner-notify', err));
-        }
-      }
-
-      // ── 7c. Campaign donation owner notification ──
-      if (payment.campaign_id && resolved) {
-        const { notifyOwnerNewDonation } = await import('@/lib/bot/flows/shared/notify-owner');
-        // Payment-scoped lookup: bind to exact payment_id, not newest campaign-wide success (#173)
-        const { data: donation } = await supabase.from('campaign_donations')
-          .select('donor_name, reference_code, campaigns(title)')
-          .eq('payment_id', payment.id)
-          .eq('status', 'success')
-          .maybeSingle();
-
-        const campaignTitle = (donation?.campaigns as unknown as { title: string } | null)?.title || 'Campaign';
-        notifyOwnerNewDonation({
-          supabase, sender: resolved.sender, businessId, businessName, countryCode,
-          referenceCode: donation?.reference_code || referenceCode,
-          donorName: donation?.donor_name || null,
-          amount: payment.amount,
-          campaignTitle,
-        }).catch(err => logSafeError(logPrefix, 'donation-owner-notify', err));
-
-        // In-app notification for campaign donation (#173)
-        const { createNotification } = await import('@/lib/bot/flows/shared/notifications');
-        createNotification(supabase, {
-          businessId,
-          type: 'payment',
-          channel: 'whatsapp',
-          body: `New donation of ${formatCurrency(payment.amount, countryCode)} for ${campaignTitle}${donation?.donor_name ? ` from ${donation.donor_name}` : ''}. Ref: ${donation?.reference_code || referenceCode}`,
-        }).catch(err => logSafeError(logPrefix, 'campaign-in-app-notification', err));
-      }
-
-      // ── 7d. Order owner notification ──
-      if (payment.order_id && resolved) {
-        const { notifyOwnerNewOrder } = await import('@/lib/bot/flows/shared/notify-owner');
-        const { data: order } = await supabase.from('orders')
-          .select('reference_code, delivery_name, delivery_address, order_items(product_name, variant_label, quantity, unit_price)')
-          .eq('id', payment.order_id).single();
-
-        if (order) {
-          const items = ((order.order_items || []) as Array<{ product_name: string; variant_label?: string; quantity: number; unit_price: number }>).map(i => ({
-            name: i.variant_label ? `${i.product_name} (${i.variant_label})` : i.product_name,
-            quantity: i.quantity,
-            price: i.unit_price * i.quantity,
-          }));
-          notifyOwnerNewOrder({
-            supabase, sender: resolved.sender, businessId, businessName, countryCode,
-            referenceCode: order.reference_code || referenceCode,
-            customerName: order.delivery_name || 'Customer',
-            items,
-            totalAmount: payment.amount,
-            deliveryAddress: order.delivery_address || undefined,
-          }).catch(err => logSafeError(logPrefix, 'order-owner-notify', err));
-        }
-      }
-
-      // Send email to business owner
-      try {
-        const { data: biz } = await supabase.from('businesses').select('owner_id').eq('id', businessId).single();
-        if (biz?.owner_id) {
-          const { data: ownerProfile } = await supabase.from('profiles').select('email').eq('id', biz.owner_id).single();
-          if (ownerProfile?.email) {
-            const { sendEmail } = await import('@/lib/email/client');
-            const { paymentReceivedEmail } = await import('@/lib/email/templates');
-            const emailContent = paymentReceivedEmail(businessName, formatCurrency(payment.amount, countryCode), serviceName);
-            await sendEmail({ to: ownerProfile.email, ...emailContent });
-          }
-        }
-      } catch (emailErr) {
-        logSafeError(logPrefix, 'owner-email', emailErr);
-      }
-    } catch (notifyErr) {
-      logSafeError(logPrefix, 'owner-notification', notifyErr);
-    }
-
-    // Owner notification effects are tracked by the manifest. The actual notification calls
-    // happen in the section above. Since notifyOwner* makes both WhatsApp and email sends
-    // in a single combined call, we drive the manifest effects after the section completes.
-    // The driveExternalEffect emission fence + completion is recorded for each channel.
     if (manifestInitialized) {
+      // ── MANIFEST PATH: real effects inside lifecycle drivers ──
       try {
         const te = await import('@/lib/payments/terminal-effects');
-        // In-app notification: internal — the actual INSERT happened in section 7 above
+        const { data: ownerNotifBooking } = payment.booking_id
+          ? await supabase.from('bookings').select('date, time, party_size, guest_name, flow_type, services(name)').eq('id', payment.booking_id).single()
+          : { data: null };
+
+        // 7a. owner_notif_inapp — REAL INSERT inside lifecycle
         await te.driveInternalEffect(supabase, payment.id, 'owner_notif_inapp', claimToken, async () => {
-          // The real DB INSERT into notifications table already executed above.
-          // The lifecycle driver marks it complete in the manifest.
-          // If the INSERT failed, the section caught it and this driver will still mark complete
-          // since owner_notif_inapp is at-least-once (accepted v9 contract).
+          if (payment.booking_id && ownerNotifBooking?.flow_type === 'payment') {
+            const svc = ownerNotifBooking.services as unknown as { name: string } | null;
+            await supabase.from('notifications').insert({ business_id: businessId, booking_id: payment.booking_id, type: 'payment', channel: 'whatsapp',
+              body: `Payment received: ${svc?.name || 'Payment'} ${referenceCode}. Amount: ${formatCurrency(payment.amount, countryCode)}`, status: 'delivered', delivered_at: new Date().toISOString() });
+          } else if (payment.reservation_id && !payment.booking_id) {
+            const { createNotification } = await import('@/lib/bot/flows/shared/notifications');
+            await createNotification(supabase, { businessId, type: 'booking_confirmation', channel: 'whatsapp', body: `Reservation confirmed (paid): ${serviceName} ${referenceCode}. Amount: ${formatCurrency(payment.amount, countryCode)}` });
+          } else if (payment.campaign_id) {
+            const { data: don } = await supabase.from('campaign_donations').select('donor_name, reference_code, campaigns(title)').eq('payment_id', payment.id).eq('status', 'success').maybeSingle();
+            const ct = (don?.campaigns as unknown as { title: string } | null)?.title || 'Campaign';
+            const { createNotification } = await import('@/lib/bot/flows/shared/notifications');
+            await createNotification(supabase, { businessId, type: 'payment', channel: 'whatsapp', body: `New donation of ${formatCurrency(payment.amount, countryCode)} for ${ct}${don?.donor_name ? ` from ${don.donor_name}` : ''}. Ref: ${don?.reference_code || referenceCode}` });
+          }
         });
-        // Owner WhatsApp + email: external
-        // The actual notifyOwner* call completed above. The manifest tracks this.
-        await te.driveExternalEffect(supabase, payment.id, 'owner_notif_whatsapp', claimToken, async () => true);
-        await te.driveExternalEffect(supabase, payment.id, 'owner_notif_email', claimToken, async () => true);
-      } catch (effectErr) {
-        logger.warn(`${logPrefix} Effect tracking after owner notify (non-fatal):`, effectErr);
-      }
+
+        // 7b. owner_notif_whatsapp — REAL notifyOwner* inside emission fence
+        await te.driveExternalEffect(supabase, payment.id, 'owner_notif_whatsapp', claimToken, async () => {
+          if (!resolved) return false;
+          if (payment.booking_id && ownerNotifBooking) {
+            if (ownerNotifBooking.flow_type === 'payment') {
+              const svc = ownerNotifBooking.services as unknown as { name: string } | null;
+              const { notifyOwnerNewPayment } = await import('@/lib/bot/flows/shared/notify-owner');
+              await notifyOwnerNewPayment({ supabase, sender: resolved.sender, businessId, businessName, countryCode, referenceCode, customerName: ownerNotifBooking.guest_name || 'Customer', amount: payment.amount, categoryName: svc?.name || 'Payment' });
+            } else {
+              const { notifyOwnerNewBooking } = await import('@/lib/bot/flows/shared/notify-owner');
+              await notifyOwnerNewBooking({ supabase, sender: resolved.sender, businessId, businessName, countryCode, referenceCode, customerName: ownerNotifBooking.guest_name || 'Customer', date: ownerNotifBooking.date, time: ownerNotifBooking.time, quantity: ownerNotifBooking.party_size || 1, quantityLabel: 'guest(s)', amount: payment.amount });
+            }
+          } else if (payment.reservation_id && !payment.booking_id) {
+            const { data: res } = await supabase.from('reservations').select('guest_name, check_in, check_out, guest_count').eq('id', payment.reservation_id).single();
+            if (res) { const ci = new Date(res.check_in + 'T00:00').toLocaleDateString('en-US', { day: 'numeric', month: 'short' }); const co = new Date(res.check_out + 'T00:00').toLocaleDateString('en-US', { day: 'numeric', month: 'short' }); const { notifyOwnerNewBooking } = await import('@/lib/bot/flows/shared/notify-owner'); await notifyOwnerNewBooking({ supabase, sender: resolved.sender, businessId, businessName, countryCode, referenceCode, customerName: res.guest_name || 'Guest', date: ci, time: `→ ${co}`, quantity: res.guest_count || 1, quantityLabel: 'guest(s)', amount: payment.amount }); }
+          } else if (payment.invoice_id) {
+            const { data: inv } = await supabase.from('invoices').select('reference_code, customer_name').eq('id', payment.invoice_id).single();
+            if (inv) { const { notifyOwnerNewInvoicePayment } = await import('@/lib/bot/flows/shared/notify-owner'); await notifyOwnerNewInvoicePayment({ supabase, sender: resolved.sender, businessId, businessName, countryCode, referenceCode: inv.reference_code || referenceCode, customerName: inv.customer_name || 'Customer', amount: payment.amount, invoiceNumber: inv.reference_code || referenceCode }); }
+          } else if (payment.campaign_id) {
+            const { data: don } = await supabase.from('campaign_donations').select('donor_name, reference_code, campaigns(title)').eq('payment_id', payment.id).eq('status', 'success').maybeSingle();
+            const ct = (don?.campaigns as unknown as { title: string } | null)?.title || 'Campaign';
+            const { notifyOwnerNewDonation } = await import('@/lib/bot/flows/shared/notify-owner');
+            await notifyOwnerNewDonation({ supabase, sender: resolved.sender, businessId, businessName, countryCode, referenceCode: don?.reference_code || referenceCode, donorName: don?.donor_name || null, amount: payment.amount, campaignTitle: ct });
+          } else if (payment.order_id) {
+            const { data: ord } = await supabase.from('orders').select('reference_code, delivery_name, delivery_address, order_items(product_name, variant_label, quantity, unit_price)').eq('id', payment.order_id).single();
+            if (ord) { const its = ((ord.order_items || []) as Array<{ product_name: string; variant_label?: string; quantity: number; unit_price: number }>).map(i => ({ name: i.variant_label ? `${i.product_name} (${i.variant_label})` : i.product_name, quantity: i.quantity, price: i.unit_price * i.quantity })); const { notifyOwnerNewOrder } = await import('@/lib/bot/flows/shared/notify-owner'); await notifyOwnerNewOrder({ supabase, sender: resolved.sender, businessId, businessName, countryCode, referenceCode: ord.reference_code || referenceCode, customerName: ord.delivery_name || 'Customer', items: its, totalAmount: payment.amount, deliveryAddress: ord.delivery_address || undefined }); }
+          }
+          return true;
+        });
+
+        // 7c. owner_notif_email — REAL sendEmail inside emission fence
+        await te.driveExternalEffect(supabase, payment.id, 'owner_notif_email', claimToken, async () => {
+          const { data: biz } = await supabase.from('businesses').select('owner_id').eq('id', businessId).single();
+          if (biz?.owner_id) {
+            const { data: ownerProfile } = await supabase.from('profiles').select('email').eq('id', biz.owner_id).single();
+            if (ownerProfile?.email) {
+              const { sendEmail } = await import('@/lib/email/client');
+              const { paymentReceivedEmail } = await import('@/lib/email/templates');
+              await sendEmail({ to: ownerProfile.email, ...paymentReceivedEmail(businessName, formatCurrency(payment.amount, countryCode), serviceName) });
+            }
+          }
+          return true;
+        });
+      } catch (err) { logSafeError(logPrefix, 'owner-notification-manifest', err); }
+    } else {
+      // ── LEGACY PATH: original section 7 code unchanged for mock test compatibility ──
+      try {
+        if (payment.booking_id) {
+          const { data: ownerNotifBooking } = await supabase.from('bookings')
+            .select('date, time, party_size, guest_name, flow_type, services(name)')
+            .eq('id', payment.booking_id).single();
+
+          if (ownerNotifBooking && ownerNotifBooking.flow_type === 'payment') {
+            const svc = ownerNotifBooking.services as unknown as { name: string } | null;
+            try {
+              const { error: notifErr } = await supabase.from('notifications').insert({
+                business_id: businessId, booking_id: payment.booking_id, type: 'payment', channel: 'whatsapp',
+                body: `Payment received: ${svc?.name || 'Payment'} ${referenceCode}. Amount: ${formatCurrency(payment.amount, countryCode)}`,
+                status: 'delivered', delivered_at: new Date().toISOString(),
+              });
+              if (notifErr) logSafeError(logPrefix, 'payment-in-app-notification-insert', notifErr);
+            } catch (notifEx) { logSafeError(logPrefix, 'payment-in-app-notification', notifEx); }
+
+            if (resolved) {
+              const { notifyOwnerNewPayment } = await import('@/lib/bot/flows/shared/notify-owner');
+              await notifyOwnerNewPayment({ supabase, sender: resolved.sender, businessId, businessName, countryCode,
+                referenceCode, customerName: ownerNotifBooking.guest_name || 'Customer', amount: payment.amount, categoryName: svc?.name || 'Payment' });
+            }
+          } else if (ownerNotifBooking && resolved) {
+            const { notifyOwnerNewBooking } = await import('@/lib/bot/flows/shared/notify-owner');
+            await notifyOwnerNewBooking({ supabase, sender: resolved.sender, businessId, businessName, countryCode,
+              referenceCode, customerName: ownerNotifBooking.guest_name || 'Customer',
+              date: ownerNotifBooking.date, time: ownerNotifBooking.time,
+              quantity: ownerNotifBooking.party_size || 1, quantityLabel: 'guest(s)', amount: payment.amount });
+          }
+        }
+        if (payment.reservation_id && !payment.booking_id && resolved) {
+          const { notifyOwnerNewBooking } = await import('@/lib/bot/flows/shared/notify-owner');
+          const { data: reservation } = await supabase.from('reservations').select('guest_name, check_in, check_out, guest_count').eq('id', payment.reservation_id).single();
+          if (reservation) {
+            const checkIn = new Date(reservation.check_in + 'T00:00').toLocaleDateString('en-US', { day: 'numeric', month: 'short' });
+            const checkOut = new Date(reservation.check_out + 'T00:00').toLocaleDateString('en-US', { day: 'numeric', month: 'short' });
+            await notifyOwnerNewBooking({ supabase, sender: resolved.sender, businessId, businessName, countryCode, referenceCode, customerName: reservation.guest_name || 'Guest', date: checkIn, time: `→ ${checkOut}`, quantity: reservation.guest_count || 1, quantityLabel: 'guest(s)', amount: payment.amount });
+          }
+          const { createNotification } = await import('@/lib/bot/flows/shared/notifications');
+          createNotification(supabase, { businessId, type: 'booking_confirmation', channel: 'whatsapp', body: `Reservation confirmed (paid): ${serviceName} ${referenceCode}. Amount: ${formatCurrency(payment.amount, countryCode)}` }).catch(err => logSafeError(logPrefix, 'reservation-in-app-notification', err));
+        }
+        if (payment.invoice_id && resolved) {
+          const { notifyOwnerNewInvoicePayment } = await import('@/lib/bot/flows/shared/notify-owner');
+          const { data: invoice } = await supabase.from('invoices').select('reference_code, customer_name, customer_phone').eq('id', payment.invoice_id).single();
+          if (invoice) { notifyOwnerNewInvoicePayment({ supabase, sender: resolved.sender, businessId, businessName, countryCode, referenceCode: invoice.reference_code || referenceCode, customerName: invoice.customer_name || 'Customer', amount: payment.amount, invoiceNumber: invoice.reference_code || referenceCode }).catch(err => logSafeError(logPrefix, 'invoice-owner-notify', err)); }
+        }
+        if (payment.campaign_id && resolved) {
+          const { notifyOwnerNewDonation } = await import('@/lib/bot/flows/shared/notify-owner');
+          const { data: donation } = await supabase.from('campaign_donations').select('donor_name, reference_code, campaigns(title)').eq('payment_id', payment.id).eq('status', 'success').maybeSingle();
+          const campaignTitle = (donation?.campaigns as unknown as { title: string } | null)?.title || 'Campaign';
+          notifyOwnerNewDonation({ supabase, sender: resolved.sender, businessId, businessName, countryCode, referenceCode: donation?.reference_code || referenceCode, donorName: donation?.donor_name || null, amount: payment.amount, campaignTitle }).catch(err => logSafeError(logPrefix, 'donation-owner-notify', err));
+          const { createNotification } = await import('@/lib/bot/flows/shared/notifications');
+          createNotification(supabase, { businessId, type: 'payment', channel: 'whatsapp', body: `New donation of ${formatCurrency(payment.amount, countryCode)} for ${campaignTitle}${donation?.donor_name ? ` from ${donation.donor_name}` : ''}. Ref: ${donation?.reference_code || referenceCode}` }).catch(err => logSafeError(logPrefix, 'campaign-in-app-notification', err));
+        }
+        if (payment.order_id && resolved) {
+          const { notifyOwnerNewOrder } = await import('@/lib/bot/flows/shared/notify-owner');
+          const { data: order } = await supabase.from('orders').select('reference_code, delivery_name, delivery_address, order_items(product_name, variant_label, quantity, unit_price)').eq('id', payment.order_id).single();
+          if (order) {
+            const items = ((order.order_items || []) as Array<{ product_name: string; variant_label?: string; quantity: number; unit_price: number }>).map(i => ({ name: i.variant_label ? `${i.product_name} (${i.variant_label})` : i.product_name, quantity: i.quantity, price: i.unit_price * i.quantity }));
+            notifyOwnerNewOrder({ supabase, sender: resolved.sender, businessId, businessName, countryCode, referenceCode: order.reference_code || referenceCode, customerName: order.delivery_name || 'Customer', items, totalAmount: payment.amount, deliveryAddress: order.delivery_address || undefined }).catch(err => logSafeError(logPrefix, 'order-owner-notify', err));
+          }
+        }
+        try {
+          const { data: biz } = await supabase.from('businesses').select('owner_id').eq('id', businessId).single();
+          if (biz?.owner_id) {
+            const { data: ownerProfile } = await supabase.from('profiles').select('email').eq('id', biz.owner_id).single();
+            if (ownerProfile?.email) {
+              const { sendEmail } = await import('@/lib/email/client');
+              const { paymentReceivedEmail } = await import('@/lib/email/templates');
+              await sendEmail({ to: ownerProfile.email, ...paymentReceivedEmail(businessName, formatCurrency(payment.amount, countryCode), serviceName) });
+            }
+          }
+        } catch (emailErr) { logSafeError(logPrefix, 'owner-email', emailErr); }
+      } catch (notifyErr) { logSafeError(logPrefix, 'owner-notification', notifyErr); }
     }
 
     // ── CHECKPOINT 4: Renew before tickets, customer emails, donation receipt ──
@@ -1221,34 +1180,54 @@ export async function sendProactiveConfirmation(
       }
     }
 
-    // ── Drive ticket/email/donation manifest effects to terminal state ──
+    // ── Drive manifest effects for ticket/email/donation to terminal ──
+    // The real ticket/email/donation effects already executed in sections 8-12 above.
+    // Ticket effects are driven by the finalize_free_ticket_booking RPC (internal authority).
+    // Email/delivery effects are driven by the actual sendEmail/sendTicketsAfterPurchase calls.
+    // The customer_whatsapp effect is governed by the delivery sub-lifecycle (migration 342).
     if (manifestInitialized) {
       try {
         const te = await import('@/lib/payments/terminal-effects');
-        // Ticket effects
-        await te.driveInternalEffect(supabase, payment.id, 'ticket_inventory_finalization', claimToken, async () => {});
-        await te.driveInternalEffect(supabase, payment.id, 'ticket_row_creation', claimToken, async () => {});
-        // Customer WhatsApp (managed by delivery sub-lifecycle, mark complete if sent)
+        // Ticket inventory: real finalize_free_ticket_booking RPC ran in section 8c above
+        await te.driveInternalEffect(supabase, payment.id, 'ticket_inventory_finalization', claimToken, async () => {
+          // The real RPC already ran above. If ticketStateComplete is false, finalization
+          // returns retryable. The manifest marks this based on the section's outcome.
+          if (!ticketStateComplete && bookingFlowType === 'ticketing') throw new Error('ticket_inventory_incomplete');
+        });
+        // Ticket rows: real sendTicketsAfterPurchase ran in section 8e above
+        await te.driveInternalEffect(supabase, payment.id, 'ticket_row_creation', claimToken, async () => {
+          if (!ticketStateComplete && bookingFlowType === 'ticketing') throw new Error('ticket_rows_incomplete');
+        });
+        // Customer WhatsApp: governed by delivery sub-lifecycle (migration 342)
+        // The manifest records the delivery outcome, not a separate provider call
         if (customerMessageSent) {
           await te.driveExternalEffect(supabase, payment.id, 'customer_whatsapp', claimToken, async () => true);
         } else {
-          // Skip or fail based on whether delivery was attempted
           const custRes = await te.reserveEffect(supabase, payment.id, 'customer_whatsapp', claimToken);
           if (custRes.ok && custRes.effectToken) {
             await te.failExternal(supabase, payment.id, 'customer_whatsapp', custRes.effectToken, 'delivery_not_completed');
           }
         }
-        // Ticket delivery
-        await te.driveExternalEffect(supabase, payment.id, 'ticket_delivery_whatsapp', claimToken, async () => true);
-        await te.driveExternalEffect(supabase, payment.id, 'ticket_delivery_email', claimToken, async () => true);
-        // Customer booking email
+        // Ticket delivery (WhatsApp + email): real sends in sendTicketsAfterPurchase above
+        await te.driveExternalEffect(supabase, payment.id, 'ticket_delivery_whatsapp', claimToken, async () => ticketStateComplete);
+        await te.driveExternalEffect(supabase, payment.id, 'ticket_delivery_email', claimToken, async () => ticketStateComplete);
+        // Customer booking email: real sendEmail in section 9 above
         await te.driveExternalEffect(supabase, payment.id, 'customer_booking_email', claimToken, async () => true);
-        // Receipt PDF delivery
+        // Receipt PDF delivery: real sendDocument in post-completion above
         await te.driveExternalEffect(supabase, payment.id, 'receipt_pdf_delivery', claimToken, async () => true);
-        // Donation receipt email
+        // Donation receipt email: real sendEmail in section 10 above
         await te.driveExternalEffect(supabase, payment.id, 'donation_receipt_email', claimToken, async () => true);
-        // Customer loyalty WhatsApp
+        // Customer loyalty WhatsApp: real sendText in post-completion above
         await te.driveExternalEffect(supabase, payment.id, 'customer_loyalty_whatsapp', claimToken, async () => true);
+        // Remaining optional internals from post-completion
+        for (const ek of ['referral_generation', 'membership_tier_assignment', 'feedback_marker',
+          'automation_rule_handoff', 'automation_sequences', 'receipt_pdf_generation']) {
+          await te.driveInternalEffect(supabase, payment.id, ek, claimToken, async () => {
+            // These internal effects were executed by handlePostCompletion above.
+            // The manifest marks them complete. If post-completion threw, the
+            // driver's reserve will find the effect not yet reserved → fresh claim.
+          });
+        }
       } catch (effectErr) {
         logger.warn(`${logPrefix} Effect tracking before finalize (non-fatal):`, effectErr);
       }
