@@ -385,6 +385,32 @@ export async function sendProactiveConfirmation(
     return { status: 'processing', retryable: true }; // claim may belong to another worker
   }
 
+  // ── MANIFEST INITIALIZATION: Register all applicable Stage-3 effects ──
+  let manifestInitialized = false;
+  const effectTokens: Record<string, string> = {};
+  try {
+    const { computeApplicableEffects, initializeManifest } = await import('@/lib/payments/terminal-effects');
+    const applicableEffects = computeApplicableEffects(payment, {
+      hasCustomerPhone: !!customerPhone,
+      hasGuestEmail: !!(payment.booking_id && customerPhone === null), // email-only path
+      hasSender: true, // resolved later, but conservatively include
+      hasLoyalty: false, // determined in post-completion, not here
+      isTicketing: bookingFlowType === 'ticketing',
+      skipLoyalty: false, // determined later
+      skipAutomation: !!payment.order_id || !!payment.campaign_id || !!payment.invoice_id,
+      amountPaid: payment.amount,
+    });
+
+    const initResult = await initializeManifest(supabase, payment.id, claimToken, applicableEffects);
+    manifestInitialized = initResult.ok;
+    if (!initResult.ok) {
+      logger.warn(`${logPrefix} Manifest initialization failed (non-blocking): ${initResult.error}`);
+    }
+  } catch (manifestErr) {
+    // Non-blocking: manifest is additive observability. Existing behavior preserved.
+    logger.warn(`${logPrefix} Manifest initialization error (non-blocking):`, manifestErr);
+  }
+
   // Add balance info if deposit was partial
   if (balanceRemaining > 0) {
     lines.push('', `💳 Remaining balance: *${formatCurrency(balanceRemaining, countryCode)}*`);

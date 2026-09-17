@@ -114,10 +114,10 @@ describe.skipIf(!canRun)('Phase A v15: Terminal effect manifest', () => {
     const result = psql(`
       SELECT initialize_terminal_effects(
         '${PAY_1}', '${CLAIM_1}',
-        ARRAY['loyalty_award', 'owner_notif_whatsapp'],
-        ARRAY['required_internal', 'required_external'],
-        ARRAY['internal', 'external'],
-        ARRAY[NULL, 'meta_whatsapp']
+        ARRAY['loyalty_award', 'owner_notif_whatsapp', 'owner_notif_email'],
+        ARRAY['required_internal', 'required_external', 'required_external'],
+        ARRAY['internal', 'external', 'external'],
+        ARRAY[NULL, 'meta_whatsapp', 'resend']
       );
     `);
     expect(result).toContain('"initialized": true');
@@ -131,27 +131,27 @@ describe.skipIf(!canRun)('Phase A v15: Terminal effect manifest', () => {
     const effectCount = psql(`
       SELECT COUNT(*) FROM payment_terminal_effects WHERE payment_id = '${PAY_1}';
     `);
-    expect(effectCount).toBe('2');
+    expect(effectCount).toBe('3');
   });
 
   it('MAN-02: duplicate initialization is idempotent (same hash)', () => {
     psql(`
       SELECT initialize_terminal_effects(
         '${PAY_1}', '${CLAIM_1}',
-        ARRAY['loyalty_award'],
-        ARRAY['required_internal'],
-        ARRAY['internal'],
-        ARRAY[NULL]
+        ARRAY['loyalty_award', 'owner_notif_whatsapp', 'owner_notif_email'],
+        ARRAY['required_internal', 'required_external', 'required_external'],
+        ARRAY['internal', 'external', 'external'],
+        ARRAY[NULL, 'meta_whatsapp', 'resend']
       );
     `);
 
     const result = psql(`
       SELECT initialize_terminal_effects(
         '${PAY_1}', '${CLAIM_1}',
-        ARRAY['loyalty_award'],
-        ARRAY['required_internal'],
-        ARRAY['internal'],
-        ARRAY[NULL]
+        ARRAY['loyalty_award', 'owner_notif_whatsapp', 'owner_notif_email'],
+        ARRAY['required_internal', 'required_external', 'required_external'],
+        ARRAY['internal', 'external', 'external'],
+        ARRAY[NULL, 'meta_whatsapp', 'resend']
       );
     `);
     expect(result).toContain('"already_initialized": true');
@@ -161,13 +161,53 @@ describe.skipIf(!canRun)('Phase A v15: Terminal effect manifest', () => {
     const result = psql(`
       SELECT initialize_terminal_effects(
         '${PAY_1}', '${CLAIM_2}',
-        ARRAY['loyalty_award'],
-        ARRAY['required_internal'],
-        ARRAY['internal'],
-        ARRAY[NULL]
+        ARRAY['loyalty_award', 'owner_notif_whatsapp', 'owner_notif_email'],
+        ARRAY['required_internal', 'required_external', 'required_external'],
+        ARRAY['internal', 'external', 'external'],
+        ARRAY[NULL, 'meta_whatsapp', 'resend']
       );
     `);
     expect(result).toContain('token_mismatch');
+  });
+
+  it('MAN-05: unknown effect key rejected by canonical catalog', () => {
+    const result = psql(`
+      SELECT initialize_terminal_effects(
+        '${PAY_2}', '${CLAIM_1}',
+        ARRAY['loyalty_award', 'owner_notif_whatsapp', 'owner_notif_email', 'fake_effect'],
+        ARRAY['required_internal', 'required_external', 'required_external', 'optional'],
+        ARRAY['internal', 'external', 'external', 'internal'],
+        ARRAY[NULL, 'meta_whatsapp', 'resend', NULL]
+      );
+    `);
+    expect(result).toContain('unknown_effect_key');
+  });
+
+  it('MAN-06: semantic mismatch rejected (wrong category for known key)', () => {
+    const result = psql(`
+      SELECT initialize_terminal_effects(
+        '${PAY_2}', '${CLAIM_1}',
+        ARRAY['loyalty_award', 'owner_notif_whatsapp', 'owner_notif_email'],
+        ARRAY['optional', 'required_external', 'required_external'],
+        ARRAY['internal', 'external', 'external'],
+        ARRAY[NULL, 'meta_whatsapp', 'resend']
+      );
+    `);
+    expect(result).toContain('semantic_mismatch');
+  });
+
+  it('MAN-07: missing required effect rejected', () => {
+    // Only supply loyalty_award + owner_notif_whatsapp, omit required owner_notif_email
+    const result = psql(`
+      SELECT initialize_terminal_effects(
+        '${PAY_2}', '${CLAIM_1}',
+        ARRAY['loyalty_award', 'owner_notif_whatsapp'],
+        ARRAY['required_internal', 'required_external'],
+        ARRAY['internal', 'external'],
+        ARRAY[NULL, 'meta_whatsapp']
+      );
+    `);
+    expect(result).toContain('missing_required_effect');
   });
 
   it('MAN-04: stage-2 incomplete rejected', () => {
@@ -230,9 +270,9 @@ describe.skipIf(!canRun)('Phase A v15: Terminal effect manifest', () => {
     const result = psql(`
       SELECT terminate_payment_confirmation('${PAY_TERM}', '${CLAIM_2}', 'delivery_failure');
     `);
-    // invalid_terminal_reason because 'delivery_failure' is not in allowed list
-    // but even if it were, existing reason conflict would trigger
-    expect(result).toContain('invalid_terminal_reason');
+    // terminal_reason_conflict: the existing 'not_deliverable' != 'delivery_failure'
+    // Step 3 (already-terminated check) runs BEFORE step 6 (reason validation)
+    expect(result).toContain('terminal_reason_conflict');
   });
 
   // ─── CLAIM TERMINAL PREDICATE GUARDS ──────────────────
@@ -291,10 +331,10 @@ describe.skipIf(!canRun)('Phase A v15: Terminal effect manifest', () => {
     const result = psql(`
       SELECT initialize_terminal_effects(
         '${PAY_1}', '${CLAIM_1}',
-        ARRAY['loyalty_award'],
-        ARRAY['required_internal'],
-        ARRAY['internal'],
-        ARRAY[NULL]
+        ARRAY['loyalty_award', 'owner_notif_whatsapp', 'owner_notif_email'],
+        ARRAY['required_internal', 'required_external', 'required_external'],
+        ARRAY['internal', 'external', 'external'],
+        ARRAY[NULL, 'meta_whatsapp', 'resend']
       );
     `);
     expect(result).toContain('payment_already_terminated');
@@ -314,10 +354,10 @@ describe.skipIf(!canRun)('Phase A v15: Terminal effect manifest', () => {
     psql(`
       SELECT initialize_terminal_effects(
         '${PAY_3}', '${CLAIM_1}',
-        ARRAY['loyalty_award'],
-        ARRAY['required_internal'],
-        ARRAY['internal'],
-        ARRAY[NULL]
+        ARRAY['loyalty_award', 'owner_notif_whatsapp', 'owner_notif_email'],
+        ARRAY['required_internal', 'required_external', 'required_external'],
+        ARRAY['internal', 'external', 'external'],
+        ARRAY[NULL, 'meta_whatsapp', 'resend']
       );
     `);
 
@@ -331,18 +371,18 @@ describe.skipIf(!canRun)('Phase A v15: Terminal effect manifest', () => {
     psql(`
       SELECT initialize_terminal_effects(
         '${PAY_1}', '${CLAIM_1}',
-        ARRAY['session_deactivation'],
-        ARRAY['required_internal'],
-        ARRAY['internal'],
-        ARRAY[NULL]
+        ARRAY['owner_notif_whatsapp', 'owner_notif_email'],
+        ARRAY['required_external', 'required_external'],
+        ARRAY['external', 'external'],
+        ARRAY['meta_whatsapp', 'resend']
       );
     `);
 
-    // Manually complete the effect
+    // Complete all effects (as superuser, bypassing service_role restriction)
     psql(`
       UPDATE payment_terminal_effects
       SET status = 'completed', completed_at = NOW()
-      WHERE payment_id = '${PAY_1}' AND effect_key = 'session_deactivation';
+      WHERE payment_id = '${PAY_1}';
     `);
 
     const result = psql(`

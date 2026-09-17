@@ -138,10 +138,19 @@ ALTER TABLE payment_rule_action_executions ENABLE ROW LEVEL SECURITY;
 -- ═══════════════════════════════════════════════════════
 -- 8. Partial unique index for active sequence enrollments
 --    Closes TOCTOU race in enrollInSequence (v12 design)
+--    Conditional: table may not exist in test databases that only apply 384+
 -- ═══════════════════════════════════════════════════════
-CREATE UNIQUE INDEX IF NOT EXISTS idx_bse_active_unique
-  ON bot_sequence_enrollments (sequence_id, customer_phone)
-  WHERE status = 'active';
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_class WHERE relname = 'bot_sequence_enrollments') THEN
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_bse_active_unique
+      ON bot_sequence_enrollments (sequence_id, customer_phone)
+      WHERE status = 'active';
+    RAISE NOTICE 'Migration 384: bot_sequence_enrollments partial unique index created';
+  ELSE
+    RAISE NOTICE 'Migration 384: bot_sequence_enrollments not found — index skipped (ok in test databases)';
+  END IF;
+END $$;
 
 -- ═══════════════════════════════════════════════════════
 -- 9. Table-level privilege hardening for payment_rule_action_executions
@@ -158,12 +167,12 @@ BEGIN
     REVOKE ALL ON TABLE payment_rule_action_executions FROM authenticated;
   END IF;
 
-  -- service_role: SELECT only (for reading frozen rows in Phase 2 execution)
-  -- Plus column-level UPDATE on mutable fields only (status transitions)
+  -- service_role: SELECT only. All status transitions go through SECURITY DEFINER RPCs
+  -- (advance_rule_action, complete_rule_action — migration 386).
+  -- No direct INSERT/DELETE/UPDATE.
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
     REVOKE ALL ON TABLE payment_rule_action_executions FROM service_role;
     GRANT SELECT ON TABLE payment_rule_action_executions TO service_role;
-    GRANT UPDATE (status, emission_started_at, executed_at) ON TABLE payment_rule_action_executions TO service_role;
   END IF;
 END $$;
 

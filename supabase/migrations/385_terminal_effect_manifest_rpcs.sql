@@ -87,10 +87,11 @@ BEGIN
     END IF;
   END LOOP;
 
-  -- 1. Lock payment row
-  SELECT confirmation_claim_token, confirmation_processing_at,
+  -- 1. Lock payment row (with entity FKs for required-effect derivation)
+  SELECT id, confirmation_claim_token, confirmation_processing_at,
          confirmation_sent_at, confirmation_terminal_reason,
-         finalization_completed_at
+         finalization_completed_at,
+         booking_id, reservation_id, order_id, invoice_id, campaign_id
   INTO v_payment FROM payments WHERE id = p_payment_id FOR UPDATE;
 
   IF NOT FOUND THEN
@@ -114,6 +115,33 @@ BEGIN
   -- 4. Stage-2 must be complete
   IF v_payment.finalization_completed_at IS NULL THEN
     RETURN jsonb_build_object('error', 'stage2_not_complete');
+  END IF;
+
+  -- 4b. Required-effect completeness validation.
+  -- The DB derives which required effects MUST be present for this payment's entity type.
+  -- Omission of an applicable required effect fails the manifest.
+
+  -- All payments require owner_notif_whatsapp and owner_notif_email (required_external)
+  IF NOT ('owner_notif_whatsapp' = ANY(p_effect_keys)) THEN
+    RETURN jsonb_build_object('error', 'missing_required_effect', 'key', 'owner_notif_whatsapp');
+  END IF;
+  IF NOT ('owner_notif_email' = ANY(p_effect_keys)) THEN
+    RETURN jsonb_build_object('error', 'missing_required_effect', 'key', 'owner_notif_email');
+  END IF;
+
+  -- session_deactivation: required for invoice/campaign (non-exact-entity-family)
+  IF v_payment.invoice_id IS NOT NULL OR v_payment.campaign_id IS NOT NULL THEN
+    IF NOT ('session_deactivation' = ANY(p_effect_keys)) THEN
+      RETURN jsonb_build_object('error', 'missing_required_effect', 'key', 'session_deactivation');
+    END IF;
+  END IF;
+
+  -- owner_notif_inapp: required for booking, reservation, or campaign
+  IF v_payment.booking_id IS NOT NULL OR v_payment.reservation_id IS NOT NULL
+     OR v_payment.campaign_id IS NOT NULL THEN
+    IF NOT ('owner_notif_inapp' = ANY(p_effect_keys)) THEN
+      RETURN jsonb_build_object('error', 'missing_required_effect', 'key', 'owner_notif_inapp');
+    END IF;
   END IF;
 
   -- 5. Compute semantic hash from the input arrays

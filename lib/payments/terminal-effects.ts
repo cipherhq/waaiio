@@ -6,6 +6,78 @@
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
 
+// ─── Payment context for determining applicable effects ───
+
+interface PaymentContext {
+  id: string;
+  booking_id?: string | null;
+  reservation_id?: string | null;
+  order_id?: string | null;
+  invoice_id?: string | null;
+  campaign_id?: string | null;
+}
+
+/**
+ * Determine the applicable Stage-3 effects for a payment based on its entity type
+ * and available context (customer phone, email, sender, capabilities).
+ */
+export function computeApplicableEffects(
+  payment: PaymentContext,
+  opts: {
+    hasCustomerPhone: boolean;
+    hasGuestEmail?: boolean;
+    hasSender?: boolean;
+    hasLoyalty?: boolean;
+    isTicketing?: boolean;
+    skipLoyalty?: boolean;
+    skipAutomation?: boolean;
+    amountPaid?: number;
+  },
+): string[] {
+  const effects: string[] = [];
+
+  // Required external
+  if (opts.hasCustomerPhone) effects.push('customer_whatsapp');
+  effects.push('owner_notif_whatsapp');
+  effects.push('owner_notif_email');
+  if (payment.campaign_id) effects.push('donation_receipt_email');
+
+  // Required internal
+  if (payment.booking_id || payment.reservation_id || payment.campaign_id) {
+    effects.push('owner_notif_inapp');
+  }
+  if (payment.invoice_id || payment.campaign_id) {
+    effects.push('session_deactivation');
+  }
+  if (opts.hasLoyalty && !opts.skipLoyalty) effects.push('loyalty_award');
+  if (opts.isTicketing) {
+    effects.push('ticket_inventory_finalization');
+    effects.push('ticket_row_creation');
+  }
+
+  // Optional
+  effects.push('crm_visit_increment');
+  effects.push('referral_generation');
+  effects.push('membership_tier_assignment');
+  effects.push('feedback_marker');
+  if ((opts.amountPaid || 0) > 0) {
+    effects.push('receipt_pdf_generation');
+    if (opts.hasSender) effects.push('receipt_pdf_delivery');
+  }
+  if (opts.hasLoyalty && !opts.skipLoyalty && opts.hasSender) {
+    effects.push('customer_loyalty_whatsapp');
+  }
+  if (!opts.skipAutomation) {
+    effects.push('automation_rule_handoff');
+    effects.push('automation_sequences');
+  }
+  if (payment.booking_id && opts.hasGuestEmail) effects.push('customer_booking_email');
+  if (opts.isTicketing && opts.hasSender) effects.push('ticket_delivery_whatsapp');
+  if (opts.isTicketing && opts.hasGuestEmail) effects.push('ticket_delivery_email');
+
+  return effects;
+}
+
 // ─── Closed Stage-3 catalog (must match DB canonical mapping in migration 385) ───
 
 interface EffectSpec {
@@ -153,6 +225,11 @@ export async function beginExternalEmission(
 
 // ─── Rule-action seal ───
 
+/**
+ * Seal the payment's rule-action manifest. Handles concurrent UNIQUE loser:
+ * if the seal fails with unique_violation, retries once to read the winner's manifest.
+ * The caller MUST NOT re-evaluate current rules after a seal — use frozen rows only.
+ */
 export async function sealRuleActions(
   supabase: SupabaseClient,
   paymentId: string,
@@ -162,12 +239,64 @@ export async function sealRuleActions(
     p_payment_id: paymentId,
     p_actions: actions,
   });
+
+  // Handle concurrent UNIQUE loser: unique_violation means another worker
+  // already sealed. Retry once to get the winner's manifest.
+  if (error && error.code === '23505') {
+    const { data: retryData, error: retryErr } = await supabase.rpc('seal_payment_rule_actions', {
+      p_payment_id: paymentId,
+      p_actions: actions,
+    });
+    if (retryErr) return { ok: false };
+    return {
+      ok: retryData?.sealed === true,
+      alreadySealed: retryData?.already_sealed === true,
+      actionCount: retryData?.action_count,
+    };
+  }
+
   if (error) return { ok: false };
   return {
     ok: data?.sealed === true,
     alreadySealed: data?.already_sealed === true,
     actionCount: data?.action_count,
   };
+}
+
+/**
+ * Read the frozen rule-action rows for execution (Phase 2).
+ * NEVER re-reads bot_rules — uses only the sealed manifest.
+ */
+export async function readFrozenRuleActions(
+  supabase: SupabaseClient,
+  paymentId: string,
+): Promise<Array<{ id: string; rule_id: string; action_type: string; action_payload: Record<string, unknown>; status: string }>> {
+  const { data } = await supabase
+    .from('payment_rule_action_executions')
+    .select('id, rule_id, action_type, action_payload, status')
+    .eq('payment_id', paymentId)
+    .in('status', ['pending', 'sending']);
+  return (data || []) as Array<{ id: string; rule_id: string; action_type: string; action_payload: Record<string, unknown>; status: string }>;
+}
+
+/**
+ * Advance a rule action through its lifecycle via the SECURITY DEFINER RPC.
+ * Legal transitions: pending→sending, pending→completed, sending→completed,
+ * sending→indeterminate, pending→failed.
+ */
+export async function advanceRuleAction(
+  supabase: SupabaseClient,
+  paymentId: string,
+  ruleId: string,
+  targetStatus: 'sending' | 'completed' | 'indeterminate' | 'failed',
+): Promise<{ ok: boolean; error?: string }> {
+  const { data, error } = await supabase.rpc('advance_rule_action', {
+    p_payment_id: paymentId,
+    p_rule_id: ruleId,
+    p_target_status: targetStatus,
+  });
+  if (error) return { ok: false, error: error.message };
+  return { ok: data?.advanced === true, error: data?.reason };
 }
 
 // ─── Termination ───

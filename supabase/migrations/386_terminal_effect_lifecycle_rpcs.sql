@@ -375,7 +375,92 @@ END;
 $$;
 
 -- ═══════════════════════════════════════════════════════
--- 7. Privilege hardening
+-- 7. advance_rule_action — atomic pending→sending emission fence
+--
+-- For provider-emitting rule actions. Sets emission_started_at.
+-- After this, worker death never permits re-emission.
+-- ═══════════════════════════════════════════════════════
+CREATE OR REPLACE FUNCTION advance_rule_action(
+  p_payment_id UUID,
+  p_rule_id UUID,
+  p_target_status TEXT
+) RETURNS JSONB
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_row RECORD;
+BEGIN
+  SELECT id, status, emission_started_at
+  INTO v_row FROM payment_rule_action_executions
+  WHERE payment_id = p_payment_id AND rule_id = p_rule_id FOR UPDATE;
+
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('advanced', false, 'reason', 'not_found');
+  END IF;
+
+  -- Legal transitions only
+  CASE p_target_status
+    WHEN 'sending' THEN
+      -- pending → sending (emission fence)
+      IF v_row.status != 'pending' THEN
+        RETURN jsonb_build_object('advanced', false, 'reason', 'not_pending',
+          'current_status', v_row.status);
+      END IF;
+      UPDATE payment_rule_action_executions
+      SET status = 'sending', emission_started_at = NOW()
+      WHERE id = v_row.id;
+
+    WHEN 'completed' THEN
+      -- sending → completed (provider confirmed) OR pending → completed (internal action)
+      IF v_row.status NOT IN ('pending', 'sending') THEN
+        IF v_row.status = 'completed' THEN
+          RETURN jsonb_build_object('advanced', true, 'already_completed', true);
+        END IF;
+        RETURN jsonb_build_object('advanced', false, 'reason', 'invalid_transition',
+          'current_status', v_row.status);
+      END IF;
+      UPDATE payment_rule_action_executions
+      SET status = 'completed', executed_at = NOW()
+      WHERE id = v_row.id;
+
+    WHEN 'indeterminate' THEN
+      -- sending → indeterminate (post-emission uncertainty)
+      IF v_row.status != 'sending' THEN
+        IF v_row.status = 'indeterminate' THEN
+          RETURN jsonb_build_object('advanced', true, 'already_indeterminate', true);
+        END IF;
+        RETURN jsonb_build_object('advanced', false, 'reason', 'not_sending',
+          'current_status', v_row.status);
+      END IF;
+      IF v_row.emission_started_at IS NULL THEN
+        RETURN jsonb_build_object('advanced', false, 'reason', 'emission_not_started');
+      END IF;
+      UPDATE payment_rule_action_executions
+      SET status = 'indeterminate'
+      WHERE id = v_row.id;
+
+    WHEN 'failed' THEN
+      -- pending → failed (pre-emission failure only)
+      IF v_row.status != 'pending' THEN
+        RETURN jsonb_build_object('advanced', false, 'reason', 'not_pending',
+          'current_status', v_row.status);
+      END IF;
+      IF v_row.emission_started_at IS NOT NULL THEN
+        RETURN jsonb_build_object('advanced', false, 'reason', 'post_emission_failed_not_permitted');
+      END IF;
+      UPDATE payment_rule_action_executions
+      SET status = 'failed'
+      WHERE id = v_row.id;
+
+    ELSE
+      RETURN jsonb_build_object('advanced', false, 'reason', 'invalid_target_status');
+  END CASE;
+
+  RETURN jsonb_build_object('advanced', true, 'new_status', p_target_status);
+END;
+$$;
+
+-- ═══════════════════════════════════════════════════════
+-- 8. Privilege hardening
 -- ═══════════════════════════════════════════════════════
 DO $$
 BEGIN
@@ -385,6 +470,7 @@ BEGIN
   REVOKE ALL ON FUNCTION fail_external_effect(UUID, TEXT, UUID, TEXT) FROM PUBLIC;
   REVOKE ALL ON FUNCTION mark_effect_indeterminate(UUID, TEXT, UUID) FROM PUBLIC;
   REVOKE ALL ON FUNCTION skip_optional_effect(UUID, TEXT, UUID, TEXT) FROM PUBLIC;
+  REVOKE ALL ON FUNCTION advance_rule_action(UUID, UUID, TEXT) FROM PUBLIC;
 
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
     REVOKE ALL ON FUNCTION begin_terminal_external_emission(UUID, TEXT, UUID, UUID) FROM anon;
@@ -393,6 +479,7 @@ BEGIN
     REVOKE ALL ON FUNCTION fail_external_effect(UUID, TEXT, UUID, TEXT) FROM anon;
     REVOKE ALL ON FUNCTION mark_effect_indeterminate(UUID, TEXT, UUID) FROM anon;
     REVOKE ALL ON FUNCTION skip_optional_effect(UUID, TEXT, UUID, TEXT) FROM anon;
+    REVOKE ALL ON FUNCTION advance_rule_action(UUID, UUID, TEXT) FROM anon;
   END IF;
 
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
@@ -402,6 +489,7 @@ BEGIN
     REVOKE ALL ON FUNCTION fail_external_effect(UUID, TEXT, UUID, TEXT) FROM authenticated;
     REVOKE ALL ON FUNCTION mark_effect_indeterminate(UUID, TEXT, UUID) FROM authenticated;
     REVOKE ALL ON FUNCTION skip_optional_effect(UUID, TEXT, UUID, TEXT) FROM authenticated;
+    REVOKE ALL ON FUNCTION advance_rule_action(UUID, UUID, TEXT) FROM authenticated;
   END IF;
 
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
@@ -411,6 +499,7 @@ BEGIN
     GRANT EXECUTE ON FUNCTION fail_external_effect(UUID, TEXT, UUID, TEXT) TO service_role;
     GRANT EXECUTE ON FUNCTION mark_effect_indeterminate(UUID, TEXT, UUID) TO service_role;
     GRANT EXECUTE ON FUNCTION skip_optional_effect(UUID, TEXT, UUID, TEXT) TO service_role;
+    GRANT EXECUTE ON FUNCTION advance_rule_action(UUID, UUID, TEXT) TO service_role;
   END IF;
 END $$;
 
@@ -425,7 +514,8 @@ BEGIN
     ('complete_external_effect', 'complete_external_effect(uuid, text, uuid)'),
     ('fail_external_effect', 'fail_external_effect(uuid, text, uuid, text)'),
     ('mark_effect_indeterminate', 'mark_effect_indeterminate(uuid, text, uuid)'),
-    ('skip_optional_effect', 'skip_optional_effect(uuid, text, uuid, text)')
+    ('skip_optional_effect', 'skip_optional_effect(uuid, text, uuid, text)'),
+    ('advance_rule_action', 'advance_rule_action(uuid, uuid, text)')
   LOOP
     IF has_function_privilege('anon', v_sig, 'EXECUTE') THEN
       v_errors := array_append(v_errors, 'FAIL: anon can execute ' || v_fn);

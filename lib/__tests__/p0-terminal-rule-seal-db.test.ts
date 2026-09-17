@@ -302,43 +302,44 @@ describe.skipIf(!canRun)('Phase A v15: Rule-action manifest seal', () => {
     psql('RESET ROLE;');
   });
 
-  it('SEAL-09: service_role CAN UPDATE mutable column status', () => {
+  it('SEAL-09: service_role CANNOT directly UPDATE status (must use advance_rule_action RPC)', () => {
     const actions = makeActions([{ rule_id: RULE_A, action_type: 'send_message' }]);
     psql(`SELECT seal_payment_rule_actions('${PAY_1}', '${actions}'::jsonb);`);
 
-    // This should succeed
-    psql(`
-      SET ROLE service_role;
-      UPDATE payment_rule_action_executions
-      SET status = 'sending'
-      WHERE payment_id = '${PAY_1}' AND rule_id = '${RULE_A}';
-      RESET ROLE;
-    `);
-
-    const status = psql(`
-      SELECT status FROM payment_rule_action_executions
-      WHERE payment_id = '${PAY_1}' AND rule_id = '${RULE_A}';
-    `);
-    expect(status).toBe('sending');
+    let error = '';
+    try {
+      psql(`
+        SET ROLE service_role;
+        UPDATE payment_rule_action_executions
+        SET status = 'sending'
+        WHERE payment_id = '${PAY_1}' AND rule_id = '${RULE_A}';
+        RESET ROLE;
+      `);
+    } catch (e) {
+      error = String(e);
+    }
+    expect(error).toContain('permission denied');
+    psql('RESET ROLE;');
   });
 
-  it('SEAL-10: service_role CAN UPDATE mutable column emission_started_at', () => {
+  it('SEAL-10: service_role CANNOT directly UPDATE emission_started_at', () => {
     const actions = makeActions([{ rule_id: RULE_A, action_type: 'send_message' }]);
     psql(`SELECT seal_payment_rule_actions('${PAY_2}', '${actions}'::jsonb);`);
 
-    psql(`
-      SET ROLE service_role;
-      UPDATE payment_rule_action_executions
-      SET emission_started_at = NOW()
-      WHERE payment_id = '${PAY_2}' AND rule_id = '${RULE_A}';
-      RESET ROLE;
-    `);
-
-    const emissionSet = psql(`
-      SELECT emission_started_at IS NOT NULL FROM payment_rule_action_executions
-      WHERE payment_id = '${PAY_2}' AND rule_id = '${RULE_A}';
-    `);
-    expect(emissionSet).toBe('t');
+    let error = '';
+    try {
+      psql(`
+        SET ROLE service_role;
+        UPDATE payment_rule_action_executions
+        SET emission_started_at = NOW()
+        WHERE payment_id = '${PAY_2}' AND rule_id = '${RULE_A}';
+        RESET ROLE;
+      `);
+    } catch (e) {
+      error = String(e);
+    }
+    expect(error).toContain('permission denied');
+    psql('RESET ROLE;');
   });
 
   // ─── CTO BINDING #2: CONCURRENT LOSER CONVERGENCE ─────
