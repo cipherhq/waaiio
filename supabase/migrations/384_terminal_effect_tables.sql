@@ -220,6 +220,10 @@ BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
     REVOKE ALL ON TABLE payment_loyalty_applications FROM authenticated;
   END IF;
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
+    REVOKE ALL ON TABLE payment_loyalty_applications FROM service_role;
+    GRANT SELECT ON TABLE payment_loyalty_applications TO service_role;
+  END IF;
 
   -- payment_receipt_applications
   REVOKE ALL ON TABLE payment_receipt_applications FROM PUBLIC;
@@ -228,6 +232,10 @@ BEGIN
   END IF;
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
     REVOKE ALL ON TABLE payment_receipt_applications FROM authenticated;
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
+    REVOKE ALL ON TABLE payment_receipt_applications FROM service_role;
+    GRANT SELECT, INSERT, UPDATE ON TABLE payment_receipt_applications TO service_role;
   END IF;
 
   -- payment_visit_applications
@@ -246,5 +254,9 @@ BEGIN
   END IF;
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
     REVOKE ALL ON TABLE payment_rule_action_manifests FROM authenticated;
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
+    REVOKE ALL ON TABLE payment_rule_action_manifests FROM service_role;
+    GRANT SELECT ON TABLE payment_rule_action_manifests TO service_role;
   END IF;
 END $$;

@@ -26,8 +26,12 @@ export function computeApplicableEffects(
   opts: {
     hasCustomerPhone: boolean;
     hasGuestEmail?: boolean;
+    hasDonationEmail?: boolean;
     hasSender?: boolean;
     hasLoyalty?: boolean;
+    hasReferral?: boolean;
+    hasMembership?: boolean;
+    hasFeedback?: boolean;
     isTicketing?: boolean;
     skipLoyalty?: boolean;
     skipAutomation?: boolean;
@@ -40,7 +44,7 @@ export function computeApplicableEffects(
   if (opts.hasCustomerPhone) effects.push('customer_whatsapp');
   effects.push('owner_notif_whatsapp');
   effects.push('owner_notif_email');
-  if (payment.campaign_id) effects.push('donation_receipt_email');
+  if (payment.campaign_id && opts.hasDonationEmail) effects.push('donation_receipt_email');
 
   // Required internal
   if (payment.booking_id || payment.reservation_id || payment.campaign_id) {
@@ -56,22 +60,24 @@ export function computeApplicableEffects(
   }
 
   // Optional
-  effects.push('crm_visit_increment');
-  effects.push('referral_generation');
-  effects.push('membership_tier_assignment');
-  effects.push('feedback_marker');
-  if ((opts.amountPaid || 0) > 0) {
+  // These operations are phone-keyed. Email-only confirmations must not seal
+  // effects that handlePostCompletion cannot execute.
+  if (opts.hasCustomerPhone) effects.push('crm_visit_increment');
+  if (opts.hasCustomerPhone && opts.hasReferral) effects.push('referral_generation');
+  if (opts.hasCustomerPhone && opts.hasMembership) effects.push('membership_tier_assignment');
+  if (opts.hasCustomerPhone && opts.hasFeedback) effects.push('feedback_marker');
+  if (opts.hasCustomerPhone && (opts.amountPaid || 0) > 0) {
     effects.push('receipt_pdf_generation');
     if (opts.hasSender) effects.push('receipt_pdf_delivery');
   }
   if (opts.hasLoyalty && !opts.skipLoyalty && opts.hasSender) {
     effects.push('customer_loyalty_whatsapp');
   }
-  if (!opts.skipAutomation) {
+  if (opts.hasCustomerPhone && !opts.skipAutomation) {
     effects.push('automation_rule_handoff');
     effects.push('automation_sequences');
   }
-  if (payment.booking_id && opts.hasGuestEmail) effects.push('customer_booking_email');
+  if (payment.booking_id && opts.hasGuestEmail && !opts.isTicketing) effects.push('customer_booking_email');
   if (opts.isTicketing && opts.hasSender) effects.push('ticket_delivery_whatsapp');
   if (opts.isTicketing && opts.hasGuestEmail) effects.push('ticket_delivery_email');
 
@@ -227,8 +233,8 @@ export async function beginExternalEmission(
 // ─── Rule-action seal ───
 
 /**
- * Seal the payment's rule-action manifest. Handles concurrent UNIQUE loser:
- * if the seal fails with unique_violation, retries once to read the winner's manifest.
+ * Seal the payment's rule-action manifest. Concurrent losers and lost RPC
+ * responses converge by reading the durable winner manifest.
  * The caller MUST NOT re-evaluate current rules after a seal — use frozen rows only.
  */
 export async function sealRuleActions(
@@ -241,27 +247,40 @@ export async function sealRuleActions(
     p_actions: actions,
   });
 
-  // Handle concurrent UNIQUE loser: unique_violation means another worker
-  // already sealed. Retry once to get the winner's manifest.
-  if (error && error.code === '23505') {
-    const { data: retryData, error: retryErr } = await supabase.rpc('seal_payment_rule_actions', {
-      p_payment_id: paymentId,
-      p_actions: actions,
-    });
-    if (retryErr) return { ok: false };
-    return {
-      ok: retryData?.sealed === true,
-      alreadySealed: retryData?.already_sealed === true,
-      actionCount: retryData?.action_count,
-    };
+  if (error) {
+    // A unique loser and a lost RPC response have the same safe recovery:
+    // observe the durable header, then execute the winner's frozen rows.
+    const manifest = await readRuleActionManifest(supabase, paymentId);
+    if (!manifest.ok || !manifest.exists) return { ok: false };
+    return { ok: true, alreadySealed: true, actionCount: manifest.actionCount };
   }
-
-  if (error) return { ok: false };
   return {
     ok: data?.sealed === true,
     alreadySealed: data?.already_sealed === true,
     actionCount: data?.action_count,
   };
+}
+
+export async function readRuleActionManifest(
+  supabase: SupabaseClient,
+  paymentId: string,
+): Promise<{ ok: boolean; exists: boolean; actionCount?: number; error?: string }> {
+  const { data, error } = await supabase
+    .from('payment_rule_action_manifests')
+    .select('action_count')
+    .eq('payment_id', paymentId)
+    .maybeSingle();
+  if (error) return { ok: false, exists: false, error: error.message };
+  if (!data) return { ok: true, exists: false };
+  return { ok: true, exists: true, actionCount: data.action_count };
+}
+
+export interface FrozenRuleAction {
+  id: string;
+  rule_id: string;
+  action_type: string;
+  action_payload: Record<string, unknown>;
+  status: 'pending' | 'sending' | 'completed' | 'failed' | 'indeterminate';
 }
 
 /**
@@ -271,13 +290,13 @@ export async function sealRuleActions(
 export async function readFrozenRuleActions(
   supabase: SupabaseClient,
   paymentId: string,
-): Promise<Array<{ id: string; rule_id: string; action_type: string; action_payload: Record<string, unknown>; status: string }>> {
-  const { data } = await supabase
+): Promise<{ ok: boolean; rows: FrozenRuleAction[]; error?: string }> {
+  const { data, error } = await supabase
     .from('payment_rule_action_executions')
     .select('id, rule_id, action_type, action_payload, status')
-    .eq('payment_id', paymentId)
-    .in('status', ['pending', 'sending']);
-  return (data || []) as Array<{ id: string; rule_id: string; action_type: string; action_payload: Record<string, unknown>; status: string }>;
+    .eq('payment_id', paymentId);
+  if (error) return { ok: false, rows: [], error: error.message };
+  return { ok: true, rows: (data || []) as FrozenRuleAction[] };
 }
 
 /**
@@ -368,6 +387,38 @@ export async function driveExternalEffect(
     if (!indRes.ok) return { ok: false, error: 'mark_indeterminate_after_throw_failed' };
     return { ok: true }; // indeterminate is a valid terminal state
   }
+}
+
+/**
+ * Bridge an already-recorded durable subsystem outcome into the manifest.
+ * No provider callback is invoked here: the named subsystem owns its own
+ * emission fence and this function only mirrors that durable terminal state.
+ */
+export async function bridgeExternalEffect(
+  supabase: SupabaseClient,
+  paymentId: string,
+  effectKey: string,
+  masterClaimToken: string,
+  outcome: 'completed' | 'failed' | 'indeterminate',
+  reason: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const res = await reserveEffect(supabase, paymentId, effectKey, masterClaimToken);
+  if (!res.ok) {
+    if (res.error === 'effect_not_in_manifest' || res.error === 'already_terminal') return { ok: true };
+    return res;
+  }
+  if (outcome === 'failed') {
+    const failed = await failExternal(supabase, paymentId, effectKey, res.effectToken!, reason);
+    return failed.ok ? { ok: true } : { ok: false, error: 'durable_bridge_failed' };
+  }
+  const emission = await beginExternalEmission(supabase, paymentId, effectKey, masterClaimToken, res.effectToken!);
+  if (!emission.ok) return { ok: false, error: emission.error };
+  if (outcome === 'completed') {
+    const completed = await completeExternal(supabase, paymentId, effectKey, res.effectToken!);
+    return completed.ok ? { ok: true } : { ok: false, error: 'durable_bridge_complete_failed' };
+  }
+  const marked = await markIndeterminate(supabase, paymentId, effectKey, res.effectToken!);
+  return marked.ok ? { ok: true } : { ok: false, error: 'durable_bridge_indeterminate_failed' };
 }
 
 // ─── Termination ───

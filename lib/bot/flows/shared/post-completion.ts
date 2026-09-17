@@ -162,9 +162,7 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
     try {
       const cc = (biz?.country_code || 'NG') as CountryCode;
       const isWhitelabel = PRICING_TIERS[(biz?.subscription_tier || 'free') as SubscriptionTier]?.whitelabel === true;
-
-      // Send PDF receipt as WhatsApp document attachment
-      try {
+      const generateAndStoreReceipt = async () => {
         const pdfBuffer = await generateReceiptPdf({
           businessName: bizName,
           referenceCode: referenceCode || '-',
@@ -178,28 +176,70 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
           whitelabel: isWhitelabel,
         });
 
-        const uuid = crypto.randomUUID();
-        const filePath = `receipts/${businessId}/${uuid}.pdf`;
-        const filename = `receipt-${referenceCode || uuid.slice(0, 8)}.pdf`;
-
-        await supabase.storage
+        const stableId = paymentId || crypto.randomUUID();
+        const filePath = `receipts/${businessId}/${stableId}.pdf`;
+        const { error: uploadError } = await supabase.storage
           .from('customer-reports')
-          .upload(filePath, pdfBuffer, { contentType: 'application/pdf', upsert: false });
+          .upload(filePath, pdfBuffer, { contentType: 'application/pdf', upsert: !!paymentId });
+        if (uploadError) throw new Error(`receipt_upload_failed:${uploadError.message}`);
+        if (paymentId) {
+          const { error: markerError } = await supabase.from('payment_receipt_applications').upsert({
+            payment_id: paymentId,
+            file_path: filePath,
+            generation_state: 'completed',
+          }, { onConflict: 'payment_id' });
+          if (markerError) throw new Error(`receipt_marker_failed:${markerError.message}`);
+        }
+        return filePath;
+      };
 
-        const { data: signedUrlData } = await supabase.storage
+      if (paymentId && claimToken) {
+        const { driveInternalEffect, driveExternalEffect } = await import('@/lib/payments/terminal-effects');
+        const generation = await driveInternalEffect(
+          supabase, paymentId, 'receipt_pdf_generation', claimToken,
+          async () => { await generateAndStoreReceipt(); },
+        );
+        if (!generation.ok) throw new Error(`receipt_generation_effect_failed:${generation.error}`);
+
+        const { data: marker, error: markerReadError } = await supabase
+          .from('payment_receipt_applications')
+          .select('file_path, generation_state')
+          .eq('payment_id', paymentId)
+          .maybeSingle();
+        if (markerReadError || !marker || marker.generation_state !== 'completed') {
+          throw new Error(`receipt_marker_read_failed:${markerReadError?.message || 'missing'}`);
+        }
+        const delivery = await driveExternalEffect(
+          supabase, paymentId, 'receipt_pdf_delivery', claimToken,
+          async () => {
+            if (!sender) return false;
+            const { data: signedUrlData, error: signedUrlError } = await supabase.storage
+              .from('customer-reports')
+              .createSignedUrl(marker.file_path, 3600);
+            if (signedUrlError || !signedUrlData?.signedUrl) throw new Error('receipt_signed_url_failed');
+            await sender.sendDocument({
+              to: phone,
+              documentUrl: signedUrlData.signedUrl,
+              filename: `receipt-${referenceCode || paymentId.slice(0, 8)}.pdf`,
+              caption: 'Your payment receipt',
+            });
+            return true;
+          },
+        );
+        if (!delivery.ok) throw new Error(`receipt_delivery_effect_failed:${delivery.error}`);
+      } else {
+        const filePath = await generateAndStoreReceipt();
+        const { data: signedUrlData, error: signedUrlError } = await supabase.storage
           .from('customer-reports')
           .createSignedUrl(filePath, 3600);
-
-        if (signedUrlData?.signedUrl && sender) {
+        if (!signedUrlError && signedUrlData?.signedUrl && sender) {
           await sender.sendDocument({
             to: phone,
             documentUrl: signedUrlData.signedUrl,
-            filename,
+            filename: `receipt-${referenceCode || 'payment'}.pdf`,
             caption: 'Your payment receipt',
           });
         }
-      } catch (pdfErr) {
-        logger.withContext({ op: 'post-completion.pdf-receipt', ...safeLogErrorContext(pdfErr) }).error('[POST-COMPLETION] PDF receipt error (non-fatal)');
       }
     } catch (err) {
       logger.withContext({ op: 'post-completion.auto-receipt', ...safeLogErrorContext(err) }).error('[POST-COMPLETION] Auto-receipt error');
@@ -226,8 +266,15 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
             loyaltyEarnedPoints = loyaltyResult.points_awarded || 0;
           }
         });
-        // Notification (outside driver — not part of loyalty_award authority)
-        if (loyaltyEarnedPoints > 0) {
+        // Read the durable award marker so a retry can notify using the original award.
+        const { data: loyaltyMarker, error: markerError } = await supabase
+          .from('payment_loyalty_applications')
+          .select('points_awarded')
+          .eq('payment_id', paymentId)
+          .maybeSingle();
+        if (markerError) throw new Error(`loyalty_marker_read_failed:${markerError.message}`);
+        loyaltyEarnedPoints = loyaltyMarker?.points_awarded || loyaltyEarnedPoints;
+        if (loyaltyEarnedPoints > 0 && sender && claimToken) {
           const { data: balanceRow } = await supabase.from('loyalty_points').select('points_balance')
             .eq('business_id', businessId).eq('customer_phone', customerPhone).maybeSingle();
           const newBalance = balanceRow?.points_balance || loyaltyEarnedPoints;
@@ -237,7 +284,15 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
           let loyaltyMsg = `+${loyaltyEarnedPoints} points earned at *${bizName}*! Your balance: *${newBalance}* points.`;
           if (pointsUntilReward === 0) { loyaltyMsg += `\n\nYou have enough points to redeem *${rewardDesc}*! Type *my points* to claim it.`; }
           else { loyaltyMsg += `\n\n${pointsUntilReward} more until ${rewardDesc}.`; }
-          if (sender) t(loyaltyMsg).then(translated => sender.sendText({ to: customerPhone, text: translated })).catch(err => logger.withContext({ op: 'post-completion.loyalty-send', ...safeLogErrorContext(err) }).error('[POST-COMPLETION] Failed to send loyalty message'));
+          const { driveExternalEffect } = await import('@/lib/payments/terminal-effects');
+          const notifyResult = await driveExternalEffect(
+            supabase, paymentId, 'customer_loyalty_whatsapp', claimToken,
+            async () => {
+              await sender.sendText({ to: customerPhone, text: await t(loyaltyMsg) });
+              return true;
+            },
+          );
+          if (!notifyResult.ok) throw new Error(`loyalty_notification_effect_failed:${notifyResult.error}`);
         }
       } else {
         // Legacy path (no paymentId): use inline loyalty logic
@@ -275,16 +330,24 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
   // Safe on retry: assignCustomerTier is idempotent (reads total_spent, assigns highest qualifying tier).
   if (capabilities.includes('membership')) {
     try {
-      // Look up customer_profile by phone+business (use canonical phone format)
-      const { data: cp } = await supabase
-        .from('customer_profiles')
-        .select('id')
-        .eq('business_id', businessId)
-        .eq('phone', phoneWithPlus)
-        .maybeSingle();
-      if (cp) {
+      const assignTier = async () => {
+        const { data: cp, error: cpError } = await supabase
+          .from('customer_profiles')
+          .select('id')
+          .eq('business_id', businessId)
+          .eq('phone', phoneWithPlus)
+          .maybeSingle();
+        if (cpError) throw new Error(`membership_profile_lookup_failed:${cpError.message}`);
+        if (!cp) throw new Error('membership_profile_missing');
         const { assignCustomerTier } = await import('@/lib/membership/assign-tiers');
-        await assignCustomerTier(supabase, businessId, cp.id);
+        await assignCustomerTier(supabase, businessId, cp.id, true);
+      };
+      if (paymentId && claimToken) {
+        const { driveInternalEffect } = await import('@/lib/payments/terminal-effects');
+        const result = await driveInternalEffect(supabase, paymentId, 'membership_tier_assignment', claimToken, assignTier);
+        if (!result.ok) throw new Error(result.error);
+      } else {
+        await assignTier();
       }
     } catch (err) {
       logger.withContext({ op: 'post-completion.tier-assign', ...safeLogErrorContext(err) }).error('[POST-COMPLETION] Tier assignment error');
@@ -296,10 +359,20 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
   if (referenceId && capabilities.includes('feedback')) {
     try {
       const table = serviceType === 'order' ? 'orders' : 'bookings';
-      await supabase
-        .from(table)
-        .update({ metadata: { feedback_requested: false, completed_at: new Date().toISOString() } })
-        .eq('id', referenceId);
+      const markFeedback = async () => {
+        const { error } = await supabase
+          .from(table)
+          .update({ metadata: { feedback_requested: false, completed_at: new Date().toISOString() } })
+          .eq('id', referenceId);
+        if (error) throw new Error(`feedback_marker_update_failed:${error.message}`);
+      };
+      if (paymentId && claimToken) {
+        const { driveInternalEffect } = await import('@/lib/payments/terminal-effects');
+        const result = await driveInternalEffect(supabase, paymentId, 'feedback_marker', claimToken, markFeedback);
+        if (!result.ok) throw new Error(result.error);
+      } else {
+        await markFeedback();
+      }
     } catch (err) { logger.warn('[POST-COMPLETION] Failed to mark feedback requested (non-critical):', err); }
   }
 
@@ -324,95 +397,29 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
 
     if (bizName) automationContext.business_name = bizName;
 
-    // Trigger sequences (idempotent via partial unique index)
-    await triggerSequences(supabase, businessId, triggerEvent, customerPhone, automationContext);
-
-    // Evaluate rules — with sealed manifest when paymentId is available (v15)
-    const sendMsg = async (to: string, text: string) => {
-      if (sender) await sender.sendText({ to, text });
-    };
     if (paymentId && claimToken) {
-      // v15 Phase-A: evaluate once → seal → execute frozen rows only
-      const { sealRuleActions, readFrozenRuleActions, advanceRuleAction } = await import('@/lib/payments/terminal-effects');
-      const { evaluateConditions } = await import('@/lib/bot/automation/rules-engine');
+      const { driveInternalEffect } = await import('@/lib/payments/terminal-effects');
+      const sequenceResult = await driveInternalEffect(
+        supabase, paymentId, 'automation_sequences', claimToken,
+        () => triggerSequences(supabase, businessId, triggerEvent, customerPhone, automationContext),
+      );
+      if (!sequenceResult.ok) throw new Error(`automation_sequences_failed:${sequenceResult.error}`);
 
-      // 1. Evaluate conditions once to identify genuinely matched rules
-      const { data: allRules } = await supabase.from('bot_rules')
-        .select('id, name, trigger_event, conditions, action_type, action_payload, priority')
-        .eq('business_id', businessId).eq('trigger_event', ruleEvent).eq('is_active', true)
-        .order('priority', { ascending: false });
-      const matched = (allRules || []).filter((r: { conditions: unknown }) => {
-        try { return evaluateConditions((r.conditions || []) as Array<{ field: string; operator: string; value: unknown }>, automationContext); }
-        catch { return false; }
-      });
-
-      // 2. Seal matched actions atomically (one-shot, immutable after seal)
-      const candidates = matched.map((r: { id: string; action_type: string; action_payload: unknown }) => ({
-        rule_id: r.id, action_type: r.action_type, action_payload: r.action_payload as object,
-        action_fingerprint: `${r.action_type}|${JSON.stringify(r.action_payload)}`,
-      }));
-      const sealResult = await sealRuleActions(supabase, paymentId, candidates);
-      if (!sealResult.ok) {
-        logger.warn('[POST-COMPLETION] Rule seal failed (non-fatal):', sealResult);
-      }
-
-      // 3. Execute from frozen rows only — never re-read bot_rules
-      const frozenRows = await readFrozenRuleActions(supabase, paymentId);
-      for (const row of frozenRows) {
-        const payload = row.action_payload as Record<string, string>;
-        if (['send_message', 'send_template', 'notify_owner'].includes(row.action_type)) {
-          // External action: emission fence (pending → sending) before provider call
-          const fenceResult = await advanceRuleAction(supabase, paymentId, row.rule_id, 'sending');
-          if (!fenceResult.ok) {
-            // Already sending/completed/indeterminate — do NOT re-emit
-            continue;
-          }
-          try {
-            if (row.action_type === 'send_message') {
-              await sendMsg(customerPhone, payload.text || payload.message || '');
-            } else if (row.action_type === 'send_template') {
-              await sendMsg(customerPhone, payload.template || payload.text || '');
-            } else if (row.action_type === 'notify_owner') {
-              // Resolve owner phone and send notification
-              const { data: biz } = await supabase.from('businesses').select('owner_id').eq('id', businessId).single();
-              if (biz?.owner_id) {
-                const { data: ownerProfile } = await supabase.from('profiles').select('phone').eq('id', biz.owner_id).single();
-                if (ownerProfile?.phone && sender) {
-                  await sender.sendText({ to: ownerProfile.phone, text: payload.message || payload.text || 'Notification' });
-                }
-              }
-            }
-            const completeResult = await advanceRuleAction(supabase, paymentId, row.rule_id, 'completed');
-            if (!completeResult.ok) logger.warn(`[POST-COMPLETION] Rule action complete failed: ${row.rule_id}`);
-          } catch {
-            const indResult = await advanceRuleAction(supabase, paymentId, row.rule_id, 'indeterminate');
-            if (!indResult.ok) logger.warn(`[POST-COMPLETION] Rule action indeterminate failed: ${row.rule_id}`);
-          }
-        } else if (row.action_type === 'enroll_sequence') {
-          // Internal: enroll in sequence
-          const seqId = payload.sequence_id;
-          if (seqId) {
-            const { enrollInSequence } = await import('@/lib/bot/automation/sequence-service');
-            await enrollInSequence(supabase, businessId, seqId, customerPhone, automationContext);
-          }
-          await advanceRuleAction(supabase, paymentId, row.rule_id, 'completed');
-        } else if (row.action_type === 'assign_tag') {
-          // Internal: assign tag to customer profile
-          const tag = payload.tag;
-          if (tag) {
-            await supabase.from('customer_profiles')
-              .update({ tags: supabase.rpc ? undefined : undefined }) // Tags handled differently per schema
-              .eq('business_id', businessId).eq('phone', customerPhone);
-            // Simplified: mark complete regardless (tag assignment is best-effort)
-          }
-          await advanceRuleAction(supabase, paymentId, row.rule_id, 'completed');
-        } else if (row.action_type === 'update_status') {
-          // Internal: no-op for payment context (status updates are entity-specific)
-          await advanceRuleAction(supabase, paymentId, row.rule_id, 'completed');
-        }
-      }
+      const ruleResult = await driveInternalEffect(
+        supabase, paymentId, 'automation_rule_handoff', claimToken,
+        async () => {
+          const { runSealedRuleActions } = await import('@/lib/bot/automation/sealed-rule-actions');
+          await runSealedRuleActions({ supabase, paymentId, businessId, event: ruleEvent, context: automationContext, sender });
+        },
+      );
+      if (!ruleResult.ok) throw new Error(`automation_rule_handoff_failed:${ruleResult.error}`);
     } else {
       // Legacy path: no paymentId, execute rules directly
+      await triggerSequences(supabase, businessId, triggerEvent, customerPhone, automationContext);
+      const sendMsg = async (to: string, text: string) => {
+        if (!sender) throw new Error('rule_sender_unavailable');
+        await sender.sendText({ to, text });
+      };
       await evaluateRules(supabase, businessId, ruleEvent, automationContext, sendMsg);
     }
   } catch (err) {
@@ -423,29 +430,37 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
   // Don't auto-send referral message after every transaction
   if (capabilities.includes('referral')) {
     try {
-      const { data: existingRef } = await supabase
-        .from('referrals')
-        .select('referral_code')
-        .eq('business_id', businessId)
-        .eq('referrer_phone', customerPhone)
-        .eq('status', 'pending')
-        .maybeSingle();
+      const ensureReferral = async () => {
+        const { data: existingRef, error: lookupError } = await supabase
+          .from('referrals')
+          .select('referral_code')
+          .eq('business_id', businessId)
+          .eq('referrer_phone', customerPhone)
+          .eq('status', 'pending')
+          .maybeSingle();
+        if (lookupError) throw new Error(`referral_lookup_failed:${lookupError.message}`);
 
-      if (!existingRef) {
-        const code = generateReferralCode();
-        const rewardType = (meta.referral_reward_type as string) || 'points';
-        const rewardAmount = (meta.referral_reward_amount as number) || 50;
-
-        await supabase.from('referrals').insert({
-          business_id: businessId,
-          referrer_phone: customerPhone,
-          referrer_name: customerName,
-          referral_code: code,
-          status: 'pending',
-          reward_type: rewardType,
-          reward_amount: rewardAmount,
-        });
-        // Code generated silently — customer can type "refer" to see it
+        if (!existingRef) {
+          const { error: insertError } = await supabase.from('referrals').insert({
+            business_id: businessId,
+            referrer_phone: customerPhone,
+            referrer_name: customerName,
+            referral_code: generateReferralCode(),
+            status: 'pending',
+            reward_type: (meta.referral_reward_type as string) || 'points',
+            reward_amount: (meta.referral_reward_amount as number) || 50,
+          });
+          if (insertError && insertError.code !== '23505') {
+            throw new Error(`referral_insert_failed:${insertError.message}`);
+          }
+        }
+      };
+      if (paymentId && claimToken) {
+        const { driveInternalEffect } = await import('@/lib/payments/terminal-effects');
+        const result = await driveInternalEffect(supabase, paymentId, 'referral_generation', claimToken, ensureReferral);
+        if (!result.ok) throw new Error(result.error);
+      } else {
+        await ensureReferral();
       }
     } catch (err) {
       logger.withContext({ op: 'post-completion.referral', ...safeLogErrorContext(err) }).error('[POST-COMPLETION] Referral error');

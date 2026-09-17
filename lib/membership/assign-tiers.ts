@@ -19,6 +19,7 @@ export async function assignCustomerTier(
   supabase: SupabaseClient,
   businessId: string,
   customerId: string,
+  strict = false,
 ): Promise<MembershipTier | null> {
   try {
     // 1. Get customer's total_spent
@@ -31,6 +32,7 @@ export async function assignCustomerTier(
 
     if (custErr || !customer) {
       logger.warn('[MEMBERSHIP] Customer not found', { businessId, customerId, error: custErr });
+      if (strict) throw new Error(`membership_customer_lookup_failed:${custErr?.message || 'not_found'}`);
       return null;
     }
 
@@ -42,7 +44,11 @@ export async function assignCustomerTier(
       .eq('is_active', true)
       .order('min_spend', { ascending: false });
 
-    if (tierErr || !tiers || tiers.length === 0) {
+    if (tierErr) {
+      if (strict) throw new Error(`membership_tier_lookup_failed:${tierErr.message}`);
+      return null;
+    }
+    if (!tiers || tiers.length === 0) {
       return null;
     }
 
@@ -53,13 +59,14 @@ export async function assignCustomerTier(
     // 4. Update if tier changed
     const newTierId = qualifiedTier?.id || null;
     if (newTierId !== customer.membership_tier_id) {
-      await supabase
+      const { error: updateError } = await supabase
         .from('customer_profiles')
         .update({
           membership_tier_id: newTierId,
           tier_earned_at: newTierId ? new Date().toISOString() : null,
         })
         .eq('id', customerId);
+      if (updateError) throw new Error(`membership_tier_update_failed:${updateError.message}`);
 
       logger.info('[MEMBERSHIP] Tier updated', {
         customerId,
@@ -73,6 +80,7 @@ export async function assignCustomerTier(
     return qualifiedTier;
   } catch (err) {
     logger.error('[MEMBERSHIP] Failed to assign tier', err);
+    if (strict) throw err;
     return null;
   }
 }

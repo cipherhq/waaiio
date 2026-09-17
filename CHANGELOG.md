@@ -3,6 +3,27 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-09-17 — Phase A v15: CTO handoff closure (runtime lifecycle)
+
+### What changed
+- Rule discovery and seal recovery now fail closed. A query failure cannot become a sealed zero-rule snapshot, while concurrent losers and lost seal responses converge on the durable winner without re-reading live rules.
+- Frozen rule actions now execute the existing action semantics under per-action lifecycle states. Retried `sending` actions reconcile to `indeterminate` without re-emission, and the aggregate handoff completes only when every frozen row is terminal.
+- Post-payment effects now perform their real work inside the manifest lifecycle or bridge an existing durable delivery outcome. Removed the dummy-success callbacks that could finalize work that had not occurred.
+- Migration 384 now grants the service runtime only the table privileges needed to read sealed manifests/outcome markers and persist receipt-generation markers; direct rule-action INSERT remains denied.
+- Paid ticket fulfillment keeps canonical ticket convergence separate from provider delivery, preserving QR ticket images over WhatsApp as the primary channel and email as supplemental.
+- Added executable TypeScript race/retry proofs and fixed the terminal-application DB fixture so migration 020 runs with its required local realtime publication.
+
+### Files changed
+- `lib/bot/automation/sealed-rule-actions.ts`, `rules-engine.ts`, `sequence-service.ts` — frozen-only rule execution and complete action semantics
+- `lib/bot/flows/shared/post-completion.ts`, `lib/payments/send-confirmation.ts`, `lib/payments/terminal-effects.ts` — lifecycle-owned effects and durable bridges
+- `lib/bot/flows/shared/send-tickets.ts`, `lib/membership/assign-tiers.ts` — ticket channel separation and strict internal-effect failures
+- `lib/bot/automation/__tests__/sealed-rule-actions.test.ts`, `lib/bot/flows/shared/__tests__/ticket-delivery-lifecycle.test.ts` — seal-race and WhatsApp QR retry regressions
+- `lib/__tests__/p0-terminal-application-db.test.ts`, `lib/__tests__/urgent-payment-ticket-hotfix.test.ts` — executable DB fixture and updated ticket ordering assertion
+
+### What could break
+- Existing automation templates must reference the dashboard’s `template_name` field and require a sender with template support; unavailable external actions now terminate conservatively instead of being marked completed as no-ops.
+- Phase-A finalization now remains blocked when rule discovery, sealing, frozen-row reads, or real effect execution cannot be proven.
+
 ## 2026-09-17 — Phase A v15: Terminal effect manifest system (DB infrastructure)
 
 ### What changed

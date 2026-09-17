@@ -56,14 +56,20 @@ describe.skipIf(!canRun)('Phase A v15: Application RPCs + rule-action lifecycle'
       DO $$ BEGIN CREATE ROLE anon NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
       DO $$ BEGIN CREATE ROLE authenticated NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
       GRANT USAGE ON SCHEMA public TO service_role, anon, authenticated;
+      DO $$ BEGIN CREATE PUBLICATION supabase_realtime; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+      CREATE SCHEMA IF NOT EXISTS auth;
+      CREATE TABLE IF NOT EXISTS auth.users (id UUID PRIMARY KEY);
+      CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID LANGUAGE sql STABLE AS 'SELECT NULL::UUID';
+      CREATE OR REPLACE FUNCTION auth.role() RETURNS TEXT LANGUAGE sql STABLE AS 'SELECT current_user::TEXT';
 
       CREATE TABLE IF NOT EXISTS businesses (
         id UUID PRIMARY KEY, name TEXT DEFAULT 'Test',
+        owner_id UUID,
         metadata JSONB DEFAULT '{"loyalty_earning_enabled": true, "loyalty_points_mode": "per_visit", "loyalty_points_per_visit": 10}'::jsonb
       );
       CREATE TABLE IF NOT EXISTS bookings (
         id UUID PRIMARY KEY, business_id UUID, guest_phone TEXT, guest_name TEXT,
-        status booking_status DEFAULT 'confirmed'
+        user_id UUID, created_at TIMESTAMPTZ DEFAULT NOW(), status booking_status DEFAULT 'confirmed'
       );
       CREATE TABLE IF NOT EXISTS reservations (id UUID PRIMARY KEY, business_id UUID, guest_phone TEXT, guest_name TEXT, status booking_status DEFAULT 'confirmed');
       CREATE TABLE IF NOT EXISTS orders (id UUID PRIMARY KEY, business_id UUID, delivery_phone TEXT);
@@ -86,8 +92,11 @@ describe.skipIf(!canRun)('Phase A v15: Application RPCs + rule-action lifecycle'
       CREATE TABLE IF NOT EXISTS queue_entries (id UUID PRIMARY KEY);
       CREATE TABLE IF NOT EXISTS services (id UUID PRIMARY KEY, business_id UUID, name TEXT);
       CREATE TABLE IF NOT EXISTS events (id UUID PRIMARY KEY, business_id UUID, name TEXT, date DATE, time TIME, venue TEXT, total_tickets INT DEFAULT 0, tickets_sold INT DEFAULT 0);
-      CREATE TABLE IF NOT EXISTS products (id UUID PRIMARY KEY, business_id UUID);
+      CREATE TABLE IF NOT EXISTS products (id UUID PRIMARY KEY, business_id UUID, stock_quantity INT DEFAULT 0);
       CREATE TABLE IF NOT EXISTS bot_rules (id UUID PRIMARY KEY, business_id UUID, name TEXT, trigger_event VARCHAR(40), conditions JSONB DEFAULT '[]', action_type VARCHAR(20), action_payload JSONB, is_active BOOLEAN DEFAULT true, priority INT DEFAULT 0);
+      CREATE TABLE IF NOT EXISTS processed_webhook_events (id UUID PRIMARY KEY DEFAULT gen_random_uuid());
+      CREATE TABLE IF NOT EXISTS whatsapp_channels (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), business_id UUID);
+      CREATE TABLE IF NOT EXISTS booking_slots (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), business_id UUID);
       -- Function stub required by migration 020 triggers
       CREATE OR REPLACE FUNCTION update_updated_at() RETURNS trigger AS $t$
       BEGIN NEW.updated_at = NOW(); RETURN NEW; END; $t$ LANGUAGE plpgsql;
@@ -103,7 +112,8 @@ describe.skipIf(!canRun)('Phase A v15: Application RPCs + rule-action lifecycle'
         confirmation_claim_token UUID,
         confirmation_terminal_reason TEXT,
         finalization_completed_at TIMESTAMPTZ,
-        payment_authority_version INTEGER DEFAULT 1
+        payment_authority_version INTEGER DEFAULT 1,
+        created_at TIMESTAMPTZ DEFAULT NOW()
       );
 
       INSERT INTO businesses (id) VALUES ('${BIZ}');
@@ -163,6 +173,9 @@ describe.skipIf(!canRun)('Phase A v15: Application RPCs + rule-action lifecycle'
       DROP TABLE IF EXISTS services CASCADE;
       DROP TABLE IF EXISTS events CASCADE;
       DROP TABLE IF EXISTS products CASCADE;
+      DROP TABLE IF EXISTS processed_webhook_events CASCADE;
+      DROP TABLE IF EXISTS whatsapp_channels CASCADE;
+      DROP TABLE IF EXISTS booking_slots CASCADE;
       DROP TABLE IF EXISTS bot_rules CASCADE;
       DROP TABLE IF EXISTS businesses CASCADE;
       DROP TYPE IF EXISTS capability_type CASCADE;
@@ -270,6 +283,14 @@ describe.skipIf(!canRun)('Phase A v15: Application RPCs + rule-action lifecycle'
   });
 
   // ─── RULE-ACTION LIFECYCLE (Blocker 5) ──────────────────
+
+  it('ACL-01: runtime can read durable rule/receipt/loyalty outcomes without broad rule-row writes', () => {
+    expect(psql(`SELECT has_table_privilege('service_role', 'payment_rule_action_manifests', 'SELECT');`)).toBe('t');
+    expect(psql(`SELECT has_table_privilege('service_role', 'payment_rule_action_executions', 'SELECT');`)).toBe('t');
+    expect(psql(`SELECT has_table_privilege('service_role', 'payment_receipt_applications', 'SELECT,INSERT,UPDATE');`)).toBe('t');
+    expect(psql(`SELECT has_table_privilege('service_role', 'payment_loyalty_applications', 'SELECT');`)).toBe('t');
+    expect(psql(`SELECT has_table_privilege('service_role', 'payment_rule_action_executions', 'INSERT');`)).toBe('f');
+  });
 
   it('RULE-01: advance_rule_action pending→sending sets emission_started_at', () => {
     const actions = JSON.stringify([{

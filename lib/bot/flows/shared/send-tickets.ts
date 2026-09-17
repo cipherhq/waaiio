@@ -58,6 +58,10 @@ export interface TicketCreationResult {
   error?: string;
 }
 
+export interface TicketDeliveryContext extends SendTicketsOptions {
+  tickets: TicketCreationResult['tickets'];
+}
+
 /**
  * Pure canonical ticket-row convergence. NO delivery side effects.
  * Creates/repairs the exact {1..N} ticket row set for a booking.
@@ -163,6 +167,36 @@ export async function sendTicketsAfterPurchase(opts: SendTicketsOptions): Promis
   if (!rowResult.success) return rowResult;
 
   const tickets = rowResult.tickets;
+  if (opts.sender) {
+    await deliverTicketsWhatsApp({ ...opts, tickets });
+  } else {
+    logger.info('[TICKETS] No WhatsApp sender — skipping WhatsApp delivery for booking:', opts.bookingId);
+  }
+  try {
+    await deliverTicketsEmail({ ...opts, tickets });
+  } catch (emailErr) {
+    // Email remains supplemental to the WhatsApp-first ticket contract.
+    logger.error('[TICKETS] Email send error:', emailErr);
+  }
+  await dispatchTicketPurchaseWebhooks({ ...opts, tickets });
+
+  return { success: true, tickets };
+}
+
+/**
+ * Deliver the canonical ticket set over WhatsApp. This is deliberately separate
+ * from row creation so a caller can place the provider operation inside its own
+ * emission fence. QR ticket images remain the primary delivery contract; the PDF
+ * is an additional convenience asset.
+ */
+export async function deliverTicketsWhatsApp(opts: TicketDeliveryContext): Promise<void> {
+  const {
+    supabase, sender, businessId, bookingId,
+    eventName, eventDate, eventTime, venue,
+    guestName, guestPhone, referenceCode, quantity, tickets,
+  } = opts;
+  if (!sender) throw new Error('ticket_whatsapp_sender_unavailable');
+  const t = opts.translate ?? ((text: string) => Promise.resolve(text));
   const phone = guestPhone.startsWith('+') ? guestPhone : `+${guestPhone}`;
 
   const verifyBaseUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com'}/tickets`;
@@ -189,21 +223,18 @@ export async function sendTicketsAfterPurchase(opts: SendTicketsOptions): Promis
     if (!uploadError) {
       logger.info('[TICKETS] PDF uploaded to storage:', storagePath);
 
-      // Only send via WhatsApp if sender is available (not web-only purchases)
-      if (sender) {
-        const { data: signedUrlData } = await supabase.storage
-          .from('documents')
-          .createSignedUrl(storagePath, 86400);
+      const { data: signedUrlData, error: signedUrlError } = await supabase.storage
+        .from('documents')
+        .createSignedUrl(storagePath, 86400);
 
-        if (signedUrlData?.signedUrl) {
-          await sender.sendDocument({
-            to: phone,
-            documentUrl: signedUrlData.signedUrl,
-            filename: `${eventName.replace(/[^a-zA-Z0-9 ]/g, '').slice(0, 40)} - Tickets.pdf`,
-            caption: `Your ${quantity} ${ticketLabel} for ${eventName}`,
-          });
-          logger.info('[TICKETS] PDF sent to', phone);
-        }
+      if (!signedUrlError && signedUrlData?.signedUrl) {
+        await sender.sendDocument({
+          to: phone,
+          documentUrl: signedUrlData.signedUrl,
+          filename: `${eventName.replace(/[^a-zA-Z0-9 ]/g, '').slice(0, 40)} - Tickets.pdf`,
+          caption: `Your ${quantity} ${ticketLabel} for ${eventName}`,
+        });
+        logger.info('[TICKETS] PDF sent to', phone);
       }
     } else {
       logger.error('[TICKETS] PDF upload failed:', uploadError.message);
@@ -213,31 +244,30 @@ export async function sendTicketsAfterPurchase(opts: SendTicketsOptions): Promis
   }
 
   // 4. Send ticket images via WhatsApp (Edge-generated image with QR code)
-  if (sender) {
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
+  for (const ticket of tickets) {
+    const verifyUrl = `${appUrl}/tickets/${ticket.ticketCode}`;
+    const caption = `🎟️ *${eventName}*\n\n👤 ${guestName || 'Guest'}\n🎫 Ticket ${ticket.ticketNumber}/${ticket.totalTickets} — *${ticket.ticketCode}*\n📅 ${eventDate}${eventTime ? ' · ' + eventTime : ''}\n📍 ${venue}\n🔑 Ref: *${referenceCode}*\n\nShow this at the entrance\n🔗 ${verifyUrl}`;
+    const imageUrl = `${appUrl}/api/tickets/image?code=${encodeURIComponent(ticket.ticketCode)}`;
 
-    for (const ticket of tickets) {
-      const verifyUrl = `${appUrl}/tickets/${ticket.ticketCode}`;
-      const caption = `🎟️ *${eventName}*\n\n👤 ${guestName || 'Guest'}\n🎫 Ticket ${ticket.ticketNumber}/${ticket.totalTickets} — *${ticket.ticketCode}*\n📅 ${eventDate}${eventTime ? ' · ' + eventTime : ''}\n📍 ${venue}\n🔑 Ref: *${referenceCode}*\n\nShow this at the entrance\n🔗 ${verifyUrl}`;
-
-      // Use the Edge API route to generate ticket image with QR code (no Sharp needed)
-      const imageUrl = `${appUrl}/api/tickets/image?code=${encodeURIComponent(ticket.ticketCode)}`;
-
-      try {
-        await sender.sendImage({ to: phone, imageUrl, caption });
-        logger.info('[TICKETS] Ticket image sent for', ticket.ticketCode);
-      } catch (err) {
-        logger.error('[TICKETS] Ticket image send failed for', ticket.ticketCode, ':', err);
-        // Text fallback
-        await sender.sendText({ to: phone, text: await t(caption) }).catch(err => logger.error('[TICKETS] Text fallback send failed:', err));
-      }
+    try {
+      await sender.sendImage({ to: phone, imageUrl, caption });
+      logger.info('[TICKETS] Ticket image sent for', ticket.ticketCode);
+    } catch (err) {
+      logger.error('[TICKETS] Ticket image send failed for', ticket.ticketCode, ':', err);
+      // A successful text fallback still preserves a usable ticket/verification URL.
+      await sender.sendText({ to: phone, text: await t(caption) });
     }
-    logger.info('[TICKETS] WhatsApp ticket delivery complete for', phone, '| booking:', bookingId);
-  } else {
-    logger.info('[TICKETS] No WhatsApp sender — skipping WhatsApp delivery for booking:', bookingId);
   }
+  logger.info('[TICKETS] WhatsApp ticket delivery complete for', phone, '| booking:', bookingId);
+}
 
-  // 8. Send email confirmation if we have an email address
+/** Send the canonical ticket set by email when an address is available. */
+export async function deliverTicketsEmail(opts: TicketDeliveryContext): Promise<void> {
+  const {
+    supabase, businessId, bookingId, eventName, eventDate, eventTime, venue,
+    guestName, guestPhone, referenceCode, quantity, tickets,
+  } = opts;
   let email = opts.guestEmail;
   if (!email) {
     // Try to find email from profile
@@ -252,39 +282,36 @@ export async function sendTicketsAfterPurchase(opts: SendTicketsOptions): Promis
     email = profile?.email || undefined;
   }
 
-  if (email) {
-    try {
-      const ticketCodes = tickets.map(t => t.ticketCode);
-      const firstName = guestName.split(' ')[0] || 'there';
-      const { data: biz } = await supabase
-        .from('businesses')
-        .select('name')
-        .eq('id', businessId)
-        .single();
+  if (!email) throw new Error('ticket_email_unavailable');
 
-      const { isWhiteLabel: isWl } = await import('@/lib/whitelabel');
-      const emailContent = ticketConfirmationEmail({
-        firstName,
-        businessName: biz?.name || 'Event',
-        eventName,
-        eventDate,
-        eventTime,
-        venue,
-        quantity,
-        referenceCode,
-        formattedAmount: opts.amount ? formatCurrency(opts.amount, opts.countryCode || 'US') : 'Paid',
-        ticketCodes,
-        whitelabel: isWl(subscriptionTier),
-      });
+  const { data: biz, error: bizError } = await supabase
+    .from('businesses')
+    .select('name, subscription_tier')
+    .eq('id', businessId)
+    .single();
+  if (bizError) throw new Error(`ticket_email_business_lookup_failed:${bizError.message}`);
 
-      await sendEmail({ to: email, ...emailContent });
-      logger.info('[TICKETS] Email sent to', email, '| booking:', bookingId);
-    } catch (emailErr) {
-      logger.error('[TICKETS] Email send error:', emailErr);
-    }
-  }
+  const { isWhiteLabel: isWl } = await import('@/lib/whitelabel');
+  const emailContent = ticketConfirmationEmail({
+    firstName: guestName.split(' ')[0] || 'there',
+    businessName: biz?.name || 'Event',
+    eventName,
+    eventDate,
+    eventTime,
+    venue,
+    quantity,
+    referenceCode,
+    formattedAmount: opts.amount ? formatCurrency(opts.amount, opts.countryCode || 'US') : 'Paid',
+    ticketCodes: tickets.map(t => t.ticketCode),
+    whitelabel: isWl(biz?.subscription_tier),
+  });
+  const result = await sendEmail({ to: email, ...emailContent });
+  if (!result.success) throw new Error('ticket_email_send_failed');
+  logger.info('[TICKETS] Email sent to', email, '| booking:', bookingId);
+}
 
-  // 9. Dispatch ticket.purchased webhook (non-blocking)
+async function dispatchTicketPurchaseWebhooks(opts: TicketDeliveryContext): Promise<void> {
+  const { supabase, businessId, bookingId, eventId, eventName, guestName, guestPhone, referenceCode, quantity, tickets } = opts;
   dispatchWebhook(supabase, businessId, 'ticket.purchased', {
     event_id: eventId,
     event_name: eventName,
@@ -311,5 +338,4 @@ export async function sendTicketsAfterPurchase(opts: SendTicketsOptions): Promis
     }).catch(err => logger.error('[TICKETS] Sold-out webhook error:', err));
   }
 
-  return { success: true, tickets };
 }
