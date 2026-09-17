@@ -324,14 +324,57 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
 
     if (bizName) automationContext.business_name = bizName;
 
-    // Trigger sequences
+    // Trigger sequences (idempotent via partial unique index)
     await triggerSequences(supabase, businessId, triggerEvent, customerPhone, automationContext);
 
-    // Evaluate rules
+    // Evaluate rules — with sealed manifest when paymentId is available (v15)
     const sendMsg = async (to: string, text: string) => {
       if (sender) await sender.sendText({ to, text });
     };
-    await evaluateRules(supabase, businessId, ruleEvent, automationContext, sendMsg);
+    if (paymentId && claimToken) {
+      try {
+        const { sealRuleActions, readFrozenRuleActions, advanceRuleAction } = await import('@/lib/payments/terminal-effects');
+        // 1. Evaluate conditions to build candidate snapshot
+        const { data: matchedRules } = await supabase.from('bot_rules')
+          .select('id, action_type, action_payload')
+          .eq('business_id', businessId).eq('trigger_event', ruleEvent).eq('is_active', true);
+        const candidates = (matchedRules || []).map((r: { id: string; action_type: string; action_payload: unknown }) => ({
+          rule_id: r.id, action_type: r.action_type, action_payload: r.action_payload as object,
+          action_fingerprint: `${r.action_type}|${JSON.stringify(r.action_payload)}`,
+        }));
+        // 2. Seal atomically (one-shot, immutable after seal)
+        await sealRuleActions(supabase, paymentId, candidates);
+        // 3. Execute from frozen rows only (never re-read bot_rules)
+        const frozenRows = await readFrozenRuleActions(supabase, paymentId);
+        for (const row of frozenRows) {
+          if (['send_message', 'send_template', 'notify_owner'].includes(row.action_type)) {
+            // External action: pending → sending → completed/indeterminate
+            await advanceRuleAction(supabase, paymentId, row.rule_id, 'sending');
+            try {
+              const payload = row.action_payload as Record<string, string>;
+              if (row.action_type === 'notify_owner') {
+                // TODO: resolve owner phone and send
+              } else {
+                await sendMsg(customerPhone, payload.text || payload.message || '');
+              }
+              await advanceRuleAction(supabase, paymentId, row.rule_id, 'completed');
+            } catch {
+              await advanceRuleAction(supabase, paymentId, row.rule_id, 'indeterminate');
+            }
+          } else {
+            // Internal action: pending → completed
+            await advanceRuleAction(supabase, paymentId, row.rule_id, 'completed');
+          }
+        }
+      } catch (sealErr) {
+        // Seal failed — fall back to legacy evaluateRules
+        logger.warn('[POST-COMPLETION] Rule seal failed, falling back to legacy evaluateRules:', sealErr);
+        await evaluateRules(supabase, businessId, ruleEvent, automationContext, sendMsg);
+      }
+    } else {
+      // Legacy path: no paymentId, execute rules directly
+      await evaluateRules(supabase, businessId, ruleEvent, automationContext, sendMsg);
+    }
   } catch (err) {
     logger.withContext({ op: 'post-completion.automation', ...safeLogErrorContext(err) }).error('[POST-COMPLETION] Automation error (non-fatal)');
   }

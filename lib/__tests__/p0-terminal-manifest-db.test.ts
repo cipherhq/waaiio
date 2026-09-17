@@ -97,7 +97,8 @@ describe.skipIf(!canRun)('Phase A v15: Terminal effect manifest', () => {
         confirmation_processing_at = NOW(),
         confirmation_sent_at = NULL,
         confirmation_terminal_reason = NULL,
-        finalization_completed_at = NOW();
+        finalization_completed_at = NOW(),
+        payment_authority_version = 1;
     `);
   }
 
