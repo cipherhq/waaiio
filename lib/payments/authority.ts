@@ -358,17 +358,10 @@ async function mapConfirmationResult(
   result: ConfirmationResult,
   stages: PaymentLifecycleResult['stages'],
 ): Promise<PaymentLifecycleResult> {
-  // Persist terminal confirmation state for ALL paths into Stage 3
-  if (result.status === 'not_deliverable') {
-    const { error: termErr } = await supabase.from('payments')
-      .update({ confirmation_terminal_reason: 'not_deliverable' })
-      .eq('id', paymentId);
-    if (termErr) {
-      logger.withContext({ op: 'authority.terminal-persist', ...safeLogErrorContext(termErr) })
-        .error('[PAY-AUTHORITY] Failed to persist confirmation_terminal_reason');
-      return retryable('confirmation_terminal_persist_failed', stages);
-    }
-  }
+  // not_deliverable termination is now handled atomically by
+  // terminate_payment_confirmation RPC in send-confirmation.ts.
+  // No unfenced UPDATE needed here — the RPC validates the claim token
+  // and sets confirmation_terminal_reason in one transaction.
   switch (result.status) {
     case 'completed':
       return { status: 'completed', retryable: false, stages: { ...stages, customerConfirmed: true } };

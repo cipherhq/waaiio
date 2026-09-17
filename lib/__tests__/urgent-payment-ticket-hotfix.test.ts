@@ -273,7 +273,7 @@ describe('Bot counter fail-closed', () => {
 describe('Ticket state completeness', () => {
   it('finalization BEFORE ticket creation', () => {
     const src = readSrc('../payments/send-confirmation.ts');
-    expect(src.indexOf("rpc('finalize_free_ticket_booking'")).toBeLessThan(src.indexOf('sendTicketsAfterPurchase({'));
+    expect(src.indexOf("rpc('finalize_free_ticket_booking'")).toBeLessThan(src.indexOf('ensureCanonicalTicketRows(ticketOptions)'));
   });
   it('incomplete state prevents confirmation finalization', () => {
     const src = readSrc('../payments/send-confirmation.ts');

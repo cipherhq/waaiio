@@ -3,6 +3,50 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-09-17 — Phase A v15: CTO handoff closure (runtime lifecycle)
+
+### What changed
+- Rule discovery and seal recovery now fail closed. A query failure cannot become a sealed zero-rule snapshot, while concurrent losers and lost seal responses converge on the durable winner without re-reading live rules.
+- Frozen rule actions now execute the existing action semantics under per-action lifecycle states. Retried `sending` actions reconcile to `indeterminate` without re-emission, and the aggregate handoff completes only when every frozen row is terminal.
+- Post-payment effects now perform their real work inside the manifest lifecycle or bridge an existing durable delivery outcome. Removed the dummy-success callbacks that could finalize work that had not occurred.
+- Migration 384 now grants the service runtime only the table privileges needed to read sealed manifests/outcome markers and persist receipt-generation markers; direct rule-action INSERT remains denied.
+- Paid ticket fulfillment keeps canonical ticket convergence separate from provider delivery, preserving QR ticket images over WhatsApp as the primary channel and email as supplemental.
+- Added executable TypeScript race/retry proofs and fixed the terminal-application DB fixture so migration 020 runs with its required local realtime publication.
+
+### Files changed
+- `lib/bot/automation/sealed-rule-actions.ts`, `rules-engine.ts`, `sequence-service.ts` — frozen-only rule execution and complete action semantics
+- `lib/bot/flows/shared/post-completion.ts`, `lib/payments/send-confirmation.ts`, `lib/payments/terminal-effects.ts` — lifecycle-owned effects and durable bridges
+- `lib/bot/flows/shared/send-tickets.ts`, `lib/membership/assign-tiers.ts` — ticket channel separation and strict internal-effect failures
+- `lib/bot/automation/__tests__/sealed-rule-actions.test.ts`, `lib/bot/flows/shared/__tests__/ticket-delivery-lifecycle.test.ts` — seal-race and WhatsApp QR retry regressions
+- `lib/__tests__/p0-terminal-application-db.test.ts`, `lib/__tests__/urgent-payment-ticket-hotfix.test.ts` — executable DB fixture and updated ticket ordering assertion
+
+### What could break
+- Existing automation templates must reference the dashboard’s `template_name` field and require a sender with template support; unavailable external actions now terminate conservatively instead of being marked completed as no-ops.
+- Phase-A finalization now remains blocked when rule discovery, sealing, frozen-row reads, or real effect execution cannot be proven.
+
+## 2026-09-17 — Phase A v15: Terminal effect manifest system (DB infrastructure)
+
+### What changed
+- **7 new tables.** `payment_terminal_manifests`, `payment_terminal_effects`, `payment_loyalty_applications`, `payment_receipt_applications`, `payment_visit_applications`, `payment_rule_action_manifests`, `payment_rule_action_executions`. All with RLS enabled. Migrations 384.
+- **12 new RPCs.** `initialize_terminal_effects`, `reserve_terminal_effect`, `begin_terminal_external_emission`, `complete_internal_effect`, `complete_external_effect`, `fail_external_effect`, `mark_effect_indeterminate`, `skip_optional_effect`, `apply_payment_loyalty_once`, `apply_payment_customer_visit_once`, `terminate_payment_confirmation`, `seal_payment_rule_actions`. Migrations 385-387.
+- **4 modified RPCs.** `claim_payment_confirmation`, `renew_payment_confirmation_claim`, `finalize_payment_confirmation`, `release_payment_confirmation` — all now enforce canonical terminal predicate (`confirmation_terminal_reason IS NOT NULL`). `finalize_payment_confirmation` adds manifest completeness checks + DB-derived terminal outcome. Migration 388.
+- **Partial unique index.** `bot_sequence_enrollments(sequence_id, customer_phone) WHERE status = 'active'` closes TOCTOU race. Migration 384.
+- **Table-level privilege hardening.** `payment_rule_action_executions` — service_role has no INSERT/DELETE; only column-level UPDATE on mutable fields. CTO binding requirement #1.
+- **All RPCs** — SECURITY DEFINER + trusted search_path + three-role REVOKE + service_role-only GRANT + migration-time `has_function_privilege()` verification.
+
+### Files changed
+- `supabase/migrations/384_terminal_effect_tables.sql` — 7 tables, 1 index, table-level ACL
+- `supabase/migrations/385_terminal_effect_manifest_rpcs.sql` — 4 RPCs + privilege hardening
+- `supabase/migrations/386_terminal_effect_lifecycle_rpcs.sql` — 6 RPCs + privilege hardening
+- `supabase/migrations/387_terminal_application_rpcs.sql` — 2 RPCs + privilege hardening
+- `supabase/migrations/388_terminal_effect_confirmation_guards.sql` — 4 modified RPCs
+- `lib/__tests__/p0-terminal-rule-seal-db.test.ts` — rule-action seal tests (CTO binding #1 + #2)
+- `lib/__tests__/p0-terminal-manifest-db.test.ts` — manifest + confirmation guard tests
+
+### What could break
+- Modified `claim_payment_confirmation` now rejects `not_deliverable` payments. Any code path that tried to re-claim a terminated payment will now get `already_terminated`. This is intentional (closes a security gap).
+- Modified `finalize_payment_confirmation` enforces manifest completeness when a manifest exists. Legacy payments without manifests are unaffected (conditional check).
+
 ## 2026-09-16 — Saved-card PIN UX bugs: premature completion, stale button escape, Waaiio PIN copy
 
 ### What changed

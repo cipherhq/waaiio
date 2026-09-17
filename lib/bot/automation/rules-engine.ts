@@ -3,7 +3,7 @@ import { logger } from '@/lib/logger';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 import { enrollInSequence } from './sequence-service';
 
-interface BotRule {
+export interface BotRule {
   id: string;
   name: string;
   trigger_event: string;
@@ -13,13 +13,13 @@ interface BotRule {
   priority: number;
 }
 
-interface RuleCondition {
+export interface RuleCondition {
   field: string;
   op: 'eq' | 'neq' | 'gt' | 'gte' | 'lt' | 'lte' | 'contains' | 'not_contains';
   value: string | number;
 }
 
-interface RuleContext {
+export interface RuleContext {
   [key: string]: unknown;
   customer_phone?: string;
   customer_name?: string;
@@ -36,8 +36,9 @@ export async function evaluateRules(
   event: string,
   context: RuleContext,
   sendMessage?: (phone: string, text: string) => Promise<void>,
+  sendTemplate?: (phone: string, templateName: string, templateParams: string[]) => Promise<void>,
 ): Promise<void> {
-  const { data: rules } = await supabase
+  const { data: rules, error: rulesError } = await supabase
     .from('bot_rules')
     .select('id, name, trigger_event, conditions, action_type, action_payload, priority')
     .eq('business_id', businessId)
@@ -45,6 +46,7 @@ export async function evaluateRules(
     .eq('is_active', true)
     .order('priority', { ascending: false });
 
+  if (rulesError) throw new Error(`rule_discovery_failed:${rulesError.message}`);
   if (!rules || rules.length === 0) return;
 
   for (const rule of rules as BotRule[]) {
@@ -54,14 +56,14 @@ export async function evaluateRules(
 
       logger.debug('[RULES] Rule matched:', rule.name, 'event:', event);
 
-      await executeAction(supabase, businessId, rule, context, sendMessage);
+      await executeRuleAction(supabase, businessId, rule, context, sendMessage, sendTemplate);
     } catch (err) {
       logger.error('[RULES] Rule execution error:', rule.name, err);
     }
   }
 }
 
-function evaluateConditions(
+export function evaluateConditions(
   conditions: RuleCondition[],
   context: RuleContext,
 ): boolean {
@@ -95,65 +97,77 @@ function evaluateConditions(
   });
 }
 
-async function executeAction(
+export async function executeRuleAction(
   supabase: SupabaseClient,
   businessId: string,
   rule: BotRule,
   context: RuleContext,
   sendMessage?: (phone: string, text: string) => Promise<void>,
+  sendTemplate?: (phone: string, templateName: string, templateParams: string[]) => Promise<void>,
 ): Promise<void> {
   const payload = rule.action_payload;
   const phone = context.customer_phone?.replace(/^\+/, '');
 
   switch (rule.action_type) {
     case 'send_message': {
-      if (!phone || !sendMessage) break;
+      if (!phone || !sendMessage) throw new Error('send_message_unavailable');
       const message = fillVariables(payload.message as string || '', context);
       await sendMessage(phone, message);
       break;
     }
 
     case 'send_template': {
-      if (!phone || !sendMessage) break;
-      const template = fillVariables(payload.template as string || '', context);
-      await sendMessage(phone, template);
+      if (!phone) throw new Error('send_template_unavailable');
+      // Legacy rules stored a freeform customer-facing message under
+      // `template`. Preserve that contract; only `template_name` denotes a
+      // provider WhatsApp template because the dashboard explicitly writes it.
+      if (!payload.template_name && typeof payload.template === 'string') {
+        if (!sendMessage) throw new Error('send_template_unavailable');
+        await sendMessage(phone, fillVariables(payload.template, context));
+        break;
+      }
+      if (!sendTemplate) throw new Error('send_template_unavailable');
+      const templateName = payload.template_name as string;
+      if (!templateName) throw new Error('send_template_name_missing');
+      const templateParams = Array.isArray(payload.template_params)
+        ? payload.template_params.map(value => fillVariables(String(value), context))
+        : [];
+      await sendTemplate(phone, templateName, templateParams);
       break;
     }
 
     case 'enroll_sequence': {
-      if (!phone) break;
+      if (!phone) throw new Error('enroll_sequence_phone_missing');
       const sequenceId = payload.sequence_id as string;
-      if (sequenceId) {
-        await enrollInSequence(supabase, businessId, sequenceId, context.customer_phone!, context);
-      }
+      if (!sequenceId) throw new Error('enroll_sequence_id_missing');
+      await enrollInSequence(supabase, businessId, sequenceId, context.customer_phone!, context);
       break;
     }
 
     case 'assign_tag': {
-      if (!phone) break;
+      if (!phone) throw new Error('assign_tag_phone_missing');
       const tag = payload.tag as string;
-      if (tag) {
-        // Upsert a tag on the customer profile or a custom tags table
-        // For now, store in customer metadata
-        const phoneP = phone.startsWith('+') ? phone : `+${phone}`;
-        const phoneN = phone.startsWith('+') ? phone.slice(1) : phone;
-        const { data: profile } = await supabase
-          .from('profiles')
-          .select('id, metadata')
-          .or(`phone.eq.${sanitizeFilterValue(phoneP)},phone.eq.${sanitizeFilterValue(phoneN)}`)
-          .limit(1)
-          .maybeSingle();
+      if (!tag) throw new Error('assign_tag_value_missing');
+      // Preserve the existing rules-engine authority: tags live in profiles.metadata.
+      const phoneP = phone.startsWith('+') ? phone : `+${phone}`;
+      const phoneN = phone.startsWith('+') ? phone.slice(1) : phone;
+      const { data: profile, error: profileError } = await supabase
+        .from('profiles')
+        .select('id, metadata')
+        .or(`phone.eq.${sanitizeFilterValue(phoneP)},phone.eq.${sanitizeFilterValue(phoneN)}`)
+        .limit(1)
+        .maybeSingle();
+      if (profileError) throw new Error(`assign_tag_lookup_failed:${profileError.message}`);
+      if (!profile) throw new Error('assign_tag_profile_missing');
 
-        if (profile) {
-          const meta = (profile.metadata || {}) as Record<string, unknown>;
-          const tags = (meta.tags as string[]) || [];
-          if (!tags.includes(tag)) {
-            tags.push(tag);
-            await supabase.from('profiles').update({
-              metadata: { ...meta, tags },
-            }).eq('id', profile.id);
-          }
-        }
+      const meta = (profile.metadata || {}) as Record<string, unknown>;
+      const tags = [...((meta.tags as string[]) || [])];
+      if (!tags.includes(tag)) {
+        tags.push(tag);
+        const { error: updateError } = await supabase.from('profiles').update({
+          metadata: { ...meta, tags },
+        }).eq('id', profile.id);
+        if (updateError) throw new Error(`assign_tag_update_failed:${updateError.message}`);
       }
       break;
     }
@@ -161,21 +175,24 @@ async function executeAction(
     case 'notify_owner': {
       // Send notification to the business owner
       const message = fillVariables(payload.message as string || `Rule "${rule.name}" triggered.`, context);
-      const { data: biz } = await supabase
+      const { data: biz, error: bizError } = await supabase
         .from('businesses')
         .select('phone, owner_id')
         .eq('id', businessId)
         .single();
 
+      if (bizError) throw new Error(`notify_owner_lookup_failed:${bizError.message}`);
+      let performed = false;
       if (biz?.phone && sendMessage) {
         const ownerPhone = biz.phone.replace(/^\+/, '');
         await sendMessage(ownerPhone, `🔔 *${rule.name}*\n${message}`);
+        performed = true;
       }
 
       // Also create in-app notification
       if (biz?.owner_id) {
         try {
-          await supabase.from('notifications').insert({
+          const { error: notificationError } = await supabase.from('notifications').insert({
             user_id: biz.owner_id,
             business_id: businessId,
             type: 'rule_triggered',
@@ -183,28 +200,41 @@ async function executeAction(
             body: message,
             is_read: false,
           });
+          if (notificationError) throw new Error(`notify_owner_insert_failed:${notificationError.message}`);
+          performed = true;
         } catch (err) { logger.warn('[RULES-ENGINE] Failed to create notification (non-critical):', err); }
       }
+      if (!performed) throw new Error('notify_owner_destination_missing');
       break;
     }
 
     case 'update_status': {
       // Update a booking/order status — payload contains { table, id_field, status }
-      const table = payload.table as string;
+      const inferredTable = context.service_type === 'order' ? 'orders' : 'bookings';
+      const table = (payload.table as string) || inferredTable;
       const statusValue = payload.status as string;
       const refId = context.reference_id as string;
-      if (table && statusValue && refId) {
-        await supabase.from(table).update({ status: statusValue }).eq('id', refId);
-      }
+      if (!['bookings', 'orders'].includes(table)) throw new Error('update_status_table_unsupported');
+      if (!statusValue || !refId) throw new Error('update_status_payload_incomplete');
+      const { error: statusError } = await supabase.from(table).update({ status: statusValue }).eq('id', refId);
+      if (statusError) throw new Error(`update_status_failed:${statusError.message}`);
       break;
     }
+
+    default:
+      throw new Error(`unsupported_rule_action:${rule.action_type}`);
   }
 }
 
 function fillVariables(template: string, vars: Record<string, unknown>): string {
   let result = template;
   for (const [key, value] of Object.entries(vars)) {
-    result = result.replace(new RegExp(`\\{${key}\\}`, 'g'), String(value ?? ''));
+    const replacement = String(value ?? '');
+    // The rules dashboard inserts Mustache-style {{variable}} tokens. Retain
+    // support for historical single-brace payloads already stored in bot_rules.
+    result = result
+      .replace(new RegExp(`\\{\\{${key}\\}\\}`, 'g'), replacement)
+      .replace(new RegExp(`\\{${key}\\}`, 'g'), replacement);
   }
   return result;
 }

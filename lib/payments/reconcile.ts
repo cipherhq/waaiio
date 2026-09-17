@@ -47,7 +47,7 @@ export async function reconcilePayment(
   // 1. Load the canonical payment
   const { data: payment, error: paymentError } = await supabase
     .from('payments')
-    .select('id, amount, currency, gateway, gateway_reference, status, business_id, booking_id, invoice_id, campaign_id, reservation_id, order_id, metadata, gateway_fee, payment_authority_version, finalization_completed_at, fee_policy_version, config_version_id, transaction_category, fee_basis')
+    .select('id, amount, currency, gateway, gateway_reference, status, business_id, booking_id, invoice_id, campaign_id, reservation_id, order_id, metadata, gateway_fee, payment_authority_version, finalization_completed_at, confirmation_terminal_reason, fee_policy_version, config_version_id, transaction_category, fee_basis')
     .eq('id', paymentId)
     .single();
 
@@ -55,6 +55,12 @@ export async function reconcilePayment(
     logger.withContext({ op: 'reconcile.payment-load', ...safeLogErrorContext(paymentError) })
       .error(`${logPrefix} Payment load failed for ${paymentId}`);
     return { providerOutcome: 'config_error', lifecycle: null, acknowledgeSuccess: false };
+  }
+
+  // Terminal predicate guard (v13): payments with a terminal reason cannot be reconciled
+  if ((payment as Record<string, unknown>).confirmation_terminal_reason) {
+    logger.info(`${logPrefix} Payment ${paymentId} already terminally resolved: ${(payment as Record<string, unknown>).confirmation_terminal_reason}`);
+    return { providerOutcome: 'skipped', lifecycle: null, acknowledgeSuccess: true };
   }
 
   // 2. Provider verification (or use override from webhook)

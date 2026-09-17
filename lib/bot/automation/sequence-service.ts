@@ -34,7 +34,7 @@ export async function enrollInSequence(
   context: Record<string, unknown> = {},
 ): Promise<void> {
   // Check for existing active enrollment
-  const { data: existing } = await supabase
+  const { data: existing, error: existingError } = await supabase
     .from('bot_sequence_enrollments')
     .select('id')
     .eq('sequence_id', sequenceId)
@@ -42,20 +42,22 @@ export async function enrollInSequence(
     .eq('status', 'active')
     .maybeSingle();
 
+  if (existingError) throw new Error(`sequence_enrollment_lookup_failed:${existingError.message}`);
   if (existing) return; // Already enrolled
 
   // Get the first step to calculate initial delay
-  const { data: steps } = await supabase
+  const { data: steps, error: stepsError } = await supabase
     .from('bot_sequence_steps')
     .select('delay_minutes')
     .eq('sequence_id', sequenceId)
     .order('step_order', { ascending: true })
     .limit(1);
 
+  if (stepsError) throw new Error(`sequence_step_lookup_failed:${stepsError.message}`);
   const firstDelay = steps?.[0]?.delay_minutes || 0;
   const nextSendAt = new Date(Date.now() + firstDelay * 60 * 1000).toISOString();
 
-  await supabase.from('bot_sequence_enrollments').insert({
+  const { error: insertError } = await supabase.from('bot_sequence_enrollments').insert({
     sequence_id: sequenceId,
     business_id: businessId,
     customer_phone: customerPhone,
@@ -64,6 +66,11 @@ export async function enrollInSequence(
     status: 'active',
     context,
   });
+  // Concurrent identical enrollment is idempotent under migration 384's
+  // partial unique index; every other DB failure must remain visible.
+  if (insertError && insertError.code !== '23505') {
+    throw new Error(`sequence_enrollment_insert_failed:${insertError.message}`);
+  }
 
   logger.debug('[SEQUENCE] Enrolled', customerPhone, 'in sequence', sequenceId);
 }
@@ -214,20 +221,17 @@ export async function triggerSequences(
   customerPhone: string,
   context: Record<string, unknown> = {},
 ): Promise<void> {
-  const { data: sequences } = await supabase
+  const { data: sequences, error: sequencesError } = await supabase
     .from('bot_sequences')
     .select('id')
     .eq('business_id', businessId)
     .eq('trigger_event', triggerEvent)
     .eq('is_active', true);
 
+  if (sequencesError) throw new Error(`sequence_discovery_failed:${sequencesError.message}`);
   if (!sequences || sequences.length === 0) return;
 
   for (const seq of sequences) {
-    try {
-      await enrollInSequence(supabase, businessId, seq.id, customerPhone, context);
-    } catch (err) {
-      logger.error('[SEQUENCE] Enrollment error:', err);
-    }
+    await enrollInSequence(supabase, businessId, seq.id, customerPhone, context);
   }
 }

@@ -18,6 +18,13 @@ interface PostCompletionParams {
   serviceType?: string;
   referenceId?: string;
   sender?: MessageSender;
+  /** Payment ID for exactly-once RPCs (loyalty, CRM visit). Optional for backward compat. */
+  paymentId?: string;
+  /** Master claim token for manifest lifecycle drivers. Required when paymentId is set. */
+  claimToken?: string;
+  /** True when the WhatsApp channel is temporarily unavailable for a WhatsApp-origin payment.
+   *  WhatsApp-dependent effects must NOT be skipped — they stay pending for retry. */
+  whatsappOriginMissingChannel?: boolean;
   /** Amount paid (in smallest currency unit) for auto-receipt */
   amountPaid?: number;
   /** Service/product name for receipt */
@@ -49,7 +56,7 @@ function generateReferralCode(): string {
  * Checks enabled capabilities and triggers loyalty, feedback, and referral actions.
  */
 export async function handlePostCompletion(params: PostCompletionParams): Promise<void> {
-  const { supabase, businessId, customerPhone, customerName, serviceType, referenceId, sender, amountPaid, serviceName, referenceCode, skipLoyalty, skipAutomation, skipCustomerSpend, translate } = params;
+  const { supabase, businessId, customerPhone, customerName, serviceType, referenceId, sender, paymentId, claimToken, whatsappOriginMissingChannel, amountPaid, serviceName, referenceCode, skipLoyalty, skipAutomation, skipCustomerSpend, translate } = params;
   const t = translate ?? ((text: string) => Promise.resolve(text));
 
   // Parallel: load capabilities + business data in one round-trip
@@ -78,56 +85,78 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
 
   // Auto-create customer profile if not exists (so Customers tab has data immediately)
   try {
-    const { data: existing } = await supabase
-      .from('customer_profiles')
-      .select('id')
-      .eq('business_id', businessId)
-      .eq('phone', phoneWithPlus)
-      .maybeSingle();
-
-    if (existing) {
-      // Update existing — increment counters
-      // When skipCustomerSpend=true, pass 0 monetary amount but still increment visits/bookings/last_seen.
-      // Stage 2 owns the durable spend mutation for paid bookings/reservations.
-      const spendAmount = skipCustomerSpend ? 0 : (amountPaid || 0);
-      const { error: rpcErr } = await supabase.rpc('increment_customer_visit', {
-        p_business_id: businessId,
-        p_phone: phoneWithPlus,
-        p_amount: spendAmount,
-      });
-      if (rpcErr) {
-        // Fallback if RPC doesn't exist — just update last_seen
-        await supabase.from('customer_profiles')
-          .update({ last_seen_at: new Date().toISOString(), name: customerName || undefined })
-          .eq('id', existing.id);
-      }
-      // Recalculate LTV tier after payment
-      const { data: updatedProfile } = await supabase.from('customer_profiles')
-        .select('total_spent, total_visits, first_seen_at')
-        .eq('id', existing.id)
-        .maybeSingle();
-      if (updatedProfile) {
-        const tier = calculateLtvTier(updatedProfile.total_spent || 0, updatedProfile.total_visits || 0, updatedProfile.first_seen_at);
-        await supabase.from('customer_profiles').update({ ltv_tier: tier }).eq('id', existing.id);
-      }
-    } else {
-      // Create new
-      const newTotalSpent = skipCustomerSpend ? 0 : (amountPaid || 0);
-      const newLtvTier = calculateLtvTier(newTotalSpent, 1);
-      await supabase.from('customer_profiles').insert({
-        business_id: businessId,
-        phone: phoneWithPlus,
-        name: customerName || null,
-        total_bookings: 1,
-        total_visits: 1,
-        total_spent: newTotalSpent,
-        ltv_tier: newLtvTier,
-        last_seen_at: new Date().toISOString(),
-        first_seen_at: new Date().toISOString(),
+    // v13: exactly-once CRM visit via DB RPC + manifest lifecycle driver
+    if (paymentId) {
+      // Import manifest driver — the real CRM mutation happens INSIDE the driver callback
+      const { driveInternalEffect } = await import('@/lib/payments/terminal-effects');
+      const token = claimToken || paymentId; // claimToken required for manifest; fallback for non-manifest callers
+      await driveInternalEffect(supabase, paymentId, 'crm_visit_increment', token, async () => {
+        // REAL MUTATION: the exactly-once RPC is the authoritative internal effect
+        const { data: visitResult, error: visitErr } = await supabase.rpc('apply_payment_customer_visit_once', {
+          p_payment_id: paymentId,
+        });
+        if (visitErr) throw new Error(`apply_payment_customer_visit_once failed: ${visitErr.message}`);
+        // Recalculate LTV tier from the now-updated profile
+        if (visitResult?.applied) {
+          const { data: updatedProfile } = await supabase.from('customer_profiles')
+            .select('id, total_spent, total_visits, first_seen_at')
+            .eq('business_id', businessId)
+            .eq('phone', phoneWithPlus)
+            .maybeSingle();
+          if (updatedProfile) {
+            const tier = calculateLtvTier(updatedProfile.total_spent || 0, updatedProfile.total_visits || 0, updatedProfile.first_seen_at);
+            await supabase.from('customer_profiles').update({ ltv_tier: tier }).eq('id', updatedProfile.id);
+          }
+        }
       });
     }
+    // Legacy path (no paymentId) or RPC fallback
+    if (!paymentId) {
+      const { data: existing } = await supabase
+        .from('customer_profiles')
+        .select('id')
+        .eq('business_id', businessId)
+        .eq('phone', phoneWithPlus)
+        .maybeSingle();
+
+      if (existing) {
+        const spendAmount = skipCustomerSpend ? 0 : (amountPaid || 0);
+        const { error: rpcErr } = await supabase.rpc('increment_customer_visit', {
+          p_business_id: businessId,
+          p_phone: phoneWithPlus,
+          p_amount: spendAmount,
+        });
+        if (rpcErr) {
+          await supabase.from('customer_profiles')
+            .update({ last_seen_at: new Date().toISOString(), name: customerName || undefined })
+            .eq('id', existing.id);
+        }
+        const { data: updatedProfile } = await supabase.from('customer_profiles')
+          .select('total_spent, total_visits, first_seen_at')
+          .eq('id', existing.id)
+          .maybeSingle();
+        if (updatedProfile) {
+          const tier = calculateLtvTier(updatedProfile.total_spent || 0, updatedProfile.total_visits || 0, updatedProfile.first_seen_at);
+          await supabase.from('customer_profiles').update({ ltv_tier: tier }).eq('id', existing.id);
+        }
+      } else {
+        const newTotalSpent = skipCustomerSpend ? 0 : (amountPaid || 0);
+        const newLtvTier = calculateLtvTier(newTotalSpent, 1);
+        await supabase.from('customer_profiles').insert({
+          business_id: businessId,
+          phone: phoneWithPlus,
+          name: customerName || null,
+          total_bookings: 1,
+          total_visits: 1,
+          total_spent: newTotalSpent,
+          ltv_tier: newLtvTier,
+          last_seen_at: new Date().toISOString(),
+          first_seen_at: new Date().toISOString(),
+        });
+      }
+    }
   } catch (err) {
-    logger.warn('[POST-COMPLETION] Referral handling failed (non-critical):', err);
+    logger.warn('[POST-COMPLETION] Customer profile handling failed (non-critical):', err);
   }
 
   // 0. Auto-receipt — send PDF receipt (text receipt removed in #268 — PDF is sufficient,
@@ -136,9 +165,7 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
     try {
       const cc = (biz?.country_code || 'NG') as CountryCode;
       const isWhitelabel = PRICING_TIERS[(biz?.subscription_tier || 'free') as SubscriptionTier]?.whitelabel === true;
-
-      // Send PDF receipt as WhatsApp document attachment
-      try {
+      const generateAndStoreReceipt = async () => {
         const pdfBuffer = await generateReceiptPdf({
           businessName: bizName,
           referenceCode: referenceCode || '-',
@@ -152,28 +179,78 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
           whitelabel: isWhitelabel,
         });
 
-        const uuid = crypto.randomUUID();
-        const filePath = `receipts/${businessId}/${uuid}.pdf`;
-        const filename = `receipt-${referenceCode || uuid.slice(0, 8)}.pdf`;
-
-        await supabase.storage
+        const stableId = paymentId || crypto.randomUUID();
+        const filePath = `receipts/${businessId}/${stableId}.pdf`;
+        const { error: uploadError } = await supabase.storage
           .from('customer-reports')
-          .upload(filePath, pdfBuffer, { contentType: 'application/pdf', upsert: false });
+          .upload(filePath, pdfBuffer, { contentType: 'application/pdf', upsert: !!paymentId });
+        if (uploadError) throw new Error(`receipt_upload_failed:${uploadError.message}`);
+        if (paymentId) {
+          const { error: markerError } = await supabase.from('payment_receipt_applications').upsert({
+            payment_id: paymentId,
+            file_path: filePath,
+            generation_state: 'completed',
+          }, { onConflict: 'payment_id' });
+          if (markerError) throw new Error(`receipt_marker_failed:${markerError.message}`);
+        }
+        return filePath;
+      };
 
-        const { data: signedUrlData } = await supabase.storage
+      if (paymentId && claimToken) {
+        const { driveInternalEffect, driveExternalEffect, skipOptionalEffect } = await import('@/lib/payments/terminal-effects');
+        const generation = await driveInternalEffect(
+          supabase, paymentId, 'receipt_pdf_generation', claimToken,
+          async () => { await generateAndStoreReceipt(); },
+        );
+        if (!generation.ok) throw new Error(`receipt_generation_effect_failed:${generation.error}`);
+
+        const { data: marker, error: markerReadError } = await supabase
+          .from('payment_receipt_applications')
+          .select('file_path, generation_state')
+          .eq('payment_id', paymentId)
+          .maybeSingle();
+        if (markerReadError || !marker || marker.generation_state !== 'completed') {
+          throw new Error(`receipt_marker_read_failed:${markerReadError?.message || 'missing'}`);
+        }
+        if (sender) {
+          const delivery = await driveExternalEffect(
+            supabase, paymentId, 'receipt_pdf_delivery', claimToken,
+            async () => {
+              const { data: signedUrlData, error: signedUrlError } = await supabase.storage
+                .from('customer-reports')
+                .createSignedUrl(marker.file_path, 3600);
+              if (signedUrlError || !signedUrlData?.signedUrl) throw new Error('receipt_signed_url_failed');
+              await sender.sendDocument({
+                to: phone,
+                documentUrl: signedUrlData.signedUrl,
+                filename: `receipt-${referenceCode || paymentId.slice(0, 8)}.pdf`,
+                caption: 'Your payment receipt',
+              });
+              return true;
+            },
+          );
+          if (!delivery.ok) throw new Error(`receipt_delivery_effect_failed:${delivery.error}`);
+        } else if (!whatsappOriginMissingChannel) {
+          // Genuine non-WhatsApp flow: skip is valid
+          const skipped = await skipOptionalEffect(
+            supabase, paymentId, 'receipt_pdf_delivery', claimToken, 'no_resolved_whatsapp_sender',
+          );
+          if (!skipped.ok) throw new Error(`receipt_delivery_skip_failed:${skipped.error}`);
+        }
+        // else: WhatsApp-origin missing channel — leave pending for retry
+      } else {
+        const filePath = await generateAndStoreReceipt();
+        const { data: signedUrlData, error: signedUrlError } = await supabase.storage
           .from('customer-reports')
           .createSignedUrl(filePath, 3600);
-
-        if (signedUrlData?.signedUrl && sender) {
+        if (!signedUrlError && signedUrlData?.signedUrl && sender) {
           await sender.sendDocument({
             to: phone,
             documentUrl: signedUrlData.signedUrl,
-            filename,
+            filename: `receipt-${referenceCode || 'payment'}.pdf`,
             caption: 'Your payment receipt',
           });
         }
-      } catch (pdfErr) {
-        logger.withContext({ op: 'post-completion.pdf-receipt', ...safeLogErrorContext(pdfErr) }).error('[POST-COMPLETION] PDF receipt error (non-fatal)');
       }
     } catch (err) {
       logger.withContext({ op: 'post-completion.auto-receipt', ...safeLogErrorContext(err) }).error('[POST-COMPLETION] Auto-receipt error');
@@ -184,96 +261,84 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
   const loyaltyEnabled = meta.loyalty_earning_enabled === true;
   if (capabilities.includes('loyalty') && loyaltyEnabled && !skipLoyalty) {
     try {
-      const pointsMode = (meta.loyalty_points_mode as string) || 'per_visit';
-      const pointsPerVisit = (meta.loyalty_points_per_visit as number) || 10;
-      const pointsPerCurrency = (meta.loyalty_points_per_currency as number) || 0; // e.g. 1 point per 100 spent
-
-      // Calculate points: flat per-visit OR amount-based
-      let earnedPoints = pointsPerVisit;
-      let reason: string = 'visit';
-      if (pointsMode === 'per_amount' && pointsPerCurrency > 0 && amountPaid && amountPaid > 0) {
-        earnedPoints = Math.floor(amountPaid / pointsPerCurrency);
-        reason = 'purchase';
-        if (earnedPoints < 1) earnedPoints = 1; // minimum 1 point
-      }
-
-      // Apply loyalty-tier points multiplier if customer has an active tier
-      if (capabilities.includes('membership')) {
-        try {
-          const { data: cp } = await supabase
-            .from('customer_profiles')
-            .select('membership_tier_id')
-            .eq('business_id', businessId)
-            .eq('phone', phoneWithPlus)
-            .maybeSingle();
-          if (cp?.membership_tier_id) {
-            const { data: tier } = await supabase
-              .from('membership_tiers')
-              .select('points_multiplier')
-              .eq('id', cp.membership_tier_id)
-              .eq('is_active', true)
-              .single();
-            if (tier?.points_multiplier && tier.points_multiplier > 1) {
-              earnedPoints = Math.floor(earnedPoints * tier.points_multiplier);
-            }
-          }
-        } catch { /* non-fatal — award base points if multiplier lookup fails */ }
-      }
-
-      // Upsert loyalty_points
-      const { data: existing } = await supabase
-        .from('loyalty_points')
-        .select('id, points_balance, total_earned, visit_count')
-        .eq('business_id', businessId)
-        .eq('customer_phone', customerPhone)
-        .maybeSingle();
-
-      if (existing) {
-        await supabase
-          .from('loyalty_points')
-          .update({
-            points_balance: existing.points_balance + earnedPoints,
-            total_earned: existing.total_earned + earnedPoints,
-            visit_count: existing.visit_count + 1,
-            customer_name: customerName || undefined,
-          })
-          .eq('id', existing.id);
-      } else {
-        await supabase
-          .from('loyalty_points')
-          .insert({
-            business_id: businessId,
-            customer_phone: customerPhone,
-            customer_name: customerName,
-            points_balance: earnedPoints,
-            total_earned: earnedPoints,
-            visit_count: 1,
+      // v13: exactly-once loyalty via DB RPC + manifest lifecycle driver
+      // The REAL loyalty mutation happens INSIDE the driver callback.
+      if (paymentId) {
+        const { driveInternalEffect } = await import('@/lib/payments/terminal-effects');
+        const loyaltyToken = claimToken || paymentId;
+        let loyaltyEarnedPoints = 0;
+        await driveInternalEffect(supabase, paymentId, 'loyalty_award', loyaltyToken, async () => {
+          // REAL MUTATION inside lifecycle authority
+          const { data: loyaltyResult, error: loyaltyErr } = await supabase.rpc('apply_payment_loyalty_once', {
+            p_payment_id: paymentId,
           });
-      }
-
-      // Insert transaction
-      await supabase.from('loyalty_transactions').insert({
-        business_id: businessId,
-        customer_phone: customerPhone,
-        points_change: earnedPoints,
-        reason,
-        reference_id: referenceId || null,
-        reference_type: serviceType || null,
-      });
-
-      const newBalance = (existing?.points_balance || 0) + earnedPoints;
-      const rewardThreshold = (meta.loyalty_reward_threshold as number) || 100;
-      const rewardDesc = (meta.loyalty_reward_description as string) || 'a special reward';
-
-      // Notify customer about earned points
-      const pointsUntilReward = Math.max(0, rewardThreshold - newBalance);
-      let loyaltyMsg = `+${earnedPoints} points earned at *${bizName}*! Your balance: *${newBalance}* points.`;
-      if (pointsUntilReward === 0) {
-        loyaltyMsg += `\n\nYou have enough points to redeem *${rewardDesc}*! Type *my points* to claim it.`;
+          if (loyaltyErr) throw new Error(`apply_payment_loyalty_once failed: ${loyaltyErr.message}`);
+          if (loyaltyResult?.applied && !loyaltyResult?.already_applied) {
+            loyaltyEarnedPoints = loyaltyResult.points_awarded || 0;
+          }
+        });
+        // Read the durable award marker so a retry can notify using the original award.
+        const { data: loyaltyMarker, error: markerError } = await supabase
+          .from('payment_loyalty_applications')
+          .select('points_awarded')
+          .eq('payment_id', paymentId)
+          .maybeSingle();
+        if (markerError) throw new Error(`loyalty_marker_read_failed:${markerError.message}`);
+        loyaltyEarnedPoints = loyaltyMarker?.points_awarded || loyaltyEarnedPoints;
+        if (loyaltyEarnedPoints > 0 && sender && claimToken) {
+          const { data: balanceRow } = await supabase.from('loyalty_points').select('points_balance')
+            .eq('business_id', businessId).eq('customer_phone', customerPhone).maybeSingle();
+          const newBalance = balanceRow?.points_balance || loyaltyEarnedPoints;
+          const rewardThreshold = (meta.loyalty_reward_threshold as number) || 100;
+          const rewardDesc = (meta.loyalty_reward_description as string) || 'a special reward';
+          const pointsUntilReward = Math.max(0, rewardThreshold - newBalance);
+          let loyaltyMsg = `+${loyaltyEarnedPoints} points earned at *${bizName}*! Your balance: *${newBalance}* points.`;
+          if (pointsUntilReward === 0) { loyaltyMsg += `\n\nYou have enough points to redeem *${rewardDesc}*! Type *my points* to claim it.`; }
+          else { loyaltyMsg += `\n\n${pointsUntilReward} more until ${rewardDesc}.`; }
+          const { driveExternalEffect } = await import('@/lib/payments/terminal-effects');
+          const notifyResult = await driveExternalEffect(
+            supabase, paymentId, 'customer_loyalty_whatsapp', claimToken,
+            async () => {
+              await sender.sendText({ to: customerPhone, text: await t(loyaltyMsg) });
+              return true;
+            },
+          );
+          if (!notifyResult.ok) throw new Error(`loyalty_notification_effect_failed:${notifyResult.error}`);
+        } else if (loyaltyEarnedPoints > 0 && claimToken && !whatsappOriginMissingChannel) {
+          // Genuine non-WhatsApp flow: skip is valid
+          const { skipOptionalEffect } = await import('@/lib/payments/terminal-effects');
+          const skipped = await skipOptionalEffect(
+            supabase, paymentId, 'customer_loyalty_whatsapp', claimToken, 'no_resolved_whatsapp_sender',
+          );
+          if (!skipped.ok) throw new Error(`loyalty_notification_skip_failed:${skipped.error}`);
+        }
+        // else: WhatsApp-origin missing channel — leave pending for retry
       } else {
-        loyaltyMsg += `\n\n${pointsUntilReward} more until ${rewardDesc}.`;
+        // Legacy path (no paymentId): use inline loyalty logic
+        const pointsMode = (meta.loyalty_points_mode as string) || 'per_visit';
+        const pointsPerVisit = (meta.loyalty_points_per_visit as number) || 10;
+        const pointsPerCurrency = (meta.loyalty_points_per_currency as number) || 0;
+        let earnedPoints = pointsPerVisit;
+        if (pointsMode === 'per_amount' && pointsPerCurrency > 0 && amountPaid && amountPaid > 0) {
+          earnedPoints = Math.floor(amountPaid / pointsPerCurrency);
+          if (earnedPoints < 1) earnedPoints = 1;
+        }
+        const { data: existing } = await supabase.from('loyalty_points').select('id, points_balance, total_earned, visit_count').eq('business_id', businessId).eq('customer_phone', customerPhone).maybeSingle();
+        if (existing) {
+          await supabase.from('loyalty_points').update({ points_balance: existing.points_balance + earnedPoints, total_earned: existing.total_earned + earnedPoints, visit_count: existing.visit_count + 1, customer_name: customerName || undefined }).eq('id', existing.id);
+        } else {
+          await supabase.from('loyalty_points').insert({ business_id: businessId, customer_phone: customerPhone, customer_name: customerName, points_balance: earnedPoints, total_earned: earnedPoints, visit_count: 1 });
+        }
+        await supabase.from('loyalty_transactions').insert({ business_id: businessId, customer_phone: customerPhone, points_change: earnedPoints, reason: 'visit', reference_id: referenceId || null, reference_type: serviceType || null });
+        const newBalance = (existing?.points_balance || 0) + earnedPoints;
+        const rewardThreshold = (meta.loyalty_reward_threshold as number) || 100;
+        const rewardDesc = (meta.loyalty_reward_description as string) || 'a special reward';
+        const pointsUntilReward = Math.max(0, rewardThreshold - newBalance);
+        let loyaltyMsg = `+${earnedPoints} points earned at *${bizName}*! Your balance: *${newBalance}* points.`;
+        if (pointsUntilReward === 0) { loyaltyMsg += `\n\nYou have enough points to redeem *${rewardDesc}*! Type *my points* to claim it.`; }
+        else { loyaltyMsg += `\n\n${pointsUntilReward} more until ${rewardDesc}.`; }
+        if (sender) t(loyaltyMsg).then(translated => sender.sendText({ to: customerPhone, text: translated })).catch(err => logger.withContext({ op: 'post-completion.loyalty-send', ...safeLogErrorContext(err) }).error('[POST-COMPLETION] Failed to send loyalty message'));
       }
-      if (sender) t(loyaltyMsg).then(translated => sender.sendText({ to: customerPhone, text: translated })).catch(err => logger.withContext({ op: 'post-completion.loyalty-send', ...safeLogErrorContext(err) }).error('[POST-COMPLETION] Failed to send loyalty message'));
     } catch (err) {
       logger.withContext({ op: 'post-completion.loyalty', ...safeLogErrorContext(err) }).error('[POST-COMPLETION] Loyalty error');
     }
@@ -284,16 +349,24 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
   // Safe on retry: assignCustomerTier is idempotent (reads total_spent, assigns highest qualifying tier).
   if (capabilities.includes('membership')) {
     try {
-      // Look up customer_profile by phone+business (use canonical phone format)
-      const { data: cp } = await supabase
-        .from('customer_profiles')
-        .select('id')
-        .eq('business_id', businessId)
-        .eq('phone', phoneWithPlus)
-        .maybeSingle();
-      if (cp) {
+      const assignTier = async () => {
+        const { data: cp, error: cpError } = await supabase
+          .from('customer_profiles')
+          .select('id')
+          .eq('business_id', businessId)
+          .eq('phone', phoneWithPlus)
+          .maybeSingle();
+        if (cpError) throw new Error(`membership_profile_lookup_failed:${cpError.message}`);
+        if (!cp) throw new Error('membership_profile_missing');
         const { assignCustomerTier } = await import('@/lib/membership/assign-tiers');
-        await assignCustomerTier(supabase, businessId, cp.id);
+        await assignCustomerTier(supabase, businessId, cp.id, true);
+      };
+      if (paymentId && claimToken) {
+        const { driveInternalEffect } = await import('@/lib/payments/terminal-effects');
+        const result = await driveInternalEffect(supabase, paymentId, 'membership_tier_assignment', claimToken, assignTier);
+        if (!result.ok) throw new Error(result.error);
+      } else {
+        await assignTier();
       }
     } catch (err) {
       logger.withContext({ op: 'post-completion.tier-assign', ...safeLogErrorContext(err) }).error('[POST-COMPLETION] Tier assignment error');
@@ -305,10 +378,20 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
   if (referenceId && capabilities.includes('feedback')) {
     try {
       const table = serviceType === 'order' ? 'orders' : 'bookings';
-      await supabase
-        .from(table)
-        .update({ metadata: { feedback_requested: false, completed_at: new Date().toISOString() } })
-        .eq('id', referenceId);
+      const markFeedback = async () => {
+        const { error } = await supabase
+          .from(table)
+          .update({ metadata: { feedback_requested: false, completed_at: new Date().toISOString() } })
+          .eq('id', referenceId);
+        if (error) throw new Error(`feedback_marker_update_failed:${error.message}`);
+      };
+      if (paymentId && claimToken) {
+        const { driveInternalEffect } = await import('@/lib/payments/terminal-effects');
+        const result = await driveInternalEffect(supabase, paymentId, 'feedback_marker', claimToken, markFeedback);
+        if (!result.ok) throw new Error(result.error);
+      } else {
+        await markFeedback();
+      }
     } catch (err) { logger.warn('[POST-COMPLETION] Failed to mark feedback requested (non-critical):', err); }
   }
 
@@ -333,14 +416,31 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
 
     if (bizName) automationContext.business_name = bizName;
 
-    // Trigger sequences
-    await triggerSequences(supabase, businessId, triggerEvent, customerPhone, automationContext);
+    if (paymentId && claimToken) {
+      const { driveInternalEffect } = await import('@/lib/payments/terminal-effects');
+      const sequenceResult = await driveInternalEffect(
+        supabase, paymentId, 'automation_sequences', claimToken,
+        () => triggerSequences(supabase, businessId, triggerEvent, customerPhone, automationContext),
+      );
+      if (!sequenceResult.ok) throw new Error(`automation_sequences_failed:${sequenceResult.error}`);
 
-    // Evaluate rules
-    const sendMsg = async (to: string, text: string) => {
-      if (sender) await sender.sendText({ to, text });
-    };
-    await evaluateRules(supabase, businessId, ruleEvent, automationContext, sendMsg);
+      const ruleResult = await driveInternalEffect(
+        supabase, paymentId, 'automation_rule_handoff', claimToken,
+        async () => {
+          const { runSealedRuleActions } = await import('@/lib/bot/automation/sealed-rule-actions');
+          await runSealedRuleActions({ supabase, paymentId, businessId, event: ruleEvent, context: automationContext, sender });
+        },
+      );
+      if (!ruleResult.ok) throw new Error(`automation_rule_handoff_failed:${ruleResult.error}`);
+    } else {
+      // Legacy path: no paymentId, execute rules directly
+      await triggerSequences(supabase, businessId, triggerEvent, customerPhone, automationContext);
+      const sendMsg = async (to: string, text: string) => {
+        if (!sender) throw new Error('rule_sender_unavailable');
+        await sender.sendText({ to, text });
+      };
+      await evaluateRules(supabase, businessId, ruleEvent, automationContext, sendMsg);
+    }
   } catch (err) {
     logger.withContext({ op: 'post-completion.automation', ...safeLogErrorContext(err) }).error('[POST-COMPLETION] Automation error (non-fatal)');
   }
@@ -349,29 +449,37 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
   // Don't auto-send referral message after every transaction
   if (capabilities.includes('referral')) {
     try {
-      const { data: existingRef } = await supabase
-        .from('referrals')
-        .select('referral_code')
-        .eq('business_id', businessId)
-        .eq('referrer_phone', customerPhone)
-        .eq('status', 'pending')
-        .maybeSingle();
+      const ensureReferral = async () => {
+        const { data: existingRef, error: lookupError } = await supabase
+          .from('referrals')
+          .select('referral_code')
+          .eq('business_id', businessId)
+          .eq('referrer_phone', customerPhone)
+          .eq('status', 'pending')
+          .maybeSingle();
+        if (lookupError) throw new Error(`referral_lookup_failed:${lookupError.message}`);
 
-      if (!existingRef) {
-        const code = generateReferralCode();
-        const rewardType = (meta.referral_reward_type as string) || 'points';
-        const rewardAmount = (meta.referral_reward_amount as number) || 50;
-
-        await supabase.from('referrals').insert({
-          business_id: businessId,
-          referrer_phone: customerPhone,
-          referrer_name: customerName,
-          referral_code: code,
-          status: 'pending',
-          reward_type: rewardType,
-          reward_amount: rewardAmount,
-        });
-        // Code generated silently — customer can type "refer" to see it
+        if (!existingRef) {
+          const { error: insertError } = await supabase.from('referrals').insert({
+            business_id: businessId,
+            referrer_phone: customerPhone,
+            referrer_name: customerName,
+            referral_code: generateReferralCode(),
+            status: 'pending',
+            reward_type: (meta.referral_reward_type as string) || 'points',
+            reward_amount: (meta.referral_reward_amount as number) || 50,
+          });
+          if (insertError && insertError.code !== '23505') {
+            throw new Error(`referral_insert_failed:${insertError.message}`);
+          }
+        }
+      };
+      if (paymentId && claimToken) {
+        const { driveInternalEffect } = await import('@/lib/payments/terminal-effects');
+        const result = await driveInternalEffect(supabase, paymentId, 'referral_generation', claimToken, ensureReferral);
+        if (!result.ok) throw new Error(result.error);
+      } else {
+        await ensureReferral();
       }
     } catch (err) {
       logger.withContext({ op: 'post-completion.referral', ...safeLogErrorContext(err) }).error('[POST-COMPLETION] Referral error');

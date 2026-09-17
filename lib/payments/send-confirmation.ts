@@ -7,6 +7,7 @@ import { stripPlus } from '@/lib/utils/phone';
 import { getCustomerName } from '@/lib/bot/flows/shared/user';
 import { getCalendarLinksText } from '@/lib/calendar/generate-links';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
+import type { ResolvedChannel } from '@/lib/channels/channel-resolver';
 
 /** Log a non-fatal error with safe structured metadata. */
 function logSafeError(prefix: string, label: string, error: unknown): void {
@@ -99,6 +100,7 @@ interface PaymentForConfirmation {
   campaign_id: string | null;
   reservation_id?: string | null;
   order_id?: string | null;
+  payment_authority_version?: number | null;
 }
 
 /** Explicit result from sendProactiveConfirmation for callers that need to distinguish outcomes. */
@@ -158,7 +160,7 @@ export async function sendProactiveConfirmation(
     return { status: 'retryable_failed', retryable: true, reason: 'claim_incomplete_data' };
   }
 
-  // Use the claim's authoritative payment data
+  // Use the claim's authoritative payment data (includes payment_authority_version for Phase-A detection)
   payment = {
     id: claim.payment_id,
     amount: claim.amount,
@@ -167,6 +169,7 @@ export async function sendProactiveConfirmation(
     campaign_id: claim.campaign_id || null,
     reservation_id: claim.reservation_id || null,
     order_id: claim.order_id || null,
+    payment_authority_version: claim.payment_authority_version ?? null,
   };
 
   // Track whether any external sends have occurred (affects release safety)
@@ -178,6 +181,8 @@ export async function sendProactiveConfirmation(
   // ── Post-claim processing: any failure releases the claim for retry ──
 
   let customerPhone: string | null = null;
+  let customerEmail: string | null = null;
+  let donationReceiptEmailAddress: string | null = null;
   let businessId: string | null = null;
   let businessName = 'Business';
   let serviceName = 'Payment';
@@ -197,7 +202,7 @@ export async function sendProactiveConfirmation(
   if (payment.booking_id) {
     const { data: booking, error: bookingError } = await supabase
       .from('bookings')
-      .select('guest_phone, reference_code, business_id, date, time, flow_type, total_amount, deposit_amount, businesses(name, country_code, address, payment_gateway), services(name, duration_minutes, service_type)')
+      .select('guest_phone, guest_email, reference_code, business_id, date, time, flow_type, total_amount, deposit_amount, businesses(name, country_code, address, payment_gateway), services(name, duration_minutes, service_type)')
       .eq('id', payment.booking_id)
       .single();
 
@@ -207,6 +212,7 @@ export async function sendProactiveConfirmation(
 
     if (booking) {
       customerPhone = booking.guest_phone;
+      customerEmail = booking.guest_email || null;
       businessId = booking.business_id;
       referenceCode = booking.reference_code || '';
       const biz = booking.businesses as unknown as { name: string; country_code?: string; address?: string; payment_gateway?: string } | null;
@@ -340,11 +346,24 @@ export async function sendProactiveConfirmation(
         .eq('id', payment.booking_id)
         .single();
       guestEmail = emailBooking?.guest_email || null;
+      customerEmail = guestEmail;
     }
     if (!guestEmail) {
       logger.warn(`${logPrefix} Proactive confirmation skipped — no phone or email`);
-      await releaseConfirmationClaim(supabase, payment.id, claimToken, logPrefix);
-      return { status: 'not_deliverable', retryable: false, reason: 'no_phone_or_email' };
+      // Atomic claim-fenced termination (v13): sets confirmation_terminal_reason + clears claim
+      const { data: termResult, error: termError } = await supabase.rpc('terminate_payment_confirmation', {
+        p_payment_id: payment.id,
+        p_claim_token: claimToken,
+        p_terminal_reason: 'not_deliverable',
+      });
+      if (termError || !termResult) {
+        logger.error(`${logPrefix} terminate_payment_confirmation RPC failed`, termError);
+        return { status: 'retryable_failed', retryable: true, reason: 'termination_rpc_failed' };
+      }
+      if (termResult.terminated === true || termResult.already_terminated === true) {
+        return { status: 'not_deliverable', retryable: false, reason: 'no_phone_or_email' };
+      }
+      return { status: 'retryable_failed', retryable: true, reason: termResult.reason || 'termination_unexpected' };
     }
     // We have email but no phone — send email-only below
     logger.info(`${logPrefix} No phone found, will attempt email-only confirmation`);
@@ -371,6 +390,130 @@ export async function sendProactiveConfirmation(
   if (!preExternal.ok) {
     logger.warn(`${logPrefix} Ownership lost before external operations: ${preExternal.reason}`);
     return { status: 'processing', retryable: true }; // claim may belong to another worker
+  }
+
+  // Resolve the actual WhatsApp sender before freezing optional manifest effects.
+  // A customer phone is only a destination; it is not evidence that a usable
+  // sender/channel exists. The resolved channel is reused by the send phase.
+  let resolved: ResolvedChannel | null = null;
+  let inboundChId: string | undefined;
+  let confirmationOrigin: string | undefined;
+  let whatsappOriginMissingChannel = false;
+  if (customerPhone) {
+    const { ChannelResolver } = await import('@/lib/channels/channel-resolver');
+    const resolver = new ChannelResolver(supabase);
+    const { data: payChMeta } = await supabase.from('payments').select('metadata').eq('id', payment.id).single();
+    const payMeta = (payChMeta?.metadata || {}) as Record<string, unknown>;
+    inboundChId = payMeta._inbound_channel_id as string | undefined;
+    confirmationOrigin = payMeta._confirmation_origin as string | undefined;
+    // Non-WhatsApp origin or legacy (no _confirmation_origin) may use the
+    // existing business fallback; WhatsApp origin never borrows another channel.
+    if (!inboundChId && confirmationOrigin !== 'whatsapp') {
+      const { data: bizSession } = await supabase
+        .from('bot_sessions').select('session_data')
+        .eq('whatsapp_number', customerPhone).eq('business_id', businessId)
+        .order('created_at', { ascending: false }).limit(1).maybeSingle();
+      inboundChId = (bizSession?.session_data as Record<string, unknown>)?._inbound_channel_id as string | undefined;
+    }
+    if (inboundChId) resolved = await resolver.resolveByChannelId(inboundChId);
+    if (!resolved && confirmationOrigin === 'whatsapp') {
+      whatsappOriginMissingChannel = true;
+    } else if (!resolved) {
+      resolved = await resolver.resolveByBusinessId(businessId);
+    }
+  }
+
+  // ── MANIFEST INITIALIZATION: Register all applicable Stage-3 effects ──
+  // Fail-closed for Phase-A payments (payment_authority_version >= 1).
+  // Historical payments without authority version use legacy path.
+  let manifestInitialized = false;
+  const effectTokens: Record<string, string> = {};
+  const isPhaseAPayment = payment.payment_authority_version != null;
+  try {
+    const { computeApplicableEffects, initializeManifest } = await import('@/lib/payments/terminal-effects');
+
+    // Derive loyalty applicability from canonical capability resolver + business config
+    let hasLoyalty = false;
+    let hasReferral = false;
+    let hasMembership = false;
+    let hasFeedback = false;
+    let skipLoyaltyFlag = false;
+    if (businessId) {
+      try {
+        const { getEnabledCapabilities } = await import('@/lib/capabilities/service');
+        const caps = await getEnabledCapabilities(supabase, businessId);
+        const { data: bizMeta } = await supabase.from('businesses').select('metadata').eq('id', businessId).single();
+        const meta = (bizMeta?.metadata || {}) as Record<string, unknown>;
+        const loyaltyEnabled = meta.loyalty_earning_enabled === true;
+        hasLoyalty = caps.includes('loyalty') && loyaltyEnabled;
+        hasReferral = caps.includes('referral');
+        hasMembership = caps.includes('membership');
+        hasFeedback = caps.includes('feedback');
+        // Giving/ambiguous classification from booking data
+        const isPaymentFamily = bookingFlowType === 'payment';
+        const isGivingPayment = isPaymentFamily && bookingServiceType === 'giving';
+        const isAmbiguousPayment = isPaymentFamily && bookingServiceType !== 'booking' && bookingServiceType !== 'giving';
+        skipLoyaltyFlag = isGivingPayment || isAmbiguousPayment;
+      } catch (capabilityError) {
+        // Applicability is part of the frozen manifest. An unreadable capability
+        // snapshot is not equivalent to a legitimate all-disabled snapshot.
+        throw new Error(`effect_capability_discovery_failed:${String(capabilityError)}`);
+      }
+    }
+
+    if (payment.campaign_id) {
+      const { data: donation, error: donationError } = await supabase
+        .from('campaign_donations')
+        .select('donor_phone')
+        .eq('payment_id', payment.id)
+        .eq('status', 'success')
+        .maybeSingle();
+      if (donationError) throw new Error(`donation_email_discovery_failed:${donationError.message}`);
+      if (donation?.donor_phone) {
+        const phoneP = donation.donor_phone.startsWith('+') ? donation.donor_phone : `+${donation.donor_phone}`;
+        const phoneN = donation.donor_phone.startsWith('+') ? donation.donor_phone.slice(1) : donation.donor_phone;
+        const { data: donorProfile, error: donorProfileError } = await supabase
+          .from('profiles')
+          .select('email')
+          .or(`phone.eq.${sanitizeFilterValue(phoneP)},phone.eq.${sanitizeFilterValue(phoneN)}`)
+          .limit(1)
+          .maybeSingle();
+        if (donorProfileError) throw new Error(`donation_email_profile_lookup_failed:${donorProfileError.message}`);
+        donationReceiptEmailAddress = donorProfile?.email || null;
+      }
+    }
+
+    const applicableEffects = computeApplicableEffects(payment, {
+      hasCustomerPhone: !!customerPhone,
+      hasGuestEmail: !!customerEmail,
+      hasDonationEmail: !!donationReceiptEmailAddress,
+      hasSender: !!resolved?.sender,
+      whatsappOriginMissingChannel,
+      hasLoyalty,
+      hasReferral,
+      hasMembership,
+      hasFeedback,
+      isTicketing: bookingFlowType === 'ticketing',
+      skipLoyalty: skipLoyaltyFlag,
+      skipAutomation: !!payment.order_id || !!payment.campaign_id || !!payment.invoice_id,
+      amountPaid: payment.amount,
+    });
+
+    const initResult = await initializeManifest(supabase, payment.id, claimToken, applicableEffects);
+    manifestInitialized = initResult.ok;
+    if (!initResult.ok && isPhaseAPayment) {
+      // Fail-closed: Phase-A payments MUST have a manifest to finalize
+      logger.error(`${logPrefix} Manifest initialization failed (fail-closed for Phase-A): ${initResult.error}`);
+      await releaseConfirmationClaim(supabase, payment.id, claimToken, logPrefix);
+      return { status: 'retryable_failed', retryable: true, reason: 'manifest_init_failed' };
+    }
+  } catch (manifestErr) {
+    if (isPhaseAPayment) {
+      logger.error(`${logPrefix} Manifest initialization error (fail-closed):`, manifestErr);
+      await releaseConfirmationClaim(supabase, payment.id, claimToken, logPrefix);
+      return { status: 'retryable_failed', retryable: true, reason: 'manifest_init_error' };
+    }
+    logger.warn(`${logPrefix} Manifest initialization error (legacy bypass):`, manifestErr);
   }
 
   // Add balance info if deposit was partial
@@ -463,60 +606,13 @@ export async function sendProactiveConfirmation(
 
   // ── 5. Resolve channel + send (protected by checkpoint 1 above) ──
   try {
-    const { ChannelResolver } = await import('@/lib/channels/channel-resolver');
-    const resolver = new ChannelResolver(supabase);
-
-    // #219: Resolve channel using _confirmation_origin + _inbound_channel_id jointly.
-    // WhatsApp origin + missing channel = skip customer send (no business-country fallback).
-    // Non-WhatsApp origin or legacy = existing resolveByBusinessId fallback.
-    let resolved = null;
-    let inboundChId: string | undefined;
-    let confirmationOrigin: string | undefined;
-    let whatsappOriginMissingChannel = false;
-
-    // Only look up WhatsApp sessions if we have a customer phone
-    if (customerPhone) {
-      // 1. Try durable channel + origin from payment metadata (persisted at initializePayment time)
-      const { data: payChMeta } = await supabase.from('payments').select('metadata').eq('id', payment.id).single();
-      const payMeta = (payChMeta?.metadata || {}) as Record<string, unknown>;
-      inboundChId = payMeta._inbound_channel_id as string | undefined;
-      confirmationOrigin = payMeta._confirmation_origin as string | undefined;
-
-      // 2. Fallback: same-business session channel — ONLY for legacy/non-WhatsApp origin (#219)
-      // WhatsApp-originated payments must use their durable _inbound_channel_id only.
-      // Borrowing a later/different session channel recreates the channel-drift defect.
-      if (!inboundChId && confirmationOrigin !== 'whatsapp') {
-        const { data: bizSession } = await supabase
-          .from('bot_sessions').select('session_data')
-          .eq('whatsapp_number', customerPhone).eq('business_id', businessId)
-          .order('created_at', { ascending: false }).limit(1).maybeSingle();
-        inboundChId = (bizSession?.session_data as Record<string, unknown>)?._inbound_channel_id as string | undefined;
-      }
-    }
-
-    if (inboundChId) {
-      resolved = await resolver.resolveByChannelId(inboundChId);
-      if (!resolved) {
-        // Channel was deactivated since payment initialization
-        logger.warn(`${logPrefix} Inbound channel ${inboundChId} no longer active for payment ${payment.id}`);
-      }
-    }
-    if (!resolved) {
-      if (confirmationOrigin === 'whatsapp') {
-        // #219: WhatsApp-originated payment lost its channel context — do NOT silently
-        // fall back to business-country shared channel. Skip customer WhatsApp send.
-        whatsappOriginMissingChannel = true;
-        logger.warn(`${logPrefix} Customer WhatsApp send skipped — no origin channel for WhatsApp-originated payment ${payment.id}`);
-      } else {
-        // Non-WhatsApp origin or legacy (no _confirmation_origin) — existing fallback
-        resolved = await resolver.resolveByBusinessId(businessId);
-      }
+    if (whatsappOriginMissingChannel) {
+      logger.warn(`${logPrefix} Customer WhatsApp send skipped — no origin channel for WhatsApp-originated payment ${payment.id}`);
     }
 
     // ── Customer WhatsApp delivery via delivery-attempt authority (#197) ──
     // The delivery-attempt table owns ONLY the customer WhatsApp send effect.
     // Stage-3 master claim (claim_payment_confirmation) still owns the full lifecycle.
-    let customerMessageSent = false;
     if (resolved && customerPhone) {
       const phone = stripPlus(customerPhone);
 
@@ -592,7 +688,6 @@ export async function sendProactiveConfirmation(
                   }
                 }
               }
-              customerMessageSent = true;
             } else {
               // No WAMID returned but no error thrown — indeterminate
               await supabase.rpc('fail_confirmation_send', {
@@ -633,19 +728,15 @@ export async function sendProactiveConfirmation(
         }
         // else: send not authorized (expired claim) — skip customer send
       } else if (deliveryClaim?.reason === 'already_delivered') {
-        customerMessageSent = true; // Already delivered — skip send, continue Stage-3 work
         logger.info(`${logPrefix} Customer message already delivered for payment ${payment.id}`);
       } else if (deliveryClaim?.reason?.startsWith('active_delivery_')) {
         // sending/accepted/sent/indeterminate exists — DO NOT resend
-        customerMessageSent = true; // Treat as "send effect handled" — continue remaining Stage-3 work
         logger.info(`${logPrefix} Active delivery exists (${deliveryClaim.reason}) for payment ${payment.id} — skipping resend`);
       } else if (deliveryClaim?.reason === 'max_attempts_exceeded') {
         // Delivery exhausted — customer delivery terminally failed
         // Allow Stage-3 to complete remaining safe work and finalize master claim
-        customerMessageSent = true;
         logger.warn(`${logPrefix} Customer delivery exhausted (max attempts) for payment ${payment.id}`);
       }
-      // else: other claim failure — customerMessageSent stays false
     } else {
       logger.info(`${logPrefix} No WhatsApp channel resolved — will attempt email-only confirmation`);
     }
@@ -680,6 +771,9 @@ export async function sendProactiveConfirmation(
         }
         await handlePostCompletion({
           supabase, businessId, customerPhone, customerName,
+          paymentId: payment.id,
+          claimToken: manifestInitialized ? claimToken : undefined,
+          whatsappOriginMissingChannel: manifestInitialized ? whatsappOriginMissingChannel : undefined,
           // Entity-correct serviceType: reservation uses booking semantics (#173)
           serviceType: (isBookingPayment || isReservationPayment) ? 'booking' : 'order',
           referenceId: payment.booking_id || payment.reservation_id || undefined,
@@ -700,6 +794,13 @@ export async function sendProactiveConfirmation(
       }
     }
 
+    // Post-completion internal effects (loyalty, CRM visit, referral, etc.) are driven
+    // by exactly-once RPCs inside handlePostCompletion. The manifest completion for these
+    // is atomically coupled: apply_payment_loyalty_once succeeds → loyalty_award is completed
+    // in the manifest by post-completion.ts after the RPC returns.
+    // Other internal effects (membership, feedback, automation, receipt) are tracked after
+    // their actual mutations in post-completion.ts.
+
     // ── CHECKPOINT 3: Renew before owner notifications and email ──
     const preOwnerNotify = await renewConfirmationClaim(supabase, payment.id, claimToken, logPrefix);
     if (!preOwnerNotify.ok) {
@@ -708,172 +809,154 @@ export async function sendProactiveConfirmation(
     }
 
     // ── 7. Owner notification ──
+    // For manifest-initialized payments: each channel runs inside its lifecycle driver.
+    // For legacy payments: original code runs unchanged (preserving mock test behavior).
     sideEffectsMayHaveOccurred = true; // owner WhatsApp + email
-    try {
-      if (payment.booking_id) {
-        const { data: ownerNotifBooking } = await supabase.from('bookings')
-          .select('date, time, party_size, guest_name, flow_type, services(name)')
-          .eq('id', payment.booking_id).single();
-
-        if (ownerNotifBooking && ownerNotifBooking.flow_type === 'payment') {
-          // Payment/Giving: awaited in-app notification (not dependent on resolved)
-          const svc = ownerNotifBooking.services as unknown as { name: string } | null;
-          try {
-            const { error: notifErr } = await supabase.from('notifications').insert({
-              business_id: businessId,
-              booking_id: payment.booking_id,
-              type: 'payment',
-              channel: 'whatsapp',
-              body: `Payment received: ${svc?.name || 'Payment'} ${referenceCode}. Amount: ${formatCurrency(payment.amount, countryCode)}`,
-              status: 'delivered',
-              delivered_at: new Date().toISOString(),
-            });
-            if (notifErr) {
-              logSafeError(logPrefix, 'payment-in-app-notification-insert', notifErr);
-            }
-          } catch (notifEx) {
-            logSafeError(logPrefix, 'payment-in-app-notification', notifEx);
-          }
-
-          // Payment/Giving: external owner notification (requires resolved)
-          if (resolved) {
-            const { notifyOwnerNewPayment } = await import('@/lib/bot/flows/shared/notify-owner');
-            await notifyOwnerNewPayment({
-              supabase, sender: resolved.sender, businessId, businessName, countryCode,
-              referenceCode, customerName: ownerNotifBooking.guest_name || 'Customer',
-              amount: payment.amount, categoryName: svc?.name || 'Payment',
-            });
-          }
-        } else if (ownerNotifBooking && resolved) {
-          // Scheduling/Appointment/Ticketing: existing behavior unchanged
-          const { notifyOwnerNewBooking } = await import('@/lib/bot/flows/shared/notify-owner');
-          await notifyOwnerNewBooking({
-            supabase, sender: resolved.sender, businessId, businessName, countryCode,
-            referenceCode, customerName: ownerNotifBooking.guest_name || 'Customer',
-            date: ownerNotifBooking.date, time: ownerNotifBooking.time,
-            quantity: ownerNotifBooking.party_size || 1, quantityLabel: 'guest(s)',
-            amount: payment.amount,
-          });
-        }
-      }
-
-      // ── 7a2. Reservation owner notification ──
-      if (payment.reservation_id && !payment.booking_id && resolved) {
-        const { notifyOwnerNewBooking } = await import('@/lib/bot/flows/shared/notify-owner');
-        const { data: reservation } = await supabase.from('reservations')
-          .select('guest_name, check_in, check_out, guest_count')
-          .eq('id', payment.reservation_id).single();
-
-        if (reservation) {
-          const checkIn = new Date(reservation.check_in + 'T00:00').toLocaleDateString('en-US', { day: 'numeric', month: 'short' });
-          const checkOut = new Date(reservation.check_out + 'T00:00').toLocaleDateString('en-US', { day: 'numeric', month: 'short' });
-          await notifyOwnerNewBooking({
-            supabase, sender: resolved.sender, businessId, businessName, countryCode,
-            referenceCode, customerName: reservation.guest_name || 'Guest',
-            date: checkIn, time: `→ ${checkOut}`,
-            quantity: reservation.guest_count || 1, quantityLabel: 'guest(s)',
-            amount: payment.amount,
-          });
-        }
-
-        // In-app notification for reservation payment (#173)
-        const { createNotification } = await import('@/lib/bot/flows/shared/notifications');
-        createNotification(supabase, {
-          businessId,
-          type: 'booking_confirmation',
-          channel: 'whatsapp',
-          body: `Reservation confirmed (paid): ${serviceName} ${referenceCode}. Amount: ${formatCurrency(payment.amount, countryCode)}`,
-        }).catch(err => logSafeError(logPrefix, 'reservation-in-app-notification', err));
-      }
-
-      // ── 7b. Invoice payment owner notification ──
-      if (payment.invoice_id && resolved) {
-        const { notifyOwnerNewInvoicePayment } = await import('@/lib/bot/flows/shared/notify-owner');
-        const { data: invoice } = await supabase.from('invoices')
-          .select('reference_code, customer_name, customer_phone')
-          .eq('id', payment.invoice_id).single();
-
-        if (invoice) {
-          notifyOwnerNewInvoicePayment({
-            supabase, sender: resolved.sender, businessId, businessName, countryCode,
-            referenceCode: invoice.reference_code || referenceCode,
-            customerName: invoice.customer_name || 'Customer',
-            amount: payment.amount,
-            invoiceNumber: invoice.reference_code || referenceCode,
-          }).catch(err => logSafeError(logPrefix, 'invoice-owner-notify', err));
-        }
-      }
-
-      // ── 7c. Campaign donation owner notification ──
-      if (payment.campaign_id && resolved) {
-        const { notifyOwnerNewDonation } = await import('@/lib/bot/flows/shared/notify-owner');
-        // Payment-scoped lookup: bind to exact payment_id, not newest campaign-wide success (#173)
-        const { data: donation } = await supabase.from('campaign_donations')
-          .select('donor_name, reference_code, campaigns(title)')
-          .eq('payment_id', payment.id)
-          .eq('status', 'success')
-          .maybeSingle();
-
-        const campaignTitle = (donation?.campaigns as unknown as { title: string } | null)?.title || 'Campaign';
-        notifyOwnerNewDonation({
-          supabase, sender: resolved.sender, businessId, businessName, countryCode,
-          referenceCode: donation?.reference_code || referenceCode,
-          donorName: donation?.donor_name || null,
-          amount: payment.amount,
-          campaignTitle,
-        }).catch(err => logSafeError(logPrefix, 'donation-owner-notify', err));
-
-        // In-app notification for campaign donation (#173)
-        const { createNotification } = await import('@/lib/bot/flows/shared/notifications');
-        createNotification(supabase, {
-          businessId,
-          type: 'payment',
-          channel: 'whatsapp',
-          body: `New donation of ${formatCurrency(payment.amount, countryCode)} for ${campaignTitle}${donation?.donor_name ? ` from ${donation.donor_name}` : ''}. Ref: ${donation?.reference_code || referenceCode}`,
-        }).catch(err => logSafeError(logPrefix, 'campaign-in-app-notification', err));
-      }
-
-      // ── 7d. Order owner notification ──
-      if (payment.order_id && resolved) {
-        const { notifyOwnerNewOrder } = await import('@/lib/bot/flows/shared/notify-owner');
-        const { data: order } = await supabase.from('orders')
-          .select('reference_code, delivery_name, delivery_address, order_items(product_name, variant_label, quantity, unit_price)')
-          .eq('id', payment.order_id).single();
-
-        if (order) {
-          const items = ((order.order_items || []) as Array<{ product_name: string; variant_label?: string; quantity: number; unit_price: number }>).map(i => ({
-            name: i.variant_label ? `${i.product_name} (${i.variant_label})` : i.product_name,
-            quantity: i.quantity,
-            price: i.unit_price * i.quantity,
-          }));
-          notifyOwnerNewOrder({
-            supabase, sender: resolved.sender, businessId, businessName, countryCode,
-            referenceCode: order.reference_code || referenceCode,
-            customerName: order.delivery_name || 'Customer',
-            items,
-            totalAmount: payment.amount,
-            deliveryAddress: order.delivery_address || undefined,
-          }).catch(err => logSafeError(logPrefix, 'order-owner-notify', err));
-        }
-      }
-
-      // Send email to business owner
+    if (manifestInitialized) {
+      // ── MANIFEST PATH: real effects inside lifecycle drivers ──
       try {
-        const { data: biz } = await supabase.from('businesses').select('owner_id').eq('id', businessId).single();
-        if (biz?.owner_id) {
-          const { data: ownerProfile } = await supabase.from('profiles').select('email').eq('id', biz.owner_id).single();
-          if (ownerProfile?.email) {
-            const { sendEmail } = await import('@/lib/email/client');
-            const { paymentReceivedEmail } = await import('@/lib/email/templates');
-            const emailContent = paymentReceivedEmail(businessName, formatCurrency(payment.amount, countryCode), serviceName);
-            await sendEmail({ to: ownerProfile.email, ...emailContent });
+        const te = await import('@/lib/payments/terminal-effects');
+        const { data: ownerNotifBooking } = payment.booking_id
+          ? await supabase.from('bookings').select('date, time, party_size, guest_name, flow_type, services(name)').eq('id', payment.booking_id).single()
+          : { data: null };
+
+        // 7a. owner_notif_inapp — REAL INSERT inside lifecycle
+        await te.driveInternalEffect(supabase, payment.id, 'owner_notif_inapp', claimToken, async () => {
+          if (payment.booking_id && ownerNotifBooking?.flow_type === 'payment') {
+            const svc = ownerNotifBooking.services as unknown as { name: string } | null;
+            await supabase.from('notifications').insert({ business_id: businessId, booking_id: payment.booking_id, type: 'payment', channel: 'whatsapp',
+              body: `Payment received: ${svc?.name || 'Payment'} ${referenceCode}. Amount: ${formatCurrency(payment.amount, countryCode)}`, status: 'delivered', delivered_at: new Date().toISOString() });
+          } else if (payment.reservation_id && !payment.booking_id) {
+            const { createNotification } = await import('@/lib/bot/flows/shared/notifications');
+            await createNotification(supabase, { businessId, type: 'booking_confirmation', channel: 'whatsapp', body: `Reservation confirmed (paid): ${serviceName} ${referenceCode}. Amount: ${formatCurrency(payment.amount, countryCode)}` });
+          } else if (payment.campaign_id) {
+            const { data: don } = await supabase.from('campaign_donations').select('donor_name, reference_code, campaigns(title)').eq('payment_id', payment.id).eq('status', 'success').maybeSingle();
+            const ct = (don?.campaigns as unknown as { title: string } | null)?.title || 'Campaign';
+            const { createNotification } = await import('@/lib/bot/flows/shared/notifications');
+            await createNotification(supabase, { businessId, type: 'payment', channel: 'whatsapp', body: `New donation of ${formatCurrency(payment.amount, countryCode)} for ${ct}${don?.donor_name ? ` from ${don.donor_name}` : ''}. Ref: ${don?.reference_code || referenceCode}` });
+          }
+        });
+
+        // 7b. owner_notif_whatsapp — REAL notifyOwner* inside emission fence
+        await te.driveExternalEffect(supabase, payment.id, 'owner_notif_whatsapp', claimToken, async () => {
+          if (!resolved) return false;
+          if (payment.booking_id && ownerNotifBooking) {
+            if (ownerNotifBooking.flow_type === 'payment') {
+              const svc = ownerNotifBooking.services as unknown as { name: string } | null;
+              const { notifyOwnerNewPayment } = await import('@/lib/bot/flows/shared/notify-owner');
+              await notifyOwnerNewPayment({ supabase, sender: resolved.sender, businessId, businessName, countryCode, referenceCode, customerName: ownerNotifBooking.guest_name || 'Customer', amount: payment.amount, categoryName: svc?.name || 'Payment' });
+            } else {
+              const { notifyOwnerNewBooking } = await import('@/lib/bot/flows/shared/notify-owner');
+              await notifyOwnerNewBooking({ supabase, sender: resolved.sender, businessId, businessName, countryCode, referenceCode, customerName: ownerNotifBooking.guest_name || 'Customer', date: ownerNotifBooking.date, time: ownerNotifBooking.time, quantity: ownerNotifBooking.party_size || 1, quantityLabel: 'guest(s)', amount: payment.amount });
+            }
+          } else if (payment.reservation_id && !payment.booking_id) {
+            const { data: res } = await supabase.from('reservations').select('guest_name, check_in, check_out, guest_count').eq('id', payment.reservation_id).single();
+            if (res) { const ci = new Date(res.check_in + 'T00:00').toLocaleDateString('en-US', { day: 'numeric', month: 'short' }); const co = new Date(res.check_out + 'T00:00').toLocaleDateString('en-US', { day: 'numeric', month: 'short' }); const { notifyOwnerNewBooking } = await import('@/lib/bot/flows/shared/notify-owner'); await notifyOwnerNewBooking({ supabase, sender: resolved.sender, businessId, businessName, countryCode, referenceCode, customerName: res.guest_name || 'Guest', date: ci, time: `→ ${co}`, quantity: res.guest_count || 1, quantityLabel: 'guest(s)', amount: payment.amount }); }
+          } else if (payment.invoice_id) {
+            const { data: inv } = await supabase.from('invoices').select('reference_code, customer_name').eq('id', payment.invoice_id).single();
+            if (inv) { const { notifyOwnerNewInvoicePayment } = await import('@/lib/bot/flows/shared/notify-owner'); await notifyOwnerNewInvoicePayment({ supabase, sender: resolved.sender, businessId, businessName, countryCode, referenceCode: inv.reference_code || referenceCode, customerName: inv.customer_name || 'Customer', amount: payment.amount, invoiceNumber: inv.reference_code || referenceCode }); }
+          } else if (payment.campaign_id) {
+            const { data: don } = await supabase.from('campaign_donations').select('donor_name, reference_code, campaigns(title)').eq('payment_id', payment.id).eq('status', 'success').maybeSingle();
+            const ct = (don?.campaigns as unknown as { title: string } | null)?.title || 'Campaign';
+            const { notifyOwnerNewDonation } = await import('@/lib/bot/flows/shared/notify-owner');
+            await notifyOwnerNewDonation({ supabase, sender: resolved.sender, businessId, businessName, countryCode, referenceCode: don?.reference_code || referenceCode, donorName: don?.donor_name || null, amount: payment.amount, campaignTitle: ct });
+          } else if (payment.order_id) {
+            const { data: ord } = await supabase.from('orders').select('reference_code, delivery_name, delivery_address, order_items(product_name, variant_label, quantity, unit_price)').eq('id', payment.order_id).single();
+            if (ord) { const its = ((ord.order_items || []) as Array<{ product_name: string; variant_label?: string; quantity: number; unit_price: number }>).map(i => ({ name: i.variant_label ? `${i.product_name} (${i.variant_label})` : i.product_name, quantity: i.quantity, price: i.unit_price * i.quantity })); const { notifyOwnerNewOrder } = await import('@/lib/bot/flows/shared/notify-owner'); await notifyOwnerNewOrder({ supabase, sender: resolved.sender, businessId, businessName, countryCode, referenceCode: ord.reference_code || referenceCode, customerName: ord.delivery_name || 'Customer', items: its, totalAmount: payment.amount, deliveryAddress: ord.delivery_address || undefined }); }
+          }
+          return true;
+        });
+
+        // 7c. owner_notif_email — REAL sendEmail inside emission fence
+        await te.driveExternalEffect(supabase, payment.id, 'owner_notif_email', claimToken, async () => {
+          const { data: biz } = await supabase.from('businesses').select('owner_id').eq('id', businessId).single();
+          if (biz?.owner_id) {
+            const { data: ownerProfile } = await supabase.from('profiles').select('email').eq('id', biz.owner_id).single();
+            if (ownerProfile?.email) {
+              const { sendEmail } = await import('@/lib/email/client');
+              const { paymentReceivedEmail } = await import('@/lib/email/templates');
+              await sendEmail({ to: ownerProfile.email, ...paymentReceivedEmail(businessName, formatCurrency(payment.amount, countryCode), serviceName) });
+            }
+          }
+          return true;
+        });
+      } catch (err) { logSafeError(logPrefix, 'owner-notification-manifest', err); }
+    } else {
+      // ── LEGACY PATH: original section 7 code unchanged for mock test compatibility ──
+      try {
+        if (payment.booking_id) {
+          const { data: ownerNotifBooking } = await supabase.from('bookings')
+            .select('date, time, party_size, guest_name, flow_type, services(name)')
+            .eq('id', payment.booking_id).single();
+
+          if (ownerNotifBooking && ownerNotifBooking.flow_type === 'payment') {
+            const svc = ownerNotifBooking.services as unknown as { name: string } | null;
+            try {
+              const { error: notifErr } = await supabase.from('notifications').insert({
+                business_id: businessId, booking_id: payment.booking_id, type: 'payment', channel: 'whatsapp',
+                body: `Payment received: ${svc?.name || 'Payment'} ${referenceCode}. Amount: ${formatCurrency(payment.amount, countryCode)}`,
+                status: 'delivered', delivered_at: new Date().toISOString(),
+              });
+              if (notifErr) logSafeError(logPrefix, 'payment-in-app-notification-insert', notifErr);
+            } catch (notifEx) { logSafeError(logPrefix, 'payment-in-app-notification', notifEx); }
+
+            if (resolved) {
+              const { notifyOwnerNewPayment } = await import('@/lib/bot/flows/shared/notify-owner');
+              await notifyOwnerNewPayment({ supabase, sender: resolved.sender, businessId, businessName, countryCode,
+                referenceCode, customerName: ownerNotifBooking.guest_name || 'Customer', amount: payment.amount, categoryName: svc?.name || 'Payment' });
+            }
+          } else if (ownerNotifBooking && resolved) {
+            const { notifyOwnerNewBooking } = await import('@/lib/bot/flows/shared/notify-owner');
+            await notifyOwnerNewBooking({ supabase, sender: resolved.sender, businessId, businessName, countryCode,
+              referenceCode, customerName: ownerNotifBooking.guest_name || 'Customer',
+              date: ownerNotifBooking.date, time: ownerNotifBooking.time,
+              quantity: ownerNotifBooking.party_size || 1, quantityLabel: 'guest(s)', amount: payment.amount });
           }
         }
-      } catch (emailErr) {
-        logSafeError(logPrefix, 'owner-email', emailErr);
-      }
-    } catch (notifyErr) {
-      logSafeError(logPrefix, 'owner-notification', notifyErr);
+        if (payment.reservation_id && !payment.booking_id && resolved) {
+          const { notifyOwnerNewBooking } = await import('@/lib/bot/flows/shared/notify-owner');
+          const { data: reservation } = await supabase.from('reservations').select('guest_name, check_in, check_out, guest_count').eq('id', payment.reservation_id).single();
+          if (reservation) {
+            const checkIn = new Date(reservation.check_in + 'T00:00').toLocaleDateString('en-US', { day: 'numeric', month: 'short' });
+            const checkOut = new Date(reservation.check_out + 'T00:00').toLocaleDateString('en-US', { day: 'numeric', month: 'short' });
+            await notifyOwnerNewBooking({ supabase, sender: resolved.sender, businessId, businessName, countryCode, referenceCode, customerName: reservation.guest_name || 'Guest', date: checkIn, time: `→ ${checkOut}`, quantity: reservation.guest_count || 1, quantityLabel: 'guest(s)', amount: payment.amount });
+          }
+          const { createNotification } = await import('@/lib/bot/flows/shared/notifications');
+          createNotification(supabase, { businessId, type: 'booking_confirmation', channel: 'whatsapp', body: `Reservation confirmed (paid): ${serviceName} ${referenceCode}. Amount: ${formatCurrency(payment.amount, countryCode)}` }).catch(err => logSafeError(logPrefix, 'reservation-in-app-notification', err));
+        }
+        if (payment.invoice_id && resolved) {
+          const { notifyOwnerNewInvoicePayment } = await import('@/lib/bot/flows/shared/notify-owner');
+          const { data: invoice } = await supabase.from('invoices').select('reference_code, customer_name, customer_phone').eq('id', payment.invoice_id).single();
+          if (invoice) { notifyOwnerNewInvoicePayment({ supabase, sender: resolved.sender, businessId, businessName, countryCode, referenceCode: invoice.reference_code || referenceCode, customerName: invoice.customer_name || 'Customer', amount: payment.amount, invoiceNumber: invoice.reference_code || referenceCode }).catch(err => logSafeError(logPrefix, 'invoice-owner-notify', err)); }
+        }
+        if (payment.campaign_id && resolved) {
+          const { notifyOwnerNewDonation } = await import('@/lib/bot/flows/shared/notify-owner');
+          const { data: donation } = await supabase.from('campaign_donations').select('donor_name, reference_code, campaigns(title)').eq('payment_id', payment.id).eq('status', 'success').maybeSingle();
+          const campaignTitle = (donation?.campaigns as unknown as { title: string } | null)?.title || 'Campaign';
+          notifyOwnerNewDonation({ supabase, sender: resolved.sender, businessId, businessName, countryCode, referenceCode: donation?.reference_code || referenceCode, donorName: donation?.donor_name || null, amount: payment.amount, campaignTitle }).catch(err => logSafeError(logPrefix, 'donation-owner-notify', err));
+          const { createNotification } = await import('@/lib/bot/flows/shared/notifications');
+          createNotification(supabase, { businessId, type: 'payment', channel: 'whatsapp', body: `New donation of ${formatCurrency(payment.amount, countryCode)} for ${campaignTitle}${donation?.donor_name ? ` from ${donation.donor_name}` : ''}. Ref: ${donation?.reference_code || referenceCode}` }).catch(err => logSafeError(logPrefix, 'campaign-in-app-notification', err));
+        }
+        if (payment.order_id && resolved) {
+          const { notifyOwnerNewOrder } = await import('@/lib/bot/flows/shared/notify-owner');
+          const { data: order } = await supabase.from('orders').select('reference_code, delivery_name, delivery_address, order_items(product_name, variant_label, quantity, unit_price)').eq('id', payment.order_id).single();
+          if (order) {
+            const items = ((order.order_items || []) as Array<{ product_name: string; variant_label?: string; quantity: number; unit_price: number }>).map(i => ({ name: i.variant_label ? `${i.product_name} (${i.variant_label})` : i.product_name, quantity: i.quantity, price: i.unit_price * i.quantity }));
+            notifyOwnerNewOrder({ supabase, sender: resolved.sender, businessId, businessName, countryCode, referenceCode: order.reference_code || referenceCode, customerName: order.delivery_name || 'Customer', items, totalAmount: payment.amount, deliveryAddress: order.delivery_address || undefined }).catch(err => logSafeError(logPrefix, 'order-owner-notify', err));
+          }
+        }
+        try {
+          const { data: biz } = await supabase.from('businesses').select('owner_id').eq('id', businessId).single();
+          if (biz?.owner_id) {
+            const { data: ownerProfile } = await supabase.from('profiles').select('email').eq('id', biz.owner_id).single();
+            if (ownerProfile?.email) {
+              const { sendEmail } = await import('@/lib/email/client');
+              const { paymentReceivedEmail } = await import('@/lib/email/templates');
+              await sendEmail({ to: ownerProfile.email, ...paymentReceivedEmail(businessName, formatCurrency(payment.amount, countryCode), serviceName) });
+            }
+          }
+        } catch (emailErr) { logSafeError(logPrefix, 'owner-email', emailErr); }
+      } catch (notifyErr) { logSafeError(logPrefix, 'owner-notification', notifyErr); }
     }
 
     // ── CHECKPOINT 4: Renew before tickets, customer emails, donation receipt ──
@@ -956,60 +1039,104 @@ export async function sendProactiveConfirmation(
               logger.error(`${logPrefix} Typed event ${ticketBooking.event_id} — cannot resolve ticket_type_id, failing closed`);
               // ticketStateComplete stays false
             } else {
-              // ── 8d. Canonical inventory finalization BEFORE ticket creation ──
-              const { data: finResult, error: finError } = await supabase.rpc('finalize_free_ticket_booking', {
-                p_booking_id: payment.booking_id,
-                p_event_id: ticketBooking.event_id,
-                p_ticket_type_id: ticketTypeId,
-                p_quantity: ticketQty,
-              });
+              const ticketModule = await import('@/lib/bot/flows/shared/send-tickets');
+              const finalizeInventory = async () => {
+                const { data: finResult, error: finError } = await supabase.rpc('finalize_free_ticket_booking', {
+                  p_booking_id: payment.booking_id,
+                  p_event_id: ticketBooking.event_id,
+                  p_ticket_type_id: ticketTypeId,
+                  p_quantity: ticketQty,
+                });
+                if (finError || finResult?.success !== true) {
+                  throw new Error(`ticket_counter_finalize_failed:${finError?.message || finResult?.reason || 'unknown'}`);
+                }
+              };
 
-              if (finError) {
-                logSafeError(logPrefix, 'ticket-counter-finalize', finError);
-                Sentry.captureException(finError, { tags: { component: 'send-confirmation', operation: 'ticket-finalize' } });
+              if (manifestInitialized) {
+                const te = await import('@/lib/payments/terminal-effects');
+                const inventoryEffect = await te.driveInternalEffect(
+                  supabase, payment.id, 'ticket_inventory_finalization', claimToken, finalizeInventory,
+                );
+                if (!inventoryEffect.ok) throw new Error(inventoryEffect.error);
               } else {
-                if (finResult?.already_finalized) {
-                  logger.info(`${logPrefix} Ticket counters already finalized for booking ${payment.booking_id}`);
-                } else {
-                  logger.info(`${logPrefix} Ticket counters finalized: event=${ticketBooking.event_id} qty=${ticketQty}`);
-                }
-
-                // ── 8e. Canonical ticket row creation ──
-                const { data: event } = await supabase
-                  .from('events')
-                  .select('id, name, date, time, venue')
-                  .eq('id', ticketBooking.event_id)
-                  .single();
-
-                const eventName = event?.name || ticketBooking.notes?.replace('Tickets for: ', '') || 'Event';
-                const dateLabel = new Date((event?.date || ticketBooking.date) + 'T00:00').toLocaleDateString('en-US', {
-                  weekday: 'long', day: 'numeric', month: 'long',
-                });
-
-                const { sendTicketsAfterPurchase } = await import('@/lib/bot/flows/shared/send-tickets');
-                const ticketResult = await sendTicketsAfterPurchase({
-                  supabase,
-                  sender: resolved?.sender,
-                  businessId,
-                  bookingId: payment.booking_id,
-                  eventId: ticketBooking.event_id,
-                  eventName, eventDate: dateLabel,
-                  eventTime: event?.time || ticketBooking.time || undefined,
-                  venue: event?.venue || '',
-                  guestName: ticketBooking.guest_name || 'Guest',
-                  guestPhone: ticketBooking.guest_phone || customerPhone || '',
-                  guestEmail: ticketBooking.guest_email || undefined,
-                  referenceCode,
-                  quantity: ticketQty,
-                  amount: payment.amount, countryCode,
-                });
-
-                if (ticketResult.success && ticketResult.tickets.length >= ticketQty) {
-                  ticketStateComplete = true;
-                } else {
-                  logger.error(`${logPrefix} Ticket creation incomplete: success=${ticketResult.success} rows=${ticketResult.tickets.length} expected=${ticketQty}`);
-                }
+                await finalizeInventory();
               }
+
+              const { data: event, error: eventError } = await supabase
+                .from('events')
+                .select('id, name, date, time, venue')
+                .eq('id', ticketBooking.event_id)
+                .single();
+              if (eventError) throw new Error(`ticket_event_lookup_failed:${eventError.message}`);
+
+              const ticketOptions = {
+                supabase,
+                sender: resolved?.sender,
+                businessId,
+                bookingId: payment.booking_id,
+                eventId: ticketBooking.event_id,
+                eventName: event?.name || ticketBooking.notes?.replace('Tickets for: ', '') || 'Event',
+                eventDate: new Date((event?.date || ticketBooking.date) + 'T00:00').toLocaleDateString('en-US', {
+                  weekday: 'long', day: 'numeric', month: 'long',
+                }),
+                eventTime: event?.time || ticketBooking.time || undefined,
+                venue: event?.venue || '',
+                guestName: ticketBooking.guest_name || 'Guest',
+                guestPhone: ticketBooking.guest_phone || customerPhone || '',
+                guestEmail: ticketBooking.guest_email || undefined,
+                referenceCode,
+                quantity: ticketQty,
+                amount: payment.amount,
+                countryCode,
+              };
+
+              let ticketResult: Awaited<ReturnType<typeof ticketModule.ensureCanonicalTicketRows>> | null = null;
+              const convergeRows = async () => {
+                ticketResult = await ticketModule.ensureCanonicalTicketRows(ticketOptions);
+                if (!ticketResult.success || ticketResult.tickets.length !== ticketQty) {
+                  throw new Error(`ticket_rows_incomplete:${ticketResult.error || ticketResult.tickets.length}`);
+                }
+              };
+              if (manifestInitialized) {
+                const te = await import('@/lib/payments/terminal-effects');
+                const rowEffect = await te.driveInternalEffect(
+                  supabase, payment.id, 'ticket_row_creation', claimToken, convergeRows,
+                );
+                if (!rowEffect.ok) throw new Error(rowEffect.error);
+                if (!ticketResult) await convergeRows(); // terminal retry: authoritative row re-read/convergence
+
+                if (resolved?.sender) {
+                  const whatsappEffect = await te.driveExternalEffect(
+                    supabase, payment.id, 'ticket_delivery_whatsapp', claimToken,
+                    async () => {
+                      await ticketModule.deliverTicketsWhatsApp({ ...ticketOptions, tickets: ticketResult!.tickets });
+                      return true;
+                    },
+                  );
+                  if (!whatsappEffect.ok) throw new Error(whatsappEffect.error);
+                } else if (!whatsappOriginMissingChannel) {
+                  // Genuine non-WhatsApp flow: skip is valid
+                  const whatsappEffect = await te.skipOptionalEffect(
+                    supabase, payment.id, 'ticket_delivery_whatsapp', claimToken, 'no_resolved_whatsapp_sender',
+                  );
+                  if (!whatsappEffect.ok) throw new Error(whatsappEffect.error);
+                }
+                // else: WhatsApp-origin missing channel — leave pending for retry
+                if (ticketBooking.guest_email) {
+                  const emailEffect = await te.driveExternalEffect(
+                    supabase, payment.id, 'ticket_delivery_email', claimToken,
+                    async () => {
+                      await ticketModule.deliverTicketsEmail({ ...ticketOptions, tickets: ticketResult!.tickets });
+                      return true;
+                    },
+                  );
+                  if (!emailEffect.ok) throw new Error(emailEffect.error);
+                }
+              } else {
+                const legacyResult = await ticketModule.sendTicketsAfterPurchase(ticketOptions);
+                ticketResult = legacyResult;
+              }
+              ticketStateComplete = !!ticketResult?.success && ticketResult.tickets.length === ticketQty;
             }
           }
         }
@@ -1021,7 +1148,7 @@ export async function sendProactiveConfirmation(
     }
 
     // ── 8b. Send email confirmation — always send if guest has email (WhatsApp + email) ──
-    if (payment.booking_id) {
+    if (payment.booking_id && bookingFlowType !== 'ticketing') {
       try {
         const { data: emailBooking } = await supabase
           .from('bookings')
@@ -1063,7 +1190,20 @@ export async function sendProactiveConfirmation(
             googleCalendarUrl: googleCalUrl,
             whitelabel: isWl,
           });
-          await sendEmail({ to: guestEmail, ...emailContent });
+          const sendBookingEmail = async () => {
+            const result = await sendEmail({ to: guestEmail, ...emailContent });
+            if (!result.success) throw new Error('booking_email_send_failed');
+            return true;
+          };
+          if (manifestInitialized) {
+            const te = await import('@/lib/payments/terminal-effects');
+            const effect = await te.driveExternalEffect(
+              supabase, payment.id, 'customer_booking_email', claimToken, sendBookingEmail,
+            );
+            if (!effect.ok) throw new Error(effect.error);
+          } else {
+            await sendBookingEmail();
+          }
           logger.info(`${logPrefix} Email confirmation sent`);
         }
       } catch (emailErr) {
@@ -1106,12 +1246,61 @@ export async function sendProactiveConfirmation(
               referenceCode: donation.reference_code || referenceCode,
               whitelabel: isWl,
             });
-            await sendEmail({ to: donorEmail, ...emailContent });
+            const sendDonationEmail = async () => {
+              const result = await sendEmail({ to: donorEmail, ...emailContent });
+              if (!result.success) throw new Error('donation_receipt_email_send_failed');
+              return true;
+            };
+            if (manifestInitialized) {
+              const te = await import('@/lib/payments/terminal-effects');
+              const effect = await te.driveExternalEffect(
+                supabase, payment.id, 'donation_receipt_email', claimToken, sendDonationEmail,
+              );
+              if (!effect.ok) throw new Error(effect.error);
+            } else {
+              await sendDonationEmail();
+            }
             logger.info(`${logPrefix} Donation receipt email sent`);
           }
         }
       } catch (donationEmailErr) {
         logSafeError(logPrefix, 'donation-receipt-email', donationEmailErr);
+      }
+    }
+
+    // ── Bridge the customer delivery subsystem's durable outcome ──
+    // Migration 342 owns the customer WhatsApp emission fence. The manifest mirrors
+    // its persisted outcome and never calls the provider a second time.
+    // CRITICAL: Do NOT terminalize customer_whatsapp when whatsappOriginMissingChannel
+    // is true — the claim is about to be released for retry. Bridging an empty delivery
+    // set to "failed" would create a stale terminal state that survives the retry.
+    if (manifestInitialized && !whatsappOriginMissingChannel) {
+      try {
+        const te = await import('@/lib/payments/terminal-effects');
+        const { data: deliveryRows, error: deliveryReadError } = await supabase
+          .from('payment_confirmation_deliveries')
+          .select('delivery_status')
+          .eq('payment_id', payment.id);
+        if (deliveryReadError) throw new Error(`customer_delivery_read_failed:${deliveryReadError.message}`);
+        const statuses = (deliveryRows || []).map(row => row.delivery_status as string);
+        // Only bridge a terminal outcome when there are actual delivery attempts.
+        // An empty delivery set means the send was never attempted (channel unavailable
+        // or non-WhatsApp flow) — NOT a delivery failure.
+        if (statuses.length > 0) {
+          const outcome = statuses.some(s => ['accepted', 'sent', 'delivered', 'read'].includes(s))
+            ? 'completed'
+            : statuses.some(s => ['sending', 'indeterminate'].includes(s))
+              ? 'indeterminate'
+              : 'failed';
+          const bridge = await te.bridgeExternalEffect(
+            supabase, payment.id, 'customer_whatsapp', claimToken, outcome, 'delivery_subsystem_terminal_state',
+          );
+          if (!bridge.ok) throw new Error(bridge.error);
+        }
+        // If no delivery rows AND customer_whatsapp is not in the manifest
+        // (non-WhatsApp flow without sender), this is a no-op — correct behavior.
+      } catch (effectErr) {
+        logger.warn(`${logPrefix} Customer delivery bridge failed:`, effectErr);
       }
     }
 
@@ -1123,19 +1312,34 @@ export async function sendProactiveConfirmation(
     }
 
     // ── 9. Deactivate the payment-waiting session ──
-    // Booking/order/reservation families: Stage 2.5 exact-origin terminalization owns their
-    // session lifecycle. The broad heuristic must NOT run for these families — even for
-    // legacy_null origins — to avoid deactivating a newer unrelated active session.
-    // Invoice/campaign families: no entity-level bot_session_id exists, so the broad
-    // business+phone heuristic remains their only cleanup mechanism.
-    if (customerPhone && !exactEntityFamily) {
-      await supabase
-        .from('bot_sessions')
-        .update({ is_active: false, current_step: 'complete' })
-        .or(`whatsapp_number.eq.${stripPlus(customerPhone)},whatsapp_number.eq.+${stripPlus(customerPhone)}`)
-        .eq('business_id', businessId)
-        .eq('is_active', true)
-        .in('current_step', ['await_invoice_payment', 'await_donation_payment']);
+    // The REAL session mutation happens inside the manifest lifecycle driver.
+    if (manifestInitialized) {
+      try {
+        const te = await import('@/lib/payments/terminal-effects');
+        await te.driveInternalEffect(supabase, payment.id, 'session_deactivation', claimToken, async () => {
+          // REAL MUTATION inside lifecycle authority
+          if (customerPhone && !exactEntityFamily) {
+            await supabase
+              .from('bot_sessions')
+              .update({ is_active: false, current_step: 'complete' })
+              .or(`whatsapp_number.eq.${stripPlus(customerPhone)},whatsapp_number.eq.+${stripPlus(customerPhone)}`)
+              .eq('business_id', businessId)
+              .eq('is_active', true)
+              .in('current_step', ['await_invoice_payment', 'await_donation_payment']);
+          }
+        });
+      } catch { /* non-fatal */ }
+    } else {
+      // Legacy path: no manifest, execute directly
+      if (customerPhone && !exactEntityFamily) {
+        await supabase
+          .from('bot_sessions')
+          .update({ is_active: false, current_step: 'complete' })
+          .or(`whatsapp_number.eq.${stripPlus(customerPhone)},whatsapp_number.eq.+${stripPlus(customerPhone)}`)
+          .eq('business_id', businessId)
+          .eq('is_active', true)
+          .in('current_step', ['await_invoice_payment', 'await_donation_payment']);
+      }
     }
 
     // ── 10. Finalize: mark confirmation as successfully completed ──
