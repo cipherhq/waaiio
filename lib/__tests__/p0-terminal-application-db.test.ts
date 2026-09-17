@@ -81,14 +81,23 @@ describe.skipIf(!canRun)('Phase A v15: Application RPCs + rule-action lifecycle'
       );
       CREATE TABLE IF NOT EXISTS loyalty_points (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        business_id UUID, customer_phone TEXT, points INT DEFAULT 0,
-        updated_at TIMESTAMPTZ DEFAULT NOW(),
+        business_id UUID NOT NULL, customer_phone VARCHAR(20) NOT NULL,
+        customer_name TEXT,
+        points_balance INTEGER NOT NULL DEFAULT 0 CHECK (points_balance >= 0),
+        total_earned INTEGER NOT NULL DEFAULT 0 CHECK (total_earned >= 0),
+        total_redeemed INTEGER NOT NULL DEFAULT 0,
+        visit_count INTEGER NOT NULL DEFAULT 0,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         UNIQUE(business_id, customer_phone)
       );
       CREATE TABLE IF NOT EXISTS loyalty_transactions (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        business_id UUID, customer_phone TEXT, points INT, type TEXT, description TEXT,
-        created_at TIMESTAMPTZ DEFAULT NOW()
+        business_id UUID NOT NULL, customer_phone VARCHAR(20) NOT NULL,
+        points_change INTEGER NOT NULL,
+        reason TEXT NOT NULL CHECK (reason IN ('visit','purchase','redemption','bonus','referral')),
+        reference_id TEXT, reference_type TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
       CREATE TABLE IF NOT EXISTS payments (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

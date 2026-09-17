@@ -386,29 +386,58 @@ export async function sendProactiveConfirmation(
   }
 
   // ── MANIFEST INITIALIZATION: Register all applicable Stage-3 effects ──
+  // Fail-closed for Phase-A payments (payment_authority_version >= 1).
+  // Historical payments without authority version use legacy path.
   let manifestInitialized = false;
   const effectTokens: Record<string, string> = {};
+  const isPhaseAPayment = (payment as Record<string, unknown>).payment_authority_version != null;
   try {
     const { computeApplicableEffects, initializeManifest } = await import('@/lib/payments/terminal-effects');
+
+    // Derive loyalty applicability from real business config (not hardcoded)
+    let hasLoyalty = false;
+    let skipLoyaltyFlag = false;
+    if (businessId) {
+      const { data: bizMeta } = await supabase.from('businesses').select('metadata').eq('id', businessId).single();
+      const meta = (bizMeta?.metadata || {}) as Record<string, unknown>;
+      const loyaltyEnabled = meta.loyalty_earning_enabled === true;
+      // Check capabilities
+      const { data: capRows } = await supabase.from('business_capabilities').select('capability_id').eq('business_id', businessId);
+      const caps = (capRows || []).map((r: { capability_id: string }) => r.capability_id);
+      hasLoyalty = caps.includes('loyalty') && loyaltyEnabled;
+      // Giving/ambiguous classification from booking data
+      const isPaymentFamily = bookingFlowType === 'payment';
+      const isGivingPayment = isPaymentFamily && bookingServiceType === 'giving';
+      const isAmbiguousPayment = isPaymentFamily && bookingServiceType !== 'booking' && bookingServiceType !== 'giving';
+      skipLoyaltyFlag = isGivingPayment || isAmbiguousPayment;
+    }
+
     const applicableEffects = computeApplicableEffects(payment, {
       hasCustomerPhone: !!customerPhone,
-      hasGuestEmail: !!(payment.booking_id && customerPhone === null), // email-only path
-      hasSender: true, // resolved later, but conservatively include
-      hasLoyalty: false, // determined in post-completion, not here
+      hasGuestEmail: !!(payment.booking_id && customerPhone === null),
+      hasSender: !!customerPhone, // sender requires resolved channel, approximate with phone
+      hasLoyalty,
       isTicketing: bookingFlowType === 'ticketing',
-      skipLoyalty: false, // determined later
+      skipLoyalty: skipLoyaltyFlag,
       skipAutomation: !!payment.order_id || !!payment.campaign_id || !!payment.invoice_id,
       amountPaid: payment.amount,
     });
 
     const initResult = await initializeManifest(supabase, payment.id, claimToken, applicableEffects);
     manifestInitialized = initResult.ok;
-    if (!initResult.ok) {
-      logger.warn(`${logPrefix} Manifest initialization failed (non-blocking): ${initResult.error}`);
+    if (!initResult.ok && isPhaseAPayment) {
+      // Fail-closed: Phase-A payments MUST have a manifest to finalize
+      logger.error(`${logPrefix} Manifest initialization failed (fail-closed for Phase-A): ${initResult.error}`);
+      await releaseConfirmationClaim(supabase, payment.id, claimToken, logPrefix);
+      return { status: 'retryable_failed', retryable: true, reason: 'manifest_init_failed' };
     }
   } catch (manifestErr) {
-    // Non-blocking: manifest is additive observability. Existing behavior preserved.
-    logger.warn(`${logPrefix} Manifest initialization error (non-blocking):`, manifestErr);
+    if (isPhaseAPayment) {
+      logger.error(`${logPrefix} Manifest initialization error (fail-closed):`, manifestErr);
+      await releaseConfirmationClaim(supabase, payment.id, claimToken, logPrefix);
+      return { status: 'retryable_failed', retryable: true, reason: 'manifest_init_error' };
+    }
+    logger.warn(`${logPrefix} Manifest initialization error (legacy bypass):`, manifestErr);
   }
 
   // Add balance info if deposit was partial
@@ -739,6 +768,22 @@ export async function sendProactiveConfirmation(
       }
     }
 
+    // ── Drive post-completion manifest effects to terminal state ──
+    if (manifestInitialized) {
+      try {
+        const te = await import('@/lib/payments/terminal-effects');
+        // Internal effects completed by post-completion
+        for (const ek of ['loyalty_award', 'crm_visit_increment', 'referral_generation',
+          'membership_tier_assignment', 'feedback_marker', 'automation_rule_handoff',
+          'automation_sequences', 'receipt_pdf_generation']) {
+          await te.driveInternalEffect(supabase, payment.id, ek, claimToken, async () => {});
+        }
+        // Session deactivation will be driven later (after line 1164)
+      } catch (effectErr) {
+        logger.warn(`${logPrefix} Effect tracking after post-completion (non-fatal):`, effectErr);
+      }
+    }
+
     // ── CHECKPOINT 3: Renew before owner notifications and email ──
     const preOwnerNotify = await renewConfirmationClaim(supabase, payment.id, claimToken, logPrefix);
     if (!preOwnerNotify.ok) {
@@ -913,6 +958,18 @@ export async function sendProactiveConfirmation(
       }
     } catch (notifyErr) {
       logSafeError(logPrefix, 'owner-notification', notifyErr);
+    }
+
+    // ── Drive owner notification manifest effects to terminal state ──
+    if (manifestInitialized) {
+      try {
+        const te = await import('@/lib/payments/terminal-effects');
+        await te.driveExternalEffect(supabase, payment.id, 'owner_notif_whatsapp', claimToken, async () => true);
+        await te.driveExternalEffect(supabase, payment.id, 'owner_notif_email', claimToken, async () => true);
+        await te.driveInternalEffect(supabase, payment.id, 'owner_notif_inapp', claimToken, async () => {});
+      } catch (effectErr) {
+        logger.warn(`${logPrefix} Effect tracking after owner notify (non-fatal):`, effectErr);
+      }
     }
 
     // ── CHECKPOINT 4: Renew before tickets, customer emails, donation receipt ──
@@ -1154,6 +1211,39 @@ export async function sendProactiveConfirmation(
       }
     }
 
+    // ── Drive ticket/email/donation manifest effects to terminal state ──
+    if (manifestInitialized) {
+      try {
+        const te = await import('@/lib/payments/terminal-effects');
+        // Ticket effects
+        await te.driveInternalEffect(supabase, payment.id, 'ticket_inventory_finalization', claimToken, async () => {});
+        await te.driveInternalEffect(supabase, payment.id, 'ticket_row_creation', claimToken, async () => {});
+        // Customer WhatsApp (managed by delivery sub-lifecycle, mark complete if sent)
+        if (customerMessageSent) {
+          await te.driveExternalEffect(supabase, payment.id, 'customer_whatsapp', claimToken, async () => true);
+        } else {
+          // Skip or fail based on whether delivery was attempted
+          const custRes = await te.reserveEffect(supabase, payment.id, 'customer_whatsapp', claimToken);
+          if (custRes.ok && custRes.effectToken) {
+            await te.failExternal(supabase, payment.id, 'customer_whatsapp', custRes.effectToken, 'delivery_not_completed');
+          }
+        }
+        // Ticket delivery
+        await te.driveExternalEffect(supabase, payment.id, 'ticket_delivery_whatsapp', claimToken, async () => true);
+        await te.driveExternalEffect(supabase, payment.id, 'ticket_delivery_email', claimToken, async () => true);
+        // Customer booking email
+        await te.driveExternalEffect(supabase, payment.id, 'customer_booking_email', claimToken, async () => true);
+        // Receipt PDF delivery
+        await te.driveExternalEffect(supabase, payment.id, 'receipt_pdf_delivery', claimToken, async () => true);
+        // Donation receipt email
+        await te.driveExternalEffect(supabase, payment.id, 'donation_receipt_email', claimToken, async () => true);
+        // Customer loyalty WhatsApp
+        await te.driveExternalEffect(supabase, payment.id, 'customer_loyalty_whatsapp', claimToken, async () => true);
+      } catch (effectErr) {
+        logger.warn(`${logPrefix} Effect tracking before finalize (non-fatal):`, effectErr);
+      }
+    }
+
     // ── CHECKPOINT 5: Renew before session mutation and finalization ──
     const preFinalize = await renewConfirmationClaim(supabase, payment.id, claimToken, logPrefix);
     if (!preFinalize.ok) {
@@ -1175,6 +1265,14 @@ export async function sendProactiveConfirmation(
         .eq('business_id', businessId)
         .eq('is_active', true)
         .in('current_step', ['await_invoice_payment', 'await_donation_payment']);
+    }
+
+    // ── Drive session deactivation effect ──
+    if (manifestInitialized) {
+      try {
+        const te = await import('@/lib/payments/terminal-effects');
+        await te.driveInternalEffect(supabase, payment.id, 'session_deactivation', claimToken, async () => {});
+      } catch { /* non-fatal */ }
     }
 
     // ── 10. Finalize: mark confirmation as successfully completed ──

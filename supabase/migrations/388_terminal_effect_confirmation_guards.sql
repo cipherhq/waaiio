@@ -121,7 +121,8 @@ DECLARE
   v_has_any_delivery BOOLEAN;
 BEGIN
   SELECT confirmation_sent_at, confirmation_processing_at,
-         confirmation_claim_token, confirmation_terminal_reason
+         confirmation_claim_token, confirmation_terminal_reason,
+         payment_authority_version
   INTO v_payment FROM payments WHERE id = p_payment_id FOR UPDATE;
 
   IF NOT FOUND THEN
@@ -252,7 +253,14 @@ BEGIN
       END IF;
     END IF;
   ELSE
-    -- Legacy path: no manifest, normal finalization
+    -- No manifest row exists.
+    -- Phase-A payments (payment_authority_version IS NOT NULL) MUST have a manifest.
+    -- Only genuine historical/legacy payments (NULL authority version) may finalize without one.
+    IF v_payment.payment_authority_version IS NOT NULL THEN
+      RETURN jsonb_build_object('finalized', false, 'reason', 'manifest_required_for_phase_a',
+        'payment_authority_version', v_payment.payment_authority_version);
+    END IF;
+    -- Legacy path: pre-authority payments finalize normally
     v_terminal_reason := NULL;
   END IF;
 

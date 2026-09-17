@@ -299,6 +299,72 @@ export async function advanceRuleAction(
   return { ok: data?.advanced === true, error: data?.reason };
 }
 
+// ─── High-level effect lifecycle drivers ───
+
+/**
+ * Drive an internal effect through reserve → execute → complete.
+ * If the effect doesn't exist in the manifest, returns ok:true (no-op for legacy/optional absence).
+ */
+export async function driveInternalEffect(
+  supabase: SupabaseClient,
+  paymentId: string,
+  effectKey: string,
+  masterClaimToken: string,
+  executeFn: () => Promise<void>,
+): Promise<{ ok: boolean; error?: string }> {
+  const res = await reserveEffect(supabase, paymentId, effectKey, masterClaimToken);
+  if (!res.ok) {
+    // already_terminal is fine (idempotent), effect_not_in_manifest means not applicable
+    if (res.error === 'effect_not_in_manifest' || res.error === 'already_terminal') return { ok: true };
+    return res;
+  }
+  try {
+    await executeFn();
+    await completeInternal(supabase, paymentId, effectKey, res.effectToken!);
+    return { ok: true };
+  } catch (err) {
+    // Internal effects that fail should not block the pipeline — log and continue
+    return { ok: false, error: String(err) };
+  }
+}
+
+/**
+ * Drive an external effect through reserve → emission fence → provider call → complete/indeterminate.
+ */
+export async function driveExternalEffect(
+  supabase: SupabaseClient,
+  paymentId: string,
+  effectKey: string,
+  masterClaimToken: string,
+  providerFn: () => Promise<boolean>, // returns true on success, false on failure
+): Promise<{ ok: boolean; error?: string }> {
+  const res = await reserveEffect(supabase, paymentId, effectKey, masterClaimToken);
+  if (!res.ok) {
+    if (res.error === 'effect_not_in_manifest' || res.error === 'already_terminal') return { ok: true };
+    return res;
+  }
+  // Emission fence
+  const emission = await beginExternalEmission(supabase, paymentId, effectKey, masterClaimToken, res.effectToken!);
+  if (!emission.ok) {
+    // Pre-emission failure
+    await failExternal(supabase, paymentId, effectKey, res.effectToken!, emission.error || 'emission_denied');
+    return { ok: false, error: emission.error };
+  }
+  try {
+    const success = await providerFn();
+    if (success) {
+      await completeExternal(supabase, paymentId, effectKey, res.effectToken!);
+    } else {
+      await markIndeterminate(supabase, paymentId, effectKey, res.effectToken!);
+    }
+    return { ok: true };
+  } catch {
+    // Post-emission error: indeterminate (provider may have received the call)
+    await markIndeterminate(supabase, paymentId, effectKey, res.effectToken!);
+    return { ok: true }; // ok because indeterminate is a valid terminal state
+  }
+}
+
 // ─── Termination ───
 
 export async function terminatePaymentConfirmation(

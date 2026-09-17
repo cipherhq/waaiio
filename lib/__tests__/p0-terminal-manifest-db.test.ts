@@ -342,12 +342,23 @@ describe.skipIf(!canRun)('Phase A v15: Terminal effect manifest', () => {
 
   // ─── FINALIZATION WITH MANIFEST ───────────────────────
 
-  it('FIN-01: legacy payment without manifest still finalizes', () => {
+  it('FIN-01: genuine legacy payment (NULL authority version) without manifest still finalizes', () => {
+    // Set payment_authority_version to NULL to simulate a pre-Phase-A historical payment
+    psql(`UPDATE payments SET payment_authority_version = NULL WHERE id = '${PAY_2}';`);
     const result = psql(`
       SELECT finalize_payment_confirmation('${PAY_2}', '${CLAIM_1}');
     `);
     expect(result).toContain('"finalized": true');
     expect(result).toContain('"has_manifest": false');
+  });
+
+  it('FIN-04: Phase-A payment without manifest is rejected (fail-closed)', () => {
+    // PAY_2 has payment_authority_version = 1 (Phase-A), no manifest
+    resetPayment(PAY_2, CLAIM_1);
+    const result = psql(`
+      SELECT finalize_payment_confirmation('${PAY_2}', '${CLAIM_1}');
+    `);
+    expect(result).toContain('manifest_required_for_phase_a');
   });
 
   it('FIN-02: manifest with incomplete required_internal blocks finalization', () => {

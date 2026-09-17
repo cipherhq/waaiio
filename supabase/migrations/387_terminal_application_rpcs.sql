@@ -116,25 +116,30 @@ BEGIN
     RETURN jsonb_build_object('applied', true, 'already_applied', true);
   END IF;
 
-  -- 8. Apply loyalty points mutation
+  -- 8. Apply loyalty points mutation (canonical schema: points_balance, total_earned, visit_count)
   UPDATE loyalty_points
-  SET points = points + v_earned_points, updated_at = NOW()
+  SET points_balance = points_balance + v_earned_points,
+      total_earned = total_earned + v_earned_points,
+      visit_count = visit_count + 1,
+      updated_at = NOW()
   WHERE business_id = v_business_id AND customer_phone = v_customer_phone;
 
   IF NOT FOUND THEN
-    INSERT INTO loyalty_points (business_id, customer_phone, points, updated_at)
-    VALUES (v_business_id, v_customer_phone, v_earned_points, NOW())
+    INSERT INTO loyalty_points (business_id, customer_phone, points_balance, total_earned, visit_count, updated_at)
+    VALUES (v_business_id, v_customer_phone, v_earned_points, v_earned_points, 1, NOW())
     ON CONFLICT (business_id, customer_phone) DO UPDATE SET
-      points = loyalty_points.points + v_earned_points,
+      points_balance = loyalty_points.points_balance + v_earned_points,
+      total_earned = loyalty_points.total_earned + v_earned_points,
+      visit_count = loyalty_points.visit_count + 1,
       updated_at = NOW();
   END IF;
 
-  -- 9. Record transaction
+  -- 9. Record transaction (canonical schema: points_change, reason, reference_id, reference_type)
   INSERT INTO loyalty_transactions
-    (business_id, customer_phone, points, type, description, created_at)
+    (business_id, customer_phone, points_change, reason, reference_id, reference_type, created_at)
   VALUES
-    (v_business_id, v_customer_phone, v_earned_points, 'earned',
-     'Payment ' || p_payment_id::TEXT, NOW());
+    (v_business_id, v_customer_phone, v_earned_points, v_reason,
+     p_payment_id::TEXT, 'payment', NOW());
 
   RETURN jsonb_build_object('applied', true, 'already_applied', false,
     'points_awarded', v_earned_points, 'reason', v_reason);
