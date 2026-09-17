@@ -246,6 +246,13 @@ describe('customer_whatsapp Phase-A lifecycle', () => {
     const failCalls = rpcCalls.filter(c => c.name === 'fail_external_effect' && (c.params as Record<string, unknown>).p_effect_key === 'customer_whatsapp');
     expect(failCalls.length).toBe(0);
 
+    // WhatsApp-dependent effects were NOT skipped (left pending for retry)
+    const skipCalls = rpcCalls.filter(c => c.name === 'skip_optional_effect');
+    const skippedKeys = skipCalls.map(c => (c.params as Record<string, unknown>).p_effect_key);
+    expect(skippedKeys).not.toContain('receipt_pdf_delivery');
+    expect(skippedKeys).not.toContain('customer_loyalty_whatsapp');
+    expect(skippedKeys).not.toContain('ticket_delivery_whatsapp');
+
     // Claim released for retry
     const releaseCalls = rpcCalls.filter(c => c.name === 'release_payment_confirmation');
     expect(releaseCalls.length).toBe(1);

@@ -22,6 +22,9 @@ interface PostCompletionParams {
   paymentId?: string;
   /** Master claim token for manifest lifecycle drivers. Required when paymentId is set. */
   claimToken?: string;
+  /** True when the WhatsApp channel is temporarily unavailable for a WhatsApp-origin payment.
+   *  WhatsApp-dependent effects must NOT be skipped — they stay pending for retry. */
+  whatsappOriginMissingChannel?: boolean;
   /** Amount paid (in smallest currency unit) for auto-receipt */
   amountPaid?: number;
   /** Service/product name for receipt */
@@ -53,7 +56,7 @@ function generateReferralCode(): string {
  * Checks enabled capabilities and triggers loyalty, feedback, and referral actions.
  */
 export async function handlePostCompletion(params: PostCompletionParams): Promise<void> {
-  const { supabase, businessId, customerPhone, customerName, serviceType, referenceId, sender, paymentId, claimToken, amountPaid, serviceName, referenceCode, skipLoyalty, skipAutomation, skipCustomerSpend, translate } = params;
+  const { supabase, businessId, customerPhone, customerName, serviceType, referenceId, sender, paymentId, claimToken, whatsappOriginMissingChannel, amountPaid, serviceName, referenceCode, skipLoyalty, skipAutomation, skipCustomerSpend, translate } = params;
   const t = translate ?? ((text: string) => Promise.resolve(text));
 
   // Parallel: load capabilities + business data in one round-trip
@@ -209,8 +212,8 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
         if (markerReadError || !marker || marker.generation_state !== 'completed') {
           throw new Error(`receipt_marker_read_failed:${markerReadError?.message || 'missing'}`);
         }
-        const delivery = sender
-          ? await driveExternalEffect(
+        if (sender) {
+          const delivery = await driveExternalEffect(
             supabase, paymentId, 'receipt_pdf_delivery', claimToken,
             async () => {
               const { data: signedUrlData, error: signedUrlError } = await supabase.storage
@@ -225,11 +228,16 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
               });
               return true;
             },
-          )
-          : await skipOptionalEffect(
+          );
+          if (!delivery.ok) throw new Error(`receipt_delivery_effect_failed:${delivery.error}`);
+        } else if (!whatsappOriginMissingChannel) {
+          // Genuine non-WhatsApp flow: skip is valid
+          const skipped = await skipOptionalEffect(
             supabase, paymentId, 'receipt_pdf_delivery', claimToken, 'no_resolved_whatsapp_sender',
           );
-        if (!delivery.ok) throw new Error(`receipt_delivery_effect_failed:${delivery.error}`);
+          if (!skipped.ok) throw new Error(`receipt_delivery_skip_failed:${skipped.error}`);
+        }
+        // else: WhatsApp-origin missing channel — leave pending for retry
       } else {
         const filePath = await generateAndStoreReceipt();
         const { data: signedUrlData, error: signedUrlError } = await supabase.storage
@@ -296,13 +304,15 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
             },
           );
           if (!notifyResult.ok) throw new Error(`loyalty_notification_effect_failed:${notifyResult.error}`);
-        } else if (loyaltyEarnedPoints > 0 && claimToken) {
+        } else if (loyaltyEarnedPoints > 0 && claimToken && !whatsappOriginMissingChannel) {
+          // Genuine non-WhatsApp flow: skip is valid
           const { skipOptionalEffect } = await import('@/lib/payments/terminal-effects');
           const skipped = await skipOptionalEffect(
             supabase, paymentId, 'customer_loyalty_whatsapp', claimToken, 'no_resolved_whatsapp_sender',
           );
           if (!skipped.ok) throw new Error(`loyalty_notification_skip_failed:${skipped.error}`);
         }
+        // else: WhatsApp-origin missing channel — leave pending for retry
       } else {
         // Legacy path (no paymentId): use inline loyalty logic
         const pointsMode = (meta.loyalty_points_mode as string) || 'per_visit';

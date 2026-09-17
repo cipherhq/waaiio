@@ -773,6 +773,7 @@ export async function sendProactiveConfirmation(
           supabase, businessId, customerPhone, customerName,
           paymentId: payment.id,
           claimToken: manifestInitialized ? claimToken : undefined,
+          whatsappOriginMissingChannel: manifestInitialized ? whatsappOriginMissingChannel : undefined,
           // Entity-correct serviceType: reservation uses booking semantics (#173)
           serviceType: (isBookingPayment || isReservationPayment) ? 'booking' : 'order',
           referenceId: payment.booking_id || payment.reservation_id || undefined,
@@ -1113,12 +1114,14 @@ export async function sendProactiveConfirmation(
                     },
                   );
                   if (!whatsappEffect.ok) throw new Error(whatsappEffect.error);
-                } else {
+                } else if (!whatsappOriginMissingChannel) {
+                  // Genuine non-WhatsApp flow: skip is valid
                   const whatsappEffect = await te.skipOptionalEffect(
                     supabase, payment.id, 'ticket_delivery_whatsapp', claimToken, 'no_resolved_whatsapp_sender',
                   );
                   if (!whatsappEffect.ok) throw new Error(whatsappEffect.error);
                 }
+                // else: WhatsApp-origin missing channel — leave pending for retry
                 if (ticketBooking.guest_email) {
                   const emailEffect = await te.driveExternalEffect(
                     supabase, payment.id, 'ticket_delivery_email', claimToken,
