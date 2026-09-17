@@ -79,25 +79,31 @@ describe.skipIf(!canRun)('Phase A v15: Application RPCs + rule-action lifecycle'
         created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW(),
         UNIQUE(business_id, phone)
       );
+      -- Canonical loyalty schema from migration 020_new_capabilities.sql (lines 49-76)
+      -- + migration 023_security_fixes.sql CHECK constraints (lines 187-198) + deleted_at (line 208)
       CREATE TABLE IF NOT EXISTS loyalty_points (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        business_id UUID NOT NULL, customer_phone VARCHAR(20) NOT NULL,
-        customer_name TEXT,
-        points_balance INTEGER NOT NULL DEFAULT 0 CHECK (points_balance >= 0),
-        total_earned INTEGER NOT NULL DEFAULT 0 CHECK (total_earned >= 0),
-        total_redeemed INTEGER NOT NULL DEFAULT 0,
-        visit_count INTEGER NOT NULL DEFAULT 0,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+        business_id uuid NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
+        customer_phone text NOT NULL,
+        customer_name text,
+        points_balance integer DEFAULT 0 NOT NULL CHECK (points_balance >= 0),
+        total_earned integer DEFAULT 0 NOT NULL CHECK (total_earned >= 0),
+        total_redeemed integer DEFAULT 0 NOT NULL,
+        visit_count integer DEFAULT 0 NOT NULL,
+        created_at timestamptz DEFAULT now() NOT NULL,
+        updated_at timestamptz DEFAULT now() NOT NULL,
+        deleted_at timestamptz,
         UNIQUE(business_id, customer_phone)
       );
       CREATE TABLE IF NOT EXISTS loyalty_transactions (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        business_id UUID NOT NULL, customer_phone VARCHAR(20) NOT NULL,
-        points_change INTEGER NOT NULL,
-        reason TEXT NOT NULL CHECK (reason IN ('visit','purchase','redemption','bonus','referral')),
-        reference_id TEXT, reference_type TEXT,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+        business_id uuid NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
+        customer_phone text NOT NULL,
+        points_change integer NOT NULL,
+        reason text NOT NULL CHECK (reason IN ('visit', 'purchase', 'redemption', 'bonus', 'referral')),
+        reference_id text,
+        reference_type text,
+        created_at timestamptz DEFAULT now() NOT NULL
       );
       CREATE TABLE IF NOT EXISTS payments (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

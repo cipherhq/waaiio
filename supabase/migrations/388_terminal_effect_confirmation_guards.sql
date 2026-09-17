@@ -27,7 +27,8 @@ BEGIN
   SELECT id, amount, status, booking_id, invoice_id, campaign_id,
          reservation_id, order_id,
          confirmation_sent_at, confirmation_processing_at,
-         confirmation_claim_token, confirmation_terminal_reason
+         confirmation_claim_token, confirmation_terminal_reason,
+         payment_authority_version
   INTO v_payment FROM payments WHERE id = p_payment_id FOR UPDATE;
 
   IF NOT FOUND THEN
@@ -59,7 +60,8 @@ BEGIN
     'payment_id', v_payment.id, 'amount', v_payment.amount,
     'booking_id', v_payment.booking_id, 'invoice_id', v_payment.invoice_id,
     'campaign_id', v_payment.campaign_id, 'reservation_id', v_payment.reservation_id,
-    'order_id', v_payment.order_id
+    'order_id', v_payment.order_id,
+    'payment_authority_version', v_payment.payment_authority_version
   );
 END;
 $$;

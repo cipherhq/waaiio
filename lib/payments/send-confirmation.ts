@@ -99,6 +99,7 @@ interface PaymentForConfirmation {
   campaign_id: string | null;
   reservation_id?: string | null;
   order_id?: string | null;
+  payment_authority_version?: number | null;
 }
 
 /** Explicit result from sendProactiveConfirmation for callers that need to distinguish outcomes. */
@@ -158,7 +159,7 @@ export async function sendProactiveConfirmation(
     return { status: 'retryable_failed', retryable: true, reason: 'claim_incomplete_data' };
   }
 
-  // Use the claim's authoritative payment data
+  // Use the claim's authoritative payment data (includes payment_authority_version for Phase-A detection)
   payment = {
     id: claim.payment_id,
     amount: claim.amount,
@@ -167,6 +168,7 @@ export async function sendProactiveConfirmation(
     campaign_id: claim.campaign_id || null,
     reservation_id: claim.reservation_id || null,
     order_id: claim.order_id || null,
+    payment_authority_version: claim.payment_authority_version ?? null,
   };
 
   // Track whether any external sends have occurred (affects release safety)
@@ -390,26 +392,31 @@ export async function sendProactiveConfirmation(
   // Historical payments without authority version use legacy path.
   let manifestInitialized = false;
   const effectTokens: Record<string, string> = {};
-  const isPhaseAPayment = (payment as Record<string, unknown>).payment_authority_version != null;
+  const isPhaseAPayment = payment.payment_authority_version != null;
   try {
     const { computeApplicableEffects, initializeManifest } = await import('@/lib/payments/terminal-effects');
 
-    // Derive loyalty applicability from real business config (not hardcoded)
+    // Derive loyalty applicability from canonical capability resolver + business config
     let hasLoyalty = false;
     let skipLoyaltyFlag = false;
     if (businessId) {
-      const { data: bizMeta } = await supabase.from('businesses').select('metadata').eq('id', businessId).single();
-      const meta = (bizMeta?.metadata || {}) as Record<string, unknown>;
-      const loyaltyEnabled = meta.loyalty_earning_enabled === true;
-      // Check capabilities
-      const { data: capRows } = await supabase.from('business_capabilities').select('capability_id').eq('business_id', businessId);
-      const caps = (capRows || []).map((r: { capability_id: string }) => r.capability_id);
-      hasLoyalty = caps.includes('loyalty') && loyaltyEnabled;
-      // Giving/ambiguous classification from booking data
-      const isPaymentFamily = bookingFlowType === 'payment';
-      const isGivingPayment = isPaymentFamily && bookingServiceType === 'giving';
-      const isAmbiguousPayment = isPaymentFamily && bookingServiceType !== 'booking' && bookingServiceType !== 'giving';
-      skipLoyaltyFlag = isGivingPayment || isAmbiguousPayment;
+      try {
+        const { getEnabledCapabilities } = await import('@/lib/capabilities/service');
+        const caps = await getEnabledCapabilities(supabase, businessId);
+        const { data: bizMeta } = await supabase.from('businesses').select('metadata').eq('id', businessId).single();
+        const meta = (bizMeta?.metadata || {}) as Record<string, unknown>;
+        const loyaltyEnabled = meta.loyalty_earning_enabled === true;
+        hasLoyalty = caps.includes('loyalty') && loyaltyEnabled;
+        // Giving/ambiguous classification from booking data
+        const isPaymentFamily = bookingFlowType === 'payment';
+        const isGivingPayment = isPaymentFamily && bookingServiceType === 'giving';
+        const isAmbiguousPayment = isPaymentFamily && bookingServiceType !== 'booking' && bookingServiceType !== 'giving';
+        skipLoyaltyFlag = isGivingPayment || isAmbiguousPayment;
+      } catch {
+        // DB error fetching capabilities — fail closed (hasLoyalty stays false)
+        // This means loyalty_award won't be in the manifest, which is correct
+        // because we can't verify the capability.
+      }
     }
 
     const applicableEffects = computeApplicableEffects(payment, {
@@ -960,13 +967,29 @@ export async function sendProactiveConfirmation(
       logSafeError(logPrefix, 'owner-notification', notifyErr);
     }
 
-    // ── Drive owner notification manifest effects to terminal state ──
+    // ── Drive owner notification manifest effects ──
+    // NOTE: The actual owner notification calls happened in the section above.
+    // owner_notif_inapp is already completed (DB INSERT above).
+    // owner_notif_whatsapp and owner_notif_email ran via notifyOwner* fire-and-forget.
+    // The manifest records their terminal state based on whether the section completed.
     if (manifestInitialized) {
       try {
         const te = await import('@/lib/payments/terminal-effects');
-        await te.driveExternalEffect(supabase, payment.id, 'owner_notif_whatsapp', claimToken, async () => true);
-        await te.driveExternalEffect(supabase, payment.id, 'owner_notif_email', claimToken, async () => true);
-        await te.driveInternalEffect(supabase, payment.id, 'owner_notif_inapp', claimToken, async () => {});
+        // In-app notification: internal, already executed above
+        await te.driveInternalEffect(supabase, payment.id, 'owner_notif_inapp', claimToken, async () => {
+          // Already inserted in the notification section above — this is the manifest completion marker
+        });
+        // Owner WhatsApp: external — the actual send happened via notifyOwner* above.
+        // We record the emission fence + completion for the manifest.
+        // A future iteration could move the actual notifyOwner* call inside this driver.
+        await te.driveExternalEffect(supabase, payment.id, 'owner_notif_whatsapp', claimToken, async () => {
+          // Provider call already executed — record success
+          return true;
+        });
+        // Owner email: same pattern
+        await te.driveExternalEffect(supabase, payment.id, 'owner_notif_email', claimToken, async () => {
+          return true;
+        });
       } catch (effectErr) {
         logger.warn(`${logPrefix} Effect tracking after owner notify (non-fatal):`, effectErr);
       }
