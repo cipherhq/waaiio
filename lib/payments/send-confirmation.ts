@@ -488,6 +488,7 @@ export async function sendProactiveConfirmation(
       hasGuestEmail: !!customerEmail,
       hasDonationEmail: !!donationReceiptEmailAddress,
       hasSender: !!resolved?.sender,
+      whatsappOriginMissingChannel,
       hasLoyalty,
       hasReferral,
       hasMembership,
@@ -1267,7 +1268,10 @@ export async function sendProactiveConfirmation(
     // ── Bridge the customer delivery subsystem's durable outcome ──
     // Migration 342 owns the customer WhatsApp emission fence. The manifest mirrors
     // its persisted outcome and never calls the provider a second time.
-    if (manifestInitialized) {
+    // CRITICAL: Do NOT terminalize customer_whatsapp when whatsappOriginMissingChannel
+    // is true — the claim is about to be released for retry. Bridging an empty delivery
+    // set to "failed" would create a stale terminal state that survives the retry.
+    if (manifestInitialized && !whatsappOriginMissingChannel) {
       try {
         const te = await import('@/lib/payments/terminal-effects');
         const { data: deliveryRows, error: deliveryReadError } = await supabase
@@ -1276,15 +1280,22 @@ export async function sendProactiveConfirmation(
           .eq('payment_id', payment.id);
         if (deliveryReadError) throw new Error(`customer_delivery_read_failed:${deliveryReadError.message}`);
         const statuses = (deliveryRows || []).map(row => row.delivery_status as string);
-        const outcome = statuses.some(status => ['accepted', 'sent', 'delivered', 'read'].includes(status))
-          ? 'completed'
-          : statuses.some(status => ['sending', 'indeterminate'].includes(status))
-            ? 'indeterminate'
-            : 'failed';
-        const bridge = await te.bridgeExternalEffect(
-          supabase, payment.id, 'customer_whatsapp', claimToken, outcome, 'delivery_subsystem_terminal_state',
-        );
-        if (!bridge.ok) throw new Error(bridge.error);
+        // Only bridge a terminal outcome when there are actual delivery attempts.
+        // An empty delivery set means the send was never attempted (channel unavailable
+        // or non-WhatsApp flow) — NOT a delivery failure.
+        if (statuses.length > 0) {
+          const outcome = statuses.some(s => ['accepted', 'sent', 'delivered', 'read'].includes(s))
+            ? 'completed'
+            : statuses.some(s => ['sending', 'indeterminate'].includes(s))
+              ? 'indeterminate'
+              : 'failed';
+          const bridge = await te.bridgeExternalEffect(
+            supabase, payment.id, 'customer_whatsapp', claimToken, outcome, 'delivery_subsystem_terminal_state',
+          );
+          if (!bridge.ok) throw new Error(bridge.error);
+        }
+        // If no delivery rows AND customer_whatsapp is not in the manifest
+        // (non-WhatsApp flow without sender), this is a no-op — correct behavior.
       } catch (effectErr) {
         logger.warn(`${logPrefix} Customer delivery bridge failed:`, effectErr);
       }

@@ -28,6 +28,10 @@ export function computeApplicableEffects(
     hasGuestEmail?: boolean;
     hasDonationEmail?: boolean;
     hasSender?: boolean;
+    /** True when the payment originated from WhatsApp AND the durable inbound channel is missing.
+     *  customer_whatsapp remains required but the manifest must NOT be terminalized as failed
+     *  before the claim is released for retry (channel may be repaired). */
+    whatsappOriginMissingChannel?: boolean;
     hasLoyalty?: boolean;
     hasReferral?: boolean;
     hasMembership?: boolean;
@@ -41,7 +45,12 @@ export function computeApplicableEffects(
   const effects: string[] = [];
 
   // Required external
-  if (opts.hasCustomerPhone) effects.push('customer_whatsapp');
+  // customer_whatsapp is only applicable when a usable WhatsApp sender exists
+  // OR the payment originated from WhatsApp (channel may be repaired on retry).
+  // A customer phone alone is NOT sufficient — it is only a destination.
+  if (opts.hasSender || opts.whatsappOriginMissingChannel) {
+    effects.push('customer_whatsapp');
+  }
   effects.push('owner_notif_whatsapp');
   effects.push('owner_notif_email');
   if (payment.campaign_id && opts.hasDonationEmail) effects.push('donation_receipt_email');
