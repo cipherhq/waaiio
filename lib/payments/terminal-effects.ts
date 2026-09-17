@@ -321,10 +321,11 @@ export async function driveInternalEffect(
   }
   try {
     await executeFn();
-    await completeInternal(supabase, paymentId, effectKey, res.effectToken!);
+    const completeRes = await completeInternal(supabase, paymentId, effectKey, res.effectToken!);
+    if (!completeRes.ok) return { ok: false, error: 'complete_internal_failed' };
     return { ok: true };
   } catch (err) {
-    // Internal effects that fail should not block the pipeline — log and continue
+    // Internal mutation failed — effect stays claimed (not completed)
     return { ok: false, error: String(err) };
   }
 }
@@ -354,15 +355,18 @@ export async function driveExternalEffect(
   try {
     const success = await providerFn();
     if (success) {
-      await completeExternal(supabase, paymentId, effectKey, res.effectToken!);
+      const completeRes = await completeExternal(supabase, paymentId, effectKey, res.effectToken!);
+      if (!completeRes.ok) return { ok: false, error: 'complete_external_failed' };
     } else {
-      await markIndeterminate(supabase, paymentId, effectKey, res.effectToken!);
+      const indRes = await markIndeterminate(supabase, paymentId, effectKey, res.effectToken!);
+      if (!indRes.ok) return { ok: false, error: 'mark_indeterminate_failed' };
     }
     return { ok: true };
   } catch {
     // Post-emission error: indeterminate (provider may have received the call)
-    await markIndeterminate(supabase, paymentId, effectKey, res.effectToken!);
-    return { ok: true }; // ok because indeterminate is a valid terminal state
+    const indRes = await markIndeterminate(supabase, paymentId, effectKey, res.effectToken!);
+    if (!indRes.ok) return { ok: false, error: 'mark_indeterminate_after_throw_failed' };
+    return { ok: true }; // indeterminate is a valid terminal state
   }
 }
 

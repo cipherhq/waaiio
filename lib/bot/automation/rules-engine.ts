@@ -61,7 +61,7 @@ export async function evaluateRules(
   }
 }
 
-function evaluateConditions(
+export function evaluateConditions(
   conditions: RuleCondition[],
   context: RuleContext,
 ): boolean {

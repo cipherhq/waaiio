@@ -79,8 +79,18 @@ describe.skipIf(!canRun)('Phase A v15: Application RPCs + rule-action lifecycle'
         created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW(),
         UNIQUE(business_id, phone)
       );
-      -- FK-dependency stubs required by migration 020 (customer_feedback table)
+      -- FK-dependency stubs required by migration 020
+      DO $$ BEGIN CREATE TYPE capability_type AS ENUM (
+        'scheduling','payment','ordering','ticketing','reminders','crowdfunding'
+      ); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
       CREATE TABLE IF NOT EXISTS queue_entries (id UUID PRIMARY KEY);
+      CREATE TABLE IF NOT EXISTS services (id UUID PRIMARY KEY, business_id UUID, name TEXT);
+      CREATE TABLE IF NOT EXISTS events (id UUID PRIMARY KEY, business_id UUID, name TEXT, date DATE, time TIME, venue TEXT, total_tickets INT DEFAULT 0, tickets_sold INT DEFAULT 0);
+      CREATE TABLE IF NOT EXISTS products (id UUID PRIMARY KEY, business_id UUID);
+      CREATE TABLE IF NOT EXISTS bot_rules (id UUID PRIMARY KEY, business_id UUID, name TEXT, trigger_event VARCHAR(40), conditions JSONB DEFAULT '[]', action_type VARCHAR(20), action_payload JSONB, is_active BOOLEAN DEFAULT true, priority INT DEFAULT 0);
+      -- Function stub required by migration 020 triggers
+      CREATE OR REPLACE FUNCTION update_updated_at() RETURNS trigger AS $t$
+      BEGIN NEW.updated_at = NOW(); RETURN NEW; END; $t$ LANGUAGE plpgsql;
       -- Canonical loyalty schema bootstrapped from actual repository migrations
       -- (loyalty_points + loyalty_transactions from 020, constraints from 023)
       CREATE TABLE IF NOT EXISTS payments (
@@ -150,7 +160,12 @@ describe.skipIf(!canRun)('Phase A v15: Application RPCs + rule-action lifecycle'
       DROP TABLE IF EXISTS campaigns CASCADE;
       DROP TABLE IF EXISTS customer_feedback CASCADE;
       DROP TABLE IF EXISTS queue_entries CASCADE;
+      DROP TABLE IF EXISTS services CASCADE;
+      DROP TABLE IF EXISTS events CASCADE;
+      DROP TABLE IF EXISTS products CASCADE;
+      DROP TABLE IF EXISTS bot_rules CASCADE;
       DROP TABLE IF EXISTS businesses CASCADE;
+      DROP TYPE IF EXISTS capability_type CASCADE;
     `);
   });
 
