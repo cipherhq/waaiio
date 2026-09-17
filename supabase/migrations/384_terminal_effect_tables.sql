@@ -172,7 +172,8 @@ END $$;
 -- ═══════════════════════════════════════════════════════
 DO $$
 BEGIN
-  -- payment_terminal_manifests
+  -- payment_terminal_manifests: SELECT only for service_role
+  -- All mutations through SECURITY DEFINER RPCs (initialize_terminal_effects, finalize)
   REVOKE ALL ON TABLE payment_terminal_manifests FROM PUBLIC;
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
     REVOKE ALL ON TABLE payment_terminal_manifests FROM anon;
@@ -180,14 +181,26 @@ BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
     REVOKE ALL ON TABLE payment_terminal_manifests FROM authenticated;
   END IF;
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
+    REVOKE ALL ON TABLE payment_terminal_manifests FROM service_role;
+    GRANT SELECT ON TABLE payment_terminal_manifests TO service_role;
+  END IF;
 
-  -- payment_terminal_effects
+  -- payment_terminal_effects: SELECT only for service_role
+  -- All state transitions through SECURITY DEFINER lifecycle RPCs
+  -- (reserve, complete_internal, complete_external, fail, indeterminate, skip)
+  -- This structurally enforces that no direct UPDATE can bypass the
+  -- emission fence or state-machine RPCs.
   REVOKE ALL ON TABLE payment_terminal_effects FROM PUBLIC;
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
     REVOKE ALL ON TABLE payment_terminal_effects FROM anon;
   END IF;
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
     REVOKE ALL ON TABLE payment_terminal_effects FROM authenticated;
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
+    REVOKE ALL ON TABLE payment_terminal_effects FROM service_role;
+    GRANT SELECT ON TABLE payment_terminal_effects TO service_role;
   END IF;
 
   -- payment_loyalty_applications

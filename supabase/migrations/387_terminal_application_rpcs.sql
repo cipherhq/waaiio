@@ -188,10 +188,13 @@ BEGIN
   ELSIF v_payment.invoice_id IS NOT NULL THEN
     SELECT business_id, customer_phone AS guest_phone INTO v_source FROM invoices WHERE id = v_payment.invoice_id;
   ELSIF v_payment.campaign_id IS NOT NULL THEN
-    SELECT business_id INTO v_source FROM campaigns WHERE id = v_payment.campaign_id;
-    -- Campaign donations: derive phone from campaign_donations
-    SELECT donor_phone AS guest_phone INTO v_source
-    FROM campaign_donations WHERE payment_id = p_payment_id LIMIT 1;
+    -- Campaign donations: derive business_id from campaign, phone from donation
+    SELECT c.business_id, cd.donor_phone AS guest_phone
+    INTO v_source
+    FROM campaigns c
+    LEFT JOIN campaign_donations cd ON cd.payment_id = p_payment_id
+    WHERE c.id = v_payment.campaign_id
+    LIMIT 1;
   ELSE
     RETURN jsonb_build_object('applied', false, 'reason', 'no_entity');
   END IF;

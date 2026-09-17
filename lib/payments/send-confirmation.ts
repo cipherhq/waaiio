@@ -343,8 +343,20 @@ export async function sendProactiveConfirmation(
     }
     if (!guestEmail) {
       logger.warn(`${logPrefix} Proactive confirmation skipped — no phone or email`);
-      await releaseConfirmationClaim(supabase, payment.id, claimToken, logPrefix);
-      return { status: 'not_deliverable', retryable: false, reason: 'no_phone_or_email' };
+      // Atomic claim-fenced termination (v13): sets confirmation_terminal_reason + clears claim
+      const { data: termResult, error: termError } = await supabase.rpc('terminate_payment_confirmation', {
+        p_payment_id: payment.id,
+        p_claim_token: claimToken,
+        p_terminal_reason: 'not_deliverable',
+      });
+      if (termError || !termResult) {
+        logger.error(`${logPrefix} terminate_payment_confirmation RPC failed`, termError);
+        return { status: 'retryable_failed', retryable: true, reason: 'termination_rpc_failed' };
+      }
+      if (termResult.terminated === true || termResult.already_terminated === true) {
+        return { status: 'not_deliverable', retryable: false, reason: 'no_phone_or_email' };
+      }
+      return { status: 'retryable_failed', retryable: true, reason: termResult.reason || 'termination_unexpected' };
     }
     // We have email but no phone — send email-only below
     logger.info(`${logPrefix} No phone found, will attempt email-only confirmation`);
@@ -680,6 +692,7 @@ export async function sendProactiveConfirmation(
         }
         await handlePostCompletion({
           supabase, businessId, customerPhone, customerName,
+          paymentId: payment.id,
           // Entity-correct serviceType: reservation uses booking semantics (#173)
           serviceType: (isBookingPayment || isReservationPayment) ? 'booking' : 'order',
           referenceId: payment.booking_id || payment.reservation_id || undefined,

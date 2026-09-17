@@ -18,6 +18,8 @@ interface PostCompletionParams {
   serviceType?: string;
   referenceId?: string;
   sender?: MessageSender;
+  /** Payment ID for exactly-once RPCs (loyalty, CRM visit). Optional for backward compat. */
+  paymentId?: string;
   /** Amount paid (in smallest currency unit) for auto-receipt */
   amountPaid?: number;
   /** Service/product name for receipt */
@@ -49,7 +51,7 @@ function generateReferralCode(): string {
  * Checks enabled capabilities and triggers loyalty, feedback, and referral actions.
  */
 export async function handlePostCompletion(params: PostCompletionParams): Promise<void> {
-  const { supabase, businessId, customerPhone, customerName, serviceType, referenceId, sender, amountPaid, serviceName, referenceCode, skipLoyalty, skipAutomation, skipCustomerSpend, translate } = params;
+  const { supabase, businessId, customerPhone, customerName, serviceType, referenceId, sender, paymentId, amountPaid, serviceName, referenceCode, skipLoyalty, skipAutomation, skipCustomerSpend, translate } = params;
   const t = translate ?? ((text: string) => Promise.resolve(text));
 
   // Parallel: load capabilities + business data in one round-trip
@@ -78,56 +80,74 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
 
   // Auto-create customer profile if not exists (so Customers tab has data immediately)
   try {
-    const { data: existing } = await supabase
-      .from('customer_profiles')
-      .select('id')
-      .eq('business_id', businessId)
-      .eq('phone', phoneWithPlus)
-      .maybeSingle();
-
-    if (existing) {
-      // Update existing — increment counters
-      // When skipCustomerSpend=true, pass 0 monetary amount but still increment visits/bookings/last_seen.
-      // Stage 2 owns the durable spend mutation for paid bookings/reservations.
-      const spendAmount = skipCustomerSpend ? 0 : (amountPaid || 0);
-      const { error: rpcErr } = await supabase.rpc('increment_customer_visit', {
-        p_business_id: businessId,
-        p_phone: phoneWithPlus,
-        p_amount: spendAmount,
+    // v13: exactly-once CRM visit via DB RPC when paymentId is available
+    if (paymentId) {
+      const { data: visitResult, error: visitErr } = await supabase.rpc('apply_payment_customer_visit_once', {
+        p_payment_id: paymentId,
       });
-      if (rpcErr) {
-        // Fallback if RPC doesn't exist — just update last_seen
-        await supabase.from('customer_profiles')
-          .update({ last_seen_at: new Date().toISOString(), name: customerName || undefined })
-          .eq('id', existing.id);
+      if (visitErr) {
+        logger.warn('[POST-COMPLETION] apply_payment_customer_visit_once failed, falling back to legacy:', visitErr.message);
       }
-      // Recalculate LTV tier after payment
-      const { data: updatedProfile } = await supabase.from('customer_profiles')
-        .select('total_spent, total_visits, first_seen_at')
-        .eq('id', existing.id)
+      // Recalculate LTV tier from the now-updated profile
+      if (!visitErr && visitResult?.applied) {
+        const { data: updatedProfile } = await supabase.from('customer_profiles')
+          .select('id, total_spent, total_visits, first_seen_at')
+          .eq('business_id', businessId)
+          .eq('phone', phoneWithPlus)
+          .maybeSingle();
+        if (updatedProfile) {
+          const tier = calculateLtvTier(updatedProfile.total_spent || 0, updatedProfile.total_visits || 0, updatedProfile.first_seen_at);
+          await supabase.from('customer_profiles').update({ ltv_tier: tier }).eq('id', updatedProfile.id);
+        }
+      }
+    }
+    // Legacy path (no paymentId) or RPC fallback
+    if (!paymentId) {
+      const { data: existing } = await supabase
+        .from('customer_profiles')
+        .select('id')
+        .eq('business_id', businessId)
+        .eq('phone', phoneWithPlus)
         .maybeSingle();
-      if (updatedProfile) {
-        const tier = calculateLtvTier(updatedProfile.total_spent || 0, updatedProfile.total_visits || 0, updatedProfile.first_seen_at);
-        await supabase.from('customer_profiles').update({ ltv_tier: tier }).eq('id', existing.id);
+
+      if (existing) {
+        const spendAmount = skipCustomerSpend ? 0 : (amountPaid || 0);
+        const { error: rpcErr } = await supabase.rpc('increment_customer_visit', {
+          p_business_id: businessId,
+          p_phone: phoneWithPlus,
+          p_amount: spendAmount,
+        });
+        if (rpcErr) {
+          await supabase.from('customer_profiles')
+            .update({ last_seen_at: new Date().toISOString(), name: customerName || undefined })
+            .eq('id', existing.id);
+        }
+        const { data: updatedProfile } = await supabase.from('customer_profiles')
+          .select('total_spent, total_visits, first_seen_at')
+          .eq('id', existing.id)
+          .maybeSingle();
+        if (updatedProfile) {
+          const tier = calculateLtvTier(updatedProfile.total_spent || 0, updatedProfile.total_visits || 0, updatedProfile.first_seen_at);
+          await supabase.from('customer_profiles').update({ ltv_tier: tier }).eq('id', existing.id);
+        }
+      } else {
+        const newTotalSpent = skipCustomerSpend ? 0 : (amountPaid || 0);
+        const newLtvTier = calculateLtvTier(newTotalSpent, 1);
+        await supabase.from('customer_profiles').insert({
+          business_id: businessId,
+          phone: phoneWithPlus,
+          name: customerName || null,
+          total_bookings: 1,
+          total_visits: 1,
+          total_spent: newTotalSpent,
+          ltv_tier: newLtvTier,
+          last_seen_at: new Date().toISOString(),
+          first_seen_at: new Date().toISOString(),
+        });
       }
-    } else {
-      // Create new
-      const newTotalSpent = skipCustomerSpend ? 0 : (amountPaid || 0);
-      const newLtvTier = calculateLtvTier(newTotalSpent, 1);
-      await supabase.from('customer_profiles').insert({
-        business_id: businessId,
-        phone: phoneWithPlus,
-        name: customerName || null,
-        total_bookings: 1,
-        total_visits: 1,
-        total_spent: newTotalSpent,
-        ltv_tier: newLtvTier,
-        last_seen_at: new Date().toISOString(),
-        first_seen_at: new Date().toISOString(),
-      });
     }
   } catch (err) {
-    logger.warn('[POST-COMPLETION] Referral handling failed (non-critical):', err);
+    logger.warn('[POST-COMPLETION] Customer profile handling failed (non-critical):', err);
   }
 
   // 0. Auto-receipt — send PDF receipt (text receipt removed in #268 — PDF is sufficient,
@@ -184,96 +204,58 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
   const loyaltyEnabled = meta.loyalty_earning_enabled === true;
   if (capabilities.includes('loyalty') && loyaltyEnabled && !skipLoyalty) {
     try {
-      const pointsMode = (meta.loyalty_points_mode as string) || 'per_visit';
-      const pointsPerVisit = (meta.loyalty_points_per_visit as number) || 10;
-      const pointsPerCurrency = (meta.loyalty_points_per_currency as number) || 0; // e.g. 1 point per 100 spent
-
-      // Calculate points: flat per-visit OR amount-based
-      let earnedPoints = pointsPerVisit;
-      let reason: string = 'visit';
-      if (pointsMode === 'per_amount' && pointsPerCurrency > 0 && amountPaid && amountPaid > 0) {
-        earnedPoints = Math.floor(amountPaid / pointsPerCurrency);
-        reason = 'purchase';
-        if (earnedPoints < 1) earnedPoints = 1; // minimum 1 point
-      }
-
-      // Apply loyalty-tier points multiplier if customer has an active tier
-      if (capabilities.includes('membership')) {
-        try {
-          const { data: cp } = await supabase
-            .from('customer_profiles')
-            .select('membership_tier_id')
+      // v13: exactly-once loyalty via DB RPC (resolves DEBT-002)
+      if (paymentId) {
+        const { data: loyaltyResult, error: loyaltyErr } = await supabase.rpc('apply_payment_loyalty_once', {
+          p_payment_id: paymentId,
+        });
+        if (!loyaltyErr && loyaltyResult?.applied && !loyaltyResult?.already_applied) {
+          const earnedPoints = loyaltyResult.points_awarded || 0;
+          // Read current balance for notification
+          const { data: balanceRow } = await supabase
+            .from('loyalty_points')
+            .select('points_balance')
             .eq('business_id', businessId)
-            .eq('phone', phoneWithPlus)
+            .eq('customer_phone', customerPhone)
             .maybeSingle();
-          if (cp?.membership_tier_id) {
-            const { data: tier } = await supabase
-              .from('membership_tiers')
-              .select('points_multiplier')
-              .eq('id', cp.membership_tier_id)
-              .eq('is_active', true)
-              .single();
-            if (tier?.points_multiplier && tier.points_multiplier > 1) {
-              earnedPoints = Math.floor(earnedPoints * tier.points_multiplier);
-            }
+          const newBalance = balanceRow?.points_balance || earnedPoints;
+          const rewardThreshold = (meta.loyalty_reward_threshold as number) || 100;
+          const rewardDesc = (meta.loyalty_reward_description as string) || 'a special reward';
+          const pointsUntilReward = Math.max(0, rewardThreshold - newBalance);
+          let loyaltyMsg = `+${earnedPoints} points earned at *${bizName}*! Your balance: *${newBalance}* points.`;
+          if (pointsUntilReward === 0) {
+            loyaltyMsg += `\n\nYou have enough points to redeem *${rewardDesc}*! Type *my points* to claim it.`;
+          } else {
+            loyaltyMsg += `\n\n${pointsUntilReward} more until ${rewardDesc}.`;
           }
-        } catch { /* non-fatal — award base points if multiplier lookup fails */ }
-      }
-
-      // Upsert loyalty_points
-      const { data: existing } = await supabase
-        .from('loyalty_points')
-        .select('id, points_balance, total_earned, visit_count')
-        .eq('business_id', businessId)
-        .eq('customer_phone', customerPhone)
-        .maybeSingle();
-
-      if (existing) {
-        await supabase
-          .from('loyalty_points')
-          .update({
-            points_balance: existing.points_balance + earnedPoints,
-            total_earned: existing.total_earned + earnedPoints,
-            visit_count: existing.visit_count + 1,
-            customer_name: customerName || undefined,
-          })
-          .eq('id', existing.id);
+          if (sender) t(loyaltyMsg).then(translated => sender.sendText({ to: customerPhone, text: translated })).catch(err => logger.withContext({ op: 'post-completion.loyalty-send', ...safeLogErrorContext(err) }).error('[POST-COMPLETION] Failed to send loyalty message'));
+        }
       } else {
-        await supabase
-          .from('loyalty_points')
-          .insert({
-            business_id: businessId,
-            customer_phone: customerPhone,
-            customer_name: customerName,
-            points_balance: earnedPoints,
-            total_earned: earnedPoints,
-            visit_count: 1,
-          });
+        // Legacy path (no paymentId): use inline loyalty logic
+        const pointsMode = (meta.loyalty_points_mode as string) || 'per_visit';
+        const pointsPerVisit = (meta.loyalty_points_per_visit as number) || 10;
+        const pointsPerCurrency = (meta.loyalty_points_per_currency as number) || 0;
+        let earnedPoints = pointsPerVisit;
+        if (pointsMode === 'per_amount' && pointsPerCurrency > 0 && amountPaid && amountPaid > 0) {
+          earnedPoints = Math.floor(amountPaid / pointsPerCurrency);
+          if (earnedPoints < 1) earnedPoints = 1;
+        }
+        const { data: existing } = await supabase.from('loyalty_points').select('id, points_balance, total_earned, visit_count').eq('business_id', businessId).eq('customer_phone', customerPhone).maybeSingle();
+        if (existing) {
+          await supabase.from('loyalty_points').update({ points_balance: existing.points_balance + earnedPoints, total_earned: existing.total_earned + earnedPoints, visit_count: existing.visit_count + 1, customer_name: customerName || undefined }).eq('id', existing.id);
+        } else {
+          await supabase.from('loyalty_points').insert({ business_id: businessId, customer_phone: customerPhone, customer_name: customerName, points_balance: earnedPoints, total_earned: earnedPoints, visit_count: 1 });
+        }
+        await supabase.from('loyalty_transactions').insert({ business_id: businessId, customer_phone: customerPhone, points_change: earnedPoints, reason: 'visit', reference_id: referenceId || null, reference_type: serviceType || null });
+        const newBalance = (existing?.points_balance || 0) + earnedPoints;
+        const rewardThreshold = (meta.loyalty_reward_threshold as number) || 100;
+        const rewardDesc = (meta.loyalty_reward_description as string) || 'a special reward';
+        const pointsUntilReward = Math.max(0, rewardThreshold - newBalance);
+        let loyaltyMsg = `+${earnedPoints} points earned at *${bizName}*! Your balance: *${newBalance}* points.`;
+        if (pointsUntilReward === 0) { loyaltyMsg += `\n\nYou have enough points to redeem *${rewardDesc}*! Type *my points* to claim it.`; }
+        else { loyaltyMsg += `\n\n${pointsUntilReward} more until ${rewardDesc}.`; }
+        if (sender) t(loyaltyMsg).then(translated => sender.sendText({ to: customerPhone, text: translated })).catch(err => logger.withContext({ op: 'post-completion.loyalty-send', ...safeLogErrorContext(err) }).error('[POST-COMPLETION] Failed to send loyalty message'));
       }
-
-      // Insert transaction
-      await supabase.from('loyalty_transactions').insert({
-        business_id: businessId,
-        customer_phone: customerPhone,
-        points_change: earnedPoints,
-        reason,
-        reference_id: referenceId || null,
-        reference_type: serviceType || null,
-      });
-
-      const newBalance = (existing?.points_balance || 0) + earnedPoints;
-      const rewardThreshold = (meta.loyalty_reward_threshold as number) || 100;
-      const rewardDesc = (meta.loyalty_reward_description as string) || 'a special reward';
-
-      // Notify customer about earned points
-      const pointsUntilReward = Math.max(0, rewardThreshold - newBalance);
-      let loyaltyMsg = `+${earnedPoints} points earned at *${bizName}*! Your balance: *${newBalance}* points.`;
-      if (pointsUntilReward === 0) {
-        loyaltyMsg += `\n\nYou have enough points to redeem *${rewardDesc}*! Type *my points* to claim it.`;
-      } else {
-        loyaltyMsg += `\n\n${pointsUntilReward} more until ${rewardDesc}.`;
-      }
-      if (sender) t(loyaltyMsg).then(translated => sender.sendText({ to: customerPhone, text: translated })).catch(err => logger.withContext({ op: 'post-completion.loyalty-send', ...safeLogErrorContext(err) }).error('[POST-COMPLETION] Failed to send loyalty message'));
     } catch (err) {
       logger.withContext({ op: 'post-completion.loyalty', ...safeLogErrorContext(err) }).error('[POST-COMPLETION] Loyalty error');
     }

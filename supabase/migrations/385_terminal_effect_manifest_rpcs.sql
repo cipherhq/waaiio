@@ -32,6 +32,17 @@ DECLARE
   v_i INTEGER;
   v_inserted INTEGER := 0;
   v_contract_version INTEGER := 1;
+  -- Closed Stage-3 canonical catalog (DB authority)
+  v_allowed_keys TEXT[] := ARRAY[
+    'loyalty_award', 'ticket_inventory_finalization', 'ticket_row_creation',
+    'session_deactivation', 'owner_notif_inapp',
+    'customer_whatsapp', 'owner_notif_whatsapp', 'owner_notif_email',
+    'donation_receipt_email',
+    'customer_loyalty_whatsapp', 'receipt_pdf_generation', 'receipt_pdf_delivery',
+    'customer_booking_email', 'ticket_delivery_whatsapp', 'ticket_delivery_email',
+    'referral_generation', 'crm_visit_increment', 'automation_rule_handoff',
+    'automation_sequences', 'membership_tier_assignment', 'feedback_marker'
+  ];
 BEGIN
   -- Array lengths must match
   IF array_length(p_effect_keys, 1) IS DISTINCT FROM array_length(p_categories, 1)
@@ -41,6 +52,40 @@ BEGIN
   END IF;
 
   v_effect_count := COALESCE(array_length(p_effect_keys, 1), 0);
+
+  -- ── CANONICAL CATALOG VALIDATION ──
+  -- The DB is the authority for the closed Stage-3 catalog.
+  -- Every caller-supplied effect must exist in the catalog with matching semantics.
+  -- A caller cannot omit a required effect or fabricate an unknown key.
+  FOR v_i IN 1..v_effect_count LOOP
+    IF NOT (p_effect_keys[v_i] = ANY(v_allowed_keys)) THEN
+      RETURN jsonb_build_object('error', 'unknown_effect_key',
+        'key', p_effect_keys[v_i]);
+    END IF;
+
+    -- Validate category + execution_class match canonical mapping
+    -- Required internal effects
+    IF p_effect_keys[v_i] IN ('loyalty_award', 'ticket_inventory_finalization',
+      'ticket_row_creation', 'session_deactivation', 'owner_notif_inapp') THEN
+      IF p_categories[v_i] != 'required_internal' OR p_execution_classes[v_i] != 'internal' THEN
+        RETURN jsonb_build_object('error', 'semantic_mismatch',
+          'key', p_effect_keys[v_i], 'expected_category', 'required_internal');
+      END IF;
+    -- Required external effects
+    ELSIF p_effect_keys[v_i] IN ('customer_whatsapp', 'owner_notif_whatsapp',
+      'owner_notif_email', 'donation_receipt_email') THEN
+      IF p_categories[v_i] != 'required_external' OR p_execution_classes[v_i] != 'external' THEN
+        RETURN jsonb_build_object('error', 'semantic_mismatch',
+          'key', p_effect_keys[v_i], 'expected_category', 'required_external');
+      END IF;
+    -- Optional effects: verify category = optional
+    ELSE
+      IF p_categories[v_i] != 'optional' THEN
+        RETURN jsonb_build_object('error', 'semantic_mismatch',
+          'key', p_effect_keys[v_i], 'expected_category', 'optional');
+      END IF;
+    END IF;
+  END LOOP;
 
   -- 1. Lock payment row
   SELECT confirmation_claim_token, confirmation_processing_at,
