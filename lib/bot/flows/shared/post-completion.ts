@@ -20,6 +20,8 @@ interface PostCompletionParams {
   sender?: MessageSender;
   /** Payment ID for exactly-once RPCs (loyalty, CRM visit). Optional for backward compat. */
   paymentId?: string;
+  /** Master claim token for manifest lifecycle drivers. Required when paymentId is set. */
+  claimToken?: string;
   /** Amount paid (in smallest currency unit) for auto-receipt */
   amountPaid?: number;
   /** Service/product name for receipt */
@@ -51,7 +53,7 @@ function generateReferralCode(): string {
  * Checks enabled capabilities and triggers loyalty, feedback, and referral actions.
  */
 export async function handlePostCompletion(params: PostCompletionParams): Promise<void> {
-  const { supabase, businessId, customerPhone, customerName, serviceType, referenceId, sender, paymentId, amountPaid, serviceName, referenceCode, skipLoyalty, skipAutomation, skipCustomerSpend, translate } = params;
+  const { supabase, businessId, customerPhone, customerName, serviceType, referenceId, sender, paymentId, claimToken, amountPaid, serviceName, referenceCode, skipLoyalty, skipAutomation, skipCustomerSpend, translate } = params;
   const t = translate ?? ((text: string) => Promise.resolve(text));
 
   // Parallel: load capabilities + business data in one round-trip
@@ -80,26 +82,30 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
 
   // Auto-create customer profile if not exists (so Customers tab has data immediately)
   try {
-    // v13: exactly-once CRM visit via DB RPC when paymentId is available
+    // v13: exactly-once CRM visit via DB RPC + manifest lifecycle driver
     if (paymentId) {
-      const { data: visitResult, error: visitErr } = await supabase.rpc('apply_payment_customer_visit_once', {
-        p_payment_id: paymentId,
-      });
-      if (visitErr) {
-        logger.warn('[POST-COMPLETION] apply_payment_customer_visit_once failed, falling back to legacy:', visitErr.message);
-      }
-      // Recalculate LTV tier from the now-updated profile
-      if (!visitErr && visitResult?.applied) {
-        const { data: updatedProfile } = await supabase.from('customer_profiles')
-          .select('id, total_spent, total_visits, first_seen_at')
-          .eq('business_id', businessId)
-          .eq('phone', phoneWithPlus)
-          .maybeSingle();
-        if (updatedProfile) {
-          const tier = calculateLtvTier(updatedProfile.total_spent || 0, updatedProfile.total_visits || 0, updatedProfile.first_seen_at);
-          await supabase.from('customer_profiles').update({ ltv_tier: tier }).eq('id', updatedProfile.id);
+      // Import manifest driver — the real CRM mutation happens INSIDE the driver callback
+      const { driveInternalEffect } = await import('@/lib/payments/terminal-effects');
+      const token = claimToken || paymentId; // claimToken required for manifest; fallback for non-manifest callers
+      await driveInternalEffect(supabase, paymentId, 'crm_visit_increment', token, async () => {
+        // REAL MUTATION: the exactly-once RPC is the authoritative internal effect
+        const { data: visitResult, error: visitErr } = await supabase.rpc('apply_payment_customer_visit_once', {
+          p_payment_id: paymentId,
+        });
+        if (visitErr) throw new Error(`apply_payment_customer_visit_once failed: ${visitErr.message}`);
+        // Recalculate LTV tier from the now-updated profile
+        if (visitResult?.applied) {
+          const { data: updatedProfile } = await supabase.from('customer_profiles')
+            .select('id, total_spent, total_visits, first_seen_at')
+            .eq('business_id', businessId)
+            .eq('phone', phoneWithPlus)
+            .maybeSingle();
+          if (updatedProfile) {
+            const tier = calculateLtvTier(updatedProfile.total_spent || 0, updatedProfile.total_visits || 0, updatedProfile.first_seen_at);
+            await supabase.from('customer_profiles').update({ ltv_tier: tier }).eq('id', updatedProfile.id);
+          }
         }
-      }
+      });
     }
     // Legacy path (no paymentId) or RPC fallback
     if (!paymentId) {
@@ -204,30 +210,33 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
   const loyaltyEnabled = meta.loyalty_earning_enabled === true;
   if (capabilities.includes('loyalty') && loyaltyEnabled && !skipLoyalty) {
     try {
-      // v13: exactly-once loyalty via DB RPC (resolves DEBT-002)
+      // v13: exactly-once loyalty via DB RPC + manifest lifecycle driver
+      // The REAL loyalty mutation happens INSIDE the driver callback.
       if (paymentId) {
-        const { data: loyaltyResult, error: loyaltyErr } = await supabase.rpc('apply_payment_loyalty_once', {
-          p_payment_id: paymentId,
+        const { driveInternalEffect } = await import('@/lib/payments/terminal-effects');
+        const loyaltyToken = claimToken || paymentId;
+        let loyaltyEarnedPoints = 0;
+        await driveInternalEffect(supabase, paymentId, 'loyalty_award', loyaltyToken, async () => {
+          // REAL MUTATION inside lifecycle authority
+          const { data: loyaltyResult, error: loyaltyErr } = await supabase.rpc('apply_payment_loyalty_once', {
+            p_payment_id: paymentId,
+          });
+          if (loyaltyErr) throw new Error(`apply_payment_loyalty_once failed: ${loyaltyErr.message}`);
+          if (loyaltyResult?.applied && !loyaltyResult?.already_applied) {
+            loyaltyEarnedPoints = loyaltyResult.points_awarded || 0;
+          }
         });
-        if (!loyaltyErr && loyaltyResult?.applied && !loyaltyResult?.already_applied) {
-          const earnedPoints = loyaltyResult.points_awarded || 0;
-          // Read current balance for notification
-          const { data: balanceRow } = await supabase
-            .from('loyalty_points')
-            .select('points_balance')
-            .eq('business_id', businessId)
-            .eq('customer_phone', customerPhone)
-            .maybeSingle();
-          const newBalance = balanceRow?.points_balance || earnedPoints;
+        // Notification (outside driver — not part of loyalty_award authority)
+        if (loyaltyEarnedPoints > 0) {
+          const { data: balanceRow } = await supabase.from('loyalty_points').select('points_balance')
+            .eq('business_id', businessId).eq('customer_phone', customerPhone).maybeSingle();
+          const newBalance = balanceRow?.points_balance || loyaltyEarnedPoints;
           const rewardThreshold = (meta.loyalty_reward_threshold as number) || 100;
           const rewardDesc = (meta.loyalty_reward_description as string) || 'a special reward';
           const pointsUntilReward = Math.max(0, rewardThreshold - newBalance);
-          let loyaltyMsg = `+${earnedPoints} points earned at *${bizName}*! Your balance: *${newBalance}* points.`;
-          if (pointsUntilReward === 0) {
-            loyaltyMsg += `\n\nYou have enough points to redeem *${rewardDesc}*! Type *my points* to claim it.`;
-          } else {
-            loyaltyMsg += `\n\n${pointsUntilReward} more until ${rewardDesc}.`;
-          }
+          let loyaltyMsg = `+${loyaltyEarnedPoints} points earned at *${bizName}*! Your balance: *${newBalance}* points.`;
+          if (pointsUntilReward === 0) { loyaltyMsg += `\n\nYou have enough points to redeem *${rewardDesc}*! Type *my points* to claim it.`; }
+          else { loyaltyMsg += `\n\n${pointsUntilReward} more until ${rewardDesc}.`; }
           if (sender) t(loyaltyMsg).then(translated => sender.sendText({ to: customerPhone, text: translated })).catch(err => logger.withContext({ op: 'post-completion.loyalty-send', ...safeLogErrorContext(err) }).error('[POST-COMPLETION] Failed to send loyalty message'));
         }
       } else {

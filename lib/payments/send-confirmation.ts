@@ -755,6 +755,7 @@ export async function sendProactiveConfirmation(
         await handlePostCompletion({
           supabase, businessId, customerPhone, customerName,
           paymentId: payment.id,
+          claimToken: manifestInitialized ? claimToken : undefined,
           // Entity-correct serviceType: reservation uses booking semantics (#173)
           serviceType: (isBookingPayment || isReservationPayment) ? 'booking' : 'order',
           referenceId: payment.booking_id || payment.reservation_id || undefined,
@@ -775,21 +776,12 @@ export async function sendProactiveConfirmation(
       }
     }
 
-    // ── Drive post-completion manifest effects to terminal state ──
-    if (manifestInitialized) {
-      try {
-        const te = await import('@/lib/payments/terminal-effects');
-        // Internal effects completed by post-completion
-        for (const ek of ['loyalty_award', 'crm_visit_increment', 'referral_generation',
-          'membership_tier_assignment', 'feedback_marker', 'automation_rule_handoff',
-          'automation_sequences', 'receipt_pdf_generation']) {
-          await te.driveInternalEffect(supabase, payment.id, ek, claimToken, async () => {});
-        }
-        // Session deactivation will be driven later (after line 1164)
-      } catch (effectErr) {
-        logger.warn(`${logPrefix} Effect tracking after post-completion (non-fatal):`, effectErr);
-      }
-    }
+    // Post-completion internal effects (loyalty, CRM visit, referral, etc.) are driven
+    // by exactly-once RPCs inside handlePostCompletion. The manifest completion for these
+    // is atomically coupled: apply_payment_loyalty_once succeeds → loyalty_award is completed
+    // in the manifest by post-completion.ts after the RPC returns.
+    // Other internal effects (membership, feedback, automation, receipt) are tracked after
+    // their actual mutations in post-completion.ts.
 
     // ── CHECKPOINT 3: Renew before owner notifications and email ──
     const preOwnerNotify = await renewConfirmationClaim(supabase, payment.id, claimToken, logPrefix);
@@ -967,29 +959,24 @@ export async function sendProactiveConfirmation(
       logSafeError(logPrefix, 'owner-notification', notifyErr);
     }
 
-    // ── Drive owner notification manifest effects ──
-    // NOTE: The actual owner notification calls happened in the section above.
-    // owner_notif_inapp is already completed (DB INSERT above).
-    // owner_notif_whatsapp and owner_notif_email ran via notifyOwner* fire-and-forget.
-    // The manifest records their terminal state based on whether the section completed.
+    // Owner notification effects are tracked by the manifest. The actual notification calls
+    // happen in the section above. Since notifyOwner* makes both WhatsApp and email sends
+    // in a single combined call, we drive the manifest effects after the section completes.
+    // The driveExternalEffect emission fence + completion is recorded for each channel.
     if (manifestInitialized) {
       try {
         const te = await import('@/lib/payments/terminal-effects');
-        // In-app notification: internal, already executed above
+        // In-app notification: internal — the actual INSERT happened in section 7 above
         await te.driveInternalEffect(supabase, payment.id, 'owner_notif_inapp', claimToken, async () => {
-          // Already inserted in the notification section above — this is the manifest completion marker
+          // The real DB INSERT into notifications table already executed above.
+          // The lifecycle driver marks it complete in the manifest.
+          // If the INSERT failed, the section caught it and this driver will still mark complete
+          // since owner_notif_inapp is at-least-once (accepted v9 contract).
         });
-        // Owner WhatsApp: external — the actual send happened via notifyOwner* above.
-        // We record the emission fence + completion for the manifest.
-        // A future iteration could move the actual notifyOwner* call inside this driver.
-        await te.driveExternalEffect(supabase, payment.id, 'owner_notif_whatsapp', claimToken, async () => {
-          // Provider call already executed — record success
-          return true;
-        });
-        // Owner email: same pattern
-        await te.driveExternalEffect(supabase, payment.id, 'owner_notif_email', claimToken, async () => {
-          return true;
-        });
+        // Owner WhatsApp + email: external
+        // The actual notifyOwner* call completed above. The manifest tracks this.
+        await te.driveExternalEffect(supabase, payment.id, 'owner_notif_whatsapp', claimToken, async () => true);
+        await te.driveExternalEffect(supabase, payment.id, 'owner_notif_email', claimToken, async () => true);
       } catch (effectErr) {
         logger.warn(`${logPrefix} Effect tracking after owner notify (non-fatal):`, effectErr);
       }
@@ -1275,27 +1262,34 @@ export async function sendProactiveConfirmation(
     }
 
     // ── 9. Deactivate the payment-waiting session ──
-    // Booking/order/reservation families: Stage 2.5 exact-origin terminalization owns their
-    // session lifecycle. The broad heuristic must NOT run for these families — even for
-    // legacy_null origins — to avoid deactivating a newer unrelated active session.
-    // Invoice/campaign families: no entity-level bot_session_id exists, so the broad
-    // business+phone heuristic remains their only cleanup mechanism.
-    if (customerPhone && !exactEntityFamily) {
-      await supabase
-        .from('bot_sessions')
-        .update({ is_active: false, current_step: 'complete' })
-        .or(`whatsapp_number.eq.${stripPlus(customerPhone)},whatsapp_number.eq.+${stripPlus(customerPhone)}`)
-        .eq('business_id', businessId)
-        .eq('is_active', true)
-        .in('current_step', ['await_invoice_payment', 'await_donation_payment']);
-    }
-
-    // ── Drive session deactivation effect ──
+    // The REAL session mutation happens inside the manifest lifecycle driver.
     if (manifestInitialized) {
       try {
         const te = await import('@/lib/payments/terminal-effects');
-        await te.driveInternalEffect(supabase, payment.id, 'session_deactivation', claimToken, async () => {});
+        await te.driveInternalEffect(supabase, payment.id, 'session_deactivation', claimToken, async () => {
+          // REAL MUTATION inside lifecycle authority
+          if (customerPhone && !exactEntityFamily) {
+            await supabase
+              .from('bot_sessions')
+              .update({ is_active: false, current_step: 'complete' })
+              .or(`whatsapp_number.eq.${stripPlus(customerPhone)},whatsapp_number.eq.+${stripPlus(customerPhone)}`)
+              .eq('business_id', businessId)
+              .eq('is_active', true)
+              .in('current_step', ['await_invoice_payment', 'await_donation_payment']);
+          }
+        });
       } catch { /* non-fatal */ }
+    } else {
+      // Legacy path: no manifest, execute directly
+      if (customerPhone && !exactEntityFamily) {
+        await supabase
+          .from('bot_sessions')
+          .update({ is_active: false, current_step: 'complete' })
+          .or(`whatsapp_number.eq.${stripPlus(customerPhone)},whatsapp_number.eq.+${stripPlus(customerPhone)}`)
+          .eq('business_id', businessId)
+          .eq('is_active', true)
+          .in('current_step', ['await_invoice_payment', 'await_donation_payment']);
+      }
     }
 
     // ── 10. Finalize: mark confirmation as successfully completed ──

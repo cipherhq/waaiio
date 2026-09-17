@@ -79,32 +79,10 @@ describe.skipIf(!canRun)('Phase A v15: Application RPCs + rule-action lifecycle'
         created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW(),
         UNIQUE(business_id, phone)
       );
-      -- Canonical loyalty schema from migration 020_new_capabilities.sql (lines 49-76)
-      -- + migration 023_security_fixes.sql CHECK constraints (lines 187-198) + deleted_at (line 208)
-      CREATE TABLE IF NOT EXISTS loyalty_points (
-        id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
-        business_id uuid NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
-        customer_phone text NOT NULL,
-        customer_name text,
-        points_balance integer DEFAULT 0 NOT NULL CHECK (points_balance >= 0),
-        total_earned integer DEFAULT 0 NOT NULL CHECK (total_earned >= 0),
-        total_redeemed integer DEFAULT 0 NOT NULL,
-        visit_count integer DEFAULT 0 NOT NULL,
-        created_at timestamptz DEFAULT now() NOT NULL,
-        updated_at timestamptz DEFAULT now() NOT NULL,
-        deleted_at timestamptz,
-        UNIQUE(business_id, customer_phone)
-      );
-      CREATE TABLE IF NOT EXISTS loyalty_transactions (
-        id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
-        business_id uuid NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
-        customer_phone text NOT NULL,
-        points_change integer NOT NULL,
-        reason text NOT NULL CHECK (reason IN ('visit', 'purchase', 'redemption', 'bonus', 'referral')),
-        reference_id text,
-        reference_type text,
-        created_at timestamptz DEFAULT now() NOT NULL
-      );
+      -- FK-dependency stubs required by migration 020 (customer_feedback table)
+      CREATE TABLE IF NOT EXISTS queue_entries (id UUID PRIMARY KEY);
+      -- Canonical loyalty schema bootstrapped from actual repository migrations
+      -- (loyalty_points + loyalty_transactions from 020, constraints from 023)
       CREATE TABLE IF NOT EXISTS payments (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         amount INT DEFAULT 5000, status payment_status DEFAULT 'success',
@@ -121,10 +99,25 @@ describe.skipIf(!canRun)('Phase A v15: Application RPCs + rule-action lifecycle'
       INSERT INTO businesses (id) VALUES ('${BIZ}');
       INSERT INTO bookings (id, business_id, guest_phone, guest_name) VALUES ('${BOOKING}', '${BIZ}', '+2348012345678', 'Test User');
       INSERT INTO campaigns (id, business_id) VALUES ('${CAMPAIGN}', '${BIZ}');
+    `);
+
+    // Bootstrap canonical loyalty schema from ACTUAL repository migrations
+    const fs = require('fs');
+    // Migration 020 creates loyalty_points + loyalty_transactions (+ customer_feedback, etc.)
+    // We extract only the loyalty-relevant DDL by applying the full migration
+    // (stubs for FK dependencies were created above).
+    const mig020 = fs.readFileSync('supabase/migrations/020_new_capabilities.sql', 'utf-8');
+    psql(mig020);
+    // Migration 023 adds CHECK constraints, VARCHAR(20) phone, deleted_at to loyalty tables
+    const mig023 = fs.readFileSync('supabase/migrations/023_security_fixes.sql', 'utf-8');
+    psql(mig023);
+
+    // Seed data that depends on loyalty tables being present
+    psql(`
       INSERT INTO campaign_donations (id, payment_id, donor_phone) VALUES (gen_random_uuid(), '${PAY_CAMP}', '+2348099999999');
     `);
 
-    const fs = require('fs');
+    // Apply Phase-A terminal effect migrations
     for (const mig of [
       '384_terminal_effect_tables.sql',
       '385_terminal_effect_manifest_rpcs.sql',
@@ -155,6 +148,8 @@ describe.skipIf(!canRun)('Phase A v15: Application RPCs + rule-action lifecycle'
       DROP TABLE IF EXISTS orders CASCADE;
       DROP TABLE IF EXISTS invoices CASCADE;
       DROP TABLE IF EXISTS campaigns CASCADE;
+      DROP TABLE IF EXISTS customer_feedback CASCADE;
+      DROP TABLE IF EXISTS queue_entries CASCADE;
       DROP TABLE IF EXISTS businesses CASCADE;
     `);
   });
