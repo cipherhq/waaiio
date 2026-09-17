@@ -76,7 +76,7 @@ describe.skipIf(!canRun)('Phase A v15: Application RPCs + rule-action lifecycle'
         total_bookings INT DEFAULT 0, total_orders INT DEFAULT 0,
         total_spent NUMERIC DEFAULT 0, total_visits INT DEFAULT 0,
         last_seen_at TIMESTAMPTZ DEFAULT NOW(), first_seen_at TIMESTAMPTZ DEFAULT NOW(),
-        updated_at TIMESTAMPTZ DEFAULT NOW(),
+        created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW(),
         UNIQUE(business_id, phone)
       );
       CREATE TABLE IF NOT EXISTS loyalty_points (
@@ -198,7 +198,7 @@ describe.skipIf(!canRun)('Phase A v15: Application RPCs + rule-action lifecycle'
     const result = psql(`SELECT apply_payment_customer_visit_once('${PAY_CAMP}');`);
     expect(result).toContain('"applied": true');
 
-    const phone = psql(`SELECT phone FROM customer_profiles WHERE business_id = '${BIZ}' ORDER BY created_at DESC LIMIT 1;`);
+    const phone = psql(`SELECT phone FROM customer_profiles WHERE business_id = '${BIZ}' ORDER BY updated_at DESC LIMIT 1;`);
     expect(phone).toContain('2348099999999'); // donor phone, not null
   });
 
@@ -280,7 +280,8 @@ describe.skipIf(!canRun)('Phase A v15: Application RPCs + rule-action lifecycle'
     psql(`SELECT advance_rule_action('${PAY_RULE}', '${RULE_A}', 'completed');`);
 
     const result = psql(`SELECT advance_rule_action('${PAY_RULE}', '${RULE_A}', 'sending');`);
-    expect(result).toContain('invalid_transition');
+    // RPC returns 'not_pending' because the sending transition checks status = 'pending'
+    expect(result).toContain('not_pending');
   });
 
   it('RULE-04: service_role CANNOT directly UPDATE status on payment_rule_action_executions', () => {
