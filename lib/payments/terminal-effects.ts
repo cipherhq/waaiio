@@ -216,6 +216,27 @@ export async function skipOptional(
   return { ok: !error && (data?.skipped === true) };
 }
 
+/**
+ * Terminalize an optional effect that was frozen before its channel became
+ * unavailable. This is deliberately distinct from driveExternalEffect:
+ * no provider emission is attempted and the row is durably marked skipped.
+ */
+export async function skipOptionalEffect(
+  supabase: SupabaseClient,
+  paymentId: string,
+  effectKey: string,
+  masterClaimToken: string,
+  reason: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const res = await reserveEffect(supabase, paymentId, effectKey, masterClaimToken);
+  if (!res.ok) {
+    if (res.error === 'effect_not_in_manifest' || res.error === 'already_terminal') return { ok: true };
+    return res;
+  }
+  const skipped = await skipOptional(supabase, paymentId, effectKey, res.effectToken!, reason);
+  return skipped.ok ? { ok: true } : { ok: false, error: 'skip_optional_failed' };
+}
+
 // ─── Emission fence ───
 
 export async function beginExternalEmission(

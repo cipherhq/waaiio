@@ -77,6 +77,19 @@ describe('rules engine supported action semantics', () => {
     expect(sendTemplate).toHaveBeenCalledWith('15551234567', 'booking_confirmation', ['Ada', 'booking-1']);
   });
 
+  it('preserves legacy freeform send_template payloads as customer text', async () => {
+    const sendMessage = vi.fn().mockResolvedValue(undefined);
+    const sendTemplate = vi.fn();
+    await executeRuleAction(actionSupabase().supabase, 'business-1', rule('send_template', {
+      template: 'Your booking for {{customer_name}} is confirmed.',
+    }), context, sendMessage, sendTemplate);
+
+    expect(sendMessage).toHaveBeenCalledWith(
+      '15551234567', 'Your booking for Ada is confirmed.',
+    );
+    expect(sendTemplate).not.toHaveBeenCalled();
+  });
+
   it('notify_owner performs both WhatsApp and the in-app notification', async () => {
     const db = actionSupabase();
     const sendMessage = vi.fn().mockResolvedValue(undefined);

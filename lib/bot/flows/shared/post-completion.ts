@@ -194,7 +194,7 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
       };
 
       if (paymentId && claimToken) {
-        const { driveInternalEffect, driveExternalEffect } = await import('@/lib/payments/terminal-effects');
+        const { driveInternalEffect, driveExternalEffect, skipOptionalEffect } = await import('@/lib/payments/terminal-effects');
         const generation = await driveInternalEffect(
           supabase, paymentId, 'receipt_pdf_generation', claimToken,
           async () => { await generateAndStoreReceipt(); },
@@ -209,23 +209,26 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
         if (markerReadError || !marker || marker.generation_state !== 'completed') {
           throw new Error(`receipt_marker_read_failed:${markerReadError?.message || 'missing'}`);
         }
-        const delivery = await driveExternalEffect(
-          supabase, paymentId, 'receipt_pdf_delivery', claimToken,
-          async () => {
-            if (!sender) return false;
-            const { data: signedUrlData, error: signedUrlError } = await supabase.storage
-              .from('customer-reports')
-              .createSignedUrl(marker.file_path, 3600);
-            if (signedUrlError || !signedUrlData?.signedUrl) throw new Error('receipt_signed_url_failed');
-            await sender.sendDocument({
-              to: phone,
-              documentUrl: signedUrlData.signedUrl,
-              filename: `receipt-${referenceCode || paymentId.slice(0, 8)}.pdf`,
-              caption: 'Your payment receipt',
-            });
-            return true;
-          },
-        );
+        const delivery = sender
+          ? await driveExternalEffect(
+            supabase, paymentId, 'receipt_pdf_delivery', claimToken,
+            async () => {
+              const { data: signedUrlData, error: signedUrlError } = await supabase.storage
+                .from('customer-reports')
+                .createSignedUrl(marker.file_path, 3600);
+              if (signedUrlError || !signedUrlData?.signedUrl) throw new Error('receipt_signed_url_failed');
+              await sender.sendDocument({
+                to: phone,
+                documentUrl: signedUrlData.signedUrl,
+                filename: `receipt-${referenceCode || paymentId.slice(0, 8)}.pdf`,
+                caption: 'Your payment receipt',
+              });
+              return true;
+            },
+          )
+          : await skipOptionalEffect(
+            supabase, paymentId, 'receipt_pdf_delivery', claimToken, 'no_resolved_whatsapp_sender',
+          );
         if (!delivery.ok) throw new Error(`receipt_delivery_effect_failed:${delivery.error}`);
       } else {
         const filePath = await generateAndStoreReceipt();
@@ -293,6 +296,12 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
             },
           );
           if (!notifyResult.ok) throw new Error(`loyalty_notification_effect_failed:${notifyResult.error}`);
+        } else if (loyaltyEarnedPoints > 0 && claimToken) {
+          const { skipOptionalEffect } = await import('@/lib/payments/terminal-effects');
+          const skipped = await skipOptionalEffect(
+            supabase, paymentId, 'customer_loyalty_whatsapp', claimToken, 'no_resolved_whatsapp_sender',
+          );
+          if (!skipped.ok) throw new Error(`loyalty_notification_skip_failed:${skipped.error}`);
         }
       } else {
         // Legacy path (no paymentId): use inline loyalty logic

@@ -7,6 +7,7 @@ import { stripPlus } from '@/lib/utils/phone';
 import { getCustomerName } from '@/lib/bot/flows/shared/user';
 import { getCalendarLinksText } from '@/lib/calendar/generate-links';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
+import type { ResolvedChannel } from '@/lib/channels/channel-resolver';
 
 /** Log a non-fatal error with safe structured metadata. */
 function logSafeError(prefix: string, label: string, error: unknown): void {
@@ -391,6 +392,37 @@ export async function sendProactiveConfirmation(
     return { status: 'processing', retryable: true }; // claim may belong to another worker
   }
 
+  // Resolve the actual WhatsApp sender before freezing optional manifest effects.
+  // A customer phone is only a destination; it is not evidence that a usable
+  // sender/channel exists. The resolved channel is reused by the send phase.
+  let resolved: ResolvedChannel | null = null;
+  let inboundChId: string | undefined;
+  let confirmationOrigin: string | undefined;
+  let whatsappOriginMissingChannel = false;
+  if (customerPhone) {
+    const { ChannelResolver } = await import('@/lib/channels/channel-resolver');
+    const resolver = new ChannelResolver(supabase);
+    const { data: payChMeta } = await supabase.from('payments').select('metadata').eq('id', payment.id).single();
+    const payMeta = (payChMeta?.metadata || {}) as Record<string, unknown>;
+    inboundChId = payMeta._inbound_channel_id as string | undefined;
+    confirmationOrigin = payMeta._confirmation_origin as string | undefined;
+    // Non-WhatsApp origin or legacy (no _confirmation_origin) may use the
+    // existing business fallback; WhatsApp origin never borrows another channel.
+    if (!inboundChId && confirmationOrigin !== 'whatsapp') {
+      const { data: bizSession } = await supabase
+        .from('bot_sessions').select('session_data')
+        .eq('whatsapp_number', customerPhone).eq('business_id', businessId)
+        .order('created_at', { ascending: false }).limit(1).maybeSingle();
+      inboundChId = (bizSession?.session_data as Record<string, unknown>)?._inbound_channel_id as string | undefined;
+    }
+    if (inboundChId) resolved = await resolver.resolveByChannelId(inboundChId);
+    if (!resolved && confirmationOrigin === 'whatsapp') {
+      whatsappOriginMissingChannel = true;
+    } else if (!resolved) {
+      resolved = await resolver.resolveByBusinessId(businessId);
+    }
+  }
+
   // ── MANIFEST INITIALIZATION: Register all applicable Stage-3 effects ──
   // Fail-closed for Phase-A payments (payment_authority_version >= 1).
   // Historical payments without authority version use legacy path.
@@ -455,7 +487,7 @@ export async function sendProactiveConfirmation(
       hasCustomerPhone: !!customerPhone,
       hasGuestEmail: !!customerEmail,
       hasDonationEmail: !!donationReceiptEmailAddress,
-      hasSender: !!customerPhone,
+      hasSender: !!resolved?.sender,
       hasLoyalty,
       hasReferral,
       hasMembership,
@@ -573,54 +605,8 @@ export async function sendProactiveConfirmation(
 
   // ── 5. Resolve channel + send (protected by checkpoint 1 above) ──
   try {
-    const { ChannelResolver } = await import('@/lib/channels/channel-resolver');
-    const resolver = new ChannelResolver(supabase);
-
-    // #219: Resolve channel using _confirmation_origin + _inbound_channel_id jointly.
-    // WhatsApp origin + missing channel = skip customer send (no business-country fallback).
-    // Non-WhatsApp origin or legacy = existing resolveByBusinessId fallback.
-    let resolved = null;
-    let inboundChId: string | undefined;
-    let confirmationOrigin: string | undefined;
-    let whatsappOriginMissingChannel = false;
-
-    // Only look up WhatsApp sessions if we have a customer phone
-    if (customerPhone) {
-      // 1. Try durable channel + origin from payment metadata (persisted at initializePayment time)
-      const { data: payChMeta } = await supabase.from('payments').select('metadata').eq('id', payment.id).single();
-      const payMeta = (payChMeta?.metadata || {}) as Record<string, unknown>;
-      inboundChId = payMeta._inbound_channel_id as string | undefined;
-      confirmationOrigin = payMeta._confirmation_origin as string | undefined;
-
-      // 2. Fallback: same-business session channel — ONLY for legacy/non-WhatsApp origin (#219)
-      // WhatsApp-originated payments must use their durable _inbound_channel_id only.
-      // Borrowing a later/different session channel recreates the channel-drift defect.
-      if (!inboundChId && confirmationOrigin !== 'whatsapp') {
-        const { data: bizSession } = await supabase
-          .from('bot_sessions').select('session_data')
-          .eq('whatsapp_number', customerPhone).eq('business_id', businessId)
-          .order('created_at', { ascending: false }).limit(1).maybeSingle();
-        inboundChId = (bizSession?.session_data as Record<string, unknown>)?._inbound_channel_id as string | undefined;
-      }
-    }
-
-    if (inboundChId) {
-      resolved = await resolver.resolveByChannelId(inboundChId);
-      if (!resolved) {
-        // Channel was deactivated since payment initialization
-        logger.warn(`${logPrefix} Inbound channel ${inboundChId} no longer active for payment ${payment.id}`);
-      }
-    }
-    if (!resolved) {
-      if (confirmationOrigin === 'whatsapp') {
-        // #219: WhatsApp-originated payment lost its channel context — do NOT silently
-        // fall back to business-country shared channel. Skip customer WhatsApp send.
-        whatsappOriginMissingChannel = true;
-        logger.warn(`${logPrefix} Customer WhatsApp send skipped — no origin channel for WhatsApp-originated payment ${payment.id}`);
-      } else {
-        // Non-WhatsApp origin or legacy (no _confirmation_origin) — existing fallback
-        resolved = await resolver.resolveByBusinessId(businessId);
-      }
+    if (whatsappOriginMissingChannel) {
+      logger.warn(`${logPrefix} Customer WhatsApp send skipped — no origin channel for WhatsApp-originated payment ${payment.id}`);
     }
 
     // ── Customer WhatsApp delivery via delivery-attempt authority (#197) ──
@@ -1124,6 +1110,11 @@ export async function sendProactiveConfirmation(
                       await ticketModule.deliverTicketsWhatsApp({ ...ticketOptions, tickets: ticketResult!.tickets });
                       return true;
                     },
+                  );
+                  if (!whatsappEffect.ok) throw new Error(whatsappEffect.error);
+                } else {
+                  const whatsappEffect = await te.skipOptionalEffect(
+                    supabase, payment.id, 'ticket_delivery_whatsapp', claimToken, 'no_resolved_whatsapp_sender',
                   );
                   if (!whatsappEffect.ok) throw new Error(whatsappEffect.error);
                 }

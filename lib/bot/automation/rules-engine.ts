@@ -117,7 +117,16 @@ export async function executeRuleAction(
     }
 
     case 'send_template': {
-      if (!phone || !sendTemplate) throw new Error('send_template_unavailable');
+      if (!phone) throw new Error('send_template_unavailable');
+      // Legacy rules stored a freeform customer-facing message under
+      // `template`. Preserve that contract; only `template_name` denotes a
+      // provider WhatsApp template because the dashboard explicitly writes it.
+      if (!payload.template_name && typeof payload.template === 'string') {
+        if (!sendMessage) throw new Error('send_template_unavailable');
+        await sendMessage(phone, fillVariables(payload.template, context));
+        break;
+      }
+      if (!sendTemplate) throw new Error('send_template_unavailable');
       const templateName = payload.template_name as string;
       if (!templateName) throw new Error('send_template_name_missing');
       const templateParams = Array.isArray(payload.template_params)
