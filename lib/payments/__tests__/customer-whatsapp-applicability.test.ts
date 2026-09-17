@@ -71,22 +71,43 @@ describe('customer_whatsapp applicability', () => {
     expect(effects).not.toContain('customer_whatsapp');
   });
 
-  it('WhatsApp origin + missing channel → retryable (manifest stays non-terminal)', () => {
-    // When whatsappOriginMissingChannel is true, customer_whatsapp is in the manifest
-    // but the bridge section must NOT terminalize it as failed (the claim will be
-    // released for retry). This test verifies the applicability side; the bridge
-    // behavior is verified by the DB test and the send-confirmation flow.
-    const effects = computeApplicableEffects(BASE_PAYMENT, {
+  it('WhatsApp origin + missing channel → manifest stable across retry (sender-dependent effects frozen)', () => {
+    // First attempt: channel missing, hasSender=false
+    const effectsAttempt1 = computeApplicableEffects(BASE_PAYMENT, {
       hasCustomerPhone: true,
       hasSender: false,
       whatsappOriginMissingChannel: true,
+      hasLoyalty: true,
+      amountPaid: 5000,
+    });
+    expect(effectsAttempt1).toContain('customer_whatsapp');
+    expect(effectsAttempt1).toContain('receipt_pdf_delivery');
+    expect(effectsAttempt1).toContain('customer_loyalty_whatsapp');
+
+    // Retry: channel repaired, hasSender=true
+    const effectsAttempt2 = computeApplicableEffects(BASE_PAYMENT, {
+      hasCustomerPhone: true,
+      hasSender: true,
+      whatsappOriginMissingChannel: false, // channel now resolved
+      hasLoyalty: true,
+      amountPaid: 5000,
+    });
+    // CRITICAL: the effect set must be identical so the manifest hash matches
+    expect(effectsAttempt1.sort()).toEqual(effectsAttempt2.sort());
+  });
+
+  it('WhatsApp origin ticketing → ticket_delivery_whatsapp frozen even without sender', () => {
+    const ticketPayment = { ...BASE_PAYMENT };
+    const effects = computeApplicableEffects(ticketPayment, {
+      hasCustomerPhone: true,
+      hasSender: false,
+      whatsappOriginMissingChannel: true,
+      isTicketing: true,
       hasLoyalty: false,
       amountPaid: 5000,
     });
+    expect(effects).toContain('ticket_delivery_whatsapp');
     expect(effects).toContain('customer_whatsapp');
-    // The manifest effect stays pending/claimed — never bridged to failed
-    // before the claim is released. Verified by the bridge guard in
-    // send-confirmation.ts: `if (manifestInitialized && !whatsappOriginMissingChannel)`
   });
 
   it('campaign donation email-only flow (no phone) → no customer_whatsapp, donation_receipt_email present', () => {

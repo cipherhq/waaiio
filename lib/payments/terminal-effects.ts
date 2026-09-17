@@ -44,11 +44,17 @@ export function computeApplicableEffects(
 ): string[] {
   const effects: string[] = [];
 
+  // For a WhatsApp-origin payment with a temporarily missing channel, freeze
+  // sender-dependent effects as though the sender exists. The channel is expected
+  // to be repaired on retry; the manifest must be stable across retries so
+  // initialize_terminal_effects does not return manifest_mismatch.
+  // For a genuine web/email/non-WhatsApp flow, sender availability is real.
+  const effectiveSender = opts.hasSender || !!opts.whatsappOriginMissingChannel;
+
   // Required external
-  // customer_whatsapp is only applicable when a usable WhatsApp sender exists
-  // OR the payment originated from WhatsApp (channel may be repaired on retry).
-  // A customer phone alone is NOT sufficient — it is only a destination.
-  if (opts.hasSender || opts.whatsappOriginMissingChannel) {
+  // customer_whatsapp: applicable when a usable sender exists OR WhatsApp-origin
+  // (channel may be repaired). A customer phone alone is NOT sufficient.
+  if (effectiveSender) {
     effects.push('customer_whatsapp');
   }
   effects.push('owner_notif_whatsapp');
@@ -69,17 +75,19 @@ export function computeApplicableEffects(
   }
 
   // Optional
-  // These operations are phone-keyed. Email-only confirmations must not seal
-  // effects that handlePostCompletion cannot execute.
+  // Phone-keyed effects: email-only flows must not seal effects that
+  // handlePostCompletion cannot execute.
   if (opts.hasCustomerPhone) effects.push('crm_visit_increment');
   if (opts.hasCustomerPhone && opts.hasReferral) effects.push('referral_generation');
   if (opts.hasCustomerPhone && opts.hasMembership) effects.push('membership_tier_assignment');
   if (opts.hasCustomerPhone && opts.hasFeedback) effects.push('feedback_marker');
   if (opts.hasCustomerPhone && (opts.amountPaid || 0) > 0) {
     effects.push('receipt_pdf_generation');
-    if (opts.hasSender) effects.push('receipt_pdf_delivery');
+    // receipt_pdf_delivery: frozen for WhatsApp-origin even if sender temporarily missing
+    if (effectiveSender) effects.push('receipt_pdf_delivery');
   }
-  if (opts.hasLoyalty && !opts.skipLoyalty && opts.hasSender) {
+  if (opts.hasLoyalty && !opts.skipLoyalty && effectiveSender) {
+    // customer_loyalty_whatsapp: frozen for WhatsApp-origin
     effects.push('customer_loyalty_whatsapp');
   }
   if (opts.hasCustomerPhone && !opts.skipAutomation) {
@@ -87,7 +95,8 @@ export function computeApplicableEffects(
     effects.push('automation_sequences');
   }
   if (payment.booking_id && opts.hasGuestEmail && !opts.isTicketing) effects.push('customer_booking_email');
-  if (opts.isTicketing && opts.hasSender) effects.push('ticket_delivery_whatsapp');
+  // ticket_delivery_whatsapp: frozen for WhatsApp-origin even if sender temporarily missing
+  if (opts.isTicketing && effectiveSender) effects.push('ticket_delivery_whatsapp');
   if (opts.isTicketing && opts.hasGuestEmail) effects.push('ticket_delivery_email');
 
   return effects;
