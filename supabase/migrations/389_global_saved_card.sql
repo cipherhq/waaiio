@@ -58,7 +58,7 @@ CREATE TABLE IF NOT EXISTS payment_saved_card_offers (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   payment_id UUID NOT NULL UNIQUE,
   customer_phone TEXT NOT NULL CHECK (customer_phone ~ '^\+[1-9]\d{7,14}$'),
-  business_id UUID NOT NULL,
+  business_id UUID,  -- nullable: ON DELETE SET NULL; creation RPC requires non-null
   offer_type TEXT NOT NULL CHECK (offer_type IN ('save', 'replace')),
   state TEXT NOT NULL DEFAULT 'pending'
     CHECK (state IN ('pending', 'sending', 'sent', 'accepted', 'declined', 'ambiguous')),
@@ -128,6 +128,15 @@ BEGIN
   WHERE payment_id = p_payment_id FOR UPDATE;
 
   IF FOUND THEN
+    -- D6: Expired sending lease → ambiguous (crash between claim and result)
+    IF v_existing.state = 'sending' AND v_existing.claim_expires_at <= NOW() THEN
+      UPDATE payment_saved_card_offers SET
+        state = 'ambiguous', claim_token = NULL, claim_expires_at = NULL
+      WHERE id = v_existing.id;
+      RETURN jsonb_build_object('created', false, 'claimed', false,
+        'current_state', 'ambiguous', 'offer_id', v_existing.id);
+    END IF;
+
     -- Already exists — only claim if retryable (pending)
     IF v_existing.state = 'pending' THEN
       v_token := gen_random_uuid();
@@ -187,6 +196,10 @@ BEGIN
   END IF;
   IF v_offer.claim_token IS NULL OR v_offer.claim_token != p_claim_token THEN
     RETURN jsonb_build_object('success', false, 'reason', 'token_mismatch');
+  END IF;
+  -- D5: Reject null/empty WAMID — treat as ambiguous
+  IF p_meta_message_id IS NULL OR TRIM(p_meta_message_id) = '' THEN
+    RETURN jsonb_build_object('success', false, 'reason', 'missing_wamid');
   END IF;
 
   UPDATE payment_saved_card_offers SET
@@ -290,10 +303,11 @@ BEGIN
 END;
 $$;
 
--- Decline offer (customer-phone binding, idempotent)
+-- Decline offer (customer-phone + offer-type binding, idempotent)
 CREATE OR REPLACE FUNCTION decline_saved_card_offer(
   p_payment_id UUID,
-  p_customer_phone TEXT
+  p_customer_phone TEXT,
+  p_expected_offer_type TEXT
 ) RETURNS JSONB
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE
@@ -305,6 +319,9 @@ BEGIN
   IF NOT FOUND THEN RETURN jsonb_build_object('result', 'not_found'); END IF;
   IF v_offer.customer_phone != p_customer_phone THEN
     RETURN jsonb_build_object('result', 'wrong_customer');
+  END IF;
+  IF v_offer.offer_type != p_expected_offer_type THEN
+    RETURN jsonb_build_object('result', 'wrong_type');
   END IF;
   IF v_offer.state = 'declined' THEN
     RETURN jsonb_build_object('result', 'already_declined');
@@ -332,7 +349,7 @@ BEGIN
   REVOKE ALL ON FUNCTION release_saved_card_offer(UUID, UUID) FROM PUBLIC;
   REVOKE ALL ON FUNCTION mark_saved_card_offer_ambiguous(UUID, UUID) FROM PUBLIC;
   REVOKE ALL ON FUNCTION accept_saved_card_offer(UUID, TEXT, TEXT) FROM PUBLIC;
-  REVOKE ALL ON FUNCTION decline_saved_card_offer(UUID, TEXT) FROM PUBLIC;
+  REVOKE ALL ON FUNCTION decline_saved_card_offer(UUID, TEXT, TEXT) FROM PUBLIC;
 
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
     REVOKE ALL ON FUNCTION create_or_claim_saved_card_offer(UUID, TEXT, UUID, TEXT, UUID, TEXT, UUID) FROM anon;
@@ -340,7 +357,7 @@ BEGIN
     REVOKE ALL ON FUNCTION release_saved_card_offer(UUID, UUID) FROM anon;
     REVOKE ALL ON FUNCTION mark_saved_card_offer_ambiguous(UUID, UUID) FROM anon;
     REVOKE ALL ON FUNCTION accept_saved_card_offer(UUID, TEXT, TEXT) FROM anon;
-    REVOKE ALL ON FUNCTION decline_saved_card_offer(UUID, TEXT) FROM anon;
+    REVOKE ALL ON FUNCTION decline_saved_card_offer(UUID, TEXT, TEXT) FROM anon;
   END IF;
 
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
@@ -349,7 +366,7 @@ BEGIN
     REVOKE ALL ON FUNCTION release_saved_card_offer(UUID, UUID) FROM authenticated;
     REVOKE ALL ON FUNCTION mark_saved_card_offer_ambiguous(UUID, UUID) FROM authenticated;
     REVOKE ALL ON FUNCTION accept_saved_card_offer(UUID, TEXT, TEXT) FROM authenticated;
-    REVOKE ALL ON FUNCTION decline_saved_card_offer(UUID, TEXT) FROM authenticated;
+    REVOKE ALL ON FUNCTION decline_saved_card_offer(UUID, TEXT, TEXT) FROM authenticated;
   END IF;
 
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
@@ -358,6 +375,6 @@ BEGIN
     GRANT EXECUTE ON FUNCTION release_saved_card_offer(UUID, UUID) TO service_role;
     GRANT EXECUTE ON FUNCTION mark_saved_card_offer_ambiguous(UUID, UUID) TO service_role;
     GRANT EXECUTE ON FUNCTION accept_saved_card_offer(UUID, TEXT, TEXT) TO service_role;
-    GRANT EXECUTE ON FUNCTION decline_saved_card_offer(UUID, TEXT) TO service_role;
+    GRANT EXECUTE ON FUNCTION decline_saved_card_offer(UUID, TEXT, TEXT) TO service_role;
   END IF;
 END $$;

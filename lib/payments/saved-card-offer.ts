@@ -18,8 +18,9 @@ import { canonicalSavedCardPhone, isSharedPlatformPaystackCompatible } from './s
  */
 async function resolvePaymentCustomerPhone(
   supabase: SupabaseClient,
-  payment: { booking_id?: string | null; reservation_id?: string | null; invoice_id?: string | null; order_id?: string | null; campaign_id?: string | null },
+  payment: { booking_id?: string | null; reservation_id?: string | null; invoice_id?: string | null; order_id?: string | null; campaign_id?: string | null; user_id?: string | null },
 ): Promise<string | null> {
+  // Entity-specific phone resolution (most specific first)
   if (payment.booking_id) {
     const { data, error } = await supabase.from('bookings').select('guest_phone').eq('id', payment.booking_id).single();
     if (error || !data?.guest_phone) return null;
@@ -39,6 +40,12 @@ async function resolvePaymentCustomerPhone(
     const { data, error } = await supabase.from('orders').select('delivery_phone').eq('id', payment.order_id).single();
     if (error || !data?.delivery_phone) return null;
     return canonicalSavedCardPhone(data.delivery_phone);
+  }
+  // D2: user_id/profile fallback — direct payment binding
+  if (payment.user_id) {
+    const { data, error } = await supabase.from('profiles').select('phone').eq('id', payment.user_id).single();
+    if (error || !data?.phone) return null;
+    return canonicalSavedCardPhone(data.phone);
   }
   return null;
 }
@@ -64,7 +71,7 @@ export async function checkSavedCardOfferEligibility(
 
   // K7: fail-closed payment read
   const { data: payment, error: payErr } = await supabase.from('payments')
-    .select('id, status, gateway, metadata, business_id, booking_id, reservation_id, invoice_id, order_id, campaign_id')
+    .select('id, status, gateway, metadata, business_id, booking_id, reservation_id, invoice_id, order_id, campaign_id, user_id')
     .eq('id', paymentId).single();
   if (payErr || !payment) return { eligible: false, reason: 'payment_read_error' };
   if (payment.status !== 'success' || payment.gateway !== 'paystack') return { eligible: false, reason: 'payment_not_eligible' };
@@ -78,9 +85,10 @@ export async function checkSavedCardOfferEligibility(
   const auth = meta._card_authorization as Record<string, unknown> | undefined;
   if (!auth?.reusable || !auth?.authorization_code || !auth?.email) return { eligible: false, reason: 'auth_not_eligible' };
 
-  // K4: Verify payment belongs to this customer
+  // D2: Verify payment belongs to this customer — fail closed when unresolved
   const paymentPhone = await resolvePaymentCustomerPhone(supabase, payment);
-  if (paymentPhone && paymentPhone !== canonPhone) return { eligible: false, reason: 'customer_mismatch' };
+  if (!paymentPhone) return { eligible: false, reason: 'customer_unresolved' };
+  if (paymentPhone !== canonPhone) return { eligible: false, reason: 'customer_mismatch' };
 
   // K7: fail-closed compatibility read
   const compat = await isSharedPlatformPaystackCompatible(supabase, businessId);
@@ -152,25 +160,33 @@ export async function checkAndOfferSavedCard(
       ];
     }
 
-    // K6: Error classification around sendButtons
+    // D5: Error classification using real error classes from attempt-recording
     try {
       const result = await sender.sendButtons({ to, body, buttons });
-      // Success with WAMID → claim-token-fenced sent
-      await supabase.rpc('mark_saved_card_offer_sent', {
-        p_payment_id: paymentId, p_claim_token: claimToken,
-        p_meta_message_id: result?.messageId || null,
-      });
-    } catch (sendErr: unknown) {
-      // K6: Classify the error — pre-emission vs ambiguous transport
-      const errText = String(sendErr);
-      const PRE_EMISSION_KEYWORDS = ['guard', 'authorization', 'blocked', 'suspended'];
-      const isPreEmission = PRE_EMISSION_KEYWORDS.some(kw => errText.indexOf(kw) >= 0);
-      if (isPreEmission) {
-        // Clear pre-emission failure → retryable pending
-        await supabase.rpc('release_saved_card_offer', { p_payment_id: paymentId, p_claim_token: claimToken });
-      } else {
-        // Ambiguous transport outcome → no auto-resend
+      const wamid = result?.messageId;
+      if (!wamid) {
+        // D5: Missing WAMID — conservatively ambiguous (may have emitted)
         await supabase.rpc('mark_saved_card_offer_ambiguous', { p_payment_id: paymentId, p_claim_token: claimToken });
+        return;
+      }
+      // WAMID present → claim-token-fenced sent
+      const { data: sentResult } = await supabase.rpc('mark_saved_card_offer_sent', {
+        p_payment_id: paymentId, p_claim_token: claimToken,
+        p_meta_message_id: wamid,
+      });
+      // If mark_sent rejects (e.g. missing_wamid race), mark ambiguous
+      if (sentResult && !sentResult.success) {
+        await supabase.rpc('mark_saved_card_offer_ambiguous', { p_payment_id: paymentId, p_claim_token: claimToken });
+      }
+    } catch (sendErr: unknown) {
+      // D5: Use actual error classes from lib/channels/attempt-recording
+      const { AmbiguousSendError, WamidPersistenceError } = await import('@/lib/channels/attempt-recording');
+      if (sendErr instanceof AmbiguousSendError || sendErr instanceof WamidPersistenceError) {
+        // Outcome may have emitted — mark ambiguous, no auto-resend
+        await supabase.rpc('mark_saved_card_offer_ambiguous', { p_payment_id: paymentId, p_claim_token: claimToken });
+      } else {
+        // Definite pre-emission failure (GateBlockError, auth error, etc.) → retryable pending
+        await supabase.rpc('release_saved_card_offer', { p_payment_id: paymentId, p_claim_token: claimToken });
       }
     }
   } catch (err) {
@@ -191,6 +207,9 @@ export async function retryPendingSavedCardOffer(
       .eq('payment_id', paymentId).maybeSingle();
 
     if (offerErr || !offer || offer.state !== 'pending') return;
+
+    // D7: fail closed when historical offer has null business_id
+    if (!offer.business_id) return;
 
     // Resolve channel from the stored channel_id
     if (!offer.channel_id) return;
@@ -225,12 +244,19 @@ export async function handleSavedCardOfferAction(
   if (!canonPhone) { await sendText(from, 'Invalid phone number.'); return; }
 
   if (action === 'save_decline' || action === 'replace_decline') {
-    // K5: Atomic decline via RPC
-    const { data: result } = await supabase.rpc('decline_saved_card_offer', {
-      p_payment_id: paymentId, p_customer_phone: canonPhone,
+    // D4: Atomic decline via RPC with expected offer type binding
+    const expectedDeclineType = action === 'save_decline' ? 'save' : 'replace';
+    const { data: result, error: declineErr } = await supabase.rpc('decline_saved_card_offer', {
+      p_payment_id: paymentId, p_customer_phone: canonPhone, p_expected_offer_type: expectedDeclineType,
     });
-    if (result?.result === 'wrong_customer') { await sendText(from, 'This offer is not for your account.'); return; }
-    // Declined or already_declined — no mutation, no PIN
+    if (declineErr || !result) {
+      await sendText(from, 'Could not process your response. Type *save card* to try again.');
+      return;
+    }
+    if (result.result === 'wrong_customer') { await sendText(from, 'This offer is not for your account.'); return; }
+    if (result.result === 'wrong_type') { await sendText(from, 'Unexpected action for this offer.'); return; }
+    if (result.result === 'already_accepted') { await sendText(from, 'This offer was already accepted.'); return; }
+    // Declined, already_declined, not_found, invalid_state — no mutation, no PIN
     return;
   }
 
@@ -277,7 +303,7 @@ export async function startSavedCardFromPaymentId(
 
   // K3+K4: Re-read the exact payment (never search for "most recent")
   const { data: payment, error: payErr } = await supabase.from('payments')
-    .select('id, status, gateway, metadata, business_id, booking_id, reservation_id, invoice_id, order_id, campaign_id')
+    .select('id, status, gateway, metadata, business_id, booking_id, reservation_id, invoice_id, order_id, campaign_id, user_id')
     .eq('id', paymentId).single();
 
   if (payErr || !payment || payment.status !== 'success' || payment.gateway !== 'paystack') {
@@ -294,9 +320,13 @@ export async function startSavedCardFromPaymentId(
     return;
   }
 
-  // K4: Verify payment belongs to this customer
+  // D2: Verify payment belongs to this customer — fail closed when unresolved
   const paymentPhone = await resolvePaymentCustomerPhone(supabase, payment);
-  if (paymentPhone && paymentPhone !== canonPhone) {
+  if (!paymentPhone) {
+    await sendText(from, 'Could not verify payment ownership. Try again.');
+    return;
+  }
+  if (paymentPhone !== canonPhone) {
     await sendText(from, 'This payment does not belong to your account.');
     return;
   }
@@ -331,11 +361,12 @@ export async function startSavedCardFromPaymentId(
       _save_card_payment_id: paymentId,
     };
 
-    // Establish session for PIN creation
+    // D3: Establish session for PIN creation — rebind to exact source-payment business
     if (session) {
       const { data: casResult } = await supabase.rpc('update_session_cas', {
         p_session_id: session.id, p_expected_version: session.version ?? 0,
         p_current_step: 'save_card_pin', p_session_data: { ...session.session_data, ...saveData },
+        p_business_id: businessId,
       });
       if (!casResult?.success) {
         await sendText(from, 'Could not start card save. Try again.');
@@ -377,12 +408,11 @@ export async function startSavedCardFromPaymentId(
   };
 
   if (session) {
-    if (session.business_id && session.business_id !== businessId) {
-      // Business mismatch — but global card allows cross-business replacement
-    }
+    // D3: Rebind session to exact source-payment business for PIN step
     const { data: casResult } = await supabase.rpc('update_session_cas', {
       p_session_id: session.id, p_expected_version: session.version ?? 0,
       p_current_step: 'replace_card_pin', p_session_data: { ...session.session_data, ...replaceData },
+      p_business_id: businessId,
     });
     if (!casResult?.success) {
       await sendText(from, 'Could not start card replacement. Try again.');

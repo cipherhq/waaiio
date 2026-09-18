@@ -196,8 +196,9 @@ describe('K10: Saved-card offer behavioral tests', () => {
     const { handleSavedCardOfferAction } = await import('@/lib/payments/saved-card-offer');
     await handleSavedCardOfferAction(supabase as any, sendText, PHONE, null, 'save_decline', PAY_ID);
 
+    // D4: decline now passes expected_offer_type
     expect(supabase.rpc).toHaveBeenCalledWith('decline_saved_card_offer', expect.objectContaining({
-      p_payment_id: PAY_ID, p_customer_phone: PHONE,
+      p_payment_id: PAY_ID, p_customer_phone: PHONE, p_expected_offer_type: 'save',
     }));
     // No session creation
     expect(supabase.from).not.toHaveBeenCalledWith('bot_sessions');
@@ -276,23 +277,25 @@ describe('K10: Saved-card offer behavioral tests', () => {
   // ═══════════════════════════════════════════════════════════════
   // K10 #8: Keep current → no mutation
   // ═══════════════════════════════════════════════════════════════
-  it('#8: replace decline (Keep current) → no mutation', async () => {
+  it('#8: replace decline (Keep current) → no mutation, D4 type-bound', async () => {
     const supabase = buildMockSupabase();
     const { handleSavedCardOfferAction } = await import('@/lib/payments/saved-card-offer');
     await handleSavedCardOfferAction(supabase as any, sendText, PHONE, null, 'replace_decline', PAY_ID);
 
+    // D4: decline passes expected_offer_type='replace'
     expect(supabase.rpc).toHaveBeenCalledWith('decline_saved_card_offer', expect.objectContaining({
-      p_payment_id: PAY_ID,
+      p_payment_id: PAY_ID, p_expected_offer_type: 'replace',
     }));
     expect(supabase.from).not.toHaveBeenCalledWith('bot_sessions');
   });
 
   // ═══════════════════════════════════════════════════════════════
-  // K10 #10: Clear pre-emission failure → pending/retryable
+  // D5 #10: Clear pre-emission failure → pending/retryable (real error class)
   // ═══════════════════════════════════════════════════════════════
-  it('#10: pre-emission sendButtons failure → release to pending (retryable)', async () => {
+  it('#10: pre-emission sendButtons failure (GateBlockError) → release to pending', async () => {
+    const { GateBlockError } = await import('@/lib/channels/attempt-recording');
     const failSender = {
-      sendButtons: vi.fn().mockRejectedValue(new Error('guard: channel suspended')),
+      sendButtons: vi.fn().mockRejectedValue(new GateBlockError('channel suspended')),
     };
     const supabase = buildMockSupabase({ existingMethods: [] });
     const { checkAndOfferSavedCard } = await import('@/lib/payments/saved-card-offer');
@@ -306,11 +309,12 @@ describe('K10: Saved-card offer behavioral tests', () => {
   });
 
   // ═══════════════════════════════════════════════════════════════
-  // K10 #11: Ambiguous CTA outcome → ambiguous/no resend
+  // D5 #11: Ambiguous CTA outcome → ambiguous/no resend (real error class)
   // ═══════════════════════════════════════════════════════════════
-  it('#11: ambiguous transport failure → mark ambiguous (no auto-resend)', async () => {
+  it('#11: AmbiguousSendError → mark ambiguous (no auto-resend)', async () => {
+    const { AmbiguousSendError } = await import('@/lib/channels/attempt-recording');
     const failSender = {
-      sendButtons: vi.fn().mockRejectedValue(new Error('ECONNRESET')),
+      sendButtons: vi.fn().mockRejectedValue(new AmbiguousSendError('ECONNRESET', 'att-1')),
     };
     const supabase = buildMockSupabase({ existingMethods: [] });
     const { checkAndOfferSavedCard } = await import('@/lib/payments/saved-card-offer');
@@ -321,6 +325,35 @@ describe('K10: Saved-card offer behavioral tests', () => {
       p_payment_id: PAY_ID, p_claim_token: CLAIM_TOKEN,
     }));
     expect(supabase.rpc).not.toHaveBeenCalledWith('release_saved_card_offer', expect.anything());
+  });
+
+  it('#11b: WamidPersistenceError → mark ambiguous', async () => {
+    const { WamidPersistenceError } = await import('@/lib/channels/attempt-recording');
+    const failSender = {
+      sendButtons: vi.fn().mockRejectedValue(new WamidPersistenceError('att-1', 'wamid.123', 'DB write failed')),
+    };
+    const supabase = buildMockSupabase({ existingMethods: [] });
+    const { checkAndOfferSavedCard } = await import('@/lib/payments/saved-card-offer');
+    await checkAndOfferSavedCard(supabase as any, PAY_ID, PHONE, BIZ_ID, failSender as any, CHANNEL_ID);
+
+    expect(supabase.rpc).toHaveBeenCalledWith('mark_saved_card_offer_ambiguous', expect.objectContaining({
+      p_payment_id: PAY_ID, p_claim_token: CLAIM_TOKEN,
+    }));
+  });
+
+  it('#11c: missing WAMID on success → mark ambiguous (D5)', async () => {
+    const noWamidSender = {
+      sendButtons: vi.fn().mockResolvedValue({ /* no messageId */ }),
+    };
+    const supabase = buildMockSupabase({ existingMethods: [] });
+    const { checkAndOfferSavedCard } = await import('@/lib/payments/saved-card-offer');
+    await checkAndOfferSavedCard(supabase as any, PAY_ID, PHONE, BIZ_ID, noWamidSender as any, CHANNEL_ID);
+
+    expect(supabase.rpc).toHaveBeenCalledWith('mark_saved_card_offer_ambiguous', expect.objectContaining({
+      p_payment_id: PAY_ID, p_claim_token: CLAIM_TOKEN,
+    }));
+    // Should NOT call mark_sent
+    expect(supabase.rpc).not.toHaveBeenCalledWith('mark_saved_card_offer_sent', expect.anything());
   });
 
   // ═══════════════════════════════════════════════════════════════
@@ -586,5 +619,148 @@ describe('K10: Saved-card offer behavioral tests', () => {
     const result = await checkSavedCardOfferEligibility(supabase as any, PAY_ID, PHONE, 'different-biz');
     expect(result.eligible).toBe(false);
     expect(result.reason).toBe('business_mismatch');
+  });
+
+  // ═══════════════════════════════════════════════════════════════
+  // D2: Unresolved customer phone → fail closed (no CTA, no PIN)
+  // ═══════════════════════════════════════════════════════════════
+  it('D2: unresolved payment customer phone → not eligible', async () => {
+    // Payment has no booking/reservation/invoice/order/user_id — resolver returns null
+    const paymentNoEntity = {
+      ...PLATFORM_PAYMENT,
+      booking_id: null, reservation_id: null, invoice_id: null,
+      order_id: null, campaign_id: null, user_id: null,
+    };
+    const supabase = buildMockSupabase({ payment: paymentNoEntity, existingMethods: [] });
+    // Override bookings to return no data (no entity to resolve phone from)
+    const origFrom = supabase.from;
+    supabase.from = vi.fn().mockImplementation((table: string) => {
+      if (table === 'profiles') {
+        const chain: Record<string, unknown> = {};
+        ['select', 'eq'].forEach(m => { chain[m] = vi.fn().mockReturnValue(chain); });
+        chain.single = vi.fn().mockResolvedValue({ data: null, error: null });
+        return chain;
+      }
+      return origFrom(table);
+    });
+    const { checkSavedCardOfferEligibility } = await import('@/lib/payments/saved-card-offer');
+    const result = await checkSavedCardOfferEligibility(supabase as any, PAY_ID, PHONE, BIZ_ID);
+    expect(result.eligible).toBe(false);
+    expect(result.reason).toBe('customer_unresolved');
+  });
+
+  it('D2: startSavedCardFromPaymentId fails closed when phone unresolvable', async () => {
+    const paymentNoEntity = {
+      ...PLATFORM_PAYMENT,
+      booking_id: null, reservation_id: null, invoice_id: null,
+      order_id: null, campaign_id: null, user_id: null,
+    };
+    const supabase = buildMockSupabase({ payment: paymentNoEntity, existingMethods: [] });
+    const { startSavedCardFromPaymentId } = await import('@/lib/payments/saved-card-offer');
+    await startSavedCardFromPaymentId(supabase as any, sendText, PHONE, null, PAY_ID);
+    expect(sendText).toHaveBeenCalledWith(PHONE, expect.stringContaining('Could not verify'));
+    // No session creation
+    expect(supabase.rpc).not.toHaveBeenCalledWith('update_session_cas', expect.anything());
+  });
+
+  // ═══════════════════════════════════════════════════════════════
+  // D3: Cross-business session rebinding
+  // ═══════════════════════════════════════════════════════════════
+  it('D3: session Business A + payment Business B → CAS passes p_business_id=B', async () => {
+    const BIZ_B = '00000000-0000-0000-0010-00000000b002';
+    const paymentBizB = { ...PLATFORM_PAYMENT, business_id: BIZ_B };
+    const supabase = buildMockSupabase({ payment: paymentBizB, existingMethods: [] });
+    const session = { id: 'sess-1', business_id: BIZ_ID, session_data: {}, version: 1 };
+    const { startSavedCardFromPaymentId } = await import('@/lib/payments/saved-card-offer');
+    await startSavedCardFromPaymentId(supabase as any, sendText, PHONE, session as any, PAY_ID);
+    // CAS should include p_business_id = B (the payment's business, not the session's)
+    expect(supabase.rpc).toHaveBeenCalledWith('update_session_cas', expect.objectContaining({
+      p_business_id: BIZ_B,
+    }));
+  });
+
+  // ═══════════════════════════════════════════════════════════════
+  // D4: Decline wrong type → rejected
+  // ═══════════════════════════════════════════════════════════════
+  it('D4: decline with wrong offer type → rejected', async () => {
+    const supabase = buildMockSupabase({
+      rpcResults: { decline_saved_card_offer: { result: 'wrong_type' } },
+    });
+    const { handleSavedCardOfferAction } = await import('@/lib/payments/saved-card-offer');
+    await handleSavedCardOfferAction(supabase as any, sendText, PHONE, null, 'save_decline', PAY_ID);
+    expect(sendText).toHaveBeenCalledWith(PHONE, expect.stringContaining('Unexpected action'));
+  });
+
+  it('D4: decline DB error → safe visible failure', async () => {
+    const supabase = buildMockSupabase({
+      rpcErrors: { decline_saved_card_offer: { message: 'DB error' } },
+    });
+    const { handleSavedCardOfferAction } = await import('@/lib/payments/saved-card-offer');
+    await handleSavedCardOfferAction(supabase as any, sendText, PHONE, null, 'save_decline', PAY_ID);
+    expect(sendText).toHaveBeenCalledWith(PHONE, expect.stringContaining('Could not process'));
+  });
+
+  // ═══════════════════════════════════════════════════════════════
+  // D9: Citadel no-session manual save card → locator → startSavedCardFromPaymentId
+  // ═══════════════════════════════════════════════════════════════
+  it('D9: handleSaveCard locates payment → delegates to startSavedCardFromPaymentId → PIN prompt', async () => {
+    // Full mock: handleSaveCard locates via bookings, then startSavedCardFromPaymentId
+    // does its own reads: payment, bookings (for phone resolution), saved_payment_methods, bot_sessions
+    const PAYMENT_WITH_BOOKING = {
+      ...PLATFORM_PAYMENT,
+      user_id: null,
+    };
+    const rpcFn = vi.fn().mockImplementation((name: string) => {
+      if (name === 'update_session_cas') return Promise.resolve({ data: { success: true, version: 2 }, error: null });
+      return Promise.resolve({ data: null, error: null });
+    });
+    const fromFn = vi.fn().mockImplementation((table: string) => {
+      const chain: Record<string, unknown> = {};
+      ['select', 'eq', 'in', 'or', 'not', 'order', 'limit', 'update', 'delete'].forEach(m => {
+        chain[m] = vi.fn().mockReturnValue(chain);
+      });
+      chain.single = vi.fn().mockResolvedValue({ data: null, error: null });
+      chain.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
+      chain.insert = vi.fn().mockResolvedValue({ data: null, error: null });
+
+      if (table === 'bookings') {
+        // Both locator and phone-resolver reads
+        chain.maybeSingle = vi.fn().mockResolvedValue({
+          data: { id: 'bk-1', business_id: BIZ_ID }, error: null,
+        });
+        chain.single = vi.fn().mockResolvedValue({
+          data: { guest_phone: PHONE }, error: null,
+        });
+      }
+      if (table === 'payments') {
+        chain.maybeSingle = vi.fn().mockResolvedValue({ data: PAYMENT_WITH_BOOKING, error: null });
+        chain.single = vi.fn().mockResolvedValue({ data: PAYMENT_WITH_BOOKING, error: null });
+      }
+      if (table === 'saved_payment_methods') {
+        chain.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
+        Object.defineProperty(chain, 'then', {
+          value: (resolve: (v: unknown) => void) => resolve({ data: [], error: null }),
+          configurable: true,
+        });
+      }
+      if (table === 'bot_sessions') {
+        chain.insert = vi.fn().mockResolvedValue({ data: null, error: null });
+      }
+      if (table === 'business_payment_credentials') {
+        chain.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
+      }
+      return chain;
+    });
+    const supabase = { rpc: rpcFn, from: fromFn };
+
+    const { handleSaveCard } = await import('@/lib/bot/handlers/saved-cards');
+    const getProfile = vi.fn().mockResolvedValue(null);
+    // No session (Citadel case)
+    await handleSaveCard(supabase as any, sendText, PHONE, null, getProfile);
+
+    // D9: Verify PIN creation prompt was sent (proves full locator→helper→PIN chain)
+    expect(sendText).toHaveBeenCalledWith(PHONE, expect.stringContaining('Waaiio PIN'));
+    // D9: Verify bot_sessions was accessed (new session for null-session case)
+    expect(fromFn).toHaveBeenCalledWith('bot_sessions');
   });
 });

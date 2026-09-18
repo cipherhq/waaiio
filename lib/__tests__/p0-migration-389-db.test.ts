@@ -118,7 +118,7 @@ describe.skipIf(!canRun)('M389: Global saved card migration', () => {
       DROP FUNCTION IF EXISTS release_saved_card_offer(UUID,UUID);
       DROP FUNCTION IF EXISTS mark_saved_card_offer_ambiguous(UUID,UUID);
       DROP FUNCTION IF EXISTS accept_saved_card_offer(UUID,TEXT,TEXT);
-      DROP FUNCTION IF EXISTS decline_saved_card_offer(UUID,TEXT);
+      DROP FUNCTION IF EXISTS decline_saved_card_offer(UUID,TEXT,TEXT);
     `);
   });
 
@@ -423,7 +423,7 @@ describe.skipIf(!canRun)('M389: Global saved card migration', () => {
   it('RPC-09: accept_saved_card_offer — transitions sent→accepted', () => {
     resetOfferToPending(PAY_2);
     const token = createOffer(PAY_2);
-    psql(`SELECT mark_saved_card_offer_sent('${PAY_2}'::UUID, '${token}'::UUID);`);
+    psql(`SELECT mark_saved_card_offer_sent('${PAY_2}'::UUID, '${token}'::UUID, 'wamid.test'::TEXT);`);
 
     const result = psql(`
       SELECT accept_saved_card_offer('${PAY_2}'::UUID, '${PHONE}'::TEXT, 'save'::TEXT);
@@ -437,7 +437,7 @@ describe.skipIf(!canRun)('M389: Global saved card migration', () => {
   it('RPC-10: accept_saved_card_offer — wrong customer rejected', () => {
     resetOfferToPending(PAY_2);
     const token = createOffer(PAY_2);
-    psql(`SELECT mark_saved_card_offer_sent('${PAY_2}'::UUID, '${token}'::UUID);`);
+    psql(`SELECT mark_saved_card_offer_sent('${PAY_2}'::UUID, '${token}'::UUID, 'wamid.test'::TEXT);`);
 
     const result = psql(`
       SELECT accept_saved_card_offer('${PAY_2}'::UUID, '${PHONE2}'::TEXT, 'save'::TEXT);
@@ -450,10 +450,10 @@ describe.skipIf(!canRun)('M389: Global saved card migration', () => {
   it('RPC-11: decline_saved_card_offer — transitions sent→declined', () => {
     resetOfferToPending(PAY_2);
     const token = createOffer(PAY_2);
-    psql(`SELECT mark_saved_card_offer_sent('${PAY_2}'::UUID, '${token}'::UUID);`);
+    psql(`SELECT mark_saved_card_offer_sent('${PAY_2}'::UUID, '${token}'::UUID, 'wamid.test'::TEXT);`);
 
     const result = psql(`
-      SELECT decline_saved_card_offer('${PAY_2}'::UUID, '${PHONE}'::TEXT);
+      SELECT decline_saved_card_offer('${PAY_2}'::UUID, '${PHONE}'::TEXT, 'save'::TEXT);
     `);
     expect(result).toContain('"result": "transitioned"');
 
@@ -464,10 +464,10 @@ describe.skipIf(!canRun)('M389: Global saved card migration', () => {
   it('RPC-12: decline_saved_card_offer — wrong customer rejected', () => {
     resetOfferToPending(PAY_2);
     const token = createOffer(PAY_2);
-    psql(`SELECT mark_saved_card_offer_sent('${PAY_2}'::UUID, '${token}'::UUID);`);
+    psql(`SELECT mark_saved_card_offer_sent('${PAY_2}'::UUID, '${token}'::UUID, 'wamid.test'::TEXT);`);
 
     const result = psql(`
-      SELECT decline_saved_card_offer('${PAY_2}'::UUID, '${PHONE2}'::TEXT);
+      SELECT decline_saved_card_offer('${PAY_2}'::UUID, '${PHONE2}'::TEXT, 'save'::TEXT);
     `);
     expect(result).toContain('wrong_customer');
   });
@@ -520,7 +520,7 @@ describe.skipIf(!canRun)('M389: Global saved card migration', () => {
       'release_saved_card_offer(uuid,uuid)',
       'mark_saved_card_offer_ambiguous(uuid,uuid)',
       'accept_saved_card_offer(uuid,text,text)',
-      'decline_saved_card_offer(uuid,text)',
+      'decline_saved_card_offer(uuid,text,text)',
     ];
     for (const sig of signatures) {
       const priv = psql(`SELECT has_function_privilege('service_role', '${sig}', 'EXECUTE');`);
@@ -533,11 +533,11 @@ describe.skipIf(!canRun)('M389: Global saved card migration', () => {
   it('SM-01: accepted is terminal — attempt to decline after accept returns already_accepted', () => {
     resetOfferToPending(PAY_2);
     const token = createOffer(PAY_2);
-    psql(`SELECT mark_saved_card_offer_sent('${PAY_2}'::UUID, '${token}'::UUID);`);
+    psql(`SELECT mark_saved_card_offer_sent('${PAY_2}'::UUID, '${token}'::UUID, 'wamid.test'::TEXT);`);
     psql(`SELECT accept_saved_card_offer('${PAY_2}'::UUID, '${PHONE}'::TEXT, 'save'::TEXT);`);
 
     const result = psql(`
-      SELECT decline_saved_card_offer('${PAY_2}'::UUID, '${PHONE}'::TEXT);
+      SELECT decline_saved_card_offer('${PAY_2}'::UUID, '${PHONE}'::TEXT, 'save'::TEXT);
     `);
     expect(result).toContain('already_accepted');
   });
@@ -545,8 +545,8 @@ describe.skipIf(!canRun)('M389: Global saved card migration', () => {
   it('SM-02: declined is terminal — attempt to accept after decline returns already_declined / already_accepted guard', () => {
     resetOfferToPending(PAY_2);
     const token = createOffer(PAY_2);
-    psql(`SELECT mark_saved_card_offer_sent('${PAY_2}'::UUID, '${token}'::UUID);`);
-    psql(`SELECT decline_saved_card_offer('${PAY_2}'::UUID, '${PHONE}'::TEXT);`);
+    psql(`SELECT mark_saved_card_offer_sent('${PAY_2}'::UUID, '${token}'::UUID, 'wamid.test'::TEXT);`);
+    psql(`SELECT decline_saved_card_offer('${PAY_2}'::UUID, '${PHONE}'::TEXT, 'save'::TEXT);`);
 
     const result = psql(`
       SELECT accept_saved_card_offer('${PAY_2}'::UUID, '${PHONE}'::TEXT, 'save'::TEXT);
@@ -597,6 +597,79 @@ describe.skipIf(!canRun)('M389: Global saved card migration', () => {
       SELECT accept_saved_card_offer('${PAY_2}'::UUID, '${PHONE}'::TEXT, 'save'::TEXT);
     `);
     expect(result).toContain('"result": "transitioned"');
+  });
+
+  // ─── SECTION 11b: D5 — mark_sent rejects null/empty WAMID ───────────────
+
+  it('D5-01: mark_saved_card_offer_sent rejects null WAMID', () => {
+    resetOfferToPending(PAY_2);
+    const token = createOffer(PAY_2);
+
+    const result = psql(`
+      SELECT mark_saved_card_offer_sent('${PAY_2}'::UUID, '${token}'::UUID, NULL);
+    `);
+    expect(result).toContain('missing_wamid');
+  });
+
+  it('D5-02: mark_saved_card_offer_sent rejects empty WAMID', () => {
+    resetOfferToPending(PAY_2);
+    const token = createOffer(PAY_2);
+
+    const result = psql(`
+      SELECT mark_saved_card_offer_sent('${PAY_2}'::UUID, '${token}'::UUID, ''::TEXT);
+    `);
+    expect(result).toContain('missing_wamid');
+  });
+
+  // ─── SECTION 11c: D4 — decline bound to offer type ─────────────────────
+
+  it('D4-01: decline with wrong offer_type rejected', () => {
+    resetOfferToPending(PAY_2);
+    const token = createOffer(PAY_2); // creates 'save' offer
+    psql(`SELECT mark_saved_card_offer_sent('${PAY_2}'::UUID, '${token}'::UUID, 'wamid.test'::TEXT);`);
+
+    const result = psql(`
+      SELECT decline_saved_card_offer('${PAY_2}'::UUID, '${PHONE}'::TEXT, 'replace'::TEXT);
+    `);
+    expect(result).toContain('wrong_type');
+  });
+
+  // ─── SECTION 11d: D6 — expired sending lease reconciliation ────────────
+
+  it('D6-01: expired sending lease transitions to ambiguous on re-claim', () => {
+    resetOfferToPending(PAY_2);
+    createOffer(PAY_2); // → sending with 2-minute lease
+
+    // Artificially expire the lease
+    psql(`
+      UPDATE payment_saved_card_offers
+      SET claim_expires_at = NOW() - INTERVAL '1 minute'
+      WHERE payment_id = '${PAY_2}';
+    `);
+
+    // Re-claim should reconcile to ambiguous
+    const result = psql(`
+      SELECT create_or_claim_saved_card_offer(
+        '${PAY_2}'::UUID, '${PHONE}'::TEXT, '${BIZ}'::UUID, 'save'::TEXT
+      );
+    `);
+    expect(result).toContain('"current_state": "ambiguous"');
+    expect(result).toContain('"claimed": false');
+
+    const state = psql(`SELECT state FROM payment_saved_card_offers WHERE payment_id = '${PAY_2}';`);
+    expect(state).toBe('ambiguous');
+  });
+
+  // ─── SECTION 11e: D7 — business_id nullable on offer table ─────────────
+
+  it('D7-01: offer table business_id is nullable', () => {
+    const nullable = psql(`
+      SELECT is_nullable FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name   = 'payment_saved_card_offers'
+        AND column_name  = 'business_id';
+    `);
+    expect(nullable).toBe('YES');
   });
 
   // ─── SECTION 12: saved_payment_methods schema changes ────────────────────

@@ -4,8 +4,9 @@ import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 import { logger } from '@/lib/logger';
 
 /**
- * Handle "save card" command — finds the most recent payment authorization
- * and starts the PIN creation flow.
+ * Handle "save card" command — D1: LOCATOR ONLY.
+ * Finds the most recent eligible payment ID and delegates to startSavedCardFromPaymentId().
+ * All auth/origin/compat/save-replace logic lives in the shared exact-payment helper.
  */
 export async function handleSaveCard(
   supabase: SupabaseClient,
@@ -20,9 +21,13 @@ export async function handleSaveCard(
     await sendText(from, 'Invalid phone number. Cannot save card.');
     return;
   }
-  const phoneN = phoneP.slice(1); // strip + for dual-format queries
+  const phoneN = phoneP.slice(1);
 
-  // Find the most recent paid booking for this phone, then get its payment
+  // ── LOCATOR: find the most recent eligible payment ID ──
+
+  // 1. Try booking-linked payment
+  let paymentId: string | null = null;
+
   const { data: recentBooking } = await supabase
     .from('bookings')
     .select('id, business_id')
@@ -32,308 +37,42 @@ export async function handleSaveCard(
     .limit(1)
     .maybeSingle();
 
-  let payment: { id: string; business_id: string | null; metadata: unknown; gateway: string } | null = null;
-
   if (recentBooking) {
     const { data: bookingPayment } = await supabase
       .from('payments')
-      .select('id, business_id, metadata, gateway')
+      .select('id, gateway')
       .eq('booking_id', recentBooking.id)
       .eq('status', 'success')
       .order('created_at', { ascending: false })
       .limit(1)
       .maybeSingle();
-
-    if (bookingPayment) {
-      payment = {
-        ...bookingPayment,
-        business_id: bookingPayment.business_id || recentBooking.business_id,
-      };
-    }
+    if (bookingPayment) paymentId = bookingPayment.id;
   }
 
-  // Also try direct payment lookup by user_id
-  if (!payment) {
+  // 2. Try direct payment by user_id
+  if (!paymentId) {
     const profile = await getProfile();
     if (profile?.id) {
       const { data: userPayment } = await supabase
         .from('payments')
-        .select('id, business_id, metadata, gateway')
+        .select('id, gateway')
         .eq('user_id', profile.id)
         .eq('status', 'success')
         .order('created_at', { ascending: false })
         .limit(1)
         .maybeSingle();
-      if (userPayment) payment = userPayment;
+      if (userPayment) paymentId = userPayment.id;
     }
   }
 
-  if (!payment) {
+  if (!paymentId) {
     await sendText(from, 'No recent payment found. Make a payment first, then type *save card*.');
     return;
   }
 
-  const meta = (payment.metadata || {}) as Record<string, unknown>;
-  const auth = meta._card_authorization as Record<string, unknown> | undefined;
-
-  if (!auth?.authorization_code) {
-    const gateway = payment.gateway || 'unknown';
-    if (gateway === 'stripe' || gateway === 'square' || gateway === 'paypal') {
-      await sendText(from, `Card saving is currently available for Paystack payments only. ${gateway.charAt(0).toUpperCase() + gateway.slice(1)} support is coming soon.`);
-    } else {
-      await sendText(from, 'Your last payment method cannot be saved. Try again after your next payment.');
-    }
-    return;
-  }
-
-  const businessId = payment.business_id || session?.business_id;
-  if (!businessId) {
-    await sendText(from, 'Could not determine the business. Try again from within a business session.');
-    return;
-  }
-
-  // Provider compatibility check — only shared-platform Paystack businesses can save/replace
-  const { isSharedPlatformPaystackCompatible } = await import('@/lib/payments/saved-card-compat');
-  const compat = await isSharedPlatformPaystackCompatible(supabase, businessId);
-  if (!compat.compatible) {
-    await sendText(from, 'Card saving is not available for this business\'s payment setup.');
-    return;
-  }
-
-  // B4: Require DURABLE PROOF that source origin is shared platform.
-  // Missing/unknown/legacy origin → fail closed.
-  const paymentMeta = (payment.metadata || {}) as Record<string, unknown>;
-  const origin = paymentMeta.payment_origin as string | undefined;
-  if (origin !== 'platform') {
-    await sendText(from, 'This payment cannot be used to save a card. Try again after a standard payment.');
-    return;
-  }
-
-  // B5: Require reusable === true explicitly
-  if (auth.reusable !== true) {
-    await sendText(from, 'Your last payment card is not reusable. Try again after your next card payment.');
-    return;
-  }
-
-  // Require authorization_email from the payment metadata
-  const authEmail = (auth.email as string) || null;
-  if (!authEmail) {
-    await sendText(from, 'Card authorization email is missing. Try again after your next payment.');
-    return;
-  }
-
-  // Customer-scoped query: no business_id filter (global saved card)
-  const { data: existingMethods } = await supabase
-    .from('saved_payment_methods')
-    .select('id, authorization_code, customer_code, card_last4, card_brand')
-    .in('customer_phone', [phoneP, phoneN])
-    .eq('is_active', true)
-    .eq('gateway', 'paystack');
-
-  // Fail closed on duplicate phone normalization ambiguity
-  if (existingMethods && existingMethods.length > 1) {
-    logger.error('[SAVED_CARDS] duplicate-phone-ambiguity', { businessId, phone: phoneP, count: existingMethods.length });
-    await sendText(from, 'There is an issue with your saved card. Please contact support.');
-    return;
-  }
-
-  const existing = existingMethods?.[0] || null;
-
-  if (existing) {
-    // ── REPLACEMENT FLOW ──
-    const newAuthCode = auth.authorization_code as string;
-    const newCustomerCode = (auth.customer_code as string) || null;
-    const existingAuthCode = existing.authorization_code;
-    const existingCustomerCode = existing.customer_code;
-
-    // Same authorization_code = already up to date
-    if (existingAuthCode === newAuthCode) {
-      await sendText(from, 'Your saved card is already up to date.');
-      return;
-    }
-
-    // Both customer_codes must be non-null and match
-    if (!existingCustomerCode || !newCustomerCode) {
-      logger.warn('[SAVED_CARDS] replacement-null-customer-code', { businessId, methodId: existing.id });
-      await sendText(from, 'Cannot verify card ownership. Please type *remove card* first, then *save card*.');
-      return;
-    }
-    if (existingCustomerCode !== newCustomerCode) {
-      logger.error('[SAVED_CARDS] replacement-customer-code-mismatch', { businessId, methodId: existing.id });
-      await sendText(from, 'The new card belongs to a different account. Please type *remove card* first, then *save card*.');
-      return;
-    }
-
-    // Compute expected state hash for CAS fence
-    const { createHash } = await import('crypto');
-    const stateHash = createHash('sha256').update(`${existing.id}:${existingAuthCode}:${existingCustomerCode}`).digest('hex');
-
-    const oldLabel = `${((existing.card_brand as string) || 'Card').toUpperCase()} ****${(existing.card_last4 as string) || '????'}`;
-    const newLabel = `${((auth.brand as string) || 'Card').toUpperCase()} ****${(auth.last4 as string) || '????'}`;
-
-    // Store PAYMENT ID in session (not raw provider auth), per R3 design
-    const replaceData = {
-      _replace_method_id: existing.id,
-      _replace_payment_id: payment.id,
-      _replace_expected_state_hash: stateHash,
-    };
-
-    // Establish durable session state for PIN step
-    const sessionEstablished = await _establishReplacementSession(
-      supabase, from, phoneP, phoneN, businessId, session, replaceData,
-    );
-
-    if (!sessionEstablished) {
-      await sendText(from, 'Could not start card replacement. Please try again.');
-      return;
-    }
-
-    await sendText(from, `💳 Replace saved card ${oldLabel} with ${newLabel}?\n\nEnter your *Waaiio PIN* to confirm, or type *cancel*.`);
-    return;
-  }
-
-  // ── FIRST-TIME SAVE ──
-  // F6: Store payment ID for durable re-read at PIN completion
-  const saveData = {
-    _save_card_pending: true,
-    _save_card_business_id: businessId,
-    _save_card_gateway: payment.gateway || 'paystack',
-    _save_card_auth: auth,
-    _save_card_payment_id: payment.id,
-  };
-
-  if (session) {
-    await supabase.from('bot_sessions')
-      .update({ current_step: 'save_card_pin', session_data: { ...session.session_data, ...saveData } })
-      .eq('id', session.id);
-  } else {
-    await supabase.from('bot_sessions').insert({
-      whatsapp_number: from, user_id: null, business_id: businessId,
-      current_step: 'save_card_pin', session_data: saveData, is_active: true,
-      expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
-    });
-  }
-
-  const cardLabel = `${((auth.brand as string) || 'Card').toUpperCase()} ****${(auth.last4 as string) || '????'}`;
-  await sendText(from, `💳 Saving *${cardLabel}*\n\nCreate a *4-digit Waaiio PIN* (not your bank/ATM PIN) to secure this card.\nYou'll need this Waaiio PIN every time you use the saved card.\n\nType your 4-digit PIN now:`);
-}
-
-/**
- * Establish a durable replace_card_pin session, handling null-session cases.
- * Returns true if the session was established successfully.
- */
-async function _establishReplacementSession(
-  supabase: SupabaseClient,
-  from: string,
-  phoneP: string,
-  phoneN: string,
-  businessId: string,
-  session: BotSession | null,
-  replaceData: Record<string, string>,
-): Promise<boolean> {
-  if (session) {
-    // Active session provided — verify business authority matches
-    if (session.business_id && session.business_id !== businessId) {
-      logger.error('[SAVED_CARDS] replacement-business-mismatch', { sessionBiz: session.business_id, replaceBiz: businessId });
-      return false;
-    }
-    // Transition via CAS
-    const { data: casResult, error: casError } = await supabase.rpc('update_session_cas', {
-      p_session_id: session.id,
-      p_expected_version: session.version ?? 0,
-      p_current_step: 'replace_card_pin',
-      p_session_data: { ...session.session_data, ...replaceData },
-    });
-    if (casError) { logger.error('[SAVED_CARDS] replacement CAS RPC error:', casError.message); return false; }
-    if (!casResult?.success) {
-      if (casResult?.reason === 'version_conflict') return false; // stale worker, silent
-      logger.error('[SAVED_CARDS] replacement CAS unexpected:', casResult?.reason);
-      return false;
-    }
-    return true;
-  }
-
-  // session = null — check for existing rows for this phone+business
-  const { data: existingRows } = await supabase
-    .from('bot_sessions')
-    .select('id, is_active, version, current_step, session_data, business_id')
-    .in('whatsapp_number', [phoneP, phoneN])
-    .eq('business_id', businessId)
-    .order('created_at', { ascending: false })
-    .limit(2);
-
-  const activeRow = existingRows?.find(r => r.is_active);
-  const inactiveRows = existingRows?.filter(r => !r.is_active) || [];
-
-  if (activeRow) {
-    // Active session exists — only proceed if SAME replacement intent (idempotent)
-    const sd = (activeRow.session_data || {}) as Record<string, unknown>;
-    if (activeRow.current_step === 'replace_card_pin'
-        && sd._replace_method_id === replaceData._replace_method_id
-        && sd._replace_payment_id === replaceData._replace_payment_id
-        && sd._replace_expected_state_hash === replaceData._replace_expected_state_hash) {
-      return true; // idempotent — same intent already established
-    }
-    // Different intent or unrelated journey — FAIL CLOSED, do not overwrite
-    logger.warn('[SAVED_CARDS] replacement-active-session-conflict', { sessionId: activeRow.id, step: activeRow.current_step });
-    return false;
-  }
-
-  // Delete inactive rows for this exact phone+business
-  if (inactiveRows.length > 0) {
-    for (const row of inactiveRows) {
-      await supabase.from('bot_sessions').delete().eq('id', row.id).eq('is_active', false);
-    }
-  }
-
-  // Create short-lived replacement session
-  const { error: insertError } = await supabase.from('bot_sessions').insert({
-    whatsapp_number: phoneP, user_id: null, business_id: businessId,
-    current_step: 'replace_card_pin', session_data: replaceData, is_active: true,
-    expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
-  });
-
-  if (insertError) {
-    // Handle 23505 unique constraint violation (concurrent creation race)
-    if (insertError.code === '23505') {
-      // Re-read authoritative state
-      const { data: raceWinner } = await supabase
-        .from('bot_sessions')
-        .select('id, current_step, session_data')
-        .in('whatsapp_number', [phoneP, phoneN])
-        .eq('business_id', businessId)
-        .eq('is_active', true)
-        .maybeSingle();
-      if (raceWinner) {
-        const sd = (raceWinner.session_data || {}) as Record<string, unknown>;
-        if (raceWinner.current_step === 'replace_card_pin'
-            && sd._replace_method_id === replaceData._replace_method_id
-            && sd._replace_payment_id === replaceData._replace_payment_id
-            && sd._replace_expected_state_hash === replaceData._replace_expected_state_hash) {
-          return true; // same intent won
-        }
-      }
-      logger.warn('[SAVED_CARDS] replacement-session-race-conflict', { error: insertError.code });
-      return false;
-    }
-    logger.error('[SAVED_CARDS] replacement-session-insert-failed:', insertError.message);
-    return false;
-  }
-
-  // Verify durable state was established
-  const { data: verifyRow } = await supabase
-    .from('bot_sessions')
-    .select('current_step, session_data')
-    .in('whatsapp_number', [phoneP, phoneN])
-    .eq('business_id', businessId)
-    .eq('is_active', true)
-    .maybeSingle();
-
-  if (!verifyRow || verifyRow.current_step !== 'replace_card_pin') {
-    logger.error('[SAVED_CARDS] replacement-session-verify-failed');
-    return false;
-  }
-  return true;
+  // D1: Delegate ALL authority/eligibility/session logic to the shared exact-payment helper
+  const { startSavedCardFromPaymentId } = await import('@/lib/payments/saved-card-offer');
+  await startSavedCardFromPaymentId(supabase, sendText, from, session, paymentId);
 }
 
 /**
