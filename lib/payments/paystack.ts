@@ -19,8 +19,8 @@ export class PaystackGateway implements PaymentGateway {
     // consistent for later charge_authorization (Paystack requires email match).
     // BYO/Connect may keep their existing email behavior (not eligible for global saved card).
     const isSharedPlatform = !opts.isByo && !opts.connectAccountId;
-    const { internalPaymentEmailAlias } = await import('./saved-card-compat');
-    const canonicalPhone = opts.phone.startsWith('+') ? opts.phone : `+${opts.phone}`;
+    const { internalPaymentEmailAlias, canonicalSavedCardPhone } = await import('./saved-card-compat');
+    const canonicalPhone = canonicalSavedCardPhone(opts.phone) || opts.phone.replace(/^\+?/, '+');
     const email = isSharedPlatform
       ? internalPaymentEmailAlias(canonicalPhone)
       : (opts.userEmail || internalPaymentEmailAlias(canonicalPhone));

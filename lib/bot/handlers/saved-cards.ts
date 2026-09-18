@@ -343,8 +343,13 @@ export async function handleRemoveCard(
   from: string,
   session: BotSession | null,
 ): Promise<void> {
-  const phoneP = from.startsWith('+') ? from : `+${from}`;
-  const phoneN = from.startsWith('+') ? from.slice(1) : from;
+  const { canonicalSavedCardPhone } = await import('@/lib/payments/saved-card-compat');
+  const phoneP = canonicalSavedCardPhone(from);
+  if (!phoneP) {
+    await sendText(from, 'Invalid phone number.');
+    return;
+  }
+  const phoneN = phoneP.slice(1);
 
   // Global remove: customer's saved card regardless of which business session
   const { data: deleted } = await supabase
@@ -397,7 +402,13 @@ export async function handleCardPinStep(
   const auth = d._save_card_auth as Record<string, unknown>;
   const businessId = d._save_card_business_id as string;
   const gateway = d._save_card_gateway as string;
-  const phoneP = from.startsWith('+') ? from : `+${from}`;
+  const { canonicalSavedCardPhone } = await import('@/lib/payments/saved-card-compat');
+  const phoneP = canonicalSavedCardPhone(from);
+  if (!phoneP) {
+    await sendText(from, 'Invalid phone number. Cannot save card.');
+    return;
+  }
+  const phoneN = phoneP.slice(1);
 
   if (!auth?.authorization_code || !businessId) {
     // 1. Execute CAS first — before sending anything
@@ -421,6 +432,16 @@ export async function handleCardPinStep(
     // 4. CAS won — update local version then send the recovery message
     session.version = casPinResult.version;
     await sendText(from, 'Something went wrong. Please type *save card* again.');
+    return;
+  }
+
+  // C6: Revalidate invariants before credential write
+  if (gateway !== 'paystack') {
+    await sendText(from, 'Card saving is only available for Paystack payments.');
+    return;
+  }
+  if (auth.reusable !== true) {
+    await sendText(from, 'Your card is not reusable. Please try again after your next payment.');
     return;
   }
 
@@ -462,6 +483,17 @@ export async function handleCardPinStep(
   });
 
   if (insertError) {
+    // C8: Clean session state — do not leave stuck in save_card_pin
+    const cleanData = { ...session.session_data };
+    delete cleanData._save_card_pending;
+    delete cleanData._save_card_business_id;
+    delete cleanData._save_card_gateway;
+    delete cleanData._save_card_auth;
+    await supabase.rpc('update_session_cas', {
+      p_session_id: session.id, p_expected_version: session.version ?? 0,
+      p_current_step: 'select_capability', p_session_data: cleanData,
+    });
+
     if (insertError.code === '23505') {
       // UNIQUE violation — concurrent first-save race. Re-read authoritative state.
       const { data: existing } = await supabase.from('saved_payment_methods')
@@ -504,8 +536,13 @@ export async function handleReplacementPinStep(
   text: string,
 ): Promise<void> {
   const input = text.trim();
-  const phoneP = from.startsWith('+') ? from : `+${from}`;
-  const phoneN = from.startsWith('+') ? from.slice(1) : from;
+  const { canonicalSavedCardPhone } = await import('@/lib/payments/saved-card-compat');
+  const phoneP = canonicalSavedCardPhone(from);
+  if (!phoneP) {
+    await sendText(from, 'Invalid phone number.');
+    return;
+  }
+  const phoneN = phoneP.slice(1);
   const d = session.session_data;
   const methodId = d._replace_method_id as string;
   const paymentId = d._replace_payment_id as string;
@@ -587,8 +624,17 @@ export async function handleReplacementPinStep(
   }
 
   const meta = (paymentRow.metadata || {}) as Record<string, unknown>;
+  // C7: Revalidate source origin + reusable + compatibility at PIN completion
+  if (meta.payment_origin !== 'platform') {
+    await sendText(from, 'This payment cannot be used to replace your card.');
+    await supabase.rpc('update_session_cas', {
+      p_session_id: session.id, p_expected_version: session.version ?? 0,
+      p_current_step: 'select_capability', p_session_data: {},
+    });
+    return;
+  }
   const newAuth = meta._card_authorization as Record<string, unknown> | undefined;
-  if (!newAuth?.authorization_code || !newAuth?.customer_code) {
+  if (!newAuth?.authorization_code || !newAuth?.customer_code || newAuth?.reusable !== true) {
     await sendText(from, 'The payment card cannot be saved. Please try again after your next payment.');
     await supabase.rpc('update_session_cas', {
       p_session_id: session.id, p_expected_version: session.version ?? 0,

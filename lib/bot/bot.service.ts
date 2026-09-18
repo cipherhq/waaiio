@@ -2399,6 +2399,24 @@ export class BotService {
       return;
     }
 
+    // C9: First-class saved-card commands — do NOT depend on bot_keywords rows.
+    // Must work from any normal business session state.
+    // Do not intercept during security-sensitive PIN steps (handled above).
+    const trimmedLower = text.trim().toLowerCase();
+    if (/^save\s+(my\s+)?card$/i.test(trimmedLower)) {
+      const { handleSaveCard } = await import('./handlers/saved-cards');
+      await handleSaveCard(this.supabase, this.sendText.bind(this), from, session, async () => {
+        const { data: profile } = await this.supabase.from('profiles').select('id').eq('phone', from).maybeSingle();
+        return profile || null;
+      });
+      return;
+    }
+    if (/^(remove|delete)\s+(my\s+)?card$/i.test(trimmedLower)) {
+      const { handleRemoveCard } = await import('./handlers/saved-cards');
+      await handleRemoveCard(this.supabase, this.sendText.bind(this), from, session);
+      return;
+    }
+
     // Handle "Did you mean?" business selection
     if (step === 'select_business_suggestion') {
       const suggestions = (session.session_data.suggestions || []) as { id: string; name: string; bot_code: string }[];
