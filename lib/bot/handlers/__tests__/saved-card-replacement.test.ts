@@ -117,7 +117,7 @@ describe('Global Saved Card', () => {
     // D1: Must delegate to startSavedCardFromPaymentId (mocked)
     const { startSavedCardFromPaymentId } = await import('@/lib/payments/saved-card-offer');
     expect(startSavedCardFromPaymentId).toHaveBeenCalledWith(
-      expect.anything(), sendText, PHONE, null, PAY_ID,
+      expect.anything(), sendText, PHONE, null, PAY_ID, undefined,
     );
   });
 

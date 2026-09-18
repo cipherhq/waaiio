@@ -246,6 +246,7 @@ export async function handleSavedCardOfferAction(
   session: import('@/lib/bot/bot-types').BotSession | null,
   action: 'save_accept' | 'save_decline' | 'replace_accept' | 'replace_decline',
   paymentId: string,
+  bindBusiness?: (businessId: string) => void,
 ): Promise<void> {
   const canonPhone = canonicalSavedCardPhone(from);
   if (!canonPhone) { await sendText(from, 'Invalid phone number.'); return; }
@@ -297,7 +298,7 @@ export async function handleSavedCardOfferAction(
     case 'transitioned':
     case 'already_accepted':
       // K5: Both transitioned and replay-accept converge on exact-payment helper
-      await startSavedCardFromPaymentId(supabase, sendText, from, session, paymentId);
+      await startSavedCardFromPaymentId(supabase, sendText, from, session, paymentId, bindBusiness);
       return;
     case 'declined':
       await sendText(from, 'This offer was declined. Type *save card* if you change your mind.');
@@ -321,6 +322,7 @@ export async function startSavedCardFromPaymentId(
   from: string,
   session: import('@/lib/bot/bot-types').BotSession | null,
   paymentId: string,
+  bindBusiness?: (businessId: string) => void,
 ): Promise<void> {
   const canonPhone = canonicalSavedCardPhone(from);
   if (!canonPhone) { await sendText(from, 'Invalid phone number.'); return; }
@@ -363,6 +365,12 @@ export async function startSavedCardFromPaymentId(
 
   const businessId = payment.business_id;
   if (!businessId) { await sendText(from, 'Could not determine the business.'); return; }
+
+  // Hotfix #331: the manual command and button ACCEPT routes execute before
+  // normal no-session business routing on shared channels. Bind only AFTER
+  // exact-payment ownership + business authority has been re-proven above.
+  // This preserves the messaging hard-stop instead of bypassing it.
+  bindBusiness?.(businessId);
 
   const compat = await isSharedPlatformPaystackCompatible(supabase, businessId);
   if (!compat.compatible) { await sendText(from, 'Card saving is not available for this business.'); return; }

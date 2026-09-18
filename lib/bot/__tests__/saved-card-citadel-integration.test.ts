@@ -60,6 +60,7 @@ vi.mock('@/lib/payments/saved-card-compat', () => ({
 
 const { BotService } = await import('@/lib/bot/bot.service');
 const { MetaCloudSender } = await import('@/lib/channels/message-sender');
+const { assertMessagingAllowed } = await import('@/lib/channels/send-guard');
 
 const PHONE = '+2348012345678';
 const PHONE_N = '2348012345678';
@@ -151,7 +152,12 @@ function createCitadelSupabase() {
         // Default
         return makeChain(null);
       }),
-      rpc: vi.fn().mockResolvedValue({ data: { success: true, version: 1 }, error: null }),
+      rpc: vi.fn().mockImplementation((name: string) => {
+        if (name === 'accept_saved_card_offer') {
+          return Promise.resolve({ data: { result: 'transitioned' }, error: null });
+        }
+        return Promise.resolve({ data: { success: true, version: 1 }, error: null });
+      }),
     },
   };
 }
@@ -201,10 +207,17 @@ describe('F1: Real Citadel no-session integration', () => {
   it('save card → real locator → real startSavedCardFromPaymentId → PIN prompt', async () => {
     const { supabase, sessionInserts } = createCitadelSupabase();
     const cloud = createMockCloud();
-    const sender = new MetaCloudSender(cloud as any, 'ch-001', BIZ_ID);
+    // Production shape: shared-channel sender starts UNBOUND.
+    const sender = new MetaCloudSender(cloud as any, null);
     const bot = new BotService(supabase as any, sender, createStandaloneService(), createMockIntelligence() as any);
 
+    expect(sender.boundBusinessId).toBe('');
     await bot.handleMessage(PHONE, 'save card', { type: 'text' });
+
+    // Hotfix proof: exact payment authority binds Citadel BEFORE business-scoped send.
+    expect(sender.boundBusinessId).toBe(BIZ_ID);
+    expect(assertMessagingAllowed).toHaveBeenCalledWith(BIZ_ID);
+    expect(assertMessagingAllowed).not.toHaveBeenCalledWith('');
 
     // F1 proof: visible CREATE-PIN response was emitted
     // MetaCloudSender.sendText calls cloud.sendText({ to, text }) — first arg is object
@@ -218,5 +231,26 @@ describe('F1: Real Citadel no-session integration', () => {
 
     // F1 proof: greeting/keyword path did NOT execute (no sendButtons for greeting)
     expect(cloud.sendButtons).not.toHaveBeenCalled();
+  });
+
+  it('button ACCEPT on unbound shared channel binds exact payment business before PIN prompt', async () => {
+    const { supabase } = createCitadelSupabase();
+    const cloud = createMockCloud();
+    const sender = new MetaCloudSender(cloud as any, null);
+    const bot = new BotService(supabase as any, sender, createStandaloneService(), createMockIntelligence() as any);
+
+    expect(sender.boundBusinessId).toBe('');
+    await bot.handleMessage(PHONE, `save_card_accept:${PAY_ID}`, { type: 'text' });
+
+    expect(sender.boundBusinessId).toBe(BIZ_ID);
+    expect(assertMessagingAllowed).toHaveBeenCalledWith(BIZ_ID);
+    expect(assertMessagingAllowed).not.toHaveBeenCalledWith('');
+
+    const pinPrompt = cloud.sendText.mock.calls.find((c: unknown[]) => {
+      const msg = c[0] as { text?: string } | undefined;
+      const text = msg?.text || '';
+      return text.indexOf('Saving') >= 0 || text.indexOf('PIN') >= 0;
+    });
+    expect(pinPrompt, 'Expected visible PIN creation prompt after Save-card button ACCEPT').toBeTruthy();
   });
 });
