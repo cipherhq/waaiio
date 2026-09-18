@@ -976,6 +976,29 @@ export class BotService {
       }
     }
 
+    // ── First-class saved-card commands ──
+    // Must run BEFORE no-session/new-session greeting path and before keyword routing.
+    // Works with session === null (handleSaveCard derives business from recent payment).
+    // PIN steps already handled above and take precedence.
+    // A business keyword named "save card" cannot override this system command.
+    const _scTrimmed = text.trim();
+    if (/^save\s+(my\s+)?card$/i.test(_scTrimmed)) {
+      const { handleSaveCard } = await import('./handlers/saved-cards');
+      const { phonePair } = await import('@/lib/utils/phone');
+      const { withPlus, withoutPlus } = phonePair(from);
+      await handleSaveCard(this.supabase, this.sendText.bind(this), from, session, async () => {
+        const { data: profile } = await this.supabase.from('profiles').select('id')
+          .or(`phone.eq.${withPlus},phone.eq.${withoutPlus}`).limit(1).maybeSingle();
+        return profile || null;
+      });
+      return;
+    }
+    if (/^(remove|delete)\s+(my\s+)?card$/i.test(_scTrimmed)) {
+      const { handleRemoveCard } = await import('./handlers/saved-cards');
+      await handleRemoveCard(this.supabase, this.sendText.bind(this), from, session);
+      return;
+    }
+
     if (!session || isRestart) {
       logger.debug('[BOT] New/restart session. hasSession:', !!session, 'isRestart:', isRestart);
       // Remember the business from the session being restarted — prevents country
@@ -2399,23 +2422,7 @@ export class BotService {
       return;
     }
 
-    // C9: First-class saved-card commands — do NOT depend on bot_keywords rows.
-    // Must work from any normal business session state.
-    // Do not intercept during security-sensitive PIN steps (handled above).
-    const trimmedLower = text.trim().toLowerCase();
-    if (/^save\s+(my\s+)?card$/i.test(trimmedLower)) {
-      const { handleSaveCard } = await import('./handlers/saved-cards');
-      await handleSaveCard(this.supabase, this.sendText.bind(this), from, session, async () => {
-        const { data: profile } = await this.supabase.from('profiles').select('id').eq('phone', from).maybeSingle();
-        return profile || null;
-      });
-      return;
-    }
-    if (/^(remove|delete)\s+(my\s+)?card$/i.test(trimmedLower)) {
-      const { handleRemoveCard } = await import('./handlers/saved-cards');
-      await handleRemoveCard(this.supabase, this.sendText.bind(this), from, session);
-      return;
-    }
+    // (saved-card commands moved earlier — before no-session path)
 
     // Handle "Did you mean?" business selection
     if (step === 'select_business_suggestion') {

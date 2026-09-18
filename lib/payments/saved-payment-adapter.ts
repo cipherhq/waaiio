@@ -191,9 +191,10 @@ async function lookupAuthorizedMethod(
   pin_locked_until: string | null;
 } | null> {
   // Customer-scoped lookup: methodId + customer_phone + is_active.
-  // businessId is no longer the authorization fence (global saved card).
-  const phoneP = customerPhone.startsWith('+') ? customerPhone : `+${customerPhone}`;
-  const phoneN = customerPhone.startsWith('+') ? customerPhone.slice(1) : customerPhone;
+  const { canonicalSavedCardPhone } = await import('./saved-card-compat');
+  const phoneP = canonicalSavedCardPhone(customerPhone);
+  if (!phoneP) return null; // Invalid phone — fail closed
+  const phoneN = phoneP.slice(1);
   const { data } = await supabase
     .from('saved_payment_methods')
     .select('id, gateway, authorization_code, customer_code, authorization_email, stripe_payment_method_id, stripe_customer_id, card_last4, card_brand, pin_hash, pin_attempts, pin_locked_until')

@@ -22,6 +22,10 @@ vi.mock('../charge-saved', () => ({
 }));
 vi.mock('../saved-card-compat', () => ({
   isSharedPlatformPaystackCompatible: vi.fn().mockResolvedValue({ compatible: true }),
+  canonicalSavedCardPhone: vi.fn().mockImplementation((p: string) => {
+    const withPlus = p.startsWith('+') ? p : `+${p}`;
+    return /^\+[1-9]\d{7,14}$/.test(withPlus) ? withPlus : null;
+  }),
 }));
 
 // Mock crypto for PIN hashing

@@ -20,7 +20,11 @@ export class PaystackGateway implements PaymentGateway {
     // BYO/Connect may keep their existing email behavior (not eligible for global saved card).
     const isSharedPlatform = !opts.isByo && !opts.connectAccountId;
     const { internalPaymentEmailAlias, canonicalSavedCardPhone } = await import('./saved-card-compat');
-    const canonicalPhone = canonicalSavedCardPhone(opts.phone) || opts.phone.replace(/^\+?/, '+');
+    const canonicalPhone = canonicalSavedCardPhone(opts.phone);
+    if (!canonicalPhone) {
+      logger.error('[PAYSTACK] Invalid phone for payment initialization — fail closed', { phone: opts.phone?.slice(0, 6) });
+      return null;
+    }
     const email = isSharedPlatform
       ? internalPaymentEmailAlias(canonicalPhone)
       : (opts.userEmail || internalPaymentEmailAlias(canonicalPhone));

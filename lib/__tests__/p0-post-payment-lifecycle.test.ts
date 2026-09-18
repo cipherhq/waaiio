@@ -67,6 +67,10 @@ vi.mock('@/lib/bot/flows/shared/notify-owner', () => ({
 vi.mock('@/lib/bot/flows/shared/notifications', () => ({ createNotification: vi.fn() }));
 vi.mock('@/lib/payments/saved-card-compat', () => ({
   isSharedPlatformPaystackCompatible: vi.fn().mockResolvedValue({ compatible: true }),
+  canonicalSavedCardPhone: vi.fn().mockImplementation((p: string) => {
+    const withPlus = p.startsWith('+') ? p : `+${p}`;
+    return /^\+[1-9]\d{7,14}$/.test(withPlus) ? withPlus : null;
+  }),
 }));
 vi.mock('@/lib/payments/paystack-recurring', () => ({
   getAuthorization: vi.fn(),

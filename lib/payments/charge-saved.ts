@@ -130,8 +130,10 @@ export async function getSavedPaymentMethod(
   const compat = await isSharedPlatformPaystackCompatible(supabase, businessId);
   if (!compat.compatible) return null;
 
-  const phoneP = customerPhone.startsWith('+') ? customerPhone : `+${customerPhone}`;
-  const phoneN = customerPhone.startsWith('+') ? customerPhone.slice(1) : customerPhone;
+  const { canonicalSavedCardPhone } = await import('./saved-card-compat');
+  const phoneP = canonicalSavedCardPhone(customerPhone);
+  if (!phoneP) return null; // Invalid phone — fail closed
+  const phoneN = phoneP.slice(1);
 
   // Customer-scoped query: no business_id filter (global saved card)
   const { data, error } = await supabase

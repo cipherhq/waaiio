@@ -483,16 +483,21 @@ export async function handleCardPinStep(
   });
 
   if (insertError) {
-    // C8: Clean session state — do not leave stuck in save_card_pin
+    // R6: Authority-checked CAS cleanup — do not leave stuck in save_card_pin
     const cleanData = { ...session.session_data };
     delete cleanData._save_card_pending;
     delete cleanData._save_card_business_id;
     delete cleanData._save_card_gateway;
     delete cleanData._save_card_auth;
-    await supabase.rpc('update_session_cas', {
+    const { data: casCleanResult } = await supabase.rpc('update_session_cas', {
       p_session_id: session.id, p_expected_version: session.version ?? 0,
       p_current_step: 'select_capability', p_session_data: cleanData,
     });
+    if (!casCleanResult?.success) {
+      // CAS lost — stale worker. Do not send misleading message.
+      return;
+    }
+    session.version = casCleanResult.version;
 
     if (insertError.code === '23505') {
       // UNIQUE violation — concurrent first-save race. Re-read authoritative state.
@@ -669,6 +674,20 @@ export async function handleReplacementPinStep(
       p_current_step: 'select_capability', p_session_data: {},
     });
     return;
+  }
+
+  // R5: Re-resolve shared-platform compatibility before credential UPDATE
+  if (businessId) {
+    const { isSharedPlatformPaystackCompatible } = await import('@/lib/payments/saved-card-compat');
+    const compat = await isSharedPlatformPaystackCompatible(supabase, businessId);
+    if (!compat.compatible) {
+      await sendText(from, 'Card replacement is not available for this business\'s payment setup.');
+      await supabase.rpc('update_session_cas', {
+        p_session_id: session.id, p_expected_version: session.version ?? 0,
+        p_current_step: 'select_capability', p_session_data: {},
+      });
+      return;
+    }
   }
 
   // 5. Verify PIN using canonical savedPaymentAdapter.verifyPin()
