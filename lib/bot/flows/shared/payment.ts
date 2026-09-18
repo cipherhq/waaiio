@@ -295,23 +295,18 @@ export async function initializePayment(
       // Successful query + no configured data → legitimate platform path.
       // Query error / transport exception → fail closed with null.
       try {
-        // Check for BYO (Bring Your Own) gateway credentials first
-        const { data: byoCreds, error: byoCredsError } = await supabase
-          .from('business_payment_credentials')
-          .select('id, secret_key, platform_subaccount_code, gateway, connect_account_id, connection_type')
-          .eq('business_id', opts.businessId)
-          .eq('is_active', true)
-          .not('verified_at', 'is', null)
-          .maybeSingle();
+        // G2: Use shared credential classifier (same authority as saved-card compatibility)
+        const { classifyBusinessPaymentCredential } = await import('@/lib/payments/saved-card-compat');
+        const { classification, credential: byoCreds } = await classifyBusinessPaymentCredential(supabase, opts.businessId);
 
-        if (byoCredsError) {
-          logger.withContext({ op: 'payment.byo-credential-lookup', ...safeLogErrorContext(byoCredsError) })
-            .error('[PAYMENT] BYO credential authority lookup failed — fail closed to prevent routing misattribution');
+        if (classification === 'error') {
+          logger.withContext({ op: 'payment.credential-classification' })
+            .error('[PAYMENT] Credential classification failed — fail closed');
           return null;
         }
 
-        if (byoCreds?.platform_subaccount_code && !byoCreds?.secret_key) {
-          // Subaccount-based connect: platform key + subaccount split
+        if (classification === 'platform_subaccount' && byoCreds?.platform_subaccount_code) {
+          // Subaccount-based: platform key + subaccount split
           subaccountCode = byoCreds.platform_subaccount_code;
 
           const { data: business, error: bizError } = await supabase
@@ -336,7 +331,7 @@ export async function initializePayment(
             });
             platformFeeAmount = feeResult.feeTotal;
           }
-        } else if (byoCreds?.connect_account_id && !byoCreds?.platform_subaccount_code) {
+        } else if (classification === 'connect' && byoCreds?.connect_account_id) {
           // True Connect mode: use platform key + X-Connect-Account header
           connectAccountId = byoCreds.connect_account_id;
           byoBusinessId = opts.businessId;
@@ -364,7 +359,7 @@ export async function initializePayment(
             });
             platformFeeAmount = feeResult.feeTotal;
           }
-        } else if (byoCreds?.secret_key && byoCreds?.platform_subaccount_code) {
+        } else if (classification === 'byo' && byoCreds?.secret_key && byoCreds?.platform_subaccount_code) {
           // BYO mode: use business's own gateway key with reversed split
           isByo = true;
           byoSecretKey = byoCreds.secret_key;
@@ -394,8 +389,8 @@ export async function initializePayment(
             });
             platformFeeAmount = feeResult.feeTotal;
           }
-        } else {
-          // No BYO/Connect credentials → legitimate platform flow: check payout mode
+        } else if (classification === 'platform') {
+          // K9: Explicitly platform only. Ambiguous/unknown fail closed above.
           const { data: biz, error: bizError4 } = await supabase
             .from('businesses')
             .select('payout_mode')
@@ -440,6 +435,11 @@ export async function initializePayment(
             }
           }
           // platform_managed or no split match: no split params, full amount goes to platform
+        } else {
+          // K9: ambiguous/unknown classification → fail closed
+          logger.withContext({ op: 'payment.credential-classification' })
+            .error(`[PAYMENT] Ambiguous/unknown credential classification: ${classification} — fail closed`);
+          return null;
         }
       } catch (routingErr) {
         // Transport-level exception in routing authority resolution.

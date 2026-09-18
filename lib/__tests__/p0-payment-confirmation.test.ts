@@ -106,12 +106,15 @@ describe('P0-CONFIRM-1: Control-flow tests', () => {
     expect(mockRpc).not.toHaveBeenCalledWith('release_payment_confirmation', expect.anything());
   });
 
-  it('5. already_completed claim → zero side effects', async () => {
+  it('5. already_completed claim → returns already_completed, retries saved-card CTA (non-blocking)', async () => {
     const s = buildMock({ claim_payment_confirmation: { data: { claimed: false, already_completed: true } } });
     const { sendProactiveConfirmation } = await import('../payments/send-confirmation');
-    await sendProactiveConfirmation(s, pay);
+    const result = await sendProactiveConfirmation(s, pay);
+    expect(result.status).toBe('already_completed');
+    // Only the claim RPC is called — no finalization or confirmation delivery RPCs
     expect(mockRpc).toHaveBeenCalledTimes(1);
-    expect(mockFrom).not.toHaveBeenCalled();
+    // K2: saved-card retry reads payment_saved_card_offers (non-blocking side effect)
+    // This is intentional — it attempts to retry a pending saved-card CTA via stored channel_id.
   });
 
   it('6. no-business release uses helper correctly', async () => {

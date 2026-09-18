@@ -109,6 +109,7 @@ interface SavedMethod {
   gateway: string;
   authorization_code: string | null;
   customer_code: string | null;
+  authorization_email: string | null;
   stripe_payment_method_id: string | null;
   stripe_customer_id: string | null;
   card_last4: string | null;
@@ -116,41 +117,44 @@ interface SavedMethod {
 }
 
 /**
- * Get a customer's saved payment method for a business.
+ * Get a customer's global saved payment method (customer-scoped, not business-scoped).
+ * Returns null if the current business is not in a compatible shared-platform Paystack domain.
  */
 export async function getSavedPaymentMethod(
   supabase: SupabaseClient,
   businessId: string,
   customerPhone: string,
 ): Promise<SavedMethod | null> {
-  const phoneP = customerPhone.startsWith('+') ? customerPhone : `+${customerPhone}`;
-  const phoneN = customerPhone.startsWith('+') ? customerPhone.slice(1) : customerPhone;
+  // Positive compatibility check — only shared-platform Paystack businesses
+  const { isSharedPlatformPaystackCompatible } = await import('./saved-card-compat');
+  const compat = await isSharedPlatformPaystackCompatible(supabase, businessId);
+  if (!compat.compatible) return null;
 
-  // Fetch both phone-variant rows for the current gateway, constrained to
-  // business_id + is_active. Gateway filter ensures deterministic provider
-  // selection when multiple gateways coexist for the same customer.
-  // Select canonical +E.164 in code: no collation/sort dependence.
+  const { canonicalSavedCardPhone } = await import('./saved-card-compat');
+  const phoneP = canonicalSavedCardPhone(customerPhone);
+  if (!phoneP) return null; // Invalid phone — fail closed
+  const phoneN = phoneP.slice(1);
+
+  // Customer-scoped query: no business_id filter (global saved card)
   const { data, error } = await supabase
     .from('saved_payment_methods')
-    .select('id, gateway, authorization_code, customer_code, stripe_payment_method_id, stripe_customer_id, card_last4, card_brand, customer_phone')
-    .eq('business_id', businessId)
+    .select('id, gateway, authorization_code, customer_code, authorization_email, stripe_payment_method_id, stripe_customer_id, card_last4, card_brand, customer_phone')
     .in('customer_phone', [phoneP, phoneN])
     .eq('is_active', true)
     .eq('gateway', 'paystack')
     .limit(2);
 
   if (error) {
-    logger.withContext({ op: 'payment.saved-method-lookup', businessId, ...safeLogErrorContext(error) })
+    logger.withContext({ op: 'payment.saved-method-lookup', ...safeLogErrorContext(error) })
       .error('[PAYMENT] Saved method lookup failed');
     return null;
   }
 
   if (!data || data.length === 0) return null;
 
-  // Deterministic selection: prefer canonical +E.164 form, fall back to legacy
+  // Deterministic selection: prefer canonical +E.164 form
   const canonical = data.find(row => row.customer_phone === phoneP);
   const selected = canonical || data[0];
-  // Strip customer_phone from the returned object (not part of SavedMethod)
   const { customer_phone: _, ...method } = selected;
   return method;
 }

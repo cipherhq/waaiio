@@ -90,7 +90,17 @@ export class StripeGateway implements PaymentGateway {
         'metadata[channel]': 'whatsapp',
         client_reference_id: opts.referenceCode,
       };
-      if (opts.userEmail) {
+      // F3: Phone-first Stripe checkout — invalid phone fails closed.
+      if (opts.phone) {
+        const { internalPaymentEmailAlias, canonicalSavedCardPhone } = await import('./saved-card-compat');
+        const canonical = canonicalSavedCardPhone(opts.phone);
+        if (!canonical) {
+          logger.error('[STRIPE] Invalid phone for phone-first checkout — fail closed');
+          return null;
+        }
+        sessionParams.customer_email = internalPaymentEmailAlias(canonical);
+      } else if (opts.userEmail) {
+        // Genuinely non-phone flow (no phone available)
         sessionParams.customer_email = opts.userEmail;
       }
 

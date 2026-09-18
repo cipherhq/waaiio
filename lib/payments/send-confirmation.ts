@@ -148,6 +148,11 @@ export async function sendProactiveConfirmation(
   if (!claim?.claimed) {
     if (claim?.already_completed) {
       logger.info(`${logPrefix} Confirmation already sent for payment ${payment.id} — skipping`);
+      // K2/Refinement 1: Retry pending saved-card CTA via stored channel_id
+      try {
+        const { retryPendingSavedCardOffer } = await import('@/lib/payments/saved-card-offer');
+        await retryPendingSavedCardOffer(supabase, payment.id);
+      } catch { /* non-blocking */ }
       return { status: 'already_completed' };
     }
     logger.info(`${logPrefix} Confirmation claim not granted for payment ${payment.id}: ${claim?.reason || 'unknown'}`);
@@ -575,34 +580,48 @@ export async function sendProactiveConfirmation(
   }
 
   // Show "save card" tip only for Paystack + first payment or new card (not on every confirmation)
-  let showSaveCardTip = false;
+  let saveCardOffer: { type: 'save'; cardLabel: string; paymentId: string } | { type: 'replace'; oldLabel: string; newLabel: string; paymentId: string; methodId: string } | null = null;
   if (businessId) {
+    // G4/G5/G6: Post-payment Save/Replace offer with full eligibility checks
     const { data: paymentGw } = await supabase.from('payments').select('gateway, metadata').eq('id', payment.id).single();
     if (paymentGw?.gateway === 'paystack' && customerPhone) {
-      const phoneP = customerPhone.startsWith('+') ? customerPhone : `+${customerPhone}`;
-      // Check if customer already has a saved card for this business
-      const { data: existingSaved } = await supabase
-        .from('saved_payment_methods')
-        .select('id, card_last4')
-        .eq('business_id', businessId)
-        .eq('customer_phone', phoneP)
-        .eq('is_active', true)
-        .maybeSingle();
+      const { canonicalSavedCardPhone, isSharedPlatformPaystackCompatible } = await import('@/lib/payments/saved-card-compat');
+      const canonPhone = canonicalSavedCardPhone(customerPhone);
+      const payMeta = (paymentGw.metadata || {}) as Record<string, unknown>;
+      const auth = payMeta._card_authorization as Record<string, unknown> | undefined;
 
-      if (!existingSaved) {
-        // No saved card — check if this is their first payment or a new card
-        const auth = (paymentGw.metadata as Record<string, unknown>)?._card_authorization as Record<string, unknown> | undefined;
-        if (auth?.reusable) {
-          showSaveCardTip = true;
+      // Full eligibility: platform origin, reusable, auth code + email, canonical phone, compatible business
+      if (canonPhone && auth?.reusable === true && auth?.authorization_code && auth?.email
+          && payMeta.payment_origin === 'platform' && businessId) {
+        const compat = await isSharedPlatformPaystackCompatible(supabase, businessId);
+        if (compat.compatible) {
+          const phoneN = stripPlus(canonPhone);
+          const { data: existingSaved } = await supabase
+            .from('saved_payment_methods')
+            .select('id, card_last4, authorization_code')
+            .in('customer_phone', [canonPhone, phoneN])
+            .eq('is_active', true)
+            .eq('gateway', 'paystack')
+            .maybeSingle();
+
+          if (!existingSaved) {
+            // No saved card → Save Card offer
+            const cardLabel = `${((auth.brand as string) || 'Card').toUpperCase()} ****${(auth.last4 as string) || '????'}`;
+            saveCardOffer = { type: 'save' as const, cardLabel, paymentId: payment.id };
+          } else if (existingSaved.authorization_code !== (auth.authorization_code as string)) {
+            // Different card → Replace Card offer
+            const oldLabel = `****${existingSaved.card_last4 || '????'}`;
+            const newLabel = `${((auth.brand as string) || 'Card').toUpperCase()} ****${(auth.last4 as string) || '????'}`;
+            saveCardOffer = { type: 'replace' as const, oldLabel, newLabel, paymentId: payment.id, methodId: existingSaved.id };
+          }
+          // Same authorization → no offer (correct)
         }
       }
     }
   }
 
-  if (showSaveCardTip) {
-    lines.push('');
-    lines.push('💳 Type *save card* to save this card for faster checkout next time');
-  }
+  // Save/Replace Card CTA is now a separate button message sent AFTER finalization.
+  // See checkAndOfferSavedCard() called after finalizeConfirmationClaim.
 
   // ── 5. Resolve channel + send (protected by checkpoint 1 above) ──
   try {
@@ -1366,8 +1385,16 @@ export async function sendProactiveConfirmation(
       const { checkAndOfferRecurring } = await import('@/lib/payments/recurring-offer');
       await checkAndOfferRecurring(supabase, payment, businessId, resolved?.sender || null, customerPhone || null, logPrefix);
     } catch (recurringErr) {
-      // NEVER affects payment finalization
       logSafeError(logPrefix, 'recurring-offer', recurringErr);
+    }
+
+    // Post-finalization saved-card CTA (separate lifecycle, non-blocking)
+    // Uses durable payment_saved_card_offers authority — safe on webhook retry.
+    try {
+      const { checkAndOfferSavedCard } = await import('@/lib/payments/saved-card-offer');
+      await checkAndOfferSavedCard(supabase, payment.id, customerPhone || '', businessId || '', resolved?.sender || null);
+    } catch (savedCardErr) {
+      logSafeError(logPrefix, 'saved-card-offer', savedCardErr);
     }
 
     return { status: 'completed' };

@@ -14,7 +14,20 @@ export class PaystackGateway implements PaymentGateway {
   async initializePayment(opts: InitPaymentOpts): Promise<InitPaymentResult | null> {
     const idempotencyKey = randomUUID();
     const amountInKobo = Math.round(opts.amount * 100);
-    const email = opts.userEmail || `${opts.phone.replace('+', '')}@${process.env.FALLBACK_EMAIL_DOMAIN || 'whatsapp.waaiio.com'}`;
+    // For shared-platform Paystack (non-BYO, non-Connect): ALWAYS use the deterministic
+    // internal email alias from canonical phone. This ensures the authorization email is
+    // consistent for later charge_authorization (Paystack requires email match).
+    // BYO/Connect may keep their existing email behavior (not eligible for global saved card).
+    const isSharedPlatform = !opts.isByo && !opts.connectAccountId;
+    const { internalPaymentEmailAlias, canonicalSavedCardPhone } = await import('./saved-card-compat');
+    const canonicalPhone = canonicalSavedCardPhone(opts.phone);
+    if (!canonicalPhone) {
+      logger.error('[PAYSTACK] Invalid phone for payment initialization — fail closed', { phone: opts.phone?.slice(0, 6) });
+      return null;
+    }
+    const email = isSharedPlatform
+      ? internalPaymentEmailAlias(canonicalPhone)
+      : (opts.userEmail || internalPaymentEmailAlias(canonicalPhone));
 
     // Connect mode: use platform key; BYO: business's own key; else: platform key
     const secretKey = opts.connectAccountId

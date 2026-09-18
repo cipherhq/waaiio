@@ -976,6 +976,59 @@ export class BotService {
       }
     }
 
+    // ── F4: PIN step precedence — must run BEFORE save card command interceptor ──
+    // If the customer is currently in a security-sensitive PIN step, route there
+    // BEFORE evaluating global save/remove commands to prevent hijacking.
+    const _pinStep = session?.current_step;
+    if (_pinStep === 'save_card_pin' || _pinStep === 'verify_card_pin') {
+      await _handleCardPinStep(this.supabase, this.sendText.bind(this), from, session!, text);
+      return;
+    }
+    if (_pinStep === 'replace_card_pin') {
+      const { handleReplacementPinStep } = await import('./handlers/saved-cards');
+      await handleReplacementPinStep(this.supabase, this.sendText.bind(this), from, session!, text);
+      return;
+    }
+
+    // ── Button-based saved-card offer actions ──
+    // Intercept save_card_accept/decline and replace_card_accept/decline button taps.
+    const _scTrimmed = text.trim();
+    const _scButtonMatch = _scTrimmed.match(/^(save_card_accept|save_card_decline|replace_card_accept|replace_card_decline):(.+)$/);
+    if (_scButtonMatch) {
+      const actionMap: Record<string, 'save_accept' | 'save_decline' | 'replace_accept' | 'replace_decline'> = {
+        save_card_accept: 'save_accept', save_card_decline: 'save_decline',
+        replace_card_accept: 'replace_accept', replace_card_decline: 'replace_decline',
+      };
+      const action = actionMap[_scButtonMatch[1]];
+      const paymentId = _scButtonMatch[2];
+      if (action && paymentId) {
+        const { handleSavedCardOfferAction } = await import('@/lib/payments/saved-card-offer');
+        await handleSavedCardOfferAction(this.supabase, this.sendText.bind(this), from, session, action, paymentId);
+        return;
+      }
+    }
+
+    // ── First-class saved-card commands (manual fallback) ──
+    // Must run BEFORE no-session/new-session greeting path and before keyword routing.
+    // Works with session === null (handleSaveCard derives business from recent payment).
+    // PIN steps handled above and take precedence.
+    if (/^save\s+(my\s+)?card$/i.test(_scTrimmed)) {
+      const { handleSaveCard } = await import('./handlers/saved-cards');
+      const { phonePair } = await import('@/lib/utils/phone');
+      const { withPlus, withoutPlus } = phonePair(from);
+      await handleSaveCard(this.supabase, this.sendText.bind(this), from, session, async () => {
+        const { data: profile } = await this.supabase.from('profiles').select('id')
+          .or(`phone.eq.${withPlus},phone.eq.${withoutPlus}`).limit(1).maybeSingle();
+        return profile || null;
+      });
+      return;
+    }
+    if (/^(remove|delete)\s+(my\s+)?card$/i.test(_scTrimmed)) {
+      const { handleRemoveCard } = await import('./handlers/saved-cards');
+      await handleRemoveCard(this.supabase, this.sendText.bind(this), from, session);
+      return;
+    }
+
     if (!session || isRestart) {
       logger.debug('[BOT] New/restart session. hasSession:', !!session, 'isRestart:', isRestart);
       // Remember the business from the session being restarted — prevents country
@@ -2373,7 +2426,7 @@ export class BotService {
 
     // ── Unified keyword matching (replaces detectIntent + old keyword + quick reply checks) ──
     // Only fire on non-free-text steps
-    const isFreeTextStepForKeywords = isChatMode || ['collect_name', 'collect_other_name', 'collect_email', 'special_requests', 'review_text', 'enter_amount', 'collect_address', 'queue_collect_name', 'select_business_suggestion', 'enter_referral_code', 'collect_pickup_address', 'collect_dropoff_address', 'collect_package_description', 'collect_venue', 'enter_promo_code', 'save_card_pin', 'verify_card_pin'].includes(step);
+    const isFreeTextStepForKeywords = isChatMode || ['collect_name', 'collect_other_name', 'collect_email', 'special_requests', 'review_text', 'enter_amount', 'collect_address', 'queue_collect_name', 'select_business_suggestion', 'enter_referral_code', 'collect_pickup_address', 'collect_dropoff_address', 'collect_package_description', 'collect_venue', 'enter_promo_code', 'save_card_pin', 'verify_card_pin', 'replace_card_pin'].includes(step);
 
     if (!isFreeTextStepForKeywords) {
       // Use cached category from session_data (saved during session creation)
@@ -2388,11 +2441,18 @@ export class BotService {
       }
     }
 
-    // Handle save card PIN creation
+    // Handle save card PIN creation and replacement PIN verification
     if (step === 'save_card_pin' || step === 'verify_card_pin') {
       await _handleCardPinStep(this.supabase, this.sendText.bind(this), from, session, text);
       return;
     }
+    if (step === 'replace_card_pin') {
+      const { handleReplacementPinStep } = await import('./handlers/saved-cards');
+      await handleReplacementPinStep(this.supabase, this.sendText.bind(this), from, session, text);
+      return;
+    }
+
+    // (saved-card commands moved earlier — before no-session path)
 
     // Handle "Did you mean?" business selection
     if (step === 'select_business_suggestion') {
@@ -2570,7 +2630,7 @@ export class BotService {
     // Works from ANY step (not just greeting/select_capability) for high-confidence
     // non-CREATE_NEW actions. "Where is my order?" while booking → order history.
     // Exclude free-text input steps where text should go to the flow validator.
-    const isCasExcluded = isChatMode || ['collect_name', 'collect_other_name', 'collect_email', 'special_requests', 'review_text', 'enter_amount', 'collect_address', 'queue_collect_name', 'enter_referral_code', 'collect_pickup_address', 'collect_dropoff_address', 'collect_package_description', 'collect_venue', 'enter_promo_code', 'save_card_pin', 'verify_card_pin'].includes(step);
+    const isCasExcluded = isChatMode || ['collect_name', 'collect_other_name', 'collect_email', 'special_requests', 'review_text', 'enter_amount', 'collect_address', 'queue_collect_name', 'enter_referral_code', 'collect_pickup_address', 'collect_dropoff_address', 'collect_package_description', 'collect_venue', 'enter_promo_code', 'save_card_pin', 'verify_card_pin', 'replace_card_pin'].includes(step);
     // Skip AI classification for deterministic postback IDs — these are button/list taps
     // that will be handled by the flow executor's step-specific validate() function
     const isDeterministicPostback = /^(cap_|class_session_|wb_\d|pc_|restart_|rsvp_|accept_quote_|reject_quote_|TK-|go_back_biz|switch_biz|browse_menu|\d{1,2})$/.test(text)

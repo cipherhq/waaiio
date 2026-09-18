@@ -166,17 +166,17 @@ async function chargeSavedCard(
     clearPin?: boolean;
   },
 ): Promise<ValidationResult> {
-  const phone = ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`;
-  const d = ctx.session.session_data;
-  const email = (d.email as string) || `${phone.replace('+', '')}@${process.env.FALLBACK_EMAIL_DOMAIN || 'whatsapp.waaiio.com'}`;
   const cc = (ctx.business?.country_code || 'NG') as CountryCode;
 
+  // Use the stored authorization_email from the saved method (not session email).
+  // The adapter resolves the email from the saved_payment_methods row.
+  // If authorization_email is missing (legacy card), the adapter declines safely.
   const result: ChargeOutcome = await savedPaymentAdapter.chargeSavedMethod(ctx.supabase, {
     methodId,
     customerPhone: ctx.from,
     amount: opts.amount,
     currency: getCurrencyCode(cc),
-    email,
+    email: '', // Adapter overrides with authorization_email from saved method
     reference: opts.reference,
     businessId: ctx.business!.id,
     ...opts.entityId,

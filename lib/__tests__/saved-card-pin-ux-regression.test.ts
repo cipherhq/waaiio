@@ -461,15 +461,19 @@ describe('Successful saved-card payment', () => {
 // ═══════════════════════════════════════════════════════════════
 describe('PIN creation copy', () => {
   let savedCardsSource: string;
+  let savedCardOfferSource: string;
   beforeEach(async () => {
     const { readFileSync } = await import('fs');
     const { resolve } = await import('path');
     savedCardsSource = readFileSync(resolve(__dirname, '../bot/handlers/saved-cards.ts'), 'utf8');
+    // D1: creation prompt moved to saved-card-offer.ts (startSavedCardFromPaymentId)
+    savedCardOfferSource = readFileSync(resolve(__dirname, '../payments/saved-card-offer.ts'), 'utf8');
   });
 
-  it('handleSaveCard creation prompt says "Waaiio PIN" and "not your bank/ATM PIN"', () => {
-    expect(savedCardsSource).toContain('Waaiio PIN');
-    expect(savedCardsSource).toContain('not your bank/ATM PIN');
+  it('creation prompt says "Waaiio PIN" and "not your bank/ATM PIN"', () => {
+    // D1: creation prompt now in saved-card-offer.ts
+    expect(savedCardOfferSource).toContain('Waaiio PIN');
+    expect(savedCardOfferSource).toContain('not your bank/ATM PIN');
   });
 
   it('PIN success confirmation says "Waaiio PIN" and privacy notice', () => {

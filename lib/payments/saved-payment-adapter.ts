@@ -174,13 +174,14 @@ function normalizePhone(phone: string): string {
 async function lookupAuthorizedMethod(
   supabase: SupabaseClient,
   methodId: string,
-  businessId: string,
+  _businessId: string, // kept for signature compat; customer-scoped lookup uses phone + method ID
   customerPhone: string,
 ): Promise<{
   id: string;
   gateway: string;
   authorization_code: string | null;
   customer_code: string | null;
+  authorization_email: string | null;
   stripe_payment_method_id: string | null;
   stripe_customer_id: string | null;
   card_last4: string | null;
@@ -189,16 +190,15 @@ async function lookupAuthorizedMethod(
   pin_attempts: number;
   pin_locked_until: string | null;
 } | null> {
-  // Accept both phone variants so a legacy-stored method found by listing
-  // can also pass authorization. The methodId + businessId + is_active fencing
-  // ensures cross-tenant/cross-customer denial regardless of phone format.
-  const phoneP = customerPhone.startsWith('+') ? customerPhone : `+${customerPhone}`;
-  const phoneN = customerPhone.startsWith('+') ? customerPhone.slice(1) : customerPhone;
+  // Customer-scoped lookup: methodId + customer_phone + is_active.
+  const { canonicalSavedCardPhone } = await import('./saved-card-compat');
+  const phoneP = canonicalSavedCardPhone(customerPhone);
+  if (!phoneP) return null; // Invalid phone — fail closed
+  const phoneN = phoneP.slice(1);
   const { data } = await supabase
     .from('saved_payment_methods')
-    .select('id, gateway, authorization_code, customer_code, stripe_payment_method_id, stripe_customer_id, card_last4, card_brand, pin_hash, pin_attempts, pin_locked_until')
+    .select('id, gateway, authorization_code, customer_code, authorization_email, stripe_payment_method_id, stripe_customer_id, card_last4, card_brand, pin_hash, pin_attempts, pin_locked_until')
     .eq('id', methodId)
-    .eq('business_id', businessId)
     .in('customer_phone', [phoneP, phoneN])
     .eq('is_active', true)
     .maybeSingle();
@@ -221,17 +221,29 @@ class PaystackSavedPaymentAdapter implements SavedPaymentAdapter {
     supabase: SupabaseClient,
     opts: ChargeOptions,
   ): Promise<ChargeOutcome> {
-    // Canonical tuple authorization: method must belong to this business + customer
+    // B2: Re-resolve provider compatibility immediately before dispatch
+    const { isSharedPlatformPaystackCompatible } = await import('./saved-card-compat');
+    const compat = await isSharedPlatformPaystackCompatible(supabase, opts.businessId);
+    if (!compat.compatible) {
+      return { status: 'method_not_found' }; // Business no longer compatible
+    }
+
+    // Customer-scoped lookup (global card)
     const method = await lookupAuthorizedMethod(supabase, opts.methodId, opts.businessId, opts.customerPhone);
     if (!method) {
       return { status: 'method_not_found' };
+    }
+
+    // Require stored authorization_email for Paystack charge
+    if (!method.authorization_email) {
+      return { status: 'method_not_found' }; // Legacy card without stored email — must re-save
     }
 
     const result = await chargeSavedCard(supabase, {
       savedMethod: method,
       amount: opts.amount,
       currency: opts.currency,
-      email: opts.email,
+      email: method.authorization_email,
       reference: opts.reference,
       businessId: opts.businessId,
       bookingId: opts.bookingId,

@@ -4,8 +4,9 @@ import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 import { logger } from '@/lib/logger';
 
 /**
- * Handle "save card" command — finds the most recent payment authorization
- * and starts the PIN creation flow.
+ * Handle "save card" command — D1: LOCATOR ONLY.
+ * Finds the most recent eligible payment ID and delegates to startSavedCardFromPaymentId().
+ * All auth/origin/compat/save-replace logic lives in the shared exact-payment helper.
  */
 export async function handleSaveCard(
   supabase: SupabaseClient,
@@ -14,114 +15,112 @@ export async function handleSaveCard(
   session: BotSession | null,
   getProfile: () => Promise<{ id: string } | null>,
 ): Promise<void> {
-  const phoneP = from.startsWith('+') ? from : `+${from}`;
-  const phoneN = from.startsWith('+') ? from.slice(1) : from;
-
-  // Find the most recent paid booking for this phone, then get its payment
-  const { data: recentBooking } = await supabase
-    .from('bookings')
-    .select('id, business_id')
-    .or(`guest_phone.eq.${sanitizeFilterValue(phoneP)},guest_phone.eq.${sanitizeFilterValue(phoneN)}`)
-    .eq('deposit_status', 'paid')
-    .order('created_at', { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  let payment: { id: string; business_id: string | null; metadata: unknown; gateway: string } | null = null;
-
-  if (recentBooking) {
-    const { data: bookingPayment } = await supabase
-      .from('payments')
-      .select('id, business_id, metadata, gateway')
-      .eq('booking_id', recentBooking.id)
-      .eq('status', 'success')
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
-    if (bookingPayment) {
-      payment = {
-        ...bookingPayment,
-        business_id: bookingPayment.business_id || recentBooking.business_id,
-      };
-    }
+  const { canonicalSavedCardPhone } = await import('@/lib/payments/saved-card-compat');
+  const phoneP = canonicalSavedCardPhone(from);
+  if (!phoneP) {
+    await sendText(from, 'Invalid phone number. Cannot save card.');
+    return;
   }
-
-  // Also try direct payment lookup by user_id
-  if (!payment) {
-    const profile = await getProfile();
-    if (profile?.id) {
-      const { data: userPayment } = await supabase
-        .from('payments')
-        .select('id, business_id, metadata, gateway')
-        .eq('user_id', profile.id)
-        .eq('status', 'success')
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      if (userPayment) payment = userPayment;
-    }
-  }
-
-  if (!payment) {
+  // E3/F4: Customer-bound latest-payment locator — profile lookup owned by locator
+  const paymentId = await findLatestSavedCardPaymentIdForPhone(supabase, phoneP);
+  if (!paymentId) {
     await sendText(from, 'No recent payment found. Make a payment first, then type *save card*.');
     return;
   }
 
-  const meta = (payment.metadata || {}) as Record<string, unknown>;
-  const auth = meta._card_authorization as Record<string, unknown> | undefined;
+  // D1: Delegate ALL authority/eligibility/session logic to the shared exact-payment helper
+  const { startSavedCardFromPaymentId } = await import('@/lib/payments/saved-card-offer');
+  await startSavedCardFromPaymentId(supabase, sendText, from, session, paymentId);
+}
 
-  if (!auth?.authorization_code) {
-    const gateway = payment.gateway || 'unknown';
-    if (gateway === 'stripe' || gateway === 'square' || gateway === 'paypal') {
-      await sendText(from, `Card saving is currently available for Paystack payments only. ${gateway.charAt(0).toUpperCase() + gateway.slice(1)} support is coming soon.`);
-    } else {
-      await sendText(from, 'Your last payment method cannot be saved. Try again after your next payment.');
+/**
+ * E3: Customer-bound latest-payment locator.
+ * Searches ALL payment/customer families and picks the newest by created_at.
+ * Fails closed on authority read errors (returns null rather than silently skipping).
+ */
+export async function findLatestSavedCardPaymentIdForPhone(
+  supabase: SupabaseClient,
+  canonPhone: string,
+): Promise<string | null> {
+  const phoneN = canonPhone.slice(1);
+  type Candidate = { id: string; created_at: string };
+  const candidates: Candidate[] = [];
+
+  // F3: Find newest successful PAYMENT by payments.created_at across ALL
+  // customer-bound entities in each family (not newest entity).
+  // Returns: candidate | 'absent' | 'error'
+  async function findNewestPaymentInFamily(
+    entityTable: string, phoneCol: string, paymentFk: string,
+  ): Promise<Candidate | 'absent' | 'error'> {
+    // Step 1: Get ALL entity IDs for this phone (not just the newest entity)
+    const { data: entities, error: entErr } = await supabase
+      .from(entityTable).select('id')
+      .or(`${phoneCol}.eq.${sanitizeFilterValue(canonPhone)},${phoneCol}.eq.${sanitizeFilterValue(phoneN)}`);
+    if (entErr) { logger.warn(`[SAVE-CARD-LOCATOR] ${entityTable} read error`, entErr.message); return 'error'; }
+    if (!entities || entities.length === 0) return 'absent';
+
+    // Step 2: Find the newest successful payment across ALL those entities
+    const entityIds = entities.map(e => e.id);
+    const { data: pay, error: payErr } = await supabase.from('payments')
+      .select('id, created_at').in(paymentFk, entityIds).eq('status', 'success')
+      .order('created_at', { ascending: false }).limit(1).maybeSingle();
+    if (payErr) { logger.warn(`[SAVE-CARD-LOCATOR] ${entityTable} payment read error`, payErr.message); return 'error'; }
+    return pay as Candidate || 'absent';
+  }
+
+  // 1-4: Entity-linked payment families
+  const families: Array<[string, string, string]> = [
+    ['bookings', 'guest_phone', 'booking_id'],
+    ['reservations', 'guest_phone', 'reservation_id'],
+    ['invoices', 'customer_phone', 'invoice_id'],
+    ['orders', 'delivery_phone', 'order_id'],
+  ];
+
+  for (const [table, col, fk] of families) {
+    const result = await findNewestPaymentInFamily(table, col, fk);
+    if (result === 'error') return null; // DB read error → fail closed
+    if (result !== 'absent') candidates.push(result);
+  }
+
+  // 5. P3: Campaign donation — get ALL successful donation payment_ids, then newest payment
+  {
+    const { data: donations, error: donErr } = await supabase
+      .from('campaign_donations').select('payment_id')
+      .or(`donor_phone.eq.${sanitizeFilterValue(canonPhone)},donor_phone.eq.${sanitizeFilterValue(phoneN)}`)
+      .eq('status', 'success');
+    if (donErr) { logger.warn('[SAVE-CARD-LOCATOR] donation read error', donErr.message); return null; }
+    if (donations && donations.length > 0) {
+      const donationPayIds = donations.map(d => d.payment_id).filter(Boolean);
+      if (donationPayIds.length > 0) {
+        const { data: pay, error: payErr } = await supabase.from('payments')
+          .select('id, created_at').in('id', donationPayIds).eq('status', 'success')
+          .order('created_at', { ascending: false }).limit(1).maybeSingle();
+        if (payErr) { logger.warn('[SAVE-CARD-LOCATOR] donation payment read error', payErr.message); return null; }
+        if (pay) candidates.push(pay as Candidate);
+      }
     }
-    return;
   }
 
-  const businessId = payment.business_id || session?.business_id;
-  if (!businessId) {
-    await sendText(from, 'Could not determine the business. Try again from within a business session.');
-    return;
+  // 6. F4: Direct profile → user_id → payment (fail closed on profile read error)
+  {
+    const { data: profile, error: profileErr } = await supabase.from('profiles')
+      .select('id')
+      .or(`phone.eq.${sanitizeFilterValue(canonPhone)},phone.eq.${sanitizeFilterValue(phoneN)}`)
+      .limit(1).maybeSingle();
+    if (profileErr) { logger.warn('[SAVE-CARD-LOCATOR] profile read error', profileErr.message); return null; }
+    if (profile?.id) {
+      const { data: pay, error: payErr } = await supabase.from('payments')
+        .select('id, created_at').eq('user_id', profile.id).eq('status', 'success')
+        .order('created_at', { ascending: false }).limit(1).maybeSingle();
+      if (payErr) { logger.warn('[SAVE-CARD-LOCATOR] user payment read error', payErr.message); return null; }
+      if (pay) candidates.push(pay as Candidate);
+    }
   }
 
-  const { data: existing } = await supabase
-    .from('saved_payment_methods')
-    .select('id')
-    .eq('business_id', businessId)
-    .eq('customer_phone', phoneP)
-    .eq('is_active', true)
-    .maybeSingle();
-
-  if (existing) {
-    await sendText(from, 'You already have a saved card for this business. Type *remove card* to remove it first.');
-    return;
-  }
-
-  // Store card data in session and ask for PIN
-  const saveData = {
-    _save_card_pending: true,
-    _save_card_business_id: businessId,
-    _save_card_gateway: payment.gateway || 'paystack',
-    _save_card_auth: auth,
-  };
-
-  if (session) {
-    await supabase.from('bot_sessions')
-      .update({ current_step: 'save_card_pin', session_data: { ...session.session_data, ...saveData } })
-      .eq('id', session.id);
-  } else {
-    await supabase.from('bot_sessions').insert({
-      whatsapp_number: from, user_id: null, business_id: businessId,
-      current_step: 'save_card_pin', session_data: saveData, is_active: true,
-      expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
-    });
-  }
-
-  const cardLabel = `${((auth.brand as string) || 'Card').toUpperCase()} ****${(auth.last4 as string) || '????'}`;
-  await sendText(from, `💳 Saving *${cardLabel}*\n\nCreate a *4-digit Waaiio PIN* (not your bank/ATM PIN) to secure this card.\nYou'll need this Waaiio PIN every time you use the saved card.\n\nType your 4-digit PIN now:`);
+  if (candidates.length === 0) return null;
+  // Pick the newest by created_at
+  candidates.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+  return candidates[0].id;
 }
 
 /**
@@ -133,39 +132,28 @@ export async function handleRemoveCard(
   from: string,
   session: BotSession | null,
 ): Promise<void> {
-  const phoneP = from.startsWith('+') ? from : `+${from}`;
-  const businessId = session?.business_id;
+  const { canonicalSavedCardPhone } = await import('@/lib/payments/saved-card-compat');
+  const phoneP = canonicalSavedCardPhone(from);
+  if (!phoneP) {
+    await sendText(from, 'Invalid phone number.');
+    return;
+  }
+  const phoneN = phoneP.slice(1);
 
-  // If in a business session, remove card for that business
-  // Otherwise, remove all saved cards for this phone
-  if (businessId) {
-    const { data: deleted } = await supabase
-      .from('saved_payment_methods')
-      .delete()
-      .eq('business_id', businessId)
-      .eq('customer_phone', phoneP)
-      .eq('is_active', true)
-      .select('card_last4, card_brand');
+  // Global remove: customer's saved card regardless of which business session
+  const { data: deleted } = await supabase
+    .from('saved_payment_methods')
+    .delete()
+    .in('customer_phone', [phoneP, phoneN])
+    .eq('is_active', true)
+    .eq('gateway', 'paystack')
+    .select('card_last4, card_brand');
 
-    if (deleted && deleted.length > 0) {
-      const card = deleted[0];
-      await sendText(from, `Card removed: ${((card.card_brand as string) || 'Card').toUpperCase()} ****${(card.card_last4 as string) || '****'}\n\nYou'll need to enter card details for future payments.`);
-    } else {
-      await sendText(from, 'No saved card found for this business.');
-    }
+  if (deleted && deleted.length > 0) {
+    const card = deleted[0];
+    await sendText(from, `Card removed: ${((card.card_brand as string) || 'Card').toUpperCase()} ****${(card.card_last4 as string) || '****'}\n\nYou'll need to enter card details for future payments.`);
   } else {
-    const { data: deleted } = await supabase
-      .from('saved_payment_methods')
-      .delete()
-      .eq('customer_phone', phoneP)
-      .eq('is_active', true)
-      .select('card_last4');
-
-    if (deleted && deleted.length > 0) {
-      await sendText(from, `Removed ${deleted.length} saved card${deleted.length > 1 ? 's' : ''}. You'll need to enter card details for future payments.`);
-    } else {
-      await sendText(from, 'No saved cards found.');
-    }
+    await sendText(from, 'No saved card found.');
   }
 }
 
@@ -203,7 +191,35 @@ export async function handleCardPinStep(
   const auth = d._save_card_auth as Record<string, unknown>;
   const businessId = d._save_card_business_id as string;
   const gateway = d._save_card_gateway as string;
-  const phoneP = from.startsWith('+') ? from : `+${from}`;
+  const { canonicalSavedCardPhone } = await import('@/lib/payments/saved-card-compat');
+  const phoneP = canonicalSavedCardPhone(from);
+  if (!phoneP) {
+    await sendText(from, 'Invalid phone number. Cannot save card.');
+    return;
+  }
+  const phoneN = phoneP.slice(1);
+
+  // F6: Re-read durable source payment at PIN completion (don't trust session cache alone)
+  const paymentId = d._save_card_payment_id as string | undefined;
+  if (paymentId) {
+    const { data: sourcePayment } = await supabase.from('payments')
+      .select('id, status, gateway, metadata')
+      .eq('id', paymentId).eq('status', 'success').eq('gateway', 'paystack').maybeSingle();
+    if (!sourcePayment) {
+      await sendText(from, 'The payment is no longer available. Please type *save card* again.');
+      return;
+    }
+    const freshMeta = (sourcePayment.metadata || {}) as Record<string, unknown>;
+    if (freshMeta.payment_origin !== 'platform') {
+      await sendText(from, 'This payment cannot be used to save a card.');
+      return;
+    }
+    const freshAuth = freshMeta._card_authorization as Record<string, unknown> | undefined;
+    if (!freshAuth?.authorization_code || !freshAuth?.email || freshAuth?.reusable !== true) {
+      await sendText(from, 'Card authorization is no longer valid. Please type *save card* again.');
+      return;
+    }
+  }
 
   if (!auth?.authorization_code || !businessId) {
     // 1. Execute CAS first — before sending anything
@@ -230,16 +246,41 @@ export async function handleCardPinStep(
     return;
   }
 
+  // C6: Revalidate invariants before credential write
+  if (gateway !== 'paystack') {
+    await sendText(from, 'Card saving is only available for Paystack payments.');
+    return;
+  }
+  if (auth.reusable !== true) {
+    await sendText(from, 'Your card is not reusable. Please try again after your next payment.');
+    return;
+  }
+
   // Hash the PIN with SHA-256 + phone as salt (not reversible)
   const { createHash } = await import('crypto');
   const pinHash = createHash('sha256').update(`${pin}:${phoneP}`).digest('hex');
 
-  await supabase.from('saved_payment_methods').insert({
-    business_id: businessId,
+  // Require authorization_email for the saved card
+  const authEmail = (auth.email as string) || null;
+  if (!authEmail) {
+    // CAS reset + inform
+    const { data: casResetResult } = await supabase.rpc('update_session_cas', {
+      p_session_id: session.id, p_expected_version: session.version ?? 0,
+      p_current_step: 'select_capability', p_session_data: {},
+    });
+    if (casResetResult?.success) session.version = casResetResult.version;
+    await sendText(from, 'Card authorization email is missing. Please try again after your next payment.');
+    return;
+  }
+
+  // B7: Check INSERT result — concurrent race can cause UNIQUE violation
+  const { error: insertError } = await supabase.from('saved_payment_methods').insert({
+    business_id: businessId, // origin/audit only (nullable, not the scoping authority)
     customer_phone: phoneP,
     gateway,
     authorization_code: auth.authorization_code as string,
     customer_code: (auth.customer_code as string) || null,
+    authorization_email: authEmail,
     card_last4: (auth.last4 as string) || null,
     card_brand: (auth.brand as string) || null,
     card_exp_month: auth.exp_month ? Number(auth.exp_month) : null,
@@ -251,6 +292,39 @@ export async function handleCardPinStep(
     pin_attempts: 0,
     last_used_at: new Date().toISOString(),
   });
+
+  if (insertError) {
+    // R6: Authority-checked CAS cleanup — do not leave stuck in save_card_pin
+    const cleanData = { ...session.session_data };
+    delete cleanData._save_card_pending;
+    delete cleanData._save_card_business_id;
+    delete cleanData._save_card_gateway;
+    delete cleanData._save_card_auth;
+    const { data: casCleanResult } = await supabase.rpc('update_session_cas', {
+      p_session_id: session.id, p_expected_version: session.version ?? 0,
+      p_current_step: 'select_capability', p_session_data: cleanData,
+    });
+    if (!casCleanResult?.success) {
+      // CAS lost — stale worker. Do not send misleading message.
+      return;
+    }
+    session.version = casCleanResult.version;
+
+    if (insertError.code === '23505') {
+      // UNIQUE violation — concurrent first-save race. Re-read authoritative state.
+      const { data: existing } = await supabase.from('saved_payment_methods')
+        .select('authorization_code').in('customer_phone', [phoneP, phoneN]).eq('is_active', true).eq('gateway', 'paystack').maybeSingle();
+      if (existing?.authorization_code === (auth.authorization_code as string)) {
+        await sendText(from, 'Your card is already saved.');
+      } else {
+        await sendText(from, 'A card is already saved. Type *save card* again to replace it.');
+      }
+    } else {
+      logger.error('[SAVED_CARDS] first-save-insert-failed:', insertError.message);
+      await sendText(from, 'Failed to save card. Please try again.');
+    }
+    return;
+  }
 
   const cardLabel = `${((auth.brand as string) || 'Card').toUpperCase()} ****${(auth.last4 as string) || '????'}`;
 
@@ -265,4 +339,269 @@ export async function handleCardPinStep(
     .eq('id', session.id);
 
   await sendText(from, `💳 Card saved! *${cardLabel}*\n\n🔒 Waaiio PIN set successfully. You'll need this Waaiio PIN when using your saved card.\n\nFor privacy, you can delete your PIN message from this chat. Type *remove card* anytime to delete this card.`);
+}
+
+/**
+ * Handle replace_card_pin step — PIN verification + CAS-protected credential replacement.
+ */
+export async function handleReplacementPinStep(
+  supabase: SupabaseClient,
+  sendText: (to: string, text: string) => Promise<void>,
+  from: string,
+  session: BotSession,
+  text: string,
+): Promise<void> {
+  const input = text.trim();
+  const { canonicalSavedCardPhone } = await import('@/lib/payments/saved-card-compat');
+  const phoneP = canonicalSavedCardPhone(from);
+  if (!phoneP) {
+    await sendText(from, 'Invalid phone number.');
+    return;
+  }
+  const phoneN = phoneP.slice(1);
+  const d = session.session_data;
+  const methodId = d._replace_method_id as string;
+  const paymentId = d._replace_payment_id as string;
+  const expectedStateHash = d._replace_expected_state_hash as string;
+
+  if (input === 'cancel' || input === 'exit') {
+    // Clear replacement data via CAS
+    const cleanData = { ...d };
+    delete cleanData._replace_method_id;
+    delete cleanData._replace_payment_id;
+    delete cleanData._replace_expected_state_hash;
+    const { data: casResult } = await supabase.rpc('update_session_cas', {
+      p_session_id: session.id,
+      p_expected_version: session.version ?? 0,
+      p_current_step: 'select_capability',
+      p_session_data: cleanData,
+    });
+    if (casResult?.success) session.version = casResult.version;
+    await sendText(from, 'Card replacement cancelled. Your existing card is unchanged.');
+    return;
+  }
+
+  if (!/^\d{4}$/.test(input)) {
+    await sendText(from, 'Please enter your *4-digit Waaiio PIN* to confirm replacement, or type *cancel*:');
+    return;
+  }
+
+  if (!methodId || !paymentId || !expectedStateHash) {
+    // Corrupt session state — CAS reset
+    const { data: casResult } = await supabase.rpc('update_session_cas', {
+      p_session_id: session.id,
+      p_expected_version: session.version ?? 0,
+      p_current_step: 'select_capability',
+      p_session_data: {},
+    });
+    if (casResult?.success) session.version = casResult.version;
+    await sendText(from, 'Something went wrong. Please type *save card* again.');
+    return;
+  }
+
+  // 1. Re-read method with customer-scoped authorization
+  const businessId = session.business_id;
+
+  const { data: method } = await supabase
+    .from('saved_payment_methods')
+    .select('id, authorization_code, customer_code, card_last4, card_brand, pin_hash, pin_attempts, pin_locked_until, gateway')
+    .eq('id', methodId)
+    .in('customer_phone', [phoneP, phoneN])
+    .eq('is_active', true)
+    .maybeSingle();
+
+  if (!method) {
+    await sendText(from, 'Your saved card was removed during replacement. Type *save card* to save a new card.');
+    // Clean session
+    await supabase.rpc('update_session_cas', {
+      p_session_id: session.id, p_expected_version: session.version ?? 0,
+      p_current_step: 'select_capability', p_session_data: {},
+    });
+    return;
+  }
+
+  // 2. Re-read payment and extract fresh _card_authorization
+  // Payment may be from a different business (global saved card)
+  const { data: paymentRow } = await supabase
+    .from('payments')
+    .select('id, status, business_id, gateway, metadata')
+    .eq('id', paymentId)
+    .eq('status', 'success')
+    .eq('gateway', 'paystack')
+    .maybeSingle();
+
+  if (!paymentRow) {
+    await sendText(from, 'The payment is no longer available. Please try again after your next payment.');
+    await supabase.rpc('update_session_cas', {
+      p_session_id: session.id, p_expected_version: session.version ?? 0,
+      p_current_step: 'select_capability', p_session_data: {},
+    });
+    return;
+  }
+
+  const meta = (paymentRow.metadata || {}) as Record<string, unknown>;
+  // C7: Revalidate source origin + reusable + compatibility at PIN completion
+  if (meta.payment_origin !== 'platform') {
+    await sendText(from, 'This payment cannot be used to replace your card.');
+    await supabase.rpc('update_session_cas', {
+      p_session_id: session.id, p_expected_version: session.version ?? 0,
+      p_current_step: 'select_capability', p_session_data: {},
+    });
+    return;
+  }
+  const newAuth = meta._card_authorization as Record<string, unknown> | undefined;
+  if (!newAuth?.authorization_code || !newAuth?.customer_code || newAuth?.reusable !== true) {
+    await sendText(from, 'The payment card cannot be saved. Please try again after your next payment.');
+    await supabase.rpc('update_session_cas', {
+      p_session_id: session.id, p_expected_version: session.version ?? 0,
+      p_current_step: 'select_capability', p_session_data: {},
+    });
+    return;
+  }
+
+  // 3. Verify customer_code matches
+  if (method.customer_code !== (newAuth.customer_code as string)) {
+    logger.error('[SAVED_CARDS] replacement-pin-customer-code-mismatch', { methodId: method.id });
+    await sendText(from, 'The new card belongs to a different account. Please type *remove card* first, then *save card*.');
+    await supabase.rpc('update_session_cas', {
+      p_session_id: session.id, p_expected_version: session.version ?? 0,
+      p_current_step: 'select_capability', p_session_data: {},
+    });
+    return;
+  }
+
+  // 4. Verify expected state hash (CAS fence)
+  const { createHash } = await import('crypto');
+  const currentStateHash = createHash('sha256').update(`${method.id}:${method.authorization_code}:${method.customer_code}`).digest('hex');
+  if (currentStateHash !== expectedStateHash) {
+    // State changed since replacement was initiated — check if idempotent
+    if (method.authorization_code === (newAuth.authorization_code as string)) {
+      await sendText(from, 'Your saved card is already up to date.');
+    } else {
+      await sendText(from, 'Your card was already updated. Type *save card* again if needed.');
+    }
+    await supabase.rpc('update_session_cas', {
+      p_session_id: session.id, p_expected_version: session.version ?? 0,
+      p_current_step: 'select_capability', p_session_data: {},
+    });
+    return;
+  }
+
+  // F7+R5: Require businessId and re-resolve compatibility before credential UPDATE
+  if (!businessId) {
+    await sendText(from, 'Could not determine the business. Please try again.');
+    await supabase.rpc('update_session_cas', {
+      p_session_id: session.id, p_expected_version: session.version ?? 0,
+      p_current_step: 'select_capability', p_session_data: {},
+    });
+    return;
+  }
+  {
+    const { isSharedPlatformPaystackCompatible } = await import('@/lib/payments/saved-card-compat');
+    const compat = await isSharedPlatformPaystackCompatible(supabase, businessId);
+    if (!compat.compatible) {
+      await sendText(from, 'Card replacement is not available for this business\'s payment setup.');
+      await supabase.rpc('update_session_cas', {
+        p_session_id: session.id, p_expected_version: session.version ?? 0,
+        p_current_step: 'select_capability', p_session_data: {},
+      });
+      return;
+    }
+  }
+
+  // 5. Verify PIN using canonical savedPaymentAdapter.verifyPin()
+  const { savedPaymentAdapter } = await import('@/lib/payments/saved-payment-adapter');
+  const pinResult = await savedPaymentAdapter.verifyPin(supabase, methodId, businessId || '', phoneP, input);
+
+  if (!pinResult.valid) {
+    if (pinResult.locked) {
+      await sendText(from, '🔒 Too many wrong attempts. Your card is locked for 30 minutes. Try again later.');
+    } else {
+      await sendText(from, `❌ Wrong PIN. ${pinResult.attemptsRemaining} attempt${pinResult.attemptsRemaining === 1 ? '' : 's'} remaining.`);
+    }
+    return; // Old card completely unchanged (PIN wrong/locked)
+  }
+
+  // Require authorization_email from the new payment
+  const newAuthEmail = (newAuth.email as string) || null;
+  if (!newAuthEmail) {
+    await sendText(from, 'Card authorization email is missing. Please try again after your next payment.');
+    await supabase.rpc('update_session_cas', {
+      p_session_id: session.id, p_expected_version: session.version ?? 0,
+      p_current_step: 'select_capability', p_session_data: {},
+    });
+    return;
+  }
+
+  // 6. CAS-protected conditional UPDATE (customer-scoped, no business_id fence)
+  const { data: updateResult, error: updateError } = await supabase
+    .from('saved_payment_methods')
+    .update({
+      authorization_code: newAuth.authorization_code as string,
+      customer_code: newAuth.customer_code as string,
+      authorization_email: newAuthEmail,
+      card_last4: (newAuth.last4 as string) || null,
+      card_brand: (newAuth.brand as string) || null,
+      card_exp_month: newAuth.exp_month ? Number(newAuth.exp_month) : null,
+      card_exp_year: newAuth.exp_year ? Number(newAuth.exp_year) : null,
+      card_type: (newAuth.card_type as string) || null,
+      bank_name: (newAuth.bank as string) || null,
+      pin_attempts: 0,
+      pin_locked_until: null,
+      last_used_at: new Date().toISOString(),
+      // pin_hash NOT in SET → preserved
+    })
+    .eq('id', methodId)
+    .in('customer_phone', [phoneP, phoneN])
+    .eq('gateway', 'paystack')
+    .eq('is_active', true)
+    .eq('authorization_code', method.authorization_code!)
+    .eq('customer_code', method.customer_code!)
+    .select('id');
+
+  if (updateError) {
+    logger.error('[SAVED_CARDS] replacement-update-error:', updateError.message);
+    await sendText(from, 'Failed to update your card. Please try again.');
+    return;
+  }
+
+  if (!updateResult || updateResult.length === 0) {
+    // Zero-row update — re-read and classify
+    const { data: reRead } = await supabase
+      .from('saved_payment_methods')
+      .select('authorization_code')
+      .eq('id', methodId)
+      .eq('is_active', true)
+      .maybeSingle();
+
+    if (reRead?.authorization_code === (newAuth.authorization_code as string)) {
+      // Idempotent success — same replacement already committed
+      logger.info('[SAVED_CARDS] replacement-idempotent-success', { methodId });
+    } else {
+      // Stale conflict — another replacement won
+      await sendText(from, 'Your card was already updated by another request. Type *save card* to check.');
+      await supabase.rpc('update_session_cas', {
+        p_session_id: session.id, p_expected_version: session.version ?? 0,
+        p_current_step: 'select_capability', p_session_data: {},
+      });
+      return;
+    }
+  }
+
+  // 7. Clean session via CAS
+  const cleanData = { ...d };
+  delete cleanData._replace_method_id;
+  delete cleanData._replace_payment_id;
+  delete cleanData._replace_expected_state_hash;
+  const { data: cleanCas } = await supabase.rpc('update_session_cas', {
+    p_session_id: session.id,
+    p_expected_version: session.version ?? 0,
+    p_current_step: 'select_capability',
+    p_session_data: cleanData,
+  });
+  if (cleanCas?.success) session.version = cleanCas.version;
+
+  const newLabel = `${((newAuth.brand as string) || 'Card').toUpperCase()} ****${(newAuth.last4 as string) || '????'}`;
+  logger.info('[SAVED_CARDS] card-replaced', { businessId, methodId });
+  await sendText(from, `💳 Card updated to *${newLabel}*!\n\n🔒 Your existing Waaiio PIN still works. Type *remove card* anytime to remove.`);
 }

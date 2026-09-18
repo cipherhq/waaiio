@@ -179,7 +179,7 @@ describe('(1) BYO credential lookup throws', () => {
 
     expect(result).toBeNull();
     expect(mockGatewayInitialize).not.toHaveBeenCalled();
-    assertLoggerOp('payment.routing-authority-threw');
+    assertLoggerOp('payment.credential-classification');
   });
 });
 
@@ -198,7 +198,7 @@ describe('(2) BYO credential lookup returns {error}', () => {
 
     expect(result).toBeNull();
     expect(mockGatewayInitialize).not.toHaveBeenCalled();
-    assertLoggerOp('payment.byo-credential-lookup');
+    assertLoggerOp('payment.credential-classification');
   });
 });
 
@@ -349,6 +349,7 @@ describe('(4) Payout authority', () => {
 
     expect(result).toBeNull();
     expect(mockGatewayInitialize).not.toHaveBeenCalled();
+    // Payout lookup throws AFTER credential classification succeeds — caught by outer try/catch
     assertLoggerOp('payment.routing-authority-threw');
   });
 });
@@ -428,7 +429,7 @@ describe('(6) Cross-capability shared boundary', () => {
 
     expect(result).toBeNull();
     expect(mockGatewayInitialize).toHaveBeenCalledTimes(0);
-    assertLoggerOp('payment.byo-credential-lookup');
+    assertLoggerOp('payment.credential-classification');
   });
 
   it('(6b) ordering transactionCategory: same boundary, BYO error → fail closed', async () => {
@@ -446,7 +447,7 @@ describe('(6) Cross-capability shared boundary', () => {
 
     expect(result).toBeNull();
     expect(mockGatewayInitialize).toHaveBeenCalledTimes(0);
-    assertLoggerOp('payment.byo-credential-lookup');
+    assertLoggerOp('payment.credential-classification');
   });
 });
 
@@ -549,5 +550,30 @@ describe('(7) V1 dispatched-row + idempotency', () => {
     expect(result).toBeNull();
     expect(mockGatewayInitialize).not.toHaveBeenCalled();
     assertLoggerOp('payment.country-payment-config');
+  });
+
+  // ═══════════════════════════════════════════════════════════════
+  // E7: K9 ambiguous credential classification → null + zero provider calls
+  // ═══════════════════════════════════════════════════════════════
+  it('(E7) ambiguous credential classification → null, zero provider calls, no payment insert', async () => {
+    // Credential with secret_key but no platform_subaccount_code and no connect_account_id
+    // → classifyBusinessPaymentCredential returns 'ambiguous'
+    const ambiguousCred = {
+      id: 'cred-ambig',
+      secret_key: 'test-byo-key-not-real',
+      platform_subaccount_code: null,
+      connect_account_id: null,
+      connection_type: null,
+    };
+    const supabase = buildSupabase({
+      business_payment_credentials: { data: ambiguousCred },
+      payments: { data: null },
+    });
+
+    const result = await initializePayment(supabase as any, BASE_OPTS);
+
+    expect(result).toBeNull();
+    expect(mockGatewayInitialize).not.toHaveBeenCalled();
+    assertLoggerOp('payment.credential-classification');
   });
 });

@@ -324,11 +324,11 @@ describe('Stripe idempotency — stable key across retries', () => {
 
     await gateway.initializePayment({
       referenceCode: 'BW-B1111', amount: 50, currency: 'USD',
-      userId: 'user-1', businessName: 'Biz', phone: '+1234', supabase: supabaseMock,
+      userId: 'user-1', businessName: 'Biz', phone: '+12025551234', supabase: supabaseMock,
     });
     await gateway.initializePayment({
       referenceCode: 'BW-B2222', amount: 75, currency: 'USD',
-      userId: 'user-2', businessName: 'Biz', phone: '+5678', supabase: supabaseMock,
+      userId: 'user-2', businessName: 'Biz', phone: '+12025555678', supabase: supabaseMock,
     });
 
     const key1 = (globalThis.fetch as any).mock.calls[0][1].headers['Idempotency-Key'];
