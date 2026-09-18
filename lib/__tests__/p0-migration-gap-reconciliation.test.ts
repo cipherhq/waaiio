@@ -1,9 +1,13 @@
 /**
  * Production-shaped migration gap reconciliation proof.
  *
- * Models the exact production state including the migration ledger
- * (supabase_migrations.schema_migrations) with M367-M377 tracked,
- * M382 tracked, M378-M381 and M383-M388 absent.
+ * Models the production migration gap using version-key semantics
+ * from supabase_migrations.schema_migrations (version + name columns).
+ * The harness reproduces the operationally relevant ledger contract
+ * but does not replicate all production ledger columns.
+ *
+ * Production state modeled: M367-M377 tracked, M382 tracked,
+ * M378-M381 and M383-M388 absent.
  *
  * Applies the reconciliation using the exact atomic batches proposed
  * for production:
@@ -96,10 +100,10 @@ describe.skipIf(!canRun)('Production-shaped migration gap reconciliation', () =>
       GRANT SELECT ON "auth".users TO service_role, anon, authenticated;
     `);
 
-    // Create the migration ledger schema matching production column contract.
-    // NOTE: This models the version-key semantics for reconciliation proof.
-    // Production has additional columns (created_by, idempotency_key, rollback)
-    // but version + name are the operationally relevant columns for this proof.
+    // Migration ledger: models version-key semantics only.
+    // Production ledger has additional columns (created_by, idempotency_key, rollback,
+    // statements) not reproduced here. This proof validates version-key tracking
+    // for the reconciliation set, not the full production ledger contract.
     psql(`
       CREATE SCHEMA IF NOT EXISTS supabase_migrations;
       CREATE TABLE IF NOT EXISTS supabase_migrations.schema_migrations (
@@ -175,8 +179,8 @@ describe.skipIf(!canRun)('Production-shaped migration gap reconciliation', () =>
       return readMig(f) + '\n' + ledgerInsert(f);
     }).join('\n');
 
-    // Execute as one transaction
-    psql(`BEGIN;\n${batchSQL}\nCOMMIT;`, 120000);
+    // Execute as one transaction with production-shaped timeout directives
+    psql(`BEGIN;\nSET LOCAL lock_timeout = '5s';\nSET LOCAL statement_timeout = '120s';\n${batchSQL}\nCOMMIT;`, 120000);
 
     // Verify ledger
     expect(ledgerHas('378')).toBe(true);
@@ -201,7 +205,7 @@ describe.skipIf(!canRun)('Production-shaped migration gap reconciliation', () =>
   it('M383: Apply entity commit revalidation atomically + ledger', () => {
     const files = getMigrationFiles();
     const f = files.find(ff => ff.startsWith('383_'))!;
-    psql(`BEGIN;\n${readMig(f)}\n${ledgerInsert(f)}\nCOMMIT;`, 120000);
+    psql(`BEGIN;\nSET LOCAL lock_timeout = '5s';\nSET LOCAL statement_timeout = '120s';\n${readMig(f)}\n${ledgerInsert(f)}\nCOMMIT;`, 120000);
 
     expect(ledgerHas('383')).toBe(true);
 
@@ -316,7 +320,7 @@ describe.skipIf(!canRun)('Production-shaped migration gap reconciliation', () =>
       return readMig(f) + '\n' + ledgerInsert(f);
     }).join('\n');
 
-    psql(`BEGIN;\n${batchSQL}\nCOMMIT;`, 120000);
+    psql(`BEGIN;\nSET LOCAL lock_timeout = '5s';\nSET LOCAL statement_timeout = '120s';\n${batchSQL}\nCOMMIT;`, 120000);
 
     // Verify ledger
     for (const v of ['384', '385', '386', '387', '388']) {
