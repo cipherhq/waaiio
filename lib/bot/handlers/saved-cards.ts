@@ -14,8 +14,13 @@ export async function handleSaveCard(
   session: BotSession | null,
   getProfile: () => Promise<{ id: string } | null>,
 ): Promise<void> {
-  const phoneP = from.startsWith('+') ? from : `+${from}`;
-  const phoneN = from.startsWith('+') ? from.slice(1) : from;
+  const { canonicalSavedCardPhone } = await import('@/lib/payments/saved-card-compat');
+  const phoneP = canonicalSavedCardPhone(from);
+  if (!phoneP) {
+    await sendText(from, 'Invalid phone number. Cannot save card.');
+    return;
+  }
+  const phoneN = phoneP.slice(1); // strip + for dual-format queries
 
   // Find the most recent paid booking for this phone, then get its payment
   const { data: recentBooking } = await supabase
@@ -95,10 +100,18 @@ export async function handleSaveCard(
     return;
   }
 
-  // Verify the source payment was created in the shared-platform context
+  // B4: Require DURABLE PROOF that source origin is shared platform.
+  // Missing/unknown/legacy origin → fail closed.
   const paymentMeta = (payment.metadata || {}) as Record<string, unknown>;
-  if (paymentMeta.payment_origin === 'byo' || paymentMeta.payment_origin === 'connect' || paymentMeta.byo === true || paymentMeta.connect === true) {
+  const origin = paymentMeta.payment_origin as string | undefined;
+  if (origin !== 'platform') {
     await sendText(from, 'This payment cannot be used to save a card. Try again after a standard payment.');
+    return;
+  }
+
+  // B5: Require reusable === true explicitly
+  if (auth.reusable !== true) {
+    await sendText(from, 'Your last payment card is not reusable. Try again after your next card payment.');
     return;
   }
 
@@ -428,7 +441,8 @@ export async function handleCardPinStep(
     return;
   }
 
-  await supabase.from('saved_payment_methods').insert({
+  // B7: Check INSERT result — concurrent race can cause UNIQUE violation
+  const { error: insertError } = await supabase.from('saved_payment_methods').insert({
     business_id: businessId, // origin/audit only (nullable, not the scoping authority)
     customer_phone: phoneP,
     gateway,
@@ -446,6 +460,23 @@ export async function handleCardPinStep(
     pin_attempts: 0,
     last_used_at: new Date().toISOString(),
   });
+
+  if (insertError) {
+    if (insertError.code === '23505') {
+      // UNIQUE violation — concurrent first-save race. Re-read authoritative state.
+      const { data: existing } = await supabase.from('saved_payment_methods')
+        .select('authorization_code').in('customer_phone', [phoneP, phoneN]).eq('is_active', true).eq('gateway', 'paystack').maybeSingle();
+      if (existing?.authorization_code === (auth.authorization_code as string)) {
+        await sendText(from, 'Your card is already saved.');
+      } else {
+        await sendText(from, 'A card is already saved. Type *save card* again to replace it.');
+      }
+    } else {
+      logger.error('[SAVED_CARDS] first-save-insert-failed:', insertError.message);
+      await sendText(from, 'Failed to save card. Please try again.');
+    }
+    return;
+  }
 
   const cardLabel = `${((auth.brand as string) || 'Card').toUpperCase()} ****${(auth.last4 as string) || '????'}`;
 

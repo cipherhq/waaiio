@@ -25,7 +25,8 @@ vi.mock('@/lib/payments/saved-payment-adapter', () => ({
 }));
 vi.mock('@/lib/payments/saved-card-compat', () => ({
   isSharedPlatformPaystackCompatible: vi.fn().mockResolvedValue({ compatible: true }),
-  canonicalPaystackEmail: vi.fn().mockReturnValue('2348012345678@whatsapp.waaiio.com'),
+  internalPaymentEmailAlias: vi.fn().mockReturnValue('2348012345678@whatsapp.waaiio.com'),
+  canonicalSavedCardPhone: vi.fn().mockImplementation((p: string) => p.startsWith('+') ? p : `+${p}`),
 }));
 
 const METHOD_ID = 'meth-001';
@@ -42,10 +43,13 @@ const EXISTING_METHOD = {
 };
 const NEW_PAYMENT = {
   id: PAY_ID, business_id: 'biz-A', gateway: 'paystack', status: 'success',
-  metadata: { _card_authorization: {
-    authorization_code: NEW_AUTH, customer_code: CUST_CODE, email: AUTH_EMAIL,
-    last4: '5678', brand: 'mastercard', reusable: true,
-  }},
+  metadata: {
+    payment_origin: 'platform',
+    _card_authorization: {
+      authorization_code: NEW_AUTH, customer_code: CUST_CODE, email: AUTH_EMAIL,
+      last4: '5678', brand: 'mastercard', reusable: true,
+    },
+  },
 };
 
 function buildSupabase(overrides: {
@@ -110,11 +114,27 @@ describe('Global Saved Card', () => {
   });
 
   it('9. missing authorization_email cannot be saved', async () => {
-    const noEmailPayment = { ...NEW_PAYMENT, metadata: { _card_authorization: { ...NEW_PAYMENT.metadata._card_authorization, email: null } } };
+    const noEmailPayment = { ...NEW_PAYMENT, metadata: { payment_origin: 'platform', _card_authorization: { ...NEW_PAYMENT.metadata._card_authorization, email: null } } };
     const s = buildSupabase({ existingMethods: [], payment: noEmailPayment });
     const { handleSaveCard } = await import('../saved-cards');
     await handleSaveCard(s as any, sendText, PHONE, { id: 'sess-1', business_id: 'biz-A', session_data: {}, version: 1 } as any, getProfile);
     expect(sendText).toHaveBeenCalledWith(PHONE, expect.stringContaining('email is missing'));
+  });
+
+  it('B4. missing/unknown payment_origin → fail closed', async () => {
+    const noOriginPayment = { ...NEW_PAYMENT, metadata: { _card_authorization: NEW_PAYMENT.metadata._card_authorization } };
+    const s = buildSupabase({ existingMethods: [], payment: noOriginPayment });
+    const { handleSaveCard } = await import('../saved-cards');
+    await handleSaveCard(s as any, sendText, PHONE, { id: 'sess-1', business_id: 'biz-A', session_data: {}, version: 1 } as any, getProfile);
+    expect(sendText).toHaveBeenCalledWith(PHONE, expect.stringContaining('cannot be used'));
+  });
+
+  it('B5. non-reusable authorization → rejected', async () => {
+    const nonReusable = { ...NEW_PAYMENT, metadata: { payment_origin: 'platform', _card_authorization: { ...NEW_PAYMENT.metadata._card_authorization, reusable: false } } };
+    const s = buildSupabase({ existingMethods: [], payment: nonReusable });
+    const { handleSaveCard } = await import('../saved-cards');
+    await handleSaveCard(s as any, sendText, PHONE, { id: 'sess-1', business_id: 'biz-A', session_data: {}, version: 1 } as any, getProfile);
+    expect(sendText).toHaveBeenCalledWith(PHONE, expect.stringContaining('not reusable'));
   });
 
   // ─── REPLACEMENT ───

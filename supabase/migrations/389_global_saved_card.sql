@@ -37,8 +37,9 @@ CREATE INDEX IF NOT EXISTS idx_saved_pm_customer_lookup
   ON saved_payment_methods (customer_phone, is_active);
 
 -- 7. CHECK constraint: active rows must have canonical +E.164 phone
+-- Validates: starts with +, followed by 1-9, then 7-14 more digits
 ALTER TABLE saved_payment_methods ADD CONSTRAINT chk_active_canonical_phone
-  CHECK (NOT is_active OR customer_phone LIKE '+%');
+  CHECK (NOT is_active OR customer_phone ~ '^\+[1-9]\d{7,14}$');
 
 -- 8. Remove merchant raw-table SELECT policy (global card = no merchant visibility)
 -- Retain only service_role access for runtime operations.

@@ -90,8 +90,14 @@ export class StripeGateway implements PaymentGateway {
         'metadata[channel]': 'whatsapp',
         client_reference_id: opts.referenceCode,
       };
+      // Use the deterministic internal alias for phone-only Waaiio UX.
+      // Real customer email is not required for Stripe Checkout.
       if (opts.userEmail) {
         sessionParams.customer_email = opts.userEmail;
+      } else if (opts.phone) {
+        const { internalPaymentEmailAlias } = await import('./saved-card-compat');
+        const canonicalPhone = opts.phone.startsWith('+') ? opts.phone : `+${opts.phone}`;
+        sessionParams.customer_email = internalPaymentEmailAlias(canonicalPhone);
       }
 
       // Stripe Connect split payment

@@ -20,6 +20,9 @@ vi.mock('../charge-saved', () => ({
   getSavedPaymentMethod: (...args: unknown[]) => mockGetSavedPaymentMethod(...args),
   chargeSavedCard: (...args: unknown[]) => mockChargeSavedCard(...args),
 }));
+vi.mock('../saved-card-compat', () => ({
+  isSharedPlatformPaystackCompatible: vi.fn().mockResolvedValue({ compatible: true }),
+}));
 
 // Mock crypto for PIN hashing
 vi.mock('crypto', () => ({

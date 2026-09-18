@@ -220,14 +220,20 @@ class PaystackSavedPaymentAdapter implements SavedPaymentAdapter {
     supabase: SupabaseClient,
     opts: ChargeOptions,
   ): Promise<ChargeOutcome> {
-    // Canonical tuple authorization: method must belong to this business + customer
+    // B2: Re-resolve provider compatibility immediately before dispatch
+    const { isSharedPlatformPaystackCompatible } = await import('./saved-card-compat');
+    const compat = await isSharedPlatformPaystackCompatible(supabase, opts.businessId);
+    if (!compat.compatible) {
+      return { status: 'method_not_found' }; // Business no longer compatible
+    }
+
+    // Customer-scoped lookup (global card)
     const method = await lookupAuthorizedMethod(supabase, opts.methodId, opts.businessId, opts.customerPhone);
     if (!method) {
       return { status: 'method_not_found' };
     }
 
-    // Use the stored authorization_email for Paystack charge (not session email).
-    // Paystack requires the email to match the original authorization.
+    // Require stored authorization_email for Paystack charge
     if (!method.authorization_email) {
       return { status: 'method_not_found' }; // Legacy card without stored email — must re-save
     }
