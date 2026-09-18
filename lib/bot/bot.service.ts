@@ -1003,7 +1003,15 @@ export class BotService {
       const paymentId = _scButtonMatch[2];
       if (action && paymentId) {
         const { handleSavedCardOfferAction } = await import('@/lib/payments/saved-card-offer');
-        await handleSavedCardOfferAction(this.supabase, this.sendText.bind(this), from, session, action, paymentId);
+        await handleSavedCardOfferAction(
+          this.supabase,
+          this.sendText.bind(this),
+          from,
+          session,
+          action,
+          paymentId,
+          (businessId) => this.messageSender.bindBusiness?.(businessId),
+        );
         return;
       }
     }
@@ -1016,11 +1024,18 @@ export class BotService {
       const { handleSaveCard } = await import('./handlers/saved-cards');
       const { phonePair } = await import('@/lib/utils/phone');
       const { withPlus, withoutPlus } = phonePair(from);
-      await handleSaveCard(this.supabase, this.sendText.bind(this), from, session, async () => {
-        const { data: profile } = await this.supabase.from('profiles').select('id')
-          .or(`phone.eq.${withPlus},phone.eq.${withoutPlus}`).limit(1).maybeSingle();
-        return profile || null;
-      });
+      await handleSaveCard(
+        this.supabase,
+        this.sendText.bind(this),
+        from,
+        session,
+        async () => {
+          const { data: profile } = await this.supabase.from('profiles').select('id')
+            .or(`phone.eq.${withPlus},phone.eq.${withoutPlus}`).limit(1).maybeSingle();
+          return profile || null;
+        },
+        (businessId) => this.messageSender.bindBusiness?.(businessId),
+      );
       return;
     }
     if (/^(remove|delete)\s+(my\s+)?card$/i.test(_scTrimmed)) {
