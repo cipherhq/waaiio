@@ -82,19 +82,22 @@ export async function findLatestSavedCardPaymentIdForPhone(
     if (result !== 'absent') candidates.push(result);
   }
 
-  // 5. Campaign donation donor_phone → payment
+  // 5. P3: Campaign donation — get ALL successful donation payment_ids, then newest payment
   {
-    const { data: donation, error: donErr } = await supabase
+    const { data: donations, error: donErr } = await supabase
       .from('campaign_donations').select('payment_id')
       .or(`donor_phone.eq.${sanitizeFilterValue(canonPhone)},donor_phone.eq.${sanitizeFilterValue(phoneN)}`)
-      .eq('status', 'success')
-      .order('created_at', { ascending: false }).limit(1).maybeSingle();
+      .eq('status', 'success');
     if (donErr) { logger.warn('[SAVE-CARD-LOCATOR] donation read error', donErr.message); return null; }
-    if (donation?.payment_id) {
-      const { data: pay, error: payErr } = await supabase.from('payments')
-        .select('id, created_at').eq('id', donation.payment_id).eq('status', 'success').maybeSingle();
-      if (payErr) { logger.warn('[SAVE-CARD-LOCATOR] donation payment read error', payErr.message); return null; }
-      if (pay) candidates.push(pay as Candidate);
+    if (donations && donations.length > 0) {
+      const donationPayIds = donations.map(d => d.payment_id).filter(Boolean);
+      if (donationPayIds.length > 0) {
+        const { data: pay, error: payErr } = await supabase.from('payments')
+          .select('id, created_at').in('id', donationPayIds).eq('status', 'success')
+          .order('created_at', { ascending: false }).limit(1).maybeSingle();
+        if (payErr) { logger.warn('[SAVE-CARD-LOCATOR] donation payment read error', payErr.message); return null; }
+        if (pay) candidates.push(pay as Candidate);
+      }
     }
   }
 
