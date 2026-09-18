@@ -45,3 +45,47 @@ ALTER TABLE saved_payment_methods ADD CONSTRAINT chk_active_canonical_phone
 -- Retain only service_role access for runtime operations.
 DROP POLICY IF EXISTS saved_pm_owner ON saved_payment_methods;
 -- service_role policy already exists (ALL for service_role) — keep it.
+
+-- ═══════════════════════════════════════════════════════
+-- 9. payment_saved_card_offers — durable payment-scoped offer authority
+--
+-- One offer per payment. Prevents duplicate Save/Replace CTAs on webhook retry.
+-- State machine: pending → sending → sent → accepted/declined
+--                                    → ambiguous (no auto-resend)
+-- Does NOT store provider secrets (auth code, email, PIN).
+-- ═══════════════════════════════════════════════════════
+CREATE TABLE IF NOT EXISTS payment_saved_card_offers (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  payment_id UUID NOT NULL UNIQUE,
+  customer_phone TEXT NOT NULL CHECK (customer_phone ~ '^\+[1-9]\d{7,14}$'),
+  business_id UUID NOT NULL,
+  offer_type TEXT NOT NULL CHECK (offer_type IN ('save', 'replace')),
+  state TEXT NOT NULL DEFAULT 'pending'
+    CHECK (state IN ('pending', 'sending', 'sent', 'accepted', 'declined', 'ambiguous')),
+  current_method_id UUID,
+  card_display TEXT,
+  claim_token UUID,
+  claim_expires_at TIMESTAMPTZ,
+  meta_message_id TEXT,
+  sent_at TIMESTAMPTZ,
+  resolved_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE payment_saved_card_offers ENABLE ROW LEVEL SECURITY;
+
+-- Service-role only — no merchant/authenticated access
+DO $$
+BEGIN
+  REVOKE ALL ON TABLE payment_saved_card_offers FROM PUBLIC;
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
+    REVOKE ALL ON TABLE payment_saved_card_offers FROM anon;
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
+    REVOKE ALL ON TABLE payment_saved_card_offers FROM authenticated;
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
+    REVOKE ALL ON TABLE payment_saved_card_offers FROM service_role;
+    GRANT SELECT, INSERT, UPDATE ON TABLE payment_saved_card_offers TO service_role;
+  END IF;
+END $$;

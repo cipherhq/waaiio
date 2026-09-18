@@ -148,6 +148,16 @@ export async function sendProactiveConfirmation(
   if (!claim?.claimed) {
     if (claim?.already_completed) {
       logger.info(`${logPrefix} Confirmation already sent for payment ${payment.id} — skipping`);
+      // Refinement 1: Retry saved-card CTA on already_completed (confirmation already finalized)
+      try {
+        const { checkAndOfferSavedCard } = await import('@/lib/payments/saved-card-offer');
+        // Derive customer phone from the payment for the CTA retry
+        const payPhone = claim.booking_id || claim.reservation_id || claim.invoice_id || claim.order_id || claim.campaign_id
+          ? null // Will be resolved by checkAndOfferSavedCard from payment context
+          : null;
+        // Use payment.id and empty strings — the offer authority re-reads everything
+        await checkAndOfferSavedCard(supabase, payment.id, '', '', null);
+      } catch { /* non-blocking */ }
       return { status: 'already_completed' };
     }
     logger.info(`${logPrefix} Confirmation claim not granted for payment ${payment.id}: ${claim?.reason || 'unknown'}`);
@@ -615,18 +625,8 @@ export async function sendProactiveConfirmation(
     }
   }
 
-  // Post-payment Save/Replace Card offer (G4/G5)
-  if (saveCardOffer) {
-    if (saveCardOffer.type === 'save') {
-      lines.push('');
-      lines.push(`💳 Save *${saveCardOffer.cardLabel}* for faster checkout next time?`);
-      lines.push('Type *save card* to save, or ignore to skip.');
-    } else if (saveCardOffer.type === 'replace') {
-      lines.push('');
-      lines.push(`💳 Replace saved card ${saveCardOffer.oldLabel} with *${saveCardOffer.newLabel}*?`);
-      lines.push('Type *save card* to replace, or ignore to keep your current card.');
-    }
-  }
+  // Save/Replace Card CTA is now a separate button message sent AFTER finalization.
+  // See checkAndOfferSavedCard() called after finalizeConfirmationClaim.
 
   // ── 5. Resolve channel + send (protected by checkpoint 1 above) ──
   try {
@@ -1390,8 +1390,16 @@ export async function sendProactiveConfirmation(
       const { checkAndOfferRecurring } = await import('@/lib/payments/recurring-offer');
       await checkAndOfferRecurring(supabase, payment, businessId, resolved?.sender || null, customerPhone || null, logPrefix);
     } catch (recurringErr) {
-      // NEVER affects payment finalization
       logSafeError(logPrefix, 'recurring-offer', recurringErr);
+    }
+
+    // Post-finalization saved-card CTA (separate lifecycle, non-blocking)
+    // Uses durable payment_saved_card_offers authority — safe on webhook retry.
+    try {
+      const { checkAndOfferSavedCard } = await import('@/lib/payments/saved-card-offer');
+      await checkAndOfferSavedCard(supabase, payment.id, customerPhone || '', businessId || '', resolved?.sender || null);
+    } catch (savedCardErr) {
+      logSafeError(logPrefix, 'saved-card-offer', savedCardErr);
     }
 
     return { status: 'completed' };

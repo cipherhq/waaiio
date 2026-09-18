@@ -990,12 +990,28 @@ export class BotService {
       return;
     }
 
-    // ── First-class saved-card commands ──
+    // ── Button-based saved-card offer actions ──
+    // Intercept save_card_accept/decline and replace_card_accept/decline button taps.
+    const _scTrimmed = text.trim();
+    const _scButtonMatch = _scTrimmed.match(/^(save_card_accept|save_card_decline|replace_card_accept|replace_card_decline):(.+)$/);
+    if (_scButtonMatch) {
+      const actionMap: Record<string, 'save_accept' | 'save_decline' | 'replace_accept' | 'replace_decline'> = {
+        save_card_accept: 'save_accept', save_card_decline: 'save_decline',
+        replace_card_accept: 'replace_accept', replace_card_decline: 'replace_decline',
+      };
+      const action = actionMap[_scButtonMatch[1]];
+      const paymentId = _scButtonMatch[2];
+      if (action && paymentId) {
+        const { handleSavedCardOfferAction } = await import('@/lib/payments/saved-card-offer');
+        await handleSavedCardOfferAction(this.supabase, this.sendText.bind(this), from, session, action, paymentId);
+        return;
+      }
+    }
+
+    // ── First-class saved-card commands (manual fallback) ──
     // Must run BEFORE no-session/new-session greeting path and before keyword routing.
     // Works with session === null (handleSaveCard derives business from recent payment).
     // PIN steps handled above and take precedence.
-    // A business keyword named "save card" cannot override this system command.
-    const _scTrimmed = text.trim();
     if (/^save\s+(my\s+)?card$/i.test(_scTrimmed)) {
       const { handleSaveCard } = await import('./handlers/saved-cards');
       const { phonePair } = await import('@/lib/utils/phone');
