@@ -3,6 +3,31 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-09-18 — D1-D9: CTO exact-head review corrections (#331)
+
+### What changed
+- **D1**: `handleSaveCard` refactored to locator-only — all auth/compat/eligibility/session logic delegated to `startSavedCardFromPaymentId`. Two competing authorities eliminated.
+- **D2**: `resolvePaymentCustomerPhone` expanded with `user_id`/profile fallback. Unresolved customer phone → fail closed (no CTA, no PIN session).
+- **D3**: PIN session CAS calls now pass `p_business_id` to rebind session to exact source-payment business. Cross-business replacement uses payment's business, not session's.
+- **D4**: `decline_saved_card_offer` RPC now accepts `p_expected_offer_type`. Wrong type → explicit rejection. DB error/null → safe visible failure.
+- **D5**: Error classification uses `AmbiguousSendError`/`WamidPersistenceError` from `attempt-recording.ts`. Missing WAMID on success → ambiguous. `mark_saved_card_offer_sent` rejects null/empty WAMID.
+- **D6**: Expired `sending` lease (crash between claim and result) → reconciled to `ambiguous` on next re-claim. No automatic resend.
+- **D7**: Offer `business_id` now nullable (was NOT NULL with ON DELETE SET NULL — contradictory). Retry helper fails closed on null.
+- **D8**: M389 DB test wired into CI shard-b with dedicated database and zero-skip enforcement.
+- **D9**: Citadel no-session manual `save card` behavioral routing test added — proves locator→helper→PIN prompt chain.
+
+### Files changed
+- `supabase/migrations/389_global_saved_card.sql` — D4 (decline type binding), D5 (WAMID rejection), D6 (lease reconciliation), D7 (nullable business_id)
+- `lib/payments/saved-card-offer.ts` — D1 (convergence), D2 (fail-closed resolver), D3 (business rebinding), D5 (real error classes)
+- `lib/bot/handlers/saved-cards.ts` — D1 (locator-only handleSaveCard, removed _establishReplacementSession)
+- `.github/workflows/ci.yml` — D8 (M389 DB test step in shard-b)
+- Test files: D2/D3/D4/D5/D6/D9 behavioral tests, updated DB proof, updated existing test suites
+
+### What could break
+- `decline_saved_card_offer` signature changed from (UUID, TEXT) to (UUID, TEXT, TEXT) — any caller must pass `p_expected_offer_type`
+- `mark_saved_card_offer_sent` now rejects null/empty WAMID — callers must handle `missing_wamid` result
+- `handleSaveCard` no longer does its own auth/compat checks — all authority is in `startSavedCardFromPaymentId`
+
 ## 2026-09-17 — K1-K10: Saved-card offer authority — durable RPCs + behavioral tests (#331)
 
 ### What changed
