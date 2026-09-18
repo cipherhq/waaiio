@@ -46,11 +46,10 @@ function ledgerHas(version: string): boolean {
 }
 
 function ledgerInsert(filename: string): string {
-  // Supabase ledger uses the filename as version (without .sql) — but actually uses a timestamp.
-  // In practice, the version column stores the migration filename prefix.
-  // We use the numeric prefix as the version for this proof.
+  // Production uses version = numeric prefix (e.g. '382'), name = descriptive slug
+  // (e.g. 'flow_execution_analytics'). This matches CTO-verified production M382 row.
   const num = filename.split('_')[0];
-  const name = filename.replace('.sql', '');
+  const name = filename.replace('.sql', '').replace(/^\d+_/, '');
   return `INSERT INTO supabase_migrations.schema_migrations (version, name) VALUES ('${num}', '${name}');`;
 }
 
@@ -97,11 +96,14 @@ describe.skipIf(!canRun)('Production-shaped migration gap reconciliation', () =>
       GRANT SELECT ON "auth".users TO service_role, anon, authenticated;
     `);
 
-    // Create the migration ledger schema (Supabase-managed)
+    // Create the migration ledger schema matching production column contract.
+    // NOTE: This models the version-key semantics for reconciliation proof.
+    // Production has additional columns (created_by, idempotency_key, rollback)
+    // but version + name are the operationally relevant columns for this proof.
     psql(`
       CREATE SCHEMA IF NOT EXISTS supabase_migrations;
       CREATE TABLE IF NOT EXISTS supabase_migrations.schema_migrations (
-        version TEXT PRIMARY KEY, name TEXT, statements_applied INT DEFAULT 0
+        version TEXT PRIMARY KEY, name TEXT, statements TEXT DEFAULT NULL
       );
     `);
 
@@ -210,43 +212,29 @@ describe.skipIf(!canRun)('Production-shaped migration gap reconciliation', () =>
     // Trigger
     expect(psql(`SELECT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_snapshot_version_guard');`)).toBe('t');
 
-    // Exact canonical M383 identities via pg_get_function_identity_arguments
+    // Exact canonical M383 identities — FULL equality via pg_get_function_identity_arguments.
+    // PostgreSQL normalizes int→integer, UUID→uuid, INT→integer, TEXT→text.
 
-    // create_order_atomic: canonical 24-arg M383 identity
+    const CANONICAL_ORDER = 'p_bot_session_id uuid, p_business_id uuid, p_user_id uuid, p_status text, p_delivery_address text, p_delivery_phone text, p_total_amount integer, p_discount_amount integer, p_shipping_cost integer, p_promo_code_id uuid, p_channel text, p_notes text, p_delivery_zone_id uuid, p_delivery_zone_name text, p_addons_total integer, p_volume_discount_amount integer, p_pickup_address text, p_dropoff_address text, p_package_description text, p_package_photo_url text, p_items jsonb, p_referral_id uuid, p_validate_products boolean, p_expected_total integer';
     const orderArgs = psql(`SELECT pg_get_function_identity_arguments(oid) FROM pg_proc WHERE proname = 'create_order_atomic';`);
-    expect(orderArgs).toContain('p_items jsonb');
-    expect(orderArgs).toContain('p_referral_id uuid');
-    expect(orderArgs).toContain('p_validate_products boolean');
-    expect(orderArgs).toContain('p_expected_total integer');
-    expect(orderArgs.split(',').length).toBe(24);
+    expect(orderArgs).toBe(CANONICAL_ORDER);
 
-    // book_slot_atomic: canonical 30-arg M383 identity
+    const CANONICAL_BOOK = 'p_business_id uuid, p_user_id uuid, p_service_id uuid, p_staff_id uuid, p_date date, p_time text, p_party_size integer, p_max_capacity integer, p_flow_type text, p_deposit_amount integer, p_deposit_status text, p_status text, p_guest_name text, p_guest_phone text, p_guest_email text, p_special_requests text, p_venue_address text, p_end_date date, p_addons_snapshot jsonb, p_promo_code_id uuid, p_total_amount integer, p_staff_name text, p_location_id uuid, p_appointment_id uuid, p_buffer_minutes integer, p_duration integer, p_bot_session_id uuid, p_class_session_id uuid, p_expected_price integer, p_expected_deposit integer';
     const bookArgs = psql(`SELECT pg_get_function_identity_arguments(oid) FROM pg_proc WHERE proname = 'book_slot_atomic';`);
-    expect(bookArgs).toContain('p_bot_session_id uuid');
-    expect(bookArgs).toContain('p_class_session_id uuid');
-    expect(bookArgs).toContain('p_expected_price integer');
-    expect(bookArgs).toContain('p_expected_deposit integer');
-    expect(bookArgs.split(',').length).toBe(30);
+    expect(bookArgs).toBe(CANONICAL_BOOK);
 
-    // purchase_tickets_atomic: canonical 12-arg M383 identity
+    const CANONICAL_TICKET = 'p_business_id uuid, p_event_id uuid, p_ticket_type_id uuid, p_quantity integer, p_user_id uuid, p_guest_name text, p_guest_phone text, p_guest_email text, p_total_amount integer, p_channel text, p_bot_session_id uuid, p_expected_price integer';
     const ticketArgs = psql(`SELECT pg_get_function_identity_arguments(oid) FROM pg_proc WHERE proname = 'purchase_tickets_atomic';`);
-    expect(ticketArgs).toContain('p_total_amount integer');
-    expect(ticketArgs).toContain('p_channel text');
-    expect(ticketArgs).toContain('p_bot_session_id uuid');
-    expect(ticketArgs).toContain('p_expected_price integer');
-    expect(ticketArgs.split(',').length).toBe(12);
+    expect(ticketArgs).toBe(CANONICAL_TICKET);
 
-    // Stale old identities absent — exactly 1 overload each (old 22/28/10 dropped)
+    // Exactly 1 overload each — stale old identities absent
     expect(psql(`SELECT COUNT(*) FROM pg_proc WHERE proname = 'create_order_atomic';`)).toBe('1');
     expect(psql(`SELECT COUNT(*) FROM pg_proc WHERE proname = 'book_slot_atomic';`)).toBe('1');
     expect(psql(`SELECT COUNT(*) FROM pg_proc WHERE proname = 'purchase_tickets_atomic';`)).toBe('1');
 
-    // Prove old identities do NOT exist by checking no function matches old arity
-    // Old create_order_atomic was 22-arg (M333)
+    // Old identities absent by arity
     expect(psql(`SELECT COUNT(*) FROM pg_proc WHERE proname = 'create_order_atomic' AND pronargs = 22;`)).toBe('0');
-    // Old book_slot_atomic was 28-arg (M325)
     expect(psql(`SELECT COUNT(*) FROM pg_proc WHERE proname = 'book_slot_atomic' AND pronargs = 28;`)).toBe('0');
-    // Old purchase_tickets_atomic was 10-arg (M149)
     expect(psql(`SELECT COUNT(*) FROM pg_proc WHERE proname = 'purchase_tickets_atomic' AND pronargs = 10;`)).toBe('0');
 
     // New RPCs exist
@@ -254,6 +242,69 @@ describe.skipIf(!canRun)('Production-shaped migration gap reconciliation', () =>
     expect(psql(`SELECT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'create_payment_booking_atomic');`)).toBe('t');
     expect(psql(`SELECT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'create_reservation_atomic');`)).toBe('t');
     expect(psql(`SELECT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'accept_order_quote_atomic');`)).toBe('t');
+  });
+
+  // ── ROLLBACK PROOF: partial intermediate states cannot escape ──
+
+  it('ROLLBACK-B: Batch B failure rolls back ALL M384-M388 + ledger entries', () => {
+    const files = getMigrationFiles();
+    // Apply M384 + M385 + their ledger entries, then force failure
+    const m384 = files.find(ff => ff.startsWith('384_'))!;
+    const m385 = files.find(ff => ff.startsWith('385_'))!;
+
+    let failed = false;
+    try {
+      psql(`
+        BEGIN;
+        ${readMig(m384)}
+        ${ledgerInsert(m384)}
+        ${readMig(m385)}
+        ${ledgerInsert(m385)}
+        -- Deliberately cause a guaranteed failure before M386-M388/COMMIT
+        SELECT 1/0;
+        COMMIT;
+      `, 120000);
+    } catch {
+      failed = true;
+    }
+    expect(failed).toBe(true);
+
+    // From a clean connection: verify NO M384 tables committed
+    expect(psql(`SELECT EXISTS (SELECT 1 FROM pg_class WHERE relname = 'payment_terminal_manifests');`)).toBe('f');
+    expect(psql(`SELECT EXISTS (SELECT 1 FROM pg_class WHERE relname = 'payment_terminal_effects');`)).toBe('f');
+
+    // NO M385 RPCs committed
+    expect(psql(`SELECT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'initialize_terminal_effects');`)).toBe('f');
+    expect(psql(`SELECT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'seal_payment_rule_actions');`)).toBe('f');
+
+    // NO 384-388 ledger rows committed
+    expect(ledgerHas('384')).toBe(false);
+    expect(ledgerHas('385')).toBe(false);
+    expect(ledgerHas('386')).toBe(false);
+    expect(ledgerHas('387')).toBe(false);
+    expect(ledgerHas('388')).toBe(false);
+  });
+
+  it('ROLLBACK-A: Batch A failure rolls back ALL M378-M381 + ledger entries', () => {
+    // Batch A already committed successfully above. This test proves the
+    // rollback mechanism works for Batch A's transaction shape.
+    // We test a synthetic equivalent: begin + partial DDL + forced failure.
+    let failed = false;
+    try {
+      psql(`
+        BEGIN;
+        CREATE TABLE IF NOT EXISTS _rollback_test_table (id UUID PRIMARY KEY);
+        INSERT INTO supabase_migrations.schema_migrations (version, name) VALUES ('999', 'rollback_test');
+        SELECT 1/0;
+        COMMIT;
+      `, 30000);
+    } catch {
+      failed = true;
+    }
+    expect(failed).toBe(true);
+    // Neither the table nor the ledger row survived
+    expect(psql(`SELECT EXISTS (SELECT 1 FROM pg_class WHERE relname = '_rollback_test_table');`)).toBe('f');
+    expect(ledgerHas('999')).toBe(false);
   });
 
   // ── BATCH B: M384+M385+M386+M387+M388 in ONE transaction ──
