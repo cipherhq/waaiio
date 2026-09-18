@@ -3,6 +3,30 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-09-17 — K1-K10: Saved-card offer authority — durable RPCs + behavioral tests (#331)
+
+### What changed
+- **M389 expanded**: 6 SECURITY DEFINER RPCs added — `create_or_claim_saved_card_offer`, `mark_saved_card_offer_sent`, `release_saved_card_offer`, `mark_saved_card_offer_ambiguous`, `accept_saved_card_offer`, `decline_saved_card_offer`. All claim-token fenced, FOR UPDATE transitions, privilege-hardened.
+- **FK integrity**: `payment_saved_card_offers` now has FKs to `payments`, `businesses` (SET NULL), `saved_payment_methods` (SET NULL), `whatsapp_channels` (SET NULL).
+- **saved-card-offer.ts rewritten**: Uses RPCs for all state transitions. Error classification splits pre-emission (retryable) from ambiguous transport (no auto-resend). Payment-customer ownership proof via `resolvePaymentCustomerPhone`. Fail-closed on all DB reads.
+- **already_completed retry fixed**: `send-confirmation.ts` now calls `retryPendingSavedCardOffer` (uses stored `channel_id`) instead of dead `checkAndOfferSavedCard` with null sender.
+- **payment.ts K9 fix**: Explicit `platform` branch in credential classifier. Ambiguous/unknown classifications fail closed with null before provider dispatch.
+- **31 behavioral tests** in `p0-saved-card-offer-behavioral.test.ts` covering eligibility, CTA emission, error classification, accept/decline, authority fencing, ineligible payment types.
+- **40-assertion M389 DB proof** in `p0-migration-389-db.test.ts` covering migration apply, table structure, FK integrity, all 6 RPCs, RLS/ACL, state-machine terminals, saved_payment_methods schema changes.
+
+### Files changed
+- `supabase/migrations/389_global_saved_card.sql` — RPCs, FK constraints, channel_id column
+- `lib/payments/saved-card-offer.ts` — complete rewrite with RPC-based state management
+- `lib/payments/send-confirmation.ts` — already_completed path fix
+- `lib/bot/flows/shared/payment.ts` — K9 classifier fix
+- `lib/__tests__/p0-saved-card-offer-behavioral.test.ts` — new: 31 behavioral tests
+- `lib/__tests__/p0-migration-389-db.test.ts` — new: hermetic M389 DB proof
+- `lib/__tests__/p0-payment-confirmation.test.ts` — updated: allow saved-card retry side effect
+
+### What could break
+- Confirmation pipeline: the `already_completed` path now performs a non-blocking read on `payment_saved_card_offers` table. If the table doesn't exist (M389 not applied), the retry silently fails (try/catch).
+- payment.ts: ambiguous credential classification now returns null instead of falling through. Any business with multiple overlapping active credentials will no longer receive a payment link.
+
 ## 2026-09-17 — Phase A v15: CTO handoff closure (runtime lifecycle)
 
 ### What changed
