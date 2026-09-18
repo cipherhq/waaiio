@@ -1,17 +1,9 @@
 /**
  * Production-shaped migration gap reconciliation proof.
  *
- * Creates a disposable PostgreSQL database representing the actual production state:
- * - M001–M377 applied (canonical chain)
- * - M378–M381 ABSENT
- * - M382 APPLIED (out-of-order)
- * - M383–M388 ABSENT
- *
- * Then applies the reconciliation set:
- * M378 → M379 → M380 → M381 → M383 → M384 → M385 → M386 → M387 → M388
- *
- * Proves: out-of-order M382 does not block the gap migrations,
- * all postconditions hold after reconciliation.
+ * Bootstraps a disposable PostgreSQL database with Supabase prerequisites,
+ * applies M001-M377 + M382 (matching production state), then applies the
+ * reconciliation set M378-M381 + M383-M388 and verifies all postconditions.
  *
  * Implementation-Agent: Claude Code
  * Requires TEST_DATABASE_URL.
@@ -19,174 +11,283 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { execSync } from 'child_process';
 import { readdirSync, readFileSync } from 'fs';
+import { join } from 'path';
 
 const dbUrl = process.env.TEST_DATABASE_URL || '';
 const canRun = dbUrl.length > 0;
 
-function psql(sql: string): string {
+function psql(sql: string, timeout = 30000): string {
   return execSync(`psql "${dbUrl}" -tAXq -v ON_ERROR_STOP=1`, {
-    input: sql, encoding: 'utf-8', timeout: 60000,
+    input: sql, encoding: 'utf-8', timeout,
   }).trim();
 }
 
-// Get all migration files sorted
+function applyMigration(filename: string): void {
+  const sql = readFileSync(join('supabase/migrations', filename), 'utf-8');
+  psql(sql, 60000);
+}
+
 function getMigrationFiles(): string[] {
   return readdirSync('supabase/migrations')
     .filter(f => f.endsWith('.sql'))
     .sort();
 }
 
+function migNum(filename: string): number {
+  return parseInt(filename.split('_')[0], 10);
+}
+
 describe.skipIf(!canRun)('Production-shaped migration gap reconciliation', () => {
   beforeAll(() => {
-    // Apply full canonical chain M001–M377 + M382 (mimicking production state)
+    // ── Supabase infrastructure prerequisites ──
+    // These objects exist in Supabase-managed PostgreSQL but not vanilla PG 15.
+    // Pattern follows ci.yml lines 156-231 and p0-terminal-application-db.test.ts.
+    psql(`
+      CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+      CREATE EXTENSION IF NOT EXISTS "btree_gist";
+      CREATE EXTENSION IF NOT EXISTS "pg_trgm";
+
+      DO $$ BEGIN CREATE ROLE service_role NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+      DO $$ BEGIN CREATE ROLE anon NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+      DO $$ BEGIN CREATE ROLE authenticated NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+      GRANT ALL ON SCHEMA public TO service_role, anon, authenticated;
+
+      CREATE SCHEMA IF NOT EXISTS storage;
+      CREATE TABLE IF NOT EXISTS storage.buckets (
+        id TEXT PRIMARY KEY, name TEXT UNIQUE, public BOOLEAN DEFAULT false,
+        created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE TABLE IF NOT EXISTS storage.objects (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        bucket_id TEXT REFERENCES storage.buckets(id),
+        name TEXT, owner UUID, metadata JSONB,
+        created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY;
+      CREATE OR REPLACE FUNCTION storage.foldername(name TEXT)
+        RETURNS TEXT[] LANGUAGE plpgsql AS $f$ BEGIN RETURN string_to_array(name, '/'); END; $f$;
+      GRANT USAGE ON SCHEMA storage TO service_role, anon, authenticated;
+      GRANT ALL ON ALL TABLES IN SCHEMA storage TO service_role, anon, authenticated;
+
+      CREATE SCHEMA IF NOT EXISTS extensions;
+      CREATE OR REPLACE FUNCTION extensions.gen_random_bytes(int) RETURNS bytea
+        LANGUAGE sql AS $f$ SELECT gen_random_bytes($1); $f$;
+      GRANT USAGE ON SCHEMA extensions TO service_role, anon, authenticated;
+
+      DO $$ BEGIN CREATE PUBLICATION supabase_realtime; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+      CREATE SCHEMA IF NOT EXISTS realtime;
+      GRANT USAGE ON SCHEMA realtime TO service_role, anon, authenticated;
+    `);
+
+    // Supabase managed-schema auth stubs
+    psql(`
+      CREATE SCHEMA IF NOT EXISTS pgsodium;
+      CREATE OR REPLACE FUNCTION pgsodium.crypto_aead_det_encrypt(bytea, bytea, bytea, bytea)
+        RETURNS bytea LANGUAGE sql AS $f$ SELECT $1; $f$;
+      CREATE OR REPLACE FUNCTION pgsodium.crypto_aead_det_decrypt(bytea, bytea, bytea, bytea)
+        RETURNS bytea LANGUAGE sql AS $f$ SELECT $1; $f$;
+      GRANT USAGE ON SCHEMA pgsodium TO service_role;
+    `);
+
+    psql(`
+      CREATE SCHEMA IF NOT EXISTS vault;
+      CREATE TABLE IF NOT EXISTS vault.decrypted_secrets (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        name TEXT UNIQUE, decrypted_secret TEXT,
+        description TEXT, created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      GRANT USAGE ON SCHEMA vault TO service_role;
+      GRANT SELECT ON vault.decrypted_secrets TO service_role;
+    `);
+
+    // Auth schema stub (required by M001 FK to profiles)
+    psql(`
+      CREATE SCHEMA IF NOT EXISTS "auth";
+      CREATE TABLE IF NOT EXISTS "auth".users (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        email TEXT, phone TEXT, raw_user_meta_data JSONB DEFAULT '{}',
+        raw_app_meta_data JSONB DEFAULT '{}'
+      );
+      CREATE OR REPLACE FUNCTION "auth".uid() RETURNS UUID LANGUAGE sql STABLE AS $f$ SELECT NULL::UUID; $f$;
+      CREATE OR REPLACE FUNCTION "auth".role() RETURNS TEXT LANGUAGE sql STABLE AS $f$ SELECT current_user::TEXT; $f$;
+      CREATE OR REPLACE FUNCTION "auth".email() RETURNS TEXT LANGUAGE sql STABLE AS $f$ SELECT NULL::TEXT; $f$;
+      GRANT USAGE ON SCHEMA "auth" TO service_role, anon, authenticated;
+      GRANT SELECT ON "auth".users TO service_role, anon, authenticated;
+    `);
+
+    // Apply M001-M377 (canonical production baseline)
     const files = getMigrationFiles();
-
-    // Phase 1: Apply M001–M377 (canonical baseline)
-    const baseline = files.filter(f => {
-      const num = parseInt(f.split('_')[0]);
-      return num >= 1 && num <= 377;
-    });
+    const baseline = files.filter(f => migNum(f) >= 1 && migNum(f) <= 377);
     for (const f of baseline) {
-      try {
-        const sql = readFileSync(`supabase/migrations/${f}`, 'utf-8');
-        psql(sql);
-      } catch {
-        // Non-fatal: early migrations may reference Supabase-managed
-        // infrastructure (schemas, extensions, publications) not present
-        // in a standalone PostgreSQL test database. These are expected
-        // and do not affect the gap reconciliation proof.
-      }
+      applyMigration(f);
     }
 
-    // Phase 2: Apply M382 out-of-order (skip M378–M381)
+    // Apply M382 out-of-order (matching production: M378-M381 absent, M382 present)
     const m382 = files.find(f => f.startsWith('382_'));
-    if (m382) {
-      const sql = readFileSync(`supabase/migrations/${m382}`, 'utf-8');
-      psql(sql);
-    }
-  }, 300000); // 5 min timeout for full migration chain
+    if (m382) applyMigration(m382);
+  }, 600000); // 10 min timeout for full chain
 
   afterAll(() => {
-    // No cleanup needed — test DB is disposable
+    // Disposable DB — no cleanup needed
   });
 
-  it('GAP-01: M382 is present before reconciliation (flow_execution_summaries exists)', () => {
-    const exists = psql(`SELECT EXISTS (SELECT 1 FROM pg_class WHERE relname = 'flow_execution_summaries');`);
-    expect(exists).toBe('t');
+  // ── Pre-reconciliation state verification ──
+
+  it('PRE-01: M367-M377 effective objects present (message_send_attempts from M367)', () => {
+    expect(psql(`SELECT EXISTS (SELECT 1 FROM pg_class WHERE relname = 'message_send_attempts');`)).toBe('t');
   });
 
-  it('GAP-02: M378 objects are absent before reconciliation', () => {
-    const exists = psql(`SELECT EXISTS (SELECT 1 FROM pg_class WHERE relname = 'subscription_checkout_intents');`);
-    expect(exists).toBe('f');
+  it('PRE-02: M378 objects absent (subscription_checkout_intents)', () => {
+    expect(psql(`SELECT EXISTS (SELECT 1 FROM pg_class WHERE relname = 'subscription_checkout_intents');`)).toBe('f');
   });
 
-  it('GAP-03: Apply M378 successfully', () => {
-    const sql = readFileSync('supabase/migrations/378_provider_neutral_subscriptions.sql', 'utf-8');
-    psql(sql);
-    const exists = psql(`SELECT EXISTS (SELECT 1 FROM pg_class WHERE relname = 'subscription_checkout_intents');`);
-    expect(exists).toBe('t');
+  it('PRE-03: M379 objects absent (CAS claim_checkout_initialization)', () => {
+    // M378's initial version should not exist either
+    const body = psql(`SELECT COALESCE(prosrc, '') FROM pg_proc WHERE proname = 'claim_checkout_initialization' LIMIT 1;`);
+    expect(body).not.toContain('config_version_conflict');
   });
 
-  it('GAP-04: Apply M379 successfully (depends on M378)', () => {
-    const sql = readFileSync('supabase/migrations/379_claim_cas_enforcement.sql', 'utf-8');
-    psql(sql);
-    const exists = psql(`SELECT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'claim_checkout_initialization');`);
-    expect(exists).toBe('t');
+  it('PRE-04: M380 objects absent (subscription_reconciliation_evidence)', () => {
+    expect(psql(`SELECT EXISTS (SELECT 1 FROM pg_class WHERE relname = 'subscription_reconciliation_evidence');`)).toBe('f');
   });
 
-  it('GAP-05: Apply M380 successfully (depends on M378)', () => {
-    const sql = readFileSync('supabase/migrations/380_reconciliation_authority.sql', 'utf-8');
-    psql(sql);
-    const exists = psql(`SELECT EXISTS (SELECT 1 FROM pg_class WHERE relname = 'subscription_reconciliation_evidence');`);
-    expect(exists).toBe('t');
+  it('PRE-05: M381 cron RPCs absent', () => {
+    expect(psql(`SELECT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'claim_stale_checkout_batch');`)).toBe('f');
+    expect(psql(`SELECT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'claim_active_subscriptions_for_cancellation_check');`)).toBe('f');
   });
 
-  it('GAP-06: Apply M381 successfully (depends on M378+M380)', () => {
-    const sql = readFileSync('supabase/migrations/381_reconciliation_cron_support.sql', 'utf-8');
-    psql(sql);
-    // Verify the two missing cron RPCs now exist
-    const stale = psql(`SELECT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'claim_stale_checkout_batch');`);
-    expect(stale).toBe('t');
-    const cancel = psql(`SELECT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'claim_active_subscriptions_for_cancellation_check');`);
-    expect(cancel).toBe('t');
+  it('PRE-06: M382 present (flow_execution_summaries)', () => {
+    expect(psql(`SELECT EXISTS (SELECT 1 FROM pg_class WHERE relname = 'flow_execution_summaries');`)).toBe('t');
   });
 
-  it('GAP-07: M382 still undisturbed after M378–M381', () => {
-    const exists = psql(`SELECT EXISTS (SELECT 1 FROM pg_class WHERE relname = 'flow_execution_summaries');`);
-    expect(exists).toBe('t');
+  it('PRE-07: M383-M388 objects absent', () => {
+    expect(psql(`SELECT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'cancel_order_immediate');`)).toBe('f');
+    expect(psql(`SELECT EXISTS (SELECT 1 FROM pg_class WHERE relname = 'payment_terminal_manifests');`)).toBe('f');
+    expect(psql(`SELECT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'initialize_terminal_effects');`)).toBe('f');
   });
 
-  it('GAP-08: Apply M383 successfully (independent of M378–M382)', () => {
-    const sql = readFileSync('supabase/migrations/383_entity_commit_revalidation.sql', 'utf-8');
-    psql(sql);
-    // Verify new atomic RPC signatures
-    const orderRpc = psql(`SELECT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'create_order_atomic');`);
-    expect(orderRpc).toBe('t');
+  // ── Reconciliation application ──
+
+  it('RECON-01: Apply M378', () => {
+    applyMigration('378_provider_neutral_subscriptions.sql');
+    expect(psql(`SELECT EXISTS (SELECT 1 FROM pg_class WHERE relname = 'subscription_checkout_intents');`)).toBe('t');
+    expect(psql(`SELECT EXISTS (SELECT 1 FROM pg_class WHERE relname = 'subscription_payment_quarantine');`)).toBe('t');
   });
 
-  it('GAP-09: Apply M384 successfully (terminal effect tables)', () => {
-    const sql = readFileSync('supabase/migrations/384_terminal_effect_tables.sql', 'utf-8');
-    psql(sql);
-    const manifests = psql(`SELECT EXISTS (SELECT 1 FROM pg_class WHERE relname = 'payment_terminal_manifests');`);
-    expect(manifests).toBe('t');
-    const effects = psql(`SELECT EXISTS (SELECT 1 FROM pg_class WHERE relname = 'payment_terminal_effects');`);
-    expect(effects).toBe('t');
+  it('RECON-02: Apply M379 (depends on M378)', () => {
+    applyMigration('379_claim_cas_enforcement.sql');
+    const body = psql(`SELECT prosrc FROM pg_proc WHERE proname = 'claim_checkout_initialization' LIMIT 1;`);
+    expect(body).toContain('config_version_conflict');
   });
 
-  it('GAP-10: Apply M385 successfully (manifest RPCs)', () => {
-    const sql = readFileSync('supabase/migrations/385_terminal_effect_manifest_rpcs.sql', 'utf-8');
-    psql(sql);
-    const init = psql(`SELECT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'initialize_terminal_effects');`);
-    expect(init).toBe('t');
+  it('RECON-03: Apply M380 (depends on M378)', () => {
+    applyMigration('380_reconciliation_authority.sql');
+    expect(psql(`SELECT EXISTS (SELECT 1 FROM pg_class WHERE relname = 'subscription_reconciliation_evidence');`)).toBe('t');
   });
 
-  it('GAP-11: Apply M386 successfully (lifecycle RPCs)', () => {
-    const sql = readFileSync('supabase/migrations/386_terminal_effect_lifecycle_rpcs.sql', 'utf-8');
-    psql(sql);
-    const emission = psql(`SELECT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'begin_terminal_external_emission');`);
-    expect(emission).toBe('t');
+  it('RECON-04: Apply M381 (depends on M378+M380)', () => {
+    applyMigration('381_reconciliation_cron_support.sql');
+    expect(psql(`SELECT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'claim_stale_checkout_batch');`)).toBe('t');
+    expect(psql(`SELECT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'claim_active_subscriptions_for_cancellation_check');`)).toBe('t');
+    expect(psql(`SELECT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'claim_overdue_subscription_batch');`)).toBe('t');
+    expect(psql(`SELECT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'expire_subscription_with_authority');`)).toBe('t');
   });
 
-  it('GAP-12: Apply M387 successfully (application RPCs)', () => {
-    const sql = readFileSync('supabase/migrations/387_terminal_application_rpcs.sql', 'utf-8');
-    psql(sql);
-    const loyalty = psql(`SELECT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'apply_payment_loyalty_once');`);
-    expect(loyalty).toBe('t');
+  it('RECON-05: M382 undisturbed after M378-M381', () => {
+    expect(psql(`SELECT EXISTS (SELECT 1 FROM pg_class WHERE relname = 'flow_execution_summaries');`)).toBe('t');
   });
 
-  it('GAP-13: Apply M388 successfully (confirmation guards — Phase-A activation)', () => {
-    const sql = readFileSync('supabase/migrations/388_terminal_effect_confirmation_guards.sql', 'utf-8');
-    psql(sql);
-    // Verify claim_payment_confirmation now returns payment_authority_version
-    // (check the function body contains the column name)
-    const body = psql(`SELECT prosrc FROM pg_proc WHERE proname = 'claim_payment_confirmation';`);
+  it('RECON-06: Apply M383 (entity commit revalidation)', () => {
+    applyMigration('383_entity_commit_revalidation.sql');
+    // New columns
+    expect(psql(`SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'orders' AND column_name = 'items_fingerprint');`)).toBe('t');
+    expect(psql(`SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'quote_requests' AND column_name = 'snapshot_version');`)).toBe('t');
+    // Trigger
+    expect(psql(`SELECT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_snapshot_version_guard');`)).toBe('t');
+    // New RPC signatures exist
+    expect(psql(`SELECT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'cancel_order_immediate');`)).toBe('t');
+    expect(psql(`SELECT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'create_payment_booking_atomic');`)).toBe('t');
+    expect(psql(`SELECT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'create_reservation_atomic');`)).toBe('t');
+    // Stale overloads absent (M383 drops old signatures and asserts exactly 1)
+    const orderCount = psql(`SELECT COUNT(*) FROM pg_proc WHERE proname = 'create_order_atomic';`);
+    expect(parseInt(orderCount)).toBe(1);
+    const bookCount = psql(`SELECT COUNT(*) FROM pg_proc WHERE proname = 'book_slot_atomic';`);
+    expect(parseInt(bookCount)).toBe(1);
+    const ticketCount = psql(`SELECT COUNT(*) FROM pg_proc WHERE proname = 'purchase_tickets_atomic';`);
+    expect(parseInt(ticketCount)).toBe(1);
+  });
+
+  it('RECON-07: Apply M384 (terminal effect tables)', () => {
+    applyMigration('384_terminal_effect_tables.sql');
+    for (const t of ['payment_terminal_manifests', 'payment_terminal_effects', 'payment_loyalty_applications',
+      'payment_receipt_applications', 'payment_visit_applications', 'payment_rule_action_manifests', 'payment_rule_action_executions']) {
+      expect(psql(`SELECT EXISTS (SELECT 1 FROM pg_class WHERE relname = '${t}');`)).toBe('t');
+    }
+  });
+
+  it('RECON-08: Apply M385 (manifest RPCs)', () => {
+    applyMigration('385_terminal_effect_manifest_rpcs.sql');
+    for (const f of ['initialize_terminal_effects', 'reserve_terminal_effect', 'terminate_payment_confirmation', 'seal_payment_rule_actions']) {
+      expect(psql(`SELECT EXISTS (SELECT 1 FROM pg_proc WHERE proname = '${f}');`)).toBe('t');
+    }
+  });
+
+  it('RECON-09: Apply M386 (lifecycle RPCs)', () => {
+    applyMigration('386_terminal_effect_lifecycle_rpcs.sql');
+    for (const f of ['begin_terminal_external_emission', 'complete_internal_effect', 'complete_external_effect',
+      'fail_external_effect', 'mark_effect_indeterminate', 'skip_optional_effect', 'advance_rule_action']) {
+      expect(psql(`SELECT EXISTS (SELECT 1 FROM pg_proc WHERE proname = '${f}');`)).toBe('t');
+    }
+  });
+
+  it('RECON-10: Apply M387 (application RPCs)', () => {
+    applyMigration('387_terminal_application_rpcs.sql');
+    expect(psql(`SELECT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'apply_payment_loyalty_once');`)).toBe('t');
+    expect(psql(`SELECT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'apply_payment_customer_visit_once');`)).toBe('t');
+  });
+
+  it('RECON-11: Apply M388 (Phase-A activation — confirmation guards)', () => {
+    applyMigration('388_terminal_effect_confirmation_guards.sql');
+    // claim_payment_confirmation now returns payment_authority_version
+    const body = psql(`SELECT prosrc FROM pg_proc WHERE proname = 'claim_payment_confirmation' LIMIT 1;`);
     expect(body).toContain('payment_authority_version');
+    // Terminal predicate guard present
+    expect(body).toContain('confirmation_terminal_reason');
+    expect(body).toContain('already_terminated');
   });
 
-  it('GAP-14: All postconditions hold after full reconciliation', () => {
+  // ── Final postcondition verification ──
+
+  it('POST-01: All postconditions hold after full reconciliation', () => {
     // M381 cron RPCs
     expect(psql(`SELECT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'claim_stale_checkout_batch');`)).toBe('t');
     expect(psql(`SELECT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'claim_active_subscriptions_for_cancellation_check');`)).toBe('t');
 
-    // M384 tables
-    expect(psql(`SELECT EXISTS (SELECT 1 FROM pg_class WHERE relname = 'payment_terminal_manifests');`)).toBe('t');
-    expect(psql(`SELECT EXISTS (SELECT 1 FROM pg_class WHERE relname = 'payment_terminal_effects');`)).toBe('t');
-    expect(psql(`SELECT EXISTS (SELECT 1 FROM pg_class WHERE relname = 'payment_loyalty_applications');`)).toBe('t');
-
-    // M385–M387 RPCs
-    expect(psql(`SELECT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'initialize_terminal_effects');`)).toBe('t');
-    expect(psql(`SELECT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'reserve_terminal_effect');`)).toBe('t');
-    expect(psql(`SELECT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'terminate_payment_confirmation');`)).toBe('t');
-    expect(psql(`SELECT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'seal_payment_rule_actions');`)).toBe('t');
-    expect(psql(`SELECT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'apply_payment_loyalty_once');`)).toBe('t');
-    expect(psql(`SELECT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'apply_payment_customer_visit_once');`)).toBe('t');
-    expect(psql(`SELECT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'advance_rule_action');`)).toBe('t');
-
-    // M382 still intact
+    // M382 undisturbed
     expect(psql(`SELECT EXISTS (SELECT 1 FROM pg_class WHERE relname = 'flow_execution_summaries');`)).toBe('t');
 
-    // M383 new signatures
-    expect(psql(`SELECT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'create_order_atomic');`)).toBe('t');
-    expect(psql(`SELECT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'cancel_order_immediate');`)).toBe('t');
+    // M383 exact new signatures (exactly 1 overload each)
+    expect(psql(`SELECT COUNT(*) FROM pg_proc WHERE proname = 'create_order_atomic';`)).toBe('1');
+    expect(psql(`SELECT COUNT(*) FROM pg_proc WHERE proname = 'book_slot_atomic';`)).toBe('1');
+    expect(psql(`SELECT COUNT(*) FROM pg_proc WHERE proname = 'purchase_tickets_atomic';`)).toBe('1');
+
+    // M384 tables
+    for (const t of ['payment_terminal_manifests', 'payment_terminal_effects', 'payment_loyalty_applications',
+      'payment_receipt_applications', 'payment_visit_applications', 'payment_rule_action_manifests', 'payment_rule_action_executions']) {
+      expect(psql(`SELECT EXISTS (SELECT 1 FROM pg_class WHERE relname = '${t}');`)).toBe('t');
+    }
+
+    // M385-M387 RPCs
+    for (const f of ['initialize_terminal_effects', 'reserve_terminal_effect', 'terminate_payment_confirmation',
+      'seal_payment_rule_actions', 'begin_terminal_external_emission', 'complete_internal_effect',
+      'complete_external_effect', 'fail_external_effect', 'mark_effect_indeterminate', 'skip_optional_effect',
+      'advance_rule_action', 'apply_payment_loyalty_once', 'apply_payment_customer_visit_once']) {
+      expect(psql(`SELECT EXISTS (SELECT 1 FROM pg_proc WHERE proname = '${f}');`)).toBe('t');
+    }
+
+    // M388 claim RPC returns authoritative payment_authority_version
+    const claimBody = psql(`SELECT prosrc FROM pg_proc WHERE proname = 'claim_payment_confirmation' LIMIT 1;`);
+    expect(claimBody).toContain('payment_authority_version');
   });
 });

@@ -753,6 +753,36 @@ jobs:
           if ! echo "$OUTPUT" | grep -q "passed"; then echo "❌ No terminal rule-seal DB tests passed."; exit 1; fi
           echo "✅ Terminal rule-seal DB tests complete — zero skips, zero failures."
 
+      - name: Production-shaped migration gap reconciliation proof
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+        timeout-minutes: 15
+        run: |
+          set -e
+          dropdb --maintenance-db=waaiio_test --if-exists waaiio_gap_recon_test
+          createdb --maintenance-db=waaiio_test waaiio_gap_recon_test
+          cleanup() { dropdb --maintenance-db=waaiio_test --if-exists waaiio_gap_recon_test; }
+          trap cleanup EXIT
+          export TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/waaiio_gap_recon_test
+          echo "Running production-shaped migration gap reconciliation proof..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/p0-migration-gap-reconciliation.test.ts 2>&1)
+          TEST_EXIT=$?
+          set -e
+          echo "$OUTPUT"
+          if [ "$TEST_EXIT" -ne 0 ]; then echo "❌ Migration gap reconciliation proof failed."; exit "$TEST_EXIT"; fi
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ Migration gap reconciliation had $SKIP_COUNT skipped. All must execute."; exit 1
+            fi
+          fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then echo "❌ No migration gap tests passed."; exit 1; fi
+          echo "✅ Migration gap reconciliation proof complete — zero skips, zero failures."
+
       - name: Package redemption database tests
         env:
           PGHOST: localhost
