@@ -179,7 +179,7 @@ describe('(1) BYO credential lookup throws', () => {
 
     expect(result).toBeNull();
     expect(mockGatewayInitialize).not.toHaveBeenCalled();
-    assertLoggerOp('payment.routing-authority-threw');
+    assertLoggerOp('payment.credential-classification');
   });
 });
 
@@ -198,7 +198,7 @@ describe('(2) BYO credential lookup returns {error}', () => {
 
     expect(result).toBeNull();
     expect(mockGatewayInitialize).not.toHaveBeenCalled();
-    assertLoggerOp('payment.byo-credential-lookup');
+    assertLoggerOp('payment.credential-classification');
   });
 });
 
@@ -349,6 +349,7 @@ describe('(4) Payout authority', () => {
 
     expect(result).toBeNull();
     expect(mockGatewayInitialize).not.toHaveBeenCalled();
+    // Payout lookup throws AFTER credential classification succeeds — caught by outer try/catch
     assertLoggerOp('payment.routing-authority-threw');
   });
 });
@@ -428,7 +429,7 @@ describe('(6) Cross-capability shared boundary', () => {
 
     expect(result).toBeNull();
     expect(mockGatewayInitialize).toHaveBeenCalledTimes(0);
-    assertLoggerOp('payment.byo-credential-lookup');
+    assertLoggerOp('payment.credential-classification');
   });
 
   it('(6b) ordering transactionCategory: same boundary, BYO error → fail closed', async () => {
@@ -446,7 +447,7 @@ describe('(6) Cross-capability shared boundary', () => {
 
     expect(result).toBeNull();
     expect(mockGatewayInitialize).toHaveBeenCalledTimes(0);
-    assertLoggerOp('payment.byo-credential-lookup');
+    assertLoggerOp('payment.credential-classification');
   });
 });
 

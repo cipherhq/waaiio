@@ -575,33 +575,57 @@ export async function sendProactiveConfirmation(
   }
 
   // Show "save card" tip only for Paystack + first payment or new card (not on every confirmation)
-  let showSaveCardTip = false;
+  let saveCardOffer: { type: 'save'; cardLabel: string; paymentId: string } | { type: 'replace'; oldLabel: string; newLabel: string; paymentId: string; methodId: string } | null = null;
   if (businessId) {
+    // G4/G5/G6: Post-payment Save/Replace offer with full eligibility checks
     const { data: paymentGw } = await supabase.from('payments').select('gateway, metadata').eq('id', payment.id).single();
     if (paymentGw?.gateway === 'paystack' && customerPhone) {
-      const phoneP = customerPhone.startsWith('+') ? customerPhone : `+${customerPhone}`;
-      // Check if customer already has a saved card for this business
-      const { data: existingSaved } = await supabase
-        .from('saved_payment_methods')
-        .select('id, card_last4')
-        .in('customer_phone', [phoneP, stripPlus(phoneP)])
-        .eq('is_active', true)
-        .eq('gateway', 'paystack')
-        .maybeSingle();
+      const { canonicalSavedCardPhone, isSharedPlatformPaystackCompatible } = await import('@/lib/payments/saved-card-compat');
+      const canonPhone = canonicalSavedCardPhone(customerPhone);
+      const payMeta = (paymentGw.metadata || {}) as Record<string, unknown>;
+      const auth = payMeta._card_authorization as Record<string, unknown> | undefined;
 
-      if (!existingSaved) {
-        // No saved card — check if this is their first payment or a new card
-        const auth = (paymentGw.metadata as Record<string, unknown>)?._card_authorization as Record<string, unknown> | undefined;
-        if (auth?.reusable) {
-          showSaveCardTip = true;
+      // Full eligibility: platform origin, reusable, auth code + email, canonical phone, compatible business
+      if (canonPhone && auth?.reusable === true && auth?.authorization_code && auth?.email
+          && payMeta.payment_origin === 'platform' && businessId) {
+        const compat = await isSharedPlatformPaystackCompatible(supabase, businessId);
+        if (compat.compatible) {
+          const phoneN = stripPlus(canonPhone);
+          const { data: existingSaved } = await supabase
+            .from('saved_payment_methods')
+            .select('id, card_last4, authorization_code')
+            .in('customer_phone', [canonPhone, phoneN])
+            .eq('is_active', true)
+            .eq('gateway', 'paystack')
+            .maybeSingle();
+
+          if (!existingSaved) {
+            // No saved card → Save Card offer
+            const cardLabel = `${((auth.brand as string) || 'Card').toUpperCase()} ****${(auth.last4 as string) || '????'}`;
+            saveCardOffer = { type: 'save' as const, cardLabel, paymentId: payment.id };
+          } else if (existingSaved.authorization_code !== (auth.authorization_code as string)) {
+            // Different card → Replace Card offer
+            const oldLabel = `****${existingSaved.card_last4 || '????'}`;
+            const newLabel = `${((auth.brand as string) || 'Card').toUpperCase()} ****${(auth.last4 as string) || '????'}`;
+            saveCardOffer = { type: 'replace' as const, oldLabel, newLabel, paymentId: payment.id, methodId: existingSaved.id };
+          }
+          // Same authorization → no offer (correct)
         }
       }
     }
   }
 
-  if (showSaveCardTip) {
-    lines.push('');
-    lines.push('💳 Type *save card* to save this card for faster checkout next time');
+  // Post-payment Save/Replace Card offer (G4/G5)
+  if (saveCardOffer) {
+    if (saveCardOffer.type === 'save') {
+      lines.push('');
+      lines.push(`💳 Save *${saveCardOffer.cardLabel}* for faster checkout next time?`);
+      lines.push('Type *save card* to save, or ignore to skip.');
+    } else if (saveCardOffer.type === 'replace') {
+      lines.push('');
+      lines.push(`💳 Replace saved card ${saveCardOffer.oldLabel} with *${saveCardOffer.newLabel}*?`);
+      lines.push('Type *save card* to replace, or ignore to keep your current card.');
+    }
   }
 
   // ── 5. Resolve channel + send (protected by checkpoint 1 above) ──
