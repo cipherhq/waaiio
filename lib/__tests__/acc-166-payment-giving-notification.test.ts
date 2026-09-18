@@ -68,6 +68,7 @@ vi.mock('@/lib/errors', () => ({ safeLogErrorContext: vi.fn().mockReturnValue({}
 vi.mock('@/lib/channels/channel-resolver', () => ({
   ChannelResolver: class {
     resolveByChannelId(...args: unknown[]) { return mockResolveByChannel(...args); }
+    resolveByChannelIdForBusiness(...args: unknown[]) { return mockResolveByChannel(...args); }
     resolveByBusinessId(...args: unknown[]) { return mockResolveByBiz(...args); }
   },
 }));

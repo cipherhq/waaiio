@@ -34,6 +34,7 @@ const mockSender = { sendText: mockSendText, sendDocument: vi.fn(), sendImage: v
 vi.mock('@/lib/channels/channel-resolver', () => ({
   ChannelResolver: class {
     resolveByChannelId(...args: unknown[]) { return mockResolveByChannel(...args); }
+    resolveByChannelIdForBusiness(...args: unknown[]) { return mockResolveByChannel(...args); }
     resolveByBusinessId(...args: unknown[]) { return mockResolveByBiz(...args); }
   },
 }));

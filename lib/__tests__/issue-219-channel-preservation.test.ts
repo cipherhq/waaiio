@@ -39,6 +39,7 @@ vi.mock('@/lib/bot/flows/shared/payment', () => ({ initializePayment: vi.fn().mo
 vi.mock('@/lib/channels/channel-resolver', () => ({
   ChannelResolver: class {
     resolveByChannelId = mockResolveByChannelId;
+    resolveByChannelIdForBusiness = mockResolveByChannelId; // uses same mock — tests verify the channel ID arg
     resolveByBusinessId = mockResolveByBusinessId;
   },
 }));
@@ -309,8 +310,8 @@ describe('#219 sendProactiveConfirmation channel resolution', () => {
       campaign_id: null,
     });
 
-    // resolveByChannelId should be called with the persisted channel ID
-    expect(mockResolveByChannelId).toHaveBeenCalledWith(channelId);
+    // resolveByChannelIdForBusiness should be called with the persisted channel ID + business ID
+    expect(mockResolveByChannelId).toHaveBeenCalledWith(channelId, expect.any(String));
     // resolveByBusinessId should NOT be called (origin channel resolved successfully)
     expect(mockResolveByBusinessId).not.toHaveBeenCalled();
   });
