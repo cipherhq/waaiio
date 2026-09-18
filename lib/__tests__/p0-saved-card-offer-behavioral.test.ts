@@ -239,7 +239,13 @@ describe('K10: Saved-card offer behavioral tests', () => {
     const supabase = buildMockSupabase({ existingMethods: [] });
     const session = { id: 'sess-1', business_id: BIZ_ID, session_data: {}, version: 1 };
     const { handleSavedCardOfferAction } = await import('@/lib/payments/saved-card-offer');
-    await handleSavedCardOfferAction(supabase as any, sendText, PHONE, session as any, 'save_accept', PAY_ID);
+    const bindBusiness = vi.fn();
+    await handleSavedCardOfferAction(
+      supabase as any, sendText, PHONE, session as any, 'save_accept', PAY_ID, bindBusiness,
+    );
+
+    // Shared-channel sender is bound only after exact payment/customer authority.
+    expect(bindBusiness).toHaveBeenCalledWith(BIZ_ID);
 
     // Accept RPC called
     expect(supabase.rpc).toHaveBeenCalledWith('accept_saved_card_offer', expect.objectContaining({
@@ -260,7 +266,13 @@ describe('K10: Saved-card offer behavioral tests', () => {
     const supabase = buildMockSupabase({ existingMethods: [EXISTING_METHOD] });
     const session = { id: 'sess-1', business_id: BIZ_ID, session_data: {}, version: 1 };
     const { handleSavedCardOfferAction } = await import('@/lib/payments/saved-card-offer');
-    await handleSavedCardOfferAction(supabase as any, sendText, PHONE, session as any, 'replace_accept', PAY_ID);
+    const bindBusiness = vi.fn();
+    await handleSavedCardOfferAction(
+      supabase as any, sendText, PHONE, session as any, 'replace_accept', PAY_ID, bindBusiness,
+    );
+
+    // Shared-channel sender is bound to the exact source-payment business.
+    expect(bindBusiness).toHaveBeenCalledWith(BIZ_ID);
 
     // Accept RPC called with replace type
     expect(supabase.rpc).toHaveBeenCalledWith('accept_saved_card_offer', expect.objectContaining({
