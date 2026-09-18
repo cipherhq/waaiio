@@ -90,18 +90,17 @@ export class StripeGateway implements PaymentGateway {
         'metadata[channel]': 'whatsapp',
         client_reference_id: opts.referenceCode,
       };
-      // Phone-first Stripe checkout: deterministic alias when canonical phone exists.
-      // Stripe saved-payment authority uses Customer ID, not email — so invalid phone
-      // does not need to fail closed for Stripe (unlike Paystack where email is critical).
+      // F3: Phone-first Stripe checkout — invalid phone fails closed.
       if (opts.phone) {
         const { internalPaymentEmailAlias, canonicalSavedCardPhone } = await import('./saved-card-compat');
         const canonical = canonicalSavedCardPhone(opts.phone);
-        if (canonical) {
-          sessionParams.customer_email = internalPaymentEmailAlias(canonical);
-        } else if (opts.userEmail) {
-          sessionParams.customer_email = opts.userEmail;
+        if (!canonical) {
+          logger.error('[STRIPE] Invalid phone for phone-first checkout — fail closed');
+          return null;
         }
+        sessionParams.customer_email = internalPaymentEmailAlias(canonical);
       } else if (opts.userEmail) {
+        // Genuinely non-phone flow (no phone available)
         sessionParams.customer_email = opts.userEmail;
       }
 

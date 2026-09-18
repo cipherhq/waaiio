@@ -976,10 +976,24 @@ export class BotService {
       }
     }
 
+    // ── F4: PIN step precedence — must run BEFORE save card command interceptor ──
+    // If the customer is currently in a security-sensitive PIN step, route there
+    // BEFORE evaluating global save/remove commands to prevent hijacking.
+    const _pinStep = session?.current_step;
+    if (_pinStep === 'save_card_pin' || _pinStep === 'verify_card_pin') {
+      await _handleCardPinStep(this.supabase, this.sendText.bind(this), from, session!, text);
+      return;
+    }
+    if (_pinStep === 'replace_card_pin') {
+      const { handleReplacementPinStep } = await import('./handlers/saved-cards');
+      await handleReplacementPinStep(this.supabase, this.sendText.bind(this), from, session!, text);
+      return;
+    }
+
     // ── First-class saved-card commands ──
     // Must run BEFORE no-session/new-session greeting path and before keyword routing.
     // Works with session === null (handleSaveCard derives business from recent payment).
-    // PIN steps already handled above and take precedence.
+    // PIN steps handled above and take precedence.
     // A business keyword named "save card" cannot override this system command.
     const _scTrimmed = text.trim();
     if (/^save\s+(my\s+)?card$/i.test(_scTrimmed)) {

@@ -192,12 +192,14 @@ export async function handleSaveCard(
     return;
   }
 
-  // ── FIRST-TIME SAVE (unchanged) ──
+  // ── FIRST-TIME SAVE ──
+  // F6: Store payment ID for durable re-read at PIN completion
   const saveData = {
     _save_card_pending: true,
     _save_card_business_id: businessId,
     _save_card_gateway: payment.gateway || 'paystack',
     _save_card_auth: auth,
+    _save_card_payment_id: payment.id,
   };
 
   if (session) {
@@ -409,6 +411,28 @@ export async function handleCardPinStep(
     return;
   }
   const phoneN = phoneP.slice(1);
+
+  // F6: Re-read durable source payment at PIN completion (don't trust session cache alone)
+  const paymentId = d._save_card_payment_id as string | undefined;
+  if (paymentId) {
+    const { data: sourcePayment } = await supabase.from('payments')
+      .select('id, status, gateway, metadata')
+      .eq('id', paymentId).eq('status', 'success').eq('gateway', 'paystack').maybeSingle();
+    if (!sourcePayment) {
+      await sendText(from, 'The payment is no longer available. Please type *save card* again.');
+      return;
+    }
+    const freshMeta = (sourcePayment.metadata || {}) as Record<string, unknown>;
+    if (freshMeta.payment_origin !== 'platform') {
+      await sendText(from, 'This payment cannot be used to save a card.');
+      return;
+    }
+    const freshAuth = freshMeta._card_authorization as Record<string, unknown> | undefined;
+    if (!freshAuth?.authorization_code || !freshAuth?.email || freshAuth?.reusable !== true) {
+      await sendText(from, 'Card authorization is no longer valid. Please type *save card* again.');
+      return;
+    }
+  }
 
   if (!auth?.authorization_code || !businessId) {
     // 1. Execute CAS first — before sending anything
@@ -676,8 +700,16 @@ export async function handleReplacementPinStep(
     return;
   }
 
-  // R5: Re-resolve shared-platform compatibility before credential UPDATE
-  if (businessId) {
+  // F7+R5: Require businessId and re-resolve compatibility before credential UPDATE
+  if (!businessId) {
+    await sendText(from, 'Could not determine the business. Please try again.');
+    await supabase.rpc('update_session_cas', {
+      p_session_id: session.id, p_expected_version: session.version ?? 0,
+      p_current_step: 'select_capability', p_session_data: {},
+    });
+    return;
+  }
+  {
     const { isSharedPlatformPaystackCompatible } = await import('@/lib/payments/saved-card-compat');
     const compat = await isSharedPlatformPaystackCompatible(supabase, businessId);
     if (!compat.compatible) {
