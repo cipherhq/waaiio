@@ -97,8 +97,11 @@ describe.skipIf(!canRun)('M389: Global saved card migration', () => {
 
       INSERT INTO saved_payment_methods
         (id, business_id, customer_phone, gateway, is_active)
-      VALUES ('${SPM_1}', '${BIZ}', '${PHONE}', 'paystack', false)
-        ON CONFLICT (id) DO NOTHING;
+      VALUES
+        ('${SPM_1}', '${BIZ}', '${PHONE}', 'paystack', false),
+        -- E8: Pre-existing ACTIVE row — M389 should deactivate it
+        ('00000000-0000-0000-0389-0000000d0002', '${BIZ}', '${PHONE2}', 'paystack', true)
+      ON CONFLICT (id) DO NOTHING;
     `);
 
     // Apply M389
@@ -131,6 +134,15 @@ describe.skipIf(!canRun)('M389: Global saved card migration', () => {
       WHERE table_schema = 'public' AND table_name = 'payment_saved_card_offers';
     `);
     expect(exists).toBe('1');
+  });
+
+  // E8: Pre-existing active rows deactivated by M389
+  it('E8-01: pre-existing ACTIVE saved card becomes inactive after M389', () => {
+    const isActive = psql(`
+      SELECT is_active FROM saved_payment_methods
+      WHERE id = '00000000-0000-0000-0389-0000000d0002';
+    `);
+    expect(isActive).toBe('f');
   });
 
   // ─── SECTION 2: TABLE STRUCTURE ──────────────────────────────────────────

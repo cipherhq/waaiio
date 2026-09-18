@@ -21,50 +21,8 @@ export async function handleSaveCard(
     await sendText(from, 'Invalid phone number. Cannot save card.');
     return;
   }
-  const phoneN = phoneP.slice(1);
-
-  // ── LOCATOR: find the most recent eligible payment ID ──
-
-  // 1. Try booking-linked payment
-  let paymentId: string | null = null;
-
-  const { data: recentBooking } = await supabase
-    .from('bookings')
-    .select('id, business_id')
-    .or(`guest_phone.eq.${sanitizeFilterValue(phoneP)},guest_phone.eq.${sanitizeFilterValue(phoneN)}`)
-    .eq('deposit_status', 'paid')
-    .order('created_at', { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  if (recentBooking) {
-    const { data: bookingPayment } = await supabase
-      .from('payments')
-      .select('id, gateway')
-      .eq('booking_id', recentBooking.id)
-      .eq('status', 'success')
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    if (bookingPayment) paymentId = bookingPayment.id;
-  }
-
-  // 2. Try direct payment by user_id
-  if (!paymentId) {
-    const profile = await getProfile();
-    if (profile?.id) {
-      const { data: userPayment } = await supabase
-        .from('payments')
-        .select('id, gateway')
-        .eq('user_id', profile.id)
-        .eq('status', 'success')
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      if (userPayment) paymentId = userPayment.id;
-    }
-  }
-
+  // E3: Use customer-bound latest-payment locator across ALL payment families
+  const paymentId = await findLatestSavedCardPaymentIdForPhone(supabase, phoneP, getProfile);
   if (!paymentId) {
     await sendText(from, 'No recent payment found. Make a payment first, then type *save card*.');
     return;
@@ -73,6 +31,86 @@ export async function handleSaveCard(
   // D1: Delegate ALL authority/eligibility/session logic to the shared exact-payment helper
   const { startSavedCardFromPaymentId } = await import('@/lib/payments/saved-card-offer');
   await startSavedCardFromPaymentId(supabase, sendText, from, session, paymentId);
+}
+
+/**
+ * E3: Customer-bound latest-payment locator.
+ * Searches ALL payment/customer families and picks the newest by created_at.
+ * Fails closed on authority read errors (returns null rather than silently skipping).
+ */
+export async function findLatestSavedCardPaymentIdForPhone(
+  supabase: SupabaseClient,
+  canonPhone: string,
+  getProfile: () => Promise<{ id: string } | null>,
+): Promise<string | null> {
+  const phoneN = canonPhone.slice(1);
+  type Candidate = { id: string; created_at: string };
+  const candidates: Candidate[] = [];
+
+  // Helper: find newest successful payment by entity FK
+  // Returns: { candidate } | 'absent' (no entity) | 'error' (DB read failure)
+  async function findPayByEntity(
+    entityTable: string, phoneCol: string, paymentFk: string,
+  ): Promise<Candidate | 'absent' | 'error'> {
+    const { data: entity, error: entErr } = await supabase
+      .from(entityTable).select('id')
+      .or(`${phoneCol}.eq.${sanitizeFilterValue(canonPhone)},${phoneCol}.eq.${sanitizeFilterValue(phoneN)}`)
+      .order('created_at', { ascending: false }).limit(1).maybeSingle();
+    if (entErr) { logger.warn(`[SAVE-CARD-LOCATOR] ${entityTable} read error`, entErr.message); return 'error'; }
+    if (!entity) return 'absent';
+    const { data: pay, error: payErr } = await supabase.from('payments')
+      .select('id, created_at').eq(paymentFk, entity.id).eq('status', 'success')
+      .order('created_at', { ascending: false }).limit(1).maybeSingle();
+    if (payErr) { logger.warn(`[SAVE-CARD-LOCATOR] ${entityTable} payment read error`, payErr.message); return 'error'; }
+    return pay as Candidate || 'absent';
+  }
+
+  // 1-4: Entity-linked payment families
+  const families: Array<[string, string, string]> = [
+    ['bookings', 'guest_phone', 'booking_id'],
+    ['reservations', 'guest_phone', 'reservation_id'],
+    ['invoices', 'customer_phone', 'invoice_id'],
+    ['orders', 'delivery_phone', 'order_id'],
+  ];
+
+  for (const [table, col, fk] of families) {
+    const result = await findPayByEntity(table, col, fk);
+    if (result === 'error') return null; // DB read error → fail closed
+    if (result !== 'absent') candidates.push(result);
+  }
+
+  // 5. Campaign donation donor_phone → payment
+  {
+    const { data: donation, error: donErr } = await supabase
+      .from('campaign_donations').select('payment_id')
+      .or(`donor_phone.eq.${sanitizeFilterValue(canonPhone)},donor_phone.eq.${sanitizeFilterValue(phoneN)}`)
+      .eq('status', 'success')
+      .order('created_at', { ascending: false }).limit(1).maybeSingle();
+    if (donErr) { logger.warn('[SAVE-CARD-LOCATOR] donation read error', donErr.message); return null; }
+    if (donation?.payment_id) {
+      const { data: pay, error: payErr } = await supabase.from('payments')
+        .select('id, created_at').eq('id', donation.payment_id).eq('status', 'success').maybeSingle();
+      if (payErr) { logger.warn('[SAVE-CARD-LOCATOR] donation payment read error', payErr.message); return null; }
+      if (pay) candidates.push(pay as Candidate);
+    }
+  }
+
+  // 6. Direct user_id → payment
+  {
+    const profile = await getProfile();
+    if (profile?.id) {
+      const { data: pay, error: payErr } = await supabase.from('payments')
+        .select('id, created_at').eq('user_id', profile.id).eq('status', 'success')
+        .order('created_at', { ascending: false }).limit(1).maybeSingle();
+      if (payErr) { logger.warn('[SAVE-CARD-LOCATOR] user payment read error', payErr.message); return null; }
+      if (pay) candidates.push(pay as Candidate);
+    }
+  }
+
+  if (candidates.length === 0) return null;
+  // Pick the newest by created_at
+  candidates.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+  return candidates[0].id;
 }
 
 /**

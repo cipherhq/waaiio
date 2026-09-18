@@ -18,7 +18,7 @@ import { canonicalSavedCardPhone, isSharedPlatformPaystackCompatible } from './s
  */
 async function resolvePaymentCustomerPhone(
   supabase: SupabaseClient,
-  payment: { booking_id?: string | null; reservation_id?: string | null; invoice_id?: string | null; order_id?: string | null; campaign_id?: string | null; user_id?: string | null },
+  payment: { id: string; booking_id?: string | null; reservation_id?: string | null; invoice_id?: string | null; order_id?: string | null; campaign_id?: string | null; user_id?: string | null },
 ): Promise<string | null> {
   // Entity-specific phone resolution (most specific first)
   if (payment.booking_id) {
@@ -40,6 +40,12 @@ async function resolvePaymentCustomerPhone(
     const { data, error } = await supabase.from('orders').select('delivery_phone').eq('id', payment.order_id).single();
     if (error || !data?.delivery_phone) return null;
     return canonicalSavedCardPhone(data.delivery_phone);
+  }
+  // E4: Campaign donation phone authority — look up by payment_id (same as send-confirmation.ts)
+  if (payment.campaign_id) {
+    const { data, error } = await supabase.from('campaign_donations').select('donor_phone').eq('payment_id', payment.id).single();
+    if (error || !data?.donor_phone) return null;
+    return canonicalSavedCardPhone(data.donor_phone);
   }
   // D2: user_id/profile fallback — direct payment binding
   if (payment.user_id) {
@@ -249,15 +255,33 @@ export async function handleSavedCardOfferAction(
     const { data: result, error: declineErr } = await supabase.rpc('decline_saved_card_offer', {
       p_payment_id: paymentId, p_customer_phone: canonPhone, p_expected_offer_type: expectedDeclineType,
     });
+    // E6: Explicit switch on all known RPC result codes
     if (declineErr || !result) {
       await sendText(from, 'Could not process your response. Type *save card* to try again.');
       return;
     }
-    if (result.result === 'wrong_customer') { await sendText(from, 'This offer is not for your account.'); return; }
-    if (result.result === 'wrong_type') { await sendText(from, 'Unexpected action for this offer.'); return; }
-    if (result.result === 'already_accepted') { await sendText(from, 'This offer was already accepted.'); return; }
-    // Declined, already_declined, not_found, invalid_state — no mutation, no PIN
-    return;
+    switch (result.result) {
+      case 'transitioned':
+        // Silent success — offer declined, no further action needed
+        return;
+      case 'already_declined':
+        // Idempotent — already declined, no mutation needed
+        return;
+      case 'wrong_customer':
+        await sendText(from, 'This offer is not for your account.');
+        return;
+      case 'wrong_type':
+        await sendText(from, 'Unexpected action for this offer.');
+        return;
+      case 'already_accepted':
+        await sendText(from, 'This offer was already accepted.');
+        return;
+      case 'not_found':
+      case 'invalid_state':
+      default:
+        await sendText(from, 'This offer is no longer available.');
+        return;
+    }
   }
 
   // ACCEPT path
@@ -306,8 +330,13 @@ export async function startSavedCardFromPaymentId(
     .select('id, status, gateway, metadata, business_id, booking_id, reservation_id, invoice_id, order_id, campaign_id, user_id')
     .eq('id', paymentId).single();
 
-  if (payErr || !payment || payment.status !== 'success' || payment.gateway !== 'paystack') {
+  if (payErr || !payment || payment.status !== 'success') {
     await sendText(from, 'This payment is no longer available for card saving.');
+    return;
+  }
+  // E5: Gateway-specific message so the user knows why saving is unavailable
+  if (payment.gateway !== 'paystack') {
+    await sendText(from, 'Card saving is currently available for Paystack payments only.');
     return;
   }
 

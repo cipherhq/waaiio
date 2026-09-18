@@ -551,4 +551,29 @@ describe('(7) V1 dispatched-row + idempotency', () => {
     expect(mockGatewayInitialize).not.toHaveBeenCalled();
     assertLoggerOp('payment.country-payment-config');
   });
+
+  // ═══════════════════════════════════════════════════════════════
+  // E7: K9 ambiguous credential classification → null + zero provider calls
+  // ═══════════════════════════════════════════════════════════════
+  it('(E7) ambiguous credential classification → null, zero provider calls, no payment insert', async () => {
+    // Credential with secret_key but no platform_subaccount_code and no connect_account_id
+    // → classifyBusinessPaymentCredential returns 'ambiguous'
+    const ambiguousCred = {
+      id: 'cred-ambig',
+      secret_key: 'test-byo-key-not-real',
+      platform_subaccount_code: null,
+      connect_account_id: null,
+      connection_type: null,
+    };
+    const supabase = buildSupabase({
+      business_payment_credentials: { data: ambiguousCred },
+      payments: { data: null },
+    });
+
+    const result = await initializePayment(supabase as any, BASE_OPTS);
+
+    expect(result).toBeNull();
+    expect(mockGatewayInitialize).not.toHaveBeenCalled();
+    assertLoggerOp('payment.credential-classification');
+  });
 });
