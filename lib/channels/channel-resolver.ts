@@ -267,6 +267,68 @@ export class ChannelResolver {
   }
 
   /**
+   * Resolve a channel by ID with business authorization validation.
+   *
+   * Unlike resolveByChannelId(), this method validates that the channel is
+   * authorized for the given business before returning it. This prevents a
+   * channel ID from payment metadata being used to send on a channel owned
+   * by a different business.
+   *
+   * Authorization rules:
+   * - Shared channel (channel_type='shared'): any business may use it
+   * - Dedicated channel owned by this business: authorized
+   * - Channel explicitly assigned to this business: authorized
+   * - Otherwise: rejected (returns null)
+   *
+   * The returned sender is always stamped with the authoritative businessId
+   * for correct business-scoped attempt recording.
+   */
+  async resolveByChannelIdForBusiness(
+    channelId: string,
+    authoritativeBusinessId: string,
+  ): Promise<ResolvedChannel | null> {
+    if (!channelId || !authoritativeBusinessId) return null;
+
+    const { data } = await this.supabase
+      .from('whatsapp_channels')
+      .select('*')
+      .eq('id', channelId)
+      .eq('is_active', true)
+      .maybeSingle();
+
+    if (!data) return null;
+    const channel = data as ChannelRecord;
+
+    // Authorization check
+    const isShared = channel.channel_type === 'shared';
+    const isOwnedByBusiness = channel.business_id === authoritativeBusinessId;
+
+    if (!isShared && !isOwnedByBusiness) {
+      // Check if the business explicitly references this channel
+      const { data: biz } = await this.supabase
+        .from('businesses')
+        .select('assigned_channel_id, whatsapp_channel_id')
+        .eq('id', authoritativeBusinessId)
+        .single();
+
+      const isAssigned = biz?.assigned_channel_id === channelId
+        || biz?.whatsapp_channel_id === channelId;
+
+      if (!isAssigned) {
+        // Not authorized — reject this channel
+        return null;
+      }
+    }
+
+    // Build the resolved channel and stamp the authoritative business identity
+    const resolved = this.buildResolved(channel);
+    if (resolved) {
+      this.stampBusinessId(resolved, authoritativeBusinessId);
+    }
+    return resolved;
+  }
+
+  /**
    * S-1 (#256): Stamp the authoritative requested businessId onto the sender.
    * This is separate from the channel's business_id (which is NULL for shared channels).
    * The businessId is the authorization identity for the hard-stop guard.

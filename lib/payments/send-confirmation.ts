@@ -415,7 +415,7 @@ export async function sendProactiveConfirmation(
         .order('created_at', { ascending: false }).limit(1).maybeSingle();
       inboundChId = (bizSession?.session_data as Record<string, unknown>)?._inbound_channel_id as string | undefined;
     }
-    if (inboundChId) resolved = await resolver.resolveByChannelId(inboundChId);
+    if (inboundChId) resolved = await resolver.resolveByChannelIdForBusiness(inboundChId, businessId!);
     if (!resolved && confirmationOrigin === 'whatsapp') {
       whatsappOriginMissingChannel = true;
     } else if (!resolved) {
