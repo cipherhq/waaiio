@@ -201,10 +201,22 @@ describe('F1: Real Citadel no-session integration', () => {
   it('save card → real locator → real startSavedCardFromPaymentId → PIN prompt', async () => {
     const { supabase, sessionInserts } = createCitadelSupabase();
     const cloud = createMockCloud();
-    const sender = new MetaCloudSender(cloud as any, 'ch-001', BIZ_ID);
+    // Production-shaped shared-channel sender: starts tenantless/unbound.
+    const sender = new MetaCloudSender(cloud as any, null);
+    expect(sender.boundBusinessId).toBe('');
     const bot = new BotService(supabase as any, sender, createStandaloneService(), createMockIntelligence() as any);
 
     await bot.handleMessage(PHONE, 'save card', { type: 'text' });
+
+    // Hotfix proof: exact payment authority binds Citadel before any PIN response.
+    expect(sender.boundBusinessId).toBe(BIZ_ID);
+    expect(sessionInserts).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        business_id: BIZ_ID,
+        current_step: 'save_card_pin',
+        whatsapp_number: PHONE,
+      }),
+    ]));
 
     // F1 proof: visible CREATE-PIN response was emitted
     // MetaCloudSender.sendText calls cloud.sendText({ to, text }) — first arg is object

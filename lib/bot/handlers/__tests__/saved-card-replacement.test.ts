@@ -113,11 +113,12 @@ describe('Global Saved Card', () => {
     });
     const s = { rpc: mockRpc, from: mockFrom } as unknown;
     const { handleSaveCard } = await import('../saved-cards');
-    await handleSaveCard(s as any, sendText, PHONE, null, getProfile);
-    // D1: Must delegate to startSavedCardFromPaymentId (mocked)
+    const bindBusiness = vi.fn();
+    await handleSaveCard(s as any, sendText, PHONE, null, getProfile, bindBusiness);
+    // D1 + hotfix: locator delegates exact payment and forwards the business binder.
     const { startSavedCardFromPaymentId } = await import('@/lib/payments/saved-card-offer');
     expect(startSavedCardFromPaymentId).toHaveBeenCalledWith(
-      expect.anything(), sendText, PHONE, null, PAY_ID,
+      expect.anything(), sendText, PHONE, null, PAY_ID, bindBusiness,
     );
   });
 

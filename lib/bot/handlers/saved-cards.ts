@@ -14,6 +14,7 @@ export async function handleSaveCard(
   from: string,
   session: BotSession | null,
   getProfile: () => Promise<{ id: string } | null>,
+  bindBusiness?: (businessId: string) => void,
 ): Promise<void> {
   const { canonicalSavedCardPhone } = await import('@/lib/payments/saved-card-compat');
   const phoneP = canonicalSavedCardPhone(from);
@@ -30,7 +31,7 @@ export async function handleSaveCard(
 
   // D1: Delegate ALL authority/eligibility/session logic to the shared exact-payment helper
   const { startSavedCardFromPaymentId } = await import('@/lib/payments/saved-card-offer');
-  await startSavedCardFromPaymentId(supabase, sendText, from, session, paymentId);
+  await startSavedCardFromPaymentId(supabase, sendText, from, session, paymentId, bindBusiness);
 }
 
 /**

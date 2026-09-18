@@ -246,6 +246,7 @@ export async function handleSavedCardOfferAction(
   session: import('@/lib/bot/bot-types').BotSession | null,
   action: 'save_accept' | 'save_decline' | 'replace_accept' | 'replace_decline',
   paymentId: string,
+  bindBusiness?: (businessId: string) => void,
 ): Promise<void> {
   const canonPhone = canonicalSavedCardPhone(from);
   if (!canonPhone) { await sendText(from, 'Invalid phone number.'); return; }
@@ -297,7 +298,7 @@ export async function handleSavedCardOfferAction(
     case 'transitioned':
     case 'already_accepted':
       // K5: Both transitioned and replay-accept converge on exact-payment helper
-      await startSavedCardFromPaymentId(supabase, sendText, from, session, paymentId);
+      await startSavedCardFromPaymentId(supabase, sendText, from, session, paymentId, bindBusiness);
       return;
     case 'declined':
       await sendText(from, 'This offer was declined. Type *save card* if you change your mind.');
@@ -321,6 +322,7 @@ export async function startSavedCardFromPaymentId(
   from: string,
   session: import('@/lib/bot/bot-types').BotSession | null,
   paymentId: string,
+  bindBusiness?: (businessId: string) => void,
 ): Promise<void> {
   const canonPhone = canonicalSavedCardPhone(from);
   if (!canonPhone) { await sendText(from, 'Invalid phone number.'); return; }
@@ -335,7 +337,26 @@ export async function startSavedCardFromPaymentId(
     await sendText(from, 'This payment is no longer available for card saving.');
     return;
   }
-  // E5: Gateway-specific message so the user knows why saving is unavailable
+  // Verify payment/customer authority before binding the shared-channel sender.
+  // The sender starts tenantless on a shared number; only the exact source payment may bind it.
+  const paymentPhone = await resolvePaymentCustomerPhone(supabase, payment);
+  if (!paymentPhone) {
+    await sendText(from, 'Could not verify payment ownership. Try again.');
+    return;
+  }
+  if (paymentPhone !== canonPhone) {
+    await sendText(from, 'This payment does not belong to your account.');
+    return;
+  }
+
+  const businessId = payment.business_id;
+  if (!businessId) { await sendText(from, 'Could not determine the business.'); return; }
+
+  // HOTFIX #331: bind only after exact payment + canonical customer ownership are proven.
+  // This preserves the #256 hard-stop while allowing early saved-card routes to send safely.
+  bindBusiness?.(businessId);
+
+  // E5: Gateway-specific message so the user knows why saving is unavailable.
   if (payment.gateway !== 'paystack') {
     await sendText(from, 'Card saving is currently available for Paystack payments only.');
     return;
@@ -349,20 +370,6 @@ export async function startSavedCardFromPaymentId(
     await sendText(from, 'Card authorization is not available.');
     return;
   }
-
-  // D2: Verify payment belongs to this customer — fail closed when unresolved
-  const paymentPhone = await resolvePaymentCustomerPhone(supabase, payment);
-  if (!paymentPhone) {
-    await sendText(from, 'Could not verify payment ownership. Try again.');
-    return;
-  }
-  if (paymentPhone !== canonPhone) {
-    await sendText(from, 'This payment does not belong to your account.');
-    return;
-  }
-
-  const businessId = payment.business_id;
-  if (!businessId) { await sendText(from, 'Could not determine the business.'); return; }
 
   const compat = await isSharedPlatformPaystackCompatible(supabase, businessId);
   if (!compat.compatible) { await sendText(from, 'Card saving is not available for this business.'); return; }
