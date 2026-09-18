@@ -389,8 +389,8 @@ export async function initializePayment(
             });
             platformFeeAmount = feeResult.feeTotal;
           }
-        } else {
-          // No BYO/Connect credentials → legitimate platform flow: check payout mode
+        } else if (classification === 'platform') {
+          // K9: Explicitly platform only. Ambiguous/unknown fail closed above.
           const { data: biz, error: bizError4 } = await supabase
             .from('businesses')
             .select('payout_mode')
@@ -435,6 +435,11 @@ export async function initializePayment(
             }
           }
           // platform_managed or no split match: no split params, full amount goes to platform
+        } else {
+          // K9: ambiguous/unknown classification → fail closed
+          logger.withContext({ op: 'payment.credential-classification' })
+            .error(`[PAYMENT] Ambiguous/unknown credential classification: ${classification} — fail closed`);
+          return null;
         }
       } catch (routingErr) {
         // Transport-level exception in routing authority resolution.

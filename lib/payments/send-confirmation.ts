@@ -148,15 +148,10 @@ export async function sendProactiveConfirmation(
   if (!claim?.claimed) {
     if (claim?.already_completed) {
       logger.info(`${logPrefix} Confirmation already sent for payment ${payment.id} — skipping`);
-      // Refinement 1: Retry saved-card CTA on already_completed (confirmation already finalized)
+      // K2/Refinement 1: Retry pending saved-card CTA via stored channel_id
       try {
-        const { checkAndOfferSavedCard } = await import('@/lib/payments/saved-card-offer');
-        // Derive customer phone from the payment for the CTA retry
-        const payPhone = claim.booking_id || claim.reservation_id || claim.invoice_id || claim.order_id || claim.campaign_id
-          ? null // Will be resolved by checkAndOfferSavedCard from payment context
-          : null;
-        // Use payment.id and empty strings — the offer authority re-reads everything
-        await checkAndOfferSavedCard(supabase, payment.id, '', '', null);
+        const { retryPendingSavedCardOffer } = await import('@/lib/payments/saved-card-offer');
+        await retryPendingSavedCardOffer(supabase, payment.id);
       } catch { /* non-blocking */ }
       return { status: 'already_completed' };
     }
