@@ -752,10 +752,12 @@ describe('K10: Saved-card offer behavioral tests', () => {
       chain.insert = vi.fn().mockResolvedValue({ data: null, error: null });
 
       if (table === 'bookings') {
-        // Both locator and phone-resolver reads
-        chain.maybeSingle = vi.fn().mockResolvedValue({
-          data: { id: 'bk-1', business_id: BIZ_ID }, error: null,
+        // F3 locator: thenable chain returns array of entity IDs
+        Object.defineProperty(chain, 'then', {
+          value: (resolve: (v: unknown) => void) => resolve({ data: [{ id: 'bk-1' }], error: null }),
+          configurable: true,
         });
+        // Phone-resolver: .single() returns guest_phone for exact booking
         chain.single = vi.fn().mockResolvedValue({
           data: { guest_phone: PHONE }, error: null,
         });
@@ -790,5 +792,32 @@ describe('K10: Saved-card offer behavioral tests', () => {
     expect(sendText).toHaveBeenCalledWith(PHONE, expect.stringContaining('Waaiio PIN'));
     // D9: Verify bot_sessions was accessed (new session for null-session case)
     expect(fromFn).toHaveBeenCalledWith('bot_sessions');
+  });
+
+  // ═══════════════════════════════════════════════════════════════
+  // F5: Non-success campaign donation → fail closed
+  // ═══════════════════════════════════════════════════════════════
+  it('F5: non-success campaign donation → customer unresolved (fail closed)', async () => {
+    const campaignPayment = {
+      ...PLATFORM_PAYMENT,
+      booking_id: null, campaign_id: 'camp-1', user_id: null,
+    };
+    const supabase = buildMockSupabase({ payment: campaignPayment, existingMethods: [] });
+    // Mock campaign_donations to return no successful row
+    const origFrom = supabase.from;
+    supabase.from = vi.fn().mockImplementation((table: string) => {
+      if (table === 'campaign_donations') {
+        const chain: Record<string, unknown> = {};
+        ['select', 'eq', 'in', 'not', 'order', 'limit'].forEach(m => { chain[m] = vi.fn().mockReturnValue(chain); });
+        chain.single = vi.fn().mockResolvedValue({ data: null, error: null }); // no successful donation
+        chain.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
+        return chain;
+      }
+      return origFrom(table);
+    });
+    const { checkSavedCardOfferEligibility } = await import('@/lib/payments/saved-card-offer');
+    const result = await checkSavedCardOfferEligibility(supabase as any, PAY_ID, PHONE, BIZ_ID);
+    expect(result.eligible).toBe(false);
+    expect(result.reason).toBe('customer_unresolved');
   });
 });

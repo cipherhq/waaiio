@@ -41,9 +41,10 @@ async function resolvePaymentCustomerPhone(
     if (error || !data?.delivery_phone) return null;
     return canonicalSavedCardPhone(data.delivery_phone);
   }
-  // E4: Campaign donation phone authority — look up by payment_id (same as send-confirmation.ts)
+  // E4+F5: Campaign donation phone authority — requires exact successful donation row
   if (payment.campaign_id) {
-    const { data, error } = await supabase.from('campaign_donations').select('donor_phone').eq('payment_id', payment.id).single();
+    const { data, error } = await supabase.from('campaign_donations').select('donor_phone')
+      .eq('payment_id', payment.id).eq('status', 'success').single();
     if (error || !data?.donor_phone) return null;
     return canonicalSavedCardPhone(data.donor_phone);
   }

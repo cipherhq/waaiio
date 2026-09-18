@@ -21,8 +21,8 @@ export async function handleSaveCard(
     await sendText(from, 'Invalid phone number. Cannot save card.');
     return;
   }
-  // E3: Use customer-bound latest-payment locator across ALL payment families
-  const paymentId = await findLatestSavedCardPaymentIdForPhone(supabase, phoneP, getProfile);
+  // E3/F4: Customer-bound latest-payment locator — profile lookup owned by locator
+  const paymentId = await findLatestSavedCardPaymentIdForPhone(supabase, phoneP);
   if (!paymentId) {
     await sendText(from, 'No recent payment found. Make a payment first, then type *save card*.');
     return;
@@ -41,25 +41,28 @@ export async function handleSaveCard(
 export async function findLatestSavedCardPaymentIdForPhone(
   supabase: SupabaseClient,
   canonPhone: string,
-  getProfile: () => Promise<{ id: string } | null>,
 ): Promise<string | null> {
   const phoneN = canonPhone.slice(1);
   type Candidate = { id: string; created_at: string };
   const candidates: Candidate[] = [];
 
-  // Helper: find newest successful payment by entity FK
-  // Returns: { candidate } | 'absent' (no entity) | 'error' (DB read failure)
-  async function findPayByEntity(
+  // F3: Find newest successful PAYMENT by payments.created_at across ALL
+  // customer-bound entities in each family (not newest entity).
+  // Returns: candidate | 'absent' | 'error'
+  async function findNewestPaymentInFamily(
     entityTable: string, phoneCol: string, paymentFk: string,
   ): Promise<Candidate | 'absent' | 'error'> {
-    const { data: entity, error: entErr } = await supabase
+    // Step 1: Get ALL entity IDs for this phone (not just the newest entity)
+    const { data: entities, error: entErr } = await supabase
       .from(entityTable).select('id')
-      .or(`${phoneCol}.eq.${sanitizeFilterValue(canonPhone)},${phoneCol}.eq.${sanitizeFilterValue(phoneN)}`)
-      .order('created_at', { ascending: false }).limit(1).maybeSingle();
+      .or(`${phoneCol}.eq.${sanitizeFilterValue(canonPhone)},${phoneCol}.eq.${sanitizeFilterValue(phoneN)}`);
     if (entErr) { logger.warn(`[SAVE-CARD-LOCATOR] ${entityTable} read error`, entErr.message); return 'error'; }
-    if (!entity) return 'absent';
+    if (!entities || entities.length === 0) return 'absent';
+
+    // Step 2: Find the newest successful payment across ALL those entities
+    const entityIds = entities.map(e => e.id);
     const { data: pay, error: payErr } = await supabase.from('payments')
-      .select('id, created_at').eq(paymentFk, entity.id).eq('status', 'success')
+      .select('id, created_at').in(paymentFk, entityIds).eq('status', 'success')
       .order('created_at', { ascending: false }).limit(1).maybeSingle();
     if (payErr) { logger.warn(`[SAVE-CARD-LOCATOR] ${entityTable} payment read error`, payErr.message); return 'error'; }
     return pay as Candidate || 'absent';
@@ -74,7 +77,7 @@ export async function findLatestSavedCardPaymentIdForPhone(
   ];
 
   for (const [table, col, fk] of families) {
-    const result = await findPayByEntity(table, col, fk);
+    const result = await findNewestPaymentInFamily(table, col, fk);
     if (result === 'error') return null; // DB read error → fail closed
     if (result !== 'absent') candidates.push(result);
   }
@@ -95,9 +98,13 @@ export async function findLatestSavedCardPaymentIdForPhone(
     }
   }
 
-  // 6. Direct user_id → payment
+  // 6. F4: Direct profile → user_id → payment (fail closed on profile read error)
   {
-    const profile = await getProfile();
+    const { data: profile, error: profileErr } = await supabase.from('profiles')
+      .select('id')
+      .or(`phone.eq.${sanitizeFilterValue(canonPhone)},phone.eq.${sanitizeFilterValue(phoneN)}`)
+      .limit(1).maybeSingle();
+    if (profileErr) { logger.warn('[SAVE-CARD-LOCATOR] profile read error', profileErr.message); return null; }
     if (profile?.id) {
       const { data: pay, error: payErr } = await supabase.from('payments')
         .select('id, created_at').eq('user_id', profile.id).eq('status', 'success')
