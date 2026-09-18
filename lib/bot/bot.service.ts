@@ -2373,7 +2373,7 @@ export class BotService {
 
     // ── Unified keyword matching (replaces detectIntent + old keyword + quick reply checks) ──
     // Only fire on non-free-text steps
-    const isFreeTextStepForKeywords = isChatMode || ['collect_name', 'collect_other_name', 'collect_email', 'special_requests', 'review_text', 'enter_amount', 'collect_address', 'queue_collect_name', 'select_business_suggestion', 'enter_referral_code', 'collect_pickup_address', 'collect_dropoff_address', 'collect_package_description', 'collect_venue', 'enter_promo_code', 'save_card_pin', 'verify_card_pin'].includes(step);
+    const isFreeTextStepForKeywords = isChatMode || ['collect_name', 'collect_other_name', 'collect_email', 'special_requests', 'review_text', 'enter_amount', 'collect_address', 'queue_collect_name', 'select_business_suggestion', 'enter_referral_code', 'collect_pickup_address', 'collect_dropoff_address', 'collect_package_description', 'collect_venue', 'enter_promo_code', 'save_card_pin', 'verify_card_pin', 'replace_card_pin'].includes(step);
 
     if (!isFreeTextStepForKeywords) {
       // Use cached category from session_data (saved during session creation)
@@ -2388,9 +2388,14 @@ export class BotService {
       }
     }
 
-    // Handle save card PIN creation
+    // Handle save card PIN creation and replacement PIN verification
     if (step === 'save_card_pin' || step === 'verify_card_pin') {
       await _handleCardPinStep(this.supabase, this.sendText.bind(this), from, session, text);
+      return;
+    }
+    if (step === 'replace_card_pin') {
+      const { handleReplacementPinStep } = await import('./handlers/saved-cards');
+      await handleReplacementPinStep(this.supabase, this.sendText.bind(this), from, session, text);
       return;
     }
 
@@ -2570,7 +2575,7 @@ export class BotService {
     // Works from ANY step (not just greeting/select_capability) for high-confidence
     // non-CREATE_NEW actions. "Where is my order?" while booking → order history.
     // Exclude free-text input steps where text should go to the flow validator.
-    const isCasExcluded = isChatMode || ['collect_name', 'collect_other_name', 'collect_email', 'special_requests', 'review_text', 'enter_amount', 'collect_address', 'queue_collect_name', 'enter_referral_code', 'collect_pickup_address', 'collect_dropoff_address', 'collect_package_description', 'collect_venue', 'enter_promo_code', 'save_card_pin', 'verify_card_pin'].includes(step);
+    const isCasExcluded = isChatMode || ['collect_name', 'collect_other_name', 'collect_email', 'special_requests', 'review_text', 'enter_amount', 'collect_address', 'queue_collect_name', 'enter_referral_code', 'collect_pickup_address', 'collect_dropoff_address', 'collect_package_description', 'collect_venue', 'enter_promo_code', 'save_card_pin', 'verify_card_pin', 'replace_card_pin'].includes(step);
     // Skip AI classification for deterministic postback IDs — these are button/list taps
     // that will be handled by the flow executor's step-specific validate() function
     const isDeterministicPostback = /^(cap_|class_session_|wb_\d|pc_|restart_|rsvp_|accept_quote_|reject_quote_|TK-|go_back_biz|switch_biz|browse_menu|\d{1,2})$/.test(text)
