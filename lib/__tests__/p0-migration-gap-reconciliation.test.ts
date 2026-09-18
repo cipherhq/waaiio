@@ -210,20 +210,44 @@ describe.skipIf(!canRun)('Production-shaped migration gap reconciliation', () =>
     // Trigger
     expect(psql(`SELECT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_snapshot_version_guard');`)).toBe('t');
 
-    // Exact new signatures via pg_get_function_identity_arguments
+    // Exact canonical M383 identities via pg_get_function_identity_arguments
+
+    // create_order_atomic: canonical 24-arg M383 identity
     const orderArgs = psql(`SELECT pg_get_function_identity_arguments(oid) FROM pg_proc WHERE proname = 'create_order_atomic';`);
+    expect(orderArgs).toContain('p_items jsonb');
+    expect(orderArgs).toContain('p_referral_id uuid');
+    expect(orderArgs).toContain('p_validate_products boolean');
+    expect(orderArgs).toContain('p_expected_total integer');
     expect(orderArgs.split(',').length).toBe(24);
 
+    // book_slot_atomic: canonical 30-arg M383 identity
     const bookArgs = psql(`SELECT pg_get_function_identity_arguments(oid) FROM pg_proc WHERE proname = 'book_slot_atomic';`);
+    expect(bookArgs).toContain('p_bot_session_id uuid');
+    expect(bookArgs).toContain('p_class_session_id uuid');
+    expect(bookArgs).toContain('p_expected_price integer');
+    expect(bookArgs).toContain('p_expected_deposit integer');
     expect(bookArgs.split(',').length).toBe(30);
 
+    // purchase_tickets_atomic: canonical 12-arg M383 identity
     const ticketArgs = psql(`SELECT pg_get_function_identity_arguments(oid) FROM pg_proc WHERE proname = 'purchase_tickets_atomic';`);
+    expect(ticketArgs).toContain('p_total_amount integer');
+    expect(ticketArgs).toContain('p_channel text');
+    expect(ticketArgs).toContain('p_bot_session_id uuid');
+    expect(ticketArgs).toContain('p_expected_price integer');
     expect(ticketArgs.split(',').length).toBe(12);
 
-    // Stale old identities absent (exactly 1 overload each)
+    // Stale old identities absent — exactly 1 overload each (old 22/28/10 dropped)
     expect(psql(`SELECT COUNT(*) FROM pg_proc WHERE proname = 'create_order_atomic';`)).toBe('1');
     expect(psql(`SELECT COUNT(*) FROM pg_proc WHERE proname = 'book_slot_atomic';`)).toBe('1');
     expect(psql(`SELECT COUNT(*) FROM pg_proc WHERE proname = 'purchase_tickets_atomic';`)).toBe('1');
+
+    // Prove old identities do NOT exist by checking no function matches old arity
+    // Old create_order_atomic was 22-arg (M333)
+    expect(psql(`SELECT COUNT(*) FROM pg_proc WHERE proname = 'create_order_atomic' AND pronargs = 22;`)).toBe('0');
+    // Old book_slot_atomic was 28-arg (M325)
+    expect(psql(`SELECT COUNT(*) FROM pg_proc WHERE proname = 'book_slot_atomic' AND pronargs = 28;`)).toBe('0');
+    // Old purchase_tickets_atomic was 10-arg (M149)
+    expect(psql(`SELECT COUNT(*) FROM pg_proc WHERE proname = 'purchase_tickets_atomic' AND pronargs = 10;`)).toBe('0');
 
     // New RPCs exist
     expect(psql(`SELECT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'cancel_order_immediate');`)).toBe('t');
