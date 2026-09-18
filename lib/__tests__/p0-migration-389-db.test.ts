@@ -74,9 +74,10 @@ describe.skipIf(!canRun)('M389: Global saved card migration', () => {
         created_at         TIMESTAMPTZ DEFAULT NOW()
       );
 
-      -- The business-scoped unique index that M389 drops
-      CREATE UNIQUE INDEX IF NOT EXISTS saved_payment_methods_business_id_customer_phone_gateway_key
-        ON saved_payment_methods (business_id, customer_phone, gateway);
+      -- The business-scoped unique constraint that M389 drops
+      ALTER TABLE saved_payment_methods
+        ADD CONSTRAINT saved_payment_methods_business_id_customer_phone_gateway_key
+        UNIQUE (business_id, customer_phone, gateway);
 
       -- Seed test fixtures
       INSERT INTO businesses (id, name)       VALUES ('${BIZ}', 'Biz A'), ('${BIZ_2}', 'Biz B')
