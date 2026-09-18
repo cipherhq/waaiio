@@ -40,6 +40,7 @@ const VALID_METHOD = {
   gateway: 'paystack',
   authorization_code: 'AUTH_secret_xyz',
   customer_code: 'CUS_abc',
+  authorization_email: '2348012345678@whatsapp.waaiio.com',
   stripe_payment_method_id: null,
   stripe_customer_id: null,
   card_last4: '4242',
@@ -82,7 +83,9 @@ function createTupleMockSupabase(opts: {
     maybeSingle: vi.fn().mockImplementation(() => {
       // Check if all tuple constraints match
       const idMatch = !opts.methodId || eqConstraints['id'] === opts.methodId;
-      const bizMatch = !opts.businessId || eqConstraints['business_id'] === opts.businessId;
+      // business_id is no longer in the query (global saved card).
+      // Mock validates only method ID + phone + is_active.
+      const bizMatch = true;
       // Phone match: check both .eq() and .in() constraints
       let phoneMatch = true;
       if (opts.customerPhone) {
@@ -361,19 +364,21 @@ describe('SavedPaymentAdapter', () => {
       expect(mockChargeSavedCard).not.toHaveBeenCalled();
     });
 
-    it('valid method ID + wrong business → method_not_found (charge rejected)', async () => {
+    it('valid method ID + different business → still charges (global card)', async () => {
+      // Global saved card model: card belongs to customer, not business.
+      // A compatible business can charge the customer's saved card.
       const { supabase } = createTupleMockSupabase({
-        methodId: 'spm-123', businessId: VALID_BUSINESS, customerPhone: VALID_PHONE,
+        methodId: 'spm-123', customerPhone: VALID_PHONE,
         returnData: VALID_METHOD,
       });
+      mockChargeSavedCard.mockResolvedValueOnce({ outcome: 'charged', paymentId: 'pay-1', reference: 'REF-saved' });
 
       const result = await savedPaymentAdapter.chargeSavedMethod(supabase as any, {
         methodId: 'spm-123', customerPhone: VALID_PHONE, amount: 5000, currency: 'NGN',
         email: 'test@test.com', reference: 'REF-saved', businessId: WRONG_BUSINESS,
       });
 
-      expect(result.status).toBe('method_not_found');
-      expect(mockChargeSavedCard).not.toHaveBeenCalled();
+      expect(result.status).toBe('charged');
     });
 
     it('foreign method cannot read PIN state (wrong customer)', async () => {
@@ -388,21 +393,19 @@ describe('SavedPaymentAdapter', () => {
       expect(result).toEqual({ required: false, locked: false });
     });
 
-    it('foreign method cannot mutate PIN attempts/lock/reset (wrong business)', async () => {
-      const { supabase, chainable } = createTupleMockSupabase({
-        methodId: 'spm-123', businessId: VALID_BUSINESS, customerPhone: VALID_PHONE,
+    it('PIN verification works regardless of business context (global card)', async () => {
+      const { supabase } = createTupleMockSupabase({
+        methodId: 'spm-123', customerPhone: VALID_PHONE,
         returnData: VALID_METHOD,
       });
 
-      // Wrong business tries to verify PIN — should fail closed
+      // Different business context — still works (global card belongs to customer)
       const result = await savedPaymentAdapter.verifyPin(
         supabase as any, 'spm-123', WRONG_BUSINESS, VALID_PHONE, '1234',
       );
 
-      // Must reject without revealing PIN state
-      expect(result.valid).toBe(false);
-      // Must NOT have called update() to mutate pin_attempts
-      expect(chainable.update).not.toHaveBeenCalled();
+      // PIN is correct (mock hash matches)
+      expect(result.valid).toBe(true);
     });
 
     it('foreign method never invokes chargeSavedCard (wrong customer + wrong business)', async () => {
@@ -479,13 +482,13 @@ describe('SavedPaymentAdapter', () => {
       expect(mockChargeSavedCard).toHaveBeenCalledTimes(1);
     });
 
-    it('wrong business still denied for legacy phone method', async () => {
+    it('legacy phone method chargeable from any compatible business (global card)', async () => {
       const { supabase } = createTupleMockSupabase({
         methodId: 'spm-legacy-1',
-        businessId: VALID_BUSINESS,
         customerPhone: LEGACY_PHONE,
-        returnData: LEGACY_METHOD,
+        returnData: { ...LEGACY_METHOD, authorization_email: 'legacy@test.com' },
       });
+      mockChargeSavedCard.mockResolvedValueOnce({ outcome: 'charged', paymentId: 'pay-legacy', reference: 'REF-legacy' });
 
       const result = await savedPaymentAdapter.chargeSavedMethod(supabase as any, {
         methodId: 'spm-legacy-1',
@@ -494,11 +497,10 @@ describe('SavedPaymentAdapter', () => {
         currency: 'NGN',
         email: 'legacy@test.com',
         reference: 'REF-legacy',
-        businessId: WRONG_BUSINESS, // different business
+        businessId: WRONG_BUSINESS, // different business — still works (global)
       });
 
-      expect(result.status).toBe('method_not_found');
-      expect(mockChargeSavedCard).not.toHaveBeenCalled();
+      expect(result.status).toBe('charged');
     });
   });
 });

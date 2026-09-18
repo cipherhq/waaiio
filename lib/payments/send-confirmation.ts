@@ -584,9 +584,9 @@ export async function sendProactiveConfirmation(
       const { data: existingSaved } = await supabase
         .from('saved_payment_methods')
         .select('id, card_last4')
-        .eq('business_id', businessId)
-        .eq('customer_phone', phoneP)
+        .in('customer_phone', [phoneP, stripPlus(phoneP)])
         .eq('is_active', true)
+        .eq('gateway', 'paystack')
         .maybeSingle();
 
       if (!existingSaved) {

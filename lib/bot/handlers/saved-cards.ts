@@ -87,13 +87,35 @@ export async function handleSaveCard(
     return;
   }
 
-  // Query both phone forms for existing saved card
+  // Provider compatibility check — only shared-platform Paystack businesses can save/replace
+  const { isSharedPlatformPaystackCompatible } = await import('@/lib/payments/saved-card-compat');
+  const compat = await isSharedPlatformPaystackCompatible(supabase, businessId);
+  if (!compat.compatible) {
+    await sendText(from, 'Card saving is not available for this business\'s payment setup.');
+    return;
+  }
+
+  // Verify the source payment was created in the shared-platform context
+  const paymentMeta = (payment.metadata || {}) as Record<string, unknown>;
+  if (paymentMeta.payment_origin === 'byo' || paymentMeta.payment_origin === 'connect' || paymentMeta.byo === true || paymentMeta.connect === true) {
+    await sendText(from, 'This payment cannot be used to save a card. Try again after a standard payment.');
+    return;
+  }
+
+  // Require authorization_email from the payment metadata
+  const authEmail = (auth.email as string) || null;
+  if (!authEmail) {
+    await sendText(from, 'Card authorization email is missing. Try again after your next payment.');
+    return;
+  }
+
+  // Customer-scoped query: no business_id filter (global saved card)
   const { data: existingMethods } = await supabase
     .from('saved_payment_methods')
     .select('id, authorization_code, customer_code, card_last4, card_brand')
-    .eq('business_id', businessId)
     .in('customer_phone', [phoneP, phoneN])
-    .eq('is_active', true);
+    .eq('is_active', true)
+    .eq('gateway', 'paystack');
 
   // Fail closed on duplicate phone normalization ambiguity
   if (existingMethods && existingMethods.length > 1) {
@@ -309,38 +331,22 @@ export async function handleRemoveCard(
   session: BotSession | null,
 ): Promise<void> {
   const phoneP = from.startsWith('+') ? from : `+${from}`;
-  const businessId = session?.business_id;
+  const phoneN = from.startsWith('+') ? from.slice(1) : from;
 
-  // If in a business session, remove card for that business
-  // Otherwise, remove all saved cards for this phone
-  if (businessId) {
-    const { data: deleted } = await supabase
-      .from('saved_payment_methods')
-      .delete()
-      .eq('business_id', businessId)
-      .eq('customer_phone', phoneP)
-      .eq('is_active', true)
-      .select('card_last4, card_brand');
+  // Global remove: customer's saved card regardless of which business session
+  const { data: deleted } = await supabase
+    .from('saved_payment_methods')
+    .delete()
+    .in('customer_phone', [phoneP, phoneN])
+    .eq('is_active', true)
+    .eq('gateway', 'paystack')
+    .select('card_last4, card_brand');
 
-    if (deleted && deleted.length > 0) {
-      const card = deleted[0];
-      await sendText(from, `Card removed: ${((card.card_brand as string) || 'Card').toUpperCase()} ****${(card.card_last4 as string) || '****'}\n\nYou'll need to enter card details for future payments.`);
-    } else {
-      await sendText(from, 'No saved card found for this business.');
-    }
+  if (deleted && deleted.length > 0) {
+    const card = deleted[0];
+    await sendText(from, `Card removed: ${((card.card_brand as string) || 'Card').toUpperCase()} ****${(card.card_last4 as string) || '****'}\n\nYou'll need to enter card details for future payments.`);
   } else {
-    const { data: deleted } = await supabase
-      .from('saved_payment_methods')
-      .delete()
-      .eq('customer_phone', phoneP)
-      .eq('is_active', true)
-      .select('card_last4');
-
-    if (deleted && deleted.length > 0) {
-      await sendText(from, `Removed ${deleted.length} saved card${deleted.length > 1 ? 's' : ''}. You'll need to enter card details for future payments.`);
-    } else {
-      await sendText(from, 'No saved cards found.');
-    }
+    await sendText(from, 'No saved card found.');
   }
 }
 
@@ -409,12 +415,26 @@ export async function handleCardPinStep(
   const { createHash } = await import('crypto');
   const pinHash = createHash('sha256').update(`${pin}:${phoneP}`).digest('hex');
 
+  // Require authorization_email for the saved card
+  const authEmail = (auth.email as string) || null;
+  if (!authEmail) {
+    // CAS reset + inform
+    const { data: casResetResult } = await supabase.rpc('update_session_cas', {
+      p_session_id: session.id, p_expected_version: session.version ?? 0,
+      p_current_step: 'select_capability', p_session_data: {},
+    });
+    if (casResetResult?.success) session.version = casResetResult.version;
+    await sendText(from, 'Card authorization email is missing. Please try again after your next payment.');
+    return;
+  }
+
   await supabase.from('saved_payment_methods').insert({
-    business_id: businessId,
+    business_id: businessId, // origin/audit only (nullable, not the scoping authority)
     customer_phone: phoneP,
     gateway,
     authorization_code: auth.authorization_code as string,
     customer_code: (auth.customer_code as string) || null,
+    authorization_email: authEmail,
     card_last4: (auth.last4 as string) || null,
     card_brand: (auth.brand as string) || null,
     card_exp_month: auth.exp_month ? Number(auth.exp_month) : null,
@@ -495,18 +515,13 @@ export async function handleReplacementPinStep(
     return;
   }
 
-  // 1. Re-read method with full business/phone authorization
+  // 1. Re-read method with customer-scoped authorization
   const businessId = session.business_id;
-  if (!businessId) {
-    await sendText(from, 'Could not determine the business. Please try again.');
-    return;
-  }
 
   const { data: method } = await supabase
     .from('saved_payment_methods')
     .select('id, authorization_code, customer_code, card_last4, card_brand, pin_hash, pin_attempts, pin_locked_until, gateway')
     .eq('id', methodId)
-    .eq('business_id', businessId)
     .in('customer_phone', [phoneP, phoneN])
     .eq('is_active', true)
     .maybeSingle();
@@ -522,12 +537,12 @@ export async function handleReplacementPinStep(
   }
 
   // 2. Re-read payment and extract fresh _card_authorization
+  // Payment may be from a different business (global saved card)
   const { data: paymentRow } = await supabase
     .from('payments')
     .select('id, status, business_id, gateway, metadata')
     .eq('id', paymentId)
     .eq('status', 'success')
-    .eq('business_id', businessId)
     .eq('gateway', 'paystack')
     .maybeSingle();
 
@@ -581,7 +596,7 @@ export async function handleReplacementPinStep(
 
   // 5. Verify PIN using canonical savedPaymentAdapter.verifyPin()
   const { savedPaymentAdapter } = await import('@/lib/payments/saved-payment-adapter');
-  const pinResult = await savedPaymentAdapter.verifyPin(supabase, methodId, businessId, phoneP, input);
+  const pinResult = await savedPaymentAdapter.verifyPin(supabase, methodId, businessId || '', phoneP, input);
 
   if (!pinResult.valid) {
     if (pinResult.locked) {
@@ -592,12 +607,24 @@ export async function handleReplacementPinStep(
     return; // Old card completely unchanged (PIN wrong/locked)
   }
 
-  // 6. CAS-protected conditional UPDATE
+  // Require authorization_email from the new payment
+  const newAuthEmail = (newAuth.email as string) || null;
+  if (!newAuthEmail) {
+    await sendText(from, 'Card authorization email is missing. Please try again after your next payment.');
+    await supabase.rpc('update_session_cas', {
+      p_session_id: session.id, p_expected_version: session.version ?? 0,
+      p_current_step: 'select_capability', p_session_data: {},
+    });
+    return;
+  }
+
+  // 6. CAS-protected conditional UPDATE (customer-scoped, no business_id fence)
   const { data: updateResult, error: updateError } = await supabase
     .from('saved_payment_methods')
     .update({
       authorization_code: newAuth.authorization_code as string,
       customer_code: newAuth.customer_code as string,
+      authorization_email: newAuthEmail,
       card_last4: (newAuth.last4 as string) || null,
       card_brand: (newAuth.brand as string) || null,
       card_exp_month: newAuth.exp_month ? Number(newAuth.exp_month) : null,
@@ -610,7 +637,6 @@ export async function handleReplacementPinStep(
       // pin_hash NOT in SET → preserved
     })
     .eq('id', methodId)
-    .eq('business_id', businessId)
     .in('customer_phone', [phoneP, phoneN])
     .eq('gateway', 'paystack')
     .eq('is_active', true)

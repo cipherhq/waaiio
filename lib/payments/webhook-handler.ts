@@ -73,6 +73,7 @@ export async function processPaystackChargeSuccess(
         _card_authorization: {
           authorization_code: authorization.authorization_code,
           customer_code: (customer?.customer_code as string) || null,
+          email: (customer?.email as string) || null,
           last4: (authorization.last4 as string) || null,
           brand: (authorization.brand as string) || null,
           exp_month: authorization.exp_month ? Number(authorization.exp_month) : null,

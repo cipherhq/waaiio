@@ -65,6 +65,9 @@ vi.mock('@/lib/bot/flows/shared/notify-owner', () => ({
   notifyOwnerNewQuoteRequest: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock('@/lib/bot/flows/shared/notifications', () => ({ createNotification: vi.fn() }));
+vi.mock('@/lib/payments/saved-card-compat', () => ({
+  isSharedPlatformPaystackCompatible: vi.fn().mockResolvedValue({ compatible: true }),
+}));
 vi.mock('@/lib/payments/paystack-recurring', () => ({
   getAuthorization: vi.fn(),
   createPlan: vi.fn(),
@@ -192,6 +195,7 @@ describe('Blocker 1: Deterministic saved-card selection', () => {
     gateway: 'paystack',
     authorization_code: 'AUTH_canonical',
     customer_code: 'CUS_canonical',
+    authorization_email: '2348012345678@whatsapp.waaiio.com',
     stripe_payment_method_id: null,
     stripe_customer_id: null,
     card_last4: '4242',
@@ -203,6 +207,7 @@ describe('Blocker 1: Deterministic saved-card selection', () => {
     gateway: 'paystack',
     authorization_code: 'AUTH_legacy',
     customer_code: 'CUS_legacy',
+    authorization_email: '2348012345678@whatsapp.waaiio.com',
     stripe_payment_method_id: null,
     stripe_customer_id: null,
     card_last4: '4242',
@@ -216,24 +221,37 @@ describe('Blocker 1: Deterministic saved-card selection', () => {
     returnError?: { message: string } | null;
     captureInArgs?: (field: string, values: string[]) => void;
   }) {
+    // Mock chain matches the global saved-card query:
+    // .from().select().in(phone).eq(is_active).eq(gateway).limit(2)
+    // No .eq('business_id') — global card model.
     const sb: any = {
       from: vi.fn().mockReturnValue({
         select: vi.fn().mockReturnValue({
-          eq: vi.fn().mockReturnValue({
-            in: vi.fn().mockImplementation((field: string, values: string[]) => {
-              opts.captureInArgs?.(field, values);
-              return {
-                // .eq('is_active', true) -> .eq('gateway', 'paystack') -> .limit(2)
+          in: vi.fn().mockImplementation((field: string, values: string[]) => {
+            opts.captureInArgs?.(field, values);
+            return {
+              eq: vi.fn().mockReturnValue({
                 eq: vi.fn().mockReturnValue({
-                  eq: vi.fn().mockReturnValue({
-                    limit: vi.fn().mockResolvedValue({
-                      data: opts.returnRows ?? null,
-                      error: opts.returnError ?? null,
-                    }),
+                  limit: vi.fn().mockResolvedValue({
+                    data: opts.returnRows ?? null,
+                    error: opts.returnError ?? null,
                   }),
                 }),
-              };
+              }),
+            };
+          }),
+          // Also support .eq() first for other queries on the same table
+          eq: vi.fn().mockReturnValue({
+            in: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                eq: vi.fn().mockReturnValue({
+                  limit: vi.fn().mockResolvedValue({ data: opts.returnRows ?? null, error: opts.returnError ?? null }),
+                }),
+              }),
             }),
+            eq: vi.fn().mockReturnValue({ not: vi.fn().mockReturnValue({ maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }) }) }),
+            not: vi.fn().mockReturnValue({ maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }) }),
+            maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
           }),
         }),
       }),
@@ -1058,6 +1076,7 @@ describe('Area B: Saved-card listing → authorization consistency', () => {
     gateway: 'paystack',
     authorization_code: 'AUTH_ps1',
     customer_code: 'CUS_ps1',
+    authorization_email: '2348012345678@whatsapp.waaiio.com',
     stripe_payment_method_id: null,
     stripe_customer_id: null,
     card_last4: '4242',
@@ -1066,10 +1085,9 @@ describe('Area B: Saved-card listing → authorization consistency', () => {
   };
 
   /**
-   * Build a supabase mock matching the exact chain in getSavedPaymentMethod:
-   * .from().select().eq(business_id).in(customer_phone).eq(is_active).eq(gateway).limit(2)
-   *
-   * Captures arguments at each chain position for assertion.
+   * Build a supabase mock matching the global saved-card query chain:
+   * .from().select().in(customer_phone).eq(is_active).eq(gateway).limit(2)
+   * No .eq(business_id) — global card model.
    */
   function buildListingSb(opts: {
     returnRows?: any[];
@@ -1080,31 +1098,29 @@ describe('Area B: Saved-card listing → authorization consistency', () => {
     const sb: any = {
       from: vi.fn().mockReturnValue({
         select: vi.fn().mockReturnValue({
-          eq: vi.fn().mockReturnValue({
-            // .in(customer_phone, [...])
-            in: vi.fn().mockImplementation((field: string, values: string[]) => {
-              opts.captureInArgs?.(field, values);
-              return {
-                // .eq('is_active', true)
-                eq: vi.fn().mockReturnValue({
-                  // .eq('gateway', 'paystack')
-                  eq: vi.fn().mockImplementation((_field: string, value: string) => {
-                    opts.captureGateway?.(value);
-                    // Apply gateway filter on the rows
-                    const filtered = opts.returnRows
-                      ? opts.returnRows.filter((r: any) => r.gateway === value)
-                      : null;
-                    return {
-                      limit: vi.fn().mockResolvedValue({
-                        data: opts.returnError ? null : filtered,
-                        error: opts.returnError ?? null,
-                      }),
-                    };
-                  }),
+          // .in(customer_phone, [...]) — first chained call after select
+          in: vi.fn().mockImplementation((field: string, values: string[]) => {
+            opts.captureInArgs?.(field, values);
+            return {
+              // .eq('is_active', true)
+              eq: vi.fn().mockReturnValue({
+                // .eq('gateway', 'paystack')
+                eq: vi.fn().mockImplementation((_field: string, value: string) => {
+                  opts.captureGateway?.(value);
+                  const filtered = opts.returnRows
+                    ? opts.returnRows.filter((r: any) => r.gateway === value)
+                    : null;
+                  return {
+                    limit: vi.fn().mockResolvedValue({
+                      data: opts.returnError ? null : filtered,
+                      error: opts.returnError ?? null,
+                    }),
+                  };
                 }),
-              };
-            }),
+              }),
+            };
           }),
+          eq: vi.fn().mockReturnValue({ not: vi.fn().mockReturnValue({ maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }) }), maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }) }),
         }),
       }),
     };
@@ -1140,11 +1156,12 @@ describe('Area B: Saved-card listing → authorization consistency', () => {
     expect(capturedPhones).toContain('2348012345678');
   });
 
-  it('B.2 Cross-tenant — empty result returns null for different business', async () => {
-    // getSavedPaymentMethod with a different business_id returns no rows
-    const sb = buildListingSb({ returnRows: [] });
+  it('B.2 Global card — different business still finds the customer card', async () => {
+    // Global saved card: business_id is not a filter anymore
+    const sb = buildListingSb({ returnRows: [PAYSTACK_METHOD] });
     const result = await getSavedPaymentMethod(sb, 'biz-FOREIGN', CANONICAL_PHONE);
-    expect(result).toBeNull();
+    expect(result).not.toBeNull();
+    expect(result!.id).toBe('spm-ps-1');
   });
 
   it('B.3 Paystack+Stripe coexistence: getSavedPaymentMethod filters by gateway=paystack, only Paystack returned', async () => {
