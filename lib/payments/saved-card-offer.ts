@@ -412,7 +412,9 @@ export async function startSavedCardFromPaymentId(
     } else {
       // No session — create short-lived save session
       const { error: insertErr } = await supabase.from('bot_sessions').insert({
-        whatsapp_number: canonPhone, user_id: null, business_id: businessId,
+        // Session lookup uses the raw inbound WhatsApp "from" value. Keep that exact
+        // transport key here; saved-card ownership remains canonicalized separately.
+        whatsapp_number: from, user_id: null, business_id: businessId,
         current_step: 'save_card_pin', session_data: saveData, is_active: true,
         expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
       });
@@ -457,7 +459,9 @@ export async function startSavedCardFromPaymentId(
     }
   } else {
     const { error: insertErr } = await supabase.from('bot_sessions').insert({
-      whatsapp_number: canonPhone, user_id: null, business_id: businessId,
+      // Session lookup uses the raw inbound WhatsApp "from" value. Keep that exact
+        // transport key here; saved-card ownership remains canonicalized separately.
+        whatsapp_number: from, user_id: null, business_id: businessId,
       current_step: 'replace_card_pin', session_data: replaceData, is_active: true,
       expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
     });

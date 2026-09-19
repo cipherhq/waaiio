@@ -101,6 +101,8 @@ function buildMockSupabase(overrides: {
     return Promise.resolve({ data: null, error: null });
   });
 
+  const botSessionInsert = vi.fn().mockResolvedValue({ data: null, error: insertError });
+
   const fromFn = vi.fn().mockImplementation((table: string) => {
     const chain: Record<string, unknown> = {};
     ['select', 'eq', 'in', 'or', 'order', 'limit', 'not', 'gte', 'update', 'delete'].forEach(m => {
@@ -132,12 +134,12 @@ function buildMockSupabase(overrides: {
       chain.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
     }
     if (table === 'bot_sessions') {
-      chain.insert = vi.fn().mockResolvedValue({ data: null, error: insertError });
+      chain.insert = botSessionInsert;
     }
     return chain;
   });
 
-  return { rpc: rpcFn, from: fromFn };
+  return { rpc: rpcFn, from: fromFn, __botSessionInsert: botSessionInsert };
 }
 
 // ── Compat mock ──
@@ -457,14 +459,41 @@ describe('K10: Saved-card offer behavioral tests', () => {
   // ═══════════════════════════════════════════════════════════════
   // K10 #15: Citadel no-session manual fallback through exact-payment helper
   // ═══════════════════════════════════════════════════════════════
-  it('#15: null session + save accept → creates new bot_session', async () => {
+  it('#15: null session + save accept preserves raw inbound phone for PIN-session lookup', async () => {
     const supabase = buildMockSupabase({ existingMethods: [] });
     const { handleSavedCardOfferAction } = await import('@/lib/payments/saved-card-offer');
-    await handleSavedCardOfferAction(supabase as any, sendText, PHONE, null, 'save_accept', PAY_ID);
 
-    // Creates new session via INSERT (not CAS)
+    // Meta inbound phones arrive without "+". Saved-card ownership is canonicalized
+    // separately, but the short-lived bot session must use this exact transport key.
+    await handleSavedCardOfferAction(supabase as any, sendText, PHONE_N, null, 'save_accept', PAY_ID);
+
     expect(supabase.from).toHaveBeenCalledWith('bot_sessions');
-    expect(sendText).toHaveBeenCalledWith(PHONE, expect.stringContaining('Waaiio PIN'));
+    expect(supabase.__botSessionInsert).toHaveBeenCalledWith(expect.objectContaining({
+      whatsapp_number: PHONE_N,
+      business_id: BIZ_ID,
+      current_step: 'save_card_pin',
+    }));
+    expect(supabase.rpc).toHaveBeenCalledWith('accept_saved_card_offer', expect.objectContaining({
+      p_customer_phone: PHONE,
+    }));
+    expect(sendText).toHaveBeenCalledWith(PHONE_N, expect.stringContaining('Waaiio PIN'));
+  });
+
+  it('#15b: null session + replace accept also preserves raw inbound phone', async () => {
+    const supabase = buildMockSupabase({ existingMethods: [EXISTING_METHOD] });
+    const { handleSavedCardOfferAction } = await import('@/lib/payments/saved-card-offer');
+
+    await handleSavedCardOfferAction(supabase as any, sendText, PHONE_N, null, 'replace_accept', PAY_ID);
+
+    expect(supabase.__botSessionInsert).toHaveBeenCalledWith(expect.objectContaining({
+      whatsapp_number: PHONE_N,
+      business_id: BIZ_ID,
+      current_step: 'replace_card_pin',
+    }));
+    expect(supabase.rpc).toHaveBeenCalledWith('accept_saved_card_offer', expect.objectContaining({
+      p_customer_phone: PHONE,
+    }));
+    expect(sendText).toHaveBeenCalledWith(PHONE_N, expect.stringContaining('Replace saved card'));
   });
 
   // ═══════════════════════════════════════════════════════════════
