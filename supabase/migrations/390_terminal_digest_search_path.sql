@@ -30,8 +30,15 @@ BEGIN
   JOIN pg_namespace n ON n.oid = e.extnamespace
   WHERE e.extname = 'pgcrypto';
 
-  IF v_pgcrypto_schema IS DISTINCT FROM 'extensions' THEN
-    RAISE EXCEPTION 'M390: expected pgcrypto in extensions, found %', v_pgcrypto_schema;
+  IF v_pgcrypto_schema IS NULL THEN
+    RAISE EXCEPTION 'M390: pgcrypto is not installed';
+  END IF;
+
+  -- Local Supabase commonly installs pgcrypto in public while hosted
+  -- production may install it in extensions. The function search_path below
+  -- supports both topologies without weakening function authority.
+  IF v_pgcrypto_schema NOT IN ('public', 'extensions') THEN
+    RAISE EXCEPTION 'M390: unsupported pgcrypto schema: %', v_pgcrypto_schema;
   END IF;
 
   SELECT p.proconfig INTO v_init_config
@@ -54,6 +61,8 @@ BEGIN
     RAISE EXCEPTION 'M390: finalize_payment_confirmation search_path not corrected: %', v_final_config;
   END IF;
 
-  PERFORM extensions.digest('waaiio-m390-probe'::text, 'sha256'::text);
+  -- Verify unqualified digest resolves under the exact function search_path.
+  PERFORM set_config('search_path', 'public, extensions', true);
+  PERFORM digest('waaiio-m390-probe'::text, 'sha256'::text);
 END;
 $$;
