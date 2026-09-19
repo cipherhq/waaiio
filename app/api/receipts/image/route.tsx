@@ -1,6 +1,7 @@
 import { ImageResponse } from 'next/og';
 import { type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
+import { formatTicketCurrency } from '@/lib/pdf/currency';
 
 export const runtime = 'edge';
 
@@ -22,7 +23,7 @@ export async function GET(request: NextRequest) {
     serviceName: string;
     date: string;
     amount: number;
-    currency: string;
+    countryCode: string;
     referenceCode: string;
     status: string;
     guestName: string;
@@ -48,7 +49,7 @@ export async function GET(request: NextRequest) {
       serviceName: svc?.name || 'Service',
       date: new Date(booking.date + 'T00:00').toLocaleDateString('en-US', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }),
       amount: booking.total_amount || 0,
-      currency: cc === 'US' ? '$' : cc === 'GB' ? '\u00A3' : cc === 'CA' ? 'CA$' : cc === 'GH' ? 'GHS ' : 'NGN ',
+      countryCode: cc,
       referenceCode: booking.reference_code,
       status: booking.status,
       guestName: booking.guest_name || 'Customer',
@@ -76,7 +77,7 @@ export async function GET(request: NextRequest) {
         serviceName: 'Order',
         date: new Date(order.created_at).toLocaleDateString('en-US', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }),
         amount: order.total_amount || 0,
-        currency: cc === 'US' ? '$' : cc === 'GB' ? '\u00A3' : cc === 'CA' ? 'CA$' : cc === 'GH' ? 'GHS ' : 'NGN ',
+        countryCode: cc,
         referenceCode: order.reference_code,
         status: order.status,
         guestName: `${user?.first_name || ''} ${user?.last_name || ''}`.trim() || 'Customer',
@@ -90,7 +91,7 @@ export async function GET(request: NextRequest) {
   }
 
   const r = receiptData;
-  const formattedAmount = `${r.currency}${r.amount.toLocaleString()}`;
+  const formattedAmount = formatTicketCurrency(r.amount, r.countryCode);
   const statusColor = r.status === 'confirmed' || r.status === 'completed' || r.status === 'delivered'
     ? '#22c55e' : r.status === 'pending' ? '#f59e0b' : r.status === 'cancelled' ? '#ef4444' : '#6C2BD9';
   const statusLabel = r.status.charAt(0).toUpperCase() + r.status.slice(1);
