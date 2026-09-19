@@ -73,6 +73,12 @@ vi.mock('@/lib/bot/flows/shared/post-completion', () => ({
   handlePostCompletion: vi.fn().mockResolvedValue(undefined),
 }));
 
+// Post-finalization Save Card is a separate non-blocking lifecycle.
+vi.mock('@/lib/payments/saved-card-offer', () => ({
+  checkAndOfferSavedCard: vi.fn().mockResolvedValue(undefined),
+  retryPendingSavedCardOffer: vi.fn().mockResolvedValue(undefined),
+}));
+
 // ── Mock Supabase factory ──
 function buildSupabase(paymentType: 'booking' | 'reservation' | 'order') {
   // eslint-disable-next-line
@@ -183,6 +189,7 @@ describe('sendProactiveConfirmation → handlePostCompletion call boundary', () 
   it('Booking: passes real amountPaid + skipCustomerSpend=true', async () => {
     const { sendProactiveConfirmation } = await import('../send-confirmation');
     const { handlePostCompletion } = await import('@/lib/bot/flows/shared/post-completion');
+    const { checkAndOfferSavedCard } = await import('@/lib/payments/saved-card-offer');
     const supabase = buildSupabase('booking');
 
     const result = await sendProactiveConfirmation(
@@ -197,6 +204,22 @@ describe('sendProactiveConfirmation → handlePostCompletion call boundary', () 
     expect(args.skipCustomerSpend).toBe(true);    // Stage 2 owns durable spend
     expect(args.businessId).toBe('biz-1');
     expect(args.customerPhone).toBe('+2341234567890');
+
+    // Save Card is reached only after confirmation finalizes successfully.
+    const finalizeCallIndex = (supabase.rpc as ReturnType<typeof vi.fn>).mock.calls
+      .findIndex(([name]) => name === 'finalize_payment_confirmation');
+    expect(finalizeCallIndex).toBeGreaterThanOrEqual(0);
+    expect(checkAndOfferSavedCard).toHaveBeenCalledWith(
+      supabase,
+      'p1',
+      '+2341234567890',
+      'biz-1',
+      expect.anything(),
+    );
+    const finalizeOrder = (supabase.rpc as ReturnType<typeof vi.fn>).mock.invocationCallOrder
+      [finalizeCallIndex];
+    const offerOrder = (checkAndOfferSavedCard as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0];
+    expect(offerOrder).toBeGreaterThan(finalizeOrder);
   });
 
   it('Reservation: passes real amountPaid + skipCustomerSpend=true', async () => {

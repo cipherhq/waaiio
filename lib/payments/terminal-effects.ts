@@ -383,7 +383,24 @@ export async function driveInternalEffect(
     if (!completeRes.ok) return { ok: false, error: 'complete_internal_failed' };
     return { ok: true };
   } catch (err) {
-    // Internal mutation failed — effect stays claimed (not completed)
+    const spec = STAGE3_EFFECT_CATALOG[effectKey];
+
+    // Optional internal effects must never hold payment confirmation open.
+    // Once reserved, terminalize a failed optional effect as skipped using the
+    // same fenced effect token. Required internal effects remain fail-closed.
+    if (spec?.category === 'optional') {
+      const skipped = await skipOptional(
+        supabase,
+        paymentId,
+        effectKey,
+        res.effectToken!,
+        'optional_internal_effect_failed',
+      );
+      if (skipped.ok) return { ok: true };
+      return { ok: false, error: 'skip_optional_failed' };
+    }
+
+    // Required internal mutation failed — keep claimed so reconciliation can retry.
     return { ok: false, error: String(err) };
   }
 }
