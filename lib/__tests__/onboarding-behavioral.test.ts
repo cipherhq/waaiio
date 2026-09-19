@@ -42,11 +42,8 @@ vi.mock('@/lib/supabase/service', () => ({
   }),
 }));
 
-vi.mock('@/lib/countries', () => ({
-  loadCountries: () => Promise.resolve(),
-  isValidCountryCode: () => true,
-  getDialingCodeMap: () => ({ '+234': ['NG'], '+1': ['US', 'CA'], '+44': ['GB'], '+233': ['GH'] }),
-}));
+// Note: lib/countries is no longer used by the registration route.
+// Country validation is now DB-authoritative via the countries table.
 
 vi.mock('@/lib/categoryConfig', () => ({
   loadCategories: () => Promise.resolve(),
@@ -169,6 +166,22 @@ function setupDefaultServiceMock(overrides?: {
             },
           };
         },
+      };
+    }
+    if (table === 'countries') {
+      return {
+        select: () => ({
+          eq: () => Promise.resolve({
+            data: [
+              { code: 'NG', dialing_code: '+234' },
+              { code: 'GH', dialing_code: '+233' },
+              { code: 'US', dialing_code: '+1' },
+              { code: 'CA', dialing_code: '+1' },
+              { code: 'GB', dialing_code: '+44' },
+            ],
+            error: null,
+          }),
+        }),
       };
     }
     if (table === 'whatsapp_config') {
