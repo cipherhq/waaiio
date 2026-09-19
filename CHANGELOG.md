@@ -3,6 +3,26 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-09-19 — Fix: onboarding preselects only free-tier capabilities (#341)
+
+### What changed
+- **New helper**: `getOnboardingDefaultCapabilities(category)` in `lib/capabilities/types.ts` — filters `CATEGORY_DEFAULT_CAPABILITIES` to free-tier only, preserves order, falls back to `['chat']`.
+- **StepCategory.tsx**: All 4 default-selection boundaries (search result, business-type, personal-event shortcut, "Other") now use the free-only resolver. Personal-event shortcut also calls `setSelectedPlan('free')` matching other paths (R1 B1).
+- **StepFeatures.tsx**: "Reset to defaults" uses the free-only resolver.
+- **OnboardingWizard.tsx**: Removed unused `CATEGORY_DEFAULT_CAPABILITIES` import.
+- **Tests**: 13 unit tests + 4 real StepCategory component tests + 1 full wizard registration payload test.
+  - B2: Renders real StepCategory with mocked setters; clicks personal-event, business-type, Other, and search paths; asserts `setSelectedCapabilities` receives free-only defaults and `setSelectedPlan('free')` is called.
+  - B3: Full wizard path captures `/api/onboarding/register` payload and asserts `capabilities` equals the free-only default set with no paid auto-adds.
+- **Updated**: `onboarding-wizard-pricing-lifecycle.test.ts` — parking category assertions now expect free-plan CTA (was premium).
+
+### What it affects
+- Onboarding (`/get-started`) feature selection step — new businesses start with free capabilities only.
+- Paid capabilities remain visible and manually selectable; `requiredPlan` behavior unchanged.
+- Global `CATEGORY_DEFAULT_CAPABILITIES` is NOT modified — no impact on dashboard, backend, or existing businesses.
+
+### What could break
+- If any non-onboarding code path relied on onboarding setting paid defaults automatically, it would now receive free-only defaults. Audit found no such dependency.
+
 ## 2026-09-18 — D1-D9: CTO exact-head review corrections (#331)
 
 ### What changed
