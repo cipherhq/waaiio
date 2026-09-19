@@ -159,11 +159,16 @@ export async function GET(request: NextRequest) {
             <div style={{ fontSize: 14, fontWeight: 'bold', color: '#6C2BD9', background: 'rgba(108, 43, 217, 0.15)', padding: '4px 12px', borderRadius: '6px', display: 'flex' }}>
               {ticketCode}
             </div>
-            {business?.subscription_tier !== 'business' && (
-              <div style={{ fontSize: 10, color: '#505060', display: 'flex' }}>
-                Powered by Waaiio
-              </div>
-            )}
+            {business?.subscription_tier !== 'business' ? (
+              /* eslint-disable-next-line @next/next/no-img-element */
+              <img src={`${process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com'}/logo.png`}
+                width={60} height={14} alt="Waaiio"
+                style={{ opacity: 0.7 }} />
+            ) : business?.logo_url ? (
+              /* eslint-disable-next-line @next/next/no-img-element */
+              <img src={business.logo_url} width={28} height={28} alt=""
+                style={{ borderRadius: '4px', opacity: 0.8 }} />
+            ) : null}
           </div>
         </div>
       </div>

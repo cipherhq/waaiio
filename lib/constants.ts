@@ -1219,6 +1219,29 @@ export function formatCurrency(amount: number, countryCode: CountryCode = 'NG'):
   }).format(amount);
 }
 
+/**
+ * Format an amount using an authoritative ISO 4217 currency code.
+ * No country→currency map — uses the code directly with Intl.NumberFormat.
+ * If the code is unknown/unsupported by the runtime, returns "CODE amount" safely.
+ * Never silently falls back to NGN.
+ */
+export function formatCurrencyCode(amount: number, currencyCode: string, locale?: string): string {
+  const code = (currencyCode || '').toUpperCase().trim();
+  if (!code || code.length < 3) return `${code || '???'} ${amount.toLocaleString('en-US', { minimumFractionDigits: amount % 1 !== 0 ? 2 : 0, maximumFractionDigits: 2 })}`;
+  try {
+    const hasCents = amount % 1 !== 0;
+    return new Intl.NumberFormat(locale || 'en-US', {
+      style: 'currency',
+      currency: code,
+      minimumFractionDigits: hasCents ? 2 : 0,
+      maximumFractionDigits: hasCents ? 2 : 0,
+    }).format(amount);
+  } catch {
+    // Intl doesn't recognize this currency code — safe literal fallback
+    return `${code} ${amount.toLocaleString('en-US', { minimumFractionDigits: amount % 1 !== 0 ? 2 : 0, maximumFractionDigits: 2 })}`;
+  }
+}
+
 /** Get pricing tiers localized for a country */
 export function getPricingTiers(countryCode: CountryCode = 'NG'): Record<SubscriptionTier, {
   name: string;

@@ -25,6 +25,11 @@ export interface SendTicketsOptions {
   quantity: number;
   amount?: number;
   countryCode?: CountryCode;
+  // Presentation-only fields for enhanced ticket PDF
+  flyerUrl?: string;       // event flyer image URL (events.image_url)
+  ticketTypeName?: string; // e.g. "VIP", "General Admission"
+  ticketPrice?: number;    // per-ticket price for display
+  currencyCode?: string;   // authoritative ISO 4217 code from payments.currency
   /** Optional translation function for customer-facing messages (from ctx.t) */
   translate?: (text: string) => Promise<string>;
 }
@@ -213,6 +218,11 @@ export async function deliverTicketsWhatsApp(opts: TicketDeliveryContext): Promi
   try {
     const pdfBuffer = await generateTicketsPdf({
       eventName, eventDate, eventTime, venue, guestName, referenceCode, tickets, verifyBaseUrl, subscriptionTier,
+      flyerUrl: opts.flyerUrl,
+      ticketType: opts.ticketTypeName,
+      price: opts.ticketPrice,
+      countryCode: opts.countryCode,
+      currencyCode: opts.currencyCode,
     });
 
     const storagePath = `tickets/${businessId}/${bookingId}.pdf`;
