@@ -206,7 +206,8 @@ describe('F1: Real Citadel no-session integration', () => {
     expect(sender.boundBusinessId).toBe('');
     const bot = new BotService(supabase as any, sender, createStandaloneService(), createMockIntelligence() as any);
 
-    await bot.handleMessage(PHONE, 'save card', { type: 'text' });
+    // Production-shaped Meta inbound: sender phone has no leading "+".
+    await bot.handleMessage(PHONE_N, 'save card', { type: 'text' });
 
     // Hotfix proof: exact payment authority binds Citadel before any PIN response.
     expect(sender.boundBusinessId).toBe(BIZ_ID);
@@ -214,7 +215,7 @@ describe('F1: Real Citadel no-session integration', () => {
       expect.objectContaining({
         business_id: BIZ_ID,
         current_step: 'save_card_pin',
-        whatsapp_number: PHONE,
+        whatsapp_number: PHONE_N,
       }),
     ]));
 
