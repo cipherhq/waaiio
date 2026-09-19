@@ -153,24 +153,5 @@ describe('requiredPlan computation with manual paid selections', () => {
   });
 });
 
-describe('category change replaces stale selections', () => {
-  it('selecting a new category produces fresh free-only defaults regardless of previous selections', () => {
-    // Simulate: user had salon defaults (potentially stale/paid from old behavior)
-    const stalePaidCaps: CapabilityId[] = [
-      'appointment',
-      'payment',
-      'broadcast',
-      'staff',
-    ];
-
-    // User changes to restaurant — StepCategory calls getOnboardingDefaultCapabilities
-    const newDefaults = getOnboardingDefaultCapabilities('restaurant');
-
-    // New defaults should be free-only and should NOT contain stale paid selections
-    for (const cap of newDefaults) {
-      expect(CAPABILITY_TIER_REQUIREMENTS[cap]).toBe('free');
-    }
-    expect(newDefaults).not.toContain('broadcast');
-    expect(newDefaults).not.toContain('staff');
-  });
-});
+// B2 component-level "category change replaces stale selections" tests
+// are in onboarding-free-defaults-component.test.ts (renders real StepCategory).

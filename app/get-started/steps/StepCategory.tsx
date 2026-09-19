@@ -407,6 +407,7 @@ export function StepCategory({
             onClick={() => {
               setCategory('events' as BusinessCategoryKey);
               setSelectedCapabilities(getOnboardingDefaultCapabilities('events'));
+              setSelectedPlan('free');
               setStep('features');
             }}
             className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl border-2 border-dashed border-brand-200 bg-brand-50/20 px-4 py-3 text-center transition hover:border-brand hover:bg-brand-50"

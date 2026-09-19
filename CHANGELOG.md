@@ -7,10 +7,12 @@ If something breaks, check this log to find what changed and when.
 
 ### What changed
 - **New helper**: `getOnboardingDefaultCapabilities(category)` in `lib/capabilities/types.ts` — filters `CATEGORY_DEFAULT_CAPABILITIES` to free-tier only, preserves order, falls back to `['chat']`.
-- **StepCategory.tsx**: All 4 default-selection boundaries (search result, business-type, personal-event shortcut, "Other") now use the free-only resolver instead of raw global defaults.
+- **StepCategory.tsx**: All 4 default-selection boundaries (search result, business-type, personal-event shortcut, "Other") now use the free-only resolver. Personal-event shortcut also calls `setSelectedPlan('free')` matching other paths (R1 B1).
 - **StepFeatures.tsx**: "Reset to defaults" uses the free-only resolver.
 - **OnboardingWizard.tsx**: Removed unused `CATEGORY_DEFAULT_CAPABILITIES` import.
-- **Tests**: 14 new tests proving free-only defaults, order preservation, global defaults unchanged, manual paid opt-in still raises `requiredPlan`.
+- **Tests**: 13 unit tests + 4 real StepCategory component tests + 1 full wizard registration payload test.
+  - B2: Renders real StepCategory with mocked setters; clicks personal-event, business-type, Other, and search paths; asserts `setSelectedCapabilities` receives free-only defaults and `setSelectedPlan('free')` is called.
+  - B3: Full wizard path captures `/api/onboarding/register` payload and asserts `capabilities` equals the free-only default set with no paid auto-adds.
 - **Updated**: `onboarding-wizard-pricing-lifecycle.test.ts` — parking category assertions now expect free-plan CTA (was premium).
 
 ### What it affects
