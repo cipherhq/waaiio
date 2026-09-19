@@ -1,7 +1,7 @@
 import PDFDocument from 'pdfkit';
 import QRCode from 'qrcode';
 import { isWhiteLabel } from '@/lib/whitelabel';
-import { formatTicketCurrency } from './currency';
+import { formatCurrency, type CountryCode } from '@/lib/constants';
 
 export interface TicketPdfOptions {
   eventName: string;
@@ -115,8 +115,8 @@ export async function generateTicketsPdf(opts: TicketPdfOptions): Promise<Buffer
     const leftWidth = contentWidth * 0.62;
     let y = margin + 14;
 
-    // Waaiio logo (small, top-left if no flyer)
-    if (!flyerBuffer && logoBuffer) {
+    // Waaiio logo (small, top-left — shown on all tickets, subject to white-label)
+    if (logoBuffer && !isWhiteLabel(opts.subscriptionTier)) {
       try {
         doc.image(logoBuffer, margin, y, { width: 72, height: 17 });
         y += 24;
@@ -153,7 +153,7 @@ export async function generateTicketsPdf(opts: TicketPdfOptions): Promise<Buffer
     detailRows.push(['ATTENDEE', opts.guestName]);
     detailRows.push(['REF', opts.referenceCode]);
     if (opts.price !== undefined && opts.price > 0) {
-      detailRows.push(['PRICE', formatTicketCurrency(opts.price, opts.countryCode)]);
+      detailRows.push(['PRICE', formatCurrency(opts.price, (opts.countryCode || 'NG') as CountryCode)]);
     }
     // Section/Row/Seat
     const seatParts: string[] = [];

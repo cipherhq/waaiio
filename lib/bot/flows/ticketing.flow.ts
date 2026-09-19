@@ -784,6 +784,11 @@ export const ticketingFlow: FlowDefinition = {
           guestPhone: ctx.from,
           referenceCode: booking.reference_code,
           quantity: qty,
+          // Presentation-only fields for enhanced ticket PDF
+          flyerUrl: (d.event_image_url as string) || undefined,
+          ticketTypeName: (d.ticket_type_name as string) || undefined,
+          ticketPrice: (d.event_price as number) || undefined,
+          countryCode: (ctx.business?.country_code || 'NG') as CountryCode,
         });
         if (!freeTicketResult.success) {
           logger.error('[TICKETING] Free ticket creation failed:', freeTicketResult.error);

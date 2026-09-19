@@ -1,6 +1,6 @@
 import PDFDocument from 'pdfkit';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
-import { formatTicketCurrency } from './currency';
+// Consistent use of canonical formatCurrency from constants.ts (no duplicate authority)
 
 // ── Types ──
 
@@ -174,12 +174,12 @@ export async function generateReceiptPdf(data: ReceiptData): Promise<Buffer> {
   // Subtotal/fees if available
   if (data.subtotal !== undefined) {
     doc.fontSize(10).font('Helvetica').fillColor(TEXT_SECONDARY).text('Subtotal', labelX, y);
-    doc.text(formatTicketCurrency(data.subtotal, data.countryCode), valueX + 60, y, { width: 100, align: 'right' });
+    doc.text(formatCurrency(data.subtotal, data.countryCode), valueX + 60, y, { width: 100, align: 'right' });
     y += lineHeight;
   }
   if (data.fees !== undefined && data.fees > 0) {
     doc.fontSize(10).font('Helvetica').fillColor(TEXT_SECONDARY).text('Fees', labelX, y);
-    doc.text(formatTicketCurrency(data.fees, data.countryCode), valueX + 60, y, { width: 100, align: 'right' });
+    doc.text(formatCurrency(data.fees, data.countryCode), valueX + 60, y, { width: 100, align: 'right' });
     y += lineHeight;
   }
 

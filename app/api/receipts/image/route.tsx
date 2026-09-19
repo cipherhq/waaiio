@@ -1,7 +1,7 @@
 import { ImageResponse } from 'next/og';
 import { type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
-import { formatTicketCurrency } from '@/lib/pdf/currency';
+import { formatCurrency, type CountryCode } from '@/lib/constants';
 
 export const runtime = 'edge';
 
@@ -91,7 +91,7 @@ export async function GET(request: NextRequest) {
   }
 
   const r = receiptData;
-  const formattedAmount = formatTicketCurrency(r.amount, r.countryCode);
+  const formattedAmount = formatCurrency(r.amount, (r.countryCode || 'NG') as CountryCode);
   const statusColor = r.status === 'confirmed' || r.status === 'completed' || r.status === 'delivered'
     ? '#22c55e' : r.status === 'pending' ? '#f59e0b' : r.status === 'cancelled' ? '#ef4444' : '#6C2BD9';
   const statusLabel = r.status.charAt(0).toUpperCase() + r.status.slice(1);

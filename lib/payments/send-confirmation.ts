@@ -1083,10 +1083,18 @@ export async function sendProactiveConfirmation(
 
               const { data: event, error: eventError } = await supabase
                 .from('events')
-                .select('id, name, date, time, venue')
+                .select('id, name, date, time, venue, image_url')
                 .eq('id', ticketBooking.event_id)
                 .single();
               if (eventError) throw new Error(`ticket_event_lookup_failed:${eventError.message}`);
+
+              // Resolve ticket type name for PDF presentation (display-only)
+              let ticketTypeName: string | undefined;
+              if (ticketTypeId) {
+                const { data: ttRow } = await supabase.from('event_ticket_types')
+                  .select('name, price').eq('id', ticketTypeId).maybeSingle();
+                ticketTypeName = ttRow?.name || undefined;
+              }
 
               const ticketOptions = {
                 supabase,
@@ -1107,6 +1115,10 @@ export async function sendProactiveConfirmation(
                 quantity: ticketQty,
                 amount: payment.amount,
                 countryCode,
+                // Presentation-only fields for enhanced ticket PDF
+                flyerUrl: (event as any)?.image_url || undefined,
+                ticketTypeName,
+                ticketPrice: payment.amount ? Math.round(payment.amount / ticketQty) : undefined,
               };
 
               let ticketResult: Awaited<ReturnType<typeof ticketModule.ensureCanonicalTicketRows>> | null = null;
