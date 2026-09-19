@@ -6,7 +6,7 @@ import {
   type BusinessCategoryKey,
 } from '@/lib/constants';
 import { getCategoryGroups, getCategoryList } from '@/lib/categoryConfig';
-import { CATEGORY_DEFAULT_CAPABILITIES } from '@/lib/capabilities/types';
+import { getOnboardingDefaultCapabilities } from '@/lib/capabilities/types';
 import type { StepCategoryProps } from './types';
 
 /* ─── Outcome-based tiles: "What do your customers need?" ─── */
@@ -406,7 +406,7 @@ export function StepCategory({
             type="button"
             onClick={() => {
               setCategory('events' as BusinessCategoryKey);
-              setSelectedCapabilities(CATEGORY_DEFAULT_CAPABILITIES['events'] || []);
+              setSelectedCapabilities(getOnboardingDefaultCapabilities('events'));
               setStep('features');
             }}
             className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl border-2 border-dashed border-brand-200 bg-brand-50/20 px-4 py-3 text-center transition hover:border-brand hover:bg-brand-50"
@@ -438,8 +438,7 @@ export function StepCategory({
                     onClick={() => {
                       const key = cat.key as BusinessCategoryKey;
                       setCategory(key);
-                      const defaults = CATEGORY_DEFAULT_CAPABILITIES[key] || ['scheduling'];
-                      setSelectedCapabilities([...defaults]);
+                      setSelectedCapabilities(getOnboardingDefaultCapabilities(key));
                       setSelectedPlan('free');
                       setStep('features');
                     }}
@@ -489,8 +488,7 @@ export function StepCategory({
                 onClick={() => {
                   const key = cat.key as BusinessCategoryKey;
                   setCategory(key);
-                  const defaults = CATEGORY_DEFAULT_CAPABILITIES[key] || ['scheduling'];
-                  setSelectedCapabilities([...defaults]);
+                  setSelectedCapabilities(getOnboardingDefaultCapabilities(key));
                   setSelectedPlan('free');
                   setStep('features');
                 }}
@@ -507,8 +505,7 @@ export function StepCategory({
                 setCategory('other' as BusinessCategoryKey);
                 const filtered = getFilteredCategories(selectedOutcome);
                 const firstKey = filtered[0]?.key as BusinessCategoryKey || 'other';
-                const defaults = CATEGORY_DEFAULT_CAPABILITIES[firstKey] || ['appointment', 'feedback', 'chat'];
-                setSelectedCapabilities([...defaults]);
+                setSelectedCapabilities(getOnboardingDefaultCapabilities(firstKey));
                 setSelectedPlan('free');
                 setStep('features');
               }}

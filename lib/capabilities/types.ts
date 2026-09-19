@@ -30,6 +30,21 @@ export function getRequiredTier(capId: CapabilityId): SubscriptionTier {
 }
 
 /**
+ * Onboarding-only default resolver.
+ * Returns the free-tier subset of CATEGORY_DEFAULT_CAPABILITIES for a given category.
+ * Preserves original order; falls back to ['chat'] if no free capabilities remain.
+ *
+ * Does NOT modify the global CATEGORY_DEFAULT_CAPABILITIES.
+ * Paid capabilities remain visible and manually selectable during onboarding.
+ */
+export function getOnboardingDefaultCapabilities(category: string): CapabilityId[] {
+  const defaults = CATEGORY_DEFAULT_CAPABILITIES[category];
+  if (!defaults) return ['chat'];
+  const freeOnly = defaults.filter(id => CAPABILITY_TIER_REQUIREMENTS[id] === 'free');
+  return freeOnly.length > 0 ? freeOnly : ['chat'];
+}
+
+/**
  * Check if a business's current tier (or admin overrides) allow enabling a capability.
  */
 export function canEnableCapability(

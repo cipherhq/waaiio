@@ -5,7 +5,7 @@ import {
   formatCurrency,
   type SubscriptionTier,
 } from '@/lib/constants';
-import { CATEGORY_DEFAULT_CAPABILITIES, CAPABILITY_TIER_REQUIREMENTS, type CapabilityId } from '@/lib/capabilities/types';
+import { CAPABILITY_TIER_REQUIREMENTS, getOnboardingDefaultCapabilities, type CapabilityId } from '@/lib/capabilities/types';
 import type { StepFeaturesProps } from './types';
 
 export function StepFeatures({
@@ -322,8 +322,7 @@ export function StepFeatures({
           </div>
           {selectedCapabilities.length === 0 && (
             <button type="button" onClick={() => {
-              const defaults = CATEGORY_DEFAULT_CAPABILITIES[category!] || ['chat'];
-              setSelectedCapabilities([...defaults]);
+              setSelectedCapabilities(getOnboardingDefaultCapabilities(category!));
             }} className="text-xs font-medium text-brand hover:underline">
               Reset to defaults
             </button>

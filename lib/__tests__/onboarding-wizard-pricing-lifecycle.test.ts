@@ -226,7 +226,7 @@ describe('OnboardingWizard — pricing lifecycle proof', () => {
     assertTextAbsent(container, '\u20A660,000');
   });
 
-  it('successful pricing \u2192 features step shows DB fixture prices, not constants', async () => {
+  it('successful pricing \u2192 features step renders with DB-derived pricing, not constants', async () => {
     setupFetch('success');
     const container = await renderWizardOnCategoryStep();
     await navigateCategoryToFeatures(container);
@@ -238,16 +238,15 @@ describe('OnboardingWizard — pricing lifecycle proof', () => {
     // Must NOT show "Pricing temporarily unavailable"
     assertTextAbsent(container, 'Pricing temporarily unavailable');
 
-    // DB fixture business price (70,000) must appear in the "Requires Premium" label
-    // (parking category defaults to premium-tier capabilities)
-    expect(text).toContain('70,000');
-    // DB fixture business fee (1%) must appear
-    expect(text).toContain('1%');
-    // Constants NG business price (\u20A660,000) must NOT appear
+    // #341: onboarding defaults are now free-tier only, so parking starts on the free plan.
+    // The free-plan fee percentage from the DB fixture must appear.
+    // DB fixture free fee (3%) must appear
+    expect(text).toContain('3%');
+    // Constants NG business price (₦60,000) must NOT appear
     expect(text).not.toContain('\u20A660,000');
   });
 
-  it('successful pricing \u2192 Continue reaches details with DB-derived paid CTA + progression enabled', async () => {
+  it('successful pricing \u2192 Continue reaches details with free-plan CTA + progression enabled', async () => {
     setupFetch('success');
     const container = await renderWizardOnCategoryStep();
     await navigateCategoryToFeatures(container);
@@ -264,15 +263,9 @@ describe('OnboardingWizard — pricing lifecycle proof', () => {
 
     const text = container.textContent || '';
 
-    // Parking category defaults to business tier. The details CTA must show
-    // the DB fixture business price (70,000), NOT constants (60,000).
-    expect(text).toContain('70,000');
-    expect(text).not.toContain('\u20A660,000');
-
-    // The paid-plan CTA ("Pay \u20A670,000/mo & Launch") proves the paid
-    // pricing-dependent path is enabled with DB authority and progression works
-    expect(text).toContain('Pay');
-    expect(text).toContain('Launch');
+    // #341: parking category now defaults to free-tier capabilities only.
+    // Details step should show "Start Free Trial" (no paid pricing CTA).
+    expect(text).toContain('Start Free Trial');
   });
 
   it('stale ?billing=annual URL: real wizard verify request emits billing_interval=month', async () => {

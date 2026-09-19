@@ -3,6 +3,24 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-09-19 — Fix: onboarding preselects only free-tier capabilities (#341)
+
+### What changed
+- **New helper**: `getOnboardingDefaultCapabilities(category)` in `lib/capabilities/types.ts` — filters `CATEGORY_DEFAULT_CAPABILITIES` to free-tier only, preserves order, falls back to `['chat']`.
+- **StepCategory.tsx**: All 4 default-selection boundaries (search result, business-type, personal-event shortcut, "Other") now use the free-only resolver instead of raw global defaults.
+- **StepFeatures.tsx**: "Reset to defaults" uses the free-only resolver.
+- **OnboardingWizard.tsx**: Removed unused `CATEGORY_DEFAULT_CAPABILITIES` import.
+- **Tests**: 14 new tests proving free-only defaults, order preservation, global defaults unchanged, manual paid opt-in still raises `requiredPlan`.
+- **Updated**: `onboarding-wizard-pricing-lifecycle.test.ts` — parking category assertions now expect free-plan CTA (was premium).
+
+### What it affects
+- Onboarding (`/get-started`) feature selection step — new businesses start with free capabilities only.
+- Paid capabilities remain visible and manually selectable; `requiredPlan` behavior unchanged.
+- Global `CATEGORY_DEFAULT_CAPABILITIES` is NOT modified — no impact on dashboard, backend, or existing businesses.
+
+### What could break
+- If any non-onboarding code path relied on onboarding setting paid defaults automatically, it would now receive free-only defaults. Audit found no such dependency.
+
 ## 2026-09-18 — D1-D9: CTO exact-head review corrections (#331)
 
 ### What changed
