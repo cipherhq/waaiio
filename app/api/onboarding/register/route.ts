@@ -9,7 +9,6 @@ import {
   type BusinessCategoryKey,
   type CountryCode,
 } from '@/lib/constants';
-import { loadCountries, isValidCountryCode, getDialingCodeMap } from '@/lib/countries';
 import { loadCategories, getAllCategoryKeys } from '@/lib/categoryConfig';
 import { initCapabilities } from '@/lib/capabilities/service';
 import type { CapabilityId } from '@/lib/capabilities/types';
@@ -28,7 +27,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ message: 'Unauthorized' }, { status: 401 });
     }
 
-    await loadCountries();
     await loadCategories();
     const body = await request.json();
     const { first_name, last_name, name, city, state, zip_code, address, phone, category, country, bot_alias, bot_greeting, wa_method, wa_own_phone, capabilities, bot_code: customBotCode, retryBusinessId } = body;
@@ -106,19 +104,48 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ message: `Maximum number of businesses reached (${settings.max_businesses_per_user}). Contact support to increase.` }, { status: 400 });
     }
 
-    // Fail-closed country validation — no hardcoded fallback
-    if (!isValidCountryCode(country)) {
+    // ── Authoritative country validation from DB (not browser cache) ──
+    const normalizedCountry = String(country || '').trim().toUpperCase();
+    const { data: activeCountries, error: countriesError } = await svcCheck
+      .from('countries')
+      .select('code, dialing_code')
+      .eq('is_active', true);
+
+    if (countriesError) {
+      logger.error('[ONBOARDING] Countries table read failed:', countriesError);
+      return NextResponse.json(
+        { message: 'Country configuration unavailable. Please try again later.' },
+        { status: 503 },
+      );
+    }
+    if (!activeCountries || activeCountries.length === 0) {
+      logger.error('[ONBOARDING] No active countries found in countries table');
+      return NextResponse.json(
+        { message: 'Country configuration unavailable. Please try again later.' },
+        { status: 503 },
+      );
+    }
+
+    const activeCountryCodes = new Set(activeCountries.map((c: { code: string }) => c.code));
+    if (!activeCountryCodes.has(normalizedCountry)) {
       return NextResponse.json(
         { message: 'Invalid or unsupported country. Please select a valid country.' },
         { status: 400 },
       );
     }
-    const countryCode = country as CountryCode;
+    const countryCode = normalizedCountry as CountryCode;
 
     // Validate country matches phone number to prevent fee arbitrage (DB-derived)
-    const phoneDialingCodes = getDialingCodeMap();
     if (phone) {
-      const matchedEntry = Object.entries(phoneDialingCodes).find(([code]) => phone.startsWith(code));
+      const dialingCodeMap: Record<string, string[]> = {};
+      for (const row of activeCountries) {
+        if (row.dialing_code) {
+          const dc = String(row.dialing_code);
+          if (!dialingCodeMap[dc]) dialingCodeMap[dc] = [];
+          dialingCodeMap[dc].push(row.code);
+        }
+      }
+      const matchedEntry = Object.entries(dialingCodeMap).find(([code]) => phone.startsWith(code));
       if (matchedEntry && !matchedEntry[1].includes(countryCode)) {
         return NextResponse.json(
           { message: `Phone number doesn't match selected country. A ${phone.slice(0, 4)} number should use ${matchedEntry[1].join(' or ')}.` },

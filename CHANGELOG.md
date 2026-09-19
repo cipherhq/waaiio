@@ -3,6 +3,23 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-09-19 — Fix: DB-authoritative country validation in onboarding registration (#342)
+
+### What changed
+- **`app/api/onboarding/register/route.ts`**: Replaced `loadCountries()`, `isValidCountryCode()`, and `getDialingCodeMap()` (browser-cache-backed) with a direct service-client query against the `countries` table (`code, dialing_code` where `is_active = true`).
+- Submitted country is normalized via `String(country || '').trim().toUpperCase()`.
+- DB read error or zero active rows → HTTP 503 "configuration unavailable" (fail-closed), not misleading 400.
+- Dialing-code→country map built from same authoritative rows for phone-country mismatch validation.
+- Removed `lib/countries` import from the route (no longer used server-side).
+- **Tests**: 14 new regression tests in `onboarding-country-authority.test.ts`. Updated mocks in `onboarding-behavioral.test.ts`.
+
+### What it affects
+- Fresh registration country validation only. Retry path unchanged.
+- `lib/countries.ts` NOT modified — browser-side country picker behavior preserved.
+
+### What could break
+- If the `countries` table has no active rows (misconfiguration), registration returns 503 instead of silently passing. This is intentional fail-closed behavior.
+
 ## 2026-09-19 — Fix: onboarding preselects only free-tier capabilities (#341)
 
 ### What changed
