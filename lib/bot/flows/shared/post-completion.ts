@@ -40,6 +40,8 @@ interface PostCompletionParams {
   skipCustomerSpend?: boolean;
   /** Optional translation function for customer-facing messages (from ctx.t) */
   translate?: (text: string) => Promise<string>;
+  /** Authoritative ISO 4217 currency code from the payment (read-only display) */
+  currencyCode?: string | null;
 }
 
 function generateReferralCode(): string {
@@ -67,7 +69,7 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
       getEnabledCapabilities(supabase, businessId),
       supabase
         .from('businesses')
-        .select('name, country_code, subscription_tier, metadata')
+        .select('name, country_code, subscription_tier, metadata, logo_url')
         .eq('id', businessId)
         .single(),
     ]);
@@ -177,6 +179,8 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
           customerPhone,
           countryCode: (cc as CountryCode) || 'NG',
           whitelabel: isWhitelabel,
+          logoUrl: (biz as any)?.logo_url || undefined,
+          currencyCode: params.currencyCode || undefined,
         });
 
         const stableId = paymentId || crypto.randomUUID();

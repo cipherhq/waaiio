@@ -1,6 +1,5 @@
 import PDFDocument from 'pdfkit';
-import { formatCurrency, type CountryCode } from '@/lib/constants';
-// Consistent use of canonical formatCurrency from constants.ts (no duplicate authority)
+import { formatCurrency, formatCurrencyCode, type CountryCode } from '@/lib/constants';
 
 // ── Types ──
 
@@ -20,6 +19,7 @@ export interface ReceiptData {
   subtotal?: number;
   fees?: number;
   paymentMethod?: string; // e.g. "Card ****4242", "Bank Transfer"
+  currencyCode?: string;  // authoritative ISO 4217 code (overrides country-derived)
 }
 
 export interface HistoryRow {
@@ -74,6 +74,12 @@ function statusColor(status: string): string {
   if (s === 'pending') return '#f59e0b';
   if (s === 'cancelled' || s === 'failed' || s === 'refunded') return '#ef4444';
   return BRAND_PURPLE;
+}
+
+/** Presentation formatting: use authoritative currencyCode when available, else country-derived */
+function fmtAmount(amount: number, countryCode: CountryCode, currencyCode?: string): string {
+  if (currencyCode) return formatCurrencyCode(amount, currencyCode);
+  return formatCurrency(amount, countryCode);
 }
 
 function collectPdfBuffer(doc: PDFDocument): Promise<Buffer> {
@@ -174,12 +180,12 @@ export async function generateReceiptPdf(data: ReceiptData): Promise<Buffer> {
   // Subtotal/fees if available
   if (data.subtotal !== undefined) {
     doc.fontSize(10).font('Helvetica').fillColor(TEXT_SECONDARY).text('Subtotal', labelX, y);
-    doc.text(formatCurrency(data.subtotal, data.countryCode), valueX + 60, y, { width: 100, align: 'right' });
+    doc.text(fmtAmount(data.subtotal, data.countryCode, data.currencyCode), valueX + 60, y, { width: 100, align: 'right' });
     y += lineHeight;
   }
   if (data.fees !== undefined && data.fees > 0) {
     doc.fontSize(10).font('Helvetica').fillColor(TEXT_SECONDARY).text('Fees', labelX, y);
-    doc.text(formatCurrency(data.fees, data.countryCode), valueX + 60, y, { width: 100, align: 'right' });
+    doc.text(fmtAmount(data.fees, data.countryCode, data.currencyCode), valueX + 60, y, { width: 100, align: 'right' });
     y += lineHeight;
   }
 
@@ -190,7 +196,7 @@ export async function generateReceiptPdf(data: ReceiptData): Promise<Buffer> {
   }
   doc.fontSize(12).font('Helvetica-Bold').fillColor(TEXT_PRIMARY).text('Total', labelX, y);
   doc.fontSize(14).font('Helvetica-Bold').fillColor(BRAND_PURPLE)
-    .text(formatCurrency(data.amount, data.countryCode), valueX + 40, y - 2, { width: 120, align: 'right' });
+    .text(fmtAmount(data.amount, data.countryCode, data.currencyCode), valueX + 40, y - 2, { width: 120, align: 'right' });
 
   // ── Footer ──
   if (!data.whitelabel) {

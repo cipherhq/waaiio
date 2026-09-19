@@ -29,6 +29,7 @@ export interface SendTicketsOptions {
   flyerUrl?: string;       // event flyer image URL (events.image_url)
   ticketTypeName?: string; // e.g. "VIP", "General Admission"
   ticketPrice?: number;    // per-ticket price for display
+  currencyCode?: string;   // authoritative ISO 4217 code from payments.currency
   /** Optional translation function for customer-facing messages (from ctx.t) */
   translate?: (text: string) => Promise<string>;
 }
@@ -221,6 +222,7 @@ export async function deliverTicketsWhatsApp(opts: TicketDeliveryContext): Promi
       ticketType: opts.ticketTypeName,
       price: opts.ticketPrice,
       countryCode: opts.countryCode,
+      currencyCode: opts.currencyCode,
     });
 
     const storagePath = `tickets/${businessId}/${bookingId}.pdf`;

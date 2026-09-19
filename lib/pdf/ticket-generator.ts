@@ -1,7 +1,7 @@
 import PDFDocument from 'pdfkit';
 import QRCode from 'qrcode';
 import { isWhiteLabel } from '@/lib/whitelabel';
-import { formatCurrency, type CountryCode } from '@/lib/constants';
+import { formatCurrency, formatCurrencyCode, type CountryCode } from '@/lib/constants';
 
 export interface TicketPdfOptions {
   eventName: string;
@@ -20,8 +20,9 @@ export interface TicketPdfOptions {
   // New optional fields for enhanced ticket
   flyerUrl?: string;       // event flyer image URL
   ticketType?: string;     // e.g. "VIP", "General Admission"
-  price?: number;          // ticket price
-  countryCode?: string;    // for currency formatting
+  price?: number;          // ticket price (authoritative ticket-type or event price)
+  countryCode?: string;    // fallback for currency formatting
+  currencyCode?: string;   // authoritative ISO 4217 code from payments.currency
   section?: string;        // optional section
   row?: string;            // optional row
   seat?: string;           // optional seat
@@ -153,7 +154,10 @@ export async function generateTicketsPdf(opts: TicketPdfOptions): Promise<Buffer
     detailRows.push(['ATTENDEE', opts.guestName]);
     detailRows.push(['REF', opts.referenceCode]);
     if (opts.price !== undefined && opts.price > 0) {
-      detailRows.push(['PRICE', formatCurrency(opts.price, (opts.countryCode || 'NG') as CountryCode)]);
+      const priceStr = opts.currencyCode
+        ? formatCurrencyCode(opts.price, opts.currencyCode)
+        : formatCurrency(opts.price, (opts.countryCode || 'NG') as CountryCode);
+      detailRows.push(['PRICE', priceStr]);
     }
     // Section/Row/Seat
     const seatParts: string[] = [];

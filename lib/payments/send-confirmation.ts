@@ -193,6 +193,12 @@ export async function sendProactiveConfirmation(
   let serviceName = 'Payment';
   let referenceCode = '';
   let countryCode: CountryCode = 'US';
+  // Read authoritative payment currency (read-only, no calculation change)
+  let paymentCurrencyCode: string | undefined;
+  try {
+    const { data: payRow } = await supabase.from('payments').select('currency').eq('id', payment.id).maybeSingle();
+    paymentCurrencyCode = payRow?.currency || undefined;
+  } catch { /* non-blocking */ }
   let bookingDate: string | undefined;
   let bookingTime: string | undefined;
   let bookingAddress: string | undefined;
@@ -806,6 +812,7 @@ export async function sendProactiveConfirmation(
           // #167: Direct Giving skips loyalty; ambiguous payment-family fails closed
           skipLoyalty: isGivingPayment || isAmbiguousPayment,
           serviceName, referenceCode,
+          currencyCode: paymentCurrencyCode,
         });
       } catch (pcErr) {
         logSafeError(logPrefix, 'post-completion', pcErr);
@@ -1083,18 +1090,26 @@ export async function sendProactiveConfirmation(
 
               const { data: event, error: eventError } = await supabase
                 .from('events')
-                .select('id, name, date, time, venue, image_url')
+                .select('id, name, date, time, venue, image_url, price')
                 .eq('id', ticketBooking.event_id)
                 .single();
               if (eventError) throw new Error(`ticket_event_lookup_failed:${eventError.message}`);
 
-              // Resolve ticket type name for PDF presentation (display-only)
+              // Resolve ticket type name + authoritative per-ticket price (display-only)
               let ticketTypeName: string | undefined;
+              let ticketPrice: number | undefined;
               if (ticketTypeId) {
                 const { data: ttRow } = await supabase.from('event_ticket_types')
                   .select('name, price').eq('id', ticketTypeId).maybeSingle();
                 ticketTypeName = ttRow?.name || undefined;
+                ticketPrice = ttRow?.price != null ? Number(ttRow.price) : undefined;
               }
+              // For untyped events, use the event's own price if available
+              if (ticketPrice === undefined && (event as any)?.price != null) {
+                ticketPrice = Number((event as any).price);
+              }
+
+              // Use authoritative payment currency read at top of function
 
               const ticketOptions = {
                 supabase,
@@ -1118,7 +1133,8 @@ export async function sendProactiveConfirmation(
                 // Presentation-only fields for enhanced ticket PDF
                 flyerUrl: (event as any)?.image_url || undefined,
                 ticketTypeName,
-                ticketPrice: payment.amount ? Math.round(payment.amount / ticketQty) : undefined,
+                ticketPrice,
+                currencyCode: paymentCurrencyCode,
               };
 
               let ticketResult: Awaited<ReturnType<typeof ticketModule.ensureCanonicalTicketRows>> | null = null;
