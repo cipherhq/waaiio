@@ -329,6 +329,37 @@ export default function ConnectWhatsAppPage() {
     );
   }
 
+  // ── Facebook connection in progress (L1) ──
+  if (step === 'pending-approval') {
+    return (
+      <div className="max-w-lg mx-auto mt-8 space-y-5">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">WhatsApp Connection</h1>
+          <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">Your connection is being processed.</p>
+        </div>
+        <div className="rounded-xl border border-blue-200 bg-blue-50 dark:border-blue-800 dark:bg-blue-900/20 p-5">
+          <div className="flex items-center gap-3 mb-3">
+            <div className="h-8 w-8 animate-spin rounded-full border-3 border-blue-500 border-t-transparent" />
+            <h3 className="text-sm font-semibold text-blue-800 dark:text-blue-300">Facebook connection in progress</h3>
+          </div>
+          {candidateAttempt?.phone_number_display && (
+            <p className="text-xs text-blue-700 dark:text-blue-400 mb-2">Number: {candidateAttempt.phone_number_display}</p>
+          )}
+          <p className="text-xs text-blue-600 dark:text-blue-400">
+            Your WhatsApp number connection is being completed. This usually takes a few moments.
+            If it takes longer, you can safely close this page and check back later.
+          </p>
+        </div>
+        <button
+          onClick={() => router.push('/dashboard')}
+          className="w-full rounded-lg bg-black px-4 py-2.5 text-sm font-medium text-white hover:bg-gray-800"
+        >
+          Back to Dashboard
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div className="max-w-lg mx-auto mt-8 space-y-5">
       <div>

@@ -297,4 +297,142 @@ describe.skipIf(!canRun)('M391: Channel candidate system DB tests', () => {
     psql(`DELETE FROM whatsapp_channel_candidates WHERE id = '${CAND_3}'`);
     psql(`DELETE FROM whatsapp_channels WHERE id = '${chanId}'`);
   });
+
+  // ─── Same-source/same-phone reconnect ───
+
+  it('same-source/same-phone reconnect updates existing row in place + persists new PIN', () => {
+    // Create an active dedicated channel
+    const chanId = psql(`INSERT INTO whatsapp_channels (
+      business_id, channel_type, phone_number, phone_number_id, waba_id,
+      connection_method, is_active, connection_status
+    ) VALUES ('${BIZ_2}', 'dedicated', '+2349555555555', 'pn-reconn', 'waba-reconn',
+      'waaiio_hosted', true, 'active')
+    RETURNING id`);
+
+    psql(`UPDATE businesses SET assigned_channel_id = '${chanId}', whatsapp_channel_id = '${chanId}', wa_method = 'transfer' WHERE id = '${BIZ_2}'`);
+
+    // Create reconnect candidate with same phone + same source
+    const candId = psql(`INSERT INTO whatsapp_channel_candidates (
+      business_id, connection_source, business_wa_method, phone_number, phone_number_normalized,
+      phone_number_id, waba_id, status,
+      expected_assigned_channel_id, expected_whatsapp_channel_id, expected_wa_method,
+      replacing_dedicated_channel_id, encrypted_registration_pin
+    ) VALUES (
+      '${BIZ_2}', 'waaiio_hosted', 'transfer', '+2349555555555', '2349555555555',
+      'pn-reconn-new', 'waba-reconn-new', 'ready',
+      '${chanId}', '${chanId}', 'transfer',
+      '${chanId}', 'new-encrypted-pin'
+    ) RETURNING id`);
+
+    const result = psql(`SELECT promote_channel_candidate('${candId}', '${BIZ_2}')`);
+    const parsed = JSON.parse(result);
+    expect(parsed.ok).toBe(true);
+    expect(parsed.action).toBe('same_phone_update');
+    expect(parsed.channel_id).toBe(chanId);
+
+    // Row was updated in-place (same ID, new phone_number_id)
+    const updated = psql(`SELECT phone_number_id, waba_id, is_active FROM whatsapp_channels WHERE id = '${chanId}'`);
+    expect(updated).toContain('pn-reconn-new');
+    expect(updated).toContain('waba-reconn-new');
+    expect(updated).toContain('t');
+
+    // New PIN persisted in secrets
+    const secret = psql(`SELECT encrypted_registration_pin FROM whatsapp_channel_secrets WHERE channel_id = '${chanId}'`);
+    expect(secret).toBe('new-encrypted-pin');
+
+    // Candidate deleted
+    const candCount = psql(`SELECT COUNT(*) FROM whatsapp_channel_candidates WHERE id = '${candId}'`);
+    expect(candCount).toBe('0');
+
+    // Cleanup
+    psql(`DELETE FROM whatsapp_channel_secrets WHERE channel_id = '${chanId}'`);
+    psql(`DELETE FROM whatsapp_channels WHERE id = '${chanId}'`);
+    psql(`UPDATE businesses SET assigned_channel_id = NULL, whatsapp_channel_id = NULL, wa_method = 'shared' WHERE id = '${BIZ_2}'`);
+  });
+
+  // ─── Different-phone replacement ───
+
+  it('different-phone replacement: old disconnected, new active, business switched', () => {
+    // Create active dedicated channel with one phone
+    const oldChanId = psql(`INSERT INTO whatsapp_channels (
+      business_id, channel_type, phone_number, phone_number_id, connection_method, is_active, connection_status
+    ) VALUES ('${BIZ_2}', 'dedicated', '+2349666666666', 'pn-old', 'waaiio_hosted', true, 'active')
+    RETURNING id`);
+
+    psql(`UPDATE businesses SET assigned_channel_id = '${oldChanId}', whatsapp_channel_id = '${oldChanId}', wa_method = 'transfer' WHERE id = '${BIZ_2}'`);
+
+    // Candidate with different phone
+    const candId = psql(`INSERT INTO whatsapp_channel_candidates (
+      business_id, connection_source, business_wa_method, phone_number, phone_number_normalized,
+      phone_number_id, waba_id, display_name, country_code, status,
+      expected_assigned_channel_id, expected_whatsapp_channel_id, expected_wa_method,
+      replacing_dedicated_channel_id, encrypted_registration_pin
+    ) VALUES (
+      '${BIZ_2}', 'waaiio_hosted', 'transfer', '+2349777777777', '2349777777777',
+      'pn-new-diff', 'waba-new-diff', 'New Display', 'NG', 'ready',
+      '${oldChanId}', '${oldChanId}', 'transfer',
+      '${oldChanId}', 'enc-pin-diff'
+    ) RETURNING id`);
+
+    const result = psql(`SELECT promote_channel_candidate('${candId}', '${BIZ_2}')`);
+    const parsed = JSON.parse(result);
+    expect(parsed.ok).toBe(true);
+    expect(parsed.action).toBe('replace');
+
+    // Old channel disconnected
+    const oldState = psql(`SELECT is_active, connection_status FROM whatsapp_channels WHERE id = '${oldChanId}'`);
+    expect(oldState).toContain('f');
+    expect(oldState).toContain('disconnected');
+
+    // New channel active
+    const newChan = psql(`SELECT is_active, phone_number FROM whatsapp_channels WHERE id = '${parsed.channel_id}'`);
+    expect(newChan).toContain('t');
+    expect(newChan).toContain('+2349777777777');
+
+    // Business points to new
+    const biz = psql(`SELECT assigned_channel_id FROM businesses WHERE id = '${BIZ_2}'`);
+    expect(biz).toBe(parsed.channel_id);
+
+    // Cleanup
+    psql(`DELETE FROM whatsapp_channel_secrets WHERE channel_id = '${parsed.channel_id}'`);
+    psql(`DELETE FROM whatsapp_channels WHERE id = '${parsed.channel_id}'`);
+    psql(`DELETE FROM whatsapp_channels WHERE id = '${oldChanId}'`);
+    psql(`UPDATE businesses SET assigned_channel_id = NULL, whatsapp_channel_id = NULL, wa_method = 'shared' WHERE id = '${BIZ_2}'`);
+  });
+
+  // ─── RPC execution permissions ───
+
+  it('anon cannot EXECUTE promote_channel_candidate', () => {
+    try {
+      psql(`SET ROLE anon; SELECT promote_channel_candidate('${CAND_1}', '${BIZ_1}'); RESET ROLE;`);
+      expect.fail('Should have been denied');
+    } catch (e) {
+      expect(String(e)).toContain('permission denied');
+    }
+  });
+
+  it('authenticated cannot EXECUTE promote_channel_candidate', () => {
+    try {
+      psql(`SET ROLE authenticated; SELECT promote_channel_candidate('${CAND_1}', '${BIZ_1}'); RESET ROLE;`);
+      expect.fail('Should have been denied');
+    } catch (e) {
+      expect(String(e)).toContain('permission denied');
+    }
+  });
+
+  it('anon cannot EXECUTE check_phone_conflict', () => {
+    try {
+      psql(`SET ROLE anon; SELECT check_phone_conflict('1234', '${BIZ_1}', 'waaiio_hosted'); RESET ROLE;`);
+      expect.fail('Should have been denied');
+    } catch (e) {
+      expect(String(e)).toContain('permission denied');
+    }
+  });
+
+  it('service_role can EXECUTE promote_channel_candidate (returns not_found for missing candidate)', () => {
+    const result = psql(`SET ROLE service_role; SELECT promote_channel_candidate('00000000-0000-0000-0000-000000000000', '${BIZ_1}'); RESET ROLE;`);
+    const parsed = JSON.parse(result);
+    expect(parsed.ok).toBe(false);
+    expect(parsed.reason).toBe('candidate_not_found');
+  });
 });
