@@ -171,6 +171,7 @@ DECLARE
   v_old_channel_business   UUID := NULL;
   v_old_channel_active     BOOLEAN := NULL;
   v_old_channel_phone      TEXT := NULL;
+  v_old_channel_source     TEXT := NULL;
   v_new_channel_id         UUID;
   v_same_phone             BOOLEAN := false;
   v_action                 TEXT;
@@ -220,9 +221,9 @@ BEGIN
 
   -- 4. If replacing an existing dedicated channel, lock and validate
   IF v_cand.replacing_dedicated_channel_id IS NOT NULL THEN
-    SELECT id, channel_type, business_id, is_active, phone_number
+    SELECT id, channel_type, business_id, is_active, phone_number, connection_method
     INTO v_old_channel_id, v_old_channel_type, v_old_channel_business,
-         v_old_channel_active, v_old_channel_phone
+         v_old_channel_active, v_old_channel_phone, v_old_channel_source
     FROM public.whatsapp_channels
     WHERE id = v_cand.replacing_dedicated_channel_id
     FOR UPDATE;
@@ -261,6 +262,10 @@ BEGIN
 
   -- 6. Perform the swap
   IF v_same_phone AND v_old_channel_id IS NOT NULL THEN
+    -- K1: final DB-authoritative source check for same-phone reconnect
+    IF v_old_channel_source IS DISTINCT FROM v_cand.connection_source THEN
+      RETURN jsonb_build_object('ok', false, 'reason', 'source_conflict');
+    END IF;
     -- Same phone + same source reconnect: update existing live row in-place
     UPDATE public.whatsapp_channels SET
       phone_number_id    = v_cand.phone_number_id,

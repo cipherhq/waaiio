@@ -341,9 +341,36 @@ export async function POST(request: NextRequest) {
       };
 
       // 2. Register phone (FATAL — H10)
-      const pin = candidate.encrypted_registration_pin
-        ? decryptToken(candidate.encrypted_registration_pin)
-        : String(randomInt(100000, 1000000));
+      // K2: fail closed if encrypted PIN is missing or decryption fails
+      if (!candidate.encrypted_registration_pin) {
+        await service.from('whatsapp_channel_candidates').update({
+          status: 'failed',
+          failure_reason: 'Missing encrypted registration PIN — cannot register safely',
+          provider_state: { ...updatedState, registered: false },
+          updated_at: new Date().toISOString(),
+        }).eq('id', candidate.id);
+        return NextResponse.json(
+          { error: 'Connection setup incomplete. Please start over.', recoverable: true },
+          { status: 422 },
+        );
+      }
+
+      let pin: string;
+      try {
+        pin = decryptToken(candidate.encrypted_registration_pin);
+      } catch (decryptErr) {
+        logger.error('[ADD-NUMBER] PIN decryption failed:', decryptErr);
+        await service.from('whatsapp_channel_candidates').update({
+          status: 'failed',
+          failure_reason: 'PIN decryption failed — cannot register safely',
+          provider_state: { ...updatedState, registered: false },
+          updated_at: new Date().toISOString(),
+        }).eq('id', candidate.id);
+        return NextResponse.json(
+          { error: 'Connection setup incomplete. Please start over.', recoverable: true },
+          { status: 422 },
+        );
+      }
 
       const regRes = await fetch(
         `https://graph.facebook.com/${API_VERSION}/${candidate.phone_number_id}/register`,

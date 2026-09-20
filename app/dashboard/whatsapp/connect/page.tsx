@@ -38,6 +38,10 @@ export default function ConnectWhatsAppPage() {
   const [error, setError] = useState<string | null>(null);
   const [connectedNumber, setConnectedNumber] = useState('');
   const [candidateId, setCandidateId] = useState<string | null>(null);
+  const [candidateAttempt, setCandidateAttempt] = useState<{
+    id: string; connection_source: string; status: string;
+    phone_number_display: string | null; failure_message: string | null;
+  } | null>(null);
 
   // FB SDK state
   const [fbSdkReady, setFbSdkReady] = useState(false);
@@ -47,7 +51,7 @@ export default function ConnectWhatsAppPage() {
   const appId = (process.env.NEXT_PUBLIC_META_APP_ID || '').trim();
   const configId = (process.env.NEXT_PUBLIC_META_EMBEDDED_SIGNUP_CONFIG_ID || '').trim();
 
-  // Check for existing active channel + any open candidate (R9 §8)
+  // Check for existing active channel + any open candidate (K3)
   useEffect(() => {
     async function checkExisting() {
       try {
@@ -55,21 +59,28 @@ export default function ConnectWhatsAppPage() {
         if (!res.ok) { setStep('choose'); return; }
         const data = await res.json();
 
+        // Store candidate attempt for display in all views
+        if (data.candidate) {
+          setCandidateAttempt(data.candidate);
+          setCandidateId(data.candidate.id);
+        }
+
         if (data.active_channel) {
           setExistingChannel(data.active_channel);
-          // If there's also an open candidate, still show existing (with in-progress notice)
+          // Active channel exists — show existing card (candidate notice rendered alongside)
           setStep('existing');
         } else if (data.candidate) {
           const cand = data.candidate;
           if (cand.connection_source === 'waaiio_hosted' && cand.status === 'validating') {
-            // OTP validating → show OTP verification screen
-            setCandidateId(cand.id);
+            // OTP validating → show OTP verification screen with masked phone
             setStep('verify-otp');
-          } else if (cand.status === 'pending' || cand.status === 'validating') {
-            // Facebook or other in-progress → show progress state
+          } else if (cand.connection_source === 'embedded_signup' && (cand.status === 'pending' || cand.status === 'validating')) {
+            // Facebook in-progress → show in-progress card, NOT the method chooser
+            setStep('pending-approval');
+          } else if (cand.status === 'failed') {
+            // Failed → show failure notice, then chooser
             setStep('choose');
           } else {
-            // Failed → show retry
             setStep('choose');
           }
         } else {
@@ -257,9 +268,27 @@ export default function ConnectWhatsAppPage() {
           )}
         </div>
 
+        {/* K3: candidate attempt notice alongside active channel */}
+        {candidateAttempt && (candidateAttempt.status === 'pending' || candidateAttempt.status === 'validating') && (
+          <div className="rounded-lg border border-blue-200 bg-blue-50 dark:border-blue-800 dark:bg-blue-900/20 p-3">
+            <p className="text-xs font-medium text-blue-700 dark:text-blue-400">New WhatsApp connection in progress</p>
+            {candidateAttempt.phone_number_display && (
+              <p className="text-xs text-blue-600 dark:text-blue-500 mt-0.5">{candidateAttempt.phone_number_display}</p>
+            )}
+          </div>
+        )}
+        {candidateAttempt && candidateAttempt.status === 'failed' && (
+          <div className="rounded-lg border border-red-200 bg-red-50 dark:border-red-800 dark:bg-red-900/20 p-3 flex items-center justify-between">
+            <p className="text-xs text-red-700 dark:text-red-400">
+              {candidateAttempt.failure_message || 'Previous connection attempt failed.'}
+            </p>
+            <button onClick={() => { setCandidateAttempt(null); setStep('choose'); }} className="text-xs font-medium text-red-600 hover:underline ml-3 shrink-0">Try again</button>
+          </div>
+        )}
+
         <div className="flex gap-3">
           <button
-            onClick={() => { setExistingChannel(null); setStep('choose'); }}
+            onClick={() => { setExistingChannel(null); setCandidateAttempt(null); setStep('choose'); }}
             className="flex-1 rounded-lg border border-gray-300 px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
           >
             Connect a Different Number
@@ -334,6 +363,15 @@ export default function ConnectWhatsAppPage() {
           <li>&#8226; <strong>Display name</strong> must match your business name. Meta reviews it (usually takes minutes).</li>
         </ul>
       </div>
+
+      {/* K3: failed candidate notice before chooser */}
+      {step === 'choose' && candidateAttempt?.status === 'failed' && (
+        <div className="rounded-lg border border-red-200 bg-red-50 dark:border-red-800 dark:bg-red-900/20 p-3">
+          <p className="text-xs text-red-700 dark:text-red-400">
+            {candidateAttempt.failure_message || 'Previous connection attempt failed. You can try again below.'}
+          </p>
+        </div>
+      )}
 
       {/* ── Choose method ── */}
       {step === 'choose' && (
@@ -429,7 +467,7 @@ export default function ConnectWhatsAppPage() {
       {step === 'verify-otp' && (
         <div className="rounded-lg border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800 p-5 space-y-4">
           <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Enter verification code</h3>
-          <p className="text-xs text-gray-500">We sent a 6-digit code to <strong>{phone}</strong></p>
+          <p className="text-xs text-gray-500">We sent a 6-digit code to <strong>{phone || candidateAttempt?.phone_number_display || 'your number'}</strong></p>
 
           <input
             type="text"
