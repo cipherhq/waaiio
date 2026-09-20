@@ -535,4 +535,85 @@ describe.skipIf(!canRun)('M391: Channel candidate system DB tests', () => {
     psql(`DELETE FROM whatsapp_channels WHERE id = '${chanId}'`);
     psql(`UPDATE businesses SET assigned_channel_id = NULL, whatsapp_channel_id = NULL, wa_method = 'shared' WHERE id = '${BIZ_2}'`);
   });
+
+  // ─── M5: True SQL rollback after old-channel deactivation ───
+
+  it('M5: SQL exception after old-channel deactivation rolls back entire transaction', () => {
+    // Create active old dedicated channel
+    const oldChanId = psql(`INSERT INTO whatsapp_channels (
+      business_id, channel_type, phone_number, phone_number_id, connection_method, is_active, connection_status
+    ) VALUES ('${BIZ_2}', 'dedicated', '+2348111111111', 'pn-m5-old', 'waaiio_hosted', true, 'active')
+    RETURNING id`);
+
+    psql(`UPDATE businesses SET assigned_channel_id = '${oldChanId}', whatsapp_channel_id = '${oldChanId}', wa_method = 'transfer' WHERE id = '${BIZ_2}'`);
+
+    // Install test-only BEFORE INSERT trigger that raises exception for our test phone
+    psql(`
+      CREATE OR REPLACE FUNCTION test_m5_block_insert() RETURNS trigger AS $$
+      BEGIN
+        IF NEW.phone_number = '+2348222222222' THEN
+          RAISE EXCEPTION 'TEST_M5_FORCED_FAILURE';
+        END IF;
+        RETURN NEW;
+      END;
+      $$ LANGUAGE plpgsql;
+
+      CREATE TRIGGER trg_test_m5_block
+        BEFORE INSERT ON whatsapp_channels
+        FOR EACH ROW EXECUTE FUNCTION test_m5_block_insert();
+    `);
+
+    try {
+      // Create READY candidate with the trigger-blocked phone (different from old)
+      const candId = psql(`INSERT INTO whatsapp_channel_candidates (
+        business_id, connection_source, business_wa_method, phone_number, phone_number_normalized,
+        phone_number_id, waba_id, display_name, country_code, status,
+        expected_assigned_channel_id, expected_whatsapp_channel_id, expected_wa_method,
+        replacing_dedicated_channel_id, encrypted_registration_pin
+      ) VALUES (
+        '${BIZ_2}', 'waaiio_hosted', 'transfer', '+2348222222222', '2348222222222',
+        'pn-m5-new', 'waba-m5', 'M5 Test', 'NG', 'ready',
+        '${oldChanId}', '${oldChanId}', 'transfer',
+        '${oldChanId}', 'enc-pin-m5'
+      ) RETURNING id`);
+
+      // Promotion will:
+      // 1. Lock business + candidate + old channel
+      // 2. Deactivate old channel (UPDATE ... SET is_active=false)
+      // 3. INSERT new channel -> TRIGGER RAISES EXCEPTION
+      // 4. Entire transaction rolls back (including step 2)
+      try {
+        psql(`SELECT promote_channel_candidate('${candId}', '${BIZ_2}')`);
+        expect.fail('Should have thrown due to trigger');
+      } catch (e) {
+        expect(String(e)).toContain('TEST_M5_FORCED_FAILURE');
+      }
+
+      // Old channel must still be active (rollback restored it)
+      const oldState = psql(`SELECT is_active, connection_status FROM whatsapp_channels WHERE id = '${oldChanId}'`);
+      expect(oldState).toContain('t');
+      expect(oldState).toContain('active');
+
+      // Business still points to old channel
+      const bizState = psql(`SELECT assigned_channel_id FROM businesses WHERE id = '${BIZ_2}'`);
+      expect(bizState).toBe(oldChanId);
+
+      // No new channel was created
+      const newChan = psql(`SELECT COUNT(*) FROM whatsapp_channels WHERE phone_number = '+2348222222222'`);
+      expect(newChan).toBe('0');
+
+      // No secret was persisted
+      const secrets = psql(`SELECT COUNT(*) FROM whatsapp_channel_secrets WHERE encrypted_registration_pin = 'enc-pin-m5'`);
+      expect(secrets).toBe('0');
+
+      // Cleanup candidate
+      psql(`DELETE FROM whatsapp_channel_candidates WHERE id = '${candId}'`);
+    } finally {
+      // Drop test trigger and function
+      psql(`DROP TRIGGER IF EXISTS trg_test_m5_block ON whatsapp_channels`);
+      psql(`DROP FUNCTION IF EXISTS test_m5_block_insert()`);
+      psql(`DELETE FROM whatsapp_channels WHERE id = '${oldChanId}'`);
+      psql(`UPDATE businesses SET assigned_channel_id = NULL, whatsapp_channel_id = NULL, wa_method = 'shared' WHERE id = '${BIZ_2}'`);
+    }
+  });
 });
