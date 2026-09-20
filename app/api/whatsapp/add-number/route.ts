@@ -133,7 +133,10 @@ export async function POST(request: NextRequest) {
     }
 
     try {
-      // 6. Only AFTER candidate INSERT: call Meta add/migrate phone
+      // 6. Only AFTER candidate INSERT: call Meta add phone
+      // Normal fresh add: migrate_phone_number=false (default path)
+      // Cross-WABA migration would require migrate_phone_number=true but is
+      // handled by the Embedded Signup / explicit migration flow, not this OTP path.
       const addRes = await fetch(
         `https://graph.facebook.com/${API_VERSION}/${wabaId}/phone_numbers`,
         {
@@ -145,7 +148,7 @@ export async function POST(request: NextRequest) {
           body: JSON.stringify({
             cc: phoneForMeta.slice(0, phoneForMeta.length > 10 ? phoneForMeta.length - 10 : 1),
             phone_number: phoneForMeta,
-            migrate_phone_number: true,
+            migrate_phone_number: false,
             verified_name: display_name || biz.name,
           }),
         }
