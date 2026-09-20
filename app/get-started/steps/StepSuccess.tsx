@@ -72,15 +72,27 @@ export function StepSuccess({
             </p>
           </div>
 
-          {/* Dedicated number notice */}
-          {waMethod !== 'shared' && (
-            <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-left">
-              <p className="text-xs font-semibold text-amber-800">WhatsApp Number Connection</p>
-              <p className="mt-1 text-xs text-amber-700">
-                Our team is setting up your dedicated WhatsApp number. You&apos;ll receive an email when it&apos;s ready (usually within 24 hours). For now, you can test using our shared number below.
-              </p>
+          {/* WhatsApp own-number connection prompt — always shown because
+              no durable channel exists at this point in the flow. The actual
+              connection happens post-registration from /dashboard/whatsapp/connect. */}
+          <div className="mt-4 rounded-xl border border-brand/20 bg-brand-50/50 p-5 text-left">
+            <h3 className="text-sm font-bold text-gray-900">Connect Your Own WhatsApp Number</h3>
+            <p className="mt-1 text-xs text-gray-600">
+              Customers can message your business number directly. Available on every plan. WhatsApp message usage charges still apply.
+            </p>
+            <div className="mt-3 flex items-center gap-3">
+              <a
+                href="/dashboard/whatsapp/connect"
+                className="inline-flex items-center gap-2 rounded-lg bg-brand px-4 py-2.5 text-sm font-bold text-white transition hover:bg-brand-600"
+              >
+                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+                </svg>
+                Connect WhatsApp Number
+              </a>
+              <a href="/dashboard" className="text-xs text-gray-400 hover:text-gray-600 hover:underline">Do this later</a>
             </div>
-          )}
+          </div>
 
           {/* QR Code hero card */}
           <div className="mt-6 rounded-2xl bg-white border border-gray-200 p-8 shadow-lg">

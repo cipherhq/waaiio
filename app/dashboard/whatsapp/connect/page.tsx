@@ -37,6 +37,11 @@ export default function ConnectWhatsAppPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [connectedNumber, setConnectedNumber] = useState('');
+  const [candidateId, setCandidateId] = useState<string | null>(null);
+  const [candidateAttempt, setCandidateAttempt] = useState<{
+    id: string; connection_source: string; status: string;
+    phone_number_display: string | null; failure_message: string | null;
+  } | null>(null);
 
   // FB SDK state
   const [fbSdkReady, setFbSdkReady] = useState(false);
@@ -46,30 +51,42 @@ export default function ConnectWhatsAppPage() {
   const appId = (process.env.NEXT_PUBLIC_META_APP_ID || '').trim();
   const configId = (process.env.NEXT_PUBLIC_META_EMBEDDED_SIGNUP_CONFIG_ID || '').trim();
 
-  // Check for existing channel on load
+  // Check for existing active channel + any open candidate (K3)
   useEffect(() => {
     async function checkExisting() {
-      const supabase = createClient();
-      const { data: channel } = await supabase
-        .from('whatsapp_channels')
-        .select('id, phone_number, display_name, connection_status, channel_type, connection_method')
-        .eq('business_id', business.id)
-        .eq('channel_type', 'dedicated')
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
+      try {
+        const res = await fetch(`/api/whatsapp/connection-status?business_id=${business.id}`);
+        if (!res.ok) { setStep('choose'); return; }
+        const data = await res.json();
 
-      if (channel) {
-        setExistingChannel(channel);
-        if (channel.connection_status === 'verifying') {
-          setStep('verify-otp');
-          setPhone(channel.phone_number);
-        } else if (channel.connection_status === 'active') {
-          setStep('existing');
-        } else {
-          setStep('existing');
+        // Store candidate attempt for display in all views
+        if (data.candidate) {
+          setCandidateAttempt(data.candidate);
+          setCandidateId(data.candidate.id);
         }
-      } else {
+
+        if (data.active_channel) {
+          setExistingChannel(data.active_channel);
+          // Active channel exists — show existing card (candidate notice rendered alongside)
+          setStep('existing');
+        } else if (data.candidate) {
+          const cand = data.candidate;
+          if (cand.connection_source === 'waaiio_hosted' && cand.status === 'validating') {
+            // OTP validating → show OTP verification screen with masked phone
+            setStep('verify-otp');
+          } else if (cand.connection_source === 'embedded_signup' && (cand.status === 'pending' || cand.status === 'validating')) {
+            // Facebook in-progress → show in-progress card, NOT the method chooser
+            setStep('pending-approval');
+          } else if (cand.status === 'failed') {
+            // Failed → show failure notice, then chooser
+            setStep('choose');
+          } else {
+            setStep('choose');
+          }
+        } else {
+          setStep('choose');
+        }
+      } catch {
         setStep('choose');
       }
     }
@@ -96,7 +113,7 @@ export default function ConnectWhatsAppPage() {
     document.body.appendChild(script);
   }, [showAdvanced, appId]);
 
-  // ── Simple flow: Enter phone → Send OTP ──
+  // ── Simple flow: Enter phone → Send OTP (R9 §4: store candidate_id) ──
   const handleSendOTP = async () => {
     if (!phone.trim()) { setError('Please enter a phone number'); return; }
     setError(null);
@@ -109,21 +126,40 @@ export default function ConnectWhatsAppPage() {
       });
       const data = await res.json();
       if (!res.ok) { setError(data.error || 'Failed to send code'); setLoading(false); return; }
+      setCandidateId(data.candidate_id);
       setStep('verify-otp');
     } catch { setError('Something went wrong. Try again.'); }
     setLoading(false);
   };
 
-  // ── Simple flow: Verify OTP ──
+  // ── Resend OTP (R9 §4: reuse same candidate) ──
+  const handleResendOTP = async () => {
+    if (!candidateId) { setError('No pending verification. Please start over.'); return; }
+    setError(null);
+    setLoading(true);
+    try {
+      const res = await fetch('/api/whatsapp/add-number?action=resend', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ business_id: business.id, candidate_id: candidateId }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setError(data.error || 'Failed to resend code'); }
+    } catch { setError('Something went wrong. Try again.'); }
+    setLoading(false);
+  };
+
+  // ── Verify OTP (R9 §4: send candidate_id) ──
   const handleVerifyOTP = async () => {
     if (!otp.trim() || otp.length < 6) { setError('Enter the 6-digit code'); return; }
+    if (!candidateId) { setError('No pending verification. Please start over.'); return; }
     setError(null);
     setLoading(true);
     try {
       const res = await fetch('/api/whatsapp/add-number?action=verify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ business_id: business.id, otp: otp.trim() }),
+        body: JSON.stringify({ business_id: business.id, otp: otp.trim(), candidate_id: candidateId }),
       });
       const data = await res.json();
       if (!res.ok) { setError(data.error || 'Verification failed'); setLoading(false); return; }
@@ -232,9 +268,27 @@ export default function ConnectWhatsAppPage() {
           )}
         </div>
 
+        {/* K3: candidate attempt notice alongside active channel */}
+        {candidateAttempt && (candidateAttempt.status === 'pending' || candidateAttempt.status === 'validating') && (
+          <div className="rounded-lg border border-blue-200 bg-blue-50 dark:border-blue-800 dark:bg-blue-900/20 p-3">
+            <p className="text-xs font-medium text-blue-700 dark:text-blue-400">New WhatsApp connection in progress</p>
+            {candidateAttempt.phone_number_display && (
+              <p className="text-xs text-blue-600 dark:text-blue-500 mt-0.5">{candidateAttempt.phone_number_display}</p>
+            )}
+          </div>
+        )}
+        {candidateAttempt && candidateAttempt.status === 'failed' && (
+          <div className="rounded-lg border border-red-200 bg-red-50 dark:border-red-800 dark:bg-red-900/20 p-3 flex items-center justify-between">
+            <p className="text-xs text-red-700 dark:text-red-400">
+              {candidateAttempt.failure_message || 'Previous connection attempt failed.'}
+            </p>
+            <button onClick={() => { setCandidateAttempt(null); setStep('choose'); }} className="text-xs font-medium text-red-600 hover:underline ml-3 shrink-0">Try again</button>
+          </div>
+        )}
+
         <div className="flex gap-3">
           <button
-            onClick={() => { setExistingChannel(null); setStep('choose'); }}
+            onClick={() => { setExistingChannel(null); setCandidateAttempt(null); setStep('choose'); }}
             className="flex-1 rounded-lg border border-gray-300 px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
           >
             Connect a Different Number
@@ -275,6 +329,37 @@ export default function ConnectWhatsAppPage() {
     );
   }
 
+  // ── Facebook connection in progress (L1) ──
+  if (step === 'pending-approval') {
+    return (
+      <div className="max-w-lg mx-auto mt-8 space-y-5">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">WhatsApp Connection</h1>
+          <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">Your connection is being processed.</p>
+        </div>
+        <div className="rounded-xl border border-blue-200 bg-blue-50 dark:border-blue-800 dark:bg-blue-900/20 p-5">
+          <div className="flex items-center gap-3 mb-3">
+            <div className="h-8 w-8 animate-spin rounded-full border-3 border-blue-500 border-t-transparent" />
+            <h3 className="text-sm font-semibold text-blue-800 dark:text-blue-300">Facebook connection in progress</h3>
+          </div>
+          {candidateAttempt?.phone_number_display && (
+            <p className="text-xs text-blue-700 dark:text-blue-400 mb-2">Number: {candidateAttempt.phone_number_display}</p>
+          )}
+          <p className="text-xs text-blue-600 dark:text-blue-400">
+            Your WhatsApp number connection is being completed. This usually takes a few moments.
+            If it takes longer, you can safely close this page and check back later.
+          </p>
+        </div>
+        <button
+          onClick={() => router.push('/dashboard')}
+          className="w-full rounded-lg bg-black px-4 py-2.5 text-sm font-medium text-white hover:bg-gray-800"
+        >
+          Back to Dashboard
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div className="max-w-lg mx-auto mt-8 space-y-5">
       <div>
@@ -309,6 +394,15 @@ export default function ConnectWhatsAppPage() {
           <li>&#8226; <strong>Display name</strong> must match your business name. Meta reviews it (usually takes minutes).</li>
         </ul>
       </div>
+
+      {/* K3: failed candidate notice before chooser */}
+      {step === 'choose' && candidateAttempt?.status === 'failed' && (
+        <div className="rounded-lg border border-red-200 bg-red-50 dark:border-red-800 dark:bg-red-900/20 p-3">
+          <p className="text-xs text-red-700 dark:text-red-400">
+            {candidateAttempt.failure_message || 'Previous connection attempt failed. You can try again below.'}
+          </p>
+        </div>
+      )}
 
       {/* ── Choose method ── */}
       {step === 'choose' && (
@@ -404,7 +498,7 @@ export default function ConnectWhatsAppPage() {
       {step === 'verify-otp' && (
         <div className="rounded-lg border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800 p-5 space-y-4">
           <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Enter verification code</h3>
-          <p className="text-xs text-gray-500">We sent a 6-digit code to <strong>{phone}</strong></p>
+          <p className="text-xs text-gray-500">We sent a 6-digit code to <strong>{phone || candidateAttempt?.phone_number_display || 'your number'}</strong></p>
 
           <input
             type="text"
@@ -426,7 +520,7 @@ export default function ConnectWhatsAppPage() {
             </button>
           </div>
 
-          <button onClick={handleSendOTP} disabled={loading} className="w-full text-xs text-brand hover:underline disabled:opacity-50">
+          <button onClick={handleResendOTP} disabled={loading} className="w-full text-xs text-brand hover:underline disabled:opacity-50">
             Didn&apos;t receive the code? Resend
           </button>
         </div>

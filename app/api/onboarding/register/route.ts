@@ -270,7 +270,7 @@ export async function POST(request: NextRequest) {
         category,
         flow_type: flowType,
         country_code: countryCode,
-        wa_method: wa_method || 'shared',
+        wa_method: 'shared',  // Always register as shared; dedicated set by /api/auth/facebook/callback after durable channel
         subscription_tier: 'free',
         status: 'pending',
       })

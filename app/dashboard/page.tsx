@@ -96,7 +96,7 @@ export default function DashboardOverview() {
       // Fire all 3 queries in parallel instead of sequential waterfall
       const [assignedResult, dedicatedResult, sharedResult] = await Promise.all([
         channelId
-          ? supabase.from('whatsapp_channels').select('phone_number').eq('id', channelId).maybeSingle()
+          ? supabase.from('whatsapp_channels').select('phone_number').eq('id', channelId).eq('is_active', true).maybeSingle()
           : Promise.resolve({ data: null }),
         supabase.from('whatsapp_channels').select('phone_number')
           .eq('business_id', business.id).eq('channel_type', 'dedicated').eq('is_active', true).maybeSingle(),

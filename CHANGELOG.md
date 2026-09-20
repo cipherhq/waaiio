@@ -3,6 +3,33 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-09-20 — Feat: customer-owned WhatsApp connection on all plans (#346)
+
+### What changed
+- **Migration 391**: Channel candidate system — `whatsapp_channel_candidates` staging table with `connection_source` ('waaiio_hosted'|'embedded_signup') + `business_wa_method` + `phone_number_normalized`, `whatsapp_channel_secrets` encrypted PIN store, `check_phone_conflict` helper RPC, `promote_channel_candidate` atomic RPC with CAS guards. Partial UNIQUE indexes on both business and normalized phone.
+- **`app/api/whatsapp/add-number/route.ts`**: Rewritten with R9 §3 ordering: candidate INSERT BEFORE any Meta provider mutation. Three actions: request (creates fenced candidate, then Meta add/OTP), verify (exact candidate_id, fatal register+webhook, promote RPC), resend (reuses same candidate). Connection source `waaiio_hosted`. No platform token in DB (H6a). Cross-source conflict check via `check_phone_conflict` RPC.
+- **`app/api/auth/facebook/callback/route.ts`**: Rewritten with R9 §5 ordering: fenced candidate INSERT before provider validation. Connection source `embedded_signup`. Encrypted customer token. Cross-source conflict check. Promote RPC on all-READY.
+- **`lib/channels/meta-cloud.ts`**: `registerPhoneNumber` PIN parameter is now required (no `'000000'` default).
+- **`app/api/whatsapp/connection-status/route.ts`** (NEW): Safe projection endpoint for candidate + active channel status. No secrets returned.
+- **`app/dashboard/page.tsx`**: Added `.eq('is_active', true)` to assigned channel query.
+- **`app/dashboard/whatsapp/connect/page.tsx`**: Uses connection-status endpoint. Separates active vs candidate display.
+- **`app/get-started/steps/StepDetails.tsx`**: Removed plan gate. Deferred Meta connection to dashboard.
+- **`app/get-started/steps/StepSuccess.tsx`**: "Do this later" is now a real `<a href="/dashboard">` link.
+- **`app/get-started/OnboardingWizard.tsx`**: `handleRegister` sends `wa_method: 'shared'`.
+- **`app/api/onboarding/register/route.ts`**: Server-enforces `wa_method='shared'`.
+- **Tests**: 65 tests (41 channel-candidate + 24 onboarding-whatsapp).
+
+### What it affects
+- Dedicated channel connections now use prepare→validate→READY→switch. Working channel stays active until candidate passes all provider gates.
+- Both OTP and Facebook paths use the candidate model.
+- Registration PIN is now cryptographically secure per-phone (no universal `000000`).
+- Dashboard link correctly falls back to shared when assigned channel is inactive.
+
+### What could break
+- OTP phone registration failures that were previously silently ignored now fail the connection attempt (candidate marked failed, user can retry).
+- OTP webhook subscription failures that were previously silently ignored now fail the connection attempt.
+- Same-number cross-method migration is blocked with 409 (was silently allowed before).
+
 ## 2026-09-19 — Fix: DB-authoritative country validation in onboarding registration (#342)
 
 ### What changed
