@@ -37,6 +37,7 @@ export default function ConnectWhatsAppPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [connectedNumber, setConnectedNumber] = useState('');
+  const [candidateId, setCandidateId] = useState<string | null>(null);
 
   // FB SDK state
   const [fbSdkReady, setFbSdkReady] = useState(false);
@@ -46,7 +47,7 @@ export default function ConnectWhatsAppPage() {
   const appId = (process.env.NEXT_PUBLIC_META_APP_ID || '').trim();
   const configId = (process.env.NEXT_PUBLIC_META_EMBEDDED_SIGNUP_CONFIG_ID || '').trim();
 
-  // Check for existing active channel + any open candidate
+  // Check for existing active channel + any open candidate (R9 §8)
   useEffect(() => {
     async function checkExisting() {
       try {
@@ -56,10 +57,21 @@ export default function ConnectWhatsAppPage() {
 
         if (data.active_channel) {
           setExistingChannel(data.active_channel);
+          // If there's also an open candidate, still show existing (with in-progress notice)
           setStep('existing');
-        } else if (data.candidate?.status === 'pending' || data.candidate?.status === 'validating') {
-          // Connection in progress — show appropriate step
-          setStep('verify-otp');
+        } else if (data.candidate) {
+          const cand = data.candidate;
+          if (cand.connection_source === 'waaiio_hosted' && cand.status === 'validating') {
+            // OTP validating → show OTP verification screen
+            setCandidateId(cand.id);
+            setStep('verify-otp');
+          } else if (cand.status === 'pending' || cand.status === 'validating') {
+            // Facebook or other in-progress → show progress state
+            setStep('choose');
+          } else {
+            // Failed → show retry
+            setStep('choose');
+          }
         } else {
           setStep('choose');
         }
@@ -90,7 +102,7 @@ export default function ConnectWhatsAppPage() {
     document.body.appendChild(script);
   }, [showAdvanced, appId]);
 
-  // ── Simple flow: Enter phone → Send OTP ──
+  // ── Simple flow: Enter phone → Send OTP (R9 §4: store candidate_id) ──
   const handleSendOTP = async () => {
     if (!phone.trim()) { setError('Please enter a phone number'); return; }
     setError(null);
@@ -103,21 +115,40 @@ export default function ConnectWhatsAppPage() {
       });
       const data = await res.json();
       if (!res.ok) { setError(data.error || 'Failed to send code'); setLoading(false); return; }
+      setCandidateId(data.candidate_id);
       setStep('verify-otp');
     } catch { setError('Something went wrong. Try again.'); }
     setLoading(false);
   };
 
-  // ── Simple flow: Verify OTP ──
+  // ── Resend OTP (R9 §4: reuse same candidate) ──
+  const handleResendOTP = async () => {
+    if (!candidateId) { setError('No pending verification. Please start over.'); return; }
+    setError(null);
+    setLoading(true);
+    try {
+      const res = await fetch('/api/whatsapp/add-number?action=resend', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ business_id: business.id, candidate_id: candidateId }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setError(data.error || 'Failed to resend code'); }
+    } catch { setError('Something went wrong. Try again.'); }
+    setLoading(false);
+  };
+
+  // ── Verify OTP (R9 §4: send candidate_id) ──
   const handleVerifyOTP = async () => {
     if (!otp.trim() || otp.length < 6) { setError('Enter the 6-digit code'); return; }
+    if (!candidateId) { setError('No pending verification. Please start over.'); return; }
     setError(null);
     setLoading(true);
     try {
       const res = await fetch('/api/whatsapp/add-number?action=verify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ business_id: business.id, otp: otp.trim() }),
+        body: JSON.stringify({ business_id: business.id, otp: otp.trim(), candidate_id: candidateId }),
       });
       const data = await res.json();
       if (!res.ok) { setError(data.error || 'Verification failed'); setLoading(false); return; }
@@ -420,7 +451,7 @@ export default function ConnectWhatsAppPage() {
             </button>
           </div>
 
-          <button onClick={handleSendOTP} disabled={loading} className="w-full text-xs text-brand hover:underline disabled:opacity-50">
+          <button onClick={handleResendOTP} disabled={loading} className="w-full text-xs text-brand hover:underline disabled:opacity-50">
             Didn&apos;t receive the code? Resend
           </button>
         </div>

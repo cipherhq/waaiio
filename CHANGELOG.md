@@ -6,9 +6,9 @@ If something breaks, check this log to find what changed and when.
 ## 2026-09-20 — Feat: customer-owned WhatsApp connection on all plans (#346)
 
 ### What changed
-- **Migration 391**: Channel candidate system — `whatsapp_channel_candidates` staging table, `whatsapp_channel_secrets` encrypted PIN store, `promote_channel_candidate` atomic RPC with CAS guards, partial UNIQUE index for one-open-candidate-per-business.
-- **`app/api/whatsapp/add-number/route.ts`**: Rewritten to use candidate system. OTP request creates candidate (not live channel). OTP verify makes register + webhook FATAL gates. Uses atomic promote RPC. Secure per-phone PIN via `crypto.randomInt`. No platform token in DB (H6a). Cross-method check (H3).
-- **`app/api/auth/facebook/callback/route.ts`**: Rewritten to use candidate system. Creates candidate with encrypted customer token. Removed premature business update. Provider validation remains fatal. Atomic promote RPC. Secure PIN. Cross-method check.
+- **Migration 391**: Channel candidate system — `whatsapp_channel_candidates` staging table with `connection_source` ('waaiio_hosted'|'embedded_signup') + `business_wa_method` + `phone_number_normalized`, `whatsapp_channel_secrets` encrypted PIN store, `check_phone_conflict` helper RPC, `promote_channel_candidate` atomic RPC with CAS guards. Partial UNIQUE indexes on both business and normalized phone.
+- **`app/api/whatsapp/add-number/route.ts`**: Rewritten with R9 §3 ordering: candidate INSERT BEFORE any Meta provider mutation. Three actions: request (creates fenced candidate, then Meta add/OTP), verify (exact candidate_id, fatal register+webhook, promote RPC), resend (reuses same candidate). Connection source `waaiio_hosted`. No platform token in DB (H6a). Cross-source conflict check via `check_phone_conflict` RPC.
+- **`app/api/auth/facebook/callback/route.ts`**: Rewritten with R9 §5 ordering: fenced candidate INSERT before provider validation. Connection source `embedded_signup`. Encrypted customer token. Cross-source conflict check. Promote RPC on all-READY.
 - **`lib/channels/meta-cloud.ts`**: `registerPhoneNumber` PIN parameter is now required (no `'000000'` default).
 - **`app/api/whatsapp/connection-status/route.ts`** (NEW): Safe projection endpoint for candidate + active channel status. No secrets returned.
 - **`app/dashboard/page.tsx`**: Added `.eq('is_active', true)` to assigned channel query.
@@ -17,7 +17,7 @@ If something breaks, check this log to find what changed and when.
 - **`app/get-started/steps/StepSuccess.tsx`**: "Do this later" is now a real `<a href="/dashboard">` link.
 - **`app/get-started/OnboardingWizard.tsx`**: `handleRegister` sends `wa_method: 'shared'`.
 - **`app/api/onboarding/register/route.ts`**: Server-enforces `wa_method='shared'`.
-- **Tests**: 76 tests (52 channel-candidate + 24 onboarding-whatsapp).
+- **Tests**: 65 tests (41 channel-candidate + 24 onboarding-whatsapp).
 
 ### What it affects
 - Dedicated channel connections now use prepare→validate→READY→switch. Working channel stays active until candidate passes all provider gates.

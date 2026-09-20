@@ -183,73 +183,61 @@ export async function POST(request: NextRequest) {
       // Non-fatal — we can still create the channel
     }
 
-    // ── Candidate-based connection (prepare → validate → READY → switch) ──
+    // ── Candidate-based connection (R9 §5: fence BEFORE provider mutation) ──
     const service = createServiceClient();
-    const connMethod = connection_method || 'transfer';
+    const bizWaMethod = connection_method || 'transfer';
+    const normalized = phoneNumber ? phoneNumber.replace(/[^0-9]/g, '') : null;
 
-    // Check for existing open candidate → 409 (H4)
-    const { data: openCandidate } = await service
-      .from('whatsapp_channel_candidates')
-      .select('id')
-      .eq('business_id', business_id)
-      .in('status', ['pending', 'validating', 'ready'])
-      .maybeSingle();
-
-    if (openCandidate) {
-      return NextResponse.json(
-        { error: 'A connection attempt is already in progress.' },
-        { status: 409 },
-      );
-    }
-
-    // Cross-method check (H3): same phone under different method → 409
-    if (phoneNumber) {
-      const { data: crossMethod } = await service
-        .from('whatsapp_channels')
-        .select('id, connection_method')
-        .eq('phone_number', phoneNumber)
-        .eq('channel_type', 'dedicated')
-        .eq('is_active', true)
-        .maybeSingle();
-
-      if (crossMethod && crossMethod.connection_method !== connMethod) {
+    // Conflict check via DB helper (R9 §2)
+    if (normalized) {
+      const { data: conflict } = await service.rpc('check_phone_conflict', {
+        p_normalized_phone: normalized,
+        p_business_id: business_id,
+        p_connection_source: 'embedded_signup',
+      });
+      if ((conflict as { conflict?: boolean })?.conflict) {
+        const reason = (conflict as { reason?: string })?.reason || 'phone_conflict';
         return NextResponse.json(
-          { error: 'This number is already connected via a different method. Cross-method migration is not yet supported.' },
+          { error: reason === 'phone_owned_by_other_business'
+              ? 'This number is already connected to another business.'
+              : reason === 'cross_source_migration_unsupported'
+              ? 'This number is already connected via a different method. Cross-method migration is not yet supported.'
+              : 'This number requires support assistance to reconnect. Please contact support.'
+          },
           { status: 409 },
         );
       }
     }
 
-    // CAS snapshot: capture current business authority (H2)
-    const existingDedicated = await (async () => {
-      const { data } = await service
-        .from('whatsapp_channels')
-        .select('id')
-        .eq('business_id', business_id)
-        .eq('channel_type', 'dedicated')
-        .eq('is_active', true)
-        .maybeSingle();
-      return data;
-    })();
+    // CAS snapshot
+    const { data: existingDedicated } = await service
+      .from('whatsapp_channels')
+      .select('id')
+      .eq('business_id', business_id)
+      .eq('channel_type', 'dedicated')
+      .eq('is_active', true)
+      .maybeSingle();
 
-    // Generate secure registration PIN (H7)
-    const pin = String(randomInt(100000, 999999));
+    // Generate secure PIN (H7)
+    const pin = String(randomInt(100000, 1000000));
 
-    // Create candidate
+    // INSERT fenced candidate BEFORE any provider mutation
     const { data: candidate, error: candErr } = await service
       .from('whatsapp_channel_candidates')
       .insert({
         business_id,
+        connection_source: 'embedded_signup',
+        business_wa_method: bizWaMethod,
         provider: 'meta_cloud',
         phone_number: phoneNumber,
+        phone_number_normalized: normalized,
         phone_number_id,
         waba_id,
-        meta_access_token: encryptToken(longLivedToken), // customer token encrypted (H6)
+        meta_access_token: encryptToken(longLivedToken),
         meta_token_expires_at: tokenExpiresAt,
         display_name: displayName,
         country_code: business.country_code || 'NG',
-        connection_method: connMethod,
-        status: 'validating',
+        status: 'pending',
         expected_assigned_channel_id: business.assigned_channel_id || null,
         expected_whatsapp_channel_id: business.whatsapp_channel_id || null,
         expected_wa_method: business.wa_method || null,
@@ -267,6 +255,12 @@ export async function POST(request: NextRequest) {
       logger.error('[FB-CALLBACK] Candidate creation failed:', candErr);
       return NextResponse.json({ message: 'Failed to start WhatsApp connection' }, { status: 500 });
     }
+
+    // Mark validating before provider work
+    await service.from('whatsapp_channel_candidates').update({
+      status: 'validating',
+      updated_at: new Date().toISOString(),
+    }).eq('id', candidate.id);
 
     // ── Provider validation chain (all FATAL) ──
     let providerState: Record<string, unknown> = {};

@@ -1,24 +1,23 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
-import { encryptToken } from '@/lib/encryption';
+import { encryptToken, decryptToken } from '@/lib/encryption';
 import { randomInt } from 'crypto';
 import { logger } from '@/lib/logger';
 
 const API_VERSION = process.env.META_GRAPH_API_VERSION || 'v22.0';
 
+/** Normalize phone to digits only. */
+function normalizePhone(phone: string): string {
+  return phone.replace(/[^0-9]/g, '');
+}
+
 /**
  * POST /api/whatsapp/add-number
+ * Actions: request (default) | verify | resend
  *
- * Add a phone number to Waaiio's WABA and request OTP verification.
- * Uses the candidate system: creates a staging candidate, validates with
- * Meta provider, then atomically promotes to live channel on READY.
- *
- * Body: { business_id, phone_number, display_name }
- *
- * POST /api/whatsapp/add-number?action=verify
- * Verify the OTP and complete registration.
- * Body: { business_id, otp, candidate_id }
+ * Uses the candidate system: creates a fenced candidate BEFORE any
+ * provider mutation, validates with Meta, then atomically promotes.
  */
 export async function POST(request: NextRequest) {
   const supabase = await createClient();
@@ -35,7 +34,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'WhatsApp not configured on server' }, { status: 500 });
   }
 
-  // ── REQUEST OTP ──
+  // ── REQUEST OTP (R9 §3: candidate fence BEFORE provider mutation) ──
   if (!action || action === 'request') {
     const { business_id, phone_number, display_name } = body;
 
@@ -43,7 +42,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Missing business_id or phone_number' }, { status: 400 });
     }
 
-    // Verify ownership
+    // 1. Authenticate + verify ownership
     const { data: biz } = await supabase
       .from('businesses')
       .select('id, name, owner_id, country_code, assigned_channel_id, whatsapp_channel_id, wa_method')
@@ -55,40 +54,30 @@ export async function POST(request: NextRequest) {
     const cleanPhone = phone_number.replace(/[\s\-()]/g, '');
     const phoneForMeta = cleanPhone.startsWith('+') ? cleanPhone.slice(1) : cleanPhone;
 
+    // 2. Normalize phone + conflict check (R9 §2)
+    const normalized = normalizePhone(cleanPhone);
     const service = createServiceClient();
 
-    // Check for existing open candidate → 409 (H4: no reuse)
-    const { data: openCandidate } = await service
-      .from('whatsapp_channel_candidates')
-      .select('id, status')
-      .eq('business_id', business_id)
-      .in('status', ['pending', 'validating', 'ready'])
-      .maybeSingle();
+    const { data: conflict } = await service.rpc('check_phone_conflict', {
+      p_normalized_phone: normalized,
+      p_business_id: business_id,
+      p_connection_source: 'waaiio_hosted',
+    });
 
-    if (openCandidate) {
+    if ((conflict as { conflict?: boolean })?.conflict) {
+      const reason = (conflict as { reason?: string })?.reason || 'phone_conflict';
       return NextResponse.json(
-        { error: 'A connection attempt is already in progress. Please complete or wait for it to expire.' },
+        { error: reason === 'phone_owned_by_other_business'
+            ? 'This number is already connected to another business.'
+            : reason === 'cross_source_migration_unsupported'
+            ? 'This number is already connected via a different method. Cross-method migration is not yet supported.'
+            : 'This number requires support assistance to reconnect. Please contact support.'
+        },
         { status: 409 },
       );
     }
 
-    // Cross-method check (H3): same phone under different method → 409
-    const { data: crossMethodChannel } = await service
-      .from('whatsapp_channels')
-      .select('id, connection_method')
-      .eq('phone_number', cleanPhone)
-      .eq('channel_type', 'dedicated')
-      .eq('is_active', true)
-      .maybeSingle();
-
-    if (crossMethodChannel && crossMethodChannel.connection_method !== 'transfer') {
-      return NextResponse.json(
-        { error: 'This number is already connected via a different method. Cross-method migration is not yet supported.' },
-        { status: 409 },
-      );
-    }
-
-    // Find existing active dedicated channel for CAS snapshot
+    // 3. Read current business authority + active dedicated channel
     const { data: existingDedicated } = await service
       .from('whatsapp_channels')
       .select('id')
@@ -97,8 +86,54 @@ export async function POST(request: NextRequest) {
       .eq('is_active', true)
       .maybeSingle();
 
+    // 4. Generate secure PIN (H7)
+    const pin = String(randomInt(100000, 1000000));
+
+    // Detect country code
+    const countryCode = cleanPhone.startsWith('+234') ? 'NG'
+      : cleanPhone.startsWith('+1') ? 'US'
+      : cleanPhone.startsWith('+44') ? 'GB'
+      : cleanPhone.startsWith('+91') ? 'IN'
+      : biz.country_code || 'US';
+
+    // 5. INSERT candidate as pending with immutable CAS snapshot
+    const { data: candidate, error: candErr } = await service
+      .from('whatsapp_channel_candidates')
+      .insert({
+        business_id,
+        connection_source: 'waaiio_hosted',
+        business_wa_method: 'transfer',
+        provider: 'meta_cloud',
+        phone_number: cleanPhone,
+        phone_number_normalized: normalized,
+        waba_id: wabaId,
+        meta_access_token: null, // OTP: platform token stays in env (H6a)
+        display_name: display_name || biz.name,
+        country_code: countryCode,
+        status: 'pending',
+        expected_assigned_channel_id: biz.assigned_channel_id || null,
+        expected_whatsapp_channel_id: biz.whatsapp_channel_id || null,
+        expected_wa_method: biz.wa_method || null,
+        replacing_dedicated_channel_id: existingDedicated?.id || null,
+        provider_state: {},
+        encrypted_registration_pin: encryptToken(pin),
+      })
+      .select('id')
+      .single();
+
+    if (candErr || !candidate) {
+      if (candErr?.code === '23505') {
+        return NextResponse.json(
+          { error: 'A connection attempt is already in progress.' },
+          { status: 409 },
+        );
+      }
+      logger.error('[ADD-NUMBER] Candidate creation failed:', candErr);
+      return NextResponse.json({ error: 'Failed to start connection.' }, { status: 500 });
+    }
+
     try {
-      // 1. Add phone number to Waaiio's WABA
+      // 6. Only AFTER candidate INSERT: call Meta add/migrate phone
       const addRes = await fetch(
         `https://graph.facebook.com/${API_VERSION}/${wabaId}/phone_numbers`,
         {
@@ -119,91 +154,62 @@ export async function POST(request: NextRequest) {
       const addData = await addRes.json();
 
       if (!addRes.ok) {
-        logger.error('[ADD-NUMBER] Failed to add number:', addData);
-        const msg = addData.error?.message || 'Failed to add phone number';
-        return NextResponse.json({ error: msg }, { status: 400 });
+        logger.error('[ADD-NUMBER] Meta add number failed:', addData);
+        await service.from('whatsapp_channel_candidates').update({
+          status: 'failed',
+          failure_reason: `Meta add number failed: ${addData.error?.message || addRes.status}`,
+          provider_state: { phone_added: false },
+          updated_at: new Date().toISOString(),
+        }).eq('id', candidate.id);
+        return NextResponse.json({ error: addData.error?.message || 'Failed to add phone number' }, { status: 400 });
       }
 
       const phoneNumberId = addData.id;
 
-      // 2. Request OTP verification code
+      // 7. Update candidate with phone_number_id
+      await service.from('whatsapp_channel_candidates').update({
+        phone_number_id: phoneNumberId,
+        provider_state: { phone_added: true },
+        updated_at: new Date().toISOString(),
+      }).eq('id', candidate.id);
+
+      // 8. Request SMS (VOICE fallback)
       const otpRes = await fetch(
         `https://graph.facebook.com/${API_VERSION}/${phoneNumberId}/request_code`,
         {
           method: 'POST',
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-            'Content-Type': 'application/json',
-          },
+          headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
           body: JSON.stringify({ code_method: 'SMS', language: 'en_US' }),
         }
       );
 
       if (!otpRes.ok) {
-        // Fallback to voice call if SMS fails
         const voiceRes = await fetch(
           `https://graph.facebook.com/${API_VERSION}/${phoneNumberId}/request_code`,
           {
             method: 'POST',
-            headers: {
-              Authorization: `Bearer ${accessToken}`,
-              'Content-Type': 'application/json',
-            },
+            headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
             body: JSON.stringify({ code_method: 'VOICE', language: 'en_US' }),
           }
         );
         const voiceData = await voiceRes.json();
         if (!voiceRes.ok) {
+          await service.from('whatsapp_channel_candidates').update({
+            status: 'failed',
+            failure_reason: `OTP delivery failed: ${voiceData.error?.message || 'both SMS and VOICE failed'}`,
+            provider_state: { phone_added: true, otp_requested: false },
+            updated_at: new Date().toISOString(),
+          }).eq('id', candidate.id);
           return NextResponse.json({ error: 'Failed to send verification code. ' + (voiceData.error?.message || '') }, { status: 400 });
         }
       }
 
-      // Detect country code from phone number
-      const countryCode = cleanPhone.startsWith('+234') ? 'NG'
-        : cleanPhone.startsWith('+1') ? 'US'
-        : cleanPhone.startsWith('+44') ? 'GB'
-        : cleanPhone.startsWith('+91') ? 'IN'
-        : biz.country_code || 'US';
-
-      // Generate secure registration PIN (H7: never '000000')
-      const pin = String(randomInt(100000, 999999));
-
-      // 3. Create candidate (not live channel)
-      const { data: candidate, error: candErr } = await service
-        .from('whatsapp_channel_candidates')
-        .insert({
-          business_id,
-          provider: 'meta_cloud',
-          phone_number: cleanPhone,
-          phone_number_id: phoneNumberId,
-          waba_id: wabaId,
-          meta_access_token: null, // OTP path: platform token stays in env (H6 option a)
-          display_name: display_name || biz.name,
-          country_code: countryCode,
-          connection_method: 'transfer',
-          status: 'validating',
-          // Immutable CAS snapshot (H2)
-          expected_assigned_channel_id: biz.assigned_channel_id || null,
-          expected_whatsapp_channel_id: biz.whatsapp_channel_id || null,
-          expected_wa_method: biz.wa_method || null,
-          replacing_dedicated_channel_id: existingDedicated?.id || null,
-          provider_state: { phone_added: true, otp_requested: true },
-          encrypted_registration_pin: encryptToken(pin),
-        })
-        .select('id')
-        .single();
-
-      if (candErr || !candidate) {
-        // Partial unique index violation → another candidate was created concurrently
-        if (candErr?.code === '23505') {
-          return NextResponse.json(
-            { error: 'A connection attempt is already in progress.' },
-            { status: 409 },
-          );
-        }
-        logger.error('[ADD-NUMBER] Candidate creation failed:', candErr);
-        return NextResponse.json({ error: 'Failed to start connection. Please try again.' }, { status: 500 });
-      }
+      // 9. Mark candidate validating
+      await service.from('whatsapp_channel_candidates').update({
+        status: 'validating',
+        provider_state: { phone_added: true, otp_requested: true },
+        updated_at: new Date().toISOString(),
+      }).eq('id', candidate.id);
 
       return NextResponse.json({
         success: true,
@@ -213,11 +219,79 @@ export async function POST(request: NextRequest) {
       });
     } catch (error) {
       logger.error('[ADD-NUMBER] Error:', (error as Error).message);
+      await service.from('whatsapp_channel_candidates').update({
+        status: 'failed',
+        failure_reason: `Unexpected error: ${(error as Error).message}`,
+        updated_at: new Date().toISOString(),
+      }).eq('id', candidate.id);
       return NextResponse.json({ error: 'Failed to add number. Please try again.' }, { status: 500 });
     }
   }
 
-  // ── VERIFY OTP ──
+  // ── RESEND OTP (R9 §4) ──
+  if (action === 'resend') {
+    const { business_id, candidate_id } = body;
+
+    if (!business_id || !candidate_id) {
+      return NextResponse.json({ error: 'Missing business_id or candidate_id' }, { status: 400 });
+    }
+
+    const { data: biz } = await supabase
+      .from('businesses')
+      .select('id').eq('id', business_id).eq('owner_id', user.id).single();
+    if (!biz) return NextResponse.json({ error: 'Business not found' }, { status: 404 });
+
+    const service = createServiceClient();
+
+    const { data: candidate } = await service
+      .from('whatsapp_channel_candidates')
+      .select('id, phone_number_id, connection_source, status')
+      .eq('id', candidate_id)
+      .eq('business_id', business_id)
+      .eq('connection_source', 'waaiio_hosted')
+      .eq('status', 'validating')
+      .single();
+
+    if (!candidate) {
+      return NextResponse.json({ error: 'No pending verification found.' }, { status: 400 });
+    }
+
+    try {
+      const otpRes = await fetch(
+        `https://graph.facebook.com/${API_VERSION}/${candidate.phone_number_id}/request_code`,
+        {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code_method: 'SMS', language: 'en_US' }),
+        }
+      );
+      if (!otpRes.ok) {
+        const voiceRes = await fetch(
+          `https://graph.facebook.com/${API_VERSION}/${candidate.phone_number_id}/request_code`,
+          {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ code_method: 'VOICE', language: 'en_US' }),
+          }
+        );
+        if (!voiceRes.ok) {
+          return NextResponse.json({ error: 'Failed to resend code.' }, { status: 400 });
+        }
+      }
+
+      await service.from('whatsapp_channel_candidates').update({
+        provider_state: { phone_added: true, otp_requested: true, resent: true },
+        updated_at: new Date().toISOString(),
+      }).eq('id', candidate.id);
+
+      return NextResponse.json({ success: true, message: 'Verification code resent.' });
+    } catch (error) {
+      logger.error('[ADD-NUMBER] Resend error:', error);
+      return NextResponse.json({ error: 'Failed to resend code.' }, { status: 500 });
+    }
+  }
+
+  // ── VERIFY OTP (R9 §4: exact candidate_id required) ──
   if (action === 'verify') {
     const { business_id, otp, candidate_id } = body;
 
@@ -225,18 +299,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Missing business_id, otp, or candidate_id' }, { status: 400 });
     }
 
-    // Verify ownership
     const { data: biz } = await supabase
       .from('businesses')
-      .select('id, owner_id')
-      .eq('id', business_id)
-      .eq('owner_id', user.id)
-      .single();
+      .select('id, owner_id').eq('id', business_id).eq('owner_id', user.id).single();
     if (!biz) return NextResponse.json({ error: 'Business not found' }, { status: 404 });
 
     const service = createServiceClient();
 
-    // Get the candidate (not live channel)
     const { data: candidate } = await service
       .from('whatsapp_channel_candidates')
       .select('id, phone_number_id, phone_number, display_name, waba_id, encrypted_registration_pin, provider_state')
@@ -246,48 +315,42 @@ export async function POST(request: NextRequest) {
       .single();
 
     if (!candidate) {
-      return NextResponse.json({ error: 'No pending connection found. Please start over.' }, { status: 400 });
+      return NextResponse.json({ error: 'No pending verification found. Please start over.' }, { status: 400 });
     }
 
     try {
-      // 1. Verify the code with Meta (fatal on failure)
+      // 1. Verify OTP (fatal)
       const verifyRes = await fetch(
         `https://graph.facebook.com/${API_VERSION}/${candidate.phone_number_id}/verify_code`,
         {
           method: 'POST',
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-            'Content-Type': 'application/json',
-          },
+          headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
           body: JSON.stringify({ code: otp }),
         }
       );
 
       const verifyData = await verifyRes.json();
-
       if (!verifyRes.ok) {
         logger.error('[ADD-NUMBER] OTP verification failed:', verifyData);
         return NextResponse.json({ error: verifyData.error?.message || 'Invalid code. Please try again.' }, { status: 400 });
       }
 
-      // Update provider state
-      const updatedState: Record<string, unknown> = { ...(candidate.provider_state as Record<string, unknown>), otp_verified: true };
+      const updatedState: Record<string, unknown> = {
+        ...(candidate.provider_state as Record<string, unknown>),
+        otp_verified: true,
+      };
 
-      // 2. Register the number for Cloud API messaging (FATAL — H10)
+      // 2. Register phone (FATAL — H10)
+      const pin = candidate.encrypted_registration_pin
+        ? decryptToken(candidate.encrypted_registration_pin)
+        : String(randomInt(100000, 1000000));
+
       const regRes = await fetch(
         `https://graph.facebook.com/${API_VERSION}/${candidate.phone_number_id}/register`,
         {
           method: 'POST',
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            messaging_product: 'whatsapp',
-            pin: candidate.encrypted_registration_pin
-              ? (() => { const { decryptToken } = require('@/lib/encryption'); return decryptToken(candidate.encrypted_registration_pin); })()
-              : String(randomInt(100000, 999999)),
-          }),
+          headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ messaging_product: 'whatsapp', pin }),
         }
       );
 
@@ -308,7 +371,7 @@ export async function POST(request: NextRequest) {
 
       updatedState.registered = true;
 
-      // 3. Subscribe WABA to webhooks (FATAL — H10)
+      // 3. Subscribe webhooks (FATAL — H10)
       const subRes = await fetch(
         `https://graph.facebook.com/${API_VERSION}/${wabaId}/subscribed_apps`,
         {
@@ -316,7 +379,6 @@ export async function POST(request: NextRequest) {
           headers: { Authorization: `Bearer ${accessToken}` },
         }
       );
-
       const subData = await subRes.json().catch(() => ({}));
       if (!subRes.ok || !(subData as { success?: boolean }).success) {
         logger.error('[ADD-NUMBER] Webhook subscription FAILED');
@@ -327,21 +389,21 @@ export async function POST(request: NextRequest) {
           updated_at: new Date().toISOString(),
         }).eq('id', candidate.id);
         return NextResponse.json(
-          { error: 'WhatsApp webhook subscription failed. Please try again or contact support.', recoverable: true },
+          { error: 'WhatsApp webhook subscription failed. Please try again.', recoverable: true },
           { status: 422 },
         );
       }
 
       updatedState.webhook_subscribed = true;
 
-      // 4. All READY gates passed — mark candidate ready
+      // 4. All READY gates passed
       await service.from('whatsapp_channel_candidates').update({
         status: 'ready',
         provider_state: updatedState,
         updated_at: new Date().toISOString(),
       }).eq('id', candidate.id);
 
-      // 5. Atomic promotion (H8: single PostgreSQL transaction)
+      // 5. Atomic promotion
       const { data: promoResult, error: promoErr } = await service.rpc(
         'promote_channel_candidate',
         { p_candidate_id: candidate.id, p_business_id: business_id },
@@ -361,11 +423,10 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      // 6. Auto-provision message templates (non-fatal)
+      // 6. Templates (non-fatal)
       try {
         const { provisionTemplates } = await import('@/lib/channels/provision-templates');
         await provisionTemplates(wabaId, accessToken);
-        logger.debug('[ADD-NUMBER] Templates provisioned');
       } catch (err) {
         logger.error('[ADD-NUMBER] Template provisioning warning:', err);
       }
