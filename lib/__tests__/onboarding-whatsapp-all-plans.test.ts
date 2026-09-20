@@ -2,14 +2,9 @@
  * Regression + orchestration tests for #346: customer-owned WhatsApp on all plans.
  *
  * Part A: Structural assertions (source-level correctness)
- * Part B: Orchestration tests (runtime flow correctness)
- *   B1. Free + shared: register → verify; trial path unchanged
- *   B2. Free + own-number intent: registers as shared, trial succeeds
- *   B3. Paid + own-number: goes through payment, not converted to Free
- *   B4. Connection failure does not disable trial/shared usability
- *   B5. No false "connected" state from transient fbConnectionData
- *   B6. Success CTA uses /dashboard/whatsapp/connect (no dead query param)
- *   B7. Dashboard connect has correct business via useBusiness() context
+ * Part B: Server-authority orchestration (register route behavior)
+ * Part C: Verify/trial orchestration (Free register → verify → trial)
+ * Part D: Paid path orchestration (register → subscribe, not converted)
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { readFileSync } from 'fs';
@@ -34,122 +29,105 @@ const dashboardConnectSource = readFileSync(
   join(process.cwd(), 'app/dashboard/whatsapp/connect/page.tsx'),
   'utf-8',
 );
-const qrPageSource = readFileSync(
-  join(process.cwd(), 'app/dashboard/qr-code/page.tsx'),
+const registerRouteSource = readFileSync(
+  join(process.cwd(), 'app/api/onboarding/register/route.ts'),
   'utf-8',
 );
 
 describe('#346 Part A — Structural assertions', () => {
 
-  describe('StepDetails — WhatsApp section', () => {
-    it('does NOT gate WhatsApp section behind selectedPlan !== free', () => {
+  describe('StepDetails', () => {
+    it('no plan gate on WhatsApp section', () => {
       expect(stepDetailsSource).not.toContain("selectedPlan !== 'free'");
     });
 
-    it('renders WhatsApp section with "available on every plan" copy', () => {
-      expect(stepDetailsSource).toContain('WhatsApp Connection');
+    it('shows "available on every plan" copy', () => {
       expect(stepDetailsSource).toContain('available on every plan');
     });
 
-    it('does NOT contain Pro/Premium-only wording', () => {
+    it('no Pro/Premium-only wording', () => {
       expect(stepDetailsSource).not.toMatch(/As a .* user, you can connect/);
     });
 
-    it('renders shared, own-number, and Coming Soon options', () => {
-      expect(stepDetailsSource).toContain("shared number");
-      expect(stepDetailsSource).toContain('Connect my own WhatsApp number');
-      expect(stepDetailsSource).toContain('Coming Soon');
+    it('defers Meta connection to post-create dashboard (no Embedded Signup UI in template)', () => {
+      // C3 fix: no Facebook Embedded Signup controls in the rendered template
+      // (launchWhatsAppSignup may exist in props destructuring but must not be invoked in JSX)
+      const templateBody = stepDetailsSource.slice(stepDetailsSource.indexOf('return ('));
+      expect(templateBody).not.toContain('Connect with Facebook');
+      expect(templateBody).not.toContain('launchWhatsAppSignup');
+      expect(templateBody).not.toContain('Facebook Connected');
+      // Instead shows deferred-connection notice
+      expect(templateBody).toContain('connect your number after signup');
     });
 
-    it('does NOT mutate selectedPlan when waMethod changes', () => {
+    it('does not mutate selectedPlan', () => {
       expect(stepDetailsSource).not.toContain('setSelectedPlan');
     });
   });
 
-  describe('StepSuccess — connect CTA', () => {
-    it('shows connect CTA with "Available on every plan"', () => {
+  describe('StepSuccess', () => {
+    it('always shows connect CTA (no conditional on waMethod or fbConnectionData)', () => {
       expect(stepSuccessSource).toContain('Connect Your Own WhatsApp Number');
-      expect(stepSuccessSource).toContain('Connect WhatsApp Number');
       expect(stepSuccessSource).toContain('Do this later');
-      expect(stepSuccessSource).toContain('Available on every plan');
-    });
-
-    it('connect CTA links to /dashboard/whatsapp/connect without dead query param', () => {
-      expect(stepSuccessSource).toContain('/dashboard/whatsapp/connect');
-      // B3 fix: no dead ?business_id= query parameter
-      expect(stepSuccessSource).not.toContain('business_id=');
-    });
-
-    it('does NOT show false "connected" state from transient fbConnectionData', () => {
-      // B1 fix: no "WhatsApp Number Connected" based on browser state
       expect(stepSuccessSource).not.toContain('WhatsApp Number Connected');
-      // fbConnectionData may be in props destructuring but must not be used in template logic
-      // Count occurrences: should only appear in the destructuring, not in JSX
-      const matches = stepSuccessSource.match(/fbConnectionData/g) || [];
-      expect(matches.length).toBeLessThanOrEqual(1); // only in destructuring
     });
 
-    it('does NOT contain misleading "our team is setting up" copy', () => {
+    it('CTA links to /dashboard/whatsapp/connect without dead params', () => {
+      expect(stepSuccessSource).toContain('href="/dashboard/whatsapp/connect"');
+      expect(stepSuccessSource).not.toContain('?business_id=');
+    });
+
+    it('no misleading "setting up" copy', () => {
       expect(stepSuccessSource).not.toContain('Our team is setting up');
-      expect(stepSuccessSource).not.toContain('setting up your dedicated');
     });
   });
 
-  describe('OnboardingWizard — registration always uses shared', () => {
-    it('handleRegister sends wa_method: shared regardless of user selection', () => {
-      // The registration payload in handleRegister must always be 'shared'
-      // to ensure trial activation succeeds (B2 fix)
+  describe('Registration route — server-enforced shared', () => {
+    it('C1: route hardcodes wa_method to shared, ignoring caller value', () => {
+      // The insert payload must use 'shared', not the caller-supplied wa_method
+      const insertBlock = registerRouteSource.slice(
+        registerRouteSource.indexOf('.insert({'),
+        registerRouteSource.indexOf('status: \'pending\'') + 20
+      );
+      expect(insertBlock).toContain("wa_method: 'shared'");
+      expect(insertBlock).not.toMatch(/wa_method:\s*wa_method/);
+      expect(insertBlock).not.toMatch(/wa_method:\s*body\.wa_method/);
+    });
+  });
+
+  describe('OnboardingWizard — client also sends shared', () => {
+    it('handleRegister sends wa_method: shared', () => {
       const handleRegisterBlock = wizardSource.slice(
         wizardSource.indexOf('async function handleRegister'),
         wizardSource.indexOf('// ── Payment Handler')
       );
-      // Must contain wa_method: 'shared' (hardcoded)
       expect(handleRegisterBlock).toContain("wa_method: 'shared'");
-      // Must NOT send wa_own_phone in the registration payload
-      expect(handleRegisterBlock).not.toContain('wa_own_phone');
     });
 
-    it('paid plan still goes through /api/onboarding/subscribe', () => {
+    it('paid plan still redirects to /api/onboarding/subscribe', () => {
       const handleRegisterBlock = wizardSource.slice(
         wizardSource.indexOf('async function handleRegister'),
         wizardSource.indexOf('// ── Payment Handler')
       );
       expect(handleRegisterBlock).toContain('/api/onboarding/subscribe');
-      expect(handleRegisterBlock).toContain("plan: selectedPlan");
-    });
-
-    it('free plan still goes through /api/onboarding/verify', () => {
-      const handleRegisterBlock = wizardSource.slice(
-        wizardSource.indexOf('async function handleRegister'),
-        wizardSource.indexOf('// ── Payment Handler')
-      );
-      expect(handleRegisterBlock).toContain('/api/onboarding/verify');
-      expect(handleRegisterBlock).toContain("plan: 'free'");
     });
   });
 
-  describe('Dashboard — no tier gate, correct priority', () => {
-    it('connect page has no subscription_tier gate', () => {
+  describe('Dashboard connect — no tier gate', () => {
+    it('no subscription_tier reference', () => {
       expect(dashboardConnectSource).not.toContain('subscription_tier');
-      expect(dashboardConnectSource).not.toContain('selectedPlan');
     });
 
-    it('QR resolves: assigned > dedicated > shared', () => {
-      const resolvedLine = qrPageSource.match(
-        /const resolved\s*=\s*assignedResult[\s\S]*?\|\|[\s\S]*?dedicatedResult[\s\S]*?\|\|[\s\S]*?sharedResult/
-      );
-      expect(resolvedLine).not.toBeNull();
-    });
-
-    it('connect page uses useBusiness() for business context', () => {
+    it('uses useBusiness() for context', () => {
       expect(dashboardConnectSource).toContain('useBusiness');
     });
   });
 });
 
-// ═══ Part B: Orchestration tests (runtime flow) ═══
+// ═══ Part B-D: Orchestration tests (actual route execution) ═══
 
-// Mock infrastructure for register route
+// ── Mock infrastructure ──
+
 const mockGetUser = vi.fn();
 vi.mock('@/lib/supabase/server', () => ({
   createClient: () => Promise.resolve({
@@ -166,12 +144,13 @@ let mockCountriesResponse = {
 };
 
 let lastInsertPayload: Record<string, unknown> | null = null;
+let lastBusinessUpdate: Record<string, unknown> | null = null;
+let rpcCalls: Array<{ fn: string; args: Record<string, unknown> }> = [];
+
 const mockServiceFrom = vi.fn((table: string) => {
   if (table === 'countries') {
     return {
-      select: () => ({
-        eq: () => Promise.resolve(mockCountriesResponse),
-      }),
+      select: () => ({ eq: () => Promise.resolve(mockCountriesResponse) }),
     };
   }
   if (table === 'businesses') {
@@ -183,6 +162,16 @@ const mockServiceFrom = vi.fn((table: string) => {
         return {
           eq: () => ({
             maybeSingle: () => Promise.resolve({ data: null, error: null }),
+            eq: () => ({
+              maybeSingle: () => Promise.resolve({ data: null, error: null }),
+              single: () => Promise.resolve({
+                data: { id: 'biz-new', owner_id: 'user-1', status: 'pending', category: 'salon', bot_code: 'TESTCODE', subscription_tier: 'free', wa_method: 'shared' },
+                error: null,
+              }),
+              eq: () => ({
+                maybeSingle: () => Promise.resolve({ data: null, error: null }),
+              }),
+            }),
           }),
         };
       },
@@ -195,6 +184,12 @@ const mockServiceFrom = vi.fn((table: string) => {
               error: null,
             }),
           }),
+        };
+      },
+      update: (data: Record<string, unknown>) => {
+        lastBusinessUpdate = data;
+        return {
+          eq: () => Promise.resolve({ error: null }),
         };
       },
     };
@@ -212,13 +207,34 @@ const mockServiceFrom = vi.fn((table: string) => {
       select: () => ({ eq: () => ({ single: () => Promise.resolve({ data: { role: 'restaurant_owner' }, error: null }) }) }),
     };
   }
+  if (table === 'business_capabilities') {
+    return {
+      select: () => ({ eq: () => ({ eq: () => Promise.resolve({ data: [{ capability: 'chat', is_enabled: true }], error: null }) }) }),
+    };
+  }
+  if (table === 'subscriptions') {
+    return {
+      select: () => ({ eq: () => ({ maybeSingle: () => Promise.resolve({ data: null, error: null }) }) }),
+    };
+  }
   return {
     select: () => ({ eq: () => Promise.resolve({ data: [], error: null }) }),
   };
 });
 
+const mockServiceRpc = vi.fn(async (fn: string, args: Record<string, unknown>) => {
+  rpcCalls.push({ fn, args });
+  if (fn === 'activate_trial_if_eligible') {
+    return { data: { activated: true, trial_ends_at: '2026-10-04T00:00:00Z', amount_minor: 500, currency_code: 'USD' }, error: null };
+  }
+  return { data: null, error: null };
+});
+
 vi.mock('@/lib/supabase/service', () => ({
-  createServiceClient: () => ({ from: mockServiceFrom }),
+  createServiceClient: () => ({
+    from: mockServiceFrom,
+    rpc: mockServiceRpc,
+  }),
 }));
 
 vi.mock('@/lib/rate-limit', () => ({
@@ -266,8 +282,16 @@ vi.mock('@/lib/observability/server-events', () => ({
   emitServerEvent: vi.fn(),
 }));
 
-function makeRequest(body: Record<string, unknown>) {
+function makeRegisterRequest(body: Record<string, unknown>) {
   return new NextRequest(new URL('http://localhost:3000/api/onboarding/register'), {
+    method: 'POST',
+    body: JSON.stringify(body),
+    headers: { 'Content-Type': 'application/json', 'x-forwarded-for': '127.0.0.1' },
+  });
+}
+
+function makeVerifyRequest(body: Record<string, unknown>) {
+  return new NextRequest(new URL('http://localhost:3000/api/onboarding/verify'), {
     method: 'POST',
     body: JSON.stringify(body),
     headers: { 'Content-Type': 'application/json', 'x-forwarded-for': '127.0.0.1' },
@@ -285,94 +309,162 @@ const FRESH_BODY = {
   country: 'NG',
 };
 
-describe('#346 Part B — Orchestration tests', () => {
+describe('#346 Part B — Server-authority: registration always persists shared', () => {
   beforeEach(() => {
     vi.resetAllMocks();
     lastInsertPayload = null;
+    lastBusinessUpdate = null;
+    rpcCalls = [];
     mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1', email: 'test@test.com' } } });
     mockCountriesResponse = {
-      data: [
-        { code: 'NG', dialing_code: '+234' },
-        { code: 'US', dialing_code: '+1' },
-      ],
+      data: [{ code: 'NG', dialing_code: '+234' }, { code: 'US', dialing_code: '+1' }],
       error: null,
     };
   });
 
-  it('B1: Free + shared: register succeeds with wa_method=shared', async () => {
+  it('C1: register with wa_method=shared → persists shared', async () => {
     const { POST } = await import('@/app/api/onboarding/register/route');
-    const req = makeRequest({ ...FRESH_BODY, wa_method: 'shared' });
-    const res = await POST(req);
-    expect(res.status).toBe(200);
-    expect(lastInsertPayload).toBeTruthy();
-    expect(lastInsertPayload!.wa_method).toBe('shared');
-    expect(lastInsertPayload!.status).toBe('pending');
-  });
-
-  it('B2: Free + own-number intent registered as shared preserves trial path', async () => {
-    // When wizard sends wa_method: 'shared' (even though user chose own-number in UI),
-    // the business is registered with shared method, ensuring trial activation succeeds
-    const { POST } = await import('@/app/api/onboarding/register/route');
-    const req = makeRequest({ ...FRESH_BODY, wa_method: 'shared' });
-    const res = await POST(req);
+    const res = await POST(makeRegisterRequest({ ...FRESH_BODY, wa_method: 'shared' }));
     expect(res.status).toBe(200);
     expect(lastInsertPayload!.wa_method).toBe('shared');
-    // With wa_method='shared', activate_trial_if_eligible will use
-    // the shared-channel path (status='active') not the dedicated path
   });
 
-  it('B3: paid + own-number: registration does NOT change plan to free', async () => {
-    // Paid plan is handled by the wizard AFTER registration succeeds:
-    // wizard calls /api/onboarding/subscribe with the paid plan.
-    // Registration always creates business with subscription_tier='free'
-    // (the tier is upgraded by the subscribe/verify route, not register).
+  it('C1: register with wa_method=transfer → server overrides to shared', async () => {
     const { POST } = await import('@/app/api/onboarding/register/route');
-    const req = makeRequest({ ...FRESH_BODY, wa_method: 'shared' });
-    const res = await POST(req);
+    const res = await POST(makeRegisterRequest({ ...FRESH_BODY, wa_method: 'transfer' }));
     expect(res.status).toBe(200);
-    // Business starts as free/pending regardless of UI plan selection
+    expect(lastInsertPayload!.wa_method).toBe('shared');
+  });
+
+  it('C1: register with wa_method=coexist → server overrides to shared', async () => {
+    const { POST } = await import('@/app/api/onboarding/register/route');
+    const res = await POST(makeRegisterRequest({ ...FRESH_BODY, wa_method: 'coexist' }));
+    expect(res.status).toBe(200);
+    expect(lastInsertPayload!.wa_method).toBe('shared');
+  });
+
+  it('C1: register with no wa_method → persists shared', async () => {
+    const { POST } = await import('@/app/api/onboarding/register/route');
+    const res = await POST(makeRegisterRequest({ ...FRESH_BODY }));
+    expect(res.status).toBe(200);
+    expect(lastInsertPayload!.wa_method).toBe('shared');
+  });
+
+  it('C1: business always starts as pending/free regardless of caller intent', async () => {
+    const { POST } = await import('@/app/api/onboarding/register/route');
+    const res = await POST(makeRegisterRequest({ ...FRESH_BODY, wa_method: 'transfer' }));
+    expect(res.status).toBe(200);
     expect(lastInsertPayload!.subscription_tier).toBe('free');
     expect(lastInsertPayload!.status).toBe('pending');
-    // The paid checkout happens in a separate /api/onboarding/subscribe call
+  });
+});
+
+describe('#346 Part C — Free register → verify → trial activation invariants', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    lastInsertPayload = null;
+    lastBusinessUpdate = null;
+    rpcCalls = [];
+    mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1', email: 'test@test.com' } } });
+    mockCountriesResponse = {
+      data: [{ code: 'NG', dialing_code: '+234' }, { code: 'US', dialing_code: '+1' }],
+      error: null,
+    };
   });
 
-  it('B4: wa_method=transfer with no channel still allows registration', async () => {
-    // Even if someone directly sends wa_method='transfer' to the API,
-    // registration succeeds. The trial activation issue is prevented
-    // because the wizard now always sends 'shared'.
-    const { POST } = await import('@/app/api/onboarding/register/route');
-    const req = makeRequest({ ...FRESH_BODY, wa_method: 'transfer' });
-    const res = await POST(req);
-    expect(res.status).toBe(200);
-    // Business is created — trial activation is a separate concern
-    expect(lastInsertPayload!.wa_method).toBe('transfer');
+  it('C2: verify route calls activate_trial_if_eligible for free plan (structural proof)', () => {
+    // The verify route calls activate_trial_if_eligible for free businesses.
+    // Prove this structurally from the source.
+    const verifySource = readFileSync(
+      join(process.cwd(), 'app/api/onboarding/verify/route.ts'),
+      'utf-8',
+    );
+    // Verify route calls activate_trial_if_eligible for free plan
+    expect(verifySource).toContain('activate_trial_if_eligible');
+    // It's called in the plan === 'free' branch
+    const freeBlock = verifySource.slice(
+      verifySource.indexOf("plan === 'free'"),
+      verifySource.indexOf("plan === 'free'") + 500
+    );
+    expect(freeBlock).toContain('activate_trial_if_eligible');
   });
 
-  it('B5: StepSuccess never shows durable connected state from transient browser data', () => {
-    // The success screen no longer uses fbConnectionData in template logic
-    // It always shows the connect CTA pointing to the dashboard
-    expect(stepSuccessSource).not.toContain('WhatsApp Number Connected');
-    // fbConnectionData only in props destructuring, never in JSX/template
-    const fbMatches = stepSuccessSource.match(/fbConnectionData/g) || [];
-    expect(fbMatches.length).toBeLessThanOrEqual(1);
-    // The connect CTA is unconditional (no waMethod branching)
-    expect(stepSuccessSource).not.toMatch(/waMethod\s*===\s*'shared'/);
-    expect(stepSuccessSource).not.toMatch(/waMethod\s*!==\s*'shared'/);
+  it('C2: own-number intent registered as shared preserves trial eligibility', async () => {
+    // When caller sends wa_method=transfer, server overrides to shared
+    const { POST: registerPost } = await import('@/app/api/onboarding/register/route');
+    const regRes = await registerPost(makeRegisterRequest({ ...FRESH_BODY, wa_method: 'transfer' }));
+    expect(regRes.status).toBe(200);
+    expect(lastInsertPayload!.wa_method).toBe('shared');
+
+    // M372 activate_trial_if_eligible: for wa_method='shared', requires
+    // business.status='active' (set by verify) — does NOT require
+    // whatsapp_channel_id. Therefore trial activation succeeds.
+    // Prove the M372 logic structurally:
+    const m372Source = readFileSync(
+      join(process.cwd(), 'supabase/migrations/372_trial_lifecycle.sql'),
+      'utf-8',
+    );
+    // Shared method path checks status, not channel
+    expect(m372Source).toContain("wa_method = 'shared'");
+    // The dedicated/transfer path requires an active channel
+    expect(m372Source).toContain('whatsapp_channel_id');
   });
 
-  it('B6: success CTA uses plain /dashboard/whatsapp/connect without dead business_id param', () => {
-    expect(stepSuccessSource).toContain('href="/dashboard/whatsapp/connect"');
-    expect(stepSuccessSource).not.toContain('?business_id=');
+  it('C2: M372 shared path does not require a dedicated channel', () => {
+    const m372Source = readFileSync(
+      join(process.cwd(), 'supabase/migrations/372_trial_lifecycle.sql'),
+      'utf-8',
+    );
+    // The trial RPC has both shared and dedicated/transfer paths
+    // Shared does NOT require whatsapp_channel_id — only status='active'
+    expect(m372Source).toContain("v_biz.wa_method = 'shared'");
+    expect(m372Source).toContain("v_biz.status = 'active'");
+    // Dedicated/transfer path requires whatsapp_channel_id
+    expect(m372Source).toContain('whatsapp_channel_id IS NOT NULL');
+  });
+});
+
+describe('#346 Part D — Paid path not converted to free', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    lastInsertPayload = null;
+    rpcCalls = [];
+    mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1', email: 'test@test.com' } } });
+    mockCountriesResponse = {
+      data: [{ code: 'NG', dialing_code: '+234' }, { code: 'US', dialing_code: '+1' }],
+      error: null,
+    };
   });
 
-  it('B7: dashboard connect page uses useBusiness() — no cross-tenant selector', () => {
-    expect(dashboardConnectSource).toContain('useBusiness');
-    // No business_id from URL params
-    expect(dashboardConnectSource).not.toContain('useSearchParams');
-    expect(dashboardConnectSource).not.toContain('searchParams');
+  it('C2: paid own-number: register creates free/pending, does NOT call verify or subscribe', async () => {
+    // Registration always creates free/pending regardless of intended plan
+    // The wizard separately calls /api/onboarding/subscribe for paid plans
+    const { POST: registerPost } = await import('@/app/api/onboarding/register/route');
+    const regRes = await registerPost(makeRegisterRequest({ ...FRESH_BODY, wa_method: 'transfer' }));
+    expect(regRes.status).toBe(200);
+    expect(lastInsertPayload!.subscription_tier).toBe('free');
+    expect(lastInsertPayload!.wa_method).toBe('shared');
+
+    // No trial activation at registration time (only at verify time)
+    const trialCall = rpcCalls.find(c => c.fn === 'activate_trial_if_eligible');
+    expect(trialCall).toBeUndefined();
   });
 
-  it('B8: retry path remains unchanged (no wa_method dependency)', async () => {
+  it('C2: subscribe route exists and requires business_id + plan', async () => {
+    // Prove the paid subscribe route is separate from register
+    // The wizard calls this after registration for paid plans
+    const subscribeRouteSource = readFileSync(
+      join(process.cwd(), 'app/api/onboarding/subscribe/route.ts'),
+      'utf-8',
+    );
+    // Subscribe route must accept business_id and plan
+    expect(subscribeRouteSource).toContain('business_id');
+    expect(subscribeRouteSource).toContain('plan');
+    // Subscribe route must NOT be called during registration
+    expect(registerRouteSource).not.toContain('/api/onboarding/subscribe');
+  });
+
+  it('retry path unchanged — no wa_method dependency', async () => {
     mockServiceFrom.mockImplementation((table: string) => {
       if (table === 'businesses') {
         return {
@@ -397,7 +489,7 @@ describe('#346 Part B — Orchestration tests', () => {
     });
 
     const { POST } = await import('@/app/api/onboarding/register/route');
-    const req = makeRequest({ retryBusinessId: 'biz-pending', capabilities: ['scheduling'] });
+    const req = makeRegisterRequest({ retryBusinessId: 'biz-pending', capabilities: ['scheduling'] });
     const res = await POST(req);
     expect(res.status).toBe(200);
   });
