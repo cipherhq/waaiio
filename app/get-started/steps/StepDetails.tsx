@@ -171,11 +171,10 @@ export function StepDetails({
           <PhoneInput value={businessPhone} onChange={setBusinessPhone} />
         </div>
       </div>
-      {/* WhatsApp Connection (Pro/Premium only) */}
-      {selectedPlan !== 'free' && (
-        <div className="mt-8 rounded-2xl border border-gray-200 bg-gray-50 p-5">
+      {/* WhatsApp Connection (available on every plan) */}
+      <div className="mt-8 rounded-2xl border border-gray-200 bg-gray-50 p-5">
           <h3 className="text-sm font-bold text-gray-900">WhatsApp Connection</h3>
-          <p className="mt-1 text-xs text-gray-500">As a {selectedPlan === 'growth' ? 'Pro' : 'Premium'} user, you can connect your own WhatsApp number.</p>
+          <p className="mt-1 text-xs text-gray-500">Choose how customers reach you on WhatsApp. You can connect your own number on any plan.</p>
           <div className="mt-4 space-y-2">
             <button type="button" onClick={() => setWaMethod('shared')} className={`flex w-full items-center gap-3 rounded-xl border-2 p-3 text-left transition ${waMethod === 'shared' ? 'border-brand bg-brand-50/50' : 'border-gray-200 hover:border-gray-300'}`}>
               <div className={`flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full border-2 ${waMethod === 'shared' ? 'border-brand bg-brand' : 'border-gray-300'}`}>
@@ -280,7 +279,6 @@ export function StepDetails({
             </div>
           )}
         </div>
-      )}
 
       {error && <p className="mt-4 text-sm text-red-600">{error}</p>}
 
