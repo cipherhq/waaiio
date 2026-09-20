@@ -72,56 +72,27 @@ export function StepSuccess({
             </p>
           </div>
 
-          {/* WhatsApp connection prompt (shared) or connected state (dedicated) */}
-          {waMethod === 'shared' ? (
-            <div className="mt-4 rounded-xl border border-brand/20 bg-brand-50/50 p-5 text-left">
-              <h3 className="text-sm font-bold text-gray-900">Connect Your Own WhatsApp Number</h3>
-              <p className="mt-1 text-xs text-gray-600">
-                Customers can message your business number directly. Available on every plan. WhatsApp message usage charges still apply.
-              </p>
-              <div className="mt-3 flex items-center gap-3">
-                <a
-                  href={`/dashboard/whatsapp/connect${successData?.business_id ? `?business_id=${successData.business_id}` : ''}`}
-                  className="inline-flex items-center gap-2 rounded-lg bg-brand px-4 py-2.5 text-sm font-bold text-white transition hover:bg-brand-600"
-                >
-                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
-                  </svg>
-                  Connect WhatsApp Number
-                </a>
-                <span className="text-xs text-gray-400">Do this later</span>
-              </div>
+          {/* WhatsApp own-number connection prompt — always shown because
+              no durable channel exists at this point in the flow. The actual
+              connection happens post-registration from /dashboard/whatsapp/connect. */}
+          <div className="mt-4 rounded-xl border border-brand/20 bg-brand-50/50 p-5 text-left">
+            <h3 className="text-sm font-bold text-gray-900">Connect Your Own WhatsApp Number</h3>
+            <p className="mt-1 text-xs text-gray-600">
+              Customers can message your business number directly. Available on every plan. WhatsApp message usage charges still apply.
+            </p>
+            <div className="mt-3 flex items-center gap-3">
+              <a
+                href="/dashboard/whatsapp/connect"
+                className="inline-flex items-center gap-2 rounded-lg bg-brand px-4 py-2.5 text-sm font-bold text-white transition hover:bg-brand-600"
+              >
+                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+                </svg>
+                Connect WhatsApp Number
+              </a>
+              <span className="text-xs text-gray-400">Do this later</span>
             </div>
-          ) : fbConnectionData ? (
-            <div className="mt-4 rounded-xl border-2 border-green-200 bg-green-50 p-4 text-left">
-              <div className="flex items-center gap-3">
-                <div className="flex h-9 w-9 items-center justify-center rounded-full bg-green-100">
-                  <svg className="h-5 w-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                  </svg>
-                </div>
-                <div>
-                  <p className="text-sm font-bold text-green-900">WhatsApp Number Connected</p>
-                  <p className="text-xs text-green-700">Your own number is being activated. You can test with the shared number below in the meantime.</p>
-                </div>
-              </div>
-            </div>
-          ) : (
-            <div className="mt-4 rounded-xl border border-brand/20 bg-brand-50/50 p-5 text-left">
-              <h3 className="text-sm font-bold text-gray-900">Connect Your Own WhatsApp Number</h3>
-              <p className="mt-1 text-xs text-gray-600">
-                You selected to connect your own number but haven&apos;t completed the connection yet. You can do this from your dashboard.
-              </p>
-              <div className="mt-3">
-                <a
-                  href={`/dashboard/whatsapp/connect${successData?.business_id ? `?business_id=${successData.business_id}` : ''}`}
-                  className="inline-flex items-center gap-2 rounded-lg bg-brand px-4 py-2.5 text-sm font-bold text-white transition hover:bg-brand-600"
-                >
-                  Connect WhatsApp Number
-                </a>
-              </div>
-            </div>
-          )}
+          </div>
 
           {/* QR Code hero card */}
           <div className="mt-6 rounded-2xl bg-white border border-gray-200 p-8 shadow-lg">
