@@ -381,7 +381,7 @@ export class MetaCloudService {
 
   // ── Register a phone number for Cloud API ──
 
-  async registerPhoneNumber(pin: string = '000000'): Promise<{ success: boolean }> {
+  async registerPhoneNumber(pin: string): Promise<{ success: boolean }> {
     const res = await fetch(
       `${this.baseUrl}/${this.phoneNumberId}/register`,
       {

@@ -46,30 +46,24 @@ export default function ConnectWhatsAppPage() {
   const appId = (process.env.NEXT_PUBLIC_META_APP_ID || '').trim();
   const configId = (process.env.NEXT_PUBLIC_META_EMBEDDED_SIGNUP_CONFIG_ID || '').trim();
 
-  // Check for existing channel on load
+  // Check for existing active channel + any open candidate
   useEffect(() => {
     async function checkExisting() {
-      const supabase = createClient();
-      const { data: channel } = await supabase
-        .from('whatsapp_channels')
-        .select('id, phone_number, display_name, connection_status, channel_type, connection_method')
-        .eq('business_id', business.id)
-        .eq('channel_type', 'dedicated')
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
+      try {
+        const res = await fetch(`/api/whatsapp/connection-status?business_id=${business.id}`);
+        if (!res.ok) { setStep('choose'); return; }
+        const data = await res.json();
 
-      if (channel) {
-        setExistingChannel(channel);
-        if (channel.connection_status === 'verifying') {
+        if (data.active_channel) {
+          setExistingChannel(data.active_channel);
+          setStep('existing');
+        } else if (data.candidate?.status === 'pending' || data.candidate?.status === 'validating') {
+          // Connection in progress — show appropriate step
           setStep('verify-otp');
-          setPhone(channel.phone_number);
-        } else if (channel.connection_status === 'active') {
-          setStep('existing');
         } else {
-          setStep('existing');
+          setStep('choose');
         }
-      } else {
+      } catch {
         setStep('choose');
       }
     }

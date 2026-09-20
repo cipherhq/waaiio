@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { MetaCloudService } from '@/lib/channels/meta-cloud';
 import { encryptToken } from '@/lib/encryption';
+import { randomInt } from 'crypto';
 import { logger } from '@/lib/logger';
 import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 
@@ -59,7 +60,7 @@ export async function POST(request: NextRequest) {
     // Verify business ownership
     const { data: business } = await supabase
       .from('businesses')
-      .select('id, owner_id, name, country_code, address')
+      .select('id, owner_id, name, country_code, address, assigned_channel_id, whatsapp_channel_id, wa_method')
       .eq('id', business_id)
       .single();
 
@@ -182,96 +183,115 @@ export async function POST(request: NextRequest) {
       // Non-fatal — we can still create the channel
     }
 
-    // Create or update the whatsapp_channels record
+    // ── Candidate-based connection (prepare → validate → READY → switch) ──
     const service = createServiceClient();
+    const connMethod = connection_method || 'transfer';
 
-    // Check if channel already exists for this business
-    const { data: existingChannel } = await service
-      .from('whatsapp_channels')
+    // Check for existing open candidate → 409 (H4)
+    const { data: openCandidate } = await service
+      .from('whatsapp_channel_candidates')
       .select('id')
       .eq('business_id', business_id)
-      .eq('provider', 'meta_cloud')
+      .in('status', ['pending', 'validating', 'ready'])
       .maybeSingle();
 
-    const channelData = {
-      business_id,
-      country_code: business.country_code || 'NG',
-      phone_number: phoneNumber,
-      provider: 'meta_cloud',
-      channel_type: 'dedicated',
-      waba_id,
-      phone_number_id,
-      meta_access_token: encryptToken(longLivedToken),
-      meta_token_expires_at: tokenExpiresAt,
-      display_name: displayName,
-      quality_rating: qualityRating,
-      messaging_limit: messagingLimit,
-      connection_method: connection_method || 'transfer',
-      connection_status: 'provisioning',
-      is_active: false,
-    };
-
-    let channelId: string;
-
-    if (existingChannel) {
-      await service
-        .from('whatsapp_channels')
-        .update(channelData)
-        .eq('id', existingChannel.id);
-      channelId = existingChannel.id;
-    } else {
-      const { data: newChannel, error: insertError } = await service
-        .from('whatsapp_channels')
-        .insert(channelData)
-        .select('id')
-        .single();
-
-      if (insertError) {
-        logger.error('Failed to create channel:', insertError);
-        return NextResponse.json(
-          { message: 'Failed to create WhatsApp channel' },
-          { status: 500 }
-        );
-      }
-      channelId = newChannel.id;
-    }
-
-    // Link the channel to the business
-    await service
-      .from('businesses')
-      .update({
-        whatsapp_channel_id: channelId,
-        assigned_channel_id: channelId,
-        wa_method: connection_method || 'transfer',
-      })
-      .eq('id', business_id);
-
-    // ── Full automation chain ──
-
-    // 1. Register the phone number for Cloud API messaging — REQUIRED
-    try {
-      await cloudService.registerPhoneNumber();
-      logger.debug('[FB-CALLBACK] Phone registered for Cloud API');
-    } catch (regErr) {
-      logger.error('[FB-CALLBACK] Phone registration FAILED:', regErr);
-      await service
-        .from('whatsapp_channels')
-        .update({
-          is_active: false,
-          metadata: { registration_error: String(regErr) },
-        })
-        .eq('id', channelId);
+    if (openCandidate) {
       return NextResponse.json(
-        {
-          error: 'Phone registration failed. Please try again or contact support.',
-          channel_id: channelId,
-          recoverable: true,
-        },
-        { status: 422 }
+        { error: 'A connection attempt is already in progress.' },
+        { status: 409 },
       );
     }
 
-    // 2. Subscribe Waaiio app to receive webhooks from their WABA — REQUIRED
+    // Cross-method check (H3): same phone under different method → 409
+    if (phoneNumber) {
+      const { data: crossMethod } = await service
+        .from('whatsapp_channels')
+        .select('id, connection_method')
+        .eq('phone_number', phoneNumber)
+        .eq('channel_type', 'dedicated')
+        .eq('is_active', true)
+        .maybeSingle();
+
+      if (crossMethod && crossMethod.connection_method !== connMethod) {
+        return NextResponse.json(
+          { error: 'This number is already connected via a different method. Cross-method migration is not yet supported.' },
+          { status: 409 },
+        );
+      }
+    }
+
+    // CAS snapshot: capture current business authority (H2)
+    const existingDedicated = await (async () => {
+      const { data } = await service
+        .from('whatsapp_channels')
+        .select('id')
+        .eq('business_id', business_id)
+        .eq('channel_type', 'dedicated')
+        .eq('is_active', true)
+        .maybeSingle();
+      return data;
+    })();
+
+    // Generate secure registration PIN (H7)
+    const pin = String(randomInt(100000, 999999));
+
+    // Create candidate
+    const { data: candidate, error: candErr } = await service
+      .from('whatsapp_channel_candidates')
+      .insert({
+        business_id,
+        provider: 'meta_cloud',
+        phone_number: phoneNumber,
+        phone_number_id,
+        waba_id,
+        meta_access_token: encryptToken(longLivedToken), // customer token encrypted (H6)
+        meta_token_expires_at: tokenExpiresAt,
+        display_name: displayName,
+        country_code: business.country_code || 'NG',
+        connection_method: connMethod,
+        status: 'validating',
+        expected_assigned_channel_id: business.assigned_channel_id || null,
+        expected_whatsapp_channel_id: business.whatsapp_channel_id || null,
+        expected_wa_method: business.wa_method || null,
+        replacing_dedicated_channel_id: existingDedicated?.id || null,
+        provider_state: {},
+        encrypted_registration_pin: encryptToken(pin),
+      })
+      .select('id')
+      .single();
+
+    if (candErr || !candidate) {
+      if (candErr?.code === '23505') {
+        return NextResponse.json({ error: 'A connection attempt is already in progress.' }, { status: 409 });
+      }
+      logger.error('[FB-CALLBACK] Candidate creation failed:', candErr);
+      return NextResponse.json({ message: 'Failed to start WhatsApp connection' }, { status: 500 });
+    }
+
+    // ── Provider validation chain (all FATAL) ──
+    let providerState: Record<string, unknown> = {};
+
+    // 1. Register the phone number for Cloud API messaging — REQUIRED
+    try {
+      await cloudService.registerPhoneNumber(pin);
+      providerState.registered = true;
+      logger.debug('[FB-CALLBACK] Phone registered for Cloud API');
+    } catch (regErr) {
+      logger.error('[FB-CALLBACK] Phone registration FAILED:', regErr);
+      providerState.registered = false;
+      await service.from('whatsapp_channel_candidates').update({
+        status: 'failed',
+        failure_reason: `Phone registration failed: ${String(regErr)}`,
+        provider_state: providerState,
+        updated_at: new Date().toISOString(),
+      }).eq('id', candidate.id);
+      return NextResponse.json(
+        { error: 'Phone registration failed. Please try again or contact support.', recoverable: true },
+        { status: 422 },
+      );
+    }
+
+    // 2. Subscribe Waaiio app to receive webhooks — REQUIRED
     try {
       const subRes = await fetch(
         `https://graph.facebook.com/${process.env.META_GRAPH_API_VERSION || 'v22.0'}/${waba_id}/subscribed_apps`,
@@ -288,44 +308,60 @@ export async function POST(request: NextRequest) {
       if (!subData.success) {
         throw new Error(`Subscription returned success=false: ${JSON.stringify(subData)}`);
       }
+      providerState.webhook_subscribed = true;
       logger.debug('[FB-CALLBACK] Webhook subscription: ok');
     } catch (subErr) {
       logger.error('[FB-CALLBACK] WABA subscription FAILED:', subErr);
-      await service
-        .from('whatsapp_channels')
-        .update({
-          is_active: false,
-          metadata: { subscription_error: String(subErr) },
-        })
-        .eq('id', channelId);
+      providerState.webhook_subscribed = false;
+      await service.from('whatsapp_channel_candidates').update({
+        status: 'failed',
+        failure_reason: `Webhook subscription failed: ${String(subErr)}`,
+        provider_state: providerState,
+        updated_at: new Date().toISOString(),
+      }).eq('id', candidate.id);
       return NextResponse.json(
-        {
-          error: 'WhatsApp webhook subscription failed. Please try again or contact support.',
-          channel_id: channelId,
-          recoverable: true,
-        },
-        { status: 422 }
+        { error: 'WhatsApp webhook subscription failed. Please try again or contact support.', recoverable: true },
+        { status: 422 },
       );
     }
 
-    // 3. Positive READY transition — phone registered + WABA subscribed
-    await service
-      .from('whatsapp_channels')
-      .update({
-        connection_status: 'active',
-        is_active: true,
-        metadata: {},
-      })
-      .eq('id', channelId);
+    // 3. All READY gates passed — mark candidate ready
+    await service.from('whatsapp_channel_candidates').update({
+      status: 'ready',
+      provider_state: providerState,
+      updated_at: new Date().toISOString(),
+    }).eq('id', candidate.id);
 
-    // 3a. Reconcile paid allowance if subscription is active
+    // 4. Atomic promotion (H8: single PostgreSQL transaction)
+    const { data: promoResult, error: promoErr } = await service.rpc(
+      'promote_channel_candidate',
+      { p_candidate_id: candidate.id, p_business_id: business_id },
+    );
+
+    if (promoErr || !(promoResult as { ok?: boolean })?.ok) {
+      const reason = (promoResult as { reason?: string })?.reason || promoErr?.message || 'unknown';
+      logger.error('[FB-CALLBACK] Promotion failed:', reason);
+      await service.from('whatsapp_channel_candidates').update({
+        status: 'failed',
+        failure_reason: `Promotion failed: ${reason}`,
+        updated_at: new Date().toISOString(),
+      }).eq('id', candidate.id);
+      return NextResponse.json(
+        { error: 'Channel activation failed. Please try again.', recoverable: true, reason },
+        { status: 409 },
+      );
+    }
+
+    const channelId = (promoResult as { channel_id?: string })?.channel_id;
+
+    // 5. Reconcile paid allowance (non-fatal)
     try {
       await service.rpc('reconcile_paid_allowance', { p_business_id: business_id });
     } catch (reconcileErr) {
       logger.warn('[FB-CALLBACK] Paid allowance reconciliation (non-fatal):', reconcileErr);
     }
 
-    // 4. Auto-set WhatsApp Business Profile (non-fatal)
+    // 6. Auto-set WhatsApp Business Profile (non-fatal)
     try {
       await cloudService.setBusinessProfile({
         about: `${business.name} — powered by Waaiio`,
@@ -338,7 +374,7 @@ export async function POST(request: NextRequest) {
       logger.error('[FB-CALLBACK] Business profile warning:', err);
     }
 
-    // 4. Auto-provision all Waaiio message templates on the business's WABA (non-fatal)
+    // 7. Auto-provision templates (non-fatal)
     try {
       const { provisionTemplates } = await import('@/lib/channels/provision-templates');
       const templateResult = await provisionTemplates(waba_id, longLivedToken);

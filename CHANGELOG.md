@@ -6,20 +6,29 @@ If something breaks, check this log to find what changed and when.
 ## 2026-09-20 — Feat: customer-owned WhatsApp connection on all plans (#346)
 
 ### What changed
-- **`app/get-started/steps/StepDetails.tsx`**: Removed `selectedPlan !== 'free'` gate. Updated copy to "available on every plan." Replaced inline Facebook Embedded Signup UI with deferred-connection notice ("You'll connect your number after signup") — actual Meta connection happens post-registration from `/dashboard/whatsapp/connect`.
-- **`app/get-started/steps/StepSuccess.tsx`**: Always shows "Connect Your Own WhatsApp Number" CTA linking to `/dashboard/whatsapp/connect`. No conditional branching on waMethod or fbConnectionData. Removed misleading "Our team is setting up your dedicated number" copy.
-- **`app/get-started/OnboardingWizard.tsx`**: `handleRegister` always sends `wa_method: 'shared'` regardless of user's UI selection. Own-number connection is deferred to the dashboard.
-- **`app/api/onboarding/register/route.ts`**: Server-enforces `wa_method='shared'` in the insert payload, ignoring caller-supplied values. Dedicated method is set by `/api/auth/facebook/callback` after durable channel establishment.
-- **Tests**: 24 tests — structural assertions + server-authority orchestration (register route execution) + verify/trial invariant proofs + paid-path separation proof.
+- **Migration 391**: Channel candidate system — `whatsapp_channel_candidates` staging table, `whatsapp_channel_secrets` encrypted PIN store, `promote_channel_candidate` atomic RPC with CAS guards, partial UNIQUE index for one-open-candidate-per-business.
+- **`app/api/whatsapp/add-number/route.ts`**: Rewritten to use candidate system. OTP request creates candidate (not live channel). OTP verify makes register + webhook FATAL gates. Uses atomic promote RPC. Secure per-phone PIN via `crypto.randomInt`. No platform token in DB (H6a). Cross-method check (H3).
+- **`app/api/auth/facebook/callback/route.ts`**: Rewritten to use candidate system. Creates candidate with encrypted customer token. Removed premature business update. Provider validation remains fatal. Atomic promote RPC. Secure PIN. Cross-method check.
+- **`lib/channels/meta-cloud.ts`**: `registerPhoneNumber` PIN parameter is now required (no `'000000'` default).
+- **`app/api/whatsapp/connection-status/route.ts`** (NEW): Safe projection endpoint for candidate + active channel status. No secrets returned.
+- **`app/dashboard/page.tsx`**: Added `.eq('is_active', true)` to assigned channel query.
+- **`app/dashboard/whatsapp/connect/page.tsx`**: Uses connection-status endpoint. Separates active vs candidate display.
+- **`app/get-started/steps/StepDetails.tsx`**: Removed plan gate. Deferred Meta connection to dashboard.
+- **`app/get-started/steps/StepSuccess.tsx`**: "Do this later" is now a real `<a href="/dashboard">` link.
+- **`app/get-started/OnboardingWizard.tsx`**: `handleRegister` sends `wa_method: 'shared'`.
+- **`app/api/onboarding/register/route.ts`**: Server-enforces `wa_method='shared'`.
+- **Tests**: 76 tests (52 channel-candidate + 24 onboarding-whatsapp).
 
 ### What it affects
-- Onboarding WhatsApp section visibility — shown to all plans, Meta connection deferred.
-- Success screen — always shows connect CTA.
-- Registration — always persists shared, preventing trial activation loss from premature transfer intent.
-- `/api/auth/facebook/callback` remains the sole authority that switches a business to dedicated.
+- Dedicated channel connections now use prepare→validate→READY→switch. Working channel stays active until candidate passes all provider gates.
+- Both OTP and Facebook paths use the candidate model.
+- Registration PIN is now cryptographically secure per-phone (no universal `000000`).
+- Dashboard link correctly falls back to shared when assigned channel is inactive.
 
 ### What could break
-- Users who previously completed Facebook Embedded Signup during onboarding now complete it from the dashboard instead. No data is lost — the business is created first, connection is a separate step.
+- OTP phone registration failures that were previously silently ignored now fail the connection attempt (candidate marked failed, user can retry).
+- OTP webhook subscription failures that were previously silently ignored now fail the connection attempt.
+- Same-number cross-method migration is blocked with 409 (was silently allowed before).
 
 ## 2026-09-19 — Fix: DB-authoritative country validation in onboarding registration (#342)
 

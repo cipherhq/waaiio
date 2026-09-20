@@ -90,7 +90,7 @@ export function StepSuccess({
                 </svg>
                 Connect WhatsApp Number
               </a>
-              <span className="text-xs text-gray-400">Do this later</span>
+              <a href="/dashboard" className="text-xs text-gray-400 hover:text-gray-600 hover:underline">Do this later</a>
             </div>
           </div>
 
