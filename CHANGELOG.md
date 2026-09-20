@@ -3,6 +3,21 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-09-20 — Feat: customer-owned WhatsApp connection on all plans (#346)
+
+### What changed
+- **`app/get-started/steps/StepDetails.tsx`**: Removed `selectedPlan !== 'free'` gate around WhatsApp Connection section. Updated copy from "As a Pro/Premium user, you can connect" to "available on every plan." Shared remains default.
+- **`app/get-started/steps/StepSuccess.tsx`**: Replaced misleading "Our team is setting up your dedicated number" with three-state display: connect CTA (shared), connected state (fbConnectionData), or incomplete-connection prompt (transfer without connection). CTA links to `/dashboard/whatsapp/connect`.
+- **Tests**: 25 regression tests covering plan-gate removal, copy changes, CTA behavior, and existing behavior preservation.
+
+### What it affects
+- Onboarding WhatsApp section visibility — now shown to all plans.
+- Success screen messaging — connect CTA for shared businesses.
+- No backend changes, no migration, no payment/capability/pricing changes.
+
+### What could break
+- Nothing — purely additive UI change. The WhatsApp connection backend (`/api/whatsapp/add-number`, `/dashboard/whatsapp/connect`) was already tier-agnostic.
+
 ## 2026-09-19 — Fix: DB-authoritative country validation in onboarding registration (#342)
 
 ### What changed
