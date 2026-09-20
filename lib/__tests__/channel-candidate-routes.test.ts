@@ -167,6 +167,50 @@ describe('OTP add-number handler', () => {
     expect(rpcCalls.find(c => c.fn === 'check_phone_conflict')).toBeDefined();
   });
 
+  it('#349: fresh add sends migrate_phone_number=false to Meta', async () => {
+    const { POST } = await import('@/app/api/whatsapp/add-number/route');
+    const res = await POST(makeReq('/api/whatsapp/add-number', { business_id: 'biz-1', phone_number: '+12025579406', display_name: 'Test' }));
+    expect(res.status).toBe(200);
+
+    // Find the POST call to /{WABA_ID}/phone_numbers
+    const addCall = mockFetch.mock.calls.find((c: unknown[]) => String(c[0]).includes('/phone_numbers'));
+    expect(addCall).toBeDefined();
+
+    // Parse the request body to verify migrate_phone_number
+    const fetchOpts = addCall![1] as { body?: string };
+    const body = JSON.parse(fetchOpts.body || '{}');
+    expect(body.migrate_phone_number).toBe(false);
+  });
+
+  it('#349 regression: Meta error 100 migrate_phone_number must be false does not recur', async () => {
+    // Simulate Meta returning the exact error from #349
+    mockFetch.mockImplementation(async (url: string) => {
+      if (String(url).includes('/phone_numbers')) {
+        return {
+          ok: false,
+          json: async () => ({ error: { message: '(#100) Param migrate_phone_number must be false.', type: 'OAuthException', code: 100 } }),
+        };
+      }
+      return { ok: true, json: async () => ({}) };
+    });
+
+    const { POST } = await import('@/app/api/whatsapp/add-number/route');
+    const res = await POST(makeReq('/api/whatsapp/add-number', { business_id: 'biz-1', phone_number: '+12025579406', display_name: 'Test' }));
+
+    // The route should NOT send migrate_phone_number=true, so this error should not occur
+    // in normal production. But if Meta rejects for any other reason, candidate should be marked failed.
+    expect(res.status).toBe(400);
+    expect(candidateUpdates.some(u => u.status === 'failed')).toBe(true);
+
+    // Verify the source code uses false, not true, for migrate_phone_number
+    const { readFileSync } = await import('fs');
+    const { join } = await import('path');
+    const routeSource = readFileSync(join(process.cwd(), 'app/api/whatsapp/add-number/route.ts'), 'utf-8');
+    // Check the entire file for the migrate flag
+    expect(routeSource).toContain('migrate_phone_number: false');
+    expect(routeSource).not.toMatch(/migrate_phone_number:\s*true/);
+  });
+
   it('request: provider failure marks candidate failed', async () => {
     mockFetch.mockImplementation(async (url: string) => {
       if (String(url).includes('/phone_numbers')) return { ok: false, json: async () => ({ error: { message: 'fail' } }) };
