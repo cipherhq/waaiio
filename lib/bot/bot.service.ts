@@ -1798,15 +1798,33 @@ export class BotService {
             // Ordering-specific: product matching with cart
             if (directCanonicalCap === 'ordering' && ents.serviceKeywords.length > 0) {
               const { matchProductsFromKeywords } = await import('./smart-intent');
+              const { classifySmartIntentMatch } = await import('./flows/shared/product-availability');
               const productMatches = await matchProductsFromKeywords(this.supabase, business.id, ents.serviceKeywords);
-              if (productMatches.length === 1) {
-                const p = productMatches[0];
-                const qty = ents.quantity || 1;
-                session.session_data.cart = [{ product_id: p.id, name: p.name, price: p.price, quantity: qty, variant: null, variant_label: null }];
-                session.session_data._auto_added_to_cart = true;
-                session.session_data._skip_browse = true;
-              } else if (productMatches.length > 1) {
-                session.session_data._matched_product_ids = productMatches.map(m => m.id);
+              const action = classifySmartIntentMatch(productMatches);
+
+              switch (action) {
+                case 'auto_add': {
+                  const p = productMatches[0];
+                  const qty = ents.quantity || 1;
+                  session.session_data.cart = [{ product_id: p.id, name: p.name, price: p.price, quantity: qty, variant: null, variant_label: null }];
+                  session.session_data._auto_added_to_cart = true;
+                  session.session_data._skip_browse = true;
+                  break;
+                }
+                case 'variant_picker': {
+                  session.session_data._matched_product_ids = [productMatches[0].id];
+                  // Clear stale auto-add flags from previous session state
+                  delete session.session_data._auto_added_to_cart;
+                  delete session.session_data._skip_browse;
+                  break;
+                }
+                case 'narrow_catalog': {
+                  session.session_data._matched_product_ids = productMatches.map(m => m.id);
+                  delete session.session_data._auto_added_to_cart;
+                  delete session.session_data._skip_browse;
+                  break;
+                }
+                // no_match: no product prefill
               }
             }
 

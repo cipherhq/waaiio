@@ -17,6 +17,7 @@ import { checkTierLimit } from '@/lib/tier-limits';
 import { logger } from '@/lib/logger';
 import { buildSavedCardOffer, handleSavedCardInput } from './shared/saved-card-flow';
 import { safeButtons } from './shared/safe-interactive';
+import { isProductAvailable, computeVariantAvailability, getViableAxisValues } from './shared/product-availability';
 
 /** Generic labels for ordering flow */
 function getOrderingLabels(_category: string): { noun: string; emoji: string; browseLabel: string } {
@@ -115,9 +116,21 @@ export const orderingFlow: FlowDefinition = {
 
         const { data: rawProducts } = await query;
 
-        // Filter out out-of-stock items that track inventory
+        // Build variant availability map for variable products
+        const variableProductIds = (rawProducts || []).filter(p => p.has_variants).map(p => p.id);
+        let variantAvail = new Map<string, boolean>();
+        if (variableProductIds.length > 0) {
+          const { data: variants } = await ctx.supabase
+            .from('product_variants')
+            .select('product_id, stock_quantity, is_active')
+            .in('product_id', variableProductIds)
+            .eq('is_active', true);
+          variantAvail = computeVariantAvailability(variants || []);
+        }
+
+        // Filter out unavailable items
         const products = (rawProducts || []).filter(p =>
-          !p.track_inventory || (p.stock_quantity !== null && p.stock_quantity > 0)
+          isProductAvailable(p, variantAvail, p.id)
         );
 
         if (!products || products.length === 0) {
@@ -210,6 +223,7 @@ export const orderingFlow: FlowDefinition = {
           .select('id, name, price, stock_quantity, has_variants, image_url, variant_options, min_order_qty')
           .eq('id', input)
           .eq('business_id', ctx.business!.id)
+          .eq('is_active', true)
           .is('deleted_at', null)
           .single();
 
@@ -302,8 +316,20 @@ export const orderingFlow: FlowDefinition = {
           .order('sort_order')
           .limit(10);
 
+        // Variant availability for variable products
+        const catVarIds = (rawProducts || []).filter(p => p.has_variants).map(p => p.id);
+        let catVarAvail = new Map<string, boolean>();
+        if (catVarIds.length > 0) {
+          const { data: catVariants } = await ctx.supabase
+            .from('product_variants')
+            .select('product_id, stock_quantity, is_active')
+            .in('product_id', catVarIds)
+            .eq('is_active', true);
+          catVarAvail = computeVariantAvailability(catVariants || []);
+        }
+
         const products = (rawProducts || []).filter(p =>
-          !p.track_inventory || (p.stock_quantity !== null && p.stock_quantity > 0)
+          isProductAvailable(p, catVarAvail, p.id)
         );
 
         if (!products || products.length === 0) {
@@ -358,6 +384,7 @@ export const orderingFlow: FlowDefinition = {
           .select('id, name, price, stock_quantity, has_variants, image_url, variant_options, min_order_qty')
           .eq('id', input)
           .eq('business_id', ctx.business!.id)
+          .eq('is_active', true)
           .is('deleted_at', null)
           .single();
 
@@ -444,6 +471,39 @@ export const orderingFlow: FlowDefinition = {
           return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start over.' }];
         }
 
+        const productId = d.current_product_id as string;
+        const selectedOptions = (d.current_selected_options as Record<string, string>) || {};
+
+        // Query active available variants for this product
+        const { data: allVariants } = await ctx.supabase
+          .from('product_variants')
+          .select('id, options, stock_quantity, is_active')
+          .eq('product_id', productId)
+          .eq('is_active', true);
+
+        // Use production helper for viable axis values
+        const viableValues = getViableAxisValues(
+          (allVariants || []).map(v => ({ options: (v.options as Record<string, string>) || {}, stock_quantity: v.stock_quantity, is_active: v.is_active })),
+          selectedOptions,
+          axis.name,
+        );
+
+        const availableValues = axis.values.filter(val => viableValues.includes(val));
+
+        if (availableValues.length === 0) {
+          // Clear stale option state so retry starts fresh
+          delete d.current_selected_options;
+          delete d.current_option_axis_index;
+          return [{
+            type: 'buttons',
+            body: `Sorry, all available options for *${d.current_product_name}* are out of stock.`,
+            buttons: [
+              { id: 'browse_more', title: 'Try Another' },
+              { id: 'cancel_order', title: 'Cancel' },
+            ],
+          }];
+        }
+
         const messages: PromptMessage[] = [];
 
         // On first axis, send product image
@@ -460,7 +520,7 @@ export const orderingFlow: FlowDefinition = {
           title: truncTitle(`Choose ${axis.name}`, 24),
           body: `Select *${axis.name}* for *${d.current_product_name}*:`,
           buttonLabel: truncTitle(`Choose ${axis.name}`, 20),
-          items: axis.values.map(val => ({
+          items: availableValues.map(val => ({
             title: truncTitle(val, 24),
             description: '',
             postbackText: val,
@@ -471,32 +531,74 @@ export const orderingFlow: FlowDefinition = {
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
         const d = ctx.session.session_data;
+
+        // Handle recovery actions from all-options-OOS prompt
+        if (input === 'browse_more') {
+          return { valid: true, data: { _axis_recovery: 'browse_more' } };
+        }
+        if (input === 'cancel_order') {
+          await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('Order cancelled. Send *Hi* to start over.') });
+          return { valid: true, data: { _axis_recovery: 'cancel' } };
+        }
+
         const variantOptions = (d.current_product_variant_options as OptionGroup[]) || [];
         const axisIndex = (d.current_option_axis_index as number) || 0;
         const axis = variantOptions[axisIndex];
 
         if (!axis) return { valid: false, errorMessage: 'Invalid option. Please tap one of the options above.' };
 
-        // Match input to a value (case-insensitive)
-        const match = axis.values.find(v => v.toLowerCase() === input.toLowerCase());
+        // Re-compute viable values using production helper
+        const productId = d.current_product_id as string;
+        const selectedOptions = (d.current_selected_options as Record<string, string>) || {};
+
+        const { data: allVariants } = await ctx.supabase
+          .from('product_variants')
+          .select('id, options, stock_quantity, is_active')
+          .eq('product_id', productId)
+          .eq('is_active', true);
+
+        const viableValues = getViableAxisValues(
+          (allVariants || []).map(v => ({ options: (v.options as Record<string, string>) || {}, stock_quantity: v.stock_quantity, is_active: v.is_active })),
+          selectedOptions,
+          axis.name,
+        );
+
+        // Match input to a viable value (case-insensitive)
+        const match = viableValues.find(v => v.toLowerCase() === input.toLowerCase());
         if (!match) {
-          return { valid: false, errorMessage: `Please select a valid ${axis.name}.` };
+          return { valid: false, errorMessage: `Sorry, ${input} is not available. Please select from the options shown.` };
         }
 
         // Store selected option
-        const selectedOptions = (d.current_selected_options as Record<string, string>) || {};
-        selectedOptions[axis.name] = match;
+        const newSelectedOptions = { ...selectedOptions };
+        newSelectedOptions[axis.name] = match;
 
         return {
           valid: true,
           data: {
-            current_selected_options: selectedOptions,
+            current_selected_options: newSelectedOptions,
             current_option_axis_index: axisIndex + 1,
           },
         };
       },
       async next(ctx: FlowContext) {
         const d = ctx.session.session_data;
+
+        // Handle recovery actions
+        if (d._axis_recovery === 'browse_more') {
+          delete d._axis_recovery;
+          delete d.current_selected_options;
+          delete d.current_option_axis_index;
+          delete d.current_product_id;
+          delete d.current_product_name;
+          return 'browse_catalog';
+        }
+        if (d._axis_recovery === 'cancel') {
+          delete d._axis_recovery;
+          return null; // Terminates the flow
+        }
+        delete d._axis_recovery;
+
         const variantOptions = (d.current_product_variant_options as OptionGroup[]) || [];
         const axisIndex = (d.current_option_axis_index as number) || 0;
 
@@ -651,10 +753,13 @@ export const orderingFlow: FlowDefinition = {
         return messages;
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
+        const d = ctx.session.session_data;
         const { data: variant } = await ctx.supabase
           .from('product_variants')
           .select('id, label, price, stock_quantity, image_url')
           .eq('id', input)
+          .eq('product_id', d.current_product_id as string)
+          .eq('is_active', true)
           .single();
 
         if (!variant) return { valid: false, errorMessage: 'That option is not available. Tap one of the choices above.' };
@@ -1178,9 +1283,15 @@ export const orderingFlow: FlowDefinition = {
           .order('sort_order')
           .limit(100);
 
-        const products = (rawProducts || []).filter(p =>
-          !p.track_inventory || (p.stock_quantity !== null && p.stock_quantity > 0)
-        );
+        const aaoVarIds = (rawProducts || []).filter(p => p.has_variants).map(p => p.id);
+        let aaoVarAvail = new Map<string, boolean>();
+        if (aaoVarIds.length > 0) {
+          const { data: aaoVariants } = await ctx.supabase
+            .from('product_variants').select('product_id, stock_quantity, is_active')
+            .in('product_id', aaoVarIds).eq('is_active', true);
+          aaoVarAvail = computeVariantAvailability(aaoVariants || []);
+        }
+        const products = (rawProducts || []).filter(p => isProductAvailable(p, aaoVarAvail, p.id));
 
         const checkoutItem = { title: 'Checkout ✅', description: `Total: ${formatCurrency(total, cc)}`.slice(0, 72), postbackText: 'checkout' };
 
@@ -1286,9 +1397,15 @@ export const orderingFlow: FlowDefinition = {
           .order('sort_order')
           .limit(100);
 
-        const products = (rawProducts || []).filter(p =>
-          !p.track_inventory || (p.stock_quantity !== null && p.stock_quantity > 0)
-        );
+        const cocVarIds = (rawProducts || []).filter(p => p.has_variants).map(p => p.id);
+        let cocVarAvail = new Map<string, boolean>();
+        if (cocVarIds.length > 0) {
+          const { data: cocVariants } = await ctx.supabase
+            .from('product_variants').select('product_id, stock_quantity, is_active')
+            .in('product_id', cocVarIds).eq('is_active', true);
+          cocVarAvail = computeVariantAvailability(cocVariants || []);
+        }
+        const products = (rawProducts || []).filter(p => isProductAvailable(p, cocVarAvail, p.id));
 
         const checkoutItem = { title: 'Checkout ✅', description: `Total: ${formatCurrency(total, cc)}`.slice(0, 72), postbackText: 'checkout' };
 
@@ -1361,6 +1478,7 @@ export const orderingFlow: FlowDefinition = {
           .select('id, name, price, stock_quantity, has_variants, image_url, variant_options, min_order_qty')
           .eq('id', input)
           .eq('business_id', ctx.business!.id)
+          .eq('is_active', true)
           .is('deleted_at', null)
           .single();
 
@@ -1961,17 +2079,46 @@ export const orderingFlow: FlowDefinition = {
               warnings.push(`❌ *${item.name}* is no longer available and was removed.`);
               continue;
             }
-            if (current.track_inventory && current.stock_quantity !== null && current.stock_quantity < item.quantity) {
-              if (current.stock_quantity <= 0) {
-                warnings.push(`❌ *${item.name}* is now out of stock and was removed.`);
+            // Variant-aware cart revalidation
+            if (item.variant_id) {
+              // Re-read exact variant under exact product
+              const { data: currentVariant } = await ctx.supabase
+                .from('product_variants')
+                .select('id, price, stock_quantity, is_active')
+                .eq('id', item.variant_id)
+                .eq('product_id', item.product_id)
+                .single();
+
+              if (!currentVariant || !currentVariant.is_active) {
+                warnings.push(`❌ *${item.name}* (${item.variant_label || 'variant'}) is no longer available and was removed.`);
                 continue;
               }
-              item.quantity = current.stock_quantity;
-              warnings.push(`⚠️ *${item.name}* — only ${current.stock_quantity} left. Quantity adjusted.`);
-            }
-            if (!item.variant_id && current.price !== item.price) {
-              warnings.push(`💰 *${item.name}* price updated: ${formatCurrency(item.price, cc)} → ${formatCurrency(current.price, cc)}`);
-              item.price = current.price;
+              if (currentVariant.stock_quantity !== null && currentVariant.stock_quantity < item.quantity) {
+                if (currentVariant.stock_quantity <= 0) {
+                  warnings.push(`❌ *${item.name}* (${item.variant_label || 'variant'}) is now out of stock and was removed.`);
+                  continue;
+                }
+                item.quantity = currentVariant.stock_quantity;
+                warnings.push(`⚠️ *${item.name}* (${item.variant_label || 'variant'}) — only ${currentVariant.stock_quantity} left. Quantity adjusted.`);
+              }
+              if (currentVariant.price !== item.price) {
+                warnings.push(`💰 *${item.name}* (${item.variant_label || 'variant'}) price updated: ${formatCurrency(item.price, cc)} → ${formatCurrency(currentVariant.price, cc)}`);
+                item.price = currentVariant.price;
+              }
+            } else {
+              // Simple product: existing behavior
+              if (current.track_inventory && current.stock_quantity !== null && current.stock_quantity < item.quantity) {
+                if (current.stock_quantity <= 0) {
+                  warnings.push(`❌ *${item.name}* is now out of stock and was removed.`);
+                  continue;
+                }
+                item.quantity = current.stock_quantity;
+                warnings.push(`⚠️ *${item.name}* — only ${current.stock_quantity} left. Quantity adjusted.`);
+              }
+              if (current.price !== item.price) {
+                warnings.push(`💰 *${item.name}* price updated: ${formatCurrency(item.price, cc)} → ${formatCurrency(current.price, cc)}`);
+                item.price = current.price;
+              }
             }
             validCart.push(item);
           }
