@@ -67,6 +67,72 @@ export async function PATCH(
 
     // ── Reject ──
     if (action === 'reject') {
+      // M393: Order-linked rejection uses atomic RPC (restores stock, cancels order)
+      if (transfer.order_id) {
+        const { data: rejectResult, error: rejectErr } = await service.rpc('reject_order_transfer_atomic', {
+          p_transfer_id: transferId,
+          p_order_id: transfer.order_id,
+          p_business_id: business_id,
+          p_reason: reason || 'merchant_rejected',
+        });
+
+        if (rejectErr) {
+          logger.error('[PENDING_TRANSFERS] reject_order_transfer_atomic error:', rejectErr.message);
+          return NextResponse.json({ error: 'Failed to reject transfer' }, { status: 500 });
+        }
+
+        if (!rejectResult?.rejected) {
+          return NextResponse.json(
+            { error: `Cannot reject: ${rejectResult?.reason || 'unknown'}` },
+            { status: 409 },
+          );
+        }
+
+        // Notify customer — order is cancelled, not just transfer rejected
+        if (transfer.customer_phone) {
+          try {
+            const resolver = new ChannelResolver(service);
+            // Use exact channel from transfer metadata if available
+            const transferMeta = (transfer.metadata || {}) as Record<string, unknown>;
+            const exactChannelId = transferMeta._inbound_channel_id as string | undefined;
+            const resolved = exactChannelId
+              ? await resolver.resolveByChannelIdForBusiness(exactChannelId, business_id)
+              : await resolver.resolveByBusinessId(business_id);
+            if (resolved) {
+              const { data: biz } = await service.from('businesses').select('name').eq('id', business_id).single();
+              const bizName = biz?.name || 'the business';
+              const rejectionReason = reason || 'No reason provided';
+              const messageText = `❌ Your bank transfer (Ref: *${transfer.reference_code}*) was not verified by *${bizName}*.\nReason: ${rejectionReason}\n\nYour order has been cancelled. Send *Hi* to start a new order.`;
+
+              const customerEmail = await findCustomerEmail(service, transfer.customer_phone, business_id);
+              await sendOrEmail({
+                supabase: service,
+                sender: resolved.sender,
+                to: transfer.customer_phone,
+                text: messageText,
+                businessName: bizName,
+                alwaysEmail: true,
+                email: customerEmail ? {
+                  address: customerEmail,
+                  subject: `Transfer Not Verified - ${bizName}`,
+                  html: businessNotificationEmail({
+                    businessName: bizName,
+                    title: 'Transfer Not Verified',
+                    message: `Your bank transfer (Ref: ${transfer.reference_code}) was not verified.\nReason: ${rejectionReason}\n\nYour order has been cancelled.`,
+                    details: { 'Reference': transfer.reference_code, 'Reason': rejectionReason },
+                  }).html,
+                } : null,
+              });
+            }
+          } catch (notifyErr) {
+            logger.error('[PENDING_TRANSFERS] Rejection notification error:', notifyErr);
+          }
+        }
+
+        return NextResponse.json({ success: true, status: 'rejected' });
+      }
+
+      // Non-order rejection: preserve existing behavior
       const { error: rejectErr } = await service
         .from('pending_transfers')
         .update({
@@ -127,6 +193,100 @@ export async function PATCH(
     }
 
     // ── Confirm ──
+
+    // M393: Order-linked confirmation uses atomic RPC
+    if (transfer.order_id) {
+      const { data: confirmResult, error: confirmErr } = await service.rpc('confirm_order_transfer_atomic', {
+        p_transfer_id: transferId,
+        p_order_id: transfer.order_id,
+        p_business_id: business_id,
+        p_confirmed_by: user.id,
+      });
+
+      if (confirmErr) {
+        logger.error('[PENDING_TRANSFERS] confirm_order_transfer_atomic error:', confirmErr.message);
+        return NextResponse.json({ error: 'Failed to confirm transfer' }, { status: 500 });
+      }
+
+      if (!confirmResult?.confirmed) {
+        return NextResponse.json(
+          { error: `Cannot confirm: ${confirmResult?.reason || 'unknown'}` },
+          { status: 409 },
+        );
+      }
+
+      // Downstream: platform fee analytics (using canonical MAJOR order_total from RPC)
+      const orderTotal = confirmResult.order_total as number;
+      await service.from('platform_fees').insert({
+        business_id: business_id,
+        order_id: transfer.order_id,
+        transaction_amount: orderTotal,
+        fee_percentage: 0,
+        fee_flat: 0,
+        fee_total: 0,
+        gateway_fee: 0,
+        tier: (business.subscription_tier || 'free') as string,
+        is_direct_transfer: true,
+      }).then(({ error }) => {
+        if (error) logger.error('[PENDING_TRANSFERS] Analytics fee record error:', error.message);
+      });
+
+      // Customer notification with exact channel
+      if (transfer.customer_phone) {
+        try {
+          const resolver = new ChannelResolver(service);
+          const exactChannelId = confirmResult.inbound_channel_id as string | undefined;
+          const resolved = exactChannelId
+            ? await resolver.resolveByChannelIdForBusiness(exactChannelId, business_id)
+            : await resolver.resolveByBusinessId(business_id);
+          if (resolved) {
+            const { data: biz } = await service
+              .from('businesses')
+              .select('name, country_code')
+              .eq('id', business_id)
+              .single();
+            const cc = (biz?.country_code || 'NG') as CountryCode;
+            const bizName = biz?.name || 'Business';
+            const amountFormatted = formatCurrency(orderTotal, cc);
+            const messageText = `✅ *Payment Confirmed!*\n\n💰 ${amountFormatted}\n🔑 Ref: *${transfer.reference_code}*\n🏢 ${bizName}\n\nYour order is confirmed. Thank you!`;
+
+            const customerEmail = await findCustomerEmail(service, transfer.customer_phone, business_id);
+            await sendOrEmail({
+              supabase: service,
+              sender: resolved.sender,
+              to: transfer.customer_phone,
+              text: messageText,
+              businessName: bizName,
+              alwaysEmail: true,
+              email: customerEmail ? {
+                address: customerEmail,
+                subject: `Payment Confirmed - ${bizName}`,
+                html: businessNotificationEmail({
+                  businessName: bizName,
+                  title: 'Payment Confirmed',
+                  message: 'Your bank transfer has been verified and your order is confirmed. Thank you!',
+                  details: { 'Amount': amountFormatted, 'Reference': transfer.reference_code },
+                }).html,
+              } : null,
+            });
+          }
+        } catch (notifyErr) {
+          logger.error('[PENDING_TRANSFERS] Customer notification error:', notifyErr);
+        }
+      }
+
+      // In-app notification
+      createNotification(service, {
+        businessId: business_id,
+        type: 'transfer_confirmed',
+        channel: 'dashboard',
+        body: `Bank transfer of ${formatCurrency(orderTotal, 'NG')} confirmed. Ref: ${transfer.reference_code}`,
+      }).catch(err => logger.error('[PENDING_TRANSFERS] Notification error:', err));
+
+      return NextResponse.json({ success: true, status: 'confirmed' });
+    }
+
+    // ── Non-order confirmation: preserve existing behavior ──
     const now = new Date().toISOString();
 
     // 1. Update pending_transfer status (guard with status='pending' to prevent double-confirm)
@@ -162,16 +322,6 @@ export async function PATCH(
         .eq('id', transfer.booking_id);
     }
 
-    if (transfer.order_id) {
-      await service
-        .from('orders')
-        .update({
-          status: 'confirmed',
-          paid_at: now,
-        })
-        .eq('id', transfer.order_id);
-    }
-
     if (transfer.invoice_id) {
       await service
         .from('invoices')
@@ -183,12 +333,11 @@ export async function PATCH(
     }
 
     // 3. Record platform fee for analytics (zero fee — direct transfers included in subscription)
-    // No per-transaction fee charged; this record is for tracking volume only
     await service.from('platform_fees').insert({
       business_id: business_id,
       booking_id: transfer.booking_id || null,
       invoice_id: transfer.invoice_id || null,
-      order_id: transfer.order_id || null,
+      order_id: null,
       transaction_amount: transfer.expected_amount,
       fee_percentage: 0,
       fee_flat: 0,
@@ -209,7 +358,6 @@ export async function PATCH(
       payment_method: 'bank_transfer',
       gateway: 'direct',
       booking_id: transfer.booking_id || null,
-      order_id: transfer.order_id || null,
       invoice_id: transfer.invoice_id || null,
       customer_phone: transfer.customer_phone || null,
       customer_name: transfer.customer_name || null,

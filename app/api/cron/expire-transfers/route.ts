@@ -38,34 +38,49 @@ export async function POST(request: NextRequest) {
     let expiredCount = 0;
 
     for (const transfer of expired) {
-      // Mark transfer as expired
-      const { error: updateErr } = await service
-        .from('pending_transfers')
-        .update({ status: 'expired' })
-        .eq('id', transfer.id)
-        .eq('status', 'pending'); // Guard against race conditions
-
-      if (updateErr) {
-        logger.error(`[EXPIRE_TRANSFERS] Failed to expire transfer ${transfer.id}:`, updateErr.message);
-        continue;
-      }
-
-      // Cancel related booking
-      if (transfer.booking_id) {
-        await service
-          .from('bookings')
-          .update({ status: 'cancelled' })
-          .eq('id', transfer.booking_id)
-          .in('status', ['pending']);
-      }
-
-      // Cancel related order
+      // M393: Order-linked transfers delegate to canonical cancel RPC
       if (transfer.order_id) {
-        await service
-          .from('orders')
-          .update({ status: 'cancelled' })
-          .eq('id', transfer.order_id)
-          .in('status', ['pending']);
+        // Do NOT pre-mark transfer expired — the RPC owns terminal state
+        const { data: cancelResult, error: cancelErr } = await service.rpc('cancel_stale_order_atomic', {
+          p_order_id: transfer.order_id,
+        });
+
+        if (cancelErr) {
+          logger.error(`[EXPIRE_TRANSFERS] cancel_stale_order_atomic error for transfer ${transfer.id}:`, cancelErr.message);
+          continue;
+        }
+
+        // Only count + notify if canonical cancellation actually won
+        if (!cancelResult?.cancelled) {
+          // Payment/confirmation/extension won after preselection — no false expiry
+          logger.info(`[EXPIRE_TRANSFERS] Order ${transfer.order_id} not cancelled (reason: ${cancelResult?.reason}), skipping transfer ${transfer.id}`);
+          continue;
+        }
+
+        // Canonical cancel succeeded — transfer was expired by the RPC
+        // Fall through to notification
+      } else {
+        // Non-order transfers: preserve existing behavior
+        // Mark transfer as expired
+        const { error: updateErr } = await service
+          .from('pending_transfers')
+          .update({ status: 'expired' })
+          .eq('id', transfer.id)
+          .eq('status', 'pending'); // Guard against race conditions
+
+        if (updateErr) {
+          logger.error(`[EXPIRE_TRANSFERS] Failed to expire transfer ${transfer.id}:`, updateErr.message);
+          continue;
+        }
+
+        // Cancel related booking
+        if (transfer.booking_id) {
+          await service
+            .from('bookings')
+            .update({ status: 'cancelled' })
+            .eq('id', transfer.booking_id)
+            .in('status', ['pending']);
+        }
       }
 
       // Notify customer via WhatsApp + email fallback

@@ -37,7 +37,7 @@ export interface PlatformSettings {
   booking_defaults: BookingDefaultsConfig;
   /** Annual billing discount percentage (e.g., 20 = 20% off). Admin-configurable. */
   annual_discount_percentage: number;
-  /** Hours before a pending bank transfer expires (default: 4) */
+  /** Hours before a pending bank transfer expires (default: 24) */
   transfer_expiry_hours: number;
   /** Days a new business must wait before payouts are eligible (default: 7) */
   payout_cooling_period_days: number;
@@ -108,7 +108,7 @@ function buildFallback(): PlatformSettings {
     trial_days: TRIAL_DAYS,
     booking_defaults: { ...BOOKING_DEFAULTS, reminderHours: [...BOOKING_DEFAULTS.reminderHours] },
     annual_discount_percentage: 20,
-    transfer_expiry_hours: 4,
+    transfer_expiry_hours: 24,
     payout_cooling_period_days: 7,
     minimum_payout: { NG: 5000, US: 2500, GB: 2000, CA: 2500, GH: 50 },
     fraud_velocity_threshold: 50,
