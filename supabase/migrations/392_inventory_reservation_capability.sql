@@ -95,8 +95,7 @@ BEGIN
   -- 4b. Void all pending payments
   UPDATE payments
   SET status = 'failed',
-      gateway_status = 'stale_order_cancelled',
-      updated_at = NOW()
+      gateway_status = 'stale_order_cancelled'
   WHERE (order_id = p_order_id OR metadata->>'order_id' = p_order_id::text)
     AND status = 'pending';
 
@@ -200,8 +199,7 @@ BEGIN
   -- 3. Void pending payments
   UPDATE payments
   SET status = 'failed',
-      gateway_status = p_reason,
-      updated_at = NOW()
+      gateway_status = p_reason
   WHERE (order_id = p_order_id OR metadata->>'order_id' = p_order_id::text)
     AND status = 'pending';
 
