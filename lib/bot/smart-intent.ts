@@ -819,6 +819,7 @@ export async function matchProductsFromKeywords(
   if (!rawProducts || rawProducts.length === 0) return [];
 
   // Filter out unavailable products (same authority as catalog browse)
+  const { isProductAvailable, computeVariantAvailability } = await import('./flows/shared/product-availability');
   const variableIds = rawProducts.filter(p => p.has_variants).map(p => p.id);
   let smartVarAvail = new Map<string, boolean>();
   if (variableIds.length > 0) {
@@ -827,16 +828,10 @@ export async function matchProductsFromKeywords(
       .select('product_id, stock_quantity, is_active')
       .in('product_id', variableIds)
       .eq('is_active', true);
-    for (const v of (smartVariants || [])) {
-      if (v.stock_quantity === null || v.stock_quantity > 0) smartVarAvail.set(v.product_id, true);
-      else if (!smartVarAvail.has(v.product_id)) smartVarAvail.set(v.product_id, false);
-    }
+    smartVarAvail = computeVariantAvailability(smartVariants || []);
   }
 
-  const products = rawProducts.filter(p => {
-    if (p.has_variants) return smartVarAvail.get(p.id) ?? false;
-    return !p.track_inventory || (p.stock_quantity !== null && p.stock_quantity > 0);
-  });
+  const products = rawProducts.filter(p => isProductAvailable(p, smartVarAvail, p.id));
 
   if (products.length === 0) return [];
 

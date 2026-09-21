@@ -17,38 +17,13 @@ import { checkTierLimit } from '@/lib/tier-limits';
 import { logger } from '@/lib/logger';
 import { buildSavedCardOffer, handleSavedCardInput } from './shared/saved-card-flow';
 import { safeButtons } from './shared/safe-interactive';
+import { isProductAvailable, computeVariantAvailability, getViableAxisValues } from './shared/product-availability';
 
 /** Generic labels for ordering flow */
 function getOrderingLabels(_category: string): { noun: string; emoji: string; browseLabel: string } {
   return { noun: 'catalog', emoji: '🛍️', browseLabel: 'Browse' };
 }
 
-
-/**
- * Check if a product is available for ordering.
- * Simple products: use parent stock_quantity when track_inventory=true.
- * Variable products (has_variants=true): defer to variant availability
- * (parent stock_quantity is NOT inventory authority for variable products).
- *
- * For variable products, variantAvailability must be pre-computed as a Map<product_id, boolean>
- * where true means at least one active variant has NULL or >0 stock.
- */
-function isProductAvailable(
-  p: { track_inventory: boolean; stock_quantity: number | null; has_variants: boolean },
-  variantAvailability?: Map<string, boolean>,
-  productId?: string,
-): boolean {
-  if (p.has_variants) {
-    // Variable product: availability comes from active variants, not parent stock
-    if (variantAvailability && productId) {
-      return variantAvailability.get(productId) ?? false;
-    }
-    // If no variant data provided, conservatively show (will be validated at variant selection)
-    return true;
-  }
-  // Simple product: existing behavior
-  return !p.track_inventory || (p.stock_quantity !== null && p.stock_quantity > 0);
-}
 
 interface OptionGroup {
   name: string;
@@ -150,13 +125,7 @@ export const orderingFlow: FlowDefinition = {
             .select('product_id, stock_quantity, is_active')
             .in('product_id', variableProductIds)
             .eq('is_active', true);
-          for (const v of (variants || [])) {
-            if (v.stock_quantity === null || v.stock_quantity > 0) {
-              variantAvail.set(v.product_id, true);
-            } else if (!variantAvail.has(v.product_id)) {
-              variantAvail.set(v.product_id, false);
-            }
-          }
+          variantAvail = computeVariantAvailability(variants || []);
         }
 
         // Filter out unavailable items
@@ -356,13 +325,7 @@ export const orderingFlow: FlowDefinition = {
             .select('product_id, stock_quantity, is_active')
             .in('product_id', catVarIds)
             .eq('is_active', true);
-          for (const v of (catVariants || [])) {
-            if (v.stock_quantity === null || v.stock_quantity > 0) {
-              catVarAvail.set(v.product_id, true);
-            } else if (!catVarAvail.has(v.product_id)) {
-              catVarAvail.set(v.product_id, false);
-            }
-          }
+          catVarAvail = computeVariantAvailability(catVariants || []);
         }
 
         const products = (rawProducts || []).filter(p =>
@@ -536,7 +499,17 @@ export const orderingFlow: FlowDefinition = {
         const availableValues = axis.values.filter(val => viableValues.has(val));
 
         if (availableValues.length === 0) {
-          return [{ type: 'text', text: `Sorry, all options for *${d.current_product_name}* are out of stock.` }];
+          // Clear stale option state so retry starts fresh
+          delete d.current_selected_options;
+          delete d.current_option_axis_index;
+          return [{
+            type: 'buttons',
+            body: `Sorry, all available options for *${d.current_product_name}* are out of stock.`,
+            buttons: [
+              { id: 'browse_more', title: 'Try Another' },
+              { id: 'cancel_order', title: 'Cancel' },
+            ],
+          }];
         }
 
         const messages: PromptMessage[] = [];
@@ -1304,10 +1277,7 @@ export const orderingFlow: FlowDefinition = {
           const { data: aaoVariants } = await ctx.supabase
             .from('product_variants').select('product_id, stock_quantity, is_active')
             .in('product_id', aaoVarIds).eq('is_active', true);
-          for (const v of (aaoVariants || [])) {
-            if (v.stock_quantity === null || v.stock_quantity > 0) aaoVarAvail.set(v.product_id, true);
-            else if (!aaoVarAvail.has(v.product_id)) aaoVarAvail.set(v.product_id, false);
-          }
+          aaoVarAvail = computeVariantAvailability(aaoVariants || []);
         }
         const products = (rawProducts || []).filter(p => isProductAvailable(p, aaoVarAvail, p.id));
 
@@ -1421,10 +1391,7 @@ export const orderingFlow: FlowDefinition = {
           const { data: cocVariants } = await ctx.supabase
             .from('product_variants').select('product_id, stock_quantity, is_active')
             .in('product_id', cocVarIds).eq('is_active', true);
-          for (const v of (cocVariants || [])) {
-            if (v.stock_quantity === null || v.stock_quantity > 0) cocVarAvail.set(v.product_id, true);
-            else if (!cocVarAvail.has(v.product_id)) cocVarAvail.set(v.product_id, false);
-          }
+          cocVarAvail = computeVariantAvailability(cocVariants || []);
         }
         const products = (rawProducts || []).filter(p => isProductAvailable(p, cocVarAvail, p.id));
 

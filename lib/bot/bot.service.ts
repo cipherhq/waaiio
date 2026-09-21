@@ -1801,10 +1801,16 @@ export class BotService {
               const productMatches = await matchProductsFromKeywords(this.supabase, business.id, ents.serviceKeywords);
               if (productMatches.length === 1) {
                 const p = productMatches[0];
-                const qty = ents.quantity || 1;
-                session.session_data.cart = [{ product_id: p.id, name: p.name, price: p.price, quantity: qty, variant: null, variant_label: null }];
-                session.session_data._auto_added_to_cart = true;
-                session.session_data._skip_browse = true;
+                if (p.has_variants) {
+                  // Variable product: route to variant picker, never auto-add parent-only
+                  session.session_data._matched_product_ids = [p.id];
+                } else {
+                  // Simple product: preserve existing auto-add behavior
+                  const qty = ents.quantity || 1;
+                  session.session_data.cart = [{ product_id: p.id, name: p.name, price: p.price, quantity: qty, variant: null, variant_label: null }];
+                  session.session_data._auto_added_to_cart = true;
+                  session.session_data._skip_browse = true;
+                }
               } else if (productMatches.length > 1) {
                 session.session_data._matched_product_ids = productMatches.map(m => m.id);
               }
