@@ -86,7 +86,8 @@ BEGIN
       -- (already the DEFAULT, no UPDATE needed)
 
     ELSE
-      RAISE EXCEPTION 'M392: unsupported order status % for stock marker %', v_order_status, v_marker.id;
+      -- draft, processing, ready, or any other unsupported status
+      RAISE EXCEPTION 'M392: unsupported order status ''%'' for stock marker %', v_order_status, v_marker.id;
     END IF;
   END LOOP;
 END $$;
@@ -379,14 +380,17 @@ BEGIN
     RAISE EXCEPTION 'M392: expires_at column not found on order_stock_applications';
   END IF;
 
-  -- Verify DEFAULT is exactly 'prepayment'
-  PERFORM 1 FROM information_schema.columns
-    WHERE table_schema = 'public'
-      AND table_name = 'order_stock_applications'
-      AND column_name = 'reservation_class'
-      AND column_default LIKE '%prepayment%';
+  -- Verify DEFAULT is exactly 'prepayment' (exact catalog check)
+  PERFORM 1 FROM pg_catalog.pg_attrdef d
+    JOIN pg_catalog.pg_attribute a ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+    JOIN pg_catalog.pg_class c ON a.attrelid = c.oid
+    JOIN pg_catalog.pg_namespace n ON c.relnamespace = n.oid
+    WHERE n.nspname = 'public'
+      AND c.relname = 'order_stock_applications'
+      AND a.attname = 'reservation_class'
+      AND pg_get_expr(d.adbin, d.adrelid) = '''prepayment''::text';
   IF NOT FOUND THEN
-    RAISE EXCEPTION 'M392: reservation_class default is not prepayment';
+    RAISE EXCEPTION 'M392: reservation_class default is not exactly prepayment';
   END IF;
 
   -- Verify CHECK constraint exists for reservation_class

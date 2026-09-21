@@ -44,7 +44,7 @@ describe.skipIf(!canRun)('M392: Inventory reservation capability', () => {
       GRANT USAGE ON SCHEMA public TO service_role, anon, authenticated;
 
       DO $$ BEGIN CREATE TYPE payment_status AS ENUM ('pending','success','failed','refunded'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-      DO $$ BEGIN CREATE TYPE order_status AS ENUM ('pending','confirmed','shipped','delivered','cancelled'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+      DO $$ BEGIN CREATE TYPE order_status AS ENUM ('draft','pending','confirmed','processing','ready','shipped','delivered','cancelled'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
       CREATE TABLE IF NOT EXISTS businesses (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), name TEXT DEFAULT 'Test');
       CREATE TABLE IF NOT EXISTS promo_codes (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), current_uses INTEGER DEFAULT 0);
@@ -455,51 +455,8 @@ describe.skipIf(!canRun)('M392: Inventory reservation capability', () => {
     psql(`DELETE FROM products WHERE id = '${prod}'`);
   });
 
-  // ─── Compatibility: create_order_atomic validated creates prepayment marker ───
-
-  it('create_order_atomic validated path creates marker with reservation_class=prepayment', () => {
-    // Load canonical create_order_atomic from M383
-    const m383 = readFileSync(join(process.cwd(), 'supabase/migrations/383_entity_commit_revalidation.sql'), 'utf-8');
-    const funcStart = m383.indexOf('CREATE OR REPLACE FUNCTION public.create_order_atomic');
-    // Find end: next CREATE OR REPLACE or end of relevant section
-    const nextFunc = m383.indexOf('CREATE OR REPLACE FUNCTION', funcStart + 50);
-    const funcSql = m383.slice(funcStart, nextFunc > funcStart ? nextFunc : funcStart + 20000);
-    try { psql(funcSql); } catch { /* may fail on dependencies, try anyway */ }
-    try { psql(`GRANT EXECUTE ON FUNCTION create_order_atomic TO service_role`); } catch { /* ignore */ }
-
-    // Create test product
-    const prod = psql(`INSERT INTO products (business_id, stock_quantity, track_inventory, price, is_active, name)
-      VALUES ('${BIZ}', 10, true, 100, true, 'TestProd') RETURNING id`);
-
-    // Execute validated create_order_atomic
-    const items = JSON.stringify([{ product_id: prod, quantity: 1, unit_price: 100 }]);
-    try {
-      const r = psql(`SELECT create_order_atomic(
-        gen_random_uuid(), '${BIZ}'::uuid, gen_random_uuid(),
-        'pending', NULL, '+1234', 100, 0, 0, NULL, 'whatsapp', NULL, NULL, NULL, 0, 0,
-        NULL, NULL, NULL, NULL,
-        '${items}'::jsonb, NULL, true, 100
-      )`);
-      const parsed = JSON.parse(r);
-      if (parsed.order_id) {
-        const cls = psql(`SELECT reservation_class FROM order_stock_applications WHERE order_id = '${parsed.order_id}'`);
-        expect(cls).toBe('prepayment');
-        // Cleanup
-        psql(`DELETE FROM order_stock_applications WHERE order_id = '${parsed.order_id}'`);
-        psql(`DELETE FROM order_items WHERE order_id = '${parsed.order_id}'`);
-        psql(`DELETE FROM orders WHERE id = '${parsed.order_id}'`);
-      }
-    } catch (e) {
-      // create_order_atomic may fail if dependencies aren't fully loaded
-      // In that case, verify structurally that the INSERT uses default
-      const insertSql = m383.slice(m383.indexOf('INSERT INTO order_stock_applications'), m383.indexOf('INSERT INTO order_stock_applications') + 100);
-      expect(insertSql).toContain('order_id, payment_id');
-      // The INSERT omits reservation_class, so it gets the DEFAULT 'prepayment'
-    }
-
-    psql(`UPDATE products SET stock_quantity = 10 WHERE id = '${prod}'`);
-    psql(`DELETE FROM products WHERE id = '${prod}'`);
-  });
+  // NOTE: create_order_atomic compatibility test is in entity-commit-revalidation-db.test.ts
+  // (test 69) where the full canonical M383 baseline is available.
 });
 
 // ═══ Fail-closed migration tests ═══
@@ -516,7 +473,7 @@ describe.skipIf(!canRun)('M392: fail-closed marker classification', () => {
       -- Recreate prerequisite tables if missing
       CREATE TABLE IF NOT EXISTS businesses (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), name TEXT DEFAULT 'Test');
       DO $$ BEGIN CREATE TYPE payment_status AS ENUM ('pending','success','failed','refunded'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-      DO $$ BEGIN CREATE TYPE order_status AS ENUM ('pending','confirmed','shipped','delivered','cancelled'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+      DO $$ BEGIN CREATE TYPE order_status AS ENUM ('draft','pending','confirmed','processing','ready','shipped','delivered','cancelled'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
       CREATE TABLE IF NOT EXISTS orders (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         business_id UUID REFERENCES businesses(id),
@@ -629,6 +586,42 @@ describe.skipIf(!canRun)('M392: fail-closed marker classification', () => {
     try { psql(`ALTER TABLE order_stock_applications DROP COLUMN IF EXISTS reservation_class, DROP COLUMN IF EXISTS expires_at`); } catch { /* ignore */ }
     psql(`DELETE FROM order_stock_applications WHERE order_id = '${ord}'`);
     psql(`DELETE FROM payments WHERE order_id = '${ord}'`);
+    psql(`DELETE FROM orders WHERE id = '${ord}'`);
+  });
+
+  it('pending order + active finalization → migration fails', () => {
+    setupFreshDb();
+    const ord = psql(`INSERT INTO orders (business_id, status) VALUES ('${BIZ}', 'pending') RETURNING id`);
+    psql(`INSERT INTO payments (order_id, status, gateway_reference, finalization_processing_at) VALUES ('${ord}', 'pending', 'ref-' || gen_random_uuid(), NOW())`);
+    psql(`INSERT INTO order_stock_applications (order_id) VALUES ('${ord}')`);
+
+    try {
+      applyM392();
+      expect.fail('Should have failed on pending+active finalization');
+    } catch (e) {
+      expect(String(e)).toContain('active finalization');
+    }
+
+    try { psql(`ALTER TABLE order_stock_applications DROP COLUMN IF EXISTS reservation_class, DROP COLUMN IF EXISTS expires_at`); } catch { /* ignore */ }
+    psql(`DELETE FROM order_stock_applications WHERE order_id = '${ord}'`);
+    psql(`DELETE FROM payments WHERE order_id = '${ord}'`);
+    psql(`DELETE FROM orders WHERE id = '${ord}'`);
+  });
+
+  it('unsupported order status (processing) → migration fails', () => {
+    setupFreshDb();
+    const ord = psql(`INSERT INTO orders (business_id, status) VALUES ('${BIZ}', 'processing') RETURNING id`);
+    psql(`INSERT INTO order_stock_applications (order_id) VALUES ('${ord}')`);
+
+    try {
+      applyM392();
+      expect.fail('Should have failed on unsupported status');
+    } catch (e) {
+      expect(String(e)).toContain('unsupported order status');
+    }
+
+    try { psql(`ALTER TABLE order_stock_applications DROP COLUMN IF EXISTS reservation_class, DROP COLUMN IF EXISTS expires_at`); } catch { /* ignore */ }
+    psql(`DELETE FROM order_stock_applications WHERE order_id = '${ord}'`);
     psql(`DELETE FROM orders WHERE id = '${ord}'`);
   });
 });

@@ -1911,4 +1911,38 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
       }
     });
   });
+
+  // ─── M392 Compatibility: validated order marker gets prepayment default ───
+  describe('M392 compatibility', () => {
+    it('69. apply M392 + create_order_atomic validated → marker.reservation_class = prepayment', () => {
+      // Apply M392 on top of the canonical M383 baseline
+      const m392 = readFileSync(join(process.cwd(), 'supabase/migrations/392_inventory_reservation_capability.sql'), 'utf-8');
+      psql(m392);
+
+      // Use a fresh bot session to avoid advisory-lock collision with other tests
+      const freshSession = '00000000-0000-0000-0383-000000000099';
+      const items = JSON.stringify([{ product_id: PRODUCT_A, quantity: 1, unit_price: 1000 }]);
+      const r = psqlJson(`
+        SET ROLE service_role;
+        SELECT create_order_atomic(
+          '${freshSession}'::uuid, '${BIZ_ID}'::uuid, '${USER_ID}'::uuid,
+          'pending', NULL, NULL, 0, 0, 0, NULL, 'whatsapp', NULL, NULL, NULL, 0, 0,
+          NULL, NULL, NULL, NULL,
+          '${items}'::jsonb, NULL, true, 1000
+        );
+      `);
+      expect(r.order_id).toBeDefined();
+
+      // Query the actual marker
+      const cls = psql(`SELECT reservation_class FROM order_stock_applications WHERE order_id = '${r.order_id}'`);
+      expect(cls).toBe('prepayment');
+
+      // Cleanup
+      psql(`DELETE FROM order_stock_applications WHERE order_id = '${r.order_id}'`);
+      psql(`DELETE FROM order_items WHERE order_id = '${r.order_id}'`);
+      psql(`DELETE FROM orders WHERE id = '${r.order_id}'`);
+      // Restore product stock
+      psql(`UPDATE products SET stock_quantity = stock_quantity + 1 WHERE id = '${PRODUCT_A}'`);
+    });
+  });
 });
