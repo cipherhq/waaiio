@@ -162,23 +162,33 @@ describe.skipIf(!canRun)('M393: Inventory reservation wiring', () => {
         updated_at TIMESTAMPTZ DEFAULT NOW()
       );
 
+      -- R28/B3: Match real production payments schema (no customer_phone/customer_name/reference columns)
       CREATE TABLE IF NOT EXISTS payments (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         business_id UUID,
+        user_id UUID,
+        reservation_id UUID,
+        booking_id UUID,
         order_id UUID REFERENCES orders(id),
-        amount INTEGER DEFAULT 0,
-        currency TEXT DEFAULT 'NGN',
-        status payment_status DEFAULT 'pending',
+        invoice_id UUID,
+        campaign_id UUID,
+        amount INTEGER NOT NULL DEFAULT 0,
+        currency VARCHAR(3) NOT NULL DEFAULT 'NGN',
+        gateway_reference VARCHAR(100) UNIQUE NOT NULL DEFAULT ('pay-' || substr(md5(random()::text), 1, 8)),
+        gateway_status VARCHAR(50) NOT NULL DEFAULT 'pending',
         gateway TEXT DEFAULT 'paystack',
-        gateway_status TEXT,
-        gateway_reference TEXT,
-        payment_method TEXT,
-        reference TEXT,
-        customer_phone TEXT,
-        customer_name TEXT,
-        metadata JSONB DEFAULT '{}',
+        payment_method VARCHAR(20),
+        card_last_four VARCHAR(4),
+        card_brand VARCHAR(20),
+        status payment_status NOT NULL DEFAULT 'pending',
+        metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+        paid_at TIMESTAMPTZ,
+        gateway_fee INTEGER NOT NULL DEFAULT 0,
         finalization_processing_at TIMESTAMPTZ,
-        created_at TIMESTAMPTZ DEFAULT NOW()
+        finalization_completed_at TIMESTAMPTZ,
+        finalization_claim_token UUID,
+        provider_init_state TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
 
       CREATE TABLE IF NOT EXISTS products (

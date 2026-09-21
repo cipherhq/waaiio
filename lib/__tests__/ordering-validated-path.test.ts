@@ -304,16 +304,18 @@ describe('M393 structural: authoritative retry', () => {
     expect(orderingSource).toContain("existingOrder.status === 'cancelled'");
   });
 
-  it('checks marker state for pending orders', () => {
-    expect(orderingSource).toContain("from('order_stock_applications')");
-    expect(orderingSource).toContain("reservation_class, expires_at, payment_id");
+  it('R28/B6: uses cancel_stale_order_atomic for ALL pending state classification', () => {
+    expect(orderingSource).toContain("rpc('cancel_stale_order_atomic'");
+    expect(orderingSource).toContain("committed_not_cancellable");
+    expect(orderingSource).toContain("instant_not_expired");
   });
 
-  it('fail closed on committed marker', () => {
-    expect(orderingSource).toContain("marker?.reservation_class === 'committed'");
+  it('fail closed on committed marker via RPC reason', () => {
+    expect(orderingSource).toContain("committed_not_cancellable");
+    expect(orderingSource).toContain('Your order is being processed');
   });
 
-  it('calls cancel_stale_order_atomic for expired markers', () => {
+  it('calls cancel_stale_order_atomic for all pending orders', () => {
     expect(orderingSource).toContain("rpc('cancel_stale_order_atomic'");
   });
 });
@@ -647,7 +649,6 @@ describe('M393 executable: authoritative retry — process_order', () => {
 
   it('9. pending + non-expired reservation -> reuses order', async () => {
     let createOrderCalled = false;
-    const futureDate = new Date(Date.now() + 3600_000).toISOString();
 
     initializePaymentSpy.mockResolvedValue({ url: 'https://pay.test/x', reference: 'PAY-X' });
 
@@ -656,11 +657,12 @@ describe('M393 executable: authoritative retry — process_order', () => {
       rpcHandler: (name) => {
         if (name === 'create_order_atomic') { createOrderCalled = true; return { data: { order_id: 'o-shouldnt', reference_code: 'WAA-NO', created: true }, error: null }; }
         if (name === 'calculate_volume_discount') return { data: 0, error: null };
+        // R28/B6: RPC returns instant_not_expired for non-expired markers
+        if (name === 'cancel_stale_order_atomic') return { data: { cancelled: false, reason: 'instant_not_expired' }, error: null };
         return { data: null, error: null };
       },
       fromTableHandler: defaultFromHandler({
         orders: ordersTableReturning({ id: 'o-pend', status: 'pending', reference_code: 'WAA-PEND' }),
-        order_stock_applications: markerTableReturning({ reservation_class: 'instant', expires_at: futureDate, payment_id: null }),
       }),
     });
 
@@ -709,11 +711,12 @@ describe('M393 executable: authoritative retry — process_order', () => {
       rpcHandler: (name) => {
         if (name === 'create_order_atomic') throw new Error('Should not be called');
         if (name === 'calculate_volume_discount') return { data: 0, error: null };
+        // R28/B6: RPC returns committed_not_cancellable for committed markers
+        if (name === 'cancel_stale_order_atomic') return { data: { cancelled: false, reason: 'committed_not_cancellable' }, error: null };
         return { data: null, error: null };
       },
       fromTableHandler: defaultFromHandler({
         orders: ordersTableReturning({ id: 'o-com', status: 'pending', reference_code: 'WAA-COM' }),
-        order_stock_applications: markerTableReturning({ reservation_class: 'committed', expires_at: null, payment_id: 'pay-1' }),
       }),
     });
 
@@ -779,7 +782,8 @@ describe('M393 executable: create_transfer_with_reservation', () => {
     expect(transferRpcParams.p_business_id).toBe('biz-uuid-001');
     expect(transferRpcParams.p_customer_phone).toBe('+2348012345678');
     expect(transferRpcParams.p_transfer_expiry_hours).toBe(24);
-    expect(transferRpcParams.p_bot_session_id).toBe('session-uuid-001');
+    // R28/B4: p_bot_session_id removed — RPC derives session from locked order
+    expect(transferRpcParams.p_bot_session_id).toBeUndefined();
 
     // Cleanup mock
     (checkBankTransferEligibility as any).mockResolvedValue({

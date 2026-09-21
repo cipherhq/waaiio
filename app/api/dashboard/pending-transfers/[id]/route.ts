@@ -92,12 +92,15 @@ export async function PATCH(
         if (transfer.customer_phone) {
           try {
             const resolver = new ChannelResolver(service);
-            // Use exact channel from transfer metadata if available
+            // R28/B5: Exact channel only for new M393 order transfers — no arbitrary fallback
             const transferMeta = (transfer.metadata || {}) as Record<string, unknown>;
             const exactChannelId = transferMeta._inbound_channel_id as string | undefined;
+            if (!exactChannelId) {
+              logger.error(`[PENDING_TRANSFERS] Order transfer ${transferId} has no exact channel evidence — skipping notification`);
+            }
             const resolved = exactChannelId
               ? await resolver.resolveByChannelIdForBusiness(exactChannelId, business_id)
-              : await resolver.resolveByBusinessId(business_id);
+              : null;
             if (resolved) {
               const { data: biz } = await service.from('businesses').select('name').eq('id', business_id).single();
               const bizName = biz?.name || 'the business';
@@ -231,14 +234,17 @@ export async function PATCH(
         if (error) logger.error('[PENDING_TRANSFERS] Analytics fee record error:', error.message);
       });
 
-      // Customer notification with exact channel
+      // R28/B5: Customer notification with exact channel only — no arbitrary fallback
       if (transfer.customer_phone) {
         try {
           const resolver = new ChannelResolver(service);
           const exactChannelId = confirmResult.inbound_channel_id as string | undefined;
+          if (!exactChannelId) {
+            logger.error(`[PENDING_TRANSFERS] Order transfer ${transferId} confirmed but no exact channel — skipping notification`);
+          }
           const resolved = exactChannelId
             ? await resolver.resolveByChannelIdForBusiness(exactChannelId, business_id)
-            : await resolver.resolveByBusinessId(business_id);
+            : null;
           if (resolved) {
             const { data: biz } = await service
               .from('businesses')

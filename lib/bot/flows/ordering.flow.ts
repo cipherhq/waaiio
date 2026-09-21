@@ -2753,60 +2753,81 @@ export const orderingFlow: FlowDefinition = {
         let freshlyCreated = false;
 
         if (d.order_id && d.reference_code) {
-          // Re-read authoritative order state before reuse
+          // R28/B6: Authoritative state classification via canonical RPC — no client clock
           const { data: existingOrder } = await ctx.supabase
             .from('orders')
             .select('id, status, reference_code')
             .eq('id', d.order_id as string)
             .single();
 
-          if (!existingOrder || existingOrder.status === 'cancelled') {
-            // Not found or cancelled — clear refs and recreate
+          const clearRefs = () => {
             delete d.order_id; delete d.reference_code;
             delete d.bank_transfer_reference; delete d.bank_transfer_offered;
+          };
+
+          if (!existingOrder) {
+            clearRefs(); // Not found — recreate
           } else if (existingOrder.status === 'confirmed') {
-            // Already confirmed — no new payment needed
             return [{
               type: 'text',
               text: `✅ Your order *${existingOrder.reference_code}* is already confirmed! Send *Hi* to start a new order.`,
             }];
+          } else if (existingOrder.status === 'cancelled') {
+            clearRefs(); // Already cancelled — recreate
           } else if (existingOrder.status === 'pending') {
-            // Check marker state for retry safety
-            const { data: marker } = await ctx.supabase
-              .from('order_stock_applications')
-              .select('reservation_class, expires_at, payment_id')
-              .eq('order_id', existingOrder.id)
-              .maybeSingle();
+            // Use canonical RPC to classify under lock — no client-side clock or marker read
+            const { data: staleResult, error: staleErr } = await ctx.supabase.rpc('cancel_stale_order_atomic', {
+              p_order_id: existingOrder.id,
+            });
 
-            if (marker?.reservation_class === 'committed') {
-              // Inconsistent state — fail closed
-              return [{
-                type: 'text',
-                text: 'Your order is being processed. If you haven\'t received confirmation, contact the business. Send *Hi* to start over.',
-              }];
+            if (staleErr) {
+              // RPC error — fail closed
+              return [{ type: 'text', text: 'Something went wrong. Send *Hi* to start over.' }];
             }
 
-            // Check if reservation expired
-            if (marker && marker.expires_at && new Date(marker.expires_at as string) <= new Date()) {
-              // Expired — try canonical cancel via stale RPC
-              const { data: cancelResult } = await ctx.supabase.rpc('cancel_stale_order_atomic', {
-                p_order_id: existingOrder.id,
-              });
-              if (cancelResult?.cancelled) {
-                delete d.order_id; delete d.reference_code;
-                delete d.bank_transfer_reference; delete d.bank_transfer_offered;
-              } else if (cancelResult?.reason === 'has_successful_payment') {
+            if (staleResult?.cancelled) {
+              // Cancellation won — clear and recreate
+              clearRefs();
+            } else {
+              // Map semantic refusal reason per R27
+              const reason = staleResult?.reason as string || '';
+              if (reason === 'instant_not_expired' || reason === 'bank_transfer_not_expired') {
+                // Valid non-expired reservation — reuse order
+                order = { id: existingOrder.id, reference_code: existingOrder.reference_code };
+              } else if (reason === 'prepayment_not_stale') {
+                // Legacy prepayment — preserve/reuse
+                order = { id: existingOrder.id, reference_code: existingOrder.reference_code };
+              } else if (reason === 'legacy_no_marker_not_stale') {
+                // Legacy no-marker — cancel immediately then recreate
+                const { data: immResult } = await ctx.supabase.rpc('cancel_order_immediate', {
+                  p_order_id: existingOrder.id, p_reason: 'legacy_no_marker_recreate',
+                });
+                if (immResult?.cancelled) {
+                  clearRefs();
+                } else if (immResult?.reason === 'has_successful_payment') {
+                  return [{
+                    type: 'text',
+                    text: `✅ Payment received for order *${existingOrder.reference_code}*! Confirmation arriving shortly. Send *Hi* to start a new order.`,
+                  }];
+                } else {
+                  return [{ type: 'text', text: 'Something went wrong with your previous order. Send *Hi* to start over.' }];
+                }
+              } else if (reason === 'committed_not_cancellable') {
+                // Committed — inconsistent pending+committed: fail closed
+                return [{
+                  type: 'text',
+                  text: 'Your order is being processed. If you haven\'t received confirmation, contact the business. Send *Hi* to start over.',
+                }];
+              } else if (reason === 'has_successful_payment') {
+                // Payment won — no new payment
                 return [{
                   type: 'text',
                   text: `✅ Payment received for order *${existingOrder.reference_code}*! Confirmation arriving shortly. Send *Hi* to start a new order.`,
                 }];
               } else {
-                // Cancel refused for other reason — fail closed
+                // Unknown reason — fail closed
                 return [{ type: 'text', text: 'Something went wrong with your previous order. Send *Hi* to start over.' }];
               }
-            } else {
-              // Valid non-expired reservation — reuse order
-              order = { id: existingOrder.id, reference_code: existingOrder.reference_code };
             }
           }
         }
@@ -3011,7 +3032,6 @@ export const orderingFlow: FlowDefinition = {
                 p_customer_name: `${d.first_name || ''} ${d.last_name || ''}`.trim(),
                 p_country_code: cc,
                 p_transfer_expiry_hours: ps.transfer_expiry_hours,
-                p_bot_session_id: ctx.session.id,
               });
               if (transferResult?.transfer_id) {
                 d.bank_transfer_reference = transferResult.reference_code;
@@ -3105,7 +3125,6 @@ export const orderingFlow: FlowDefinition = {
               p_customer_name: `${d.first_name || ''} ${d.last_name || ''}`.trim(),
               p_country_code: cc,
               p_transfer_expiry_hours: ps.transfer_expiry_hours,
-              p_bot_session_id: ctx.session.id,
             });
             if (!transferFallback?.transfer_id) {
               // Transfer creation also failed — fall through to payment failure path

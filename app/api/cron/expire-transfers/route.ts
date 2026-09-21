@@ -22,7 +22,7 @@ export async function POST(request: NextRequest) {
     // Fetch expired pending transfers
     const { data: expired, error: fetchErr } = await service
       .from('pending_transfers')
-      .select('id, booking_id, order_id, customer_phone, business_id, reference_code, businesses(name)')
+      .select('id, booking_id, order_id, customer_phone, business_id, reference_code, metadata, businesses(name)')
       .eq('status', 'pending')
       .lt('expires_at', now);
 
@@ -87,9 +87,20 @@ export async function POST(request: NextRequest) {
       if (transfer.customer_phone && transfer.business_id) {
         try {
           const resolver = new ChannelResolver(service);
-          const resolved = await resolver.resolveByBusinessId(transfer.business_id);
+          // R28/B5: Order-linked transfers use exact channel, not arbitrary business resolver
+          const transferMeta = ((transfer as any).metadata || {}) as Record<string, unknown>;
+          const exactChannelId = transfer.order_id ? (transferMeta._inbound_channel_id as string | undefined) : undefined;
+          const resolved = exactChannelId
+            ? await resolver.resolveByChannelIdForBusiness(exactChannelId, transfer.business_id)
+            : transfer.order_id
+              ? null  // Order transfer without exact channel — skip notification
+              : await resolver.resolveByBusinessId(transfer.business_id);
+          // Order-specific vs booking copy
+          const entityCopy = transfer.order_id
+            ? 'your order has been cancelled'
+            : 'your booking has been cancelled';
           if (resolved) {
-            const waText = `⏰ Your bank transfer (Ref: *${transfer.reference_code || 'N/A'}*) has expired. The payment window has closed and your booking has been cancelled.\n\nSend *Hi* to start a new booking.`;
+            const waText = `⏰ Your bank transfer (Ref: *${transfer.reference_code || 'N/A'}*) has expired. The payment window has closed and ${entityCopy}.\n\nSend *Hi* to start over.`;
 
             // Look up customer email for fallback/dual delivery
             const bizName = (transfer as any).businesses?.name || 'the business';
@@ -99,7 +110,7 @@ export async function POST(request: NextRequest) {
                   const { subject, html } = businessNotificationEmail({
                     businessName: bizName,
                     title: 'Transfer Expired',
-                    message: `Your bank transfer (Ref: ${transfer.reference_code || 'N/A'}) has expired. The payment window has closed and your booking has been cancelled.`,
+                    message: `Your bank transfer (Ref: ${transfer.reference_code || 'N/A'}) has expired. The payment window has closed and ${entityCopy}.`,
                     details: {
                       'Reference': transfer.reference_code || 'N/A',
                       'Status': 'Expired',

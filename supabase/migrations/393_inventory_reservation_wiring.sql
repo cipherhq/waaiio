@@ -281,7 +281,7 @@ BEGIN
     -- M393: Delivery-zone server-authoritative total
     -- When a delivery zone is specified, re-read its price from DB instead of trusting p_shipping_cost
     IF p_delivery_zone_id IS NOT NULL THEN
-      SELECT id, price, business_id, is_active
+      SELECT id, price, name, business_id, is_active
       INTO v_zone
       FROM delivery_zones
       WHERE id = p_delivery_zone_id
@@ -397,7 +397,10 @@ BEGIN
     p_delivery_address, p_delivery_phone,
     CASE WHEN p_validate_products THEN v_server_total ELSE p_total_amount END,
     p_discount_amount, p_shipping_cost, p_promo_code_id, p_channel, p_notes,
-    p_delivery_zone_id, p_delivery_zone_name, p_addons_total, p_volume_discount_amount,
+    p_delivery_zone_id,
+    CASE WHEN p_validate_products AND p_delivery_zone_id IS NOT NULL THEN v_zone.name
+         ELSE p_delivery_zone_name END,
+    p_addons_total, p_volume_discount_amount,
     p_pickup_address, p_dropoff_address, p_package_description, p_package_photo_url,
     p_referral_id, v_fingerprint
   )
@@ -593,23 +596,9 @@ BEGIN
         -- NULL payment on committed marker: fail closed
         RETURN jsonb_build_object('applied', false, 'reason', 'committed_no_winner');
       ELSE
-        -- committed + existing payment_id IS NULL + new payment: upgrade winner
-        UPDATE order_stock_applications
-        SET payment_id = p_payment_id, reservation_class = 'committed', expires_at = NULL
-        WHERE order_id = p_order_id;
-
-        -- Close linked pending transfers (online payment supersedes them)
-        UPDATE pending_transfers SET status = 'cancelled'
-        WHERE order_id = p_order_id AND status = 'pending';
-
-        -- Confirm order if pending
-        IF v_order.status = 'pending' THEN
-          UPDATE orders SET status = 'confirmed', updated_at = NOW()
-          WHERE id = p_order_id AND status = 'pending';
-        END IF;
-
-        RETURN jsonb_build_object('applied', true, 'already_applied', true,
-          'order_confirmed', true);
+        -- R28/B7: committed + NULL existing winner + new payment => fail closed
+        -- No silently attaching a new winner to an already-committed marker
+        RETURN jsonb_build_object('applied', false, 'reason', 'committed_no_winner');
       END IF;
     ELSE
       -- Non-committed marker (instant, bank_transfer, prepayment)
@@ -1063,8 +1052,7 @@ CREATE OR REPLACE FUNCTION public.create_transfer_with_reservation(
   p_customer_phone TEXT,
   p_customer_name TEXT,
   p_country_code TEXT,
-  p_transfer_expiry_hours INT,
-  p_bot_session_id UUID
+  p_transfer_expiry_hours INT
 ) RETURNS JSONB
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -1128,14 +1116,23 @@ BEGIN
     RETURN jsonb_build_object('error', true, 'reason', 'active_transfer_exists');
   END IF;
 
-  -- 4. Read bot_session for exact channel provenance
-  SELECT id, session_data
+  -- 4. R28/B4: Derive bot_session from locked order (no caller override)
+  IF v_order.bot_session_id IS NULL THEN
+    RETURN jsonb_build_object('error', true, 'reason', 'order_has_no_session');
+  END IF;
+
+  SELECT id, session_data, business_id AS sess_business_id
   INTO v_session
   FROM bot_sessions
-  WHERE id = p_bot_session_id;
+  WHERE id = v_order.bot_session_id;
 
   IF NOT FOUND THEN
     RETURN jsonb_build_object('error', true, 'reason', 'session_not_found');
+  END IF;
+
+  -- Verify session belongs to the same business
+  IF v_session.sess_business_id != p_business_id THEN
+    RETURN jsonb_build_object('error', true, 'reason', 'session_business_mismatch');
   END IF;
 
   v_channel_id := v_session.session_data->>'_inbound_channel_id';
@@ -1221,16 +1218,16 @@ END;
 $$;
 
 -- ACL: service_role only
-REVOKE ALL ON FUNCTION public.create_transfer_with_reservation(UUID, UUID, TEXT, TEXT, TEXT, INT, UUID) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.create_transfer_with_reservation(UUID, UUID, TEXT, TEXT, TEXT, INT) FROM PUBLIC;
 DO $$ BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
-    REVOKE ALL ON FUNCTION public.create_transfer_with_reservation(UUID, UUID, TEXT, TEXT, TEXT, INT, UUID) FROM anon;
+    REVOKE ALL ON FUNCTION public.create_transfer_with_reservation(UUID, UUID, TEXT, TEXT, TEXT, INT) FROM anon;
   END IF;
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
-    REVOKE ALL ON FUNCTION public.create_transfer_with_reservation(UUID, UUID, TEXT, TEXT, TEXT, INT, UUID) FROM authenticated;
+    REVOKE ALL ON FUNCTION public.create_transfer_with_reservation(UUID, UUID, TEXT, TEXT, TEXT, INT) FROM authenticated;
   END IF;
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
-    GRANT EXECUTE ON FUNCTION public.create_transfer_with_reservation(UUID, UUID, TEXT, TEXT, TEXT, INT, UUID) TO service_role;
+    GRANT EXECUTE ON FUNCTION public.create_transfer_with_reservation(UUID, UUID, TEXT, TEXT, TEXT, INT) TO service_role;
   END IF;
 END $$;
 
@@ -1319,6 +1316,10 @@ BEGIN
   IF v_marker.expires_at <= v_now THEN
     RETURN jsonb_build_object('confirmed', false, 'reason', 'reservation_expired');
   END IF;
+  -- R28/B7: marker must have no existing winner
+  IF v_marker.payment_id IS NOT NULL THEN
+    RETURN jsonb_build_object('confirmed', false, 'reason', 'marker_has_payment');
+  END IF;
 
   -- 4. Lock ALL linked payment rows
   PERFORM id FROM payments
@@ -1356,10 +1357,10 @@ BEGIN
   -- 8. Insert exactly one direct bank-transfer success payment
   --    amount = order.total_amount (MAJOR units, canonical)
   --    currency = transfer.currency
+  -- R28/B2: Use only real production payment columns
   INSERT INTO payments (
     business_id, amount, currency, status, payment_method, gateway,
-    order_id, customer_phone, customer_name, reference,
-    metadata
+    gateway_reference, gateway_status, order_id, paid_at, metadata
   ) VALUES (
     p_business_id,
     v_order.total_amount,  -- MAJOR units
@@ -1367,13 +1368,15 @@ BEGIN
     'success',
     'bank_transfer',
     'direct',
-    p_order_id,
-    v_transfer.customer_phone,
-    v_transfer.customer_name,
     'transfer:' || v_transfer.reference_code,
+    'merchant_confirmed',
+    p_order_id,
+    v_now,
     jsonb_build_object(
       'pending_transfer_id', p_transfer_id,
       'confirmed_by', p_confirmed_by,
+      'customer_phone', v_transfer.customer_phone,
+      'customer_name', v_transfer.customer_name,
       '_inbound_channel_id', v_transfer.metadata->>'_inbound_channel_id',
       '_confirmation_origin', v_transfer.metadata->>'_confirmation_origin'
     )
@@ -1481,6 +1484,10 @@ BEGIN
   END IF;
   IF v_transfer.order_id != p_order_id THEN
     RETURN jsonb_build_object('rejected', false, 'reason', 'transfer_order_mismatch');
+  END IF;
+  -- R28/B8: Exact business binding
+  IF v_transfer.business_id != p_business_id THEN
+    RETURN jsonb_build_object('rejected', false, 'reason', 'transfer_business_mismatch');
   END IF;
 
   -- 3. Lock marker
