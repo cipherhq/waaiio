@@ -19,6 +19,8 @@
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { execSync, spawn } from 'child_process';
+import { readFileSync } from 'fs';
+import { join } from 'path';
 
 const dbUrl = process.env.TEST_DATABASE_URL || '';
 const canRun = dbUrl.length > 0;
