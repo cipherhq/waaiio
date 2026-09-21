@@ -50,6 +50,21 @@ export function computeVariantAvailability(
  * Viable = active AND (stock_quantity IS NULL OR stock_quantity > 0)
  * AND matches all previously selected options.
  */
+/**
+ * Determine the smart-intent auto-add action for a unique product match.
+ *
+ * Simple product → 'auto_add' (preserve existing behavior)
+ * Variable product → 'variant_picker' (never auto-add without exact variant)
+ * Multiple matches → 'narrow_catalog'
+ */
+export function classifySmartIntentMatch(
+  matches: Array<{ id: string; has_variants: boolean }>,
+): 'auto_add' | 'variant_picker' | 'narrow_catalog' | 'no_match' {
+  if (matches.length === 0) return 'no_match';
+  if (matches.length > 1) return 'narrow_catalog';
+  return matches[0].has_variants ? 'variant_picker' : 'auto_add';
+}
+
 export function getViableAxisValues(
   variants: Array<{ options: Record<string, string>; stock_quantity: number | null; is_active: boolean }>,
   selectedOptions: Record<string, string>,

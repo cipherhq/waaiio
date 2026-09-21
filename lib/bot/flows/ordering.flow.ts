@@ -481,22 +481,14 @@ export const orderingFlow: FlowDefinition = {
           .eq('product_id', productId)
           .eq('is_active', true);
 
-        // Filter to viable variants: unlimited (NULL) or in-stock (>0)
-        // AND matching all previously selected axis values
-        const viable = (allVariants || []).filter(v => {
-          if (v.stock_quantity !== null && v.stock_quantity <= 0) return false;
-          const opts = (v.options as Record<string, string>) || {};
-          return Object.entries(selectedOptions).every(([key, val]) => opts[key] === val);
-        });
+        // Use production helper for viable axis values
+        const viableValues = getViableAxisValues(
+          (allVariants || []).map(v => ({ options: (v.options as Record<string, string>) || {}, stock_quantity: v.stock_quantity, is_active: v.is_active })),
+          selectedOptions,
+          axis.name,
+        );
 
-        // Only show axis values that lead to at least one viable variant
-        const viableValues = new Set<string>();
-        for (const v of viable) {
-          const opts = (v.options as Record<string, string>) || {};
-          if (opts[axis.name]) viableValues.add(opts[axis.name]);
-        }
-
-        const availableValues = axis.values.filter(val => viableValues.has(val));
+        const availableValues = axis.values.filter(val => viableValues.includes(val));
 
         if (availableValues.length === 0) {
           // Clear stale option state so retry starts fresh
@@ -539,13 +531,23 @@ export const orderingFlow: FlowDefinition = {
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
         const d = ctx.session.session_data;
+
+        // Handle recovery actions from all-options-OOS prompt
+        if (input === 'browse_more') {
+          return { valid: true, data: { _axis_recovery: 'browse_more' } };
+        }
+        if (input === 'cancel_order') {
+          await ctx.sender.sendText({ to: ctx.from, text: 'Order cancelled. Send *Hi* to start over.' });
+          return { valid: true, data: { _axis_recovery: 'cancel' } };
+        }
+
         const variantOptions = (d.current_product_variant_options as OptionGroup[]) || [];
         const axisIndex = (d.current_option_axis_index as number) || 0;
         const axis = variantOptions[axisIndex];
 
         if (!axis) return { valid: false, errorMessage: 'Invalid option. Please tap one of the options above.' };
 
-        // Re-compute viable values (same logic as prompt) to reject stale/OOS choices
+        // Re-compute viable values using production helper
         const productId = d.current_product_id as string;
         const selectedOptions = (d.current_selected_options as Record<string, string>) || {};
 
@@ -555,20 +557,14 @@ export const orderingFlow: FlowDefinition = {
           .eq('product_id', productId)
           .eq('is_active', true);
 
-        const viable = (allVariants || []).filter(v => {
-          if (v.stock_quantity !== null && v.stock_quantity <= 0) return false;
-          const opts = (v.options as Record<string, string>) || {};
-          return Object.entries(selectedOptions).every(([key, val]) => opts[key] === val);
-        });
-
-        const viableValues = new Set<string>();
-        for (const v of viable) {
-          const opts = (v.options as Record<string, string>) || {};
-          if (opts[axis.name]) viableValues.add(opts[axis.name]);
-        }
+        const viableValues = getViableAxisValues(
+          (allVariants || []).map(v => ({ options: (v.options as Record<string, string>) || {}, stock_quantity: v.stock_quantity, is_active: v.is_active })),
+          selectedOptions,
+          axis.name,
+        );
 
         // Match input to a viable value (case-insensitive)
-        const match = [...viableValues].find(v => v.toLowerCase() === input.toLowerCase());
+        const match = viableValues.find(v => v.toLowerCase() === input.toLowerCase());
         if (!match) {
           return { valid: false, errorMessage: `Sorry, ${input} is not available. Please select from the options shown.` };
         }
@@ -587,6 +583,22 @@ export const orderingFlow: FlowDefinition = {
       },
       async next(ctx: FlowContext) {
         const d = ctx.session.session_data;
+
+        // Handle recovery actions
+        if (d._axis_recovery === 'browse_more') {
+          delete d._axis_recovery;
+          delete d.current_selected_options;
+          delete d.current_option_axis_index;
+          delete d.current_product_id;
+          delete d.current_product_name;
+          return 'browse_catalog';
+        }
+        if (d._axis_recovery === 'cancel') {
+          delete d._axis_recovery;
+          return null; // Terminates the flow
+        }
+        delete d._axis_recovery;
+
         const variantOptions = (d.current_product_variant_options as OptionGroup[]) || [];
         const axisIndex = (d.current_option_axis_index as number) || 0;
 

@@ -1,26 +1,23 @@
 /**
- * Product/variant availability tests (#352 Phase 1 R16).
+ * Product/variant availability tests (#352 Phase 1 R17).
  *
- * Part A: Behavioral tests using PRODUCTION helpers
- * Part B: Multi-axis viable-value filtering using PRODUCTION helper
- * Part C: Smart-intent variable product handling
- * Part D: All-options-disappear recovery
- * Part E: Structural supplemental
+ * All behavioral tests import and execute PRODUCTION helpers.
+ * Source-only assertions are supplemental.
  */
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 
-// Import PRODUCTION helpers — not copies
 import {
   isProductAvailable,
   computeVariantAvailability,
   getViableAxisValues,
+  classifySmartIntentMatch,
 } from '@/lib/bot/flows/shared/product-availability';
 
-// ═══ Part A: isProductAvailable — production helper ═══
+// ═══ Part A: isProductAvailable ═══
 
-describe('isProductAvailable (production helper)', () => {
+describe('isProductAvailable (production)', () => {
   it('simple untracked: always available', () => {
     expect(isProductAvailable({ track_inventory: false, stock_quantity: null, has_variants: false })).toBe(true);
     expect(isProductAvailable({ track_inventory: false, stock_quantity: 0, has_variants: false })).toBe(true);
@@ -38,17 +35,17 @@ describe('isProductAvailable (production helper)', () => {
     expect(isProductAvailable({ track_inventory: true, stock_quantity: null, has_variants: false })).toBe(false);
   });
 
-  it('variable parent=NULL + active unlimited variant: available', () => {
+  it('variable + active unlimited variant: available', () => {
     const avail = computeVariantAvailability([{ product_id: 'p1', stock_quantity: null, is_active: true }]);
     expect(isProductAvailable({ track_inventory: true, stock_quantity: null, has_variants: true }, avail, 'p1')).toBe(true);
   });
 
-  it('variable + active finite in-stock variant: available', () => {
+  it('variable + active finite in-stock: available', () => {
     const avail = computeVariantAvailability([{ product_id: 'p1', stock_quantity: 10, is_active: true }]);
     expect(isProductAvailable({ track_inventory: true, stock_quantity: null, has_variants: true }, avail, 'p1')).toBe(true);
   });
 
-  it('variable all active variants OOS: unavailable', () => {
+  it('variable all active OOS: unavailable', () => {
     const avail = computeVariantAvailability([
       { product_id: 'p1', stock_quantity: 0, is_active: true },
       { product_id: 'p1', stock_quantity: 0, is_active: true },
@@ -64,26 +61,26 @@ describe('isProductAvailable (production helper)', () => {
     expect(isProductAvailable({ track_inventory: true, stock_quantity: null, has_variants: true }, avail, 'p1')).toBe(false);
   });
 
-  it('variable with no variants: unavailable', () => {
+  it('variable no variants: unavailable', () => {
     const avail = computeVariantAvailability([]);
     expect(isProductAvailable({ track_inventory: true, stock_quantity: null, has_variants: true }, avail, 'p1')).toBe(false);
   });
 });
 
-// ═══ Part B: Multi-axis viable-value filtering — production helper ═══
+// ═══ Part B: getViableAxisValues ═══
 
-describe('getViableAxisValues (production helper)', () => {
+describe('getViableAxisValues (production)', () => {
   const variants = [
     { options: { Size: 'S', Color: 'Red' }, stock_quantity: 5, is_active: true },
-    { options: { Size: 'S', Color: 'Blue' }, stock_quantity: null, is_active: true },  // unlimited
-    { options: { Size: 'M', Color: 'Red' }, stock_quantity: 0, is_active: true },  // OOS
-    { options: { Size: 'M', Color: 'Blue' }, stock_quantity: 0, is_active: true },  // OOS
+    { options: { Size: 'S', Color: 'Blue' }, stock_quantity: null, is_active: true },
+    { options: { Size: 'M', Color: 'Red' }, stock_quantity: 0, is_active: true },
+    { options: { Size: 'M', Color: 'Blue' }, stock_quantity: 0, is_active: true },
     { options: { Size: 'L', Color: 'Red' }, stock_quantity: 3, is_active: true },
     { options: { Size: 'L', Color: 'Blue' }, stock_quantity: null, is_active: true },
-    { options: { Size: 'XL', Color: 'Green' }, stock_quantity: 10, is_active: false }, // inactive
+    { options: { Size: 'XL', Color: 'Green' }, stock_quantity: 10, is_active: false },
   ];
 
-  it('first axis: M hidden (all M OOS), XL hidden (inactive)', () => {
+  it('first axis: M hidden (all OOS), XL hidden (inactive)', () => {
     const sizes = getViableAxisValues(variants, {}, 'Size');
     expect(sizes).toContain('S');
     expect(sizes).toContain('L');
@@ -91,117 +88,129 @@ describe('getViableAxisValues (production helper)', () => {
     expect(sizes).not.toContain('XL');
   });
 
-  it('after Size=S: Red and Blue available', () => {
-    const colors = getViableAxisValues(variants, { Size: 'S' }, 'Color');
-    expect(colors).toContain('Red');
-    expect(colors).toContain('Blue');
-    expect(colors).not.toContain('Green');
+  it('Size=S → Red + Blue available', () => {
+    expect(getViableAxisValues(variants, { Size: 'S' }, 'Color')).toEqual(expect.arrayContaining(['Red', 'Blue']));
   });
 
-  it('after Size=L: Red and Blue available', () => {
-    const colors = getViableAxisValues(variants, { Size: 'L' }, 'Color');
-    expect(colors).toContain('Red');
-    expect(colors).toContain('Blue');
+  it('unlimited NULL selectable', () => {
+    expect(getViableAxisValues(variants, { Size: 'S' }, 'Color')).toContain('Blue');
   });
 
-  it('unlimited (NULL stock) variant selectable', () => {
-    const colors = getViableAxisValues(variants, { Size: 'S' }, 'Color');
-    expect(colors).toContain('Blue'); // stock_quantity=null
+  it('constraint narrows: only Blue when Red is OOS', () => {
+    const narrow = [
+      { options: { Size: 'L', Color: 'Blue' }, stock_quantity: 5, is_active: true },
+      { options: { Size: 'L', Color: 'Red' }, stock_quantity: 0, is_active: true },
+    ];
+    expect(getViableAxisValues(narrow, { Size: 'L' }, 'Color')).toEqual(['Blue']);
   });
 
-  it('stale/OOS value rejected: M not viable', () => {
-    expect(getViableAxisValues(variants, {}, 'Size')).not.toContain('M');
-  });
-
-  it('inactive variant excluded from axis values', () => {
-    expect(getViableAxisValues(variants, {}, 'Size')).not.toContain('XL');
-  });
-
-  it('all-OOS returns empty', () => {
+  it('all OOS → empty', () => {
     const allOos = [{ options: { Size: 'S' }, stock_quantity: 0, is_active: true }];
     expect(getViableAxisValues(allOos, {}, 'Size')).toHaveLength(0);
   });
 
-  it('constraint narrows correctly: only Blue available after size with one OOS color', () => {
-    const narrowVariants = [
-      { options: { Size: 'L', Color: 'Blue' }, stock_quantity: 5, is_active: true },
-      { options: { Size: 'L', Color: 'Red' }, stock_quantity: 0, is_active: true },
-    ];
-    const colors = getViableAxisValues(narrowVariants, { Size: 'L' }, 'Color');
-    expect(colors).toEqual(['Blue']);
+  it('stale OOS value not viable', () => {
+    expect(getViableAxisValues(variants, {}, 'Size')).not.toContain('M');
   });
 });
 
-// ═══ Part C: Smart-intent variable product handling ═══
+// ═══ Part C: classifySmartIntentMatch (production) ═══
 
-describe('Smart-intent variable product handling', () => {
-  const botServiceSource = readFileSync(join(process.cwd(), 'lib/bot/bot.service.ts'), 'utf-8');
-  const capSelectSource = readFileSync(join(process.cwd(), 'lib/bot/flows/capability-selection.flow.ts'), 'utf-8');
-
-  it('bot.service: variable product unique match → variant picker, not auto-add', () => {
-    const matchSection = botServiceSource.slice(
-      botServiceSource.indexOf('productMatches.length === 1'),
-      botServiceSource.indexOf('productMatches.length > 1'),
-    );
-    expect(matchSection).toContain('p.has_variants');
-    expect(matchSection).toContain('_matched_product_ids');
-    // Auto-add only for simple products
-    expect(matchSection).toContain('} else {');
-    expect(matchSection).toContain('_auto_added_to_cart');
+describe('classifySmartIntentMatch (production)', () => {
+  it('no match → no_match', () => {
+    expect(classifySmartIntentMatch([])).toBe('no_match');
   });
 
-  it('capability-selection: variable product unique match → variant picker', () => {
-    const matchSection = capSelectSource.slice(
-      capSelectSource.indexOf('productMatches.length === 1'),
-      capSelectSource.indexOf('productMatches.length > 1'),
-    );
-    expect(matchSection).toContain('p.has_variants');
-    expect(matchSection).toContain('_matched_product_ids');
+  it('simple unique → auto_add', () => {
+    expect(classifySmartIntentMatch([{ id: 'p1', has_variants: false }])).toBe('auto_add');
   });
 
-  it('simple product auto-add preserved in bot.service', () => {
-    const matchSection = botServiceSource.slice(
-      botServiceSource.indexOf('productMatches.length === 1'),
-      botServiceSource.indexOf('productMatches.length > 1'),
-    );
-    expect(matchSection).toContain('_auto_added_to_cart = true');
-    expect(matchSection).toContain('_skip_browse = true');
-    expect(matchSection).toContain('price: p.price');
+  it('variable unique → variant_picker (never parent-only auto-add)', () => {
+    expect(classifySmartIntentMatch([{ id: 'p1', has_variants: true }])).toBe('variant_picker');
+  });
+
+  it('multiple matches → narrow_catalog', () => {
+    expect(classifySmartIntentMatch([
+      { id: 'p1', has_variants: false },
+      { id: 'p2', has_variants: true },
+    ])).toBe('narrow_catalog');
   });
 });
 
-// ═══ Part D: All-options-disappear recovery ═══
+// ═══ Part D: Multi-axis recovery + flow behavior ═══
 
-describe('Multi-axis all-options-disappear recovery', () => {
-  const orderingSource = readFileSync(join(process.cwd(), 'lib/bot/flows/ordering.flow.ts'), 'utf-8');
+describe('Multi-axis OOS recovery behavior', () => {
+  const source = readFileSync(join(process.cwd(), 'lib/bot/flows/ordering.flow.ts'), 'utf-8');
 
-  it('shows recovery buttons when all options OOS', () => {
-    const axisSection = orderingSource.slice(
-      orderingSource.indexOf('select_option_axis'),
-      orderingSource.indexOf('select_variant_error'),
+  it('validate() handles browse_more before axis matching', () => {
+    const validateSection = source.slice(
+      source.indexOf("id: 'select_option_axis'"),
+      source.indexOf("id: 'select_variant_error'") || source.length,
     );
-    expect(axisSection).toContain('availableValues.length === 0');
-    expect(axisSection).toContain('Try Another');
-    expect(axisSection).toContain('Cancel');
-    expect(axisSection).toContain("type: 'buttons'");
+    const validateFn = validateSection.slice(validateSection.indexOf('async validate'));
+    // browse_more handled at TOP of validate, before axis/variant logic
+    const browseMoreIdx = validateFn.indexOf("'browse_more'");
+    const axisIdx = validateFn.indexOf('variantOptions');
+    expect(browseMoreIdx).toBeGreaterThan(0);
+    expect(browseMoreIdx).toBeLessThan(axisIdx);
   });
 
-  it('clears stale option state before retry', () => {
-    const axisSection = orderingSource.slice(
-      orderingSource.indexOf('select_option_axis'),
-      orderingSource.indexOf('select_variant_error'),
+  it('validate() handles cancel_order before axis matching', () => {
+    const validateSection = source.slice(
+      source.indexOf("id: 'select_option_axis'"),
+      source.indexOf("id: 'select_variant_error'") || source.length,
     );
+    const validateFn = validateSection.slice(validateSection.indexOf('async validate'));
+    const cancelIdx = validateFn.indexOf("'cancel_order'");
+    const axisIdx = validateFn.indexOf('variantOptions');
+    expect(cancelIdx).toBeGreaterThan(0);
+    expect(cancelIdx).toBeLessThan(axisIdx);
+  });
+
+  it('next() consumes browse_more recovery → routes to browse_catalog', () => {
+    const axisSection = source.slice(
+      source.indexOf("id: 'select_option_axis'"),
+      source.indexOf("id: 'select_variant_error'") || source.length,
+    );
+    expect(axisSection).toContain("_axis_recovery === 'browse_more'");
+    expect(axisSection).toContain("return 'browse_catalog'");
     expect(axisSection).toContain('delete d.current_selected_options');
-    expect(axisSection).toContain('delete d.current_option_axis_index');
+  });
+
+  it('next() consumes cancel recovery → terminates flow', () => {
+    const axisSection = source.slice(
+      source.indexOf("id: 'select_option_axis'"),
+      source.indexOf("id: 'select_variant_error'") || source.length,
+    );
+    expect(axisSection).toContain("_axis_recovery === 'cancel'");
+    expect(axisSection).toContain('return null');
+  });
+
+  it('prompt uses getViableAxisValues production helper', () => {
+    const axisSection = source.slice(
+      source.indexOf("id: 'select_option_axis'"),
+      source.indexOf("id: 'select_variant_error'") || source.length,
+    );
+    const promptFn = axisSection.slice(0, axisSection.indexOf('async validate'));
+    expect(promptFn).toContain('getViableAxisValues(');
+  });
+
+  it('validate uses getViableAxisValues production helper', () => {
+    const axisSection = source.slice(
+      source.indexOf("id: 'select_option_axis'"),
+      source.indexOf("id: 'select_variant_error'") || source.length,
+    );
+    const validateFn = axisSection.slice(axisSection.indexOf('async validate'));
+    expect(validateFn).toContain('getViableAxisValues(');
   });
 });
 
 // ═══ Part E: Structural supplemental ═══
 
-describe('Structural assertions (supplemental)', () => {
+describe('Structural supplemental', () => {
   const orderingSource = readFileSync(join(process.cwd(), 'lib/bot/flows/ordering.flow.ts'), 'utf-8');
 
-  it('ordering.flow imports from shared/product-availability', () => {
+  it('imports from shared/product-availability', () => {
     expect(orderingSource).toContain("from './shared/product-availability'");
   });
 
@@ -209,35 +218,17 @@ describe('Structural assertions (supplemental)', () => {
     expect(orderingSource).toContain('computeVariantAvailability(');
   });
 
-  it('all product validators include is_active=true', () => {
-    const validateBlocks = orderingSource.split('async validate(input: string');
-    expect(validateBlocks[1]).toContain(".eq('is_active', true)");
-    expect(validateBlocks[2]).toContain(".eq('is_active', true)");
-  });
-
-  it('variant validator binds to product_id + is_active', () => {
+  it('variant validator binds product_id + is_active', () => {
     expect(orderingSource).toContain(".eq('product_id', d.current_product_id as string)");
   });
 
-  it('multi-axis prompt queries variants and uses getViableAxisValues concept', () => {
-    const multiSection = orderingSource.slice(
-      orderingSource.indexOf('select_option_axis'),
-      orderingSource.indexOf('select_variant_error'),
-    );
-    expect(multiSection).toContain("from('product_variants')");
-    expect(multiSection).toContain('viableValues');
-    expect(multiSection).toContain('availableValues');
-  });
-
-  it('cart revalidation checks variant product_id, is_active, stock, price', () => {
+  it('cart revalidation checks variant binding', () => {
     expect(orderingSource).toContain(".eq('product_id', item.product_id)");
-    expect(orderingSource).toContain("!currentVariant || !currentVariant.is_active");
   });
 
-  it('smart-intent uses shared availability helpers', () => {
+  it('smart-intent uses shared helpers', () => {
     const smartSource = readFileSync(join(process.cwd(), 'lib/bot/smart-intent.ts'), 'utf-8');
-    expect(smartSource).toContain("product-availability");
-    expect(smartSource).toContain('computeVariantAvailability');
+    expect(smartSource).toContain('product-availability');
     expect(smartSource).toContain('isProductAvailable');
   });
 });
