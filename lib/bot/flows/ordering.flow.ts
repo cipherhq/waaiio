@@ -508,6 +508,37 @@ export const orderingFlow: FlowDefinition = {
           return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start over.' }];
         }
 
+        const productId = d.current_product_id as string;
+        const selectedOptions = (d.current_selected_options as Record<string, string>) || {};
+
+        // Query active available variants for this product
+        const { data: allVariants } = await ctx.supabase
+          .from('product_variants')
+          .select('id, options, stock_quantity, is_active')
+          .eq('product_id', productId)
+          .eq('is_active', true);
+
+        // Filter to viable variants: unlimited (NULL) or in-stock (>0)
+        // AND matching all previously selected axis values
+        const viable = (allVariants || []).filter(v => {
+          if (v.stock_quantity !== null && v.stock_quantity <= 0) return false;
+          const opts = (v.options as Record<string, string>) || {};
+          return Object.entries(selectedOptions).every(([key, val]) => opts[key] === val);
+        });
+
+        // Only show axis values that lead to at least one viable variant
+        const viableValues = new Set<string>();
+        for (const v of viable) {
+          const opts = (v.options as Record<string, string>) || {};
+          if (opts[axis.name]) viableValues.add(opts[axis.name]);
+        }
+
+        const availableValues = axis.values.filter(val => viableValues.has(val));
+
+        if (availableValues.length === 0) {
+          return [{ type: 'text', text: `Sorry, all options for *${d.current_product_name}* are out of stock.` }];
+        }
+
         const messages: PromptMessage[] = [];
 
         // On first axis, send product image
@@ -524,7 +555,7 @@ export const orderingFlow: FlowDefinition = {
           title: truncTitle(`Choose ${axis.name}`, 24),
           body: `Select *${axis.name}* for *${d.current_product_name}*:`,
           buttonLabel: truncTitle(`Choose ${axis.name}`, 20),
-          items: axis.values.map(val => ({
+          items: availableValues.map(val => ({
             title: truncTitle(val, 24),
             description: '',
             postbackText: val,
@@ -541,20 +572,42 @@ export const orderingFlow: FlowDefinition = {
 
         if (!axis) return { valid: false, errorMessage: 'Invalid option. Please tap one of the options above.' };
 
-        // Match input to a value (case-insensitive)
-        const match = axis.values.find(v => v.toLowerCase() === input.toLowerCase());
+        // Re-compute viable values (same logic as prompt) to reject stale/OOS choices
+        const productId = d.current_product_id as string;
+        const selectedOptions = (d.current_selected_options as Record<string, string>) || {};
+
+        const { data: allVariants } = await ctx.supabase
+          .from('product_variants')
+          .select('id, options, stock_quantity, is_active')
+          .eq('product_id', productId)
+          .eq('is_active', true);
+
+        const viable = (allVariants || []).filter(v => {
+          if (v.stock_quantity !== null && v.stock_quantity <= 0) return false;
+          const opts = (v.options as Record<string, string>) || {};
+          return Object.entries(selectedOptions).every(([key, val]) => opts[key] === val);
+        });
+
+        const viableValues = new Set<string>();
+        for (const v of viable) {
+          const opts = (v.options as Record<string, string>) || {};
+          if (opts[axis.name]) viableValues.add(opts[axis.name]);
+        }
+
+        // Match input to a viable value (case-insensitive)
+        const match = [...viableValues].find(v => v.toLowerCase() === input.toLowerCase());
         if (!match) {
-          return { valid: false, errorMessage: `Please select a valid ${axis.name}.` };
+          return { valid: false, errorMessage: `Sorry, ${input} is not available. Please select from the options shown.` };
         }
 
         // Store selected option
-        const selectedOptions = (d.current_selected_options as Record<string, string>) || {};
-        selectedOptions[axis.name] = match;
+        const newSelectedOptions = { ...selectedOptions };
+        newSelectedOptions[axis.name] = match;
 
         return {
           valid: true,
           data: {
-            current_selected_options: selectedOptions,
+            current_selected_options: newSelectedOptions,
             current_option_axis_index: axisIndex + 1,
           },
         };
