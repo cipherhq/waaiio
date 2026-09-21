@@ -537,7 +537,7 @@ export const orderingFlow: FlowDefinition = {
           return { valid: true, data: { _axis_recovery: 'browse_more' } };
         }
         if (input === 'cancel_order') {
-          await ctx.sender.sendText({ to: ctx.from, text: 'Order cancelled. Send *Hi* to start over.' });
+          await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('Order cancelled. Send *Hi* to start over.') });
           return { valid: true, data: { _axis_recovery: 'cancel' } };
         }
 

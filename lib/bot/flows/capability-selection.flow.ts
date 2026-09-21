@@ -434,14 +434,13 @@ const selectCapabilityStep: FlowStepConfig = {
           // Match products for ordering flow
           if (capId === 'ordering' && serviceKw.length > 0) {
             const { matchProductsFromKeywords } = await import('@/lib/bot/smart-intent');
+            const { classifySmartIntentMatch } = await import('./shared/product-availability');
             const productMatches = await matchProductsFromKeywords(ctx.supabase, ctx.business.id, serviceKw);
-            if (productMatches.length === 1) {
-              const p = productMatches[0];
-              if (p.has_variants) {
-                // Variable product: route to variant picker, never auto-add parent-only
-                ctx.session.session_data._matched_product_ids = [p.id];
-              } else {
-                // Simple product: preserve existing auto-add behavior
+            const action = classifySmartIntentMatch(productMatches);
+
+            switch (action) {
+              case 'auto_add': {
+                const p = productMatches[0];
                 const qty = parsed.quantity || 1;
                 ctx.session.session_data.cart = [{
                   product_id: p.id, name: p.name, price: p.price,
@@ -449,10 +448,21 @@ const selectCapabilityStep: FlowStepConfig = {
                 }];
                 ctx.session.session_data._auto_added_to_cart = true;
                 ctx.session.session_data._skip_browse = true;
+                break;
               }
-            } else if (productMatches.length > 1) {
-              // Multiple matches — filter catalog
-              ctx.session.session_data._matched_product_ids = productMatches.map(m => m.id);
+              case 'variant_picker': {
+                ctx.session.session_data._matched_product_ids = [productMatches[0].id];
+                delete ctx.session.session_data._auto_added_to_cart;
+                delete ctx.session.session_data._skip_browse;
+                break;
+              }
+              case 'narrow_catalog': {
+                ctx.session.session_data._matched_product_ids = productMatches.map(m => m.id);
+                delete ctx.session.session_data._auto_added_to_cart;
+                delete ctx.session.session_data._skip_browse;
+                break;
+              }
+              // no_match: no product prefill
             }
           }
 
