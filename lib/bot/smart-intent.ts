@@ -807,16 +807,38 @@ export async function matchProductsFromKeywords(
 ): Promise<ProductMatch[]> {
   if (keywords.length === 0) return [];
 
-  const { data: products } = await supabase
+  const { data: rawProducts } = await supabase
     .from('products')
-    .select('id, name, price, has_variants')
+    .select('id, name, price, has_variants, track_inventory, stock_quantity')
     .eq('business_id', businessId)
     .eq('is_active', true)
     .is('deleted_at', null)
     .order('sort_order')
     .limit(100);
 
-  if (!products || products.length === 0) return [];
+  if (!rawProducts || rawProducts.length === 0) return [];
+
+  // Filter out unavailable products (same authority as catalog browse)
+  const variableIds = rawProducts.filter(p => p.has_variants).map(p => p.id);
+  let smartVarAvail = new Map<string, boolean>();
+  if (variableIds.length > 0) {
+    const { data: smartVariants } = await supabase
+      .from('product_variants')
+      .select('product_id, stock_quantity, is_active')
+      .in('product_id', variableIds)
+      .eq('is_active', true);
+    for (const v of (smartVariants || [])) {
+      if (v.stock_quantity === null || v.stock_quantity > 0) smartVarAvail.set(v.product_id, true);
+      else if (!smartVarAvail.has(v.product_id)) smartVarAvail.set(v.product_id, false);
+    }
+  }
+
+  const products = rawProducts.filter(p => {
+    if (p.has_variants) return smartVarAvail.get(p.id) ?? false;
+    return !p.track_inventory || (p.stock_quantity !== null && p.stock_quantity > 0);
+  });
+
+  if (products.length === 0) return [];
 
   const scored: Array<{ product: (typeof products)[0]; score: number }> = [];
 

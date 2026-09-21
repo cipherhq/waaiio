@@ -24,6 +24,32 @@ function getOrderingLabels(_category: string): { noun: string; emoji: string; br
 }
 
 
+/**
+ * Check if a product is available for ordering.
+ * Simple products: use parent stock_quantity when track_inventory=true.
+ * Variable products (has_variants=true): defer to variant availability
+ * (parent stock_quantity is NOT inventory authority for variable products).
+ *
+ * For variable products, variantAvailability must be pre-computed as a Map<product_id, boolean>
+ * where true means at least one active variant has NULL or >0 stock.
+ */
+function isProductAvailable(
+  p: { track_inventory: boolean; stock_quantity: number | null; has_variants: boolean },
+  variantAvailability?: Map<string, boolean>,
+  productId?: string,
+): boolean {
+  if (p.has_variants) {
+    // Variable product: availability comes from active variants, not parent stock
+    if (variantAvailability && productId) {
+      return variantAvailability.get(productId) ?? false;
+    }
+    // If no variant data provided, conservatively show (will be validated at variant selection)
+    return true;
+  }
+  // Simple product: existing behavior
+  return !p.track_inventory || (p.stock_quantity !== null && p.stock_quantity > 0);
+}
+
 interface OptionGroup {
   name: string;
   values: string[];
@@ -115,9 +141,27 @@ export const orderingFlow: FlowDefinition = {
 
         const { data: rawProducts } = await query;
 
-        // Filter out out-of-stock items that track inventory
+        // Build variant availability map for variable products
+        const variableProductIds = (rawProducts || []).filter(p => p.has_variants).map(p => p.id);
+        let variantAvail = new Map<string, boolean>();
+        if (variableProductIds.length > 0) {
+          const { data: variants } = await ctx.supabase
+            .from('product_variants')
+            .select('product_id, stock_quantity, is_active')
+            .in('product_id', variableProductIds)
+            .eq('is_active', true);
+          for (const v of (variants || [])) {
+            if (v.stock_quantity === null || v.stock_quantity > 0) {
+              variantAvail.set(v.product_id, true);
+            } else if (!variantAvail.has(v.product_id)) {
+              variantAvail.set(v.product_id, false);
+            }
+          }
+        }
+
+        // Filter out unavailable items
         const products = (rawProducts || []).filter(p =>
-          !p.track_inventory || (p.stock_quantity !== null && p.stock_quantity > 0)
+          isProductAvailable(p, variantAvail, p.id)
         );
 
         if (!products || products.length === 0) {
@@ -210,6 +254,7 @@ export const orderingFlow: FlowDefinition = {
           .select('id, name, price, stock_quantity, has_variants, image_url, variant_options, min_order_qty')
           .eq('id', input)
           .eq('business_id', ctx.business!.id)
+          .eq('is_active', true)
           .is('deleted_at', null)
           .single();
 
@@ -302,8 +347,26 @@ export const orderingFlow: FlowDefinition = {
           .order('sort_order')
           .limit(10);
 
+        // Variant availability for variable products
+        const catVarIds = (rawProducts || []).filter(p => p.has_variants).map(p => p.id);
+        let catVarAvail = new Map<string, boolean>();
+        if (catVarIds.length > 0) {
+          const { data: catVariants } = await ctx.supabase
+            .from('product_variants')
+            .select('product_id, stock_quantity, is_active')
+            .in('product_id', catVarIds)
+            .eq('is_active', true);
+          for (const v of (catVariants || [])) {
+            if (v.stock_quantity === null || v.stock_quantity > 0) {
+              catVarAvail.set(v.product_id, true);
+            } else if (!catVarAvail.has(v.product_id)) {
+              catVarAvail.set(v.product_id, false);
+            }
+          }
+        }
+
         const products = (rawProducts || []).filter(p =>
-          !p.track_inventory || (p.stock_quantity !== null && p.stock_quantity > 0)
+          isProductAvailable(p, catVarAvail, p.id)
         );
 
         if (!products || products.length === 0) {
@@ -358,6 +421,7 @@ export const orderingFlow: FlowDefinition = {
           .select('id, name, price, stock_quantity, has_variants, image_url, variant_options, min_order_qty')
           .eq('id', input)
           .eq('business_id', ctx.business!.id)
+          .eq('is_active', true)
           .is('deleted_at', null)
           .single();
 
@@ -651,10 +715,13 @@ export const orderingFlow: FlowDefinition = {
         return messages;
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
+        const d = ctx.session.session_data;
         const { data: variant } = await ctx.supabase
           .from('product_variants')
           .select('id, label, price, stock_quantity, image_url')
           .eq('id', input)
+          .eq('product_id', d.current_product_id as string)
+          .eq('is_active', true)
           .single();
 
         if (!variant) return { valid: false, errorMessage: 'That option is not available. Tap one of the choices above.' };
@@ -1178,9 +1245,18 @@ export const orderingFlow: FlowDefinition = {
           .order('sort_order')
           .limit(100);
 
-        const products = (rawProducts || []).filter(p =>
-          !p.track_inventory || (p.stock_quantity !== null && p.stock_quantity > 0)
-        );
+        const aaoVarIds = (rawProducts || []).filter(p => p.has_variants).map(p => p.id);
+        let aaoVarAvail = new Map<string, boolean>();
+        if (aaoVarIds.length > 0) {
+          const { data: aaoVariants } = await ctx.supabase
+            .from('product_variants').select('product_id, stock_quantity, is_active')
+            .in('product_id', aaoVarIds).eq('is_active', true);
+          for (const v of (aaoVariants || [])) {
+            if (v.stock_quantity === null || v.stock_quantity > 0) aaoVarAvail.set(v.product_id, true);
+            else if (!aaoVarAvail.has(v.product_id)) aaoVarAvail.set(v.product_id, false);
+          }
+        }
+        const products = (rawProducts || []).filter(p => isProductAvailable(p, aaoVarAvail, p.id));
 
         const checkoutItem = { title: 'Checkout ✅', description: `Total: ${formatCurrency(total, cc)}`.slice(0, 72), postbackText: 'checkout' };
 
@@ -1286,9 +1362,18 @@ export const orderingFlow: FlowDefinition = {
           .order('sort_order')
           .limit(100);
 
-        const products = (rawProducts || []).filter(p =>
-          !p.track_inventory || (p.stock_quantity !== null && p.stock_quantity > 0)
-        );
+        const cocVarIds = (rawProducts || []).filter(p => p.has_variants).map(p => p.id);
+        let cocVarAvail = new Map<string, boolean>();
+        if (cocVarIds.length > 0) {
+          const { data: cocVariants } = await ctx.supabase
+            .from('product_variants').select('product_id, stock_quantity, is_active')
+            .in('product_id', cocVarIds).eq('is_active', true);
+          for (const v of (cocVariants || [])) {
+            if (v.stock_quantity === null || v.stock_quantity > 0) cocVarAvail.set(v.product_id, true);
+            else if (!cocVarAvail.has(v.product_id)) cocVarAvail.set(v.product_id, false);
+          }
+        }
+        const products = (rawProducts || []).filter(p => isProductAvailable(p, cocVarAvail, p.id));
 
         const checkoutItem = { title: 'Checkout ✅', description: `Total: ${formatCurrency(total, cc)}`.slice(0, 72), postbackText: 'checkout' };
 
@@ -1361,6 +1446,7 @@ export const orderingFlow: FlowDefinition = {
           .select('id, name, price, stock_quantity, has_variants, image_url, variant_options, min_order_qty')
           .eq('id', input)
           .eq('business_id', ctx.business!.id)
+          .eq('is_active', true)
           .is('deleted_at', null)
           .single();
 
@@ -1961,17 +2047,46 @@ export const orderingFlow: FlowDefinition = {
               warnings.push(`❌ *${item.name}* is no longer available and was removed.`);
               continue;
             }
-            if (current.track_inventory && current.stock_quantity !== null && current.stock_quantity < item.quantity) {
-              if (current.stock_quantity <= 0) {
-                warnings.push(`❌ *${item.name}* is now out of stock and was removed.`);
+            // Variant-aware cart revalidation
+            if (item.variant_id) {
+              // Re-read exact variant under exact product
+              const { data: currentVariant } = await ctx.supabase
+                .from('product_variants')
+                .select('id, price, stock_quantity, is_active')
+                .eq('id', item.variant_id)
+                .eq('product_id', item.product_id)
+                .single();
+
+              if (!currentVariant || !currentVariant.is_active) {
+                warnings.push(`❌ *${item.name}* (${item.variant_label || 'variant'}) is no longer available and was removed.`);
                 continue;
               }
-              item.quantity = current.stock_quantity;
-              warnings.push(`⚠️ *${item.name}* — only ${current.stock_quantity} left. Quantity adjusted.`);
-            }
-            if (!item.variant_id && current.price !== item.price) {
-              warnings.push(`💰 *${item.name}* price updated: ${formatCurrency(item.price, cc)} → ${formatCurrency(current.price, cc)}`);
-              item.price = current.price;
+              if (currentVariant.stock_quantity !== null && currentVariant.stock_quantity < item.quantity) {
+                if (currentVariant.stock_quantity <= 0) {
+                  warnings.push(`❌ *${item.name}* (${item.variant_label || 'variant'}) is now out of stock and was removed.`);
+                  continue;
+                }
+                item.quantity = currentVariant.stock_quantity;
+                warnings.push(`⚠️ *${item.name}* (${item.variant_label || 'variant'}) — only ${currentVariant.stock_quantity} left. Quantity adjusted.`);
+              }
+              if (currentVariant.price !== item.price) {
+                warnings.push(`💰 *${item.name}* (${item.variant_label || 'variant'}) price updated: ${formatCurrency(item.price, cc)} → ${formatCurrency(currentVariant.price, cc)}`);
+                item.price = currentVariant.price;
+              }
+            } else {
+              // Simple product: existing behavior
+              if (current.track_inventory && current.stock_quantity !== null && current.stock_quantity < item.quantity) {
+                if (current.stock_quantity <= 0) {
+                  warnings.push(`❌ *${item.name}* is now out of stock and was removed.`);
+                  continue;
+                }
+                item.quantity = current.stock_quantity;
+                warnings.push(`⚠️ *${item.name}* — only ${current.stock_quantity} left. Quantity adjusted.`);
+              }
+              if (current.price !== item.price) {
+                warnings.push(`💰 *${item.name}* price updated: ${formatCurrency(item.price, cc)} → ${formatCurrency(current.price, cc)}`);
+                item.price = current.price;
+              }
             }
             validCart.push(item);
           }
