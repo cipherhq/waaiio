@@ -3,6 +3,35 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-09-21 — Feat: M393 inventory reservation wiring (#352 Phase 2B+2C)
+
+### What changed
+- **Migration 393**: Inventory reservation wiring — 7 functions (4 modified, 3 new).
+  - `create_order_atomic`: delivery-zone server-authoritative total, zero-floor parity, reservation_class/expires_at on marker (free=committed, paid=instant/30min)
+  - `apply_order_stock_once`: exact winner conflict/replay rules, closes linked pending_transfers on online payment win
+  - `cancel_stale_order_atomic`: marker-aware expiry authority (committed=refuse, instant/bank_transfer expired=eligible, prepayment/legacy=48h)
+  - `cancel_order_immediate`: cancels linked pending_transfers atomically
+  - `create_transfer_with_reservation` (NEW): atomic transfer INSERT + marker extension (instant→bank_transfer), channel provenance validation
+  - `confirm_order_transfer_atomic` (NEW): bank-transfer winner authority with full lock hierarchy, payment fence, marker commit, promo finalization
+  - `reject_order_transfer_atomic` (NEW): bank-transfer rejection with stock restore, promo release, order cancellation
+- **`ordering.flow.ts`**: Addon revalidation at checkout (price/active/binding). Validated path (`p_validate_products=true, p_expected_total`). Authoritative retry/re-entry with marker state re-read. Order-linked transfers use `create_transfer_with_reservation` RPC. Customer cancel uses `cancel_order_immediate` RPC (not direct UPDATE).
+- **`expire-transfers/route.ts`**: Order-linked expired transfers delegate to `cancel_stale_order_atomic` instead of direct UPDATE. Only sends notification if canonical cancellation wins.
+- **`pending-transfers/[id]/route.ts`**: Order-linked confirm uses `confirm_order_transfer_atomic` RPC. Order-linked reject uses `reject_order_transfer_atomic` RPC. Exact channel resolution via `resolveByChannelIdForBusiness`. Non-order paths preserved unchanged.
+- **`platformSettings.ts`**: `transfer_expiry_hours` fallback 4→24h (code only, no production mutation).
+
+### What it affects
+- Ordering flow now uses server-authoritative product/variant/addon/total validation at commit time.
+- Stock reservations have explicit lifecycle: instant (30min) → bank_transfer (24h) → committed (permanent).
+- Online payment success closes linked bank transfers atomically.
+- Bank transfer confirmation/rejection uses atomic RPCs with stock/promo/payment authority.
+- Cron transfer expiry delegates to canonical cancel RPC — no false expiry notifications.
+
+### What could break
+- Orders with stale addon prices will see price update warnings at checkout (previously silently committed stale prices).
+- Delivery-zone price changes between cart and checkout will fail with total_mismatch (server re-reads from DB).
+- Expired instant reservations on retry will trigger canonical cancel + recreate (previously blindly reused).
+- Transfer expiry hours changed from 4→24h fallback (production value still DB-driven).
+
 ## 2026-09-20 — Feat: customer-owned WhatsApp connection on all plans (#346)
 
 ### What changed

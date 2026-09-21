@@ -22,7 +22,7 @@ export async function POST(request: NextRequest) {
     // Fetch expired pending transfers
     const { data: expired, error: fetchErr } = await service
       .from('pending_transfers')
-      .select('id, booking_id, order_id, customer_phone, business_id, reference_code, businesses(name)')
+      .select('id, booking_id, order_id, customer_phone, business_id, reference_code, metadata, businesses(name)')
       .eq('status', 'pending')
       .lt('expires_at', now);
 
@@ -38,43 +38,69 @@ export async function POST(request: NextRequest) {
     let expiredCount = 0;
 
     for (const transfer of expired) {
-      // Mark transfer as expired
-      const { error: updateErr } = await service
-        .from('pending_transfers')
-        .update({ status: 'expired' })
-        .eq('id', transfer.id)
-        .eq('status', 'pending'); // Guard against race conditions
-
-      if (updateErr) {
-        logger.error(`[EXPIRE_TRANSFERS] Failed to expire transfer ${transfer.id}:`, updateErr.message);
-        continue;
-      }
-
-      // Cancel related booking
-      if (transfer.booking_id) {
-        await service
-          .from('bookings')
-          .update({ status: 'cancelled' })
-          .eq('id', transfer.booking_id)
-          .in('status', ['pending']);
-      }
-
-      // Cancel related order
+      // M393: Order-linked transfers delegate to canonical cancel RPC
       if (transfer.order_id) {
-        await service
-          .from('orders')
-          .update({ status: 'cancelled' })
-          .eq('id', transfer.order_id)
-          .in('status', ['pending']);
+        // Do NOT pre-mark transfer expired — the RPC owns terminal state
+        const { data: cancelResult, error: cancelErr } = await service.rpc('cancel_stale_order_atomic', {
+          p_order_id: transfer.order_id,
+        });
+
+        if (cancelErr) {
+          logger.error(`[EXPIRE_TRANSFERS] cancel_stale_order_atomic error for transfer ${transfer.id}:`, cancelErr.message);
+          continue;
+        }
+
+        // Only count + notify if canonical cancellation actually won
+        if (!cancelResult?.cancelled) {
+          // Payment/confirmation/extension won after preselection — no false expiry
+          logger.info(`[EXPIRE_TRANSFERS] Order ${transfer.order_id} not cancelled (reason: ${cancelResult?.reason}), skipping transfer ${transfer.id}`);
+          continue;
+        }
+
+        // Canonical cancel succeeded — transfer was expired by the RPC
+        // Fall through to notification
+      } else {
+        // Non-order transfers: preserve existing behavior
+        // Mark transfer as expired
+        const { error: updateErr } = await service
+          .from('pending_transfers')
+          .update({ status: 'expired' })
+          .eq('id', transfer.id)
+          .eq('status', 'pending'); // Guard against race conditions
+
+        if (updateErr) {
+          logger.error(`[EXPIRE_TRANSFERS] Failed to expire transfer ${transfer.id}:`, updateErr.message);
+          continue;
+        }
+
+        // Cancel related booking
+        if (transfer.booking_id) {
+          await service
+            .from('bookings')
+            .update({ status: 'cancelled' })
+            .eq('id', transfer.booking_id)
+            .in('status', ['pending']);
+        }
       }
 
       // Notify customer via WhatsApp + email fallback
       if (transfer.customer_phone && transfer.business_id) {
         try {
           const resolver = new ChannelResolver(service);
-          const resolved = await resolver.resolveByBusinessId(transfer.business_id);
+          // R28/B5: Order-linked transfers use exact channel, not arbitrary business resolver
+          const transferMeta = ((transfer as any).metadata || {}) as Record<string, unknown>;
+          const exactChannelId = transfer.order_id ? (transferMeta._inbound_channel_id as string | undefined) : undefined;
+          const resolved = exactChannelId
+            ? await resolver.resolveByChannelIdForBusiness(exactChannelId, transfer.business_id)
+            : transfer.order_id
+              ? null  // Order transfer without exact channel — skip notification
+              : await resolver.resolveByBusinessId(transfer.business_id);
+          // Order-specific vs booking copy
+          const entityCopy = transfer.order_id
+            ? 'your order has been cancelled'
+            : 'your booking has been cancelled';
           if (resolved) {
-            const waText = `⏰ Your bank transfer (Ref: *${transfer.reference_code || 'N/A'}*) has expired. The payment window has closed and your booking has been cancelled.\n\nSend *Hi* to start a new booking.`;
+            const waText = `⏰ Your bank transfer (Ref: *${transfer.reference_code || 'N/A'}*) has expired. The payment window has closed and ${entityCopy}.\n\nSend *Hi* to start over.`;
 
             // Look up customer email for fallback/dual delivery
             const bizName = (transfer as any).businesses?.name || 'the business';
@@ -84,7 +110,7 @@ export async function POST(request: NextRequest) {
                   const { subject, html } = businessNotificationEmail({
                     businessName: bizName,
                     title: 'Transfer Expired',
-                    message: `Your bank transfer (Ref: ${transfer.reference_code || 'N/A'}) has expired. The payment window has closed and your booking has been cancelled.`,
+                    message: `Your bank transfer (Ref: ${transfer.reference_code || 'N/A'}) has expired. The payment window has closed and ${entityCopy}.`,
                     details: {
                       'Reference': transfer.reference_code || 'N/A',
                       'Status': 'Expired',

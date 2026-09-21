@@ -2120,6 +2120,37 @@ export const orderingFlow: FlowDefinition = {
                 item.price = current.price;
               }
             }
+
+            // M393: Addon revalidation — re-read prices, check active/binding
+            if (item.addons && item.addons.length > 0 && ctx.business) {
+              const addonIds = item.addons.map((a: { id: string }) => a.id).filter(Boolean);
+              if (addonIds.length > 0) {
+                const { data: currentAddons } = await ctx.supabase
+                  .from('product_addons')
+                  .select('id, name, price, is_active, business_id, product_id')
+                  .in('id', addonIds);
+                const addonMap = new Map((currentAddons || []).map((a: any) => [a.id, a]));
+                const validAddons: Array<{ id: string; name: string; price: number; quantity?: number }> = [];
+                for (const a of item.addons) {
+                  const cur = addonMap.get(a.id);
+                  if (!cur || !cur.is_active || cur.business_id !== ctx.business!.id) {
+                    warnings.push(`❌ Add-on *${a.name}* is no longer available and was removed.`);
+                    continue;
+                  }
+                  if (cur.product_id && cur.product_id !== item.product_id) {
+                    warnings.push(`❌ Add-on *${a.name}* is no longer compatible and was removed.`);
+                    continue;
+                  }
+                  if (cur.price !== a.price) {
+                    warnings.push(`💰 Add-on *${a.name}* price updated: ${formatCurrency(a.price, cc)} → ${formatCurrency(cur.price, cc)}`);
+                    a.price = cur.price;
+                  }
+                  validAddons.push(a);
+                }
+                item.addons = validAddons;
+              }
+            }
+
             validCart.push(item);
           }
 
@@ -2717,13 +2748,91 @@ export const orderingFlow: FlowDefinition = {
         if (d.package_description) orderPayload.package_description = d.package_description;
         if (d.package_photo_url) orderPayload.package_photo_url = d.package_photo_url;
 
-        // If order already exists in session (e.g. retry_payment), reuse
-        let order: { id: string; reference_code: string };
+        // M393: Authoritative retry/re-entry with state re-read
+        let order!: { id: string; reference_code: string };
         let freshlyCreated = false;
 
         if (d.order_id && d.reference_code) {
-          order = { id: d.order_id as string, reference_code: d.reference_code as string };
-        } else {
+          // R28/B6: Authoritative state classification via canonical RPC — no client clock
+          const { data: existingOrder } = await ctx.supabase
+            .from('orders')
+            .select('id, status, reference_code')
+            .eq('id', d.order_id as string)
+            .single();
+
+          const clearRefs = () => {
+            delete d.order_id; delete d.reference_code;
+            delete d.bank_transfer_reference; delete d.bank_transfer_offered;
+          };
+
+          if (!existingOrder) {
+            clearRefs(); // Not found — recreate
+          } else if (existingOrder.status === 'confirmed') {
+            return [{
+              type: 'text',
+              text: `✅ Your order *${existingOrder.reference_code}* is already confirmed! Send *Hi* to start a new order.`,
+            }];
+          } else if (existingOrder.status === 'cancelled') {
+            clearRefs(); // Already cancelled — recreate
+          } else if (existingOrder.status === 'pending') {
+            // Use canonical RPC to classify under lock — no client-side clock or marker read
+            const { data: staleResult, error: staleErr } = await ctx.supabase.rpc('cancel_stale_order_atomic', {
+              p_order_id: existingOrder.id,
+            });
+
+            if (staleErr) {
+              // RPC error — fail closed
+              return [{ type: 'text', text: 'Something went wrong. Send *Hi* to start over.' }];
+            }
+
+            if (staleResult?.cancelled) {
+              // Cancellation won — clear and recreate
+              clearRefs();
+            } else {
+              // Map semantic refusal reason per R27
+              const reason = staleResult?.reason as string || '';
+              if (reason === 'instant_not_expired' || reason === 'bank_transfer_not_expired') {
+                // Valid non-expired reservation — reuse order
+                order = { id: existingOrder.id, reference_code: existingOrder.reference_code };
+              } else if (reason === 'prepayment_not_stale') {
+                // Legacy prepayment — preserve/reuse
+                order = { id: existingOrder.id, reference_code: existingOrder.reference_code };
+              } else if (reason === 'legacy_no_marker_not_stale') {
+                // Legacy no-marker — cancel immediately then recreate
+                const { data: immResult } = await ctx.supabase.rpc('cancel_order_immediate', {
+                  p_order_id: existingOrder.id, p_reason: 'legacy_no_marker_recreate',
+                });
+                if (immResult?.cancelled) {
+                  clearRefs();
+                } else if (immResult?.reason === 'has_successful_payment') {
+                  return [{
+                    type: 'text',
+                    text: `✅ Payment received for order *${existingOrder.reference_code}*! Confirmation arriving shortly. Send *Hi* to start a new order.`,
+                  }];
+                } else {
+                  return [{ type: 'text', text: 'Something went wrong with your previous order. Send *Hi* to start over.' }];
+                }
+              } else if (reason === 'committed_not_cancellable') {
+                // Committed — inconsistent pending+committed: fail closed
+                return [{
+                  type: 'text',
+                  text: 'Your order is being processed. If you haven\'t received confirmation, contact the business. Send *Hi* to start over.',
+                }];
+              } else if (reason === 'has_successful_payment') {
+                // Payment won — no new payment
+                return [{
+                  type: 'text',
+                  text: `✅ Payment received for order *${existingOrder.reference_code}*! Confirmation arriving shortly. Send *Hi* to start a new order.`,
+                }];
+              } else {
+                // Unknown reason — fail closed
+                return [{ type: 'text', text: 'Something went wrong with your previous order. Send *Hi* to start over.' }];
+              }
+            }
+          }
+        }
+
+        if (!d.order_id || !d.reference_code) {
           // Atomic order + items creation via RPC (idempotent by bot_session_id)
           const itemsJson = cart.map((item: any) => ({
             product_id: item.product_id,
@@ -2757,6 +2866,8 @@ export const orderingFlow: FlowDefinition = {
             p_package_photo_url: (d.package_photo_url as string) || null,
             p_items: itemsJson,
             p_referral_id: (d.referral_id as string) || null,
+            p_validate_products: true,
+            p_expected_total: total,
           });
 
           if (rpcError || !rpcResult) {
@@ -2913,19 +3024,24 @@ export const orderingFlow: FlowDefinition = {
 
             if (bankAccount) {
               // Dual-option: online + bank transfer
-              const transferRef = await createPendingTransfer(ctx.supabase, {
-                businessId: ctx.business!.id,
-                entityId: { order_id: order.id },
-                customerPhone: ctx.from,
-                customerName: `${d.first_name || ''} ${d.last_name || ''}`.trim(),
-                amount: total,
-                countryCode: cc,
-                transferExpiryHours: ps.transfer_expiry_hours,
+              // M393: Atomic transfer + reservation extension via RPC
+              const { data: transferResult } = await ctx.supabase.rpc('create_transfer_with_reservation', {
+                p_order_id: order.id,
+                p_business_id: ctx.business!.id,
+                p_customer_phone: ctx.from,
+                p_customer_name: `${d.first_name || ''} ${d.last_name || ''}`.trim(),
+                p_country_code: cc,
+                p_transfer_expiry_hours: ps.transfer_expiry_hours,
               });
-              d.bank_transfer_reference = transferRef;
-              d.bank_transfer_offered = true;
-              d.bank_transfer_amount = total;
+              if (transferResult?.transfer_id) {
+                d.bank_transfer_reference = transferResult.reference_code;
+                d.bank_transfer_offered = true;
+                d.bank_transfer_amount = total;
+              }
+              // If transfer creation failed, fall through to online-only
+            }
 
+            if (d.bank_transfer_offered && bankAccount) {
               // ACC-008: Transition handled by nextAfterPrompt (reads payment_reference/bank_transfer_reference)
 
               const orderSummary = getOrderConfirmationMessage({
@@ -2950,7 +3066,7 @@ export const orderingFlow: FlowDefinition = {
                 paymentResult.url,
                 '',
                 `*Option 2 — Bank Transfer* 🏦`,
-                formatBankTransferBlock(bankAccount, formatCurrency(total, cc), transferRef),
+                formatBankTransferBlock(bankAccount, formatCurrency(total, cc), d.bank_transfer_reference as string),
               ];
 
               return [
@@ -3001,19 +3117,25 @@ export const orderingFlow: FlowDefinition = {
 
           // Payment gateway failed — but bank transfer may still be available
           if (bankAccount) {
-            const transferRef = await createPendingTransfer(ctx.supabase, {
-              businessId: ctx.business!.id,
-              entityId: { order_id: order.id },
-              customerPhone: ctx.from,
-              customerName: `${d.first_name || ''} ${d.last_name || ''}`.trim(),
-              amount: total,
-              countryCode: cc,
-              transferExpiryHours: ps.transfer_expiry_hours,
+            // M393: Atomic transfer + reservation extension via RPC
+            const { data: transferFallback } = await ctx.supabase.rpc('create_transfer_with_reservation', {
+              p_order_id: order.id,
+              p_business_id: ctx.business!.id,
+              p_customer_phone: ctx.from,
+              p_customer_name: `${d.first_name || ''} ${d.last_name || ''}`.trim(),
+              p_country_code: cc,
+              p_transfer_expiry_hours: ps.transfer_expiry_hours,
             });
-            d.bank_transfer_reference = transferRef;
-            d.bank_transfer_offered = true;
-            d.bank_transfer_amount = total;
+            if (!transferFallback?.transfer_id) {
+              // Transfer creation also failed — fall through to payment failure path
+            } else {
+              d.bank_transfer_reference = transferFallback.reference_code;
+              d.bank_transfer_offered = true;
+              d.bank_transfer_amount = total;
+            }
+          }
 
+          if (d.bank_transfer_offered) {
             // ACC-008: Transition handled by nextAfterPrompt (reads payment_reference/bank_transfer_reference)
 
             const orderSummary = getOrderConfirmationMessage({
@@ -3037,7 +3159,7 @@ export const orderingFlow: FlowDefinition = {
               `🏦 *Bank Transfer Payment*`,
               '',
               `Transfer to:`,
-              formatBankTransferBlock(bankAccount, formatCurrency(total, cc), transferRef),
+              formatBankTransferBlock(bankAccount!, formatCurrency(total, cc), d.bank_transfer_reference as string),
             ];
 
             return [
@@ -3150,9 +3272,8 @@ export const orderingFlow: FlowDefinition = {
         if (input === 'cancel_order') {
           const orderId = ctx.session.session_data.order_id as string;
           if (orderId) {
-            await ctx.supabase.from('orders').update({ status: 'cancelled' }).eq('id', orderId);
-            // ACC-008: Release promo reservation on cancellation
-            try { await ctx.supabase.rpc('release_promo_reservation', { p_order_id: orderId }); } catch { /* non-critical */ }
+            // M393: Atomic cancel with stock restore + promo release + linked transfer closure
+            await ctx.supabase.rpc('cancel_order_immediate', { p_order_id: orderId, p_reason: 'customer_cancel' });
           }
           await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('Order cancelled. Send *Hi* to start over.') });
           return { valid: true, data: { _action: 'cancelled' } };
@@ -3191,8 +3312,8 @@ export const orderingFlow: FlowDefinition = {
         if (d._saved_card_cancelled) {
           const orderId = d.order_id as string;
           if (orderId) {
-            await ctx.supabase.from('orders').update({ status: 'cancelled' }).eq('id', orderId);
-            try { await ctx.supabase.rpc('release_promo_reservation', { p_order_id: orderId }); } catch { /* non-critical */ }
+            // M393: Atomic cancel with stock restore + promo release + linked transfer closure
+            await ctx.supabase.rpc('cancel_order_immediate', { p_order_id: orderId, p_reason: 'saved_card_cancelled' });
           }
           await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('Order cancelled. Send *Hi* to start over.') });
           return null;
@@ -3269,15 +3390,8 @@ export const orderingFlow: FlowDefinition = {
         if ((text === 'cancel' || text === 'go_back' || text === 'cancel_order')) {
           const orderId = ctx.session.session_data.order_id as string;
           if (orderId) {
-            await ctx.supabase.from('orders').update({ status: 'cancelled' }).eq('id', orderId);
-            // ACC-008: Release promo reservation on cancellation
-            try { await ctx.supabase.rpc('release_promo_reservation', { p_order_id: orderId }); } catch { /* non-critical */ }
-          }
-          if (d.bank_transfer_reference) {
-            await ctx.supabase
-              .from('pending_transfers')
-              .update({ status: 'cancelled' })
-              .eq('reference_code', d.bank_transfer_reference as string);
+            // M393: Atomic cancel with stock restore + promo release + linked transfer closure
+            await ctx.supabase.rpc('cancel_order_immediate', { p_order_id: orderId, p_reason: 'customer_cancel' });
           }
           await ctx.sender.sendText({ to: ctx.from, text: await ctx.t(`Order from *${ctx.business?.name || 'business'}* cancelled. Send *Hi* to start over.`) });
           return { valid: true, data: { _action: 'cancel' } };

@@ -1914,12 +1914,14 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
     });
   });
 
-  // ─── M392 Compatibility: validated order marker gets prepayment default ───
-  describe('M392 compatibility', () => {
-    it('69. apply M392 + create_order_atomic validated → marker.reservation_class = prepayment', () => {
-      // Apply M392 on top of the canonical M383 baseline
+  // ─── M392+M393 Full-current: validated order marker gets instant/30m ───
+  describe('M393 full-current behavior', () => {
+    it('69. apply M392+M393 → create_order_atomic validated pending → marker instant with ~30m expiry', () => {
+      // Apply M392 + M393 on top of the canonical M383 baseline
       const m392 = readFileSync(join(process.cwd(), 'supabase/migrations/392_inventory_reservation_capability.sql'), 'utf-8');
       psql(m392);
+      const m393 = readFileSync(join(process.cwd(), 'supabase/migrations/393_inventory_reservation_wiring.sql'), 'utf-8');
+      psql(m393);
 
       // Use a fresh bot session to avoid advisory-lock collision with other tests
       const freshSession = '00000000-0000-0000-0383-000000000099';
@@ -1935,16 +1937,54 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
       `);
       expect(r.order_id).toBeDefined();
 
-      // Query the actual marker
-      const cls = psql(`SELECT reservation_class FROM order_stock_applications WHERE order_id = '${r.order_id}'`);
-      expect(cls).toBe('prepayment');
+      // R30: Use jsonb_build_object to return proper JSON from scalar SELECT
+      const marker = psqlJson(`SELECT jsonb_build_object(
+        'reservation_class', reservation_class,
+        'has_expiry', (expires_at IS NOT NULL),
+        'not_expired', (expires_at > NOW()),
+        'within_35m', (expires_at < NOW() + interval '35 minutes')
+      ) FROM order_stock_applications WHERE order_id = '${r.order_id}'`);
+      expect(marker.reservation_class).toBe('instant');
+      expect(marker.has_expiry).toBe(true);
+      expect(marker.not_expired).toBe(true);
+      expect(marker.within_35m).toBe(true);
 
       // Cleanup
       psql(`DELETE FROM order_stock_applications WHERE order_id = '${r.order_id}'`);
       psql(`DELETE FROM order_items WHERE order_id = '${r.order_id}'`);
       psql(`DELETE FROM orders WHERE id = '${r.order_id}'`);
-      // Restore product stock
       psql(`UPDATE products SET stock_quantity = stock_quantity + 1 WHERE id = '${PRODUCT_A}'`);
+    });
+
+    it('70. apply M392+M393 → create_order_atomic validated confirmed → marker committed no expiry', () => {
+      const freshSession = '00000000-0000-0000-0383-0000000000aa';
+      // R30: Insert product with explicit name (required column in some schemas)
+      const freeProduct = psql(`INSERT INTO products (business_id, name, price, is_active) VALUES ('${BIZ_ID}', 'Free Test Product', 0, true) RETURNING id`);
+      const items = JSON.stringify([{ product_id: freeProduct, quantity: 1, unit_price: 0 }]);
+      const r = psqlJson(`
+        SET ROLE service_role;
+        SELECT create_order_atomic(
+          '${freshSession}'::uuid, '${BIZ_ID}'::uuid, '${USER_ID}'::uuid,
+          'confirmed', NULL, NULL, 0, 0, 0, NULL, 'whatsapp', NULL, NULL, NULL, 0, 0,
+          NULL, NULL, NULL, NULL,
+          '${items}'::jsonb, NULL, true, 0
+        );
+      `);
+      expect(r.order_id).toBeDefined();
+
+      // R30: Use jsonb_build_object for proper JSON
+      const marker = psqlJson(`SELECT jsonb_build_object(
+        'reservation_class', reservation_class,
+        'no_expiry', (expires_at IS NULL)
+      ) FROM order_stock_applications WHERE order_id = '${r.order_id}'`);
+      expect(marker.reservation_class).toBe('committed');
+      expect(marker.no_expiry).toBe(true);
+
+      // Cleanup
+      psql(`DELETE FROM order_stock_applications WHERE order_id = '${r.order_id}'`);
+      psql(`DELETE FROM order_items WHERE order_id = '${r.order_id}'`);
+      psql(`DELETE FROM orders WHERE id = '${r.order_id}'`);
+      psql(`DELETE FROM products WHERE id = '${freeProduct}'`);
     });
   });
 });
