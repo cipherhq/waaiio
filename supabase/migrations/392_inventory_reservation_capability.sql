@@ -25,14 +25,71 @@ ALTER TABLE public.order_stock_applications
 ALTER TABLE public.order_stock_applications
   ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ DEFAULT NULL;
 
--- ─── 2. Backfill: terminal orders → committed ─────────
+-- ─── 2. Fail-closed marker classification + backfill ──
+--
+-- Every pre-existing marker must be safely classifiable.
+-- Ambiguous/inconsistent states FAIL the migration.
 
-UPDATE public.order_stock_applications osa
-SET reservation_class = 'committed', expires_at = NULL
-FROM public.orders o
-WHERE osa.order_id = o.id
-  AND o.status IN ('confirmed', 'shipped', 'delivered')
-  AND osa.reservation_class = 'prepayment';
+DO $$
+DECLARE
+  v_marker RECORD;
+  v_order_status TEXT;
+  v_has_success_payment BOOLEAN;
+  v_has_active_finalization BOOLEAN;
+BEGIN
+  FOR v_marker IN
+    SELECT osa.id, osa.order_id
+    FROM public.order_stock_applications osa
+  LOOP
+    -- Check if order exists
+    SELECT o.status::text INTO v_order_status
+    FROM public.orders o WHERE o.id = v_marker.order_id;
+
+    IF v_order_status IS NULL THEN
+      RAISE EXCEPTION 'M392: orphan stock marker % — no matching order %', v_marker.id, v_marker.order_id;
+    END IF;
+
+    IF v_order_status IN ('confirmed', 'shipped', 'delivered') THEN
+      -- Terminal order → committed
+      UPDATE public.order_stock_applications
+      SET reservation_class = 'committed', expires_at = NULL
+      WHERE id = v_marker.id;
+
+    ELSIF v_order_status = 'cancelled' THEN
+      RAISE EXCEPTION 'M392: cancelled-order stock marker % for order %', v_marker.id, v_marker.order_id;
+
+    ELSIF v_order_status = 'pending' THEN
+      -- Check for successful payment
+      SELECT EXISTS (
+        SELECT 1 FROM public.payments
+        WHERE (order_id = v_marker.order_id OR metadata->>'order_id' = v_marker.order_id::text)
+          AND status = 'success'
+      ) INTO v_has_success_payment;
+
+      IF v_has_success_payment THEN
+        RAISE EXCEPTION 'M392: pending order % has stock marker AND successful payment — inconsistent state', v_marker.order_id;
+      END IF;
+
+      -- Check for active finalization
+      SELECT EXISTS (
+        SELECT 1 FROM public.payments
+        WHERE (order_id = v_marker.order_id OR metadata->>'order_id' = v_marker.order_id::text)
+          AND finalization_processing_at IS NOT NULL
+          AND finalization_processing_at > NOW() - INTERVAL '5 minutes'
+      ) INTO v_has_active_finalization;
+
+      IF v_has_active_finalization THEN
+        RAISE EXCEPTION 'M392: pending order % has stock marker AND active finalization — inconsistent state', v_marker.order_id;
+      END IF;
+
+      -- Safe: pending with no successful payment and no active finalization → prepayment
+      -- (already the DEFAULT, no UPDATE needed)
+
+    ELSE
+      RAISE EXCEPTION 'M392: unsupported order status % for stock marker %', v_order_status, v_marker.id;
+    END IF;
+  END LOOP;
+END $$;
 
 -- ─── 3. Fix: cancel_stale_order_atomic ────────────────
 -- Exact canonical body from M333:412-512 with TWO corrections:
@@ -322,6 +379,16 @@ BEGIN
     RAISE EXCEPTION 'M392: expires_at column not found on order_stock_applications';
   END IF;
 
+  -- Verify DEFAULT is exactly 'prepayment'
+  PERFORM 1 FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'order_stock_applications'
+      AND column_name = 'reservation_class'
+      AND column_default LIKE '%prepayment%';
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'M392: reservation_class default is not prepayment';
+  END IF;
+
   -- Verify CHECK constraint exists for reservation_class
   PERFORM 1 FROM information_schema.check_constraints
     WHERE constraint_name LIKE '%reservation_class%';
@@ -336,6 +403,14 @@ BEGIN
     AND osa.reservation_class = 'prepayment';
   IF FOUND THEN
     RAISE EXCEPTION 'M392: backfill incomplete — terminal orders still have prepayment class';
+  END IF;
+
+  -- Verify no unclassifiable markers remain (cancelled/orphan would have failed above)
+  -- All markers must be either 'committed' (terminal) or 'prepayment' (safe pending)
+  PERFORM 1 FROM order_stock_applications
+    WHERE reservation_class NOT IN ('committed', 'prepayment');
+  IF FOUND THEN
+    RAISE EXCEPTION 'M392: unclassifiable marker found with unexpected reservation_class';
   END IF;
 
   -- Verify both RPCs exist as SECURITY DEFINER
