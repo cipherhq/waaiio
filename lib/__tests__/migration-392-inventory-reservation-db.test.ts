@@ -506,9 +506,61 @@ describe.skipIf(!canRun)('M392: Inventory reservation capability', () => {
 // These test that M392 FAILS on ambiguous pre-existing states
 
 describe.skipIf(!canRun)('M392: fail-closed marker classification', () => {
+  // These tests need a completely fresh environment each time
   function setupFreshDb() {
     psql(`
       DROP TABLE IF EXISTS order_stock_applications CASCADE;
+      DROP TABLE IF EXISTS order_items CASCADE;
+      DROP TABLE IF EXISTS promo_reservations CASCADE;
+
+      -- Recreate prerequisite tables if missing
+      CREATE TABLE IF NOT EXISTS businesses (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), name TEXT DEFAULT 'Test');
+      DO $$ BEGIN CREATE TYPE payment_status AS ENUM ('pending','success','failed','refunded'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+      DO $$ BEGIN CREATE TYPE order_status AS ENUM ('pending','confirmed','shipped','delivered','cancelled'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+      CREATE TABLE IF NOT EXISTS orders (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        business_id UUID REFERENCES businesses(id),
+        status order_status DEFAULT 'pending',
+        total_amount INTEGER DEFAULT 0,
+        promo_code_id UUID, quote_request_id UUID, bot_session_id UUID,
+        created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE TABLE IF NOT EXISTS payments (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        business_id UUID, order_id UUID REFERENCES orders(id),
+        amount INTEGER DEFAULT 0, status payment_status DEFAULT 'pending',
+        gateway TEXT DEFAULT 'paystack', gateway_status TEXT, gateway_reference TEXT,
+        metadata JSONB DEFAULT '{}', finalization_processing_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      INSERT INTO businesses (id) VALUES ('${BIZ}') ON CONFLICT DO NOTHING;
+
+      CREATE TABLE IF NOT EXISTS promo_codes (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), current_uses INTEGER DEFAULT 0);
+      CREATE TABLE IF NOT EXISTS promo_reservations (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(), order_id UUID, promo_code_id UUID,
+        state TEXT DEFAULT 'reserved', updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE TABLE IF NOT EXISTS quote_requests (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(), status TEXT DEFAULT 'quoted',
+        order_id UUID, responded_at TIMESTAMPTZ
+      );
+      CREATE TABLE IF NOT EXISTS products (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(), business_id UUID REFERENCES businesses(id),
+        name TEXT DEFAULT 'Test', price INTEGER DEFAULT 0, stock_quantity INTEGER,
+        track_inventory BOOLEAN DEFAULT false, is_active BOOLEAN DEFAULT true, deleted_at TIMESTAMPTZ
+      );
+      CREATE TABLE IF NOT EXISTS product_variants (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(), product_id UUID REFERENCES products(id),
+        label TEXT DEFAULT 'V', price INTEGER DEFAULT 0, stock_quantity INTEGER, is_active BOOLEAN DEFAULT true
+      );
+      CREATE TABLE IF NOT EXISTS order_items (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(), order_id UUID REFERENCES orders(id),
+        product_id UUID, variant_id UUID, quantity INTEGER DEFAULT 1, unit_price INTEGER DEFAULT 0
+      );
+      CREATE OR REPLACE FUNCTION release_promo_reservation(p_order_id UUID) RETURNS VOID
+      LANGUAGE plpgsql AS $fn$ BEGIN DELETE FROM promo_reservations WHERE order_id = p_order_id AND state = 'reserved'; END; $fn$;
+
+      -- Recreate pre-M392 order_stock_applications
       CREATE TABLE order_stock_applications (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         payment_id UUID,
