@@ -266,6 +266,26 @@ export async function GET(request: NextRequest) {
     }
 
     try {
+      // M394/Phase 2D: Direct bank-transfer recovery — no provider verification needed
+      const payMeta = ((payment as any).metadata || {}) as Record<string, unknown>;
+      if (payment.gateway === 'direct' && payment.status === 'success'
+          && (payment as any).payment_authority_version != null
+          && payMeta._direct_transfer === true) {
+        const { resumeSuccessfulPaymentFinalization } = await import('@/lib/payments/authority');
+        const { processSuccessfulPayment } = await import('@/lib/payments/process-success');
+        const { sendProactiveConfirmation } = await import('@/lib/payments/send-confirmation');
+        const lifecycle = await resumeSuccessfulPaymentFinalization(
+          supabase, payment.id,
+          (sb, pay) => processSuccessfulPayment(sb, pay),
+          (sb, pay, opts) => sendProactiveConfirmation(sb, pay, { logPrefix: '[CRON-DIRECT-RECOVERY]', exactEntityFamily: opts?.exactEntityFamily }),
+        );
+        if (lifecycle.status === 'completed' || lifecycle.status === 'already_completed') {
+          reconciled++;
+          logger.info(`[PAYMENT-RECONCILIATION] Direct transfer recovery completed: ${payment.id}`);
+        }
+        continue;
+      }
+
       // Use canonical reconciliation (provider adapter + Payment Authority)
       const result = await reconcilePayment(supabase, payment.id, 'cron');
 

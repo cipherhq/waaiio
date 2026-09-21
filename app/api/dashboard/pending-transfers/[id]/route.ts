@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
 import { logger } from '@/lib/logger';
+import * as Sentry from '@sentry/nextjs';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { sendOrEmail, findCustomerEmail } from '@/lib/channels/send-or-email';
 import { businessNotificationEmail } from '@/lib/email/templates';
@@ -58,7 +59,49 @@ export async function PATCH(
       return NextResponse.json({ error: 'Transfer not found' }, { status: 404 });
     }
 
+    // R2 item 10: Already-confirmed order transfer retry — resume finalization
     if (transfer.status !== 'pending') {
+      if (transfer.status === 'confirmed' && transfer.order_id && action === 'confirm') {
+        // Find exact direct payment for this confirmed order transfer
+        const { data: directPayment } = await service
+          .from('payments')
+          .select('id')
+          .eq('order_id', transfer.order_id)
+          .eq('gateway', 'direct')
+          .eq('status', 'success')
+          .maybeSingle();
+
+        if (!directPayment) {
+          return NextResponse.json({ error: 'No direct payment found for confirmed transfer' }, { status: 409 });
+        }
+
+        // Verify pending_transfer_id provenance matches
+        const { data: payMeta } = await service
+          .from('payments')
+          .select('metadata')
+          .eq('id', directPayment.id)
+          .single();
+        const meta = (payMeta?.metadata || {}) as Record<string, unknown>;
+        if (meta.pending_transfer_id !== transferId) {
+          return NextResponse.json({ error: 'Payment provenance mismatch' }, { status: 409 });
+        }
+
+        // Resume finalization (downstream effects only — financial state already confirmed)
+        try {
+          const { resumeSuccessfulPaymentFinalization } = await import('@/lib/payments/authority');
+          const { processSuccessfulPayment } = await import('@/lib/payments/process-success');
+          const { sendProactiveConfirmation } = await import('@/lib/payments/send-confirmation');
+          await resumeSuccessfulPaymentFinalization(
+            service, directPayment.id,
+            (sb, pay) => processSuccessfulPayment(sb, pay),
+            (sb, pay, opts) => sendProactiveConfirmation(sb, pay, { logPrefix: '[TRANSFER-RETRY]', exactEntityFamily: opts?.exactEntityFamily }),
+          );
+        } catch (resumeErr) {
+          logger.error('[PENDING_TRANSFERS] Retry resume error (non-fatal):', resumeErr);
+        }
+        return NextResponse.json({ success: true, status: 'confirmed' });
+      }
+
       return NextResponse.json(
         { error: `Transfer already ${transfer.status}` },
         { status: 409 },
@@ -218,78 +261,28 @@ export async function PATCH(
         );
       }
 
-      // Downstream: platform fee analytics (using canonical MAJOR order_total from RPC)
-      const orderTotal = confirmResult.order_total as number;
-      await service.from('platform_fees').insert({
-        business_id: business_id,
-        order_id: transfer.order_id,
-        transaction_amount: orderTotal,
-        fee_percentage: 0,
-        fee_flat: 0,
-        fee_total: 0,
-        gateway_fee: 0,
-        tier: (business.subscription_tier || 'free') as string,
-        is_direct_transfer: true,
-      }).then(({ error }) => {
-        if (error) logger.error('[PENDING_TRANSFERS] Analytics fee record error:', error.message);
-      });
-
-      // R28/B5: Customer notification with exact channel only — no arbitrary fallback
-      if (transfer.customer_phone) {
-        try {
-          const resolver = new ChannelResolver(service);
-          const exactChannelId = confirmResult.inbound_channel_id as string | undefined;
-          if (!exactChannelId) {
-            logger.error(`[PENDING_TRANSFERS] Order transfer ${transferId} confirmed but no exact channel — skipping notification`);
-          }
-          const resolved = exactChannelId
-            ? await resolver.resolveByChannelIdForBusiness(exactChannelId, business_id)
-            : null;
-          if (resolved) {
-            const { data: biz } = await service
-              .from('businesses')
-              .select('name, country_code')
-              .eq('id', business_id)
-              .single();
-            const cc = (biz?.country_code || 'NG') as CountryCode;
-            const bizName = biz?.name || 'Business';
-            const amountFormatted = formatCurrency(orderTotal, cc);
-            const messageText = `✅ *Payment Confirmed!*\n\n💰 ${amountFormatted}\n🔑 Ref: *${transfer.reference_code}*\n🏢 ${bizName}\n\nYour order is confirmed. Thank you!`;
-
-            const customerEmail = await findCustomerEmail(service, transfer.customer_phone, business_id);
-            await sendOrEmail({
-              supabase: service,
-              sender: resolved.sender,
-              to: transfer.customer_phone,
-              text: messageText,
-              businessName: bizName,
-              alwaysEmail: true,
-              email: customerEmail ? {
-                address: customerEmail,
-                subject: `Payment Confirmed - ${bizName}`,
-                html: businessNotificationEmail({
-                  businessName: bizName,
-                  title: 'Payment Confirmed',
-                  message: 'Your bank transfer has been verified and your order is confirmed. Thank you!',
-                  details: { 'Amount': amountFormatted, 'Reference': transfer.reference_code },
-                }).html,
-              } : null,
-            });
-          }
-        } catch (notifyErr) {
-          logger.error('[PENDING_TRANSFERS] Customer notification error:', notifyErr);
-        }
+      // M394/Phase 2D: Delegate Stage 2→3 to canonical Payment Authority
+      // R2 item 11: Downstream failure cannot undo financial success
+      const paymentId = confirmResult.payment_id as string;
+      let finalizationStatus = 'pending';
+      try {
+        const { resumeSuccessfulPaymentFinalization } = await import('@/lib/payments/authority');
+        const { processSuccessfulPayment } = await import('@/lib/payments/process-success');
+        const { sendProactiveConfirmation } = await import('@/lib/payments/send-confirmation');
+        const lifecycle = await resumeSuccessfulPaymentFinalization(
+          service, paymentId,
+          (sb, pay) => processSuccessfulPayment(sb, pay),
+          (sb, pay, opts) => sendProactiveConfirmation(sb, pay, { logPrefix: '[TRANSFER-CONFIRM]', exactEntityFamily: opts?.exactEntityFamily }),
+        );
+        finalizationStatus = lifecycle.status;
+      } catch (resumeErr) {
+        // Log but do NOT fail the financial confirmation
+        logger.error('[PENDING_TRANSFERS] Payment Authority resume error (non-fatal):', resumeErr);
+        Sentry.captureException(resumeErr, { tags: { component: 'pending-transfers', operation: 'resume-finalization' } });
+        finalizationStatus = 'error';
       }
 
-      // In-app notification
-      createNotification(service, {
-        businessId: business_id,
-        type: 'transfer_confirmed',
-        channel: 'dashboard',
-        body: `Bank transfer of ${formatCurrency(orderTotal, 'NG')} confirmed. Ref: ${transfer.reference_code}`,
-      }).catch(err => logger.error('[PENDING_TRANSFERS] Notification error:', err));
-
-      return NextResponse.json({ success: true, status: 'confirmed' });
+      return NextResponse.json({ success: true, status: 'confirmed', finalization_status: finalizationStatus });
     }
 
     // ── Non-order confirmation: preserve existing behavior ──

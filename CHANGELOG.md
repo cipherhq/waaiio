@@ -3,6 +3,25 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-09-21 — Feat: Phase 2D direct order Payment Authority (#352)
+
+### What changed
+- **Migration 394**: Redefine `confirm_order_transfer_atomic` with `payment_authority_version=1` + `_direct_transfer=true` metadata provenance. Redefine `initialize_terminal_effects` with `customer_order_email` in catalog + direct order bank transfer exemption from owner_notif_whatsapp/email.
+- **`lib/payments/authority.ts`**: Extract `executeStage2Through3` common executor. Add `resumeSuccessfulPaymentFinalization` export for direct bank-transfer payments. Fail-closed validation: status=success, authority_version present, gateway=direct, order_id present, _direct_transfer=true, pending_transfer_id present.
+- **`lib/payments/process-success.ts`**: Direct bank transfer zero-fee path — gateway='direct' inserts zero-fee platform_fees record with 23505 idempotency. Online tier fee unchanged.
+- **`app/api/dashboard/pending-transfers/[id]/route.ts`**: Order-linked confirm delegates to `resumeSuccessfulPaymentFinalization` (Stage 2→3). Already-confirmed retry support. Downstream failure cannot undo financial success.
+- **`app/api/cron/payment-reconciliation/route.ts`**: Direct gateway recovery bypasses provider verification, calls `resumeSuccessfulPaymentFinalization` directly.
+
+### What it affects
+- Direct bank-transfer order payments now traverse canonical Payment Authority Stage 2→3
+- Missing effects now execute: referral conversion, customer spend, payment_received automation, session terminalization, loyalty, feedback
+- Recovery cron can complete interrupted direct-transfer finalization without provider calls
+- Dashboard returns financial confirmation regardless of downstream finalization state
+
+### What could break
+- Phase 2B+2C tests that checked for route-owned channel resolution now check for Payment Authority delegation
+- Direct transfers that crash between RPC and Stage 2 will be recovered by cron (new behavior — previously orphaned)
+
 ## 2026-09-21 — Feat: M393 inventory reservation wiring (#352 Phase 2B+2C)
 
 ### What changed
