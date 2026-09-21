@@ -1487,6 +1487,9 @@ describe.skipIf(!canRun)('M393: Inventory reservation wiring', () => {
       expect(wins).toBe(1);
 
       expect(parseInt(psql(`SELECT count(*) FROM pending_transfers WHERE order_id = '${orderId}' AND status = 'pending'`))).toBe(1);
+      // R33-6: marker class = bank_transfer, expires_at = winning transfer's
+      const markerClass = psql(`SELECT reservation_class FROM order_stock_applications WHERE order_id = '${orderId}'`);
+      expect(markerClass).toBe('bank_transfer');
       const markerExpiry = psql(`SELECT expires_at FROM order_stock_applications WHERE order_id = '${orderId}'`);
       const transferExpiry = psql(`SELECT expires_at FROM pending_transfers WHERE order_id = '${orderId}' AND status = 'pending'`);
       expect(markerExpiry).toBe(transferExpiry);
@@ -1494,8 +1497,8 @@ describe.skipIf(!canRun)('M393: Inventory reservation wiring', () => {
 
     // R32-2: online vs direct confirm — exact winner assertions
     it('online payment vs confirm_order_transfer_atomic: exactly one winner', async () => {
-      const { orderId, reservedStock, total } = canonicalReservation({ price: 4000, qty: 1, stock: 20 });
-      const { transferId, deadline } = canonicalBankTransfer(orderId);
+      const { prod, orderId, reservedStock, total } = canonicalReservation({ price: 4000, qty: 1, stock: 20 });
+      const { transferId } = canonicalBankTransfer(orderId);
       const payId = psql(`INSERT INTO payments (business_id, order_id, amount, status, currency) VALUES ('${BIZ}', '${orderId}', ${total}, 'pending', 'NGN') RETURNING id`);
 
       const [onlineR, confirmR] = await Promise.all([
@@ -1508,6 +1511,7 @@ describe.skipIf(!canRun)('M393: Inventory reservation wiring', () => {
 
       expect(psql(`SELECT status FROM orders WHERE id = '${orderId}'`)).toBe('confirmed');
 
+      // R33-3: Exactly ONE successful payment
       const successCount = parseInt(psql(`SELECT count(*) FROM payments WHERE (order_id = '${orderId}' OR metadata->>'order_id' = '${orderId}') AND status = 'success'`));
       expect(successCount).toBe(1);
 
@@ -1516,21 +1520,30 @@ describe.skipIf(!canRun)('M393: Inventory reservation wiring', () => {
       expect(psql(`SELECT status FROM payments WHERE id = '${markerPayId}'`)).toBe('success');
       expect(parseInt(psql(`SELECT count(*) FROM order_stock_applications WHERE order_id = '${orderId}'`))).toBe(1);
 
+      // R33-3: Final stock = reservedStock for BOTH winner outcomes
+      const finalStock = parseInt(psql(`SELECT stock_quantity FROM products WHERE id = '${prod}'`));
+      expect(finalStock).toBe(reservedStock);
+
       const confirmResult = confirmR.ok ? JSON.parse(confirmR.stdout) : { confirmed: false };
       const confirmedXfers = parseInt(psql(`SELECT count(*) FROM pending_transfers WHERE order_id = '${orderId}' AND status = 'confirmed'`));
+      const pendingXfers = parseInt(psql(`SELECT count(*) FROM pending_transfers WHERE order_id = '${orderId}' AND status = 'pending'`));
 
       if (confirmResult.confirmed) {
+        // R33-4: Direct winner — transfer confirmed, online not success
         expect(confirmedXfers).toBe(1);
         expect(psql(`SELECT status FROM payments WHERE id = '${payId}'`)).not.toBe('success');
-        // Sole success = the direct payment created by confirm RPC
-        expect(markerPayId).not.toBe(payId);
+        expect(markerPayId).not.toBe(payId); // Sole success = direct payment
+        expect(pendingXfers).toBe(0); // No pending transfers left
       } else {
+        // R33-4: Online winner — transfer cancelled, online is sole success
         expect(confirmedXfers).toBe(0);
         expect(psql(`SELECT status FROM payments WHERE id = '${payId}'`)).toBe('success');
         expect(markerPayId).toBe(payId);
+        // Target pending transfer should be cancelled (online winner closes them)
+        const targetXferStatus = psql(`SELECT status FROM pending_transfers WHERE id = '${transferId}'`);
+        expect(targetXferStatus).toBe('cancelled');
+        expect(pendingXfers).toBe(0);
       }
-
-      // Stock = reservedStock (no second decrement, no restore) — marker count=1 proves this
     }, 30000);
 
     // R32-3: reject vs online — XOR with exact stock
@@ -1590,15 +1603,30 @@ describe.skipIf(!canRun)('M393: Inventory reservation wiring', () => {
       const stockFinal = parseInt(psql(`SELECT stock_quantity FROM products WHERE id = '${prod}'`));
       const sResult = staleR.ok ? JSON.parse(staleR.stdout) : {};
 
+      const payStatus = psql(`SELECT status FROM payments WHERE id = '${payId}'`);
+
       if (orderStatus === 'confirmed') {
+        // R33-5: Payment won
+        expect(payStatus).toBe('success');
         expect(sResult.cancelled).toBe(false);
         const markerPayId = psql(`SELECT payment_id FROM order_stock_applications WHERE order_id = '${orderId}'`);
         expect(markerPayId).toBe(payId);
         expect(stockFinal).toBe(reservedStock); // No restore
       } else {
+        // R33-5: Stale cancel won
         expect(orderStatus).toBe('cancelled');
         expect(sResult.cancelled).toBe(true);
         expect(stockFinal).toBe(originalStock); // Restored once
+        expect(parseInt(psql(`SELECT count(*) FROM order_stock_applications WHERE order_id = '${orderId}'`))).toBe(0);
+        // Loser proof: payment cannot be success on cancelled order
+        expect(payStatus).not.toBe('success');
+        // Second guarded transition affects 0 rows
+        const secondTransition = psql(`UPDATE payments SET status = 'success' WHERE id = '${payId}' AND status = 'pending' RETURNING id`);
+        expect(secondTransition).toBe(''); // 0 rows affected
+        // apply_order_stock_once cannot confirm cancelled order
+        const retryStock = psqlJson(`SELECT apply_order_stock_once('${orderId}', '${payId}')`);
+        expect(retryStock.applied).toBe(false);
+        expect(retryStock.reason).toBe('order_cancelled');
       }
       expect(stockFinal).toBeLessThanOrEqual(originalStock);
     }, 30000);
