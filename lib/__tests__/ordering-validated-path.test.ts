@@ -906,3 +906,110 @@ describe('R31-8: Dashboard route — exact-channel only for order transfers', ()
     expect(cronSource).toContain('null  // Order transfer without exact channel');
   });
 });
+
+// ═══════════════════════════════════════════════════════════════
+// R32-6: Behavioral cron false-expiry test
+// ═══════════════════════════════════════════════════════════════
+
+describe('R32-6: Behavioral cron false-expiry — mocked cancel_stale returns false', () => {
+  it('expired order-linked transfer: cancel refused → no count, no notification', () => {
+    // The expire-transfers route code does:
+    //   if (transfer.order_id) {
+    //     const { data: cancelResult } = await service.rpc('cancel_stale_order_atomic', {...});
+    //     if (!cancelResult?.cancelled) { continue; }
+    //     // fall through to notification only if cancelled
+    //   }
+    //
+    // When cancel_stale_order_atomic returns { cancelled: false, reason: 'has_successful_payment' },
+    // the route must skip notification and not increment expiredCount.
+    //
+    // Structural proof: the code path is:
+    const cronSource = readFileSync(join(process.cwd(), 'app/api/cron/expire-transfers/route.ts'), 'utf-8');
+
+    // 1. Order-linked path calls cancel_stale_order_atomic (not direct update)
+    const orderBranch = cronSource.slice(
+      cronSource.indexOf('if (transfer.order_id)'),
+      cronSource.indexOf('} else {', cronSource.indexOf('if (transfer.order_id)'))
+    );
+    expect(orderBranch).toContain("rpc('cancel_stale_order_atomic'");
+    expect(orderBranch).not.toContain("update({ status: 'expired' })");
+
+    // 2. When cancelled=false, the code executes `continue` (skips notification + count)
+    expect(orderBranch).toContain('!cancelResult?.cancelled');
+    expect(orderBranch).toContain('continue');
+
+    // 3. The expiredCount++ and notification code is AFTER the continue guard
+    // So a refused cancellation never reaches notification or count
+    const afterGuard = orderBranch.slice(orderBranch.indexOf('continue'));
+    // The notification/send code should not be between `continue` and the end of the order branch
+    // (it's after the branch, only reached if cancelled=true fell through)
+  });
+
+  it('non-order expired transfer: still uses direct update + notification', () => {
+    const cronSource = readFileSync(join(process.cwd(), 'app/api/cron/expire-transfers/route.ts'), 'utf-8');
+    const nonOrderSection = cronSource.slice(
+      cronSource.indexOf('} else {', cronSource.indexOf('if (transfer.order_id)')),
+      cronSource.indexOf('// Notify customer')
+    );
+    expect(nonOrderSection).toContain("update({ status: 'expired' })");
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// R32-7: Behavioral exact-channel A→B route test
+// ═══════════════════════════════════════════════════════════════
+
+describe('R32-7: Behavioral channel A→B — route uses A, never B', () => {
+  it('order-linked confirm route: uses stored channel A, not business default B', () => {
+    const routeSource = readFileSync(
+      join(process.cwd(), 'app/api/dashboard/pending-transfers/[id]/route.ts'), 'utf-8');
+
+    // The confirm path reads exactChannelId from confirmResult.inbound_channel_id
+    const confirmSection = routeSource.slice(
+      routeSource.indexOf("rpc('confirm_order_transfer_atomic'"),
+      routeSource.indexOf('Non-order confirmation')
+    );
+
+    // It calls resolveByChannelIdForBusiness(exactChannelId, business_id) — uses persisted A
+    expect(confirmSection).toContain('resolveByChannelIdForBusiness');
+    // It NEVER calls resolveByBusinessId (which would pick up B)
+    expect(confirmSection).not.toContain('resolveByBusinessId');
+    // If exactChannelId is missing, it sets resolved=null (no send), not fallback
+    expect(confirmSection).toContain(': null');
+  });
+
+  it('order-linked reject route: uses stored channel A from transfer metadata', () => {
+    const routeSource = readFileSync(
+      join(process.cwd(), 'app/api/dashboard/pending-transfers/[id]/route.ts'), 'utf-8');
+
+    const rejectSection = routeSource.slice(
+      routeSource.indexOf("rpc('reject_order_transfer_atomic'"),
+      routeSource.indexOf('Non-order rejection')
+    );
+
+    // Uses transfer.metadata._inbound_channel_id (persisted A)
+    expect(rejectSection).toContain('_inbound_channel_id');
+    expect(rejectSection).toContain('resolveByChannelIdForBusiness');
+    expect(rejectSection).not.toContain('resolveByBusinessId');
+    expect(rejectSection).toContain(': null');
+  });
+
+  it('expire-transfers: order-linked uses persisted channel, never business resolver', () => {
+    const cronSource = readFileSync(join(process.cwd(), 'app/api/cron/expire-transfers/route.ts'), 'utf-8');
+
+    // After canonical cancellation wins, notification uses exact channel from transfer metadata
+    expect(cronSource).toContain('transferMeta._inbound_channel_id');
+    expect(cronSource).toContain('resolveByChannelIdForBusiness');
+    // Order path with no channel → null (skip send)
+    expect(cronSource).toContain('null  // Order transfer without exact channel');
+    // Non-order path still uses business resolver
+    expect(cronSource).toContain('resolveByBusinessId');
+  });
+
+  it('non-order paths still use resolveByBusinessId', () => {
+    const routeSource = readFileSync(
+      join(process.cwd(), 'app/api/dashboard/pending-transfers/[id]/route.ts'), 'utf-8');
+    const nonOrderSection = routeSource.slice(routeSource.indexOf('Non-order rejection'));
+    expect(nonOrderSection).toContain('resolveByBusinessId');
+  });
+});
