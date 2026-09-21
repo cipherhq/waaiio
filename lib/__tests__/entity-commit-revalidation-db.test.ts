@@ -1937,12 +1937,13 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
       `);
       expect(r.order_id).toBeDefined();
 
-      // M393: pending validated order → instant marker with ~30m expiry
-      const marker = psqlJson(`SELECT reservation_class,
-        expires_at IS NOT NULL AS has_expiry,
-        expires_at > NOW() AS not_expired,
-        expires_at < NOW() + interval '35 minutes' AS within_35m
-        FROM order_stock_applications WHERE order_id = '${r.order_id}'`);
+      // R30: Use jsonb_build_object to return proper JSON from scalar SELECT
+      const marker = psqlJson(`SELECT jsonb_build_object(
+        'reservation_class', reservation_class,
+        'has_expiry', (expires_at IS NOT NULL),
+        'not_expired', (expires_at > NOW()),
+        'within_35m', (expires_at < NOW() + interval '35 minutes')
+      ) FROM order_stock_applications WHERE order_id = '${r.order_id}'`);
       expect(marker.reservation_class).toBe('instant');
       expect(marker.has_expiry).toBe(true);
       expect(marker.not_expired).toBe(true);
@@ -1957,7 +1958,8 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
 
     it('70. apply M392+M393 → create_order_atomic validated confirmed → marker committed no expiry', () => {
       const freshSession = '00000000-0000-0000-0383-0000000000aa';
-      const freeProduct = psql(`INSERT INTO products (business_id, price, is_active) VALUES ('${BIZ_ID}', 0, true) RETURNING id`);
+      // R30: Insert product with explicit name (required column in some schemas)
+      const freeProduct = psql(`INSERT INTO products (business_id, name, price, is_active) VALUES ('${BIZ_ID}', 'Free Test Product', 0, true) RETURNING id`);
       const items = JSON.stringify([{ product_id: freeProduct, quantity: 1, unit_price: 0 }]);
       const r = psqlJson(`
         SET ROLE service_role;
@@ -1970,8 +1972,11 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
       `);
       expect(r.order_id).toBeDefined();
 
-      const marker = psqlJson(`SELECT reservation_class, expires_at IS NULL AS no_expiry
-        FROM order_stock_applications WHERE order_id = '${r.order_id}'`);
+      // R30: Use jsonb_build_object for proper JSON
+      const marker = psqlJson(`SELECT jsonb_build_object(
+        'reservation_class', reservation_class,
+        'no_expiry', (expires_at IS NULL)
+      ) FROM order_stock_applications WHERE order_id = '${r.order_id}'`);
       expect(marker.reservation_class).toBe('committed');
       expect(marker.no_expiry).toBe(true);
 
