@@ -73,6 +73,7 @@ DECLARE
   v_fp_item jsonb;
   v_addon_ids text;
   v_zone RECORD;  -- M393: delivery zone
+  v_zone_name TEXT := NULL;  -- M393: canonical zone name (only set when zone validated)
 BEGIN
   -- ── Phase 1: Lock + idempotency ──
   PERFORM pg_advisory_xact_lock(abs(hashtext(p_bot_session_id::text)));
@@ -299,6 +300,7 @@ BEGIN
 
       -- Add zone price (replaces shipping for zone orders — no double-count)
       v_server_total := v_server_total + v_zone.price;
+      v_zone_name := v_zone.name;  -- R29: capture canonical name for later INSERT
     ELSE
       -- No zone: use caller-supplied shipping cost
       v_server_total := v_server_total + COALESCE(p_shipping_cost, 0);
@@ -398,7 +400,7 @@ BEGIN
     CASE WHEN p_validate_products THEN v_server_total ELSE p_total_amount END,
     p_discount_amount, p_shipping_cost, p_promo_code_id, p_channel, p_notes,
     p_delivery_zone_id,
-    CASE WHEN p_validate_products AND p_delivery_zone_id IS NOT NULL THEN v_zone.name
+    CASE WHEN v_zone_name IS NOT NULL THEN v_zone_name
          ELSE p_delivery_zone_name END,
     p_addons_total, p_volume_discount_amount,
     p_pickup_address, p_dropoff_address, p_package_description, p_package_photo_url,
@@ -1116,6 +1118,11 @@ BEGIN
     RETURN jsonb_build_object('error', true, 'reason', 'active_transfer_exists');
   END IF;
 
+  -- R29: Bind to locked order.channel — require WhatsApp for this authority
+  IF v_order.channel IS NULL OR v_order.channel != 'whatsapp' THEN
+    RETURN jsonb_build_object('error', true, 'reason', 'order_not_whatsapp');
+  END IF;
+
   -- 4. R28/B4: Derive bot_session from locked order (no caller override)
   IF v_order.bot_session_id IS NULL THEN
     RETURN jsonb_build_object('error', true, 'reason', 'order_has_no_session');
@@ -1130,7 +1137,10 @@ BEGIN
     RETURN jsonb_build_object('error', true, 'reason', 'session_not_found');
   END IF;
 
-  -- Verify session belongs to the same business
+  -- R29: NULL-safe session business check
+  IF v_session.sess_business_id IS NULL THEN
+    RETURN jsonb_build_object('error', true, 'reason', 'session_no_business');
+  END IF;
   IF v_session.sess_business_id != p_business_id THEN
     RETURN jsonb_build_object('error', true, 'reason', 'session_business_mismatch');
   END IF;
@@ -1150,16 +1160,24 @@ BEGIN
     RETURN jsonb_build_object('error', true, 'reason', 'channel_not_found_or_inactive');
   END IF;
 
-  -- Authorization: shared channels = any business; dedicated = must own or be assigned
-  IF v_channel.channel_type != 'shared' AND v_channel.business_id != p_business_id THEN
-    -- Check if business has this channel assigned
+  -- R29: NULL-safe channel authorization matching resolveByChannelIdForBusiness semantics
+  -- shared → allowed; dedicated owned by exact business → allowed; otherwise require assignment
+  IF v_channel.channel_type = 'shared' THEN
+    -- Shared channels: any business may use
+    NULL;
+  ELSIF v_channel.business_id IS NOT NULL AND v_channel.business_id = p_business_id THEN
+    -- Dedicated channel owned by this business: authorized
+    NULL;
+  ELSE
+    -- Dedicated channel not owned (or NULL owner): check explicit assignment
     SELECT assigned_channel_id, whatsapp_channel_id
     INTO v_business
     FROM businesses
     WHERE id = p_business_id;
 
-    IF v_business.assigned_channel_id != v_channel_id::uuid
-       AND v_business.whatsapp_channel_id != v_channel_id::uuid THEN
+    IF NOT FOUND
+       OR (COALESCE(v_business.assigned_channel_id::text, '') != v_channel_id
+           AND COALESCE(v_business.whatsapp_channel_id::text, '') != v_channel_id) THEN
       RETURN jsonb_build_object('error', true, 'reason', 'channel_not_authorized');
     END IF;
   END IF;
@@ -1270,9 +1288,9 @@ BEGIN
     RETURN jsonb_build_object('confirmed', false, 'reason', 'business_mismatch');
   END IF;
 
-  -- 2. Lock transfer
+  -- 2. Lock transfer (R29: include customer_phone, customer_name for payment metadata)
   SELECT id, order_id, business_id, expected_amount, currency, reference_code,
-         status, expires_at, metadata
+         status, expires_at, metadata, customer_phone, customer_name
   INTO v_transfer
   FROM pending_transfers
   WHERE id = p_transfer_id
@@ -1377,6 +1395,9 @@ BEGIN
       'confirmed_by', p_confirmed_by,
       'customer_phone', v_transfer.customer_phone,
       'customer_name', v_transfer.customer_name,
+      'transfer_reference', v_transfer.reference_code,
+      'transfer_currency', v_transfer.currency,
+      'transfer_expected_amount', v_transfer.expected_amount,
       '_inbound_channel_id', v_transfer.metadata->>'_inbound_channel_id',
       '_confirmation_origin', v_transfer.metadata->>'_confirmation_origin'
     )

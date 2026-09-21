@@ -835,7 +835,7 @@ describe.skipIf(!canRun)('M393: Inventory reservation wiring', () => {
 
       const r = psqlJson(`
         SELECT create_transfer_with_reservation(
-          '${ord}', '${BIZ}', '+2348099990393', 'Test Customer', 'NG', 24, '${SESSION_A}'
+          '${ord}', '${BIZ}', '+2348099990393', 'Test Customer', 'NG', 24
         )
       `);
       expect(r.error).toBeUndefined();
@@ -861,7 +861,7 @@ describe.skipIf(!canRun)('M393: Inventory reservation wiring', () => {
 
       const r = psqlJson(`
         SELECT create_transfer_with_reservation(
-          '${ord}', '${BIZ_OTHER}', '+2348099990393', 'Test', 'NG', 24, '${SESSION_A}'
+          '${ord}', '${BIZ_OTHER}', '+2348099990393', 'Test', 'NG', 24
         )
       `);
       expect(r.error).toBe(true);
@@ -876,7 +876,7 @@ describe.skipIf(!canRun)('M393: Inventory reservation wiring', () => {
 
       const r = psqlJson(`
         SELECT create_transfer_with_reservation(
-          '${ord}', '${BIZ}', '+2348099990393', 'Test', 'NG', 24, '${SESSION_B}'
+          '${ord}', '${BIZ}', '+2348099990393', 'Test', 'NG', 24
         )
       `);
       expect(r.error).toBe(true);
@@ -891,7 +891,7 @@ describe.skipIf(!canRun)('M393: Inventory reservation wiring', () => {
 
       const r = psqlJson(`
         SELECT create_transfer_with_reservation(
-          '${ord}', '${BIZ}', '+2348099990393', 'Test', 'NG', 24, '${SESSION_C}'
+          '${ord}', '${BIZ}', '+2348099990393', 'Test', 'NG', 24
         )
       `);
       expect(r.error).toBe(true);
@@ -906,7 +906,7 @@ describe.skipIf(!canRun)('M393: Inventory reservation wiring', () => {
 
       const r = psqlJson(`
         SELECT create_transfer_with_reservation(
-          '${ord}', '${BIZ}', '+2348099990393', 'Test', 'NG', 24, '${SESSION_NO_CH}'
+          '${ord}', '${BIZ}', '+2348099990393', 'Test', 'NG', 24
         )
       `);
       expect(r.error).toBe(true);
@@ -921,7 +921,7 @@ describe.skipIf(!canRun)('M393: Inventory reservation wiring', () => {
 
       const r = psqlJson(`
         SELECT create_transfer_with_reservation(
-          '${ord}', '${BIZ}', '+233200000001', 'Ghana Test', 'GH', 24, '${SESSION_D}'
+          '${ord}', '${BIZ}', '+233200000001', 'Ghana Test', 'GH', 24
         )
       `);
       expect(r.currency).toBe('GHS');
@@ -1162,7 +1162,7 @@ describe.skipIf(!canRun)('M393: Inventory reservation wiring', () => {
     });
 
     it('anon: create_transfer_with_reservation denied', () => {
-      const res = psqlMayFail(`SET ROLE anon; SELECT create_transfer_with_reservation('${DUMMY_UUID}'::uuid, '${DUMMY_UUID}'::uuid, '+234', 'X', 'NG', 24, '${DUMMY_UUID}'::uuid); RESET ROLE;`);
+      const res = psqlMayFail(`SET ROLE anon; SELECT create_transfer_with_reservation('${DUMMY_UUID}'::uuid, '${DUMMY_UUID}'::uuid, '+234', 'X', 'NG', 24); RESET ROLE;`);
       expect(res.ok).toBe(false);
       expect(res.output).toContain('permission denied');
     });
@@ -1203,7 +1203,7 @@ describe.skipIf(!canRun)('M393: Inventory reservation wiring', () => {
     });
 
     it('service_role: create_transfer_with_reservation allowed', () => {
-      const r = psql(`SET ROLE service_role; SELECT create_transfer_with_reservation('${DUMMY_UUID}'::uuid, '${DUMMY_UUID}'::uuid, '+234', 'X', 'NG', 24, '${DUMMY_UUID}'::uuid); RESET ROLE;`);
+      const r = psql(`SET ROLE service_role; SELECT create_transfer_with_reservation('${DUMMY_UUID}'::uuid, '${DUMMY_UUID}'::uuid, '+234', 'X', 'NG', 24); RESET ROLE;`);
       const parsed = JSON.parse(r);
       expect(parsed.error).toBe(true);
       expect(parsed.reason).toBe('order_not_found');
@@ -1224,12 +1224,187 @@ describe.skipIf(!canRun)('M393: Inventory reservation wiring', () => {
     });
 
     it('service_role: create_order_atomic allowed (creates order)', () => {
-      // create_order_atomic with a dummy session won't find an existing order,
-      // it will try to create one. We verify permission is granted.
       const r = psql(`SET ROLE service_role; SELECT create_order_atomic('${DUMMY_UUID}'::uuid, '${BIZ}'::uuid, '${DUMMY_UUID}'::uuid); RESET ROLE;`);
       const parsed = JSON.parse(r);
-      // Should succeed (create a new order) since session doesn't exist
       expect(parsed.order_id).toBeTruthy();
+    });
+
+    // R29: PUBLIC denied on all 3 new RPCs
+    it('PUBLIC: create_transfer_with_reservation denied', () => {
+      const res = psqlMayFail(`SET ROLE postgres; SELECT has_function_privilege('public', 'create_transfer_with_reservation', 'EXECUTE'); RESET ROLE;`);
+      // has_function_privilege returns 'f' for denied or fails
+      if (res.ok) expect(res.output).toBe('f');
+    });
+
+    it('authenticated: create_transfer_with_reservation denied', () => {
+      const res = psqlMayFail(`SET ROLE authenticated; SELECT create_transfer_with_reservation('${DUMMY_UUID}'::uuid, '${DUMMY_UUID}'::uuid, '+234', 'Test', 'NG', 24); RESET ROLE;`);
+      expect(res.ok).toBe(false);
+    });
+
+    it('authenticated: confirm_order_transfer_atomic denied', () => {
+      const res = psqlMayFail(`SET ROLE authenticated; SELECT confirm_order_transfer_atomic('${DUMMY_UUID}'::uuid, '${DUMMY_UUID}'::uuid, '${DUMMY_UUID}'::uuid, '${DUMMY_UUID}'::uuid); RESET ROLE;`);
+      expect(res.ok).toBe(false);
+    });
+
+    it('authenticated: reject_order_transfer_atomic denied', () => {
+      const res = psqlMayFail(`SET ROLE authenticated; SELECT reject_order_transfer_atomic('${DUMMY_UUID}'::uuid, '${DUMMY_UUID}'::uuid, '${DUMMY_UUID}'::uuid); RESET ROLE;`);
+      expect(res.ok).toBe(false);
+    });
+  });
+
+  // ═══ R29: Channel authority ═══
+  describe('Channel authority in create_transfer_with_reservation', () => {
+    it('shared channel: allowed', () => {
+      // CHANNEL_A is already 'shared' + active from beforeAll
+      const orderId = psql(`INSERT INTO orders (business_id, user_id, total_amount, status, bot_session_id, channel) VALUES ('${BIZ}', '${USER_A}', 1000, 'pending', '${SESSION_A}', 'whatsapp') RETURNING id`);
+      psql(`INSERT INTO order_stock_applications (order_id, reservation_class, expires_at) VALUES ('${orderId}', 'instant', NOW() + interval '25 minutes')`);
+      const result = psqlJson(`SELECT create_transfer_with_reservation('${orderId}', '${BIZ}', '+234900', 'Test', 'NG', 24)`);
+      expect(result.error).toBeUndefined();
+      expect(result.transfer_id).toBeDefined();
+    });
+
+    it('Waaiio-hosted dedicated channel (owned by business): allowed', () => {
+      const dedicatedCh = psql(`INSERT INTO whatsapp_channels (channel_type, business_id, is_active) VALUES ('dedicated', '${BIZ}', true) RETURNING id`);
+      const dedSession = psql(`INSERT INTO bot_sessions (business_id, session_data) VALUES ('${BIZ}', '{"_inbound_channel_id":"${dedicatedCh}"}'::jsonb) RETURNING id`);
+      const orderId = psql(`INSERT INTO orders (business_id, user_id, total_amount, status, bot_session_id, channel) VALUES ('${BIZ}', '${USER_A}', 1000, 'pending', '${dedSession}', 'whatsapp') RETURNING id`);
+      psql(`INSERT INTO order_stock_applications (order_id, reservation_class, expires_at) VALUES ('${orderId}', 'instant', NOW() + interval '25 minutes')`);
+      const result = psqlJson(`SELECT create_transfer_with_reservation('${orderId}', '${BIZ}', '+234900', 'Test', 'NG', 24)`);
+      expect(result.error).toBeUndefined();
+      expect(result.transfer_id).toBeDefined();
+    });
+
+    it('Embedded Signup dedicated (assigned via whatsapp_channel_id): allowed', () => {
+      // Dedicated channel with NULL business_id but assigned to business
+      const esCh = psql(`INSERT INTO whatsapp_channels (channel_type, business_id, is_active) VALUES ('dedicated', NULL, true) RETURNING id`);
+      psql(`UPDATE businesses SET whatsapp_channel_id = '${esCh}' WHERE id = '${BIZ}'`);
+      const esSession = psql(`INSERT INTO bot_sessions (business_id, session_data) VALUES ('${BIZ}', '{"_inbound_channel_id":"${esCh}"}'::jsonb) RETURNING id`);
+      const orderId = psql(`INSERT INTO orders (business_id, user_id, total_amount, status, bot_session_id, channel) VALUES ('${BIZ}', '${USER_A}', 1000, 'pending', '${esSession}', 'whatsapp') RETURNING id`);
+      psql(`INSERT INTO order_stock_applications (order_id, reservation_class, expires_at) VALUES ('${orderId}', 'instant', NOW() + interval '25 minutes')`);
+      const result = psqlJson(`SELECT create_transfer_with_reservation('${orderId}', '${BIZ}', '+234900', 'Test', 'NG', 24)`);
+      expect(result.error).toBeUndefined();
+      expect(result.transfer_id).toBeDefined();
+      // Cleanup assignment
+      psql(`UPDATE businesses SET whatsapp_channel_id = NULL WHERE id = '${BIZ}'`);
+    });
+
+    it('inactive channel: refused', () => {
+      const inactiveCh = psql(`INSERT INTO whatsapp_channels (channel_type, is_active) VALUES ('shared', false) RETURNING id`);
+      const inactSession = psql(`INSERT INTO bot_sessions (business_id, session_data) VALUES ('${BIZ}', '{"_inbound_channel_id":"${inactiveCh}"}'::jsonb) RETURNING id`);
+      const orderId = psql(`INSERT INTO orders (business_id, user_id, total_amount, status, bot_session_id, channel) VALUES ('${BIZ}', '${USER_A}', 1000, 'pending', '${inactSession}', 'whatsapp') RETURNING id`);
+      psql(`INSERT INTO order_stock_applications (order_id, reservation_class, expires_at) VALUES ('${orderId}', 'instant', NOW() + interval '25 minutes')`);
+      const result = psqlJson(`SELECT create_transfer_with_reservation('${orderId}', '${BIZ}', '+234900', 'Test', 'NG', 24)`);
+      expect(result.error).toBe(true);
+      expect(result.reason).toBe('channel_not_found_or_inactive');
+    });
+
+    it('unauthorized dedicated (NULL owner, not assigned): refused', () => {
+      const unownedCh = psql(`INSERT INTO whatsapp_channels (channel_type, business_id, is_active) VALUES ('dedicated', NULL, true) RETURNING id`);
+      const unownSession = psql(`INSERT INTO bot_sessions (business_id, session_data) VALUES ('${BIZ}', '{"_inbound_channel_id":"${unownedCh}"}'::jsonb) RETURNING id`);
+      const orderId = psql(`INSERT INTO orders (business_id, user_id, total_amount, status, bot_session_id, channel) VALUES ('${BIZ}', '${USER_A}', 1000, 'pending', '${unownSession}', 'whatsapp') RETURNING id`);
+      psql(`INSERT INTO order_stock_applications (order_id, reservation_class, expires_at) VALUES ('${orderId}', 'instant', NOW() + interval '25 minutes')`);
+      const result = psqlJson(`SELECT create_transfer_with_reservation('${orderId}', '${BIZ}', '+234900', 'Test', 'NG', 24)`);
+      expect(result.error).toBe(true);
+      expect(result.reason).toBe('channel_not_authorized');
+    });
+
+    it('wrong/null bot-session business: refused', () => {
+      const nullBizSession = psql(`INSERT INTO bot_sessions (business_id, session_data) VALUES (NULL, '{"_inbound_channel_id":"${CHANNEL_A}"}'::jsonb) RETURNING id`);
+      const orderId = psql(`INSERT INTO orders (business_id, user_id, total_amount, status, bot_session_id, channel) VALUES ('${BIZ}', '${USER_A}', 1000, 'pending', '${nullBizSession}', 'whatsapp') RETURNING id`);
+      psql(`INSERT INTO order_stock_applications (order_id, reservation_class, expires_at) VALUES ('${orderId}', 'instant', NOW() + interval '25 minutes')`);
+      const result = psqlJson(`SELECT create_transfer_with_reservation('${orderId}', '${BIZ}', '+234900', 'Test', 'NG', 24)`);
+      expect(result.error).toBe(true);
+      expect(result.reason).toBe('session_no_business');
+    });
+
+    it('order.channel != whatsapp: refused', () => {
+      const orderId = psql(`INSERT INTO orders (business_id, user_id, total_amount, status, bot_session_id, channel) VALUES ('${BIZ}', '${USER_A}', 1000, 'pending', '${SESSION_A}', 'web') RETURNING id`);
+      psql(`INSERT INTO order_stock_applications (order_id, reservation_class, expires_at) VALUES ('${orderId}', 'instant', NOW() + interval '25 minutes')`);
+      const result = psqlJson(`SELECT create_transfer_with_reservation('${orderId}', '${BIZ}', '+234900', 'Test', 'NG', 24)`);
+      expect(result.error).toBe(true);
+      expect(result.reason).toBe('order_not_whatsapp');
+    });
+
+    it('duplicate active transfer: refused', () => {
+      const orderId = psql(`INSERT INTO orders (business_id, user_id, total_amount, status, bot_session_id, channel) VALUES ('${BIZ}', '${USER_A}', 1000, 'pending', '${SESSION_A}', 'whatsapp') RETURNING id`);
+      psql(`INSERT INTO order_stock_applications (order_id, reservation_class, expires_at) VALUES ('${orderId}', 'instant', NOW() + interval '25 minutes')`);
+      // First transfer succeeds
+      const r1 = psqlJson(`SELECT create_transfer_with_reservation('${orderId}', '${BIZ}', '+234900', 'Test', 'NG', 24)`);
+      expect(r1.transfer_id).toBeDefined();
+      // Reset marker to instant for re-attempt (normally wouldn't happen but tests the duplicate check)
+      psql(`UPDATE order_stock_applications SET reservation_class = 'instant', expires_at = NOW() + interval '25 minutes' WHERE order_id = '${orderId}'`);
+      const r2 = psqlJson(`SELECT create_transfer_with_reservation('${orderId}', '${BIZ}', '+234900', 'Test', 'NG', 24)`);
+      expect(r2.error).toBe(true);
+      expect(r2.reason).toBe('active_transfer_exists');
+    });
+  });
+
+  // ═══ R29: Winner/concurrency ═══
+  describe('Winner and concurrency', () => {
+    it('confirm rejects bank_transfer marker with non-null payment_id', () => {
+      const orderId = psql(`INSERT INTO orders (business_id, user_id, total_amount, status, bot_session_id, channel) VALUES ('${BIZ}', '${USER_A}', 1000, 'pending', '${SESSION_A}', 'whatsapp') RETURNING id`);
+      const payId = psql(`INSERT INTO payments (business_id, order_id, amount, status) VALUES ('${BIZ}', '${orderId}', 1000, 'pending') RETURNING id`);
+      const deadline = psql(`SELECT (NOW() + interval '24 hours')::timestamptz`);
+      psql(`INSERT INTO order_stock_applications (order_id, reservation_class, expires_at, payment_id) VALUES ('${orderId}', 'bank_transfer', '${deadline}', '${payId}')`);
+      const xferId = psql(`INSERT INTO pending_transfers (business_id, order_id, customer_phone, expected_amount, currency, expires_at, status) VALUES ('${BIZ}', '${orderId}', '+234900', 100000, 'NGN', '${deadline}', 'pending') RETURNING id`);
+      const result = psqlJson(`SELECT confirm_order_transfer_atomic('${xferId}', '${orderId}', '${BIZ}', '${USER_A}')`);
+      expect(result.confirmed).toBe(false);
+      expect(result.reason).toBe('marker_has_payment');
+    });
+
+    it('active finalization_processing_at blocks direct transfer confirm', () => {
+      const orderId = psql(`INSERT INTO orders (business_id, user_id, total_amount, status, bot_session_id, channel) VALUES ('${BIZ}', '${USER_A}', 2000, 'pending', '${SESSION_A}', 'whatsapp') RETURNING id`);
+      const deadline = psql(`SELECT (NOW() + interval '24 hours')::timestamptz`);
+      psql(`INSERT INTO order_stock_applications (order_id, reservation_class, expires_at) VALUES ('${orderId}', 'bank_transfer', '${deadline}')`);
+      // Active finalization lease (< 5 min old)
+      psql(`INSERT INTO payments (business_id, order_id, amount, status, finalization_processing_at) VALUES ('${BIZ}', '${orderId}', 2000, 'pending', NOW())`);
+      const xferId = psql(`INSERT INTO pending_transfers (business_id, order_id, customer_phone, expected_amount, currency, expires_at, status) VALUES ('${BIZ}', '${orderId}', '+234900', 200000, 'NGN', '${deadline}', 'pending') RETURNING id`);
+      const result = psqlJson(`SELECT confirm_order_transfer_atomic('${xferId}', '${orderId}', '${BIZ}', '${USER_A}')`);
+      expect(result.confirmed).toBe(false);
+      expect(result.reason).toBe('online_payment_won');
+    });
+
+    it('reject vs already-confirmed order: refused', () => {
+      const orderId = psql(`INSERT INTO orders (business_id, user_id, total_amount, status) VALUES ('${BIZ}', '${USER_A}', 1000, 'confirmed') RETURNING id`);
+      const xferId = psql(`INSERT INTO pending_transfers (business_id, order_id, customer_phone, expected_amount, currency, expires_at, status) VALUES ('${BIZ}', '${orderId}', '+234900', 100000, 'NGN', NOW() + interval '24 hours', 'pending') RETURNING id`);
+      const result = psqlJson(`SELECT reject_order_transfer_atomic('${xferId}', '${orderId}', '${BIZ}')`);
+      expect(result.rejected).toBe(false);
+      expect(result.reason).toBe('confirmed');
+    });
+
+    it('reject vs successful payment: refused', () => {
+      const orderId = psql(`INSERT INTO orders (business_id, user_id, total_amount, status) VALUES ('${BIZ}', '${USER_A}', 1000, 'pending') RETURNING id`);
+      const deadline = psql(`SELECT (NOW() + interval '24 hours')::timestamptz`);
+      psql(`INSERT INTO order_stock_applications (order_id, reservation_class, expires_at) VALUES ('${orderId}', 'bank_transfer', '${deadline}')`);
+      psql(`INSERT INTO payments (business_id, order_id, amount, status) VALUES ('${BIZ}', '${orderId}', 1000, 'success')`);
+      const xferId = psql(`INSERT INTO pending_transfers (business_id, order_id, customer_phone, expected_amount, currency, expires_at, status) VALUES ('${BIZ}', '${orderId}', '+234900', 100000, 'NGN', '${deadline}', 'pending') RETURNING id`);
+      const result = psqlJson(`SELECT reject_order_transfer_atomic('${xferId}', '${orderId}', '${BIZ}')`);
+      expect(result.rejected).toBe(false);
+      expect(result.reason).toBe('has_successful_payment');
+    });
+
+    it('wrong business on reject: refused', () => {
+      const orderId = psql(`INSERT INTO orders (business_id, user_id, total_amount, status) VALUES ('${BIZ}', '${USER_A}', 1000, 'pending') RETURNING id`);
+      const xferId = psql(`INSERT INTO pending_transfers (business_id, order_id, customer_phone, expected_amount, currency, expires_at, status) VALUES ('${BIZ}', '${orderId}', '+234900', 100000, 'NGN', NOW() + interval '24 hours', 'pending') RETURNING id`);
+      const result = psqlJson(`SELECT reject_order_transfer_atomic('${xferId}', '${orderId}', '${BIZ_OTHER}')`);
+      expect(result.rejected).toBe(false);
+      expect(result.reason).toBe('business_mismatch');
+    });
+
+    it('no-zone validated order: does not crash (v_zone_name NULL safe)', () => {
+      const prod = psql(`INSERT INTO products (business_id, price, is_active) VALUES ('${BIZ}', 2000, true) RETURNING id`);
+      const items = JSON.stringify([{ product_id: prod, quantity: 1, unit_price: 2000 }]);
+      const result = psqlJson(`
+        SELECT create_order_atomic(
+          gen_random_uuid(), '${BIZ}'::uuid, '${USER_A}'::uuid,
+          'pending', NULL, NULL, 2000, 0, 500, NULL, 'whatsapp', NULL, NULL, NULL, 0, 0,
+          NULL, NULL, NULL, NULL,
+          '${items}'::jsonb, NULL, true, 2500
+        )
+      `);
+      expect(result.created).toBe(true);
+      // Verify zone_name is caller-supplied (NULL in this case)
+      const zoneName = psql(`SELECT delivery_zone_name FROM orders WHERE id = '${result.order_id}'`);
+      expect(zoneName).toBe(''); // NULL renders as empty in psql -tA
     });
   });
 });
