@@ -1,5 +1,5 @@
 /**
- * Waaiio Payment Authority — Phase 1 Core Lifecycle
+ * Waaiio Payment Authority — Core Lifecycle
  *
  * GATEWAYS AUTHENTICATE MONEY. WAAIIO AUTHORIZES BUSINESS STATE.
  *
@@ -8,8 +8,11 @@
  *   Stage 2 — Business-finalized:   payment.finalization_completed_at IS NOT NULL
  *   Stage 3 — Customer-confirmed:   ConfirmationResult.status = 'completed'
  *
- * The authority resumes from the first incomplete stage.
- * Every entry point must call the SAME engine.
+ * Two entry points:
+ *   authorizeAndFinalize — full Stage 1→2→3 for provider-paid online payments
+ *   resumeSuccessfulPaymentFinalization — Stage 2→3 for already-successful direct payments (M394)
+ *
+ * Both use the SAME internal Stage 2→3 executor.
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -207,6 +210,113 @@ export async function authorizeAndFinalize(
   }
   const stagesPaid = { providerPaid: true, businessFinalized: false, customerConfirmed: false };
 
+  // ── Stage 2→2.5→3: Delegate to common executor ──
+  return executeStage2Through3(supabase, payment, processPayment, sendConfirmation, logPrefix, stagesPaid);
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Phase 2D: resumeSuccessfulPaymentFinalization
+// ────────────────────────────────────────────────────────────────────────────
+
+type ProcessPaymentCallback = (supabase: SupabaseClient, payment: {
+  id: string; amount: number;
+  booking_id: string | null; invoice_id: string | null; campaign_id: string | null;
+  reservation_id: string | null; order_id: string | null;
+  metadata: Record<string, unknown> | null; gateway_fee: number;
+  fee_policy_version?: number; config_version_id?: string;
+  transaction_category?: string; fee_basis?: Record<string, unknown>;
+  gateway?: string;
+}) => Promise<FinalizationResult>;
+
+type SendConfirmationCallback = (supabase: SupabaseClient, payment: {
+  id: string; amount: number;
+  booking_id: string | null; invoice_id: string | null; campaign_id: string | null;
+  reservation_id?: string | null; order_id?: string | null;
+}, opts?: { exactEntityFamily?: boolean }) => Promise<ConfirmationResult>;
+
+/**
+ * Resume Stage 2→3 for an already-successful direct bank-transfer payment.
+ * Skips Stage 1 (provider-paid) — payment.status is already 'success'.
+ *
+ * Fails closed unless ALL conditions are met:
+ * - payment.status = 'success'
+ * - payment.payment_authority_version IS NOT NULL
+ * - payment.gateway = 'direct'
+ * - payment.order_id IS NOT NULL
+ * - payment.metadata._direct_transfer = true
+ * - payment.metadata.pending_transfer_id present
+ */
+export async function resumeSuccessfulPaymentFinalization(
+  supabase: SupabaseClient,
+  paymentId: string,
+  processPayment: ProcessPaymentCallback,
+  sendConfirmation: SendConfirmationCallback,
+): Promise<PaymentLifecycleResult> {
+  const logPrefix = '[PAY-AUTHORITY direct-resume]';
+
+  // Load payment by ID
+  const { data: payment, error: paymentError } = await supabase
+    .from('payments')
+    .select('id, amount, currency, gateway, status, booking_id, invoice_id, campaign_id, reservation_id, order_id, metadata, gateway_fee, finalization_completed_at, payment_authority_version, fee_policy_version, config_version_id, transaction_category, fee_basis')
+    .eq('id', paymentId)
+    .single();
+
+  if (paymentError || !payment) {
+    logger.withContext({ op: 'authority.direct-resume.load', ...safeLogErrorContext(paymentError) })
+      .error(`${logPrefix} Payment load failed for ${paymentId}`);
+    return retryable('payment_load_error', { providerPaid: false, businessFinalized: false, customerConfirmed: false });
+  }
+
+  // Fail-closed validation
+  if (payment.status !== 'success') {
+    return reject(`Direct resume: payment ${paymentId} status is '${payment.status}', not 'success'`, 'not_successful');
+  }
+  if (payment.payment_authority_version == null) {
+    return reject(`Direct resume: payment ${paymentId} has no authority version`, 'no_authority_version');
+  }
+  if (payment.gateway !== 'direct') {
+    return reject(`Direct resume: payment ${paymentId} gateway is '${payment.gateway}', not 'direct'`, 'not_direct_gateway');
+  }
+  if (!payment.order_id) {
+    return reject(`Direct resume: payment ${paymentId} has no order_id`, 'no_order_id');
+  }
+  const meta = (payment.metadata || {}) as Record<string, unknown>;
+  if (!meta._direct_transfer) {
+    return reject(`Direct resume: payment ${paymentId} missing _direct_transfer provenance`, 'no_direct_transfer_provenance');
+  }
+  if (!meta.pending_transfer_id) {
+    return reject(`Direct resume: payment ${paymentId} missing pending_transfer_id`, 'no_pending_transfer_id');
+  }
+
+  const stagesPaid = { providerPaid: true, businessFinalized: false, customerConfirmed: false };
+
+  return executeStage2Through3(supabase, payment, processPayment, sendConfirmation, logPrefix, stagesPaid);
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Common Stage 2→2.5→3 Executor (private)
+// ────────────────────────────────────────────────────────────────────────────
+
+async function executeStage2Through3(
+  supabase: SupabaseClient,
+  payment: {
+    id: string; amount: number; currency?: string; gateway?: string; status?: string;
+    booking_id: string | null; invoice_id: string | null; campaign_id: string | null;
+    reservation_id: string | null; order_id: string | null;
+    metadata: Record<string, unknown> | null; gateway_fee: number;
+    finalization_completed_at?: string | null;
+    payment_authority_version?: number | null;
+    fee_policy_version?: number;
+    config_version_id?: string;
+    transaction_category?: string;
+    fee_basis?: unknown;
+  },
+  processPayment: ProcessPaymentCallback,
+  sendConfirmation: SendConfirmationCallback,
+  logPrefix: string,
+  stagesPaid: PaymentLifecycleResult['stages'],
+): Promise<PaymentLifecycleResult> {
+
   // ── Stage 2: Business finalization ──
   // Check if already finalized
   if (payment.finalization_completed_at) {
@@ -222,7 +332,6 @@ export async function authorizeAndFinalize(
     if (termResult.status === 'error') {
       return retryable('session_terminalization_failed', { ...stagesPaid, businessFinalized: true });
     }
-    // Booking/order/reservation families skip broad Stage-3 cleanup entirely
     const exactEntityFamily = termResult.status !== 'no_origin';
 
     const confirmResult = await sendConfirmation(supabase, {
@@ -246,7 +355,6 @@ export async function authorizeAndFinalize(
   }
   if (!claim?.claimed) {
     if (claim?.already_completed) {
-      // Stage 2.5: Exact-origin session terminalization (claim-already-completed path)
       const { terminalizeOriginatingSession } = await import('./session-terminalization');
       const termResult = await terminalizeOriginatingSession(supabase, {
         bookingId: payment.booking_id,
@@ -260,7 +368,6 @@ export async function authorizeAndFinalize(
       }
       const exactEntityFamily = termResult.status !== 'no_origin';
 
-      // Another worker completed finalization — skip to Stage 3
       const confirmResult = await sendConfirmation(supabase, {
         id: payment.id, amount: payment.amount,
         booking_id: payment.booking_id, invoice_id: payment.invoice_id,
@@ -287,29 +394,27 @@ export async function authorizeAndFinalize(
       order_id: claim.order_id || null,
       metadata: (payment.metadata || null) as Record<string, unknown> | null,
       gateway_fee: claim.gateway_fee || 0,
-      // #264: Pass fee-policy fields for v1 pinned finalization
       fee_policy_version: payment.fee_policy_version,
       config_version_id: payment.config_version_id,
       transaction_category: payment.transaction_category,
       fee_basis: payment.fee_basis as Record<string, unknown> | undefined,
+      gateway: payment.gateway,
     });
   } catch (err) {
     logger.withContext({ op: 'authority.process-payment', ...safeLogErrorContext(err) })
       .error(`${logPrefix} processSuccessfulPayment threw`);
     Sentry.captureException(err, { tags: { component: 'payment-authority', operation: 'process-payment' } });
-    // Release claim for retry
     try { await supabase.rpc('release_payment_finalization', { p_payment_id: payment.id, p_claim_token: claimToken }); } catch { /* release is best-effort */ }
     return retryable('process_payment_threw', stagesPaid);
   }
 
   if (!finalizationResult.criticalSuccess) {
     logger.error(`${logPrefix} Critical business effects failed: ${finalizationResult.errors?.join(', ')}`);
-    // Release claim for retry — critical effects are idempotent
     try { await supabase.rpc('release_payment_finalization', { p_payment_id: payment.id, p_claim_token: claimToken }); } catch { /* release is best-effort */ }
     return retryable('critical_effects_failed', stagesPaid);
   }
 
-  // Mark Stage 2 complete — MUST succeed before proceeding
+  // Mark Stage 2 complete
   const { data: completeResult, error: completeError } = await supabase.rpc('complete_payment_finalization', {
     p_payment_id: payment.id, p_claim_token: claimToken,
   });
@@ -336,7 +441,6 @@ export async function authorizeAndFinalize(
     campaignId: payment.campaign_id,
   });
   if (termResult.status === 'error') {
-    // Terminalization failed — do NOT proceed to Stage 3 (durable session invariant unknown)
     return retryable('session_terminalization_failed', stagesFinalized);
   }
   const exactEntityFamily = termResult.status !== 'no_origin';

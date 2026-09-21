@@ -19,6 +19,7 @@ interface PaymentRecord {
   order_id?: string | null;
   metadata?: Record<string, unknown> | null;
   gateway_fee?: number;
+  gateway?: string; // M394: direct-transfer zero-fee path
   // #264: Fee policy fields (passed through from authority.ts for v1 payments)
   fee_policy_version?: number;
   config_version_id?: string;
@@ -207,15 +208,48 @@ export async function processSuccessfulPayment(
   const orderId = payment.order_id || (payment.metadata?.order_id as string) || null;
   if (orderId) {
     try {
-      try {
-        await recordPlatformFee(supabase, {
-          orderId, paymentId: payment.id, paymentAmount: payment.amount, gatewayFee: payment.gateway_fee,
-          feePolicyVersion: payment.fee_policy_version, configVersionId: payment.config_version_id,
-          transactionCategory: payment.transaction_category, feeBasis: payment.fee_basis,
-        });
-      } catch (feeErr) {
-        criticalErrors.push('order_platform_fee_failed');
-        logger.withContext({ op: 'platform-fee.order', ...safeLogErrorContext(feeErr) }).error('[PLATFORM-FEE] Failed to record fee for order');
+      // M394: Direct bank transfer → zero-fee analytics (no tier calculation)
+      if (payment.gateway === 'direct') {
+        try {
+          // Resolve business_id for fee record
+          const { data: orderForFee } = await supabase
+            .from('orders').select('business_id').eq('id', orderId).single();
+          const feeBizId = orderForFee?.business_id;
+          if (feeBizId) {
+            // Resolve tier for analytics
+            const { data: feeBiz } = await supabase
+              .from('businesses').select('subscription_tier').eq('id', feeBizId).single();
+            const { error: directFeeErr } = await supabase.from('platform_fees').insert({
+              business_id: feeBizId,
+              payment_id: payment.id,
+              order_id: orderId,
+              transaction_amount: payment.amount,
+              fee_percentage: 0, fee_flat: 0, fee_total: 0, gateway_fee: 0,
+              tier: (feeBiz?.subscription_tier || 'free') as string,
+              is_direct_transfer: true,
+            });
+            // 23505 = unique violation → idempotent duplicate (payment_id UNIQUE index)
+            if (directFeeErr && !directFeeErr.code?.startsWith('23505') && !directFeeErr.message?.includes('duplicate')) {
+              criticalErrors.push('direct_transfer_fee_failed');
+              logger.withContext({ op: 'platform-fee.direct-order', ...safeLogErrorContext(directFeeErr) }).error('[PLATFORM-FEE] Failed to record direct transfer fee');
+            }
+          }
+        } catch (directFeeThrow) {
+          criticalErrors.push('direct_transfer_fee_threw');
+          logger.withContext({ op: 'platform-fee.direct-order', ...safeLogErrorContext(directFeeThrow) }).error('[PLATFORM-FEE] Direct transfer fee threw');
+        }
+      } else {
+        // Online/card/wallet: existing tier-based fee calculation
+        try {
+          await recordPlatformFee(supabase, {
+            orderId, paymentId: payment.id, paymentAmount: payment.amount, gatewayFee: payment.gateway_fee,
+            feePolicyVersion: payment.fee_policy_version, configVersionId: payment.config_version_id,
+            transactionCategory: payment.transaction_category, feeBasis: payment.fee_basis,
+          });
+        } catch (feeErr) {
+          criticalErrors.push('order_platform_fee_failed');
+          logger.withContext({ op: 'platform-fee.order', ...safeLogErrorContext(feeErr) }).error('[PLATFORM-FEE] Failed to record fee for order');
+        }
       }
 
       // Stock decrement + order confirmation: exactly-once via durable marker (crash-gap safe).
