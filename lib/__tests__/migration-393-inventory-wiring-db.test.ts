@@ -13,11 +13,9 @@
  * Requires TEST_DATABASE_URL.
  */
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
-import { execSync, exec } from 'child_process';
+import { execSync, spawn } from 'child_process';
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import { promisify } from 'util';
-const execAsync = promisify(exec);
 
 const dbUrl = process.env.TEST_DATABASE_URL || '';
 const canRun = dbUrl.length > 0;
@@ -1340,14 +1338,23 @@ describe.skipIf(!canRun)('M393: Inventory reservation wiring', () => {
     });
   });
 
-  // ═══ R29: Winner/concurrency ═══
-  describe('Winner and concurrency', () => {
+  // R31-1: Shared helper for test transfer INSERTs — always supplies required reference_code
+  let _refSeq = 0;
+  function insertTestTransfer(cols: string, vals: string): string {
+    _refSeq++;
+    return psql(`INSERT INTO pending_transfers (${cols}, reference_code) VALUES (${vals}, 'TST-${String(_refSeq).padStart(4, '0')}') RETURNING id`);
+  }
+
+  // ═══ R29/R31: Winner/concurrency (sequential proofs) ═══
+  describe('Winner and concurrency (sequential)', () => {
     it('confirm rejects bank_transfer marker with non-null payment_id', () => {
       const orderId = psql(`INSERT INTO orders (business_id, user_id, total_amount, status, bot_session_id, channel) VALUES ('${BIZ}', '${USER_A}', 1000, 'pending', '${SESSION_A}', 'whatsapp') RETURNING id`);
       const payId = psql(`INSERT INTO payments (business_id, order_id, amount, status) VALUES ('${BIZ}', '${orderId}', 1000, 'pending') RETURNING id`);
       const deadline = psql(`SELECT (NOW() + interval '24 hours')::timestamptz`);
       psql(`INSERT INTO order_stock_applications (order_id, reservation_class, expires_at, payment_id) VALUES ('${orderId}', 'bank_transfer', '${deadline}', '${payId}')`);
-      const xferId = psql(`INSERT INTO pending_transfers (business_id, order_id, customer_phone, expected_amount, currency, expires_at, status) VALUES ('${BIZ}', '${orderId}', '+234900', 100000, 'NGN', '${deadline}', 'pending') RETURNING id`);
+      const xferId = insertTestTransfer(
+        'business_id, order_id, customer_phone, expected_amount, currency, expires_at, status',
+        `'${BIZ}', '${orderId}', '+234900', 100000, 'NGN', '${deadline}', 'pending'`);
       const result = psqlJson(`SELECT confirm_order_transfer_atomic('${xferId}', '${orderId}', '${BIZ}', '${USER_A}')`);
       expect(result.confirmed).toBe(false);
       expect(result.reason).toBe('marker_has_payment');
@@ -1357,9 +1364,10 @@ describe.skipIf(!canRun)('M393: Inventory reservation wiring', () => {
       const orderId = psql(`INSERT INTO orders (business_id, user_id, total_amount, status, bot_session_id, channel) VALUES ('${BIZ}', '${USER_A}', 2000, 'pending', '${SESSION_A}', 'whatsapp') RETURNING id`);
       const deadline = psql(`SELECT (NOW() + interval '24 hours')::timestamptz`);
       psql(`INSERT INTO order_stock_applications (order_id, reservation_class, expires_at) VALUES ('${orderId}', 'bank_transfer', '${deadline}')`);
-      // Active finalization lease (< 5 min old)
       psql(`INSERT INTO payments (business_id, order_id, amount, status, finalization_processing_at) VALUES ('${BIZ}', '${orderId}', 2000, 'pending', NOW())`);
-      const xferId = psql(`INSERT INTO pending_transfers (business_id, order_id, customer_phone, expected_amount, currency, expires_at, status) VALUES ('${BIZ}', '${orderId}', '+234900', 200000, 'NGN', '${deadline}', 'pending') RETURNING id`);
+      const xferId = insertTestTransfer(
+        'business_id, order_id, customer_phone, expected_amount, currency, expires_at, status',
+        `'${BIZ}', '${orderId}', '+234900', 200000, 'NGN', '${deadline}', 'pending'`);
       const result = psqlJson(`SELECT confirm_order_transfer_atomic('${xferId}', '${orderId}', '${BIZ}', '${USER_A}')`);
       expect(result.confirmed).toBe(false);
       expect(result.reason).toBe('online_payment_won');
@@ -1367,7 +1375,9 @@ describe.skipIf(!canRun)('M393: Inventory reservation wiring', () => {
 
     it('reject vs already-confirmed order: refused', () => {
       const orderId = psql(`INSERT INTO orders (business_id, user_id, total_amount, status) VALUES ('${BIZ}', '${USER_A}', 1000, 'confirmed') RETURNING id`);
-      const xferId = psql(`INSERT INTO pending_transfers (business_id, order_id, customer_phone, expected_amount, currency, expires_at, status) VALUES ('${BIZ}', '${orderId}', '+234900', 100000, 'NGN', NOW() + interval '24 hours', 'pending') RETURNING id`);
+      const xferId = insertTestTransfer(
+        'business_id, order_id, customer_phone, expected_amount, currency, expires_at, status',
+        `'${BIZ}', '${orderId}', '+234900', 100000, 'NGN', NOW() + interval '24 hours', 'pending'`);
       const result = psqlJson(`SELECT reject_order_transfer_atomic('${xferId}', '${orderId}', '${BIZ}')`);
       expect(result.rejected).toBe(false);
       expect(result.reason).toBe('confirmed');
@@ -1378,7 +1388,9 @@ describe.skipIf(!canRun)('M393: Inventory reservation wiring', () => {
       const deadline = psql(`SELECT (NOW() + interval '24 hours')::timestamptz`);
       psql(`INSERT INTO order_stock_applications (order_id, reservation_class, expires_at) VALUES ('${orderId}', 'bank_transfer', '${deadline}')`);
       psql(`INSERT INTO payments (business_id, order_id, amount, status) VALUES ('${BIZ}', '${orderId}', 1000, 'success')`);
-      const xferId = psql(`INSERT INTO pending_transfers (business_id, order_id, customer_phone, expected_amount, currency, expires_at, status) VALUES ('${BIZ}', '${orderId}', '+234900', 100000, 'NGN', '${deadline}', 'pending') RETURNING id`);
+      const xferId = insertTestTransfer(
+        'business_id, order_id, customer_phone, expected_amount, currency, expires_at, status',
+        `'${BIZ}', '${orderId}', '+234900', 100000, 'NGN', '${deadline}', 'pending'`);
       const result = psqlJson(`SELECT reject_order_transfer_atomic('${xferId}', '${orderId}', '${BIZ}')`);
       expect(result.rejected).toBe(false);
       expect(result.reason).toBe('has_successful_payment');
@@ -1386,7 +1398,9 @@ describe.skipIf(!canRun)('M393: Inventory reservation wiring', () => {
 
     it('wrong business on reject: refused', () => {
       const orderId = psql(`INSERT INTO orders (business_id, user_id, total_amount, status) VALUES ('${BIZ}', '${USER_A}', 1000, 'pending') RETURNING id`);
-      const xferId = psql(`INSERT INTO pending_transfers (business_id, order_id, customer_phone, expected_amount, currency, expires_at, status) VALUES ('${BIZ}', '${orderId}', '+234900', 100000, 'NGN', NOW() + interval '24 hours', 'pending') RETURNING id`);
+      const xferId = insertTestTransfer(
+        'business_id, order_id, customer_phone, expected_amount, currency, expires_at, status',
+        `'${BIZ}', '${orderId}', '+234900', 100000, 'NGN', NOW() + interval '24 hours', 'pending'`);
       const result = psqlJson(`SELECT reject_order_transfer_atomic('${xferId}', '${orderId}', '${BIZ_OTHER}')`);
       expect(result.rejected).toBe(false);
       expect(result.reason).toBe('business_mismatch');
@@ -1395,160 +1409,222 @@ describe.skipIf(!canRun)('M393: Inventory reservation wiring', () => {
     it('no-zone validated order: does not crash (v_zone_name NULL safe)', () => {
       const prod = psql(`INSERT INTO products (business_id, price, is_active) VALUES ('${BIZ}', 2000, true) RETURNING id`);
       const items = JSON.stringify([{ product_id: prod, quantity: 1, unit_price: 2000 }]);
-      const result = psqlJson(`
-        SELECT create_order_atomic(
-          gen_random_uuid(), '${BIZ}'::uuid, '${USER_A}'::uuid,
-          'pending', NULL, NULL, 2000, 0, 500, NULL, 'whatsapp', NULL, NULL, NULL, 0, 0,
-          NULL, NULL, NULL, NULL,
-          '${items}'::jsonb, NULL, true, 2500
-        )
-      `);
+      const result = psqlJson(`SELECT create_order_atomic(gen_random_uuid(), '${BIZ}'::uuid, '${USER_A}'::uuid, 'pending', NULL, NULL, 2000, 0, 500, NULL, 'whatsapp', NULL, NULL, NULL, 0, 0, NULL, NULL, NULL, NULL, '${items}'::jsonb, NULL, true, 2500)`);
       expect(result.created).toBe(true);
       const zoneName = psql(`SELECT delivery_zone_name FROM orders WHERE id = '${result.order_id}'`);
-      expect(zoneName).toBe(''); // NULL renders as empty in psql -tA
+      expect(zoneName).toBe('');
     });
   });
 
-  // ═══ R30: REAL concurrent DB tests (separate connections) ═══
-  describe('Concurrent races (separate psql connections)', () => {
-    // Helper: run SQL on a separate psql connection, returns Promise
-    async function psqlAsync(sql: string): Promise<{ ok: boolean; stdout: string }> {
-      try {
-        const { stdout } = await execAsync(`psql "${dbUrl}" -tAXq -v ON_ERROR_STOP=1`, {
-          input: sql, encoding: 'utf-8', timeout: 15000,
+  // ═══ R31: REAL concurrent DB tests (separate spawn processes) ═══
+  describe('Concurrent races (separate spawn processes)', () => {
+    // R31-2: Real separate-process helper using spawn
+    function spawnPsql(sql: string, timeoutMs = 20000): Promise<{ ok: boolean; stdout: string; stderr: string }> {
+      return new Promise((resolve) => {
+        const child = spawn('psql', [dbUrl, '-tAXq', '-v', 'ON_ERROR_STOP=1'], {
+          stdio: ['pipe', 'pipe', 'pipe'],
+          timeout: timeoutMs,
         });
-        return { ok: true, stdout: stdout.trim() };
-      } catch (e: any) {
-        return { ok: false, stdout: e.stdout?.trim() || e.message || '' };
-      }
+        let stdout = '';
+        let stderr = '';
+        child.stdout.on('data', (d: Buffer) => { stdout += d.toString(); });
+        child.stderr.on('data', (d: Buffer) => { stderr += d.toString(); });
+        child.on('close', (code) => {
+          resolve({ ok: code === 0, stdout: stdout.trim(), stderr: stderr.trim() });
+        });
+        child.on('error', (err) => {
+          resolve({ ok: false, stdout: '', stderr: err.message });
+        });
+        child.stdin.write(sql);
+        child.stdin.end();
+      });
     }
 
     it('two concurrent create_transfer_with_reservation: exactly one wins', async () => {
-      // Setup: order with instant marker
       const orderId = psql(`INSERT INTO orders (business_id, user_id, total_amount, status, bot_session_id, channel) VALUES ('${BIZ}', '${USER_A}', 3000, 'pending', '${SESSION_A}', 'whatsapp') RETURNING id`);
       psql(`INSERT INTO order_stock_applications (order_id, reservation_class, expires_at) VALUES ('${orderId}', 'instant', NOW() + interval '25 minutes')`);
 
-      // Launch two concurrent transfer creations
       const [r1, r2] = await Promise.all([
-        psqlAsync(`SELECT create_transfer_with_reservation('${orderId}', '${BIZ}', '+234900001', 'Customer A', 'NG', 24)`),
-        psqlAsync(`SELECT create_transfer_with_reservation('${orderId}', '${BIZ}', '+234900002', 'Customer B', 'NG', 24)`),
+        spawnPsql(`SELECT create_transfer_with_reservation('${orderId}', '${BIZ}', '+234900001', 'Customer A', 'NG', 24);`),
+        spawnPsql(`SELECT create_transfer_with_reservation('${orderId}', '${BIZ}', '+234900002', 'Customer B', 'NG', 24);`),
       ]);
 
-      // Parse results
+      // Both processes must have executed SQL (non-empty output)
+      expect(r1.stdout.length + r1.stderr.length).toBeGreaterThan(0);
+      expect(r2.stdout.length + r2.stderr.length).toBeGreaterThan(0);
+
       const p1 = r1.ok ? JSON.parse(r1.stdout) : { error: true };
       const p2 = r2.ok ? JSON.parse(r2.stdout) : { error: true };
-
-      // Exactly one must win
       const wins = [!p1.error, !p2.error].filter(Boolean).length;
       expect(wins).toBe(1);
 
-      // Exactly one active transfer
       const activeCount = psql(`SELECT count(*) FROM pending_transfers WHERE order_id = '${orderId}' AND status = 'pending'`);
       expect(parseInt(activeCount)).toBe(1);
 
-      // Marker deadline equals winning transfer
       const markerExpiry = psql(`SELECT expires_at FROM order_stock_applications WHERE order_id = '${orderId}'`);
       const transferExpiry = psql(`SELECT expires_at FROM pending_transfers WHERE order_id = '${orderId}' AND status = 'pending'`);
       expect(markerExpiry).toBe(transferExpiry);
-    });
+    }, 30000);
 
     it('online payment vs confirm_order_transfer_atomic: exactly one winner', async () => {
       const orderId = psql(`INSERT INTO orders (business_id, user_id, total_amount, status, bot_session_id, channel) VALUES ('${BIZ}', '${USER_A}', 4000, 'pending', '${SESSION_A}', 'whatsapp') RETURNING id`);
       const deadline = psql(`SELECT (NOW() + interval '24 hours')::timestamptz`);
       psql(`INSERT INTO order_stock_applications (order_id, reservation_class, expires_at) VALUES ('${orderId}', 'bank_transfer', '${deadline}')`);
-      // Create a pending online payment
       const payId = psql(`INSERT INTO payments (business_id, order_id, amount, status, currency) VALUES ('${BIZ}', '${orderId}', 4000, 'pending', 'NGN') RETURNING id`);
-      // Create transfer
-      const xferId = psql(`INSERT INTO pending_transfers (business_id, order_id, customer_phone, expected_amount, currency, expires_at, status, metadata) VALUES ('${BIZ}', '${orderId}', '+234900', 400000, 'NGN', '${deadline}', 'pending', '{"_inbound_channel_id":"${CHANNEL_A}","_confirmation_origin":"whatsapp"}'::jsonb) RETURNING id`);
+      _refSeq++;
+      const xferId = psql(`INSERT INTO pending_transfers (business_id, order_id, customer_phone, expected_amount, currency, expires_at, status, reference_code, metadata) VALUES ('${BIZ}', '${orderId}', '+234900', 400000, 'NGN', '${deadline}', 'pending', 'TST-R${_refSeq}', '{"_inbound_channel_id":"${CHANNEL_A}","_confirmation_origin":"whatsapp"}'::jsonb) RETURNING id`);
 
-      // Race: online payment success + transfer confirm
+      // R31-3: Guarded provider-paid transition (only from pending)
       const [onlineR, confirmR] = await Promise.all([
-        // Simulate online payment: mark success + apply_order_stock_once
-        psqlAsync(`UPDATE payments SET status = 'success' WHERE id = '${payId}'; SELECT apply_order_stock_once('${orderId}', '${payId}')`),
-        psqlAsync(`SELECT confirm_order_transfer_atomic('${xferId}', '${orderId}', '${BIZ}', '${USER_A}')`),
+        spawnPsql(`UPDATE payments SET status = 'success' WHERE id = '${payId}' AND status = 'pending'; SELECT apply_order_stock_once('${orderId}', '${payId}');`),
+        spawnPsql(`SELECT confirm_order_transfer_atomic('${xferId}', '${orderId}', '${BIZ}', '${USER_A}');`),
       ]);
 
-      // Check final state: order must be confirmed
+      // Both must have executed
+      expect(onlineR.stdout.length + onlineR.stderr.length).toBeGreaterThan(0);
+      expect(confirmR.stdout.length + confirmR.stderr.length).toBeGreaterThan(0);
+
       const orderStatus = psql(`SELECT status FROM orders WHERE id = '${orderId}'`);
       expect(orderStatus).toBe('confirmed');
 
-      // Never both: online success payment + confirmed direct transfer
-      const successPayments = psql(`SELECT count(*) FROM payments WHERE order_id = '${orderId}' AND status = 'success'`);
-      const confirmedTransfers = psql(`SELECT count(*) FROM pending_transfers WHERE order_id = '${orderId}' AND status = 'confirmed'`);
-      // At most one success payment + one confirmed transfer is OK (confirm creates a payment),
-      // but the marker must have exactly one payment_id
+      // Exactly ONE successful payment
+      const successCount = parseInt(psql(`SELECT count(*) FROM payments WHERE (order_id = '${orderId}' OR metadata->>'order_id' = '${orderId}') AND status = 'success'`));
+      const confirmedXfers = parseInt(psql(`SELECT count(*) FROM pending_transfers WHERE order_id = '${orderId}' AND status = 'confirmed'`));
+
+      const confirmResult = confirmR.ok ? JSON.parse(confirmR.stdout) : { confirmed: false };
+      if (confirmResult.confirmed) {
+        // Direct transfer won: direct payment is the sole success, online is NOT success
+        expect(confirmedXfers).toBe(1);
+        const onlinePayStatus = psql(`SELECT status FROM payments WHERE id = '${payId}'`);
+        expect(onlinePayStatus).not.toBe('success');
+      } else {
+        // Online won: online payment is sole success, transfer not confirmed
+        expect(confirmedXfers).toBe(0);
+        const onlinePayStatus = psql(`SELECT status FROM payments WHERE id = '${payId}'`);
+        expect(onlinePayStatus).toBe('success');
+      }
+
+      // Marker has exactly one payment_id = the winning payment
       const markerPayId = psql(`SELECT payment_id FROM order_stock_applications WHERE order_id = '${orderId}'`);
-      expect(markerPayId).toBeTruthy(); // Has a winner
+      expect(markerPayId).toBeTruthy();
+      const winnerPayStatus = psql(`SELECT status FROM payments WHERE id = '${markerPayId}'`);
+      expect(winnerPayStatus).toBe('success');
 
-      // Stock decremented only once (marker exists, not duplicated)
-      const markerCount = psql(`SELECT count(*) FROM order_stock_applications WHERE order_id = '${orderId}'`);
-      expect(parseInt(markerCount)).toBe(1);
-    });
+      // One stock marker only
+      expect(parseInt(psql(`SELECT count(*) FROM order_stock_applications WHERE order_id = '${orderId}'`))).toBe(1);
+    }, 30000);
 
-    it('reject vs confirm: exactly one terminal winner', async () => {
+    // R31-4: reject vs online payment race
+    it('reject vs online payment: exactly one authority wins', async () => {
+      const prod = psql(`INSERT INTO products (business_id, price, stock_quantity, track_inventory, is_active, name) VALUES ('${BIZ}', 2000, 5, true, true, 'Race Rej') RETURNING id`);
       const orderId = psql(`INSERT INTO orders (business_id, user_id, total_amount, status, bot_session_id, channel) VALUES ('${BIZ}', '${USER_A}', 2000, 'pending', '${SESSION_A}', 'whatsapp') RETURNING id`);
+      psql(`INSERT INTO order_items (order_id, product_id, quantity, unit_price) VALUES ('${orderId}', '${prod}', 1, 2000)`);
       const deadline = psql(`SELECT (NOW() + interval '24 hours')::timestamptz`);
       psql(`INSERT INTO order_stock_applications (order_id, reservation_class, expires_at) VALUES ('${orderId}', 'bank_transfer', '${deadline}')`);
-      const xferId = psql(`INSERT INTO pending_transfers (business_id, order_id, customer_phone, expected_amount, currency, expires_at, status, metadata) VALUES ('${BIZ}', '${orderId}', '+234900', 200000, 'NGN', '${deadline}', 'pending', '{"_inbound_channel_id":"${CHANNEL_A}","_confirmation_origin":"whatsapp"}'::jsonb) RETURNING id`);
+      const payId = psql(`INSERT INTO payments (business_id, order_id, amount, status, currency) VALUES ('${BIZ}', '${orderId}', 2000, 'pending', 'NGN') RETURNING id`);
+      _refSeq++;
+      const xferId = psql(`INSERT INTO pending_transfers (business_id, order_id, customer_phone, expected_amount, currency, expires_at, status, reference_code, metadata) VALUES ('${BIZ}', '${orderId}', '+234900', 200000, 'NGN', '${deadline}', 'pending', 'TST-R${_refSeq}', '{"_inbound_channel_id":"${CHANNEL_A}","_confirmation_origin":"whatsapp"}'::jsonb) RETURNING id`);
+
+      const stockBefore = parseInt(psql(`SELECT stock_quantity FROM products WHERE id = '${prod}'`));
+
+      const [onlineR, rejectR] = await Promise.all([
+        spawnPsql(`UPDATE payments SET status = 'success' WHERE id = '${payId}' AND status = 'pending'; SELECT apply_order_stock_once('${orderId}', '${payId}');`),
+        spawnPsql(`SELECT reject_order_transfer_atomic('${xferId}', '${orderId}', '${BIZ}', 'test_reject');`),
+      ]);
+
+      expect(onlineR.stdout.length + onlineR.stderr.length).toBeGreaterThan(0);
+      expect(rejectR.stdout.length + rejectR.stderr.length).toBeGreaterThan(0);
+
+      const orderStatus = psql(`SELECT status FROM orders WHERE id = '${orderId}'`);
+      const stockAfter = parseInt(psql(`SELECT stock_quantity FROM products WHERE id = '${prod}'`));
+      const onlinePayStatus = psql(`SELECT status FROM payments WHERE id = '${payId}'`);
+      const rejectResult = rejectR.ok ? JSON.parse(rejectR.stdout) : { rejected: false };
+
+      // Forbidden: successful online payment + cancelled order + restored stock
+      if (onlinePayStatus === 'success') {
+        expect(orderStatus).toBe('confirmed');
+        // Stock remains decremented (not restored)
+        expect(stockAfter).toBe(stockBefore); // apply_order_stock_once on existing marker = no second decrement
+        expect(rejectResult.rejected).toBe(false);
+      } else if (rejectResult.rejected) {
+        expect(orderStatus).toBe('cancelled');
+        expect(stockAfter).toBe(stockBefore + 1); // restored once
+        // Online payment cannot be success on cancelled order
+        expect(onlinePayStatus).not.toBe('success');
+      }
+    }, 30000);
+
+    // R31-5: expiry vs payment with stock assertions
+    it('cancel_stale vs payment: winner gets exact stock state', async () => {
+      const prod = psql(`INSERT INTO products (business_id, price, stock_quantity, track_inventory, is_active, name) VALUES ('${BIZ}', 1000, 10, true, true, 'Stale Race') RETURNING id`);
+      const orderId = psql(`INSERT INTO orders (business_id, user_id, total_amount, status, bot_session_id, channel) VALUES ('${BIZ}', '${USER_A}', 1000, 'pending', '${SESSION_A}', 'whatsapp') RETURNING id`);
+      psql(`INSERT INTO order_items (order_id, product_id, quantity, unit_price) VALUES ('${orderId}', '${prod}', 1, 1000)`);
+      psql(`INSERT INTO order_stock_applications (order_id, reservation_class, expires_at) VALUES ('${orderId}', 'instant', NOW() - interval '1 second')`);
+      const payId = psql(`INSERT INTO payments (business_id, order_id, amount, status, currency) VALUES ('${BIZ}', '${orderId}', 1000, 'pending', 'NGN') RETURNING id`);
+
+      const stockBefore = parseInt(psql(`SELECT stock_quantity FROM products WHERE id = '${prod}'`));
+
+      const [staleR, payR] = await Promise.all([
+        spawnPsql(`SELECT cancel_stale_order_atomic('${orderId}');`),
+        spawnPsql(`UPDATE payments SET status = 'success' WHERE id = '${payId}' AND status = 'pending'; SELECT apply_order_stock_once('${orderId}', '${payId}');`),
+      ]);
+
+      expect(staleR.stdout.length + staleR.stderr.length).toBeGreaterThan(0);
+      expect(payR.stdout.length + payR.stderr.length).toBeGreaterThan(0);
+
+      const orderStatus = psql(`SELECT status FROM orders WHERE id = '${orderId}'`);
+      const stockAfter = parseInt(psql(`SELECT stock_quantity FROM products WHERE id = '${prod}'`));
+      const sResult = staleR.ok ? JSON.parse(staleR.stdout) : {};
+
+      if (orderStatus === 'confirmed') {
+        // Payment won
+        const markerPayId = psql(`SELECT payment_id FROM order_stock_applications WHERE order_id = '${orderId}'`);
+        expect(markerPayId).toBe(payId);
+        expect(sResult.cancelled).toBe(false);
+        expect(stockAfter).toBe(stockBefore); // No restore
+      } else {
+        // Stale cancel won
+        expect(orderStatus).toBe('cancelled');
+        expect(sResult.cancelled).toBe(true);
+        expect(stockAfter).toBe(stockBefore + 1); // Restored once
+      }
+    }, 30000);
+
+    it('reject vs confirm: exactly one terminal winner', async () => {
+      const prod = psql(`INSERT INTO products (business_id, price, stock_quantity, track_inventory, is_active, name) VALUES ('${BIZ}', 2000, 8, true, true, 'RC Race') RETURNING id`);
+      const orderId = psql(`INSERT INTO orders (business_id, user_id, total_amount, status, bot_session_id, channel) VALUES ('${BIZ}', '${USER_A}', 2000, 'pending', '${SESSION_A}', 'whatsapp') RETURNING id`);
+      psql(`INSERT INTO order_items (order_id, product_id, quantity, unit_price) VALUES ('${orderId}', '${prod}', 1, 2000)`);
+      const deadline = psql(`SELECT (NOW() + interval '24 hours')::timestamptz`);
+      psql(`INSERT INTO order_stock_applications (order_id, reservation_class, expires_at) VALUES ('${orderId}', 'bank_transfer', '${deadline}')`);
+      _refSeq++;
+      const xferId = psql(`INSERT INTO pending_transfers (business_id, order_id, customer_phone, expected_amount, currency, expires_at, status, reference_code, metadata) VALUES ('${BIZ}', '${orderId}', '+234900', 200000, 'NGN', '${deadline}', 'pending', 'TST-R${_refSeq}', '{"_inbound_channel_id":"${CHANNEL_A}","_confirmation_origin":"whatsapp"}'::jsonb) RETURNING id`);
+
+      const stockBefore = parseInt(psql(`SELECT stock_quantity FROM products WHERE id = '${prod}'`));
 
       const [confirmR, rejectR] = await Promise.all([
-        psqlAsync(`SELECT confirm_order_transfer_atomic('${xferId}', '${orderId}', '${BIZ}', '${USER_A}')`),
-        psqlAsync(`SELECT reject_order_transfer_atomic('${xferId}', '${orderId}', '${BIZ}', 'test_reject')`),
+        spawnPsql(`SELECT confirm_order_transfer_atomic('${xferId}', '${orderId}', '${BIZ}', '${USER_A}');`),
+        spawnPsql(`SELECT reject_order_transfer_atomic('${xferId}', '${orderId}', '${BIZ}', 'test_reject');`),
       ]);
 
       const cResult = confirmR.ok ? JSON.parse(confirmR.stdout) : { confirmed: false };
       const rResult = rejectR.ok ? JSON.parse(rejectR.stdout) : { rejected: false };
-
-      // Exactly one terminal winner
       const confirmWon = cResult.confirmed === true;
       const rejectWon = rResult.rejected === true;
-      expect(confirmWon !== rejectWon).toBe(true); // XOR: exactly one
+      expect(confirmWon !== rejectWon).toBe(true);
 
       const orderStatus = psql(`SELECT status FROM orders WHERE id = '${orderId}'`);
+      const stockAfter = parseInt(psql(`SELECT stock_quantity FROM products WHERE id = '${prod}'`));
+
       if (confirmWon) {
         expect(orderStatus).toBe('confirmed');
-        // Marker still exists (no restore)
-        const markerExists = psql(`SELECT count(*) FROM order_stock_applications WHERE order_id = '${orderId}'`);
-        expect(parseInt(markerExists)).toBe(1);
+        expect(parseInt(psql(`SELECT count(*) FROM order_stock_applications WHERE order_id = '${orderId}'`))).toBe(1);
+        expect(stockAfter).toBe(stockBefore); // No restore on confirm
       } else {
         expect(orderStatus).toBe('cancelled');
-        // Stock restored (marker deleted)
-        const markerExists = psql(`SELECT count(*) FROM order_stock_applications WHERE order_id = '${orderId}'`);
-        expect(parseInt(markerExists)).toBe(0);
+        expect(parseInt(psql(`SELECT count(*) FROM order_stock_applications WHERE order_id = '${orderId}'`))).toBe(0);
+        expect(stockAfter).toBe(stockBefore + 1); // Restored once
       }
-    });
-
-    it('cancel_stale vs payment winner: payment wins, no stock restore', async () => {
-      const prod = psql(`INSERT INTO products (business_id, price, stock_quantity, track_inventory, is_active, name) VALUES ('${BIZ}', 1000, 10, true, true, 'Race Prod') RETURNING id`);
-      const orderId = psql(`INSERT INTO orders (business_id, user_id, total_amount, status, bot_session_id, channel) VALUES ('${BIZ}', '${USER_A}', 1000, 'pending', '${SESSION_A}', 'whatsapp') RETURNING id`);
-      psql(`INSERT INTO order_items (order_id, product_id, quantity, unit_price) VALUES ('${orderId}', '${prod}', 1, 1000)`);
-      // Expired instant marker (eligible for stale cancel)
-      psql(`INSERT INTO order_stock_applications (order_id, reservation_class, expires_at) VALUES ('${orderId}', 'instant', NOW() - interval '1 second')`);
-      // Payment arrives
-      const payId = psql(`INSERT INTO payments (business_id, order_id, amount, status, currency) VALUES ('${BIZ}', '${orderId}', 1000, 'success', 'NGN') RETURNING id`);
-
-      // Race: stale cancel vs payment stock application
-      const [staleR, payR] = await Promise.all([
-        psqlAsync(`SELECT cancel_stale_order_atomic('${orderId}')`),
-        psqlAsync(`SELECT apply_order_stock_once('${orderId}', '${payId}')`),
-      ]);
-
-      const sResult = staleR.ok ? JSON.parse(staleR.stdout) : {};
-      const pResult = payR.ok ? JSON.parse(payR.stdout) : {};
-
-      const orderStatus = psql(`SELECT status FROM orders WHERE id = '${orderId}'`);
-
-      // If payment won, order is confirmed and stock NOT restored
-      if (pResult.applied && pResult.order_confirmed) {
-        expect(orderStatus).toBe('confirmed');
-        // Stale cancel should have been refused
-        expect(sResult.cancelled).toBe(false);
-      } else if (sResult.cancelled) {
-        // Stale cancel won — payment was too late
-        expect(orderStatus).toBe('cancelled');
-      }
-      // Either way, stock accounting is consistent (no double-decrement or double-restore)
-    });
+    }, 30000);
   });
 
   // ═══ R30-4: PUBLIC ACL ═══
@@ -1557,48 +1633,37 @@ describe.skipIf(!canRun)('M393: Inventory reservation wiring', () => {
       const hasPub = psql(`SELECT has_function_privilege('public', 'confirm_order_transfer_atomic(uuid,uuid,uuid,uuid)', 'EXECUTE')`);
       expect(hasPub).toBe('f');
     });
-
     it('PUBLIC: reject_order_transfer_atomic denied', () => {
       const hasPub = psql(`SELECT has_function_privilege('public', 'reject_order_transfer_atomic(uuid,uuid,uuid,text)', 'EXECUTE')`);
       expect(hasPub).toBe('f');
     });
-
     it('PUBLIC: create_transfer_with_reservation denied', () => {
       const hasPub = psql(`SELECT has_function_privilege('public', 'create_transfer_with_reservation(uuid,uuid,text,text,text,int)', 'EXECUTE')`);
       expect(hasPub).toBe('f');
     });
   });
 
-  // ═══ R30-5: Exact-channel durability ═══
+  // ═══ R30-5 + R31-5: Exact-channel durability ═══
   describe('Exact-channel durability', () => {
     it('transfer created with channel A; business changes to B; confirmation still uses A', () => {
-      // Channel A is CHANNEL_A (shared, from beforeAll)
       const channelB = psql(`INSERT INTO whatsapp_channels (channel_type, is_active) VALUES ('shared', true) RETURNING id`);
-
-      // Create order + transfer with channel A
       const orderId = psql(`INSERT INTO orders (business_id, user_id, total_amount, status, bot_session_id, channel) VALUES ('${BIZ}', '${USER_A}', 5000, 'pending', '${SESSION_A}', 'whatsapp') RETURNING id`);
       psql(`INSERT INTO order_stock_applications (order_id, reservation_class, expires_at) VALUES ('${orderId}', 'instant', NOW() + interval '25 minutes')`);
       const transferResult = psqlJson(`SELECT create_transfer_with_reservation('${orderId}', '${BIZ}', '+234900', 'Test', 'NG', 24)`);
       expect(transferResult.inbound_channel_id).toBe(CHANNEL_A);
 
-      // Business default changes to channel B
       psql(`UPDATE businesses SET assigned_channel_id = '${channelB}' WHERE id = '${BIZ}'`);
 
-      // Transfer metadata still contains channel A
       const transferMeta = psqlJson(`SELECT metadata FROM pending_transfers WHERE id = '${transferResult.transfer_id}'`);
       expect(transferMeta._inbound_channel_id).toBe(CHANNEL_A);
 
-      // Confirm the transfer — payment metadata should copy channel A
-      const deadline = psql(`SELECT expires_at FROM pending_transfers WHERE id = '${transferResult.transfer_id}'`);
       const confirmResult = psqlJson(`SELECT confirm_order_transfer_atomic('${transferResult.transfer_id}', '${orderId}', '${BIZ}', '${USER_A}')`);
       expect(confirmResult.confirmed).toBe(true);
       expect(confirmResult.inbound_channel_id).toBe(CHANNEL_A);
 
-      // Direct payment metadata has channel A (not B)
       const payMeta = psqlJson(`SELECT metadata FROM payments WHERE id = '${confirmResult.payment_id}'`);
       expect(payMeta._inbound_channel_id).toBe(CHANNEL_A);
 
-      // Cleanup business assignment
       psql(`UPDATE businesses SET assigned_channel_id = NULL WHERE id = '${BIZ}'`);
     });
   });

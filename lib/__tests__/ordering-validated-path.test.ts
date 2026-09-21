@@ -810,3 +810,99 @@ describe('M393 non-order createPendingTransfer unchanged', () => {
     expect(src).not.toContain("rpc('create_transfer_with_reservation'");
   });
 });
+
+// ═══════════════════════════════════════════════════════════════
+// R31-7: Cron false-expiry application proof
+// ═══════════════════════════════════════════════════════════════
+
+describe('R31-7: expire-transfers cron route — no false expiry', () => {
+  const cronSource = readFileSync(join(process.cwd(), 'app/api/cron/expire-transfers/route.ts'), 'utf-8');
+
+  it('order-linked path does NOT pre-mark transfer expired before RPC', () => {
+    // The order branch should NOT contain a direct transfer status update
+    const orderBranch = cronSource.slice(
+      cronSource.indexOf('if (transfer.order_id)'),
+      cronSource.indexOf('} else {', cronSource.indexOf('if (transfer.order_id)'))
+    );
+    expect(orderBranch).not.toContain("update({ status: 'expired' })");
+  });
+
+  it('only counts/notifies if cancelResult.cancelled is true', () => {
+    expect(cronSource).toContain('cancelResult?.cancelled');
+    // When cancelled=false, it continues (skips notification)
+    expect(cronSource).toContain('continue');
+  });
+
+  it('non-cancelled result skips notification with log', () => {
+    expect(cronSource).toContain('not cancelled');
+    expect(cronSource).toContain('skipping transfer');
+  });
+
+  it('non-order path preserves direct transfer update', () => {
+    // The else branch (non-order) still does direct update
+    const nonOrderSection = cronSource.slice(cronSource.indexOf('} else {'));
+    expect(nonOrderSection).toContain("update({ status: 'expired' })");
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// R31-8: Route exact-channel durability proof
+// ═══════════════════════════════════════════════════════════════
+
+describe('R31-8: Dashboard route — exact-channel only for order transfers', () => {
+  const routeSource = readFileSync(
+    join(process.cwd(), 'app/api/dashboard/pending-transfers/[id]/route.ts'),
+    'utf-8',
+  );
+
+  it('order-linked confirm: uses resolveByChannelIdForBusiness, never resolveByBusinessId', () => {
+    // Find the order-linked confirm section (between confirm_order_transfer_atomic and non-order confirm)
+    const confirmSection = routeSource.slice(
+      routeSource.indexOf("rpc('confirm_order_transfer_atomic'"),
+      routeSource.indexOf('Non-order confirmation')
+    );
+    expect(confirmSection).toContain('resolveByChannelIdForBusiness');
+    expect(confirmSection).not.toContain('resolveByBusinessId');
+  });
+
+  it('order-linked confirm: logs missing channel instead of fallback', () => {
+    const confirmSection = routeSource.slice(
+      routeSource.indexOf("rpc('confirm_order_transfer_atomic'"),
+      routeSource.indexOf('Non-order confirmation')
+    );
+    expect(confirmSection).toContain('no exact channel');
+    expect(confirmSection).toContain('skipping notification');
+  });
+
+  it('order-linked reject: uses resolveByChannelIdForBusiness, never resolveByBusinessId', () => {
+    const rejectSection = routeSource.slice(
+      routeSource.indexOf("rpc('reject_order_transfer_atomic'"),
+      routeSource.indexOf('Non-order rejection')
+    );
+    expect(rejectSection).toContain('resolveByChannelIdForBusiness');
+    expect(rejectSection).not.toContain('resolveByBusinessId');
+  });
+
+  it('order-linked reject: logs missing channel instead of fallback', () => {
+    const rejectSection = routeSource.slice(
+      routeSource.indexOf("rpc('reject_order_transfer_atomic'"),
+      routeSource.indexOf('Non-order rejection')
+    );
+    expect(rejectSection).toContain('no exact channel');
+    expect(rejectSection).toContain('skipping notification');
+  });
+
+  it('non-order paths preserve resolveByBusinessId', () => {
+    const nonOrderSection = routeSource.slice(routeSource.indexOf('Non-order rejection'));
+    expect(nonOrderSection).toContain('resolveByBusinessId');
+  });
+
+  it('expire-transfers: order-linked uses exact channel, non-order uses business resolver', () => {
+    const cronSource = readFileSync(join(process.cwd(), 'app/api/cron/expire-transfers/route.ts'), 'utf-8');
+    expect(cronSource).toContain('resolveByChannelIdForBusiness');
+    // Non-order fallback
+    expect(cronSource).toContain('resolveByBusinessId');
+    // Order-linked without channel = null (no send)
+    expect(cronSource).toContain('null  // Order transfer without exact channel');
+  });
+});
