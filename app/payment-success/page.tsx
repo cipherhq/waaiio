@@ -117,7 +117,7 @@ export default async function PaymentSuccessPage({
 
   const isWebChannel = bookingChannel === 'web';
 
-  // Determine confirmation message
+  // Determine confirmation message — entity-neutral for non-booking payments
   let confirmationMessage: string;
   if (!confirmed) {
     confirmationMessage = isWebChannel
@@ -126,7 +126,7 @@ export default async function PaymentSuccessPage({
   } else if (isWebChannel) {
     confirmationMessage = 'Your payment is confirmed. Confirmation sent to your email.';
   } else {
-    confirmationMessage = 'Your payment is confirmed. Check WhatsApp for your booking details.';
+    confirmationMessage = 'Your payment is confirmed. Check WhatsApp for your confirmation details.';
   }
 
   return (
