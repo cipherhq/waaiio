@@ -100,15 +100,17 @@ export async function resolvePaymentFromRef(
   // Preserves existing behavior: look up booking by reference_code, then find
   // the payment linked to that booking.
   //
-  // Ambiguity fence: WA-RS- references can exist in BOTH the bookings table and
-  // the reservations table. If a booking is found, we cross-check against legacy
-  // Stripe metadata candidates to ensure we're not returning the wrong payment.
-  // If there's a different Stripe candidate for the same ref, we fail closed.
+  // Also reads flow_type to determine if ambiguity fence is needed.
+  // Only flow_type='reservation' bookings share the WA-RS- namespace with
+  // the separate reservations table and need the Stripe cross-check.
+  // All other booking types (scheduling, payment, ticketing, queue, etc.)
+  // use the provider-neutral fallback directly without any Stripe dependency.
   let bookingPayment: ResolvedPayment | null = null;
+  let bookingFlowType: string | null = null;
   try {
     const { data: booking, error: bookingError } = await supabase
       .from('bookings')
-      .select('id')
+      .select('id, flow_type')
       .eq('reference_code', ref)
       .maybeSingle();
 
@@ -119,6 +121,8 @@ export async function resolvePaymentFromRef(
     }
 
     if (booking) {
+      bookingFlowType = booking.flow_type || null;
+
       const { data: payment, error: paymentError } = await supabase
         .from('payments')
         .select(PAYMENT_SELECT)
@@ -142,16 +146,27 @@ export async function resolvePaymentFromRef(
     return { payment: null, path: null };
   }
 
-  // ── R3-B1: WA-RS ambiguity fence ──
-  // If we found a booking payment, cross-check against legacy Stripe metadata
-  // candidates to detect collisions where the same ref maps to different payments.
   if (bookingPayment) {
+    // ── R4-B2: Only reservation bookings need the ambiguity fence ──
+    // Normal booking flows (scheduling, payment, ticketing, queue) have unique
+    // prefixes (WA-BK-, WA-PY-, WA-TK-, WA-QU-) that don't collide with other
+    // tables. Return directly via provider-neutral path.
+    //
+    // Only flow_type='reservation' shares the WA-RS- prefix with the separate
+    // reservations table, creating potential cross-table collision.
+    if (bookingFlowType !== 'reservation') {
+      return { payment: bookingPayment, path: 'booking_reference' };
+    }
+
+    // ── WA-RS ambiguity fence (reservation bookings only) ──
+    // Cross-check against legacy Stripe metadata candidates to detect collisions
+    // where the same WA-RS- ref maps to different payments across tables.
     try {
       const { data: stripeCandidates, error: stripeError } = await queryLegacyStripeCandidates(supabase, ref);
 
       if (stripeError) {
         // Cannot verify uniqueness — fail closed
-        logger.error('[PAYMENT-RESOLVER] ambiguity cross-check error — fail closed', { stripeError });
+        logger.error('[PAYMENT-RESOLVER] reservation ambiguity cross-check error — fail closed', { stripeError });
         return { payment: null, path: null };
       }
 
@@ -173,7 +188,7 @@ export async function resolvePaymentFromRef(
       // No Stripe metadata candidates — booking payment is unambiguous
       return { payment: bookingPayment, path: 'booking_reference' };
     } catch (err) {
-      logger.error('[PAYMENT-RESOLVER] ambiguity cross-check threw — fail closed', { err });
+      logger.error('[PAYMENT-RESOLVER] reservation ambiguity cross-check threw — fail closed', { err });
       return { payment: null, path: null };
     }
   }

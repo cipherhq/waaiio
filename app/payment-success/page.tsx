@@ -1,9 +1,9 @@
 import { ReturnToWhatsApp } from '@/components/ReturnToWhatsApp';
 import { createServiceClient } from '@/lib/supabase/service';
 import { logger } from '@/lib/logger';
-// processSuccessfulPayment is now called inside reconcilePayment (Payment Authority)
 import { isWhiteLabel } from '@/lib/whitelabel';
 import { resolvePaymentFromRef } from '@/lib/payments/payment-success-resolver';
+import { reconcileAndConfirm, getConfirmationMessage } from '@/lib/payments/payment-success-helpers';
 
 export const metadata = {
   title: 'Payment Successful — Waaiio',
@@ -72,19 +72,9 @@ export default async function PaymentSuccessPage({
 
         // ── Canonical Payment Authority: server-side reconciliation ──
         // Browser redirect alone is NOT proof of payment.
-        // Reconcile through the shared authority which handles:
-        // provider verification, business finalization, and customer confirmation.
         const { reconcilePayment } = await import('@/lib/payments/reconcile');
-        const reconcileResult = await reconcilePayment(supabase, payment.id, 'payment_success');
-
-        if (reconcileResult.lifecycle?.status === 'completed' || reconcileResult.lifecycle?.status === 'already_completed') {
-          confirmed = true;
-        } else if (reconcileResult.lifecycle?.status === 'not_deliverable') {
-          // Business state is finalized but no delivery channel
-          confirmed = true;
-        }
-        // Do NOT fall back to payment.status='success' as "confirmed"
-        // Stage 1 (provider-paid) is not Stage 2/3 (business-finalized + customer-confirmed)
+        const { confirmed: isConfirmed } = await reconcileAndConfirm(supabase, payment.id, reconcilePayment);
+        confirmed = isConfirmed;
 
         // Fetch booking channel and ticket info for UI rendering
         if (confirmed && payment.booking_id) {
@@ -117,17 +107,7 @@ export default async function PaymentSuccessPage({
 
   const isWebChannel = bookingChannel === 'web';
 
-  // Determine confirmation message — entity-neutral for non-booking payments
-  let confirmationMessage: string;
-  if (!confirmed) {
-    confirmationMessage = isWebChannel
-      ? 'Thank you! Your confirmation will arrive in your email shortly.'
-      : 'Thank you! Your confirmation will arrive on WhatsApp shortly.';
-  } else if (isWebChannel) {
-    confirmationMessage = 'Your payment is confirmed. Confirmation sent to your email.';
-  } else {
-    confirmationMessage = 'Your payment is confirmed. Check WhatsApp for your confirmation details.';
-  }
+  const confirmationMessage = getConfirmationMessage(confirmed, isWebChannel);
 
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-gray-50 px-4 text-center">

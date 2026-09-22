@@ -1,287 +1,187 @@
 /**
- * Payment Success Orchestration — #358 R3-B3 executable evidence
+ * Payment Success Orchestration — #358 R4-B1 executable evidence
  *
- * Tests the payment-success page orchestration boundary:
- * - resolved payment ID → reconcilePayment(..., 'payment_success') exactly once
- * - completed/already_completed → confirmed
- * - not_deliverable → confirmed (finalized semantics preserved)
- * - not_paid/retryable_error/config_error → NOT confirmed
- * - payment.status='success' never bypasses Payment Authority
+ * Tests the PRODUCTION helpers used by app/payment-success/page.tsx:
+ * - reconcileAndConfirm() — calls reconcilePayment exactly once, maps lifecycle
+ * - getConfirmationMessage() — entity-neutral wording
  *
- * R3-B4: Entity-neutral confirmation wording
- * - order/invoice/campaign payments do NOT say "booking details"
- * - booking-specific UI preserved only when real booking exists
+ * These are the same functions imported by the production page.
+ * reconcilePayment is the only mocked dependency.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { reconcileAndConfirm, getConfirmationMessage } from '../payment-success-helpers';
+import type { ReconciliationResult } from '../reconcile';
+import type { SupabaseClient } from '@supabase/supabase-js';
 
-// ── Orchestration helper extracted from payment-success page logic ──
-// This mirrors the exact orchestration in app/payment-success/page.tsx
-// without requiring RSC rendering infrastructure.
-
-interface ReconcileResult {
-  lifecycle: { status: string } | null;
-  providerOutcome: string;
+function makeReconcileResult(overrides: Partial<ReconciliationResult> = {}): ReconciliationResult {
+  return {
+    providerOutcome: 'verified',
+    lifecycle: null,
+    acknowledgeSuccess: true,
+    ...overrides,
+  };
 }
 
-interface PaymentLike {
-  id: string;
-  status: string;
-  booking_id: string | null;
-  order_id: string | null;
-  invoice_id: string | null;
-  campaign_id: string | null;
-  reservation_id: string | null;
-}
-
-/**
- * Mirrors the exact orchestration in payment-success/page.tsx lines 77-87.
- * Returns { confirmed, reconcileCalledWith } for test assertion.
- */
-async function orchestratePaymentSuccess(
-  payment: PaymentLike,
-  reconcilePayment: (supabase: unknown, paymentId: string, source: string) => Promise<ReconcileResult>,
-) {
-  const supabase = {}; // placeholder — reconcile mock doesn't need real client
-  let confirmed = false;
-
-  // This is the EXACT logic from payment-success/page.tsx
-  const reconcileResult = await reconcilePayment(supabase, payment.id, 'payment_success');
-
-  if (reconcileResult.lifecycle?.status === 'completed' || reconcileResult.lifecycle?.status === 'already_completed') {
-    confirmed = true;
-  } else if (reconcileResult.lifecycle?.status === 'not_deliverable') {
-    // Business state is finalized but no delivery channel
-    confirmed = true;
-  }
-  // Do NOT fall back to payment.status='success' as "confirmed"
-  // Stage 1 (provider-paid) is not Stage 2/3 (business-finalized + customer-confirmed)
-
-  return { confirmed };
-}
-
-/**
- * Mirrors the confirmation message logic from payment-success/page.tsx lines 120-130.
- */
-function getConfirmationMessage(confirmed: boolean, isWebChannel: boolean, hasBooking: boolean): string {
-  if (!confirmed) {
-    return isWebChannel
-      ? 'Thank you! Your confirmation will arrive in your email shortly.'
-      : 'Thank you! Your confirmation will arrive on WhatsApp shortly.';
-  } else if (isWebChannel) {
-    return 'Your payment is confirmed. Confirmation sent to your email.';
-  } else {
-    return 'Your payment is confirmed. Check WhatsApp for your confirmation details.';
-  }
-}
-
-describe('Payment Success Orchestration — page→reconcile boundary', () => {
+describe('reconcileAndConfirm (production helper)', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
   });
 
-  // ──────────────────────────────────────────────────────────────────
-  // reconcilePayment invocation
-  // ──────────────────────────────────────────────────────────────────
+  const supabase = {} as SupabaseClient;
 
-  describe('reconcilePayment invocation', () => {
-    it('calls reconcilePayment with exact payment.id and "payment_success" source', async () => {
-      const reconcile = vi.fn().mockResolvedValue({
-        lifecycle: { status: 'completed' },
-        providerOutcome: 'verified',
-      });
+  it('calls reconcilePayment with exact payment ID and "payment_success" source', async () => {
+    const reconcile = vi.fn().mockResolvedValue(makeReconcileResult({
+      lifecycle: { status: 'completed' } as ReconciliationResult['lifecycle'],
+    }));
 
-      const payment: PaymentLike = {
-        id: 'pay_exact_id_123',
-        status: 'pending',
-        booking_id: null, order_id: 'ord_1',
-        invoice_id: null, campaign_id: null, reservation_id: null,
-      };
+    await reconcileAndConfirm(supabase, 'pay_exact_123', reconcile);
 
-      await orchestratePaymentSuccess(payment, reconcile);
-
-      expect(reconcile).toHaveBeenCalledTimes(1);
-      expect(reconcile).toHaveBeenCalledWith(expect.anything(), 'pay_exact_id_123', 'payment_success');
-    });
-
-    it('calls reconcilePayment exactly once — no duplicate calls', async () => {
-      const reconcile = vi.fn().mockResolvedValue({
-        lifecycle: { status: 'already_completed' },
-        providerOutcome: 'verified',
-      });
-
-      const payment: PaymentLike = {
-        id: 'pay_no_dup',
-        status: 'success',
-        booking_id: 'bk_1', order_id: null,
-        invoice_id: null, campaign_id: null, reservation_id: null,
-      };
-
-      await orchestratePaymentSuccess(payment, reconcile);
-      expect(reconcile).toHaveBeenCalledTimes(1);
-    });
+    expect(reconcile).toHaveBeenCalledTimes(1);
+    expect(reconcile).toHaveBeenCalledWith(supabase, 'pay_exact_123', 'payment_success');
   });
 
-  // ──────────────────────────────────────────────────────────────────
-  // Lifecycle → confirmed mapping
-  // ──────────────────────────────────────────────────────────────────
+  it('calls reconcilePayment exactly once — no duplicate calls', async () => {
+    const reconcile = vi.fn().mockResolvedValue(makeReconcileResult({
+      lifecycle: { status: 'already_completed' } as ReconciliationResult['lifecycle'],
+    }));
 
-  describe('lifecycle status → confirmed state', () => {
-    it('completed → confirmed', async () => {
-      const reconcile = vi.fn().mockResolvedValue({
-        lifecycle: { status: 'completed' },
-        providerOutcome: 'verified',
-      });
-
-      const { confirmed } = await orchestratePaymentSuccess(
-        { id: 'p1', status: 'pending', booking_id: null, order_id: 'o1', invoice_id: null, campaign_id: null, reservation_id: null },
-        reconcile,
-      );
-      expect(confirmed).toBe(true);
-    });
-
-    it('already_completed → confirmed', async () => {
-      const reconcile = vi.fn().mockResolvedValue({
-        lifecycle: { status: 'already_completed' },
-        providerOutcome: 'verified',
-      });
-
-      const { confirmed } = await orchestratePaymentSuccess(
-        { id: 'p2', status: 'success', booking_id: 'bk_1', order_id: null, invoice_id: null, campaign_id: null, reservation_id: null },
-        reconcile,
-      );
-      expect(confirmed).toBe(true);
-    });
-
-    it('not_deliverable → confirmed (finalized state preserved)', async () => {
-      const reconcile = vi.fn().mockResolvedValue({
-        lifecycle: { status: 'not_deliverable' },
-        providerOutcome: 'verified',
-      });
-
-      const { confirmed } = await orchestratePaymentSuccess(
-        { id: 'p3', status: 'pending', booking_id: null, order_id: null, invoice_id: 'inv_1', campaign_id: null, reservation_id: null },
-        reconcile,
-      );
-      expect(confirmed).toBe(true);
-    });
-
-    it('provider not_paid → NOT confirmed', async () => {
-      const reconcile = vi.fn().mockResolvedValue({
-        lifecycle: null,
-        providerOutcome: 'not_paid',
-      });
-
-      const { confirmed } = await orchestratePaymentSuccess(
-        { id: 'p4', status: 'pending', booking_id: null, order_id: 'o2', invoice_id: null, campaign_id: null, reservation_id: null },
-        reconcile,
-      );
-      expect(confirmed).toBe(false);
-    });
-
-    it('retryable_error → NOT confirmed', async () => {
-      const reconcile = vi.fn().mockResolvedValue({
-        lifecycle: null,
-        providerOutcome: 'retryable_error',
-      });
-
-      const { confirmed } = await orchestratePaymentSuccess(
-        { id: 'p5', status: 'pending', booking_id: null, order_id: null, invoice_id: null, campaign_id: 'c1', reservation_id: null },
-        reconcile,
-      );
-      expect(confirmed).toBe(false);
-    });
-
-    it('config_error → NOT confirmed', async () => {
-      const reconcile = vi.fn().mockResolvedValue({
-        lifecycle: null,
-        providerOutcome: 'config_error',
-      });
-
-      const { confirmed } = await orchestratePaymentSuccess(
-        { id: 'p6', status: 'pending', booking_id: null, order_id: null, invoice_id: null, campaign_id: null, reservation_id: 'r1' },
-        reconcile,
-      );
-      expect(confirmed).toBe(false);
-    });
-
-    it('processing lifecycle (no completed status) → NOT confirmed', async () => {
-      const reconcile = vi.fn().mockResolvedValue({
-        lifecycle: { status: 'processing' },
-        providerOutcome: 'verified',
-      });
-
-      const { confirmed } = await orchestratePaymentSuccess(
-        { id: 'p7', status: 'pending', booking_id: null, order_id: 'o3', invoice_id: null, campaign_id: null, reservation_id: null },
-        reconcile,
-      );
-      expect(confirmed).toBe(false);
-    });
+    await reconcileAndConfirm(supabase, 'pay_no_dup', reconcile);
+    expect(reconcile).toHaveBeenCalledTimes(1);
   });
 
-  // ──────────────────────────────────────────────────────────────────
-  // payment.status='success' must NEVER bypass Payment Authority
-  // ──────────────────────────────────────────────────────────────────
+  it('completed → confirmed', async () => {
+    const reconcile = vi.fn().mockResolvedValue(makeReconcileResult({
+      lifecycle: { status: 'completed' } as ReconciliationResult['lifecycle'],
+    }));
 
-  describe('payment.status=success does not bypass Authority', () => {
-    it('payment already status=success but reconcile says not_paid → NOT confirmed', async () => {
-      const reconcile = vi.fn().mockResolvedValue({
-        lifecycle: null,
-        providerOutcome: 'not_paid',
-      });
-
-      const { confirmed } = await orchestratePaymentSuccess(
-        { id: 'p8', status: 'success', booking_id: null, order_id: 'o4', invoice_id: null, campaign_id: null, reservation_id: null },
-        reconcile,
-      );
-      // Even though payment.status is 'success', if reconcile doesn't confirm, it stays unconfirmed
-      expect(confirmed).toBe(false);
-    });
-
-    it('payment.status=success with reconcile completed → confirmed (Authority verified)', async () => {
-      const reconcile = vi.fn().mockResolvedValue({
-        lifecycle: { status: 'completed' },
-        providerOutcome: 'verified',
-      });
-
-      const { confirmed } = await orchestratePaymentSuccess(
-        { id: 'p9', status: 'success', booking_id: 'bk_9', order_id: null, invoice_id: null, campaign_id: null, reservation_id: null },
-        reconcile,
-      );
-      expect(confirmed).toBe(true);
-    });
+    const { confirmed } = await reconcileAndConfirm(supabase, 'p1', reconcile);
+    expect(confirmed).toBe(true);
   });
 
-  // ──────────────────────────────────────────────────────────────────
-  // R3-B4: Entity-neutral confirmation wording
-  // ──────────────────────────────────────────────────────────────────
+  it('already_completed → confirmed', async () => {
+    const reconcile = vi.fn().mockResolvedValue(makeReconcileResult({
+      lifecycle: { status: 'already_completed' } as ReconciliationResult['lifecycle'],
+    }));
 
-  describe('R3-B4: entity-neutral confirmation wording', () => {
-    it('confirmed non-web order payment does NOT say "booking details"', () => {
-      const msg = getConfirmationMessage(true, false, false);
-      expect(msg).not.toContain('booking');
-      expect(msg).toContain('confirmation details');
-    });
+    const { confirmed } = await reconcileAndConfirm(supabase, 'p2', reconcile);
+    expect(confirmed).toBe(true);
+  });
 
-    it('confirmed non-web invoice payment does NOT say "booking details"', () => {
-      const msg = getConfirmationMessage(true, false, false);
-      expect(msg).not.toContain('booking');
-    });
+  it('not_deliverable → confirmed (finalized semantics)', async () => {
+    const reconcile = vi.fn().mockResolvedValue(makeReconcileResult({
+      lifecycle: { status: 'not_deliverable' } as ReconciliationResult['lifecycle'],
+    }));
 
-    it('confirmed non-web campaign/giving payment uses neutral wording', () => {
-      const msg = getConfirmationMessage(true, false, false);
-      expect(msg).toContain('Your payment is confirmed');
-      expect(msg).not.toContain('booking');
-    });
+    const { confirmed } = await reconcileAndConfirm(supabase, 'p3', reconcile);
+    expect(confirmed).toBe(true);
+  });
 
-    it('unconfirmed non-web payment uses generic pending message', () => {
-      const msg = getConfirmationMessage(false, false, false);
-      expect(msg).toContain('Your confirmation will arrive on WhatsApp shortly');
-      expect(msg).not.toContain('booking');
-    });
+  it('not_paid → NOT confirmed', async () => {
+    const reconcile = vi.fn().mockResolvedValue(makeReconcileResult({
+      providerOutcome: 'not_paid',
+      lifecycle: null,
+    }));
 
-    it('confirmed web channel payment uses email wording', () => {
-      const msg = getConfirmationMessage(true, true, true);
-      expect(msg).toContain('Confirmation sent to your email');
-    });
+    const { confirmed } = await reconcileAndConfirm(supabase, 'p4', reconcile);
+    expect(confirmed).toBe(false);
+  });
+
+  it('retryable_error → NOT confirmed', async () => {
+    const reconcile = vi.fn().mockResolvedValue(makeReconcileResult({
+      providerOutcome: 'retryable_error',
+      lifecycle: null,
+    }));
+
+    const { confirmed } = await reconcileAndConfirm(supabase, 'p5', reconcile);
+    expect(confirmed).toBe(false);
+  });
+
+  it('config_error → NOT confirmed', async () => {
+    const reconcile = vi.fn().mockResolvedValue(makeReconcileResult({
+      providerOutcome: 'config_error',
+      lifecycle: null,
+    }));
+
+    const { confirmed } = await reconcileAndConfirm(supabase, 'p6', reconcile);
+    expect(confirmed).toBe(false);
+  });
+
+  it('processing lifecycle → NOT confirmed', async () => {
+    const reconcile = vi.fn().mockResolvedValue(makeReconcileResult({
+      lifecycle: { status: 'processing' } as ReconciliationResult['lifecycle'],
+    }));
+
+    const { confirmed } = await reconcileAndConfirm(supabase, 'p7', reconcile);
+    expect(confirmed).toBe(false);
+  });
+
+  it('retryable_failed lifecycle → NOT confirmed', async () => {
+    const reconcile = vi.fn().mockResolvedValue(makeReconcileResult({
+      lifecycle: { status: 'retryable_failed' } as ReconciliationResult['lifecycle'],
+    }));
+
+    const { confirmed } = await reconcileAndConfirm(supabase, 'p8', reconcile);
+    expect(confirmed).toBe(false);
+  });
+
+  it('payment.status=success cannot bypass Authority — not_paid reconcile → NOT confirmed', async () => {
+    // Even if the payment row has status='success', the orchestration helper
+    // does not look at payment.status — it only uses reconcile's lifecycle result.
+    const reconcile = vi.fn().mockResolvedValue(makeReconcileResult({
+      providerOutcome: 'not_paid',
+      lifecycle: null,
+    }));
+
+    const { confirmed } = await reconcileAndConfirm(supabase, 'pay_status_success', reconcile);
+    expect(confirmed).toBe(false);
+  });
+
+  it('null lifecycle → NOT confirmed', async () => {
+    const reconcile = vi.fn().mockResolvedValue(makeReconcileResult({
+      lifecycle: null,
+    }));
+
+    const { confirmed } = await reconcileAndConfirm(supabase, 'p9', reconcile);
+    expect(confirmed).toBe(false);
+  });
+});
+
+describe('getConfirmationMessage (production helper)', () => {
+  it('confirmed non-web: entity-neutral, does NOT say "booking"', () => {
+    const msg = getConfirmationMessage(true, false);
+    expect(msg).not.toContain('booking');
+    expect(msg).toContain('confirmation details');
+    expect(msg).toContain('Your payment is confirmed');
+  });
+
+  it('confirmed web channel: email wording', () => {
+    const msg = getConfirmationMessage(true, true);
+    expect(msg).toContain('Confirmation sent to your email');
+  });
+
+  it('unconfirmed non-web: pending WhatsApp message', () => {
+    const msg = getConfirmationMessage(false, false);
+    expect(msg).toContain('Your confirmation will arrive on WhatsApp shortly');
+    expect(msg).not.toContain('booking');
+  });
+
+  it('unconfirmed web: pending email message', () => {
+    const msg = getConfirmationMessage(false, true);
+    expect(msg).toContain('Your confirmation will arrive in your email shortly');
+  });
+
+  it('order payment confirmed message does not mention booking', () => {
+    const msg = getConfirmationMessage(true, false);
+    expect(msg).not.toContain('booking');
+  });
+
+  it('invoice payment confirmed message does not mention booking', () => {
+    const msg = getConfirmationMessage(true, false);
+    expect(msg).not.toContain('booking');
+  });
+
+  it('campaign/giving payment confirmed message does not mention booking', () => {
+    const msg = getConfirmationMessage(true, false);
+    expect(msg).not.toContain('booking');
   });
 });

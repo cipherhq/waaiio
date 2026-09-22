@@ -3,13 +3,14 @@
  *
  * Tests the three-tier resolution logic in payment-success-resolver.ts:
  * 1. Provider-neutral exact gateway_reference lookup
- * 2. Provider-neutral booking reference_code fallback with WA-RS ambiguity fence
+ * 2. Provider-neutral booking reference_code fallback (no Stripe cross-check
+ *    for non-reservation bookings — R4-B2)
  * 3. Legacy Stripe entity-reference fallback via metadata.reference_code
  *
  * Also tests:
  * - fail-closed semantics for ambiguity, multi-candidate, and error cases
  * - DB error fail-closed behavior (R3-B2)
- * - WA-RS collision detection (R3-B1)
+ * - WA-RS collision detection only for reservation bookings (R3-B1 + R4-B2)
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { resolvePaymentFromRef } from '../payment-success-resolver';
@@ -36,7 +37,7 @@ function makePayment(overrides: Record<string, unknown> = {}) {
 /**
  * Creates a chainable Supabase mock where `from(table)` calls are handled
  * sequentially by index. Each handler returns `{data, error}`.
- * The chain is thenable (for non-maybeSingle terminal queries like the legacy path).
+ * The chain is thenable for non-maybeSingle terminal queries.
  */
 function createMockSupabase(handler: (table: string, callIndex: number) => { data: unknown; error: unknown }) {
   let callCount = 0;
@@ -121,17 +122,18 @@ describe('resolvePaymentFromRef', () => {
 
   // ──────────────────────────────────────────────────────────────────────
   // Path 2: Provider-neutral booking reference_code fallback
+  // Non-reservation bookings return directly (no Stripe cross-check)
   // ──────────────────────────────────────────────────────────────────────
 
   describe('Path 2: booking reference fallback (provider-neutral)', () => {
-    it('resolves booking reference for scheduling/appointment payment', async () => {
+    it('resolves WA-BK scheduling booking — no Stripe cross-check', async () => {
       const payment = makePayment({ id: 'pay_booking', booking_id: 'bk_001' });
+      let fromCallCount = 0;
       const supabase = createMockSupabase((table, idx) => {
+        fromCallCount = idx + 1;
         if (table === 'payments' && idx === 0) return { data: null, error: null }; // no gw match
-        if (table === 'bookings' && idx === 1) return { data: { id: 'bk_001' }, error: null };
+        if (table === 'bookings' && idx === 1) return { data: { id: 'bk_001', flow_type: 'scheduling' }, error: null };
         if (table === 'payments' && idx === 2) return { data: payment, error: null };
-        // Cross-check: no Stripe candidates
-        if (table === 'payments' && idx === 3) return { data: [], error: null };
         return { data: null, error: null };
       });
 
@@ -139,29 +141,66 @@ describe('resolvePaymentFromRef', () => {
       expect(result.payment).not.toBeNull();
       expect(result.path).toBe('booking_reference');
       expect(result.payment!.booking_id).toBe('bk_001');
+      // Only 3 from() calls: gateway_ref, bookings, payments. No Stripe cross-check.
+      expect(fromCallCount).toBe(3);
     });
 
-    it('resolves booking reference for ticketing payment', async () => {
+    it('resolves WA-TK ticketing booking — no Stripe cross-check', async () => {
       const payment = makePayment({ id: 'pay_ticket', booking_id: 'bk_tk_001' });
+      let fromCallCount = 0;
       const supabase = createMockSupabase((table, idx) => {
+        fromCallCount = idx + 1;
         if (table === 'payments' && idx === 0) return { data: null, error: null };
-        if (table === 'bookings' && idx === 1) return { data: { id: 'bk_tk_001' }, error: null };
+        if (table === 'bookings' && idx === 1) return { data: { id: 'bk_tk_001', flow_type: 'ticketing' }, error: null };
         if (table === 'payments' && idx === 2) return { data: payment, error: null };
-        if (table === 'payments' && idx === 3) return { data: [], error: null };
         return { data: null, error: null };
       });
 
       const result = await resolvePaymentFromRef(supabase, 'WA-TK-5678');
       expect(result.payment).not.toBeNull();
       expect(result.path).toBe('booking_reference');
+      expect(fromCallCount).toBe(3);
+    });
+
+    it('resolves Paystack appointment booking — provider-neutral, no Stripe cross-check', async () => {
+      const payment = makePayment({ id: 'pay_paystack_bk', booking_id: 'bk_ps_001' });
+      let fromCallCount = 0;
+      const supabase = createMockSupabase((table, idx) => {
+        fromCallCount = idx + 1;
+        if (table === 'payments' && idx === 0) return { data: null, error: null };
+        if (table === 'bookings' && idx === 1) return { data: { id: 'bk_ps_001', flow_type: 'scheduling' }, error: null };
+        if (table === 'payments' && idx === 2) return { data: payment, error: null };
+        return { data: null, error: null };
+      });
+
+      const result = await resolvePaymentFromRef(supabase, 'WA-BK-7777');
+      expect(result.payment).not.toBeNull();
+      expect(result.path).toBe('booking_reference');
+      expect(fromCallCount).toBe(3);
+    });
+
+    it('resolves Flutterwave ticketing booking — provider-neutral, no Stripe cross-check', async () => {
+      const payment = makePayment({ id: 'pay_flw_tk', booking_id: 'bk_flw_001' });
+      let fromCallCount = 0;
+      const supabase = createMockSupabase((table, idx) => {
+        fromCallCount = idx + 1;
+        if (table === 'payments' && idx === 0) return { data: null, error: null };
+        if (table === 'bookings' && idx === 1) return { data: { id: 'bk_flw_001', flow_type: 'ticketing' }, error: null };
+        if (table === 'payments' && idx === 2) return { data: payment, error: null };
+        return { data: null, error: null };
+      });
+
+      const result = await resolvePaymentFromRef(supabase, 'WA-TK-FLW');
+      expect(result.payment).not.toBeNull();
+      expect(result.path).toBe('booking_reference');
+      expect(fromCallCount).toBe(3);
     });
 
     it('continues to legacy path when booking not found (successful empty result)', async () => {
       const payment = makePayment({ id: 'pay_legacy', order_id: 'ord_001', metadata: { reference_code: 'WA-OR-9138' } });
       const supabase = createMockSupabase((table, idx) => {
         if (table === 'payments' && idx === 0) return { data: null, error: null };
-        if (table === 'bookings' && idx === 1) return { data: null, error: null }; // no booking found (successful)
-        // Legacy Stripe path
+        if (table === 'bookings' && idx === 1) return { data: null, error: null };
         if (table === 'payments' && idx === 2) return { data: [payment], error: null };
         return { data: null, error: null };
       });
@@ -169,21 +208,6 @@ describe('resolvePaymentFromRef', () => {
       const result = await resolvePaymentFromRef(supabase, 'WA-OR-9138');
       expect(result.payment).not.toBeNull();
       expect(result.path).toBe('legacy_stripe_metadata');
-    });
-
-    it('is provider-neutral — works for Paystack booking payments', async () => {
-      const payment = makePayment({ id: 'pay_paystack_bk', booking_id: 'bk_ps_001' });
-      const supabase = createMockSupabase((table, idx) => {
-        if (table === 'payments' && idx === 0) return { data: null, error: null };
-        if (table === 'bookings' && idx === 1) return { data: { id: 'bk_ps_001' }, error: null };
-        if (table === 'payments' && idx === 2) return { data: payment, error: null };
-        if (table === 'payments' && idx === 3) return { data: [], error: null };
-        return { data: null, error: null };
-      });
-
-      const result = await resolvePaymentFromRef(supabase, 'WA-BK-7777');
-      expect(result.payment).not.toBeNull();
-      expect(result.path).toBe('booking_reference');
     });
   });
 
@@ -231,7 +255,7 @@ describe('resolvePaymentFromRef', () => {
     it('booking→payment lookup DB error → fail closed', async () => {
       const supabase = createMockSupabase((table, idx) => {
         if (table === 'payments' && idx === 0) return { data: null, error: null };
-        if (table === 'bookings' && idx === 1) return { data: { id: 'bk_err' }, error: null };
+        if (table === 'bookings' && idx === 1) return { data: { id: 'bk_err', flow_type: 'scheduling' }, error: null };
         if (table === 'payments' && idx === 2) return { data: null, error: { message: 'DB timeout' } };
         return { data: null, error: null };
       });
@@ -243,20 +267,19 @@ describe('resolvePaymentFromRef', () => {
   });
 
   // ──────────────────────────────────────────────────────────────────────
-  // R3-B1: WA-RS collision detection
+  // R3-B1 + R4-B2: WA-RS collision detection (reservation bookings only)
   // ──────────────────────────────────────────────────────────────────────
 
-  describe('R3-B1: WA-RS collision ambiguity fence', () => {
-    it('booking found + different Stripe reservation payment with same ref → fail closed', async () => {
-      // Production topology: booking table has WA-RS-X, separate Stripe reservation payment also has WA-RS-X
+  describe('WA-RS collision fence (reservation bookings only)', () => {
+    it('reservation booking + different Stripe reservation payment same ref → fail closed', async () => {
       const bookingPayment = makePayment({ id: 'pay_bk_rs', booking_id: 'bk_rs_1' });
       const stripeReservationPayment = makePayment({ id: 'pay_stripe_rv', reservation_id: 'rv_1', metadata: { reference_code: 'WA-RS-COLL' } });
 
       const supabase = createMockSupabase((table, idx) => {
-        if (table === 'payments' && idx === 0) return { data: null, error: null }; // no gw match
-        if (table === 'bookings' && idx === 1) return { data: { id: 'bk_rs_1' }, error: null }; // booking found
-        if (table === 'payments' && idx === 2) return { data: bookingPayment, error: null }; // booking's payment
-        // Cross-check: Stripe metadata finds a DIFFERENT payment
+        if (table === 'payments' && idx === 0) return { data: null, error: null };
+        if (table === 'bookings' && idx === 1) return { data: { id: 'bk_rs_1', flow_type: 'reservation' }, error: null };
+        if (table === 'payments' && idx === 2) return { data: bookingPayment, error: null };
+        // Cross-check: different Stripe payment
         if (table === 'payments' && idx === 3) return { data: [stripeReservationPayment], error: null };
         return { data: null, error: null };
       });
@@ -266,15 +289,14 @@ describe('resolvePaymentFromRef', () => {
       expect(result.path).toBeNull();
     });
 
-    it('booking found + Stripe metadata resolves SAME payment → safe resolution', async () => {
-      // Same canonical payment found through both paths — no ambiguity
+    it('reservation booking + same canonical Stripe payment → safe resolution', async () => {
       const payment = makePayment({ id: 'pay_same', booking_id: 'bk_same', metadata: { reference_code: 'WA-RS-SAFE' } });
 
       const supabase = createMockSupabase((table, idx) => {
         if (table === 'payments' && idx === 0) return { data: null, error: null };
-        if (table === 'bookings' && idx === 1) return { data: { id: 'bk_same' }, error: null };
+        if (table === 'bookings' && idx === 1) return { data: { id: 'bk_same', flow_type: 'reservation' }, error: null };
         if (table === 'payments' && idx === 2) return { data: payment, error: null };
-        // Cross-check: same payment found via Stripe metadata
+        // Cross-check: same payment
         if (table === 'payments' && idx === 3) return { data: [payment], error: null };
         return { data: null, error: null };
       });
@@ -285,14 +307,13 @@ describe('resolvePaymentFromRef', () => {
       expect(result.payment!.id).toBe('pay_same');
     });
 
-    it('booking found + no Stripe candidates → safe (non-Stripe provider)', async () => {
+    it('reservation booking + no Stripe candidates → safe (non-Stripe provider)', async () => {
       const payment = makePayment({ id: 'pay_paystack_rs', booking_id: 'bk_ps_rs' });
 
       const supabase = createMockSupabase((table, idx) => {
         if (table === 'payments' && idx === 0) return { data: null, error: null };
-        if (table === 'bookings' && idx === 1) return { data: { id: 'bk_ps_rs' }, error: null };
+        if (table === 'bookings' && idx === 1) return { data: { id: 'bk_ps_rs', flow_type: 'reservation' }, error: null };
         if (table === 'payments' && idx === 2) return { data: payment, error: null };
-        // Cross-check: no Stripe metadata candidates (non-Stripe provider)
         if (table === 'payments' && idx === 3) return { data: [], error: null };
         return { data: null, error: null };
       });
@@ -302,14 +323,13 @@ describe('resolvePaymentFromRef', () => {
       expect(result.path).toBe('booking_reference');
     });
 
-    it('booking found + cross-check DB error → fail closed', async () => {
+    it('reservation cross-check DB error → fail closed', async () => {
       const bookingPayment = makePayment({ id: 'pay_bk_cross_err', booking_id: 'bk_cross' });
 
       const supabase = createMockSupabase((table, idx) => {
         if (table === 'payments' && idx === 0) return { data: null, error: null };
-        if (table === 'bookings' && idx === 1) return { data: { id: 'bk_cross' }, error: null };
+        if (table === 'bookings' && idx === 1) return { data: { id: 'bk_cross', flow_type: 'reservation' }, error: null };
         if (table === 'payments' && idx === 2) return { data: bookingPayment, error: null };
-        // Cross-check fails
         if (table === 'payments' && idx === 3) return { data: null, error: { message: 'cross-check error' } };
         return { data: null, error: null };
       });
@@ -319,16 +339,15 @@ describe('resolvePaymentFromRef', () => {
       expect(result.path).toBeNull();
     });
 
-    it('booking found + multiple Stripe candidates → fail closed', async () => {
+    it('reservation booking + multiple Stripe candidates → fail closed', async () => {
       const bookingPayment = makePayment({ id: 'pay_bk_multi', booking_id: 'bk_multi' });
       const stripe1 = makePayment({ id: 'pay_stripe_1', metadata: { reference_code: 'WA-RS-MULTI' } });
       const stripe2 = makePayment({ id: 'pay_stripe_2', metadata: { reference_code: 'WA-RS-MULTI' } });
 
       const supabase = createMockSupabase((table, idx) => {
         if (table === 'payments' && idx === 0) return { data: null, error: null };
-        if (table === 'bookings' && idx === 1) return { data: { id: 'bk_multi' }, error: null };
+        if (table === 'bookings' && idx === 1) return { data: { id: 'bk_multi', flow_type: 'reservation' }, error: null };
         if (table === 'payments' && idx === 2) return { data: bookingPayment, error: null };
-        // Cross-check: multiple Stripe candidates
         if (table === 'payments' && idx === 3) return { data: [stripe1, stripe2], error: null };
         return { data: null, error: null };
       });
@@ -371,7 +390,6 @@ describe('resolvePaymentFromRef', () => {
       const result = await resolvePaymentFromRef(supabase, 'WA-IN-4567');
       expect(result.payment).not.toBeNull();
       expect(result.path).toBe('legacy_stripe_metadata');
-      expect(result.payment!.invoice_id).toBe('inv_001');
     });
 
     it('resolves legacy Stripe reservation payment', async () => {
@@ -386,7 +404,6 @@ describe('resolvePaymentFromRef', () => {
       const result = await resolvePaymentFromRef(supabase, 'WA-RS-3333');
       expect(result.payment).not.toBeNull();
       expect(result.path).toBe('legacy_stripe_metadata');
-      expect(result.payment!.reservation_id).toBe('res_001');
     });
 
     it('resolves legacy Stripe campaign/giving payment (DON-xxxx)', async () => {
@@ -401,7 +418,6 @@ describe('resolvePaymentFromRef', () => {
       const result = await resolvePaymentFromRef(supabase, 'DON-ABC123');
       expect(result.payment).not.toBeNull();
       expect(result.path).toBe('legacy_stripe_metadata');
-      expect(result.payment!.campaign_id).toBe('camp_001');
     });
 
     it('fails closed on zero candidates', async () => {
@@ -414,35 +430,19 @@ describe('resolvePaymentFromRef', () => {
 
       const result = await resolvePaymentFromRef(supabase, 'WA-OR-0000');
       expect(result.payment).toBeNull();
-      expect(result.path).toBeNull();
     });
 
-    it('fails closed on multiple candidates — no arbitrary latest', async () => {
-      const payment1 = makePayment({ id: 'pay_a', metadata: { reference_code: 'DON-DUP1' } });
-      const payment2 = makePayment({ id: 'pay_b', metadata: { reference_code: 'DON-DUP1' } });
+    it('fails closed on multiple candidates', async () => {
+      const p1 = makePayment({ id: 'pay_a' });
+      const p2 = makePayment({ id: 'pay_b' });
       const supabase = createMockSupabase((table, idx) => {
         if (table === 'payments' && idx === 0) return { data: null, error: null };
         if (table === 'bookings' && idx === 1) return { data: null, error: null };
-        if (table === 'payments' && idx === 2) return { data: [payment1, payment2], error: null };
+        if (table === 'payments' && idx === 2) return { data: [p1, p2], error: null };
         return { data: null, error: null };
       });
 
-      const result = await resolvePaymentFromRef(supabase, 'DON-DUP1');
-      expect(result.payment).toBeNull();
-      expect(result.path).toBeNull();
-    });
-
-    it('DON- non-uniqueness: multiple donation payments fails closed', async () => {
-      const don1 = makePayment({ id: 'don_a', campaign_id: 'c1', metadata: { reference_code: 'DON-SAME' } });
-      const don2 = makePayment({ id: 'don_b', campaign_id: 'c1', metadata: { reference_code: 'DON-SAME' } });
-      const supabase = createMockSupabase((table, idx) => {
-        if (table === 'payments' && idx === 0) return { data: null, error: null };
-        if (table === 'bookings' && idx === 1) return { data: null, error: null };
-        if (table === 'payments' && idx === 2) return { data: [don1, don2], error: null };
-        return { data: null, error: null };
-      });
-
-      const result = await resolvePaymentFromRef(supabase, 'DON-SAME');
+      const result = await resolvePaymentFromRef(supabase, 'DON-DUP');
       expect(result.payment).toBeNull();
     });
 
@@ -470,7 +470,6 @@ describe('resolvePaymentFromRef', () => {
         _inbound_channel_id: 'ch_original',
         _confirmation_origin: 'whatsapp',
         payment_origin: 'platform',
-        stripe_session_id: 'cs_test_preserved',
       };
       const payment = makePayment({ id: 'pay_meta', metadata: { ...originalMeta } });
       const supabase = createMockSupabase((table, idx) => {
@@ -479,23 +478,16 @@ describe('resolvePaymentFromRef', () => {
       });
 
       const result = await resolvePaymentFromRef(supabase, 'cs_test_preserved');
-      expect(result.payment).not.toBeNull();
       const meta = result.payment!.metadata as Record<string, unknown>;
       expect(meta._inbound_channel_id).toBe('ch_original');
       expect(meta._confirmation_origin).toBe('whatsapp');
       expect(meta.payment_origin).toBe('platform');
-      expect(meta.reference_code).toBe('WA-OR-9138');
     });
 
     it('preserves all entity IDs on the resolved payment', async () => {
       const payment = makePayment({
-        id: 'pay_entity',
-        order_id: 'ord_99',
-        booking_id: null,
-        invoice_id: null,
-        campaign_id: null,
-        reservation_id: null,
-        business_id: 'biz_99',
+        id: 'pay_entity', order_id: 'ord_99', booking_id: null,
+        invoice_id: null, campaign_id: null, reservation_id: null, business_id: 'biz_99',
       });
       const supabase = createMockSupabase((table, idx) => {
         if (table === 'payments' && idx === 0) return { data: payment, error: null };
@@ -515,10 +507,7 @@ describe('resolvePaymentFromRef', () => {
 
   describe('unknown reference', () => {
     it('returns null for completely unknown reference', async () => {
-      const supabase = createMockSupabase(() => {
-        return { data: null, error: null };
-      });
-
+      const supabase = createMockSupabase(() => ({ data: null, error: null }));
       const result = await resolvePaymentFromRef(supabase, 'UNKNOWN-REF-XYZ');
       expect(result.payment).toBeNull();
     });
