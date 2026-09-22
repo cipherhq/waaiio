@@ -270,7 +270,8 @@ BEGIN
     'operation_type', v_row.operation_type,
     'customer_phone', v_row.customer_phone,
     'source_event', v_row.source_event,
-    'attempt_count', v_row.attempt_count + 1
+    'attempt_count', v_row.attempt_count + 1,
+    'source_offer_id', v_row.source_offer_id
   );
 END;
 $$;

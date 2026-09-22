@@ -243,21 +243,28 @@ export async function handleCardPinStep(
   if (paymentId) {
     const { data: sourcePayment } = await supabase.from('payments')
       .select('id, status, gateway, metadata')
-      .eq('id', paymentId).eq('status', 'success').eq('gateway', 'paystack').maybeSingle();
+      .eq('id', paymentId).eq('status', 'success').maybeSingle();
     if (!sourcePayment) {
       await sendText(from, 'The payment is no longer available. Please type *save card* again.');
       return;
     }
+    if (sourcePayment.gateway !== 'paystack' && sourcePayment.gateway !== 'stripe') {
+      await sendText(from, 'Card saving is not available for this payment method.');
+      return;
+    }
     const freshMeta = (sourcePayment.metadata || {}) as Record<string, unknown>;
-    if (freshMeta.payment_origin !== 'platform') {
+    if (freshMeta.payment_origin === 'byo' || freshMeta.payment_origin === 'connect') {
       await sendText(from, 'This payment cannot be used to save a card.');
       return;
     }
-    const freshAuth = freshMeta._card_authorization as Record<string, unknown> | undefined;
-    if (!freshAuth?.authorization_code || !freshAuth?.email || freshAuth?.reusable !== true) {
-      await sendText(from, 'Card authorization is no longer valid. Please type *save card* again.');
-      return;
+    if (sourcePayment.gateway === 'paystack') {
+      const freshAuth = freshMeta._card_authorization as Record<string, unknown> | undefined;
+      if (!freshAuth?.authorization_code || !freshAuth?.email || freshAuth?.reusable !== true) {
+        await sendText(from, 'Card authorization is no longer valid. Please type *save card* again.');
+        return;
+      }
     }
+    // Stripe: consent evidence in metadata.stripe_save_consent, validated at offer creation time
   }
 
   if (!auth?.authorization_code || !businessId) {
@@ -285,13 +292,9 @@ export async function handleCardPinStep(
     return;
   }
 
-  // C6: Revalidate invariants before credential write
-  if (gateway !== 'paystack') {
-    await sendText(from, 'Card saving is only available for Paystack payments.');
-    return;
-  }
-  if (auth.reusable !== true) {
-    await sendText(from, 'Your card is not reusable. Please try again after your next payment.');
+  // C6: Revalidate invariants before credential write — dispatch by gateway
+  if (gateway !== 'paystack' && gateway !== 'stripe') {
+    await sendText(from, 'Card saving is not available for this payment method.');
     return;
   }
 
@@ -299,73 +302,150 @@ export async function handleCardPinStep(
   const { createHash } = await import('crypto');
   const pinHash = createHash('sha256').update(`${pin}:${phoneP}`).digest('hex');
 
-  // Require authorization_email for the saved card
-  const authEmail = (auth.email as string) || null;
-  if (!authEmail) {
-    // CAS reset + inform
-    const { data: casResetResult } = await supabase.rpc('update_session_cas', {
-      p_session_id: session.id, p_expected_version: session.version ?? 0,
-      p_current_step: 'select_capability', p_session_data: {},
-    });
-    if (casResetResult?.success) session.version = casResetResult.version;
-    await sendText(from, 'Card authorization email is missing. Please try again after your next payment.');
-    return;
-  }
-
-  // B7: Check INSERT result — concurrent race can cause UNIQUE violation
-  const { error: insertError } = await supabase.from('saved_payment_methods').insert({
-    business_id: businessId, // origin/audit only (nullable, not the scoping authority)
-    customer_phone: phoneP,
-    gateway,
-    authorization_code: auth.authorization_code as string,
-    customer_code: (auth.customer_code as string) || null,
-    authorization_email: authEmail,
-    card_last4: (auth.last4 as string) || null,
-    card_brand: (auth.brand as string) || null,
-    card_exp_month: auth.exp_month ? Number(auth.exp_month) : null,
-    card_exp_year: auth.exp_year ? Number(auth.exp_year) : null,
-    card_type: (auth.card_type as string) || null,
-    bank_name: (auth.bank as string) || null,
-    is_active: true,
-    pin_hash: pinHash,
-    pin_attempts: 0,
-    last_used_at: new Date().toISOString(),
-  });
-
-  if (insertError) {
-    // R6: Authority-checked CAS cleanup — do not leave stuck in save_card_pin
-    const cleanData = { ...session.session_data };
-    delete cleanData._save_card_pending;
-    delete cleanData._save_card_business_id;
-    delete cleanData._save_card_gateway;
-    delete cleanData._save_card_auth;
-    const { data: casCleanResult } = await supabase.rpc('update_session_cas', {
-      p_session_id: session.id, p_expected_version: session.version ?? 0,
-      p_current_step: 'select_capability', p_session_data: cleanData,
-    });
-    if (!casCleanResult?.success) {
-      // CAS lost — stale worker. Do not send misleading message.
+  if (gateway === 'paystack') {
+    // ── Paystack first-save (existing behavior, unchanged) ──
+    if (auth.reusable !== true) {
+      await sendText(from, 'Your card is not reusable. Please try again after your next payment.');
       return;
     }
-    session.version = casCleanResult.version;
+    const authEmail = (auth.email as string) || null;
+    if (!authEmail) {
+      const { data: casResetResult } = await supabase.rpc('update_session_cas', {
+        p_session_id: session.id, p_expected_version: session.version ?? 0,
+        p_current_step: 'select_capability', p_session_data: {},
+      });
+      if (casResetResult?.success) session.version = casResetResult.version;
+      await sendText(from, 'Card authorization email is missing. Please try again after your next payment.');
+      return;
+    }
 
-    if (insertError.code === '23505') {
-      // UNIQUE violation — concurrent first-save race. Re-read authoritative state.
-      const { data: existing } = await supabase.from('saved_payment_methods')
-        .select('authorization_code').in('customer_phone', [phoneP, phoneN]).eq('is_active', true).eq('gateway', 'paystack').maybeSingle();
-      if (existing?.authorization_code === (auth.authorization_code as string)) {
+    const { error: insertError } = await supabase.from('saved_payment_methods').insert({
+      business_id: businessId,
+      customer_phone: phoneP,
+      gateway,
+      authorization_code: auth.authorization_code as string,
+      customer_code: (auth.customer_code as string) || null,
+      authorization_email: authEmail,
+      card_last4: (auth.last4 as string) || null,
+      card_brand: (auth.brand as string) || null,
+      card_exp_month: auth.exp_month ? Number(auth.exp_month) : null,
+      card_exp_year: auth.exp_year ? Number(auth.exp_year) : null,
+      card_type: (auth.card_type as string) || null,
+      bank_name: (auth.bank as string) || null,
+      is_active: true,
+      pin_hash: pinHash,
+      pin_attempts: 0,
+      last_used_at: new Date().toISOString(),
+    });
+
+    if (insertError) {
+      const cleanData = { ...session.session_data };
+      delete cleanData._save_card_pending;
+      delete cleanData._save_card_business_id;
+      delete cleanData._save_card_gateway;
+      delete cleanData._save_card_auth;
+      const { data: casCleanResult } = await supabase.rpc('update_session_cas', {
+        p_session_id: session.id, p_expected_version: session.version ?? 0,
+        p_current_step: 'select_capability', p_session_data: cleanData,
+      });
+      if (!casCleanResult?.success) return;
+      session.version = casCleanResult.version;
+
+      if (insertError.code === '23505') {
+        const { data: existing } = await supabase.from('saved_payment_methods')
+          .select('authorization_code').in('customer_phone', [phoneP, phoneN]).eq('is_active', true).eq('gateway', 'paystack').maybeSingle();
+        if (existing?.authorization_code === (auth.authorization_code as string)) {
+          await sendText(from, 'Your card is already saved.');
+        } else {
+          await sendText(from, 'A card is already saved. Type *save card* again to replace it.');
+        }
+      } else {
+        logger.error('[SAVED_CARDS] first-save-insert-failed:', insertError.message);
+        await sendText(from, 'Failed to save card. Please try again.');
+      }
+      return;
+    }
+
+    // Paystack durable acknowledgement: committed → confirmed
+    const offerId = d._save_card_offer_id as string | undefined;
+    if (offerId) {
+      const savedMethod = await supabase.from('saved_payment_methods')
+        .select('id, credential_version').in('customer_phone', [phoneP, phoneN]).eq('is_active', true).eq('gateway', 'paystack').maybeSingle();
+      if (savedMethod?.data) {
+        await supabase.rpc('commit_saved_card_offer', {
+          p_offer_id: offerId, p_customer_phone: phoneP,
+          p_method_id: savedMethod.data.id,
+          p_card_display: `${((auth.brand as string) || 'Card').toUpperCase()} ****${(auth.last4 as string) || '????'}`,
+          p_credential_version: savedMethod.data.credential_version || 1,
+        });
+      }
+    }
+  } else if (gateway === 'stripe') {
+    // ── Stripe first-save: commit saved credential ──
+    const pmId = auth.stripe_payment_method_id as string;
+    const custId = auth.stripe_customer_id as string;
+    if (!pmId || !custId) {
+      await sendText(from, 'Stripe card details are not available. Please try again after your next payment.');
+      return;
+    }
+
+    const { error: insertError } = await supabase.from('saved_payment_methods').insert({
+      business_id: businessId,
+      customer_phone: phoneP,
+      gateway: 'stripe',
+      stripe_payment_method_id: pmId,
+      stripe_customer_id: custId,
+      card_last4: (auth.card_last4 as string) || null,
+      card_brand: (auth.card_brand as string) || null,
+      card_exp_month: auth.card_exp_month ? Number(auth.card_exp_month) : null,
+      card_exp_year: auth.card_exp_year ? Number(auth.card_exp_year) : null,
+      is_active: true,
+      pin_hash: pinHash,
+      pin_attempts: 0,
+      last_used_at: new Date().toISOString(),
+    });
+
+    if (insertError) {
+      const cleanData = { ...session.session_data };
+      delete cleanData._save_card_pending;
+      delete cleanData._save_card_business_id;
+      delete cleanData._save_card_gateway;
+      delete cleanData._save_card_auth;
+      const { data: casCleanResult } = await supabase.rpc('update_session_cas', {
+        p_session_id: session.id, p_expected_version: session.version ?? 0,
+        p_current_step: 'select_capability', p_session_data: cleanData,
+      });
+      if (!casCleanResult?.success) return;
+      session.version = casCleanResult.version;
+
+      if (insertError.code === '23505') {
         await sendText(from, 'Your card is already saved.');
       } else {
-        await sendText(from, 'A card is already saved. Type *save card* again to replace it.');
+        logger.error('[SAVED_CARDS] Stripe first-save-insert-failed:', insertError.message);
+        await sendText(from, 'Failed to save card. Please try again.');
       }
-    } else {
-      logger.error('[SAVED_CARDS] first-save-insert-failed:', insertError.message);
-      await sendText(from, 'Failed to save card. Please try again.');
+      return;
     }
-    return;
+
+    // Stripe durable acknowledgement: committed → confirmed
+    const offerId = d._save_card_offer_id as string | undefined;
+    if (offerId) {
+      const savedMethod = await supabase.from('saved_payment_methods')
+        .select('id, credential_version').in('customer_phone', [phoneP, phoneN]).eq('is_active', true).eq('gateway', 'stripe').maybeSingle();
+      if (savedMethod?.data) {
+        await supabase.rpc('commit_saved_card_offer', {
+          p_offer_id: offerId, p_customer_phone: phoneP,
+          p_method_id: savedMethod.data.id,
+          p_card_display: `${((auth.card_brand as string) || 'Card').toUpperCase()} ****${(auth.card_last4 as string) || '????'}`,
+          p_credential_version: savedMethod.data.credential_version || 1,
+        });
+      }
+    }
   }
 
-  const cardLabel = `${((auth.brand as string) || 'Card').toUpperCase()} ****${(auth.last4 as string) || '????'}`;
+  const cardLabel = gateway === 'stripe'
+    ? `${((auth.card_brand as string) || 'Card').toUpperCase()} ****${(auth.card_last4 as string) || '????'}`
+    : `${((auth.brand as string) || 'Card').toUpperCase()} ****${(auth.last4 as string) || '????'}`;
 
   // Clear save data from session
   const cleanData = { ...session.session_data };
@@ -377,7 +457,18 @@ export async function handleCardPinStep(
     .update({ current_step: 'select_capability', session_data: cleanData })
     .eq('id', session.id);
 
-  await sendText(from, `💳 Card saved! *${cardLabel}*\n\n🔒 Waaiio PIN set successfully. You'll need this Waaiio PIN when using your saved card.\n\nFor privacy, you can delete your PIN message from this chat. Type *remove card* anytime to delete this card.`);
+  // Durable confirmation: committed → confirmed
+  const offerId = d._save_card_offer_id as string | undefined;
+  try {
+    await sendText(from, `💳 Card saved! *${cardLabel}*\n\n🔒 Waaiio PIN set successfully. You'll need this Waaiio PIN when using your saved card.\n\nFor privacy, you can delete your PIN message from this chat. Type *remove card* anytime to delete this card.`);
+    // Mark offer as confirmed (delivery proven)
+    if (offerId) {
+      await supabase.rpc('confirm_saved_card_offer', { p_offer_id: offerId, p_customer_phone: phoneP });
+    }
+  } catch (confirmErr) {
+    // Delivery failed — offer stays 'committed'. Recovery can re-send without re-running credential save.
+    logger.error('[SAVED_CARDS] Confirmation delivery failed — offer stays committed for recovery', { confirmErr });
+  }
 }
 
 /**

@@ -525,8 +525,8 @@ export async function checkStripeConsentAndOffer(
 
   const cardLabel = `${(evidence.cardBrand || 'Card').toUpperCase()} ****${evidence.cardLast4}`;
 
-  // Record consent evidence in payment metadata (before downgrade)
-  await supabase.from('payments').update({
+  // Step 1: Record consent evidence in payment metadata (durable, before any mutation)
+  const { error: consentWriteErr } = await supabase.from('payments').update({
     metadata: {
       ...meta,
       stripe_save_consent: true,
@@ -537,26 +537,12 @@ export async function checkStripeConsentAndOffer(
     },
   }).eq('id', paymentId);
 
-  // Downgrade PM redisplay to prevent Checkout PIN bypass
-  const { downgradeAllowRedisplay } = await import('./stripe-saved-card');
-  const downgraded = await downgradeAllowRedisplay(evidence.paymentMethodId);
-
-  if (!downgraded) {
-    // Redisplay fence failed — create cleanup operation for retry
-    logger.warn(`${logPrefix} Redisplay downgrade failed — creating cleanup operation`, { paymentId });
-    await supabase.from('provider_cleanup_operations').insert({
-      customer_phone: canonPhone,
-      gateway: 'stripe',
-      provider_account_scope: 'platform',
-      operation_type: 'set_allow_redisplay_limited',
-      provider_object_id: evidence.paymentMethodId,
-      source_event: 'redisplay_downgrade',
-    }).select().maybeSingle();
-    // Do NOT proceed to PIN activation — fence not proven
+  if (consentWriteErr) {
+    logger.error(`${logPrefix} Consent evidence write failed — cannot proceed`, { consentWriteErr });
     return;
   }
 
-  // Check for existing saved method (same customer, gateway=stripe)
+  // Step 2: Check for existing saved method
   const phoneN = canonPhone.slice(1);
   const { data: existing } = await supabase.from('saved_payment_methods')
     .select('id, stripe_payment_method_id')
@@ -571,7 +557,16 @@ export async function checkStripeConsentAndOffer(
     return;
   }
 
-  // Create provider-consented offer (direct to 'accepted' — consent was at Checkout)
+  // Step 3: Resolve originating channel for durable recovery
+  let channelId: string | null = null;
+  if (payment.business_id) {
+    const { data: bizFull } = await supabase.from('businesses')
+      .select('assigned_channel_id, whatsapp_channel_id')
+      .eq('id', payment.business_id).maybeSingle();
+    channelId = bizFull?.assigned_channel_id || bizFull?.whatsapp_channel_id || null;
+  }
+
+  // Step 4: Create provider-consented offer FIRST (before redisplay mutation)
   const { data: offerResult } = await supabase.rpc('create_provider_consented_offer', {
     p_payment_id: paymentId,
     p_customer_phone: canonPhone,
@@ -581,6 +576,7 @@ export async function checkStripeConsentAndOffer(
     p_consented_at: new Date().toISOString(),
     p_card_display: cardLabel,
     p_current_method_id: existing?.id || null,
+    p_channel_id: channelId,
   });
 
   if (!offerResult || (offerResult as Record<string, unknown>).already_exists) {
@@ -590,7 +586,27 @@ export async function checkStripeConsentAndOffer(
 
   const offerId = (offerResult as Record<string, unknown>).offer_id as string;
 
-  // Send PIN activation prompt (NOT a Save Card question — consent already obtained)
+  // Step 5: Downgrade PM redisplay to prevent Checkout PIN bypass
+  const { downgradeAllowRedisplay } = await import('./stripe-saved-card');
+  const downgraded = await downgradeAllowRedisplay(evidence.paymentMethodId);
+
+  if (!downgraded) {
+    // Redisplay fence failed — create cleanup operation bound to exact offer
+    logger.warn(`${logPrefix} Redisplay downgrade failed — creating cleanup operation`, { paymentId, offerId });
+    await supabase.from('provider_cleanup_operations').insert({
+      customer_phone: canonPhone,
+      gateway: 'stripe',
+      provider_account_scope: 'platform',
+      operation_type: 'set_allow_redisplay_limited',
+      provider_object_id: evidence.paymentMethodId,
+      source_event: 'redisplay_downgrade',
+      source_offer_id: offerId,
+    }).select().maybeSingle();
+    // Do NOT proceed to PIN activation — fence not proven
+    return;
+  }
+
+  // Step 6: Send PIN activation prompt (durable delivery tracking)
   if (sender) {
     try {
       const activationMsg = offerType === 'save'
@@ -598,13 +614,13 @@ export async function checkStripeConsentAndOffer(
         : `🔒 You chose to save ${cardLabel}. Enter your existing *Waaiio PIN* to update your saved card.`;
       await sender.sendText({ to: canonPhone, text: activationMsg });
 
-      // Mark activation prompt sent
+      // Mark activation prompt sent (durable delivery proof)
       await supabase.from('payment_saved_card_offers')
         .update({ activation_prompt_sent_at: new Date().toISOString() })
         .eq('id', offerId);
     } catch (sendErr) {
-      // Activation prompt delivery failed — the offer stays 'accepted' for recovery
-      logger.error(`${logPrefix} Activation prompt send failed — offer stays accepted for recovery`, { sendErr });
+      // Activation prompt delivery failed — offer stays 'accepted' with channel_id for recovery
+      logger.error(`${logPrefix} Activation prompt send failed — offer stays accepted for recovery`, { sendErr, offerId, channelId });
     }
   }
 }
