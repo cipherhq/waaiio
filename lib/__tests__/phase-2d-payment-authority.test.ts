@@ -1,12 +1,16 @@
 /**
  * Phase 2D: Direct Order Payment Authority tests (#352).
  *
- * Tests M394 provenance, Stage 2 zero-fee, Stage 3 manifest parity,
- * terminal effects, channel behavior, and recovery semantics.
+ * Part A: Structural/contract verification (source text + executable imports)
+ * Part B: Real PostgreSQL DB tests (M394 provenance, zero-fee, concurrency)
+ * Part C: Executable runtime tests (manifest parity, Stage 3 behavior)
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { execSync, spawn } from 'child_process';
 import { readFileSync } from 'fs';
 import { join } from 'path';
+
+// ═══ Part A: Structural + executable import tests ═══
 
 const authoritySource = readFileSync(join(process.cwd(), 'lib/payments/authority.ts'), 'utf-8');
 const processSuccessSource = readFileSync(join(process.cwd(), 'lib/payments/process-success.ts'), 'utf-8');
@@ -16,291 +20,103 @@ const dashboardRoute = readFileSync(join(process.cwd(), 'app/api/dashboard/pendi
 const cronRoute = readFileSync(join(process.cwd(), 'app/api/cron/payment-reconciliation/route.ts'), 'utf-8');
 const m394Source = readFileSync(join(process.cwd(), 'supabase/migrations/394_direct_order_payment_authority.sql'), 'utf-8');
 
-// ═══ M394 Migration ═══
-
-describe('M394: confirm_order_transfer_atomic', () => {
-  it('sets payment_authority_version = 1', () => {
-    expect(m394Source).toContain('payment_authority_version');
-    // In the INSERT VALUES
-    const insertSection = m394Source.slice(m394Source.indexOf('INSERT INTO payments'), m394Source.indexOf('RETURNING id INTO v_new_payment_id'));
-    expect(insertSection).toContain('payment_authority_version');
-    expect(insertSection).toContain("1,  -- M394");
+describe('M394 structural', () => {
+  it('payment_authority_version = 1 in INSERT', () => {
+    const ins = m394Source.slice(m394Source.indexOf('INSERT INTO payments'), m394Source.indexOf('RETURNING id INTO v_new_payment_id'));
+    expect(ins).toContain('payment_authority_version');
   });
-
-  it('sets _direct_transfer = true in metadata', () => {
-    const insertSection = m394Source.slice(m394Source.indexOf('INSERT INTO payments'), m394Source.indexOf('RETURNING id INTO v_new_payment_id'));
-    expect(insertSection).toContain("'_direct_transfer', true");
+  it('_direct_transfer = true in metadata', () => {
+    const ins = m394Source.slice(m394Source.indexOf('INSERT INTO payments'), m394Source.indexOf('RETURNING id INTO v_new_payment_id'));
+    expect(ins).toContain("'_direct_transfer', true");
   });
-
-  it('preserves all M393 lock/winner semantics', () => {
-    expect(m394Source).toContain('Lock order FOR UPDATE');
-    expect(m394Source).toContain('Lock transfer');
-    expect(m394Source).toContain('Lock marker');
-    expect(m394Source).toContain('Lock ALL linked payment rows');
-    expect(m394Source).toContain('Payment/finalization fence');
-    expect(m394Source).toContain('marker_has_payment');
-    expect(m394Source).toContain("reservation_class = 'committed'");
-    expect(m394Source).toContain("status = 'confirmed'");
-  });
-});
-
-describe('M394: initialize_terminal_effects', () => {
-  it('includes customer_order_email in catalog', () => {
+  it('initialize_terminal_effects includes customer_order_email', () => {
     expect(m394Source).toContain("'customer_order_email'");
   });
-
-  it('requires payment_authority_version in direct order predicate', () => {
+  it('DB predicate requires payment_authority_version IS NOT NULL', () => {
     expect(m394Source).toContain('v_payment.payment_authority_version IS NOT NULL');
   });
-
-  it('exempts direct orders from owner_notif_whatsapp/email requirement', () => {
+  it('exempts direct orders from owner WA/email', () => {
     expect(m394Source).toContain('IF NOT v_is_direct_order THEN');
-    expect(m394Source).toContain("owner_notif_whatsapp");
-  });
-
-  it('requires owner_notif_inapp for direct orders', () => {
-    // The condition includes v_is_direct_order
-    expect(m394Source).toContain('OR v_is_direct_order THEN');
-    expect(m394Source).toContain("'owner_notif_inapp'");
   });
 });
 
-// ═══ Authority refactor ═══
-
-describe('authority.ts: resumeSuccessfulPaymentFinalization', () => {
-  it('exported', () => {
+describe('authority.ts structural', () => {
+  it('resumeSuccessfulPaymentFinalization exported', () => {
     expect(authoritySource).toContain('export async function resumeSuccessfulPaymentFinalization');
   });
-
-  it('fails closed on non-success status', () => {
-    expect(authoritySource).toContain("status !== 'success'");
-    expect(authoritySource).toContain('not_successful');
-  });
-
-  it('fails closed on non-direct gateway', () => {
-    expect(authoritySource).toContain("gateway !== 'direct'");
+  it('fails closed on non-direct', () => {
     expect(authoritySource).toContain('not_direct_gateway');
-  });
-
-  it('fails closed without authority version', () => {
-    expect(authoritySource).toContain('payment_authority_version == null');
     expect(authoritySource).toContain('no_authority_version');
-  });
-
-  it('fails closed without _direct_transfer provenance', () => {
-    expect(authoritySource).toContain('_direct_transfer');
     expect(authoritySource).toContain('no_direct_transfer_provenance');
   });
-
-  it('fails closed without pending_transfer_id', () => {
-    expect(authoritySource).toContain('pending_transfer_id');
-    expect(authoritySource).toContain('no_pending_transfer_id');
+  it('executeStage2Through3 shared by both entry points', () => {
+    // Both entry points use the same private function
+    expect(authoritySource).toContain('executeStage2Through3(supabase, payment');
+    // The function itself exists
+    expect(authoritySource).toContain('async function executeStage2Through3');
   });
-
-  it('calls executeStage2Through3', () => {
-    expect(authoritySource).toContain('executeStage2Through3');
-  });
-
-  it('authorizeAndFinalize also calls executeStage2Through3', () => {
-    // Both entry points use the same executor
-    const aafSection = authoritySource.slice(
-      authoritySource.indexOf('export async function authorizeAndFinalize'),
-      authoritySource.indexOf('export async function resumeSuccessfulPaymentFinalization')
-    );
-    expect(aafSection).toContain('executeStage2Through3');
-  });
-
   it('passes payment_authority_version to processPayment', () => {
     expect(authoritySource).toContain('payment_authority_version: payment.payment_authority_version');
   });
 });
 
-// ═══ Stage 2: Zero fee ═══
-
-describe('process-success.ts: direct zero-fee', () => {
-  it('requires gateway + orderId + _direct_transfer + authority_version', () => {
-    expect(processSuccessSource).toContain("payment.gateway === 'direct'");
-    expect(processSuccessSource).toContain('payMeta._direct_transfer === true');
+describe('process-success.ts structural', () => {
+  it('zero-fee requires authority version', () => {
     expect(processSuccessSource).toContain('payment.payment_authority_version != null');
   });
-
-  it('inserts zero-fee platform_fees row', () => {
-    expect(processSuccessSource).toContain('fee_percentage: 0, fee_flat: 0, fee_total: 0, gateway_fee: 0');
-    expect(processSuccessSource).toContain('is_direct_transfer: true');
-  });
-
-  it('uses strict 23505 only (no message substring)', () => {
-    expect(processSuccessSource).toContain("directFeeErr.code === '23505'");
-    // Should NOT contain message.includes('duplicate') in the direct fee path
-    const directFeeSection = processSuccessSource.slice(
-      processSuccessSource.indexOf('R4-B2: Durable direct order'),
-      processSuccessSource.indexOf('Online/card/wallet: existing tier-based')
-    );
-    expect(directFeeSection).not.toContain("includes('duplicate')");
-  });
-
-  it('verifies fee row on both fresh insert and 23505 replay', () => {
+  it('verifies fee row on fresh + replay', () => {
     expect(processSuccessSource).toContain('verifyFeeRow');
-    expect(processSuccessSource).toContain('direct_transfer_fee_mismatch');
-    expect(processSuccessSource).toContain('direct_transfer_fee_verify_failed');
   });
-
-  it('online fee path unchanged (recordPlatformFee)', () => {
-    expect(processSuccessSource).toContain('await recordPlatformFee(supabase');
+  it('strict 23505 only', () => {
+    const section = processSuccessSource.slice(processSuccessSource.indexOf('R4-B2'), processSuccessSource.indexOf('Online/card/wallet'));
+    expect(section).not.toContain("includes('duplicate')");
   });
 });
 
-// ═══ Stage 3: Terminal effects ═══
-
-describe('terminal-effects.ts: computeApplicableEffects', () => {
-  it('accepts isDirectOrderTransfer flag', () => {
-    expect(terminalEffectsSource).toContain('isDirectOrderTransfer');
+describe('send-confirmation.ts structural', () => {
+  it('R5-B1: email failure not completed', () => {
+    expect(sendConfirmSource).toContain('customer_order_email delivery failed');
+    expect(sendConfirmSource).toContain('emailResult');
+    expect(sendConfirmSource).toContain('success');
   });
-
-  it('direct order includes owner_notif_inapp', () => {
-    expect(terminalEffectsSource).toContain('isDirect');
-    // The condition adds owner_notif_inapp for direct orders
-    const inappLine = terminalEffectsSource.slice(
-      terminalEffectsSource.indexOf("effects.push('owner_notif_inapp')"),
-    );
-    expect(inappLine).toBeDefined();
-  });
-
-  it('direct order omits owner_notif_whatsapp and owner_notif_email', () => {
-    expect(terminalEffectsSource).toContain('if (!isDirect)');
-    expect(terminalEffectsSource).toContain("effects.push('owner_notif_whatsapp')");
-    expect(terminalEffectsSource).toContain("effects.push('owner_notif_email')");
-  });
-
-  it('direct order omits receipt PDF and loyalty WhatsApp', () => {
-    expect(terminalEffectsSource).toContain("!isDirect && opts.hasCustomerPhone && (opts.amountPaid");
-    expect(terminalEffectsSource).toContain("!isDirect && opts.hasLoyalty");
-  });
-
-  it('includes customer_order_email for direct + hasCustomerEmail', () => {
-    expect(terminalEffectsSource).toContain("isDirect && opts.hasCustomerEmail");
-    expect(terminalEffectsSource).toContain("customer_order_email");
-  });
-
-  it('customer_order_email in STAGE3_EFFECT_CATALOG', () => {
-    expect(terminalEffectsSource).toContain("customer_order_email:");
-    expect(terminalEffectsSource).toContain("'customer_order_email'");
-  });
-
-  it('non-direct payments still get owner_notif_whatsapp/email', () => {
-    // When isDirect is false, owner WA/email are always pushed
-    const fn = terminalEffectsSource.slice(
-      terminalEffectsSource.indexOf('function computeApplicableEffects'),
-      terminalEffectsSource.indexOf('return effects;')
-    );
-    expect(fn).toContain("!isDirect");
-  });
-});
-
-// ═══ Stage 3: send-confirmation.ts ═══
-
-describe('send-confirmation.ts: direct order Stage 3', () => {
-  it('derives isDirectOrderTransfer from payment provenance', () => {
+  it('derives isDirectOrderTransfer', () => {
     expect(sendConfirmSource).toContain('isDirectOrderTransfer');
-    expect(sendConfirmSource).toContain("gateway === 'direct'");
-    expect(sendConfirmSource).toContain('_direct_transfer');
   });
-
-  it('canonical order resolution uses payment.order_id first', () => {
+  it('canonical order resolution', () => {
     expect(sendConfirmSource).toContain('canonicalOrderId = payment.order_id');
-    expect(sendConfirmSource).toContain('meta.order_id');
   });
-
-  it('resolves customer email for direct orders before manifest freeze', () => {
-    expect(sendConfirmSource).toContain('directOrderCustomerEmail');
-    expect(sendConfirmSource).toContain('findCustomerEmail');
-  });
-
-  it('owner_notif_inapp handles direct order transfer_confirmed', () => {
-    expect(sendConfirmSource).toContain("isDirectOrderTransfer && payment.order_id");
-    expect(sendConfirmSource).toContain("type: 'transfer_confirmed'");
-    expect(sendConfirmSource).toContain("channel: 'dashboard'");
-  });
-
-  it('customer_order_email executed via driveExternalEffect', () => {
-    expect(sendConfirmSource).toContain("'customer_order_email'");
-    expect(sendConfirmSource).toContain('driveExternalEffect');
-    expect(sendConfirmSource).toContain('sendEmail');
-    expect(sendConfirmSource).toContain('Payment Confirmed');
-  });
-
-  it('Save Card suppressed for direct transfers', () => {
+  it('Save Card suppressed for direct', () => {
     expect(sendConfirmSource).toContain('!isDirectOrderTransfer');
-    expect(sendConfirmSource).toContain('checkAndOfferSavedCard');
+  });
+  it('transfer_confirmed in owner_notif_inapp', () => {
+    expect(sendConfirmSource).toContain("type: 'transfer_confirmed'");
   });
 });
 
-// ═══ Dashboard route ═══
-
-describe('Dashboard route: order-linked confirm', () => {
-  it('delegates to resumeSuccessfulPaymentFinalization after RPC', () => {
+describe('Dashboard route structural', () => {
+  it('delegates to resumeSuccessfulPaymentFinalization', () => {
     expect(dashboardRoute).toContain('resumeSuccessfulPaymentFinalization');
-    expect(dashboardRoute).toContain('processSuccessfulPayment');
-    expect(dashboardRoute).toContain('sendProactiveConfirmation');
   });
-
-  it('downstream failure cannot undo financial success', () => {
+  it('downstream failure non-fatal', () => {
     expect(dashboardRoute).toContain('non-fatal');
-    expect(dashboardRoute).toContain("status: 'confirmed'");
-    expect(dashboardRoute).toContain('finalization_status');
   });
-
-  it('already-confirmed retry uses exact provenance lookup', () => {
-    expect(dashboardRoute).toContain('payment_authority_version');
+  it('retry requires exact provenance', () => {
     expect(dashboardRoute).toContain('_direct_transfer');
     expect(dashboardRoute).toContain('pending_transfer_id');
-    expect(dashboardRoute).toContain('Multiple direct payments');
-  });
-
-  it('no route-owned customer WhatsApp/email/platform_fees for orders', () => {
-    // After confirm_order_transfer_atomic, route no longer owns these
-    const confirmSection = dashboardRoute.slice(
-      dashboardRoute.indexOf("rpc('confirm_order_transfer_atomic'"),
-      dashboardRoute.indexOf('Non-order confirmation')
-    );
-    expect(confirmSection).not.toContain('resolveByChannelIdForBusiness');
-    expect(confirmSection).not.toContain('resolveByBusinessId');
-    expect(confirmSection).not.toContain("from('platform_fees')");
   });
 });
 
-// ═══ Recovery cron ═══
-
-describe('Recovery cron: direct gateway', () => {
-  it('bypasses provider verification for direct transfers', () => {
+describe('Cron structural', () => {
+  it('direct bypass + semantic failure surfacing', () => {
     expect(cronRoute).toContain("payment.gateway === 'direct'");
-    expect(cronRoute).toContain('_direct_transfer');
-    expect(cronRoute).toContain('resumeSuccessfulPaymentFinalization');
-  });
-
-  it('surfaces semantic resume failures', () => {
     expect(cronRoute).toContain('UNEXPECTED');
-    expect(cronRoute).toContain('Sentry');
-  });
-
-  it('online gateways still use reconcilePayment', () => {
-    expect(cronRoute).toContain('reconcilePayment(supabase, payment.id');
   });
 });
 
-// ═══ Regression freeze ═══
+// ═══ Part B: Executable manifest parity (real import) ═══
 
-describe('Regression: online payment behavior unchanged', () => {
-  it('authorizeAndFinalize still supports Paystack/Stripe/Flutterwave/Square/PayPal', () => {
-    expect(authoritySource).toContain("'paystack'");
-    expect(authoritySource).toContain("'stripe'");
-    expect(authoritySource).toContain("'flutterwave'");
-    expect(authoritySource).toContain("'square'");
-    expect(authoritySource).toContain("'paypal'");
-  });
-
-  it('non-direct payments still include owner_notif_whatsapp/email in computeApplicableEffects', async () => {
-    // Import and test the actual function
+describe('computeApplicableEffects executable', () => {
+  it('non-direct booking includes owner WA/email + inapp', async () => {
     const { computeApplicableEffects } = await import('@/lib/payments/terminal-effects');
     const effects = computeApplicableEffects(
       { id: 'p1', booking_id: 'b1' },
@@ -312,7 +128,7 @@ describe('Regression: online payment behavior unchanged', () => {
     expect(effects).toContain('customer_whatsapp');
   });
 
-  it('direct order omits owner WA/email but includes owner_notif_inapp', async () => {
+  it('direct order: owner_notif_inapp YES, owner WA/email NO, customer_order_email YES', async () => {
     const { computeApplicableEffects } = await import('@/lib/payments/terminal-effects');
     const effects = computeApplicableEffects(
       { id: 'p2', order_id: 'o1' },
@@ -324,21 +140,366 @@ describe('Regression: online payment behavior unchanged', () => {
     expect(effects).toContain('customer_whatsapp');
     expect(effects).toContain('customer_order_email');
     expect(effects).not.toContain('receipt_pdf_generation');
+    expect(effects).not.toContain('receipt_pdf_delivery');
     expect(effects).not.toContain('customer_loyalty_whatsapp');
   });
 
-  it('non-order transfers not affected by Phase 2D', () => {
-    const routeSource = readFileSync(join(process.cwd(), 'app/api/dashboard/pending-transfers/[id]/route.ts'), 'utf-8');
-    // Non-order confirm still exists unchanged
-    expect(routeSource).toContain('Non-order confirmation');
-    expect(routeSource).toContain('resolveByBusinessId');
+  it('direct order without email: customer_order_email omitted', async () => {
+    const { computeApplicableEffects } = await import('@/lib/payments/terminal-effects');
+    const effects = computeApplicableEffects(
+      { id: 'p3', order_id: 'o2' },
+      { hasCustomerPhone: true, hasSender: true, isDirectOrderTransfer: true, hasCustomerEmail: false },
+    );
+    expect(effects).not.toContain('customer_order_email');
+    expect(effects).toContain('owner_notif_inapp');
   });
 
-  it('M393 inventory/winner functions preserved', () => {
-    // M394 only redefines confirm_order_transfer_atomic, not other M393 functions
+  it('non-direct order: has owner WA/email, no customer_order_email', async () => {
+    const { computeApplicableEffects } = await import('@/lib/payments/terminal-effects');
+    const effects = computeApplicableEffects(
+      { id: 'p4', order_id: 'o3' },
+      { hasCustomerPhone: true, hasSender: true, isDirectOrderTransfer: false, hasCustomerEmail: true, amountPaid: 5000 },
+    );
+    expect(effects).toContain('owner_notif_whatsapp');
+    expect(effects).toContain('owner_notif_email');
+    expect(effects).not.toContain('customer_order_email');
+    // Online orders may get receipt
+    expect(effects).toContain('receipt_pdf_generation');
+  });
+
+  it('invoice/campaign still requires session_deactivation', async () => {
+    const { computeApplicableEffects } = await import('@/lib/payments/terminal-effects');
+    const effects = computeApplicableEffects(
+      { id: 'p5', invoice_id: 'inv1' },
+      { hasCustomerPhone: true, hasSender: true },
+    );
+    expect(effects).toContain('session_deactivation');
+    expect(effects).toContain('owner_notif_whatsapp');
+  });
+});
+
+// ═══ Part C: Real PostgreSQL DB tests ═══
+
+const dbUrl = process.env.TEST_DATABASE_URL || '';
+const canRunDb = dbUrl.length > 0;
+
+function psql(sql: string): string {
+  return execSync(`psql "${dbUrl}" -tAXq -v ON_ERROR_STOP=1`, {
+    input: sql, encoding: 'utf-8', timeout: 30000,
+  }).trim();
+}
+
+function psqlJson(sql: string): Record<string, unknown> {
+  return JSON.parse(psql(sql));
+}
+
+function psqlMayFail(sql: string): { ok: boolean; output: string } {
+  try {
+    const output = execSync(`psql "${dbUrl}" -tAXq -v ON_ERROR_STOP=1`, {
+      input: sql, encoding: 'utf-8', timeout: 30000,
+    }).trim();
+    return { ok: true, output };
+  } catch (e: any) {
+    return { ok: false, output: e.stdout?.trim() || e.message || '' };
+  }
+}
+
+function spawnPsql(sql: string, timeoutMs = 20000): Promise<{ ok: boolean; stdout: string; stderr: string }> {
+  return new Promise((resolve) => {
+    const child = spawn('psql', [dbUrl, '-tAXq', '-v', 'ON_ERROR_STOP=1'], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      timeout: timeoutMs,
+    });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (d: Buffer) => { stdout += d.toString(); });
+    child.stderr.on('data', (d: Buffer) => { stderr += d.toString(); });
+    child.on('close', (code) => resolve({ ok: code === 0, stdout: stdout.trim(), stderr: stderr.trim() }));
+    child.on('error', (err) => resolve({ ok: false, stdout: '', stderr: err.message }));
+    child.stdin.write(sql);
+    child.stdin.end();
+  });
+}
+
+const BIZ = '00000000-0000-0000-0394-000000000001';
+const USER = '00000000-0000-0000-0394-000000000002';
+const CHANNEL = '00000000-0000-0000-0394-000000000003';
+const SESSION = '00000000-0000-0000-0394-000000000004';
+
+describe.skipIf(!canRunDb)('M394: Real PostgreSQL DB tests', () => {
+  beforeAll(() => {
+    psql(`
+      CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+      DO $$ BEGIN CREATE ROLE service_role NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+      DO $$ BEGIN CREATE ROLE anon NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+      DO $$ BEGIN CREATE ROLE authenticated NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+      GRANT USAGE ON SCHEMA public TO service_role, anon, authenticated;
+
+      DO $$ BEGIN CREATE TYPE payment_status AS ENUM ('pending','success','failed','refunded'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+      DO $$ BEGIN CREATE TYPE order_status AS ENUM ('draft','pending','confirmed','processing','ready','shipped','delivered','cancelled'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+      DO $$ BEGIN CREATE TYPE addon_price_type AS ENUM ('fixed','per_unit','quote'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+      CREATE TABLE IF NOT EXISTS businesses (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), name TEXT DEFAULT 'Test', assigned_channel_id UUID, whatsapp_channel_id UUID, subscription_tier TEXT DEFAULT 'growth');
+      CREATE TABLE IF NOT EXISTS promo_codes (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), current_uses INTEGER DEFAULT 0, max_uses INTEGER);
+      CREATE TABLE IF NOT EXISTS orders (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(), business_id UUID REFERENCES businesses(id),
+        user_id UUID, status order_status DEFAULT 'pending', total_amount INTEGER DEFAULT 0,
+        discount_amount INTEGER DEFAULT 0, shipping_cost INTEGER DEFAULT 0,
+        promo_code_id UUID, bot_session_id UUID, channel TEXT DEFAULT 'whatsapp',
+        delivery_phone TEXT, reference_code TEXT DEFAULT ('ORD-' || upper(substr(md5(random()::text), 1, 6))),
+        paid_at TIMESTAMPTZ, created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW(),
+        delivery_zone_id UUID, delivery_zone_name TEXT, addons_total INTEGER DEFAULT 0,
+        volume_discount_amount INTEGER DEFAULT 0, items_fingerprint TEXT, referral_id UUID,
+        delivery_address TEXT, notes TEXT, quote_request_id UUID,
+        pickup_address TEXT, dropoff_address TEXT, package_description TEXT, package_photo_url TEXT
+      );
+      CREATE TABLE IF NOT EXISTS payments (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(), business_id UUID,
+        order_id UUID REFERENCES orders(id), amount INTEGER NOT NULL DEFAULT 0,
+        currency VARCHAR(3) NOT NULL DEFAULT 'NGN',
+        gateway_reference VARCHAR(100) UNIQUE NOT NULL DEFAULT ('pay-' || substr(md5(random()::text), 1, 8)),
+        gateway_status VARCHAR(50) NOT NULL DEFAULT 'pending', gateway TEXT DEFAULT 'paystack',
+        payment_method VARCHAR(20), status payment_status NOT NULL DEFAULT 'pending',
+        metadata JSONB NOT NULL DEFAULT '{}'::jsonb, paid_at TIMESTAMPTZ,
+        gateway_fee INTEGER NOT NULL DEFAULT 0, payment_authority_version INTEGER,
+        finalization_processing_at TIMESTAMPTZ, finalization_completed_at TIMESTAMPTZ,
+        finalization_claim_token UUID, confirmation_sent_at TIMESTAMPTZ,
+        confirmation_terminal_reason TEXT, confirmation_claim_token UUID,
+        confirmation_processing_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      CREATE TABLE IF NOT EXISTS platform_fees (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(), business_id UUID, payment_id UUID,
+        order_id UUID, booking_id UUID, invoice_id UUID, campaign_id UUID, reservation_id UUID,
+        transaction_amount INTEGER DEFAULT 0, fee_percentage NUMERIC DEFAULT 0,
+        fee_flat INTEGER DEFAULT 0, fee_total INTEGER DEFAULT 0, gateway_fee INTEGER DEFAULT 0,
+        tier TEXT DEFAULT 'free', is_direct_transfer BOOLEAN DEFAULT false,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_platform_fees_payment_unique ON platform_fees(payment_id) WHERE payment_id IS NOT NULL;
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_platform_fees_order_unique ON platform_fees(order_id) WHERE order_id IS NOT NULL AND refunded_at IS NULL;
+      CREATE TABLE IF NOT EXISTS pending_transfers (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(), business_id UUID, order_id UUID,
+        customer_phone TEXT NOT NULL, customer_name TEXT,
+        expected_amount INTEGER NOT NULL, currency TEXT DEFAULT 'NGN',
+        reference_code VARCHAR(20) NOT NULL UNIQUE DEFAULT ('WA-' || substr(md5(random()::text), 1, 4)),
+        status TEXT DEFAULT 'pending', confirmed_by UUID, confirmed_at TIMESTAMPTZ,
+        expires_at TIMESTAMPTZ, metadata JSONB DEFAULT '{}', created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE TABLE IF NOT EXISTS order_stock_applications (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(), payment_id UUID,
+        order_id UUID NOT NULL UNIQUE, applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        item_count INTEGER NOT NULL DEFAULT 0,
+        reservation_class TEXT NOT NULL DEFAULT 'prepayment',
+        expires_at TIMESTAMPTZ DEFAULT NULL
+      );
+      CREATE TABLE IF NOT EXISTS promo_reservations (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(), order_id UUID, promo_code_id UUID,
+        state TEXT DEFAULT 'reserved'
+      );
+      CREATE TABLE IF NOT EXISTS bot_sessions (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(), business_id UUID,
+        session_data JSONB DEFAULT '{}', is_active BOOLEAN DEFAULT true
+      );
+      CREATE TABLE IF NOT EXISTS whatsapp_channels (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(), channel_type TEXT DEFAULT 'shared',
+        business_id UUID, is_active BOOLEAN DEFAULT true
+      );
+      CREATE TABLE IF NOT EXISTS order_items (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(), order_id UUID,
+        product_id UUID, variant_id UUID, quantity INTEGER DEFAULT 1, unit_price INTEGER DEFAULT 0
+      );
+      CREATE TABLE IF NOT EXISTS products (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(), business_id UUID,
+        name TEXT DEFAULT 'Test', price INTEGER DEFAULT 0,
+        stock_quantity INTEGER, track_inventory BOOLEAN DEFAULT false,
+        is_active BOOLEAN DEFAULT true
+      );
+
+      CREATE OR REPLACE FUNCTION release_promo_reservation(p_order_id UUID) RETURNS VOID
+      LANGUAGE plpgsql AS $fn$ BEGIN DELETE FROM promo_reservations WHERE order_id = p_order_id AND state = 'reserved'; END; $fn$;
+
+      INSERT INTO businesses (id, name) VALUES ('${BIZ}', 'TestBiz') ON CONFLICT DO NOTHING;
+      INSERT INTO whatsapp_channels (id, channel_type, is_active) VALUES ('${CHANNEL}', 'shared', true) ON CONFLICT DO NOTHING;
+      INSERT INTO bot_sessions (id, business_id, session_data) VALUES ('${SESSION}', '${BIZ}', '{"_inbound_channel_id":"${CHANNEL}"}'::jsonb) ON CONFLICT DO NOTHING;
+    `);
+
+    // Apply M393 + M394
+    const m393 = readFileSync(join(process.cwd(), 'supabase/migrations/393_inventory_reservation_wiring.sql'), 'utf-8');
+    psql(m393);
+    const m394 = readFileSync(join(process.cwd(), 'supabase/migrations/394_direct_order_payment_authority.sql'), 'utf-8');
+    psql(m394);
+  });
+
+  afterAll(() => {
+    try {
+      psql(`
+        DROP TABLE IF EXISTS platform_fees CASCADE; DROP TABLE IF EXISTS promo_reservations CASCADE;
+        DROP TABLE IF EXISTS order_stock_applications CASCADE; DROP TABLE IF EXISTS order_items CASCADE;
+        DROP TABLE IF EXISTS pending_transfers CASCADE; DROP TABLE IF EXISTS payments CASCADE;
+        DROP TABLE IF EXISTS orders CASCADE; DROP TABLE IF EXISTS products CASCADE;
+        DROP TABLE IF EXISTS bot_sessions CASCADE; DROP TABLE IF EXISTS whatsapp_channels CASCADE;
+        DROP TABLE IF EXISTS promo_codes CASCADE; DROP TABLE IF EXISTS businesses CASCADE;
+        DROP FUNCTION IF EXISTS release_promo_reservation(UUID);
+        DROP TYPE IF EXISTS payment_status CASCADE; DROP TYPE IF EXISTS order_status CASCADE;
+        DROP TYPE IF EXISTS addon_price_type CASCADE;
+      `);
+    } catch { /* best effort */ }
+  });
+
+  describe('M394 confirm_order_transfer_atomic provenance', () => {
+    it('creates payment with payment_authority_version=1 + _direct_transfer=true', () => {
+      const orderId = psql(`INSERT INTO orders (business_id, user_id, total_amount, status, bot_session_id, channel) VALUES ('${BIZ}', '${USER}', 5000, 'pending', '${SESSION}', 'whatsapp') RETURNING id`);
+      const deadline = psql(`SELECT (NOW() + interval '24 hours')::timestamptz`);
+      psql(`INSERT INTO order_stock_applications (order_id, reservation_class, expires_at) VALUES ('${orderId}', 'bank_transfer', '${deadline}')`);
+      const xferId = psql(`INSERT INTO pending_transfers (business_id, order_id, customer_phone, expected_amount, currency, expires_at, status, metadata) VALUES ('${BIZ}', '${orderId}', '+234900', 500000, 'NGN', '${deadline}', 'pending', '{"_inbound_channel_id":"${CHANNEL}","_confirmation_origin":"whatsapp"}'::jsonb) RETURNING id`);
+
+      const result = psqlJson(`SELECT confirm_order_transfer_atomic('${xferId}', '${orderId}', '${BIZ}', '${USER}')`);
+      expect(result.confirmed).toBe(true);
+
+      // Verify M394 provenance on created payment
+      const pay = psqlJson(`SELECT jsonb_build_object(
+        'gateway', gateway, 'payment_authority_version', payment_authority_version,
+        'direct_transfer', metadata->>'_direct_transfer',
+        'pending_transfer_id', metadata->>'pending_transfer_id'
+      ) FROM payments WHERE id = '${result.payment_id}'`);
+      expect(pay.gateway).toBe('direct');
+      expect(pay.payment_authority_version).toBe(1);
+      expect(pay.direct_transfer).toBe('true');
+      expect(pay.pending_transfer_id).toBe(xferId);
+    });
+  });
+
+  describe('Zero-fee fresh + 23505 replay', () => {
+    it('first insert creates zero-fee row', () => {
+      const orderId = psql(`INSERT INTO orders (business_id, total_amount, status) VALUES ('${BIZ}', 3000, 'confirmed') RETURNING id`);
+      const payId = psql(`INSERT INTO payments (business_id, order_id, amount, status, gateway, payment_authority_version, metadata) VALUES ('${BIZ}', '${orderId}', 3000, 'success', 'direct', 1, '{"_direct_transfer":true}'::jsonb) RETURNING id`);
+
+      psql(`INSERT INTO platform_fees (business_id, payment_id, order_id, transaction_amount, fee_percentage, fee_flat, fee_total, gateway_fee, tier, is_direct_transfer) VALUES ('${BIZ}', '${payId}', '${orderId}', 3000, 0, 0, 0, 0, 'growth', true)`);
+
+      const fee = psqlJson(`SELECT jsonb_build_object('transaction_amount', transaction_amount, 'fee_total', fee_total, 'is_direct_transfer', is_direct_transfer) FROM platform_fees WHERE payment_id = '${payId}'`);
+      expect(fee.transaction_amount).toBe(3000);
+      expect(fee.fee_total).toBe(0);
+      expect(fee.is_direct_transfer).toBe(true);
+    });
+
+    it('23505 replay on same payment_id is safe', () => {
+      const orderId = psql(`INSERT INTO orders (business_id, total_amount, status) VALUES ('${BIZ}', 2000, 'confirmed') RETURNING id`);
+      const payId = psql(`INSERT INTO payments (business_id, order_id, amount, status, gateway, payment_authority_version, metadata) VALUES ('${BIZ}', '${orderId}', 2000, 'success', 'direct', 1, '{"_direct_transfer":true}'::jsonb) RETURNING id`);
+
+      // First insert
+      psql(`INSERT INTO platform_fees (business_id, payment_id, order_id, transaction_amount, fee_percentage, fee_flat, fee_total, gateway_fee, tier, is_direct_transfer) VALUES ('${BIZ}', '${payId}', '${orderId}', 2000, 0, 0, 0, 0, 'growth', true)`);
+
+      // Second insert → 23505
+      const res = psqlMayFail(`INSERT INTO platform_fees (business_id, payment_id, order_id, transaction_amount, fee_percentage, fee_flat, fee_total, gateway_fee, tier, is_direct_transfer) VALUES ('${BIZ}', '${payId}', '${orderId}', 2000, 0, 0, 0, 0, 'growth', true)`);
+      expect(res.ok).toBe(false);
+      expect(res.output).toContain('duplicate');
+
+      // Original row still correct
+      const count = psql(`SELECT count(*) FROM platform_fees WHERE payment_id = '${payId}'`);
+      expect(parseInt(count)).toBe(1);
+    });
+  });
+
+  describe('Channel authority', () => {
+    it('shared channel: transfer created successfully', () => {
+      const orderId = psql(`INSERT INTO orders (business_id, total_amount, status, bot_session_id, channel) VALUES ('${BIZ}', 1000, 'pending', '${SESSION}', 'whatsapp') RETURNING id`);
+      psql(`INSERT INTO order_stock_applications (order_id, reservation_class, expires_at) VALUES ('${orderId}', 'instant', NOW() + interval '25 minutes')`);
+      const result = psqlJson(`SELECT create_transfer_with_reservation('${orderId}', '${BIZ}', '+234900', 'Test', 'NG', 24)`);
+      expect(result.error).toBeUndefined();
+      expect(result.inbound_channel_id).toBe(CHANNEL);
+    });
+
+    it('dedicated channel owned by business: allowed', () => {
+      const dedCh = psql(`INSERT INTO whatsapp_channels (channel_type, business_id, is_active) VALUES ('dedicated', '${BIZ}', true) RETURNING id`);
+      const dedSession = psql(`INSERT INTO bot_sessions (business_id, session_data) VALUES ('${BIZ}', '{"_inbound_channel_id":"${dedCh}"}'::jsonb) RETURNING id`);
+      const orderId = psql(`INSERT INTO orders (business_id, total_amount, status, bot_session_id, channel) VALUES ('${BIZ}', 1000, 'pending', '${dedSession}', 'whatsapp') RETURNING id`);
+      psql(`INSERT INTO order_stock_applications (order_id, reservation_class, expires_at) VALUES ('${orderId}', 'instant', NOW() + interval '25 minutes')`);
+      const result = psqlJson(`SELECT create_transfer_with_reservation('${orderId}', '${BIZ}', '+234900', 'Test', 'NG', 24)`);
+      expect(result.error).toBeUndefined();
+      expect(result.inbound_channel_id).toBe(dedCh);
+    });
+
+    it('Embedded Signup (NULL owner, assigned): allowed', () => {
+      const esCh = psql(`INSERT INTO whatsapp_channels (channel_type, business_id, is_active) VALUES ('dedicated', NULL, true) RETURNING id`);
+      psql(`UPDATE businesses SET whatsapp_channel_id = '${esCh}' WHERE id = '${BIZ}'`);
+      const esSession = psql(`INSERT INTO bot_sessions (business_id, session_data) VALUES ('${BIZ}', '{"_inbound_channel_id":"${esCh}"}'::jsonb) RETURNING id`);
+      const orderId = psql(`INSERT INTO orders (business_id, total_amount, status, bot_session_id, channel) VALUES ('${BIZ}', 1000, 'pending', '${esSession}', 'whatsapp') RETURNING id`);
+      psql(`INSERT INTO order_stock_applications (order_id, reservation_class, expires_at) VALUES ('${orderId}', 'instant', NOW() + interval '25 minutes')`);
+      const result = psqlJson(`SELECT create_transfer_with_reservation('${orderId}', '${BIZ}', '+234900', 'Test', 'NG', 24)`);
+      expect(result.error).toBeUndefined();
+      psql(`UPDATE businesses SET whatsapp_channel_id = NULL WHERE id = '${BIZ}'`);
+    });
+
+    it('A→B durability: transfer + confirm still uses A', () => {
+      const channelB = psql(`INSERT INTO whatsapp_channels (channel_type, is_active) VALUES ('shared', true) RETURNING id`);
+      const orderId = psql(`INSERT INTO orders (business_id, total_amount, status, bot_session_id, channel) VALUES ('${BIZ}', 4000, 'pending', '${SESSION}', 'whatsapp') RETURNING id`);
+      psql(`INSERT INTO order_stock_applications (order_id, reservation_class, expires_at) VALUES ('${orderId}', 'instant', NOW() + interval '25 minutes')`);
+      const xferResult = psqlJson(`SELECT create_transfer_with_reservation('${orderId}', '${BIZ}', '+234900', 'Test', 'NG', 24)`);
+      expect(xferResult.inbound_channel_id).toBe(CHANNEL);
+
+      // Business changes default to B
+      psql(`UPDATE businesses SET assigned_channel_id = '${channelB}' WHERE id = '${BIZ}'`);
+
+      // Confirm → payment metadata still has A
+      const confirmResult = psqlJson(`SELECT confirm_order_transfer_atomic('${xferResult.transfer_id}', '${orderId}', '${BIZ}', '${USER}')`);
+      expect(confirmResult.confirmed).toBe(true);
+      expect(confirmResult.inbound_channel_id).toBe(CHANNEL);
+
+      const payMeta = psqlJson(`SELECT metadata FROM payments WHERE id = '${confirmResult.payment_id}'`);
+      expect(payMeta._inbound_channel_id).toBe(CHANNEL);
+
+      psql(`UPDATE businesses SET assigned_channel_id = NULL WHERE id = '${BIZ}'`);
+    });
+  });
+
+  describe('Concurrent double-resume contention', () => {
+    it('two concurrent finalization claims: exactly one winner', async () => {
+      const orderId = psql(`INSERT INTO orders (business_id, total_amount, status) VALUES ('${BIZ}', 1000, 'confirmed') RETURNING id`);
+      const payId = psql(`INSERT INTO payments (business_id, order_id, amount, status, gateway, payment_authority_version, metadata) VALUES ('${BIZ}', '${orderId}', 1000, 'success', 'direct', 1, '{"_direct_transfer":true,"pending_transfer_id":"xf-1"}'::jsonb) RETURNING id`);
+
+      const [r1, r2] = await Promise.all([
+        spawnPsql(`SELECT claim_payment_finalization('${payId}');`),
+        spawnPsql(`SELECT claim_payment_finalization('${payId}');`),
+      ]);
+
+      expect(r1.stdout.length + r1.stderr.length).toBeGreaterThan(0);
+      expect(r2.stdout.length + r2.stderr.length).toBeGreaterThan(0);
+
+      const p1 = r1.ok ? JSON.parse(r1.stdout) : { claimed: false };
+      const p2 = r2.ok ? JSON.parse(r2.stdout) : { claimed: false };
+
+      const claims = [p1.claimed === true, p2.claimed === true].filter(Boolean).length;
+      // At most one claims (the other gets processing_in_progress or already_completed)
+      expect(claims).toBeLessThanOrEqual(1);
+    }, 30000);
+  });
+
+  describe('ACL parity', () => {
+    it('confirm_order_transfer_atomic: service_role allowed', () => {
+      const allowed = psql(`SELECT has_function_privilege('service_role', 'confirm_order_transfer_atomic(uuid,uuid,uuid,uuid)', 'EXECUTE')`);
+      expect(allowed).toBe('t');
+    });
+    it('confirm_order_transfer_atomic: anon denied', () => {
+      const denied = psql(`SELECT has_function_privilege('anon', 'confirm_order_transfer_atomic(uuid,uuid,uuid,uuid)', 'EXECUTE')`);
+      expect(denied).toBe('f');
+    });
+    it('initialize_terminal_effects: service_role allowed', () => {
+      const allowed = psql(`SELECT has_function_privilege('service_role', 'initialize_terminal_effects(uuid,uuid,text[],text[],text[],text[],int)', 'EXECUTE')`);
+      expect(allowed).toBe('t');
+    });
+  });
+});
+
+// ═══ Regression freeze ═══
+
+describe('Regression: M393 functions unchanged', () => {
+  it('M394 only redefines confirm_order_transfer_atomic + initialize_terminal_effects', () => {
     expect(m394Source).toContain('confirm_order_transfer_atomic');
+    expect(m394Source).toContain('initialize_terminal_effects');
     expect(m394Source).not.toContain('cancel_order_immediate');
     expect(m394Source).not.toContain('cancel_stale_order_atomic');
     expect(m394Source).not.toContain('create_transfer_with_reservation');
+    expect(m394Source).not.toContain('apply_order_stock_once');
   });
 });

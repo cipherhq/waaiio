@@ -956,17 +956,21 @@ export async function sendProactiveConfirmation(
             const { sendEmail } = await import('@/lib/email/client');
             const { businessNotificationEmail } = await import('@/lib/email/templates');
             const amtFmt = formatCurrency(payment.amount, countryCode);
-            const { subject, html } = businessNotificationEmail({
+            const { html } = businessNotificationEmail({
               businessName: businessName || 'Business',
               title: 'Payment Confirmed',
               message: `Your bank transfer has been verified and your order is confirmed. Thank you!`,
               details: { 'Amount': amtFmt, 'Reference': referenceCode },
             });
-            await sendEmail({
+            // R5-B1: Inspect sendEmail result — failed delivery must NOT be recorded as completed
+            const emailResult = await sendEmail({
               to: directOrderCustomerEmail!,
               subject: `Payment Confirmed - ${businessName || 'Business'}`,
               html,
             });
+            if (!(emailResult as any)?.success) {
+              throw new Error(`customer_order_email delivery failed: ${JSON.stringify((emailResult as any)?.error || 'unknown')}`);
+            }
             return true;
           });
         } catch (emailErr) { logSafeError(logPrefix, 'customer-order-email', emailErr); }
