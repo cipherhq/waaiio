@@ -534,8 +534,14 @@ describe.skipIf(!canRunDb)('M394: Real PostgreSQL DB tests', () => {
       const p2 = r2.ok ? JSON.parse(r2.stdout) : { claimed: false };
 
       const claims = [p1.claimed === true, p2.claimed === true].filter(Boolean).length;
-      // R6-B4: Exactly one winner (the other gets processing_in_progress)
+      // R6-B4: Exactly one winner
       expect(claims).toBe(1);
+
+      // R9-B6: Loser has a semantic authority reason
+      const loser = p1.claimed ? p2 : p1;
+      expect(loser.claimed).toBe(false);
+      // The loser should get 'processing_in_progress' (another worker holds the lease)
+      expect(loser.reason).toBe('processing_in_progress');
     }, 30000);
   });
 
