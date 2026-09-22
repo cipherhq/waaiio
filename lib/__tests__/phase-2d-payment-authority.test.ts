@@ -255,6 +255,7 @@ describe.skipIf(!canRunDb)('M394: Real PostgreSQL DB tests', () => {
       );
       CREATE TABLE IF NOT EXISTS payments (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(), business_id UUID,
+        booking_id UUID, invoice_id UUID, campaign_id UUID, reservation_id UUID,
         order_id UUID REFERENCES orders(id), amount INTEGER NOT NULL DEFAULT 0,
         currency VARCHAR(3) NOT NULL DEFAULT 'NGN',
         gateway_reference VARCHAR(100) UNIQUE NOT NULL DEFAULT ('pay-' || substr(md5(random()::text), 1, 8)),
