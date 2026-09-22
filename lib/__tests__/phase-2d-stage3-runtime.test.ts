@@ -53,7 +53,15 @@ function chain(data: any = null): any {
   return c;
 }
 
-function mockSb(chId: string, ordId: string, payId: string) {
+function mockSb(
+  chId: string,
+  ordId: string,
+  payId: string,
+  opts: { gateway?: string; metadata?: Record<string, unknown>; authorityVersion?: number | null } = {},
+) {
+  const gateway = opts.gateway ?? 'direct';
+  const metadata = opts.metadata ?? { _direct_transfer: true, pending_transfer_id: 'xf-1', _inbound_channel_id: chId, _confirmation_origin: 'whatsapp' };
+  const authorityVersion = opts.authorityVersion === undefined ? 1 : opts.authorityVersion;
   // Track initialized effects so reserve_terminal_effect can return effect_not_in_manifest
   let initializedEffects: string[] = [];
 
@@ -330,7 +338,7 @@ describe('Stage3 direct transfer effect suppression', () => {
     expect(frozen).toContain('customer_whatsapp');
     expect(frozen).toContain('owner_notif_inapp');
     expect(frozen).toContain('customer_order_email');
-
+  });
 
   it('4. eligible non-direct Paystack payment still reaches Save Card CTA', async () => {
     vi.resetModules();
@@ -352,6 +360,5 @@ describe('Stage3 direct transfer effect suppression', () => {
 
     expect(result.status).toBe('completed');
     expect(effects.savedCardOffered).toBe(true);
-  });
   });
 });
