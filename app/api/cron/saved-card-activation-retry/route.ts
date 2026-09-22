@@ -147,13 +147,32 @@ export async function GET(request: NextRequest) {
         }
       }
 
-      // Send activation prompt via channel
-      const { sendWhatsAppMessage } = await import('@/lib/channels/send-message');
-      await sendWhatsAppMessage({
-        to: offer.customer_phone,
-        text: activationMsg,
-        channelPhone,
-      });
+      // Send activation prompt via the resolved channel
+      // Look up channel credentials for the exact originating channel
+      const resolvedChannelId = offer.channel_id || channelPhone;
+      if (!resolvedChannelId) {
+        errors++;
+        continue;
+      }
+      const { data: channelCreds } = await supabase
+        .from('whatsapp_channels')
+        .select('phone_number_id, access_token')
+        .eq('id', offer.channel_id || '')
+        .maybeSingle();
+
+      if (!channelCreds?.phone_number_id || !channelCreds?.access_token) {
+        logger.warn('[ACTIVATION-RETRY] Channel credentials not found — will retry', { offerId: offer.id });
+        errors++;
+        continue;
+      }
+      const { MetaCloudSender } = await import('@/lib/channels/message-sender');
+      const sender = new MetaCloudSender(channelCreds.phone_number_id, channelCreds.access_token);
+      const sendResult = await sender.sendText({ to: offer.customer_phone, text: activationMsg });
+      if (!sendResult?.success) {
+        logger.warn('[ACTIVATION-RETRY] Send failed — will retry next cycle', { offerId: offer.id });
+        errors++;
+        continue;
+      }
 
       // Mark activation prompt sent
       await supabase.from('payment_saved_card_offers')
