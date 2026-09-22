@@ -522,6 +522,7 @@ CREATE OR REPLACE FUNCTION complete_customer_recovery(
 ) RETURNS BOOLEAN
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 BEGIN
+  -- R5-B3: Expired lease cannot complete — claim must still be valid
   IF p_new_state = 'provider_confirmed' AND p_provider_customer_id IS NOT NULL THEN
     UPDATE provider_customer_identities
     SET provisioning_state = 'provider_confirmed',
@@ -530,7 +531,8 @@ BEGIN
         recovery_claim_token = NULL,
         recovery_claim_expires_at = NULL
     WHERE id = p_operation_id
-      AND recovery_claim_token = p_claim_token;
+      AND recovery_claim_token = p_claim_token
+      AND recovery_claim_expires_at > NOW();
   ELSIF p_new_state = 'failed' THEN
     UPDATE provider_customer_identities
     SET provisioning_state = 'failed',
@@ -538,14 +540,16 @@ BEGIN
         recovery_claim_token = NULL,
         recovery_claim_expires_at = NULL
     WHERE id = p_operation_id
-      AND recovery_claim_token = p_claim_token;
+      AND recovery_claim_token = p_claim_token
+      AND recovery_claim_expires_at > NOW();
   ELSE
-    -- Release claim without state change
+    -- Release claim without state change (also checks expiry)
     UPDATE provider_customer_identities
     SET recovery_claim_token = NULL,
         recovery_claim_expires_at = NULL
     WHERE id = p_operation_id
-      AND recovery_claim_token = p_claim_token;
+      AND recovery_claim_token = p_claim_token
+      AND recovery_claim_expires_at > NOW();
   END IF;
   RETURN FOUND;
 END;

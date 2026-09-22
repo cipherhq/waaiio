@@ -3207,6 +3207,35 @@ jobs:
           fi
           echo "✅ Migration 389 saved-card offer tests complete — zero skips, zero failures."
 
+      - name: "Migration 395 saved-card RPC concurrency DB tests"
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+        run: |
+          set -euo pipefail
+          # Create fresh DB for M395 tests
+          psql -c "DROP DATABASE IF EXISTS waaiio_m395_test;" || true
+          psql -c "CREATE DATABASE waaiio_m395_test;"
+          export TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/waaiio_m395_test
+
+          echo "Running Migration 395 saved-card RPC concurrency tests..."
+          OUTPUT=$(npx vitest run lib/__tests__/saved-card-rpc-concurrency-db.test.ts 2>&1)
+          echo "$OUTPUT"
+
+          # Verify tests ran (not skipped)
+          if echo "$OUTPUT" | grep -q "skipped"; then
+            echo "❌ Tests were skipped — TEST_DATABASE_URL may not be set"
+            exit 1
+          fi
+          if echo "$OUTPUT" | grep -q "passed"; then
+            echo "✅ Migration 395 concurrency tests complete."
+          else
+            echo "❌ Migration 395 concurrency tests failed."
+            exit 1
+          fi
+
       - name: "Migration 391 channel candidate DB/RLS/RPC tests"
         env:
           PGHOST: localhost

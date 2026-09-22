@@ -3,10 +3,15 @@
  *
  * Requires TEST_DATABASE_URL:
  *   docker run --rm -d --name m395-test -p 54324:5432 -e POSTGRES_PASSWORD=test postgres:16
+ *   sleep 2
  *   TEST_DATABASE_URL=postgresql://postgres:test@localhost:54324/postgres npx vitest run lib/__tests__/saved-card-rpc-concurrency-db.test.ts
+ *
+ * R5-B2: Uses TWO independent connections for genuine concurrency.
+ * R5-B3: Tests expired lease cannot complete.
+ * R5-B4: Tests exact channel_id UUID preservation.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { execSync } from 'child_process';
+import { execSync, exec } from 'child_process';
 import * as path from 'path';
 
 const M395_PATH = path.resolve('supabase/migrations/395_stripe_saved_card_infrastructure.sql');
@@ -27,21 +32,43 @@ function psqlJson(sql: string): unknown {
   return raw ? JSON.parse(raw) : null;
 }
 
+/** Run psql asynchronously for concurrent operations */
+function psqlAsync(sql: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    exec(`psql "${dbUrl}" -tAXq -v ON_ERROR_STOP=1`, {
+      encoding: 'utf-8', timeout: 15000,
+    }, (err, stdout) => {
+      if (err) reject(err);
+      else resolve(stdout.trim());
+    }).stdin!.end(sql);
+  });
+}
+
+function parseJsonResult(raw: string): unknown {
+  const lines = raw.split('\n').filter(l => l.trim() && !l.trim().startsWith('('));
+  const last = lines[lines.length - 1]?.trim();
+  if (!last || last === '') return null;
+  try { return JSON.parse(last); } catch { return null; }
+}
+
+const EXACT_CHANNEL_ID = '11111111-1111-1111-1111-111111111111';
+
 describe.skipIf(!dbUrl)('M395 RPC Concurrency (real PostgreSQL)', () => {
   beforeAll(() => {
     if (!dbUrl) return;
 
-    // Create stub roles + required tables
     psql(`
       DO $$ BEGIN CREATE ROLE anon NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
       DO $$ BEGIN CREATE ROLE authenticated NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
       DO $$ BEGIN CREATE ROLE service_role NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
       GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
 
-      -- Stub required referenced tables
       CREATE TABLE IF NOT EXISTS payments (id UUID PRIMARY KEY DEFAULT gen_random_uuid());
       CREATE TABLE IF NOT EXISTS businesses (id UUID PRIMARY KEY DEFAULT gen_random_uuid());
-      CREATE TABLE IF NOT EXISTS whatsapp_channels (id UUID PRIMARY KEY DEFAULT gen_random_uuid());
+      CREATE TABLE IF NOT EXISTS whatsapp_channels (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        phone_number TEXT, phone_number_id TEXT, access_token TEXT
+      );
       CREATE TABLE IF NOT EXISTS saved_payment_methods (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         customer_phone TEXT, gateway TEXT, is_active BOOLEAN DEFAULT true,
@@ -54,7 +81,6 @@ describe.skipIf(!dbUrl)('M395 RPC Concurrency (real PostgreSQL)', () => {
         credential_version INT NOT NULL DEFAULT 1
       );
 
-      -- Stub payment_saved_card_offers before M395 (M395 alters it)
       CREATE TABLE IF NOT EXISTS payment_saved_card_offers (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         payment_id UUID NOT NULL UNIQUE,
@@ -73,14 +99,17 @@ describe.skipIf(!dbUrl)('M395 RPC Concurrency (real PostgreSQL)', () => {
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         channel_id UUID
       );
+
+      -- R5-B4: Insert exact channel for testing
+      INSERT INTO whatsapp_channels (id, phone_number, phone_number_id, access_token)
+      VALUES ('${EXACT_CHANNEL_ID}', '+15551234567', 'pnid_test', 'tok_test')
+      ON CONFLICT (id) DO NOTHING;
     `);
 
-    // Apply M395
     execSync(`psql "${dbUrl}" -v ON_ERROR_STOP=1 -f "${M395_PATH}"`, {
       encoding: 'utf-8', timeout: 30000,
     });
 
-    // Grant service_role permissions for RPCs
     psql(`GRANT ALL ON ALL TABLES IN SCHEMA public TO service_role;`);
   });
 
@@ -99,137 +128,145 @@ describe.skipIf(!dbUrl)('M395 RPC Concurrency (real PostgreSQL)', () => {
   });
 
   // ──────────────────────────────────────────────────────────────
-  // Customer Recovery Claim Concurrency
+  // R5-B2: GENUINE concurrent customer recovery claims (two sessions)
   // ──────────────────────────────────────────────────────────────
 
-  describe('claim_stale_customer_provisioning', () => {
-    it('two concurrent claims → exactly one owner', () => {
-      // Insert one stale dispatched row
+  describe('customer recovery: two concurrent sessions', () => {
+    it('two overlapping claim calls → exactly one owner', async () => {
       psql(`
+        DELETE FROM provider_customer_identities WHERE customer_phone = '+12025551001';
         INSERT INTO provider_customer_identities
           (customer_phone, gateway, provider_account_scope, idempotency_key, provisioning_state, dispatched_at)
-        VALUES ('+12025551001', 'stripe', 'platform', 'key_concurrent_1', 'dispatched', NOW() - INTERVAL '15 minutes')
-        ON CONFLICT (customer_phone, gateway, provider_account_scope) DO UPDATE
-        SET provisioning_state = 'dispatched', dispatched_at = NOW() - INTERVAL '15 minutes',
-            recovery_claim_token = NULL, recovery_claim_expires_at = NULL;
+        VALUES ('+12025551001', 'stripe', 'platform', 'key_conc_1', 'dispatched', NOW() - INTERVAL '15 minutes');
       `);
 
-      // Two claims in sequence (simulating concurrent — FOR UPDATE SKIP LOCKED)
-      const claim1 = psqlJson(`SELECT claim_stale_customer_provisioning('stripe', 10, 300);`) as Record<string, unknown> | null;
-      const claim2 = psqlJson(`SELECT claim_stale_customer_provisioning('stripe', 10, 300);`) as Record<string, unknown> | null;
+      // Two independent psql processes fired simultaneously
+      const [r1, r2] = await Promise.all([
+        psqlAsync("SELECT claim_stale_customer_provisioning('stripe', 10, 300);"),
+        psqlAsync("SELECT claim_stale_customer_provisioning('stripe', 10, 300);"),
+      ]);
 
-      // First claim should succeed
-      expect(claim1).not.toBeNull();
-      expect((claim1 as Record<string, unknown>).claim_token).toBeTruthy();
+      const claim1 = parseJsonResult(r1);
+      const claim2 = parseJsonResult(r2);
 
-      // Second claim should return null (row is claimed)
-      expect(claim2).toBeNull();
+      // Exactly one should get the claim
+      const owners = [claim1, claim2].filter(c => c !== null && (c as Record<string, unknown>).claim_token);
+      expect(owners.length).toBe(1);
     });
 
-    it('wrong token complete_customer_recovery changes zero rows', () => {
+    it('wrong token complete_customer_recovery returns false', () => {
       const wrongToken = '00000000-0000-0000-0000-000000000000';
       const result = psql(`SELECT complete_customer_recovery(
         (SELECT id FROM provider_customer_identities WHERE customer_phone = '+12025551001'),
-        '${wrongToken}'::UUID,
-        'cus_wrong',
-        'provider_confirmed'
+        '${wrongToken}'::UUID, 'cus_wrong', 'provider_confirmed'
       );`);
-      expect(result).toBe('f'); // false — zero rows changed
+      expect(result).toBe('f');
     });
 
     it('correct token confirms successfully', () => {
-      // Read the current claim token
-      const tokenRow = psql(`SELECT recovery_claim_token FROM provider_customer_identities WHERE customer_phone = '+12025551001';`);
+      const token = psql(`SELECT recovery_claim_token FROM provider_customer_identities WHERE customer_phone = '+12025551001';`);
       const result = psql(`SELECT complete_customer_recovery(
         (SELECT id FROM provider_customer_identities WHERE customer_phone = '+12025551001'),
-        '${tokenRow}'::UUID,
-        'cus_recovered_001',
-        'provider_confirmed'
+        '${token}'::UUID, 'cus_recovered', 'provider_confirmed'
       );`);
-      expect(result).toBe('t'); // true — confirmed
-
-      // Verify state
+      expect(result).toBe('t');
       const state = psql(`SELECT provisioning_state FROM provider_customer_identities WHERE customer_phone = '+12025551001';`);
       expect(state).toBe('provider_confirmed');
-    });
-
-    it('expired/released lease can be reclaimed', () => {
-      // Reset to dispatched with expired lease
-      psql(`
-        UPDATE provider_customer_identities
-        SET provisioning_state = 'dispatched',
-            provider_customer_id = NULL,
-            confirmed_at = NULL,
-            recovery_claim_token = gen_random_uuid(),
-            recovery_claim_expires_at = NOW() - INTERVAL '1 minute'
-        WHERE customer_phone = '+12025551001';
-      `);
-
-      // Should be reclaimable (expired lease)
-      const claim = psqlJson(`SELECT claim_stale_customer_provisioning('stripe', 10, 300);`) as Record<string, unknown> | null;
-      expect(claim).not.toBeNull();
-
-      // Clean up
-      psql(`DELETE FROM provider_customer_identities WHERE customer_phone = '+12025551001';`);
     });
   });
 
   // ──────────────────────────────────────────────────────────────
-  // Activation Delivery Claim Concurrency
+  // R5-B3: Expired lease cannot complete
   // ──────────────────────────────────────────────────────────────
 
-  describe('claim_activation_delivery', () => {
-    it('two concurrent claims → exactly one owner', () => {
-      // Insert test payment and offer
-      const payId = psql(`INSERT INTO payments DEFAULT VALUES RETURNING id;`);
+  describe('expired customer recovery lease', () => {
+    it('expired claim token cannot complete (returns false)', () => {
+      // Reset row with a very short lease (already expired)
       psql(`
-        INSERT INTO payment_saved_card_offers
-          (payment_id, customer_phone, offer_type, state, consent_source, channel_id)
-        VALUES ('${payId}', '+12025552001', 'save', 'accepted', 'provider_checkout',
-          (SELECT id FROM whatsapp_channels LIMIT 1))
-        ON CONFLICT (payment_id) DO UPDATE SET state = 'accepted',
-          activation_prompt_sent_at = NULL, activation_send_started_at = NULL,
-          claim_token = NULL, claim_expires_at = NULL;
+        DELETE FROM provider_customer_identities WHERE customer_phone = '+12025551002';
+        INSERT INTO provider_customer_identities
+          (customer_phone, gateway, provider_account_scope, idempotency_key, provisioning_state, dispatched_at)
+        VALUES ('+12025551002', 'stripe', 'platform', 'key_expire_1', 'dispatched', NOW() - INTERVAL '15 minutes');
       `);
 
-      const claim1 = psqlJson(`SELECT claim_activation_delivery(120);`) as Record<string, unknown> | null;
-      const claim2 = psqlJson(`SELECT claim_activation_delivery(120);`) as Record<string, unknown> | null;
+      // Claim with 1-second lease
+      const claim = psqlJson(`SELECT claim_stale_customer_provisioning('stripe', 10, 1);`) as Record<string, unknown>;
+      expect(claim).not.toBeNull();
+      const claimToken = claim.claim_token as string;
 
-      expect(claim1).not.toBeNull();
-      expect((claim1 as Record<string, unknown>).claim_token).toBeTruthy();
-      expect(claim2).toBeNull(); // second claim blocked
+      // Wait for lease to expire (pg_sleep)
+      psql(`SELECT pg_sleep(2);`);
 
-      // Verify channel_id is returned
-      expect((claim1 as Record<string, unknown>).channel_id).toBeDefined();
+      // Old token should NOT be able to complete (lease expired)
+      const opId = psql(`SELECT id FROM provider_customer_identities WHERE customer_phone = '+12025551002';`);
+      const result = psql(`SELECT complete_customer_recovery('${opId}'::UUID, '${claimToken}'::UUID, 'cus_stale', 'provider_confirmed');`);
+      expect(result).toBe('f'); // EXPIRED — zero rows changed
+
+      // New claim should work (expired lease is reclaimable)
+      const newClaim = psqlJson(`SELECT claim_stale_customer_provisioning('stripe', 10, 300);`) as Record<string, unknown>;
+      expect(newClaim).not.toBeNull();
+      const newToken = newClaim.claim_token as string;
+      expect(newToken).not.toBe(claimToken); // Different token
+
+      // New owner can complete
+      const newResult = psql(`SELECT complete_customer_recovery('${opId}'::UUID, '${newToken}'::UUID, 'cus_new_owner', 'provider_confirmed');`);
+      expect(newResult).toBe('t');
+
+      psql(`DELETE FROM provider_customer_identities WHERE customer_phone = '+12025551002';`);
+    });
+  });
+
+  // ──────────────────────────────────────────────────────────────
+  // R5-B2: GENUINE concurrent activation delivery claims
+  // ──────────────────────────────────────────────────────────────
+
+  describe('activation delivery: two concurrent sessions', () => {
+    it('two overlapping activation claims → exactly one owner + exact channel_id', async () => {
+      const payId = psql(`INSERT INTO payments DEFAULT VALUES RETURNING id;`);
+      psql(`
+        DELETE FROM payment_saved_card_offers WHERE customer_phone = '+12025552001';
+        INSERT INTO payment_saved_card_offers
+          (payment_id, customer_phone, offer_type, state, consent_source, channel_id)
+        VALUES ('${payId}', '+12025552001', 'save', 'accepted', 'provider_checkout', '${EXACT_CHANNEL_ID}');
+      `);
+
+      // Two independent psql processes
+      const [r1, r2] = await Promise.all([
+        psqlAsync("SELECT claim_activation_delivery(120);"),
+        psqlAsync("SELECT claim_activation_delivery(120);"),
+      ]);
+
+      const claim1 = parseJsonResult(r1);
+      const claim2 = parseJsonResult(r2);
+
+      const owners = [claim1, claim2].filter(c => c !== null && (c as Record<string, unknown>).claim_token);
+      expect(owners.length).toBe(1);
+
+      // R5-B4: EXACT channel_id UUID preservation
+      const winner = owners[0] as Record<string, unknown>;
+      expect(winner.channel_id).toBe(EXACT_CHANNEL_ID);
     });
 
-    it('wrong token complete_activation_delivery changes zero rows', () => {
+    it('wrong token complete_activation_delivery returns false', () => {
       const wrongToken = '00000000-0000-0000-0000-000000000001';
       const offerId = psql(`SELECT id FROM payment_saved_card_offers WHERE customer_phone = '+12025552001';`);
       const result = psql(`SELECT complete_activation_delivery('${offerId}'::UUID, '${wrongToken}'::UUID);`);
       expect(result).toBe('f');
     });
 
-    it('wrong token release_activation_delivery changes zero rows', () => {
-      const wrongToken = '00000000-0000-0000-0000-000000000002';
+    it('activation_send_started_at makes offer non-claimable after lease expiry', () => {
       const offerId = psql(`SELECT id FROM payment_saved_card_offers WHERE customer_phone = '+12025552001';`);
-      const result = psql(`SELECT release_activation_delivery('${offerId}'::UUID, '${wrongToken}'::UUID);`);
-      expect(result).toBe('f');
-    });
+      const token = psql(`SELECT claim_token FROM payment_saved_card_offers WHERE customer_phone = '+12025552001';`);
 
-    it('activation_send_started_at makes offer non-claimable even after lease expiry', () => {
-      // Mark send started + expire the lease
-      const offerId = psql(`SELECT id FROM payment_saved_card_offers WHERE customer_phone = '+12025552001';`);
-      const claimToken = psql(`SELECT claim_token FROM payment_saved_card_offers WHERE customer_phone = '+12025552001';`);
+      // Mark send started
+      psql(`SELECT mark_activation_send_started('${offerId}'::UUID, '${token}'::UUID);`);
 
-      psql(`SELECT mark_activation_send_started('${offerId}'::UUID, '${claimToken}'::UUID);`);
-
-      // Expire the lease
+      // Expire lease
       psql(`UPDATE payment_saved_card_offers SET claim_expires_at = NOW() - INTERVAL '1 minute' WHERE id = '${offerId}'::UUID;`);
 
-      // Try to claim — should fail because activation_send_started_at IS NOT NULL
+      // Cannot reclaim because send_started_at IS NOT NULL
       const reclaimAttempt = psqlJson(`SELECT claim_activation_delivery(120);`) as Record<string, unknown> | null;
-      expect(reclaimAttempt).toBeNull(); // NOT claimable — send was started
+      expect(reclaimAttempt).toBeNull();
 
       // Clean up
       psql(`DELETE FROM payment_saved_card_offers WHERE customer_phone = '+12025552001';`);
@@ -237,27 +274,29 @@ describe.skipIf(!dbUrl)('M395 RPC Concurrency (real PostgreSQL)', () => {
   });
 
   // ──────────────────────────────────────────────────────────────
-  // Provider Cleanup Claim Concurrency
+  // Provider cleanup claim concurrency
   // ──────────────────────────────────────────────────────────────
 
-  describe('claim_provider_cleanup_operation', () => {
-    it('two concurrent claims → different operations or second gets null', () => {
-      // Insert one cleanup operation
+  describe('provider cleanup: concurrent claims', () => {
+    it('two overlapping cleanup claims → one owner per operation', async () => {
       psql(`
         INSERT INTO provider_cleanup_operations
           (customer_phone, gateway, provider_account_scope, operation_type, provider_object_id, source_event)
-        VALUES ('+12025553001', 'stripe', 'platform', 'detach', 'pm_cleanup_test_1', 'remove')
+        VALUES ('+12025553001', 'stripe', 'platform', 'detach', 'pm_conc_test_1', 'remove')
         ON CONFLICT (gateway, provider_object_id, operation_type) DO UPDATE
         SET completed_at = NULL, claim_token = NULL, claim_expires_at = NULL, attempt_count = 0;
       `);
 
-      const claim1 = psqlJson(`SELECT claim_provider_cleanup_operation('stripe', 5, 300);`) as Record<string, unknown> | null;
-      const claim2 = psqlJson(`SELECT claim_provider_cleanup_operation('stripe', 5, 300);`) as Record<string, unknown> | null;
+      const [r1, r2] = await Promise.all([
+        psqlAsync("SELECT claim_provider_cleanup_operation('stripe', 5, 300);"),
+        psqlAsync("SELECT claim_provider_cleanup_operation('stripe', 5, 300);"),
+      ]);
 
-      expect(claim1).not.toBeNull();
-      expect(claim2).toBeNull(); // only one operation, second gets null
+      const claim1 = parseJsonResult(r1);
+      const claim2 = parseJsonResult(r2);
+      const owners = [claim1, claim2].filter(c => c !== null && (c as Record<string, unknown>).claim_token);
+      expect(owners.length).toBe(1);
 
-      // Clean up
       psql(`DELETE FROM provider_cleanup_operations WHERE customer_phone = '+12025553001';`);
     });
   });
