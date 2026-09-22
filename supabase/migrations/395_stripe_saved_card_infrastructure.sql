@@ -24,6 +24,8 @@ CREATE TABLE IF NOT EXISTS provider_customer_identities (
   dispatched_at TIMESTAMPTZ,
   confirmed_at TIMESTAMPTZ,
   error_detail TEXT,
+  recovery_claim_token UUID,
+  recovery_claim_expires_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE (customer_phone, gateway, provider_account_scope)
 );
@@ -472,24 +474,35 @@ GRANT EXECUTE ON FUNCTION atomic_stripe_revoke_and_enqueue(UUID, TEXT, TEXT) TO 
 -- ═══════════════════════════════════════════════════════
 CREATE OR REPLACE FUNCTION claim_stale_customer_provisioning(
   p_gateway TEXT,
-  p_stale_minutes INT DEFAULT 10
+  p_stale_minutes INT DEFAULT 10,
+  p_lease_seconds INT DEFAULT 300
 ) RETURNS JSONB
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE
+  v_token UUID := gen_random_uuid();
   v_row provider_customer_identities%ROWTYPE;
 BEGIN
+  -- Atomic claim: select + lock + persist ownership in one transaction
   SELECT * INTO v_row
   FROM provider_customer_identities
   WHERE provisioning_state = 'dispatched'
     AND gateway = p_gateway
     AND dispatched_at < NOW() - (p_stale_minutes || ' minutes')::INTERVAL
+    AND (recovery_claim_token IS NULL OR recovery_claim_expires_at < NOW())
   ORDER BY dispatched_at ASC LIMIT 1
   FOR UPDATE SKIP LOCKED;
 
   IF NOT FOUND THEN RETURN NULL; END IF;
 
+  -- Persist claim ownership before returning
+  UPDATE provider_customer_identities
+  SET recovery_claim_token = v_token,
+      recovery_claim_expires_at = NOW() + (p_lease_seconds || ' seconds')::INTERVAL
+  WHERE id = v_row.id;
+
   RETURN jsonb_build_object(
     'operation_id', v_row.id,
+    'claim_token', v_token,
     'customer_phone', v_row.customer_phone,
     'provider_account_scope', v_row.provider_account_scope,
     'idempotency_key', v_row.idempotency_key,
@@ -497,6 +510,132 @@ BEGIN
   );
 END;
 $$;
+
+-- Complete customer provisioning recovery (fenced by claim token)
+CREATE OR REPLACE FUNCTION complete_customer_recovery(
+  p_operation_id UUID,
+  p_claim_token UUID,
+  p_provider_customer_id TEXT DEFAULT NULL,
+  p_new_state TEXT DEFAULT 'provider_confirmed',
+  p_error TEXT DEFAULT NULL
+) RETURNS BOOLEAN
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+BEGIN
+  IF p_new_state = 'provider_confirmed' AND p_provider_customer_id IS NOT NULL THEN
+    UPDATE provider_customer_identities
+    SET provisioning_state = 'provider_confirmed',
+        provider_customer_id = p_provider_customer_id,
+        confirmed_at = NOW(),
+        recovery_claim_token = NULL,
+        recovery_claim_expires_at = NULL
+    WHERE id = p_operation_id
+      AND recovery_claim_token = p_claim_token;
+  ELSIF p_new_state = 'failed' THEN
+    UPDATE provider_customer_identities
+    SET provisioning_state = 'failed',
+        error_detail = p_error,
+        recovery_claim_token = NULL,
+        recovery_claim_expires_at = NULL
+    WHERE id = p_operation_id
+      AND recovery_claim_token = p_claim_token;
+  ELSE
+    -- Release claim without state change
+    UPDATE provider_customer_identities
+    SET recovery_claim_token = NULL,
+        recovery_claim_expires_at = NULL
+    WHERE id = p_operation_id
+      AND recovery_claim_token = p_claim_token;
+  END IF;
+  RETURN FOUND;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION complete_customer_recovery(UUID, UUID, TEXT, TEXT, TEXT) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION complete_customer_recovery(UUID, UUID, TEXT, TEXT, TEXT) TO service_role;
+
+-- ═══════════════════════════════════════════════════════
+-- 12. Atomic activation-delivery claim for PIN activation retry
+-- ═══════════════════════════════════════════════════════
+CREATE OR REPLACE FUNCTION claim_activation_delivery(
+  p_lease_seconds INT DEFAULT 120
+) RETURNS JSONB
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_token UUID := gen_random_uuid();
+  v_offer payment_saved_card_offers%ROWTYPE;
+BEGIN
+  -- Claim one unsent activation offer atomically
+  SELECT * INTO v_offer
+  FROM payment_saved_card_offers
+  WHERE state = 'accepted'
+    AND consent_source = 'provider_checkout'
+    AND activation_prompt_sent_at IS NULL
+    AND (claim_token IS NULL OR claim_expires_at < NOW())
+  ORDER BY created_at ASC LIMIT 1
+  FOR UPDATE SKIP LOCKED;
+
+  IF NOT FOUND THEN RETURN NULL; END IF;
+
+  -- Persist claim ownership
+  UPDATE payment_saved_card_offers
+  SET claim_token = v_token,
+      claim_expires_at = NOW() + (p_lease_seconds || ' seconds')::INTERVAL
+  WHERE id = v_offer.id;
+
+  RETURN jsonb_build_object(
+    'offer_id', v_offer.id,
+    'claim_token', v_token,
+    'customer_phone', v_offer.customer_phone,
+    'business_id', v_offer.business_id,
+    'offer_type', v_offer.offer_type,
+    'card_display', v_offer.card_display,
+    'channel_id', v_offer.channel_id,
+    'payment_id', v_offer.payment_id
+  );
+END;
+$$;
+
+-- Complete activation delivery (fenced by claim token)
+CREATE OR REPLACE FUNCTION complete_activation_delivery(
+  p_offer_id UUID,
+  p_claim_token UUID
+) RETURNS BOOLEAN
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+BEGIN
+  UPDATE payment_saved_card_offers
+  SET activation_prompt_sent_at = NOW(),
+      claim_token = NULL,
+      claim_expires_at = NULL
+  WHERE id = p_offer_id
+    AND claim_token = p_claim_token
+    AND state = 'accepted'
+    AND activation_prompt_sent_at IS NULL;
+  RETURN FOUND;
+END;
+$$;
+
+-- Release activation claim (on send failure)
+CREATE OR REPLACE FUNCTION release_activation_delivery(
+  p_offer_id UUID,
+  p_claim_token UUID
+) RETURNS BOOLEAN
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+BEGIN
+  UPDATE payment_saved_card_offers
+  SET claim_token = NULL,
+      claim_expires_at = NULL
+  WHERE id = p_offer_id
+    AND claim_token = p_claim_token;
+  RETURN FOUND;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION claim_activation_delivery(INT) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION claim_activation_delivery(INT) TO service_role;
+REVOKE ALL ON FUNCTION complete_activation_delivery(UUID, UUID) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION complete_activation_delivery(UUID, UUID) TO service_role;
+REVOKE ALL ON FUNCTION release_activation_delivery(UUID, UUID) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION release_activation_delivery(UUID, UUID) TO service_role;
 
 REVOKE ALL ON FUNCTION claim_stale_customer_provisioning(TEXT, INT) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION claim_stale_customer_provisioning(TEXT, INT) TO service_role;

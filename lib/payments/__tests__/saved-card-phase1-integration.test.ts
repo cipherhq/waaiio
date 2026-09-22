@@ -240,11 +240,48 @@ describe('BYO/Connect fail closed', () => {
 // ──────────────────────────────────────────────────────────────
 
 describe('Customer recovery claim fencing', () => {
-  it('claim_stale_customer_provisioning uses FOR UPDATE SKIP LOCKED', () => {
+  it('claim RPC persists durable claim_token + lease before returning', () => {
     const fs = require('fs');
     const migration = fs.readFileSync('supabase/migrations/395_stripe_saved_card_infrastructure.sql', 'utf-8');
-    expect(migration).toContain('claim_stale_customer_provisioning');
-    expect(migration).toContain('FOR UPDATE SKIP LOCKED');
+    // RPC must UPDATE to persist claim before RETURN
+    const claimSection = migration.substring(migration.indexOf('claim_stale_customer_provisioning'));
+    expect(claimSection).toContain('recovery_claim_token = v_token');
+    expect(claimSection).toContain('recovery_claim_expires_at');
+    expect(claimSection).toContain('FOR UPDATE SKIP LOCKED');
+  });
+
+  it('claim RPC excludes rows with active unexpired claims', () => {
+    const fs = require('fs');
+    const migration = fs.readFileSync('supabase/migrations/395_stripe_saved_card_infrastructure.sql', 'utf-8');
+    const claimSection = migration.substring(migration.indexOf('claim_stale_customer_provisioning'));
+    expect(claimSection).toContain('recovery_claim_token IS NULL OR recovery_claim_expires_at < NOW()');
+  });
+
+  it('complete_customer_recovery requires exact claim_token match', () => {
+    const fs = require('fs');
+    const migration = fs.readFileSync('supabase/migrations/395_stripe_saved_card_infrastructure.sql', 'utf-8');
+    expect(migration).toContain('complete_customer_recovery');
+    const completeSection = migration.substring(migration.indexOf('complete_customer_recovery'));
+    expect(completeSection).toContain('recovery_claim_token = p_claim_token');
+  });
+
+  it('wrong claim token affects zero rows (fenced completion)', () => {
+    // The RPC WHERE clause includes AND recovery_claim_token = p_claim_token
+    // If a different worker tries to complete with the wrong token, FOUND = false
+    const fs = require('fs');
+    const migration = fs.readFileSync('supabase/migrations/395_stripe_saved_card_infrastructure.sql', 'utf-8');
+    const completeSection = migration.substring(migration.indexOf('complete_customer_recovery'));
+    // The WHERE clause with claim_token ensures wrong token → zero rows → RETURN FOUND (false)
+    expect(completeSection).toContain('RETURN FOUND');
+    expect(completeSection).toContain('recovery_claim_token = p_claim_token');
+  });
+
+  it('expired lease can be reclaimed (recovery_claim_expires_at < NOW())', () => {
+    const fs = require('fs');
+    const migration = fs.readFileSync('supabase/migrations/395_stripe_saved_card_infrastructure.sql', 'utf-8');
+    const claimSection = migration.substring(migration.indexOf('claim_stale_customer_provisioning'));
+    // When lease expires, the row becomes eligible again
+    expect(claimSection).toContain('recovery_claim_expires_at < NOW()');
   });
 
   it('only provider_confirmed Customer can be used for Checkout', () => {
@@ -260,17 +297,35 @@ describe('Customer recovery claim fencing', () => {
 // ──────────────────────────────────────────────────────────────
 
 describe('Cleanup claim fencing', () => {
-  it('claim_provider_cleanup_operation uses FOR UPDATE SKIP LOCKED', () => {
+  it('claim persists durable claim_token + lease before returning', () => {
     const fs = require('fs');
     const migration = fs.readFileSync('supabase/migrations/395_stripe_saved_card_infrastructure.sql', 'utf-8');
     const claimSection = migration.substring(migration.indexOf('claim_provider_cleanup_operation'));
     expect(claimSection).toContain('FOR UPDATE SKIP LOCKED');
+    expect(claimSection).toContain('claim_token = v_token');
+    expect(claimSection).toContain('claim_expires_at');
   });
 
-  it('completion is fenced by claim_token', () => {
+  it('claim excludes rows with active unexpired claims', () => {
     const fs = require('fs');
     const migration = fs.readFileSync('supabase/migrations/395_stripe_saved_card_infrastructure.sql', 'utf-8');
-    expect(migration).toContain('AND claim_token = p_claim_token');
+    const claimSection = migration.substring(migration.indexOf('claim_provider_cleanup_operation'));
+    expect(claimSection).toContain('claim_token IS NULL OR claim_expires_at < NOW()');
+  });
+
+  it('complete_provider_cleanup_operation requires exact claim_token', () => {
+    const fs = require('fs');
+    const migration = fs.readFileSync('supabase/migrations/395_stripe_saved_card_infrastructure.sql', 'utf-8');
+    const completeSection = migration.substring(migration.indexOf('complete_provider_cleanup_operation'));
+    expect(completeSection).toContain('claim_token = p_claim_token');
+    expect(completeSection).toContain('RETURN FOUND');
+  });
+
+  it('release_provider_cleanup_operation requires exact claim_token', () => {
+    const fs = require('fs');
+    const migration = fs.readFileSync('supabase/migrations/395_stripe_saved_card_infrastructure.sql', 'utf-8');
+    const releaseSection = migration.substring(migration.indexOf('release_provider_cleanup_operation'));
+    expect(releaseSection).toContain('claim_token = p_claim_token');
   });
 });
 
@@ -387,34 +442,65 @@ describe('3DS auth-attempt lifecycle', () => {
 // Activation retry on exact channel
 // ──────────────────────────────────────────────────────────────
 
-describe('Activation retry worker', () => {
-  it('retry worker exists with exact channel authority', () => {
+describe('Activation retry claim fencing', () => {
+  it('claim_activation_delivery persists durable claim_token + lease', () => {
+    const fs = require('fs');
+    const migration = fs.readFileSync('supabase/migrations/395_stripe_saved_card_infrastructure.sql', 'utf-8');
+    const claimSection = migration.substring(migration.indexOf('claim_activation_delivery'));
+    expect(claimSection).toContain('FOR UPDATE SKIP LOCKED');
+    expect(claimSection).toContain('claim_token = v_token');
+    expect(claimSection).toContain('claim_expires_at');
+  });
+
+  it('claim excludes rows with active unexpired claims', () => {
+    const fs = require('fs');
+    const migration = fs.readFileSync('supabase/migrations/395_stripe_saved_card_infrastructure.sql', 'utf-8');
+    const claimSection = migration.substring(migration.indexOf('claim_activation_delivery'));
+    expect(claimSection).toContain('claim_token IS NULL OR claim_expires_at < NOW()');
+  });
+
+  it('complete_activation_delivery requires exact claim_token + state=accepted + null sent_at', () => {
+    const fs = require('fs');
+    const migration = fs.readFileSync('supabase/migrations/395_stripe_saved_card_infrastructure.sql', 'utf-8');
+    const completeSection = migration.substring(migration.indexOf('complete_activation_delivery'));
+    expect(completeSection).toContain('claim_token = p_claim_token');
+    expect(completeSection).toContain("state = 'accepted'");
+    expect(completeSection).toContain('activation_prompt_sent_at IS NULL');
+    expect(completeSection).toContain('RETURN FOUND');
+  });
+
+  it('release_activation_delivery requires exact claim_token', () => {
+    const fs = require('fs');
+    const migration = fs.readFileSync('supabase/migrations/395_stripe_saved_card_infrastructure.sql', 'utf-8');
+    const releaseSection = migration.substring(migration.indexOf('release_activation_delivery'));
+    expect(releaseSection).toContain('claim_token = p_claim_token');
+  });
+
+  it('retry worker uses exact stored channel_id only — no business fallback', () => {
     const fs = require('fs');
     const workerCode = fs.readFileSync('app/api/cron/saved-card-activation-retry/route.ts', 'utf-8');
-    expect(workerCode).toContain('channel_id');
-    expect(workerCode).toContain('activation_prompt_sent_at');
-    expect(workerCode).toContain("consent_source', 'provider_checkout'");
+    // Must use exact channel_id
+    expect(workerCode).toContain("!channelId");
+    expect(workerCode).toContain("fail closed");
+    // Must NOT contain business channel fallback
+    expect(workerCode).not.toContain('assigned_channel_id');
+    expect(workerCode).not.toContain('whatsapp_channel_id');
   });
 
   it('retry worker does not repeat consent or redisplay downgrade', () => {
     const fs = require('fs');
     const workerCode = fs.readFileSync('app/api/cron/saved-card-activation-retry/route.ts', 'utf-8');
-    // Should NOT contain Stripe consent or downgrade calls
     expect(workerCode).not.toContain('extractStripeSavedCardEvidence');
     expect(workerCode).not.toContain('downgradeAllowRedisplay');
   });
 
-  it('retry worker checks pending redisplay fence before sending', () => {
+  it('retry worker checks completion after send (fenced by claim token)', () => {
     const fs = require('fs');
     const workerCode = fs.readFileSync('app/api/cron/saved-card-activation-retry/route.ts', 'utf-8');
-    expect(workerCode).toContain('set_allow_redisplay_limited');
-    expect(workerCode).toContain('pendingCleanup');
-  });
-
-  it('retry worker marks activation_prompt_sent_at on success', () => {
-    const fs = require('fs');
-    const workerCode = fs.readFileSync('app/api/cron/saved-card-activation-retry/route.ts', 'utf-8');
-    expect(workerCode).toContain("activation_prompt_sent_at: new Date().toISOString()");
+    expect(workerCode).toContain('complete_activation_delivery');
+    expect(workerCode).toContain('p_claim_token: claimToken');
+    // Checks completion result
+    expect(workerCode).toContain('!completed');
   });
 });
 
