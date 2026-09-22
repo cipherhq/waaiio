@@ -226,6 +226,7 @@ type ProcessPaymentCallback = (supabase: SupabaseClient, payment: {
   fee_policy_version?: number; config_version_id?: string;
   transaction_category?: string; fee_basis?: Record<string, unknown>;
   gateway?: string;
+  payment_authority_version?: number | null;
 }) => Promise<FinalizationResult>;
 
 type SendConfirmationCallback = (supabase: SupabaseClient, payment: {
@@ -399,6 +400,7 @@ async function executeStage2Through3(
       transaction_category: payment.transaction_category,
       fee_basis: payment.fee_basis as Record<string, unknown> | undefined,
       gateway: payment.gateway,
+      payment_authority_version: payment.payment_authority_version,
     });
   } catch (err) {
     logger.withContext({ op: 'authority.process-payment', ...safeLogErrorContext(err) })

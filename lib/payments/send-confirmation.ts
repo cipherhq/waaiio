@@ -456,6 +456,15 @@ export async function sendProactiveConfirmation(
     }
   }
 
+  // R4-B1: Resolve customer email for direct order transfers before manifest freeze
+  let directOrderCustomerEmail: string | null = null;
+  if (isDirectOrderTransfer && customerPhone && businessId) {
+    try {
+      const { findCustomerEmail } = await import('@/lib/channels/send-or-email');
+      directOrderCustomerEmail = await findCustomerEmail(supabase, customerPhone, businessId);
+    } catch { /* non-critical — customer_order_email simply won't be in manifest */ }
+  }
+
   // ── MANIFEST INITIALIZATION: Register all applicable Stage-3 effects ──
   // Fail-closed for Phase-A payments (payment_authority_version >= 1).
   // Historical payments without authority version use legacy path.
@@ -531,7 +540,7 @@ export async function sendProactiveConfirmation(
       skipAutomation: !!payment.order_id || !!payment.campaign_id || !!payment.invoice_id,
       amountPaid: payment.amount,
       isDirectOrderTransfer,  // M394/Phase 2D
-      hasCustomerEmail: !!customerEmail,  // M394/Phase 2D: for customer_order_email
+      hasCustomerEmail: !!directOrderCustomerEmail || !!customerEmail,  // M394/Phase 2D
     });
 
     const initResult = await initializeManifest(supabase, payment.id, claimToken, applicableEffects);
@@ -938,6 +947,30 @@ export async function sendProactiveConfirmation(
           return true;
         });
       } catch (err) { logSafeError(logPrefix, 'owner-notification-manifest', err); }
+
+      // R4-B1: customer_order_email — direct order bank transfer confirmation email
+      if (isDirectOrderTransfer && directOrderCustomerEmail) {
+        try {
+          const teEmail = await import('@/lib/payments/terminal-effects');
+          await teEmail.driveExternalEffect(supabase, payment.id, 'customer_order_email', claimToken, async () => {
+            const { sendEmail } = await import('@/lib/email/client');
+            const { businessNotificationEmail } = await import('@/lib/email/templates');
+            const amtFmt = formatCurrency(payment.amount, countryCode);
+            const { subject, html } = businessNotificationEmail({
+              businessName: businessName || 'Business',
+              title: 'Payment Confirmed',
+              message: `Your bank transfer has been verified and your order is confirmed. Thank you!`,
+              details: { 'Amount': amtFmt, 'Reference': referenceCode },
+            });
+            await sendEmail({
+              to: directOrderCustomerEmail!,
+              subject: `Payment Confirmed - ${businessName || 'Business'}`,
+              html,
+            });
+            return true;
+          });
+        } catch (emailErr) { logSafeError(logPrefix, 'customer-order-email', emailErr); }
+      }
     } else {
       // ── LEGACY PATH: original section 7 code unchanged for mock test compatibility ──
       try {

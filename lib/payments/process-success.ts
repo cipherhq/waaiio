@@ -20,6 +20,7 @@ interface PaymentRecord {
   metadata?: Record<string, unknown> | null;
   gateway_fee?: number;
   gateway?: string; // M394: direct-transfer zero-fee path
+  payment_authority_version?: number | null; // M394: durable provenance for direct zero-fee
   // #264: Fee policy fields (passed through from authority.ts for v1 payments)
   fee_policy_version?: number;
   config_version_id?: string;
@@ -208,10 +209,11 @@ export async function processSuccessfulPayment(
   const orderId = payment.order_id || (payment.metadata?.order_id as string) || null;
   if (orderId) {
     try {
-      // M394/R3-B7: Durable direct order bank transfer → zero-fee analytics
+      // R4-B2: Durable direct order bank transfer → zero-fee analytics (requires authority version)
       const payMeta = (payment.metadata || {}) as Record<string, unknown>;
       const isDirectOrderTransfer = payment.gateway === 'direct' && !!orderId
-        && payMeta._direct_transfer === true;
+        && payMeta._direct_transfer === true
+        && payment.payment_authority_version != null;
       if (isDirectOrderTransfer) {
         try {
           const { data: orderForFee } = await supabase
@@ -232,28 +234,36 @@ export async function processSuccessfulPayment(
               tier: (feeBiz?.subscription_tier || 'free') as string,
               is_direct_transfer: true,
             });
+            // R4-B2: Verify fee row on both fresh insert and 23505 replay
+            const verifyFeeRow = async () => {
+              const { data: feeRow, error: verifyErr } = await supabase.from('platform_fees')
+                .select('payment_id, order_id, business_id, transaction_amount, fee_percentage, fee_flat, fee_total, gateway_fee, is_direct_transfer')
+                .eq('payment_id', payment.id).single();
+              if (verifyErr || !feeRow) {
+                criticalErrors.push('direct_transfer_fee_verify_failed');
+                logger.error('[PLATFORM-FEE] Direct transfer fee: cannot verify row', { paymentId: payment.id, verifyErr });
+                return;
+              }
+              if (feeRow.order_id !== orderId || feeRow.business_id !== feeBizId
+                  || feeRow.transaction_amount !== payment.amount
+                  || feeRow.fee_percentage !== 0 || feeRow.fee_flat !== 0
+                  || feeRow.fee_total !== 0 || feeRow.gateway_fee !== 0
+                  || !feeRow.is_direct_transfer) {
+                criticalErrors.push('direct_transfer_fee_mismatch');
+                logger.error('[PLATFORM-FEE] Direct transfer fee: row does not match expected values', { paymentId: payment.id, feeRow });
+              }
+            };
             if (directFeeErr) {
-              // R3-B7: Only 23505 (unique violation) is idempotent — no message substring
               if (directFeeErr.code === '23505') {
                 // Idempotent replay — verify existing row is correct
-                const { data: existing } = await supabase.from('platform_fees')
-                  .select('payment_id, order_id, business_id, transaction_amount, fee_percentage, fee_flat, fee_total, gateway_fee, is_direct_transfer')
-                  .eq('payment_id', payment.id).single();
-                if (existing && (
-                  existing.order_id !== orderId ||
-                  existing.business_id !== feeBizId ||
-                  existing.transaction_amount !== payment.amount ||
-                  existing.fee_percentage !== 0 || existing.fee_flat !== 0 ||
-                  existing.fee_total !== 0 || existing.gateway_fee !== 0 ||
-                  !existing.is_direct_transfer
-                )) {
-                  criticalErrors.push('direct_transfer_fee_mismatch');
-                  logger.error('[PLATFORM-FEE] Direct transfer fee: existing row does not match expected values', { paymentId: payment.id, existing });
-                }
+                await verifyFeeRow();
               } else {
                 criticalErrors.push('direct_transfer_fee_failed');
                 logger.withContext({ op: 'platform-fee.direct-order', ...safeLogErrorContext(directFeeErr) }).error('[PLATFORM-FEE] Failed to record direct transfer fee');
               }
+            } else {
+              // Fresh insert — verify it was written correctly
+              await verifyFeeRow();
             }
           }
         } catch (directFeeThrow) {
