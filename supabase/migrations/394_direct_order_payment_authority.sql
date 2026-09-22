@@ -305,7 +305,7 @@ BEGIN
          confirmation_sent_at, confirmation_terminal_reason,
          finalization_completed_at,
          booking_id, reservation_id, order_id, invoice_id, campaign_id,
-         gateway, metadata
+         gateway, metadata, payment_authority_version
   INTO v_payment FROM payments WHERE id = p_payment_id FOR UPDATE;
 
   IF NOT FOUND THEN
@@ -335,6 +335,7 @@ BEGIN
   v_is_direct_order := (
     v_payment.gateway = 'direct'
     AND v_payment.order_id IS NOT NULL
+    AND v_payment.payment_authority_version IS NOT NULL
     AND v_payment.metadata IS NOT NULL
     AND (v_payment.metadata->>'_direct_transfer')::boolean IS TRUE
   );

@@ -59,47 +59,65 @@ export async function PATCH(
       return NextResponse.json({ error: 'Transfer not found' }, { status: 404 });
     }
 
-    // R2 item 10: Already-confirmed order transfer retry — resume finalization
+    // R3-B9: Already-confirmed order transfer retry — exact fail-closed lookup
     if (transfer.status !== 'pending') {
       if (transfer.status === 'confirmed' && transfer.order_id && action === 'confirm') {
-        // Find exact direct payment for this confirmed order transfer
-        const { data: directPayment } = await service
+        // Exact fail-closed lookup: all provenance fields required
+        const { data: directPayments, error: retryLookupErr } = await service
           .from('payments')
-          .select('id')
+          .select('id, metadata, payment_authority_version')
           .eq('order_id', transfer.order_id)
+          .eq('business_id', business_id)
           .eq('gateway', 'direct')
           .eq('status', 'success')
-          .maybeSingle();
+          .not('payment_authority_version', 'is', null);
 
-        if (!directPayment) {
-          return NextResponse.json({ error: 'No direct payment found for confirmed transfer' }, { status: 409 });
+        if (retryLookupErr) {
+          logger.error('[PENDING_TRANSFERS] Retry lookup error:', retryLookupErr.message);
+          return NextResponse.json({ error: 'Retry lookup failed' }, { status: 500 });
         }
 
-        // Verify pending_transfer_id provenance matches
-        const { data: payMeta } = await service
-          .from('payments')
-          .select('metadata')
-          .eq('id', directPayment.id)
-          .single();
-        const meta = (payMeta?.metadata || {}) as Record<string, unknown>;
-        if (meta.pending_transfer_id !== transferId) {
-          return NextResponse.json({ error: 'Payment provenance mismatch' }, { status: 409 });
+        // Filter by durable provenance
+        const candidates = (directPayments || []).filter((p: any) => {
+          const meta = (p.metadata || {}) as Record<string, unknown>;
+          return meta._direct_transfer === true && meta.pending_transfer_id === transferId;
+        });
+
+        if (candidates.length === 0) {
+          return NextResponse.json({ error: 'No matching direct payment found for retry' }, { status: 409 });
+        }
+        if (candidates.length > 1) {
+          logger.error(`[PENDING_TRANSFERS] CRITICAL: Multiple direct payments for transfer ${transferId} — fail closed`);
+          Sentry.captureException(new Error(`Multiple direct payments for transfer ${transferId}`), {
+            tags: { component: 'pending-transfers', operation: 'retry-lookup' },
+          });
+          return NextResponse.json({ error: 'Multiple matching payments — contact support' }, { status: 409 });
         }
 
-        // Resume finalization (downstream effects only — financial state already confirmed)
+        const exactPaymentId = candidates[0].id;
+        let retryFinalizationStatus = 'pending';
         try {
           const { resumeSuccessfulPaymentFinalization } = await import('@/lib/payments/authority');
           const { processSuccessfulPayment } = await import('@/lib/payments/process-success');
           const { sendProactiveConfirmation } = await import('@/lib/payments/send-confirmation');
-          await resumeSuccessfulPaymentFinalization(
-            service, directPayment.id,
+          const lifecycle = await resumeSuccessfulPaymentFinalization(
+            service, exactPaymentId,
             (sb, pay) => processSuccessfulPayment(sb, pay),
             (sb, pay, opts) => sendProactiveConfirmation(sb, pay, { logPrefix: '[TRANSFER-RETRY]', exactEntityFamily: opts?.exactEntityFamily }),
           );
+          retryFinalizationStatus = lifecycle.status;
+          if (lifecycle.status === 'rejected') {
+            logger.error(`[PENDING_TRANSFERS] Retry resume returned rejected: ${lifecycle.reason}`);
+            Sentry.captureException(new Error(`Direct retry rejected: ${lifecycle.reason}`), {
+              tags: { component: 'pending-transfers', operation: 'retry-resume' },
+            });
+          }
         } catch (resumeErr) {
           logger.error('[PENDING_TRANSFERS] Retry resume error (non-fatal):', resumeErr);
+          Sentry.captureException(resumeErr, { tags: { component: 'pending-transfers', operation: 'retry-resume' } });
+          retryFinalizationStatus = 'error';
         }
-        return NextResponse.json({ success: true, status: 'confirmed' });
+        return NextResponse.json({ success: true, status: 'confirmed', finalization_status: retryFinalizationStatus });
       }
 
       return NextResponse.json(

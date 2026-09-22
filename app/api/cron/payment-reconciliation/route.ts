@@ -282,6 +282,16 @@ export async function GET(request: NextRequest) {
         if (lifecycle.status === 'completed' || lifecycle.status === 'already_completed') {
           reconciled++;
           logger.info(`[PAYMENT-RECONCILIATION] Direct transfer recovery completed: ${payment.id}`);
+        } else if (lifecycle.status === 'processing' || lifecycle.status === 'retryable_failed') {
+          // Leave for future retry
+          logger.info(`[PAYMENT-RECONCILIATION] Direct transfer ${payment.id} ${lifecycle.status}: ${lifecycle.reason} — leaving for next cycle`);
+        } else if (lifecycle.status === 'rejected' || lifecycle.status === 'not_deliverable') {
+          // Unexpected for a durable direct order — high-severity alert
+          logger.error(`[PAYMENT-RECONCILIATION] UNEXPECTED: Direct transfer ${payment.id} returned ${lifecycle.status}: ${lifecycle.reason}`);
+          Sentry.captureException(
+            new Error(`Direct transfer unexpected status: ${lifecycle.status} / ${lifecycle.reason}`),
+            { tags: { component: 'payment-reconciliation', operation: 'direct-recovery' }, extra: { paymentId: payment.id } },
+          );
         }
         continue;
       }
