@@ -274,7 +274,7 @@ describe.skipIf(!canRunDb)('M394: Real PostgreSQL DB tests', () => {
         transaction_amount INTEGER DEFAULT 0, fee_percentage NUMERIC DEFAULT 0,
         fee_flat INTEGER DEFAULT 0, fee_total INTEGER DEFAULT 0, gateway_fee INTEGER DEFAULT 0,
         tier TEXT DEFAULT 'free', is_direct_transfer BOOLEAN DEFAULT false,
-        created_at TIMESTAMPTZ DEFAULT NOW()
+        refunded_at TIMESTAMPTZ, created_at TIMESTAMPTZ DEFAULT NOW()
       );
       CREATE UNIQUE INDEX IF NOT EXISTS idx_platform_fees_payment_unique ON platform_fees(payment_id) WHERE payment_id IS NOT NULL;
       CREATE UNIQUE INDEX IF NOT EXISTS idx_platform_fees_order_unique ON platform_fees(order_id) WHERE order_id IS NOT NULL AND refunded_at IS NULL;
@@ -324,7 +324,9 @@ describe.skipIf(!canRunDb)('M394: Real PostgreSQL DB tests', () => {
       INSERT INTO bot_sessions (id, business_id, session_data) VALUES ('${SESSION}', '${BIZ}', '{"_inbound_channel_id":"${CHANNEL}"}'::jsonb) ON CONFLICT DO NOTHING;
     `);
 
-    // Apply M393 + M394
+    // Apply required migrations
+    const m314 = readFileSync(join(process.cwd(), 'supabase/migrations/314_payment_finalization_lifecycle.sql'), 'utf-8');
+    psql(m314);
     const m393 = readFileSync(join(process.cwd(), 'supabase/migrations/393_inventory_reservation_wiring.sql'), 'utf-8');
     psql(m393);
     const m394 = readFileSync(join(process.cwd(), 'supabase/migrations/394_direct_order_payment_authority.sql'), 'utf-8');
@@ -470,8 +472,8 @@ describe.skipIf(!canRunDb)('M394: Real PostgreSQL DB tests', () => {
       const p2 = r2.ok ? JSON.parse(r2.stdout) : { claimed: false };
 
       const claims = [p1.claimed === true, p2.claimed === true].filter(Boolean).length;
-      // At most one claims (the other gets processing_in_progress or already_completed)
-      expect(claims).toBeLessThanOrEqual(1);
+      // R6-B4: Exactly one winner (the other gets processing_in_progress)
+      expect(claims).toBe(1);
     }, 30000);
   });
 
@@ -488,6 +490,188 @@ describe.skipIf(!canRunDb)('M394: Real PostgreSQL DB tests', () => {
       const allowed = psql(`SELECT has_function_privilege('service_role', 'initialize_terminal_effects(uuid,uuid,text[],text[],text[],text[],int)', 'EXECUTE')`);
       expect(allowed).toBe('t');
     });
+  });
+});
+
+// ═══ Part D: Executable Stage 2 runtime tests ═══
+
+describe('processSuccessfulPayment: direct zero-fee (executable)', () => {
+  it('direct order creates zero-fee row and calls idempotent RPCs', async () => {
+    const { processSuccessfulPayment } = await import('@/lib/payments/process-success');
+
+    const insertedFees: any[] = [];
+    const rpcCalls: { name: string; params: any }[] = [];
+
+    // Build a chainable mock that handles all Supabase query patterns
+    function chain(data: any = null): any {
+      const c: any = {};
+      for (const m of ['select', 'eq', 'in', 'update', 'neq', 'not', 'order', 'limit', 'insert', 'delete']) {
+        c[m] = (...args: any[]) => {
+          if (m === 'insert') {
+            insertedFees.push(args[0]);
+            // Return value with both .then() and direct error
+            const r: any = { error: null };
+            r.then = (fn: any) => fn({ error: null });
+            return r;
+          }
+          return c;
+        };
+      }
+      c.single = async () => ({ data, error: null });
+      c.maybeSingle = async () => ({ data, error: null });
+      c.then = (resolve: any) => resolve({ data: data ? [data] : [], error: null });
+      return c;
+    }
+
+    const mockSupabase = {
+      from: (table: string) => {
+        if (table === 'orders') return chain({ business_id: 'biz-1', referral_id: null, delivery_phone: '+234900' });
+        if (table === 'businesses') return chain({ subscription_tier: 'growth' });
+        if (table === 'platform_fees') return chain({ payment_id: 'pay-direct-1', order_id: 'ord-1', business_id: 'biz-1', transaction_amount: 5000, fee_percentage: 0, fee_flat: 0, fee_total: 0, gateway_fee: 0, is_direct_transfer: true });
+        return chain();
+      },
+      rpc: async (name: string, params?: any) => {
+        rpcCalls.push({ name, params });
+        if (name === 'apply_order_stock_once') return { data: { applied: true, already_applied: true, order_confirmed: true }, error: null };
+        if (name === 'finalize_promo_reservation') return { data: { reason: 'no_reservation' }, error: null };
+        if (name === 'apply_customer_spend_once') return { data: { applied: true }, error: null };
+        return { data: null, error: null };
+      },
+    } as any;
+
+    const result = await processSuccessfulPayment(mockSupabase, {
+      id: 'pay-direct-1',
+      amount: 5000,
+      booking_id: null,
+      invoice_id: null,
+      campaign_id: null,
+      order_id: 'ord-1',
+      metadata: { _direct_transfer: true, pending_transfer_id: 'xf-1' },
+      gateway_fee: 0,
+      gateway: 'direct',
+      payment_authority_version: 1,
+    });
+
+    expect(result.criticalSuccess).toBe(true);
+
+    // Zero-fee row was inserted
+    const feeInserts = insertedFees.filter((f: any) => f.is_direct_transfer === true);
+    expect(feeInserts.length).toBeGreaterThanOrEqual(1);
+    expect(feeInserts[0].fee_percentage).toBe(0);
+    expect(feeInserts[0].fee_total).toBe(0);
+    expect(feeInserts[0].transaction_amount).toBe(5000);
+
+    // Idempotent RPCs were called
+    expect(rpcCalls.find(c => c.name === 'apply_order_stock_once')).toBeDefined();
+    expect(rpcCalls.find(c => c.name === 'apply_customer_spend_once')).toBeDefined();
+  });
+
+  it('non-direct gateway uses normal recordPlatformFee', async () => {
+    const { processSuccessfulPayment } = await import('@/lib/payments/process-success');
+
+    const rpcCalls: { name: string }[] = [];
+    const mockChainable: any = {};
+    for (const m of ['select', 'eq', 'in', 'update', 'neq', 'not', 'order', 'limit']) {
+      mockChainable[m] = () => mockChainable;
+    }
+    mockChainable.single = async () => ({ data: { business_id: 'biz-1', subscription_tier: 'growth' }, error: null });
+    mockChainable.maybeSingle = async () => ({ data: null, error: null });
+
+    const mockSupabase = {
+      from: () => ({
+        ...mockChainable,
+        insert: () => ({ error: null, then: (r: any) => r({ error: null }) }),
+      }),
+      rpc: async (name: string, params?: any) => {
+        rpcCalls.push({ name });
+        if (name === 'apply_order_stock_once') return { data: { applied: true, already_applied: true, order_confirmed: true }, error: null };
+        if (name === 'finalize_promo_reservation') return { data: { reason: 'no_reservation' }, error: null };
+        if (name === 'apply_customer_spend_once') return { data: { applied: true }, error: null };
+        return { data: null, error: null };
+      },
+    } as any;
+
+    const result = await processSuccessfulPayment(mockSupabase, {
+      id: 'pay-online-1',
+      amount: 5000,
+      booking_id: null,
+      invoice_id: null,
+      campaign_id: null,
+      order_id: 'ord-2',
+      metadata: { order_id: 'ord-2' },
+      gateway_fee: 100,
+      gateway: 'paystack',
+    });
+
+    // Should still succeed (recordPlatformFee may fail silently)
+    expect(result.criticalSuccess).toBe(true);
+  });
+});
+
+// ═══ Part E: Executable resumeSuccessfulPaymentFinalization ═══
+
+describe('resumeSuccessfulPaymentFinalization: fail-closed validation (executable)', () => {
+  it('rejects non-success status', async () => {
+    const { resumeSuccessfulPaymentFinalization } = await import('@/lib/payments/authority');
+
+    const mockSupabase = {
+      from: () => ({
+        select: () => ({ eq: () => ({ single: async () => ({
+          data: { id: 'p1', status: 'pending', gateway: 'direct', order_id: 'o1', payment_authority_version: 1, metadata: { _direct_transfer: true, pending_transfer_id: 'xf1' }, amount: 1000, gateway_fee: 0 },
+          error: null,
+        }) }) }),
+      }),
+    } as any;
+
+    const result = await resumeSuccessfulPaymentFinalization(
+      mockSupabase, 'p1',
+      async () => ({ criticalSuccess: true }),
+      async () => ({ status: 'completed' as const }),
+    );
+    expect(result.status).toBe('rejected');
+    expect(result.reason).toContain('not_successful');
+  });
+
+  it('rejects non-direct gateway', async () => {
+    const { resumeSuccessfulPaymentFinalization } = await import('@/lib/payments/authority');
+
+    const mockSupabase = {
+      from: () => ({
+        select: () => ({ eq: () => ({ single: async () => ({
+          data: { id: 'p2', status: 'success', gateway: 'paystack', order_id: 'o1', payment_authority_version: 1, metadata: { _direct_transfer: true, pending_transfer_id: 'xf1' }, amount: 1000, gateway_fee: 0 },
+          error: null,
+        }) }) }),
+      }),
+    } as any;
+
+    const result = await resumeSuccessfulPaymentFinalization(
+      mockSupabase, 'p2',
+      async () => ({ criticalSuccess: true }),
+      async () => ({ status: 'completed' as const }),
+    );
+    expect(result.status).toBe('rejected');
+    expect(result.reason).toContain('not_direct_gateway');
+  });
+
+  it('rejects without authority version', async () => {
+    const { resumeSuccessfulPaymentFinalization } = await import('@/lib/payments/authority');
+
+    const mockSupabase = {
+      from: () => ({
+        select: () => ({ eq: () => ({ single: async () => ({
+          data: { id: 'p3', status: 'success', gateway: 'direct', order_id: 'o1', payment_authority_version: null, metadata: { _direct_transfer: true, pending_transfer_id: 'xf1' }, amount: 1000, gateway_fee: 0 },
+          error: null,
+        }) }) }),
+      }),
+    } as any;
+
+    const result = await resumeSuccessfulPaymentFinalization(
+      mockSupabase, 'p3',
+      async () => ({ criticalSuccess: true }),
+      async () => ({ status: 'completed' as const }),
+    );
+    expect(result.status).toBe('rejected');
+    expect(result.reason).toContain('no_authority_version');
   });
 });
 
