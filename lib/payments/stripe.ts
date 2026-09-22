@@ -91,6 +91,8 @@ export class StripeGateway implements PaymentGateway {
         client_reference_id: opts.referenceCode,
       };
       // F3: Phone-first Stripe checkout — invalid phone fails closed.
+      // #353: When a canonical phone exists and business is save-eligible,
+      // provision a Stripe Customer and enable Save Card checkbox.
       if (opts.phone) {
         const { internalPaymentEmailAlias, canonicalSavedCardPhone } = await import('./saved-card-compat');
         const canonical = canonicalSavedCardPhone(opts.phone);
@@ -98,7 +100,38 @@ export class StripeGateway implements PaymentGateway {
           logger.error('[STRIPE] Invalid phone for phone-first checkout — fail closed');
           return null;
         }
-        sessionParams.customer_email = internalPaymentEmailAlias(canonical);
+
+        // #353: Try to provision/retrieve canonical Stripe Customer for Save Card
+        let stripeCustomerId: string | null = null;
+        if (opts.businessId) {
+          try {
+            const { isCompatibleForSavedCard } = await import('./saved-card-compat');
+            const compat = await isCompatibleForSavedCard(opts.supabase, opts.businessId, 'stripe');
+            if (compat.compatible) {
+              const { provisionStripeCustomer } = await import('./provision-stripe-customer');
+              const emailAlias = internalPaymentEmailAlias(canonical);
+              const customerResult = await provisionStripeCustomer(opts.supabase, canonical, 'platform', emailAlias);
+              if (customerResult) {
+                stripeCustomerId = customerResult.customerId;
+              }
+            }
+          } catch (custErr) {
+            // Non-fatal: Customer provisioning failure should not block payment
+            logger.warn('[STRIPE] Customer provisioning failed — proceeding without Save Card', { custErr });
+          }
+        }
+
+        if (stripeCustomerId) {
+          // Pass canonical Customer — do NOT pass customer_email alongside customer
+          sessionParams.customer = stripeCustomerId;
+          // Enable native Save Card checkbox
+          sessionParams['saved_payment_method_options[payment_method_save]'] = 'enabled';
+          // Filter: only show PMs with allow_redisplay=always (our saved PMs are downgraded to 'limited')
+          sessionParams['saved_payment_method_options[allow_redisplay_filters][0]'] = 'always';
+        } else {
+          // No canonical Customer — use email alias as before
+          sessionParams.customer_email = internalPaymentEmailAlias(canonical);
+        }
       } else if (opts.userEmail) {
         // Genuinely non-phone flow (no phone available)
         sessionParams.customer_email = opts.userEmail;

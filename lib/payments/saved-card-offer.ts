@@ -471,3 +471,211 @@ export async function startSavedCardFromPaymentId(
   const newLabel = `${((auth.brand as string) || 'Card').toUpperCase()} ****${(auth.last4 as string) || '????'}`;
   await sendText(from, `💳 Replace saved card ${oldLabel} with ${newLabel}?\n\nEnter your *Waaiio PIN* to confirm, or type *cancel*.`);
 }
+
+// ═══════════════════════════════════════════════════════
+// #353: Stripe consent detection + offer (Option A — native Checkout consent)
+//
+// After canonical payment finalization, checks if the customer opted in
+// to save their card via Stripe's native Save Card checkbox.
+// If consented: records evidence, downgrades redisplay, sends PIN activation.
+// No redundant WhatsApp "Save card?" question for Stripe.
+// ═══════════════════════════════════════════════════════
+
+export async function checkStripeConsentAndOffer(
+  supabase: SupabaseClient,
+  paymentId: string,
+  customerPhone: string,
+  businessId: string,
+  sender: { sendText: (opts: { to: string; text: string }) => Promise<unknown> } | null,
+): Promise<void> {
+  const logPrefix = '[STRIPE-SAVED-CARD-OFFER]';
+
+  const canonPhone = canonicalSavedCardPhone(customerPhone);
+  if (!canonPhone) return;
+
+  // K7: fail-closed payment read
+  const { data: payment, error: payErr } = await supabase.from('payments')
+    .select('id, status, gateway, gateway_reference, metadata, business_id')
+    .eq('id', paymentId).single();
+  if (payErr || !payment) {
+    logger.error(`${logPrefix} Payment read failed`, { payErr });
+    return;
+  }
+  if (payment.status !== 'success' || payment.gateway !== 'stripe') return;
+  if (payment.business_id !== businessId) return;
+
+  const meta = (payment.metadata || {}) as Record<string, unknown>;
+  if (meta.payment_origin === 'byo' || meta.payment_origin === 'connect') return;
+
+  // Compatibility check
+  const { isCompatibleForSavedCard } = await import('./saved-card-compat');
+  const compat = await isCompatibleForSavedCard(supabase, businessId, 'stripe');
+  if (!compat.compatible) return;
+
+  // Extract Stripe evidence
+  const { extractStripeSavedCardEvidence } = await import('./stripe-saved-card');
+  const evidence = await extractStripeSavedCardEvidence(payment.gateway_reference);
+  if (!evidence) return;
+
+  // Check consent: allow_redisplay=always means customer checked Save Card
+  if (!evidence.consented) {
+    logger.info(`${logPrefix} Customer did not consent to save card`, { paymentId });
+    return;
+  }
+
+  const cardLabel = `${(evidence.cardBrand || 'Card').toUpperCase()} ****${evidence.cardLast4}`;
+
+  // Step 1: Record consent evidence in payment metadata (durable, before any mutation)
+  const { error: consentWriteErr } = await supabase.from('payments').update({
+    metadata: {
+      ...meta,
+      stripe_save_consent: true,
+      stripe_pm_id: evidence.paymentMethodId,
+      stripe_customer_id: evidence.customerId,
+      stripe_pi_id: evidence.paymentIntentId,
+      stripe_card_display: cardLabel,
+    },
+  }).eq('id', paymentId);
+
+  if (consentWriteErr) {
+    logger.error(`${logPrefix} Consent evidence write failed — cannot proceed`, { consentWriteErr });
+    return;
+  }
+
+  // Step 2: Check for existing saved method
+  const phoneN = canonPhone.slice(1);
+  const { data: existing } = await supabase.from('saved_payment_methods')
+    .select('id, stripe_payment_method_id')
+    .in('customer_phone', [canonPhone, phoneN])
+    .eq('is_active', true).eq('gateway', 'stripe').maybeSingle();
+
+  const offerType = existing ? 'replace' : 'save';
+  const isExactSameMethod = existing?.stripe_payment_method_id === evidence.paymentMethodId;
+
+  if (isExactSameMethod) {
+    logger.info(`${logPrefix} Same Stripe PM already saved — no action`, { paymentId });
+    return;
+  }
+
+  // Step 3: Resolve originating channel for durable recovery
+  let channelId: string | null = null;
+  if (payment.business_id) {
+    const { data: bizFull } = await supabase.from('businesses')
+      .select('assigned_channel_id, whatsapp_channel_id')
+      .eq('id', payment.business_id).maybeSingle();
+    channelId = bizFull?.assigned_channel_id || bizFull?.whatsapp_channel_id || null;
+  }
+
+  // Step 4: Create provider-consented offer FIRST (before redisplay mutation)
+  const { data: offerResult } = await supabase.rpc('create_provider_consented_offer', {
+    p_payment_id: paymentId,
+    p_customer_phone: canonPhone,
+    p_business_id: businessId,
+    p_offer_type: offerType,
+    p_consent_source: 'provider_checkout',
+    p_consented_at: new Date().toISOString(),
+    p_card_display: cardLabel,
+    p_current_method_id: existing?.id || null,
+    p_channel_id: channelId,
+  });
+
+  if (!offerResult || (offerResult as Record<string, unknown>).already_exists) {
+    logger.info(`${logPrefix} Offer already exists for payment`, { paymentId });
+    return;
+  }
+
+  const offerId = (offerResult as Record<string, unknown>).offer_id as string;
+
+  // Step 5: Downgrade PM redisplay to prevent Checkout PIN bypass
+  const { downgradeAllowRedisplay } = await import('./stripe-saved-card');
+  const downgraded = await downgradeAllowRedisplay(evidence.paymentMethodId);
+
+  if (!downgraded) {
+    // Redisplay fence failed — create cleanup operation bound to exact offer
+    logger.warn(`${logPrefix} Redisplay downgrade failed — creating cleanup operation`, { paymentId, offerId });
+    await supabase.from('provider_cleanup_operations').insert({
+      customer_phone: canonPhone,
+      gateway: 'stripe',
+      provider_account_scope: 'platform',
+      operation_type: 'set_allow_redisplay_limited',
+      provider_object_id: evidence.paymentMethodId,
+      source_event: 'redisplay_downgrade',
+      source_offer_id: offerId,
+    }).select().maybeSingle();
+    // Do NOT proceed to PIN activation — fence not proven
+    return;
+  }
+
+  // Step 6: Establish bot session for PIN entry + send activation prompt
+  // The session must contain all Stripe evidence so handleCardPinStep can commit the credential
+  const pinSessionData = {
+    _save_card_pending: true,
+    _save_card_business_id: businessId,
+    _save_card_gateway: 'stripe',
+    _save_card_payment_id: paymentId,
+    _save_card_offer_id: offerId,
+    _save_card_auth: {
+      // Stripe-specific credential evidence (NOT authorization_code — that's Paystack)
+      stripe_payment_method_id: evidence.paymentMethodId,
+      stripe_customer_id: evidence.customerId,
+      card_last4: evidence.cardLast4,
+      card_brand: evidence.cardBrand,
+      card_exp_month: evidence.cardExpMonth,
+      card_exp_year: evidence.cardExpYear,
+    },
+  };
+
+  // Create or update bot session for PIN activation
+  // Use the customer's phone as the session key
+  try {
+    // Try to find existing session for this phone+business
+    const { data: existingSession } = await supabase.from('bot_sessions')
+      .select('id, version')
+      .eq('whatsapp_number', canonPhone)
+      .eq('business_id', businessId)
+      .eq('is_active', true)
+      .maybeSingle();
+
+    if (existingSession) {
+      // CAS update to save_card_pin step
+      await supabase.rpc('update_session_cas', {
+        p_session_id: existingSession.id,
+        p_expected_version: existingSession.version ?? 0,
+        p_current_step: 'save_card_pin',
+        p_session_data: pinSessionData,
+      });
+    } else {
+      // Create new session
+      await supabase.from('bot_sessions').insert({
+        whatsapp_number: canonPhone,
+        business_id: businessId,
+        current_step: 'save_card_pin',
+        session_data: pinSessionData,
+        is_active: true,
+        expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+      });
+    }
+  } catch (sessionErr) {
+    logger.error(`${logPrefix} Session creation for PIN activation failed`, { sessionErr });
+    // Offer stays 'accepted' — can be retried
+    return;
+  }
+
+  // Send PIN activation prompt (durable delivery tracking)
+  if (sender) {
+    try {
+      const activationMsg = offerType === 'save'
+        ? `🔒 You chose to save ${cardLabel} for faster checkout. Create your 4-digit *Waaiio PIN* to activate it.`
+        : `🔒 You chose to save ${cardLabel}. Enter your existing *Waaiio PIN* to update your saved card.`;
+      await sender.sendText({ to: canonPhone, text: activationMsg });
+
+      // Mark activation prompt sent (durable delivery proof)
+      await supabase.from('payment_saved_card_offers')
+        .update({ activation_prompt_sent_at: new Date().toISOString() })
+        .eq('id', offerId);
+    } catch (sendErr) {
+      // Activation prompt delivery failed — offer stays 'accepted' with channel_id for recovery
+      logger.error(`${logPrefix} Activation prompt send failed — offer stays accepted for recovery`, { sendErr, offerId, channelId });
+    }
+  }
+}

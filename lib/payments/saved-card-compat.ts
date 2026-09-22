@@ -119,3 +119,44 @@ export async function isSharedPlatformPaystackCompatible(
       return { compatible: false, reason: 'unknown_classification' };
   }
 }
+
+/**
+ * Provider-neutral saved-card compatibility check.
+ * Determines whether a business + gateway combination supports saved-card reuse.
+ *
+ * - Paystack: platform/platform_subaccount → compatible (same as isSharedPlatformPaystackCompatible)
+ * - Stripe: platform/platform_subaccount → compatible (PM lives on platform Stripe account)
+ *           connect/byo → fail closed (PM not reusable under different account)
+ * - Other gateways → not implemented, fail closed
+ */
+export async function isCompatibleForSavedCard(
+  supabase: SupabaseClient,
+  businessId: string,
+  gateway: string,
+): Promise<CompatibilityResult> {
+  if (gateway === 'paystack') {
+    return isSharedPlatformPaystackCompatible(supabase, businessId);
+  }
+
+  if (gateway === 'stripe') {
+    const { classification } = await classifyBusinessPaymentCredential(supabase, businessId);
+    switch (classification) {
+      case 'platform':
+      case 'platform_subaccount':
+        return { compatible: true };
+      case 'connect':
+        return { compatible: false, reason: 'stripe_connect_not_supported' };
+      case 'byo':
+        return { compatible: false, reason: 'stripe_byo_not_supported' };
+      case 'ambiguous':
+        return { compatible: false, reason: 'ambiguous_credential_state' };
+      case 'error':
+        return { compatible: false, reason: 'credential_lookup_error' };
+      default:
+        return { compatible: false, reason: 'unknown_classification' };
+    }
+  }
+
+  // Flutterwave, Square, PayPal — not implemented yet
+  return { compatible: false, reason: 'provider_not_implemented' };
+}

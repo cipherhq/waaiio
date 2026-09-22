@@ -1488,8 +1488,17 @@ export async function sendProactiveConfirmation(
     // M394/Phase 2D: Direct bank transfers do NOT get Save Card offer
     if (!isDirectOrderTransfer) {
       try {
-        const { checkAndOfferSavedCard } = await import('@/lib/payments/saved-card-offer');
-        await checkAndOfferSavedCard(supabase, payment.id, customerPhone || '', businessId || '', resolved?.sender || null);
+        // #353: Dispatch by gateway — Stripe uses native checkout consent, Paystack uses WhatsApp CTA
+        const { data: payGwData } = await supabase.from('payments').select('gateway').eq('id', payment.id).single();
+        const paymentGateway = payGwData?.gateway as string | undefined;
+        if (paymentGateway === 'stripe') {
+          const { checkStripeConsentAndOffer } = await import('@/lib/payments/saved-card-offer');
+          await checkStripeConsentAndOffer(supabase, payment.id, customerPhone || '', businessId || '', resolved?.sender || null);
+        } else {
+          // Paystack + all other gateways: existing WhatsApp CTA flow (unchanged)
+          const { checkAndOfferSavedCard } = await import('@/lib/payments/saved-card-offer');
+          await checkAndOfferSavedCard(supabase, payment.id, customerPhone || '', businessId || '', resolved?.sender || null);
+        }
       } catch (savedCardErr) {
         logSafeError(logPrefix, 'saved-card-offer', savedCardErr);
       }

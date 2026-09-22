@@ -289,165 +289,27 @@ export async function initializePayment(
 
     if (opts.businessId) {
       // ── Payment-routing authority resolution ──
-      // Lines 196-337 determine BYO/Connect/direct-split/platform routing.
-      // A failed authority lookup must NOT be interpreted as "configuration absent" —
-      // that would silently route a BYO/Connect transaction through the platform account.
-      // Successful query + no configured data → legitimate platform path.
-      // Query error / transport exception → fail closed with null.
-      try {
-        // G2: Use shared credential classifier (same authority as saved-card compatibility)
-        const { classifyBusinessPaymentCredential } = await import('@/lib/payments/saved-card-compat');
-        const { classification, credential: byoCreds } = await classifyBusinessPaymentCredential(supabase, opts.businessId);
-
-        if (classification === 'error') {
-          logger.withContext({ op: 'payment.credential-classification' })
-            .error('[PAYMENT] Credential classification failed — fail closed');
-          return null;
-        }
-
-        if (classification === 'platform_subaccount' && byoCreds?.platform_subaccount_code) {
-          // Subaccount-based: platform key + subaccount split
-          subaccountCode = byoCreds.platform_subaccount_code;
-
-          const { data: business, error: bizError } = await supabase
-            .from('businesses')
-            .select('subscription_tier, trial_ends_at, custom_fee_percentage, custom_fee_flat')
-            .eq('id', opts.businessId)
-            .single();
-
-          if (bizError) {
-            logger.withContext({ op: 'payment.subaccount-split-fee', ...safeLogErrorContext(bizError) })
-              .error('[PAYMENT] Business tier lookup failed for subaccount split — fail closed');
-            return null;
-          }
-
-          if (business) {
-            const tier = (business.subscription_tier || 'free') as SubscriptionTier;
-            const isInTrial = await resolveTrialStatus(supabase, opts.businessId, tier, business.trial_ends_at);
-            const { getPlatformFees } = await import('@/lib/getPlatformFees');
-            const feeResult = await getPlatformFees(opts.amount, tier, isInTrial, {
-              feePercentage: business.custom_fee_percentage ?? undefined,
-              feeFlat: business.custom_fee_flat ?? undefined,
-            });
-            platformFeeAmount = feeResult.feeTotal;
-          }
-        } else if (classification === 'connect' && byoCreds?.connect_account_id) {
-          // True Connect mode: use platform key + X-Connect-Account header
-          connectAccountId = byoCreds.connect_account_id;
-          byoBusinessId = opts.businessId;
-          providerConnectionId = byoCreds.id;
-
-          const { data: business, error: bizError2 } = await supabase
-            .from('businesses')
-            .select('subscription_tier, trial_ends_at, custom_fee_percentage, custom_fee_flat')
-            .eq('id', opts.businessId)
-            .single();
-
-          if (bizError2) {
-            logger.withContext({ op: 'payment.connect-split-fee', ...safeLogErrorContext(bizError2) })
-              .error('[PAYMENT] Business tier lookup failed for connect split — fail closed');
-            return null;
-          }
-
-          if (business) {
-            const tier = (business.subscription_tier || 'free') as SubscriptionTier;
-            const isInTrial = await resolveTrialStatus(supabase, opts.businessId, tier, business.trial_ends_at);
-            const { getPlatformFees } = await import('@/lib/getPlatformFees');
-            const feeResult = await getPlatformFees(opts.amount, tier, isInTrial, {
-              feePercentage: business.custom_fee_percentage ?? undefined,
-              feeFlat: business.custom_fee_flat ?? undefined,
-            });
-            platformFeeAmount = feeResult.feeTotal;
-          }
-        } else if (classification === 'byo' && byoCreds?.secret_key && byoCreds?.platform_subaccount_code) {
-          // BYO mode: use business's own gateway key with reversed split
-          isByo = true;
-          byoSecretKey = byoCreds.secret_key;
-          byoPlatformSubaccount = byoCreds.platform_subaccount_code;
-          byoBusinessId = opts.businessId;
-          providerConnectionId = byoCreds.id;
-
-          const { data: business, error: bizError3 } = await supabase
-            .from('businesses')
-            .select('subscription_tier, trial_ends_at, custom_fee_percentage, custom_fee_flat')
-            .eq('id', opts.businessId)
-            .single();
-
-          if (bizError3) {
-            logger.withContext({ op: 'payment.byo-split-fee', ...safeLogErrorContext(bizError3) })
-              .error('[PAYMENT] Business tier lookup failed for BYO split — fail closed');
-            return null;
-          }
-
-          if (business) {
-            const tier = (business.subscription_tier || 'free') as SubscriptionTier;
-            const isInTrial = await resolveTrialStatus(supabase, opts.businessId, tier, business.trial_ends_at);
-            const { getPlatformFees } = await import('@/lib/getPlatformFees');
-            const feeResult = await getPlatformFees(opts.amount, tier, isInTrial, {
-              feePercentage: business.custom_fee_percentage ?? undefined,
-              feeFlat: business.custom_fee_flat ?? undefined,
-            });
-            platformFeeAmount = feeResult.feeTotal;
-          }
-        } else if (classification === 'platform') {
-          // K9: Explicitly platform only. Ambiguous/unknown fail closed above.
-          const { data: biz, error: bizError4 } = await supabase
-            .from('businesses')
-            .select('payout_mode')
-            .eq('id', opts.businessId)
-            .single();
-
-          if (bizError4) {
-            logger.withContext({ op: 'payment.payout-mode-authority', ...safeLogErrorContext(bizError4) })
-              .error('[PAYMENT] Payout-mode authority lookup failed — fail closed to prevent split misattribution');
-            return null;
-          }
-
-          // Only query payout_accounts when the payout mode actually requires split routing.
-          // platform_managed does not depend on the payout_accounts table — querying it
-          // and failing closed would unnecessarily block payments for platform-managed businesses.
-          if (biz?.payout_mode === 'direct_split') {
-            const { data: payout, error: payoutError } = await supabase
-              .from('payout_accounts')
-              .select('id, subaccount_code, stripe_account_id, square_merchant_id, square_access_token, platform_percentage, gateway')
-              .eq('business_id', opts.businessId)
-              .eq('is_active', true)
-              .maybeSingle();
-
-            if (payoutError) {
-              logger.withContext({ op: 'payment.payout-account-authority', ...safeLogErrorContext(payoutError) })
-                .error('[PAYMENT] Payout account authority lookup failed — fail closed to prevent split misattribution');
-              return null;
-            }
-
-            if (payout) {
-              const payoutGw = payout.gateway || 'paystack';
-              const paymentGw = gateway.name;
-
-              if (payoutGw === paymentGw || (payoutGw === 'paystack' && paymentGw === 'paystack') || (payoutGw === 'stripe' && paymentGw === 'stripe')) {
-                subaccountCode = payout.subaccount_code || undefined;
-                stripeAccountId = payout.stripe_account_id || undefined;
-                squareMerchantId = payout.square_merchant_id || undefined;
-                squareAccessToken = payout.square_access_token || undefined;
-                platformFeeAmount = Math.round(opts.amount * (payout.platform_percentage / 100));
-                payoutAccountId = payout.id;
-              }
-            }
-          }
-          // platform_managed or no split match: no split params, full amount goes to platform
-        } else {
-          // K9: ambiguous/unknown classification → fail closed
-          logger.withContext({ op: 'payment.credential-classification' })
-            .error(`[PAYMENT] Ambiguous/unknown credential classification: ${classification} — fail closed`);
-          return null;
-        }
-      } catch (routingErr) {
-        // Transport-level exception in routing authority resolution.
-        // Fail closed: ambiguous routing state must not proceed to provider.
-        logger.withContext({ op: 'payment.routing-authority-threw', ...safeLogErrorContext(routingErr) })
-          .error('[PAYMENT] Payment routing authority resolution threw — fail closed');
+      // #353: Uses shared resolvePaymentRoutingAuthority (same authority for normal Checkout and saved-card).
+      const { resolvePaymentRoutingAuthority } = await import('@/lib/payments/resolve-stripe-routing');
+      const routing = await resolvePaymentRoutingAuthority(supabase, opts.businessId, gateway.name, opts.amount);
+      if (!routing) {
+        // resolvePaymentRoutingAuthority already logged the fail-closed reason
         return null;
       }
+
+      // Map routing result to existing local variables
+      subaccountCode = routing.subaccountCode || undefined;
+      stripeAccountId = routing.stripeAccountId || undefined;
+      squareMerchantId = routing.squareMerchantId || undefined;
+      squareAccessToken = routing.squareAccessToken || undefined;
+      platformFeeAmount = routing.platformFeeAmount || undefined;
+      isByo = routing.isByo;
+      byoSecretKey = routing.byoSecretKey || undefined;
+      byoPlatformSubaccount = routing.byoPlatformSubaccount || undefined;
+      byoBusinessId = routing.byoBusinessId || undefined;
+      connectAccountId = routing.connectAccountId || undefined;
+      providerConnectionId = routing.providerConnectionId || undefined;
+      payoutAccountId = routing.payoutAccountId || undefined;
     }
 
     // Fetch business payment channel preferences
