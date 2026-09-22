@@ -141,8 +141,12 @@ export async function handleRemoveCard(
   }
   const phoneN = phoneP.slice(1);
 
-  // Global remove: customer's saved card regardless of which business session
-  const { data: deleted } = await supabase
+  // #353: Remove saved card — dispatch by gateway
+  // Paystack: hard DELETE (existing behavior, unchanged)
+  // Stripe: soft revoke (is_active=false) + durable cleanup outbox for provider detach
+
+  // Try Paystack first (existing behavior)
+  const { data: paystackDeleted } = await supabase
     .from('saved_payment_methods')
     .delete()
     .in('customer_phone', [phoneP, phoneN])
@@ -150,12 +154,46 @@ export async function handleRemoveCard(
     .eq('gateway', 'paystack')
     .select('card_last4, card_brand');
 
-  if (deleted && deleted.length > 0) {
-    const card = deleted[0];
+  if (paystackDeleted && paystackDeleted.length > 0) {
+    const card = paystackDeleted[0];
     await sendText(from, `Card removed: ${((card.card_brand as string) || 'Card').toUpperCase()} ****${(card.card_last4 as string) || '****'}\n\nYou'll need to enter card details for future payments.`);
-  } else {
-    await sendText(from, 'No saved card found.');
+    return;
   }
+
+  // Try Stripe: soft revoke + cleanup outbox
+  const { data: stripeMethod } = await supabase
+    .from('saved_payment_methods')
+    .select('id, card_last4, card_brand, stripe_payment_method_id')
+    .in('customer_phone', [phoneP, phoneN])
+    .eq('is_active', true)
+    .eq('gateway', 'stripe')
+    .maybeSingle();
+
+  if (stripeMethod) {
+    // Immediately revoke Waaiio authority
+    await supabase
+      .from('saved_payment_methods')
+      .update({ is_active: false })
+      .eq('id', stripeMethod.id);
+
+    // Create durable cleanup operation for provider detach
+    if (stripeMethod.stripe_payment_method_id) {
+      await supabase.from('provider_cleanup_operations').insert({
+        customer_phone: phoneP,
+        gateway: 'stripe',
+        provider_account_scope: 'platform',
+        operation_type: 'detach',
+        provider_object_id: stripeMethod.stripe_payment_method_id,
+        source_event: 'remove',
+      }).select().maybeSingle();
+    }
+
+    const card = stripeMethod;
+    await sendText(from, `Card removed: ${((card.card_brand as string) || 'Card').toUpperCase()} ****${(card.card_last4 as string) || '****'}\n\nYou'll need to enter card details for future payments.`);
+    return;
+  }
+
+  await sendText(from, 'No saved card found.');
 }
 
 /**

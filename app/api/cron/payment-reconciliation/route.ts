@@ -168,8 +168,77 @@ export async function GET(request: NextRequest) {
             } catch { /* ambiguous */ }
           }
         } else if (dp.gateway === 'stripe') {
-          // Stripe: read-only bounded session listing with deterministic pagination.
           const stripeKey = process.env.STRIPE_SECRET_KEY;
+
+          // #353: Saved-card PaymentIntent recovery (idempotent replay)
+          // Saved-card PIs are created directly, not via Checkout Sessions.
+          if (meta.saved_method === true && stripeKey) {
+            const paymentAge = Date.now() - new Date(dp.created_at as string).getTime();
+            const STRIPE_IDEMPOTENCY_WINDOW = 23 * 60 * 60 * 1000; // 23h (safe margin under 24h)
+
+            if (paymentAge > STRIPE_IDEMPOTENCY_WINDOW) {
+              // Beyond safe idempotency window — quarantine, do NOT replay
+              logger.warn('[CRON] Saved-card PI beyond idempotency window — quarantining', { paymentId: dp.id });
+              resolved = await checkedCAS({
+                gateway_status: 'dispatched_quarantine:idempotency_expired',
+                provider_init_state: 'dispatched', // keep dispatched for audit
+              });
+              // Do NOT transition to provider_confirmed or replay
+            } else if (meta.stripe_customer_id && meta.stripe_pm_id) {
+              try {
+                const idempotencyKey = `sc_charge_${dp.id}`;
+                const params: Record<string, string> = {
+                  customer: meta.stripe_customer_id as string,
+                  payment_method: meta.stripe_pm_id as string,
+                  amount: String(Math.round(dp.amount * 100)),
+                  currency: (dp.currency as string).toLowerCase(),
+                  confirm: 'true',
+                };
+                if (meta.provider_account_id) {
+                  params['transfer_data[destination]'] = meta.provider_account_id as string;
+                }
+
+                const res = await fetch('https://api.stripe.com/v1/payment_intents', {
+                  method: 'POST',
+                  headers: {
+                    Authorization: `Bearer ${stripeKey}`,
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                    'Idempotency-Key': idempotencyKey,
+                  },
+                  body: new URLSearchParams(params).toString(),
+                  signal: AbortSignal.timeout(15000),
+                });
+
+                if (res.ok) {
+                  const pi = await res.json() as Record<string, unknown>;
+                  if (pi.id && typeof pi.id === 'string') {
+                    if (pi.status === 'succeeded') {
+                      resolved = await checkedCAS({
+                        gateway_reference: pi.id,
+                        provider_init_state: 'provider_confirmed',
+                        metadata: { ...meta, stripe_pi_id: pi.id },
+                      });
+                      if (resolved) {
+                        const { reconcilePayment: rp } = await import('@/lib/payments/reconcile');
+                        await rp(supabase, dp.id, 'cron');
+                      }
+                    } else if (pi.status === 'requires_action') {
+                      resolved = await checkedCAS({
+                        gateway_reference: pi.id,
+                        provider_init_state: 'provider_confirmed',
+                        metadata: { ...meta, stripe_pi_id: pi.id },
+                      });
+                    } else if (['requires_payment_method', 'canceled'].includes(pi.status as string)) {
+                      resolved = await checkedTerminal(`stripe_pi_${pi.status}`);
+                    }
+                  }
+                } else if (res.status >= 400 && res.status < 500) {
+                  resolved = await checkedTerminal('stripe_request_rejected');
+                }
+              } catch { /* network error → ambiguous */ }
+            }
+          } else {
+          // Stripe Checkout Session recovery (existing path, unchanged)
           if (stripeKey) {
             try {
               const createdAt = Math.floor(new Date(dp.created_at as string).getTime() / 1000);
@@ -228,6 +297,7 @@ export async function GET(request: NextRequest) {
               // zero, multiple, no url, or pagination error → ambiguous
             } catch { /* ambiguous */ }
           }
+          } // close saved-card else branch
         }
         // Square/PayPal: no cron recovery (cannot safely re-POST). Webhook-only.
 

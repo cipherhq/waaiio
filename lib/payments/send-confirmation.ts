@@ -1489,7 +1489,8 @@ export async function sendProactiveConfirmation(
     if (!isDirectOrderTransfer) {
       try {
         // #353: Dispatch by gateway — Stripe uses native checkout consent, Paystack uses WhatsApp CTA
-        const paymentGateway = (gwMetaData as Record<string, unknown> | null)?.gateway as string | undefined;
+        const { data: payGwData } = await supabase.from('payments').select('gateway').eq('id', payment.id).single();
+        const paymentGateway = payGwData?.gateway as string | undefined;
         if (paymentGateway === 'stripe') {
           const { checkStripeConsentAndOffer } = await import('@/lib/payments/saved-card-offer');
           await checkStripeConsentAndOffer(supabase, payment.id, customerPhone || '', businessId || '', resolved?.sender || null);
