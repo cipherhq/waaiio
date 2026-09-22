@@ -606,7 +606,62 @@ export async function checkStripeConsentAndOffer(
     return;
   }
 
-  // Step 6: Send PIN activation prompt (durable delivery tracking)
+  // Step 6: Establish bot session for PIN entry + send activation prompt
+  // The session must contain all Stripe evidence so handleCardPinStep can commit the credential
+  const pinSessionData = {
+    _save_card_pending: true,
+    _save_card_business_id: businessId,
+    _save_card_gateway: 'stripe',
+    _save_card_payment_id: paymentId,
+    _save_card_offer_id: offerId,
+    _save_card_auth: {
+      // Stripe-specific credential evidence (NOT authorization_code — that's Paystack)
+      stripe_payment_method_id: evidence.paymentMethodId,
+      stripe_customer_id: evidence.customerId,
+      card_last4: evidence.cardLast4,
+      card_brand: evidence.cardBrand,
+      card_exp_month: evidence.cardExpMonth,
+      card_exp_year: evidence.cardExpYear,
+    },
+  };
+
+  // Create or update bot session for PIN activation
+  // Use the customer's phone as the session key
+  try {
+    // Try to find existing session for this phone+business
+    const { data: existingSession } = await supabase.from('bot_sessions')
+      .select('id, version')
+      .eq('whatsapp_number', canonPhone)
+      .eq('business_id', businessId)
+      .eq('is_active', true)
+      .maybeSingle();
+
+    if (existingSession) {
+      // CAS update to save_card_pin step
+      await supabase.rpc('update_session_cas', {
+        p_session_id: existingSession.id,
+        p_expected_version: existingSession.version ?? 0,
+        p_current_step: 'save_card_pin',
+        p_session_data: pinSessionData,
+      });
+    } else {
+      // Create new session
+      await supabase.from('bot_sessions').insert({
+        whatsapp_number: canonPhone,
+        business_id: businessId,
+        current_step: 'save_card_pin',
+        session_data: pinSessionData,
+        is_active: true,
+        expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+      });
+    }
+  } catch (sessionErr) {
+    logger.error(`${logPrefix} Session creation for PIN activation failed`, { sessionErr });
+    // Offer stays 'accepted' — can be retried
+    return;
+  }
+
+  // Send PIN activation prompt (durable delivery tracking)
   if (sender) {
     try {
       const activationMsg = offerType === 'save'

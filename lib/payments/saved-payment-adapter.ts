@@ -434,9 +434,9 @@ class StripeSavedPaymentAdapterImpl implements SavedPaymentAdapter {
     }
 
     const amountCents = Math.round(opts.amount * 100);
-    const idempotencyKey = `sc_charge_${opts.reference}`;
+    const appFeeCents = routing.platformFeeAmount ? Math.round(routing.platformFeeAmount * 100) : 0;
 
-    // Build exact PI params for durable storage
+    // Build exact PI params for durable storage + exact replay
     const { buildSavedCardPIParams, chargeStripeSavedCard } = await import('./stripe-saved-card');
     const piParams = buildSavedCardPIParams({
       customerId: method.stripe_customer_id,
@@ -444,8 +444,42 @@ class StripeSavedPaymentAdapterImpl implements SavedPaymentAdapter {
       amountCents,
       currency: opts.currency,
       stripeAccountId: routing.stripeAccountId || undefined,
-      applicationFeeAmount: routing.platformFeeAmount ? Math.round(routing.platformFeeAmount * 100) : undefined,
+      applicationFeeAmount: appFeeCents > 0 ? appFeeCents : undefined,
     });
+
+    // I3: Duplicate-tap fence — check for existing pending/dispatched saved-card payment
+    // for the same entity + amount + gateway to prevent second payment row
+    const entityCol = opts.bookingId ? 'booking_id' : opts.orderId ? 'order_id'
+      : opts.invoiceId ? 'invoice_id' : opts.reservationId ? 'reservation_id'
+      : opts.campaignId ? 'campaign_id' : null;
+    const entityId = opts.bookingId || opts.orderId || opts.invoiceId || opts.reservationId || opts.campaignId;
+
+    if (entityCol && entityId) {
+      const { data: existingPay } = await supabase.from('payments')
+        .select('id, status, gateway_reference, provider_init_state')
+        .eq(entityCol, entityId)
+        .eq('gateway', 'stripe')
+        .eq('payment_method', 'saved_card')
+        .in('status', ['pending'])
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (existingPay) {
+        if (existingPay.status === 'pending' && existingPay.gateway_reference?.startsWith('pi_')) {
+          // Already has a PI — reconcile it
+          const { reconcilePayment } = await import('./reconcile');
+          const reconcileResult = await reconcilePayment(supabase, existingPay.id, 'saved_card');
+          if (reconcileResult.lifecycle?.status === 'completed') {
+            return { status: 'already_charged', paymentId: existingPay.id };
+          }
+          return { status: 'indeterminate', paymentId: existingPay.id, message: 'existing_payment_in_progress' };
+        }
+        if (existingPay.provider_init_state === 'dispatched' || existingPay.provider_init_state === 'pre_dispatch') {
+          return { status: 'indeterminate', paymentId: existingPay.id, message: 'duplicate_tap_existing_dispatch' };
+        }
+      }
+    }
 
     // Create canonical payment row BEFORE provider dispatch
     const { data: payRow, error: payErr } = await supabase.from('payments').insert({
@@ -459,7 +493,7 @@ class StripeSavedPaymentAdapterImpl implements SavedPaymentAdapter {
       amount: opts.amount,
       currency: opts.currency,
       gateway: 'stripe',
-      gateway_reference: `sc_pending_${opts.reference}`,
+      gateway_reference: `sc_pending_${Date.now()}`,
       status: 'pending',
       payment_method: 'saved_card',
       payment_authority_version: 1,
@@ -470,7 +504,7 @@ class StripeSavedPaymentAdapterImpl implements SavedPaymentAdapter {
         stripe_customer_id: method.stripe_customer_id,
         stripe_pm_id: method.stripe_payment_method_id,
         ...(routing.stripeAccountId && { provider_account_id: routing.stripeAccountId }),
-        ...(routing.platformFeeAmount && { application_fee_amount: Math.round(routing.platformFeeAmount * 100) }),
+        ...(appFeeCents > 0 && { application_fee_amount: appFeeCents }),
         pi_params: piParams,
       },
     }).select('id').single();
@@ -478,6 +512,10 @@ class StripeSavedPaymentAdapterImpl implements SavedPaymentAdapter {
     if (payErr || !payRow) {
       return { status: 'declined', message: 'Payment creation failed', shouldDeactivate: false };
     }
+
+    // I2: Derive canonical idempotency key from durable payment row ID
+    // Both live dispatch and recovery cron must use this exact key
+    const canonicalIdempotencyKey = `sc_charge_${payRow.id}`;
 
     // CAS: pre_dispatch → dispatched
     const { data: casRows } = await supabase.from('payments')
@@ -487,48 +525,67 @@ class StripeSavedPaymentAdapterImpl implements SavedPaymentAdapter {
       .select('id');
 
     if (!casRows || casRows.length !== 1) {
-      return { status: 'indeterminate', paymentId: payRow.id, message: 'CAS failed' };
+      return { status: 'indeterminate', paymentId: payRow.id, message: 'CAS pre_dispatch failed' };
     }
 
-    // Dispatch to Stripe
+    // Dispatch to Stripe with canonical idempotency key
     const result = await chargeStripeSavedCard({
       customerId: method.stripe_customer_id,
       paymentMethodId: method.stripe_payment_method_id,
       amountCents,
       currency: opts.currency,
-      idempotencyKey,
+      idempotencyKey: canonicalIdempotencyKey,
       stripeAccountId: routing.stripeAccountId || undefined,
-      applicationFeeAmount: routing.platformFeeAmount ? Math.round(routing.platformFeeAmount * 100) : undefined,
+      applicationFeeAmount: appFeeCents > 0 ? appFeeCents : undefined,
     });
 
     if (result.status === 'succeeded' && result.paymentIntentId) {
-      // CAS: dispatched → provider_confirmed
-      await supabase.from('payments')
+      // I4: Checked CAS — dispatched → provider_confirmed
+      const { data: confirmRows } = await supabase.from('payments')
         .update({
           gateway_reference: result.paymentIntentId,
           provider_init_state: 'provider_confirmed',
         })
         .eq('id', payRow.id)
-        .eq('provider_init_state', 'dispatched');
+        .eq('provider_init_state', 'dispatched')
+        .select('id');
+
+      if (!confirmRows || confirmRows.length !== 1) {
+        // CAS failed — PI exists but not bound. Re-read to check state.
+        const { data: reread } = await supabase.from('payments')
+          .select('provider_init_state, gateway_reference')
+          .eq('id', payRow.id).single();
+        if (reread?.provider_init_state === 'provider_confirmed') {
+          // Another path confirmed — reconcile
+          const { reconcilePayment } = await import('./reconcile');
+          await reconcilePayment(supabase, payRow.id, 'saved_card');
+          return { status: 'charged', paymentId: payRow.id };
+        }
+        return { status: 'indeterminate', paymentId: payRow.id, message: 'CAS provider_confirmed failed' };
+      }
 
       // Reconcile
       const { reconcilePayment } = await import('./reconcile');
       await reconcilePayment(supabase, payRow.id, 'saved_card');
-
       return { status: 'charged', paymentId: payRow.id };
     }
 
     if (result.status === 'requires_action' && result.paymentIntentId) {
-      // CAS: dispatched → provider_confirmed with PI reference
-      await supabase.from('payments')
+      // I4: Checked CAS — bind PI before issuing auth URL
+      const { data: confirmRows } = await supabase.from('payments')
         .update({
           gateway_reference: result.paymentIntentId,
           provider_init_state: 'provider_confirmed',
         })
         .eq('id', payRow.id)
-        .eq('provider_init_state', 'dispatched');
+        .eq('provider_init_state', 'dispatched')
+        .select('id');
 
-      // Create 3DS auth attempt
+      if (!confirmRows || confirmRows.length !== 1) {
+        return { status: 'indeterminate', paymentId: payRow.id, message: 'CAS provider_confirmed failed for 3DS' };
+      }
+
+      // PI is durably bound — now create 3DS auth attempt
       const { createAuthAttempt } = await import('./stripe-saved-card');
       const { canonicalSavedCardPhone } = await import('./saved-card-compat');
       const phone = canonicalSavedCardPhone(opts.customerPhone);

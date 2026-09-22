@@ -184,18 +184,30 @@ export async function GET(request: NextRequest) {
                 provider_init_state: 'dispatched', // keep dispatched for audit
               });
               // Do NOT transition to provider_confirmed or replay
-            } else if (meta.stripe_customer_id && meta.stripe_pm_id) {
+            } else if (meta.pi_params || (meta.stripe_customer_id && meta.stripe_pm_id)) {
               try {
+                // I2/I5: Use exact stored pi_params for replay with the canonical idempotency key
                 const idempotencyKey = `sc_charge_${dp.id}`;
-                const params: Record<string, string> = {
-                  customer: meta.stripe_customer_id as string,
-                  payment_method: meta.stripe_pm_id as string,
-                  amount: String(Math.round(dp.amount * 100)),
-                  currency: (dp.currency as string).toLowerCase(),
-                  confirm: 'true',
-                };
-                if (meta.provider_account_id) {
-                  params['transfer_data[destination]'] = meta.provider_account_id as string;
+                let params: Record<string, string>;
+
+                if (meta.pi_params && typeof meta.pi_params === 'object') {
+                  // Use stored exact params — includes application_fee_amount
+                  params = meta.pi_params as Record<string, string>;
+                } else {
+                  // Fallback: reconstruct from metadata (legacy rows without pi_params)
+                  params = {
+                    customer: meta.stripe_customer_id as string,
+                    payment_method: meta.stripe_pm_id as string,
+                    amount: String(Math.round(dp.amount * 100)),
+                    currency: (dp.currency as string).toLowerCase(),
+                    confirm: 'true',
+                  };
+                  if (meta.provider_account_id) {
+                    params['transfer_data[destination]'] = meta.provider_account_id as string;
+                  }
+                  if (meta.application_fee_amount) {
+                    params['application_fee_amount'] = String(meta.application_fee_amount);
+                  }
                 }
 
                 const res = await fetch('https://api.stripe.com/v1/payment_intents', {
@@ -232,10 +244,33 @@ export async function GET(request: NextRequest) {
                       resolved = await checkedTerminal(`stripe_pi_${pi.status}`);
                     }
                   }
-                } else if (res.status >= 400 && res.status < 500) {
-                  resolved = await checkedTerminal('stripe_request_rejected');
+                } else {
+                  // I5: Do NOT terminalize every 4xx — classify properly
+                  const errorBody = await res.json().catch(() => ({})) as Record<string, unknown>;
+                  const error = (errorBody.error || {}) as Record<string, unknown>;
+                  const errType = (error.type as string) || '';
+                  const errCode = (error.code as string) || '';
+
+                  if (errType === 'card_error' || errCode === 'card_declined') {
+                    // Genuine card decline → terminal
+                    resolved = await checkedTerminal(`stripe_card_decline:${errCode}`);
+                  } else if (res.status === 401 || res.status === 403 || res.status === 429
+                    || errType === 'authentication_error' || errCode === 'idempotency_key_in_use') {
+                    // Auth/config/rate-limit/idempotency → remain dispatched (retryable)
+                    logger.warn('[CRON] Saved-card PI recovery: retryable Stripe error', {
+                      paymentId: dp.id, status: res.status, errType, errCode,
+                    });
+                  } else if (errType === 'invalid_request_error' && (errCode === 'resource_missing' || errCode === 'payment_method_unattached')) {
+                    // PM/Customer invalid → terminal
+                    resolved = await checkedTerminal(`stripe_invalid:${errCode}`);
+                  } else {
+                    // Other 4xx → quarantine for review (not auto-terminal)
+                    logger.warn('[CRON] Saved-card PI recovery: unclassified Stripe error — quarantine', {
+                      paymentId: dp.id, status: res.status, errType, errCode,
+                    });
+                  }
                 }
-              } catch { /* network error → ambiguous */ }
+              } catch { /* network error → ambiguous, remain dispatched */ }
             }
           } else {
           // Stripe Checkout Session recovery (existing path, unchanged)

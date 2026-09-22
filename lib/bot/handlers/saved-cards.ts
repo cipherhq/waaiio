@@ -267,7 +267,11 @@ export async function handleCardPinStep(
     // Stripe: consent evidence in metadata.stripe_save_consent, validated at offer creation time
   }
 
-  if (!auth?.authorization_code || !businessId) {
+  // Guard: verify auth data exists for this gateway
+  const hasValidAuth = gateway === 'stripe'
+    ? !!(auth?.stripe_payment_method_id && auth?.stripe_customer_id)
+    : !!(auth?.authorization_code);
+  if (!hasValidAuth || !businessId) {
     // 1. Execute CAS first — before sending anything
     const { data: casPinResult, error: casPinError } = await supabase.rpc('update_session_cas', {
       p_session_id: session.id,
@@ -366,18 +370,21 @@ export async function handleCardPinStep(
       return;
     }
 
-    // Paystack durable acknowledgement: committed → confirmed
+    // I6: Paystack durable acknowledgement — checked commit
     const offerId = d._save_card_offer_id as string | undefined;
     if (offerId) {
       const savedMethod = await supabase.from('saved_payment_methods')
         .select('id, credential_version').in('customer_phone', [phoneP, phoneN]).eq('is_active', true).eq('gateway', 'paystack').maybeSingle();
       if (savedMethod?.data) {
-        await supabase.rpc('commit_saved_card_offer', {
+        const { data: commitResult } = await supabase.rpc('commit_saved_card_offer', {
           p_offer_id: offerId, p_customer_phone: phoneP,
           p_method_id: savedMethod.data.id,
           p_card_display: `${((auth.brand as string) || 'Card').toUpperCase()} ****${(auth.last4 as string) || '????'}`,
           p_credential_version: savedMethod.data.credential_version || 1,
         });
+        if (!commitResult) {
+          logger.warn('[SAVED_CARDS] Paystack commit RPC failed — credential saved but offer not committed');
+        }
       }
     }
   } else if (gateway === 'stripe') {
@@ -427,18 +434,21 @@ export async function handleCardPinStep(
       return;
     }
 
-    // Stripe durable acknowledgement: committed → confirmed
-    const offerId = d._save_card_offer_id as string | undefined;
-    if (offerId) {
+    // I6: Stripe durable acknowledgement — checked commit
+    const stripeOfferId = d._save_card_offer_id as string | undefined;
+    if (stripeOfferId) {
       const savedMethod = await supabase.from('saved_payment_methods')
         .select('id, credential_version').in('customer_phone', [phoneP, phoneN]).eq('is_active', true).eq('gateway', 'stripe').maybeSingle();
       if (savedMethod?.data) {
-        await supabase.rpc('commit_saved_card_offer', {
-          p_offer_id: offerId, p_customer_phone: phoneP,
+        const { data: commitResult } = await supabase.rpc('commit_saved_card_offer', {
+          p_offer_id: stripeOfferId, p_customer_phone: phoneP,
           p_method_id: savedMethod.data.id,
           p_card_display: `${((auth.card_brand as string) || 'Card').toUpperCase()} ****${(auth.card_last4 as string) || '????'}`,
           p_credential_version: savedMethod.data.credential_version || 1,
         });
+        if (!commitResult) {
+          logger.warn('[SAVED_CARDS] Stripe commit RPC failed — credential saved but offer not committed');
+        }
       }
     }
   }
@@ -457,13 +467,18 @@ export async function handleCardPinStep(
     .update({ current_step: 'select_capability', session_data: cleanData })
     .eq('id', session.id);
 
-  // Durable confirmation: committed → confirmed
-  const offerId = d._save_card_offer_id as string | undefined;
+  // I6: Durable confirmation — committed → confirmed with checked delivery
+  const finalOfferId = d._save_card_offer_id as string | undefined;
   try {
     await sendText(from, `💳 Card saved! *${cardLabel}*\n\n🔒 Waaiio PIN set successfully. You'll need this Waaiio PIN when using your saved card.\n\nFor privacy, you can delete your PIN message from this chat. Type *remove card* anytime to delete this card.`);
-    // Mark offer as confirmed (delivery proven)
-    if (offerId) {
-      await supabase.rpc('confirm_saved_card_offer', { p_offer_id: offerId, p_customer_phone: phoneP });
+    // Delivery proven — mark offer as confirmed
+    if (finalOfferId) {
+      const { data: confirmResult } = await supabase.rpc('confirm_saved_card_offer', {
+        p_offer_id: finalOfferId, p_customer_phone: phoneP,
+      });
+      if (!confirmResult) {
+        logger.warn('[SAVED_CARDS] Confirm RPC failed — offer may not be in committed state');
+      }
     }
   } catch (confirmErr) {
     // Delivery failed — offer stays 'committed'. Recovery can re-send without re-running credential save.
