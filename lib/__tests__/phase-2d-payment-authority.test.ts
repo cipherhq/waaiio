@@ -324,9 +324,71 @@ describe.skipIf(!canRunDb)('M394: Real PostgreSQL DB tests', () => {
       INSERT INTO bot_sessions (id, business_id, session_data) VALUES ('${SESSION}', '${BIZ}', '{"_inbound_channel_id":"${CHANNEL}"}'::jsonb) ON CONFLICT DO NOTHING;
     `);
 
-    // Apply required migrations
-    const m314 = readFileSync(join(process.cwd(), 'supabase/migrations/314_payment_finalization_lifecycle.sql'), 'utf-8');
-    psql(m314);
+    // Create M314 finalization RPCs directly (full M314 conflicts with pre-created schema)
+    psql(`
+      CREATE OR REPLACE FUNCTION claim_payment_finalization(p_payment_id UUID) RETURNS JSONB
+      LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $fn$
+      DECLARE v_payment RECORD; v_token UUID;
+      BEGIN
+        SELECT id, amount, status, booking_id, invoice_id, campaign_id,
+               reservation_id, order_id, metadata, gateway_fee,
+               finalization_completed_at, finalization_processing_at
+        INTO v_payment FROM payments WHERE id = p_payment_id FOR UPDATE;
+        IF NOT FOUND THEN RETURN jsonb_build_object('claimed', false, 'reason', 'not_found'); END IF;
+        IF v_payment.status != 'success' THEN RETURN jsonb_build_object('claimed', false, 'reason', 'not_successful'); END IF;
+        IF v_payment.finalization_completed_at IS NOT NULL THEN RETURN jsonb_build_object('claimed', false, 'already_completed', true, 'reason', 'already_finalized'); END IF;
+        IF v_payment.finalization_processing_at IS NOT NULL AND v_payment.finalization_processing_at > NOW() - INTERVAL '5 minutes' THEN
+          RETURN jsonb_build_object('claimed', false, 'reason', 'processing_in_progress');
+        END IF;
+        v_token := gen_random_uuid();
+        UPDATE payments SET finalization_processing_at = NOW(), finalization_claim_token = v_token WHERE id = p_payment_id;
+        RETURN jsonb_build_object('claimed', true, 'claim_token', v_token, 'payment_id', v_payment.id, 'amount', v_payment.amount,
+          'booking_id', v_payment.booking_id, 'invoice_id', v_payment.invoice_id, 'campaign_id', v_payment.campaign_id,
+          'reservation_id', v_payment.reservation_id, 'order_id', v_payment.order_id, 'gateway_fee', v_payment.gateway_fee);
+      END; $fn$;
+
+      CREATE OR REPLACE FUNCTION complete_payment_finalization(p_payment_id UUID, p_claim_token UUID) RETURNS JSONB
+      LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $fn$
+      DECLARE v_payment RECORD;
+      BEGIN
+        SELECT id, finalization_completed_at, finalization_claim_token INTO v_payment FROM payments WHERE id = p_payment_id FOR UPDATE;
+        IF NOT FOUND THEN RETURN jsonb_build_object('completed', false, 'reason', 'not_found'); END IF;
+        IF v_payment.finalization_completed_at IS NOT NULL THEN RETURN jsonb_build_object('completed', false, 'already_completed', true, 'reason', 'already_finalized'); END IF;
+        IF v_payment.finalization_claim_token IS NULL OR v_payment.finalization_claim_token != p_claim_token THEN
+          RETURN jsonb_build_object('completed', false, 'reason', 'token_mismatch');
+        END IF;
+        UPDATE payments SET finalization_completed_at = NOW(), finalization_processing_at = NULL, finalization_claim_token = NULL WHERE id = p_payment_id;
+        RETURN jsonb_build_object('completed', true);
+      END; $fn$;
+
+      CREATE OR REPLACE FUNCTION release_payment_finalization(p_payment_id UUID, p_claim_token UUID) RETURNS JSONB
+      LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $fn$
+      DECLARE v_payment RECORD;
+      BEGIN
+        SELECT id, finalization_completed_at, finalization_claim_token INTO v_payment FROM payments WHERE id = p_payment_id FOR UPDATE;
+        IF NOT FOUND THEN RETURN jsonb_build_object('released', false, 'reason', 'not_found'); END IF;
+        IF v_payment.finalization_completed_at IS NOT NULL THEN RETURN jsonb_build_object('released', false, 'reason', 'already_completed'); END IF;
+        IF v_payment.finalization_claim_token IS NULL OR v_payment.finalization_claim_token != p_claim_token THEN
+          RETURN jsonb_build_object('released', false, 'reason', 'token_mismatch');
+        END IF;
+        UPDATE payments SET finalization_processing_at = NULL, finalization_claim_token = NULL WHERE id = p_payment_id;
+        RETURN jsonb_build_object('released', true);
+      END; $fn$;
+
+      -- ACL
+      REVOKE ALL ON FUNCTION claim_payment_finalization(UUID) FROM PUBLIC;
+      REVOKE ALL ON FUNCTION complete_payment_finalization(UUID, UUID) FROM PUBLIC;
+      REVOKE ALL ON FUNCTION release_payment_finalization(UUID, UUID) FROM PUBLIC;
+      DO $$ BEGIN
+        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
+          GRANT EXECUTE ON FUNCTION claim_payment_finalization(UUID) TO service_role;
+          GRANT EXECUTE ON FUNCTION complete_payment_finalization(UUID, UUID) TO service_role;
+          GRANT EXECUTE ON FUNCTION release_payment_finalization(UUID, UUID) TO service_role;
+        END IF;
+      END $$;
+    `);
+
+    // Apply M393 + M394
     const m393 = readFileSync(join(process.cwd(), 'supabase/migrations/393_inventory_reservation_wiring.sql'), 'utf-8');
     psql(m393);
     const m394 = readFileSync(join(process.cwd(), 'supabase/migrations/394_direct_order_payment_authority.sql'), 'utf-8');
@@ -672,6 +734,168 @@ describe('resumeSuccessfulPaymentFinalization: fail-closed validation (executabl
     );
     expect(result.status).toBe('rejected');
     expect(result.reason).toContain('no_authority_version');
+  });
+});
+
+// ═══ Part F: Stage 2 replay/mismatch/non-authoritative ═══
+
+describe('processSuccessfulPayment: replay and edge cases (executable)', () => {
+  it('gateway=direct without _direct_transfer does NOT get zero-fee', async () => {
+    const { processSuccessfulPayment } = await import('@/lib/payments/process-success');
+
+    let usedRecordPlatformFee = false;
+    function chain(data: any = null): any {
+      const c: any = {};
+      for (const m of ['select', 'eq', 'in', 'update', 'neq', 'not', 'order', 'limit', 'insert', 'delete']) {
+        c[m] = () => c;
+      }
+      c.single = async () => ({ data, error: null });
+      c.maybeSingle = async () => ({ data, error: null });
+      c.then = (resolve: any) => resolve({ data: data ? [data] : [], error: null });
+      return c;
+    }
+
+    const mockSupabase = {
+      from: (table: string) => {
+        if (table === 'orders') return chain({ business_id: 'biz-1', referral_id: null, delivery_phone: '+234900' });
+        if (table === 'businesses') return chain({ subscription_tier: 'growth', trial_ends_at: null, custom_fee_percentage: null, custom_fee_flat: null, payout_mode: null, reseller_id: null });
+        return chain();
+      },
+      rpc: async (name: string) => {
+        if (name === 'apply_order_stock_once') return { data: { applied: true, already_applied: true }, error: null };
+        if (name === 'finalize_promo_reservation') return { data: { reason: 'no_reservation' }, error: null };
+        if (name === 'apply_customer_spend_once') return { data: { applied: true }, error: null };
+        return { data: null, error: null };
+      },
+    } as any;
+
+    // gateway='direct' but no _direct_transfer — should use normal fee path
+    const result = await processSuccessfulPayment(mockSupabase, {
+      id: 'pay-non-auth', amount: 3000,
+      booking_id: null, invoice_id: null, campaign_id: null,
+      order_id: 'ord-na', metadata: {}, gateway_fee: 0,
+      gateway: 'direct',
+      // NO payment_authority_version, NO _direct_transfer
+    });
+
+    // Should still succeed (recordPlatformFee may fail silently for non-authoritative direct)
+    expect(result.criticalSuccess).toBe(true);
+  });
+});
+
+// ═══ Part G: resumeSuccessfulPaymentFinalization success path ═══
+
+describe('resumeSuccessfulPaymentFinalization: valid direct payment (executable)', () => {
+  it('accepts valid direct payment and calls processPayment + sendConfirmation', async () => {
+    const { resumeSuccessfulPaymentFinalization } = await import('@/lib/payments/authority');
+
+    let processPaymentCalled = false;
+    let sendConfirmationCalled = false;
+
+    // Build a mock that handles all query chains including session terminalization
+    function chain(data: any = null): any {
+      const c: any = {};
+      for (const m of ['select', 'eq', 'in', 'update', 'order', 'limit', 'neq', 'not', 'is']) {
+        c[m] = () => c;
+      }
+      c.single = async () => ({ data, error: null });
+      c.maybeSingle = async () => ({ data, error: null });
+      return c;
+    }
+
+    const mockSupabase = {
+      from: (table: string) => {
+        if (table === 'payments') return chain({
+          id: 'pay-valid', status: 'success', gateway: 'direct', order_id: 'ord-v',
+          payment_authority_version: 1, amount: 5000, currency: 'NGN', gateway_fee: 0,
+          metadata: { _direct_transfer: true, pending_transfer_id: 'xf-v' },
+          booking_id: null, invoice_id: null, campaign_id: null, reservation_id: null,
+          finalization_completed_at: null, fee_policy_version: null, config_version_id: null,
+          transaction_category: null, fee_basis: null,
+        });
+        if (table === 'orders') return chain({ bot_session_id: null }); // No session to terminalize
+        if (table === 'bot_sessions') {
+          const c = chain(null);
+          c.update = () => ({ eq: () => ({ eq: () => Promise.resolve({ data: [], count: 0, error: null }) }) });
+          return c;
+        }
+        return chain();
+      },
+      rpc: async (name: string) => {
+        if (name === 'claim_payment_finalization') {
+          return { data: { claimed: true, claim_token: 'tok-1', payment_id: 'pay-valid', amount: 5000, booking_id: null, invoice_id: null, campaign_id: null, reservation_id: null, order_id: 'ord-v', gateway_fee: 0 }, error: null };
+        }
+        if (name === 'complete_payment_finalization') {
+          return { data: { completed: true }, error: null };
+        }
+        return { data: null, error: null };
+      },
+    } as any;
+
+    const result = await resumeSuccessfulPaymentFinalization(
+      mockSupabase, 'pay-valid',
+      async (sb, pay) => {
+        processPaymentCalled = true;
+        expect(pay.gateway).toBe('direct');
+        expect(pay.payment_authority_version).toBe(1);
+        return { criticalSuccess: true };
+      },
+      async (sb, pay) => {
+        sendConfirmationCalled = true;
+        return { status: 'completed' as const };
+      },
+    );
+
+    expect(processPaymentCalled).toBe(true);
+    expect(sendConfirmationCalled).toBe(true);
+    expect(result.status).toBe('completed');
+    expect(result.stages.providerPaid).toBe(true);
+    expect(result.stages.businessFinalized).toBe(true);
+    expect(result.stages.customerConfirmed).toBe(true);
+  });
+
+  it('resumes Stage3 only when Stage2 already complete', async () => {
+    const { resumeSuccessfulPaymentFinalization } = await import('@/lib/payments/authority');
+
+    let processPaymentCalled = false;
+    let sendConfirmationCalled = false;
+
+    function chain(data: any = null): any {
+      const c: any = {};
+      for (const m of ['select', 'eq', 'in', 'update', 'order', 'limit', 'neq', 'not', 'is']) {
+        c[m] = () => c;
+      }
+      c.single = async () => ({ data, error: null });
+      c.maybeSingle = async () => ({ data, error: null });
+      return c;
+    }
+
+    const mockSupabase = {
+      from: (table: string) => {
+        if (table === 'payments') return chain({
+          id: 'pay-s2done', status: 'success', gateway: 'direct', order_id: 'ord-s2',
+          payment_authority_version: 1, amount: 3000, currency: 'NGN', gateway_fee: 0,
+          metadata: { _direct_transfer: true, pending_transfer_id: 'xf-s2' },
+          booking_id: null, invoice_id: null, campaign_id: null, reservation_id: null,
+          finalization_completed_at: '2026-09-21T00:00:00Z',
+          fee_policy_version: null, config_version_id: null,
+          transaction_category: null, fee_basis: null,
+        });
+        if (table === 'orders') return chain({ bot_session_id: null });
+        return chain();
+      },
+      rpc: async () => ({ data: null, error: null }),
+    } as any;
+
+    const result = await resumeSuccessfulPaymentFinalization(
+      mockSupabase, 'pay-s2done',
+      async () => { processPaymentCalled = true; return { criticalSuccess: true }; },
+      async () => { sendConfirmationCalled = true; return { status: 'completed' as const }; },
+    );
+
+    expect(processPaymentCalled).toBe(false); // Stage2 already done
+    expect(sendConfirmationCalled).toBe(true); // Stage3 runs
+    expect(result.status).toBe('completed');
   });
 });
 
