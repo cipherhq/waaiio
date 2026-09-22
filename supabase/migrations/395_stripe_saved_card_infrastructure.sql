@@ -637,5 +637,5 @@ GRANT EXECUTE ON FUNCTION complete_activation_delivery(UUID, UUID) TO service_ro
 REVOKE ALL ON FUNCTION release_activation_delivery(UUID, UUID) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION release_activation_delivery(UUID, UUID) TO service_role;
 
-REVOKE ALL ON FUNCTION claim_stale_customer_provisioning(TEXT, INT) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION claim_stale_customer_provisioning(TEXT, INT) TO service_role;
+REVOKE ALL ON FUNCTION claim_stale_customer_provisioning(TEXT, INT, INT) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION claim_stale_customer_provisioning(TEXT, INT, INT) TO service_role;
