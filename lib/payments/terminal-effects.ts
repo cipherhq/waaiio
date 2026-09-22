@@ -28,9 +28,7 @@ export function computeApplicableEffects(
     hasGuestEmail?: boolean;
     hasDonationEmail?: boolean;
     hasSender?: boolean;
-    /** True when the payment originated from WhatsApp AND the durable inbound channel is missing.
-     *  customer_whatsapp remains required but the manifest must NOT be terminalized as failed
-     *  before the claim is released for retry (channel may be repaired). */
+    /** True when the payment originated from WhatsApp AND the durable inbound channel is missing. */
     whatsappOriginMissingChannel?: boolean;
     hasLoyalty?: boolean;
     hasReferral?: boolean;
@@ -40,29 +38,31 @@ export function computeApplicableEffects(
     skipLoyalty?: boolean;
     skipAutomation?: boolean;
     amountPaid?: number;
+    /** M394/Phase 2D: Durable direct order bank transfer — suppresses owner WA/email, receipt, loyalty WA */
+    isDirectOrderTransfer?: boolean;
+    /** M394/Phase 2D: Customer email available for direct order bank transfer */
+    hasCustomerEmail?: boolean;
   },
 ): string[] {
   const effects: string[] = [];
 
-  // For a WhatsApp-origin payment with a temporarily missing channel, freeze
-  // sender-dependent effects as though the sender exists. The channel is expected
-  // to be repaired on retry; the manifest must be stable across retries so
-  // initialize_terminal_effects does not return manifest_mismatch.
-  // For a genuine web/email/non-WhatsApp flow, sender availability is real.
   const effectiveSender = opts.hasSender || !!opts.whatsappOriginMissingChannel;
+  const isDirect = !!opts.isDirectOrderTransfer;
 
   // Required external
-  // customer_whatsapp: applicable when a usable sender exists OR WhatsApp-origin
-  // (channel may be repaired). A customer phone alone is NOT sufficient.
   if (effectiveSender) {
     effects.push('customer_whatsapp');
   }
-  effects.push('owner_notif_whatsapp');
-  effects.push('owner_notif_email');
+  // M394/Phase 2D: Direct order bank transfers do NOT gain owner WhatsApp/email
+  if (!isDirect) {
+    effects.push('owner_notif_whatsapp');
+    effects.push('owner_notif_email');
+  }
   if (payment.campaign_id && opts.hasDonationEmail) effects.push('donation_receipt_email');
 
   // Required internal
-  if (payment.booking_id || payment.reservation_id || payment.campaign_id) {
+  // M394/Phase 2D: Direct order transfers INCLUDE owner_notif_inapp (transfer_confirmed)
+  if (payment.booking_id || payment.reservation_id || payment.campaign_id || isDirect) {
     effects.push('owner_notif_inapp');
   }
   if (payment.invoice_id || payment.campaign_id) {
@@ -75,19 +75,16 @@ export function computeApplicableEffects(
   }
 
   // Optional
-  // Phone-keyed effects: email-only flows must not seal effects that
-  // handlePostCompletion cannot execute.
   if (opts.hasCustomerPhone) effects.push('crm_visit_increment');
   if (opts.hasCustomerPhone && opts.hasReferral) effects.push('referral_generation');
   if (opts.hasCustomerPhone && opts.hasMembership) effects.push('membership_tier_assignment');
   if (opts.hasCustomerPhone && opts.hasFeedback) effects.push('feedback_marker');
-  if (opts.hasCustomerPhone && (opts.amountPaid || 0) > 0) {
+  // M394/Phase 2D: Direct order transfers do NOT gain receipt PDF or loyalty WhatsApp
+  if (!isDirect && opts.hasCustomerPhone && (opts.amountPaid || 0) > 0) {
     effects.push('receipt_pdf_generation');
-    // receipt_pdf_delivery: frozen for WhatsApp-origin even if sender temporarily missing
     if (effectiveSender) effects.push('receipt_pdf_delivery');
   }
-  if (opts.hasLoyalty && !opts.skipLoyalty && effectiveSender) {
-    // customer_loyalty_whatsapp: frozen for WhatsApp-origin
+  if (!isDirect && opts.hasLoyalty && !opts.skipLoyalty && effectiveSender) {
     effects.push('customer_loyalty_whatsapp');
   }
   if (opts.hasCustomerPhone && !opts.skipAutomation) {
@@ -95,9 +92,10 @@ export function computeApplicableEffects(
     effects.push('automation_sequences');
   }
   if (payment.booking_id && opts.hasGuestEmail && !opts.isTicketing) effects.push('customer_booking_email');
-  // ticket_delivery_whatsapp: frozen for WhatsApp-origin even if sender temporarily missing
   if (opts.isTicketing && effectiveSender) effects.push('ticket_delivery_whatsapp');
   if (opts.isTicketing && opts.hasGuestEmail) effects.push('ticket_delivery_email');
+  // M394/Phase 2D: customer_order_email for direct order transfers only
+  if (isDirect && opts.hasCustomerEmail) effects.push('customer_order_email');
 
   return effects;
 }
@@ -133,6 +131,7 @@ export const STAGE3_EFFECT_CATALOG: Record<string, EffectSpec> = {
   automation_sequences:           { key: 'automation_sequences',           category: 'optional',           execution_class: 'internal', provider_channel: null },
   membership_tier_assignment:     { key: 'membership_tier_assignment',     category: 'optional',           execution_class: 'internal', provider_channel: null },
   feedback_marker:                { key: 'feedback_marker',                category: 'optional',           execution_class: 'internal', provider_channel: null },
+  customer_order_email:           { key: 'customer_order_email',           category: 'optional',           execution_class: 'external', provider_channel: 'resend' },  // M394
 };
 
 // ─── Manifest initialization ───

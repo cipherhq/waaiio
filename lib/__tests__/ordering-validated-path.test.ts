@@ -855,23 +855,28 @@ describe('R31-8: Dashboard route — exact-channel only for order transfers', ()
     'utf-8',
   );
 
-  it('order-linked confirm: uses resolveByChannelIdForBusiness, never resolveByBusinessId', () => {
-    // Find the order-linked confirm section (between confirm_order_transfer_atomic and non-order confirm)
+  it('order-linked confirm: delegates to resumeSuccessfulPaymentFinalization (Phase 2D)', () => {
     const confirmSection = routeSource.slice(
       routeSource.indexOf("rpc('confirm_order_transfer_atomic'"),
       routeSource.indexOf('Non-order confirmation')
     );
-    expect(confirmSection).toContain('resolveByChannelIdForBusiness');
+    // Phase 2D: route delegates notification to Payment Authority Stage 3
+    expect(confirmSection).toContain('resumeSuccessfulPaymentFinalization');
+    expect(confirmSection).toContain('processSuccessfulPayment');
+    expect(confirmSection).toContain('sendProactiveConfirmation');
+    // No route-owned resolveByChannelIdForBusiness (delegated to Stage 3)
+    expect(confirmSection).not.toContain('resolveByChannelIdForBusiness');
     expect(confirmSection).not.toContain('resolveByBusinessId');
   });
 
-  it('order-linked confirm: logs missing channel instead of fallback', () => {
+  it('order-linked confirm: downstream failure cannot undo financial success', () => {
     const confirmSection = routeSource.slice(
       routeSource.indexOf("rpc('confirm_order_transfer_atomic'"),
       routeSource.indexOf('Non-order confirmation')
     );
-    expect(confirmSection).toContain('no exact channel');
-    expect(confirmSection).toContain('skipping notification');
+    // Resume is wrapped in try/catch — failure is non-fatal
+    expect(confirmSection).toContain('non-fatal');
+    expect(confirmSection).toContain("status: 'confirmed'");
   });
 
   it('order-linked reject: uses resolveByChannelIdForBusiness, never resolveByBusinessId', () => {
@@ -960,22 +965,21 @@ describe('R32-6: Behavioral cron false-expiry — mocked cancel_stale returns fa
 // ═══════════════════════════════════════════════════════════════
 
 describe('R32-7: Behavioral channel A→B — route uses A, never B', () => {
-  it('order-linked confirm route: uses stored channel A, not business default B', () => {
+  it('order-linked confirm route: delegates to Payment Authority Stage 3 (Phase 2D)', () => {
     const routeSource = readFileSync(
       join(process.cwd(), 'app/api/dashboard/pending-transfers/[id]/route.ts'), 'utf-8');
 
-    // The confirm path reads exactChannelId from confirmResult.inbound_channel_id
+    // Phase 2D: confirm delegates to resumeSuccessfulPaymentFinalization
+    // which internally uses sendProactiveConfirmation → resolveByChannelIdForBusiness
     const confirmSection = routeSource.slice(
       routeSource.indexOf("rpc('confirm_order_transfer_atomic'"),
       routeSource.indexOf('Non-order confirmation')
     );
 
-    // It calls resolveByChannelIdForBusiness(exactChannelId, business_id) — uses persisted A
-    expect(confirmSection).toContain('resolveByChannelIdForBusiness');
-    // It NEVER calls resolveByBusinessId (which would pick up B)
+    expect(confirmSection).toContain('resumeSuccessfulPaymentFinalization');
+    // No direct route-owned channel resolution
+    expect(confirmSection).not.toContain('resolveByChannelIdForBusiness');
     expect(confirmSection).not.toContain('resolveByBusinessId');
-    // If exactChannelId is missing, it sets resolved=null (no send), not fallback
-    expect(confirmSection).toContain(': null');
   });
 
   it('order-linked reject route: uses stored channel A from transfer metadata', () => {

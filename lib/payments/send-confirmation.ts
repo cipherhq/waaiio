@@ -305,11 +305,13 @@ export async function sendProactiveConfirmation(
       .single();
 
     const meta = (paymentFull?.metadata || {}) as Record<string, unknown>;
-    if (meta.order_id) {
+    // M394/Phase 2D: canonical order identity — real payment.order_id first, metadata fallback for legacy
+    const canonicalOrderId = payment.order_id || (meta.order_id as string) || null;
+    if (canonicalOrderId) {
       const { data: order } = await supabase
         .from('orders')
         .select('delivery_phone, reference_code, business_id, businesses(name, country_code)')
-        .eq('id', meta.order_id as string)
+        .eq('id', canonicalOrderId)
         .maybeSingle();
       if (order) {
         customerPhone = order.delivery_phone;
@@ -413,7 +415,7 @@ export async function sendProactiveConfirmation(
   if (customerPhone) {
     const { ChannelResolver } = await import('@/lib/channels/channel-resolver');
     const resolver = new ChannelResolver(supabase);
-    const { data: payChMeta } = await supabase.from('payments').select('metadata').eq('id', payment.id).single();
+    const { data: payChMeta } = await supabase.from('payments').select('metadata, gateway').eq('id', payment.id).single();
     const payMeta = (payChMeta?.metadata || {}) as Record<string, unknown>;
     inboundChId = payMeta._inbound_channel_id as string | undefined;
     confirmationOrigin = payMeta._confirmation_origin as string | undefined;
@@ -432,6 +434,35 @@ export async function sendProactiveConfirmation(
     } else if (!resolved) {
       resolved = await resolver.resolveByBusinessId(businessId);
     }
+  }
+
+  // ── M394/Phase 2D: Derive direct order transfer status from durable payment provenance ──
+  let isDirectOrderTransfer = false;
+  {
+    // Load gateway + metadata if not already loaded above (customerPhone path may not have run)
+    let gwMetaData = null as { gateway?: string; metadata?: unknown } | null;
+    if (customerPhone) {
+      // payChMeta was loaded in the customerPhone block above — re-read is safe
+      const { data: payGwCheck } = await supabase.from('payments').select('gateway, metadata').eq('id', payment.id).single();
+      gwMetaData = payGwCheck;
+    } else {
+      const { data: payGwCheck } = await supabase.from('payments').select('gateway, metadata').eq('id', payment.id).single();
+      gwMetaData = payGwCheck;
+    }
+    const directMeta = ((gwMetaData as any)?.metadata || {}) as Record<string, unknown>;
+    if ((gwMetaData as any)?.gateway === 'direct' && payment.order_id
+        && directMeta._direct_transfer === true && payment.payment_authority_version != null) {
+      isDirectOrderTransfer = true;
+    }
+  }
+
+  // R4-B1: Resolve customer email for direct order transfers before manifest freeze
+  let directOrderCustomerEmail: string | null = null;
+  if (isDirectOrderTransfer && customerPhone && businessId) {
+    try {
+      const { findCustomerEmail } = await import('@/lib/channels/send-or-email');
+      directOrderCustomerEmail = await findCustomerEmail(supabase, customerPhone, businessId);
+    } catch { /* non-critical — customer_order_email simply won't be in manifest */ }
   }
 
   // ── MANIFEST INITIALIZATION: Register all applicable Stage-3 effects ──
@@ -508,6 +539,8 @@ export async function sendProactiveConfirmation(
       skipLoyalty: skipLoyaltyFlag,
       skipAutomation: !!payment.order_id || !!payment.campaign_id || !!payment.invoice_id,
       amountPaid: payment.amount,
+      isDirectOrderTransfer,  // M394/Phase 2D
+      hasCustomerEmail: !!directOrderCustomerEmail || !!customerEmail,  // M394/Phase 2D
     });
 
     const initResult = await initializeManifest(supabase, payment.id, claimToken, applicableEffects);
@@ -860,6 +893,13 @@ export async function sendProactiveConfirmation(
             const ct = (don?.campaigns as unknown as { title: string } | null)?.title || 'Campaign';
             const { createNotification } = await import('@/lib/bot/flows/shared/notifications');
             await createNotification(supabase, { businessId, type: 'payment', channel: 'whatsapp', body: `New donation of ${formatCurrency(payment.amount, countryCode)} for ${ct}${don?.donor_name ? ` from ${don.donor_name}` : ''}. Ref: ${don?.reference_code || referenceCode}` });
+          } else if (isDirectOrderTransfer && payment.order_id) {
+            // M394/Phase 2D: Direct order bank transfer → transfer_confirmed dashboard notification
+            const { createNotification } = await import('@/lib/bot/flows/shared/notifications');
+            await createNotification(supabase, {
+              businessId, type: 'transfer_confirmed', channel: 'dashboard',
+              body: `Bank transfer of ${formatCurrency(payment.amount, countryCode)} confirmed. Ref: ${referenceCode}`,
+            });
           }
         });
 
@@ -907,6 +947,34 @@ export async function sendProactiveConfirmation(
           return true;
         });
       } catch (err) { logSafeError(logPrefix, 'owner-notification-manifest', err); }
+
+      // R4-B1: customer_order_email — direct order bank transfer confirmation email
+      if (isDirectOrderTransfer && directOrderCustomerEmail) {
+        try {
+          const teEmail = await import('@/lib/payments/terminal-effects');
+          await teEmail.driveExternalEffect(supabase, payment.id, 'customer_order_email', claimToken, async () => {
+            const { sendEmail } = await import('@/lib/email/client');
+            const { businessNotificationEmail } = await import('@/lib/email/templates');
+            const amtFmt = formatCurrency(payment.amount, countryCode);
+            const { html } = businessNotificationEmail({
+              businessName: businessName || 'Business',
+              title: 'Payment Confirmed',
+              message: `Your bank transfer has been verified and your order is confirmed. Thank you!`,
+              details: { 'Amount': amtFmt, 'Reference': referenceCode },
+            });
+            // R5-B1: Inspect sendEmail result — failed delivery must NOT be recorded as completed
+            const emailResult = await sendEmail({
+              to: directOrderCustomerEmail!,
+              subject: `Payment Confirmed - ${businessName || 'Business'}`,
+              html,
+            });
+            if (!(emailResult as any)?.success) {
+              throw new Error(`customer_order_email delivery failed: ${JSON.stringify((emailResult as any)?.error || 'unknown')}`);
+            }
+            return true;
+          });
+        } catch (emailErr) { logSafeError(logPrefix, 'customer-order-email', emailErr); }
+      }
     } else {
       // ── LEGACY PATH: original section 7 code unchanged for mock test compatibility ──
       try {
@@ -1417,12 +1485,14 @@ export async function sendProactiveConfirmation(
     }
 
     // Post-finalization saved-card CTA (separate lifecycle, non-blocking)
-    // Uses durable payment_saved_card_offers authority — safe on webhook retry.
-    try {
-      const { checkAndOfferSavedCard } = await import('@/lib/payments/saved-card-offer');
-      await checkAndOfferSavedCard(supabase, payment.id, customerPhone || '', businessId || '', resolved?.sender || null);
-    } catch (savedCardErr) {
-      logSafeError(logPrefix, 'saved-card-offer', savedCardErr);
+    // M394/Phase 2D: Direct bank transfers do NOT get Save Card offer
+    if (!isDirectOrderTransfer) {
+      try {
+        const { checkAndOfferSavedCard } = await import('@/lib/payments/saved-card-offer');
+        await checkAndOfferSavedCard(supabase, payment.id, customerPhone || '', businessId || '', resolved?.sender || null);
+      } catch (savedCardErr) {
+        logSafeError(logPrefix, 'saved-card-offer', savedCardErr);
+      }
     }
 
     return { status: 'completed' };

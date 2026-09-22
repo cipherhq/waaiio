@@ -154,7 +154,7 @@ describe('R33-1: expire-transfers actual POST', () => {
 // ═══ 2+3. pending-transfers PATCH ═══
 
 describe('R33-2: pending-transfers PATCH — exact channel A', () => {
-  it('order-linked confirm: uses channel A, never B', async () => {
+  it('order-linked confirm: delegates to Payment Authority Stage 2→3 (Phase 2D)', async () => {
     vi.resetModules();
     const transfer = {
       id: 'xf-c1', order_id: 'ord-c1', booking_id: null, invoice_id: null,
@@ -170,16 +170,24 @@ describe('R33-2: pending-transfers PATCH — exact channel A', () => {
         c.single = vi.fn().mockResolvedValue({ data: { name: 'Biz', country_code: 'NG' }, error: null });
         return c;
       }
-      if (table === 'platform_fees') {
-        const c = chain(); c.insert = vi.fn(() => ({ then: (r: any) => r({ error: null }) })); return c;
-      }
       return chain();
     };
     mockRpc.mockResolvedValue({
       data: { confirmed: true, order_total: 5000, payment_id: 'pay-d1', inbound_channel_id: 'ch-a' },
       error: null,
     });
-    mockResolveByChannelIdForBusiness.mockResolvedValue({ sender: { sendText: mockSendText } });
+
+    // Phase 2D: Route delegates to resumeSuccessfulPaymentFinalization
+    // Mock the authority module
+    vi.doMock('@/lib/payments/authority', () => ({
+      resumeSuccessfulPaymentFinalization: vi.fn().mockResolvedValue({ status: 'completed', retryable: false, stages: { providerPaid: true, businessFinalized: true, customerConfirmed: true } }),
+    }));
+    vi.doMock('@/lib/payments/process-success', () => ({
+      processSuccessfulPayment: vi.fn().mockResolvedValue({ criticalSuccess: true }),
+    }));
+    vi.doMock('@/lib/payments/send-confirmation', () => ({
+      sendProactiveConfirmation: vi.fn().mockResolvedValue({ status: 'completed' }),
+    }));
 
     const { PATCH } = await import('@/app/api/dashboard/pending-transfers/[id]/route');
     const req = new Request('http://x', {
@@ -191,7 +199,7 @@ describe('R33-2: pending-transfers PATCH — exact channel A', () => {
     const body = await res.json();
 
     expect(body.status).toBe('confirmed');
-    expect(mockResolveByChannelIdForBusiness).toHaveBeenCalledWith('ch-a', 'biz-1');
+    // Phase 2D: route no longer does direct channel resolution — delegated to Stage 3
     expect(mockResolveByBusinessId).not.toHaveBeenCalled();
   });
 
