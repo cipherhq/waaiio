@@ -179,7 +179,7 @@ describe('(1) BYO credential lookup throws', () => {
 
     expect(result).toBeNull();
     expect(mockGatewayInitialize).not.toHaveBeenCalled();
-    assertLoggerOp('payment.credential-classification');
+    assertLoggerOp('routing.credential-classification');
   });
 });
 
@@ -198,7 +198,7 @@ describe('(2) BYO credential lookup returns {error}', () => {
 
     expect(result).toBeNull();
     expect(mockGatewayInitialize).not.toHaveBeenCalled();
-    assertLoggerOp('payment.credential-classification');
+    assertLoggerOp('routing.credential-classification');
   });
 });
 
@@ -313,7 +313,7 @@ describe('(4) Payout authority', () => {
 
     expect(result).toBeNull();
     expect(mockGatewayInitialize).not.toHaveBeenCalled();
-    assertLoggerOp('payment.payout-mode-authority');
+    assertLoggerOp('routing.payout-mode-authority');
   });
 
   it('(4b) direct_split payout-account lookup error → fail closed', async () => {
@@ -331,7 +331,7 @@ describe('(4) Payout authority', () => {
 
     expect(result).toBeNull();
     expect(mockGatewayInitialize).not.toHaveBeenCalled();
-    assertLoggerOp('payment.payout-account-authority');
+    assertLoggerOp('routing.payout-account-authority');
   });
 
   it('(4c) direct_split payout-account lookup throws → fail closed with stage log', async () => {
@@ -350,7 +350,7 @@ describe('(4) Payout authority', () => {
     expect(result).toBeNull();
     expect(mockGatewayInitialize).not.toHaveBeenCalled();
     // Payout lookup throws AFTER credential classification succeeds — caught by outer try/catch
-    assertLoggerOp('payment.routing-authority-threw');
+    assertLoggerOp('routing.authority-threw');
   });
 });
 
@@ -429,7 +429,7 @@ describe('(6) Cross-capability shared boundary', () => {
 
     expect(result).toBeNull();
     expect(mockGatewayInitialize).toHaveBeenCalledTimes(0);
-    assertLoggerOp('payment.credential-classification');
+    assertLoggerOp('routing.credential-classification');
   });
 
   it('(6b) ordering transactionCategory: same boundary, BYO error → fail closed', async () => {
@@ -447,7 +447,7 @@ describe('(6) Cross-capability shared boundary', () => {
 
     expect(result).toBeNull();
     expect(mockGatewayInitialize).toHaveBeenCalledTimes(0);
-    assertLoggerOp('payment.credential-classification');
+    assertLoggerOp('routing.credential-classification');
   });
 });
 
@@ -574,6 +574,6 @@ describe('(7) V1 dispatched-row + idempotency', () => {
 
     expect(result).toBeNull();
     expect(mockGatewayInitialize).not.toHaveBeenCalled();
-    assertLoggerOp('payment.credential-classification');
+    assertLoggerOp('routing.credential-classification');
   });
 });
