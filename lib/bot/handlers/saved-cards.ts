@@ -160,7 +160,7 @@ export async function handleRemoveCard(
     return;
   }
 
-  // Try Stripe: soft revoke + cleanup outbox
+  // Try Stripe: atomic revoke + cleanup enqueue via RPC
   const { data: stripeMethod } = await supabase
     .from('saved_payment_methods')
     .select('id, card_last4, card_brand, stripe_payment_method_id')
@@ -170,26 +170,21 @@ export async function handleRemoveCard(
     .maybeSingle();
 
   if (stripeMethod) {
-    // Immediately revoke Waaiio authority
-    await supabase
-      .from('saved_payment_methods')
-      .update({ is_active: false })
-      .eq('id', stripeMethod.id);
+    // Atomic: revoke Waaiio authority + enqueue cleanup in one DB transaction
+    const { data: revokeResult } = await supabase.rpc('atomic_stripe_revoke_and_enqueue', {
+      p_method_id: stripeMethod.id,
+      p_customer_phone: phoneP,
+      p_provider_object_id: stripeMethod.stripe_payment_method_id || '',
+    });
 
-    // Create durable cleanup operation for provider detach
-    if (stripeMethod.stripe_payment_method_id) {
-      await supabase.from('provider_cleanup_operations').insert({
-        customer_phone: phoneP,
-        gateway: 'stripe',
-        provider_account_scope: 'platform',
-        operation_type: 'detach',
-        provider_object_id: stripeMethod.stripe_payment_method_id,
-        source_event: 'remove',
-      }).select().maybeSingle();
+    const result = revokeResult as Record<string, unknown> | null;
+    if (!result?.revoked) {
+      // Revoke failed — do NOT tell customer card was removed
+      await sendText(from, 'Could not remove card. Please try again.');
+      return;
     }
 
-    const card = stripeMethod;
-    await sendText(from, `Card removed: ${((card.card_brand as string) || 'Card').toUpperCase()} ****${(card.card_last4 as string) || '****'}\n\nYou'll need to enter card details for future payments.`);
+    await sendText(from, `Card removed: ${((result.card_brand as string) || 'Card').toUpperCase()} ****${(result.card_last4 as string) || '****'}\n\nYou'll need to enter card details for future payments.`);
     return;
   }
 
@@ -748,5 +743,39 @@ export async function handleReplacementPinStep(
 
   const newLabel = `${((newAuth.brand as string) || 'Card').toUpperCase()} ****${(newAuth.last4 as string) || '????'}`;
   logger.info('[SAVED_CARDS] card-replaced', { businessId, methodId });
-  await sendText(from, `💳 Card updated to *${newLabel}*!\n\n🔒 Your existing Waaiio PIN still works. Type *remove card* anytime to remove.`);
+
+  // Durable replacement acknowledgement: committed → confirmed
+  const replaceOfferId = d._replace_offer_id as string | undefined;
+  if (replaceOfferId) {
+    // Read credential_version for committed evidence binding
+    const { data: updatedMethod } = await supabase.from('saved_payment_methods')
+      .select('id, credential_version').eq('id', methodId).eq('is_active', true).maybeSingle();
+    if (updatedMethod) {
+      const { data: commitResult } = await supabase.rpc('commit_saved_card_offer', {
+        p_offer_id: replaceOfferId, p_customer_phone: phoneP,
+        p_method_id: updatedMethod.id,
+        p_card_display: newLabel,
+        p_credential_version: updatedMethod.credential_version || 1,
+      });
+      if (!commitResult) {
+        logger.warn('[SAVED_CARDS] Replacement commit RPC failed — credential replaced but offer not committed');
+      }
+    }
+  }
+
+  try {
+    await sendText(from, `💳 Card updated to *${newLabel}*!\n\n🔒 Your existing Waaiio PIN still works. Type *remove card* anytime to remove.`);
+    // Delivery proven → confirm
+    if (replaceOfferId) {
+      const { data: confirmResult } = await supabase.rpc('confirm_saved_card_offer', {
+        p_offer_id: replaceOfferId, p_customer_phone: phoneP,
+      });
+      if (!confirmResult) {
+        logger.warn('[SAVED_CARDS] Replacement confirm RPC failed');
+      }
+    }
+  } catch (confirmErr) {
+    // Delivery failed — offer stays 'committed' for recovery
+    logger.error('[SAVED_CARDS] Replacement confirmation delivery failed — stays committed', { confirmErr });
+  }
 }

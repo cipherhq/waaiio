@@ -427,3 +427,76 @@ BEGIN
   REVOKE ALL ON FUNCTION confirm_saved_card_offer(UUID, TEXT) FROM PUBLIC;
   GRANT EXECUTE ON FUNCTION confirm_saved_card_offer(UUID, TEXT) TO service_role;
 END $$;
+
+-- ═══════════════════════════════════════════════════════
+-- 10. Atomic Stripe saved-card remove — revoke + cleanup enqueue in one transaction
+-- ═══════════════════════════════════════════════════════
+CREATE OR REPLACE FUNCTION atomic_stripe_revoke_and_enqueue(
+  p_method_id UUID,
+  p_customer_phone TEXT,
+  p_provider_object_id TEXT
+) RETURNS JSONB
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_card_last4 TEXT;
+  v_card_brand TEXT;
+  v_revoked BOOLEAN := false;
+BEGIN
+  UPDATE saved_payment_methods
+  SET is_active = false
+  WHERE id = p_method_id AND customer_phone = p_customer_phone
+    AND gateway = 'stripe' AND is_active = true
+  RETURNING card_last4, card_brand INTO v_card_last4, v_card_brand;
+
+  v_revoked := FOUND;
+  IF NOT v_revoked THEN
+    RETURN jsonb_build_object('revoked', false, 'reason', 'not_found_or_already_revoked');
+  END IF;
+
+  IF p_provider_object_id IS NOT NULL AND p_provider_object_id <> '' THEN
+    INSERT INTO provider_cleanup_operations
+      (customer_phone, gateway, provider_account_scope, operation_type, provider_object_id, source_event)
+    VALUES (p_customer_phone, 'stripe', 'platform', 'detach', p_provider_object_id, 'remove')
+    ON CONFLICT (gateway, provider_object_id, operation_type) DO NOTHING;
+  END IF;
+
+  RETURN jsonb_build_object('revoked', true, 'card_last4', v_card_last4, 'card_brand', v_card_brand);
+END;
+$$;
+
+REVOKE ALL ON FUNCTION atomic_stripe_revoke_and_enqueue(UUID, TEXT, TEXT) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION atomic_stripe_revoke_and_enqueue(UUID, TEXT, TEXT) TO service_role;
+
+-- ═══════════════════════════════════════════════════════
+-- 11. Atomic customer provisioning recovery claim (FOR UPDATE SKIP LOCKED)
+-- ═══════════════════════════════════════════════════════
+CREATE OR REPLACE FUNCTION claim_stale_customer_provisioning(
+  p_gateway TEXT,
+  p_stale_minutes INT DEFAULT 10
+) RETURNS JSONB
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_row provider_customer_identities%ROWTYPE;
+BEGIN
+  SELECT * INTO v_row
+  FROM provider_customer_identities
+  WHERE provisioning_state = 'dispatched'
+    AND gateway = p_gateway
+    AND dispatched_at < NOW() - (p_stale_minutes || ' minutes')::INTERVAL
+  ORDER BY dispatched_at ASC LIMIT 1
+  FOR UPDATE SKIP LOCKED;
+
+  IF NOT FOUND THEN RETURN NULL; END IF;
+
+  RETURN jsonb_build_object(
+    'operation_id', v_row.id,
+    'customer_phone', v_row.customer_phone,
+    'provider_account_scope', v_row.provider_account_scope,
+    'idempotency_key', v_row.idempotency_key,
+    'dispatched_at', v_row.dispatched_at
+  );
+END;
+$$;
+
+REVOKE ALL ON FUNCTION claim_stale_customer_provisioning(TEXT, INT) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION claim_stale_customer_provisioning(TEXT, INT) TO service_role;

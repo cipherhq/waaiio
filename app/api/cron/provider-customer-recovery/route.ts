@@ -2,8 +2,8 @@
  * Provider Customer Recovery Cron
  *
  * Recovers stranded provider_customer_identities rows stuck in 'dispatched' state.
- * These can occur when Customer creation succeeds at Stripe but the response is lost,
- * and no subsequent payment triggers synchronous recovery.
+ * Uses claim_stale_customer_provisioning RPC with FOR UPDATE SKIP LOCKED
+ * to prevent concurrent workers from processing the same row.
  */
 import { NextResponse, type NextRequest } from 'next/server';
 import { verifyCronAuth } from '@/lib/cron-auth';
@@ -18,45 +18,45 @@ export async function GET(request: NextRequest) {
   let recovered = 0;
   let failed = 0;
 
-  // Find stale dispatched rows (>10 minutes old)
-  const staleThreshold = new Date(Date.now() - 10 * 60 * 1000).toISOString();
-  const { data: staleRows } = await supabase
-    .from('provider_customer_identities')
-    .select('id, customer_phone, gateway, provider_account_scope, idempotency_key, dispatched_at')
-    .eq('provisioning_state', 'dispatched')
-    .lt('dispatched_at', staleThreshold)
-    .limit(5);
+  // Process up to 5 stale rows per invocation
+  for (let i = 0; i < 5; i++) {
+    // Atomic claim via FOR UPDATE SKIP LOCKED RPC
+    const { data: claimed, error: claimErr } = await supabase.rpc('claim_stale_customer_provisioning', {
+      p_gateway: 'stripe',
+      p_stale_minutes: 10,
+    });
 
-  if (!staleRows || staleRows.length === 0) {
-    return NextResponse.json({ recovered: 0, failed: 0 });
-  }
+    if (claimErr || !claimed) break;
 
-  for (const row of staleRows) {
+    const row = claimed as Record<string, unknown>;
+    const operationId = row.operation_id as string;
+    const customerPhone = row.customer_phone as string;
+    const scope = row.provider_account_scope as string;
+    const dispatchedAt = row.dispatched_at as string;
+
     try {
       const { provisionStripeCustomer } = await import('@/lib/payments/provision-stripe-customer');
       const { internalPaymentEmailAlias } = await import('@/lib/payments/saved-card-compat');
-      const emailAlias = internalPaymentEmailAlias(row.customer_phone);
+      const emailAlias = internalPaymentEmailAlias(customerPhone);
 
-      const result = await provisionStripeCustomer(
-        supabase, row.customer_phone, row.provider_account_scope, emailAlias,
-      );
+      const result = await provisionStripeCustomer(supabase, customerPhone, scope, emailAlias);
 
       if (result) {
         recovered++;
       } else {
-        // Check if row is now >24h old — mark as failed
-        const dispatchedAt = new Date(row.dispatched_at).getTime();
-        if (Date.now() - dispatchedAt > 24 * 60 * 60 * 1000) {
+        // Check if row is >24h old — mark as failed
+        const dispatchedTime = new Date(dispatchedAt).getTime();
+        if (Date.now() - dispatchedTime > 24 * 60 * 60 * 1000) {
           await supabase
             .from('provider_customer_identities')
             .update({ provisioning_state: 'failed', error_detail: 'stale_24h_unrecoverable' })
-            .eq('id', row.id)
+            .eq('id', operationId)
             .eq('provisioning_state', 'dispatched');
           failed++;
         }
       }
     } catch (err) {
-      logger.error('[CUSTOMER-RECOVERY] Row recovery threw', { rowId: row.id, err });
+      logger.error('[CUSTOMER-RECOVERY] Row recovery threw', { operationId, err });
       failed++;
     }
   }
