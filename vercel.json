@@ -2,7 +2,12 @@
   "redirects": [
     {
       "source": "/:path*",
-      "has": [{ "type": "host", "value": "waaiio.com" }],
+      "has": [
+        {
+          "type": "host",
+          "value": "waaiio.com"
+        }
+      ],
       "destination": "https://www.waaiio.com/:path*",
       "permanent": true
     }
@@ -115,6 +120,18 @@
     {
       "path": "/api/cron/subscription-cancellation-reconciliation",
       "schedule": "0 5 * * *"
+    },
+    {
+      "path": "/api/cron/provider-cleanup",
+      "schedule": "0,15,30,45 * * * *"
+    },
+    {
+      "path": "/api/cron/provider-customer-recovery",
+      "schedule": "5,20,35,50 * * * *"
+    },
+    {
+      "path": "/api/cron/saved-card-activation-retry",
+      "schedule": "10,25,40,55 * * * *"
     }
   ]
 }
