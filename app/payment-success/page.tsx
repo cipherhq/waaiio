@@ -1,9 +1,9 @@
 import { ReturnToWhatsApp } from '@/components/ReturnToWhatsApp';
 import { createServiceClient } from '@/lib/supabase/service';
 import { logger } from '@/lib/logger';
-import { sendProactiveConfirmation } from '@/lib/payments/send-confirmation';
 // processSuccessfulPayment is now called inside reconcilePayment (Payment Authority)
 import { isWhiteLabel } from '@/lib/whitelabel';
+import { resolvePaymentFromRef } from '@/lib/payments/payment-success-resolver';
 
 export const metadata = {
   title: 'Payment Successful — Waaiio',
@@ -28,28 +28,15 @@ export default async function PaymentSuccessPage({
   if (params.ref) {
     try {
       const supabase = createServiceClient();
-      // ref can be gateway_reference (cs_test_xxx) OR booking reference_code (WA-BK-3218)
-      let payment = (await supabase
-        .from('payments')
-        .select('id, status, amount, booking_id, invoice_id, campaign_id, order_id, reservation_id, business_id, businesses(phone, name, country_code, subscription_tier)')
-        .eq('gateway_reference', params.ref)
-        .order('created_at', { ascending: false }).limit(1).maybeSingle()).data;
-
-      // Fallback: match by booking reference_code
-      if (!payment) {
-        const { data: booking } = await supabase
-          .from('bookings')
-          .select('id')
-          .eq('reference_code', params.ref)
-          .order('created_at', { ascending: false }).limit(1).maybeSingle();
-        if (booking) {
-          payment = (await supabase
-            .from('payments')
-            .select('id, status, amount, booking_id, invoice_id, campaign_id, order_id, reservation_id, business_id, businesses(phone, name, country_code, subscription_tier)')
-            .eq('booking_id', booking.id)
-            .order('created_at', { ascending: false }).limit(1).maybeSingle()).data;
-        }
+      // Resolve payment through canonical resolver:
+      // 1. Exact gateway_reference (provider-neutral — works for cs_... Stripe sessions and all other providers)
+      // 2. Booking reference_code fallback (provider-neutral — existing behavior)
+      // 3. Legacy Stripe entity-reference fallback (for old sessions with WA-OR-xxxx, etc.)
+      const { payment: resolvedPayment, path } = await resolvePaymentFromRef(supabase, params.ref);
+      if (path) {
+        logger.info('[PAYMENT-SUCCESS] Payment resolved via ' + path, { ref: params.ref });
       }
+      const payment = resolvedPayment;
 
       if (payment) {
         const biz = payment.businesses as unknown as { phone: string; name: string; country_code?: string; subscription_tier?: string } | null;
@@ -170,11 +157,4 @@ export default async function PaymentSuccessPage({
       </div>
     </div>
   );
-}
-
-async function triggerWhatsAppConfirmation(
-  supabase: ReturnType<typeof createServiceClient>,
-  payment: { id: string; booking_id: string | null; invoice_id: string | null; campaign_id: string | null; amount: number },
-): Promise<void> {
-  await sendProactiveConfirmation(supabase, payment, '[PAYMENT-SUCCESS]');
 }
