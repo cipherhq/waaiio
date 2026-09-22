@@ -3334,7 +3334,15 @@ jobs:
           export TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/waaiio_m394_test
           echo "Running Phase 2D direct order Payment Authority tests..."
           set +e
-          OUTPUT=$(npx vitest run lib/__tests__/phase-2d-payment-authority.test.ts 2>&1)
+          OUTPUT=$(npx vitest run \
+            lib/__tests__/phase-2d-payment-authority.test.ts \
+            lib/__tests__/phase-2d-stage3-runtime.test.ts \
+            lib/__tests__/phase-2d-r13-stage2-recovery.test.ts \
+            lib/__tests__/phase-2d-r13-route-race.test.ts \
+            lib/__tests__/phase-2d-r13-post-completion.test.ts \
+            lib/__tests__/m393-route-behavioral.test.ts \
+            lib/__tests__/p0-saved-card-offer-behavioral.test.ts \
+            lib/channels/__tests__/channel-authority.test.ts 2>&1)
           TEST_EXIT=$?
           set -e
           echo "$OUTPUT"
