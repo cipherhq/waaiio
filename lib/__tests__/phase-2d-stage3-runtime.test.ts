@@ -54,6 +54,9 @@ function chain(data: any = null): any {
 }
 
 function mockSb(chId: string, ordId: string, payId: string) {
+  // Track initialized effects so reserve_terminal_effect can return effect_not_in_manifest
+  let initializedEffects: string[] = [];
+
   return {
     from: vi.fn((t: string) => {
       if (t === 'payments') return chain({ id: payId, gateway: 'direct', metadata: { _direct_transfer: true, pending_transfer_id: 'xf-1', _inbound_channel_id: chId, _confirmation_origin: 'whatsapp' }, payment_authority_version: 1 });
@@ -66,11 +69,24 @@ function mockSb(chId: string, ordId: string, payId: string) {
     }),
     rpc: vi.fn(async (name: string, params?: any) => {
       if (name === 'claim_payment_confirmation') return { data: { claimed: true, claim_token: 'ct-1', payment_id: payId, amount: 5000, booking_id: null, invoice_id: null, campaign_id: null, reservation_id: null, order_id: ordId, customer_phone: '+234900', payment_authority_version: 1 }, error: null };
-      if (name === 'initialize_terminal_effects') return { data: { initialized: true, already_initialized: false, effect_count: params?.p_effect_keys?.length || 0 }, error: null };
-      if (name === 'reserve_terminal_effect') return { data: { reserved: true, effect_token: 'et-1' }, error: null };
-      if (name === 'begin_terminal_effect_emission') return { data: { started: true }, error: null };
-      if (name === 'complete_terminal_effect') return { data: { completed: true }, error: null };
-      if (name === 'fail_terminal_effect') return { data: { failed: true }, error: null };
+      if (name === 'initialize_terminal_effects') {
+        initializedEffects = params?.p_effect_keys || [];
+        return { data: { initialized: true, already_initialized: false, effect_count: initializedEffects.length }, error: null };
+      }
+      // Only reserve effects that were initialized in the manifest
+      if (name === 'reserve_terminal_effect') {
+        const effectKey = params?.p_effect_key;
+        if (effectKey && !initializedEffects.includes(effectKey)) {
+          return { data: { reserved: false, reason: 'effect_not_in_manifest' }, error: null };
+        }
+        return { data: { reserved: true, effect_token: 'et-' + effectKey }, error: null };
+      }
+      if (name === 'begin_terminal_external_emission') return { data: { authorized: true }, error: null };
+      if (name === 'complete_external_effect') return { data: { completed: true }, error: null };
+      if (name === 'complete_internal_effect') return { data: { completed: true }, error: null };
+      if (name === 'fail_external_effect') return { data: { failed: true }, error: null };
+      if (name === 'mark_effect_indeterminate') return { data: { marked: true }, error: null };
+      if (name === 'skip_optional_effect') return { data: { skipped: true }, error: null };
       if (name === 'seal_terminal_manifest') return { data: { sealed: true }, error: null };
       if (name === 'finalize_payment_confirmation') return { data: { finalized: true }, error: null };
       if (name === 'renew_confirmation_claim' || name === 'renew_payment_confirmation_claim') return { data: { renewed: true }, error: null };
@@ -96,7 +112,7 @@ beforeEach(() => {
 // ═══ 1. EMAIL LIFECYCLE ═══
 
 describe('Stage3 email lifecycle', () => {
-  it('1A. email success: sendEmail called, customer_order_email frozen', async () => {
+  it('1A. email SUCCESS: sendEmail called once, complete_external_effect for customer_order_email', async () => {
     vi.resetModules();
     mockResolveByChForBiz.mockResolvedValue({ channel: { id: 'ch-1', channel_type: 'shared' }, sender: sharedSender });
     mockSendEmail.mockResolvedValue({ success: true });
@@ -109,12 +125,20 @@ describe('Stage3 email lifecycle', () => {
     }, { logPrefix: '[EMAIL-SUCCESS]', exactEntityFamily: true });
 
     expect(result.status).toBe('completed');
+    // sendEmail called (at least once for customer_order_email)
+    expect(mockSendEmail).toHaveBeenCalled();
     // customer_order_email in manifest
     const initCall = (sb.rpc as any).mock.calls.find((c: any) => c[0] === 'initialize_terminal_effects');
     expect(initCall[1].p_effect_keys).toContain('customer_order_email');
+    // complete_external_effect called (success)
+    const completeCalls = (sb.rpc as any).mock.calls.filter((c: any) => c[0] === 'complete_external_effect');
+    expect(completeCalls.length).toBeGreaterThanOrEqual(1);
+    // fail_external_effect NOT called for this effect
+    const failCalls = (sb.rpc as any).mock.calls.filter((c: any) => c[0] === 'fail_external_effect');
+    expect(failCalls.length).toBe(0);
   });
 
-  it('1B. email failure: sendEmail returns {success:false} — fail_terminal_effect called', async () => {
+  it('1B. email {success:false}: sendEmail called, mark_effect_indeterminate (NOT completed)', async () => {
     vi.resetModules();
     mockResolveByChForBiz.mockResolvedValue({ channel: { id: 'ch-2', channel_type: 'shared' }, sender: sharedSender });
     mockSendEmail.mockResolvedValue({ success: false, error: 'Resend provider error' });
@@ -126,16 +150,15 @@ describe('Stage3 email lifecycle', () => {
       order_id: 'o-em-f', payment_authority_version: 1,
     }, { logPrefix: '[EMAIL-FAIL]', exactEntityFamily: true });
 
-    // Function still completes (email is optional effect — error caught)
     expect(result.status).toBe('completed');
-    // The email callback throws on failure, which driveExternalEffect catches.
-    // The terminal-effect driver handles thrown callbacks as indeterminate/post-emission
-    // (not completed). The key invariant: failed email is NOT falsely marked completed
-    // for the customer_order_email effect specifically.
-    // Verify that the overall Stage3 still completes despite email failure.
+    // sendEmail was invoked (at least once)
+    expect(mockSendEmail).toHaveBeenCalled();
+    // Production code throws on {success:false} → driveExternalEffect catches → mark_effect_indeterminate
+    const indCalls = (sb.rpc as any).mock.calls.filter((c: any) => c[0] === 'mark_effect_indeterminate');
+    expect(indCalls.length).toBeGreaterThanOrEqual(1);
   });
 
-  it('1C. email thrown: sendEmail throws — effect not completed', async () => {
+  it('1C. email THROWN: sendEmail called, mark_effect_indeterminate (NOT completed)', async () => {
     vi.resetModules();
     mockResolveByChForBiz.mockResolvedValue({ channel: { id: 'ch-3', channel_type: 'shared' }, sender: sharedSender });
     mockSendEmail.mockRejectedValue(new Error('Network timeout'));
@@ -147,8 +170,12 @@ describe('Stage3 email lifecycle', () => {
       order_id: 'o-em-t', payment_authority_version: 1,
     }, { logPrefix: '[EMAIL-THROW]', exactEntityFamily: true });
 
-    // Function completes (email errors are caught)
     expect(result.status).toBe('completed');
+    // sendEmail was invoked (then threw)
+    expect(mockSendEmail).toHaveBeenCalled();
+    // Thrown → driveExternalEffect catch → mark_effect_indeterminate (not completed)
+    const indCalls = (sb.rpc as any).mock.calls.filter((c: any) => c[0] === 'mark_effect_indeterminate');
+    expect(indCalls.length).toBeGreaterThanOrEqual(1);
   });
 });
 
