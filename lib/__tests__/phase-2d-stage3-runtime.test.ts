@@ -59,7 +59,7 @@ function mockSb(chId: string, ordId: string, payId: string) {
 
   return {
     from: vi.fn((t: string) => {
-      if (t === 'payments') return chain({ id: payId, gateway: 'direct', metadata: { _direct_transfer: true, pending_transfer_id: 'xf-1', _inbound_channel_id: chId, _confirmation_origin: 'whatsapp' }, payment_authority_version: 1 });
+      if (t === 'payments') return chain({ id: payId, gateway, metadata, payment_authority_version: authorityVersion });
       if (t === 'orders') return chain({ delivery_phone: '+234900', reference_code: 'ORD-T', business_id: 'b1', delivery_name: 'Cust', businesses: { name: 'Biz', country_code: 'NG' } });
       if (t === 'businesses') return chain({ id: 'b1', name: 'Biz', country_code: 'NG', owner_id: 'own-1', metadata: {} });
       if (t === 'profiles') return chain({ email: 'own@t.com' });
@@ -125,17 +125,22 @@ describe('Stage3 email lifecycle', () => {
     }, { logPrefix: '[EMAIL-SUCCESS]', exactEntityFamily: true });
 
     expect(result.status).toBe('completed');
-    // sendEmail called (at least once for customer_order_email)
-    expect(mockSendEmail).toHaveBeenCalled();
-    // customer_order_email in manifest
+    expect(mockSendEmail).toHaveBeenCalledTimes(1);
+    expect(mockSendEmail).toHaveBeenCalledWith(expect.objectContaining({ to: 'cust@test.com' }));
     const initCall = (sb.rpc as any).mock.calls.find((c: any) => c[0] === 'initialize_terminal_effects');
     expect(initCall[1].p_effect_keys).toContain('customer_order_email');
-    // complete_external_effect called (success)
-    const completeCalls = (sb.rpc as any).mock.calls.filter((c: any) => c[0] === 'complete_external_effect');
-    expect(completeCalls.length).toBeGreaterThanOrEqual(1);
-    // fail_external_effect NOT called for this effect
-    const failCalls = (sb.rpc as any).mock.calls.filter((c: any) => c[0] === 'fail_external_effect');
-    expect(failCalls.length).toBe(0);
+    const completeCalls = (sb.rpc as any).mock.calls.filter(
+      (call: any) => call[0] === 'complete_external_effect' && call[1]?.p_effect_key === 'customer_order_email',
+    );
+    const failCalls = (sb.rpc as any).mock.calls.filter(
+      (call: any) => call[0] === 'fail_external_effect' && call[1]?.p_effect_key === 'customer_order_email',
+    );
+    const indeterminateCalls = (sb.rpc as any).mock.calls.filter(
+      (call: any) => call[0] === 'mark_effect_indeterminate' && call[1]?.p_effect_key === 'customer_order_email',
+    );
+    expect(completeCalls).toHaveLength(1);
+    expect(failCalls).toHaveLength(0);
+    expect(indeterminateCalls).toHaveLength(0);
   });
 
   it('1B. email {success:false}: sendEmail called, mark_effect_indeterminate (NOT completed)', async () => {
@@ -151,11 +156,16 @@ describe('Stage3 email lifecycle', () => {
     }, { logPrefix: '[EMAIL-FAIL]', exactEntityFamily: true });
 
     expect(result.status).toBe('completed');
-    // sendEmail was invoked (at least once)
-    expect(mockSendEmail).toHaveBeenCalled();
-    // Production code throws on {success:false} → driveExternalEffect catches → mark_effect_indeterminate
-    const indCalls = (sb.rpc as any).mock.calls.filter((c: any) => c[0] === 'mark_effect_indeterminate');
-    expect(indCalls.length).toBeGreaterThanOrEqual(1);
+    expect(mockSendEmail).toHaveBeenCalledTimes(1);
+    expect(mockSendEmail).toHaveBeenCalledWith(expect.objectContaining({ to: 'cust@test.com' }));
+    const indCalls = (sb.rpc as any).mock.calls.filter(
+      (call: any) => call[0] === 'mark_effect_indeterminate' && call[1]?.p_effect_key === 'customer_order_email',
+    );
+    const completeCalls = (sb.rpc as any).mock.calls.filter(
+      (call: any) => call[0] === 'complete_external_effect' && call[1]?.p_effect_key === 'customer_order_email',
+    );
+    expect(indCalls).toHaveLength(1);
+    expect(completeCalls).toHaveLength(0);
   });
 
   it('1C. email THROWN: sendEmail called, mark_effect_indeterminate (NOT completed)', async () => {
@@ -171,11 +181,16 @@ describe('Stage3 email lifecycle', () => {
     }, { logPrefix: '[EMAIL-THROW]', exactEntityFamily: true });
 
     expect(result.status).toBe('completed');
-    // sendEmail was invoked (then threw)
-    expect(mockSendEmail).toHaveBeenCalled();
-    // Thrown → driveExternalEffect catch → mark_effect_indeterminate (not completed)
-    const indCalls = (sb.rpc as any).mock.calls.filter((c: any) => c[0] === 'mark_effect_indeterminate');
-    expect(indCalls.length).toBeGreaterThanOrEqual(1);
+    expect(mockSendEmail).toHaveBeenCalledTimes(1);
+    expect(mockSendEmail).toHaveBeenCalledWith(expect.objectContaining({ to: 'cust@test.com' }));
+    const indCalls = (sb.rpc as any).mock.calls.filter(
+      (call: any) => call[0] === 'mark_effect_indeterminate' && call[1]?.p_effect_key === 'customer_order_email',
+    );
+    const completeCalls = (sb.rpc as any).mock.calls.filter(
+      (call: any) => call[0] === 'complete_external_effect' && call[1]?.p_effect_key === 'customer_order_email',
+    );
+    expect(indCalls).toHaveLength(1);
+    expect(completeCalls).toHaveLength(0);
   });
 });
 
@@ -310,5 +325,28 @@ describe('Stage3 direct transfer effect suppression', () => {
     expect(frozen).toContain('customer_whatsapp');
     expect(frozen).toContain('owner_notif_inapp');
     expect(frozen).toContain('customer_order_email');
+
+
+  it('4. eligible non-direct Paystack payment still reaches Save Card CTA', async () => {
+    vi.resetModules();
+    mockResolveByChForBiz.mockResolvedValue({ channel: { id: 'ch-pay', channel_type: 'shared' }, sender: sharedSender });
+    mockResolveByBiz.mockResolvedValue(null);
+    mockSendEmail.mockResolvedValue({ success: true });
+
+    const { sendProactiveConfirmation } = await import('@/lib/payments/send-confirmation');
+    const sb = mockSb('ch-pay', 'o-pay', 'p-pay', {
+      gateway: 'paystack',
+      metadata: { _inbound_channel_id: 'ch-pay', _confirmation_origin: 'whatsapp' },
+      authorityVersion: 1,
+    });
+
+    const result = await sendProactiveConfirmation(sb, {
+      id: 'p-pay', amount: 5000, booking_id: null, invoice_id: null, campaign_id: null,
+      order_id: 'o-pay', payment_authority_version: 1,
+    }, { logPrefix: '[NON-DIRECT-SAVE-CARD]', exactEntityFamily: true });
+
+    expect(result.status).toBe('completed');
+    expect(effects.savedCardOffered).toBe(true);
+  });
   });
 });
