@@ -310,6 +310,11 @@ describe('Stage3 direct transfer effect suppression', () => {
     // ZERO owner WA
     expect(effects.ownerWaSent).toBe(false);
 
+    // Exactly one email exists and it is the customer confirmation — no owner email emission.
+    expect(mockSendEmail).toHaveBeenCalledTimes(1);
+    expect(mockSendEmail).toHaveBeenCalledWith(expect.objectContaining({ to: 'cust@test.com' }));
+    expect(mockSendEmail.mock.calls.some((call: any[]) => call[0]?.to === 'own@t.com')).toBe(false);
+
     // ZERO SaveCard
     expect(effects.savedCardOffered).toBe(false);
 
