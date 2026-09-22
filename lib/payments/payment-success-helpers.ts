@@ -6,7 +6,7 @@
  * helpers to prove the production orchestration behavior.
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
-import type { ReconciliationResult } from './reconcile';
+import type { ReconciliationResult, ReconciliationSource } from './reconcile';
 
 export interface ReconcileConfirmationResult {
   confirmed: boolean;
@@ -26,7 +26,7 @@ export interface ReconcileConfirmationResult {
 export async function reconcileAndConfirm(
   supabase: SupabaseClient,
   paymentId: string,
-  reconcilePayment: (supabase: SupabaseClient, paymentId: string, source: string) => Promise<ReconciliationResult>,
+  reconcilePayment: (supabase: SupabaseClient, paymentId: string, source: ReconciliationSource) => Promise<ReconciliationResult>,
 ): Promise<ReconcileConfirmationResult> {
   const result = await reconcilePayment(supabase, paymentId, 'payment_success');
 
