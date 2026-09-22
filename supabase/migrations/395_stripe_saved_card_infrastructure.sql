@@ -144,7 +144,8 @@ ALTER TABLE payment_saved_card_offers
     REFERENCES saved_payment_methods(id) ON DELETE SET NULL,
   ADD COLUMN IF NOT EXISTS committed_card_display TEXT,
   ADD COLUMN IF NOT EXISTS committed_credential_version INT,
-  ADD COLUMN IF NOT EXISTS activation_prompt_sent_at TIMESTAMPTZ;
+  ADD COLUMN IF NOT EXISTS activation_prompt_sent_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS activation_send_started_at TIMESTAMPTZ;
 
 -- ═══════════════════════════════════════════════════════
 -- 5. Add credential_version to saved_payment_methods
@@ -565,11 +566,14 @@ DECLARE
   v_offer payment_saved_card_offers%ROWTYPE;
 BEGIN
   -- Claim one unsent activation offer atomically
+  -- R3-B1: Exclude offers where send was already started (activation_send_started_at IS NOT NULL)
+  -- Even if completion failed, a started send must not be auto-retried
   SELECT * INTO v_offer
   FROM payment_saved_card_offers
   WHERE state = 'accepted'
     AND consent_source = 'provider_checkout'
     AND activation_prompt_sent_at IS NULL
+    AND activation_send_started_at IS NULL
     AND (claim_token IS NULL OR claim_expires_at < NOW())
   ORDER BY created_at ASC LIMIT 1
   FOR UPDATE SKIP LOCKED;
@@ -630,12 +634,30 @@ BEGIN
 END;
 $$;
 
+-- Mark activation send started (before provider call) — fenced by claim token
+CREATE OR REPLACE FUNCTION mark_activation_send_started(
+  p_offer_id UUID,
+  p_claim_token UUID
+) RETURNS BOOLEAN
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+BEGIN
+  UPDATE payment_saved_card_offers
+  SET activation_send_started_at = NOW()
+  WHERE id = p_offer_id
+    AND claim_token = p_claim_token
+    AND activation_send_started_at IS NULL;
+  RETURN FOUND;
+END;
+$$;
+
 REVOKE ALL ON FUNCTION claim_activation_delivery(INT) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION claim_activation_delivery(INT) TO service_role;
 REVOKE ALL ON FUNCTION complete_activation_delivery(UUID, UUID) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION complete_activation_delivery(UUID, UUID) TO service_role;
 REVOKE ALL ON FUNCTION release_activation_delivery(UUID, UUID) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION release_activation_delivery(UUID, UUID) TO service_role;
+REVOKE ALL ON FUNCTION mark_activation_send_started(UUID, UUID) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION mark_activation_send_started(UUID, UUID) TO service_role;
 
 REVOKE ALL ON FUNCTION claim_stale_customer_provisioning(TEXT, INT, INT) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION claim_stale_customer_provisioning(TEXT, INT, INT) TO service_role;

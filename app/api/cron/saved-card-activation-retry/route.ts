@@ -131,7 +131,21 @@ export async function GET(request: NextRequest) {
         }
       }
 
-      // Send activation prompt
+      // R3-B1: Durable outbound-effect lifecycle
+      // Step 1: Mark send started BEFORE provider call — prevents auto-retry after success
+      const { data: sendStarted } = await supabase.rpc('mark_activation_send_started', {
+        p_offer_id: offerId, p_claim_token: claimToken,
+      });
+      if (!sendStarted) {
+        // Could not mark send started — release claim
+        await supabase.rpc('release_activation_delivery', {
+          p_offer_id: offerId, p_claim_token: claimToken,
+        });
+        errors++;
+        continue;
+      }
+
+      // Step 2: Send activation prompt
       const cardDisplay = (offer.card_display as string) || 'your card';
       const activationMsg = (offer.offer_type as string) === 'save'
         ? `🔒 You chose to save ${cardDisplay} for faster checkout. Create your 4-digit *Waaiio PIN* to activate it.`
@@ -142,7 +156,11 @@ export async function GET(request: NextRequest) {
       const sendResult = await sender.sendText({ to: customerPhone, text: activationMsg });
 
       if (!sendResult?.success) {
-        // Send failed — release claim for retry
+        // Send FAILED — clear send_started_at to allow retry (send did not succeed)
+        await supabase.from('payment_saved_card_offers')
+          .update({ activation_send_started_at: null })
+          .eq('id', offerId)
+          .eq('claim_token', claimToken);
         await supabase.rpc('release_activation_delivery', {
           p_offer_id: offerId, p_claim_token: claimToken,
         });
@@ -150,17 +168,19 @@ export async function GET(request: NextRequest) {
         continue;
       }
 
-      // R2-B4: Check durable completion — fenced by claim token
+      // Step 3: Send SUCCEEDED — mark durable completion
       const { data: completed } = await supabase.rpc('complete_activation_delivery', {
         p_offer_id: offerId, p_claim_token: claimToken,
       });
 
       if (!completed) {
-        // Completion write failed — send succeeded but state not persisted
-        // This is safe: the message was sent, and the claim will expire,
-        // allowing re-read to find activation_prompt_sent_at was not set.
-        // A retry may send a duplicate, but the PIN session is idempotent.
-        logger.warn('[ACTIVATION-RETRY] Completion write failed after successful send', { offerId });
+        // R3-B1: Send succeeded but durable completion failed.
+        // activation_send_started_at is set → offer will NOT be auto-claimed again.
+        // The offer is in a non-retryable ambiguous state.
+        // Reconciliation/manual repair must finish the state later.
+        logger.error('[ACTIVATION-RETRY] AMBIGUOUS: send succeeded but completion write failed — NOT auto-retryable', { offerId });
+        // Do NOT release claim — let it expire naturally. The offer won't be reclaimed
+        // because activation_send_started_at IS NOT NULL blocks the claim RPC.
         errors++;
         continue;
       }

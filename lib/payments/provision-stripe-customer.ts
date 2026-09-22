@@ -142,7 +142,7 @@ export async function provisionStripeCustomer(
       return await createAndConfirmStripeCustomer(supabase, operationId, canonicalPhone, scope, idempotencyKey, emailAlias);
     }
 
-    // Dispatched (stale) → synchronous recovery
+    // Dispatched (stale) → synchronous recovery with claim/lease fencing
     if (row.current_state === 'dispatched') {
       const dispatchedAt = row.dispatched_at ? new Date(row.dispatched_at as string).getTime() : 0;
       const staleThreshold = 2 * 60 * 1000; // 2 minutes
@@ -164,10 +164,45 @@ export async function provisionStripeCustomer(
         return null;
       }
 
-      // Stale → recovery
-      return await recoverStaleCustomerProvisioning(
+      // R3-B2: Acquire the same claim/lease as the cron before doing stale recovery
+      // This prevents cron and sync from recovering the same row concurrently
+      const { data: claimResult, error: claimErr } = await supabase.rpc('claim_stale_customer_provisioning', {
+        p_gateway: gateway,
+        p_stale_minutes: 2, // sync uses shorter stale threshold
+        p_lease_seconds: 120,
+      });
+
+      if (claimErr || !claimResult) {
+        // Another worker owns this row OR no stale rows exist — fail closed
+        return null;
+      }
+
+      const claim = claimResult as Record<string, unknown>;
+      // Verify we claimed the row we expected (same operation_id)
+      if (claim.operation_id !== row.operation_id) {
+        // Claimed a different row — release and fail closed for our target
+        await supabase.rpc('complete_customer_recovery', {
+          p_operation_id: claim.operation_id as string,
+          p_claim_token: claim.claim_token as string,
+          p_new_state: 'dispatched',
+        });
+        return null;
+      }
+
+      // We own the claim — perform recovery
+      const recoveryResult = await recoverStaleCustomerProvisioning(
         supabase, row.operation_id as string, canonicalPhone, scope, idempotencyKey, emailAlias,
       );
+
+      // Release claim (recovery may have already confirmed via confirm_customer_provisioning)
+      await supabase.rpc('complete_customer_recovery', {
+        p_operation_id: claim.operation_id as string,
+        p_claim_token: claim.claim_token as string,
+        p_new_state: recoveryResult ? 'provider_confirmed' : 'dispatched',
+        p_provider_customer_id: recoveryResult?.customerId || null,
+      });
+
+      return recoveryResult;
     }
 
     return null;
