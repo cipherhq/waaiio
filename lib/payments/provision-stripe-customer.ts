@@ -189,18 +189,24 @@ export async function provisionStripeCustomer(
         return null;
       }
 
-      // We own the claim — perform recovery
+      // We own the claim — perform recovery (all mutations fenced by claim token)
       const recoveryResult = await recoverStaleCustomerProvisioning(
-        supabase, row.operation_id as string, canonicalPhone, scope, idempotencyKey, emailAlias,
+        supabase, row.operation_id as string, claim.claim_token as string,
+        canonicalPhone, scope, idempotencyKey, emailAlias,
       );
-
-      // Release claim (recovery may have already confirmed via confirm_customer_provisioning)
-      await supabase.rpc('complete_customer_recovery', {
-        p_operation_id: claim.operation_id as string,
-        p_claim_token: claim.claim_token as string,
-        p_new_state: recoveryResult ? 'provider_confirmed' : 'dispatched',
-        p_provider_customer_id: recoveryResult?.customerId || null,
-      });
+      // Recovery already used complete_customer_recovery internally with the claim token.
+      // If recovery returned null and didn't transition, release the claim for next attempt.
+      if (!recoveryResult) {
+        // Re-read to check if recovery already transitioned the state
+        const { data: postRecovery } = await supabase
+          .from('provider_customer_identities')
+          .select('provisioning_state, provider_customer_id')
+          .eq('id', row.operation_id as string)
+          .single();
+        if (postRecovery?.provisioning_state === 'provider_confirmed' && postRecovery.provider_customer_id) {
+          return { customerId: postRecovery.provider_customer_id };
+        }
+      }
 
       return recoveryResult;
     }
@@ -259,9 +265,15 @@ async function createAndConfirmStripeCustomer(
   }
 }
 
+/**
+ * Recover a stale dispatched Customer provisioning row.
+ * R4-B2: ALL mutations are fenced by the recovery claim token.
+ * Uses complete_customer_recovery RPC, NOT unfenced confirm_customer_provisioning.
+ */
 async function recoverStaleCustomerProvisioning(
   supabase: SupabaseClient,
   operationId: string,
+  claimToken: string,
   canonicalPhone: string,
   scope: string,
   idempotencyKey: string,
@@ -282,15 +294,17 @@ async function recoverStaleCustomerProvisioning(
     });
 
     if (candidates.length === 1) {
-      // Exactly one match → bind
+      // Exactly one match → bind through fenced completion
       const customerId = candidates[0].id as string;
-      const { data: confirmed } = await supabase.rpc('confirm_customer_provisioning', {
-        p_id: operationId,
+      const { data: confirmed } = await supabase.rpc('complete_customer_recovery', {
+        p_operation_id: operationId,
+        p_claim_token: claimToken,
         p_provider_customer_id: customerId,
+        p_new_state: 'provider_confirmed',
       });
       if (confirmed) return { customerId };
 
-      // CAS failed — re-read
+      // Claim token lost/expired — fail closed, re-read
       const { data: reread } = await supabase
         .from('provider_customer_identities')
         .select('provider_customer_id, provisioning_state')
@@ -304,15 +318,40 @@ async function recoverStaleCustomerProvisioning(
 
     if (candidates.length === 0) {
       // Zero matches → replay create with same idempotency key
-      return await createAndConfirmStripeCustomer(supabase, operationId, canonicalPhone, scope, idempotencyKey, emailAlias);
+      const result = await stripeRequest('/customers', {
+        email: emailAlias,
+        'metadata[waaiio_phone]': canonicalPhone,
+        'metadata[provider_scope]': scope,
+      }, idempotencyKey);
+
+      if (result.id && typeof result.id === 'string') {
+        // Confirm through fenced completion
+        const { data: confirmed } = await supabase.rpc('complete_customer_recovery', {
+          p_operation_id: operationId,
+          p_claim_token: claimToken,
+          p_provider_customer_id: result.id,
+          p_new_state: 'provider_confirmed',
+        });
+        if (confirmed) return { customerId: result.id };
+
+        // Claim lost — re-read
+        const { data: reread } = await supabase
+          .from('provider_customer_identities')
+          .select('provider_customer_id')
+          .eq('id', operationId)
+          .single();
+        if (reread?.provider_customer_id) return { customerId: reread.provider_customer_id };
+      }
+      return null;
     }
 
-    // Multiple matches → fail closed, mark failed
-    await supabase
-      .from('provider_customer_identities')
-      .update({ provisioning_state: 'failed', error_detail: `multiple_candidates:${candidates.length}` })
-      .eq('id', operationId)
-      .eq('provisioning_state', 'dispatched');
+    // Multiple matches → fail closed through fenced completion
+    await supabase.rpc('complete_customer_recovery', {
+      p_operation_id: operationId,
+      p_claim_token: claimToken,
+      p_new_state: 'failed',
+      p_error: `multiple_candidates:${candidates.length}`,
+    });
     logger.error('[STRIPE-CUSTOMER] Multiple Stripe Customers found — review required', {
       phone: canonicalPhone, scope, count: candidates.length,
     });
