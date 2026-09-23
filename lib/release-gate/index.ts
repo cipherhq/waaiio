@@ -3,10 +3,12 @@
  *
  * This module provides the executable release-safety infrastructure:
  *
- * - types.ts          — Schema definitions (baseline, manifest, diff, certificate)
+ * - types.ts              — Schema definitions (baseline, manifest, diff, certificate)
  * - invariant-registry.ts — Machine-readable invariant + protected object registry
  * - baseline-capture.ts   — Captures DB catalog state from a live database
  * - diff-engine.ts        — Compares baselines, classifies differences
+ * - sha-guard.ts          — Exact-SHA freshness and stale-evidence rejection
+ * - gate.ts               — Gate orchestrator (BEFORE → CANDIDATE → AFTER)
  * - migration-lint.ts     — Static analysis of migration files
  * - certificate.ts        — Generates release certificates
  *
@@ -18,6 +20,8 @@
  * - lib/__tests__/release-gate-diff-engine.test.ts       — Diff engine (synthetic baselines)
  * - lib/__tests__/release-gate-invariants-db.test.ts     — DB invariants (real PostgreSQL)
  * - lib/__tests__/release-gate-migration-lint.test.ts    — Migration lint
+ * - lib/__tests__/release-gate-sha-guard.test.ts         — SHA freshness + stale evidence
+ * - lib/__tests__/release-gate-orchestration.test.ts     — Full 3-phase gate orchestration
  *
  * @see RELEASE_GATE_V2.md
  */
@@ -57,5 +61,13 @@ export {
 
 export { captureBaseline } from './baseline-capture';
 export { computeStateDiff } from './diff-engine';
+export {
+  validateBaselineSha,
+  validateDiffShas,
+  validateCertificateSha,
+  validateEvidenceChain,
+} from './sha-guard';
+export { executeGate } from './gate';
+export type { GateResult, GateInput } from './gate';
 export { lintMigration, lintMigrationDirectory } from './migration-lint';
 export { generateCertificate, formatCertificate } from './certificate';

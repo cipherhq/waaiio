@@ -238,6 +238,18 @@ function checkProtectedObjects(dbUrl: string): InvariantResult[] {
 
       const [, schema, name] = match;
 
+      // Validate identifiers are safe (alphanumeric + underscore only)
+      if (!/^\w+$/.test(schema) || !/^\w+$/.test(name)) {
+        results.push({
+          invariant_id: 'DB-002',
+          description: `Protected object ${obj.identifier}: unsafe identifier characters`,
+          status: 'error',
+          evidence: `schema="${schema}" name="${name}" contain non-alphanumeric characters`,
+          critical: true,
+        });
+        continue;
+      }
+
       const query = `
         SELECT
           CASE WHEN p.prosecdef THEN 'definer' ELSE 'invoker' END AS security,
