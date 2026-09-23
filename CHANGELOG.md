@@ -3,6 +3,14 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-09-23 — Fix: saved-card reuse cold country cache crash (#373)
+
+### What changed
+- **`lib/bot/flows/shared/saved-card-flow.ts`**: `chargeSavedCard()` now resolves currency authoritatively from the `countries` table via the request Supabase client, instead of depending on the synchronous `getCurrencyCode()` module-global cache. Fails closed on DB error, missing/inactive country, or malformed currency — no provider dispatch or payment INSERT on resolution failure.
+- **Root cause**: On cold serverless instances, the country cache is empty and `getCurrencyCode()` throws. Ordinary payment checkout was already fixed (uses DB lookup); saved-card reuse had not adopted that pattern.
+- **Impact**: Fixes saved-card reuse charges crashing before provider dispatch.
+- **What could break**: Nothing — the only change is replacing the synchronous cache lookup with an authoritative DB query. Stripe/Paystack adapter behavior, PIN semantics, idempotency, 3DS, channel routing all unchanged.
+
 ## 2026-09-22 — Fix: P0 saved-card PIN session phone normalization (#370)
 
 ### What changed

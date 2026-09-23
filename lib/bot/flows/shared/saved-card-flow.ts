@@ -10,7 +10,49 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { FlowContext, PromptMessage, ValidationResult } from '../types';
 import { savedPaymentAdapter } from '@/lib/payments/saved-payment-adapter';
 import type { SavedPaymentDisplay, ChargeOutcome } from '@/lib/payments/saved-payment-adapter';
-import { formatCurrency, getCurrencyCode, type CountryCode } from '@/lib/constants';
+import { formatCurrency, type CountryCode } from '@/lib/constants';
+import { logger } from '@/lib/logger';
+
+/** Validate currency_code: non-empty, 3 uppercase letters (ISO 4217 canonical form) */
+function isValidCurrencyCode(code: unknown): code is string {
+  return typeof code === 'string' && /^[A-Z]{3}$/.test(code);
+}
+
+/**
+ * Resolve authoritative currency code from the countries table.
+ * Uses the request Supabase client — no dependency on module-global cache.
+ * Fails closed on DB error, missing/inactive country, or malformed currency.
+ */
+async function resolveAuthoritativeCurrency(
+  supabase: SupabaseClient,
+  countryCode: string,
+): Promise<string | null> {
+  try {
+    const { data: countryRow, error: countryErr } = await supabase
+      .from('countries')
+      .select('currency_code')
+      .eq('code', countryCode)
+      .eq('is_active', true)
+      .maybeSingle();
+
+    if (countryErr) {
+      logger.error('[SAVED-CARD] Country currency lookup failed — fail closed', { countryCode, countryErr });
+      return null;
+    }
+    if (!countryRow) {
+      logger.error('[SAVED-CARD] Country not found or inactive — fail closed', { countryCode });
+      return null;
+    }
+    if (!isValidCurrencyCode(countryRow.currency_code)) {
+      logger.error('[SAVED-CARD] Country has invalid currency_code — fail closed', { countryCode, currency: countryRow.currency_code });
+      return null;
+    }
+    return countryRow.currency_code;
+  } catch (err) {
+    logger.error('[SAVED-CARD] Country resolution threw — fail closed', { countryCode, err });
+    return null;
+  }
+}
 
 /**
  * Check for a saved payment method and build the offer prompt.
@@ -166,7 +208,22 @@ async function chargeSavedCard(
     clearPin?: boolean;
   },
 ): Promise<ValidationResult> {
-  const cc = (ctx.business?.country_code || 'NG') as CountryCode;
+  const cc = (ctx.business?.country_code || 'NG');
+
+  // Resolve currency authoritatively from DB — no module-global cache dependency.
+  // Fail closed: no provider dispatch or payment INSERT on resolution failure.
+  const currency = await resolveAuthoritativeCurrency(ctx.supabase, cc);
+  if (!currency) {
+    const clearPinData = opts.clearPin ? { _awaiting_card_pin: false } : {};
+    return {
+      valid: false,
+      data: {
+        ...clearPinData,
+        _saved_card_error: 'currency_resolution_failed',
+      },
+      errorMessage: 'We could not process your payment right now. Please try again.',
+    };
+  }
 
   // Use the stored authorization_email from the saved method (not session email).
   // The adapter resolves the email from the saved_payment_methods row.
@@ -175,7 +232,7 @@ async function chargeSavedCard(
     methodId,
     customerPhone: ctx.from,
     amount: opts.amount,
-    currency: getCurrencyCode(cc),
+    currency,
     email: '', // Adapter overrides with authorization_email from saved method
     reference: opts.reference,
     businessId: ctx.business!.id,
