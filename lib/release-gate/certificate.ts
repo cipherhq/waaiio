@@ -27,6 +27,12 @@ export function generateCertificate(opts: {
   preToCandidateDiff?: StateDiffResult;
   preToPostDiff?: StateDiffResult;
   migrationsApplied: string[];
+  /** Commit actually checked out and tested */
+  testedCommitSha?: string;
+  /** GitHub's synthetic merge SHA (PR events only) */
+  mergeSha?: string;
+  /** Certificate kind — determines scope derivation */
+  kind?: ReleaseCertificate['kind'];
 }): ReleaseCertificate {
   const {
     releaseSha,
@@ -37,6 +43,9 @@ export function generateCertificate(opts: {
     preToCandidateDiff,
     preToPostDiff,
     migrationsApplied,
+    testedCommitSha,
+    mergeSha,
+    kind = 'release_candidate',
   } = opts;
 
   // Compute invariant summary from the most recent baseline
@@ -76,10 +85,43 @@ export function generateCertificate(opts: {
 
   const status = blockReasons.length > 0 ? 'BLOCKED' : 'PENDING_REVIEW';
 
+  // Derive scope based on certificate kind
+  const baseline = candidateBaseline || preBaseline;
+  const scope = kind === 'self_test'
+    ? {
+        // Self-test: no real evidence for any surface
+        functions: false,
+        function_grants: false,
+        table_rls: false,
+        rls_policies: false,
+        constraints: false,
+        triggers: false,
+        extensions: false,
+        cron_jobs: false,
+        invariants: false,
+        journeys: false,
+      }
+    : {
+        // Release candidate / post-deployment: derive from baseline data
+        functions: baseline.functions.length > 0,
+        function_grants: baseline.function_grants.length > 0,
+        table_rls: baseline.table_rls.length > 0,
+        rls_policies: false,   // Phase 2
+        constraints: false,     // Phase 2
+        triggers: false,        // Phase 2
+        extensions: false,      // Phase 2
+        cron_jobs: false,       // Phase 2
+        invariants: baseline.invariant_results.length > 0,
+        journeys: false,        // Phase 2
+      };
+
   return {
     id: randomUUID(),
     issued_at: new Date().toISOString(),
     release_sha: releaseSha,
+    tested_commit_sha: testedCommitSha || null,
+    merge_sha: mergeSha || null,
+    kind,
     deployment_id: deploymentId || null,
     pre_deployment_baseline_id: preBaseline.id,
     candidate_baseline_id: candidateBaseline?.id || null,
@@ -88,19 +130,15 @@ export function generateCertificate(opts: {
     pre_to_candidate_diff: preToCandidateDiff || null,
     pre_to_post_diff: preToPostDiff || null,
     invariant_summary: invariantSummary,
+    invariant_details: invariantResults.map(r => ({
+      invariant_id: r.invariant_id,
+      description: r.description,
+      status: r.status,
+      evidence: r.evidence,
+      critical: r.critical,
+    })),
     journey_summary: journeySummary,
-    scope: {
-      functions: true,
-      function_grants: true,
-      table_rls: true,
-      rls_policies: false,   // Phase 2
-      constraints: false,     // Phase 2
-      triggers: false,        // Phase 2
-      extensions: false,      // Phase 2
-      cron_jobs: false,       // Phase 2
-      invariants: true,
-      journeys: false,        // Phase 2
-    },
+    scope,
     provider_checks: [],
     status,
     block_reasons: blockReasons,
@@ -117,13 +155,22 @@ export function generateCertificate(opts: {
 export function formatCertificate(cert: ReleaseCertificate): string {
   const lines: string[] = [];
 
+  const kindLabel = {
+    self_test: 'SELF-TEST (no real evidence)',
+    release_candidate: 'RELEASE CANDIDATE',
+    post_deployment: 'POST-DEPLOYMENT VERIFICATION',
+  }[cert.kind] || cert.kind;
+
   lines.push('═══════════════════════════════════════════════════════════════');
-  lines.push('RELEASE GATE V2 — RELEASE CERTIFICATE');
+  lines.push(`RELEASE GATE V2 — RELEASE CERTIFICATE [${kindLabel}]`);
   lines.push('═══════════════════════════════════════════════════════════════');
   lines.push('');
   lines.push(`Certificate ID:  ${cert.id}`);
   lines.push(`Issued:          ${cert.issued_at}`);
+  lines.push(`Kind:            ${kindLabel}`);
   lines.push(`Release SHA:     ${cert.release_sha}`);
+  lines.push(`Tested Commit:   ${cert.tested_commit_sha || 'N/A'}`);
+  lines.push(`Merge SHA:       ${cert.merge_sha || 'N/A'}`);
   lines.push(`Deployment:      ${cert.deployment_id || 'N/A'}`);
   lines.push(`Status:          ${cert.status}`);
   lines.push('');
@@ -158,6 +205,24 @@ export function formatCertificate(cert: ReleaseCertificate): string {
   lines.push('── Invariant Gate ──');
   lines.push(`Total: ${cert.invariant_summary.total}  Passed: ${cert.invariant_summary.passed}  Failed: ${cert.invariant_summary.failed}  Critical Failed: ${cert.invariant_summary.critical_failed}`);
   lines.push('');
+
+  if (cert.invariant_details && cert.invariant_details.length > 0) {
+    lines.push('── Invariant Details ──');
+    for (const inv of cert.invariant_details) {
+      const statusIcon = inv.status === 'pass' ? 'PASS' :
+        inv.status === 'fail' ? 'FAIL' :
+        inv.status === 'error' ? 'ERROR' :
+        inv.status === 'skip' ? 'SKIP' :
+        inv.status === 'not_applicable' ? 'N/A' : inv.status;
+      const criticalTag = inv.critical ? ' [CRITICAL]' : '';
+      const truncatedEvidence = inv.evidence.length > 120
+        ? inv.evidence.substring(0, 117) + '...'
+        : inv.evidence;
+      lines.push(`  ${inv.invariant_id}: ${statusIcon}${criticalTag} — ${inv.description}`);
+      lines.push(`    Evidence: ${truncatedEvidence}`);
+    }
+    lines.push('');
+  }
 
   lines.push('── Journey Gate ──');
   lines.push(`Total: ${cert.journey_summary.total}  Passed: ${cert.journey_summary.passed}  Failed: ${cert.journey_summary.failed}`);

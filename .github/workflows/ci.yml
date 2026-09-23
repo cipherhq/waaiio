@@ -75,7 +75,7 @@ jobs:
 
   # ── Release Gate V2 ──
   release-gate:
-    name: Release Gate V2 (migration lint, invariant tests, certificate)
+    name: "Release Gate V2 Phase 1 — Tooling Self-Test"
     runs-on: ubuntu-latest
 
     env:
@@ -90,13 +90,32 @@ jobs:
       SENTRY_DSN: https://dummy@sentry.io/0
       SENTRY_ORG: dummy
       SENTRY_PROJECT: dummy
-      # Bind certificate to exact PR head SHA, not synthetic merge SHA
-      RELEASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+      # SHA provenance — truthful recording of what was tested
+      # SOURCE_HEAD_SHA: the PR author's head SHA (or push SHA)
+      # MERGE_SHA: GitHub's synthetic merge SHA for PR events, same as SOURCE_HEAD_SHA for push
+      SOURCE_HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+      MERGE_SHA: ${{ github.sha }}
       BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || (github.event_name == 'push' && github.event.before || github.sha) }}
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Checkout exact PR head (not merge commit)
+        if: github.event_name == 'pull_request'
+        run: git checkout ${{ github.event.pull_request.head.sha }}
+
+      - name: Record execution provenance
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "TESTED_COMMIT_SHA=${{ github.event.pull_request.head.sha }}" >> "$GITHUB_ENV"
+          else
+            echo "TESTED_COMMIT_SHA=${{ github.sha }}" >> "$GITHUB_ENV"
+          fi
+          echo "Provenance:"
+          echo "  TESTED_COMMIT_SHA=${TESTED_COMMIT_SHA:-${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}}"
+          echo "  SOURCE_HEAD_SHA=${{ env.SOURCE_HEAD_SHA }}"
+          echo "  MERGE_SHA=${{ env.MERGE_SHA }}"
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -107,38 +126,82 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Run migration lint (candidate migrations only)
+      - name: Run migration lint (immutability + candidate lint)
         run: |
           set -euo pipefail
 
-          # For push events to main (post-merge), skip lint — already merged
-          if [ "${{ github.event_name }}" = "push" ] && [ "${{ github.ref }}" = "refs/heads/main" ]; then
-            echo "Post-merge push to main — migration lint skipped (already merged)."
+          # Determine base SHA and event context
+          BASE_SHA="${{ env.BASE_SHA }}"
+          EVENT="${{ github.event_name }}"
+
+          # For push-to-main: defense-in-depth using before..after
+          if [ "$EVENT" = "push" ] && [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            echo "Post-merge push to main — defense-in-depth migration check"
+            BEFORE_SHA="${{ github.event.before }}"
+            if [ "$BEFORE_SHA" = "0000000000000000000000000000000000000000" ]; then
+              echo "Initial push — no base to compare. Skipping."
+              exit 0
+            fi
+            git fetch --depth=1 origin "$BEFORE_SHA" 2>/dev/null || true
+            BASE_SHA="$BEFORE_SHA"
+          fi
+
+          echo "Fetching base ref $BASE_SHA..."
+          git fetch --depth=1 origin "$BASE_SHA"
+
+          echo "Computing migration diff (base: $BASE_SHA)..."
+          MIGRATION_DIFF=$(git diff --name-status "$BASE_SHA" -- 'supabase/migrations/*.sql')
+
+          if [ -z "$MIGRATION_DIFF" ]; then
+            echo "No migration changes — lint passes."
             exit 0
           fi
 
-          # For PR events, use the base SHA that actions/checkout has available
-          BASE_SHA="${{ env.BASE_SHA }}"
-          echo "Fetching base ref $BASE_SHA for diff..."
-          git fetch --depth=1 origin "$BASE_SHA"
+          echo "Migration changes detected:"
+          echo "$MIGRATION_DIFF"
 
-          CANDIDATE_MIGRATIONS=$(git diff --name-only --diff-filter=A "$BASE_SHA" -- 'supabase/migrations/*.sql' | xargs -I{} basename {} 2>/dev/null)
-          if [ -z "$CANDIDATE_MIGRATIONS" ]; then
-            echo "No new candidate migrations — lint passes (nothing to check)."
-          else
-            echo "Candidate migrations: $CANDIDATE_MIGRATIONS"
-            npx tsx -e "
-              import { lintMigrationDirectory } from './lib/release-gate/migration-lint';
-              const candidates = '${CANDIDATE_MIGRATIONS}'.split('\n').filter(Boolean);
-              const violations = lintMigrationDirectory('supabase/migrations', candidates);
-              const errors = violations.filter(v => v.severity === 'error');
-              for (const v of violations) {
-                console.log(\`\${v.severity === 'error' ? '❌' : '⚠️'} \${v.file}:\${v.line} [\${v.rule}] \${v.message}\`);
-              }
-              if (errors.length > 0) { console.log('BLOCKED'); process.exit(1); }
-              else { console.log('✅ No violations in candidate migrations.'); }
-            "
+          # Check for modifications, deletions, renames of existing migrations — BLOCK
+          MODIFIED=$(echo "$MIGRATION_DIFF" | grep -E '^M\t' || true)
+          DELETED=$(echo "$MIGRATION_DIFF" | grep -E '^D\t' || true)
+          RENAMED=$(echo "$MIGRATION_DIFF" | grep -E '^R' || true)
+
+          if [ -n "$MODIFIED" ]; then
+            echo "❌ BLOCKED: Historical migration(s) MODIFIED — immutable migrations must not be changed:"
+            echo "$MODIFIED"
+            exit 1
           fi
+
+          if [ -n "$DELETED" ]; then
+            echo "❌ BLOCKED: Historical migration(s) DELETED — immutable migrations must not be removed:"
+            echo "$DELETED"
+            exit 1
+          fi
+
+          if [ -n "$RENAMED" ]; then
+            echo "❌ BLOCKED: Historical migration(s) RENAMED — immutable migrations must not be renamed:"
+            echo "$RENAMED"
+            exit 1
+          fi
+
+          # New migrations — lint them
+          NEW_MIGRATIONS=$(echo "$MIGRATION_DIFF" | grep -E '^A\t' | awk '{print $2}' | xargs -I{} basename {} 2>/dev/null || true)
+          if [ -z "$NEW_MIGRATIONS" ]; then
+            echo "No new migrations to lint."
+            exit 0
+          fi
+
+          echo "New candidate migrations: $NEW_MIGRATIONS"
+          npx tsx -e "
+            import { lintMigrationDirectory } from './lib/release-gate/migration-lint';
+            const candidates = '${NEW_MIGRATIONS}'.split('\n').filter(Boolean);
+            const violations = lintMigrationDirectory('supabase/migrations', candidates);
+            const errors = violations.filter(v => v.severity === 'error');
+            for (const v of violations) {
+              console.log(\`\${v.severity === 'error' ? '❌' : '⚠️'} \${v.file}:\${v.line} [\${v.rule}] \${v.message}\`);
+            }
+            if (errors.length > 0) { console.log('BLOCKED'); process.exit(1); }
+            else { console.log('✅ No violations in candidate migrations.'); }
+          "
 
       - name: Run release gate tests
         run: npx vitest run lib/__tests__/release-gate-diff-engine.test.ts lib/__tests__/release-gate-migration-lint.test.ts lib/__tests__/release-gate-sha-guard.test.ts lib/__tests__/release-gate-orchestration.test.ts
@@ -151,9 +214,11 @@ jobs:
           import { writeFileSync } from 'fs';
 
           const NOW = new Date();
-          const sha = process.env.RELEASE_SHA || 'unknown';
+          const testedSha = process.env.TESTED_COMMIT_SHA || 'unknown';
+          const sourceHeadSha = process.env.SOURCE_HEAD_SHA || testedSha;
+          const mergeSha = process.env.MERGE_SHA || testedSha;
           const pre = {
-            id: 'ci-synthetic-pre', captured_at: NOW.toISOString(), git_sha: sha,
+            id: 'ci-synthetic-pre', captured_at: NOW.toISOString(), git_sha: testedSha,
             phase: 'pre_deployment' as const, label: 'SYNTHETIC SELF-TEST — no real DB evidence',
             functions: [], function_grants: [], table_rls: [], rls_policies: [],
             extensions: [], constraints: [], triggers: [], cron_jobs: [],
@@ -161,32 +226,38 @@ jobs:
           };
           const cand = { ...pre, id: 'ci-synthetic-cand', phase: 'candidate' as const, label: 'SYNTHETIC SELF-TEST — no real DB evidence' };
           const result = executeGate({
-            releaseSha: sha, productionSha: sha,
+            releaseSha: testedSha, productionSha: testedSha,
             preBaseline: pre, candidateBaseline: cand, now: NOW,
+            kind: 'self_test',
+            testedCommitSha: testedSha,
+            mergeSha: mergeSha,
           });
-          // Override scope.invariants to false for synthetic baselines (no real evidence)
-          (result.certificate as any).scope.invariants = false;
-          const certText = '⚠️  SYNTHETIC SELF-TEST — no real DB evidence\\n\\n' + formatCertificate(result.certificate);
+          const certText = formatCertificate(result.certificate);
           writeFileSync('release-certificate.txt', certText);
           writeFileSync('release-certificate.json', JSON.stringify(result.certificate, null, 2));
           console.log(certText);
           "
 
-      - name: Verify certificate SHA matches PR head
+      - name: Verify certificate SHA matches TESTED_COMMIT_SHA
         run: |
           set -euo pipefail
-          EXPECTED_SHA="${{ env.RELEASE_SHA }}"
+          EXPECTED_SHA="${{ env.TESTED_COMMIT_SHA }}"
           CERT_SHA=$(node -e "const c = require('./release-certificate.json'); console.log(c.release_sha)")
+          CERT_TESTED=$(node -e "const c = require('./release-certificate.json'); console.log(c.tested_commit_sha)")
           if [ "$CERT_SHA" != "$EXPECTED_SHA" ]; then
-            echo "FATAL: Certificate release_sha ($CERT_SHA) does not match expected PR head SHA ($EXPECTED_SHA)"
+            echo "FATAL: Certificate release_sha ($CERT_SHA) does not match TESTED_COMMIT_SHA ($EXPECTED_SHA)"
             exit 1
           fi
-          echo "✅ Certificate release_sha matches expected SHA: $CERT_SHA"
+          if [ "$CERT_TESTED" != "$EXPECTED_SHA" ]; then
+            echo "FATAL: Certificate tested_commit_sha ($CERT_TESTED) does not match TESTED_COMMIT_SHA ($EXPECTED_SHA)"
+            exit 1
+          fi
+          echo "✅ Certificate provenance verified: release_sha=$CERT_SHA tested_commit_sha=$CERT_TESTED"
 
       - name: Upload release certificate artifact
         uses: actions/upload-artifact@v4
         with:
-          name: release-certificate
+          name: release-gate-self-test-certificate
           path: |
             release-certificate.txt
             release-certificate.json

@@ -148,8 +148,8 @@ export interface InvariantResult {
   invariant_id: string;
   /** Human-readable description */
   description: string;
-  /** Pass/fail/skip/error */
-  status: 'pass' | 'fail' | 'skip' | 'error';
+  /** Pass/fail/skip/error/not_applicable */
+  status: 'pass' | 'fail' | 'skip' | 'error' | 'not_applicable';
   /** Evidence details (query result, error message, etc.) */
   evidence: string;
   /** Is this invariant critical (blocks release if failed)? */
@@ -295,6 +295,12 @@ export interface ReleaseCertificate {
   issued_at: string;
   /** Release SHA */
   release_sha: string;
+  /** Commit actually checked out and tested */
+  tested_commit_sha: string | null;
+  /** GitHub's synthetic merge SHA (PR events only) */
+  merge_sha: string | null;
+  /** Certificate kind */
+  kind: 'self_test' | 'release_candidate' | 'post_deployment';
   /** Deployment identifier (e.g. Vercel deployment ID) */
   deployment_id: string | null;
 
@@ -317,6 +323,15 @@ export interface ReleaseCertificate {
     failed: number;
     critical_failed: number;
   };
+
+  /** Individual invariant results for disclosure */
+  invariant_details: Array<{
+    invariant_id: string;
+    description: string;
+    status: 'pass' | 'fail' | 'skip' | 'error' | 'not_applicable';
+    evidence: string;
+    critical: boolean;
+  }>;
 
   /** Journey gate */
   journey_summary: {

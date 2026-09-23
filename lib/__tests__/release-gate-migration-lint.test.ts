@@ -99,6 +99,46 @@ describe('ALTER FUNCTION does not trigger lint', () => {
   });
 });
 
+// ═══════════════════════════════════════════════════════════════════
+// R3 — Migration immutability concept tests
+// ═══════════════════════════════════════════════════════════════════
+
+describe('R3: Historical migration immutability', () => {
+  it('modified historical migration would be BLOCKED by CI (concept test)', () => {
+    // The CI workflow uses `git diff --name-status` to detect modifications.
+    // A modified migration (M status) is blocked BEFORE lint even runs.
+    // This test validates the concept by checking that the CI logic
+    // would produce a grep match for the M status.
+    const nameStatusOutput = 'M\tsupabase/migrations/001_initial.sql\nA\tsupabase/migrations/999_new.sql';
+    const modified = nameStatusOutput.split('\n').filter(l => /^M\t/.test(l));
+    expect(modified).toHaveLength(1);
+    expect(modified[0]).toContain('001_initial.sql');
+  });
+
+  it('deleted historical migration would be BLOCKED by CI (concept test)', () => {
+    const nameStatusOutput = 'D\tsupabase/migrations/001_initial.sql';
+    const deleted = nameStatusOutput.split('\n').filter(l => /^D\t/.test(l));
+    expect(deleted).toHaveLength(1);
+    expect(deleted[0]).toContain('001_initial.sql');
+  });
+
+  it('renamed historical migration would be BLOCKED by CI (concept test)', () => {
+    const nameStatusOutput = 'R100\tsupabase/migrations/001_old.sql\tsupabase/migrations/001_new.sql';
+    const renamed = nameStatusOutput.split('\n').filter(l => /^R/.test(l));
+    expect(renamed).toHaveLength(1);
+  });
+
+  it('added migration is NOT blocked by immutability check', () => {
+    const nameStatusOutput = 'A\tsupabase/migrations/999_new.sql';
+    const modified = nameStatusOutput.split('\n').filter(l => /^M\t/.test(l));
+    const deleted = nameStatusOutput.split('\n').filter(l => /^D\t/.test(l));
+    const renamed = nameStatusOutput.split('\n').filter(l => /^R/.test(l));
+    expect(modified).toHaveLength(0);
+    expect(deleted).toHaveLength(0);
+    expect(renamed).toHaveLength(0);
+  });
+});
+
 describe('Non-protected functions', () => {
   it('does not flag functions without digest()', () => {
     const sql = `

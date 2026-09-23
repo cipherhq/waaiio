@@ -563,6 +563,90 @@ describe('Table RLS diff detects added/removed tables and force_rls changes', ()
 });
 
 // ═══════════════════════════════════════════════════════════════════
+// R3 BLOCKER 4 — Security-sensitive expected deltas
+// ═══════════════════════════════════════════════════════════════════
+
+describe('R3: Security-sensitive deltas require PENDING_MANUAL_REVIEW even with manifest', () => {
+  it('BLOCKS: PUBLIC EXECUTE grant added to protected RPC with manifest', () => {
+    const before = makeBaseline({ function_grants: [] });
+    const after = makeBaseline({
+      git_sha: 'def456',
+      function_grants: [
+        { schema: 'public', function_name: 'accept_saved_card_offer', arg_types: 'uuid, text, text', grantee: 'anon', is_grantable: false },
+      ],
+    });
+    const manifest = makeManifest({
+      expected_changes: [{
+        category: 'grant',
+        object_id: 'public.accept_saved_card_offer(uuid, text, text)→anon',
+        change_type: 'added',
+        reason: 'Grant for anon access', owner_authorization: '#500',
+      }],
+    });
+    const diff = computeStateDiff(before, after, manifest);
+    expect(diff.verdict).toBe('BLOCKED');
+    expect(diff.block_reasons.some(r => r.includes('PENDING_MANUAL_REVIEW'))).toBe(true);
+    const entry = diff.entries.find(e => e.category === 'grant');
+    expect(entry!.classification).toBe('expected');
+    expect(entry!.critical).toBe(true);
+  });
+
+  it('BLOCKS: RLS true→false with manifest', () => {
+    const before = makeBaseline({
+      table_rls: [{ schema: 'public', table_name: 'payments', rls_enabled: true, force_rls: false }],
+    });
+    const after = makeBaseline({
+      git_sha: 'def456',
+      table_rls: [{ schema: 'public', table_name: 'payments', rls_enabled: false, force_rls: false }],
+    });
+    const manifest = makeManifest({
+      expected_changes: [{
+        category: 'rls',
+        object_id: 'public.payments',
+        change_type: 'modified',
+        field: 'rls_enabled',
+        expected_before: 'true',
+        expected_after: 'false',
+        reason: 'Disabling RLS for migration', owner_authorization: '#600',
+      }],
+    });
+    const diff = computeStateDiff(before, after, manifest);
+    expect(diff.verdict).toBe('BLOCKED');
+    expect(diff.block_reasons.some(r => r.includes('PENDING_MANUAL_REVIEW'))).toBe(true);
+    const entry = diff.entries.find(e => e.field === 'rls_enabled');
+    expect(entry!.classification).toBe('expected');
+    expect(entry!.critical).toBe(true);
+  });
+
+  it('BLOCKS: Required protected function removed with manifest', () => {
+    const before = makeBaseline({
+      functions: [makeFunction({
+        name: 'accept_saved_card_offer',
+        arg_types: 'uuid, text, text',
+      })],
+    });
+    const after = makeBaseline({
+      git_sha: 'def456',
+      functions: [],
+    });
+    const manifest = makeManifest({
+      expected_changes: [{
+        category: 'function',
+        object_id: 'public.accept_saved_card_offer(uuid, text, text)',
+        change_type: 'removed',
+        reason: 'Removing deprecated function', owner_authorization: '#700',
+      }],
+    });
+    const diff = computeStateDiff(before, after, manifest);
+    expect(diff.verdict).toBe('BLOCKED');
+    expect(diff.block_reasons.some(r => r.includes('PENDING_MANUAL_REVIEW'))).toBe(true);
+    const entry = diff.entries.find(e => e.field === 'existence' && e.after === 'absent');
+    expect(entry!.classification).toBe('expected');
+    expect(entry!.critical).toBe(true);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════
 // Clean release
 // ═══════════════════════════════════════════════════════════════════
 

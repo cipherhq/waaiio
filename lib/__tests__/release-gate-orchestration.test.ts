@@ -234,7 +234,7 @@ describe('TEST 5: Generic manifest cannot waive protected properties', () => {
 // ═══════════════════════════════════════════════════════════════════
 
 describe('TEST 6: Certificate scope declaration', () => {
-  it('certificate declares Phase 1 scope — unchecked surfaces are NOT claimed', () => {
+  it('certificate scope derived from baseline data — empty baselines get false', () => {
     const pre = makeBaseline({ id: 'pre', git_sha: 'prod-sha' });
     const cand = makeBaseline({
       id: 'cand', git_sha: 'rel-sha', phase: 'candidate',
@@ -244,11 +244,12 @@ describe('TEST 6: Certificate scope declaration', () => {
     });
     const result = executeGate({ releaseSha: 'rel-sha', productionSha: 'prod-sha', preBaseline: pre, candidateBaseline: cand, now: NOW });
     const scope = result.certificate.scope;
-    // Phase 1 checked surfaces
-    expect(scope.functions).toBe(true);
-    expect(scope.function_grants).toBe(true);
-    expect(scope.table_rls).toBe(true);
-    expect(scope.invariants).toBe(true); // true because invariant_results is non-empty
+    // Scope derived from baseline data: no functions/grants/rls in baseline → false
+    expect(scope.functions).toBe(false);
+    expect(scope.function_grants).toBe(false);
+    expect(scope.table_rls).toBe(false);
+    // invariants: true because invariant_results is non-empty
+    expect(scope.invariants).toBe(true);
     // Phase 2 NOT checked — certificate makes no claims
     expect(scope.rls_policies).toBe(false);
     expect(scope.constraints).toBe(false);
@@ -256,6 +257,23 @@ describe('TEST 6: Certificate scope declaration', () => {
     expect(scope.extensions).toBe(false);
     expect(scope.cron_jobs).toBe(false);
     expect(scope.journeys).toBe(false);
+  });
+
+  it('certificate scope is true for surfaces with data in baseline', () => {
+    const pre = makeBaseline({ id: 'pre', git_sha: 'prod-sha' });
+    const cand = makeBaseline({
+      id: 'cand', git_sha: 'rel-sha', phase: 'candidate',
+      functions: [makeFunction()],
+      function_grants: [{ schema: 'public', function_name: 'f', arg_types: 'uuid', grantee: 'service_role', is_grantable: false }],
+      table_rls: [{ schema: 'public', table_name: 't', rls_enabled: true, force_rls: false }],
+      invariant_results: allCriticalInvariantsPassing(),
+    });
+    const result = executeGate({ releaseSha: 'rel-sha', productionSha: 'prod-sha', preBaseline: pre, candidateBaseline: cand, now: NOW });
+    const scope = result.certificate.scope;
+    expect(scope.functions).toBe(true);
+    expect(scope.function_grants).toBe(true);
+    expect(scope.table_rls).toBe(true);
+    expect(scope.invariants).toBe(true);
   });
 
   it('certificate text includes scope section', () => {
@@ -345,6 +363,139 @@ describe('TEST 8: Phase mismatch blocks gate', () => {
     });
     expect(result.verdict).toBe('BLOCKED');
     expect(result.block_reasons.some(r => r.includes('phase mismatch'))).toBe(true);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// R3 TEST: Critical invariant with status 'skip' blocks gate
+// ═══════════════════════════════════════════════════════════════════
+
+describe('R3: Critical invariant with skip status blocks gate', () => {
+  it('blocks when critical invariant has status skip', () => {
+    const pre = makeBaseline({ id: 'pre', git_sha: 'prod-sha' });
+    const cand = makeBaseline({
+      id: 'cand', git_sha: 'rel-sha', phase: 'candidate',
+      invariant_results: [
+        ...allCriticalInvariantsPassing().filter(i => i.invariant_id !== 'DB-001'),
+        { invariant_id: 'DB-001', description: 'test', status: 'skip' as const, evidence: 'skipped', critical: true },
+      ],
+    });
+    const result = executeGate({
+      releaseSha: 'rel-sha', productionSha: 'prod-sha',
+      preBaseline: pre, candidateBaseline: cand, now: NOW,
+    });
+    expect(result.verdict).toBe('BLOCKED');
+    expect(result.block_reasons.some(r => r.includes('DB-001') && r.includes('skip'))).toBe(true);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// R3 TEST: Critical invariant missing from candidate blocks gate
+// ═══════════════════════════════════════════════════════════════════
+
+describe('R3: Critical invariant missing from candidate blocks gate', () => {
+  it('blocks when any critical invariant is absent from candidate', () => {
+    const pre = makeBaseline({ id: 'pre', git_sha: 'prod-sha' });
+    // Include all critical invariants EXCEPT DB-003
+    const partialInvariants = allCriticalInvariantsPassing().filter(i => i.invariant_id !== 'DB-003');
+    const cand = makeBaseline({
+      id: 'cand', git_sha: 'rel-sha', phase: 'candidate',
+      invariant_results: partialInvariants,
+    });
+    const result = executeGate({
+      releaseSha: 'rel-sha', productionSha: 'prod-sha',
+      preBaseline: pre, candidateBaseline: cand, now: NOW,
+    });
+    expect(result.verdict).toBe('BLOCKED');
+    expect(result.block_reasons.some(r => r.includes('DB-003') && r.includes('missing'))).toBe(true);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// R3 TEST: not_applicable invariant does NOT block but IS disclosed
+// ═══════════════════════════════════════════════════════════════════
+
+describe('R3: not_applicable invariant does not block but is disclosed', () => {
+  it('passes when critical invariant is not_applicable, disclosed in certificate', () => {
+    const pre = makeBaseline({ id: 'pre', git_sha: 'prod-sha' });
+    const invariants = allCriticalInvariantsPassing().map(i =>
+      i.invariant_id === 'DB-001'
+        ? { ...i, status: 'not_applicable' as const, evidence: 'Not applicable to this release' }
+        : i
+    );
+    const cand = makeBaseline({
+      id: 'cand', git_sha: 'rel-sha', phase: 'candidate',
+      invariant_results: invariants,
+    });
+    const result = executeGate({
+      releaseSha: 'rel-sha', productionSha: 'prod-sha',
+      preBaseline: pre, candidateBaseline: cand, now: NOW,
+    });
+    // Should not be blocked by not_applicable
+    const db001BlockReasons = result.block_reasons.filter(r => r.includes('DB-001'));
+    expect(db001BlockReasons).toHaveLength(0);
+    // Should be disclosed in the certificate invariant_details
+    const detail = result.certificate.invariant_details.find(d => d.invariant_id === 'DB-001');
+    expect(detail).toBeDefined();
+    expect(detail!.status).toBe('not_applicable');
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// R3 TEST: Certificate kind and provenance
+// ═══════════════════════════════════════════════════════════════════
+
+describe('R3: Certificate kind and provenance fields', () => {
+  it('self_test kind sets all scope surfaces to false', () => {
+    const pre = makeBaseline({ id: 'pre', git_sha: 'prod-sha', functions: [makeFunction()] });
+    const cand = makeBaseline({
+      id: 'cand', git_sha: 'rel-sha', phase: 'candidate',
+      functions: [makeFunction()],
+    });
+    const result = executeGate({
+      releaseSha: 'rel-sha', productionSha: 'prod-sha',
+      preBaseline: pre, candidateBaseline: cand, now: NOW,
+      kind: 'self_test',
+    });
+    const scope = result.certificate.scope;
+    expect(scope.functions).toBe(false);
+    expect(scope.function_grants).toBe(false);
+    expect(scope.table_rls).toBe(false);
+    expect(scope.invariants).toBe(false);
+    expect(result.certificate.kind).toBe('self_test');
+  });
+
+  it('release_candidate kind derives scope from baseline data', () => {
+    const pre = makeBaseline({ id: 'pre', git_sha: 'prod-sha', functions: [makeFunction()] });
+    const cand = makeBaseline({
+      id: 'cand', git_sha: 'rel-sha', phase: 'candidate',
+      functions: [makeFunction()],
+      invariant_results: allCriticalInvariantsPassing(),
+    });
+    const result = executeGate({
+      releaseSha: 'rel-sha', productionSha: 'prod-sha',
+      preBaseline: pre, candidateBaseline: cand, now: NOW,
+      kind: 'release_candidate',
+    });
+    expect(result.certificate.scope.functions).toBe(true);
+    expect(result.certificate.scope.invariants).toBe(true);
+    expect(result.certificate.kind).toBe('release_candidate');
+  });
+
+  it('records tested_commit_sha and merge_sha in certificate', () => {
+    const pre = makeBaseline({ id: 'pre', git_sha: 'prod-sha' });
+    const cand = makeBaseline({
+      id: 'cand', git_sha: 'rel-sha', phase: 'candidate',
+      invariant_results: allCriticalInvariantsPassing(),
+    });
+    const result = executeGate({
+      releaseSha: 'rel-sha', productionSha: 'prod-sha',
+      preBaseline: pre, candidateBaseline: cand, now: NOW,
+      testedCommitSha: 'abc123-tested',
+      mergeSha: 'def456-merge',
+    });
+    expect(result.certificate.tested_commit_sha).toBe('abc123-tested');
+    expect(result.certificate.merge_sha).toBe('def456-merge');
   });
 });
 

@@ -119,8 +119,21 @@ function isExpectedChange(
 
   const entry = `${match.category}:${match.object_id}:${match.field || '*'} (${match.reason}) [auth: ${match.owner_authorization}]`;
 
-  // Protected safety fields require independent Owner verification even when manifest-declared
+  // Security-sensitive changes require independent Owner verification even when manifest-declared
+  // 1. Protected safety fields (security, proconfig, owner)
   if (PROTECTED_SAFETY_FIELDS.has(field)) {
+    return { matched: true, requiresManualVerification: true, entry };
+  }
+  // 2. All grant changes are security-sensitive
+  if (category === 'grant') {
+    return { matched: true, requiresManualVerification: true, entry };
+  }
+  // 3. RLS true→false is security-sensitive
+  if (category === 'rls' && field === 'rls_enabled' && after === 'false') {
+    return { matched: true, requiresManualVerification: true, entry };
+  }
+  // 4. Protected function removal (existence: present→absent)
+  if (category === 'function' && field === 'existence' && after === 'absent' && isProtectedObject(objectId)) {
     return { matched: true, requiresManualVerification: true, entry };
   }
 

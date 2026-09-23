@@ -25,6 +25,7 @@ import type {
   ReleaseManifest,
   ReleaseCertificate,
   StateDiffResult,
+  InvariantResult,
 } from './types';
 import { computeStateDiff } from './diff-engine';
 import { generateCertificate, formatCertificate } from './certificate';
@@ -76,6 +77,12 @@ export interface GateInput {
   deploymentId?: string;
   /** Current time for staleness checks */
   now?: Date;
+  /** Certificate kind — determines scope derivation */
+  kind?: ReleaseCertificate['kind'];
+  /** Commit actually checked out and tested */
+  testedCommitSha?: string;
+  /** GitHub's synthetic merge SHA (PR events only) */
+  mergeSha?: string;
 }
 
 /**
@@ -176,24 +183,29 @@ export function executeGate(input: GateInput): GateResult {
   }
 
   // ─── Step 4b: Enforce invariant evidence completeness ───
+  // For every critical invariant in the registry:
+  //   pass         → acceptable
+  //   not_applicable → acceptable BUT must be disclosed in certificate
+  //   fail, error, skip, missing → BLOCK
   const criticalInvariants = getCriticalInvariants();
-  const candidateInvariantIds = new Set(
-    candidateBaseline.invariant_results.map(r => r.invariant_id)
+  const candidateInvariantMap = new Map(
+    candidateBaseline.invariant_results.map(r => [r.invariant_id, r])
   );
   for (const inv of criticalInvariants) {
-    if (!candidateInvariantIds.has(inv.id)) {
+    const result = candidateInvariantMap.get(inv.id);
+    if (!result) {
       blockReasons.push(
         `Critical invariant ${inv.id} ("${inv.description}") missing from candidate baseline — no evidence captured`
       );
-    } else {
-      // Check for skipped catalog assertions — these MUST produce real evidence
-      const result = candidateBaseline.invariant_results.find(r => r.invariant_id === inv.id);
-      if (result && result.status === 'skip' && inv.check_query) {
-        blockReasons.push(
-          `Critical invariant ${inv.id} ("${inv.description}") has status 'skip' but has a check_query — catalog assertion must produce real evidence`
-        );
-      }
+    } else if (result.status === 'skip') {
+      blockReasons.push(
+        `Critical invariant ${inv.id} ("${inv.description}") has status 'skip' — critical invariants must produce real evidence (pass, fail, error, or not_applicable)`
+      );
+    } else if (result.status === 'not_applicable') {
+      // Acceptable but disclosed in certificate — no block
+      // (invariant_details in certificate will include it)
     }
+    // pass → acceptable, fail/error already caught in Step 4 above
   }
 
   // ─── Step 5: Generate certificate ───
@@ -206,14 +218,10 @@ export function executeGate(input: GateInput): GateResult {
     preToCandidateDiff,
     preToPostDiff: preToPostDiff || undefined,
     migrationsApplied,
+    kind: input.kind,
+    testedCommitSha: input.testedCommitSha,
+    mergeSha: input.mergeSha,
   });
-
-  // Derive invariants scope: true only if at least one invariant result exists
-  const hasInvariantEvidence = candidateBaseline.invariant_results.length > 0;
-  (certificate as { scope: typeof certificate.scope }).scope = {
-    ...certificate.scope,
-    invariants: hasInvariantEvidence,
-  };
 
   // Override certificate status with our comprehensive block reasons
   if (blockReasons.length > 0) {
