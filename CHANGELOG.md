@@ -3,6 +3,15 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-09-23 — Fix: M397 restore initialize_terminal_effects search_path (#365)
+
+### What changed
+- **Migration 397**: ALTER FUNCTION to restore `search_path = public, extensions` on `initialize_terminal_effects`. Does NOT change function body, grants, owner, or SECURITY DEFINER.
+- **Root cause**: M394 recreated the function with `SET search_path = public`, dropping `extensions`. Production pgcrypto is in schema `extensions`, so unqualified `digest()` call failed.
+- **Impact**: Fixes Stage-3 confirmation for ALL payment types × ALL gateways. Payments/bookings succeed (Stage 2 was unaffected) but no confirmation messages, terminal effects, or saved-card offers were sent.
+- **Files**: `supabase/migrations/397_restore_terminal_effects_search_path.sql`, `lib/__tests__/m397-search-path-regression.test.ts`
+- **What could break**: Nothing — ALTER only changes the search_path attribute. Function body, grants, ownership unchanged. `finalize_payment_confirmation` already has correct search_path (M394 did not recreate it).
+
 ## 2026-09-21 — Feat: M393 inventory reservation wiring (#352 Phase 2B+2C)
 
 ### What changed
