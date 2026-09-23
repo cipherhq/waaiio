@@ -112,6 +112,20 @@ export function executeGate(input: GateInput): GateResult {
     blockReasons.push(...evidenceChain.errors);
   }
 
+  // ─── Step 1b: Validate manifest SHA alignment ───
+  if (manifest) {
+    if (manifest.base_sha !== productionSha) {
+      blockReasons.push(
+        `Manifest base_sha (${manifest.base_sha}) does not match production SHA (${productionSha}). Stale manifest.`
+      );
+    }
+    if (manifest.candidate_sha !== releaseSha) {
+      blockReasons.push(
+        `Manifest candidate_sha (${manifest.candidate_sha}) does not match release SHA (${releaseSha}). Stale manifest.`
+      );
+    }
+  }
+
   // ─── Step 2: Compute BEFORE → CANDIDATE diff ───
   const preToCandidateDiff = computeStateDiff(preBaseline, candidateBaseline, manifest || null);
 

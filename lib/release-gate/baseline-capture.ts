@@ -76,18 +76,23 @@ const FUNCTIONS_QUERY = `
   ORDER BY p.proname;
 `;
 
+/** Overload-safe grant query using pg_catalog + pg_get_function_identity_arguments */
 const FUNCTION_GRANTS_QUERY = `
   SELECT
-    r.specific_schema,
-    r.routine_name,
-    r.routine_name,
-    r.grantee,
-    r.is_grantable
-  FROM information_schema.routine_privileges r
-  WHERE r.specific_schema = 'public'
-    AND r.privilege_type = 'EXECUTE'
-  ORDER BY r.routine_name, r.grantee;
+    n.nspname,
+    p.proname,
+    pg_get_function_identity_arguments(p.oid),
+    acl.grantee::regrole::text,
+    acl.is_grantable
+  FROM pg_proc p
+  JOIN pg_namespace n ON n.oid = p.pronamespace
+  CROSS JOIN LATERAL aclexplode(COALESCE(p.proacl, acldefault('f', p.proowner))) AS acl
+  WHERE n.nspname = 'public'
+    AND acl.privilege_type = 'EXECUTE'
+    AND acl.grantee != 0
+  ORDER BY p.proname, acl.grantee::regrole::text;
 `;
+
 
 const TABLE_RLS_QUERY = `
   SELECT
@@ -250,25 +255,49 @@ function checkProtectedObjects(dbUrl: string): InvariantResult[] {
         continue;
       }
 
+      // Use exact regprocedure cast for overload-safe identity
+      const regprocedure = `${schema}.${name}(${match[3]})`;
       const query = `
         SELECT
           CASE WHEN p.prosecdef THEN 'definer' ELSE 'invoker' END AS security,
           COALESCE(array_to_string(p.proconfig, '||'), '') AS proconfig
         FROM pg_proc p
-        JOIN pg_namespace n ON n.oid = p.pronamespace
-        WHERE n.nspname = '${schema}'
-          AND p.proname = '${name}'
-        LIMIT 1;
+        WHERE p.oid = '${regprocedure}'::regprocedure;
       `;
 
-      const rows = runSQLRows(dbUrl, query);
+      let rows: string[][];
+      try {
+        rows = runSQLRows(dbUrl, query);
+      } catch (regErr) {
+        // regprocedure cast fails when function doesn't exist
+        if (obj.required) {
+          results.push({
+            invariant_id: 'DB-002',
+            description: `Required protected function ${obj.identifier}: NOT FOUND`,
+            status: 'fail',
+            evidence: `Function does not exist in catalog. Required objects must be present.`,
+            critical: true,
+          });
+        } else {
+          results.push({
+            invariant_id: 'DB-002',
+            description: `Protected function ${obj.identifier}: not found in catalog`,
+            status: 'skip',
+            evidence: 'Function does not exist (may not be deployed yet)',
+            critical: false,
+          });
+        }
+        continue;
+      }
+
       if (rows.length === 0 || (rows.length === 1 && rows[0][0] === '')) {
+        // Function not found — fail if required
         results.push({
           invariant_id: 'DB-002',
-          description: `Protected function ${obj.identifier}: not found in catalog`,
-          status: 'skip',
-          evidence: 'Function does not exist (may not be deployed yet)',
-          critical: false,
+          description: `Protected function ${obj.identifier}: ${obj.required ? 'REQUIRED BUT MISSING' : 'not found'}`,
+          status: obj.required ? 'fail' : 'skip',
+          evidence: obj.required ? 'Required function does not exist in catalog' : 'Function not deployed yet',
+          critical: obj.required,
         });
         continue;
       }

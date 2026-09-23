@@ -38,7 +38,6 @@ export const INVARIANTS: InvariantDefinition[] = [
         AND pg_get_functiondef(p.oid) LIKE '%digest(%'
         AND NOT ('search_path=public, extensions' = ANY(COALESCE(p.proconfig, ARRAY[]::text[])))
     `,
-    // PASS condition: zero rows returned (no functions violating the invariant)
   },
   {
     id: 'DB-002',
@@ -47,7 +46,7 @@ export const INVARIANTS: InvariantDefinition[] = [
     critical: true,
     owner: '#365, M390→M394',
     evidence_type: 'catalog_assertion',
-    // Checked by verifying protected objects (below) retain required properties
+    // Checked by verifying protected objects retain required properties
   },
   {
     id: 'DB-003',
@@ -95,7 +94,6 @@ export const INVARIANTS: InvariantDefinition[] = [
     critical: true,
     owner: '#338',
     evidence_type: 'behavioral_test',
-    // Checked by behavioral test, not catalog query
   },
   {
     id: 'DB-006',
@@ -127,13 +125,21 @@ export const INVARIANTS: InvariantDefinition[] = [
     owner: '#353, #366',
     evidence_type: 'behavioral_test',
   },
+  // PAY-002 REMOVED: The Stripe-Version header hypothesis for #366 is UNPROVEN.
+  // #366 root cause is not yet determined. Possible causes include API version,
+  // allow_redisplay_filters behavior, or other Stripe-side suppression. A new
+  // PAY-002 will be added when #366 is root-caused with provider-visible evidence.
+  // See: #366 issue, CTO R1 BLOCKER 8.
   {
     id: 'PAY-002',
-    description: 'Stripe requests for Checkout Sessions using saved_payment_method_options set explicit Stripe-Version header >= 2024-04-10',
+    description: 'Stripe Checkout Save Card: provider-visible behavior matches code intent when eligible (root cause pending #366 investigation)',
     category: 'payment',
     critical: true,
     owner: '#366',
-    evidence_type: 'behavioral_test',
+    evidence_type: 'provider_check',
+    // This invariant requires provider-visible evidence (e.g., retrieving the
+    // created Checkout Session from Stripe API and inspecting its actual state),
+    // not just verifying that code attempts to send a parameter.
   },
   {
     id: 'PAY-003',
@@ -215,52 +221,61 @@ export const INVARIANTS: InvariantDefinition[] = [
 // Protected Objects Registry
 //
 // These objects have properties that must not change without an
-// explicit release manifest entry. The baseline diff engine checks
-// every protected property and flags unauthorized changes.
+// explicit release manifest entry with field-level specificity.
+// The baseline diff engine checks every protected property and
+// flags unauthorized changes.
+//
+// `required: true` means the object MUST exist in the catalog.
+// Absence of a required object is a FAIL, not a skip.
 // ═══════════════════════════════════════════════════════════════════
 
 export const PROTECTED_OBJECTS: ProtectedObject[] = [
   {
     type: 'function',
-    identifier: 'public.initialize_terminal_effects(uuid,uuid,text[],text[],text[],text[],integer)',
+    identifier: 'public.initialize_terminal_effects(uuid, uuid, text[], text[], text[], text[], integer)',
     protected_properties: {
       security: 'definer',
       'proconfig:search_path': 'public, extensions',
     },
     invariant_ids: ['DB-001', 'DB-002', 'DB-006'],
+    required: true,
   },
   {
     type: 'function',
-    identifier: 'public.finalize_payment_confirmation(uuid,uuid)',
+    identifier: 'public.finalize_payment_confirmation(uuid, uuid)',
     protected_properties: {
       security: 'definer',
       'proconfig:search_path': 'public, extensions',
     },
     invariant_ids: ['DB-001', 'DB-002', 'DB-006'],
+    required: true,
   },
   {
     type: 'function',
-    identifier: 'public.accept_saved_card_offer(uuid,text,text)',
+    identifier: 'public.accept_saved_card_offer(uuid, text, text)',
     protected_properties: {
       security: 'definer',
     },
     invariant_ids: ['DB-004'],
+    required: true,
   },
   {
     type: 'function',
-    identifier: 'public.decline_saved_card_offer(uuid,text,text)',
+    identifier: 'public.decline_saved_card_offer(uuid, text, text)',
     protected_properties: {
       security: 'definer',
     },
     invariant_ids: ['DB-004'],
+    required: true,
   },
   {
     type: 'function',
-    identifier: 'public.create_provider_consented_offer(uuid,text,uuid,text,text,text,text,uuid,uuid)',
+    identifier: 'public.create_provider_consented_offer(uuid, text, uuid, text, text, text, text, uuid, uuid)',
     protected_properties: {
       security: 'definer',
     },
     invariant_ids: ['DB-004'],
+    required: true,
   },
 ];
 

@@ -14,7 +14,7 @@ Every invariant has a unique ID, an owner (the PR/issue that established it), a 
 | ID | Invariant | Owner | Required Evidence |
 |----|-----------|-------|-------------------|
 | DB-001 | `SECURITY DEFINER` functions calling `digest()` must have `SET search_path = public, extensions` | M390, #365 | `pg_proc.proconfig` catalog assertion + RPC execution returning valid hash |
-| DB-002 | `CREATE OR REPLACE FUNCTION` that recreates a function resets all attributes (search_path, grants, security label) to what the `CREATE` statement specifies — any prior `ALTER` is lost | M390→M394 regression | CI migration lint (see §6) |
+| DB-002 | `CREATE OR REPLACE FUNCTION` replaces the function body and assigns function-level attributes (search_path, cost, rows, security) from the new statement. Ownership and EXECUTE permissions are **not** changed by PostgreSQL on replace. However, function-level `SET` attributes (like `search_path`) from prior `ALTER` statements **are** overwritten by the replacement's own attribute list — any attribute not repeated in the new `CREATE OR REPLACE` reverts to the system default. | M390→M394 regression | CI migration lint (see §6) + final-state catalog check |
 | DB-003 | Every table in `public` schema has RLS enabled, default deny | Standing | Migration review + `pg_class.relrowsecurity` assertion |
 | DB-004 | Saved-card RPCs (`accept_saved_card_offer`, `decline_saved_card_offer`, `create_provider_consented_offer`) are blocked for `anon`/`authenticated`; only `service_role` may execute | M396, #353 | Grant catalog assertion |
 | DB-005 | `bot_sessions.whatsapp_number` must store the raw inbound transport key (no `+` prefix normalization), because session lookup uses exact match on raw Meta `from` | #338 | Behavioral test: insert with raw phone → lookup with same raw phone → match |
@@ -25,7 +25,7 @@ Every invariant has a unique ID, an owner (the PR/issue that established it), a 
 | ID | Invariant | Owner | Required Evidence |
 |----|-----------|-------|-------------------|
 | PAY-001 | Stripe Checkout Session must include `saved_payment_method_options[payment_method_save]=enabled` when customer is provisioned and business is platform-eligible | #353, #366 | Checkout creation test asserting param presence when preconditions met |
-| PAY-002 | `stripeRequest()` must set an explicit `Stripe-Version` header ≥ `2024-04-10` for Checkout Sessions that use `saved_payment_method_options` | #366 (pending fix) | Unit test asserting header presence |
+| PAY-002 | Stripe Checkout Save Card: provider-visible behavior must match code intent when customer is eligible. Root cause of #366 is pending investigation — do not assume API version without evidence. | #366 (investigation pending) | Provider-visible evidence (retrieve Checkout Session from Stripe, inspect actual state) |
 | PAY-003 | Paystack Save Card PIN session uses raw inbound phone (transport key), not canonPhone | #338 | Behavioral test: no-session accept → assert `whatsapp_number` = raw `from` |
 | PAY-004 | Saved-card ownership authority uses canonical `+E.164` phone, never raw transport key | #353 | RPC parameter assertions in behavioral tests |
 | PAY-005 | Platform fee recording resolves tier from DB, never trusts caller-supplied tier | #352, Phase 2D | `recordPlatformFee` call-site audit |
@@ -57,7 +57,7 @@ Every invariant has a unique ID, an owner (the PR/issue that established it), a 
 
 ### 2.1 The CREATE OR REPLACE Trap
 
-`CREATE OR REPLACE FUNCTION` **replaces the entire function definition**, including any attributes set by prior `ALTER` statements (search_path, security label, cost, rows). This is how M394 silently reverted M390's `search_path` fix.
+`CREATE OR REPLACE FUNCTION` replaces the function body and assigns function-level attributes from the new statement. PostgreSQL does **not** change ownership or EXECUTE permissions on replace. However, function-level `SET` attributes (like `search_path`) are assigned from the replacement command — if the new `CREATE OR REPLACE` does not repeat a `SET search_path` clause that was previously added via `ALTER`, the attribute reverts to the system default. This is how M394 silently reverted M390's `search_path` fix.
 
 **Mandatory check before merging any migration that uses `CREATE OR REPLACE`:**
 
@@ -283,7 +283,7 @@ Track every escaped defect for pattern analysis:
 | Date | Issue | Severity | Root Cause | Invariant Gap | Gate Improvement |
 |------|-------|----------|-----------|---------------|-----------------|
 | 2026-09-22 | #365 | P0 | M394 `CREATE OR REPLACE` dropped M390's `search_path` fix | DB-001, DB-002 added | CI migration lint for `digest()` + `search_path` |
-| 2026-09-22 | #366 | P1 | Stripe API version not pinned; `saved_payment_method_options` may be silently ignored | PAY-002 added | Require explicit `Stripe-Version` header |
+| 2026-09-22 | #366 | P1 | Stripe Save Card checkbox not shown despite eligible customer — root cause pending investigation (hypotheses: API version, `allow_redisplay_filters` behavior, other Stripe-side suppression) | PAY-002 updated to require provider-visible evidence | Provider-visible behavior verification, not just request construction |
 | 2026-09-22 | #338 | P1 | PIN session stored canonPhone; session lookup uses raw transport key | DB-005, PAY-003 added | Behavioral test for phone-key round-trip |
 
 ### 7.4 Pattern Prevention

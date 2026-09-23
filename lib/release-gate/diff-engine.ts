@@ -8,6 +8,11 @@
  * Critical regressions block the release gate automatically.
  * Green unit tests cannot override a failed state-diff gate.
  *
+ * Phase 1 scope: functions, function grants, table RLS, invariant status.
+ * NOT in Phase 1 scope: RLS policy bodies, constraints, triggers,
+ * extensions, cron jobs, migrations, journey results.
+ * The certificate honestly declares which surfaces were checked.
+ *
  * @see RELEASE_GATE_V2.md §8.4 (Automatic Delta)
  */
 
@@ -15,16 +20,34 @@ import { randomUUID } from 'crypto';
 import type {
   BaselineSnapshot,
   ReleaseManifest,
+  ExpectedChange,
   StateDiffEntry,
   StateDiffResult,
   DiffClassification,
   FunctionCatalog,
   FunctionGrant,
   TableRls,
-  RlsPolicy,
   InvariantResult,
 } from './types';
 import { PROTECTED_OBJECTS } from './invariant-registry';
+
+// ═══════════════════════════════════════════════════════════════════
+// Phase 1 scope declaration
+// ═══════════════════════════════════════════════════════════════════
+
+/** Surfaces the Phase 1 diff engine actually checks */
+export const PHASE1_SCOPE = {
+  functions: true,
+  function_grants: true,
+  table_rls: true,
+  rls_policies: false,   // Phase 2
+  constraints: false,     // Phase 2
+  triggers: false,        // Phase 2
+  extensions: false,      // Phase 2
+  cron_jobs: false,       // Phase 2
+  invariants: true,
+  journeys: false,        // Phase 2
+} as const;
 
 // ═══════════════════════════════════════════════════════════════════
 // Helpers
@@ -34,38 +57,66 @@ function functionKey(f: FunctionCatalog): string {
   return `${f.schema}.${f.name}(${f.arg_types})`;
 }
 
+/** Overload-safe grant key: includes arg_types and grantability */
 function grantKey(g: FunctionGrant): string {
-  return `${g.schema}.${g.function_name}→${g.grantee}`;
+  return `${g.schema}.${g.function_name}(${g.arg_types})→${g.grantee}[${g.is_grantable ? 'grantable' : 'no-grant'}]`;
+}
+
+/** Simpler grant identity for diff (without grantability — grantability is a field) */
+function grantIdentity(g: FunctionGrant): string {
+  return `${g.schema}.${g.function_name}(${g.arg_types})→${g.grantee}`;
 }
 
 function rlsKey(t: TableRls): string {
   return `${t.schema}.${t.table_name}`;
 }
 
-function policyKey(p: RlsPolicy): string {
-  return `${p.schema}.${p.table_name}.${p.policy_name}`;
-}
-
 function isProtectedObject(objectId: string): boolean {
-  return PROTECTED_OBJECTS.some(o => o.identifier === objectId || objectId.includes(o.identifier.split('(')[0]));
+  return PROTECTED_OBJECTS.some(o => o.identifier === objectId);
 }
 
+/** Protected safety properties that can NEVER be blanket-waived by a generic
+ *  function modification manifest entry. These require their own specific
+ *  field-level manifest entry with exact expected before/after values. */
+const PROTECTED_SAFETY_FIELDS = new Set(['security', 'proconfig', 'owner']);
+
+/**
+ * Check if a specific diff entry is covered by a manifest entry.
+ * Requires EXACT object_id match (no substring), exact field match for
+ * modifications, and validates expected before/after when provided.
+ */
 function isExpectedChange(
   manifest: ReleaseManifest | null,
   category: StateDiffEntry['category'],
   objectId: string,
+  field: string,
+  before: string,
+  after: string,
   changeType: StateDiffEntry['change_type'],
 ): { matched: boolean; entry?: string } {
   if (!manifest) return { matched: false };
 
-  const match = manifest.expected_changes.find(ec =>
-    ec.category === category &&
-    (ec.object_id === objectId || objectId.includes(ec.object_id)) &&
-    ec.change_type === changeType
-  );
+  const match = manifest.expected_changes.find((ec: ExpectedChange) => {
+    // Exact category match
+    if (ec.category !== category) return false;
+    // Exact object_id match — NO substring/prefix matching
+    if (ec.object_id !== objectId) return false;
+    // Change type must match
+    if (ec.change_type !== changeType) return false;
+    // For modifications: field must match if specified in manifest
+    if (changeType === 'modified') {
+      if (ec.field && ec.field !== field) return false;
+      // If manifest doesn't specify field, it cannot waive protected safety fields
+      if (!ec.field && PROTECTED_SAFETY_FIELDS.has(field)) return false;
+    }
+    // Validate expected before/after if provided
+    if (ec.expected_before !== undefined && ec.expected_before !== before) return false;
+    if (ec.expected_after !== undefined && ec.expected_after !== after) return false;
+    return true;
+  });
 
   return match
-    ? { matched: true, entry: `${match.category}:${match.object_id} (${match.reason})` }
+    ? { matched: true, entry: `${match.category}:${match.object_id}:${match.field || '*'} (${match.reason}) [auth: ${match.owner_authorization}]` }
     : { matched: false };
 }
 
@@ -79,7 +130,7 @@ function classifyDiff(
   changeType: StateDiffEntry['change_type'],
 ): { classification: DiffClassification; critical: boolean; manifestEntry?: string } {
 
-  const expected = isExpectedChange(manifest, category, objectId, changeType);
+  const expected = isExpectedChange(manifest, category, objectId, field, before, after, changeType);
 
   if (expected.matched) {
     return { classification: 'expected', critical: false, manifestEntry: expected.entry };
@@ -100,12 +151,12 @@ function classifyDiff(
     return { classification: 'unexpected', critical: true };
   }
 
-  // Function security/search_path changes are critical
-  if (category === 'function' && (field === 'security' || field === 'proconfig')) {
+  // Function security/search_path/owner changes are critical
+  if (category === 'function' && PROTECTED_SAFETY_FIELDS.has(field)) {
     return { classification: 'unexpected', critical: true };
   }
 
-  // Grant changes on critical functions are critical
+  // Grant changes are critical
   if (category === 'grant') {
     return { classification: 'unexpected', critical: true };
   }
@@ -133,7 +184,7 @@ function diffFunctions(
   const afterMap = new Map(after.map(f => [functionKey(f), f]));
 
   // Removed functions
-  for (const [key, bf] of Array.from(beforeMap)) {
+  for (const [key] of Array.from(beforeMap)) {
     if (!afterMap.has(key)) {
       const { classification, critical, manifestEntry } = classifyDiff(
         'function', key, 'existence', 'present', 'absent', manifest, 'removed',
@@ -147,7 +198,7 @@ function diffFunctions(
   }
 
   // Added functions
-  for (const [key, af] of Array.from(afterMap)) {
+  for (const [key] of Array.from(afterMap)) {
     if (!beforeMap.has(key)) {
       const { classification, critical, manifestEntry } = classifyDiff(
         'function', key, 'existence', 'absent', 'present', manifest, 'added',
@@ -160,7 +211,7 @@ function diffFunctions(
     }
   }
 
-  // Modified functions
+  // Modified functions — each field is diffed independently
   for (const [key, bf] of Array.from(beforeMap)) {
     const af = afterMap.get(key);
     if (!af) continue;
@@ -201,11 +252,12 @@ function diffGrants(
   manifest: ReleaseManifest | null,
 ): StateDiffEntry[] {
   const entries: StateDiffEntry[] = [];
-  const beforeSet = new Set(before.map(grantKey));
-  const afterSet = new Set(after.map(grantKey));
+  const beforeMap = new Map(before.map(g => [grantIdentity(g), g]));
+  const afterMap = new Map(after.map(g => [grantIdentity(g), g]));
 
-  for (const key of Array.from(beforeSet)) {
-    if (!afterSet.has(key)) {
+  // Removed grants
+  for (const [key] of Array.from(beforeMap)) {
+    if (!afterMap.has(key)) {
       const { classification, critical, manifestEntry } = classifyDiff(
         'grant', key, 'existence', 'granted', 'revoked', manifest, 'removed',
       );
@@ -217,14 +269,31 @@ function diffGrants(
     }
   }
 
-  for (const key of Array.from(afterSet)) {
-    if (!beforeSet.has(key)) {
+  // Added grants
+  for (const [key] of Array.from(afterMap)) {
+    if (!beforeMap.has(key)) {
       const { classification, critical, manifestEntry } = classifyDiff(
         'grant', key, 'existence', 'absent', 'granted', manifest, 'added',
       );
       entries.push({
         category: 'grant', object_id: key, change_type: 'added',
         field: 'existence', before: 'absent', after: 'granted',
+        classification, critical, manifest_entry: manifestEntry,
+      });
+    }
+  }
+
+  // Changed grantability
+  for (const [key, bg] of Array.from(beforeMap)) {
+    const ag = afterMap.get(key);
+    if (!ag) continue;
+    if (bg.is_grantable !== ag.is_grantable) {
+      const { classification, critical, manifestEntry } = classifyDiff(
+        'grant', key, 'is_grantable', String(bg.is_grantable), String(ag.is_grantable), manifest, 'modified',
+      );
+      entries.push({
+        category: 'grant', object_id: key, change_type: 'modified',
+        field: 'is_grantable', before: String(bg.is_grantable), after: String(ag.is_grantable),
         classification, critical, manifest_entry: manifestEntry,
       });
     }

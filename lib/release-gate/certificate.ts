@@ -89,6 +89,18 @@ export function generateCertificate(opts: {
     pre_to_post_diff: preToPostDiff || null,
     invariant_summary: invariantSummary,
     journey_summary: journeySummary,
+    scope: {
+      functions: true,
+      function_grants: true,
+      table_rls: true,
+      rls_policies: false,   // Phase 2
+      constraints: false,     // Phase 2
+      triggers: false,        // Phase 2
+      extensions: false,      // Phase 2
+      cron_jobs: false,       // Phase 2
+      invariants: true,
+      journeys: false,        // Phase 2
+    },
     provider_checks: [],
     status,
     block_reasons: blockReasons,
@@ -129,6 +141,17 @@ export function formatCertificate(cert: ReleaseCertificate): string {
     for (const m of cert.migrations_applied) {
       lines.push(`  ${m}`);
     }
+  }
+  lines.push('');
+
+  lines.push('── Verified Scope ──');
+  const checkedSurfaces = Object.entries(cert.scope)
+    .filter(([, v]) => v).map(([k]) => k);
+  const uncheckedSurfaces = Object.entries(cert.scope)
+    .filter(([, v]) => !v).map(([k]) => k);
+  lines.push(`Checked:   ${checkedSurfaces.join(', ')}`);
+  if (uncheckedSurfaces.length > 0) {
+    lines.push(`NOT checked (Phase 2): ${uncheckedSurfaces.join(', ')}`);
   }
   lines.push('');
 

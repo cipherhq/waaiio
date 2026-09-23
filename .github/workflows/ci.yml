@@ -73,6 +73,77 @@ jobs:
           NODE_OPTIONS: --max-old-space-size=4096
         run: npx next build
 
+  # ── Release Gate V2 ──
+  release-gate:
+    name: Release Gate V2 (migration lint, invariant tests, certificate)
+    runs-on: ubuntu-latest
+
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: https://example.supabase.co
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: dummy
+      NEXT_PUBLIC_APP_URL: https://www.waaiio.com
+      NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: pk_test_dummy
+      NEXT_PUBLIC_PAYSTACK_PUBLIC_KEY: pk_test_dummy
+      NEXT_PUBLIC_POSTHOG_KEY: dummy
+      NEXT_PUBLIC_META_APP_ID: dummy
+      NEXT_PUBLIC_SENTRY_DSN: https://dummy@sentry.io/0
+      SENTRY_DSN: https://dummy@sentry.io/0
+      SENTRY_ORG: dummy
+      SENTRY_PROJECT: dummy
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.11.1
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run migration lint (candidate migrations only)
+        run: npx tsx lib/release-gate/migration-lint.ts
+
+      - name: Run release gate tests
+        run: npx vitest run lib/__tests__/release-gate-diff-engine.test.ts lib/__tests__/release-gate-migration-lint.test.ts lib/__tests__/release-gate-sha-guard.test.ts lib/__tests__/release-gate-orchestration.test.ts
+
+      - name: Generate sample release certificate
+        run: |
+          npx tsx -e "
+          import { executeGate } from './lib/release-gate/gate';
+          import { formatCertificate } from './lib/release-gate/certificate';
+          import { writeFileSync } from 'fs';
+
+          const NOW = new Date();
+          const sha = process.env.GITHUB_SHA || 'unknown';
+          const pre = {
+            id: 'ci-pre', captured_at: NOW.toISOString(), git_sha: sha,
+            phase: 'pre_deployment' as const, label: 'CI baseline',
+            functions: [], function_grants: [], table_rls: [], rls_policies: [],
+            extensions: [], constraints: [], triggers: [], cron_jobs: [],
+            migrations: [], invariant_results: [], journey_results: [],
+          };
+          const cand = { ...pre, id: 'ci-cand', phase: 'candidate' as const };
+          const result = executeGate({
+            releaseSha: sha, productionSha: sha,
+            preBaseline: pre, candidateBaseline: cand, now: NOW,
+          });
+          writeFileSync('release-certificate.txt', result.certificate_text);
+          writeFileSync('release-certificate.json', JSON.stringify(result.certificate, null, 2));
+          console.log(result.certificate_text);
+          "
+
+      - name: Upload release certificate artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-certificate
+          path: |
+            release-certificate.txt
+            release-certificate.json
+
   # ── Admin Application ──
   admin-app:
     name: Admin App (install, build)

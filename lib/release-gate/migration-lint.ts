@@ -168,16 +168,43 @@ function analyzeFunction(
 }
 
 /**
- * Lint all migration files in a directory.
+ * Historical migrations that are known to have violations but are immutable.
+ * These cannot be fixed because modifying historical migrations would break
+ * the migration chain. The final-state catalog check (not the lint) is
+ * authoritative after all migrations are composed.
+ *
+ * Each entry: migration filename → reason for exemption.
  */
-export function lintMigrationDirectory(dirPath: string): LintViolation[] {
-  const files = readdirSync(dirPath)
+export const HISTORICAL_EXCEPTIONS: Record<string, string> = {
+  '394_direct_order_payment_authority.sql':
+    'M394 recreated initialize_terminal_effects with search_path=public (missing extensions). ' +
+    'This is the #365 escaped defect. The migration is immutable; the repair is M397 (ALTER). ' +
+    'Final-state catalog check is authoritative.',
+};
+
+/**
+ * Lint all migration files in a directory.
+ * @param onlyCandidates If provided, only lint these specific filenames (for candidate-only linting)
+ */
+export function lintMigrationDirectory(
+  dirPath: string,
+  onlyCandidates?: string[],
+): LintViolation[] {
+  let files = readdirSync(dirPath)
     .filter(f => f.endsWith('.sql'))
     .sort();
+
+  if (onlyCandidates) {
+    const candidateSet = new Set(onlyCandidates);
+    files = files.filter(f => candidateSet.has(f));
+  }
 
   const allViolations: LintViolation[] = [];
 
   for (const file of files) {
+    // Skip historical exceptions — immutable migrations can't be fixed
+    if (HISTORICAL_EXCEPTIONS[file]) continue;
+
     const fullPath = join(dirPath, file);
     const content = readFileSync(fullPath, 'utf-8');
     allViolations.push(...lintMigration(file, content));

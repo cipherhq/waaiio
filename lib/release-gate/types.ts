@@ -33,10 +33,11 @@ export interface FunctionCatalog {
   body_hash: string;
 }
 
-/** EXECUTE grants on a function */
+/** EXECUTE grants on a function, keyed by overload-safe identity */
 export interface FunctionGrant {
   schema: string;
   function_name: string;
+  /** Overload-safe argument signature from pg_get_function_identity_arguments */
   arg_types: string;
   grantee: string;
   is_grantable: boolean;
@@ -197,14 +198,26 @@ export interface ReleaseManifest {
 export interface ExpectedChange {
   /** What category: function, grant, rls, constraint, migration, config */
   category: 'function' | 'grant' | 'rls' | 'constraint' | 'migration' | 'config' | 'cron' | 'extension';
-  /** Object identifier (function name, table.policy, etc.) */
+  /** Exact object identifier — must match the diff engine's object_id exactly.
+   *  For functions: "public.func_name(arg1_type, arg2_type)"
+   *  For grants: "public.func_name(arg1_type)→grantee"
+   *  For RLS: "public.table_name"
+   *  Substring/prefix matching is NOT allowed. */
   object_id: string;
-  /** What changed: added, removed, modified, attribute_changed */
-  change_type: 'added' | 'removed' | 'modified' | 'attribute_changed';
+  /** What changed: added, removed, modified */
+  change_type: 'added' | 'removed' | 'modified';
+  /** Exact field that changed. Required for 'modified'.
+   *  e.g. "body_hash", "proconfig", "security", "owner", "rls_enabled" */
+  field?: string;
+  /** Expected before value (for verification — must match baseline) */
+  expected_before?: string;
+  /** Expected after value (for verification — must match candidate) */
+  expected_after?: string;
   /** Human description of why this change is expected */
   reason: string;
-  /** Which PR/issue authorized this change */
-  authorization: string;
+  /** Durable Owner authorization reference (GitHub issue/PR comment URL or ID).
+   *  CTO approval alone is not sufficient — Owner must authorize behavior changes. */
+  owner_authorization: string;
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -315,6 +328,21 @@ export interface ReleaseCertificate {
   /** Provider acceptance */
   provider_checks: ProviderCheck[];
 
+  /** Surfaces actually checked in this certificate.
+   *  Surfaces NOT listed were NOT verified — the certificate makes no claim about them. */
+  scope: {
+    functions: boolean;
+    function_grants: boolean;
+    table_rls: boolean;
+    rls_policies: boolean;
+    constraints: boolean;
+    triggers: boolean;
+    extensions: boolean;
+    cron_jobs: boolean;
+    invariants: boolean;
+    journeys: boolean;
+  };
+
   /** Final status */
   status: 'PASS' | 'BLOCKED' | 'PENDING_REVIEW';
   block_reasons: string[];
@@ -364,10 +392,14 @@ export interface InvariantDefinition {
 export interface ProtectedObject {
   /** Object type */
   type: 'function' | 'table' | 'policy' | 'grant';
-  /** Schema-qualified identifier */
+  /** Schema-qualified identifier using exact regprocedure-safe notation.
+   *  For functions: "public.func_name(uuid, uuid, text[])" with exact arg types. */
   identifier: string;
   /** Which properties are protected and their required values */
   protected_properties: Record<string, string>;
   /** Which invariant IDs protect this object */
   invariant_ids: string[];
+  /** If true, absence of this object from the catalog is a FAIL, not a skip.
+   *  Required production objects must exist. */
+  required: boolean;
 }

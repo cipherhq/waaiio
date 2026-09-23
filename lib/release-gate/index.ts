@@ -69,5 +69,5 @@ export {
 } from './sha-guard';
 export { executeGate } from './gate';
 export type { GateResult, GateInput } from './gate';
-export { lintMigration, lintMigrationDirectory } from './migration-lint';
+export { lintMigration, lintMigrationDirectory, HISTORICAL_EXCEPTIONS } from './migration-lint';
 export { generateCertificate, formatCertificate } from './certificate';
