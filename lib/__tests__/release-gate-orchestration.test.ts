@@ -15,10 +15,22 @@
 
 import { describe, it, expect } from 'vitest';
 import { executeGate } from '../release-gate/gate';
-import type { BaselineSnapshot, FunctionCatalog, ReleaseManifest } from '../release-gate/types';
+import { getCriticalInvariants } from '../release-gate/invariant-registry';
+import type { BaselineSnapshot, FunctionCatalog, InvariantResult, ReleaseManifest } from '../release-gate/types';
 
 const NOW = new Date('2026-09-23T12:00:00Z');
 const ONE_HOUR_AGO = new Date('2026-09-23T11:00:00Z');
+
+/** Generate passing invariant results for all critical invariants */
+function allCriticalInvariantsPassing(): InvariantResult[] {
+  return getCriticalInvariants().map(inv => ({
+    invariant_id: inv.id,
+    description: inv.description,
+    status: 'pass' as const,
+    evidence: 'synthetic test pass',
+    critical: true,
+  }));
+}
 
 function makeBaseline(overrides: Partial<BaselineSnapshot> = {}): BaselineSnapshot {
   return {
@@ -87,7 +99,7 @@ describe('TEST 2: Previously passing invariant turns red → BLOCKS', () => {
       ],
     });
     const cand = makeBaseline({
-      id: 'cand', git_sha: 'rel-sha',
+      id: 'cand', git_sha: 'rel-sha', phase: 'candidate',
       invariant_results: [
         { invariant_id: 'PAY-001', description: 'x', status: 'fail', evidence: 'broken', critical: true },
       ],
@@ -107,12 +119,12 @@ describe('TEST 3: Declared/Owner-approved delta accepted and recorded', () => {
     const pre = makeBaseline({
       id: 'pre', git_sha: 'prod-sha',
       functions: [makeFunction({ name: 'my_func', body_hash: 'old' })],
-      invariant_results: [{ invariant_id: 'DB-001', description: 'x', status: 'pass', evidence: 'ok', critical: true }],
+      invariant_results: allCriticalInvariantsPassing(),
     });
     const cand = makeBaseline({
-      id: 'cand', git_sha: 'rel-sha',
+      id: 'cand', git_sha: 'rel-sha', phase: 'candidate',
       functions: [makeFunction({ name: 'my_func', body_hash: 'new' })],
-      invariant_results: [{ invariant_id: 'DB-001', description: 'x', status: 'pass', evidence: 'ok', critical: true }],
+      invariant_results: allCriticalInvariantsPassing(),
     });
     const manifest: ReleaseManifest = {
       release_id: 'PR-400', candidate_sha: 'rel-sha', base_sha: 'prod-sha',
@@ -143,7 +155,7 @@ describe('TEST 3: Declared/Owner-approved delta accepted and recorded', () => {
 describe('TEST 4: Stale SHA evidence rejected', () => {
   it('blocks when pre-baseline SHA mismatches production', () => {
     const pre = makeBaseline({ id: 'pre', git_sha: 'old-prod' });
-    const cand = makeBaseline({ id: 'cand', git_sha: 'rel-sha' });
+    const cand = makeBaseline({ id: 'cand', git_sha: 'rel-sha', phase: 'candidate' });
     const result = executeGate({ releaseSha: 'rel-sha', productionSha: 'current-prod', preBaseline: pre, candidateBaseline: cand, now: NOW });
     expect(result.verdict).toBe('BLOCKED');
     expect(result.evidence_chain_valid).toBe(false);
@@ -151,7 +163,7 @@ describe('TEST 4: Stale SHA evidence rejected', () => {
 
   it('blocks when candidate-baseline SHA mismatches release', () => {
     const pre = makeBaseline({ id: 'pre', git_sha: 'prod-sha' });
-    const cand = makeBaseline({ id: 'cand', git_sha: 'stale-cand' });
+    const cand = makeBaseline({ id: 'cand', git_sha: 'stale-cand', phase: 'candidate' });
     const result = executeGate({ releaseSha: 'latest-cand', productionSha: 'prod-sha', preBaseline: pre, candidateBaseline: cand, now: NOW });
     expect(result.verdict).toBe('BLOCKED');
   });
@@ -159,7 +171,7 @@ describe('TEST 4: Stale SHA evidence rejected', () => {
   it('blocks when evidence is older than 24h', () => {
     const old = new Date('2026-09-21T12:00:00Z');
     const pre = makeBaseline({ id: 'pre', git_sha: 'prod-sha', captured_at: old.toISOString() });
-    const cand = makeBaseline({ id: 'cand', git_sha: 'rel-sha' });
+    const cand = makeBaseline({ id: 'cand', git_sha: 'rel-sha', phase: 'candidate' });
     const result = executeGate({ releaseSha: 'rel-sha', productionSha: 'prod-sha', preBaseline: pre, candidateBaseline: cand, now: NOW });
     expect(result.verdict).toBe('BLOCKED');
     expect(result.block_reasons.some(r => r.includes('48h old'))).toBe(true);
@@ -167,7 +179,7 @@ describe('TEST 4: Stale SHA evidence rejected', () => {
 
   it('blocks when manifest SHA does not match release/production', () => {
     const pre = makeBaseline({ id: 'pre', git_sha: 'prod-sha' });
-    const cand = makeBaseline({ id: 'cand', git_sha: 'rel-sha' });
+    const cand = makeBaseline({ id: 'cand', git_sha: 'rel-sha', phase: 'candidate' });
     const manifest: ReleaseManifest = {
       release_id: 'stale', candidate_sha: 'wrong-sha', base_sha: 'wrong-prod',
       approved_by: 'CTO', created_at: ONE_HOUR_AGO.toISOString(), expected_changes: [],
@@ -193,7 +205,7 @@ describe('TEST 5: Generic manifest cannot waive protected properties', () => {
       })],
     });
     const cand = makeBaseline({
-      id: 'cand', git_sha: 'rel-sha',
+      id: 'cand', git_sha: 'rel-sha', phase: 'candidate',
       functions: [makeFunction({
         name: 'initialize_terminal_effects',
         arg_types: 'uuid, uuid, text[], text[], text[], text[], integer',
@@ -224,14 +236,19 @@ describe('TEST 5: Generic manifest cannot waive protected properties', () => {
 describe('TEST 6: Certificate scope declaration', () => {
   it('certificate declares Phase 1 scope — unchecked surfaces are NOT claimed', () => {
     const pre = makeBaseline({ id: 'pre', git_sha: 'prod-sha' });
-    const cand = makeBaseline({ id: 'cand', git_sha: 'rel-sha' });
+    const cand = makeBaseline({
+      id: 'cand', git_sha: 'rel-sha', phase: 'candidate',
+      invariant_results: [
+        { invariant_id: 'DB-001', description: 'test', status: 'pass', evidence: 'ok', critical: true },
+      ],
+    });
     const result = executeGate({ releaseSha: 'rel-sha', productionSha: 'prod-sha', preBaseline: pre, candidateBaseline: cand, now: NOW });
     const scope = result.certificate.scope;
     // Phase 1 checked surfaces
     expect(scope.functions).toBe(true);
     expect(scope.function_grants).toBe(true);
     expect(scope.table_rls).toBe(true);
-    expect(scope.invariants).toBe(true);
+    expect(scope.invariants).toBe(true); // true because invariant_results is non-empty
     // Phase 2 NOT checked — certificate makes no claims
     expect(scope.rls_policies).toBe(false);
     expect(scope.constraints).toBe(false);
@@ -243,10 +260,91 @@ describe('TEST 6: Certificate scope declaration', () => {
 
   it('certificate text includes scope section', () => {
     const pre = makeBaseline({ id: 'pre', git_sha: 'prod-sha' });
-    const cand = makeBaseline({ id: 'cand', git_sha: 'rel-sha' });
+    const cand = makeBaseline({
+      id: 'cand', git_sha: 'rel-sha', phase: 'candidate',
+      invariant_results: [
+        { invariant_id: 'DB-001', description: 'test', status: 'pass', evidence: 'ok', critical: true },
+      ],
+    });
     const result = executeGate({ releaseSha: 'rel-sha', productionSha: 'prod-sha', preBaseline: pre, candidateBaseline: cand, now: NOW });
     expect(result.certificate_text).toContain('Verified Scope');
     expect(result.certificate_text).toContain('NOT checked');
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// TEST 7: Missing critical invariant evidence blocks gate
+// ═══════════════════════════════════════════════════════════════════
+
+describe('TEST 7: Missing critical invariant evidence blocks gate', () => {
+  it('blocks when candidate baseline has no invariant results for critical invariants', () => {
+    const pre = makeBaseline({ id: 'pre', git_sha: 'prod-sha' });
+    const cand = makeBaseline({
+      id: 'cand', git_sha: 'rel-sha', phase: 'candidate',
+      invariant_results: [], // No invariant results at all
+    });
+    const result = executeGate({
+      releaseSha: 'rel-sha', productionSha: 'prod-sha',
+      preBaseline: pre, candidateBaseline: cand, now: NOW,
+    });
+    expect(result.verdict).toBe('BLOCKED');
+    expect(result.block_reasons.some(r => r.includes('missing from candidate baseline'))).toBe(true);
+  });
+
+  it('certificate scope.invariants is false when no invariant evidence exists', () => {
+    const pre = makeBaseline({ id: 'pre', git_sha: 'prod-sha' });
+    const cand = makeBaseline({
+      id: 'cand', git_sha: 'rel-sha', phase: 'candidate',
+      invariant_results: [],
+    });
+    const result = executeGate({
+      releaseSha: 'rel-sha', productionSha: 'prod-sha',
+      preBaseline: pre, candidateBaseline: cand, now: NOW,
+    });
+    expect(result.certificate.scope.invariants).toBe(false);
+  });
+
+  it('certificate scope.invariants is true when invariant evidence exists', () => {
+    const pre = makeBaseline({ id: 'pre', git_sha: 'prod-sha' });
+    const cand = makeBaseline({
+      id: 'cand', git_sha: 'rel-sha', phase: 'candidate',
+      invariant_results: [
+        { invariant_id: 'DB-001', description: 'test', status: 'pass', evidence: 'ok', critical: true },
+      ],
+    });
+    const result = executeGate({
+      releaseSha: 'rel-sha', productionSha: 'prod-sha',
+      preBaseline: pre, candidateBaseline: cand, now: NOW,
+    });
+    expect(result.certificate.scope.invariants).toBe(true);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// TEST 8: Phase mismatch blocks gate
+// ═══════════════════════════════════════════════════════════════════
+
+describe('TEST 8: Phase mismatch blocks gate', () => {
+  it('blocks when pre-baseline has candidate phase', () => {
+    const pre = makeBaseline({ id: 'pre', git_sha: 'prod-sha', phase: 'candidate' }); // wrong
+    const cand = makeBaseline({ id: 'cand', git_sha: 'rel-sha', phase: 'candidate' });
+    const result = executeGate({
+      releaseSha: 'rel-sha', productionSha: 'prod-sha',
+      preBaseline: pre, candidateBaseline: cand, now: NOW,
+    });
+    expect(result.verdict).toBe('BLOCKED');
+    expect(result.block_reasons.some(r => r.includes('phase mismatch'))).toBe(true);
+  });
+
+  it('blocks when candidate-baseline has pre_deployment phase', () => {
+    const pre = makeBaseline({ id: 'pre', git_sha: 'prod-sha', phase: 'pre_deployment' });
+    const cand = makeBaseline({ id: 'cand', git_sha: 'rel-sha', phase: 'pre_deployment' }); // wrong
+    const result = executeGate({
+      releaseSha: 'rel-sha', productionSha: 'prod-sha',
+      preBaseline: pre, candidateBaseline: cand, now: NOW,
+    });
+    expect(result.verdict).toBe('BLOCKED');
+    expect(result.block_reasons.some(r => r.includes('phase mismatch'))).toBe(true);
   });
 });
 
@@ -256,9 +354,10 @@ describe('TEST 6: Certificate scope declaration', () => {
 
 describe('3-Phase BEFORE → CANDIDATE → AFTER', () => {
   it('passes when post-deployment matches candidate', () => {
-    const pre = makeBaseline({ id: 'pre', git_sha: 'prod-sha', functions: [makeFunction({ name: 'f', body_hash: 'old' })] });
-    const cand = makeBaseline({ id: 'cand', git_sha: 'rel-sha', phase: 'candidate', functions: [makeFunction({ name: 'f', body_hash: 'new' })] });
-    const post = makeBaseline({ id: 'post', git_sha: 'rel-sha', phase: 'post_deployment', functions: [makeFunction({ name: 'f', body_hash: 'new' })] });
+    const allInv = allCriticalInvariantsPassing();
+    const pre = makeBaseline({ id: 'pre', git_sha: 'prod-sha', functions: [makeFunction({ name: 'f', body_hash: 'old' })], invariant_results: allInv });
+    const cand = makeBaseline({ id: 'cand', git_sha: 'rel-sha', phase: 'candidate', functions: [makeFunction({ name: 'f', body_hash: 'new' })], invariant_results: allInv });
+    const post = makeBaseline({ id: 'post', git_sha: 'rel-sha', phase: 'post_deployment', functions: [makeFunction({ name: 'f', body_hash: 'new' })], invariant_results: allInv });
     const manifest: ReleaseManifest = {
       release_id: 'test', candidate_sha: 'rel-sha', base_sha: 'prod-sha',
       approved_by: 'CTO', created_at: ONE_HOUR_AGO.toISOString(),

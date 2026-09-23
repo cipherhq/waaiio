@@ -39,6 +39,7 @@ export function validateBaselineSha(
   baseline: BaselineSnapshot,
   expectedSha: string,
   now: Date = new Date(),
+  expectedPhase?: BaselineSnapshot['phase'],
 ): ShaValidation {
   const errors: string[] = [];
 
@@ -47,6 +48,14 @@ export function validateBaselineSha(
     errors.push(
       `Baseline SHA mismatch: baseline was captured for ${baseline.git_sha}, ` +
       `but release candidate is ${expectedSha}. Evidence is stale.`
+    );
+  }
+
+  // Phase must match if specified
+  if (expectedPhase && baseline.phase !== expectedPhase) {
+    errors.push(
+      `Baseline phase mismatch: expected '${expectedPhase}', ` +
+      `but baseline has phase '${baseline.phase}'. Wrong baseline type.`
     );
   }
 
@@ -169,13 +178,13 @@ export function validateEvidenceChain(opts: {
   const errors: string[] = [];
   const warnings: string[] = [];
 
-  // Pre-baseline must match production SHA
-  const preValidation = validateBaselineSha(preBaseline, productionSha, now);
+  // Pre-baseline must match production SHA and be 'pre_deployment' phase
+  const preValidation = validateBaselineSha(preBaseline, productionSha, now, 'pre_deployment');
   errors.push(...preValidation.errors);
 
-  // Candidate baseline must match release SHA
+  // Candidate baseline must match release SHA and be 'candidate' phase
   if (candidateBaseline) {
-    const candValidation = validateBaselineSha(candidateBaseline, releaseSha, now);
+    const candValidation = validateBaselineSha(candidateBaseline, releaseSha, now, 'candidate');
     errors.push(...candValidation.errors);
   }
 

@@ -69,22 +69,43 @@ export const INVARIANTS: InvariantDefinition[] = [
   },
   {
     id: 'DB-004',
-    description: 'Saved-card RPCs blocked for anon/authenticated; only service_role may execute',
+    description: 'Saved-card RPCs blocked for anon/authenticated/PUBLIC; only service_role may execute',
     category: 'database',
     critical: true,
     owner: '#353, M396',
     evidence_type: 'catalog_assertion',
     check_query: `
-      SELECT r.routine_name, grantee
-      FROM information_schema.routine_privileges r
-      WHERE r.routine_schema = 'public'
-        AND r.routine_name IN (
+      -- Check 1: anon, authenticated, and PUBLIC must NOT have EXECUTE
+      SELECT r.routine_name, 'UNAUTHORIZED_GRANT' AS violation,
+             CASE WHEN acl.grantee = 0 THEN 'PUBLIC' ELSE acl.grantee::regrole::text END AS grantee
+      FROM pg_proc p
+      JOIN pg_namespace n ON n.oid = p.pronamespace
+      CROSS JOIN LATERAL aclexplode(COALESCE(p.proacl, acldefault('f', p.proowner))) AS acl
+      JOIN information_schema.routines r ON r.routine_schema = n.nspname AND r.routine_name = p.proname
+      WHERE n.nspname = 'public'
+        AND p.proname IN (
           'accept_saved_card_offer',
           'decline_saved_card_offer',
           'create_provider_consented_offer'
         )
-        AND r.grantee IN ('anon', 'authenticated')
-        AND r.privilege_type = 'EXECUTE'
+        AND acl.privilege_type = 'EXECUTE'
+        AND (acl.grantee = 0 OR acl.grantee::regrole::text IN ('anon', 'authenticated'))
+      UNION ALL
+      -- Check 2: service_role MUST have EXECUTE (required access)
+      SELECT p.proname AS routine_name, 'MISSING_SERVICE_ROLE_GRANT' AS violation, 'service_role' AS grantee
+      FROM pg_proc p
+      JOIN pg_namespace n ON n.oid = p.pronamespace
+      WHERE n.nspname = 'public'
+        AND p.proname IN (
+          'accept_saved_card_offer',
+          'decline_saved_card_offer',
+          'create_provider_consented_offer'
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM aclexplode(COALESCE(p.proacl, acldefault('f', p.proowner))) AS acl
+          WHERE acl.privilege_type = 'EXECUTE'
+            AND acl.grantee::regrole::text = 'service_role'
+        )
     `,
   },
   {

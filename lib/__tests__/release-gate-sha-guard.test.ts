@@ -124,6 +124,79 @@ describe('Baseline SHA validation', () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════
+// Baseline phase validation
+// ═══════════════════════════════════════════════════════════════════
+
+describe('Baseline phase validation', () => {
+  it('accepts baseline with matching phase', () => {
+    const baseline = makeBaseline('abc123');
+    baseline.phase = 'pre_deployment';
+    const result = validateBaselineSha(baseline, 'abc123', NOW, 'pre_deployment');
+    expect(result.valid).toBe(true);
+  });
+
+  it('rejects baseline with mismatched phase', () => {
+    const baseline = makeBaseline('abc123');
+    baseline.phase = 'candidate';
+    const result = validateBaselineSha(baseline, 'abc123', NOW, 'pre_deployment');
+    expect(result.valid).toBe(false);
+    expect(result.errors[0]).toContain('phase mismatch');
+    expect(result.errors[0]).toContain('pre_deployment');
+    expect(result.errors[0]).toContain('candidate');
+  });
+
+  it('skips phase check when expectedPhase is not provided', () => {
+    const baseline = makeBaseline('abc123');
+    baseline.phase = 'candidate';
+    const result = validateBaselineSha(baseline, 'abc123', NOW);
+    expect(result.valid).toBe(true);
+  });
+
+  it('rejects candidate baseline used as post_deployment', () => {
+    const baseline = makeBaseline('abc123');
+    baseline.phase = 'candidate';
+    const result = validateBaselineSha(baseline, 'abc123', NOW, 'post_deployment');
+    expect(result.valid).toBe(false);
+    expect(result.errors[0]).toContain('post_deployment');
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// Evidence chain validates phases
+// ═══════════════════════════════════════════════════════════════════
+
+describe('Evidence chain validates baseline phases', () => {
+  it('rejects when pre-baseline has wrong phase', () => {
+    const pre = makeBaseline('prod-sha');
+    pre.phase = 'candidate'; // wrong — should be pre_deployment
+    const result = validateEvidenceChain({
+      releaseSha: 'release-sha',
+      productionSha: 'prod-sha',
+      preBaseline: pre,
+      now: NOW,
+    });
+    expect(result.valid).toBe(false);
+    expect(result.errors.some(e => e.includes('phase mismatch'))).toBe(true);
+  });
+
+  it('rejects when candidate-baseline has wrong phase', () => {
+    const pre = makeBaseline('prod-sha');
+    pre.phase = 'pre_deployment';
+    const cand = makeBaseline('release-sha');
+    cand.phase = 'pre_deployment'; // wrong — should be candidate
+    const result = validateEvidenceChain({
+      releaseSha: 'release-sha',
+      productionSha: 'prod-sha',
+      preBaseline: pre,
+      candidateBaseline: cand,
+      now: NOW,
+    });
+    expect(result.valid).toBe(false);
+    expect(result.errors.some(e => e.includes('phase mismatch'))).toBe(true);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════
 // Diff SHA validation
 // ═══════════════════════════════════════════════════════════════════
 
@@ -189,11 +262,13 @@ describe('Certificate SHA validation', () => {
 
 describe('Evidence chain validation', () => {
   it('accepts consistent evidence chain', () => {
+    const candBaseline = makeBaseline('release-sha');
+    candBaseline.phase = 'candidate';
     const result = validateEvidenceChain({
       releaseSha: 'release-sha',
       productionSha: 'prod-sha',
       preBaseline: makeBaseline('prod-sha'),
-      candidateBaseline: makeBaseline('release-sha'),
+      candidateBaseline: candBaseline,
       now: NOW,
     });
 
@@ -202,11 +277,13 @@ describe('Evidence chain validation', () => {
   });
 
   it('rejects when pre-baseline SHA does not match production', () => {
+    const candBaseline = makeBaseline('release-sha');
+    candBaseline.phase = 'candidate';
     const result = validateEvidenceChain({
       releaseSha: 'release-sha',
       productionSha: 'prod-sha',
       preBaseline: makeBaseline('wrong-sha'),
-      candidateBaseline: makeBaseline('release-sha'),
+      candidateBaseline: candBaseline,
       now: NOW,
     });
 
@@ -215,11 +292,13 @@ describe('Evidence chain validation', () => {
   });
 
   it('rejects when candidate-baseline SHA does not match release', () => {
+    const candBaseline = makeBaseline('stale-candidate-sha');
+    candBaseline.phase = 'candidate';
     const result = validateEvidenceChain({
       releaseSha: 'release-sha',
       productionSha: 'prod-sha',
       preBaseline: makeBaseline('prod-sha'),
-      candidateBaseline: makeBaseline('stale-candidate-sha'),
+      candidateBaseline: candBaseline,
       now: NOW,
     });
 

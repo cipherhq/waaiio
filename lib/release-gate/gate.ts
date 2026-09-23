@@ -29,6 +29,7 @@ import type {
 import { computeStateDiff } from './diff-engine';
 import { generateCertificate, formatCertificate } from './certificate';
 import { validateEvidenceChain, validateBaselineSha } from './sha-guard';
+import { getCriticalInvariants } from './invariant-registry';
 
 // ═══════════════════════════════════════════════════════════════════
 // Gate Result
@@ -137,8 +138,8 @@ export function executeGate(input: GateInput): GateResult {
   let preToPostDiff: StateDiffResult | null = null;
 
   if (postBaseline) {
-    // Validate post-baseline SHA matches the release
-    const postValidation = validateBaselineSha(postBaseline, releaseSha, now);
+    // Validate post-baseline SHA matches the release and phase is 'post_deployment'
+    const postValidation = validateBaselineSha(postBaseline, releaseSha, now, 'post_deployment');
     if (!postValidation.valid) {
       blockReasons.push(...postValidation.errors);
     }
@@ -174,6 +175,27 @@ export function executeGate(input: GateInput): GateResult {
     }
   }
 
+  // ─── Step 4b: Enforce invariant evidence completeness ───
+  const criticalInvariants = getCriticalInvariants();
+  const candidateInvariantIds = new Set(
+    candidateBaseline.invariant_results.map(r => r.invariant_id)
+  );
+  for (const inv of criticalInvariants) {
+    if (!candidateInvariantIds.has(inv.id)) {
+      blockReasons.push(
+        `Critical invariant ${inv.id} ("${inv.description}") missing from candidate baseline — no evidence captured`
+      );
+    } else {
+      // Check for skipped catalog assertions — these MUST produce real evidence
+      const result = candidateBaseline.invariant_results.find(r => r.invariant_id === inv.id);
+      if (result && result.status === 'skip' && inv.check_query) {
+        blockReasons.push(
+          `Critical invariant ${inv.id} ("${inv.description}") has status 'skip' but has a check_query — catalog assertion must produce real evidence`
+        );
+      }
+    }
+  }
+
   // ─── Step 5: Generate certificate ───
   const certificate = generateCertificate({
     releaseSha,
@@ -185,6 +207,13 @@ export function executeGate(input: GateInput): GateResult {
     preToPostDiff: preToPostDiff || undefined,
     migrationsApplied,
   });
+
+  // Derive invariants scope: true only if at least one invariant result exists
+  const hasInvariantEvidence = candidateBaseline.invariant_results.length > 0;
+  (certificate as { scope: typeof certificate.scope }).scope = {
+    ...certificate.scope,
+    invariants: hasInvariantEvidence,
+  };
 
   // Override certificate status with our comprehensive block reasons
   if (blockReasons.length > 0) {

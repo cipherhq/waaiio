@@ -185,7 +185,7 @@ describe('Generic manifest entry cannot waive protected safety properties', () =
     expect(diff.verdict).toBe('BLOCKED');
   });
 
-  it('ACCEPTS: explicit field-level proconfig manifest entry with expected values', () => {
+  it('MATCHES but BLOCKS: explicit field-level proconfig manifest entry requires manual verification (protected safety field)', () => {
     const before = makeBaseline({
       functions: [makeFunction({
         name: 'initialize_terminal_effects',
@@ -212,8 +212,11 @@ describe('Generic manifest entry cannot waive protected safety properties', () =
       }],
     });
     const diff = computeStateDiff(before, after, manifest);
-    expect(diff.verdict).toBe('PASS');
+    // proconfig is a protected safety field — classified as expected but blocks with PENDING_MANUAL_REVIEW
     expect(diff.entries[0].classification).toBe('expected');
+    expect(diff.entries[0].critical).toBe(true);
+    expect(diff.verdict).toBe('BLOCKED');
+    expect(diff.block_reasons.some(r => r.includes('PENDING_MANUAL_REVIEW'))).toBe(true);
   });
 });
 
@@ -379,6 +382,183 @@ describe('#366: PAY-002 does not assume Stripe API version root cause', () => {
     expect(pay002.description).not.toContain('>= 2024');
     expect(pay002.description).toContain('provider-visible');
     expect(pay002.evidence_type).toBe('provider_check');
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// BLOCKER 5 — Protected safety change with manifest still blocks as PENDING
+// ═══════════════════════════════════════════════════════════════════
+
+describe('Protected safety change with manifest still blocks as PENDING_MANUAL_REVIEW', () => {
+  it('BLOCKS: field-specific security manifest entry matches but requires manual verification', () => {
+    const before = makeBaseline({
+      functions: [makeFunction({ name: 'my_func', security: 'definer' })],
+    });
+    const after = makeBaseline({
+      git_sha: 'def456',
+      functions: [makeFunction({ name: 'my_func', security: 'invoker' })],
+    });
+    const manifest = makeManifest({
+      expected_changes: [{
+        category: 'function', object_id: 'public.my_func(uuid, uuid)',
+        change_type: 'modified', field: 'security',
+        expected_before: 'definer', expected_after: 'invoker',
+        reason: 'Switching to invoker for RLS', owner_authorization: '#500-owner-approval',
+      }],
+    });
+    const diff = computeStateDiff(before, after, manifest);
+    // Should be classified as 'expected' but still critical
+    const entry = diff.entries.find(e => e.field === 'security');
+    expect(entry).toBeDefined();
+    expect(entry!.classification).toBe('expected');
+    expect(entry!.critical).toBe(true);
+    expect(entry!.manifest_entry).toContain('PENDING_MANUAL_REVIEW');
+    // Should BLOCK the gate
+    expect(diff.verdict).toBe('BLOCKED');
+    expect(diff.block_reasons.some(r => r.includes('PENDING_MANUAL_REVIEW'))).toBe(true);
+  });
+
+  it('BLOCKS: field-specific proconfig manifest entry matches but requires manual verification', () => {
+    const before = makeBaseline({
+      functions: [makeFunction({
+        name: 'initialize_terminal_effects',
+        arg_types: 'uuid, uuid, text[], text[], text[], text[], integer',
+        proconfig: ['search_path=public, extensions'],
+      })],
+    });
+    const after = makeBaseline({
+      git_sha: 'def456',
+      functions: [makeFunction({
+        name: 'initialize_terminal_effects',
+        arg_types: 'uuid, uuid, text[], text[], text[], text[], integer',
+        proconfig: ['search_path=public, extensions, pg_catalog'],
+      })],
+    });
+    const manifest = makeManifest({
+      expected_changes: [{
+        category: 'function',
+        object_id: 'public.initialize_terminal_effects(uuid, uuid, text[], text[], text[], text[], integer)',
+        change_type: 'modified', field: 'proconfig',
+        expected_before: '["search_path=public, extensions"]',
+        expected_after: '["search_path=public, extensions, pg_catalog"]',
+        reason: 'Adding pg_catalog', owner_authorization: '#999-owner-approval',
+      }],
+    });
+    const diff = computeStateDiff(before, after, manifest);
+    const entry = diff.entries[0];
+    expect(entry.classification).toBe('expected');
+    expect(entry.critical).toBe(true);
+    expect(entry.manifest_entry).toContain('PENDING_MANUAL_REVIEW');
+    expect(diff.verdict).toBe('BLOCKED');
+  });
+
+  it('does NOT require manual verification for non-protected fields', () => {
+    const before = makeBaseline({
+      functions: [makeFunction({ name: 'my_func', body_hash: 'old' })],
+    });
+    const after = makeBaseline({
+      git_sha: 'def456',
+      functions: [makeFunction({ name: 'my_func', body_hash: 'new' })],
+    });
+    const manifest = makeManifest({
+      expected_changes: [{
+        category: 'function', object_id: 'public.my_func(uuid, uuid)',
+        change_type: 'modified', field: 'body_hash',
+        reason: 'Updated logic', owner_authorization: '#400',
+      }],
+    });
+    const diff = computeStateDiff(before, after, manifest);
+    expect(diff.verdict).toBe('PASS');
+    const entry = diff.entries[0];
+    expect(entry.classification).toBe('expected');
+    expect(entry.critical).toBe(false);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// Invariant disappearance from candidate treated as regression
+// ═══════════════════════════════════════════════════════════════════
+
+describe('Invariant disappearance from candidate treated as regression', () => {
+  it('pass → missing is a regression', () => {
+    const before = makeBaseline({
+      invariant_results: [
+        { invariant_id: 'DB-001', description: 'test', status: 'pass', evidence: 'ok', critical: true },
+      ],
+    });
+    const after = makeBaseline({
+      git_sha: 'def456',
+      invariant_results: [], // DB-001 is missing
+    });
+    const diff = computeStateDiff(before, after);
+    expect(diff.verdict).toBe('BLOCKED');
+    const entry = diff.entries.find(e => e.object_id === 'DB-001');
+    expect(entry).toBeDefined();
+    expect(entry!.classification).toBe('regression');
+    expect(entry!.after).toBe('missing');
+    expect(diff.block_reasons.some(r => r.includes('PREVIOUSLY PASSING') && r.includes('DB-001'))).toBe(true);
+  });
+
+  it('fail → missing is NOT a regression (was already failing)', () => {
+    const before = makeBaseline({
+      invariant_results: [
+        { invariant_id: 'DB-001', description: 'test', status: 'fail', evidence: 'broken', critical: true },
+      ],
+    });
+    const after = makeBaseline({
+      git_sha: 'def456',
+      invariant_results: [],
+    });
+    const diff = computeStateDiff(before, after);
+    // Should NOT produce any entries for fail → missing
+    expect(diff.entries.find(e => e.object_id === 'DB-001')).toBeUndefined();
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// Added/removed tables detected in table_rls diff
+// ═══════════════════════════════════════════════════════════════════
+
+describe('Table RLS diff detects added/removed tables and force_rls changes', () => {
+  it('detects added table', () => {
+    const before = makeBaseline({ table_rls: [] });
+    const after = makeBaseline({
+      git_sha: 'def456',
+      table_rls: [{ schema: 'public', table_name: 'new_table', rls_enabled: true, force_rls: false }],
+    });
+    const diff = computeStateDiff(before, after);
+    const entry = diff.entries.find(e => e.object_id === 'public.new_table');
+    expect(entry).toBeDefined();
+    expect(entry!.change_type).toBe('added');
+    expect(entry!.field).toBe('existence');
+  });
+
+  it('detects removed table', () => {
+    const before = makeBaseline({
+      table_rls: [{ schema: 'public', table_name: 'old_table', rls_enabled: true, force_rls: false }],
+    });
+    const after = makeBaseline({ git_sha: 'def456', table_rls: [] });
+    const diff = computeStateDiff(before, after);
+    const entry = diff.entries.find(e => e.object_id === 'public.old_table');
+    expect(entry).toBeDefined();
+    expect(entry!.change_type).toBe('removed');
+    expect(entry!.field).toBe('existence');
+  });
+
+  it('detects force_rls change', () => {
+    const before = makeBaseline({
+      table_rls: [{ schema: 'public', table_name: 'payments', rls_enabled: true, force_rls: false }],
+    });
+    const after = makeBaseline({
+      git_sha: 'def456',
+      table_rls: [{ schema: 'public', table_name: 'payments', rls_enabled: true, force_rls: true }],
+    });
+    const diff = computeStateDiff(before, after);
+    const entry = diff.entries.find(e => e.field === 'force_rls');
+    expect(entry).toBeDefined();
+    expect(entry!.change_type).toBe('modified');
+    expect(entry!.before).toBe('false');
+    expect(entry!.after).toBe('true');
   });
 });
 

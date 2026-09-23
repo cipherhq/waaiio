@@ -90,6 +90,9 @@ jobs:
       SENTRY_DSN: https://dummy@sentry.io/0
       SENTRY_ORG: dummy
       SENTRY_PROJECT: dummy
+      # Bind certificate to exact PR head SHA, not synthetic merge SHA
+      RELEASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+      BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || (github.event_name == 'push' && github.event.before || github.sha) }}
 
     steps:
       - name: Checkout code
@@ -106,9 +109,20 @@ jobs:
 
       - name: Run migration lint (candidate migrations only)
         run: |
-          # Only lint migration files that are NEW in this branch vs main.
-          # All existing migrations in main are historical and immutable.
-          CANDIDATE_MIGRATIONS=$(git diff --name-only --diff-filter=A origin/main -- 'supabase/migrations/*.sql' | xargs -I{} basename {} 2>/dev/null || true)
+          set -euo pipefail
+
+          # For push events to main (post-merge), skip lint — already merged
+          if [ "${{ github.event_name }}" = "push" ] && [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            echo "Post-merge push to main — migration lint skipped (already merged)."
+            exit 0
+          fi
+
+          # For PR events, use the base SHA that actions/checkout has available
+          BASE_SHA="${{ env.BASE_SHA }}"
+          echo "Fetching base ref $BASE_SHA for diff..."
+          git fetch --depth=1 origin "$BASE_SHA"
+
+          CANDIDATE_MIGRATIONS=$(git diff --name-only --diff-filter=A "$BASE_SHA" -- 'supabase/migrations/*.sql' | xargs -I{} basename {} 2>/dev/null)
           if [ -z "$CANDIDATE_MIGRATIONS" ]; then
             echo "No new candidate migrations — lint passes (nothing to check)."
           else
@@ -129,7 +143,7 @@ jobs:
       - name: Run release gate tests
         run: npx vitest run lib/__tests__/release-gate-diff-engine.test.ts lib/__tests__/release-gate-migration-lint.test.ts lib/__tests__/release-gate-sha-guard.test.ts lib/__tests__/release-gate-orchestration.test.ts
 
-      - name: Generate sample release certificate
+      - name: Generate Release Gate V2 Self-Test Certificate
         run: |
           npx tsx -e "
           import { executeGate } from './lib/release-gate/gate';
@@ -137,23 +151,39 @@ jobs:
           import { writeFileSync } from 'fs';
 
           const NOW = new Date();
-          const sha = process.env.GITHUB_SHA || 'unknown';
+          const sha = process.env.RELEASE_SHA || 'unknown';
           const pre = {
-            id: 'ci-pre', captured_at: NOW.toISOString(), git_sha: sha,
-            phase: 'pre_deployment' as const, label: 'CI baseline',
+            id: 'ci-synthetic-pre', captured_at: NOW.toISOString(), git_sha: sha,
+            phase: 'pre_deployment' as const, label: 'SYNTHETIC SELF-TEST — no real DB evidence',
             functions: [], function_grants: [], table_rls: [], rls_policies: [],
             extensions: [], constraints: [], triggers: [], cron_jobs: [],
             migrations: [], invariant_results: [], journey_results: [],
           };
-          const cand = { ...pre, id: 'ci-cand', phase: 'candidate' as const };
+          const cand = { ...pre, id: 'ci-synthetic-cand', phase: 'candidate' as const, label: 'SYNTHETIC SELF-TEST — no real DB evidence' };
           const result = executeGate({
             releaseSha: sha, productionSha: sha,
             preBaseline: pre, candidateBaseline: cand, now: NOW,
           });
-          writeFileSync('release-certificate.txt', result.certificate_text);
+          // Override scope.invariants to false for synthetic baselines (no real evidence)
+          (result.certificate as any).scope.invariants = false;
+          // Re-format with updated scope
+          const { formatCertificate: fmt } = await import('./lib/release-gate/certificate');
+          const certText = '⚠️  SYNTHETIC SELF-TEST — no real DB evidence\\n\\n' + fmt(result.certificate);
+          writeFileSync('release-certificate.txt', certText);
           writeFileSync('release-certificate.json', JSON.stringify(result.certificate, null, 2));
-          console.log(result.certificate_text);
+          console.log(certText);
           "
+
+      - name: Verify certificate SHA matches PR head
+        run: |
+          set -euo pipefail
+          EXPECTED_SHA="${{ env.RELEASE_SHA }}"
+          CERT_SHA=$(node -e "const c = require('./release-certificate.json'); console.log(c.release_sha)")
+          if [ "$CERT_SHA" != "$EXPECTED_SHA" ]; then
+            echo "FATAL: Certificate release_sha ($CERT_SHA) does not match expected PR head SHA ($EXPECTED_SHA)"
+            exit 1
+          fi
+          echo "✅ Certificate release_sha matches expected SHA: $CERT_SHA"
 
       - name: Upload release certificate artifact
         uses: actions/upload-artifact@v4

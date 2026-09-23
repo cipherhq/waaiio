@@ -93,8 +93,8 @@ function isExpectedChange(
   before: string,
   after: string,
   changeType: StateDiffEntry['change_type'],
-): { matched: boolean; entry?: string } {
-  if (!manifest) return { matched: false };
+): { matched: boolean; requiresManualVerification: boolean; entry?: string } {
+  if (!manifest) return { matched: false, requiresManualVerification: false };
 
   const match = manifest.expected_changes.find((ec: ExpectedChange) => {
     // Exact category match
@@ -115,9 +115,16 @@ function isExpectedChange(
     return true;
   });
 
-  return match
-    ? { matched: true, entry: `${match.category}:${match.object_id}:${match.field || '*'} (${match.reason}) [auth: ${match.owner_authorization}]` }
-    : { matched: false };
+  if (!match) return { matched: false, requiresManualVerification: false };
+
+  const entry = `${match.category}:${match.object_id}:${match.field || '*'} (${match.reason}) [auth: ${match.owner_authorization}]`;
+
+  // Protected safety fields require independent Owner verification even when manifest-declared
+  if (PROTECTED_SAFETY_FIELDS.has(field)) {
+    return { matched: true, requiresManualVerification: true, entry };
+  }
+
+  return { matched: true, requiresManualVerification: false, entry };
 }
 
 function classifyDiff(
@@ -133,6 +140,14 @@ function classifyDiff(
   const expected = isExpectedChange(manifest, category, objectId, field, before, after, changeType);
 
   if (expected.matched) {
+    if (expected.requiresManualVerification) {
+      // Protected safety change declared as expected but requires independent Owner verification
+      return {
+        classification: 'expected',
+        critical: true,
+        manifestEntry: `${expected.entry} — PENDING_MANUAL_REVIEW: Protected safety change declared as expected but requires independent Owner verification`,
+      };
+    }
     return { classification: 'expected', critical: false, manifestEntry: expected.entry };
   }
 
@@ -311,6 +326,35 @@ function diffTableRls(
   const beforeMap = new Map(before.map(t => [rlsKey(t), t]));
   const afterMap = new Map(after.map(t => [rlsKey(t), t]));
 
+  // Removed tables (in before but not after)
+  for (const [key] of Array.from(beforeMap)) {
+    if (!afterMap.has(key)) {
+      const { classification, critical, manifestEntry } = classifyDiff(
+        'rls', key, 'existence', 'present', 'absent', manifest, 'removed',
+      );
+      entries.push({
+        category: 'rls', object_id: key, change_type: 'removed',
+        field: 'existence', before: 'present', after: 'absent',
+        classification, critical, manifest_entry: manifestEntry,
+      });
+    }
+  }
+
+  // Added tables (in after but not before)
+  for (const [key] of Array.from(afterMap)) {
+    if (!beforeMap.has(key)) {
+      const { classification, critical, manifestEntry } = classifyDiff(
+        'rls', key, 'existence', 'absent', 'present', manifest, 'added',
+      );
+      entries.push({
+        category: 'rls', object_id: key, change_type: 'added',
+        field: 'existence', before: 'absent', after: 'present',
+        classification, critical, manifest_entry: manifestEntry,
+      });
+    }
+  }
+
+  // Modified tables — check rls_enabled and force_rls
   for (const [key, bt] of Array.from(beforeMap)) {
     const at = afterMap.get(key);
     if (!at) continue;
@@ -322,6 +366,17 @@ function diffTableRls(
       entries.push({
         category: 'rls', object_id: key, change_type: 'modified',
         field: 'rls_enabled', before: String(bt.rls_enabled), after: String(at.rls_enabled),
+        classification, critical, manifest_entry: manifestEntry,
+      });
+    }
+
+    if (bt.force_rls !== at.force_rls) {
+      const { classification, critical, manifestEntry } = classifyDiff(
+        'rls', key, 'force_rls', String(bt.force_rls), String(at.force_rls), manifest, 'modified',
+      );
+      entries.push({
+        category: 'rls', object_id: key, change_type: 'modified',
+        field: 'force_rls', before: String(bt.force_rls), after: String(at.force_rls),
         classification, critical, manifest_entry: manifestEntry,
       });
     }
@@ -339,9 +394,20 @@ function diffInvariants(
   const beforeMap = new Map(before.map(i => [i.invariant_id, i]));
   const afterMap = new Map(after.map(i => [i.invariant_id, i]));
 
+  // Detect invariants that exist in before but are MISSING from after
   for (const [id, bi] of Array.from(beforeMap)) {
     const ai = afterMap.get(id);
-    if (!ai) continue;
+    if (!ai) {
+      // Missing from after — if it was passing, this is a regression (pass → missing)
+      if (bi.status === 'pass') {
+        entries.push({
+          category: 'invariant', object_id: id, change_type: 'removed',
+          field: 'status', before: bi.status, after: 'missing',
+          classification: 'regression', critical: bi.critical,
+        });
+      }
+      continue;
+    }
 
     if (bi.status !== ai.status) {
       const { classification, critical, manifestEntry } = classifyDiff(
@@ -399,10 +465,18 @@ export function computeStateDiff(
     }
   }
 
+  // Protected safety changes declared as expected but requiring manual verification
+  const pendingManualReview = entries.filter(e =>
+    e.classification === 'expected' && e.critical && e.manifest_entry?.includes('PENDING_MANUAL_REVIEW')
+  );
+  for (const entry of pendingManualReview) {
+    blockReasons.push(`PENDING_MANUAL_REVIEW: ${entry.category} ${entry.object_id} — ${entry.field}: ${entry.before} → ${entry.after} (${entry.manifest_entry})`);
+  }
+
   // Previous-passing-must-stay-passing rule
   const passToFail = entries.filter(e =>
     (e.category === 'invariant' || e.category === 'journey') &&
-    e.before === 'pass' && e.after === 'fail'
+    e.before === 'pass' && (e.after === 'fail' || e.after === 'missing')
   );
   for (const pf of passToFail) {
     blockReasons.push(`PREVIOUSLY PASSING NOW FAILS: ${pf.object_id} (${pf.category})`);

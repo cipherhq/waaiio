@@ -76,21 +76,21 @@ const FUNCTIONS_QUERY = `
   ORDER BY p.proname;
 `;
 
-/** Overload-safe grant query using pg_catalog + pg_get_function_identity_arguments */
+/** Overload-safe grant query using pg_catalog + pg_get_function_identity_arguments.
+ *  Includes grantee=0 (PUBLIC) — mapped to the string 'PUBLIC' below. */
 const FUNCTION_GRANTS_QUERY = `
   SELECT
     n.nspname,
     p.proname,
     pg_get_function_identity_arguments(p.oid),
-    acl.grantee::regrole::text,
+    CASE WHEN acl.grantee = 0 THEN 'PUBLIC' ELSE acl.grantee::regrole::text END,
     acl.is_grantable
   FROM pg_proc p
   JOIN pg_namespace n ON n.oid = p.pronamespace
   CROSS JOIN LATERAL aclexplode(COALESCE(p.proacl, acldefault('f', p.proowner))) AS acl
   WHERE n.nspname = 'public'
     AND acl.privilege_type = 'EXECUTE'
-    AND acl.grantee != 0
-  ORDER BY p.proname, acl.grantee::regrole::text;
+  ORDER BY p.proname, CASE WHEN acl.grantee = 0 THEN 'PUBLIC' ELSE acl.grantee::regrole::text END;
 `;
 
 
