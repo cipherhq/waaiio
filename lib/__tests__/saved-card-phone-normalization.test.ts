@@ -83,6 +83,15 @@ describe('isProvenPreEmission', () => {
     expect(isProvenPreEmission(err)).toBe(true);
   });
 
+  it('classifies Financial authorization errors as pre-emission', async () => {
+    const { isProvenPreEmission } = await import('@/lib/payments/saved-card-delivery');
+    expect(isProvenPreEmission(new Error('Financial authorization denied: insufficient'))).toBe(true);
+    expect(isProvenPreEmission(new Error('Financial authorization RPC error: timeout'))).toBe(true);
+    expect(isProvenPreEmission(new Error('Financial authorization: null RPC response'))).toBe(true);
+    expect(isProvenPreEmission(new Error('Financial authorization error: network'))).toBe(true);
+    expect(isProvenPreEmission(new Error('Financial authorization: unexpected RPC response'))).toBe(true);
+  });
+
   it('classifies AmbiguousSendError as NOT pre-emission', async () => {
     const { isProvenPreEmission } = await import('@/lib/payments/saved-card-delivery');
     const err = Object.assign(new Error('ambiguous'), { isAmbiguous: true });

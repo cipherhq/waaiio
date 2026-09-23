@@ -668,9 +668,10 @@ export async function checkStripeConsentAndOffer(
       businessId,
       channelId,
       messageText: activationMsg,
-      markStartedRpc: 'mark_activation_send_started',
-      completeRpc: 'complete_activation_delivery',
-      releasePreEmissionRpc: 'release_activation_pre_emission',
+      markStarted: (id, token) => supabase.rpc('mark_activation_send_started', { p_offer_id: id, p_claim_token: token }),
+      // complete_activation_delivery (M395) takes exactly 2 args — no p_customer_phone
+      complete: (id, token) => supabase.rpc('complete_activation_delivery', { p_offer_id: id, p_claim_token: token }),
+      releasePreEmission: (id, token) => supabase.rpc('release_activation_pre_emission', { p_offer_id: id, p_claim_token: token }),
     });
 
     if (delivered) {

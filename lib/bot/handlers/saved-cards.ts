@@ -366,19 +366,20 @@ export async function handleCardPinStep(
     }
 
     // I6: Paystack durable acknowledgement — checked commit
+    // R5-B2: Check BOTH error AND data — do NOT send Card Saved if commit fails
     const offerId = d._save_card_offer_id as string | undefined;
     if (offerId) {
       const savedMethod = await supabase.from('saved_payment_methods')
         .select('id, credential_version').in('customer_phone', [phoneP, phoneN]).eq('is_active', true).eq('gateway', 'paystack').maybeSingle();
       if (savedMethod?.data) {
-        const { data: commitResult } = await supabase.rpc('commit_saved_card_offer', {
+        const { data: commitResult, error: commitError } = await supabase.rpc('commit_saved_card_offer', {
           p_offer_id: offerId, p_customer_phone: phoneP,
           p_method_id: savedMethod.data.id,
           p_card_display: `${((auth.brand as string) || 'Card').toUpperCase()} ****${(auth.last4 as string) || '????'}`,
           p_credential_version: savedMethod.data.credential_version || 1,
         });
-        if (!commitResult) {
-          logger.warn('[SAVED_CARDS] Paystack commit RPC failed — credential saved but offer not committed');
+        if (commitError || !commitResult) {
+          logger.warn('[SAVED_CARDS] Paystack commit failed — credential saved but no Card Saved confirmation will be sent', { offerId, commitError: commitError?.message });
         }
       }
     }
@@ -430,19 +431,20 @@ export async function handleCardPinStep(
     }
 
     // I6: Stripe durable acknowledgement — checked commit
+    // R5-B2: Check BOTH error AND data — do NOT send Card Saved if commit fails
     const stripeOfferId = d._save_card_offer_id as string | undefined;
     if (stripeOfferId) {
       const savedMethod = await supabase.from('saved_payment_methods')
         .select('id, credential_version').in('customer_phone', [phoneP, phoneN]).eq('is_active', true).eq('gateway', 'stripe').maybeSingle();
       if (savedMethod?.data) {
-        const { data: commitResult } = await supabase.rpc('commit_saved_card_offer', {
+        const { data: commitResult, error: commitError } = await supabase.rpc('commit_saved_card_offer', {
           p_offer_id: stripeOfferId, p_customer_phone: phoneP,
           p_method_id: savedMethod.data.id,
           p_card_display: `${((auth.card_brand as string) || 'Card').toUpperCase()} ****${(auth.card_last4 as string) || '????'}`,
           p_credential_version: savedMethod.data.credential_version || 1,
         });
-        if (!commitResult) {
-          logger.warn('[SAVED_CARDS] Stripe commit RPC failed — credential saved but offer not committed');
+        if (commitError || !commitResult) {
+          logger.warn('[SAVED_CARDS] Stripe commit failed — credential saved but no Card Saved confirmation will be sent', { stripeOfferId, commitError: commitError?.message });
         }
       }
     }
@@ -463,56 +465,64 @@ export async function handleCardPinStep(
     .eq('id', session.id);
 
   // I6: Durable confirmation — committed → confirmed with fenced delivery
+  // R5-B2: No sendText fallback for provider-consented offers — recovery worker handles retries
+  // R5-B5: Use durable claim authority (customer_phone, business_id, channel_id) from claim, not session fields
   const finalOfferId = d._save_card_offer_id as string | undefined;
-  const savedCardChannelId = d._saved_card_channel_id as string | undefined;
   const confirmationMsg = `💳 Card saved! *${cardLabel}*\n\n🔒 Waaiio PIN set successfully. You'll need this Waaiio PIN when using your saved card.\n\nFor privacy, you can delete your PIN message from this chat. Type *remove card* anytime to delete this card.`;
 
-  if (finalOfferId && savedCardChannelId && businessId) {
-    // Use fenced delivery via the offer's durable channel_id — NOT the bot's sendText
+  if (finalOfferId) {
+    // Provider-consented offer path — use fenced delivery, NO sendText fallback
     try {
-      const { data: claimed } = await supabase.rpc('claim_confirmation_delivery', {
+      const { data: claimed, error: claimErr } = await supabase.rpc('claim_confirmation_delivery', {
         p_offer_id: finalOfferId,
       });
 
-      if (claimed) {
-        const confirmClaimToken = (claimed as Record<string, unknown>).claim_token as string;
-        const { sendWithFencedDelivery } = await import('@/lib/payments/saved-card-delivery');
-        await sendWithFencedDelivery({
-          supabase,
-          offerId: finalOfferId,
-          claimToken: confirmClaimToken,
-          customerPhone: phoneP,
-          businessId,
-          channelId: savedCardChannelId,
-          messageText: confirmationMsg,
-          markStartedRpc: 'mark_confirmation_send_started',
-          completeRpc: 'complete_confirmation_delivery',
-          releasePreEmissionRpc: 'release_confirmation_pre_emission',
-        });
+      if (claimErr) {
+        logger.error('[SAVED_CARDS] Confirmation claim RPC error — offer stays committed for recovery', { finalOfferId, claimErr: claimErr.message });
+      } else if (claimed) {
+        // R5-B5: Extract durable authority from claim — do NOT use phoneP, businessId, or session fields
+        const claim = claimed as Record<string, unknown>;
+        const claimCustomerPhone = claim.customer_phone as string;
+        const claimBusinessId = claim.business_id as string;
+        const claimChannelId = claim.channel_id as string;
+        const confirmClaimToken = claim.claim_token as string;
+
+        if (!claimChannelId) {
+          logger.warn('[SAVED_CARDS] Claim has no channel_id — releasing for recovery', { finalOfferId });
+          await supabase.rpc('release_confirmation_pre_emission', {
+            p_offer_id: finalOfferId, p_claim_token: confirmClaimToken,
+          });
+        } else {
+          const { sendWithFencedDelivery } = await import('@/lib/payments/saved-card-delivery');
+          await sendWithFencedDelivery({
+            supabase,
+            offerId: finalOfferId,
+            claimToken: confirmClaimToken,
+            customerPhone: claimCustomerPhone,
+            businessId: claimBusinessId,
+            channelId: claimChannelId,
+            messageText: confirmationMsg,
+            markStarted: (id, token) => supabase.rpc('mark_confirmation_send_started', { p_offer_id: id, p_claim_token: token }),
+            // complete_confirmation_delivery (M398) takes 3 args — includes p_customer_phone
+            complete: (id, token) => supabase.rpc('complete_confirmation_delivery', { p_offer_id: id, p_claim_token: token, p_customer_phone: claimCustomerPhone }),
+            releasePreEmission: (id, token) => supabase.rpc('release_confirmation_pre_emission', { p_offer_id: id, p_claim_token: token }),
+          });
+        }
       } else {
-        // Claim failed — offer may not be committed yet, or already confirmed
-        // Fall back to sendText for user experience (non-security-critical copy)
-        logger.warn('[SAVED_CARDS] Confirmation claim failed — using sendText fallback', { finalOfferId });
-        await sendText(from, confirmationMsg);
+        // Claim returned null — offer not committed, or already confirmed by another worker.
+        // R5-B2: Do NOT fall back to sendText. Silent return. Recovery worker handles it.
+        logger.warn('[SAVED_CARDS] Confirmation claim returned null — not committed or already confirmed', { finalOfferId });
       }
     } catch (confirmErr) {
       logger.error('[SAVED_CARDS] Fenced confirmation delivery failed — offer stays committed for recovery', { confirmErr });
     }
   } else {
-    // No offer or no channel — use sendText for Paystack-only (non-Stripe) saves or legacy paths
+    // Legacy path WITHOUT offer_id — Paystack saves that predate the offer lifecycle.
+    // These don't have fenced delivery; sendText is acceptable here.
     try {
       await sendText(from, confirmationMsg);
-      // Best-effort confirm for offers without channel tracking
-      if (finalOfferId) {
-        const { data: confirmResult } = await supabase.rpc('confirm_saved_card_offer', {
-          p_offer_id: finalOfferId, p_customer_phone: phoneP,
-        });
-        if (!confirmResult) {
-          logger.warn('[SAVED_CARDS] Confirm RPC failed — offer may not be in committed state');
-        }
-      }
     } catch (confirmErr) {
-      logger.error('[SAVED_CARDS] Confirmation delivery failed — offer stays committed for recovery', { confirmErr });
+      logger.error('[SAVED_CARDS] Legacy confirmation delivery failed', { confirmErr });
     }
   }
 }

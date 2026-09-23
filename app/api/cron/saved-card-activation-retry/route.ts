@@ -149,9 +149,10 @@ export async function GET(request: NextRequest) {
         businessId,
         channelId,
         messageText: activationMsg,
-        markStartedRpc: 'mark_activation_send_started',
-        completeRpc: 'complete_activation_delivery',
-        releasePreEmissionRpc: 'release_activation_pre_emission',
+        markStarted: (id, token) => supabase.rpc('mark_activation_send_started', { p_offer_id: id, p_claim_token: token }),
+        // complete_activation_delivery (M395) takes exactly 2 args — no p_customer_phone
+        complete: (id, token) => supabase.rpc('complete_activation_delivery', { p_offer_id: id, p_claim_token: token }),
+        releasePreEmission: (id, token) => supabase.rpc('release_activation_pre_emission', { p_offer_id: id, p_claim_token: token }),
       });
 
       if (delivered) {
@@ -175,5 +176,82 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  return NextResponse.json({ retried, errors });
+  // ── R5-B3: Confirmation recovery loop ──
+  // Retries Card Saved confirmation messages for offers stuck in 'committed' state.
+  // Uses discover_pending_confirmation (global oldest-first claim with SKIP LOCKED).
+  let confirmRetried = 0;
+  let confirmErrors = 0;
+
+  for (let i = 0; i < 10; i++) {
+    const { data: pending, error: discoverErr } = await supabase.rpc('discover_pending_confirmation', {
+      p_lease_seconds: 120,
+    });
+
+    if (discoverErr || !pending) break;
+
+    const claim = pending as Record<string, unknown>;
+    const confirmOfferId = claim.offer_id as string;
+    const confirmClaimToken = claim.claim_token as string;
+    const confirmChannelId = claim.channel_id as string | null;
+    // R5-B5: Use durable claim authority — customer_phone, business_id, channel_id from claim
+    const confirmCustomerPhone = claim.customer_phone as string;
+    const confirmBusinessId = claim.business_id as string;
+    const cardDisplay = (claim.committed_card_display as string) || 'your card';
+
+    try {
+      if (!confirmChannelId) {
+        logger.warn('[CONFIRMATION-RECOVERY] No exact channel_id on offer — fail closed', { confirmOfferId });
+        await supabase.rpc('release_confirmation_pre_emission', {
+          p_offer_id: confirmOfferId, p_claim_token: confirmClaimToken,
+        });
+        confirmErrors++;
+        continue;
+      }
+
+      // Derive sessionPhone from claim's customer_phone (durable authority)
+      const confirmCanonPhone = canonicalSavedCardPhone(confirmCustomerPhone);
+      if (!confirmCanonPhone) {
+        logger.warn('[CONFIRMATION-RECOVERY] Invalid phone — fail closed', { confirmOfferId, confirmCustomerPhone });
+        await supabase.rpc('release_confirmation_pre_emission', {
+          p_offer_id: confirmOfferId, p_claim_token: confirmClaimToken,
+        });
+        confirmErrors++;
+        continue;
+      }
+
+      const confirmMsg = `💳 Card saved! *${cardDisplay}*\n\n🔒 Waaiio PIN set successfully. You'll need this Waaiio PIN when using your saved card.\n\nFor privacy, you can delete your PIN message from this chat. Type *remove card* anytime to delete this card.`;
+
+      const { sendWithFencedDelivery } = await import('@/lib/payments/saved-card-delivery');
+      const delivered = await sendWithFencedDelivery({
+        supabase,
+        offerId: confirmOfferId,
+        claimToken: confirmClaimToken,
+        customerPhone: confirmCanonPhone,
+        businessId: confirmBusinessId,
+        channelId: confirmChannelId,
+        messageText: confirmMsg,
+        markStarted: (id, token) => supabase.rpc('mark_confirmation_send_started', { p_offer_id: id, p_claim_token: token }),
+        // complete_confirmation_delivery (M398) takes 3 args — includes p_customer_phone
+        complete: (id, token) => supabase.rpc('complete_confirmation_delivery', { p_offer_id: id, p_claim_token: token, p_customer_phone: confirmCanonPhone }),
+        releasePreEmission: (id, token) => supabase.rpc('release_confirmation_pre_emission', { p_offer_id: id, p_claim_token: token }),
+      });
+
+      if (delivered) {
+        confirmRetried++;
+        logger.info('[CONFIRMATION-RECOVERY] Confirmation delivered', { confirmOfferId, confirmCustomerPhone });
+      } else {
+        confirmErrors++;
+      }
+    } catch (err) {
+      logger.error('[CONFIRMATION-RECOVERY] Processing threw — releasing claim', { confirmOfferId, err });
+      try {
+        await supabase.rpc('release_confirmation_pre_emission', {
+          p_offer_id: confirmOfferId, p_claim_token: confirmClaimToken,
+        });
+      } catch { /* best-effort release */ }
+      confirmErrors++;
+    }
+  }
+
+  return NextResponse.json({ retried, errors, confirmRetried, confirmErrors });
 }
