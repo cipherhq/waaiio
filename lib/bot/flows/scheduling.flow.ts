@@ -3272,13 +3272,14 @@ export const schedulingFlow: FlowDefinition = {
           const { resolveAuthoritativeCurrency: resolveAuthCurr } = await import('./shared/saved-card-flow');
           const currency = await resolveAuthCurr(ctx.supabase, ctx.business?.country_code || 'NG');
           if (!currency) {
-            // Fail closed: PIN was correct but currency cannot be resolved.
-            // Clear PIN state so the user isn't stuck in a PIN loop.
+            // Fail closed: PIN was correct but currency cannot be resolved (transient).
+            // Keep _awaiting_card_pin=true — session state is already correct.
+            // Executor re-prompts with PIN prompt. User enters PIN again on retry
+            // (no attempt penalty: correct PIN resets pin_attempts to 0).
+            // No persistSessionDataOnFailure needed — no session mutation.
             return {
               valid: false,
               errorMessage: 'We could not process your payment right now. Please try again.',
-              data: { _awaiting_card_pin: false, _saved_card_error: 'currency_resolution_failed' },
-              persistSessionDataOnFailure: true,
             };
           }
 

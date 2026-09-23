@@ -214,13 +214,11 @@ async function chargeSavedCard(
   // Fail closed: no provider dispatch or payment INSERT on resolution failure.
   const currency = await resolveAuthoritativeCurrency(ctx.supabase, cc);
   if (!currency) {
-    const clearPinData = opts.clearPin ? { _awaiting_card_pin: false } : {};
+    // Transient failure. Keep _awaiting_card_pin=true (already in session).
+    // Executor re-prompts; user enters PIN again on retry (no attempt penalty:
+    // correct PIN resets pin_attempts to 0). No session mutation needed.
     return {
       valid: false,
-      data: {
-        ...clearPinData,
-        _saved_card_error: 'currency_resolution_failed',
-      },
       errorMessage: 'We could not process your payment right now. Please try again.',
     };
   }

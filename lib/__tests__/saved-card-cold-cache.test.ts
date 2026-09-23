@@ -153,7 +153,7 @@ describe('#373: Saved-card cold cache — authoritative currency resolution', ()
 
     expect(result).not.toBeNull();
     expect(result!.valid).toBe(false);
-    expect(result!.errorMessage).toContain('could not process');
+    expect(result!.errorMessage).toContain('try again');
     // Zero provider dispatch
     expect(mockChargeSavedMethod).not.toHaveBeenCalled();
     expect(mockLogError).toHaveBeenCalled();
@@ -301,7 +301,7 @@ describe('#373 R1: Scheduling saved_card_prompt — exact Jshop production path'
     expect(mockChargeSavedMethod.mock.calls[0][1].currency).toBe('USD');
   });
 
-  it('PIN success + country lookup failure → zero provider dispatch, fail closed', async () => {
+  it('PIN success + country lookup failure → zero provider dispatch, PIN-wait retained for retry', async () => {
     const step = await getSchedulingSavedCardStep();
     expect(step).toBeDefined();
 
@@ -313,13 +313,20 @@ describe('#373 R1: Scheduling saved_card_prompt — exact Jshop production path'
     );
 
     const result = await step.validate!('1234', ctx);
-    // Fail closed — no provider dispatch
+
+    // Fail closed — zero provider dispatch
     expect(mockChargeSavedMethod).not.toHaveBeenCalled();
-    // PIN state should be cleared so user isn't stuck in PIN loop
-    expect(result.data?._awaiting_card_pin).toBe(false);
-    expect(result.data?._saved_card_error).toBe('currency_resolution_failed');
-    // Should use persistSessionDataOnFailure so PIN state is actually cleared
-    expect(result.persistSessionDataOnFailure).toBe(true);
+    // valid:false triggers executor re-prompt
+    expect(result.valid).toBe(false);
+    // Error message tells user to retry
+    expect(result.errorMessage).toContain('try again');
+    // No persistSessionDataOnFailure — no session mutation needed
+    expect(result.persistSessionDataOnFailure).toBeUndefined();
+    // Session state preserved: _awaiting_card_pin remains true
+    // (executor does not merge result.data for valid:false)
+    expect(ctx.session.session_data._awaiting_card_pin).toBe(true);
+    // No PIN-attempt penalty: correct PIN resets pin_attempts to 0
+    // (verified by the verifyPin mock returning valid:true above)
   });
 
   it('no-PIN + country lookup failure → zero provider dispatch', async () => {
