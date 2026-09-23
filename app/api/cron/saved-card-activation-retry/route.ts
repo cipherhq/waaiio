@@ -141,7 +141,7 @@ export async function GET(request: NextRequest) {
         : `🔒 You chose to save ${cardDisplay}. Enter your existing *Waaiio PIN* to update your saved card.`;
 
       const { sendWithFencedDelivery } = await import('@/lib/payments/saved-card-delivery');
-      const delivered = await sendWithFencedDelivery({
+      const activationOutcome = await sendWithFencedDelivery({
         supabase,
         offerId,
         claimToken,
@@ -155,7 +155,7 @@ export async function GET(request: NextRequest) {
         releasePreEmission: (id, token) => supabase.rpc('release_activation_pre_emission', { p_offer_id: id, p_claim_token: token }),
       });
 
-      if (delivered) {
+      if (activationOutcome === 'delivered') {
         // Mark activation prompt sent for legacy tracking
         await supabase.from('payment_saved_card_offers')
           .update({ activation_prompt_sent_at: new Date().toISOString() })
@@ -222,7 +222,7 @@ export async function GET(request: NextRequest) {
       const confirmMsg = `💳 Card saved! *${cardDisplay}*\n\n🔒 Waaiio PIN set successfully. You'll need this Waaiio PIN when using your saved card.\n\nFor privacy, you can delete your PIN message from this chat. Type *remove card* anytime to delete this card.`;
 
       const { sendWithFencedDelivery } = await import('@/lib/payments/saved-card-delivery');
-      const delivered = await sendWithFencedDelivery({
+      const confirmOutcome = await sendWithFencedDelivery({
         supabase,
         offerId: confirmOfferId,
         claimToken: confirmClaimToken,
@@ -236,19 +236,17 @@ export async function GET(request: NextRequest) {
         releasePreEmission: (id, token) => supabase.rpc('release_confirmation_pre_emission', { p_offer_id: id, p_claim_token: token }),
       });
 
-      if (delivered) {
+      if (confirmOutcome === 'delivered') {
         confirmRetried++;
         logger.info('[CONFIRMATION-RECOVERY] Confirmation delivered', { confirmOfferId, confirmCustomerPhone });
       } else {
         confirmErrors++;
       }
-    } catch (err) {
-      logger.error('[CONFIRMATION-RECOVERY] Processing threw — releasing claim', { confirmOfferId, err });
-      try {
-        await supabase.rpc('release_confirmation_pre_emission', {
-          p_offer_id: confirmOfferId, p_claim_token: confirmClaimToken,
-        });
-      } catch { /* best-effort release */ }
+    } catch (unexpectedErr) {
+      // R6-B4: Do NOT release the fence on unknown exceptions — may be post-emission.
+      // The helper already handles pre-emission vs ambiguous internally.
+      // If the helper throws, leave the fence intact (non-auto-retryable).
+      logger.error('[CONFIRMATION-RECOVERY] Unexpected error in confirmation delivery — fence remains intact', { confirmOfferId, unexpectedErr });
       confirmErrors++;
     }
   }

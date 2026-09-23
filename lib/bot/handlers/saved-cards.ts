@@ -301,6 +301,10 @@ export async function handleCardPinStep(
   const { createHash } = await import('crypto');
   const pinHash = createHash('sha256').update(`${pin}:${phoneP}`).digest('hex');
 
+  // R6-B2: Track commit proven status across gateway paths
+  let paystackCommitProven = false;
+  let stripeCommitProven = false;
+
   if (gateway === 'paystack') {
     // ── Paystack first-save (existing behavior, unchanged) ──
     if (auth.reusable !== true) {
@@ -366,20 +370,35 @@ export async function handleCardPinStep(
     }
 
     // I6: Paystack durable acknowledgement — checked commit
-    // R5-B2: Check BOTH error AND data — do NOT send Card Saved if commit fails
+    // R6-B2: Track commitProven + exact method/version for fenced confirmation
     const offerId = d._save_card_offer_id as string | undefined;
     if (offerId) {
       const savedMethod = await supabase.from('saved_payment_methods')
         .select('id, credential_version').in('customer_phone', [phoneP, phoneN]).eq('is_active', true).eq('gateway', 'paystack').maybeSingle();
       if (savedMethod?.data) {
+        const savedMethodId = savedMethod.data.id as string;
+        const credentialVersion = (savedMethod.data.credential_version || 1) as number;
         const { data: commitResult, error: commitError } = await supabase.rpc('commit_saved_card_offer', {
           p_offer_id: offerId, p_customer_phone: phoneP,
-          p_method_id: savedMethod.data.id,
+          p_method_id: savedMethodId,
           p_card_display: `${((auth.brand as string) || 'Card').toUpperCase()} ****${(auth.last4 as string) || '????'}`,
-          p_credential_version: savedMethod.data.credential_version || 1,
+          p_credential_version: credentialVersion,
         });
-        if (commitError || !commitResult) {
-          logger.warn('[SAVED_CARDS] Paystack commit failed — credential saved but no Card Saved confirmation will be sent', { offerId, commitError: commitError?.message });
+        if (!commitError && commitResult) {
+          paystackCommitProven = true;
+        } else {
+          // Durable reread: commit RPC failed — check if it actually committed
+          const { data: offerReread } = await supabase.from('payment_saved_card_offers')
+            .select('state, committed_method_id, committed_credential_version, committed_card_display')
+            .eq('id', offerId)
+            .single();
+          if (offerReread?.state === 'committed'
+              && offerReread.committed_method_id === savedMethodId
+              && offerReread.committed_credential_version === credentialVersion) {
+            paystackCommitProven = true;
+          } else {
+            logger.warn('[SAVED_CARDS] Paystack commit failed — credential saved but no Card Saved confirmation will be sent', { offerId, commitError: commitError?.message });
+          }
         }
       }
     }
@@ -431,24 +450,42 @@ export async function handleCardPinStep(
     }
 
     // I6: Stripe durable acknowledgement — checked commit
-    // R5-B2: Check BOTH error AND data — do NOT send Card Saved if commit fails
+    // R6-B2: Track commitProven + exact method/version for fenced confirmation
     const stripeOfferId = d._save_card_offer_id as string | undefined;
     if (stripeOfferId) {
       const savedMethod = await supabase.from('saved_payment_methods')
         .select('id, credential_version').in('customer_phone', [phoneP, phoneN]).eq('is_active', true).eq('gateway', 'stripe').maybeSingle();
       if (savedMethod?.data) {
+        const savedMethodId = savedMethod.data.id as string;
+        const credentialVersion = (savedMethod.data.credential_version || 1) as number;
         const { data: commitResult, error: commitError } = await supabase.rpc('commit_saved_card_offer', {
           p_offer_id: stripeOfferId, p_customer_phone: phoneP,
-          p_method_id: savedMethod.data.id,
+          p_method_id: savedMethodId,
           p_card_display: `${((auth.card_brand as string) || 'Card').toUpperCase()} ****${(auth.card_last4 as string) || '????'}`,
-          p_credential_version: savedMethod.data.credential_version || 1,
+          p_credential_version: credentialVersion,
         });
-        if (commitError || !commitResult) {
-          logger.warn('[SAVED_CARDS] Stripe commit failed — credential saved but no Card Saved confirmation will be sent', { stripeOfferId, commitError: commitError?.message });
+        if (!commitError && commitResult) {
+          stripeCommitProven = true;
+        } else {
+          // Durable reread: commit RPC failed — check if it actually committed
+          const { data: offerReread } = await supabase.from('payment_saved_card_offers')
+            .select('state, committed_method_id, committed_credential_version, committed_card_display')
+            .eq('id', stripeOfferId)
+            .single();
+          if (offerReread?.state === 'committed'
+              && offerReread.committed_method_id === savedMethodId
+              && offerReread.committed_credential_version === credentialVersion) {
+            stripeCommitProven = true;
+          } else {
+            logger.warn('[SAVED_CARDS] Stripe commit failed — credential saved but no Card Saved confirmation will be sent', { stripeOfferId, commitError: commitError?.message });
+          }
         }
       }
     }
   }
+
+  // R6-B2: Merge commitProven from gateway-specific paths
+  const commitProven = gateway === 'paystack' ? paystackCommitProven : stripeCommitProven;
 
   const cardLabel = gateway === 'stripe'
     ? `${((auth.card_brand as string) || 'Card').toUpperCase()} ****${(auth.card_last4 as string) || '????'}`
@@ -467,10 +504,10 @@ export async function handleCardPinStep(
   // I6: Durable confirmation — committed → confirmed with fenced delivery
   // R5-B2: No sendText fallback for provider-consented offers — recovery worker handles retries
   // R5-B5: Use durable claim authority (customer_phone, business_id, channel_id) from claim, not session fields
+  // R6-B2: Only enter confirmation if commitProven — zero Card Saved sends on commit failure
   const finalOfferId = d._save_card_offer_id as string | undefined;
-  const confirmationMsg = `💳 Card saved! *${cardLabel}*\n\n🔒 Waaiio PIN set successfully. You'll need this Waaiio PIN when using your saved card.\n\nFor privacy, you can delete your PIN message from this chat. Type *remove card* anytime to delete this card.`;
 
-  if (finalOfferId) {
+  if (finalOfferId && commitProven) {
     // Provider-consented offer path — use fenced delivery, NO sendText fallback
     try {
       const { data: claimed, error: claimErr } = await supabase.rpc('claim_confirmation_delivery', {
@@ -486,6 +523,10 @@ export async function handleCardPinStep(
         const claimBusinessId = claim.business_id as string;
         const claimChannelId = claim.channel_id as string;
         const confirmClaimToken = claim.claim_token as string;
+        // R6-B2: Use committed_card_display from durable claim, not session-derived cardLabel
+        const claimCardDisplay = (claim.committed_card_display as string) || cardLabel;
+
+        const confirmationMsg = `💳 Card saved! *${claimCardDisplay}*\n\n🔒 Waaiio PIN set successfully. You'll need this Waaiio PIN when using your saved card.\n\nFor privacy, you can delete your PIN message from this chat. Type *remove card* anytime to delete this card.`;
 
         if (!claimChannelId) {
           logger.warn('[SAVED_CARDS] Claim has no channel_id — releasing for recovery', { finalOfferId });
@@ -494,7 +535,7 @@ export async function handleCardPinStep(
           });
         } else {
           const { sendWithFencedDelivery } = await import('@/lib/payments/saved-card-delivery');
-          await sendWithFencedDelivery({
+          const confirmOutcome = await sendWithFencedDelivery({
             supabase,
             offerId: finalOfferId,
             claimToken: confirmClaimToken,
@@ -516,9 +557,13 @@ export async function handleCardPinStep(
     } catch (confirmErr) {
       logger.error('[SAVED_CARDS] Fenced confirmation delivery failed — offer stays committed for recovery', { confirmErr });
     }
+  } else if (finalOfferId && !commitProven) {
+    // R6-B2: Commit not proven — zero Card Saved sends. Recovery will handle if commit actually succeeded.
+    logger.warn('[SAVED_CARDS] Commit not proven — skipping confirmation delivery', { finalOfferId });
   } else {
     // Legacy path WITHOUT offer_id — Paystack saves that predate the offer lifecycle.
     // These don't have fenced delivery; sendText is acceptable here.
+    const confirmationMsg = `💳 Card saved! *${cardLabel}*\n\n🔒 Waaiio PIN set successfully. You'll need this Waaiio PIN when using your saved card.\n\nFor privacy, you can delete your PIN message from this chat. Type *remove card* anytime to delete this card.`;
     try {
       await sendText(from, confirmationMsg);
     } catch (confirmErr) {

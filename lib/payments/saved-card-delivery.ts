@@ -36,6 +36,9 @@ export function isProvenPreEmission(err: unknown): boolean {
   return false;
 }
 
+/** Classified delivery outcomes */
+export type DeliveryOutcome = 'delivered' | 'channel_failed' | 'claim_stale' | 'pre_emission_failure' | 'ambiguous' | 'no_wamid' | 'completion_failed' | 'release_failed';
+
 /** RPC result shape — compatible with both Promise and PostgrestFilterBuilder (thenable) */
 type RpcResult = PromiseLike<{ data: unknown; error: unknown }>;
 
@@ -64,9 +67,9 @@ export interface FencedDeliveryParams {
  * 5. On pre-emission failure: release for retry
  * 6. On ambiguous failure: leave send_started set (non-retryable)
  *
- * Returns true if the message was sent and delivery completed.
+ * Returns a DeliveryOutcome classifying what happened.
  */
-export async function sendWithFencedDelivery(params: FencedDeliveryParams): Promise<boolean> {
+export async function sendWithFencedDelivery(params: FencedDeliveryParams): Promise<DeliveryOutcome> {
   const {
     supabase, offerId, claimToken, customerPhone, businessId,
     channelId, messageText, markStarted, complete, releasePreEmission,
@@ -83,7 +86,7 @@ export async function sendWithFencedDelivery(params: FencedDeliveryParams): Prom
     logger.warn(`${logPrefix} Channel resolution failed — releasing`, { offerId, channelId, businessId });
     const { error: relErr } = await releasePreEmission(offerId, claimToken);
     if (relErr) logger.error(`${logPrefix} Release RPC error after channel failure`, { offerId, relErr });
-    return false;
+    return 'channel_failed';
   }
 
   // 2. Mark send started
@@ -91,11 +94,11 @@ export async function sendWithFencedDelivery(params: FencedDeliveryParams): Prom
 
   if (startErr) {
     logger.error(`${logPrefix} Mark-started RPC error`, { offerId, startErr });
-    return false;
+    return 'claim_stale';
   }
   if (!started) {
     logger.warn(`${logPrefix} Could not mark send started — claim may be stale`, { offerId });
-    return false;
+    return 'claim_stale';
   }
 
   // 3. Send message — require messageId (WAMID) as positive delivery evidence
@@ -108,19 +111,24 @@ export async function sendWithFencedDelivery(params: FencedDeliveryParams): Prom
     if (isProvenPreEmission(sendErr)) {
       // 5. Pre-emission: safe to retry — clear send_started
       logger.info(`${logPrefix} Pre-emission failure — releasing for retry`, { offerId, err: sendErr });
-      const { error: relErr } = await releasePreEmission(offerId, claimToken);
-      if (relErr) logger.error(`${logPrefix} Release RPC error after pre-emission`, { offerId, relErr });
+      const { data: released, error: relErr } = await releasePreEmission(offerId, claimToken);
+      if (relErr || !released) {
+        logger.error(`${logPrefix} Pre-emission release failed`, { relErr, released, offerId });
+        // send-started remains set — offer is stuck non-auto-retryable
+        return 'release_failed';
+      }
+      return 'pre_emission_failure'; // Successfully released, retryable
     } else {
       // 6. Ambiguous: may have emitted — leave send_started set
       logger.error(`${logPrefix} Ambiguous send failure — non-retryable`, { offerId, err: sendErr });
     }
-    return false;
+    return 'ambiguous';
   }
 
   if (!messageId) {
     // Provider accepted but no WAMID — ambiguous, leave send_started set
     logger.error(`${logPrefix} Send returned without messageId — ambiguous`, { offerId });
-    return false;
+    return 'no_wamid';
   }
 
   // 4. Send succeeded with WAMID — complete delivery
@@ -128,12 +136,12 @@ export async function sendWithFencedDelivery(params: FencedDeliveryParams): Prom
 
   if (completeErr) {
     logger.error(`${logPrefix} AMBIGUOUS: send succeeded (${messageId}) but completion RPC error`, { offerId, completeErr });
-    return false;
+    return 'completion_failed';
   }
   if (!completed) {
     logger.error(`${logPrefix} AMBIGUOUS: send succeeded (${messageId}) but completion returned false`, { offerId });
-    return false;
+    return 'completion_failed';
   }
 
-  return true;
+  return 'delivered';
 }

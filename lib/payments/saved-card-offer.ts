@@ -645,9 +645,14 @@ export async function checkStripeConsentAndOffer(
 
   // Step 7: Fenced activation delivery — claim then send via shared helper
   try {
-    const { data: claimed } = await supabase.rpc('claim_exact_activation_delivery', {
+    const { data: claimed, error: claimActivationErr } = await supabase.rpc('claim_exact_activation_delivery', {
       p_offer_id: offerId,
     });
+
+    if (claimActivationErr) {
+      logger.error(`${logPrefix} claim_exact_activation_delivery RPC error`, { offerId, claimActivationErr: claimActivationErr.message });
+      return;
+    }
 
     if (!claimed) {
       logger.info(`${logPrefix} Activation claim failed — may already be claimed/sent`, { offerId });
@@ -660,7 +665,7 @@ export async function checkStripeConsentAndOffer(
       : `🔒 You chose to save ${cardLabel}. Enter your existing *Waaiio PIN* to update your saved card.`;
 
     const { sendWithFencedDelivery } = await import('./saved-card-delivery');
-    const delivered = await sendWithFencedDelivery({
+    const outcome = await sendWithFencedDelivery({
       supabase,
       offerId,
       claimToken: activationClaimToken,
@@ -674,7 +679,7 @@ export async function checkStripeConsentAndOffer(
       releasePreEmission: (id, token) => supabase.rpc('release_activation_pre_emission', { p_offer_id: id, p_claim_token: token }),
     });
 
-    if (delivered) {
+    if (outcome === 'delivered') {
       // Mark activation prompt sent for legacy tracking
       await supabase.from('payment_saved_card_offers')
         .update({ activation_prompt_sent_at: new Date().toISOString() })
