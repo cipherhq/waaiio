@@ -3219,11 +3219,18 @@ export const schedulingFlow: FlowDefinition = {
           const phone = ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`;
           const email = (d.email as string) || `${phone.replace('+', '')}@${process.env.FALLBACK_EMAIL_DOMAIN || 'whatsapp.waaiio.com'}`;
 
+          // #373: Resolve currency authoritatively from DB — no module-global cache dependency
+          const { resolveAuthoritativeCurrency } = await import('./shared/saved-card-flow');
+          const currency = await resolveAuthoritativeCurrency(ctx.supabase, ctx.business?.country_code || 'NG');
+          if (!currency) {
+            return { valid: true, data: { _skip_saved_card: true, _saved_card_error: 'currency_resolution_failed' } };
+          }
+
           const result: ChargeOutcome = await savedPaymentAdapter.chargeSavedMethod(ctx.supabase, {
             methodId,
             customerPhone: ctx.from,
             amount,
-            currency: getCurrencyCode((ctx.business?.country_code || 'NG') as CountryCode),
+            currency,
             email,
             reference: `${refCode}-saved`,
             businessId: ctx.business!.id,
@@ -3261,9 +3268,23 @@ export const schedulingFlow: FlowDefinition = {
           const phone = ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`;
           const email = (d.email as string) || `${phone.replace('+', '')}@${process.env.FALLBACK_EMAIL_DOMAIN || 'whatsapp.waaiio.com'}`;
 
+          // #373: Resolve currency authoritatively from DB — no module-global cache dependency
+          const { resolveAuthoritativeCurrency: resolveAuthCurr } = await import('./shared/saved-card-flow');
+          const currency = await resolveAuthCurr(ctx.supabase, ctx.business?.country_code || 'NG');
+          if (!currency) {
+            // Fail closed: PIN was correct but currency cannot be resolved.
+            // Clear PIN state so the user isn't stuck in a PIN loop.
+            return {
+              valid: false,
+              errorMessage: 'We could not process your payment right now. Please try again.',
+              data: { _awaiting_card_pin: false, _saved_card_error: 'currency_resolution_failed' },
+              persistSessionDataOnFailure: true,
+            };
+          }
+
           const result: ChargeOutcome = await savedPaymentAdapter.chargeSavedMethod(ctx.supabase, {
             methodId, customerPhone: ctx.from, amount,
-            currency: getCurrencyCode((ctx.business?.country_code || 'NG') as CountryCode),
+            currency,
             email, reference: `${refCode}-saved`,
             businessId: ctx.business!.id, bookingId,
             transactionCategory: 'scheduling',

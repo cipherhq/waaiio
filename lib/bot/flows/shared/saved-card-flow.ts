@@ -23,7 +23,7 @@ function isValidCurrencyCode(code: unknown): code is string {
  * Uses the request Supabase client — no dependency on module-global cache.
  * Fails closed on DB error, missing/inactive country, or malformed currency.
  */
-async function resolveAuthoritativeCurrency(
+export async function resolveAuthoritativeCurrency(
   supabase: SupabaseClient,
   countryCode: string,
 ): Promise<string | null> {

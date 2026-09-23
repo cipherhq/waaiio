@@ -220,3 +220,131 @@ describe('#373: Saved-card cold cache — authoritative currency resolution', ()
     expect(mockChargeSavedMethod).not.toHaveBeenCalled();
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════
+// R1: Scheduling saved_card_prompt — exact production Jshop path
+// ═══════════════════════════════════════════════════════════════════
+
+// These tests import the real schedulingFlow and execute the saved_card_prompt
+// step's validate() function to prove the exact production path uses
+// authoritative DB currency resolution.
+
+const mockVerifyPin = vi.fn();
+
+vi.mock('@/lib/payments/saved-payment-adapter', async () => {
+  const actual = await vi.importActual<Record<string, unknown>>('@/lib/payments/saved-payment-adapter');
+  return {
+    ...actual,
+    savedPaymentAdapter: {
+      chargeSavedMethod: mockChargeSavedMethod,
+      getSavedMethods: vi.fn().mockResolvedValue([]),
+      requiresPin: vi.fn().mockResolvedValue({ required: false }),
+      verifyPin: mockVerifyPin,
+    },
+  };
+});
+
+describe('#373 R1: Scheduling saved_card_prompt — exact Jshop production path', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  async function getSchedulingSavedCardStep() {
+    const { schedulingFlow } = await import('../bot/flows/scheduling.flow');
+    return schedulingFlow.steps.find((s: { id: string }) => s.id === 'saved_card_prompt');
+  }
+
+  function makeSchedulingCtx(sessionData: Record<string, unknown>, countryResult: { data: unknown; error: unknown }) {
+    const makeChain = (table: string) => {
+      const c: Record<string, unknown> = {};
+      for (const m of ['select', 'insert', 'update', 'delete', 'eq', 'neq', 'in', 'or', 'not', 'order', 'limit', 'is', 'gte', 'lte', 'lt', 'gt']) {
+        c[m] = vi.fn().mockReturnValue(c);
+      }
+      c.single = vi.fn().mockResolvedValue({ data: null, error: null });
+      c.maybeSingle = vi.fn().mockResolvedValue(
+        table === 'countries' ? countryResult : { data: null, error: null },
+      );
+      return c;
+    };
+    return {
+      supabase: { from: vi.fn().mockImplementation((t: string) => makeChain(t)), rpc: vi.fn().mockResolvedValue({ data: { success: true }, error: null }) } as never,
+      from: '15551234567',
+      sender: { sendText: vi.fn().mockResolvedValue(undefined) },
+      t: (t: string) => Promise.resolve(t),
+      business: { id: 'biz-1', name: 'Jshop', country_code: 'US', subscription_tier: 'free' },
+      session: { id: 's-1', business_id: 'biz-1', current_step: 'saved_card_prompt', session_data: sessionData, version: 1 },
+    } as unknown as FlowContext;
+  }
+
+  it('PIN success + cold US cache → adapter receives USD', async () => {
+    const step = await getSchedulingSavedCardStep();
+    expect(step).toBeDefined();
+
+    mockVerifyPin.mockResolvedValue({ valid: true });
+    mockChargeSavedMethod.mockResolvedValue({ status: 'charged', paymentId: 'pay-pin-1' });
+
+    const ctx = makeSchedulingCtx(
+      { _awaiting_card_pin: true, _saved_method_id: 'spm-1', _pending_deposit: 2000, booking_id: 'bk-1', reference_code: 'WA-BK-TEST' },
+      { data: { currency_code: 'USD' }, error: null },
+    );
+
+    const result = await step.validate!('1234', ctx);
+    expect(result.valid).toBe(true);
+    expect(result.data?._saved_card_paid).toBe(true);
+    expect(mockChargeSavedMethod).toHaveBeenCalledTimes(1);
+    expect(mockChargeSavedMethod.mock.calls[0][1].currency).toBe('USD');
+  });
+
+  it('no-PIN + cold US cache → adapter receives USD', async () => {
+    const step = await getSchedulingSavedCardStep();
+    expect(step).toBeDefined();
+
+    mockChargeSavedMethod.mockResolvedValue({ status: 'charged', paymentId: 'pay-nopin-1' });
+
+    const ctx = makeSchedulingCtx(
+      { _saved_method_id: 'spm-1', _pending_deposit: 2000, booking_id: 'bk-1', reference_code: 'WA-BK-TEST' },
+      { data: { currency_code: 'USD' }, error: null },
+    );
+
+    const result = await step.validate!('pay_saved', ctx);
+    expect(result.valid).toBe(true);
+    expect(result.data?._saved_card_paid).toBe(true);
+    expect(mockChargeSavedMethod).toHaveBeenCalledTimes(1);
+    expect(mockChargeSavedMethod.mock.calls[0][1].currency).toBe('USD');
+  });
+
+  it('PIN success + country lookup failure → zero provider dispatch, fail closed', async () => {
+    const step = await getSchedulingSavedCardStep();
+    expect(step).toBeDefined();
+
+    mockVerifyPin.mockResolvedValue({ valid: true });
+
+    const ctx = makeSchedulingCtx(
+      { _awaiting_card_pin: true, _saved_method_id: 'spm-1', _pending_deposit: 2000, booking_id: 'bk-1', reference_code: 'WA-BK-TEST' },
+      { data: null, error: null }, // Country not found
+    );
+
+    const result = await step.validate!('1234', ctx);
+    // Fail closed — no provider dispatch
+    expect(mockChargeSavedMethod).not.toHaveBeenCalled();
+    // PIN state should be cleared so user isn't stuck in PIN loop
+    expect(result.data?._awaiting_card_pin).toBe(false);
+    expect(result.data?._saved_card_error).toBe('currency_resolution_failed');
+    // Should use persistSessionDataOnFailure so PIN state is actually cleared
+    expect(result.persistSessionDataOnFailure).toBe(true);
+  });
+
+  it('no-PIN + country lookup failure → zero provider dispatch', async () => {
+    const step = await getSchedulingSavedCardStep();
+    expect(step).toBeDefined();
+
+    const ctx = makeSchedulingCtx(
+      { _saved_method_id: 'spm-1', _pending_deposit: 2000, booking_id: 'bk-1', reference_code: 'WA-BK-TEST' },
+      { data: null, error: null },
+    );
+
+    const result = await step.validate!('pay_saved', ctx);
+    expect(mockChargeSavedMethod).not.toHaveBeenCalled();
+    expect(result.data?._skip_saved_card).toBe(true);
+  });
+});
