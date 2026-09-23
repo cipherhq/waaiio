@@ -141,23 +141,20 @@ vi.mock('@/lib/payments/bot-recovery', () => ({
 // ── Helpers ──
 
 function makeCtx(sessionData: Record<string, unknown>, overrides?: Partial<FlowContext>): FlowContext {
+  const makeChain = (table: string) => {
+    const c: Record<string, unknown> = {};
+    for (const m of ['select', 'insert', 'update', 'delete', 'eq', 'neq', 'in', 'or', 'not', 'order', 'limit']) {
+      c[m] = vi.fn().mockReturnValue(c);
+    }
+    c.single = vi.fn().mockResolvedValue({ data: null, error: null });
+    c.maybeSingle = vi.fn().mockResolvedValue(
+      table === 'countries' ? { data: { currency_code: 'NGN' }, error: null } : { data: null, error: null },
+    );
+    return c;
+  };
   return {
     supabase: {
-      from: vi.fn().mockReturnValue({
-        select: vi.fn().mockReturnThis(),
-        insert: vi.fn().mockReturnThis(),
-        update: vi.fn().mockReturnThis(),
-        delete: vi.fn().mockReturnThis(),
-        eq: vi.fn().mockReturnThis(),
-        neq: vi.fn().mockReturnThis(),
-        in: vi.fn().mockReturnThis(),
-        or: vi.fn().mockReturnThis(),
-        not: vi.fn().mockReturnThis(),
-        order: vi.fn().mockReturnThis(),
-        limit: vi.fn().mockReturnThis(),
-        single: vi.fn().mockResolvedValue({ data: null, error: null }),
-        maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
-      }),
+      from: vi.fn().mockImplementation((table: string) => makeChain(table)),
       rpc: vi.fn().mockResolvedValue({ data: { success: true, version: 2 }, error: null }),
     } as any,
     sender: { sendText: vi.fn().mockResolvedValue(undefined) } as any,
