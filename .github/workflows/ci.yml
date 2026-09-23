@@ -98,12 +98,12 @@ jobs:
       BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || (github.event_name == 'push' && github.event.before || github.sha) }}
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
       - name: Checkout exact PR head (not merge commit)
-        if: github.event_name == 'pull_request'
-        run: git checkout ${{ github.event.pull_request.head.sha }}
+        uses: actions/checkout@v4
+        with:
+          # For PRs: check out the exact PR head, not the synthetic merge commit.
+          # For push/dispatch: uses the default (github.sha).
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || '' }}
 
       - name: Record execution provenance
         run: |
