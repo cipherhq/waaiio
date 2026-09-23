@@ -138,6 +138,7 @@ export function generateCertificate(opts: {
       status: r.status,
       evidence: r.evidence,
       critical: r.critical,
+      ...(r.na_exclusion ? { na_exclusion: r.na_exclusion } : {}),
     })),
     journey_summary: journeySummary,
     scope,
@@ -222,6 +223,10 @@ export function formatCertificate(cert: ReleaseCertificate): string {
         : inv.evidence;
       lines.push(`  ${inv.invariant_id}: ${statusIcon}${criticalTag} — ${inv.description}`);
       lines.push(`    Evidence: ${truncatedEvidence}`);
+      if (inv.status === 'not_applicable' && (inv as Record<string, unknown>).na_exclusion) {
+        const excl = (inv as Record<string, unknown>).na_exclusion as { reason: string; explanation: string; authority: string };
+        lines.push(`    N/A Exclusion: [${excl.reason}] ${excl.explanation} (authority: ${excl.authority})`);
+      }
     }
     lines.push('');
   }

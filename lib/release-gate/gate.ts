@@ -210,13 +210,22 @@ export function executeGate(input: GateInput): GateResult {
       // Validate N/A against registry applicability policy
       const requiredFor = inv.required_for || ['release_candidate'];
       if (requiredFor.includes(certKind)) {
-        // This invariant is REQUIRED for this certificate kind — N/A is not allowed
-        const reason = (result as { na_reason?: string }).na_reason || 'no reason provided';
+        // Required for this kind — N/A cannot bypass
+        const excl = result.na_exclusion;
+        const reason = excl ? `${excl.reason}: ${excl.explanation}` : 'no exclusion provided';
         blockReasons.push(
-          `Critical invariant ${inv.id} ("${inv.description}") declared not_applicable but registry requires it for ${certKind} — reason: "${reason}". Not_applicable is not a valid bypass for required invariants.`
+          `Critical invariant ${inv.id} ("${inv.description}") declared not_applicable but registry requires it for ${certKind} — ${reason}. Not_applicable is not a valid bypass for required invariants.`
         );
+      } else {
+        // Not required for this kind — validate exclusion is structured
+        const excl = result.na_exclusion;
+        if (!excl || !excl.reason || !excl.authority) {
+          blockReasons.push(
+            `Critical invariant ${inv.id}: not_applicable without structured exclusion (reason + authority required)`
+          );
+        }
+        // Valid exclusion — acceptable, disclosed in certificate invariant_details
       }
-      // If not required for this kind, N/A is acceptable but disclosed
     }
     // pass → acceptable
   }

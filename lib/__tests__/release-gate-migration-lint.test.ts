@@ -190,6 +190,79 @@ describe('R4: Migration diff parser (line-based fallback)', () => {
   });
 });
 
+// ═══════════════════════════════════════════════════════════════════
+// R5 — NUL-safe transport integration test (real bytes through CLI)
+// ═══════════════════════════════════════════════════════════════════
+
+import { execSync, type ExecSyncOptions } from 'child_process';
+import { writeFileSync, unlinkSync } from 'fs';
+import { join } from 'path';
+
+describe('R5: NUL-safe transport integration (real NUL bytes → CLI)', () => {
+  const cliPath = join(process.cwd(), 'lib/release-gate/migration-diff-cli.ts');
+  const tmpFile = join(process.cwd(), '.migration-diff-test.bin');
+  const opts: ExecSyncOptions = { encoding: 'utf-8', timeout: 30000 };
+
+  function runCli(nulInput: Buffer): { stdout: string; exitCode: number } {
+    // Write real NUL bytes to a temp file, then pipe to the CLI
+    writeFileSync(tmpFile, nulInput);
+    try {
+      const stdout = execSync(
+        `cat "${tmpFile}" | npx tsx "${cliPath}" supabase/migrations`,
+        opts,
+      ) as string;
+      return { stdout: stdout.trim(), exitCode: 0 };
+    } catch (err: unknown) {
+      const e = err as { stdout?: string; status?: number };
+      return { stdout: (e.stdout || '').trim(), exitCode: e.status || 1 };
+    } finally {
+      try { unlinkSync(tmpFile); } catch { /* ignore */ }
+    }
+  }
+
+  it('A (added) migration is detected via NUL transport', () => {
+    // Real NUL-delimited: "A\0supabase/migrations/999_test.sql\0"
+    const input = Buffer.from('A\0supabase/migrations/999_test.sql\0');
+    const { stdout, exitCode } = runCli(input);
+    expect(stdout).toContain('NEW');
+    expect(stdout).toContain('999_test.sql');
+    // Exit 0 = pass (migration exists in supabase/migrations is not guaranteed,
+    // but the parser classifies correctly and the lint runs or says "not found")
+  });
+
+  it('M (modified) migration BLOCKS via NUL transport', () => {
+    const input = Buffer.from('M\0supabase/migrations/001_initial.sql\0');
+    const { stdout, exitCode } = runCli(input);
+    expect(exitCode).toBe(1);
+    expect(stdout).toContain('MODIFIED');
+    expect(stdout).toContain('BLOCKED');
+  });
+
+  it('D (deleted) migration BLOCKS via NUL transport', () => {
+    const input = Buffer.from('D\0supabase/migrations/050_old.sql\0');
+    const { stdout, exitCode } = runCli(input);
+    expect(exitCode).toBe(1);
+    expect(stdout).toContain('DELETED');
+    expect(stdout).toContain('BLOCKED');
+  });
+
+  it('R (renamed) migration BLOCKS via NUL transport', () => {
+    const input = Buffer.from('R100\0supabase/migrations/001_old.sql\0supabase/migrations/001_new.sql\0');
+    const { stdout, exitCode } = runCli(input);
+    expect(exitCode).toBe(1);
+    expect(stdout).toContain('RENAMED');
+    expect(stdout).toContain('BLOCKED');
+  });
+
+  it('mixed A + M: M BLOCKS even with valid new migration', () => {
+    const input = Buffer.from('M\0supabase/migrations/001_initial.sql\0A\0supabase/migrations/999_new.sql\0');
+    const { stdout, exitCode } = runCli(input);
+    expect(exitCode).toBe(1);
+    expect(stdout).toContain('MODIFIED');
+    expect(stdout).toContain('BLOCKED');
+  });
+});
+
 describe('Non-protected functions', () => {
   it('does not flag functions without digest()', () => {
     const sql = `

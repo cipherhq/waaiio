@@ -146,43 +146,11 @@ jobs:
           echo "Fetching base ref $BASE_SHA..."
           git fetch --depth=1 origin "$BASE_SHA"
 
-          echo "Computing migration diff via checked-in parser (base: $BASE_SHA)..."
-          # Use NUL-delimited output for safe parsing, pipe to TS parser
-          DIFF_RAW=$(git diff --name-status -z "$BASE_SHA" -- 'supabase/migrations/*.sql' || { echo "FATAL: git diff failed" >&2; exit 1; })
-
-          npx tsx -e "
-            import { parseMigrationDiffNul } from './lib/release-gate/migration-diff-parser';
-            import { lintMigrationDirectory } from './lib/release-gate/migration-lint';
-
-            const raw = $(node -e "process.stdout.write(JSON.stringify(process.argv[1]))" -- "$DIFF_RAW");
-            const result = parseMigrationDiffNul(raw);
-
-            if (result.changes.length === 0) {
-              console.log('No migration changes — lint passes.');
-              process.exit(0);
-            }
-
-            console.log('Migration changes:', JSON.stringify(result.changes, null, 2));
-
-            if (result.hasImmutabilityViolation) {
-              for (const r of result.blockReasons) console.log('❌ BLOCKED:', r);
-              process.exit(1);
-            }
-
-            if (result.newMigrations.length === 0) {
-              console.log('No new migrations to lint.');
-              process.exit(0);
-            }
-
-            console.log('Linting new migrations:', result.newMigrations.join(', '));
-            const violations = lintMigrationDirectory('supabase/migrations', result.newMigrations);
-            const errors = violations.filter(v => v.severity === 'error');
-            for (const v of violations) {
-              console.log(\`\${v.severity === 'error' ? '❌' : '⚠️'} \${v.file}:\${v.line} [\${v.rule}] \${v.message}\`);
-            }
-            if (errors.length > 0) { console.log('BLOCKED'); process.exit(1); }
-            else { console.log('✅ No violations.'); }
-          "
+          echo "Running migration diff + lint (NUL-safe pipe, base: $BASE_SHA)..."
+          # Pipe NUL-delimited git diff directly to checked-in CLI.
+          # No shell variable intermediary — preserves NUL bytes end-to-end.
+          git diff --name-status -z "$BASE_SHA" -- 'supabase/migrations/*.sql' \
+            | npx tsx lib/release-gate/migration-diff-cli.ts
 
       - name: Run release gate tests
         run: npx vitest run lib/__tests__/release-gate-diff-engine.test.ts lib/__tests__/release-gate-migration-lint.test.ts lib/__tests__/release-gate-sha-guard.test.ts lib/__tests__/release-gate-orchestration.test.ts

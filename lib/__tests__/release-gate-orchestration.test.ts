@@ -415,13 +415,15 @@ describe('R3: Critical invariant missing from candidate blocks gate', () => {
 // R4 TEST: not_applicable is validated against registry policy
 // ═══════════════════════════════════════════════════════════════════
 
-describe('R4: not_applicable validated against registry applicability', () => {
-  it('BLOCKS: required critical invariant cannot self-declare not_applicable for release_candidate', () => {
+describe('R5: Typed not_applicable with structured exclusion', () => {
+  it('BLOCKS: required critical invariant cannot use N/A for release_candidate even with exclusion', () => {
     const pre = makeBaseline({ id: 'pre', git_sha: 'prod-sha' });
-    // DB-001 is required for release_candidate — N/A should block
     const invariants = allCriticalInvariantsPassing().map(i =>
       i.invariant_id === 'DB-001'
-        ? { ...i, status: 'not_applicable' as const, evidence: 'Trying to bypass', na_reason: 'arbitrary reason' }
+        ? {
+            ...i, status: 'not_applicable' as const, evidence: 'Trying to bypass',
+            na_exclusion: { reason: 'no_db_in_stage' as const, explanation: 'No DB available', authority: '#367' },
+          }
         : i
     );
     const cand = makeBaseline({
@@ -431,17 +433,19 @@ describe('R4: not_applicable validated against registry applicability', () => {
     const result = executeGate({
       releaseSha: 'rel-sha', productionSha: 'prod-sha',
       preBaseline: pre, candidateBaseline: cand, now: NOW,
-      // Default kind is release_candidate
     });
     expect(result.verdict).toBe('BLOCKED');
     expect(result.block_reasons.some(r => r.includes('DB-001') && r.includes('not_applicable') && r.includes('requires it'))).toBe(true);
   });
 
-  it('ACCEPTS: not_applicable on self_test kind when invariant not required for self_test', () => {
+  it('ACCEPTS: N/A on self_test kind with valid structured exclusion', () => {
     const pre = makeBaseline({ id: 'pre', git_sha: 'prod-sha' });
     const invariants = allCriticalInvariantsPassing().map(i =>
       i.invariant_id === 'DB-001'
-        ? { ...i, status: 'not_applicable' as const, evidence: 'N/A for self-test', na_reason: 'self-test has no DB' }
+        ? {
+            ...i, status: 'not_applicable' as const, evidence: 'No DB in self-test',
+            na_exclusion: { reason: 'no_db_in_stage' as const, explanation: 'Self-test has no DB', authority: '#367-activation-plan' },
+          }
         : i
     );
     const cand = makeBaseline({
@@ -453,9 +457,29 @@ describe('R4: not_applicable validated against registry applicability', () => {
       preBaseline: pre, candidateBaseline: cand, now: NOW,
       kind: 'self_test',
     });
-    // DB-001 not required for self_test, so N/A is acceptable
     const db001Blocks = result.block_reasons.filter(r => r.includes('DB-001') && r.includes('not_applicable'));
     expect(db001Blocks).toHaveLength(0);
+  });
+
+  it('BLOCKS: N/A without structured exclusion (missing reason/authority)', () => {
+    const pre = makeBaseline({ id: 'pre', git_sha: 'prod-sha' });
+    const invariants = allCriticalInvariantsPassing().map(i =>
+      i.invariant_id === 'DB-001'
+        ? { ...i, status: 'not_applicable' as const, evidence: 'No reason given' }
+        // No na_exclusion provided!
+        : i
+    );
+    const cand = makeBaseline({
+      id: 'cand', git_sha: 'rel-sha', phase: 'candidate',
+      invariant_results: invariants,
+    });
+    const result = executeGate({
+      releaseSha: 'rel-sha', productionSha: 'prod-sha',
+      preBaseline: pre, candidateBaseline: cand, now: NOW,
+      kind: 'self_test', // Even on self_test, missing exclusion should block
+    });
+    expect(result.verdict).toBe('BLOCKED');
+    expect(result.block_reasons.some(r => r.includes('DB-001') && r.includes('structured exclusion'))).toBe(true);
   });
 });
 

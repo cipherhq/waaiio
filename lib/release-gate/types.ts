@@ -157,9 +157,15 @@ export interface InvariantResult {
    *  This field is informational — if it disagrees with the registry,
    *  the gate flags a metadata mismatch and uses the registry value. */
   critical: boolean;
-  /** Required when status is 'not_applicable': typed reason for exclusion.
-   *  The gate validates this against registry applicability policy. */
-  na_reason?: string;
+  /** Required when status is 'not_applicable': structured exclusion. */
+  na_exclusion?: {
+    /** Typed reason code for the exclusion */
+    reason: 'no_db_in_stage' | 'no_provider_sandbox' | 'invariant_not_yet_implemented' | 'feature_not_deployed';
+    /** Human explanation */
+    explanation: string;
+    /** Authority/evidence reference (e.g., issue URL, CTO decision) */
+    authority: string;
+  };
 }
 
 export interface JourneyResult {
@@ -337,6 +343,11 @@ export interface ReleaseCertificate {
     status: 'pass' | 'fail' | 'skip' | 'error' | 'not_applicable';
     evidence: string;
     critical: boolean;
+    na_exclusion?: {
+      reason: string;
+      explanation: string;
+      authority: string;
+    };
   }>;
 
   /** Journey gate */
