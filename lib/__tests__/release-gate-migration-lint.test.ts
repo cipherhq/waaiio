@@ -238,8 +238,8 @@ describe('R5: NUL-safe transport integration (real NUL bytes → CLI)', () => {
       const filename = '999_bad_transport.sql';
       const badSql = `
         CREATE OR REPLACE FUNCTION initialize_terminal_effects(p UUID)
-        RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $
-        BEGIN PERFORM encode(digest('x', 'sha256'), 'hex'); END; $;
+        RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+        BEGIN PERFORM encode(digest('x', 'sha256'), 'hex'); END; $$;
       `;
       writeFileSync(join(tempMigrationsDir, filename), badSql);
 
