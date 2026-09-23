@@ -280,3 +280,7 @@ When Owner says **`Continue Waaiio`** in a new chat, ChatGPT must:
 - No production mutation/deployment without separate Owner authorization.
 - Merge requires ChatGPT exact-SHA review plus explicit Owner authorization.
 - All existing safety rules remain unchanged: repository/runtime evidence wins; corrections stay on the same PR; merge requires exact-head CTO approval plus separate owner authorization; production mutation/deployment remains separately authorized.
+
+### Release Gate V2
+
+The detailed release-safety contract — invariant registry, migration checks, golden journeys, provider acceptance, exact-SHA certification, canary rules, and escaped defect policy — lives in [`RELEASE_GATE_V2.md`](./RELEASE_GATE_V2.md). That document supplements this Operating Order and must be read before migrations, payments, authorization, provider integrations, or cross-cutting changes.

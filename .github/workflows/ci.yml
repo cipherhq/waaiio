@@ -73,6 +73,144 @@ jobs:
           NODE_OPTIONS: --max-old-space-size=4096
         run: npx next build
 
+  # ── Release Gate V2 ──
+  release-gate:
+    name: "Release Gate V2 Phase 1 — Tooling Self-Test"
+    runs-on: ubuntu-latest
+
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: https://example.supabase.co
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: dummy
+      NEXT_PUBLIC_APP_URL: https://www.waaiio.com
+      NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: pk_test_dummy
+      NEXT_PUBLIC_PAYSTACK_PUBLIC_KEY: pk_test_dummy
+      NEXT_PUBLIC_POSTHOG_KEY: dummy
+      NEXT_PUBLIC_META_APP_ID: dummy
+      NEXT_PUBLIC_SENTRY_DSN: https://dummy@sentry.io/0
+      SENTRY_DSN: https://dummy@sentry.io/0
+      SENTRY_ORG: dummy
+      SENTRY_PROJECT: dummy
+      # SHA provenance — truthful recording of what was tested
+      # SOURCE_HEAD_SHA: the PR author's head SHA (or push SHA)
+      # MERGE_SHA: GitHub's synthetic merge SHA for PR events, same as SOURCE_HEAD_SHA for push
+      SOURCE_HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+      MERGE_SHA: ${{ github.sha }}
+      BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || (github.event_name == 'push' && github.event.before || github.sha) }}
+
+    steps:
+      - name: Checkout exact PR head (not merge commit)
+        uses: actions/checkout@v4
+        with:
+          # For PRs: check out the exact PR head, not the synthetic merge commit.
+          # For push/dispatch: uses the default (github.sha).
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || '' }}
+
+      - name: Record execution provenance
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "TESTED_COMMIT_SHA=${{ github.event.pull_request.head.sha }}" >> "$GITHUB_ENV"
+          else
+            echo "TESTED_COMMIT_SHA=${{ github.sha }}" >> "$GITHUB_ENV"
+          fi
+          echo "Provenance:"
+          echo "  TESTED_COMMIT_SHA=${TESTED_COMMIT_SHA:-${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}}"
+          echo "  SOURCE_HEAD_SHA=${{ env.SOURCE_HEAD_SHA }}"
+          echo "  MERGE_SHA=${{ env.MERGE_SHA }}"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.11.1
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run migration lint (immutability + candidate lint)
+        run: |
+          set -euo pipefail
+
+          BASE_SHA="${{ env.BASE_SHA }}"
+          EVENT="${{ github.event_name }}"
+
+          # For push-to-main: defense-in-depth using before..after
+          if [ "$EVENT" = "push" ] && [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            BEFORE_SHA="${{ github.event.before }}"
+            if [ "$BEFORE_SHA" = "0000000000000000000000000000000000000000" ]; then
+              echo "Initial push — no base to compare."
+              exit 0
+            fi
+            BASE_SHA="$BEFORE_SHA"
+          fi
+
+          echo "Fetching base ref $BASE_SHA..."
+          git fetch --depth=1 origin "$BASE_SHA"
+
+          echo "Running migration diff + lint (NUL-safe pipe, base: $BASE_SHA)..."
+          # Pipe NUL-delimited git diff directly to checked-in CLI.
+          # No shell variable intermediary — preserves NUL bytes end-to-end.
+          git diff --name-status -z "$BASE_SHA" -- 'supabase/migrations/*.sql' \
+            | npx tsx lib/release-gate/migration-diff-cli.ts
+
+      - name: Run release gate tests
+        run: npx vitest run lib/__tests__/release-gate-diff-engine.test.ts lib/__tests__/release-gate-migration-lint.test.ts lib/__tests__/release-gate-sha-guard.test.ts lib/__tests__/release-gate-orchestration.test.ts
+
+      - name: Generate Release Gate V2 Self-Test Certificate
+        run: |
+          npx tsx -e "
+          import { executeGate } from './lib/release-gate/gate';
+          import { formatCertificate } from './lib/release-gate/certificate';
+          import { writeFileSync } from 'fs';
+
+          const NOW = new Date();
+          const testedSha = process.env.TESTED_COMMIT_SHA || 'unknown';
+          const sourceHeadSha = process.env.SOURCE_HEAD_SHA || testedSha;
+          const mergeSha = process.env.MERGE_SHA || testedSha;
+          const pre = {
+            id: 'ci-synthetic-pre', captured_at: NOW.toISOString(), git_sha: testedSha,
+            phase: 'pre_deployment' as const, label: 'SYNTHETIC SELF-TEST — no real DB evidence',
+            functions: [], function_grants: [], table_rls: [], rls_policies: [],
+            extensions: [], constraints: [], triggers: [], cron_jobs: [],
+            migrations: [], invariant_results: [], journey_results: [],
+          };
+          const cand = { ...pre, id: 'ci-synthetic-cand', phase: 'candidate' as const, label: 'SYNTHETIC SELF-TEST — no real DB evidence' };
+          const result = executeGate({
+            releaseSha: testedSha, productionSha: testedSha,
+            preBaseline: pre, candidateBaseline: cand, now: NOW,
+            kind: 'self_test',
+            testedCommitSha: testedSha,
+            mergeSha: mergeSha,
+          });
+          const certText = formatCertificate(result.certificate);
+          writeFileSync('release-certificate.txt', certText);
+          writeFileSync('release-certificate.json', JSON.stringify(result.certificate, null, 2));
+          console.log(certText);
+          "
+
+      - name: Verify certificate SHA matches TESTED_COMMIT_SHA
+        run: |
+          set -euo pipefail
+          EXPECTED_SHA="${{ env.TESTED_COMMIT_SHA }}"
+          CERT_SHA=$(node -e "const c = require('./release-certificate.json'); console.log(c.release_sha)")
+          CERT_TESTED=$(node -e "const c = require('./release-certificate.json'); console.log(c.tested_commit_sha)")
+          if [ "$CERT_SHA" != "$EXPECTED_SHA" ]; then
+            echo "FATAL: Certificate release_sha ($CERT_SHA) does not match TESTED_COMMIT_SHA ($EXPECTED_SHA)"
+            exit 1
+          fi
+          if [ "$CERT_TESTED" != "$EXPECTED_SHA" ]; then
+            echo "FATAL: Certificate tested_commit_sha ($CERT_TESTED) does not match TESTED_COMMIT_SHA ($EXPECTED_SHA)"
+            exit 1
+          fi
+          echo "✅ Certificate provenance verified: release_sha=$CERT_SHA tested_commit_sha=$CERT_TESTED"
+
+      - name: Upload release certificate artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-gate-self-test-certificate
+          path: |
+            release-certificate.txt
+            release-certificate.json
+
   # ── Admin Application ──
   admin-app:
     name: Admin App (install, build)

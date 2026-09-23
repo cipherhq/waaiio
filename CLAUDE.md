@@ -4,7 +4,11 @@
 
 **Canonical governance document:** [`WAAIIO_ENGINEERING_OPERATING_ORDER.md`](./WAAIIO_ENGINEERING_OPERATING_ORDER.md)
 
-Read and follow the Operating Order before any substantive work. It defines roles, evidence hierarchy, the standard change process, review/checkpoint protocol, failure escalation, production certification, and release safety invariants.
+**Release safety contract:** [`RELEASE_GATE_V2.md`](./RELEASE_GATE_V2.md)
+
+Read and follow both documents before any substantive work. The Operating Order defines roles, evidence hierarchy, the standard change process, review/checkpoint protocol, failure escalation, production certification, and release safety invariants. Release Gate V2 defines the invariant registry, final-state migration checks, golden journeys, provider acceptance criteria, exact-SHA certification, canary rules, and escaped defect policy.
+
+**For migrations, payments, authorization, provider integrations, or cross-cutting changes:** read Release Gate V2 §1 (invariant registry) and §2 (migration checks) before writing code. Verify your change does not violate a registered invariant. If it touches a `SECURITY DEFINER` function, check DB-001/DB-002/DB-006.
 
 ### Startup-Critical Non-Negotiables (compact summary — Operating Order is authoritative)
 
@@ -269,6 +273,8 @@ The draft→ready_for_review transition fires a `pull_request: ready_for_review`
 3. VERIFY DB column types, enums, and constraints before INSERT/UPDATE
 4. CHECK which version of a two-function trap you're importing
 5. RUN `npm run test` after every change (318 tests, 27 suites)
+6. For migrations: CHECK `RELEASE_GATE_V2.md` §1 invariant registry and §2 migration checks — especially DB-001/DB-002 if touching `SECURITY DEFINER` functions
+7. For payments/providers: CHECK `RELEASE_GATE_V2.md` §1.2 payment invariants and §4 provider acceptance criteria
 
 ## Common Tasks
 - **New dashboard page:** Create `app/dashboard/{name}/page.tsx`, add to Sidebar.tsx with capability gate
