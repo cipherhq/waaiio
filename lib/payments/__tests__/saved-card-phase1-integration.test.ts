@@ -494,13 +494,13 @@ describe('Activation retry claim fencing', () => {
     expect(workerCode).not.toContain('downgradeAllowRedisplay');
   });
 
-  it('retry worker checks completion after send (fenced by claim token)', () => {
+  it('retry worker uses fenced delivery with completion tracking', () => {
     const fs = require('fs');
     const workerCode = fs.readFileSync('app/api/cron/saved-card-activation-retry/route.ts', 'utf-8');
+    // #370: Delegates to sendWithFencedDelivery which handles mark_started → send → complete
+    expect(workerCode).toContain('sendWithFencedDelivery');
     expect(workerCode).toContain('complete_activation_delivery');
-    expect(workerCode).toContain('p_claim_token: claimToken');
-    // Checks completion result
-    expect(workerCode).toContain('!completed');
+    expect(workerCode).toContain('claimToken');
   });
 });
 

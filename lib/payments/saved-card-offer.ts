@@ -410,13 +410,14 @@ export async function startSavedCardFromPaymentId(
         return;
       }
     } else {
-      // No session — create short-lived save session
-      const { error: insertErr } = await supabase.from('bot_sessions').insert({
-        whatsapp_number: canonPhone, user_id: null, business_id: businessId,
-        current_step: 'save_card_pin', session_data: saveData, is_active: true,
-        expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+      // No session — create short-lived save session with normalized digits-only phone
+      const { data: sessionResult, error: sessionRpcErr } = await supabase.rpc('establish_saved_card_session', {
+        p_canon_phone: canonPhone,
+        p_business_id: businessId,
+        p_current_step: 'save_card_pin',
+        p_session_data: saveData,
       });
-      if (insertErr) {
+      if (sessionRpcErr || !sessionResult) {
         await sendText(from, 'Could not start card save. Try again.');
         return;
       }
@@ -456,12 +457,13 @@ export async function startSavedCardFromPaymentId(
       return;
     }
   } else {
-    const { error: insertErr } = await supabase.from('bot_sessions').insert({
-      whatsapp_number: canonPhone, user_id: null, business_id: businessId,
-      current_step: 'replace_card_pin', session_data: replaceData, is_active: true,
-      expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+    const { data: sessionResult, error: sessionRpcErr } = await supabase.rpc('establish_saved_card_session', {
+      p_canon_phone: canonPhone,
+      p_business_id: businessId,
+      p_current_step: 'replace_card_pin',
+      p_session_data: replaceData,
     });
-    if (insertErr) {
+    if (sessionRpcErr || !sessionResult) {
       await sendText(from, 'Could not start card replacement. Try again.');
       return;
     }
@@ -557,13 +559,11 @@ export async function checkStripeConsentAndOffer(
     return;
   }
 
-  // Step 3: Resolve originating channel for durable recovery
-  let channelId: string | null = null;
-  if (payment.business_id) {
-    const { data: bizFull } = await supabase.from('businesses')
-      .select('assigned_channel_id, whatsapp_channel_id')
-      .eq('id', payment.business_id).maybeSingle();
-    channelId = bizFull?.assigned_channel_id || bizFull?.whatsapp_channel_id || null;
+  // Step 3: Exact originating channel from payment metadata (no business-current fallback)
+  const channelId = (meta._inbound_channel_id as string) || null;
+  if (!channelId) {
+    logger.error(`${logPrefix} No _inbound_channel_id in payment metadata — fail closed`, { paymentId });
+    return;
   }
 
   // Step 4: Create provider-consented offer FIRST (before redisplay mutation)
@@ -606,14 +606,14 @@ export async function checkStripeConsentAndOffer(
     return;
   }
 
-  // Step 6: Establish bot session for PIN entry + send activation prompt
-  // The session must contain all Stripe evidence so handleCardPinStep can commit the credential
+  // Step 6: Establish bot session for PIN entry using normalized digits-only phone
   const pinSessionData = {
     _save_card_pending: true,
     _save_card_business_id: businessId,
     _save_card_gateway: 'stripe',
     _save_card_payment_id: paymentId,
     _save_card_offer_id: offerId,
+    _saved_card_channel_id: channelId,
     _save_card_auth: {
       // Stripe-specific credential evidence (NOT authorization_code — that's Paystack)
       stripe_payment_method_id: evidence.paymentMethodId,
@@ -625,57 +625,61 @@ export async function checkStripeConsentAndOffer(
     },
   };
 
-  // Create or update bot session for PIN activation
-  // Use the customer's phone as the session key
   try {
-    // Try to find existing session for this phone+business
-    const { data: existingSession } = await supabase.from('bot_sessions')
-      .select('id, version')
-      .eq('whatsapp_number', canonPhone)
-      .eq('business_id', businessId)
-      .eq('is_active', true)
-      .maybeSingle();
+    const { data: sessionResult, error: sessionErr } = await supabase.rpc('establish_saved_card_session', {
+      p_canon_phone: canonPhone,
+      p_business_id: businessId,
+      p_current_step: 'save_card_pin',
+      p_session_data: pinSessionData,
+    });
 
-    if (existingSession) {
-      // CAS update to save_card_pin step
-      await supabase.rpc('update_session_cas', {
-        p_session_id: existingSession.id,
-        p_expected_version: existingSession.version ?? 0,
-        p_current_step: 'save_card_pin',
-        p_session_data: pinSessionData,
-      });
-    } else {
-      // Create new session
-      await supabase.from('bot_sessions').insert({
-        whatsapp_number: canonPhone,
-        business_id: businessId,
-        current_step: 'save_card_pin',
-        session_data: pinSessionData,
-        is_active: true,
-        expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
-      });
+    if (sessionErr || !sessionResult) {
+      logger.error(`${logPrefix} establish_saved_card_session failed`, { sessionErr });
+      // Offer stays 'accepted' — can be retried
+      return;
     }
   } catch (sessionErr) {
     logger.error(`${logPrefix} Session creation for PIN activation failed`, { sessionErr });
-    // Offer stays 'accepted' — can be retried
     return;
   }
 
-  // Send PIN activation prompt (durable delivery tracking)
-  if (sender) {
-    try {
-      const activationMsg = offerType === 'save'
-        ? `🔒 You chose to save ${cardLabel} for faster checkout. Create your 4-digit *Waaiio PIN* to activate it.`
-        : `🔒 You chose to save ${cardLabel}. Enter your existing *Waaiio PIN* to update your saved card.`;
-      await sender.sendText({ to: canonPhone, text: activationMsg });
+  // Step 7: Fenced activation delivery — claim then send via shared helper
+  try {
+    const { data: claimed } = await supabase.rpc('claim_exact_activation_delivery', {
+      p_offer_id: offerId,
+    });
 
-      // Mark activation prompt sent (durable delivery proof)
+    if (!claimed) {
+      logger.info(`${logPrefix} Activation claim failed — may already be claimed/sent`, { offerId });
+      return;
+    }
+
+    const activationClaimToken = (claimed as Record<string, unknown>).claim_token as string;
+    const activationMsg = offerType === 'save'
+      ? `🔒 You chose to save ${cardLabel} for faster checkout. Create your 4-digit *Waaiio PIN* to activate it.`
+      : `🔒 You chose to save ${cardLabel}. Enter your existing *Waaiio PIN* to update your saved card.`;
+
+    const { sendWithFencedDelivery } = await import('./saved-card-delivery');
+    const delivered = await sendWithFencedDelivery({
+      supabase,
+      offerId,
+      claimToken: activationClaimToken,
+      customerPhone: canonPhone,
+      businessId,
+      channelId,
+      messageText: activationMsg,
+      markStartedRpc: 'mark_activation_send_started',
+      completeRpc: 'complete_activation_delivery',
+      releasePreEmissionRpc: 'release_activation_pre_emission',
+    });
+
+    if (delivered) {
+      // Mark activation prompt sent for legacy tracking
       await supabase.from('payment_saved_card_offers')
         .update({ activation_prompt_sent_at: new Date().toISOString() })
         .eq('id', offerId);
-    } catch (sendErr) {
-      // Activation prompt delivery failed — offer stays 'accepted' with channel_id for recovery
-      logger.error(`${logPrefix} Activation prompt send failed — offer stays accepted for recovery`, { sendErr, offerId, channelId });
     }
+  } catch (sendErr) {
+    logger.error(`${logPrefix} Activation delivery failed — offer stays accepted for recovery`, { sendErr, offerId, channelId });
   }
 }

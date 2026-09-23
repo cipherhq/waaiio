@@ -2,8 +2,12 @@
  * Saved Card Activation Retry Worker
  *
  * Retries failed PIN-activation message delivery using durable claim/fencing.
- * Uses the EXACT originating WhatsApp channel — no business-current fallback.
+ * Uses the EXACT originating WhatsApp channel via resolveByChannelIdForBusiness.
  * Never repeats Stripe consent, redisplay downgrade, or credential setup.
+ *
+ * #370: Uses establish_saved_card_session RPC for normalized digits-only phone,
+ * sendWithFencedDelivery for activation sends, and release_activation_pre_emission
+ * for proven pre-emission failures.
  *
  * Concurrency: claim_activation_delivery RPC (FOR UPDATE SKIP LOCKED)
  * ensures exactly one worker owns each offer. Completion/release fenced
@@ -13,6 +17,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { verifyCronAuth } from '@/lib/cron-auth';
 import { createServiceClient } from '@/lib/supabase/service';
 import { logger } from '@/lib/logger';
+import { canonicalSavedCardPhone } from '@/lib/payments/saved-card-compat';
 
 export async function GET(request: NextRequest) {
   const authError = verifyCronAuth(request);
@@ -36,6 +41,7 @@ export async function GET(request: NextRequest) {
     const channelId = offer.channel_id as string | null;
     const customerPhone = offer.customer_phone as string;
     const paymentId = offer.payment_id as string;
+    const businessId = offer.business_id as string;
 
     try {
       // R2-B3: Exact originating channel ONLY — no fallback
@@ -65,15 +71,10 @@ export async function GET(request: NextRequest) {
         continue;
       }
 
-      // Load exact channel credentials
-      const { data: channelCreds } = await supabase
-        .from('whatsapp_channels')
-        .select('phone_number_id, access_token')
-        .eq('id', channelId)
-        .maybeSingle();
-
-      if (!channelCreds?.phone_number_id || !channelCreds?.access_token) {
-        logger.warn('[ACTIVATION-RETRY] Exact channel credentials unavailable — fail closed', { offerId, channelId });
+      // Ensure bot session exists for PIN entry using normalized phone
+      const canonPhone = canonicalSavedCardPhone(customerPhone);
+      if (!canonPhone) {
+        logger.warn('[ACTIVATION-RETRY] Invalid phone — fail closed', { offerId, customerPhone });
         await supabase.rpc('release_activation_delivery', {
           p_offer_id: offerId, p_claim_token: claimToken,
         });
@@ -81,11 +82,13 @@ export async function GET(request: NextRequest) {
         continue;
       }
 
-      // Ensure bot session exists for PIN entry
+      // Check for existing normalized session
+      const { savedCardSessionPhone } = await import('@/lib/payments/saved-card-compat');
+      const sessionPhone = savedCardSessionPhone(canonPhone);
       const { data: existingSession } = await supabase.from('bot_sessions')
         .select('id, version, current_step')
-        .eq('whatsapp_number', customerPhone)
-        .eq('business_id', offer.business_id as string)
+        .eq('whatsapp_number', sessionPhone)
+        .eq('business_id', businessId)
         .eq('is_active', true)
         .maybeSingle();
 
@@ -96,10 +99,11 @@ export async function GET(request: NextRequest) {
 
         const pinSessionData: Record<string, unknown> = {
           _save_card_pending: true,
-          _save_card_business_id: offer.business_id,
+          _save_card_business_id: businessId,
           _save_card_gateway: 'stripe',
           _save_card_payment_id: paymentId,
           _save_card_offer_id: offerId,
+          _saved_card_channel_id: channelId,
         };
 
         if (payment?.metadata) {
@@ -112,81 +116,54 @@ export async function GET(request: NextRequest) {
           };
         }
 
-        if (existingSession) {
-          await supabase.rpc('update_session_cas', {
-            p_session_id: existingSession.id,
-            p_expected_version: existingSession.version ?? 0,
-            p_current_step: 'save_card_pin',
-            p_session_data: pinSessionData,
+        // Use establish_saved_card_session for normalized digits-only phone
+        const { error: sessionErr } = await supabase.rpc('establish_saved_card_session', {
+          p_canon_phone: canonPhone,
+          p_business_id: businessId,
+          p_current_step: 'save_card_pin',
+          p_session_data: pinSessionData,
+        });
+
+        if (sessionErr) {
+          logger.error('[ACTIVATION-RETRY] Session establishment failed', { offerId, sessionErr });
+          await supabase.rpc('release_activation_delivery', {
+            p_offer_id: offerId, p_claim_token: claimToken,
           });
-        } else {
-          await supabase.from('bot_sessions').insert({
-            whatsapp_number: customerPhone,
-            business_id: offer.business_id,
-            current_step: 'save_card_pin',
-            session_data: pinSessionData,
-            is_active: true,
-            expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
-          });
+          errors++;
+          continue;
         }
       }
 
-      // R3-B1: Durable outbound-effect lifecycle
-      // Step 1: Mark send started BEFORE provider call — prevents auto-retry after success
-      const { data: sendStarted } = await supabase.rpc('mark_activation_send_started', {
-        p_offer_id: offerId, p_claim_token: claimToken,
-      });
-      if (!sendStarted) {
-        // Could not mark send started — release claim
-        await supabase.rpc('release_activation_delivery', {
-          p_offer_id: offerId, p_claim_token: claimToken,
-        });
-        errors++;
-        continue;
-      }
-
-      // Step 2: Send activation prompt
+      // Send activation prompt using shared fenced delivery helper
       const cardDisplay = (offer.card_display as string) || 'your card';
       const activationMsg = (offer.offer_type as string) === 'save'
         ? `🔒 You chose to save ${cardDisplay} for faster checkout. Create your 4-digit *Waaiio PIN* to activate it.`
         : `🔒 You chose to save ${cardDisplay}. Enter your existing *Waaiio PIN* to update your saved card.`;
 
-      const { MetaCloudSender } = await import('@/lib/channels/message-sender');
-      const sender = new MetaCloudSender(channelCreds.phone_number_id, channelCreds.access_token);
-      const sendResult = await sender.sendText({ to: customerPhone, text: activationMsg });
-
-      if (!sendResult?.success) {
-        // Send FAILED — clear send_started_at to allow retry (send did not succeed)
-        await supabase.from('payment_saved_card_offers')
-          .update({ activation_send_started_at: null })
-          .eq('id', offerId)
-          .eq('claim_token', claimToken);
-        await supabase.rpc('release_activation_delivery', {
-          p_offer_id: offerId, p_claim_token: claimToken,
-        });
-        errors++;
-        continue;
-      }
-
-      // Step 3: Send SUCCEEDED — mark durable completion
-      const { data: completed } = await supabase.rpc('complete_activation_delivery', {
-        p_offer_id: offerId, p_claim_token: claimToken,
+      const { sendWithFencedDelivery } = await import('@/lib/payments/saved-card-delivery');
+      const delivered = await sendWithFencedDelivery({
+        supabase,
+        offerId,
+        claimToken,
+        customerPhone: canonPhone,
+        businessId,
+        channelId,
+        messageText: activationMsg,
+        markStartedRpc: 'mark_activation_send_started',
+        completeRpc: 'complete_activation_delivery',
+        releasePreEmissionRpc: 'release_activation_pre_emission',
       });
 
-      if (!completed) {
-        // R3-B1: Send succeeded but durable completion failed.
-        // activation_send_started_at is set → offer will NOT be auto-claimed again.
-        // The offer is in a non-retryable ambiguous state.
-        // Reconciliation/manual repair must finish the state later.
-        logger.error('[ACTIVATION-RETRY] AMBIGUOUS: send succeeded but completion write failed — NOT auto-retryable', { offerId });
-        // Do NOT release claim — let it expire naturally. The offer won't be reclaimed
-        // because activation_send_started_at IS NOT NULL blocks the claim RPC.
+      if (delivered) {
+        // Mark activation prompt sent for legacy tracking
+        await supabase.from('payment_saved_card_offers')
+          .update({ activation_prompt_sent_at: new Date().toISOString() })
+          .eq('id', offerId);
+        retried++;
+        logger.info('[ACTIVATION-RETRY] Activation prompt sent and confirmed', { offerId, customerPhone });
+      } else {
         errors++;
-        continue;
       }
-
-      retried++;
-      logger.info('[ACTIVATION-RETRY] Activation prompt sent and confirmed', { offerId, customerPhone });
     } catch (err) {
       logger.error('[ACTIVATION-RETRY] Processing threw — releasing claim', { offerId, err });
       try {

@@ -185,17 +185,14 @@ describe('RPC Concurrency Contract Verification', () => {
 
     it('worker lifecycle: mark_started → send → complete OR ambiguous', () => {
       const worker = readFileSync('app/api/cron/saved-card-activation-retry/route.ts', 'utf-8');
-      // Step 1: mark send started
+      // Step 1: mark send started (delegated to sendWithFencedDelivery)
       expect(worker).toContain('mark_activation_send_started');
-      // Step 2: send
-      expect(worker).toContain('sender.sendText');
-      // Step 3a: on success → complete
+      // Step 2: send via shared fenced delivery helper
+      expect(worker).toContain('sendWithFencedDelivery');
+      // Step 3a: on success → complete (delegated to sendWithFencedDelivery)
       expect(worker).toContain('complete_activation_delivery');
-      // Step 3b: on send failure → clear send_started (allow retry)
-      expect(worker).toContain('activation_send_started_at: null');
-      // Step 3c: on completion failure after send success → NOT auto-retryable
-      expect(worker).toContain('AMBIGUOUS');
-      expect(worker).toContain('NOT auto-retryable');
+      // Step 3b: on pre-emission failure → release (via release_activation_pre_emission)
+      expect(worker).toContain('release_activation_pre_emission');
     });
   });
 
@@ -245,9 +242,11 @@ describe('RPC Concurrency Contract Verification', () => {
       expect(worker).not.toContain('whatsapp_channel_id');
     });
 
-    it('worker loads credentials from exact channel_id only', () => {
+    it('worker resolves channel via resolveByChannelIdForBusiness (not direct query)', () => {
       const worker = readFileSync('app/api/cron/saved-card-activation-retry/route.ts', 'utf-8');
-      expect(worker).toContain("eq('id', channelId)");
+      // #370: Uses shared fenced delivery which internally uses resolveByChannelIdForBusiness
+      expect(worker).toContain('sendWithFencedDelivery');
+      expect(worker).not.toContain("from('whatsapp_channels')");
     });
   });
 });

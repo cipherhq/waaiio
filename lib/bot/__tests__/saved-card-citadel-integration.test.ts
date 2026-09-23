@@ -151,7 +151,15 @@ function createCitadelSupabase() {
         // Default
         return makeChain(null);
       }),
-      rpc: vi.fn().mockResolvedValue({ data: { success: true, version: 1 }, error: null }),
+      rpc: vi.fn().mockImplementation((name: string, args?: Record<string, unknown>) => {
+        if (name === 'establish_saved_card_session') {
+          return Promise.resolve({
+            data: { session_id: 'sess-new', version: 1, session_phone: (args?.p_canon_phone as string)?.replace(/^\+/, '') },
+            error: null,
+          });
+        }
+        return Promise.resolve({ data: { success: true, version: 1 }, error: null });
+      }),
     },
   };
 }
@@ -210,13 +218,15 @@ describe('F1: Real Citadel no-session integration', () => {
 
     // Hotfix proof: exact payment authority binds Citadel before any PIN response.
     expect(sender.boundBusinessId).toBe(BIZ_ID);
-    expect(sessionInserts).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        business_id: BIZ_ID,
-        current_step: 'save_card_pin',
-        whatsapp_number: PHONE,
-      }),
-    ]));
+    // #370: Session created via establish_saved_card_session RPC (digits-only phone)
+    const rpcCalls = (supabase.rpc as ReturnType<typeof vi.fn>).mock.calls;
+    const establishCall = rpcCalls.find((c: unknown[]) => c[0] === 'establish_saved_card_session');
+    expect(establishCall).toBeTruthy();
+    expect(establishCall![1]).toEqual(expect.objectContaining({
+      p_canon_phone: PHONE,
+      p_business_id: BIZ_ID,
+      p_current_step: 'save_card_pin',
+    }));
 
     // F1 proof: visible CREATE-PIN response was emitted
     // MetaCloudSender.sendText calls cloud.sendText({ to, text }) — first arg is object

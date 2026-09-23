@@ -98,6 +98,7 @@ function buildMockSupabase(overrides: {
     if (name === 'accept_saved_card_offer') return Promise.resolve({ data: { result: 'transitioned' }, error: null });
     if (name === 'decline_saved_card_offer') return Promise.resolve({ data: { result: 'transitioned' }, error: null });
     if (name === 'update_session_cas') return Promise.resolve({ data: { success: true, version: 2 }, error: null });
+    if (name === 'establish_saved_card_session') return Promise.resolve({ data: { session_id: 'sess-new', version: 1, session_phone: (params?.p_canon_phone as string)?.replace(/^\+/, '') }, error: null });
     return Promise.resolve({ data: null, error: null });
   });
 
@@ -457,13 +458,16 @@ describe('K10: Saved-card offer behavioral tests', () => {
   // ═══════════════════════════════════════════════════════════════
   // K10 #15: Citadel no-session manual fallback through exact-payment helper
   // ═══════════════════════════════════════════════════════════════
-  it('#15: null session + save accept → creates new bot_session', async () => {
+  it('#15: null session + save accept → creates new bot_session via RPC', async () => {
     const supabase = buildMockSupabase({ existingMethods: [] });
     const { handleSavedCardOfferAction } = await import('@/lib/payments/saved-card-offer');
     await handleSavedCardOfferAction(supabase as any, sendText, PHONE, null, 'save_accept', PAY_ID);
 
-    // Creates new session via INSERT (not CAS)
-    expect(supabase.from).toHaveBeenCalledWith('bot_sessions');
+    // #370: Creates new session via establish_saved_card_session RPC (not direct INSERT)
+    expect(supabase.rpc).toHaveBeenCalledWith('establish_saved_card_session', expect.objectContaining({
+      p_canon_phone: PHONE,
+      p_current_step: 'save_card_pin',
+    }));
     expect(sendText).toHaveBeenCalledWith(PHONE, expect.stringContaining('Waaiio PIN'));
   });
 
@@ -750,8 +754,9 @@ describe('K10: Saved-card offer behavioral tests', () => {
       ...PLATFORM_PAYMENT,
       user_id: null,
     };
-    const rpcFn = vi.fn().mockImplementation((name: string) => {
+    const rpcFn = vi.fn().mockImplementation((name: string, args?: Record<string, unknown>) => {
       if (name === 'update_session_cas') return Promise.resolve({ data: { success: true, version: 2 }, error: null });
+      if (name === 'establish_saved_card_session') return Promise.resolve({ data: { session_id: 'sess-new', version: 1, session_phone: (args?.p_canon_phone as string)?.replace(/^\+/, '') }, error: null });
       return Promise.resolve({ data: null, error: null });
     });
     const fromFn = vi.fn().mockImplementation((table: string) => {
@@ -802,8 +807,11 @@ describe('K10: Saved-card offer behavioral tests', () => {
 
     // D9: Verify PIN creation prompt was sent (proves full locator→helper→PIN chain)
     expect(sendText).toHaveBeenCalledWith(PHONE, expect.stringContaining('Waaiio PIN'));
-    // D9: Verify bot_sessions was accessed (new session for null-session case)
-    expect(fromFn).toHaveBeenCalledWith('bot_sessions');
+    // D9: #370 — Verify establish_saved_card_session RPC was called (new session for null-session case)
+    expect(rpcFn).toHaveBeenCalledWith('establish_saved_card_session', expect.objectContaining({
+      p_canon_phone: PHONE,
+      p_current_step: 'save_card_pin',
+    }));
   });
 
   // ═══════════════════════════════════════════════════════════════

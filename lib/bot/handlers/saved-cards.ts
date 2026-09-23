@@ -462,22 +462,58 @@ export async function handleCardPinStep(
     .update({ current_step: 'select_capability', session_data: cleanData })
     .eq('id', session.id);
 
-  // I6: Durable confirmation — committed → confirmed with checked delivery
+  // I6: Durable confirmation — committed → confirmed with fenced delivery
   const finalOfferId = d._save_card_offer_id as string | undefined;
-  try {
-    await sendText(from, `💳 Card saved! *${cardLabel}*\n\n🔒 Waaiio PIN set successfully. You'll need this Waaiio PIN when using your saved card.\n\nFor privacy, you can delete your PIN message from this chat. Type *remove card* anytime to delete this card.`);
-    // Delivery proven — mark offer as confirmed
-    if (finalOfferId) {
-      const { data: confirmResult } = await supabase.rpc('confirm_saved_card_offer', {
-        p_offer_id: finalOfferId, p_customer_phone: phoneP,
+  const savedCardChannelId = d._saved_card_channel_id as string | undefined;
+  const confirmationMsg = `💳 Card saved! *${cardLabel}*\n\n🔒 Waaiio PIN set successfully. You'll need this Waaiio PIN when using your saved card.\n\nFor privacy, you can delete your PIN message from this chat. Type *remove card* anytime to delete this card.`;
+
+  if (finalOfferId && savedCardChannelId && businessId) {
+    // Use fenced delivery via the offer's durable channel_id — NOT the bot's sendText
+    try {
+      const { data: claimed } = await supabase.rpc('claim_confirmation_delivery', {
+        p_offer_id: finalOfferId,
       });
-      if (!confirmResult) {
-        logger.warn('[SAVED_CARDS] Confirm RPC failed — offer may not be in committed state');
+
+      if (claimed) {
+        const confirmClaimToken = (claimed as Record<string, unknown>).claim_token as string;
+        const { sendWithFencedDelivery } = await import('@/lib/payments/saved-card-delivery');
+        await sendWithFencedDelivery({
+          supabase,
+          offerId: finalOfferId,
+          claimToken: confirmClaimToken,
+          customerPhone: phoneP,
+          businessId,
+          channelId: savedCardChannelId,
+          messageText: confirmationMsg,
+          markStartedRpc: 'mark_confirmation_send_started',
+          completeRpc: 'complete_confirmation_delivery',
+          releasePreEmissionRpc: 'release_confirmation_pre_emission',
+        });
+      } else {
+        // Claim failed — offer may not be committed yet, or already confirmed
+        // Fall back to sendText for user experience (non-security-critical copy)
+        logger.warn('[SAVED_CARDS] Confirmation claim failed — using sendText fallback', { finalOfferId });
+        await sendText(from, confirmationMsg);
       }
+    } catch (confirmErr) {
+      logger.error('[SAVED_CARDS] Fenced confirmation delivery failed — offer stays committed for recovery', { confirmErr });
     }
-  } catch (confirmErr) {
-    // Delivery failed — offer stays 'committed'. Recovery can re-send without re-running credential save.
-    logger.error('[SAVED_CARDS] Confirmation delivery failed — offer stays committed for recovery', { confirmErr });
+  } else {
+    // No offer or no channel — use sendText for Paystack-only (non-Stripe) saves or legacy paths
+    try {
+      await sendText(from, confirmationMsg);
+      // Best-effort confirm for offers without channel tracking
+      if (finalOfferId) {
+        const { data: confirmResult } = await supabase.rpc('confirm_saved_card_offer', {
+          p_offer_id: finalOfferId, p_customer_phone: phoneP,
+        });
+        if (!confirmResult) {
+          logger.warn('[SAVED_CARDS] Confirm RPC failed — offer may not be in committed state');
+        }
+      }
+    } catch (confirmErr) {
+      logger.error('[SAVED_CARDS] Confirmation delivery failed — offer stays committed for recovery', { confirmErr });
+    }
   }
 }
 
