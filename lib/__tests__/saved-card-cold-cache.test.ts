@@ -12,17 +12,19 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const { mockChargeSavedMethod, mockLogError } = vi.hoisted(() => ({
+const { mockChargeSavedMethod, mockLogError, mockVerifyPin, mockRequiresPin } = vi.hoisted(() => ({
   mockChargeSavedMethod: vi.fn(),
   mockLogError: vi.fn(),
+  mockVerifyPin: vi.fn().mockResolvedValue({ valid: true }),
+  mockRequiresPin: vi.fn().mockResolvedValue({ required: false }),
 }));
 
 vi.mock('@/lib/payments/saved-payment-adapter', () => ({
   savedPaymentAdapter: {
     chargeSavedMethod: mockChargeSavedMethod,
     getSavedMethods: vi.fn().mockResolvedValue([]),
-    requiresPin: vi.fn().mockResolvedValue({ required: false }),
-    verifyPin: vi.fn().mockResolvedValue({ valid: true }),
+    requiresPin: mockRequiresPin,
+    verifyPin: mockVerifyPin,
   },
 }));
 
@@ -228,21 +230,7 @@ describe('#373: Saved-card cold cache — authoritative currency resolution', ()
 // These tests import the real schedulingFlow and execute the saved_card_prompt
 // step's validate() function to prove the exact production path uses
 // authoritative DB currency resolution.
-
-const mockVerifyPin = vi.fn();
-
-vi.mock('@/lib/payments/saved-payment-adapter', async () => {
-  const actual = await vi.importActual<Record<string, unknown>>('@/lib/payments/saved-payment-adapter');
-  return {
-    ...actual,
-    savedPaymentAdapter: {
-      chargeSavedMethod: mockChargeSavedMethod,
-      getSavedMethods: vi.fn().mockResolvedValue([]),
-      requiresPin: vi.fn().mockResolvedValue({ required: false }),
-      verifyPin: mockVerifyPin,
-    },
-  };
-});
+// Mock is already set up at module top via vi.hoisted + vi.mock.
 
 describe('#373 R1: Scheduling saved_card_prompt — exact Jshop production path', () => {
   beforeEach(() => {
