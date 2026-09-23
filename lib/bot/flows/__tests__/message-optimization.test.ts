@@ -126,7 +126,11 @@ function createTestSupabase() {
       c[m] = vi.fn().mockReturnValue(c);
     }
     c.single = vi.fn().mockResolvedValue({ data: null, error: null });
-    c.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
+    c.maybeSingle = vi.fn().mockResolvedValue(
+      table === 'countries'
+        ? { data: { currency_code: 'USD' }, error: null }
+        : { data: null, error: null }
+    );
     c.insert = vi.fn().mockImplementation((data: unknown) => {
       ops.push({ table, op: 'insert', data });
       const ic: Record<string, any> = {};
@@ -179,8 +183,10 @@ function createTestSupabase() {
 }
 
 function flowCtx(supabase: any, sessionData: Record<string, unknown> = {}): FlowContext {
+  // If supabase is not a real mock (e.g. {} as any), create one so DB queries don't throw
+  const sb = (supabase && typeof supabase.from === 'function') ? supabase : createTestSupabase().supabase;
   return {
-    supabase,
+    supabase: sb,
     sender: { sendText: vi.fn().mockResolvedValue(undefined), sendButtons: vi.fn().mockResolvedValue(undefined), sendList: vi.fn().mockResolvedValue(undefined), sendImage: vi.fn().mockResolvedValue(undefined), sendDocument: vi.fn().mockResolvedValue(undefined) },
     standalone: {} as any,
     intelligence: {} as any,
