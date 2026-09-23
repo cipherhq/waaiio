@@ -105,7 +105,26 @@ jobs:
         run: npm ci
 
       - name: Run migration lint (candidate migrations only)
-        run: npx tsx lib/release-gate/migration-lint.ts
+        run: |
+          # Only lint migration files that are NEW in this branch vs main.
+          # All existing migrations in main are historical and immutable.
+          CANDIDATE_MIGRATIONS=$(git diff --name-only --diff-filter=A origin/main -- 'supabase/migrations/*.sql' | xargs -I{} basename {} 2>/dev/null || true)
+          if [ -z "$CANDIDATE_MIGRATIONS" ]; then
+            echo "No new candidate migrations — lint passes (nothing to check)."
+          else
+            echo "Candidate migrations: $CANDIDATE_MIGRATIONS"
+            npx tsx -e "
+              import { lintMigrationDirectory } from './lib/release-gate/migration-lint';
+              const candidates = '${CANDIDATE_MIGRATIONS}'.split('\n').filter(Boolean);
+              const violations = lintMigrationDirectory('supabase/migrations', candidates);
+              const errors = violations.filter(v => v.severity === 'error');
+              for (const v of violations) {
+                console.log(\`\${v.severity === 'error' ? '❌' : '⚠️'} \${v.file}:\${v.line} [\${v.rule}] \${v.message}\`);
+              }
+              if (errors.length > 0) { console.log('BLOCKED'); process.exit(1); }
+              else { console.log('✅ No violations in candidate migrations.'); }
+            "
+          fi
 
       - name: Run release gate tests
         run: npx vitest run lib/__tests__/release-gate-diff-engine.test.ts lib/__tests__/release-gate-migration-lint.test.ts lib/__tests__/release-gate-sha-guard.test.ts lib/__tests__/release-gate-orchestration.test.ts
