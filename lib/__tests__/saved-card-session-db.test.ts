@@ -258,7 +258,7 @@ describe.skipIf(!dbUrl)('M398 Session Normalization (real PostgreSQL)', () => {
 
   describe('complete_activation_delivery: 2-arg signature', () => {
     it('2-arg call succeeds on accepted offer with valid claim', () => {
-      const payId = psql(`INSERT INTO payments DEFAULT VALUES RETURNING id;`);
+      const payId = psql(`INSERT INTO payments (amount, currency, gateway, status) VALUES (1000, 'NGN', 'paystack', 'success') RETURNING id;`);
       psql(`
         INSERT INTO payment_saved_card_offers
           (payment_id, customer_phone, business_id, offer_type, state, consent_source, channel_id)
@@ -307,7 +307,7 @@ describe.skipIf(!dbUrl)('M398 Session Normalization (real PostgreSQL)', () => {
 
   describe('discover_pending_confirmation: atomic claim', () => {
     it('first discover returns offer, second returns null', () => {
-      const payId = psql(`INSERT INTO payments DEFAULT VALUES RETURNING id;`);
+      const payId = psql(`INSERT INTO payments (amount, currency, gateway, status) VALUES (1000, 'NGN', 'paystack', 'success') RETURNING id;`);
 
       // Create a committed offer
       psql(`
@@ -337,7 +337,7 @@ describe.skipIf(!dbUrl)('M398 Session Normalization (real PostgreSQL)', () => {
     });
 
     it('expired claim allows re-discovery', () => {
-      const payId = psql(`INSERT INTO payments DEFAULT VALUES RETURNING id;`);
+      const payId = psql(`INSERT INTO payments (amount, currency, gateway, status) VALUES (1000, 'NGN', 'paystack', 'success') RETURNING id;`);
 
       psql(`
         INSERT INTO payment_saved_card_offers
