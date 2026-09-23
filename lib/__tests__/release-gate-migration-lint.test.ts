@@ -195,7 +195,8 @@ describe('R4: Migration diff parser (line-based fallback)', () => {
 // ═══════════════════════════════════════════════════════════════════
 
 import { execSync, type ExecSyncOptions } from 'child_process';
-import { writeFileSync, unlinkSync } from 'fs';
+import { mkdtempSync, rmSync, writeFileSync, unlinkSync } from 'fs';
+import { tmpdir } from 'os';
 import { join } from 'path';
 
 describe('R5: NUL-safe transport integration (real NUL bytes → CLI)', () => {
@@ -203,12 +204,13 @@ describe('R5: NUL-safe transport integration (real NUL bytes → CLI)', () => {
   const tmpFile = join(process.cwd(), '.migration-diff-test.bin');
   const opts: ExecSyncOptions = { encoding: 'utf-8', timeout: 30000 };
 
-  function runCli(nulInput: Buffer): { stdout: string; exitCode: number } {
-    // Write real NUL bytes to a temp file, then pipe to the CLI
+  function runCli(nulInput: Buffer, migrationsDir = 'supabase/migrations'): { stdout: string; exitCode: number } {
+    // Write real NUL bytes to a temp file, then pipe to the CLI.
+    // This exercises the same stdin byte transport used by CI.
     writeFileSync(tmpFile, nulInput);
     try {
       const stdout = execSync(
-        `cat "${tmpFile}" | npx tsx "${cliPath}" supabase/migrations`,
+        `cat "${tmpFile}" | npx tsx "${cliPath}" "${migrationsDir}"`,
         opts,
       ) as string;
       return { stdout: stdout.trim(), exitCode: 0 };
@@ -230,6 +232,27 @@ describe('R5: NUL-safe transport integration (real NUL bytes → CLI)', () => {
     // but the parser classifies correctly and the lint runs or says "not found")
   });
 
+  it('bad A migration reaches lint through the real CLI transport and BLOCKS', () => {
+    const tempMigrationsDir = mkdtempSync(join(tmpdir(), 'waaiio-release-gate-'));
+    try {
+      const filename = '999_bad_transport.sql';
+      const badSql = `
+        CREATE OR REPLACE FUNCTION initialize_terminal_effects(p UUID)
+        RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $
+        BEGIN PERFORM encode(digest('x', 'sha256'), 'hex'); END; $;
+      `;
+      writeFileSync(join(tempMigrationsDir, filename), badSql);
+
+      const input = Buffer.from(`A\0supabase/migrations/${filename}\0`);
+      const { stdout, exitCode } = runCli(input, tempMigrationsDir);
+
+      expect(exitCode).toBe(1);
+      expect(stdout).toContain(`Linting new migrations: ${filename}`);
+      expect(stdout).toContain('BLOCKED');
+    } finally {
+      rmSync(tempMigrationsDir, { recursive: true, force: true });
+    }
+  });
   it('M (modified) migration BLOCKS via NUL transport', () => {
     const input = Buffer.from('M\0supabase/migrations/001_initial.sql\0');
     const { stdout, exitCode } = runCli(input);
