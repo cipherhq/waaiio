@@ -101,7 +101,7 @@ CREATE OR REPLACE FUNCTION claim_exact_activation_delivery(
   p_offer_id UUID,
   p_lease_seconds INT DEFAULT 120
 ) RETURNS JSONB
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, extensions AS $$
 DECLARE
   v_token UUID := gen_random_uuid();
   v_offer payment_saved_card_offers%ROWTYPE;
@@ -196,7 +196,7 @@ CREATE OR REPLACE FUNCTION claim_confirmation_delivery(
   p_offer_id UUID,
   p_lease_seconds INT DEFAULT 120
 ) RETURNS JSONB
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, extensions AS $$
 DECLARE
   v_token UUID := gen_random_uuid();
   v_offer payment_saved_card_offers%ROWTYPE;
@@ -346,7 +346,7 @@ GRANT EXECUTE ON FUNCTION release_confirmation_pre_emission(UUID, UUID) TO servi
 CREATE OR REPLACE FUNCTION discover_pending_confirmation(
   p_lease_seconds INT DEFAULT 120
 ) RETURNS JSONB
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, extensions AS $$
 DECLARE
   v_token UUID := gen_random_uuid();
   v_offer payment_saved_card_offers%ROWTYPE;
