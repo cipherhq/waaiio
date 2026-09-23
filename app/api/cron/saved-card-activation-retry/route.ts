@@ -47,9 +47,12 @@ export async function GET(request: NextRequest) {
       // R2-B3: Exact originating channel ONLY — no fallback
       if (!channelId) {
         logger.warn('[ACTIVATION-RETRY] No exact channel_id on offer — fail closed', { offerId });
-        await supabase.rpc('release_activation_delivery', {
+        const { data: released, error: relErr } = await supabase.rpc('release_activation_delivery', {
           p_offer_id: offerId, p_claim_token: claimToken,
         });
+        if (relErr || !released) {
+          logger.error('[SAVED-CARD-CRON] Activation release failed', { relErr, released, offerId });
+        }
         errors++;
         continue;
       }
@@ -65,9 +68,13 @@ export async function GET(request: NextRequest) {
 
       if (pendingCleanup) {
         // Fence not proven — release for retry later
-        await supabase.rpc('release_activation_delivery', {
+        const { data: released, error: relErr } = await supabase.rpc('release_activation_delivery', {
           p_offer_id: offerId, p_claim_token: claimToken,
         });
+        if (relErr || !released) {
+          logger.error('[SAVED-CARD-CRON] Activation release failed', { relErr, released, offerId });
+          errors++;
+        }
         continue;
       }
 
@@ -75,9 +82,12 @@ export async function GET(request: NextRequest) {
       const canonPhone = canonicalSavedCardPhone(customerPhone);
       if (!canonPhone) {
         logger.warn('[ACTIVATION-RETRY] Invalid phone — fail closed', { offerId, customerPhone });
-        await supabase.rpc('release_activation_delivery', {
+        const { data: released, error: relErr } = await supabase.rpc('release_activation_delivery', {
           p_offer_id: offerId, p_claim_token: claimToken,
         });
+        if (relErr || !released) {
+          logger.error('[SAVED-CARD-CRON] Activation release failed', { relErr, released, offerId });
+        }
         errors++;
         continue;
       }
@@ -126,9 +136,12 @@ export async function GET(request: NextRequest) {
 
         if (sessionErr) {
           logger.error('[ACTIVATION-RETRY] Session establishment failed', { offerId, sessionErr });
-          await supabase.rpc('release_activation_delivery', {
+          const { data: released, error: relErr } = await supabase.rpc('release_activation_delivery', {
             p_offer_id: offerId, p_claim_token: claimToken,
           });
+          if (relErr || !released) {
+            logger.error('[SAVED-CARD-CRON] Activation release failed', { relErr, released, offerId });
+          }
           errors++;
           continue;
         }
@@ -168,94 +181,20 @@ export async function GET(request: NextRequest) {
     } catch (err) {
       logger.error('[ACTIVATION-RETRY] Processing threw — releasing claim', { offerId, err });
       try {
-        await supabase.rpc('release_activation_delivery', {
+        const { data: released, error: relErr } = await supabase.rpc('release_activation_delivery', {
           p_offer_id: offerId, p_claim_token: claimToken,
         });
+        if (relErr || !released) {
+          logger.error('[SAVED-CARD-CRON] Activation release failed in catch', { relErr, released, offerId });
+        }
       } catch { /* best-effort release */ }
       errors++;
     }
   }
 
-  // ── R5-B3: Confirmation recovery loop ──
-  // Retries Card Saved confirmation messages for offers stuck in 'committed' state.
-  // Uses discover_pending_confirmation (global oldest-first claim with SKIP LOCKED).
-  let confirmRetried = 0;
-  let confirmErrors = 0;
-
-  for (let i = 0; i < 10; i++) {
-    const { data: pending, error: discoverErr } = await supabase.rpc('discover_pending_confirmation', {
-      p_lease_seconds: 120,
-    });
-
-    if (discoverErr || !pending) break;
-
-    const claim = pending as Record<string, unknown>;
-    const confirmOfferId = claim.offer_id as string;
-    const confirmClaimToken = claim.claim_token as string;
-    const confirmChannelId = claim.channel_id as string | null;
-    // R5-B5: Use durable claim authority — customer_phone, business_id, channel_id from claim
-    const confirmCustomerPhone = claim.customer_phone as string;
-    const confirmBusinessId = claim.business_id as string;
-    const cardDisplay = (claim.committed_card_display as string) || 'your card';
-
-    try {
-      if (!confirmChannelId) {
-        logger.warn('[CONFIRMATION-RECOVERY] No exact channel_id on offer — fail closed', { confirmOfferId });
-        const { data: released, error: relErr } = await supabase.rpc('release_confirmation_pre_emission', {
-          p_offer_id: confirmOfferId, p_claim_token: confirmClaimToken,
-        });
-        if (relErr || !released) {
-          logger.error('[CONFIRMATION-RECOVERY] Channel-missing release unsuccessful', { relErr, released, confirmOfferId });
-        }
-        confirmErrors++;
-        continue;
-      }
-
-      // Derive sessionPhone from claim's customer_phone (durable authority)
-      const confirmCanonPhone = canonicalSavedCardPhone(confirmCustomerPhone);
-      if (!confirmCanonPhone) {
-        logger.warn('[CONFIRMATION-RECOVERY] Invalid phone — fail closed', { confirmOfferId, confirmCustomerPhone });
-        const { data: released2, error: relErr2 } = await supabase.rpc('release_confirmation_pre_emission', {
-          p_offer_id: confirmOfferId, p_claim_token: confirmClaimToken,
-        });
-        if (relErr2 || !released2) {
-          logger.error('[CONFIRMATION-RECOVERY] Phone-invalid release unsuccessful', { relErr: relErr2, released: released2, confirmOfferId });
-        }
-        confirmErrors++;
-        continue;
-      }
-
-      const confirmMsg = `💳 Card saved! *${cardDisplay}*\n\n🔒 Waaiio PIN set successfully. You'll need this Waaiio PIN when using your saved card.\n\nFor privacy, you can delete your PIN message from this chat. Type *remove card* anytime to delete this card.`;
-
-      const { sendWithFencedDelivery } = await import('@/lib/payments/saved-card-delivery');
-      const confirmOutcome = await sendWithFencedDelivery({
-        supabase,
-        offerId: confirmOfferId,
-        claimToken: confirmClaimToken,
-        customerPhone: confirmCanonPhone,
-        businessId: confirmBusinessId,
-        channelId: confirmChannelId,
-        messageText: confirmMsg,
-        markStarted: (id, token) => supabase.rpc('mark_confirmation_send_started', { p_offer_id: id, p_claim_token: token }),
-        // complete_confirmation_delivery (M398) takes 3 args — includes p_customer_phone
-        complete: (id, token) => supabase.rpc('complete_confirmation_delivery', { p_offer_id: id, p_claim_token: token, p_customer_phone: confirmCanonPhone }),
-        releasePreEmission: (id, token) => supabase.rpc('release_confirmation_pre_emission', { p_offer_id: id, p_claim_token: token }),
-      });
-
-      if (confirmOutcome === 'delivered') {
-        confirmRetried++;
-        logger.info('[CONFIRMATION-RECOVERY] Confirmation delivered', { confirmOfferId, confirmCustomerPhone });
-      } else {
-        confirmErrors++;
-      }
-    } catch (unexpectedErr) {
-      // R6-B4: Do NOT release the fence on unknown exceptions — may be post-emission.
-      // The helper already handles pre-emission vs ambiguous internally.
-      // If the helper throws, leave the fence intact (non-auto-retryable).
-      logger.error('[CONFIRMATION-RECOVERY] Unexpected error in confirmation delivery — fence remains intact', { confirmOfferId, unexpectedErr });
-      confirmErrors++;
-    }
-  }
+  // ── R5-B3: Confirmation recovery loop (extracted to shared helper) ──
+  const { processSavedCardConfirmationRecovery } = await import('@/lib/payments/saved-card-delivery');
+  const { recovered: confirmRetried, errors: confirmErrors } = await processSavedCardConfirmationRecovery(supabase, 10);
 
   return NextResponse.json({ retried, errors, confirmRetried, confirmErrors });
 }

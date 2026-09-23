@@ -556,50 +556,15 @@ describe('R7-B2 Test A: handleCardPinStep — commit failure produces zero Card 
   });
 });
 
-describe('R7-B2 Test B: interactive-vs-recovery produces one provider send', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
+// ── R8-B1: Production recovery helper tests ──
 
-  it('second claim_confirmation_delivery returns null — only first caller sends', () => {
-    let claimCount = 0;
-    const claimFn = vi.fn().mockImplementation(() => {
-      claimCount++;
-      if (claimCount === 1) {
-        return { data: { offer_id: OFFER_ID, claim_token: CLAIM_TOKEN, customer_phone: PHONE_E164, business_id: BIZ_ID, channel_id: CHANNEL_ID, committed_card_display: 'VISA ****1234' }, error: null };
-      }
-      // Second claim attempt — already claimed
-      return { data: null, error: null };
-    });
-
-    const deliveryHelper = vi.fn();
-
-    // Simulate the claim logic executed by both interactive and recovery
-    function executeClaimLogic() {
-      const result = claimFn();
-      if (result.data) {
-        deliveryHelper(result.data);
-      }
-    }
-
-    // Interactive path
-    executeClaimLogic();
-    // Recovery path
-    executeClaimLogic();
-
-    // Only one delivery
-    expect(deliveryHelper).toHaveBeenCalledTimes(1);
-    expect(claimCount).toBe(2);
-  });
-});
-
-describe('R7-B2 Test C: recovery processes a committed pending confirmation', () => {
+describe('R8-B1 Test 1: processSavedCardConfirmationRecovery — committed pending confirmation', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.resetModules();
   });
 
-  it('sendWithFencedDelivery delivers committed pending confirmation', async () => {
+  it('recovery processes committed pending confirmation via the production helper', async () => {
     vi.doMock('@/lib/logger', () => ({
       logger: {
         info: mockLogInfo, warn: mockLogWarn, error: mockLogError, debug: vi.fn(),
@@ -607,52 +572,58 @@ describe('R7-B2 Test C: recovery processes a committed pending confirmation', ()
       },
     }));
 
-    // Mock ChannelResolver to return a working sender
+    vi.doMock('@/lib/payments/saved-card-compat', () => ({
+      canonicalSavedCardPhone: (p: string) => p.startsWith('+') ? p : `+${p}`,
+      savedCardSessionPhone: (p: string) => p.replace(/^\+/, ''),
+    }));
+
+    const mockSendText = vi.fn().mockResolvedValue({ messageId: 'wamid_test' });
+
     vi.doMock('@/lib/channels/channel-resolver', () => ({
       ChannelResolver: class {
         resolveByChannelIdForBusiness() {
-          return Promise.resolve({
-            sender: {
-              sendText: vi.fn().mockResolvedValue({ messageId: 'wamid_test' }),
-            },
-          });
+          return Promise.resolve({ sender: { sendText: mockSendText } });
         }
       },
     }));
 
-    const { sendWithFencedDelivery } = await import('@/lib/payments/saved-card-delivery');
+    const { processSavedCardConfirmationRecovery } = await import('@/lib/payments/saved-card-delivery');
 
-    const markStarted = vi.fn().mockResolvedValue({ data: true, error: null });
-    const complete = vi.fn().mockResolvedValue({ data: true, error: null });
-    const releasePreEmission = vi.fn().mockResolvedValue({ data: true, error: null });
-
-    const outcome = await sendWithFencedDelivery({
-      supabase: {} as never,
-      offerId: OFFER_ID,
-      claimToken: CLAIM_TOKEN,
-      customerPhone: PHONE_E164,
-      businessId: BIZ_ID,
-      channelId: CHANNEL_ID,
-      messageText: '\u{1F4B3} Card saved! VISA ****1234',
-      markStarted,
-      complete,
-      releasePreEmission,
+    let discoverCallCount = 0;
+    const rpcFn = vi.fn().mockImplementation((name: string) => {
+      if (name === 'discover_pending_confirmation') {
+        discoverCallCount++;
+        if (discoverCallCount === 1) {
+          return { data: {
+            offer_id: OFFER_ID, claim_token: CLAIM_TOKEN,
+            customer_phone: PHONE_E164, business_id: BIZ_ID,
+            channel_id: CHANNEL_ID, committed_card_display: 'VISA ****1234',
+          }, error: null };
+        }
+        return { data: null, error: null }; // No more offers
+      }
+      if (name === 'mark_confirmation_send_started') return { data: true, error: null };
+      if (name === 'complete_confirmation_delivery') return { data: true, error: null };
+      if (name === 'release_confirmation_pre_emission') return { data: true, error: null };
+      return { data: null, error: null };
     });
 
-    expect(outcome).toBe('delivered');
-    expect(markStarted).toHaveBeenCalledWith(OFFER_ID, CLAIM_TOKEN);
-    expect(complete).toHaveBeenCalledWith(OFFER_ID, CLAIM_TOKEN);
-    expect(releasePreEmission).not.toHaveBeenCalled();
+    const supabase = { rpc: rpcFn } as never;
+    const result = await processSavedCardConfirmationRecovery(supabase, 1);
+
+    expect(result.recovered).toBe(1);
+    expect(result.errors).toBe(0);
+    expect(mockSendText).toHaveBeenCalledTimes(1);
   });
 });
 
-describe('R7-B2 Test D: unknown exception does not release fence', () => {
+describe('R8-B1 Test 2: interactive-vs-recovery exactly-once via production helper', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.resetModules();
   });
 
-  it('unexpected error after mark_send_started does NOT call release_pre_emission', async () => {
+  it('second call to processSavedCardConfirmationRecovery gets null claim — only one send total', async () => {
     vi.doMock('@/lib/logger', () => ({
       logger: {
         info: mockLogInfo, warn: mockLogWarn, error: mockLogError, debug: vi.fn(),
@@ -660,7 +631,77 @@ describe('R7-B2 Test D: unknown exception does not release fence', () => {
       },
     }));
 
-    // Mock ChannelResolver with a sender that throws a generic (non-pre-emission) error
+    vi.doMock('@/lib/payments/saved-card-compat', () => ({
+      canonicalSavedCardPhone: (p: string) => p.startsWith('+') ? p : `+${p}`,
+      savedCardSessionPhone: (p: string) => p.replace(/^\+/, ''),
+    }));
+
+    const mockSendText = vi.fn().mockResolvedValue({ messageId: 'wamid_test' });
+
+    vi.doMock('@/lib/channels/channel-resolver', () => ({
+      ChannelResolver: class {
+        resolveByChannelIdForBusiness() {
+          return Promise.resolve({ sender: { sendText: mockSendText } });
+        }
+      },
+    }));
+
+    const { processSavedCardConfirmationRecovery } = await import('@/lib/payments/saved-card-delivery');
+
+    let discoverCallCount = 0;
+    const rpcFn = vi.fn().mockImplementation((name: string) => {
+      if (name === 'discover_pending_confirmation') {
+        discoverCallCount++;
+        if (discoverCallCount === 1) {
+          return { data: {
+            offer_id: OFFER_ID, claim_token: CLAIM_TOKEN,
+            customer_phone: PHONE_E164, business_id: BIZ_ID,
+            channel_id: CHANNEL_ID, committed_card_display: 'VISA ****1234',
+          }, error: null };
+        }
+        // Second and subsequent: already claimed
+        return { data: null, error: null };
+      }
+      if (name === 'mark_confirmation_send_started') return { data: true, error: null };
+      if (name === 'complete_confirmation_delivery') return { data: true, error: null };
+      if (name === 'release_confirmation_pre_emission') return { data: true, error: null };
+      return { data: null, error: null };
+    });
+
+    const supabase = { rpc: rpcFn } as never;
+
+    // First call succeeds
+    const r1 = await processSavedCardConfirmationRecovery(supabase, 5);
+    // Second call: discover returns null immediately
+    const r2 = await processSavedCardConfirmationRecovery(supabase, 5);
+
+    expect(r1.recovered).toBe(1);
+    expect(r2.recovered).toBe(0);
+    // Only one provider send total
+    expect(mockSendText).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('R8-B1 Test 3: ambiguous/unknown post-fence failure', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.resetModules();
+  });
+
+  it('generic sender error does NOT release pre-emission fence and counts as error', async () => {
+    vi.doMock('@/lib/logger', () => ({
+      logger: {
+        info: mockLogInfo, warn: mockLogWarn, error: mockLogError, debug: vi.fn(),
+        withContext: () => ({ error: mockLogError, warn: mockLogWarn, info: mockLogInfo }),
+      },
+    }));
+
+    vi.doMock('@/lib/payments/saved-card-compat', () => ({
+      canonicalSavedCardPhone: (p: string) => p.startsWith('+') ? p : `+${p}`,
+      savedCardSessionPhone: (p: string) => p.replace(/^\+/, ''),
+    }));
+
+    // Sender throws a generic (non-pre-emission) error
     vi.doMock('@/lib/channels/channel-resolver', () => ({
       ChannelResolver: class {
         resolveByChannelIdForBusiness() {
@@ -673,30 +714,169 @@ describe('R7-B2 Test D: unknown exception does not release fence', () => {
       },
     }));
 
-    const { sendWithFencedDelivery } = await import('@/lib/payments/saved-card-delivery');
+    const { processSavedCardConfirmationRecovery } = await import('@/lib/payments/saved-card-delivery');
 
-    const markStarted = vi.fn().mockResolvedValue({ data: true, error: null });
-    const complete = vi.fn().mockResolvedValue({ data: true, error: null });
-    const releasePreEmission = vi.fn().mockResolvedValue({ data: true, error: null });
-
-    const outcome = await sendWithFencedDelivery({
-      supabase: {} as never,
-      offerId: OFFER_ID,
-      claimToken: CLAIM_TOKEN,
-      customerPhone: PHONE_E164,
-      businessId: BIZ_ID,
-      channelId: CHANNEL_ID,
-      messageText: 'test message',
-      markStarted,
-      complete,
-      releasePreEmission,
+    let discoverCallCount = 0;
+    const releasePreEmission = vi.fn();
+    const rpcFn = vi.fn().mockImplementation((name: string) => {
+      if (name === 'discover_pending_confirmation') {
+        discoverCallCount++;
+        if (discoverCallCount === 1) {
+          return { data: {
+            offer_id: OFFER_ID, claim_token: CLAIM_TOKEN,
+            customer_phone: PHONE_E164, business_id: BIZ_ID,
+            channel_id: CHANNEL_ID, committed_card_display: 'VISA ****1234',
+          }, error: null };
+        }
+        return { data: null, error: null };
+      }
+      if (name === 'mark_confirmation_send_started') return { data: true, error: null };
+      if (name === 'release_confirmation_pre_emission') {
+        releasePreEmission();
+        return { data: true, error: null };
+      }
+      return { data: null, error: null };
     });
 
-    // Ambiguous error — fence stays intact
-    expect(outcome).toBe('ambiguous');
-    // release_pre_emission was NOT called (error is not proven pre-emission)
+    const supabase = { rpc: rpcFn } as never;
+    const result = await processSavedCardConfirmationRecovery(supabase, 1);
+
+    // Ambiguous error — release_confirmation_pre_emission was NOT called
     expect(releasePreEmission).not.toHaveBeenCalled();
-    // complete was NOT called (no messageId)
-    expect(complete).not.toHaveBeenCalled();
+    expect(result.errors).toBe(1);
+    expect(result.recovered).toBe(0);
+  });
+});
+
+// ── R8-B2: Activation release RPC result checks ──
+
+describe('R8-B2: release_activation_delivery result=false is counted as error', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.resetModules();
+  });
+
+  it('release returning false triggers error logging', async () => {
+    vi.doMock('@/lib/logger', () => ({
+      logger: {
+        info: mockLogInfo, warn: mockLogWarn, error: mockLogError, debug: vi.fn(),
+        withContext: () => ({ error: mockLogError, warn: mockLogWarn, info: mockLogInfo }),
+      },
+    }));
+
+    vi.doMock('@/lib/payments/saved-card-compat', () => ({
+      canonicalSavedCardPhone: () => null, // invalid phone
+      savedCardSessionPhone: (p: string) => p.replace(/^\+/, ''),
+    }));
+
+    vi.doMock('@/lib/cron-auth', () => ({
+      verifyCronAuth: () => null,
+    }));
+
+    vi.doMock('@/lib/supabase/service', () => ({
+      createServiceClient: () => {
+        let claimCount = 0;
+        return {
+          rpc: vi.fn().mockImplementation((name: string) => {
+            if (name === 'claim_activation_delivery') {
+              claimCount++;
+              if (claimCount === 1) {
+                return { data: {
+                  offer_id: OFFER_ID, claim_token: CLAIM_TOKEN,
+                  customer_phone: PHONE_E164, business_id: BIZ_ID,
+                  card_display: 'VISA ****1234', channel_id: CHANNEL_ID,
+                  payment_id: PAY_ID,
+                }, error: null };
+              }
+              return { data: null, error: null };
+            }
+            if (name === 'release_activation_delivery') {
+              return { data: false, error: null }; // release failed!
+            }
+            return { data: null, error: null };
+          }),
+          from: vi.fn().mockReturnValue({
+            select: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            is: vi.fn().mockReturnThis(),
+            maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+          }),
+        };
+      },
+    }));
+
+    const { GET } = await import('@/app/api/cron/saved-card-activation-retry/route');
+    const request = new Request('http://localhost/api/cron/saved-card-activation-retry');
+    const response = await GET(request as never);
+    const body = await response.json();
+
+    // Invalid phone → release → release returned false → error logged
+    expect(body.errors).toBeGreaterThanOrEqual(1);
+    expect(mockLogError).toHaveBeenCalledWith(
+      '[SAVED-CARD-CRON] Activation release failed',
+      expect.objectContaining({ released: false, offerId: OFFER_ID }),
+    );
+  });
+});
+
+// ── R8-B3: NULL committed_card_display skipped by recovery worker ──
+
+describe('R8-B3: recovery worker skips NULL committed_card_display', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.resetModules();
+  });
+
+  it('NULL committed_card_display produces zero provider sends and increments errors', async () => {
+    vi.doMock('@/lib/logger', () => ({
+      logger: {
+        info: mockLogInfo, warn: mockLogWarn, error: mockLogError, debug: vi.fn(),
+        withContext: () => ({ error: mockLogError, warn: mockLogWarn, info: mockLogInfo }),
+      },
+    }));
+
+    vi.doMock('@/lib/payments/saved-card-compat', () => ({
+      canonicalSavedCardPhone: (p: string) => p.startsWith('+') ? p : `+${p}`,
+      savedCardSessionPhone: (p: string) => p.replace(/^\+/, ''),
+    }));
+
+    const mockSendText = vi.fn().mockResolvedValue({ messageId: 'wamid_test' });
+
+    vi.doMock('@/lib/channels/channel-resolver', () => ({
+      ChannelResolver: class {
+        resolveByChannelIdForBusiness() {
+          return Promise.resolve({ sender: { sendText: mockSendText } });
+        }
+      },
+    }));
+
+    const { processSavedCardConfirmationRecovery } = await import('@/lib/payments/saved-card-delivery');
+
+    let discoverCallCount = 0;
+    const rpcFn = vi.fn().mockImplementation((name: string) => {
+      if (name === 'discover_pending_confirmation') {
+        discoverCallCount++;
+        if (discoverCallCount === 1) {
+          return { data: {
+            offer_id: OFFER_ID, claim_token: CLAIM_TOKEN,
+            customer_phone: PHONE_E164, business_id: BIZ_ID,
+            channel_id: CHANNEL_ID,
+            committed_card_display: null, // NULL!
+          }, error: null };
+        }
+        return { data: null, error: null };
+      }
+      if (name === 'release_confirmation_pre_emission') return { data: true, error: null };
+      return { data: null, error: null };
+    });
+
+    const supabase = { rpc: rpcFn } as never;
+    const result = await processSavedCardConfirmationRecovery(supabase, 1);
+
+    // Zero provider sends
+    expect(mockSendText).not.toHaveBeenCalled();
+    // Counted as error, not recovered
+    expect(result.errors).toBe(1);
+    expect(result.recovered).toBe(0);
   });
 });

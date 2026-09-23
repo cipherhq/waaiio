@@ -396,6 +396,84 @@ describe.skipIf(!dbUrl)('M398 Session Normalization (real PostgreSQL)', () => {
   });
 
   // ──────────────────────────────────────────────────────────────
+  // Test 3b: R8-B3 — NULL committed_card_display excluded from discovery/claim
+  // ──────────────────────────────────────────────────────────────
+
+  describe('discover_pending_confirmation: committed_card_display guard', () => {
+    it('NULL committed_card_display is not claimable', () => {
+      const payId = psql(`INSERT INTO payments (amount, currency, gateway, status, gateway_reference) VALUES (1000, 'NGN', 'paystack', 'success', 'ref_m398_' || gen_random_uuid()::text) RETURNING id;`);
+
+      // Create committed offer with NULL committed_card_display
+      psql(`
+        INSERT INTO payment_saved_card_offers
+          (payment_id, customer_phone, business_id, offer_type, state,
+           consent_source, channel_id, credential_committed_at, committed_card_display)
+        VALUES ('${payId}', '${PHONE_E164}', '${BIZ_ID}', 'save', 'committed',
+                'provider_checkout', '${CHANNEL_ID}', NOW(), NULL);
+      `);
+
+      // discover_pending_confirmation should return NULL
+      const result = psqlJson(`SELECT discover_pending_confirmation(120);`);
+      expect(result).toBeNull();
+
+      // claim_confirmation_delivery should also return NULL
+      const offerId = psql(`SELECT id FROM payment_saved_card_offers WHERE payment_id = '${payId}';`);
+      const claimResult = psqlJson(`SELECT claim_confirmation_delivery('${offerId}'::UUID, 120);`);
+      expect(claimResult).toBeNull();
+
+      // Clean up
+      psql(`DELETE FROM payment_saved_card_offers WHERE payment_id = '${payId}';`);
+      psql(`DELETE FROM payments WHERE id = '${payId}'::UUID;`);
+    });
+
+    it('empty string committed_card_display is not claimable', () => {
+      const payId = psql(`INSERT INTO payments (amount, currency, gateway, status, gateway_reference) VALUES (1000, 'NGN', 'paystack', 'success', 'ref_m398_' || gen_random_uuid()::text) RETURNING id;`);
+
+      psql(`
+        INSERT INTO payment_saved_card_offers
+          (payment_id, customer_phone, business_id, offer_type, state,
+           consent_source, channel_id, credential_committed_at, committed_card_display)
+        VALUES ('${payId}', '${PHONE_E164}', '${BIZ_ID}', 'save', 'committed',
+                'provider_checkout', '${CHANNEL_ID}', NOW(), '  ');
+      `);
+
+      const result = psqlJson(`SELECT discover_pending_confirmation(120);`);
+      expect(result).toBeNull();
+
+      psql(`DELETE FROM payment_saved_card_offers WHERE payment_id = '${payId}';`);
+      psql(`DELETE FROM payments WHERE id = '${payId}'::UUID;`);
+    });
+
+    it('valid committed_card_display IS claimable', () => {
+      const payId = psql(`INSERT INTO payments (amount, currency, gateway, status, gateway_reference) VALUES (1000, 'NGN', 'paystack', 'success', 'ref_m398_' || gen_random_uuid()::text) RETURNING id;`);
+
+      psql(`
+        INSERT INTO payment_saved_card_offers
+          (payment_id, customer_phone, business_id, offer_type, state,
+           consent_source, channel_id, credential_committed_at, committed_card_display)
+        VALUES ('${payId}', '${PHONE_E164}', '${BIZ_ID}', 'save', 'committed',
+                'provider_checkout', '${CHANNEL_ID}', NOW(), 'VISA ****9999');
+      `);
+
+      const result = psqlJson(`SELECT discover_pending_confirmation(120);`) as Record<string, unknown>;
+      expect(result).not.toBeNull();
+      expect(result.committed_card_display).toBe('VISA ****9999');
+
+      // Also verify claim_confirmation_delivery works
+      // Need to clear the discover claim first
+      psql(`UPDATE payment_saved_card_offers SET confirmation_claim_token = NULL, confirmation_claim_expires_at = NULL WHERE payment_id = '${payId}';`);
+
+      const offerId = psql(`SELECT id FROM payment_saved_card_offers WHERE payment_id = '${payId}';`);
+      const claimResult = psqlJson(`SELECT claim_confirmation_delivery('${offerId}'::UUID, 120);`) as Record<string, unknown>;
+      expect(claimResult).not.toBeNull();
+      expect(claimResult.committed_card_display).toBe('VISA ****9999');
+
+      psql(`DELETE FROM payment_saved_card_offers WHERE payment_id = '${payId}';`);
+      psql(`DELETE FROM payments WHERE id = '${payId}'::UUID;`);
+    });
+  });
+
+  // ──────────────────────────────────────────────────────────────
   // Test 4: Confirmation discovery + claim is atomic
   // ──────────────────────────────────────────────────────────────
 

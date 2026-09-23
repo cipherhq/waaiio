@@ -4,10 +4,14 @@
  * Classifies send errors as pre-emission (retryable) vs ambiguous (non-retryable)
  * and uses the appropriate RPC to release or preserve the send_started fence.
  *
+ * Also exports processSavedCardConfirmationRecovery — the production confirmation
+ * recovery loop extracted from the cron route for testability.
+ *
  * #370 P0 — phone normalization fix
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { logger } from '@/lib/logger';
+import { canonicalSavedCardPhone } from '@/lib/payments/saved-card-compat';
 
 /**
  * Classify whether a send error is proven pre-emission (no message left the provider).
@@ -147,4 +151,101 @@ export async function sendWithFencedDelivery(params: FencedDeliveryParams): Prom
   }
 
   return 'delivered';
+}
+
+
+/**
+ * Production confirmation recovery loop.
+ *
+ * Retries Card Saved confirmation messages for offers stuck in 'committed' state.
+ * Uses discover_pending_confirmation (global oldest-first claim with SKIP LOCKED).
+ *
+ * Extracted from the cron route for direct unit testability.
+ */
+export async function processSavedCardConfirmationRecovery(
+  supabase: SupabaseClient,
+  limit: number = 10,
+): Promise<{ recovered: number; errors: number }> {
+  let recovered = 0;
+  let errors = 0;
+
+  for (let i = 0; i < limit; i++) {
+    const { data: pending, error: discoverErr } = await supabase.rpc('discover_pending_confirmation', {
+      p_lease_seconds: 120,
+    });
+
+    if (discoverErr || !pending) break;
+
+    const claim = pending as Record<string, unknown>;
+    const offerId = claim.offer_id as string;
+    const claimToken = claim.claim_token as string;
+    const channelId = claim.channel_id as string | null;
+    const customerPhone = claim.customer_phone as string;
+    const businessId = claim.business_id as string;
+
+    try {
+      if (!channelId) {
+        logger.warn('[CONFIRMATION-RECOVERY] No exact channel_id on offer — fail closed', { offerId });
+        const { data: released, error: relErr } = await supabase.rpc('release_confirmation_pre_emission', {
+          p_offer_id: offerId, p_claim_token: claimToken,
+        });
+        if (relErr || !released) {
+          logger.error('[CONFIRMATION-RECOVERY] Channel-missing release unsuccessful', { relErr, released, offerId });
+        }
+        errors++;
+        continue;
+      }
+
+      // R8-B3: Reject offers with missing committed_card_display — they need investigation, not a generic send
+      if (!claim.committed_card_display || (claim.committed_card_display as string).trim() === '') {
+        logger.error('[SAVED-CARD-CRON] Confirmation claim missing committed_card_display — skipping', { offerId });
+        // Release the claim — this offer needs investigation, not a generic send
+        await supabase.rpc('release_confirmation_pre_emission', { p_offer_id: offerId, p_claim_token: claimToken });
+        errors++;
+        continue;
+      }
+      const cardDisplay = claim.committed_card_display as string;
+
+      const canonPhone = canonicalSavedCardPhone(customerPhone);
+      if (!canonPhone) {
+        logger.warn('[CONFIRMATION-RECOVERY] Invalid phone — fail closed', { offerId, customerPhone });
+        const { data: released2, error: relErr2 } = await supabase.rpc('release_confirmation_pre_emission', {
+          p_offer_id: offerId, p_claim_token: claimToken,
+        });
+        if (relErr2 || !released2) {
+          logger.error('[CONFIRMATION-RECOVERY] Phone-invalid release unsuccessful', { relErr: relErr2, released: released2, offerId });
+        }
+        errors++;
+        continue;
+      }
+
+      const confirmMsg = `💳 Card saved! *${cardDisplay}*\n\n🔒 Waaiio PIN set successfully. You'll need this Waaiio PIN when using your saved card.\n\nFor privacy, you can delete your PIN message from this chat. Type *remove card* anytime to delete this card.`;
+
+      const confirmOutcome = await sendWithFencedDelivery({
+        supabase,
+        offerId,
+        claimToken,
+        customerPhone: canonPhone,
+        businessId,
+        channelId,
+        messageText: confirmMsg,
+        markStarted: (id, token) => supabase.rpc('mark_confirmation_send_started', { p_offer_id: id, p_claim_token: token }),
+        complete: (id, token) => supabase.rpc('complete_confirmation_delivery', { p_offer_id: id, p_claim_token: token, p_customer_phone: canonPhone }),
+        releasePreEmission: (id, token) => supabase.rpc('release_confirmation_pre_emission', { p_offer_id: id, p_claim_token: token }),
+      });
+
+      if (confirmOutcome === 'delivered') {
+        recovered++;
+        logger.info('[CONFIRMATION-RECOVERY] Confirmation delivered', { offerId, customerPhone });
+      } else {
+        errors++;
+      }
+    } catch (unexpectedErr) {
+      // R6-B4: Do NOT release the fence on unknown exceptions — may be post-emission.
+      logger.error('[CONFIRMATION-RECOVERY] Unexpected error in confirmation delivery — fence remains intact', { offerId, unexpectedErr });
+      errors++;
+    }
+  }
+
+  return { recovered, errors };
 }

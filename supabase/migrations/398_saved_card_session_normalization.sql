@@ -208,6 +208,8 @@ BEGIN
     AND confirmation_delivered_at IS NULL
     AND confirmation_send_started_at IS NULL
     AND (confirmation_claim_token IS NULL OR confirmation_claim_expires_at < NOW())
+    AND committed_card_display IS NOT NULL
+    AND btrim(committed_card_display) <> ''
   FOR UPDATE;
 
   IF NOT FOUND THEN RETURN NULL; END IF;
@@ -357,6 +359,8 @@ BEGIN
     AND confirmation_delivered_at IS NULL
     AND confirmation_send_started_at IS NULL
     AND (confirmation_claim_token IS NULL OR confirmation_claim_expires_at < NOW())
+    AND committed_card_display IS NOT NULL
+    AND btrim(committed_card_display) <> ''
   ORDER BY credential_committed_at ASC
   LIMIT 1
   FOR UPDATE SKIP LOCKED;
