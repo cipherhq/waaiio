@@ -150,26 +150,32 @@ describe.skipIf(!dbUrl)('M398 Session Normalization (real PostgreSQL)', () => {
       ON CONFLICT (id) DO NOTHING;
     `);
 
-    // Apply M395 (activation delivery RPCs) then M398 (session normalization + confirmation)
-    execSync(`psql "${dbUrl}" -v ON_ERROR_STOP=1 -f "${M395_PATH}"`, {
-      encoding: 'utf-8', timeout: 30000,
-    });
-    execSync(`psql "${dbUrl}" -v ON_ERROR_STOP=1 -f "${M398_PATH}"`, {
-      encoding: 'utf-8', timeout: 30000,
-    });
+    // Apply M395 + M398 only if not already applied (CI migration shard
+    // composes all migrations before this test runs).
+    const hasM398 = psql(`
+      SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+      WHERE n.nspname = 'public' AND p.proname = 'establish_saved_card_session' LIMIT 1;
+    `).trim();
+    if (!hasM398) {
+      execSync(`psql "${dbUrl}" -v ON_ERROR_STOP=1 -f "${M395_PATH}"`, {
+        encoding: 'utf-8', timeout: 30000,
+      });
+      execSync(`psql "${dbUrl}" -v ON_ERROR_STOP=1 -f "${M398_PATH}"`, {
+        encoding: 'utf-8', timeout: 30000,
+      });
+    }
 
     psql(`GRANT ALL ON ALL TABLES IN SCHEMA public TO service_role;`);
   });
 
   afterAll(() => {
     if (!dbUrl) return;
+    // Clean up test data only — do NOT drop shared tables in CI
     psql(`
-      DROP TABLE IF EXISTS payment_saved_card_offers CASCADE;
-      DROP TABLE IF EXISTS bot_sessions CASCADE;
-      DROP TABLE IF EXISTS saved_payment_methods CASCADE;
-      DROP TABLE IF EXISTS payments CASCADE;
-      DROP TABLE IF EXISTS whatsapp_channels CASCADE;
-      DROP TABLE IF EXISTS businesses CASCADE;
+      DELETE FROM payment_saved_card_offers WHERE business_id = '${BIZ_ID}';
+      DELETE FROM bot_sessions WHERE business_id = '${BIZ_ID}';
+      DELETE FROM whatsapp_channels WHERE id = '${CHANNEL_ID}';
+      DELETE FROM businesses WHERE id = '${BIZ_ID}';
     `);
   });
 
