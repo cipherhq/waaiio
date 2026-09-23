@@ -64,17 +64,23 @@ describe.skipIf(!dbUrl)('M398 Session Normalization (real PostgreSQL)', () => {
   beforeAll(() => {
     if (!dbUrl) return;
 
+    // Setup: create stub tables if they don't exist (local dev),
+    // or use existing tables from the full migration chain (CI).
     psql(`
       DO $$ BEGIN CREATE ROLE anon NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
       DO $$ BEGIN CREATE ROLE authenticated NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
       DO $$ BEGIN CREATE ROLE service_role NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
       GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
 
+      -- Stub tables for local dev (IF NOT EXISTS = no-op in CI with real schema)
       CREATE TABLE IF NOT EXISTS payments (id UUID PRIMARY KEY DEFAULT gen_random_uuid());
-      CREATE TABLE IF NOT EXISTS businesses (id UUID PRIMARY KEY DEFAULT gen_random_uuid());
+      CREATE TABLE IF NOT EXISTS businesses (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        owner_id UUID, name TEXT, business_code TEXT
+      );
       CREATE TABLE IF NOT EXISTS whatsapp_channels (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        phone_number TEXT, phone_number_id TEXT, access_token TEXT
+        phone_number TEXT, phone_number_id TEXT, meta_access_token TEXT
       );
       CREATE TABLE IF NOT EXISTS saved_payment_methods (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -84,14 +90,12 @@ describe.skipIf(!dbUrl)('M398 Session Normalization (real PostgreSQL)', () => {
         authorization_email TEXT, stripe_payment_method_id TEXT, stripe_customer_id TEXT,
         card_exp_month SMALLINT, card_exp_year SMALLINT, card_type TEXT, bank_name TEXT,
         last_used_at TIMESTAMPTZ, created_at TIMESTAMPTZ DEFAULT NOW(),
-        business_id UUID REFERENCES businesses(id) ON DELETE SET NULL,
-        credential_version INT NOT NULL DEFAULT 1
+        business_id UUID, credential_version INT NOT NULL DEFAULT 1
       );
-
       CREATE TABLE IF NOT EXISTS bot_sessions (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         whatsapp_number VARCHAR(20) NOT NULL,
-        business_id UUID REFERENCES businesses(id) ON DELETE SET NULL,
+        business_id UUID,
         current_step VARCHAR(50) NOT NULL DEFAULT 'greeting',
         session_data JSONB NOT NULL DEFAULT '{}'::jsonb,
         is_active BOOLEAN NOT NULL DEFAULT true,
@@ -104,7 +108,6 @@ describe.skipIf(!dbUrl)('M398 Session Normalization (real PostgreSQL)', () => {
       );
       CREATE UNIQUE INDEX IF NOT EXISTS idx_bot_sessions_phone_business
         ON bot_sessions(whatsapp_number, business_id) WHERE business_id IS NOT NULL;
-
       CREATE TABLE IF NOT EXISTS payment_saved_card_offers (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         payment_id UUID NOT NULL UNIQUE,
@@ -113,29 +116,36 @@ describe.skipIf(!dbUrl)('M398 Session Normalization (real PostgreSQL)', () => {
         offer_type TEXT NOT NULL CHECK (offer_type IN ('save','replace')),
         state TEXT NOT NULL DEFAULT 'pending'
           CHECK (state IN ('pending','sending','sent','accepted','declined','ambiguous','committed','confirmed')),
-        current_method_id UUID,
-        card_display TEXT,
-        claim_token UUID,
-        claim_expires_at TIMESTAMPTZ,
-        meta_message_id TEXT,
-        sent_at TIMESTAMPTZ,
-        resolved_at TIMESTAMPTZ,
+        current_method_id UUID, card_display TEXT,
+        claim_token UUID, claim_expires_at TIMESTAMPTZ,
+        meta_message_id TEXT, sent_at TIMESTAMPTZ, resolved_at TIMESTAMPTZ,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         channel_id UUID,
         consent_source TEXT CHECK (consent_source IS NULL OR consent_source IN ('whatsapp','provider_checkout')),
-        consented_at TIMESTAMPTZ,
-        credential_committed_at TIMESTAMPTZ,
-        confirmation_delivered_at TIMESTAMPTZ,
-        committed_method_id UUID,
-        committed_card_display TEXT,
-        committed_credential_version INT,
-        activation_prompt_sent_at TIMESTAMPTZ,
-        activation_send_started_at TIMESTAMPTZ
+        consented_at TIMESTAMPTZ, credential_committed_at TIMESTAMPTZ,
+        confirmation_delivered_at TIMESTAMPTZ, committed_method_id UUID,
+        committed_card_display TEXT, committed_credential_version INT,
+        activation_prompt_sent_at TIMESTAMPTZ, activation_send_started_at TIMESTAMPTZ
       );
+    `);
 
-      -- Insert test business and channel
-      INSERT INTO businesses (id) VALUES ('${BIZ_ID}') ON CONFLICT (id) DO NOTHING;
-      INSERT INTO whatsapp_channels (id, phone_number, phone_number_id, access_token)
+    // Create test owner user for CI (real schema has businesses.owner_id NOT NULL FK to profiles)
+    // In CI, auth.users trigger creates the profiles row automatically
+    psql(`
+      DO $$ BEGIN
+        IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='auth' AND table_name='users') THEN
+          INSERT INTO auth.users (id, email) VALUES ('00000000-0000-0000-0000-000000000099', 'm398-test@test.local')
+          ON CONFLICT (id) DO NOTHING;
+        END IF;
+      END $$;
+    `);
+
+    // Insert test business and channel
+    psql(`
+      INSERT INTO businesses (id, owner_id, name, business_code)
+      VALUES ('${BIZ_ID}', '00000000-0000-0000-0000-000000000099', 'Test Business', 'TEST-M398')
+      ON CONFLICT (id) DO NOTHING;
+      INSERT INTO whatsapp_channels (id, phone_number, phone_number_id, meta_access_token)
       VALUES ('${CHANNEL_ID}', '+15551234567', 'pnid_test', 'tok_test')
       ON CONFLICT (id) DO NOTHING;
     `);
