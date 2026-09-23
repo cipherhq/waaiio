@@ -142,8 +142,8 @@ describe.skipIf(!dbUrl)('M398 Session Normalization (real PostgreSQL)', () => {
 
     // Insert test business and channel
     psql(`
-      INSERT INTO businesses (id, owner_id, name, business_code)
-      VALUES ('${BIZ_ID}', '00000000-0000-0000-0000-000000000099', 'Test Business', 'TEST-M398')
+      INSERT INTO businesses (id, name, slug, owner_id, address, city, neighborhood, phone, status, payout_mode, country_code, verification_level)
+      VALUES ('${BIZ_ID}', 'M398 Test Biz', 'm398-test-biz', '00000000-0000-0000-0000-000000000099', '1 Test', 'Test', 'Test', '+000', 'active', 'platform_managed', 'US', 'basic')
       ON CONFLICT (id) DO NOTHING;
       INSERT INTO whatsapp_channels (id, phone_number, phone_number_id, meta_access_token)
       VALUES ('${CHANNEL_ID}', '+15551234567', 'pnid_test', 'tok_test')
