@@ -152,8 +152,14 @@ export interface InvariantResult {
   status: 'pass' | 'fail' | 'skip' | 'error' | 'not_applicable';
   /** Evidence details (query result, error message, etc.) */
   evidence: string;
-  /** Is this invariant critical (blocks release if failed)? */
+  /** Is this invariant critical (blocks release if failed)?
+   *  NOTE: The invariant REGISTRY is authoritative for criticality.
+   *  This field is informational — if it disagrees with the registry,
+   *  the gate flags a metadata mismatch and uses the registry value. */
   critical: boolean;
+  /** Required when status is 'not_applicable': typed reason for exclusion.
+   *  The gate validates this against registry applicability policy. */
+  na_reason?: string;
 }
 
 export interface JourneyResult {
@@ -392,6 +398,10 @@ export interface InvariantDefinition {
   evidence_type: 'catalog_assertion' | 'rpc_execution' | 'behavioral_test' | 'code_audit' | 'provider_check';
   /** SQL or description of how to check this invariant */
   check_query?: string;
+  /** Which certificate kinds require this invariant to pass (cannot be N/A).
+   *  Defaults to ['release_candidate'] if not specified.
+   *  An invariant required for a kind CANNOT be bypassed with not_applicable. */
+  required_for?: Array<'self_test' | 'release_candidate' | 'post_deployment'>;
 }
 
 // ═══════════════════════════════════════════════════════════════════

@@ -100,42 +100,93 @@ describe('ALTER FUNCTION does not trigger lint', () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════
-// R3 — Migration immutability concept tests
+// R4 — Migration diff parser (real parser, not concept tests)
 // ═══════════════════════════════════════════════════════════════════
 
-describe('R3: Historical migration immutability', () => {
-  it('modified historical migration would be BLOCKED by CI (concept test)', () => {
-    // The CI workflow uses `git diff --name-status` to detect modifications.
-    // A modified migration (M status) is blocked BEFORE lint even runs.
-    // This test validates the concept by checking that the CI logic
-    // would produce a grep match for the M status.
-    const nameStatusOutput = 'M\tsupabase/migrations/001_initial.sql\nA\tsupabase/migrations/999_new.sql';
-    const modified = nameStatusOutput.split('\n').filter(l => /^M\t/.test(l));
-    expect(modified).toHaveLength(1);
-    expect(modified[0]).toContain('001_initial.sql');
+import { parseMigrationDiffNul, parseMigrationDiffLines } from '../release-gate/migration-diff-parser';
+
+describe('R4: Migration diff parser (NUL-delimited)', () => {
+  it('classifies added migration (A) as new — available for linting', () => {
+    // NUL-delimited: "A\0path\0"
+    const raw = 'A\0supabase/migrations/999_new_feature.sql\0';
+    const result = parseMigrationDiffNul(raw);
+    expect(result.newMigrations).toEqual(['999_new_feature.sql']);
+    expect(result.hasImmutabilityViolation).toBe(false);
   });
 
-  it('deleted historical migration would be BLOCKED by CI (concept test)', () => {
-    const nameStatusOutput = 'D\tsupabase/migrations/001_initial.sql';
-    const deleted = nameStatusOutput.split('\n').filter(l => /^D\t/.test(l));
-    expect(deleted).toHaveLength(1);
-    expect(deleted[0]).toContain('001_initial.sql');
+  it('classifies modified migration (M) as immutability violation → BLOCK', () => {
+    const raw = 'M\0supabase/migrations/001_initial.sql\0';
+    const result = parseMigrationDiffNul(raw);
+    expect(result.modifiedMigrations).toEqual(['001_initial.sql']);
+    expect(result.hasImmutabilityViolation).toBe(true);
+    expect(result.blockReasons[0]).toContain('MODIFIED');
   });
 
-  it('renamed historical migration would be BLOCKED by CI (concept test)', () => {
-    const nameStatusOutput = 'R100\tsupabase/migrations/001_old.sql\tsupabase/migrations/001_new.sql';
-    const renamed = nameStatusOutput.split('\n').filter(l => /^R/.test(l));
-    expect(renamed).toHaveLength(1);
+  it('classifies deleted migration (D) as immutability violation → BLOCK', () => {
+    const raw = 'D\0supabase/migrations/050_old_migration.sql\0';
+    const result = parseMigrationDiffNul(raw);
+    expect(result.deletedMigrations).toEqual(['050_old_migration.sql']);
+    expect(result.hasImmutabilityViolation).toBe(true);
+    expect(result.blockReasons[0]).toContain('DELETED');
   });
 
-  it('added migration is NOT blocked by immutability check', () => {
-    const nameStatusOutput = 'A\tsupabase/migrations/999_new.sql';
-    const modified = nameStatusOutput.split('\n').filter(l => /^M\t/.test(l));
-    const deleted = nameStatusOutput.split('\n').filter(l => /^D\t/.test(l));
-    const renamed = nameStatusOutput.split('\n').filter(l => /^R/.test(l));
-    expect(modified).toHaveLength(0);
-    expect(deleted).toHaveLength(0);
-    expect(renamed).toHaveLength(0);
+  it('classifies renamed migration (R) as immutability violation → BLOCK', () => {
+    // NUL-delimited rename: "R100\0oldpath\0newpath\0"
+    const raw = 'R100\0supabase/migrations/001_old.sql\0supabase/migrations/001_new.sql\0';
+    const result = parseMigrationDiffNul(raw);
+    expect(result.renamedMigrations).toHaveLength(1);
+    expect(result.renamedMigrations[0]).toContain('001_old.sql');
+    expect(result.hasImmutabilityViolation).toBe(true);
+    expect(result.blockReasons[0]).toContain('RENAMED');
+  });
+
+  it('handles mixed A + M correctly — M blocks, A is available for lint', () => {
+    const raw = 'M\0supabase/migrations/001_initial.sql\0A\0supabase/migrations/999_new.sql\0';
+    const result = parseMigrationDiffNul(raw);
+    expect(result.modifiedMigrations).toEqual(['001_initial.sql']);
+    expect(result.newMigrations).toEqual(['999_new.sql']);
+    expect(result.hasImmutabilityViolation).toBe(true);
+  });
+
+  it('ignores non-migration files', () => {
+    const raw = 'M\0lib/some-file.ts\0A\0supabase/migrations/999_new.sql\0';
+    const result = parseMigrationDiffNul(raw);
+    expect(result.changes).toHaveLength(1); // only the migration
+    expect(result.newMigrations).toEqual(['999_new.sql']);
+    expect(result.hasImmutabilityViolation).toBe(false);
+  });
+
+  it('returns empty result for empty input', () => {
+    const result = parseMigrationDiffNul('');
+    expect(result.changes).toHaveLength(0);
+    expect(result.hasImmutabilityViolation).toBe(false);
+  });
+
+  it('bad added migration reaches lintMigrationDirectory and BLOCKS', () => {
+    // Simulate: parser identifies new migration, lint catches bad content
+    const raw = 'A\0supabase/migrations/999_bad_migration.sql\0';
+    const result = parseMigrationDiffNul(raw);
+    expect(result.newMigrations).toEqual(['999_bad_migration.sql']);
+
+    // Now prove the filename would be passed to lintMigrationDirectory and blocks
+    const badSql = `
+      CREATE OR REPLACE FUNCTION initialize_terminal_effects(p UUID)
+      RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+      BEGIN PERFORM encode(digest('x', 'sha256'), 'hex'); END; $$;
+    `;
+    const violations = lintMigration('999_bad_migration.sql', badSql);
+    expect(violations.length).toBeGreaterThan(0);
+    expect(violations.some(v => v.severity === 'error')).toBe(true);
+  });
+});
+
+describe('R4: Migration diff parser (line-based fallback)', () => {
+  it('handles tab-delimited output correctly', () => {
+    const raw = "M\tsupabase/migrations/001_initial.sql\nA\tsupabase/migrations/999_new.sql";
+    const result = parseMigrationDiffLines(raw);
+    expect(result.modifiedMigrations).toEqual(['001_initial.sql']);
+    expect(result.newMigrations).toEqual(['999_new.sql']);
+    expect(result.hasImmutabilityViolation).toBe(true);
   });
 });
 

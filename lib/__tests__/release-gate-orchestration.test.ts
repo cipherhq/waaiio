@@ -412,15 +412,63 @@ describe('R3: Critical invariant missing from candidate blocks gate', () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════
-// R3 TEST: not_applicable invariant does NOT block but IS disclosed
+// R4 TEST: not_applicable is validated against registry policy
 // ═══════════════════════════════════════════════════════════════════
 
-describe('R3: not_applicable invariant does not block but is disclosed', () => {
-  it('passes when critical invariant is not_applicable, disclosed in certificate', () => {
+describe('R4: not_applicable validated against registry applicability', () => {
+  it('BLOCKS: required critical invariant cannot self-declare not_applicable for release_candidate', () => {
+    const pre = makeBaseline({ id: 'pre', git_sha: 'prod-sha' });
+    // DB-001 is required for release_candidate — N/A should block
+    const invariants = allCriticalInvariantsPassing().map(i =>
+      i.invariant_id === 'DB-001'
+        ? { ...i, status: 'not_applicable' as const, evidence: 'Trying to bypass', na_reason: 'arbitrary reason' }
+        : i
+    );
+    const cand = makeBaseline({
+      id: 'cand', git_sha: 'rel-sha', phase: 'candidate',
+      invariant_results: invariants,
+    });
+    const result = executeGate({
+      releaseSha: 'rel-sha', productionSha: 'prod-sha',
+      preBaseline: pre, candidateBaseline: cand, now: NOW,
+      // Default kind is release_candidate
+    });
+    expect(result.verdict).toBe('BLOCKED');
+    expect(result.block_reasons.some(r => r.includes('DB-001') && r.includes('not_applicable') && r.includes('requires it'))).toBe(true);
+  });
+
+  it('ACCEPTS: not_applicable on self_test kind when invariant not required for self_test', () => {
     const pre = makeBaseline({ id: 'pre', git_sha: 'prod-sha' });
     const invariants = allCriticalInvariantsPassing().map(i =>
       i.invariant_id === 'DB-001'
-        ? { ...i, status: 'not_applicable' as const, evidence: 'Not applicable to this release' }
+        ? { ...i, status: 'not_applicable' as const, evidence: 'N/A for self-test', na_reason: 'self-test has no DB' }
+        : i
+    );
+    const cand = makeBaseline({
+      id: 'cand', git_sha: 'rel-sha', phase: 'candidate',
+      invariant_results: invariants,
+    });
+    const result = executeGate({
+      releaseSha: 'rel-sha', productionSha: 'prod-sha',
+      preBaseline: pre, candidateBaseline: cand, now: NOW,
+      kind: 'self_test',
+    });
+    // DB-001 not required for self_test, so N/A is acceptable
+    const db001Blocks = result.block_reasons.filter(r => r.includes('DB-001') && r.includes('not_applicable'));
+    expect(db001Blocks).toHaveLength(0);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// R4 TEST: Registry-authoritative criticality
+// ═══════════════════════════════════════════════════════════════════
+
+describe('R4: Registry-authoritative criticality cannot be downgraded', () => {
+  it('BLOCKS: registry-critical fail with result critical=false still blocks', () => {
+    const pre = makeBaseline({ id: 'pre', git_sha: 'prod-sha' });
+    const invariants = allCriticalInvariantsPassing().map(i =>
+      i.invariant_id === 'PAY-001'
+        ? { ...i, status: 'fail' as const, evidence: 'broken', critical: false } // Trying to downgrade!
         : i
     );
     const cand = makeBaseline({
@@ -431,13 +479,29 @@ describe('R3: not_applicable invariant does not block but is disclosed', () => {
       releaseSha: 'rel-sha', productionSha: 'prod-sha',
       preBaseline: pre, candidateBaseline: cand, now: NOW,
     });
-    // Should not be blocked by not_applicable
-    const db001BlockReasons = result.block_reasons.filter(r => r.includes('DB-001'));
-    expect(db001BlockReasons).toHaveLength(0);
-    // Should be disclosed in the certificate invariant_details
-    const detail = result.certificate.invariant_details.find(d => d.invariant_id === 'DB-001');
-    expect(detail).toBeDefined();
-    expect(detail!.status).toBe('not_applicable');
+    expect(result.verdict).toBe('BLOCKED');
+    // Should block for the failure AND flag the metadata mismatch
+    expect(result.block_reasons.some(r => r.includes('PAY-001') && r.includes('FAILED'))).toBe(true);
+    expect(result.block_reasons.some(r => r.includes('PAY-001') && r.includes('metadata mismatch'))).toBe(true);
+  });
+
+  it('BLOCKS: registry-critical error with result critical=false still blocks', () => {
+    const pre = makeBaseline({ id: 'pre', git_sha: 'prod-sha' });
+    const invariants = allCriticalInvariantsPassing().map(i =>
+      i.invariant_id === 'DB-006'
+        ? { ...i, status: 'error' as const, evidence: 'query error', critical: false }
+        : i
+    );
+    const cand = makeBaseline({
+      id: 'cand', git_sha: 'rel-sha', phase: 'candidate',
+      invariant_results: invariants,
+    });
+    const result = executeGate({
+      releaseSha: 'rel-sha', productionSha: 'prod-sha',
+      preBaseline: pre, candidateBaseline: cand, now: NOW,
+    });
+    expect(result.verdict).toBe('BLOCKED');
+    expect(result.block_reasons.some(r => r.includes('DB-006') && r.includes('FAILED'))).toBe(true);
   });
 });
 

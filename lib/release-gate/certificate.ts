@@ -17,6 +17,7 @@ import type {
   StateDiffResult,
   ReleaseCertificate,
 } from './types';
+import { getCriticalInvariants } from './invariant-registry';
 
 export function generateCertificate(opts: {
   releaseSha: string;
@@ -48,15 +49,16 @@ export function generateCertificate(opts: {
     kind = 'release_candidate',
   } = opts;
 
-  // Compute invariant summary from the most recent baseline
+  // Compute invariant summary — criticality is REGISTRY-AUTHORITATIVE
   const latestBaseline = postBaseline || candidateBaseline || preBaseline;
   const invariantResults = latestBaseline.invariant_results;
+  const registryCriticalIds = new Set(getCriticalInvariants().map(i => i.id));
   const invariantSummary = {
     total: invariantResults.length,
     passed: invariantResults.filter(r => r.status === 'pass').length,
     failed: invariantResults.filter(r => r.status === 'fail' || r.status === 'error').length,
     critical_failed: invariantResults.filter(r =>
-      (r.status === 'fail' || r.status === 'error') && r.critical
+      (r.status === 'fail' || r.status === 'error') && registryCriticalIds.has(r.invariant_id)
     ).length,
   };
 

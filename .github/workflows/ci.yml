@@ -130,77 +130,58 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Determine base SHA and event context
           BASE_SHA="${{ env.BASE_SHA }}"
           EVENT="${{ github.event_name }}"
 
           # For push-to-main: defense-in-depth using before..after
           if [ "$EVENT" = "push" ] && [ "${{ github.ref }}" = "refs/heads/main" ]; then
-            echo "Post-merge push to main — defense-in-depth migration check"
             BEFORE_SHA="${{ github.event.before }}"
             if [ "$BEFORE_SHA" = "0000000000000000000000000000000000000000" ]; then
-              echo "Initial push — no base to compare. Skipping."
+              echo "Initial push — no base to compare."
               exit 0
             fi
-            git fetch --depth=1 origin "$BEFORE_SHA" 2>/dev/null || true
             BASE_SHA="$BEFORE_SHA"
           fi
 
           echo "Fetching base ref $BASE_SHA..."
           git fetch --depth=1 origin "$BASE_SHA"
 
-          echo "Computing migration diff (base: $BASE_SHA)..."
-          MIGRATION_DIFF=$(git diff --name-status "$BASE_SHA" -- 'supabase/migrations/*.sql')
+          echo "Computing migration diff via checked-in parser (base: $BASE_SHA)..."
+          # Use NUL-delimited output for safe parsing, pipe to TS parser
+          DIFF_RAW=$(git diff --name-status -z "$BASE_SHA" -- 'supabase/migrations/*.sql' || { echo "FATAL: git diff failed" >&2; exit 1; })
 
-          if [ -z "$MIGRATION_DIFF" ]; then
-            echo "No migration changes — lint passes."
-            exit 0
-          fi
-
-          echo "Migration changes detected:"
-          echo "$MIGRATION_DIFF"
-
-          # Check for modifications, deletions, renames of existing migrations — BLOCK
-          MODIFIED=$(echo "$MIGRATION_DIFF" | grep -E '^M\t' || true)
-          DELETED=$(echo "$MIGRATION_DIFF" | grep -E '^D\t' || true)
-          RENAMED=$(echo "$MIGRATION_DIFF" | grep -E '^R' || true)
-
-          if [ -n "$MODIFIED" ]; then
-            echo "❌ BLOCKED: Historical migration(s) MODIFIED — immutable migrations must not be changed:"
-            echo "$MODIFIED"
-            exit 1
-          fi
-
-          if [ -n "$DELETED" ]; then
-            echo "❌ BLOCKED: Historical migration(s) DELETED — immutable migrations must not be removed:"
-            echo "$DELETED"
-            exit 1
-          fi
-
-          if [ -n "$RENAMED" ]; then
-            echo "❌ BLOCKED: Historical migration(s) RENAMED — immutable migrations must not be renamed:"
-            echo "$RENAMED"
-            exit 1
-          fi
-
-          # New migrations — lint them
-          NEW_MIGRATIONS=$(echo "$MIGRATION_DIFF" | grep -E '^A\t' | awk '{print $2}' | xargs -I{} basename {} 2>/dev/null || true)
-          if [ -z "$NEW_MIGRATIONS" ]; then
-            echo "No new migrations to lint."
-            exit 0
-          fi
-
-          echo "New candidate migrations: $NEW_MIGRATIONS"
           npx tsx -e "
+            import { parseMigrationDiffNul } from './lib/release-gate/migration-diff-parser';
             import { lintMigrationDirectory } from './lib/release-gate/migration-lint';
-            const candidates = '${NEW_MIGRATIONS}'.split('\n').filter(Boolean);
-            const violations = lintMigrationDirectory('supabase/migrations', candidates);
+
+            const raw = $(node -e "process.stdout.write(JSON.stringify(process.argv[1]))" -- "$DIFF_RAW");
+            const result = parseMigrationDiffNul(raw);
+
+            if (result.changes.length === 0) {
+              console.log('No migration changes — lint passes.');
+              process.exit(0);
+            }
+
+            console.log('Migration changes:', JSON.stringify(result.changes, null, 2));
+
+            if (result.hasImmutabilityViolation) {
+              for (const r of result.blockReasons) console.log('❌ BLOCKED:', r);
+              process.exit(1);
+            }
+
+            if (result.newMigrations.length === 0) {
+              console.log('No new migrations to lint.');
+              process.exit(0);
+            }
+
+            console.log('Linting new migrations:', result.newMigrations.join(', '));
+            const violations = lintMigrationDirectory('supabase/migrations', result.newMigrations);
             const errors = violations.filter(v => v.severity === 'error');
             for (const v of violations) {
               console.log(\`\${v.severity === 'error' ? '❌' : '⚠️'} \${v.file}:\${v.line} [\${v.rule}] \${v.message}\`);
             }
             if (errors.length > 0) { console.log('BLOCKED'); process.exit(1); }
-            else { console.log('✅ No violations in candidate migrations.'); }
+            else { console.log('✅ No violations.'); }
           "
 
       - name: Run release gate tests

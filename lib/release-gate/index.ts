@@ -70,4 +70,5 @@ export {
 export { executeGate } from './gate';
 export type { GateResult, GateInput } from './gate';
 export { lintMigration, lintMigrationDirectory, HISTORICAL_EXCEPTIONS } from './migration-lint';
+export { parseMigrationDiffNul, parseMigrationDiffLines } from './migration-diff-parser';
 export { generateCertificate, formatCertificate } from './certificate';

@@ -172,40 +172,53 @@ export function executeGate(input: GateInput): GateResult {
     }
   }
 
-  // ─── Step 4: Check candidate invariants ───
-  const criticalFailed = candidateBaseline.invariant_results.filter(r =>
-    (r.status === 'fail' || r.status === 'error') && r.critical
-  );
-  if (criticalFailed.length > 0) {
-    for (const inv of criticalFailed) {
-      blockReasons.push(`Critical invariant ${inv.invariant_id} FAILED: ${inv.evidence}`);
-    }
-  }
-
-  // ─── Step 4b: Enforce invariant evidence completeness ───
-  // For every critical invariant in the registry:
-  //   pass         → acceptable
-  //   not_applicable → acceptable BUT must be disclosed in certificate
-  //   fail, error, skip, missing → BLOCK
+  // ─── Step 4: Check candidate invariants (registry-authoritative criticality) ───
+  // Criticality comes from the REGISTRY, never from result payloads.
+  // A result that says critical:false for a registry-critical invariant is
+  // treated as a metadata mismatch — the registry wins.
   const criticalInvariants = getCriticalInvariants();
   const candidateInvariantMap = new Map(
     candidateBaseline.invariant_results.map(r => [r.invariant_id, r])
   );
+  const certKind = input.kind || 'release_candidate';
+
   for (const inv of criticalInvariants) {
     const result = candidateInvariantMap.get(inv.id);
+
     if (!result) {
       blockReasons.push(
         `Critical invariant ${inv.id} ("${inv.description}") missing from candidate baseline — no evidence captured`
       );
+      continue;
+    }
+
+    // Flag metadata mismatch (result says non-critical, registry says critical)
+    if (!result.critical) {
+      blockReasons.push(
+        `Critical invariant ${inv.id}: result metadata says critical=false but registry says critical=true — metadata mismatch, treating as critical`
+      );
+    }
+
+    // Check status — registry criticality is authoritative
+    if (result.status === 'fail' || result.status === 'error') {
+      blockReasons.push(`Critical invariant ${inv.id} FAILED: ${result.evidence}`);
     } else if (result.status === 'skip') {
       blockReasons.push(
-        `Critical invariant ${inv.id} ("${inv.description}") has status 'skip' — critical invariants must produce real evidence (pass, fail, error, or not_applicable)`
+        `Critical invariant ${inv.id} ("${inv.description}") has status 'skip' — critical invariants must produce real evidence`
       );
     } else if (result.status === 'not_applicable') {
-      // Acceptable but disclosed in certificate — no block
-      // (invariant_details in certificate will include it)
+      // Validate N/A against registry applicability policy
+      const requiredFor = inv.required_for || ['release_candidate'];
+      if (requiredFor.includes(certKind)) {
+        // This invariant is REQUIRED for this certificate kind — N/A is not allowed
+        const reason = (result as { na_reason?: string }).na_reason || 'no reason provided';
+        blockReasons.push(
+          `Critical invariant ${inv.id} ("${inv.description}") declared not_applicable but registry requires it for ${certKind} — reason: "${reason}". Not_applicable is not a valid bypass for required invariants.`
+        );
+      }
+      // If not required for this kind, N/A is acceptable but disclosed
     }
-    // pass → acceptable, fail/error already caught in Step 4 above
+    // pass → acceptable
   }
 
   // ─── Step 5: Generate certificate ───
