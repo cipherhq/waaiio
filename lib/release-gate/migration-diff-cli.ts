@@ -29,7 +29,7 @@ async function main(): Promise<void> {
   try {
     rawBuffer = readFileSync(0); // fd 0 = stdin
   } catch (err) {
-    console.error('FATAL: Failed to read stdin:', (err as Error).message);
+    process.stderr.write(`FATAL: Failed to read stdin: ${(err as Error).message}\n`);
     process.exit(2);
   }
 
@@ -84,6 +84,6 @@ async function main(): Promise<void> {
 }
 
 main().catch(err => {
-  console.error('FATAL:', (err as Error).message);
+  process.stderr.write(`FATAL: ${(err as Error).message}\n`);
   process.exit(2);
 });
