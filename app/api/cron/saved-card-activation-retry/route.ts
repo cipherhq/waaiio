@@ -201,9 +201,12 @@ export async function GET(request: NextRequest) {
     try {
       if (!confirmChannelId) {
         logger.warn('[CONFIRMATION-RECOVERY] No exact channel_id on offer — fail closed', { confirmOfferId });
-        await supabase.rpc('release_confirmation_pre_emission', {
+        const { data: released, error: relErr } = await supabase.rpc('release_confirmation_pre_emission', {
           p_offer_id: confirmOfferId, p_claim_token: confirmClaimToken,
         });
+        if (relErr || !released) {
+          logger.error('[CONFIRMATION-RECOVERY] Channel-missing release unsuccessful', { relErr, released, confirmOfferId });
+        }
         confirmErrors++;
         continue;
       }
@@ -212,9 +215,12 @@ export async function GET(request: NextRequest) {
       const confirmCanonPhone = canonicalSavedCardPhone(confirmCustomerPhone);
       if (!confirmCanonPhone) {
         logger.warn('[CONFIRMATION-RECOVERY] Invalid phone — fail closed', { confirmOfferId, confirmCustomerPhone });
-        await supabase.rpc('release_confirmation_pre_emission', {
+        const { data: released2, error: relErr2 } = await supabase.rpc('release_confirmation_pre_emission', {
           p_offer_id: confirmOfferId, p_claim_token: confirmClaimToken,
         });
+        if (relErr2 || !released2) {
+          logger.error('[CONFIRMATION-RECOVERY] Phone-invalid release unsuccessful', { relErr: relErr2, released: released2, confirmOfferId });
+        }
         confirmErrors++;
         continue;
       }

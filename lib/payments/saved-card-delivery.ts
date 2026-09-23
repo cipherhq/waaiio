@@ -84,8 +84,11 @@ export async function sendWithFencedDelivery(params: FencedDeliveryParams): Prom
 
   if (!resolved) {
     logger.warn(`${logPrefix} Channel resolution failed — releasing`, { offerId, channelId, businessId });
-    const { error: relErr } = await releasePreEmission(offerId, claimToken);
-    if (relErr) logger.error(`${logPrefix} Release RPC error after channel failure`, { offerId, relErr });
+    const { data: released, error: relErr } = await releasePreEmission(offerId, claimToken);
+    if (relErr || !released) {
+      logger.error(`${logPrefix} Channel-failed release unsuccessful`, { relErr, released, offerId });
+      return 'release_failed';
+    }
     return 'channel_failed';
   }
 

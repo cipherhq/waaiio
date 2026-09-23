@@ -184,6 +184,100 @@ describe.skipIf(!dbUrl)('M398 Session Normalization (real PostgreSQL)', () => {
   // ──────────────────────────────────────────────────────────────
 
   describe('establish_saved_card_session: mixed phone dedup', () => {
+    it('reuses inactive digits-only row when active +E.164 row exists', () => {
+      // Clean existing test sessions
+      psql(`DELETE FROM bot_sessions WHERE business_id = '${BIZ_ID}';`);
+
+      // INSERT an inactive digits-only row
+      psql(`
+        INSERT INTO bot_sessions (whatsapp_number, business_id, current_step, session_data, is_active, version)
+        VALUES ('${PHONE_DIGITS}', '${BIZ_ID}', 'greeting', '{}'::jsonb, false, 1);
+      `);
+
+      // Record the digits-only row's ID
+      const digitsRowId = psql(`SELECT id FROM bot_sessions WHERE whatsapp_number = '${PHONE_DIGITS}' AND business_id = '${BIZ_ID}' AND is_active = false;`);
+      expect(digitsRowId).toBeTruthy();
+
+      // INSERT an active +E.164 row
+      psql(`
+        INSERT INTO bot_sessions (whatsapp_number, business_id, current_step, session_data, is_active, version)
+        VALUES ('${PHONE_E164}', '${BIZ_ID}', 'select_capability', '{}'::jsonb, true, 1);
+      `);
+
+      // Call establish_saved_card_session with p_canon_phone = '+15559998888'
+      const result = psqlJson(`SELECT establish_saved_card_session('${PHONE_E164}', '${BIZ_ID}'::UUID, 'save_card_pin', '{"test": true}'::jsonb);`) as Record<string, unknown>;
+
+      // Assert: no error (we got a result)
+      expect(result).not.toBeNull();
+
+      // Assert: returned session_phone = digits-only
+      expect(result.session_phone).toBe(PHONE_DIGITS);
+
+      // Query bot_sessions: exactly ONE active row for this business with whatsapp_number IN ('+15559998888', '15559998888')
+      const activeCount = psql(`SELECT count(*) FROM bot_sessions WHERE business_id = '${BIZ_ID}' AND whatsapp_number IN ('${PHONE_E164}', '${PHONE_DIGITS}') AND is_active = true;`);
+      expect(activeCount).toBe('1');
+
+      // The active row has whatsapp_number = digits-only
+      const activePhone = psql(`SELECT whatsapp_number FROM bot_sessions WHERE business_id = '${BIZ_ID}' AND whatsapp_number IN ('${PHONE_E164}', '${PHONE_DIGITS}') AND is_active = true;`);
+      expect(activePhone).toBe(PHONE_DIGITS);
+
+      // The active row has current_step = 'save_card_pin'
+      const activeStep = psql(`SELECT current_step FROM bot_sessions WHERE business_id = '${BIZ_ID}' AND whatsapp_number = '${PHONE_DIGITS}' AND is_active = true;`);
+      expect(activeStep).toBe('save_card_pin');
+
+      // The active row has a fresh expires_at (> NOW())
+      const freshExpiry = psql(`SELECT (expires_at > NOW())::text FROM bot_sessions WHERE business_id = '${BIZ_ID}' AND whatsapp_number = '${PHONE_DIGITS}' AND is_active = true;`);
+      expect(freshExpiry).toBe('true');
+
+      // The active row's version > 0 (was incremented)
+      const version = psql(`SELECT version FROM bot_sessions WHERE business_id = '${BIZ_ID}' AND whatsapp_number = '${PHONE_DIGITS}' AND is_active = true;`);
+      expect(Number(version)).toBeGreaterThan(0);
+
+      // The +E.164 row is now inactive
+      const e164Active = psql(`SELECT count(*) FROM bot_sessions WHERE whatsapp_number = '${PHONE_E164}' AND business_id = '${BIZ_ID}' AND is_active = true;`);
+      expect(e164Active).toBe('0');
+
+      // The digits-only row was reused (same id as the pre-existing inactive one)
+      const activeId = psql(`SELECT id FROM bot_sessions WHERE business_id = '${BIZ_ID}' AND whatsapp_number = '${PHONE_DIGITS}' AND is_active = true;`);
+      expect(activeId).toBe(digitsRowId);
+
+      psql(`DELETE FROM bot_sessions WHERE business_id = '${BIZ_ID}';`);
+    });
+
+    it('refreshes expired-but-active digits-only row', () => {
+      psql(`DELETE FROM bot_sessions WHERE business_id = '${BIZ_ID}';`);
+
+      // INSERT an active digits-only row with expired expires_at
+      psql(`
+        INSERT INTO bot_sessions (whatsapp_number, business_id, current_step, session_data, is_active, version, expires_at)
+        VALUES ('${PHONE_DIGITS}', '${BIZ_ID}', 'greeting', '{"old": true}'::jsonb, true, 1, NOW() - INTERVAL '1 hour');
+      `);
+
+      // Verify it's expired but still active
+      const expiredCheck = psql(`SELECT (expires_at < NOW())::text FROM bot_sessions WHERE whatsapp_number = '${PHONE_DIGITS}' AND business_id = '${BIZ_ID}' AND is_active = true;`);
+      expect(expiredCheck).toBe('true');
+
+      // Call establish_saved_card_session
+      const result = psqlJson(`SELECT establish_saved_card_session('${PHONE_E164}', '${BIZ_ID}'::UUID, 'save_card_pin', '{"refreshed": true}'::jsonb);`) as Record<string, unknown>;
+
+      expect(result).not.toBeNull();
+      expect(result.session_phone).toBe(PHONE_DIGITS);
+
+      // Assert the row was refreshed: is_active=true
+      const isActive = psql(`SELECT is_active::text FROM bot_sessions WHERE whatsapp_number = '${PHONE_DIGITS}' AND business_id = '${BIZ_ID}' AND is_active = true;`);
+      expect(isActive).toBe('true');
+
+      // expires_at > NOW() (refreshed)
+      const freshExpiry = psql(`SELECT (expires_at > NOW())::text FROM bot_sessions WHERE whatsapp_number = '${PHONE_DIGITS}' AND business_id = '${BIZ_ID}' AND is_active = true;`);
+      expect(freshExpiry).toBe('true');
+
+      // correct step
+      const step = psql(`SELECT current_step FROM bot_sessions WHERE whatsapp_number = '${PHONE_DIGITS}' AND business_id = '${BIZ_ID}' AND is_active = true;`);
+      expect(step).toBe('save_card_pin');
+
+      psql(`DELETE FROM bot_sessions WHERE business_id = '${BIZ_ID}';`);
+    });
+
     it('deactivates +E.164 row and creates digits-only row', () => {
       // Setup: insert an active +E.164 row
       psql(`

@@ -523,16 +523,24 @@ export async function handleCardPinStep(
         const claimBusinessId = claim.business_id as string;
         const claimChannelId = claim.channel_id as string;
         const confirmClaimToken = claim.claim_token as string;
-        // R6-B2: Use committed_card_display from durable claim, not session-derived cardLabel
-        const claimCardDisplay = (claim.committed_card_display as string) || cardLabel;
+        // R7-B4: Fail closed if committed_card_display is missing — do not use session-derived fallback
+        if (!claim.committed_card_display) {
+          logger.error('[SAVED_CARDS] Confirmation claim missing committed_card_display — fail closed', { offerId: finalOfferId });
+          // Do not send unverified card display. Offer stays committed for investigation.
+          return;
+        }
+        const claimCardDisplay = claim.committed_card_display as string;
 
         const confirmationMsg = `💳 Card saved! *${claimCardDisplay}*\n\n🔒 Waaiio PIN set successfully. You'll need this Waaiio PIN when using your saved card.\n\nFor privacy, you can delete your PIN message from this chat. Type *remove card* anytime to delete this card.`;
 
         if (!claimChannelId) {
           logger.warn('[SAVED_CARDS] Claim has no channel_id — releasing for recovery', { finalOfferId });
-          await supabase.rpc('release_confirmation_pre_emission', {
+          const { data: released, error: relErr } = await supabase.rpc('release_confirmation_pre_emission', {
             p_offer_id: finalOfferId, p_claim_token: confirmClaimToken,
           });
+          if (relErr || !released) {
+            logger.error('[SAVED_CARDS] Channel-missing release unsuccessful', { relErr, released, finalOfferId });
+          }
         } else {
           const { sendWithFencedDelivery } = await import('@/lib/payments/saved-card-delivery');
           const confirmOutcome = await sendWithFencedDelivery({
