@@ -166,9 +166,7 @@ jobs:
           });
           // Override scope.invariants to false for synthetic baselines (no real evidence)
           (result.certificate as any).scope.invariants = false;
-          // Re-format with updated scope
-          const { formatCertificate: fmt } = await import('./lib/release-gate/certificate');
-          const certText = '⚠️  SYNTHETIC SELF-TEST — no real DB evidence\\n\\n' + fmt(result.certificate);
+          const certText = '⚠️  SYNTHETIC SELF-TEST — no real DB evidence\\n\\n' + formatCertificate(result.certificate);
           writeFileSync('release-certificate.txt', certText);
           writeFileSync('release-certificate.json', JSON.stringify(result.certificate, null, 2));
           console.log(certText);
