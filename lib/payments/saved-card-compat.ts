@@ -22,6 +22,11 @@ export function canonicalSavedCardPhone(phone: string): string | null {
   return withPlus;
 }
 
+/** Derive the deterministic digits-only bot-session phone from a canonical +E.164 phone. */
+export function savedCardSessionPhone(canonPhone: string): string {
+  return canonPhone.replace(/^\+/, '');
+}
+
 // ─── Gateway-neutral internal email alias ───
 
 /**

@@ -3,6 +3,24 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-09-22 — Fix: P0 saved-card PIN session phone normalization (#370)
+
+### What changed
+- **Root cause**: Saved-card PIN sessions were created with `+E.164` phone (e.g., `+15712746425`) but Meta inbound messages arrive digits-only (e.g., `15712746425`). Session lookup is exact-match, so PIN sessions were invisible and the PIN handler never executed.
+- **Migration 398** (`398_saved_card_session_normalization.sql`): 8 new RPCs + 3 new columns on `payment_saved_card_offers`.
+  - `establish_saved_card_session`: Atomic session creation with digits-only phone normalization. Deactivates legacy +E.164 rows, UPSERTs digits-only row, advisory lock for concurrency.
+  - `claim_exact_activation_delivery` / `release_activation_pre_emission`: Exact-offer activation claim with pre-emission release.
+  - `claim_confirmation_delivery` / `mark_confirmation_send_started` / `complete_confirmation_delivery` / `release_confirmation_pre_emission`: Full fenced delivery lifecycle for Card Saved confirmation messages.
+  - `discover_pending_confirmation`: Global oldest-first recovery for committed offers needing confirmation.
+  - New columns: `confirmation_send_started_at`, `confirmation_claim_token`, `confirmation_claim_expires_at`.
+- **`lib/payments/saved-card-compat.ts`**: Added `savedCardSessionPhone()` — derives digits-only phone from canonical +E.164.
+- **`lib/payments/saved-card-delivery.ts`** (NEW): Shared fenced delivery helper (`sendWithFencedDelivery`) used by both activation and confirmation paths. Classifies errors as pre-emission (retryable) vs ambiguous (non-retryable) via `isProvenPreEmission()`.
+- **`lib/payments/saved-card-offer.ts`**: Stripe consent path now uses `establish_saved_card_session` RPC (not direct INSERT), reads `_inbound_channel_id` from payment metadata (no business-current fallback), and uses fenced delivery for activation sends. Paystack no-session paths also use `establish_saved_card_session` RPC.
+- **`lib/bot/handlers/saved-cards.ts`**: Card Saved confirmation now uses fenced delivery via offer's durable `channel_id` (claim_confirmation_delivery + sendWithFencedDelivery) instead of bot sendText. Falls back to sendText for Paystack-only saves without channel tracking.
+- **`app/api/cron/saved-card-activation-retry/route.ts`**: Uses `establish_saved_card_session` RPC for session re-establishment, `resolveByChannelIdForBusiness` for channel resolution (not direct whatsapp_channels query), and shared fenced delivery helper.
+- **Files**: `supabase/migrations/398_saved_card_session_normalization.sql`, `lib/payments/saved-card-compat.ts`, `lib/payments/saved-card-delivery.ts`, `lib/payments/saved-card-offer.ts`, `lib/bot/handlers/saved-cards.ts`, `app/api/cron/saved-card-activation-retry/route.ts`, `lib/__tests__/saved-card-phone-normalization.test.ts`
+- **What could break**: Any code that creates saved-card sessions with +E.164 phone will create invisible sessions. All three paths (Stripe consent, Paystack save, Paystack replace) are now normalized. Legacy +E.164 sessions are deactivated by the RPC. Recovery cron also uses normalized phone.
+
 ## 2026-09-23 — Fix: M397 restore initialize_terminal_effects search_path (#365)
 
 ### What changed
