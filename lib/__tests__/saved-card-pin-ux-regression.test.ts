@@ -141,6 +141,9 @@ vi.mock('@/lib/payments/bot-recovery', () => ({
 // ── Helpers ──
 
 function makeCtx(sessionData: Record<string, unknown>, overrides?: Partial<FlowContext>): FlowContext {
+  // Keep the original object identity: flow tests assert in-place session mutations.
+  if (!sessionData._inbound_channel_id) sessionData._inbound_channel_id = 'channel-test';
+
   const makeChain = (table: string) => {
     const c: Record<string, unknown> = {};
     for (const m of ['select', 'insert', 'update', 'delete', 'eq', 'neq', 'in', 'or', 'not', 'order', 'limit']) {
