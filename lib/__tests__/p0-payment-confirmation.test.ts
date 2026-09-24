@@ -344,8 +344,7 @@ describe('P0-CONFIRM-1: Control-flow tests', () => {
     const { sendProactiveConfirmation } = await import('../payments/send-confirmation');
     await sendProactiveConfirmation(s, pay);
     expect(mockInitializePayment).not.toHaveBeenCalled();
-    // The production source must retain balance visibility while containing no
-    // provider checkout initialization. Test 25 independently fences the source.
+    // #391 regression: successful deposit confirmation ends without spawning a balance checkout.
     expect(mockInitializePayment).not.toHaveBeenCalled();
   });
 
