@@ -557,14 +557,6 @@ describe('Saved-card provider state semantics', () => {
     expect(errBlock).not.toContain("outcome: 'declined'");
   });
 
-  it('existing-row validates exact booking_id match (null = mismatch)', () => {
-    const fs = require('fs');
-    const src = fs.readFileSync('lib/payments/charge-saved.ts', 'utf-8');
-    // Must compare without the && existing.booking_id guard that accepts null
-    expect(src).toContain('existing.booking_id !== opts.bookingId');
-    expect(src).not.toContain('existing.booking_id && existing.booking_id !==');
-  });
-
   it('existing-row validates business_id with legacy metadata fallback', () => {
     const fs = require('fs');
     const src = fs.readFileSync('lib/payments/charge-saved.ts', 'utf-8');
@@ -671,10 +663,26 @@ describe('chargeSavedCard behavioral state machine', () => {
 
   // Helper to build a chargeSavedCard mock environment with configurable behavior
   async function setupChargeTest(opts: {
-    existingPayment?: { id: string; status: string; booking_id: string | null; business_id: string | null; metadata: Record<string, unknown> };
+    existingPayment?: {
+      id: string;
+      status: string;
+      booking_id: string | null;
+      order_id?: string | null;
+      reservation_id?: string | null;
+      invoice_id?: string | null;
+      campaign_id?: string | null;
+      business_id: string | null;
+      amount?: number;
+      currency?: string;
+      gateway?: string;
+      payment_method?: string;
+      metadata: Record<string, unknown>;
+    };
     reconcileResult?: Record<string, unknown>;
     termUpdateResult?: { data: unknown; error: unknown };
     rereadResult?: { data: unknown; error: unknown };
+    rpcResult?: { data?: unknown; error?: unknown };
+    newPaymentId?: string;
   }) {
     vi.resetModules();
     process.env.PAYSTACK_SECRET_KEY = 'test_key_for_unit_test';
@@ -683,16 +691,21 @@ describe('chargeSavedCard behavioral state machine', () => {
     vi.doMock('@/lib/errors', () => ({ normalizeError: (e: unknown) => ({ message: String(e) }) }));
     vi.doMock('@/lib/getPlatformFees', () => ({ getPlatformFees: vi.fn() }));
 
+    const mockReconcile = vi.fn().mockResolvedValue(opts.reconcileResult);
     if (opts.reconcileResult) {
       vi.doMock('@/lib/payments/reconcile', () => ({
-        reconcilePayment: vi.fn().mockResolvedValue(opts.reconcileResult),
+        reconcilePayment: mockReconcile,
       }));
     }
 
     const { chargeSavedCard } = await import('@/lib/payments/charge-saved');
 
     let fromCallCount = 0;
+    const insertedPayments: Array<Record<string, unknown>> = [];
     const mockSb = {
+      rpc: vi.fn().mockResolvedValue(opts.rpcResult || {
+        data: { created: true, already_existed: false }, error: null,
+      }),
       from: vi.fn((table: string) => {
         if (table === 'payments') {
           fromCallCount++;
@@ -707,18 +720,25 @@ describe('chargeSavedCard behavioral state machine', () => {
             };
           }
           if (fromCallCount === 2) {
-            // Terminalization update
-            return {
-              update: vi.fn().mockReturnValue({
-                eq: vi.fn().mockReturnValue({
-                  eq: vi.fn().mockReturnValue({
-                    select: vi.fn().mockReturnValue({
-                      maybeSingle: vi.fn().mockResolvedValue(opts.termUpdateResult || { data: null, error: null }),
-                    }),
-                  }),
-                }),
+            let operation: 'insert' | 'update' | null = null;
+            const chain: Record<string, any> = {
+              insert: vi.fn((row: Record<string, unknown>) => {
+                operation = 'insert';
+                insertedPayments.push(row);
+                return chain;
               }),
+              update: vi.fn(() => { operation = 'update'; return chain; }),
+              eq: vi.fn().mockReturnValue(undefined),
+              select: vi.fn(() => chain),
+              maybeSingle: vi.fn(async () => operation === 'update'
+                ? (opts.termUpdateResult || { data: null, error: null })
+                : { data: null, error: null }),
+              single: vi.fn(async () => operation === 'insert'
+                ? { data: { id: opts.newPaymentId || 'pay-new' }, error: null }
+                : (opts.rereadResult || { data: null, error: null })),
             };
+            chain.eq.mockReturnValue(chain);
+            return chain;
           }
           if (fromCallCount === 3) {
             // Re-read after zero-row terminalization
@@ -731,19 +751,142 @@ describe('chargeSavedCard behavioral state machine', () => {
             };
           }
         }
+        if (table === 'businesses') {
+          const chain: Record<string, any> = {
+            select: vi.fn(() => chain),
+            eq: vi.fn(() => chain),
+            single: vi.fn().mockResolvedValue({ data: { payout_mode: 'platform_managed' }, error: null }),
+          };
+          return chain;
+        }
         return {};
       }),
     };
 
-    return { chargeSavedCard, mockSb };
+    return { chargeSavedCard, mockSb, insertedPayments, mockReconcile };
   }
 
   const savedMethod = { id: 'sm-1', gateway: 'paystack' as const, authorization_code: 'AUTH_x', customer_code: null, stripe_payment_method_id: null, stripe_customer_id: null, card_last4: '1234', card_brand: 'visa' };
   const baseOpts = { savedMethod, amount: 1000, currency: 'NGN', email: 'test@test.com', reference: 'ref-term', businessId: 'biz-1', bookingId: 'bk-1' };
 
+  it('existing payment with a different or missing entity link fails closed before provider dispatch', async () => {
+    const { chargeSavedCard, mockSb } = await setupChargeTest({
+      existingPayment: {
+        id: 'pay-entity-mismatch', status: 'success', booking_id: null,
+        business_id: 'biz-1', amount: 1000, currency: 'NGN',
+        gateway: 'paystack', payment_method: 'saved_card', metadata: {},
+      },
+    });
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    try {
+      const result = await chargeSavedCard(mockSb as never, baseOpts);
+      expect(result).toMatchObject({
+        outcome: 'indeterminate',
+        paymentId: 'pay-entity-mismatch',
+        message: 'Payment reference conflict',
+      });
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it('existing success rejects Paystack amount/currency/gateway/payment-method collisions', async () => {
+    const mismatches = [
+      { name: 'amount', fields: { amount: 999 }, message: 'Amount mismatch' },
+      { name: 'currency', fields: { currency: 'USD' }, message: 'Currency mismatch' },
+      { name: 'gateway', fields: { gateway: 'stripe' }, message: 'Gateway mismatch' },
+      { name: 'payment method', fields: { payment_method: 'card' }, message: 'Payment method mismatch' },
+    ] as const;
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    try {
+      for (const mismatch of mismatches) {
+        const { chargeSavedCard, mockSb } = await setupChargeTest({
+          existingPayment: {
+            id: `pay-${mismatch.name.replaceAll(' ', '-')}`, status: 'success', booking_id: 'bk-1',
+            business_id: 'biz-1', amount: 1000, currency: 'NGN', gateway: 'paystack',
+            payment_method: 'saved_card', metadata: {}, ...mismatch.fields,
+          },
+        });
+        const result = await chargeSavedCard(mockSb as never, baseOpts);
+        expect(result).toMatchObject({
+          outcome: 'indeterminate',
+          message: mismatch.message,
+        });
+        expect(fetchSpy).not.toHaveBeenCalled();
+      }
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it('Paystack creates/verifies the donation intent before dispatch and blocks on semantic failure', async () => {
+    const { chargeSavedCard, mockSb, insertedPayments } = await setupChargeTest({
+      newPaymentId: 'pay-giving-new',
+      rpcResult: { data: { created: false, reason: 'amount_mismatch' }, error: null },
+    });
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    try {
+      const result = await chargeSavedCard(mockSb as never, {
+        ...baseOpts,
+        bookingId: undefined,
+        campaignId: 'campaign-1',
+        customerPhone: '+2348012345678',
+        donorName: 'Ada Donor',
+      });
+
+      expect(result).toMatchObject({
+        outcome: 'indeterminate',
+        paymentId: 'pay-giving-new',
+        message: 'Donation intent failed',
+      });
+      expect(insertedPayments).toHaveLength(1);
+      expect(insertedPayments[0]).toMatchObject({ campaign_id: 'campaign-1', gateway_reference: baseOpts.reference });
+      expect(mockSb.rpc).toHaveBeenCalledWith('ensure_campaign_donation_intent_for_payment', expect.objectContaining({
+        p_payment_id: 'pay-giving-new',
+        p_donor_phone: '+2348012345678',
+        p_donor_name: 'Ada Donor',
+      }));
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it('Paystack campaign recovery blocks before reconciling when the donation intent is unproven', async () => {
+    const { chargeSavedCard, mockSb, mockReconcile } = await setupChargeTest({
+      existingPayment: {
+        id: 'pay-giving-existing', status: 'pending', booking_id: null, campaign_id: 'campaign-1',
+        business_id: 'biz-1', amount: 1000, currency: 'NGN', gateway: 'paystack',
+        payment_method: 'saved_card', metadata: {},
+      },
+      reconcileResult: { providerOutcome: 'paid', lifecycle: { status: 'completed' } },
+      rpcResult: { data: { created: false, reason: 'donor_identity_mismatch' }, error: null },
+    });
+
+    const result = await chargeSavedCard(mockSb as never, {
+      ...baseOpts,
+      bookingId: undefined,
+      campaignId: 'campaign-1',
+      customerPhone: '+2348012345678',
+      donorName: 'Ada Donor',
+    });
+
+    expect(result).toMatchObject({
+      outcome: 'indeterminate',
+      paymentId: 'pay-giving-existing',
+      message: 'Donation intent unavailable',
+    });
+    expect(mockSb.rpc).toHaveBeenCalledWith('ensure_campaign_donation_intent_for_payment', expect.objectContaining({
+      p_payment_id: 'pay-giving-existing',
+      p_donor_phone: '+2348012345678',
+    }));
+    expect(mockReconcile).not.toHaveBeenCalled();
+  });
+
   it('terminalization zero rows + reread success → already_charged', async () => {
     const { chargeSavedCard, mockSb } = await setupChargeTest({
-      existingPayment: { id: 'pay-1', status: 'pending', booking_id: 'bk-1', business_id: 'biz-1', amount: 1000, currency: 'NGN', payment_method: 'saved_card', metadata: {} },
+      existingPayment: { id: 'pay-1', status: 'pending', booking_id: 'bk-1', business_id: 'biz-1', amount: 1000, currency: 'NGN', gateway: 'paystack', payment_method: 'saved_card', metadata: {} },
       reconcileResult: { providerOutcome: 'not_paid', lifecycle: null, acknowledgeSuccess: true, providerReason: 'paystack_status: abandoned' },
       termUpdateResult: { data: null, error: null }, // zero rows affected
       rereadResult: { data: { status: 'success' }, error: null },
@@ -755,7 +898,7 @@ describe('chargeSavedCard behavioral state machine', () => {
 
   it('terminalization zero rows + reread failed → previously_declined', async () => {
     const { chargeSavedCard, mockSb } = await setupChargeTest({
-      existingPayment: { id: 'pay-1', status: 'pending', booking_id: 'bk-1', business_id: 'biz-1', amount: 1000, currency: 'NGN', payment_method: 'saved_card', metadata: {} },
+      existingPayment: { id: 'pay-1', status: 'pending', booking_id: 'bk-1', business_id: 'biz-1', amount: 1000, currency: 'NGN', gateway: 'paystack', payment_method: 'saved_card', metadata: {} },
       reconcileResult: { providerOutcome: 'not_paid', lifecycle: null, acknowledgeSuccess: true, providerReason: 'paystack_status: failed' },
       termUpdateResult: { data: null, error: null },
       rereadResult: { data: { status: 'failed' }, error: null },
@@ -767,7 +910,7 @@ describe('chargeSavedCard behavioral state machine', () => {
 
   it('terminalization zero rows + reread pending → indeterminate', async () => {
     const { chargeSavedCard, mockSb } = await setupChargeTest({
-      existingPayment: { id: 'pay-1', status: 'pending', booking_id: 'bk-1', business_id: 'biz-1', amount: 1000, currency: 'NGN', payment_method: 'saved_card', metadata: {} },
+      existingPayment: { id: 'pay-1', status: 'pending', booking_id: 'bk-1', business_id: 'biz-1', amount: 1000, currency: 'NGN', gateway: 'paystack', payment_method: 'saved_card', metadata: {} },
       reconcileResult: { providerOutcome: 'not_paid', lifecycle: null, acknowledgeSuccess: true, providerReason: 'paystack_status: abandoned' },
       termUpdateResult: { data: null, error: null },
       rereadResult: { data: { status: 'pending' }, error: null },
@@ -779,7 +922,7 @@ describe('chargeSavedCard behavioral state machine', () => {
 
   it('terminalization zero rows + reread DB error → indeterminate', async () => {
     const { chargeSavedCard, mockSb } = await setupChargeTest({
-      existingPayment: { id: 'pay-1', status: 'pending', booking_id: 'bk-1', business_id: 'biz-1', amount: 1000, currency: 'NGN', payment_method: 'saved_card', metadata: {} },
+      existingPayment: { id: 'pay-1', status: 'pending', booking_id: 'bk-1', business_id: 'biz-1', amount: 1000, currency: 'NGN', gateway: 'paystack', payment_method: 'saved_card', metadata: {} },
       reconcileResult: { providerOutcome: 'not_paid', lifecycle: null, acknowledgeSuccess: true, providerReason: 'paystack_status: declined' },
       termUpdateResult: { data: null, error: null },
       rereadResult: { data: null, error: { message: 'db down' } },
@@ -791,7 +934,7 @@ describe('chargeSavedCard behavioral state machine', () => {
 
   it('legacy ownership: null top-level business_id, matching metadata.business_id → proceeds', async () => {
     const { chargeSavedCard, mockSb } = await setupChargeTest({
-      existingPayment: { id: 'pay-legacy', status: 'pending', booking_id: 'bk-1', business_id: null, amount: 1000, currency: 'NGN', payment_method: 'saved_card', metadata: { business_id: 'biz-1' } },
+      existingPayment: { id: 'pay-legacy', status: 'pending', booking_id: 'bk-1', business_id: null, amount: 1000, currency: 'NGN', gateway: 'paystack', payment_method: 'saved_card', metadata: { business_id: 'biz-1' } },
       reconcileResult: { providerOutcome: 'not_paid', lifecycle: null, acknowledgeSuccess: true, providerReason: 'paystack_status: abandoned' },
       termUpdateResult: { data: { id: 'pay-legacy' }, error: null }, // row affected
     });

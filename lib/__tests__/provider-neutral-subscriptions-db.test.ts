@@ -2164,8 +2164,7 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
           SELECT 1 FROM pg_stat_activity
           WHERE application_name = 'test99_renewal'
             AND state = 'active'
-            AND wait_event_type = 'Timeout'
-            AND wait_event = 'PgSleep'
+            AND query LIKE 'DO $wait$%'
         );
       `);
       if (ready === 't') {

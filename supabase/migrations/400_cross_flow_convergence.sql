@@ -28,9 +28,9 @@ DECLARE
   v_existing RECORD;
   v_donation_id UUID;
 BEGIN
-  -- Read payment to get campaign_id, business_id, amount, currency
+  -- Lock the canonical payment tuple while creating/verifying its donation intent.
   SELECT id, campaign_id, business_id, amount, currency
-  INTO v_payment FROM payments WHERE id = p_payment_id;
+  INTO v_payment FROM payments WHERE id = p_payment_id FOR UPDATE;
 
   IF NOT FOUND THEN
     RETURN jsonb_build_object('created', false, 'reason', 'payment_not_found');
@@ -58,8 +58,8 @@ BEGIN
     RETURN jsonb_build_object('created', true, 'donation_id', v_donation_id, 'already_existed', false);
   END IF;
 
-  -- Conflict: verify existing row matches payment's campaign/business/amount/currency
-  SELECT id, campaign_id, business_id, amount, currency
+  -- Conflict: verify the full canonical payment + donor identity tuple.
+  SELECT id, campaign_id, business_id, donor_phone, donor_name, amount, currency
   INTO v_existing FROM campaign_donations WHERE payment_id = p_payment_id;
 
   IF NOT FOUND THEN
@@ -68,17 +68,21 @@ BEGIN
   END IF;
 
   -- Fail closed on mismatch
-  IF v_existing.campaign_id != v_payment.campaign_id THEN
+  IF v_existing.campaign_id IS DISTINCT FROM v_payment.campaign_id THEN
     RETURN jsonb_build_object('created', false, 'reason', 'campaign_mismatch',
       'existing_campaign', v_existing.campaign_id, 'payment_campaign', v_payment.campaign_id);
   END IF;
-  IF v_existing.business_id != v_payment.business_id THEN
+  IF v_existing.business_id IS DISTINCT FROM v_payment.business_id THEN
     RETURN jsonb_build_object('created', false, 'reason', 'business_mismatch');
   END IF;
-  IF v_existing.amount != v_payment.amount THEN
+  IF v_existing.donor_phone IS DISTINCT FROM p_donor_phone
+     OR v_existing.donor_name IS DISTINCT FROM p_donor_name THEN
+    RETURN jsonb_build_object('created', false, 'reason', 'donor_identity_mismatch');
+  END IF;
+  IF v_existing.amount IS DISTINCT FROM v_payment.amount THEN
     RETURN jsonb_build_object('created', false, 'reason', 'amount_mismatch');
   END IF;
-  IF v_existing.currency != v_payment.currency THEN
+  IF v_existing.currency IS DISTINCT FROM v_payment.currency THEN
     RETURN jsonb_build_object('created', false, 'reason', 'currency_mismatch');
   END IF;
 
@@ -426,6 +430,7 @@ DECLARE
   v_has_indeterminate BOOLEAN;
   v_has_any_delivery BOOLEAN;
   v_active_internal INTEGER;
+  v_active_external INTEGER;
 BEGIN
   SELECT confirmation_sent_at, confirmation_processing_at,
          confirmation_claim_token, confirmation_terminal_reason,
@@ -522,6 +527,29 @@ BEGIN
     IF v_active_internal > 0 THEN
       RETURN jsonb_build_object('finalized', false, 'reason', 'optional_internal_in_progress',
         'remaining', v_active_internal);
+    END IF;
+
+    -- A claimed external effect that crossed the emission fence may have
+    -- reached its provider. If its lease expired (or is missing), preserve
+    -- that uncertainty as terminal indeterminate; never make it retryable.
+    UPDATE payment_terminal_effects SET status = 'indeterminate',
+      suppression_reason = 'stale_claim_external:side_effect_unknown',
+      completed_at = NOW(), updated_at = NOW()
+    WHERE payment_id = p_payment_id AND category = 'optional'
+      AND execution_class = 'external' AND status = 'claimed'
+      AND emission_started_at IS NOT NULL
+      AND (claim_expires_at IS NULL OR claim_expires_at <= NOW());
+
+    -- An external call that has started and still owns a live lease must
+    -- finish (or become stale) before Stage 3 can become terminal.
+    SELECT COUNT(*) INTO v_active_external FROM payment_terminal_effects
+    WHERE payment_id = p_payment_id AND category = 'optional'
+      AND execution_class = 'external' AND status = 'claimed'
+      AND emission_started_at IS NOT NULL
+      AND claim_expires_at > NOW();
+    IF v_active_external > 0 THEN
+      RETURN jsonb_build_object('finalized', false, 'reason', 'optional_external_in_progress',
+        'remaining', v_active_external);
     END IF;
 
     -- Phase 2: Auto-skip external optional
