@@ -326,8 +326,30 @@ describe('charge-saved.ts entity tuple + amount/currency/payment_method validati
     expect(src).toContain('Amount mismatch');
     // Verify currency mismatch check
     expect(src).toContain('Currency mismatch');
-    // Verify payment_method mismatch check
+    // Verify gateway + payment_method mismatch checks
+    expect(src).toContain('Gateway mismatch');
+    expect(src).toContain("existing.gateway !== 'paystack'");
     expect(src).toContain('Payment method mismatch');
+  });
+});
+
+// ── 14: Paystack collision — existing payment with different amount ──
+
+describe('Paystack campaign recovery authority', () => {
+  it('14a. Existing campaign payment proves donation intent before reconciliation/status convergence', async () => {
+    const fs = await import('fs');
+    const src = fs.readFileSync(
+      new URL('../../lib/payments/charge-saved.ts', import.meta.url).pathname,
+      'utf-8',
+    );
+    const existingPos = src.indexOf('if (existing) {');
+    const intentPos = src.indexOf('Existing campaign donation intent could not be proven', existingPos);
+    const successPos = src.indexOf("existing.status === 'success'", existingPos);
+    const reconcilePos = src.indexOf("const { reconcilePayment }", successPos);
+    expect(existingPos).toBeGreaterThan(-1);
+    expect(intentPos).toBeGreaterThan(existingPos);
+    expect(successPos).toBeGreaterThan(intentPos);
+    expect(reconcilePos).toBeGreaterThan(successPos);
   });
 });
 
@@ -411,6 +433,7 @@ describe('Flow confirmation suppression (B1)', () => {
       'ticketing.flow.ts',
       'reservation.flow.ts',
       'payment.flow.ts',
+      'invoice.flow.ts',
       'crowdfunding.flow.ts',
     ];
 
