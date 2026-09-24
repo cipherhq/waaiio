@@ -50,7 +50,7 @@ BEGIN
     COALESCE(p_reference_code, 'DON-' || UPPER(TO_HEX(EXTRACT(EPOCH FROM NOW())::BIGINT))),
     'pending'
   )
-  ON CONFLICT (payment_id) DO NOTHING
+  ON CONFLICT (payment_id) WHERE payment_id IS NOT NULL DO NOTHING
   RETURNING id INTO v_donation_id;
 
   IF v_donation_id IS NOT NULL THEN
