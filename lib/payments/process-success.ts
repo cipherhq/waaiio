@@ -44,6 +44,22 @@ export async function processSuccessfulPayment(
 
   // 1. Confirm booking (only if still pending — idempotent)
   if (payment.booking_id) {
+    // #385: Persist the first successfully-finalized payment as the booking's
+    // canonical payment identity. The NULL guard is the authority boundary:
+    // later balance payments remain linked through payments.booking_id but can
+    // never overwrite the original successful deposit/full payment.
+    const { error: paymentLinkErr } = await supabase
+      .from('bookings')
+      .update({ payment_id: payment.id })
+      .eq('id', payment.booking_id)
+      .is('payment_id', null);
+
+    if (paymentLinkErr) {
+      criticalErrors.push('booking_payment_link_failed');
+      logger.withContext({ op: 'process-success.booking-payment-link', ...safeLogErrorContext(paymentLinkErr) })
+        .error('[PROCESS-SUCCESS] Booking canonical payment link failed');
+    }
+
     // Confirm booking: pending → confirmed + deposit_status='paid'
     // For already-confirmed/in_progress/completed: ensure deposit_status='paid' only
     const { error: bookingErr } = await supabase
