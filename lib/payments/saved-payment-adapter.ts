@@ -600,7 +600,7 @@ class StripeSavedPaymentAdapterImpl implements SavedPaymentAdapter {
       const { data: intentResult, error: intentErr } = await supabase.rpc('ensure_campaign_donation_intent_for_payment', {
         p_payment_id: payRow.id,
         p_donor_phone: normalizePhone(opts.customerPhone),
-        p_donor_name: null,
+        p_donor_name: opts.donorName || null,
         p_reference_code: null,
       });
       if (intentErr || (!intentResult?.created && !intentResult?.already_existed)) {
