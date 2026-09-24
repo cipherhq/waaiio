@@ -488,23 +488,69 @@ class StripeSavedPaymentAdapterImpl implements SavedPaymentAdapter {
         .eq(entityCol, entityId)
         .eq('gateway', 'stripe')
         .eq('payment_method', 'saved_card')
+        .eq('amount', opts.amount)
+        .eq('currency', opts.currency)
         .in('status', ['pending'])
         .order('created_at', { ascending: false })
         .limit(1)
         .maybeSingle();
 
       if (existingPay) {
+        // #389 R6-A: giving recovery must prove its donation intent before
+        // reconciliation or provider replay can advance the payment.
+        if (opts.campaignId) {
+          const { data: intentResult, error: intentErr } = await supabase.rpc('ensure_campaign_donation_intent_for_payment', {
+            p_payment_id: existingPay.id,
+            p_donor_phone: normalizePhone(opts.customerPhone),
+            p_donor_name: null,
+            p_reference_code: null,
+          });
+          if (intentErr || (!intentResult?.created && !intentResult?.already_existed)) {
+            logger.error('[STRIPE-SAVED-CARD] Existing campaign donation intent could not be proven — blocking recovery', intentErr);
+            return { status: 'indeterminate', paymentId: existingPay.id, message: 'Donation intent unavailable' };
+          }
+        }
+
         if (existingPay.status === 'pending' && existingPay.gateway_reference?.startsWith('pi_')) {
-          // Already has a PI — reconcile it
+          // Provider-confirmed row: converge through canonical reconciliation.
           const { reconcilePayment } = await import('./reconcile');
           const reconcileResult = await reconcilePayment(supabase, existingPay.id, 'saved_card');
-          if (reconcileResult.lifecycle?.status === 'completed') {
+          if (reconcileResult.lifecycle?.status === 'completed'
+            || reconcileResult.lifecycle?.status === 'already_completed'
+            || reconcileResult.lifecycle?.status === 'not_deliverable') {
             return { status: 'already_charged', paymentId: existingPay.id };
           }
           return { status: 'indeterminate', paymentId: existingPay.id, message: 'existing_payment_in_progress' };
         }
-        if (existingPay.provider_init_state === 'dispatched' || existingPay.provider_init_state === 'pre_dispatch') {
-          return { status: 'indeterminate', paymentId: existingPay.id, message: 'duplicate_tap_existing_dispatch' };
+
+        if (existingPay.provider_init_state === 'pre_dispatch') {
+          // Safe resume: pre_dispatch proves Stripe was never called. Move the
+          // same canonical row to dispatched, then use the existing exact-row
+          // recovery path which replays stored pi_params with sc_charge_<paymentId>.
+          const { data: dispatchRows, error: dispatchErr } = await supabase.from('payments')
+            .update({ provider_init_state: 'dispatched' })
+            .eq('id', existingPay.id)
+            .eq('status', 'pending')
+            .eq('provider_init_state', 'pre_dispatch')
+            .select('id');
+          if (dispatchErr || !dispatchRows || dispatchRows.length !== 1) {
+            return { status: 'indeterminate', paymentId: existingPay.id, message: 'pre_dispatch_resume_conflict' };
+          }
+        }
+
+        if (existingPay.provider_init_state === 'pre_dispatch' || existingPay.provider_init_state === 'dispatched') {
+          const { recoverDispatchedSavedCardPayment } = await import('./saved-card-recovery');
+          const recovery = await recoverDispatchedSavedCardPayment(supabase, existingPay.id);
+          if (recovery.outcome === 'succeeded' || recovery.outcome === 'already_resolved') {
+            return { status: 'already_charged', paymentId: existingPay.id };
+          }
+          if (recovery.outcome === 'requires_action' && recovery.authUrl) {
+            return { status: 'requires_provider_auth', authUrl: recovery.authUrl, paymentId: existingPay.id };
+          }
+          if (recovery.outcome === 'declined') {
+            return { status: 'declined', message: recovery.message || 'Card declined', shouldDeactivate: false };
+          }
+          return { status: 'indeterminate', paymentId: existingPay.id, message: recovery.message || recovery.outcome };
         }
       }
     }
