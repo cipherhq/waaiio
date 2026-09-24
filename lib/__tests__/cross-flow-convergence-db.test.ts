@@ -472,4 +472,38 @@ describe.skipIf(!dbUrl)('M400 Cross-flow convergence (real PostgreSQL)', () => {
     expect(result.finalized).toBe(false);
     expect(result.reason).toBe('optional_internal_in_progress');
   });
+
+  it('10. finalize_payment_confirmation marks claimed internal effect with NULL lease indeterminate', () => {
+    const claimToken = 'b0000000-0000-0000-0000-000000000004';
+    psql(`
+      DELETE FROM payment_terminal_effects WHERE payment_id = '${PAY_ID_3}';
+      DELETE FROM payment_terminal_manifests WHERE payment_id = '${PAY_ID_3}';
+      DELETE FROM payments WHERE id = '${PAY_ID_3}';
+
+      INSERT INTO payments (id, business_id, amount, currency, status, gateway, gateway_reference,
+        confirmation_claim_token, confirmation_sent_at, payment_authority_version)
+      VALUES ('${PAY_ID_3}', '${BIZ_ID}', 100, 'NGN', 'success', 'stripe', 'ref_m400_fin_' || gen_random_uuid()::text,
+        '${claimToken}', NULL, 1);
+
+      INSERT INTO payment_terminal_manifests (payment_id, initialization_state, expected_effect_count, expected_semantic_hash)
+      VALUES ('${PAY_ID_3}', 'initialized', 1,
+        encode(digest('unleased_effect|optional|internal|none|1', 'sha256'), 'hex'));
+
+      INSERT INTO payment_terminal_effects (payment_id, effect_key, category, execution_class, provider_channel, contract_version, status, claim_expires_at)
+      VALUES ('${PAY_ID_3}', 'unleased_effect', 'optional', 'internal', NULL, 1, 'claimed', NULL);
+    `);
+
+    const result = psqlJson(`
+      SELECT finalize_payment_confirmation('${PAY_ID_3}'::uuid, '${claimToken}'::uuid);
+    `) as Record<string, unknown>;
+
+    expect(result).not.toBeNull();
+    expect(result.finalized).toBe(true);
+
+    const status = psql(`
+      SELECT status FROM payment_terminal_effects
+      WHERE payment_id = '${PAY_ID_3}' AND effect_key = 'unleased_effect'
+    `);
+    expect(status).toBe('indeterminate');
+  });
 });
