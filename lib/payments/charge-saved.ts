@@ -208,6 +208,8 @@ export async function chargeSavedCard(
     confirmationOrigin?: 'whatsapp' | 'web';
     /** #389: Customer phone for donation intent creation */
     customerPhone?: string;
+    /** #389: Donor display name; null/empty means anonymous. */
+    donorName?: string | null;
   },
 ): Promise<SavedCardOutcome> {
   // BYO saved-card not supported — fail closed without durable provider identity
@@ -327,6 +329,7 @@ async function chargePaystackAuthorization(
       const { data: intentResult, error: intentErr } = await supabase.rpc('ensure_campaign_donation_intent_for_payment', {
         p_payment_id: existing.id,
         p_donor_phone: normalizePhone(opts.customerPhone),
+        p_donor_name: opts.donorName || null,
       });
       if (intentErr || (!intentResult?.created && !intentResult?.already_existed)) {
         logger.error('[PAYSTACK-SAVED-CARD] Existing campaign donation intent could not be proven — blocking recovery', intentErr);
@@ -552,6 +555,7 @@ async function chargePaystackAuthorization(
     const { data: intentResult, error: intentErr } = await supabase.rpc('ensure_campaign_donation_intent_for_payment', {
       p_payment_id: paymentId,
       p_donor_phone: normalizePhone(opts.customerPhone),
+      p_donor_name: opts.donorName || null,
     });
     if (intentErr || (!intentResult?.created && !intentResult?.already_existed)) {
       logger.error('[PAYSTACK-SAVED-CARD] Donation intent failed — blocking dispatch', intentErr);
