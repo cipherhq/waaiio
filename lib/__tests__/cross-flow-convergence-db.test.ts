@@ -66,7 +66,9 @@ describe.skipIf(!dbUrl)('M400 Cross-flow convergence (real PostgreSQL)', () => {
       -- Stub tables
       CREATE TABLE IF NOT EXISTS businesses (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        owner_id UUID, name TEXT, business_code TEXT
+        owner_id UUID, name TEXT, business_code TEXT, slug TEXT,
+        address TEXT, city TEXT, neighborhood TEXT, phone TEXT,
+        status TEXT, payout_mode TEXT, country_code TEXT, verification_level TEXT
       );
       CREATE TABLE IF NOT EXISTS payments (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -81,7 +83,7 @@ describe.skipIf(!dbUrl)('M400 Cross-flow convergence (real PostgreSQL)', () => {
       );
       CREATE TABLE IF NOT EXISTS orders (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        business_id UUID, status TEXT DEFAULT 'pending', payment_id UUID,
+        business_id UUID, user_id UUID, status TEXT DEFAULT 'pending', payment_id UUID,
         reference_code TEXT, updated_at TIMESTAMPTZ DEFAULT NOW()
       );
       CREATE TABLE IF NOT EXISTS order_items (
@@ -108,7 +110,8 @@ describe.skipIf(!dbUrl)('M400 Cross-flow convergence (real PostgreSQL)', () => {
       );
       CREATE TABLE IF NOT EXISTS reservations (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        business_id UUID, status TEXT DEFAULT 'pending',
+        business_id UUID, user_id UUID, check_in DATE, check_out DATE,
+        status TEXT DEFAULT 'pending',
         deposit_status TEXT DEFAULT 'pending', payment_id UUID,
         confirmed_at TIMESTAMPTZ, updated_at TIMESTAMPTZ DEFAULT NOW()
       );
