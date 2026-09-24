@@ -351,20 +351,20 @@ describe('recoverDispatchedSavedCardPayment', () => {
     const supabase = makeSupabase(confirmed);
     const result = await recoverDispatchedSavedCardPayment(supabase, 'pay-123');
 
-    expect(result.outcome).toBe('already_resolved');
+    expect(result.outcome).toBe('succeeded');
     // Should have reconciled
     expect(mockReconcilePayment).toHaveBeenCalledWith(supabase, 'pay-123', 'saved_card');
   });
 
   // R1-B5: already-success → completed
-  it('payment already success → already_resolved (completed)', async () => {
+  it('payment already success → reconciles to verify lifecycle completion', async () => {
     const success = { ...VALID_PAYMENT, status: 'success', provider_init_state: 'provider_confirmed' };
     const supabase = makeSupabase(success);
     const result = await recoverDispatchedSavedCardPayment(supabase, 'pay-123');
 
-    expect(result.outcome).toBe('already_resolved');
-    // No reconciliation needed for already-success
-    expect(mockReconcilePayment).not.toHaveBeenCalled();
+    // R2-B1: Must reconcile — status='success' is Stage 1 only
+    expect(mockReconcilePayment).toHaveBeenCalledWith(supabase, 'pay-123', 'saved_card');
+    expect(result.outcome).toBe('succeeded');
   });
 
   // R1-B5: already-failed → declined
@@ -383,7 +383,7 @@ describe('recoverDispatchedSavedCardPayment', () => {
     const result = await recoverDispatchedSavedCardPayment(supabase, 'pay-123');
 
     expect(mockReconcilePayment).toHaveBeenCalledWith(supabase, 'pay-123', 'saved_card');
-    expect(result.outcome).toBe('already_resolved');
+    expect(result.outcome).toBe('succeeded');
     expect(globalThis.fetch).toBe(originalFetch);
   });
 
@@ -415,7 +415,7 @@ describe('recoverDispatchedSavedCardPayment', () => {
     const supabase = makeSupabase(paystackPayment);
     const result = await recoverDispatchedSavedCardPayment(supabase, 'pay-123');
 
-    expect(result.outcome).toBe('already_resolved');
+    expect(result.outcome).toBe('succeeded');
     expect(mockReconcilePayment).toHaveBeenCalledWith(supabase, 'pay-123', 'saved_card');
   });
 
@@ -498,7 +498,7 @@ describe('recoverDispatchedSavedCardPayment', () => {
     );
     const result = await recoverDispatchedSavedCardPayment(supabase, 'pay-123');
 
-    expect(result.outcome).toBe('already_resolved');
+    expect(result.outcome).toBe('succeeded');
     expect(result.paymentIntentId).toBe('pi_cas_lost');
   });
 
@@ -535,7 +535,7 @@ describe('recoverDispatchedSavedCardPayment', () => {
     const result = await recoverDispatchedSavedCardPayment(supabase, 'pay-123');
 
     // The provider response lost the CAS; canonical success wins.
-    expect(result.outcome).toBe('already_resolved');
+    expect(result.outcome).toBe('succeeded');
   });
 });
 
@@ -575,12 +575,13 @@ describe('recoverSavedCardPaymentForFlow', () => {
     expect('paymentId' in result && result.paymentId).toBe('pay-123');
   });
 
-  it('already_resolved → returns already_completed', async () => {
+  it('already success + reconciliation completed → returns completed', async () => {
     const success = { ...VALID_PAYMENT, status: 'success', provider_init_state: 'provider_confirmed' };
     const supabase = makeSupabase(success);
     const result = await recoverSavedCardPaymentForFlow(supabase, 'pay-123');
 
-    expect(result.type).toBe('already_completed');
+    // R2-B1: succeeds only when lifecycle is terminal-safe
+    expect(result.type).toBe('completed');
   });
 
   it('declined → returns terminal_decline', async () => {
@@ -700,5 +701,93 @@ describe('All flows wired with centralized helper', () => {
     const types = [completed, alreadyCompleted, requiresAuth, terminalDecline, providerConfirmed, indeterminate, quarantined, notApplicable, error];
     const typeNames = types.map(t => t.type);
     expect(new Set(typeNames).size).toBe(9);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// R2-B1: Lifecycle-aware recovery (status=success ≠ completed)
+// ═══════════════════════════════════════════════════════════════════
+
+describe('R2-B1: Lifecycle-aware reconciliation after PI succeeded', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('PI succeeded + lifecycle completed → outcome succeeded', async () => {
+    mockReconcilePayment.mockResolvedValue({
+      providerOutcome: 'verified',
+      lifecycle: { status: 'completed', retryable: false, stages: { providerPaid: true, businessFinalized: true, customerConfirmed: true } },
+      acknowledgeSuccess: true,
+    });
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ id: 'pi_test', status: 'succeeded' }) });
+    const sb = makeSupabase(VALID_PAYMENT);
+    const result = await recoverDispatchedSavedCardPayment(sb, 'pay-123');
+    expect(result.outcome).toBe('succeeded');
+    expect(mockReconcilePayment).toHaveBeenCalledWith(sb, 'pay-123', 'saved_card');
+  });
+
+  it('PI succeeded + lifecycle processing → outcome provider_confirmed, NOT succeeded', async () => {
+    mockReconcilePayment.mockResolvedValue({
+      providerOutcome: 'verified',
+      lifecycle: { status: 'processing', retryable: true, stages: { providerPaid: true, businessFinalized: false, customerConfirmed: false } },
+      acknowledgeSuccess: true,
+    });
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ id: 'pi_test', status: 'succeeded' }) });
+    const sb = makeSupabase(VALID_PAYMENT);
+    const result = await recoverDispatchedSavedCardPayment(sb, 'pay-123');
+    expect(result.outcome).toBe('provider_confirmed');
+    expect(result.outcome).not.toBe('succeeded');
+  });
+
+  it('PI succeeded + lifecycle retryable_failed → outcome provider_confirmed, NOT succeeded', async () => {
+    mockReconcilePayment.mockResolvedValue({
+      providerOutcome: 'verified',
+      lifecycle: { status: 'retryable_failed', retryable: true, stages: { providerPaid: true, businessFinalized: false, customerConfirmed: false } },
+      acknowledgeSuccess: true,
+    });
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ id: 'pi_test', status: 'succeeded' }) });
+    const sb = makeSupabase(VALID_PAYMENT);
+    const result = await recoverDispatchedSavedCardPayment(sb, 'pay-123');
+    expect(result.outcome).toBe('provider_confirmed');
+    expect(result.outcome).not.toBe('succeeded');
+  });
+
+  it('existing status=success + incomplete finalization → reconciliation runs, not auto-completed', async () => {
+    const successPayment = { ...VALID_PAYMENT, status: 'success', provider_init_state: 'provider_confirmed', gateway_reference: 'pi_already' };
+    const sb = makeSupabase(successPayment);
+    mockReconcilePayment.mockResolvedValue({
+      providerOutcome: 'verified',
+      lifecycle: { status: 'processing', retryable: true },
+      acknowledgeSuccess: true,
+    });
+    const result = await recoverDispatchedSavedCardPayment(sb, 'pay-123');
+    expect(mockReconcilePayment).toHaveBeenCalledWith(sb, 'pay-123', 'saved_card');
+    expect(result.outcome).not.toBe('succeeded');
+  });
+
+  it('CAS-loss + status=success + processing → no false completion', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ id: 'pi_cas_lost', status: 'succeeded' }) });
+    // CAS fails (0 rows updated), re-read sees success
+    const sb = makeSupabaseWithReRead(
+      VALID_PAYMENT, 0,
+      { ...VALID_PAYMENT, status: 'success', provider_init_state: 'provider_confirmed', gateway_reference: 'pi_cas_lost' },
+    );
+    mockReconcilePayment.mockResolvedValue({
+      providerOutcome: 'verified',
+      lifecycle: { status: 'processing', retryable: true },
+      acknowledgeSuccess: true,
+    });
+    const result = await recoverDispatchedSavedCardPayment(sb, 'pay-123');
+    expect(result.outcome).not.toBe('succeeded');
+  });
+
+  it('already-success + lifecycle completed → safe completed', async () => {
+    const successPayment = { ...VALID_PAYMENT, status: 'success', provider_init_state: 'provider_confirmed', gateway_reference: 'pi_done' };
+    const sb = makeSupabase(successPayment);
+    mockReconcilePayment.mockResolvedValue({
+      providerOutcome: 'verified',
+      lifecycle: { status: 'already_completed', retryable: false },
+      acknowledgeSuccess: true,
+    });
+    const result = await recoverDispatchedSavedCardPayment(sb, 'pay-123');
+    expect(result.outcome).toBe('succeeded');
   });
 });

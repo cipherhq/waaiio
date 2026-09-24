@@ -62,12 +62,10 @@ export async function recoverDispatchedSavedCardPayment(
   // R1-B5: If no longer dispatched/pending, another authority already won — converge
   if (payment.provider_init_state !== 'dispatched' || payment.status !== 'pending') {
     logger.info(`${logPrefix} Payment ${paymentId} already resolved (status=${payment.status}, init=${payment.provider_init_state}) — converging`);
-    if (payment.status === 'success') {
-      return { outcome: 'already_resolved', paymentIntentId: payment.gateway_reference || undefined };
-    }
-    if (payment.provider_init_state === 'provider_confirmed' && payment.status === 'pending') {
-      // Another authority confirmed but reconciliation hasn't run
-      return reconcileProviderConfirmedPayment(supabase, paymentId, payment.gateway_reference || undefined);
+    if (payment.status === 'success' || (payment.provider_init_state === 'provider_confirmed' && payment.status === 'pending')) {
+      // R2-B1: status='success' only proves Stage 1 (provider paid).
+      // Must reconcile to determine if Stage 2/3 completed.
+      return reconcileAndMapLifecycle(supabase, paymentId, payment.gateway_reference || undefined);
     }
     if (payment.status === 'failed') {
       return { outcome: 'declined', message: 'Payment was declined', paymentIntentId: payment.gateway_reference || undefined };
@@ -80,7 +78,7 @@ export async function recoverDispatchedSavedCardPayment(
     // Other saved-card providers do not use Stripe's replay protocol, but the
     // known payment ID is still authoritative. Reconcile this exact row rather
     // than falling back to a logical gateway reference.
-    return reconcileProviderConfirmedPayment(supabase, paymentId, payment.gateway_reference || undefined);
+    return reconcileAndMapLifecycle(supabase, paymentId, payment.gateway_reference || undefined);
   }
 
   const stripeKey = process.env.STRIPE_SECRET_KEY;
@@ -156,14 +154,13 @@ export async function recoverDispatchedSavedCardPayment(
             provider_init_state: 'provider_confirmed',
             metadata: { ...meta, stripe_pi_id: pi.id },
           });
-          if (casOk) {
-            const { reconcilePayment } = await import('@/lib/payments/reconcile');
-            await reconcilePayment(supabase, paymentId, 'saved_card');
-          } else {
+          if (!casOk) {
             // R1-B2: CAS lost — another authority won. Re-read and converge.
-            return convergeAfterCASLoss(supabase, paymentId);
+            return convergeWithReconciliation(supabase, paymentId, pi.id);
           }
-          return { outcome: 'succeeded', paymentIntentId: pi.id };
+          // R2-B1: CAS won. Reconcile and inspect lifecycle — status='success'
+          // only proves Stage 1 (provider paid), NOT Stages 2/3.
+          return reconcileAndMapLifecycle(supabase, paymentId, pi.id);
         }
 
         if (pi.status === 'requires_action') {
@@ -250,12 +247,9 @@ async function convergeAfterCASLoss(
 
   if (error || !current) return { outcome: 'indeterminate', message: 'CAS lost and canonical state could not be read' };
 
-  if (current.status === 'success') {
-    return { outcome: 'already_resolved', paymentIntentId: current.gateway_reference || undefined };
-  }
-  if (current.provider_init_state === 'provider_confirmed' && current.status === 'pending') {
-    // Another authority confirmed but reconciliation hasn't completed
-    return reconcileProviderConfirmedPayment(supabase, paymentId, current.gateway_reference || undefined);
+  if (current.status === 'success' || (current.provider_init_state === 'provider_confirmed' && current.status === 'pending')) {
+    // R2-B1: Re-enter canonical reconciliation — status='success' is Stage 1 only
+    return reconcileAndMapLifecycle(supabase, paymentId, current.gateway_reference || undefined);
   }
   if (current.status === 'failed') {
     return { outcome: 'declined', paymentIntentId: current.gateway_reference || undefined, message: 'Payment was declined' };
@@ -263,27 +257,60 @@ async function convergeAfterCASLoss(
   return { outcome: 'indeterminate', paymentIntentId: current.gateway_reference || undefined, message: 'CAS lost to a non-terminal canonical state' };
 }
 
-async function reconcileProviderConfirmedPayment(
+/**
+ * R2-B1: Reconcile payment through canonical Payment Authority and map the
+ * actual lifecycle result. status='success' only proves Stage 1 (provider paid).
+ * Only terminal-safe lifecycle statuses produce 'succeeded'/'already_resolved'.
+ */
+async function reconcileAndMapLifecycle(
   supabase: SupabaseClient,
   paymentId: string,
   paymentIntentId?: string,
 ): Promise<SavedCardRecoveryResult> {
-  const { reconcilePayment } = await import('@/lib/payments/reconcile');
-  const result = await reconcilePayment(supabase, paymentId, 'saved_card');
-  const status = result.lifecycle?.status;
-  if (status === 'completed' || status === 'already_completed' || status === 'not_deliverable') {
-    return { outcome: 'already_resolved', paymentIntentId };
-  }
+  try {
+    const { reconcilePayment } = await import('@/lib/payments/reconcile');
+    const result = await reconcilePayment(supabase, paymentId, 'saved_card');
+    const lifecycleStatus = result.lifecycle?.status;
 
-  const { data: current } = await supabase.from('payments')
-    .select('status, provider_init_state, gateway_reference')
-    .eq('id', paymentId).single();
-  if (current?.status === 'success') return { outcome: 'already_resolved', paymentIntentId: current.gateway_reference || paymentIntentId };
-  if (current?.status === 'failed') return { outcome: 'declined', paymentIntentId: current.gateway_reference || paymentIntentId, message: 'Payment was declined' };
-  if (current?.provider_init_state === 'provider_confirmed') {
-    return { outcome: 'provider_confirmed', paymentIntentId: current.gateway_reference || paymentIntentId, message: 'Provider confirmed; canonical finalization is still pending' };
+    // Terminal-safe: all stages completed
+    if (lifecycleStatus === 'completed' || lifecycleStatus === 'already_completed' || lifecycleStatus === 'not_deliverable') {
+      return { outcome: 'succeeded', paymentIntentId };
+    }
+    // Still processing: Stage 2/3 not yet done — do NOT tell customer "Payment Confirmed"
+    if (lifecycleStatus === 'processing') {
+      return { outcome: 'provider_confirmed', paymentIntentId, message: 'Payment received; finalization is still processing' };
+    }
+    // Retryable failure in finalization — keep pending
+    if (lifecycleStatus === 'retryable_failed') {
+      return { outcome: 'provider_confirmed', paymentIntentId, message: 'Finalization encountered a retryable error; cron will retry' };
+    }
+    // Rejected by canonical authority
+    if (lifecycleStatus === 'rejected') {
+      return { outcome: 'declined', paymentIntentId, message: result.lifecycle?.reason || 'Rejected by payment authority' };
+    }
+    // Provider not verified or no lifecycle
+    if (result.providerOutcome === 'not_paid') {
+      return { outcome: 'indeterminate', paymentIntentId, message: 'Provider did not confirm payment' };
+    }
+    // Fallback: re-read canonical state
+    const { data: current } = await supabase.from('payments')
+      .select('status, provider_init_state, gateway_reference')
+      .eq('id', paymentId).single();
+    if (current?.status === 'failed') return { outcome: 'declined', paymentIntentId: current.gateway_reference || paymentIntentId, message: 'Payment was declined' };
+    return { outcome: 'provider_confirmed', paymentIntentId: current?.gateway_reference || paymentIntentId, message: 'Provider confirmed; canonical finalization pending' };
+  } catch (err) {
+    logger.error('[SAVED-CARD-RECOVERY] reconcileAndMapLifecycle threw', { paymentId, err });
+    return { outcome: 'indeterminate', paymentIntentId, message: 'Reconciliation failed' };
   }
-  return { outcome: 'indeterminate', paymentIntentId: current?.gateway_reference || paymentIntentId, message: 'Canonical payment remains pending' };
+}
+
+/** R2-B1: CAS lost — converge via reconciliation, don't infer from status alone */
+async function convergeWithReconciliation(
+  supabase: SupabaseClient,
+  paymentId: string,
+  paymentIntentId?: string,
+): Promise<SavedCardRecoveryResult> {
+  return reconcileAndMapLifecycle(supabase, paymentId, paymentIntentId);
 }
 
 async function convergeRequiresActionCASLoss(
