@@ -183,6 +183,9 @@ function createTestSupabase() {
 }
 
 function flowCtx(supabase: any, sessionData: Record<string, unknown> = {}): FlowContext {
+  // Keep the caller's object identity because flow execution mutates session_data in place.
+  if (!sessionData._inbound_channel_id) sessionData._inbound_channel_id = 'channel-test';
+
   // If supabase is not a real mock (e.g. {} as any), create one so DB queries don't throw
   const sb = (supabase && typeof supabase.from === 'function') ? supabase : createTestSupabase().supabase;
   return {
