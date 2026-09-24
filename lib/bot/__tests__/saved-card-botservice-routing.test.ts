@@ -64,6 +64,22 @@ vi.mock('@/lib/bot/handlers/saved-cards', () => ({
   findLatestSavedCardPaymentIdForPhone: vi.fn().mockResolvedValue(null),
 }));
 
+// #375/R4: stale-button saved-card recovery must never fall through when
+// canonical payment-ID authority returns an authority-rejected state.
+const mockRecoverSavedCardPaymentForFlow = vi.fn().mockResolvedValue({ type: 'not_applicable' });
+vi.mock('@/lib/payments/bot-recovery', () => ({
+  recoverSavedCardPaymentForFlow: (...args: unknown[]) => mockRecoverSavedCardPaymentForFlow(...args),
+}));
+
+const mockRecoverByOrderReference = vi.fn().mockResolvedValue({ type: 'error', message: 'ordinary order recovery should not run' });
+const mockRecoverByPaymentReference = vi.fn().mockResolvedValue({ type: 'error', message: 'ordinary payment recovery should not run' });
+const mockRecoverGeneric = vi.fn().mockResolvedValue({ type: 'error', message: 'ordinary generic recovery should not run' });
+vi.mock('@/lib/payments/stale-payment-recovery', () => ({
+  recoverByOrderReference: (...args: unknown[]) => mockRecoverByOrderReference(...args),
+  recoverByPaymentReference: (...args: unknown[]) => mockRecoverByPaymentReference(...args),
+  recoverGeneric: (...args: unknown[]) => mockRecoverGeneric(...args),
+}));
+
 const { BotService } = await import('@/lib/bot/bot.service');
 const { MetaCloudSender } = await import('@/lib/channels/message-sender');
 
@@ -224,5 +240,68 @@ describe('E1+E2: BotService saved-card routing', () => {
     // Replacement PIN handler wins: cloud.sendText called (PIN response), not greeting/buttons
     expect(cloud.sendText).toHaveBeenCalled();
     expect(cloud.sendButtons).not.toHaveBeenCalled();
+  });
+
+  // ═══════════════════════════════════════════════════════════════
+  // R4: stale-button authority-rejected recovery remains payment-ID fenced
+  // ═══════════════════════════════════════════════════════════════
+  it('R4: stale I-paid + authority_rejected returns fail-closed and never invokes ordinary stale recovery', async () => {
+    mockSessionResult = {
+      id: 'sess-r4', user_id: 'u1', business_id: BIZ_ID, is_active: true, version: 1,
+      whatsapp_number: PHONE, current_step: 'select_service',
+      session_data: { _saved_card_payment_id: 'pay-r4', _payment_retry_blocked: true, capabilities: [] },
+      expires_at: new Date(Date.now() + 3600000).toISOString(),
+    };
+    mockRecoverSavedCardPaymentForFlow.mockResolvedValueOnce({
+      type: 'authority_rejected',
+      paymentId: 'pay-r4',
+      message: 'provider paid, authority rejected',
+    });
+
+    const supabase = createSupabase();
+    const cloud = createMockCloud();
+    const sender = new MetaCloudSender(cloud as any, 'ch-001', BIZ_ID);
+    const bot = new BotService(supabase as any, sender, createStandaloneService(), createMockIntelligence() as any);
+
+    await bot.handleMessage(PHONE, 'i_paid', { type: 'button' });
+
+    expect(mockRecoverSavedCardPaymentForFlow).toHaveBeenCalledWith(supabase, 'pay-r4');
+    expect(mockRecoverByOrderReference).not.toHaveBeenCalled();
+    expect(mockRecoverByPaymentReference).not.toHaveBeenCalled();
+    expect(mockRecoverGeneric).not.toHaveBeenCalled();
+
+    const sent = JSON.stringify(cloud.sendText.mock.calls);
+    expect(sent).toContain('do NOT pay again');
+    expect(sent).not.toContain('different payment method');
+    expect(sent).not.toContain('start a new payment');
+  });
+
+  it('R4: stale I-paid + genuine terminal_decline still gives safe new-card retry and does not use ordinary recovery', async () => {
+    mockSessionResult = {
+      id: 'sess-r4-decline', user_id: 'u1', business_id: BIZ_ID, is_active: true, version: 1,
+      whatsapp_number: PHONE, current_step: 'select_service',
+      session_data: { _saved_card_payment_id: 'pay-r4-decline', _payment_retry_blocked: true, capabilities: [] },
+      expires_at: new Date(Date.now() + 3600000).toISOString(),
+    };
+    mockRecoverSavedCardPaymentForFlow.mockResolvedValueOnce({
+      type: 'terminal_decline',
+      paymentId: 'pay-r4-decline',
+      message: 'card declined',
+    });
+
+    const supabase = createSupabase();
+    const cloud = createMockCloud();
+    const sender = new MetaCloudSender(cloud as any, 'ch-001', BIZ_ID);
+    const bot = new BotService(supabase as any, sender, createStandaloneService(), createMockIntelligence() as any);
+
+    await bot.handleMessage(PHONE, 'i_paid', { type: 'button' });
+
+    expect(mockRecoverByOrderReference).not.toHaveBeenCalled();
+    expect(mockRecoverByPaymentReference).not.toHaveBeenCalled();
+    expect(mockRecoverGeneric).not.toHaveBeenCalled();
+
+    const sent = JSON.stringify(cloud.sendText.mock.calls);
+    expect(sent).toContain('different payment method');
+    expect(sent).not.toContain('do NOT pay again');
   });
 });
