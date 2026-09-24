@@ -110,7 +110,7 @@ DECLARE
   v_out_of_stock TEXT[] := '{}';
 BEGIN
   -- 1. Lock order row (serializes all stock operations for this order)
-  SELECT id, status
+  SELECT id, status, payment_id
   INTO v_order FROM orders WHERE id = p_order_id FOR UPDATE;
 
   IF NOT FOUND THEN
@@ -120,6 +120,15 @@ BEGIN
   -- 2. Reject cancelled orders (cleanup already restored stock)
   IF v_order.status = 'cancelled' THEN
     RETURN jsonb_build_object('applied', false, 'reason', 'order_cancelled');
+  END IF;
+
+  -- M400: fail closed on an established canonical payment BEFORE any stock,
+  -- marker, transfer, or order-state mutation. Returning JSON does not roll
+  -- back prior statements, so this check must be early.
+  IF p_payment_id IS NOT NULL
+     AND v_order.payment_id IS NOT NULL
+     AND v_order.payment_id != p_payment_id THEN
+    RETURN jsonb_build_object('applied', false, 'reason', 'payment_link_conflict');
   END IF;
 
   -- 3. Validate payment->order relationship AND payment success when payment_id is supplied.
