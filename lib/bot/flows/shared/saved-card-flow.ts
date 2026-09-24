@@ -101,6 +101,7 @@ export async function handleSavedCardInput(
     reference: string;
     entityId: { bookingId?: string; orderId?: string; reservationId?: string; invoiceId?: string; campaignId?: string };
     transactionCategory: string;
+    donorName?: string | null;
   },
 ): Promise<ValidationResult | null> {
   const d = ctx.session.session_data;
@@ -210,6 +211,7 @@ async function chargeSavedCard(
     reference: string;
     entityId: { bookingId?: string; orderId?: string; reservationId?: string; invoiceId?: string; campaignId?: string };
     transactionCategory: string;
+    donorName?: string | null;
     clearPin?: boolean;
   },
 ): Promise<ValidationResult> {
@@ -252,6 +254,7 @@ async function chargeSavedCard(
     businessId: ctx.business!.id,
     ...opts.entityId,
     transactionCategory: opts.transactionCategory,
+    donorName: opts.donorName,
     inboundChannelId,
     confirmationOrigin: 'whatsapp',
   });
