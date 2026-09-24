@@ -7,6 +7,7 @@
  * This replaces direct verifyPayment calls in bot "I've Paid" paths.
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
+import type { ValidationResult } from '@/lib/bot/flows/types';
 import { logger } from '@/lib/logger';
 import { reconcilePayment } from './reconcile';
 
@@ -24,10 +25,140 @@ export interface RecoveryResult {
   paymentId?: string;
 }
 
+// ── R1-B1: Centralized flow-level saved-card recovery ──
+
+/**
+ * Rich result type for flow-level saved-card recovery.
+ * Preserves all distinctions so flows can provide accurate UX.
+ */
+export type FlowRecoveryResult =
+  | { type: 'completed'; paymentId: string }
+  | { type: 'already_completed'; paymentId: string }
+  | { type: 'requires_auth'; paymentId: string; authUrl: string }
+  | { type: 'terminal_decline'; paymentId: string; message: string }
+  | { type: 'provider_confirmed'; paymentId: string }
+  | { type: 'indeterminate'; paymentId: string }
+  | { type: 'quarantined'; paymentId: string }
+  | { type: 'not_applicable' }  // Not a saved-card dispatched payment — fall back to ordinary
+  | { type: 'error'; message: string };
+
+/**
+ * Centralized saved-card recovery for ALL bot flows.
+ * Routes through the canonical saved-card recovery helper (payment-ID authority).
+ */
+export async function recoverSavedCardPaymentForFlow(
+  supabase: SupabaseClient,
+  savedCardPaymentId: string,
+): Promise<FlowRecoveryResult> {
+  const { recoverDispatchedSavedCardPayment } = await import('./saved-card-recovery');
+  const scResult = await recoverDispatchedSavedCardPayment(supabase, savedCardPaymentId);
+
+  switch (scResult.outcome) {
+    case 'succeeded':
+      return { type: 'completed', paymentId: savedCardPaymentId };
+    case 'already_resolved':
+      return { type: 'already_completed', paymentId: savedCardPaymentId };
+    case 'requires_action':
+      if (scResult.authUrl) {
+        return { type: 'requires_auth', paymentId: savedCardPaymentId, authUrl: scResult.authUrl };
+      }
+      return { type: 'indeterminate', paymentId: savedCardPaymentId };
+    case 'declined':
+      return { type: 'terminal_decline', paymentId: savedCardPaymentId, message: scResult.message || 'Payment declined' };
+    case 'provider_confirmed':
+      return { type: 'provider_confirmed', paymentId: savedCardPaymentId };
+    case 'quarantined':
+      return { type: 'quarantined', paymentId: savedCardPaymentId };
+    case 'indeterminate':
+      return { type: 'indeterminate', paymentId: savedCardPaymentId };
+    case 'error':
+      // "Not a saved-card dispatched payment" → not_applicable so flows fall through
+      if (scResult.message === 'Not a saved-card dispatched payment') {
+        return { type: 'not_applicable' };
+      }
+      return { type: 'error', message: scResult.message || 'Unknown error' };
+  }
+}
+
+/**
+ * Map a FlowRecoveryResult to a ValidationResult for flow retry/i_paid handlers.
+ * Returns null when the flow should fall through to ordinary recovery (not_applicable).
+ */
+export function mapSavedCardRecoveryToValidation(
+  result: FlowRecoveryResult,
+  sessionData: Record<string, unknown>,
+): ValidationResult | null {
+  switch (result.type) {
+    case 'completed':
+    case 'already_completed':
+      return { valid: true, data: { _action: 'payment_confirmed' } };
+
+    case 'requires_auth':
+      // Payment requires 3DS — block retry, keep session active
+      sessionData._payment_retry_blocked = true;
+      return {
+        valid: false,
+        persistSessionDataOnFailure: true,
+        errorMessage: `🔒 Your bank requires verification.\n\nPlease complete here 👇\n${result.authUrl}\n\nThen return and tap *I've Paid* again.`,
+      };
+
+    case 'terminal_decline':
+      // Card was declined — allow retry with new payment method
+      return {
+        valid: true,
+        data: {
+          _retry_payment: true,
+          _payment_retry_blocked: false,
+          _saved_card_indeterminate: false,
+          _saved_card_requires_auth: false,
+          _saved_card_payment_id: null,
+          _skip_saved_card: true,
+        },
+      };
+
+    case 'indeterminate':
+      // Uncertain state — block fresh checkout, let customer retry verification.
+      sessionData._payment_retry_blocked = true;
+      return {
+        valid: false,
+        persistSessionDataOnFailure: true,
+        errorMessage: "We're still verifying your previous payment. Tap *I've Paid* to check again.",
+      };
+
+    case 'provider_confirmed':
+      sessionData._payment_retry_blocked = true;
+      return {
+        valid: false,
+        persistSessionDataOnFailure: true,
+        errorMessage: "Your payment is confirmed by the provider and is still being finalized. Tap *I've Paid* again shortly.",
+      };
+
+    case 'quarantined':
+      return {
+        valid: false,
+        errorMessage: 'This payment attempt has expired and cannot be replayed safely. Type *Hi* to restart payment.',
+      };
+
+    case 'not_applicable':
+      // Not a saved-card payment — fall through to ordinary recovery
+      return null;
+
+    case 'error':
+      sessionData._payment_retry_blocked = true;
+      return {
+        valid: false,
+        persistSessionDataOnFailure: true,
+        errorMessage: 'Something went wrong. Please try again.',
+      };
+  }
+}
+
 /**
  * #375: Verify and reconcile a saved-card dispatched payment by payment ID.
  * Uses the canonical saved-card recovery helper (payment-ID authority)
  * instead of gateway_reference lookup.
+ *
+ * @deprecated Use recoverSavedCardPaymentForFlow + mapSavedCardRecoveryToValidation instead
  */
 export async function verifyAndReconcileSavedCardPayment(
   supabase: SupabaseClient,
@@ -38,8 +169,11 @@ export async function verifyAndReconcileSavedCardPayment(
 
   switch (scResult.outcome) {
     case 'succeeded':
+    case 'already_resolved':
       return { outcome: 'completed', paymentId };
     case 'requires_action':
+      return { outcome: 'processing', paymentId };
+    case 'provider_confirmed':
       return { outcome: 'processing', paymentId };
     case 'declined':
     case 'quarantined':

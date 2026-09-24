@@ -500,6 +500,8 @@ class StripeSavedPaymentAdapterImpl implements SavedPaymentAdapter {
       provider_init_state: 'pre_dispatch',
       metadata: {
         saved_method: true,
+        saved_method_id: method.id,
+        customer_phone: normalizePhone(opts.customerPhone),
         payment_origin: routing.paymentOrigin,
         stripe_customer_id: method.stripe_customer_id,
         stripe_pm_id: method.stripe_payment_method_id,

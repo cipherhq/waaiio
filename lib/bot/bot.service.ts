@@ -2326,31 +2326,34 @@ export class BotService {
         // instead of gateway_reference lookup (which fails for sc_pending_ references).
         const savedCardPaymentId = session.session_data?._saved_card_payment_id as string | undefined;
         if (savedCardPaymentId) {
-          const { recoverDispatchedSavedCardPayment } = await import('@/lib/payments/saved-card-recovery');
-          const scRecovery = await recoverDispatchedSavedCardPayment(this.supabase, savedCardPaymentId);
+          const { recoverSavedCardPaymentForFlow } = await import('@/lib/payments/bot-recovery');
+          const scRecovery = await recoverSavedCardPaymentForFlow(this.supabase, savedCardPaymentId);
 
-          switch (scRecovery.outcome) {
-            case 'succeeded':
+          switch (scRecovery.type) {
+            case 'completed':
+            case 'already_completed':
               await this.sendText(from, '✅ *Payment Confirmed!*\n\nYour payment has been verified and processed.\n\n💡 Type *my bookings* to view details, or *receipt* for your payment receipt.');
               return;
-            case 'requires_action':
-              if (scRecovery.authUrl) {
-                await this.sendText(from, `🔒 Your bank requires verification.\n\nPlease complete here 👇\n${scRecovery.authUrl}\n\n⚠️ Return to WhatsApp after verifying.`);
-              } else {
-                await this.sendText(from, '🔒 Your bank requires additional verification. Please check your banking app or email for a verification prompt.');
-              }
+            case 'requires_auth':
+              await this.sendText(from, `🔒 Your bank requires verification.\n\nPlease complete here 👇\n${scRecovery.authUrl}\n\n⚠️ Return to WhatsApp after verifying.`);
               return;
-            case 'declined':
+            case 'terminal_decline':
               await this.sendText(from, `❌ Payment could not be completed: ${scRecovery.message || 'card declined'}.\n\nPlease try again with a different payment method by typing *Hi*.`);
               return;
             case 'quarantined':
               await this.sendText(from, 'Your payment session has expired. Please start a new payment by typing *Hi*.');
               return;
             case 'indeterminate':
-              // Fall through to ordinary recovery — provider may confirm via webhook
-              break;
+              await this.sendText(from, "We're still verifying your previous payment. Tap *I've Paid* again shortly.");
+              return;
+            case 'provider_confirmed':
+              await this.sendText(from, "Your payment is confirmed by the provider and is still being finalized. Tap *I've Paid* again shortly.");
+              return;
             case 'error':
-              // Not a saved-card dispatched payment (e.g., already resolved) — fall through
+              await this.sendText(from, 'We could not verify your saved-card payment right now. Please try again shortly.');
+              return;
+            case 'not_applicable':
+              // Only genuinely non-saved-card cases may use reference recovery.
               break;
           }
         }

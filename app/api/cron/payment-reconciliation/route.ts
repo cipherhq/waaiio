@@ -177,7 +177,9 @@ export async function GET(request: NextRequest) {
               const { recoverDispatchedSavedCardPayment } = await import('@/lib/payments/saved-card-recovery');
               const scResult = await recoverDispatchedSavedCardPayment(supabase, dp.id);
               // Map shared helper outcome to the cron's resolved flag
-              if (scResult.outcome === 'succeeded' || scResult.outcome === 'declined' || scResult.outcome === 'quarantined') {
+              if (scResult.outcome === 'succeeded' || scResult.outcome === 'already_resolved'
+                || scResult.outcome === 'provider_confirmed' || scResult.outcome === 'declined'
+                || scResult.outcome === 'quarantined') {
                 resolved = true;
               } else if (scResult.outcome === 'requires_action') {
                 // CAS already bound PI ID — mark resolved so quarantine doesn't fire

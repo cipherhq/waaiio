@@ -12,7 +12,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { logger } from '@/lib/logger';
 
 export interface SavedCardRecoveryResult {
-  outcome: 'succeeded' | 'requires_action' | 'declined' | 'indeterminate' | 'quarantined' | 'error';
+  outcome: 'succeeded' | 'requires_action' | 'declined' | 'provider_confirmed' | 'indeterminate' | 'quarantined' | 'already_resolved' | 'error';
   paymentIntentId?: string;
   authUrl?: string;
   message?: string;
@@ -52,17 +52,35 @@ export async function recoverDispatchedSavedCardPayment(
     return { outcome: 'error', message: 'Payment not found' };
   }
 
-  // 2. Validate it's a saved-card dispatched payment
+  // 2. Validate it's a saved-card payment
   const meta = (payment.metadata || {}) as Record<string, unknown>;
-  if (meta.saved_method !== true || payment.provider_init_state !== 'dispatched' || payment.status !== 'pending') {
-    logger.info(`${logPrefix} Payment ${paymentId} is not a saved-card dispatched payment — skipping`);
+  if (meta.saved_method !== true) {
+    logger.info(`${logPrefix} Payment ${paymentId} is not a saved-card payment — skipping`);
     return { outcome: 'error', message: 'Not a saved-card dispatched payment' };
   }
 
+  // R1-B5: If no longer dispatched/pending, another authority already won — converge
+  if (payment.provider_init_state !== 'dispatched' || payment.status !== 'pending') {
+    logger.info(`${logPrefix} Payment ${paymentId} already resolved (status=${payment.status}, init=${payment.provider_init_state}) — converging`);
+    if (payment.status === 'success') {
+      return { outcome: 'already_resolved', paymentIntentId: payment.gateway_reference || undefined };
+    }
+    if (payment.provider_init_state === 'provider_confirmed' && payment.status === 'pending') {
+      // Another authority confirmed but reconciliation hasn't run
+      return reconcileProviderConfirmedPayment(supabase, paymentId, payment.gateway_reference || undefined);
+    }
+    if (payment.status === 'failed') {
+      return { outcome: 'declined', message: 'Payment was declined', paymentIntentId: payment.gateway_reference || undefined };
+    }
+    // Other states: return what we know
+    return { outcome: 'indeterminate', paymentIntentId: payment.gateway_reference || undefined };
+  }
+
   if (payment.gateway !== 'stripe') {
-    // Only Stripe saved-card PI recovery is supported in this helper
-    logger.info(`${logPrefix} Payment ${paymentId} gateway ${payment.gateway} — not Stripe, skipping`);
-    return { outcome: 'error', message: 'Only Stripe saved-card recovery is supported' };
+    // Other saved-card providers do not use Stripe's replay protocol, but the
+    // known payment ID is still authoritative. Reconcile this exact row rather
+    // than falling back to a logical gateway reference.
+    return reconcileProviderConfirmedPayment(supabase, paymentId, payment.gateway_reference || undefined);
   }
 
   const stripeKey = process.env.STRIPE_SECRET_KEY;
@@ -75,10 +93,14 @@ export async function recoverDispatchedSavedCardPayment(
   const paymentAge = Date.now() - new Date(payment.created_at as string).getTime();
   if (paymentAge > STRIPE_IDEMPOTENCY_WINDOW) {
     logger.warn(`${logPrefix} Payment ${paymentId} beyond idempotency window — quarantining`);
-    await checkedCAS(supabase, paymentId, {
+    const qCas = await checkedCAS(supabase, paymentId, {
       gateway_status: 'dispatched_quarantine:idempotency_expired',
       provider_init_state: 'dispatched', // keep dispatched for audit
     });
+    if (!qCas) {
+      // R1-B2: CAS lost — another authority won. Re-read and converge.
+      return convergeAfterCASLoss(supabase, paymentId);
+    }
     return { outcome: 'quarantined', message: 'Idempotency window expired' };
   }
 
@@ -137,26 +159,35 @@ export async function recoverDispatchedSavedCardPayment(
           if (casOk) {
             const { reconcilePayment } = await import('@/lib/payments/reconcile');
             await reconcilePayment(supabase, paymentId, 'saved_card');
+          } else {
+            // R1-B2: CAS lost — another authority won. Re-read and converge.
+            return convergeAfterCASLoss(supabase, paymentId);
           }
           return { outcome: 'succeeded', paymentIntentId: pi.id };
         }
 
         if (pi.status === 'requires_action') {
-          await checkedCAS(supabase, paymentId, {
+          const casOk = await checkedCAS(supabase, paymentId, {
             gateway_reference: pi.id,
             provider_init_state: 'provider_confirmed',
             metadata: { ...meta, stripe_pi_id: pi.id },
           });
-          // Extract 3DS redirect URL if available
-          const nextAction = pi.next_action as Record<string, unknown> | undefined;
-          const redirectUrl = nextAction?.type === 'redirect_to_url'
-            ? (nextAction.redirect_to_url as Record<string, unknown>)?.url as string | undefined
-            : undefined;
-          return { outcome: 'requires_action', paymentIntentId: pi.id, authUrl: redirectUrl || undefined };
+          if (!casOk) {
+            // R1-B2: CAS lost — another authority won. Re-read and converge.
+            return convergeRequiresActionCASLoss(supabase, paymentId, pi.id, meta);
+          }
+          const authResult = await createRecoveryAuthAttempt(supabase, paymentId, meta);
+          if (authResult) return { outcome: 'requires_action', paymentIntentId: pi.id, authUrl: authResult.authUrl };
+          // Auth attempt creation failed — return indeterminate (not raw Stripe URL)
+          return { outcome: 'indeterminate', paymentIntentId: pi.id, message: 'requires_action but auth attempt creation failed' };
         }
 
         if (['requires_payment_method', 'canceled'].includes(pi.status as string)) {
-          await checkedTerminal(supabase, paymentId, `stripe_pi_${pi.status}`);
+          const termOk = await checkedTerminal(supabase, paymentId, `stripe_pi_${pi.status}`);
+          if (!termOk) {
+            // R1-B2: CAS lost — another authority won. Re-read and converge.
+            return convergeAfterCASLoss(supabase, paymentId);
+          }
           return { outcome: 'declined', paymentIntentId: pi.id, message: `Payment ${pi.status === 'canceled' ? 'canceled' : 'declined'}` };
         }
       }
@@ -171,7 +202,10 @@ export async function recoverDispatchedSavedCardPayment(
     const errCode = (error.code as string) || '';
 
     if (errType === 'card_error' || errCode === 'card_declined') {
-      await checkedTerminal(supabase, paymentId, `stripe_card_decline:${errCode}`);
+      const termOk = await checkedTerminal(supabase, paymentId, `stripe_card_decline:${errCode}`);
+      if (!termOk) {
+        return convergeAfterCASLoss(supabase, paymentId);
+      }
       return { outcome: 'declined', message: `Card declined: ${errCode}` };
     }
 
@@ -183,7 +217,10 @@ export async function recoverDispatchedSavedCardPayment(
     }
 
     if (errType === 'invalid_request_error' && (errCode === 'resource_missing' || errCode === 'payment_method_unattached')) {
-      await checkedTerminal(supabase, paymentId, `stripe_invalid:${errCode}`);
+      const termOk = await checkedTerminal(supabase, paymentId, `stripe_invalid:${errCode}`);
+      if (!termOk) {
+        return convergeAfterCASLoss(supabase, paymentId);
+      }
       return { outcome: 'declined', message: `Invalid: ${errCode}` };
     }
 
@@ -199,6 +236,101 @@ export async function recoverDispatchedSavedCardPayment(
 
 // ── Internal helpers ──
 
+/**
+ * R1-B2: After a CAS transition fails, re-read the payment row and converge
+ * to the correct outcome based on current state.
+ */
+async function convergeAfterCASLoss(
+  supabase: SupabaseClient,
+  paymentId: string,
+): Promise<SavedCardRecoveryResult> {
+  const { data: current, error } = await supabase.from('payments')
+    .select('status, provider_init_state, gateway_reference')
+    .eq('id', paymentId).single();
+
+  if (error || !current) return { outcome: 'indeterminate', message: 'CAS lost and canonical state could not be read' };
+
+  if (current.status === 'success') {
+    return { outcome: 'already_resolved', paymentIntentId: current.gateway_reference || undefined };
+  }
+  if (current.provider_init_state === 'provider_confirmed' && current.status === 'pending') {
+    // Another authority confirmed but reconciliation hasn't completed
+    return reconcileProviderConfirmedPayment(supabase, paymentId, current.gateway_reference || undefined);
+  }
+  if (current.status === 'failed') {
+    return { outcome: 'declined', paymentIntentId: current.gateway_reference || undefined, message: 'Payment was declined' };
+  }
+  return { outcome: 'indeterminate', paymentIntentId: current.gateway_reference || undefined, message: 'CAS lost to a non-terminal canonical state' };
+}
+
+async function reconcileProviderConfirmedPayment(
+  supabase: SupabaseClient,
+  paymentId: string,
+  paymentIntentId?: string,
+): Promise<SavedCardRecoveryResult> {
+  const { reconcilePayment } = await import('@/lib/payments/reconcile');
+  const result = await reconcilePayment(supabase, paymentId, 'saved_card');
+  const status = result.lifecycle?.status;
+  if (status === 'completed' || status === 'already_completed' || status === 'not_deliverable') {
+    return { outcome: 'already_resolved', paymentIntentId };
+  }
+
+  const { data: current } = await supabase.from('payments')
+    .select('status, provider_init_state, gateway_reference')
+    .eq('id', paymentId).single();
+  if (current?.status === 'success') return { outcome: 'already_resolved', paymentIntentId: current.gateway_reference || paymentIntentId };
+  if (current?.status === 'failed') return { outcome: 'declined', paymentIntentId: current.gateway_reference || paymentIntentId, message: 'Payment was declined' };
+  if (current?.provider_init_state === 'provider_confirmed') {
+    return { outcome: 'provider_confirmed', paymentIntentId: current.gateway_reference || paymentIntentId, message: 'Provider confirmed; canonical finalization is still pending' };
+  }
+  return { outcome: 'indeterminate', paymentIntentId: current?.gateway_reference || paymentIntentId, message: 'Canonical payment remains pending' };
+}
+
+async function convergeRequiresActionCASLoss(
+  supabase: SupabaseClient,
+  paymentId: string,
+  paymentIntentId: string,
+  metadata: Record<string, unknown>,
+): Promise<SavedCardRecoveryResult> {
+  const { data: current } = await supabase.from('payments')
+    .select('status, provider_init_state, gateway_reference')
+    .eq('id', paymentId).single();
+  if (current?.status === 'pending'
+    && current.provider_init_state === 'provider_confirmed'
+    && current.gateway_reference === paymentIntentId) {
+    const authResult = await createRecoveryAuthAttempt(supabase, paymentId, metadata);
+    if (authResult) return { outcome: 'requires_action', paymentIntentId, authUrl: authResult.authUrl };
+    return { outcome: 'indeterminate', paymentIntentId, message: 'Canonical PI requires action but auth attempt creation failed' };
+  }
+  return convergeAfterCASLoss(supabase, paymentId);
+}
+
+async function createRecoveryAuthAttempt(
+  supabase: SupabaseClient,
+  paymentId: string,
+  metadata: Record<string, unknown>,
+): Promise<{ authUrl: string; attemptId: string } | null> {
+  const { canonicalSavedCardPhone } = await import('./saved-card-compat');
+  let phone = typeof metadata.customer_phone === 'string'
+    ? canonicalSavedCardPhone(metadata.customer_phone)
+    : null;
+
+  // Older dispatched rows predate customer_phone persistence. Recover the durable
+  // owner from the exact Stripe credential tuple instead of inventing identity.
+  if (!phone && metadata.stripe_customer_id && metadata.stripe_pm_id) {
+    const { data: method } = await supabase.from('saved_payment_methods')
+      .select('customer_phone')
+      .eq('stripe_customer_id', metadata.stripe_customer_id)
+      .eq('stripe_payment_method_id', metadata.stripe_pm_id)
+      .maybeSingle();
+    if (method?.customer_phone) phone = canonicalSavedCardPhone(method.customer_phone);
+  }
+  if (!phone) return null;
+
+  const { createAuthAttempt } = await import('./stripe-saved-card');
+  return createAuthAttempt(supabase, paymentId, phone);
+}
+
 /** Checked CAS — returns true only on exactly one affected row */
 async function checkedCAS(
   supabase: SupabaseClient,
@@ -208,6 +340,7 @@ async function checkedCAS(
   const { data: rows, error: casErr } = await supabase.from('payments')
     .update(updates)
     .eq('id', paymentId).eq('provider_init_state', 'dispatched')
+    .eq('status', 'pending')
     .select('id');
   return !casErr && rows != null && rows.length === 1;
 }

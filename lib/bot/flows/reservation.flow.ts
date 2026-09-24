@@ -1294,6 +1294,15 @@ export const reservationFlow: FlowDefinition = {
         const d = ctx.session.session_data;
 
         if (text === 'retry_payment') {
+          // #375: If session has a saved-card payment ID, use centralized recovery first
+          const scPaymentId = d._saved_card_payment_id as string | undefined;
+          if (scPaymentId) {
+            const { recoverSavedCardPaymentForFlow, mapSavedCardRecoveryToValidation } = await import('@/lib/payments/bot-recovery');
+            const scResult = await recoverSavedCardPaymentForFlow(ctx.supabase, scPaymentId);
+            const mapped = mapSavedCardRecoveryToValidation(scResult, d);
+            if (mapped) return mapped;
+            // not_applicable → fall through to ordinary recovery
+          }
           const ref = ctx.session.session_data.payment_reference as string;
           if (!ref) {
             return { valid: false, errorMessage: "If you've already paid, tap *I've Paid*. Otherwise, type *Hi* to start a new reservation." };
@@ -1463,6 +1472,16 @@ export const reservationFlow: FlowDefinition = {
           }
 
           if (!ref) return { valid: false, errorMessage: "We couldn't verify your payment. If you've already paid, please contact the business." };
+
+          // #375: If session has a saved-card payment ID, try payment-ID recovery first
+          const scPaymentId2 = ctx.session.session_data._saved_card_payment_id as string | undefined;
+          if (scPaymentId2) {
+            const { recoverSavedCardPaymentForFlow, mapSavedCardRecoveryToValidation } = await import('@/lib/payments/bot-recovery');
+            const scResult = await recoverSavedCardPaymentForFlow(ctx.supabase, scPaymentId2);
+            const mapped = mapSavedCardRecoveryToValidation(scResult, d);
+            if (mapped) return mapped;
+            // not_applicable → fall through to ordinary recovery
+          }
 
           // Converge through canonical Payment Authority — same path as webhooks (#173).
           const { verifyAndReconcilePayment } = await import('@/lib/payments/bot-recovery');

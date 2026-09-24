@@ -3384,6 +3384,15 @@ export const orderingFlow: FlowDefinition = {
         const d = ctx.session.session_data;
 
         if (text === 'retry_payment') {
+          // #375: If session has a saved-card payment ID, use centralized recovery first
+          const scPaymentId = d._saved_card_payment_id as string | undefined;
+          if (scPaymentId) {
+            const { recoverSavedCardPaymentForFlow, mapSavedCardRecoveryToValidation } = await import('@/lib/payments/bot-recovery');
+            const scResult = await recoverSavedCardPaymentForFlow(ctx.supabase, scPaymentId);
+            const mapped = mapSavedCardRecoveryToValidation(scResult, d);
+            if (mapped) return mapped;
+            // not_applicable → fall through to ordinary recovery
+          }
           return { valid: true, data: { _retry_payment: true } };
         }
 
@@ -3500,6 +3509,17 @@ export const orderingFlow: FlowDefinition = {
           }
 
           if (!ref) return { valid: true, data: { _action: 'cancel' } };
+
+          // #375: If session has a saved-card payment ID, try payment-ID recovery first
+          // (gateway_reference lookup fails for sc_pending_ references).
+          const scPaymentId = ctx.session.session_data._saved_card_payment_id as string | undefined;
+          if (scPaymentId) {
+            const { recoverSavedCardPaymentForFlow, mapSavedCardRecoveryToValidation } = await import('@/lib/payments/bot-recovery');
+            const scResult = await recoverSavedCardPaymentForFlow(ctx.supabase, scPaymentId);
+            const mapped = mapSavedCardRecoveryToValidation(scResult, ctx.session.session_data);
+            if (mapped) return mapped;
+            // not_applicable → fall through to ordinary recovery
+          }
 
           // ACC-008: Find payment by gateway reference and ALWAYS converge through
           // canonical Payment Authority. No order-status bypass — reconcilePayment
