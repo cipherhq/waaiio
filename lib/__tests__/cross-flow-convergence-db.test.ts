@@ -175,7 +175,7 @@ describe.skipIf(!dbUrl)('M400 Cross-flow convergence (real PostgreSQL)', () => {
 
   afterAll(() => {
     if (!dbUrl) return;
-    // Clean up test data
+    // Clean up test data — payments first (FK to orders/reservations/campaigns), then entities
     psql(`
       DELETE FROM payment_confirmation_deliveries WHERE payment_id IN ('${PAY_ID_1}', '${PAY_ID_2}', '${PAY_ID_3}');
       DELETE FROM payment_terminal_effects WHERE payment_id IN ('${PAY_ID_1}', '${PAY_ID_2}', '${PAY_ID_3}');
@@ -184,10 +184,10 @@ describe.skipIf(!dbUrl)('M400 Cross-flow convergence (real PostgreSQL)', () => {
       DELETE FROM order_stock_applications WHERE order_id = '${ORDER_ID}';
       DELETE FROM order_items WHERE order_id = '${ORDER_ID}';
       DELETE FROM pending_transfers WHERE order_id = '${ORDER_ID}';
+      DELETE FROM payments WHERE id IN ('${PAY_ID_1}', '${PAY_ID_2}', '${PAY_ID_3}');
       DELETE FROM orders WHERE id = '${ORDER_ID}';
       DELETE FROM reservations WHERE id = '${RES_ID}';
       DELETE FROM campaigns WHERE id = '${CAMP_ID}';
-      DELETE FROM payments WHERE id IN ('${PAY_ID_1}', '${PAY_ID_2}', '${PAY_ID_3}');
     `);
   });
 
@@ -197,13 +197,13 @@ describe.skipIf(!dbUrl)('M400 Cross-flow convergence (real PostgreSQL)', () => {
     // Setup: order with NULL payment_id, committed stock marker with PAY_ID_1
     psql(`
       DELETE FROM order_stock_applications WHERE order_id = '${ORDER_ID}';
+      DELETE FROM payments WHERE order_id = '${ORDER_ID}';
       DELETE FROM orders WHERE id = '${ORDER_ID}';
-      DELETE FROM payments WHERE id = '${PAY_ID_1}';
 
-      INSERT INTO payments (id, business_id, amount, currency, status, gateway, gateway_reference, order_id)
-      VALUES ('${PAY_ID_1}', '${BIZ_ID}', 100, 'NGN', 'success', 'stripe', 'ref_m400_' || gen_random_uuid()::text, '${ORDER_ID}');
       INSERT INTO orders (id, business_id, status, payment_id, reference_code)
       VALUES ('${ORDER_ID}', '${BIZ_ID}', 'confirmed', NULL, 'ORD-TEST1');
+      INSERT INTO payments (id, business_id, amount, currency, status, gateway, gateway_reference, order_id)
+      VALUES ('${PAY_ID_1}', '${BIZ_ID}', 100, 'NGN', 'success', 'stripe', 'ref_m400_' || gen_random_uuid()::text, '${ORDER_ID}');
       INSERT INTO order_stock_applications (order_id, payment_id, item_count, reservation_class)
       VALUES ('${ORDER_ID}', '${PAY_ID_1}', 0, 'committed');
     `);
@@ -225,17 +225,19 @@ describe.skipIf(!dbUrl)('M400 Cross-flow convergence (real PostgreSQL)', () => {
 
   it('2. apply_order_stock_once with different established payment -> payment_link_conflict', () => {
     // Setup: order already linked to PAY_ID_1, try to apply with PAY_ID_2
+    // Order must be created BEFORE payments (FK: payments.order_id -> orders.id)
     psql(`
       DELETE FROM order_stock_applications WHERE order_id = '${ORDER_ID}';
-      DELETE FROM orders WHERE id = '${ORDER_ID}';
       DELETE FROM payments WHERE id IN ('${PAY_ID_1}', '${PAY_ID_2}');
+      DELETE FROM orders WHERE id = '${ORDER_ID}';
 
+      INSERT INTO orders (id, business_id, status, payment_id, reference_code)
+      VALUES ('${ORDER_ID}', '${BIZ_ID}', 'confirmed', NULL, 'ORD-TEST2');
       INSERT INTO payments (id, business_id, amount, currency, status, gateway, gateway_reference, order_id)
       VALUES ('${PAY_ID_1}', '${BIZ_ID}', 100, 'NGN', 'success', 'stripe', 'ref_m400_' || gen_random_uuid()::text, '${ORDER_ID}');
       INSERT INTO payments (id, business_id, amount, currency, status, gateway, gateway_reference, order_id)
       VALUES ('${PAY_ID_2}', '${BIZ_ID}', 100, 'NGN', 'success', 'stripe', 'ref_m400_' || gen_random_uuid()::text, '${ORDER_ID}');
-      INSERT INTO orders (id, business_id, status, payment_id, reference_code)
-      VALUES ('${ORDER_ID}', '${BIZ_ID}', 'confirmed', '${PAY_ID_1}', 'ORD-TEST2');
+      UPDATE orders SET payment_id = '${PAY_ID_1}' WHERE id = '${ORDER_ID}';
       INSERT INTO order_stock_applications (order_id, payment_id, item_count, reservation_class)
       VALUES ('${ORDER_ID}', '${PAY_ID_1}', 0, 'committed');
     `);
@@ -252,14 +254,16 @@ describe.skipIf(!dbUrl)('M400 Cross-flow convergence (real PostgreSQL)', () => {
   // ── 3. confirm_reservation_payment_atomic: replay -> idempotent ──
 
   it('3. confirm_reservation_payment_atomic replay -> idempotent', () => {
+    // Reservation must be created BEFORE payment (FK: payments.reservation_id -> reservations.id)
     psql(`
-      DELETE FROM reservations WHERE id = '${RES_ID}';
       DELETE FROM payments WHERE id = '${PAY_ID_1}';
+      DELETE FROM reservations WHERE id = '${RES_ID}';
 
+      INSERT INTO reservations (id, business_id, status, deposit_status, payment_id)
+      VALUES ('${RES_ID}', '${BIZ_ID}', 'confirmed', 'paid', NULL);
       INSERT INTO payments (id, business_id, amount, currency, status, gateway, gateway_reference, reservation_id)
       VALUES ('${PAY_ID_1}', '${BIZ_ID}', 50, 'NGN', 'success', 'stripe', 'ref_m400_' || gen_random_uuid()::text, '${RES_ID}');
-      INSERT INTO reservations (id, business_id, status, deposit_status, payment_id)
-      VALUES ('${RES_ID}', '${BIZ_ID}', 'confirmed', 'paid', '${PAY_ID_1}');
+      UPDATE reservations SET payment_id = '${PAY_ID_1}' WHERE id = '${RES_ID}';
     `);
 
     const result = psqlJson(`
@@ -275,16 +279,18 @@ describe.skipIf(!dbUrl)('M400 Cross-flow convergence (real PostgreSQL)', () => {
   // ── 4. confirm_reservation_payment_atomic: different payment -> conflict ──
 
   it('4. confirm_reservation_payment_atomic different payment -> conflict', () => {
+    // Reservation must be created BEFORE payments (FK: payments.reservation_id -> reservations.id)
     psql(`
-      DELETE FROM reservations WHERE id = '${RES_ID}';
       DELETE FROM payments WHERE id IN ('${PAY_ID_1}', '${PAY_ID_2}');
+      DELETE FROM reservations WHERE id = '${RES_ID}';
 
+      INSERT INTO reservations (id, business_id, status, deposit_status, payment_id)
+      VALUES ('${RES_ID}', '${BIZ_ID}', 'confirmed', 'paid', NULL);
       INSERT INTO payments (id, business_id, amount, currency, status, gateway, gateway_reference, reservation_id)
       VALUES ('${PAY_ID_1}', '${BIZ_ID}', 50, 'NGN', 'success', 'stripe', 'ref_m400_' || gen_random_uuid()::text, '${RES_ID}');
       INSERT INTO payments (id, business_id, amount, currency, status, gateway, gateway_reference, reservation_id)
       VALUES ('${PAY_ID_2}', '${BIZ_ID}', 50, 'NGN', 'success', 'stripe', 'ref_m400_' || gen_random_uuid()::text, '${RES_ID}');
-      INSERT INTO reservations (id, business_id, status, deposit_status, payment_id)
-      VALUES ('${RES_ID}', '${BIZ_ID}', 'confirmed', 'paid', '${PAY_ID_1}');
+      UPDATE reservations SET payment_id = '${PAY_ID_1}' WHERE id = '${RES_ID}';
     `);
 
     const result = psqlJson(`
@@ -299,10 +305,12 @@ describe.skipIf(!dbUrl)('M400 Cross-flow convergence (real PostgreSQL)', () => {
   // ── 5. ensure_campaign_donation_intent_for_payment: creates row ──
 
   it('5. ensure_campaign_donation_intent_for_payment creates donation row', () => {
+    // Campaign must be created BEFORE payment (FK: payments.campaign_id -> campaigns.id)
+    // Payments must be deleted BEFORE campaign on cleanup
     psql(`
       DELETE FROM campaign_donations WHERE payment_id = '${PAY_ID_1}';
-      DELETE FROM campaigns WHERE id = '${CAMP_ID}';
       DELETE FROM payments WHERE id = '${PAY_ID_1}';
+      DELETE FROM campaigns WHERE id = '${CAMP_ID}';
 
       INSERT INTO campaigns (id, business_id, title, goal_amount)
       VALUES ('${CAMP_ID}', '${BIZ_ID}', 'Test Campaign', 1000);
