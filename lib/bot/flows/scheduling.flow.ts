@@ -3248,8 +3248,15 @@ export const schedulingFlow: FlowDefinition = {
           const phone = ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`;
           const email = (d.email as string) || `${phone.replace('+', '')}@${process.env.FALLBACK_EMAIL_DOMAIN || 'whatsapp.waaiio.com'}`;
 
+          // #382 / #219: Do not charge a WhatsApp-origin saved card unless the
+          // exact inbound channel is available for post-payment confirmation.
+          const { resolveAuthoritativeCurrency, getSavedCardInboundChannel } = await import('./shared/saved-card-flow');
+          const inboundChannelId = getSavedCardInboundChannel(ctx);
+          if (!inboundChannelId) {
+            return { valid: false, errorMessage: 'We could not safely process this payment right now. Please try again.' };
+          }
+
           // #373: Resolve currency authoritatively from DB — no module-global cache dependency
-          const { resolveAuthoritativeCurrency } = await import('./shared/saved-card-flow');
           const currency = await resolveAuthoritativeCurrency(ctx.supabase, ctx.business?.country_code || 'NG');
           if (!currency) {
             return { valid: true, data: { _skip_saved_card: true, _saved_card_error: 'currency_resolution_failed' } };
@@ -3265,6 +3272,8 @@ export const schedulingFlow: FlowDefinition = {
             businessId: ctx.business!.id,
             bookingId,
             transactionCategory: 'scheduling',
+            inboundChannelId,
+            confirmationOrigin: 'whatsapp',
           });
 
           if (result.status === 'charged' || result.status === 'already_charged') {
@@ -3297,8 +3306,14 @@ export const schedulingFlow: FlowDefinition = {
           const phone = ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`;
           const email = (d.email as string) || `${phone.replace('+', '')}@${process.env.FALLBACK_EMAIL_DOMAIN || 'whatsapp.waaiio.com'}`;
 
+          // #382 / #219 hard stop after PIN verification but before any provider side effect.
+          const { resolveAuthoritativeCurrency: resolveAuthCurr, getSavedCardInboundChannel: getInboundChannel } = await import('./shared/saved-card-flow');
+          const inboundChannelId = getInboundChannel(ctx);
+          if (!inboundChannelId) {
+            return { valid: false, errorMessage: 'We could not safely process this payment right now. Please try again.' };
+          }
+
           // #373: Resolve currency authoritatively from DB — no module-global cache dependency
-          const { resolveAuthoritativeCurrency: resolveAuthCurr } = await import('./shared/saved-card-flow');
           const currency = await resolveAuthCurr(ctx.supabase, ctx.business?.country_code || 'NG');
           if (!currency) {
             // Fail closed: PIN was correct but currency cannot be resolved (transient).
@@ -3318,6 +3333,8 @@ export const schedulingFlow: FlowDefinition = {
             email, reference: `${refCode}-saved`,
             businessId: ctx.business!.id, bookingId,
             transactionCategory: 'scheduling',
+            inboundChannelId,
+            confirmationOrigin: 'whatsapp',
           });
 
           if (result.status === 'charged' || result.status === 'already_charged') {
