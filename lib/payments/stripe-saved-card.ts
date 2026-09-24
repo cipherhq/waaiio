@@ -258,7 +258,9 @@ export async function chargeStripeSavedCard(opts: {
       if (classification === 'terminal_decline') {
         return {
           status: 'declined',
-          errorMessage: `stripe_decline_${httpStatus}:${errorCode}`,
+          // Preserve the existing customer-facing decline message contract.
+          // Structured evidence is carried separately and is what persistence uses.
+          errorMessage: (error.message as string) || `stripe_${httpStatus}`,
           errorEvidence,
         };
       }
