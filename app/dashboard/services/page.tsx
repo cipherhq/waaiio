@@ -13,6 +13,7 @@ import EmptyState from '@/components/dashboard/EmptyState';
 import { PageHelp } from '@/components/dashboard/PageHelp';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 import { buildServicePayload } from '@/lib/services/payload-builders';
+import { getDepositConfigurationError } from '@/lib/payments/deposit-amount-authority';
 
 interface Service {
   id: string;
@@ -296,6 +297,15 @@ export default function ServicesPage() {
 
   async function handleSave() {
     if (!form.name.trim()) return;
+    const depositError = getDepositConfigurationError({
+      price: form.price,
+      deposit: form.deposit_amount,
+      priceIsVariable: form.price_is_variable,
+    });
+    if (depositError) {
+      alert(depositError);
+      return;
+    }
     setSaving(true);
     const supabase = createClient();
 
