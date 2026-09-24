@@ -308,10 +308,32 @@ async function chargePaystackAuthorization(
       logger.error('[SAVED-CARD] Currency mismatch');
       return { outcome: 'indeterminate', paymentId: existing.id, reference: opts.reference, message: 'Currency mismatch' };
     }
+    if (existing.gateway !== 'paystack') {
+      logger.error('[SAVED-CARD] Gateway mismatch', { existing: existing.gateway, expected: 'paystack' });
+      return { outcome: 'indeterminate', paymentId: existing.id, reference: opts.reference, message: 'Gateway mismatch' };
+    }
     if (existing.payment_method !== 'saved_card') {
       logger.error('[SAVED-CARD] Payment method mismatch');
       return { outcome: 'indeterminate', paymentId: existing.id, reference: opts.reference, message: 'Payment method mismatch' };
     }
+
+    // #389 R6-A: campaign recovery must prove the durable donation intent
+    // before any reconciliation can advance this payment.
+    if (opts.campaignId) {
+      if (!opts.customerPhone) {
+        logger.error('[PAYSTACK-SAVED-CARD] Campaign payment missing customer phone — blocking recovery');
+        return { outcome: 'indeterminate', paymentId: existing.id, reference: opts.reference, message: 'Donation identity unavailable' };
+      }
+      const { data: intentResult, error: intentErr } = await supabase.rpc('ensure_campaign_donation_intent_for_payment', {
+        p_payment_id: existing.id,
+        p_donor_phone: normalizePhone(opts.customerPhone),
+      });
+      if (intentErr || (!intentResult?.created && !intentResult?.already_existed)) {
+        logger.error('[PAYSTACK-SAVED-CARD] Existing campaign donation intent could not be proven — blocking recovery', intentErr);
+        return { outcome: 'indeterminate', paymentId: existing.id, reference: opts.reference, message: 'Donation intent unavailable' };
+      }
+    }
+
     if (existing.status === 'success') {
       return { outcome: 'already_charged', paymentId: existing.id, reference: opts.reference };
     }
@@ -521,14 +543,18 @@ async function chargePaystackAuthorization(
 
   const paymentId = payRow.id;
 
-  // #389 B4: For giving/campaign payments, ensure donation intent BEFORE provider dispatch — BLOCKING
-  if (opts.campaignId && opts.customerPhone) {
+  // #389 R6-A: For giving/campaign payments, prove donation intent BEFORE provider dispatch.
+  if (opts.campaignId) {
+    if (!opts.customerPhone) {
+      logger.error('[PAYSTACK-SAVED-CARD] Campaign payment missing customer phone — blocking dispatch');
+      return { outcome: 'indeterminate', paymentId, reference: opts.reference, message: 'Donation identity unavailable' };
+    }
     const { data: intentResult, error: intentErr } = await supabase.rpc('ensure_campaign_donation_intent_for_payment', {
       p_payment_id: paymentId,
       p_donor_phone: normalizePhone(opts.customerPhone),
     });
     if (intentErr || (!intentResult?.created && !intentResult?.already_existed)) {
-      logger.error('[PAYSTACK-SAVED-CARD] Donation intent failed — blocking', intentErr);
+      logger.error('[PAYSTACK-SAVED-CARD] Donation intent failed — blocking dispatch', intentErr);
       return { outcome: 'indeterminate', paymentId, reference: opts.reference, message: 'Donation intent failed' };
     }
   }
