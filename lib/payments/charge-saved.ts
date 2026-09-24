@@ -245,7 +245,7 @@ async function chargePaystackAuthorization(
   // Fail closed on lookup error — never call provider without confirming no existing charge.
   const { data: existing, error: lookupErr } = await supabase
     .from('payments')
-    .select('id, status, booking_id, business_id, metadata')
+    .select('id, status, booking_id, order_id, reservation_id, invoice_id, campaign_id, business_id, metadata')
     .eq('gateway_reference', opts.reference)
     .maybeSingle();
 
@@ -257,10 +257,26 @@ async function chargePaystackAuthorization(
   }
 
   if (existing) {
-    // Validate entity + business identity: existing row must belong to same booking and business.
-    // If opts.bookingId is supplied, existing must match (null existing.booking_id = mismatch).
+    // R6-B: Validate FULL entity tuple — not just booking_id.
+    // All entity columns must match (null opts = don't check; null existing = mismatch if opts supplied).
     if (opts.bookingId && existing.booking_id !== opts.bookingId) {
       logger.error('[SAVED-CARD] Existing payment booking mismatch', { existing: existing.booking_id, expected: opts.bookingId });
+      return { outcome: 'indeterminate', paymentId: existing.id, reference: opts.reference, message: 'Payment reference conflict' };
+    }
+    if (opts.orderId && existing.order_id !== opts.orderId) {
+      logger.error('[SAVED-CARD] Existing payment order mismatch', { existing: existing.order_id, expected: opts.orderId });
+      return { outcome: 'indeterminate', paymentId: existing.id, reference: opts.reference, message: 'Payment reference conflict' };
+    }
+    if (opts.reservationId && existing.reservation_id !== opts.reservationId) {
+      logger.error('[SAVED-CARD] Existing payment reservation mismatch', { existing: existing.reservation_id, expected: opts.reservationId });
+      return { outcome: 'indeterminate', paymentId: existing.id, reference: opts.reference, message: 'Payment reference conflict' };
+    }
+    if (opts.invoiceId && existing.invoice_id !== opts.invoiceId) {
+      logger.error('[SAVED-CARD] Existing payment invoice mismatch', { existing: existing.invoice_id, expected: opts.invoiceId });
+      return { outcome: 'indeterminate', paymentId: existing.id, reference: opts.reference, message: 'Payment reference conflict' };
+    }
+    if (opts.campaignId && existing.campaign_id !== opts.campaignId) {
+      logger.error('[SAVED-CARD] Existing payment campaign mismatch', { existing: existing.campaign_id, expected: opts.campaignId });
       return { outcome: 'indeterminate', paymentId: existing.id, reference: opts.reference, message: 'Payment reference conflict' };
     }
     // Business ownership: check top-level business_id first; fall back to legacy metadata.

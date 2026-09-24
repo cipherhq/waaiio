@@ -544,6 +544,20 @@ class StripeSavedPaymentAdapterImpl implements SavedPaymentAdapter {
       return { status: 'declined', message: 'Payment creation failed', shouldDeactivate: false };
     }
 
+    // #389: For giving/campaign payments, ensure donation intent BEFORE provider dispatch
+    if (opts.campaignId) {
+      try {
+        await supabase.rpc('ensure_campaign_donation_intent_for_payment', {
+          p_payment_id: payRow.id,
+          p_donor_phone: normalizePhone(opts.customerPhone),
+          p_donor_name: null,
+          p_reference_code: null,
+        });
+      } catch (donIntentErr) {
+        logger.error('[STRIPE-SAVED-CARD] Donation intent RPC failed — continuing with charge', donIntentErr);
+      }
+    }
+
     // I2: Derive canonical idempotency key from durable payment row ID
     // Both live dispatch and recovery cron must use this exact key
     const canonicalIdempotencyKey = `sc_charge_${payRow.id}`;

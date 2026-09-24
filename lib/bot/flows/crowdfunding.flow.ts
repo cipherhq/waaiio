@@ -13,6 +13,7 @@ import { checkTierLimit } from '@/lib/tier-limits';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 import { getPoweredByFooter } from '@/lib/whitelabel';
 import { isToggleColumnMissing } from '@/lib/utils/campaign-column-fallback';
+import { buildSavedCardOffer, handleSavedCardInput } from './shared/saved-card-flow';
 
 const EXPANDED_CAMPAIGN_SELECT = 'id, title, description, goal_amount, raised_amount, donor_count, end_date, allow_after_end_date, allow_after_goal_met' as const;
 const LEGACY_CAMPAIGN_SELECT = 'id, title, description, goal_amount, raised_amount, donor_count, end_date' as const;
@@ -408,6 +409,16 @@ const donationPaymentStep: FlowStepConfig = {
     // Use name from the donor name step (or profile if skipped)
     const donorName = (sd.donor_display_name as string) || '';
 
+    // #389: Saved-card offer — check BEFORE payment link
+    const savedCardOffer = await buildSavedCardOffer(ctx, amount);
+    if (savedCardOffer) {
+      sd._saved_method_id = savedCardOffer.display.id;
+      sd._pending_deposit = amount;
+      sd.donation_ref_code = refCode;
+      sd.donor_name = donorName;
+      return [savedCardOffer.prompt];
+    }
+
     // Initialize payment
     const { initializePayment } = await import('./shared/payment');
     const result = await initializePayment(ctx.supabase, {
@@ -569,11 +580,76 @@ const donationPaymentStep: FlowStepConfig = {
     ];
   },
 
-  async validate() {
+  async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
+    // #389: Handle saved-card input
+    const d = ctx.session.session_data;
+    if (d._saved_method_id || d._awaiting_card_pin) {
+      const donRef = d.donation_ref_code as string || 'DON';
+      const savedResult = await handleSavedCardInput(input, ctx, {
+        amount: d._pending_deposit as number || d.donation_amount as number,
+        reference: `${donRef}-saved-${Date.now().toString(36)}`,
+        entityId: { campaignId: d.campaign_id as string },
+        transactionCategory: 'giving',
+      });
+      if (savedResult) return savedResult;
+    }
     return { valid: true };
   },
 
-  async next() {
+  async next(ctx: FlowContext) {
+    const d = ctx.session.session_data;
+    // Stay on step while awaiting saved-card PIN
+    if (d._awaiting_card_pin) return 'donation_payment';
+    // #389: Saved-card outcomes
+    if (d._saved_card_paid) {
+      const paymentId = d._saved_card_payment_id as string;
+      if (paymentId) {
+        // #389: Ensure donation intent is created for saved-card payments
+        try {
+          const { createServiceClient } = await import('@/lib/supabase/service');
+          const serviceClient = createServiceClient();
+          await serviceClient.rpc('ensure_campaign_donation_intent_for_payment', {
+            p_payment_id: paymentId,
+            p_donor_phone: ctx.from,
+            p_donor_name: (d.donor_display_name as string) || null,
+            p_reference_code: d.donation_ref_code as string || null,
+          });
+        } catch (err) {
+          logger.error('[CROWDFUNDING] Donation intent RPC failed for saved-card payment', err);
+        }
+
+        const { reconcilePayment } = await import('@/lib/payments/reconcile');
+        const result = await reconcilePayment(ctx.supabase, paymentId, 'saved_card');
+        const isComplete = result.lifecycle?.status === 'completed'
+          || result.lifecycle?.status === 'already_completed'
+          || result.lifecycle?.status === 'not_deliverable';
+        if (!isComplete) {
+          d.payment_reference = `${d.donation_ref_code as string}-saved`;
+          return 'await_donation_payment';
+        }
+      }
+      return null;
+    }
+    if (d._saved_card_indeterminate || d._saved_card_requires_auth) {
+      d.payment_reference = `${d.donation_ref_code as string}-saved`;
+      return 'await_donation_payment';
+    }
+    if (d._saved_card_cancelled) {
+      // CAS: cancel donation only while still pending
+      const donRef = d.donation_ref_code as string;
+      if (donRef) {
+        await ctx.supabase.from('campaign_donations')
+          .update({ status: 'cancelled' })
+          .eq('reference_code', donRef)
+          .in('status', ['pending']);
+      }
+      await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('Donation cancelled. Send *Hi* to start over.') });
+      return null;
+    }
+    if (d._skip_saved_card && d._saved_method_id) {
+      delete d._saved_method_id;
+      return 'donation_payment';
+    }
     return 'await_donation_payment';
   },
 };
@@ -757,12 +833,8 @@ const awaitDonationPaymentStep: FlowStepConfig = {
       const recovery = await verifyAndReconcilePayment(ctx.supabase, ref);
 
       if (recovery.outcome === 'completed' || recovery.outcome === 'not_deliverable') {
-        const sd = ctx.session.session_data;
-        await ctx.sender.sendText({
-          to: ctx.from,
-          text: await ctx.t(`✅ *Donation Confirmed!*\n\n🙏 Thank you for supporting *${sd.campaign_title}*\n\n💡 Type *my giving* to see your giving history, or *receipt* for your donation receipt.`),
-        });
-        return { valid: true, data: { _action: 'already_confirmed' } };
+        // #389: Stage-3 owns customer confirmation — flow only sets action flag
+        return { valid: true, data: { _action: 'payment_confirmed' } };
       }
 
       if (recovery.outcome === 'processing' || recovery.outcome === 'retryable') {

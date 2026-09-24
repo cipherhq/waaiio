@@ -398,8 +398,23 @@ export async function sendProactiveConfirmation(
   logger.info(`${logPrefix} Sending proactive confirmation for ${businessName}`);
 
   // ── 4. Build confirmation message (local string work — no external calls) ──
+  // #389: Capability-aware Stage-3 confirmation title
+  let confirmationTitle = 'Payment';
+  if (payment.booking_id && bookingFlowType) {
+    if (bookingFlowType === 'scheduling') confirmationTitle = 'Appointment';
+    else if (bookingFlowType === 'ticketing') confirmationTitle = 'Ticket';
+    else confirmationTitle = 'Payment';
+  } else if (payment.order_id) {
+    confirmationTitle = 'Order';
+  } else if (payment.reservation_id) {
+    confirmationTitle = 'Reservation';
+  } else if (payment.campaign_id) {
+    confirmationTitle = 'Donation';
+  } else if (payment.invoice_id) {
+    confirmationTitle = 'Invoice Payment';
+  }
   const lines = [
-    `✅ *Payment Confirmed!*`,
+    `✅ *${confirmationTitle} Confirmed!*`,
     '',
     `🏢 ${businessName}`,
     `📋 ${serviceName}`,
