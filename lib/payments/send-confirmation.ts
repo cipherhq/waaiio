@@ -589,6 +589,10 @@ export async function sendProactiveConfirmation(
           phone: phoneForLookup,
           countryCode,
           businessId,
+          // #381: This is a follow-on balance payment. Keep the successful
+          // deposit payment as the booking's canonical payment_id while the
+          // new payment row remains linked through booking_id.
+          preserveEntityPaymentLink: true,
         });
         if (result?.url) {
           lines.push(`💰 Pay now: ${result.url}`);
