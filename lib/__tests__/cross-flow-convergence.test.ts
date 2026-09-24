@@ -273,11 +273,12 @@ describe('Stage-3 confirmation copy entity title', () => {
       reservation_id?: string | null;
       campaign_id?: string | null;
       invoice_id?: string | null;
-    }, bookingFlowType?: string) {
+    }, bookingFlowType?: string, bookingServiceType?: string) {
       let title = 'Payment';
       if (payment.booking_id && bookingFlowType) {
-        if (bookingFlowType === 'scheduling') title = 'Appointment';
+        if (bookingFlowType === 'scheduling' || bookingFlowType === 'appointment') title = 'Appointment';
         else if (bookingFlowType === 'ticketing') title = 'Ticket';
+        else if (bookingFlowType === 'payment' && bookingServiceType === 'giving') title = 'Donation';
         else title = 'Payment';
       } else if (payment.order_id) {
         title = 'Order';
@@ -292,8 +293,10 @@ describe('Stage-3 confirmation copy entity title', () => {
     }
 
     expect(deriveTitle({ booking_id: 'b1' }, 'scheduling')).toBe('Appointment');
+    expect(deriveTitle({ booking_id: 'b1' }, 'appointment')).toBe('Appointment');
     expect(deriveTitle({ booking_id: 'b1' }, 'ticketing')).toBe('Ticket');
-    expect(deriveTitle({ booking_id: 'b1' }, 'payment')).toBe('Payment');
+    expect(deriveTitle({ booking_id: 'b1' }, 'payment', 'giving')).toBe('Donation');
+    expect(deriveTitle({ booking_id: 'b1' }, 'payment', 'booking')).toBe('Payment');
     expect(deriveTitle({ order_id: 'o1' })).toBe('Order');
     expect(deriveTitle({ reservation_id: 'r1' })).toBe('Reservation');
     expect(deriveTitle({ campaign_id: 'c1' })).toBe('Donation');
