@@ -381,7 +381,7 @@ CREATE OR REPLACE FUNCTION finalize_payment_confirmation(
   p_payment_id UUID,
   p_claim_token UUID
 ) RETURNS JSONB
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, extensions AS $$
 DECLARE
   v_payment RECORD;
   v_manifest RECORD;
