@@ -3,6 +3,15 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-09-24 — Fix: Stripe saved-card PI dispatch explicitly card-only (#379)
+
+### What changed
+- **`lib/payments/stripe-saved-card.ts`**: `chargeStripeSavedCard()` and `buildSavedCardPIParams()` now include `payment_method_types[0]=card` in the PI creation params. This prevents Stripe from adding redirect-capable payment methods that require `return_url`.
+- **`lib/payments/saved-payment-adapter.ts`**: Indeterminate dispatch errors now persist sanitized evidence (`gateway_status`, `_dispatch_error`) on the payment row for diagnostics.
+- **Root cause**: Without explicit `payment_method_types`, Stripe's automatic payment methods could include redirect-capable types, causing `invalid_request_error` for missing `return_url`.
+- **Impact**: Fixes saved-card charge failures that left `sc_pending_` rows with no provider error evidence.
+- **What could break**: Nothing — card-only restriction matches the saved-card flow's server-side intent. Stripe Checkout (ordinary payment) is unaffected.
+
 ## 2026-09-22 — Fix: P0 saved-card dispatched-recovery parity (#375)
 
 ### What changed

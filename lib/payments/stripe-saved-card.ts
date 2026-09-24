@@ -211,7 +211,10 @@ export async function chargeStripeSavedCard(opts: {
       amount: String(opts.amountCents),
       currency: opts.currency.toLowerCase(),
       confirm: 'true',
-      // on-session: customer is present in the WhatsApp flow
+      // #379: Explicitly card-only — prevents Stripe from adding redirect-capable
+      // payment methods (e.g. bank transfers, wallets) that require return_url.
+      // This is a server-side saved-card charge, not a Checkout Session.
+      'payment_method_types[0]': 'card',
     };
 
     if (opts.stripeAccountId) {
@@ -282,6 +285,8 @@ export function buildSavedCardPIParams(opts: {
     amount: String(opts.amountCents),
     currency: opts.currency.toLowerCase(),
     confirm: 'true',
+    // #379: Explicitly card-only for server-side saved-card charges
+    'payment_method_types[0]': 'card',
   };
   if (opts.stripeAccountId) {
     params['transfer_data[destination]'] = opts.stripeAccountId;

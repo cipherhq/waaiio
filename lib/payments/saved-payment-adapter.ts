@@ -608,7 +608,18 @@ class StripeSavedPaymentAdapterImpl implements SavedPaymentAdapter {
       return { status: 'declined', message: result.errorMessage || 'Card declined', shouldDeactivate: false };
     }
 
-    // indeterminate/error — leave dispatched for cron recovery
+    // indeterminate/error — leave dispatched for cron recovery.
+    // #379: Persist sanitized error evidence on the payment row for diagnostics.
+    // Do not log secrets. Do not transition to failed (provider truth unknown).
+    if (result.errorMessage) {
+      const errorEvidence = result.errorMessage.slice(0, 200); // Truncate for safety
+      // #379: Persist sanitized error evidence for diagnostics. Do not log secrets.
+      // Do not transition state — leave dispatched for cron recovery.
+      await supabase.from('payments')
+        .update({ gateway_status: `dispatched_error:${errorEvidence}` })
+        .eq('id', payRow.id)
+        .eq('provider_init_state', 'dispatched'); // CAS: only update if still dispatched
+    }
     return { status: 'indeterminate', paymentId: payRow.id, message: result.errorMessage || 'unknown' };
   }
 
