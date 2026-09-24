@@ -2119,6 +2119,7 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
     // Session A: multi-statement script that holds the lock, waits for B to block, runs renewal, commits
     // Uses application_name to identify Session B in pg_stat_activity
     const sessionASql = `
+      SET application_name = 'test99_renewal';
       BEGIN;
       SELECT id FROM subscriptions WHERE id = '${subId}'::uuid FOR UPDATE;
       -- Now we hold the row lock. Wait for Session B to be blocked on it.
@@ -2151,11 +2152,34 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
       SELECT expire_subscription_with_authority('${subId}'::uuid, '${oldPeriodEnd}'::timestamptz);
     `;
 
-    // Launch both sessions — A holds lock, B blocks on it
-    const [rA, rB] = await Promise.all([
-      psqlAsync(sessionASql),
-      psqlAsync(sessionBSql),
-    ]);
+    // Start Session A first. Do not launch B until pg_stat_activity proves
+    // A has passed FOR UPDATE and is inside its pg_sleep wait loop while holding
+    // the subscription row lock. The previous Promise.all launch raced which
+    // session acquired the lock first and made this "deterministic" proof flaky.
+    const sessionAPromise = psqlAsync(sessionASql);
+    let renewalOwnsLock = false;
+    for (let i = 0; i < 100; i += 1) {
+      const ready = psql(`
+        SELECT EXISTS (
+          SELECT 1 FROM pg_stat_activity
+          WHERE application_name = 'test99_renewal'
+            AND state = 'active'
+            AND wait_event_type = 'Timeout'
+            AND wait_event = 'PgSleep'
+        );
+      `);
+      if (ready === 't') {
+        renewalOwnsLock = true;
+        break;
+      }
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    expect(renewalOwnsLock).toBe(true);
+
+    // Only now launch expiry. It must block behind A's row lock; A's SQL
+    // independently proves that state before running the real renewal finalizer.
+    const sessionBPromise = psqlAsync(sessionBSql);
+    const [rA, rB] = await Promise.all([sessionAPromise, sessionBPromise]);
 
     // Unconditional assertions — no conditional branches, no alternate accepted outcomes
 
