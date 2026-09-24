@@ -70,6 +70,7 @@ function makeCtx(overrides: Partial<FlowContext> = {}): FlowContext {
       business_id: 'biz-123',
       current_step: 'saved_card_prompt',
       session_data: {
+        _inbound_channel_id: 'channel-test',
         _saved_method_id: 'method-123',
         _awaiting_card_pin: true,
       },
@@ -260,7 +261,7 @@ describe('#373 R1: Scheduling saved_card_prompt — exact Jshop production path'
       sender: { sendText: vi.fn().mockResolvedValue(undefined) },
       t: (t: string) => Promise.resolve(t),
       business: { id: 'biz-1', name: 'Jshop', country_code: 'US', subscription_tier: 'free' },
-      session: { id: 's-1', business_id: 'biz-1', current_step: 'saved_card_prompt', session_data: sessionData, version: 1 },
+      session: { id: 's-1', business_id: 'biz-1', current_step: 'saved_card_prompt', session_data: { _inbound_channel_id: 'channel-test', ...sessionData }, version: 1 },
     } as unknown as FlowContext;
   }
 
