@@ -401,8 +401,9 @@ export async function sendProactiveConfirmation(
   // #389: Capability-aware Stage-3 confirmation title
   let confirmationTitle = 'Payment';
   if (payment.booking_id && bookingFlowType) {
-    if (bookingFlowType === 'scheduling') confirmationTitle = 'Appointment';
+    if (bookingFlowType === 'scheduling' || bookingFlowType === 'appointment') confirmationTitle = 'Appointment';
     else if (bookingFlowType === 'ticketing') confirmationTitle = 'Ticket';
+    else if (bookingFlowType === 'payment' && bookingServiceType === 'giving') confirmationTitle = 'Donation';
     else confirmationTitle = 'Payment';
   } else if (payment.order_id) {
     confirmationTitle = 'Order';
