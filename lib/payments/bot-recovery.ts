@@ -36,6 +36,7 @@ export type FlowRecoveryResult =
   | { type: 'already_completed'; paymentId: string }
   | { type: 'requires_auth'; paymentId: string; authUrl: string }
   | { type: 'terminal_decline'; paymentId: string; message: string }
+  | { type: 'authority_rejected'; paymentId: string; message: string }
   | { type: 'provider_confirmed'; paymentId: string }
   | { type: 'indeterminate'; paymentId: string }
   | { type: 'quarantined'; paymentId: string }
@@ -65,6 +66,8 @@ export async function recoverSavedCardPaymentForFlow(
       return { type: 'indeterminate', paymentId: savedCardPaymentId };
     case 'declined':
       return { type: 'terminal_decline', paymentId: savedCardPaymentId, message: scResult.message || 'Payment declined' };
+    case 'authority_rejected':
+      return { type: 'authority_rejected', paymentId: savedCardPaymentId, message: scResult.message || 'Payment received but could not be finalized' };
     case 'provider_confirmed':
       return { type: 'provider_confirmed', paymentId: savedCardPaymentId };
     case 'quarantined':
@@ -133,6 +136,16 @@ export function mapSavedCardRecoveryToValidation(
         errorMessage: "Your payment is confirmed by the provider and is still being finalized. Tap *I've Paid* again shortly.",
       };
 
+    case 'authority_rejected':
+      // R3-B1: Provider may have charged customer but Waaiio authority rejected finalization.
+      // Do NOT enable retry. Do NOT clear payment ID. Do NOT suggest paying again.
+      sessionData._payment_retry_blocked = true;
+      return {
+        valid: false,
+        persistSessionDataOnFailure: true,
+        errorMessage: 'Your payment was received but we could not safely finalize it. Please do NOT pay again — we are resolving this. Tap *I\'ve Paid* to check status.',
+      };
+
     case 'quarantined':
       return {
         valid: false,
@@ -178,6 +191,8 @@ export async function verifyAndReconcileSavedCardPayment(
     case 'declined':
     case 'quarantined':
       return { outcome: 'not_verified', paymentId };
+    case 'authority_rejected':
+      return { outcome: 'processing', paymentId }; // Keep fenced — do not allow retry
     case 'indeterminate':
       return { outcome: 'provider_error', paymentId };
     case 'error':

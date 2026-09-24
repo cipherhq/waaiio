@@ -691,6 +691,7 @@ describe('All flows wired with centralized helper', () => {
     const alreadyCompleted: FlowRecoveryResult = { type: 'already_completed', paymentId: 'p1' };
     const requiresAuth: FlowRecoveryResult = { type: 'requires_auth', paymentId: 'p1', authUrl: 'url' };
     const terminalDecline: FlowRecoveryResult = { type: 'terminal_decline', paymentId: 'p1', message: 'msg' };
+    const authorityRejected: FlowRecoveryResult = { type: 'authority_rejected', paymentId: 'p1', message: 'msg' };
     const providerConfirmed: FlowRecoveryResult = { type: 'provider_confirmed', paymentId: 'p1' };
     const indeterminate: FlowRecoveryResult = { type: 'indeterminate', paymentId: 'p1' };
     const quarantined: FlowRecoveryResult = { type: 'quarantined', paymentId: 'p1' };
@@ -698,9 +699,88 @@ describe('All flows wired with centralized helper', () => {
     const error: FlowRecoveryResult = { type: 'error', message: 'msg' };
 
     // All types are distinct
-    const types = [completed, alreadyCompleted, requiresAuth, terminalDecline, providerConfirmed, indeterminate, quarantined, notApplicable, error];
+    const types = [completed, alreadyCompleted, requiresAuth, terminalDecline, authorityRejected, providerConfirmed, indeterminate, quarantined, notApplicable, error];
     const typeNames = types.map(t => t.type);
-    expect(new Set(typeNames).size).toBe(9);
+    expect(new Set(typeNames).size).toBe(10);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// R3-B1: Authority rejected vs terminal decline
+// ═══════════════════════════════════════════════════════════════════
+
+describe('R3-B1: Authority rejected after provider success', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('PI succeeded + lifecycle rejected → authority_rejected, NEVER declined/terminal_decline', async () => {
+    mockReconcilePayment.mockResolvedValue({
+      providerOutcome: 'verified',
+      lifecycle: { status: 'rejected', retryable: false, reason: 'Amount mismatch' },
+      acknowledgeSuccess: true,
+    });
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ id: 'pi_rej', status: 'succeeded' }) });
+    const sb = makeSupabase(VALID_PAYMENT);
+    const result = await recoverDispatchedSavedCardPayment(sb, 'pay-123');
+    expect(result.outcome).toBe('authority_rejected');
+    expect(result.outcome).not.toBe('declined');
+    // Message contains the rejection reason from canonical authority
+    expect(result.message).toBeTruthy();
+  });
+
+  it('authority_rejected flow mapping keeps retry blocked and preserves payment ID', () => {
+    const sessionData: Record<string, unknown> = {
+      _saved_card_payment_id: 'pay-123',
+      _payment_retry_blocked: true,
+    };
+    const result = mapSavedCardRecoveryToValidation(
+      { type: 'authority_rejected', paymentId: 'pay-123', message: 'test' },
+      sessionData,
+    );
+    expect(result).not.toBeNull();
+    // retry remains blocked
+    expect(sessionData._payment_retry_blocked).toBe(true);
+    // payment ID preserved
+    expect(sessionData._saved_card_payment_id).toBe('pay-123');
+    // valid=false — no "payment confirmed"
+    expect(result!.valid).toBe(false);
+    // _retry_payment never set
+    expect(result!.data?._retry_payment).toBeUndefined();
+    // persistSessionDataOnFailure so the blocked state persists
+    expect(result!.persistSessionDataOnFailure).toBe(true);
+    // UX says do not pay again
+    expect(result!.errorMessage).toContain('do NOT pay again');
+  });
+
+  it('genuine Stripe card decline still safely enables retry/new card', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        id: 'pi_card_decline',
+        status: 'requires_payment_method',
+        last_payment_error: { type: 'card_error', message: 'Insufficient funds' },
+      }),
+    });
+    const sb = makeSupabase(VALID_PAYMENT);
+    const result = await recoverDispatchedSavedCardPayment(sb, 'pay-123');
+    // Should be a genuine decline
+    expect(result.outcome).toBe('declined');
+    expect(result.outcome).not.toBe('authority_rejected');
+  });
+
+  it('terminal_decline flow mapping clears payment ID and enables retry', () => {
+    const sessionData: Record<string, unknown> = {
+      _saved_card_payment_id: 'pay-123',
+      _payment_retry_blocked: true,
+    };
+    const result = mapSavedCardRecoveryToValidation(
+      { type: 'terminal_decline', paymentId: 'pay-123', message: 'Card declined' },
+      sessionData,
+    );
+    expect(result).not.toBeNull();
+    expect(result!.valid).toBe(true);
+    expect(result!.data?._retry_payment).toBe(true);
+    expect(result!.data?._saved_card_payment_id).toBeNull();
+    expect(result!.data?._payment_retry_blocked).toBe(false);
   });
 });
 

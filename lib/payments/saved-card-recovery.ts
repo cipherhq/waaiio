@@ -12,7 +12,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { logger } from '@/lib/logger';
 
 export interface SavedCardRecoveryResult {
-  outcome: 'succeeded' | 'requires_action' | 'declined' | 'provider_confirmed' | 'indeterminate' | 'quarantined' | 'already_resolved' | 'error';
+  outcome: 'succeeded' | 'requires_action' | 'declined' | 'authority_rejected' | 'provider_confirmed' | 'indeterminate' | 'quarantined' | 'already_resolved' | 'error';
   paymentIntentId?: string;
   authUrl?: string;
   message?: string;
@@ -284,9 +284,15 @@ async function reconcileAndMapLifecycle(
     if (lifecycleStatus === 'retryable_failed') {
       return { outcome: 'provider_confirmed', paymentIntentId, message: 'Finalization encountered a retryable error; cron will retry' };
     }
-    // Rejected by canonical authority
+    // R3-B1: Rejected by canonical authority after provider may have succeeded.
+    // This is NOT a card decline — Stripe may already have charged the customer.
+    // Must NOT enable retry/new-card. Preserve payment ID for reconciliation.
     if (lifecycleStatus === 'rejected') {
-      return { outcome: 'declined', paymentIntentId, message: result.lifecycle?.reason || 'Rejected by payment authority' };
+      return {
+        outcome: 'authority_rejected',
+        paymentIntentId,
+        message: result.lifecycle?.reason || 'Payment was received but could not be safely finalized. Do not pay again — we are resolving this.',
+      };
     }
     // Provider not verified or no lifecycle
     if (result.providerOutcome === 'not_paid') {
