@@ -123,10 +123,12 @@ describe.skipIf(!dbUrl)('M400 Cross-flow convergence (real PostgreSQL)', () => {
       );
       CREATE TABLE IF NOT EXISTS campaign_donations (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        campaign_id UUID, business_id UUID, payment_id UUID UNIQUE,
+        campaign_id UUID, business_id UUID, payment_id UUID,
         donor_phone TEXT, donor_name TEXT, amount NUMERIC, currency TEXT,
         reference_code TEXT, status TEXT DEFAULT 'pending'
       );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_campaign_donations_payment_unique
+        ON campaign_donations(payment_id) WHERE payment_id IS NOT NULL;
       CREATE TABLE IF NOT EXISTS payment_terminal_manifests (
         payment_id UUID PRIMARY KEY,
         initialization_state TEXT DEFAULT 'initialized',
