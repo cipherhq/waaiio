@@ -3550,17 +3550,7 @@ export const orderingFlow: FlowDefinition = {
           const isProcessing = lifecycle?.status === 'processing';
 
           if (reconcileResult.providerOutcome === 'verified' && isComplete) {
-            // Payment Authority fully completed (Stage 2+3). Confirmation/post-completion
-            // already handled by sendProactiveConfirmation in Stage 3 — don't duplicate.
-            const cc = (ctx.business?.country_code || 'NG') as CountryCode;
-            await ctx.sender.sendText({
-              to: ctx.from,
-              text: await ctx.t(`✅ *Payment Confirmed!*\n\nOrder *${sd.reference_code as string}* is being processed.\n\n💡 Type *my orders* to track, *receipt* for your receipt, or *Hi* to order again.`),
-            });
-
-            // payment_received automation fires from canonical processSuccessfulPayment
-            // (Stage 2) — fires identically for webhook and "I've Paid".
-
+            // #389 B1: Stage-3 owns customer confirmation — suppress flow-level sendText
             return { valid: true, data: { _action: 'payment_confirmed' } };
           }
 

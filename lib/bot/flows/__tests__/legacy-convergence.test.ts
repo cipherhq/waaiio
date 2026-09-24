@@ -221,12 +221,12 @@ describe('Invoice: I\'ve Paid convergence', () => {
     step = getStep(invoiceFlow, 'await_invoice_payment');
   });
 
-  it('completed → brief ack', async () => {
+  it('completed → payment_confirmed (Stage-3 owns confirmation)', async () => {
     mockRecovery.mockResolvedValue({ outcome: 'completed' });
     const ctx = buildCtx({ _invoice_ref: 'INV-001', payment_reference: 'ref-inv' });
     const r = await step.validate('i_paid', ctx);
     expect(r.valid).toBe(true);
-    expect(r.data?._action).toBe('already_confirmed');
+    expect(r.data?._action).toBe('payment_confirmed');
   });
 
   it('processing → stays at step', async () => {
@@ -252,12 +252,12 @@ describe('Crowdfunding: I\'ve Paid convergence', () => {
   const awaitStep = crowdfundingFlow.steps.find(s => s.id === 'await_donation_payment')!;
   beforeEach(() => { vi.clearAllMocks(); });
 
-  it('completed → brief ack', async () => {
+  it('completed → payment_confirmed (Stage-3 owns confirmation)', async () => {
     mockRecovery.mockResolvedValue({ outcome: 'completed' });
     const ctx = buildCtx({ payment_reference: 'ref-don', campaign_title: 'Feed the Children', donation_ref_code: 'DON-001' });
     const r = await awaitStep.validate('i_paid', ctx);
     expect(r.valid).toBe(true);
-    expect(r.data?._action).toBe('already_confirmed');
+    expect(r.data?._action).toBe('payment_confirmed');
   });
 
   it('processing → stays at step', async () => {

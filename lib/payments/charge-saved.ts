@@ -9,6 +9,10 @@ import { resolveTrialStatus } from '@/lib/trial-status';
 
 const paystackSecretKey = process.env.PAYSTACK_SECRET_KEY || '';
 
+function normalizePhone(phone: string): string {
+  return phone.startsWith('+') ? phone : `+${phone}`;
+}
+
 export type SplitResult =
   | { mode: 'no_split' }
   | { mode: 'split'; subaccount: string; transactionChargeKobo: number }
@@ -202,6 +206,10 @@ export async function chargeSavedCard(
     transactionCategory?: string;
     inboundChannelId?: string;
     confirmationOrigin?: 'whatsapp' | 'web';
+    /** #389: Customer phone for donation intent creation */
+    customerPhone?: string;
+    /** #389: Donor display name; null/empty means anonymous. */
+    donorName?: string | null;
   },
 ): Promise<SavedCardOutcome> {
   // BYO saved-card not supported — fail closed without durable provider identity
@@ -234,6 +242,8 @@ async function chargePaystackAuthorization(
     transactionCategory?: string;
     inboundChannelId?: string;
     confirmationOrigin?: 'whatsapp' | 'web';
+    customerPhone?: string;
+    donorName?: string | null;
   },
 ): Promise<SavedCardOutcome> {
   if (!paystackSecretKey) {
@@ -245,7 +255,7 @@ async function chargePaystackAuthorization(
   // Fail closed on lookup error — never call provider without confirming no existing charge.
   const { data: existing, error: lookupErr } = await supabase
     .from('payments')
-    .select('id, status, booking_id, business_id, metadata')
+    .select('id, status, booking_id, order_id, reservation_id, invoice_id, campaign_id, business_id, amount, currency, gateway, payment_method, metadata')
     .eq('gateway_reference', opts.reference)
     .maybeSingle();
 
@@ -257,15 +267,43 @@ async function chargePaystackAuthorization(
   }
 
   if (existing) {
-    // Validate entity + business identity: existing row must belong to same booking and business.
-    // If opts.bookingId is supplied, existing must match (null existing.booking_id = mismatch).
-    if (opts.bookingId && existing.booking_id !== opts.bookingId) {
-      logger.error('[SAVED-CARD] Existing payment booking mismatch', { existing: existing.booking_id, expected: opts.bookingId });
+    // R6-B: Validate the EXACT canonical entity tuple, not merely the entity
+    // fields supplied by the caller. A reference belonging to a different
+    // domain must never converge just because one ID happens to match.
+    const meta = (existing.metadata || {}) as Record<string, unknown>;
+    const legacyOrderId = typeof meta.order_id === 'string' && meta.order_id.trim()
+      ? meta.order_id.trim()
+      : null;
+    const expectedEntities = [
+      ['booking', opts.bookingId || null],
+      ['order', opts.orderId || null],
+      ['reservation', opts.reservationId || null],
+      ['invoice', opts.invoiceId || null],
+      ['campaign', opts.campaignId || null],
+    ] as const;
+    const existingEntities = [
+      ['booking', existing.booking_id || null],
+      ['order', existing.order_id || legacyOrderId],
+      ['reservation', existing.reservation_id || null],
+      ['invoice', existing.invoice_id || null],
+      ['campaign', existing.campaign_id || null],
+    ] as const;
+    const expectedActive = expectedEntities.filter(([, id]) => !!id);
+    const existingActive = existingEntities.filter(([, id]) => !!id);
+
+    if (expectedActive.length !== 1
+        || existingActive.length !== 1
+        || expectedActive[0][0] !== existingActive[0][0]
+        || expectedActive[0][1] !== existingActive[0][1]) {
+      logger.error('[SAVED-CARD] Existing payment entity tuple mismatch', {
+        expectedKind: expectedActive[0]?.[0] || null,
+        existingKind: existingActive[0]?.[0] || null,
+      });
       return { outcome: 'indeterminate', paymentId: existing.id, reference: opts.reference, message: 'Payment reference conflict' };
     }
+
     // Business ownership: check top-level business_id first; fall back to legacy metadata.
     // Pre-PR saved-card rows stored business_id only in metadata, not the top-level column.
-    const meta = (existing.metadata || {}) as Record<string, unknown>;
     const existingBizId = existing.business_id || (meta.business_id as string | undefined);
     if (!existingBizId) {
       // Cannot prove ownership — stay indeterminate, do not call provider
@@ -276,6 +314,42 @@ async function chargePaystackAuthorization(
       logger.error('[SAVED-CARD] Existing payment business mismatch', { existing: existingBizId, expected: opts.businessId });
       return { outcome: 'indeterminate', paymentId: existing.id, reference: opts.reference, message: 'Payment reference conflict' };
     }
+    // #389 B3: Amount/currency/payment_method validation — fail closed on mismatch
+    if (existing.amount !== opts.amount) {
+      logger.error('[SAVED-CARD] Amount mismatch', { existing: existing.amount, expected: opts.amount });
+      return { outcome: 'indeterminate', paymentId: existing.id, reference: opts.reference, message: 'Amount mismatch' };
+    }
+    if (existing.currency?.toLowerCase() !== opts.currency?.toLowerCase()) {
+      logger.error('[SAVED-CARD] Currency mismatch');
+      return { outcome: 'indeterminate', paymentId: existing.id, reference: opts.reference, message: 'Currency mismatch' };
+    }
+    if (existing.gateway !== 'paystack') {
+      logger.error('[SAVED-CARD] Gateway mismatch', { existing: existing.gateway, expected: 'paystack' });
+      return { outcome: 'indeterminate', paymentId: existing.id, reference: opts.reference, message: 'Gateway mismatch' };
+    }
+    if (existing.payment_method !== 'saved_card') {
+      logger.error('[SAVED-CARD] Payment method mismatch');
+      return { outcome: 'indeterminate', paymentId: existing.id, reference: opts.reference, message: 'Payment method mismatch' };
+    }
+
+    // #389 R6-A: campaign recovery must prove the durable donation intent
+    // before any reconciliation can advance this payment.
+    if (opts.campaignId) {
+      if (!opts.customerPhone) {
+        logger.error('[PAYSTACK-SAVED-CARD] Campaign payment missing customer phone — blocking recovery');
+        return { outcome: 'indeterminate', paymentId: existing.id, reference: opts.reference, message: 'Donation identity unavailable' };
+      }
+      const { data: intentResult, error: intentErr } = await supabase.rpc('ensure_campaign_donation_intent_for_payment', {
+        p_payment_id: existing.id,
+        p_donor_phone: normalizePhone(opts.customerPhone),
+        p_donor_name: opts.donorName || null,
+      });
+      if (intentErr || (!intentResult?.created && !intentResult?.already_existed)) {
+        logger.error('[PAYSTACK-SAVED-CARD] Existing campaign donation intent could not be proven — blocking recovery', intentErr);
+        return { outcome: 'indeterminate', paymentId: existing.id, reference: opts.reference, message: 'Donation intent unavailable' };
+      }
+    }
+
     if (existing.status === 'success') {
       return { outcome: 'already_charged', paymentId: existing.id, reference: opts.reference };
     }
@@ -484,6 +558,24 @@ async function chargePaystackAuthorization(
   }
 
   const paymentId = payRow.id;
+
+  // #389 R6-A: For giving/campaign payments, prove donation intent BEFORE provider dispatch.
+  if (opts.campaignId) {
+    if (!opts.customerPhone) {
+      logger.error('[PAYSTACK-SAVED-CARD] Campaign payment missing customer phone — blocking dispatch');
+      return { outcome: 'indeterminate', paymentId, reference: opts.reference, message: 'Donation identity unavailable' };
+    }
+    const { data: intentResult, error: intentErr } = await supabase.rpc('ensure_campaign_donation_intent_for_payment', {
+      p_payment_id: paymentId,
+      p_donor_phone: normalizePhone(opts.customerPhone),
+      p_donor_name: opts.donorName || null,
+    });
+    if (intentErr || (!intentResult?.created && !intentResult?.already_existed)) {
+      logger.error('[PAYSTACK-SAVED-CARD] Donation intent failed — blocking dispatch', intentErr);
+      return { outcome: 'indeterminate', paymentId, reference: opts.reference, message: 'Donation intent failed' };
+    }
+  }
+
   const amountInKobo = Math.round(opts.amount * 100);
 
   // ── Step 2b: Provider-init state machine for v1 ──

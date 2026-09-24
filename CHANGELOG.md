@@ -3,6 +3,25 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-09-22 — Feature: Cross-flow convergence (#389)
+
+### What changed
+- **`supabase/migrations/400_cross_flow_convergence.sql`** (NEW): Migration with 4 RPC changes:
+  - `ensure_campaign_donation_intent_for_payment`: Creates donation intent row atomically before provider dispatch for saved-card giving payments. ON CONFLICT verifies entity tuple match (fail closed on mismatch).
+  - `apply_order_stock_once`: CREATE OR REPLACE adds `UPDATE orders SET payment_id = p_payment_id` at every successful return path where p_payment_id IS NOT NULL. Covers committed replay, non-committed upgrade, and fresh winner paths.
+  - `confirm_reservation_payment_atomic`: New RPC replacing loose `.update()` for reservations. Locks FOR UPDATE, validates payment exists/successful/matches, handles state transitions atomically (pending->confirmed, repair paid state), rejects conflicts.
+  - `finalize_payment_confirmation`: CREATE OR REPLACE removes `dangling_optional` gate. Phase 1 auto-skips internal optional pending, marks stale internal claims indeterminate. Phase 2 auto-skips external optional pending/unclaimed. Active internal claims still block.
+- **`lib/payments/process-success.ts`**: Reservation linkage now uses `confirm_reservation_payment_atomic` RPC instead of loose `.from('reservations').update()`. Validates RPC result and handles rejection reasons.
+- **`lib/payments/charge-saved.ts`**: Existing-payment convergence query now SELECTs all entity columns (booking_id, order_id, reservation_id, invoice_id, campaign_id) and validates full tuple match, not just booking_id.
+- **`lib/bot/flows/invoice.flow.ts`**: Added saved-card offer + handling (buildSavedCardOffer, handleSavedCardInput) with entity ID `{ invoiceId }`. Unique per-attempt reference. Stage-3 suppression: removed sendText confirmation in I've Paid path.
+- **`lib/bot/flows/crowdfunding.flow.ts`**: Added saved-card offer + handling with entity ID `{ campaignId }`. Calls `ensure_campaign_donation_intent_for_payment` RPC in next() after saved-card charge. Stage-3 suppression: removed sendText confirmation in I've Paid path.
+- **`lib/payments/saved-payment-adapter.ts`**: Stripe adapter calls `ensure_campaign_donation_intent_for_payment` after payment row creation, before provider dispatch, when campaignId is present.
+- **`lib/payments/send-confirmation.ts`**: Confirmation title now derived from entity linkage (Appointment/Ticket/Order/Reservation/Donation/Invoice Payment/Payment fallback).
+- **`lib/__tests__/cross-flow-convergence.test.ts`** (NEW): 12 test cases covering order/reservation/invoice/giving convergence, finalization optional handling, and entity title derivation.
+- **Impact**: Orders, reservations, invoices, and giving flows now have payment-link convergence parity. Saved-card payments available for invoice and crowdfunding flows. Finalization no longer blocks on unprocessed optional effects.
+- **What could break**: Reservation confirmation now goes through atomic RPC — if RPC fails, the error is surfaced rather than silently ignored. Invoice/crowdfunding I've Paid no longer sends inline confirmation (Stage-3 owns it).
+- **Files**: `supabase/migrations/400_cross_flow_convergence.sql`, `lib/payments/process-success.ts`, `lib/payments/charge-saved.ts`, `lib/bot/flows/invoice.flow.ts`, `lib/bot/flows/crowdfunding.flow.ts`, `lib/payments/saved-payment-adapter.ts`, `lib/payments/send-confirmation.ts`, `lib/__tests__/cross-flow-convergence.test.ts`
+
 ## 2026-09-24 — Fix: Stripe saved-card PI dispatch explicitly card-only (#379)
 
 ### What changed
