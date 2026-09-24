@@ -202,10 +202,10 @@ export class StripeGateway implements PaymentGateway {
         }
       }
 
-      if (payment && opts.bookingId) {
+      if (payment && opts.bookingId && !opts.preserveEntityPaymentLink) {
         await opts.supabase.from('bookings').update({ payment_id: payment.id }).eq('id', opts.bookingId);
       }
-      if (payment && opts.invoiceId) {
+      if (payment && opts.invoiceId && !opts.preserveEntityPaymentLink) {
         await opts.supabase.from('invoices').update({ payment_id: payment.id }).eq('id', opts.invoiceId);
       }
 
