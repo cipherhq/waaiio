@@ -200,6 +200,8 @@ export async function chargeSavedCard(
     byoSecretKey?: string;
     /** #264: Server-derived transaction category for fee policy */
     transactionCategory?: string;
+    inboundChannelId?: string;
+    confirmationOrigin?: 'whatsapp' | 'web';
   },
 ): Promise<SavedCardOutcome> {
   // BYO saved-card not supported — fail closed without durable provider identity
@@ -230,6 +232,8 @@ async function chargePaystackAuthorization(
     campaignId?: string;
     userId?: string;
     transactionCategory?: string;
+    inboundChannelId?: string;
+    confirmationOrigin?: 'whatsapp' | 'web';
   },
 ): Promise<SavedCardOutcome> {
   if (!paystackSecretKey) {
@@ -468,6 +472,8 @@ async function chargePaystackAuthorization(
       business_id: opts.businessId,
       saved_method: true,
       payment_origin: 'platform',
+      ...(opts.inboundChannelId && { _inbound_channel_id: opts.inboundChannelId }),
+      ...(opts.confirmationOrigin && { _confirmation_origin: opts.confirmationOrigin }),
     },
     ...v1Fields,
   }).select('id').single();

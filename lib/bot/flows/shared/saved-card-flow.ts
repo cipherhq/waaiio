@@ -197,6 +197,11 @@ export async function handleSavedCardInput(
   return null;
 }
 
+export function getSavedCardInboundChannel(ctx: FlowContext): string | null {
+  const channelId = ctx.session.session_data._inbound_channel_id;
+  return typeof channelId === 'string' && channelId.trim() ? channelId : null;
+}
+
 async function chargeSavedCard(
   ctx: FlowContext,
   methodId: string,
@@ -208,6 +213,17 @@ async function chargeSavedCard(
     clearPin?: boolean;
   },
 ): Promise<ValidationResult> {
+  // #382 / #219 hard stop: a WhatsApp-origin saved-card charge must have the
+  // exact inbound channel before any payment row/provider side effect occurs.
+  const inboundChannelId = getSavedCardInboundChannel(ctx);
+  if (!inboundChannelId) {
+    logger.warn('[SAVED-CARD] WhatsApp-origin charge blocked — no inbound channel');
+    return {
+      valid: false,
+      errorMessage: 'We could not safely process this payment right now. Please try again.',
+    };
+  }
+
   const cc = (ctx.business?.country_code || 'NG');
 
   // Resolve currency authoritatively from DB — no module-global cache dependency.
@@ -236,6 +252,8 @@ async function chargeSavedCard(
     businessId: ctx.business!.id,
     ...opts.entityId,
     transactionCategory: opts.transactionCategory,
+    inboundChannelId,
+    confirmationOrigin: 'whatsapp',
   });
 
   const clearPinData = opts.clearPin ? { _awaiting_card_pin: false } : {};
