@@ -150,6 +150,8 @@ const CHARGE_OPTS = {
   businessId: 'biz-jshop',
   bookingId: 'booking-1',
   transactionCategory: 'scheduling',
+  inboundChannelId: 'channel-jshop-1',
+  confirmationOrigin: 'whatsapp' as const,
 };
 
 describe('#379 Stripe saved-payment adapter behavior', () => {
@@ -201,6 +203,27 @@ describe('#379 Stripe saved-payment adapter behavior', () => {
 
     // Canonical row was fenced before provider dispatch and remains the same row.
     expect(state.updates[0]).toEqual({ provider_init_state: 'dispatched' });
+  });
+
+  it('persists exact WhatsApp channel provenance on the canonical saved-card payment', async () => {
+    mockChargeStripeSavedCard.mockResolvedValue({
+      status: 'indeterminate',
+      errorMessage: 'stripe_retryable_429:rate_limit',
+      errorEvidence: {
+        httpStatus: 429,
+        type: 'rate_limit_error',
+        code: 'rate_limit',
+        classification: 'retryable',
+      },
+    });
+
+    const { supabase, state } = makeSupabase({ paymentId: 'pay-channel' });
+    await savedPaymentAdapter.chargeSavedMethod(supabase, CHARGE_OPTS);
+
+    expect(state.inserts).toHaveLength(1);
+    const metadata = state.inserts[0].metadata as Record<string, unknown>;
+    expect(metadata._inbound_channel_id).toBe('channel-jshop-1');
+    expect(metadata._confirmation_origin).toBe('whatsapp');
   });
 
   it('a second interaction with an existing dispatched payment does not insert or dispatch a second charge', async () => {
