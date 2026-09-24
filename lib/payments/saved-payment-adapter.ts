@@ -283,6 +283,7 @@ class PaystackSavedPaymentAdapter implements SavedPaymentAdapter {
       inboundChannelId: opts.inboundChannelId,
       confirmationOrigin: opts.confirmationOrigin,
       customerPhone: opts.customerPhone,
+      donorName: opts.donorName,
     });
 
     return mapOutcome(result);
