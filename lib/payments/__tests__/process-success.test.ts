@@ -11,12 +11,16 @@ vi.mock('@/lib/logger', () => ({
 import { processSuccessfulPayment, recordPlatformFee, processInvoicePayment, processCampaignDonation } from '../process-success';
 
 function mockSupabase(overrides: Record<string, unknown> = {}) {
+  const updateCalls: Array<{ table: string; row: Record<string, unknown> }> = [];
   const updateResult = { eq: vi.fn().mockReturnThis(), in: vi.fn().mockReturnThis(), is: vi.fn().mockReturnThis(), select: vi.fn().mockReturnValue({ maybeSingle: vi.fn().mockResolvedValue({ data: null }), single: vi.fn().mockResolvedValue({ data: { status: 'confirmed', deposit_status: 'paid' }, error: null }) }), ...overrides };
   const insertFn = vi.fn().mockResolvedValue({ data: null, error: null });
 
   return {
     from: vi.fn().mockImplementation((table: string) => ({
-      update: vi.fn().mockReturnValue(updateResult),
+      update: vi.fn().mockImplementation((row: Record<string, unknown>) => {
+        updateCalls.push({ table, row });
+        return updateResult;
+      }),
       insert: insertFn,
       select: vi.fn().mockReturnValue({
         eq: vi.fn().mockReturnValue({
@@ -37,6 +41,8 @@ function mockSupabase(overrides: Record<string, unknown> = {}) {
     })),
     rpc: vi.fn().mockResolvedValue({ data: { applied: true, is_legacy: false, amount: 500, new_amount_paid: 1000, is_fully_paid: true }, error: null }),
     _insertFn: insertFn,
+    _updateCalls: updateCalls,
+    _updateResult: updateResult,
   };
 }
 
@@ -51,6 +57,21 @@ describe('processSuccessfulPayment', () => {
     expect(supabase.from).toHaveBeenCalledWith('bookings');
     // Should call from('platform_fees') to insert fee
     expect(supabase.from).toHaveBeenCalledWith('platform_fees');
+  });
+
+  it('persists the successful payment as booking.payment_id only while the link is NULL', async () => {
+    const supabase = mockSupabase();
+    await processSuccessfulPayment(supabase as any, {
+      id: 'pay-deposit-1', amount: 200, booking_id: 'bk1', invoice_id: null, campaign_id: null,
+    });
+
+    expect(supabase._updateCalls).toContainEqual({
+      table: 'bookings',
+      row: { payment_id: 'pay-deposit-1' },
+    });
+    // #385 no-overwrite invariant: a later balance payment can never replace
+    // the first successful booking payment identity.
+    expect(supabase._updateResult.is).toHaveBeenCalledWith('payment_id', null);
   });
 
   it('skips booking when booking_id is null', async () => {
