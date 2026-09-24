@@ -243,6 +243,7 @@ async function chargePaystackAuthorization(
     inboundChannelId?: string;
     confirmationOrigin?: 'whatsapp' | 'web';
     customerPhone?: string;
+    donorName?: string | null;
   },
 ): Promise<SavedCardOutcome> {
   if (!paystackSecretKey) {
