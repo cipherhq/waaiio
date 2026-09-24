@@ -75,6 +75,9 @@ export async function POST(request: NextRequest) {
       countryCode: cc,
       gatewayOverride: biz.payment_gateway,
       businessId: biz.id,
+      // #381: Balance requests create a new linked payment row but must not
+      // replace the successful deposit payment that confirmed the booking.
+      preserveEntityPaymentLink: true,
     });
 
     if (!result) {
