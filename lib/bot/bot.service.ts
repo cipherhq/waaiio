@@ -2322,6 +2322,47 @@ export class BotService {
 
     if (staleButton.isStalePaymentButton) {
       try {
+        // #375: If session has a known saved-card payment ID, use payment-ID recovery
+        // instead of gateway_reference lookup (which fails for sc_pending_ references).
+        const savedCardPaymentId = session.session_data?._saved_card_payment_id as string | undefined;
+        if (savedCardPaymentId) {
+          const { recoverSavedCardPaymentForFlow } = await import('@/lib/payments/bot-recovery');
+          const scRecovery = await recoverSavedCardPaymentForFlow(this.supabase, savedCardPaymentId);
+
+          switch (scRecovery.type) {
+            case 'completed':
+            case 'already_completed':
+              await this.sendText(from, '✅ *Payment Confirmed!*\n\nYour payment has been verified and processed.\n\n💡 Type *my bookings* to view details, or *receipt* for your payment receipt.');
+              return;
+            case 'requires_auth':
+              await this.sendText(from, `🔒 Your bank requires verification.\n\nPlease complete here 👇\n${scRecovery.authUrl}\n\n⚠️ Return to WhatsApp after verifying.`);
+              return;
+            case 'terminal_decline':
+              await this.sendText(from, `❌ Payment could not be completed: ${scRecovery.message || 'card declined'}.\n\nPlease try again with a different payment method by typing *Hi*.`);
+              return;
+            case 'quarantined':
+              await this.sendText(from, 'Your payment session has expired. Please start a new payment by typing *Hi*.');
+              return;
+            case 'indeterminate':
+              await this.sendText(from, "We're still verifying your previous payment. Tap *I've Paid* again shortly.");
+              return;
+            case 'provider_confirmed':
+              await this.sendText(from, "Your payment is confirmed by the provider and is still being finalized. Tap *I've Paid* again shortly.");
+              return;
+            case 'authority_rejected':
+              // Provider may already have collected funds. Keep payment-ID authority
+              // fenced and never fall through to ordinary reference recovery / retry.
+              await this.sendText(from, "Your payment was received by the payment provider, but Waaiio could not safely finalize it. Please do NOT pay again. Tap *I've Paid* to check the same payment again while we resolve it.");
+              return;
+            case 'error':
+              await this.sendText(from, 'We could not verify your saved-card payment right now. Please try again shortly.');
+              return;
+            case 'not_applicable':
+              // Only genuinely non-saved-card cases may use reference recovery.
+              break;
+          }
+        }
+
         const { recoverByOrderReference, recoverByPaymentReference, recoverGeneric } = await import('@/lib/payments/stale-payment-recovery');
 
         // Determine country code for formatting

@@ -132,24 +132,32 @@ describe('PI recovery with same idempotency key', () => {
   it('live and recovery use the same canonical key: sc_charge_{paymentId}', () => {
     const fs = require('fs');
     const adapterCode = fs.readFileSync('lib/payments/saved-payment-adapter.ts', 'utf-8');
-    const cronCode = fs.readFileSync('app/api/cron/payment-reconciliation/route.ts', 'utf-8');
-    // Both use sc_charge_${payRow.id} / sc_charge_${dp.id}
+    // Shared recovery helper owns the canonical key
+    const recoveryCode = fs.readFileSync('lib/payments/saved-card-recovery.ts', 'utf-8');
     expect(adapterCode).toContain('`sc_charge_${payRow.id}`');
-    expect(cronCode).toContain('`sc_charge_${dp.id}`');
+    expect(recoveryCode).toContain('`sc_charge_${paymentId}`');
   });
 
   it('recovery uses stored pi_params when available', () => {
     const fs = require('fs');
-    const cronCode = fs.readFileSync('app/api/cron/payment-reconciliation/route.ts', 'utf-8');
-    expect(cronCode).toContain('meta.pi_params');
-    expect(cronCode).toContain('application_fee_amount');
+    // Shared recovery helper owns pi_params logic
+    const recoveryCode = fs.readFileSync('lib/payments/saved-card-recovery.ts', 'utf-8');
+    expect(recoveryCode).toContain('pi_params');
+    expect(recoveryCode).toContain('application_fee_amount');
   });
 
   it('age-gates before POST — beyond 23h window triggers quarantine', () => {
     const fs = require('fs');
+    // Shared recovery helper owns the idempotency window check
+    const recoveryCode = fs.readFileSync('lib/payments/saved-card-recovery.ts', 'utf-8');
+    expect(recoveryCode).toContain('STRIPE_IDEMPOTENCY_WINDOW');
+    expect(recoveryCode).toContain('idempotency_expired');
+  });
+
+  it('cron delegates to shared recovery helper', () => {
+    const fs = require('fs');
     const cronCode = fs.readFileSync('app/api/cron/payment-reconciliation/route.ts', 'utf-8');
-    expect(cronCode).toContain('STRIPE_IDEMPOTENCY_WINDOW');
-    expect(cronCode).toContain('idempotency_expired');
+    expect(cronCode).toContain('recoverDispatchedSavedCardPayment');
   });
 });
 

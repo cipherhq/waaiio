@@ -704,6 +704,15 @@ export const paymentFlow: FlowDefinition = {
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
         if (input === 'retry_payment') {
+          // #375: If session has a saved-card payment ID, use centralized recovery first
+          const scPaymentId = ctx.session.session_data._saved_card_payment_id as string | undefined;
+          if (scPaymentId) {
+            const { recoverSavedCardPaymentForFlow, mapSavedCardRecoveryToValidation } = await import('@/lib/payments/bot-recovery');
+            const scResult = await recoverSavedCardPaymentForFlow(ctx.supabase, scPaymentId);
+            const mapped = mapSavedCardRecoveryToValidation(scResult, ctx.session.session_data);
+            if (mapped) return mapped;
+            // not_applicable → fall through to ordinary recovery
+          }
           const ref = ctx.session.session_data.payment_reference as string;
           if (!ref) {
             // No payment reference — cannot establish provider truth. Fail closed.
@@ -912,6 +921,16 @@ export const paymentFlow: FlowDefinition = {
           }
 
           if (!ref) return { valid: true, data: { _action: 'cancel' } };
+
+          // #375: If session has a saved-card payment ID, try payment-ID recovery first
+          const scPaymentId2 = ctx.session.session_data._saved_card_payment_id as string | undefined;
+          if (scPaymentId2) {
+            const { recoverSavedCardPaymentForFlow, mapSavedCardRecoveryToValidation } = await import('@/lib/payments/bot-recovery');
+            const scResult = await recoverSavedCardPaymentForFlow(ctx.supabase, scPaymentId2);
+            const mapped = mapSavedCardRecoveryToValidation(scResult, d);
+            if (mapped) return mapped;
+            // not_applicable → fall through to ordinary recovery
+          }
 
           // Converge through canonical Payment Authority — same path as webhooks.
           // Authority handles: provider verification, booking confirmation, platform fee,

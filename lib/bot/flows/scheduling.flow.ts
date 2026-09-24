@@ -3409,6 +3409,15 @@ export const schedulingFlow: FlowDefinition = {
           if (!ref) {
             return { valid: false, errorMessage: "If you've already paid, tap *I've Paid*. Otherwise, type *Hi* to start a new booking." };
           }
+          // #375: If session has a saved-card payment ID, use centralized recovery first
+          const scPaymentId = ctx.session.session_data._saved_card_payment_id as string | undefined;
+          if (scPaymentId) {
+            const { recoverSavedCardPaymentForFlow, mapSavedCardRecoveryToValidation } = await import('@/lib/payments/bot-recovery');
+            const scResult = await recoverSavedCardPaymentForFlow(ctx.supabase, scPaymentId);
+            const mapped = mapSavedCardRecoveryToValidation(scResult, ctx.session.session_data);
+            if (mapped) return mapped;
+            // not_applicable → fall through to ordinary recovery
+          }
           const { verifyAndReconcilePayment } = await import('@/lib/payments/bot-recovery');
           const recovery = await verifyAndReconcilePayment(ctx.supabase, ref);
           if (recovery.outcome === 'not_paid') {
@@ -3602,6 +3611,17 @@ export const schedulingFlow: FlowDefinition = {
           }
 
           if (!ref) return { valid: true, data: { _action: 'cancel' } };
+
+          // #375: If session has a saved-card payment ID, try centralized recovery first
+          // (gateway_reference lookup fails for sc_pending_ references).
+          const scPaymentId2 = ctx.session.session_data._saved_card_payment_id as string | undefined;
+          if (scPaymentId2) {
+            const { recoverSavedCardPaymentForFlow, mapSavedCardRecoveryToValidation } = await import('@/lib/payments/bot-recovery');
+            const scResult = await recoverSavedCardPaymentForFlow(ctx.supabase, scPaymentId2);
+            const mapped = mapSavedCardRecoveryToValidation(scResult, d);
+            if (mapped) return mapped;
+            // not_applicable → fall through to ordinary recovery
+          }
 
           // Converge through canonical Payment Authority — same path as webhooks.
           // Authority handles: provider verification, booking confirmation, platform

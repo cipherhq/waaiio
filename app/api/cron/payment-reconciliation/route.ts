@@ -170,107 +170,25 @@ export async function GET(request: NextRequest) {
         } else if (dp.gateway === 'stripe') {
           const stripeKey = process.env.STRIPE_SECRET_KEY;
 
-          // #353: Saved-card PaymentIntent recovery (idempotent replay)
-          // Saved-card PIs are created directly, not via Checkout Sessions.
+          // #375/#353: Saved-card PaymentIntent recovery — delegated to shared helper.
+          // Same payment row, same stored pi_params, same sc_charge_ idempotency key.
           if (meta.saved_method === true && stripeKey) {
-            const paymentAge = Date.now() - new Date(dp.created_at as string).getTime();
-            const STRIPE_IDEMPOTENCY_WINDOW = 23 * 60 * 60 * 1000; // 23h (safe margin under 24h)
-
-            if (paymentAge > STRIPE_IDEMPOTENCY_WINDOW) {
-              // Beyond safe idempotency window — quarantine, do NOT replay
-              logger.warn('[CRON] Saved-card PI beyond idempotency window — quarantining', { paymentId: dp.id });
-              resolved = await checkedCAS({
-                gateway_status: 'dispatched_quarantine:idempotency_expired',
-                provider_init_state: 'dispatched', // keep dispatched for audit
-              });
-              // Do NOT transition to provider_confirmed or replay
-            } else if (meta.pi_params || (meta.stripe_customer_id && meta.stripe_pm_id)) {
-              try {
-                // I2/I5: Use exact stored pi_params for replay with the canonical idempotency key
-                const idempotencyKey = `sc_charge_${dp.id}`;
-                let params: Record<string, string>;
-
-                if (meta.pi_params && typeof meta.pi_params === 'object') {
-                  // Use stored exact params — includes application_fee_amount
-                  params = meta.pi_params as Record<string, string>;
-                } else {
-                  // Fallback: reconstruct from metadata (legacy rows without pi_params)
-                  params = {
-                    customer: meta.stripe_customer_id as string,
-                    payment_method: meta.stripe_pm_id as string,
-                    amount: String(Math.round(dp.amount * 100)),
-                    currency: (dp.currency as string).toLowerCase(),
-                    confirm: 'true',
-                  };
-                  if (meta.provider_account_id) {
-                    params['transfer_data[destination]'] = meta.provider_account_id as string;
-                  }
-                  if (meta.application_fee_amount) {
-                    params['application_fee_amount'] = String(meta.application_fee_amount);
-                  }
-                }
-
-                const res = await fetch('https://api.stripe.com/v1/payment_intents', {
-                  method: 'POST',
-                  headers: {
-                    Authorization: `Bearer ${stripeKey}`,
-                    'Content-Type': 'application/x-www-form-urlencoded',
-                    'Idempotency-Key': idempotencyKey,
-                  },
-                  body: new URLSearchParams(params).toString(),
-                  signal: AbortSignal.timeout(15000),
-                });
-
-                if (res.ok) {
-                  const pi = await res.json() as Record<string, unknown>;
-                  if (pi.id && typeof pi.id === 'string') {
-                    if (pi.status === 'succeeded') {
-                      resolved = await checkedCAS({
-                        gateway_reference: pi.id,
-                        provider_init_state: 'provider_confirmed',
-                        metadata: { ...meta, stripe_pi_id: pi.id },
-                      });
-                      if (resolved) {
-                        const { reconcilePayment: rp } = await import('@/lib/payments/reconcile');
-                        await rp(supabase, dp.id, 'cron');
-                      }
-                    } else if (pi.status === 'requires_action') {
-                      resolved = await checkedCAS({
-                        gateway_reference: pi.id,
-                        provider_init_state: 'provider_confirmed',
-                        metadata: { ...meta, stripe_pi_id: pi.id },
-                      });
-                    } else if (['requires_payment_method', 'canceled'].includes(pi.status as string)) {
-                      resolved = await checkedTerminal(`stripe_pi_${pi.status}`);
-                    }
-                  }
-                } else {
-                  // I5: Do NOT terminalize every 4xx — classify properly
-                  const errorBody = await res.json().catch(() => ({})) as Record<string, unknown>;
-                  const error = (errorBody.error || {}) as Record<string, unknown>;
-                  const errType = (error.type as string) || '';
-                  const errCode = (error.code as string) || '';
-
-                  if (errType === 'card_error' || errCode === 'card_declined') {
-                    // Genuine card decline → terminal
-                    resolved = await checkedTerminal(`stripe_card_decline:${errCode}`);
-                  } else if (res.status === 401 || res.status === 403 || res.status === 429
-                    || errType === 'authentication_error' || errCode === 'idempotency_key_in_use') {
-                    // Auth/config/rate-limit/idempotency → remain dispatched (retryable)
-                    logger.warn('[CRON] Saved-card PI recovery: retryable Stripe error', {
-                      paymentId: dp.id, status: res.status, errType, errCode,
-                    });
-                  } else if (errType === 'invalid_request_error' && (errCode === 'resource_missing' || errCode === 'payment_method_unattached')) {
-                    // PM/Customer invalid → terminal
-                    resolved = await checkedTerminal(`stripe_invalid:${errCode}`);
-                  } else {
-                    // Other 4xx → quarantine for review (not auto-terminal)
-                    logger.warn('[CRON] Saved-card PI recovery: unclassified Stripe error — quarantine', {
-                      paymentId: dp.id, status: res.status, errType, errCode,
-                    });
-                  }
-                }
-              } catch { /* network error → ambiguous, remain dispatched */ }
+            try {
+              const { recoverDispatchedSavedCardPayment } = await import('@/lib/payments/saved-card-recovery');
+              const scResult = await recoverDispatchedSavedCardPayment(supabase, dp.id);
+              // Map shared helper outcome to the cron's resolved flag
+              if (scResult.outcome === 'succeeded' || scResult.outcome === 'already_resolved'
+                || scResult.outcome === 'provider_confirmed' || scResult.outcome === 'declined'
+                || scResult.outcome === 'quarantined') {
+                resolved = true;
+              } else if (scResult.outcome === 'requires_action') {
+                // CAS already bound PI ID — mark resolved so quarantine doesn't fire
+                resolved = true;
+              }
+              // 'indeterminate' / 'error' → resolved stays false (quarantine-eligible)
+            } catch (scErr) {
+              logger.error('[CRON] Saved-card recovery helper error', { paymentId: dp.id, error: String(scErr) });
+              // remain dispatched — quarantine-eligible
             }
           } else {
           // Stripe Checkout Session recovery (existing path, unchanged)
