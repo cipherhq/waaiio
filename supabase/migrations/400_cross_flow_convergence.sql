@@ -503,7 +503,7 @@ BEGIN
       completed_at = NOW(), updated_at = NOW()
     WHERE payment_id = p_payment_id AND category = 'optional'
       AND execution_class = 'internal' AND status = 'claimed'
-      AND claim_expires_at <= NOW();
+      AND (claim_expires_at IS NULL OR claim_expires_at <= NOW());
 
     -- Check active internal claims
     SELECT COUNT(*) INTO v_active_internal FROM payment_terminal_effects
