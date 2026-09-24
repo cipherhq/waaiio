@@ -596,6 +596,7 @@ const donationPaymentStep: FlowStepConfig = {
         reference: savedCardRef,
         entityId: { campaignId: d.campaign_id as string },
         transactionCategory: 'giving',
+        donorName: (d.donor_name as string) || null,
       });
       if (savedResult) return savedResult;
     }
