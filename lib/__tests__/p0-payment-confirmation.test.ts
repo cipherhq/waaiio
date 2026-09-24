@@ -313,7 +313,7 @@ describe('P0-CONFIRM-1: Control-flow tests', () => {
     expect(mockRpc).toHaveBeenCalledWith('finalize_payment_confirmation', expect.objectContaining({ p_claim_token: 'tok-aaa' }));
   });
 
-  // ── Partial-balance / remaining-balance provider initialization ──
+  // ── #391: Partial-balance confirmation must not initialize another payment ──
 
   it('22. partial balance + ownership lost at checkpoint 1 → no initializePayment', async () => {
     const s = buildMock({
@@ -328,42 +328,34 @@ describe('P0-CONFIRM-1: Control-flow tests', () => {
     expect(mockRpc).not.toHaveBeenCalledWith('release_payment_confirmation', expect.anything());
   });
 
-  it('23. partial balance + provider init attempted then throws → no release', async () => {
-    mockInitializePayment.mockRejectedValue(new Error('provider timeout'));
+  it('23. partial deposit confirmation never initializes a follow-on balance payment', async () => {
+    mockInitializePayment.mockRejectedValue(new Error('must never be reached'));
     const s = buildMock({ claim_payment_confirmation: CLAIM_OK, renew_payment_confirmation_claim: RENEW_OK, finalize_payment_confirmation: FIN_OK });
     setupPartialBalanceMock();
     const { sendProactiveConfirmation } = await import('../payments/send-confirmation');
     await sendProactiveConfirmation(s, pay);
-    // initializePayment WAS called (proves the profile mock works)
-    expect(mockInitializePayment).toHaveBeenCalledTimes(1);
-    // Provider threw but was attempted → no release
-    expect(mockRpc).not.toHaveBeenCalledWith('release_payment_confirmation', expect.anything());
-  });
-
-  it('24. partial balance success → initializePayment called, finalize succeeds', async () => {
-    mockInitializePayment.mockResolvedValue({ url: 'https://pay.example.com/balance' });
-    const s = buildMock({ claim_payment_confirmation: CLAIM_OK, renew_payment_confirmation_claim: RENEW_OK, finalize_payment_confirmation: FIN_OK });
-    setupPartialBalanceMock();
-    const { sendProactiveConfirmation } = await import('../payments/send-confirmation');
-    await sendProactiveConfirmation(s, pay);
-    expect(mockInitializePayment).toHaveBeenCalledTimes(1);
-    // Correct amount passed (100 total - $50 successful payment history = $50 due)
-    expect(mockInitializePayment).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ amount: 50 }));
+    expect(mockInitializePayment).not.toHaveBeenCalled();
     expect(mockRpc).toHaveBeenCalledWith('finalize_payment_confirmation', expect.objectContaining({ p_claim_token: 'tok-aaa' }));
   });
 
-  it('25. checkpoint 1 verified BEFORE initializePayment — source ordering', () => {
+  it('24. partial deposit still exposes the authoritative remaining balance without a checkout URL', async () => {
+    const s = buildMock({ claim_payment_confirmation: CLAIM_OK, renew_payment_confirmation_claim: RENEW_OK, finalize_payment_confirmation: FIN_OK });
+    setupPartialBalanceMock();
+    const { sendProactiveConfirmation } = await import('../payments/send-confirmation');
+    await sendProactiveConfirmation(s, pay);
+    expect(mockInitializePayment).not.toHaveBeenCalled();
+    const sentTexts = mockSendText.mock.calls.map((call: any[]) => JSON.stringify(call)).join('\n');
+    expect(sentTexts).toContain('Remaining balance');
+    expect(sentTexts).not.toContain('pay.example.com/balance');
+  });
+
+  it('25. Stage 3 source contains no payment initialization for remaining balance', () => {
     const fs = require('fs');
     const path = require('path');
     const src = fs.readFileSync(path.resolve(__dirname, '../payments/send-confirmation.ts'), 'utf-8');
-    const cp1Idx = src.indexOf('CHECKPOINT 1');
-    const renewIdx = src.indexOf('renewConfirmationClaim', cp1Idx);
-    const initIdx = src.indexOf('initializePayment(supabase');
-    const whatsappIdx = src.indexOf('resolved.sender.sendText');
-    expect(cp1Idx).toBeGreaterThan(-1);
-    expect(renewIdx).toBeGreaterThan(cp1Idx);
-    expect(initIdx).toBeGreaterThan(renewIdx);
-    expect(whatsappIdx).toBeGreaterThan(initIdx);
+    expect(src).not.toContain("import('@/lib/bot/flows/shared/payment')");
+    expect(src).not.toContain('initializePayment(supabase');
+    expect(src).toContain('Remaining balance');
   });
 
   it('26. no balance (fully paid) → no initializePayment, normal 5-checkpoint flow', async () => {
@@ -393,23 +385,15 @@ describe('P0-CONFIRM-1: Control-flow tests', () => {
 
   // ── Outer-catch release invariant regression ──
 
-  it('28. outer catch: provider init done + calendar throw → NO release (global invariant)', async () => {
-    // Scenario: checkpoint 1 succeeds, initializePayment succeeds (flag=true),
-    // then getCalendarLinksText throws (after balance init, before inner try).
-    // Outer catch fires. Must NOT release.
-    mockInitializePayment.mockResolvedValue({ url: 'https://pay.example.com/balance' });
-    mockCalendarLinks.mockImplementation(() => { throw new Error('post-provider pre-send crash'); });
-    const s = buildMock({ claim_payment_confirmation: CLAIM_OK, renew_payment_confirmation_claim: RENEW_OK });
+  it('28. outer catch before customer send → release remains permitted because no balance provider side effect exists', async () => {
+    mockCalendarLinks.mockImplementation(() => { throw new Error('pre-send crash'); });
+    const s = buildMock({ claim_payment_confirmation: CLAIM_OK, renew_payment_confirmation_claim: RENEW_OK, release_payment_confirmation: REL_OK });
     setupPartialBalanceMock();
     const { sendProactiveConfirmation } = await import('../payments/send-confirmation');
     await sendProactiveConfirmation(s, pay);
-    // initializePayment WAS called
-    expect(mockInitializePayment).toHaveBeenCalledTimes(1);
-    // Calendar throw WAS reached
+    expect(mockInitializePayment).not.toHaveBeenCalled();
     expect(mockCalendarLinks).toHaveBeenCalled();
-    // Release must NOT be called — provider init already happened
-    expect(mockRpc).not.toHaveBeenCalledWith('release_payment_confirmation', expect.anything());
-    // Finalize must NOT be called — processing stopped at the crash
+    expect(mockRpc).toHaveBeenCalledWith('release_payment_confirmation', expect.objectContaining({ p_claim_token: 'tok-aaa' }));
     expect(mockRpc).not.toHaveBeenCalledWith('finalize_payment_confirmation', expect.anything());
   });
 
