@@ -26,6 +26,15 @@ function psqlMayFail(sql: string): string {
   } catch (e: unknown) { return (e as { stderr?: string }).stderr || String(e); }
 }
 
+/** Poll a database predicate until it becomes true or the bounded wait expires. */
+async function waitForActivity(sql: string, attempts = 120): Promise<boolean> {
+  for (let i = 0; i < attempts; i++) {
+    if (psql(sql) === 't') return true;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  return false;
+}
+
 function adminContext(adminId: string): string {
   return `
     SELECT set_config('request.jwt.claims', '{"sub":"${adminId}","role":"admin","aud":"authenticated"}', false);
