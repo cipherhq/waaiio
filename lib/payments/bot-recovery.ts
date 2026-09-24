@@ -25,6 +25,34 @@ export interface RecoveryResult {
 }
 
 /**
+ * #375: Verify and reconcile a saved-card dispatched payment by payment ID.
+ * Uses the canonical saved-card recovery helper (payment-ID authority)
+ * instead of gateway_reference lookup.
+ */
+export async function verifyAndReconcileSavedCardPayment(
+  supabase: SupabaseClient,
+  paymentId: string,
+): Promise<RecoveryResult> {
+  const { recoverDispatchedSavedCardPayment } = await import('./saved-card-recovery');
+  const scResult = await recoverDispatchedSavedCardPayment(supabase, paymentId);
+
+  switch (scResult.outcome) {
+    case 'succeeded':
+      return { outcome: 'completed', paymentId };
+    case 'requires_action':
+      return { outcome: 'processing', paymentId };
+    case 'declined':
+    case 'quarantined':
+      return { outcome: 'not_verified', paymentId };
+    case 'indeterminate':
+      return { outcome: 'provider_error', paymentId };
+    case 'error':
+      // Not a saved-card dispatched payment — fall back to ordinary path
+      return { outcome: 'not_verified', paymentId };
+  }
+}
+
+/**
  * Verify and reconcile a payment through the canonical authority.
  * Returns a rich result distinguishing completed, processing, retryable,
  * and not-verified outcomes so bot flows can provide accurate UX.

@@ -2322,6 +2322,39 @@ export class BotService {
 
     if (staleButton.isStalePaymentButton) {
       try {
+        // #375: If session has a known saved-card payment ID, use payment-ID recovery
+        // instead of gateway_reference lookup (which fails for sc_pending_ references).
+        const savedCardPaymentId = session.session_data?._saved_card_payment_id as string | undefined;
+        if (savedCardPaymentId) {
+          const { recoverDispatchedSavedCardPayment } = await import('@/lib/payments/saved-card-recovery');
+          const scRecovery = await recoverDispatchedSavedCardPayment(this.supabase, savedCardPaymentId);
+
+          switch (scRecovery.outcome) {
+            case 'succeeded':
+              await this.sendText(from, '✅ *Payment Confirmed!*\n\nYour payment has been verified and processed.\n\n💡 Type *my bookings* to view details, or *receipt* for your payment receipt.');
+              return;
+            case 'requires_action':
+              if (scRecovery.authUrl) {
+                await this.sendText(from, `🔒 Your bank requires verification.\n\nPlease complete here 👇\n${scRecovery.authUrl}\n\n⚠️ Return to WhatsApp after verifying.`);
+              } else {
+                await this.sendText(from, '🔒 Your bank requires additional verification. Please check your banking app or email for a verification prompt.');
+              }
+              return;
+            case 'declined':
+              await this.sendText(from, `❌ Payment could not be completed: ${scRecovery.message || 'card declined'}.\n\nPlease try again with a different payment method by typing *Hi*.`);
+              return;
+            case 'quarantined':
+              await this.sendText(from, 'Your payment session has expired. Please start a new payment by typing *Hi*.');
+              return;
+            case 'indeterminate':
+              // Fall through to ordinary recovery — provider may confirm via webhook
+              break;
+            case 'error':
+              // Not a saved-card dispatched payment (e.g., already resolved) — fall through
+              break;
+          }
+        }
+
         const { recoverByOrderReference, recoverByPaymentReference, recoverGeneric } = await import('@/lib/payments/stale-payment-recovery');
 
         // Determine country code for formatting

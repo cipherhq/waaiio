@@ -3409,6 +3409,25 @@ export const schedulingFlow: FlowDefinition = {
           if (!ref) {
             return { valid: false, errorMessage: "If you've already paid, tap *I've Paid*. Otherwise, type *Hi* to start a new booking." };
           }
+          // #375: If session has a saved-card payment ID, use payment-ID recovery first
+          const scPaymentId = ctx.session.session_data._saved_card_payment_id as string | undefined;
+          if (scPaymentId) {
+            const { verifyAndReconcileSavedCardPayment } = await import('@/lib/payments/bot-recovery');
+            const scRecovery = await verifyAndReconcileSavedCardPayment(ctx.supabase, scPaymentId);
+            if (scRecovery.outcome === 'completed' || scRecovery.outcome === 'not_deliverable') {
+              const d = ctx.session.session_data;
+              await ctx.sender.sendText({
+                to: ctx.from,
+                text: await ctx.t(`✅ *Payment Confirmed!*\n\nYour booking *${d.reference_code as string}* is confirmed.\n\n💡 Type *my bookings* to view details, or *receipt* for your payment receipt.`),
+              });
+              return { valid: true, data: { _action: 'payment_confirmed' } };
+            }
+            if (scRecovery.outcome !== 'not_verified') {
+              ctx.session.session_data._payment_retry_blocked = true;
+              return { valid: false, persistSessionDataOnFailure: true, errorMessage: "We're still verifying your previous payment. Tap *I've Paid* to check again." };
+            }
+            // not_verified from saved-card path → fall through to ordinary recovery
+          }
           const { verifyAndReconcilePayment } = await import('@/lib/payments/bot-recovery');
           const recovery = await verifyAndReconcilePayment(ctx.supabase, ref);
           if (recovery.outcome === 'not_paid') {
@@ -3602,6 +3621,34 @@ export const schedulingFlow: FlowDefinition = {
           }
 
           if (!ref) return { valid: true, data: { _action: 'cancel' } };
+
+          // #375: If session has a saved-card payment ID, try payment-ID recovery first
+          // (gateway_reference lookup fails for sc_pending_ references).
+          const scPaymentId2 = ctx.session.session_data._saved_card_payment_id as string | undefined;
+          if (scPaymentId2) {
+            const { verifyAndReconcileSavedCardPayment } = await import('@/lib/payments/bot-recovery');
+            const scRecovery = await verifyAndReconcileSavedCardPayment(ctx.supabase, scPaymentId2);
+            if (scRecovery.outcome === 'completed' || scRecovery.outcome === 'not_deliverable') {
+              await ctx.sender.sendText({
+                to: ctx.from,
+                text: await ctx.t(`✅ *Payment Confirmed!*\n\nYour booking *${d.reference_code as string}* is confirmed.\n\n💡 Type *my bookings* to view details, or *receipt* for your payment receipt.`),
+              });
+              return { valid: true, data: { _action: 'payment_confirmed' } };
+            }
+            if (scRecovery.outcome === 'processing') {
+              d._payment_retry_blocked = true;
+              await ctx.sender.sendText({
+                to: ctx.from,
+                text: await ctx.t('✅ Payment received! Your booking is being processed.\n\nYou\'ll get a confirmation shortly. If not, tap *I\'ve Paid* again.'),
+              });
+              return { valid: true, data: { _action: 'payment_processing' } };
+            }
+            if (scRecovery.outcome === 'provider_error') {
+              d._payment_retry_blocked = true;
+              return { valid: false, persistSessionDataOnFailure: true, errorMessage: "We couldn't verify your payment right now. If you've already paid, tap *I've Paid* again in a moment." };
+            }
+            // not_verified / not_paid → fall through to ordinary recovery
+          }
 
           // Converge through canonical Payment Authority — same path as webhooks.
           // Authority handles: provider verification, booking confirmation, platform

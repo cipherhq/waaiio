@@ -3,6 +3,19 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-09-22 — Fix: P0 saved-card dispatched-recovery parity (#375)
+
+### What changed
+- **`lib/payments/saved-card-recovery.ts`** (NEW): Extracted canonical saved-card dispatched-payment recovery helper from the cron inline Stripe PI replay block. Same payment row, same stored `pi_params`, same `sc_charge_` idempotency key. No second payment row. No fresh provider dispatch with a different key. Used by both cron and bot "I've Paid" paths.
+- **`app/api/cron/payment-reconciliation/route.ts`**: Replaced inline 90-line Stripe saved-card recovery block with a call to `recoverDispatchedSavedCardPayment`. Detection/query logic stays in the cron; recovery is delegated.
+- **`lib/payments/bot-recovery.ts`**: Added `verifyAndReconcileSavedCardPayment()` — payment-ID-based recovery for saved-card dispatched payments. Allows bot flows to bypass the `gateway_reference` lookup that fails for `sc_pending_` references.
+- **`lib/bot/bot.service.ts`**: Stale "I've Paid" button handler now checks `_saved_card_payment_id` in session data BEFORE falling through to `gateway_reference`-based recovery. On `succeeded`/`requires_action`/`declined`/`quarantined`, responds directly.
+- **`lib/bot/flows/scheduling.flow.ts`**: Both `retry_payment` and `i_paid` handlers in the `payment` step now try saved-card payment-ID recovery first when `_saved_card_payment_id` is in session, then fall through to ordinary `verifyAndReconcilePayment` if not applicable.
+- **Root cause**: Saved-card dispatched payments use `sc_pending_{paymentId}` as gateway_reference, which is a placeholder. The bot's "I've Paid" path looked up payments by gateway_reference, finding nothing. The cron had the correct PI replay logic inline but the bot path did not share it.
+- **Impact**: Saved-card "I've Paid" buttons now correctly recover dispatched payments. Ordinary (non-saved-card) recovery paths are unchanged.
+- **What could break**: Nothing — saved-card recovery is additive and falls through to ordinary recovery on error/not-applicable. Cron behavior is identical (same logic, now shared). No schema changes.
+- **Files**: `lib/payments/saved-card-recovery.ts`, `app/api/cron/payment-reconciliation/route.ts`, `lib/payments/bot-recovery.ts`, `lib/bot/bot.service.ts`, `lib/bot/flows/scheduling.flow.ts`, `lib/__tests__/saved-card-dispatched-recovery.test.ts`
+
 ## 2026-09-23 — Fix: saved-card reuse cold country cache crash (#373)
 
 ### What changed
