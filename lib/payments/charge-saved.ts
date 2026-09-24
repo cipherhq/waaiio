@@ -267,31 +267,43 @@ async function chargePaystackAuthorization(
   }
 
   if (existing) {
-    // R6-B: Validate FULL entity tuple — not just booking_id.
-    // All entity columns must match (null opts = don't check; null existing = mismatch if opts supplied).
-    if (opts.bookingId && existing.booking_id !== opts.bookingId) {
-      logger.error('[SAVED-CARD] Existing payment booking mismatch', { existing: existing.booking_id, expected: opts.bookingId });
+    // R6-B: Validate the EXACT canonical entity tuple, not merely the entity
+    // fields supplied by the caller. A reference belonging to a different
+    // domain must never converge just because one ID happens to match.
+    const meta = (existing.metadata || {}) as Record<string, unknown>;
+    const legacyOrderId = typeof meta.order_id === 'string' && meta.order_id.trim()
+      ? meta.order_id.trim()
+      : null;
+    const expectedEntities = [
+      ['booking', opts.bookingId || null],
+      ['order', opts.orderId || null],
+      ['reservation', opts.reservationId || null],
+      ['invoice', opts.invoiceId || null],
+      ['campaign', opts.campaignId || null],
+    ] as const;
+    const existingEntities = [
+      ['booking', existing.booking_id || null],
+      ['order', existing.order_id || legacyOrderId],
+      ['reservation', existing.reservation_id || null],
+      ['invoice', existing.invoice_id || null],
+      ['campaign', existing.campaign_id || null],
+    ] as const;
+    const expectedActive = expectedEntities.filter(([, id]) => !!id);
+    const existingActive = existingEntities.filter(([, id]) => !!id);
+
+    if (expectedActive.length !== 1
+        || existingActive.length !== 1
+        || expectedActive[0][0] !== existingActive[0][0]
+        || expectedActive[0][1] !== existingActive[0][1]) {
+      logger.error('[SAVED-CARD] Existing payment entity tuple mismatch', {
+        expectedKind: expectedActive[0]?.[0] || null,
+        existingKind: existingActive[0]?.[0] || null,
+      });
       return { outcome: 'indeterminate', paymentId: existing.id, reference: opts.reference, message: 'Payment reference conflict' };
     }
-    if (opts.orderId && existing.order_id !== opts.orderId) {
-      logger.error('[SAVED-CARD] Existing payment order mismatch', { existing: existing.order_id, expected: opts.orderId });
-      return { outcome: 'indeterminate', paymentId: existing.id, reference: opts.reference, message: 'Payment reference conflict' };
-    }
-    if (opts.reservationId && existing.reservation_id !== opts.reservationId) {
-      logger.error('[SAVED-CARD] Existing payment reservation mismatch', { existing: existing.reservation_id, expected: opts.reservationId });
-      return { outcome: 'indeterminate', paymentId: existing.id, reference: opts.reference, message: 'Payment reference conflict' };
-    }
-    if (opts.invoiceId && existing.invoice_id !== opts.invoiceId) {
-      logger.error('[SAVED-CARD] Existing payment invoice mismatch', { existing: existing.invoice_id, expected: opts.invoiceId });
-      return { outcome: 'indeterminate', paymentId: existing.id, reference: opts.reference, message: 'Payment reference conflict' };
-    }
-    if (opts.campaignId && existing.campaign_id !== opts.campaignId) {
-      logger.error('[SAVED-CARD] Existing payment campaign mismatch', { existing: existing.campaign_id, expected: opts.campaignId });
-      return { outcome: 'indeterminate', paymentId: existing.id, reference: opts.reference, message: 'Payment reference conflict' };
-    }
+
     // Business ownership: check top-level business_id first; fall back to legacy metadata.
     // Pre-PR saved-card rows stored business_id only in metadata, not the top-level column.
-    const meta = (existing.metadata || {}) as Record<string, unknown>;
     const existingBizId = existing.business_id || (meta.business_id as string | undefined);
     if (!existingBizId) {
       // Cannot prove ownership — stay indeterminate, do not call provider
