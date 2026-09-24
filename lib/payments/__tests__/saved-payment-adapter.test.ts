@@ -281,6 +281,7 @@ describe('SavedPaymentAdapter', () => {
         methodId: 'spm-123', customerPhone: VALID_PHONE, amount: 3000, currency: 'NGN',
         email: 'a@b.com', reference: 'REF-saved', businessId: VALID_BUSINESS,
         bookingId: 'bk-99', orderId: 'ord-77', transactionCategory: 'scheduling',
+        inboundChannelId: 'channel-shared-1', confirmationOrigin: 'whatsapp',
       });
 
       expect(mockChargeSavedCard).toHaveBeenCalledTimes(1);
@@ -288,6 +289,8 @@ describe('SavedPaymentAdapter', () => {
       expect(callOpts.bookingId).toBe('bk-99');
       expect(callOpts.orderId).toBe('ord-77');
       expect(callOpts.transactionCategory).toBe('scheduling');
+      expect(callOpts.inboundChannelId).toBe('channel-shared-1');
+      expect(callOpts.confirmationOrigin).toBe('whatsapp');
       expect(callOpts.amount).toBe(3000);
       expect(callOpts.savedMethod.authorization_code).toBe('AUTH_secret_xyz');
     });
