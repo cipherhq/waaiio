@@ -149,7 +149,7 @@ function createSupabase() {
     from: vi.fn().mockImplementation((table: string) => {
       if (table === 'platform_settings') return makeChain({ value: false });
       if (table === 'bot_sessions') return makeChain(mockSessionResult);
-      if (table === 'businesses') return makeChain({ id: BIZ_ID, name: 'Citadel of Grace', slug: 'citadel', category: 'church', flow_type: 'scheduling', subscription_tier: 'growth', trial_ends_at: null, metadata: {}, country_code: 'NG' });
+      if (table === 'businesses') return makeChain({ id: BIZ_ID, name: 'Citadel of Grace', slug: 'citadel', category: 'church', flow_type: 'scheduling', subscription_tier: 'growth', trial_ends_at: null, metadata: {}, country_code: 'NG', payment_gateway: null, operating_hours: null, status: 'active', is_whitelabel: false });
       if (table === 'blocked_phones') {
         const c = makeChain(null);
         c.select = vi.fn().mockReturnValue({ ...c, eq: vi.fn().mockReturnValue({ ...c, or: vi.fn().mockResolvedValue({ count: 0, error: null }) }) });
