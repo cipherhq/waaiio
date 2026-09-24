@@ -18,7 +18,7 @@
  * 8. finalize_payment_confirmation: stale internal claimed -> indeterminate
  * 9. finalize_payment_confirmation: active internal claimed -> optional_internal_in_progress
  */
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest';
 import { execSync, spawn } from 'child_process';
 import * as path from 'path';
 
@@ -40,9 +40,12 @@ function psqlJson(sql: string): unknown {
   return raw ? JSON.parse(raw) : null;
 }
 
-function psqlAsync(sql: string): Promise<{ ok: boolean; result: string; error: string }> {
+function psqlAsync(sql: string, applicationName?: string): Promise<{ ok: boolean; result: string; error: string }> {
   return new Promise((resolve) => {
-    const proc = spawn('psql', [dbUrl!, '-tAXq', '-v', 'ON_ERROR_STOP=1'], { timeout: 30000 });
+    const proc = spawn('psql', [dbUrl!, '-tAXq', '-v', 'ON_ERROR_STOP=1'], {
+      timeout: 30000,
+      ...(applicationName ? { env: { ...process.env, PGAPPNAME: applicationName } } : {}),
+    });
     let stdout = '';
     let stderr = '';
     proc.stdin.write(`SET search_path TO public, extensions;\n${sql}`);
@@ -201,6 +204,28 @@ describe.skipIf(!dbUrl)('M400 Cross-flow convergence (real PostgreSQL)', () => {
     `);
   });
 
+  beforeEach(() => {
+    if (!dbUrl) return;
+    // Reset shared test IDs in foreign-key-safe order so each case stands alone.
+    psql(`
+      DELETE FROM payment_confirmation_deliveries WHERE payment_id IN ('${PAY_ID_1}', '${PAY_ID_2}', '${PAY_ID_3}');
+      DELETE FROM payment_terminal_effects WHERE payment_id IN ('${PAY_ID_1}', '${PAY_ID_2}', '${PAY_ID_3}');
+      DELETE FROM payment_terminal_manifests WHERE payment_id IN ('${PAY_ID_1}', '${PAY_ID_2}', '${PAY_ID_3}');
+      DELETE FROM campaign_donations WHERE payment_id IN ('${PAY_ID_1}', '${PAY_ID_2}', '${PAY_ID_3}') OR campaign_id = '${CAMP_ID}';
+      DELETE FROM order_stock_applications WHERE order_id = '${ORDER_ID}';
+      DELETE FROM order_items WHERE order_id = '${ORDER_ID}';
+      DELETE FROM pending_transfers WHERE order_id = '${ORDER_ID}';
+      UPDATE orders SET payment_id = NULL WHERE id = '${ORDER_ID}';
+      UPDATE reservations SET payment_id = NULL WHERE id = '${RES_ID}';
+      DELETE FROM payments
+        WHERE id IN ('${PAY_ID_1}', '${PAY_ID_2}', '${PAY_ID_3}')
+           OR order_id = '${ORDER_ID}' OR reservation_id = '${RES_ID}' OR campaign_id = '${CAMP_ID}';
+      DELETE FROM orders WHERE id = '${ORDER_ID}';
+      DELETE FROM reservations WHERE id = '${RES_ID}';
+      DELETE FROM campaigns WHERE id = '${CAMP_ID}';
+    `);
+  });
+
   afterAll(() => {
     if (!dbUrl) return;
     // Clean up test data — payments first (FK to orders/reservations/campaigns), then entities
@@ -212,6 +237,8 @@ describe.skipIf(!dbUrl)('M400 Cross-flow convergence (real PostgreSQL)', () => {
       DELETE FROM order_stock_applications WHERE order_id = '${ORDER_ID}';
       DELETE FROM order_items WHERE order_id = '${ORDER_ID}';
       DELETE FROM pending_transfers WHERE order_id = '${ORDER_ID}';
+      UPDATE orders SET payment_id = NULL WHERE id = '${ORDER_ID}';
+      UPDATE reservations SET payment_id = NULL WHERE id = '${RES_ID}';
       DELETE FROM payments WHERE id IN ('${PAY_ID_1}', '${PAY_ID_2}', '${PAY_ID_3}');
       DELETE FROM orders WHERE id = '${ORDER_ID}';
       DELETE FROM reservations WHERE id = '${RES_ID}';
@@ -246,6 +273,15 @@ describe.skipIf(!dbUrl)('M400 Cross-flow convergence (real PostgreSQL)', () => {
         provider_channel, contract_version, status, claim_token, claim_expires_at, emission_started_at)
       VALUES ('${PAY_ID_3}', 'external_opt', 'optional', 'external', 'email', 1, 'claimed',
         '${effectToken}', ${leaseSql}, ${emissionSql});
+    `);
+  }
+
+  function seedCampaignPayment(amount: number) {
+    psql(`
+      INSERT INTO campaigns (id, business_id, title, goal_amount)
+      VALUES ('${CAMP_ID}', '${BIZ_ID}', 'Test Campaign', 1000);
+      INSERT INTO payments (id, business_id, amount, currency, status, gateway, gateway_reference, campaign_id)
+      VALUES ('${PAY_ID_1}', '${BIZ_ID}', ${amount}, 'NGN', 'pending', 'stripe', 'ref_m400_' || gen_random_uuid()::text, '${CAMP_ID}');
     `);
   }
 
@@ -400,11 +436,15 @@ describe.skipIf(!dbUrl)('M400 Cross-flow convergence (real PostgreSQL)', () => {
   // ── 6. ensure_campaign_donation_intent_for_payment: mismatch -> fail closed ──
 
   it('6. ensure_campaign_donation_intent_for_payment amount mismatch -> fail closed', () => {
-    // Row already exists from test 5 with amount=25. Change payment amount to 50.
-    psql(`
-      UPDATE payments SET amount = 50 WHERE id = '${PAY_ID_1}';
-    `);
+    seedCampaignPayment(25);
+    const initial = psqlJson(`
+      SELECT ensure_campaign_donation_intent_for_payment(
+        '${PAY_ID_1}'::uuid, '+2341234567890', 'Test Donor', 'DON-TEST'
+      );
+    `) as Record<string, unknown>;
+    expect(initial.created).toBe(true);
 
+    psql(`UPDATE payments SET amount = 50 WHERE id = '${PAY_ID_1}';`);
     const result = psqlJson(`
       SELECT ensure_campaign_donation_intent_for_payment(
         '${PAY_ID_1}'::uuid, '+2341234567890', 'Test Donor'
@@ -417,7 +457,13 @@ describe.skipIf(!dbUrl)('M400 Cross-flow convergence (real PostgreSQL)', () => {
   });
 
   it('6b. ensure_campaign_donation_intent_for_payment donor identity mismatch -> fail closed', () => {
-    psql(`UPDATE payments SET amount = 25 WHERE id = '${PAY_ID_1}';`);
+    seedCampaignPayment(25);
+    const initial = psqlJson(`
+      SELECT ensure_campaign_donation_intent_for_payment(
+        '${PAY_ID_1}'::uuid, '+2341234567890', 'Test Donor', 'DON-TEST'
+      );
+    `) as Record<string, unknown>;
+    expect(initial.created).toBe(true);
 
     const result = psqlJson(`
       SELECT ensure_campaign_donation_intent_for_payment(
@@ -620,38 +666,38 @@ describe.skipIf(!dbUrl)('M400 Cross-flow convergence (real PostgreSQL)', () => {
     const effectToken = 'b1000000-0000-0000-0000-000000000013';
     seedExternalOptionalEffect(claimToken, effectToken, null, '2099-01-01T00:00:00Z');
 
+    const barrierTable = `_m400_emission_barrier_${Date.now()}`;
+    psql(`
+      CREATE TABLE public."${barrierTable}" (id INTEGER PRIMARY KEY, proceed BOOLEAN NOT NULL DEFAULT false);
+      INSERT INTO public."${barrierTable}" (id, proceed) VALUES (1, false);
+    `);
+
     const emitterSql = `
-      SET application_name = 'm400_emitter';
       BEGIN;
       SELECT begin_terminal_external_emission(
         '${PAY_ID_3}'::uuid, 'external_opt', '${claimToken}'::uuid, '${effectToken}'::uuid
       );
-      DO $wait$
+      DO $barrier$
       DECLARE v_attempts INTEGER := 0;
       BEGIN
         LOOP
           EXIT WHEN EXISTS (
-            SELECT 1 FROM pg_stat_activity waiting
-            WHERE waiting.application_name = 'm400_finalizer'
-              AND waiting.state = 'active'
-              AND waiting.wait_event_type = 'Lock'
-              AND pg_backend_pid() = ANY(pg_blocking_pids(waiting.pid))
+            SELECT 1 FROM public."${barrierTable}" WHERE id = 1 AND proceed
           );
           v_attempts := v_attempts + 1;
-          IF v_attempts > 200 THEN
-            RAISE EXCEPTION 'Timeout waiting for finalizer to block behind emission fence';
+          IF v_attempts > 300 THEN
+            RAISE EXCEPTION 'Timeout waiting for test barrier release';
           END IF;
           PERFORM pg_sleep(0.05);
         END LOOP;
-      END $wait$;
+      END $barrier$;
       COMMIT;
     `;
     const finalizerSql = `
-      SET application_name = 'm400_finalizer';
       SELECT finalize_payment_confirmation('${PAY_ID_3}'::uuid, '${claimToken}'::uuid);
     `;
 
-    const emitterPromise = psqlAsync(emitterSql);
+    const emitterPromise = psqlAsync(emitterSql, 'm400_emitter');
     let finalizerPromise: Promise<{ ok: boolean; result: string; error: string }> | undefined;
     try {
       const emitterHasFence = await waitForActivity(`
@@ -659,36 +705,45 @@ describe.skipIf(!dbUrl)('M400 Cross-flow convergence (real PostgreSQL)', () => {
           SELECT 1 FROM pg_stat_activity
           WHERE application_name = 'm400_emitter'
             AND state = 'active'
-            AND query LIKE 'DO $wait$%'
+            AND query LIKE 'DO $barrier$%'
         );
       `);
       expect(emitterHasFence).toBe(true);
-      if (!emitterHasFence) return;
+      if (emitterHasFence) {
+        finalizerPromise = psqlAsync(finalizerSql, 'm400_finalizer');
+        const finalizerIsBlocked = await waitForActivity(`
+          SELECT EXISTS (
+            SELECT 1 FROM pg_stat_activity waiting
+            JOIN pg_stat_activity blocker
+              ON blocker.pid = ANY(pg_blocking_pids(waiting.pid))
+            WHERE waiting.application_name = 'm400_finalizer'
+              AND waiting.state = 'active'
+              AND waiting.wait_event_type = 'Lock'
+              AND blocker.application_name = 'm400_emitter'
+          );
+        `);
+        expect(finalizerIsBlocked).toBe(true);
 
-      finalizerPromise = psqlAsync(finalizerSql);
-      const finalizerIsBlocked = await waitForActivity(`
-        SELECT EXISTS (
-          SELECT 1 FROM pg_stat_activity waiting
-          JOIN pg_stat_activity blocker
-            ON blocker.pid = ANY(pg_blocking_pids(waiting.pid))
-          WHERE waiting.application_name = 'm400_finalizer'
-            AND waiting.state = 'active'
-            AND waiting.wait_event_type = 'Lock'
-            AND blocker.application_name = 'm400_emitter'
-        );
-      `);
-      expect(finalizerIsBlocked).toBe(true);
-
-      const [emitter, finalizer] = await Promise.all([emitterPromise, finalizerPromise]);
-      expect(emitter.ok).toBe(true);
-      expect(emitter.result).toContain('"authorized": true');
-      expect(finalizer.ok).toBe(true);
-      expect(finalizer.result).toContain('optional_external_in_progress');
-      expect(psql(`SELECT status FROM payment_terminal_effects WHERE payment_id='${PAY_ID_3}' AND effect_key='external_opt';`)).toBe('claimed');
-      expect(psql(`SELECT confirmation_sent_at IS NULL FROM payments WHERE id='${PAY_ID_3}';`)).toBe('t');
+        psqlJson(`UPDATE public."${barrierTable}" SET proceed = true WHERE id = 1;`);
+        const [emitter, finalizer] = await Promise.all([emitterPromise, finalizerPromise]);
+        expect(emitter.ok).toBe(true);
+        expect(emitter.result).toContain('"authorized": true');
+        expect(finalizer.ok).toBe(true);
+        expect(finalizer.result).toContain('optional_external_in_progress');
+        expect(psql(`SELECT status FROM payment_terminal_effects WHERE payment_id='${PAY_ID_3}' AND effect_key='external_opt';`)).toBe('claimed');
+        expect(psql(`SELECT confirmation_sent_at IS NULL FROM payments WHERE id='${PAY_ID_3}';`)).toBe('t');
+      }
     } finally {
-      if (finalizerPromise) await Promise.allSettled([emitterPromise, finalizerPromise]);
-      else await Promise.allSettled([emitterPromise]);
+      try {
+        psql(`UPDATE public."${barrierTable}" SET proceed = true WHERE id = 1;`);
+      } catch { /* ensure the emitter is released before the test exits */ }
+      await Promise.allSettled([
+        emitterPromise,
+        finalizerPromise || Promise.resolve({ ok: false, result: '', error: 'finalizer was not started' }),
+      ]);
+      try {
+        psql(`DROP TABLE IF EXISTS public."${barrierTable}";`);
+      } catch { /* test cleanup must not mask the lock assertion */ }
     }
   }, 30000);
 });
