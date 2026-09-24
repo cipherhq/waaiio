@@ -66,6 +66,8 @@ export interface ChargeOptions {
   reservationId?: string;
   invoiceId?: string;
   campaignId?: string;
+  /** Optional donor display name for campaign donation intent; null/empty = anonymous. */
+  donorName?: string | null;
   userId?: string;
   transactionCategory?: string;
   /** #382: Exact inbound WhatsApp channel that originated this payment. */
@@ -503,7 +505,7 @@ class StripeSavedPaymentAdapterImpl implements SavedPaymentAdapter {
           const { data: intentResult, error: intentErr } = await supabase.rpc('ensure_campaign_donation_intent_for_payment', {
             p_payment_id: existingPay.id,
             p_donor_phone: normalizePhone(opts.customerPhone),
-            p_donor_name: null,
+            p_donor_name: opts.donorName || null,
             p_reference_code: null,
           });
           if (intentErr || (!intentResult?.created && !intentResult?.already_existed)) {
