@@ -395,6 +395,26 @@ describe('process-success.ts reservation atomic RPC', () => {
 
 // ── 16: Stable saved-card attempt reference for invoice/giving ──
 
+describe('Stripe saved-card recovery authority', () => {
+  it('15a. Existing-payment recovery is tenant + entity + amount + currency scoped', async () => {
+    const fs = await import('fs');
+    const src = fs.readFileSync(
+      new URL('../../lib/payments/saved-payment-adapter.ts', import.meta.url).pathname,
+      'utf-8',
+    );
+    const fencePos = src.indexOf('I3: Duplicate-tap fence');
+    expect(fencePos).toBeGreaterThan(-1);
+    const fence = src.substring(fencePos, fencePos + 5000);
+    expect(fence).toContain(".eq('business_id', opts.businessId)");
+    expect(fence).toContain(".eq('gateway', 'stripe')");
+    expect(fence).toContain(".eq('payment_method', 'saved_card')");
+    expect(fence).toContain(".eq('amount', opts.amount)");
+    expect(fence).toContain(".eq('currency', opts.currency)");
+  });
+});
+
+// ── 16: Stable saved-card attempt reference for invoice/giving ──
+
 describe('Stable saved-card attempt reference (B5)', () => {
   it('16a. Invoice flow generates reference once and persists in _saved_card_attempt_ref', async () => {
     const fs = await import('fs');
