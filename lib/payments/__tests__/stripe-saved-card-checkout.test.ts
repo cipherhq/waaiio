@@ -62,7 +62,10 @@ describe('Stripe Checkout Save Card params', () => {
       businessName: 'TestShop', phone: '+12025551234', businessId: 'biz_1',
     });
 
+    expect(mockFetch.mock.calls[0][0]).toBe('https://api.stripe.com/v1/checkout/sessions');
     const body = new URLSearchParams(mockFetch.mock.calls[0][1].body);
+    // Ordinary Checkout remains its own code path and keeps its existing card config.
+    expect(body.get('payment_method_types[0]')).toBe('card');
     // Must have customer param (from provisioning)
     expect(body.get('customer')).toBe('cus_test_canonical');
     // Must NOT have customer_email when customer is set

@@ -162,6 +162,27 @@ function normalizePhone(phone: string): string {
   return phone.startsWith('+') ? phone : `+${phone}`;
 }
 
+/** #379: Keep provider diagnostics useful without persisting free-form provider messages. */
+function sanitizeStripeEvidenceToken(value: string | undefined, fallback = 'unknown'): string {
+  const raw = value || fallback;
+  return raw.replace(/[^A-Za-z0-9_.:-]/g, '_').slice(0, 64) || fallback;
+}
+
+function formatStripeDispatchEvidence(evidence: {
+  httpStatus: number;
+  type: string;
+  code: string;
+  classification: string;
+}): string {
+  return [
+    'dispatched_error',
+    `http=${Number.isFinite(evidence.httpStatus) ? evidence.httpStatus : 0}`,
+    `class=${sanitizeStripeEvidenceToken(evidence.classification)}`,
+    `type=${sanitizeStripeEvidenceToken(evidence.type)}`,
+    `code=${sanitizeStripeEvidenceToken(evidence.code)}`,
+  ].join(';').slice(0, 200);
+}
+
 /**
  * Canonical saved-method lookup by the full (business + customer + method + active) tuple.
  * Reuses the same columns as getSavedPaymentMethod but adds the methodId constraint.
@@ -608,7 +629,23 @@ class StripeSavedPaymentAdapterImpl implements SavedPaymentAdapter {
       return { status: 'declined', message: result.errorMessage || 'Card declined', shouldDeactivate: false };
     }
 
-    // indeterminate/error — leave dispatched for cron recovery
+    // indeterminate/error — leave dispatched for canonical same-row recovery.
+    // #379: Persist structured, sanitized provider evidence. Never persist Stripe's
+    // free-form error message, customer data, keys, or request payload.
+    if (result.errorEvidence) {
+      const gatewayStatus = formatStripeDispatchEvidence(result.errorEvidence);
+      logger.warn('[STRIPE-SAVED-CARD] Dispatch remained indeterminate', {
+        paymentId: payRow.id,
+        httpStatus: result.errorEvidence.httpStatus,
+        errorType: result.errorEvidence.type,
+        errorCode: result.errorEvidence.code,
+        classification: result.errorEvidence.classification,
+      });
+      await supabase.from('payments')
+        .update({ gateway_status: gatewayStatus })
+        .eq('id', payRow.id)
+        .eq('provider_init_state', 'dispatched'); // CAS: only update if still dispatched
+    }
     return { status: 'indeterminate', paymentId: payRow.id, message: result.errorMessage || 'unknown' };
   }
 

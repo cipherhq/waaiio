@@ -177,11 +177,28 @@ export async function downgradeAllowRedisplay(paymentMethodId: string): Promise<
 
 // ── Charge (on-session PaymentIntent) ──
 
+export type StripeFailureClassification =
+  | 'terminal_decline'
+  | 'config_error'
+  | 'retryable'
+  | 'idempotency_conflict'
+  | 'transport_error'
+  | 'unexpected_response';
+
+export interface StripeFailureEvidence {
+  httpStatus: number;
+  type: string;
+  code: string;
+  classification: StripeFailureClassification;
+}
+
 export interface StripeChargeResult {
   status: 'succeeded' | 'requires_action' | 'declined' | 'error' | 'indeterminate';
   paymentIntentId?: string;
   clientSecret?: string;
   errorMessage?: string;
+  /** Sanitized provider evidence only — never contains Stripe's free-form message. */
+  errorEvidence?: StripeFailureEvidence;
 }
 
 /**
@@ -211,7 +228,10 @@ export async function chargeStripeSavedCard(opts: {
       amount: String(opts.amountCents),
       currency: opts.currency.toLowerCase(),
       confirm: 'true',
-      // on-session: customer is present in the WhatsApp flow
+      // #379: Explicitly card-only — prevents Stripe from adding redirect-capable
+      // payment methods (e.g. bank transfers, wallets) that require return_url.
+      // This is a server-side saved-card charge, not a Checkout Session.
+      'payment_method_types[0]': 'card',
     };
 
     if (opts.stripeAccountId) {
@@ -226,16 +246,39 @@ export async function chargeStripeSavedCard(opts: {
     if (!ok || result.error) {
       const error = (result.error || {}) as Record<string, unknown>;
       const classification = classifyStripeError(httpStatus, error);
+      const errorType = typeof error.type === 'string' && error.type ? error.type : 'unknown';
+      const errorCode = typeof error.code === 'string' && error.code ? error.code : 'unknown';
+      const errorEvidence: StripeFailureEvidence = {
+        httpStatus,
+        type: errorType,
+        code: errorCode,
+        classification,
+      };
 
       if (classification === 'terminal_decline') {
-        return { status: 'declined', errorMessage: (error.message as string) || `stripe_${httpStatus}` };
+        return {
+          status: 'declined',
+          // Preserve the existing customer-facing decline message contract.
+          // Structured evidence is carried separately and is what persistence uses.
+          errorMessage: (error.message as string) || `stripe_${httpStatus}`,
+          errorEvidence,
+        };
       }
       if (classification === 'config_error' || classification === 'idempotency_conflict') {
-        // Config/auth/idempotency errors are NOT customer declines — return indeterminate
-        return { status: 'indeterminate', errorMessage: `stripe_config_${httpStatus}: ${(error.code as string) || (error.type as string) || ''}` };
+        // Config/auth/idempotency errors are NOT customer declines — return indeterminate.
+        // Preserve type + code separately so the canonical payment row can retain both.
+        return {
+          status: 'indeterminate',
+          errorMessage: `stripe_config_${httpStatus}:${errorCode}`,
+          errorEvidence,
+        };
       }
       // Retryable
-      return { status: 'indeterminate', errorMessage: `stripe_retryable_${httpStatus}` };
+      return {
+        status: 'indeterminate',
+        errorMessage: `stripe_retryable_${httpStatus}:${errorCode}`,
+        errorEvidence,
+      };
     }
 
     const piId = result.id as string;
@@ -255,12 +298,30 @@ export async function chargeStripeSavedCard(opts: {
       return { status: 'declined', paymentIntentId: piId, errorMessage: `stripe_pi_${piStatus}` };
     }
 
-    // processing or other → indeterminate
-    return { status: 'indeterminate', paymentIntentId: piId };
+    // processing or other → indeterminate, but a PI exists and can be durably bound.
+    return {
+      status: 'indeterminate',
+      paymentIntentId: piId,
+      errorEvidence: {
+        httpStatus,
+        type: 'unexpected_payment_intent_status',
+        code: piStatus || 'unknown',
+        classification: 'unexpected_response',
+      },
+    };
   } catch (err) {
     logger.withContext({ op: 'stripe-saved-card.charge', ...safeLogErrorContext(err) })
       .error('[STRIPE-SAVED-CARD] Charge threw');
-    return { status: 'error', errorMessage: 'Stripe charge error' };
+    return {
+      status: 'error',
+      errorMessage: 'Stripe charge error',
+      errorEvidence: {
+        httpStatus: 0,
+        type: 'transport_error',
+        code: 'exception',
+        classification: 'transport_error',
+      },
+    };
   }
 }
 
@@ -282,6 +343,8 @@ export function buildSavedCardPIParams(opts: {
     amount: String(opts.amountCents),
     currency: opts.currency.toLowerCase(),
     confirm: 'true',
+    // #379: Explicitly card-only for server-side saved-card charges
+    'payment_method_types[0]': 'card',
   };
   if (opts.stripeAccountId) {
     params['transfer_data[destination]'] = opts.stripeAccountId;
