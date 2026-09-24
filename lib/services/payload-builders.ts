@@ -1,3 +1,5 @@
+import { assertValidDepositConfiguration } from '@/lib/payments/deposit-amount-authority';
+
 /**
  * Pure payload builders for service create/edit operations.
  *
@@ -73,6 +75,12 @@ export interface ServiceFormInput {
 }
 
 export function buildServicePayload(input: ServiceFormInput) {
+  assertValidDepositConfiguration({
+    price: input.price,
+    deposit: input.deposit_amount,
+    priceIsVariable: input.price_is_variable,
+  });
+
   return {
     business_id: input.businessId,
     name: input.name.trim(),
