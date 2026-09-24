@@ -2349,6 +2349,11 @@ export class BotService {
             case 'provider_confirmed':
               await this.sendText(from, "Your payment is confirmed by the provider and is still being finalized. Tap *I've Paid* again shortly.");
               return;
+            case 'authority_rejected':
+              // Provider may already have collected funds. Keep payment-ID authority
+              // fenced and never fall through to ordinary reference recovery / retry.
+              await this.sendText(from, "Your payment was received by the payment provider, but Waaiio could not safely finalize it. Please do NOT pay again. Tap *I've Paid* to check the same payment again while we resolve it.");
+              return;
             case 'error':
               await this.sendText(from, 'We could not verify your saved-card payment right now. Please try again shortly.');
               return;
