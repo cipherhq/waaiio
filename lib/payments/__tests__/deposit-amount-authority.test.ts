@@ -186,7 +186,7 @@ describe('#376 production wiring guards', () => {
     const migration = readSource('supabase/migrations/399_deposit_amount_authority.sql');
     expect(migration).toContain('appointments_deposit_amount_authority_chk');
     expect(migration).toContain('services_deposit_amount_authority_chk');
-    expect((migration.match(/NOT VALID/g) || []).length).toBe(2);
+    expect((migration.match(/\) NOT VALID;/g) || []).length).toBe(2);
     expect(migration).toContain('COALESCE(price_is_variable, false)');
   });
 });
