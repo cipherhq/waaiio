@@ -280,6 +280,7 @@ class PaystackSavedPaymentAdapter implements SavedPaymentAdapter {
       transactionCategory: opts.transactionCategory,
       inboundChannelId: opts.inboundChannelId,
       confirmationOrigin: opts.confirmationOrigin,
+      customerPhone: opts.customerPhone,
     });
 
     return mapOutcome(result);
@@ -544,17 +545,17 @@ class StripeSavedPaymentAdapterImpl implements SavedPaymentAdapter {
       return { status: 'declined', message: 'Payment creation failed', shouldDeactivate: false };
     }
 
-    // #389: For giving/campaign payments, ensure donation intent BEFORE provider dispatch
+    // #389 B4: For giving/campaign payments, ensure donation intent BEFORE provider dispatch — BLOCKING
     if (opts.campaignId) {
-      try {
-        await supabase.rpc('ensure_campaign_donation_intent_for_payment', {
-          p_payment_id: payRow.id,
-          p_donor_phone: normalizePhone(opts.customerPhone),
-          p_donor_name: null,
-          p_reference_code: null,
-        });
-      } catch (donIntentErr) {
-        logger.error('[STRIPE-SAVED-CARD] Donation intent RPC failed — continuing with charge', donIntentErr);
+      const { data: intentResult, error: intentErr } = await supabase.rpc('ensure_campaign_donation_intent_for_payment', {
+        p_payment_id: payRow.id,
+        p_donor_phone: normalizePhone(opts.customerPhone),
+        p_donor_name: null,
+        p_reference_code: null,
+      });
+      if (intentErr || (!intentResult?.created && !intentResult?.already_existed)) {
+        logger.error('[STRIPE-SAVED-CARD] Campaign donation intent creation failed — blocking dispatch', intentErr);
+        return { status: 'indeterminate', paymentId: payRow.id, message: 'Donation intent creation failed' };
       }
     }
 

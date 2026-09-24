@@ -585,9 +585,15 @@ const donationPaymentStep: FlowStepConfig = {
     const d = ctx.session.session_data;
     if (d._saved_method_id || d._awaiting_card_pin) {
       const donRef = d.donation_ref_code as string || 'DON';
+      // #389 B5: Generate reference ONCE, persist in session for PIN/retry reuse
+      let savedCardRef = d._saved_card_attempt_ref as string | undefined;
+      if (!savedCardRef) {
+        savedCardRef = `${donRef}-saved-${Date.now().toString(36)}`;
+        d._saved_card_attempt_ref = savedCardRef;
+      }
       const savedResult = await handleSavedCardInput(input, ctx, {
         amount: d._pending_deposit as number || d.donation_amount as number,
-        reference: `${donRef}-saved-${Date.now().toString(36)}`,
+        reference: savedCardRef,
         entityId: { campaignId: d.campaign_id as string },
         transactionCategory: 'giving',
       });
@@ -602,21 +608,11 @@ const donationPaymentStep: FlowStepConfig = {
     if (d._awaiting_card_pin) return 'donation_payment';
     // #389: Saved-card outcomes
     if (d._saved_card_paid) {
+      delete d._saved_card_attempt_ref; // #389 B5: Clear stable ref on success
       const paymentId = d._saved_card_payment_id as string;
       if (paymentId) {
-        // #389: Ensure donation intent is created for saved-card payments
-        try {
-          const { createServiceClient } = await import('@/lib/supabase/service');
-          const serviceClient = createServiceClient();
-          await serviceClient.rpc('ensure_campaign_donation_intent_for_payment', {
-            p_payment_id: paymentId,
-            p_donor_phone: ctx.from,
-            p_donor_name: (d.donor_display_name as string) || null,
-            p_reference_code: d.donation_ref_code as string || null,
-          });
-        } catch (err) {
-          logger.error('[CROWDFUNDING] Donation intent RPC failed for saved-card payment', err);
-        }
+        // #389 B4: Donation intent now created INSIDE the adapter (charge-saved.ts / saved-payment-adapter.ts)
+        // before provider dispatch — no after-charge call needed here.
 
         const { reconcilePayment } = await import('@/lib/payments/reconcile');
         const result = await reconcilePayment(ctx.supabase, paymentId, 'saved_card');
@@ -635,6 +631,7 @@ const donationPaymentStep: FlowStepConfig = {
       return 'await_donation_payment';
     }
     if (d._saved_card_cancelled) {
+      delete d._saved_card_attempt_ref; // #389 B5: Clear stable ref on cancel
       // CAS: cancel donation only while still pending
       const donRef = d.donation_ref_code as string;
       if (donRef) {
@@ -648,6 +645,7 @@ const donationPaymentStep: FlowStepConfig = {
     }
     if (d._skip_saved_card && d._saved_method_id) {
       delete d._saved_method_id;
+      delete d._saved_card_attempt_ref; // #389 B5: Clear stable ref when switching to new card
       return 'donation_payment';
     }
     return 'await_donation_payment';
@@ -705,7 +703,7 @@ const awaitDonationPaymentStep: FlowStepConfig = {
           const { data: don } = await ctx.supabase.from('campaign_donations')
             .select('status').eq('reference_code', refCode).maybeSingle();
           if (don?.status === 'success') {
-            await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('✅ Your donation has already been confirmed! Thank you for your generosity.\n\n💡 Type *my giving* to see your giving history.') });
+            // #389 B1: Stage-3 owns customer confirmation — suppress flow-level sendText
             return { valid: true, data: { _action: 'already_confirmed' } };
           }
           if (don?.status === 'cancelled') {

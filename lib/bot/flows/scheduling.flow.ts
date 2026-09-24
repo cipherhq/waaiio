@@ -3172,7 +3172,7 @@ export const schedulingFlow: FlowDefinition = {
               const { data: bk } = await ctx.supabase.from('bookings')
                 .select('status, deposit_status').eq('id', d.booking_id as string).single();
               if (bk?.deposit_status === 'paid' || bk?.status === 'confirmed') {
-                await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('Your payment has been confirmed! Your booking is active.\n\n💡 Type *my bookings* to view details.') });
+                // #389 B1: Stage-3 owns customer confirmation — suppress flow-level sendText
                 return { valid: true, data: { _action: 'already_confirmed' } };
               }
             }
@@ -3471,11 +3471,7 @@ export const schedulingFlow: FlowDefinition = {
             return { valid: true, data: { _retry_payment: true } };
           }
           if (recovery.outcome === 'completed' || recovery.outcome === 'not_deliverable') {
-            const d = ctx.session.session_data;
-            await ctx.sender.sendText({
-              to: ctx.from,
-              text: await ctx.t(`✅ *Payment Confirmed!*\n\nYour booking *${d.reference_code as string}* is confirmed.\n\n💡 Type *my bookings* to view details, or *receipt* for your payment receipt.`),
-            });
+            // #389 B1: Stage-3 owns customer confirmation — suppress flow-level sendText
             return { valid: true, data: { _action: 'payment_confirmed' } };
           }
           ctx.session.session_data._payment_retry_blocked = true;
@@ -3510,10 +3506,7 @@ export const schedulingFlow: FlowDefinition = {
                 return { valid: false, errorMessage: '' };
               }
               if (bk?.deposit_status === 'paid' || bk?.status === 'confirmed') {
-                await ctx.sender.sendText({
-                  to: ctx.from,
-                  text: await ctx.t('Your payment has been confirmed! Your booking is active.\n\n💡 Type *my bookings* to view details.'),
-                });
+                // #389 B1: Stage-3 owns customer confirmation — suppress flow-level sendText
                 return { valid: true, data: { _action: 'already_confirmed' } };
               }
             }
@@ -3676,14 +3669,7 @@ export const schedulingFlow: FlowDefinition = {
           const recovery = await verifyAndReconcilePayment(ctx.supabase, ref);
 
           if (recovery.outcome === 'completed' || recovery.outcome === 'not_deliverable') {
-            // Payment Authority fully completed. Stage 3 (sendProactiveConfirmation)
-            // already sent customer confirmation, owner notification, and post-completion.
-            // Bot provides only a brief acknowledgment — no duplicate full confirmation.
-            const d = ctx.session.session_data;
-            await ctx.sender.sendText({
-              to: ctx.from,
-              text: await ctx.t(`✅ *Payment Confirmed!*\n\nYour booking *${d.reference_code as string}* is confirmed.\n\n💡 Type *my bookings* to view details, or *receipt* for your payment receipt.`),
-            });
+            // #389 B1: Stage-3 owns customer confirmation — suppress flow-level sendText
             return { valid: true, data: { _action: 'payment_confirmed' } };
           }
 

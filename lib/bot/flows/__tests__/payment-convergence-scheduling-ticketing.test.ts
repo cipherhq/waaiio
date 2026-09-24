@@ -743,7 +743,7 @@ describe('chargeSavedCard behavioral state machine', () => {
 
   it('terminalization zero rows + reread success → already_charged', async () => {
     const { chargeSavedCard, mockSb } = await setupChargeTest({
-      existingPayment: { id: 'pay-1', status: 'pending', booking_id: 'bk-1', business_id: 'biz-1', metadata: {} },
+      existingPayment: { id: 'pay-1', status: 'pending', booking_id: 'bk-1', business_id: 'biz-1', amount: 1000, currency: 'NGN', payment_method: 'saved_card', metadata: {} },
       reconcileResult: { providerOutcome: 'not_paid', lifecycle: null, acknowledgeSuccess: true, providerReason: 'paystack_status: abandoned' },
       termUpdateResult: { data: null, error: null }, // zero rows affected
       rereadResult: { data: { status: 'success' }, error: null },
@@ -755,7 +755,7 @@ describe('chargeSavedCard behavioral state machine', () => {
 
   it('terminalization zero rows + reread failed → previously_declined', async () => {
     const { chargeSavedCard, mockSb } = await setupChargeTest({
-      existingPayment: { id: 'pay-1', status: 'pending', booking_id: 'bk-1', business_id: 'biz-1', metadata: {} },
+      existingPayment: { id: 'pay-1', status: 'pending', booking_id: 'bk-1', business_id: 'biz-1', amount: 1000, currency: 'NGN', payment_method: 'saved_card', metadata: {} },
       reconcileResult: { providerOutcome: 'not_paid', lifecycle: null, acknowledgeSuccess: true, providerReason: 'paystack_status: failed' },
       termUpdateResult: { data: null, error: null },
       rereadResult: { data: { status: 'failed' }, error: null },
@@ -767,7 +767,7 @@ describe('chargeSavedCard behavioral state machine', () => {
 
   it('terminalization zero rows + reread pending → indeterminate', async () => {
     const { chargeSavedCard, mockSb } = await setupChargeTest({
-      existingPayment: { id: 'pay-1', status: 'pending', booking_id: 'bk-1', business_id: 'biz-1', metadata: {} },
+      existingPayment: { id: 'pay-1', status: 'pending', booking_id: 'bk-1', business_id: 'biz-1', amount: 1000, currency: 'NGN', payment_method: 'saved_card', metadata: {} },
       reconcileResult: { providerOutcome: 'not_paid', lifecycle: null, acknowledgeSuccess: true, providerReason: 'paystack_status: abandoned' },
       termUpdateResult: { data: null, error: null },
       rereadResult: { data: { status: 'pending' }, error: null },
@@ -779,7 +779,7 @@ describe('chargeSavedCard behavioral state machine', () => {
 
   it('terminalization zero rows + reread DB error → indeterminate', async () => {
     const { chargeSavedCard, mockSb } = await setupChargeTest({
-      existingPayment: { id: 'pay-1', status: 'pending', booking_id: 'bk-1', business_id: 'biz-1', metadata: {} },
+      existingPayment: { id: 'pay-1', status: 'pending', booking_id: 'bk-1', business_id: 'biz-1', amount: 1000, currency: 'NGN', payment_method: 'saved_card', metadata: {} },
       reconcileResult: { providerOutcome: 'not_paid', lifecycle: null, acknowledgeSuccess: true, providerReason: 'paystack_status: declined' },
       termUpdateResult: { data: null, error: null },
       rereadResult: { data: null, error: { message: 'db down' } },
@@ -791,7 +791,7 @@ describe('chargeSavedCard behavioral state machine', () => {
 
   it('legacy ownership: null top-level business_id, matching metadata.business_id → proceeds', async () => {
     const { chargeSavedCard, mockSb } = await setupChargeTest({
-      existingPayment: { id: 'pay-legacy', status: 'pending', booking_id: 'bk-1', business_id: null, metadata: { business_id: 'biz-1' } },
+      existingPayment: { id: 'pay-legacy', status: 'pending', booking_id: 'bk-1', business_id: null, amount: 1000, currency: 'NGN', payment_method: 'saved_card', metadata: { business_id: 'biz-1' } },
       reconcileResult: { providerOutcome: 'not_paid', lifecycle: null, acknowledgeSuccess: true, providerReason: 'paystack_status: abandoned' },
       termUpdateResult: { data: { id: 'pay-legacy' }, error: null }, // row affected
     });

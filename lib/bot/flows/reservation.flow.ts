@@ -1228,7 +1228,7 @@ export const reservationFlow: FlowDefinition = {
               return null; // fail closed
             }
             if (res.deposit_status === 'paid' || res.status === 'confirmed') {
-              await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('✅ Your reservation has been confirmed! Type *my bookings* to view details.') });
+              // #389 B1: Stage-3 owns customer confirmation — suppress flow-level sendText
               return null;
             }
             if (res.status === 'cancelled') {
@@ -1314,7 +1314,7 @@ export const reservationFlow: FlowDefinition = {
             return { valid: true, data: { _retry_payment: true } };
           }
           if (recovery.outcome === 'completed' || recovery.outcome === 'not_deliverable') {
-            await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('✅ Your payment has already been confirmed! Your reservation is active.\n\n💡 Type *my bookings* to view details.') });
+            // #389 B1: Stage-3 owns customer confirmation — suppress flow-level sendText
             return { valid: true, data: { _action: 'already_confirmed' } };
           }
           ctx.session.session_data._payment_retry_blocked = true;
@@ -1345,7 +1345,7 @@ export const reservationFlow: FlowDefinition = {
                 return { valid: false, errorMessage: 'Something went wrong. Please try again.' };
               }
               if (res.deposit_status === 'paid' || res.status === 'confirmed') {
-                await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('✅ Your payment has been confirmed! Your reservation is active.\n\n💡 Type *my bookings* to view details.') });
+                // #389 B1: Stage-3 owns customer confirmation — suppress flow-level sendText
                 return { valid: true, data: { _action: 'already_confirmed' } };
               }
               if (res.status === 'cancelled') {
@@ -1488,10 +1488,7 @@ export const reservationFlow: FlowDefinition = {
           const recovery = await verifyAndReconcilePayment(ctx.supabase, ref);
 
           if (recovery.outcome === 'completed' || recovery.outcome === 'not_deliverable') {
-            await ctx.sender.sendText({
-              to: ctx.from,
-              text: await ctx.t('✅ *Payment Confirmed!*\n\nYour reservation is confirmed.\n\n💡 Type *my bookings* to view details, or *receipt* for your payment receipt.'),
-            });
+            // #389 B1: Stage-3 owns customer confirmation — suppress flow-level sendText
             return { valid: true, data: { _action: 'already_confirmed' } };
           }
 

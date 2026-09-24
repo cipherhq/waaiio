@@ -9,6 +9,10 @@ import { resolveTrialStatus } from '@/lib/trial-status';
 
 const paystackSecretKey = process.env.PAYSTACK_SECRET_KEY || '';
 
+function normalizePhone(phone: string): string {
+  return phone.startsWith('+') ? phone : `+${phone}`;
+}
+
 export type SplitResult =
   | { mode: 'no_split' }
   | { mode: 'split'; subaccount: string; transactionChargeKobo: number }
@@ -202,6 +206,8 @@ export async function chargeSavedCard(
     transactionCategory?: string;
     inboundChannelId?: string;
     confirmationOrigin?: 'whatsapp' | 'web';
+    /** #389: Customer phone for donation intent creation */
+    customerPhone?: string;
   },
 ): Promise<SavedCardOutcome> {
   // BYO saved-card not supported — fail closed without durable provider identity
@@ -234,6 +240,7 @@ async function chargePaystackAuthorization(
     transactionCategory?: string;
     inboundChannelId?: string;
     confirmationOrigin?: 'whatsapp' | 'web';
+    customerPhone?: string;
   },
 ): Promise<SavedCardOutcome> {
   if (!paystackSecretKey) {
@@ -245,7 +252,7 @@ async function chargePaystackAuthorization(
   // Fail closed on lookup error — never call provider without confirming no existing charge.
   const { data: existing, error: lookupErr } = await supabase
     .from('payments')
-    .select('id, status, booking_id, order_id, reservation_id, invoice_id, campaign_id, business_id, metadata')
+    .select('id, status, booking_id, order_id, reservation_id, invoice_id, campaign_id, business_id, amount, currency, gateway, payment_method, metadata')
     .eq('gateway_reference', opts.reference)
     .maybeSingle();
 
@@ -291,6 +298,19 @@ async function chargePaystackAuthorization(
     if (existingBizId !== opts.businessId) {
       logger.error('[SAVED-CARD] Existing payment business mismatch', { existing: existingBizId, expected: opts.businessId });
       return { outcome: 'indeterminate', paymentId: existing.id, reference: opts.reference, message: 'Payment reference conflict' };
+    }
+    // #389 B3: Amount/currency/payment_method validation — fail closed on mismatch
+    if (existing.amount !== opts.amount) {
+      logger.error('[SAVED-CARD] Amount mismatch', { existing: existing.amount, expected: opts.amount });
+      return { outcome: 'indeterminate', paymentId: existing.id, reference: opts.reference, message: 'Amount mismatch' };
+    }
+    if (existing.currency?.toLowerCase() !== opts.currency?.toLowerCase()) {
+      logger.error('[SAVED-CARD] Currency mismatch');
+      return { outcome: 'indeterminate', paymentId: existing.id, reference: opts.reference, message: 'Currency mismatch' };
+    }
+    if (existing.payment_method !== 'saved_card') {
+      logger.error('[SAVED-CARD] Payment method mismatch');
+      return { outcome: 'indeterminate', paymentId: existing.id, reference: opts.reference, message: 'Payment method mismatch' };
     }
     if (existing.status === 'success') {
       return { outcome: 'already_charged', paymentId: existing.id, reference: opts.reference };
@@ -500,6 +520,19 @@ async function chargePaystackAuthorization(
   }
 
   const paymentId = payRow.id;
+
+  // #389 B4: For giving/campaign payments, ensure donation intent BEFORE provider dispatch — BLOCKING
+  if (opts.campaignId && opts.customerPhone) {
+    const { data: intentResult, error: intentErr } = await supabase.rpc('ensure_campaign_donation_intent_for_payment', {
+      p_payment_id: paymentId,
+      p_donor_phone: normalizePhone(opts.customerPhone),
+    });
+    if (intentErr || (!intentResult?.created && !intentResult?.already_existed)) {
+      logger.error('[PAYSTACK-SAVED-CARD] Donation intent failed — blocking', intentErr);
+      return { outcome: 'indeterminate', paymentId, reference: opts.reference, message: 'Donation intent failed' };
+    }
+  }
+
   const amountInKobo = Math.round(opts.amount * 100);
 
   // ── Step 2b: Provider-init state machine for v1 ──

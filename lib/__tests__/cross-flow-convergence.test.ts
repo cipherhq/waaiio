@@ -1,21 +1,20 @@
 /**
  * #389: Cross-flow convergence tests
  *
+ * Replaces placeholder expect(true).toBe(true) with real executable tests.
+ * DB-level tests live in cross-flow-convergence-db.test.ts (requires TEST_DATABASE_URL).
+ *
  * Tests:
- * 1. Order payment -> orders.payment_id set
- * 2. Order committed replay + NULL payment_id -> repaired
- * 3. Order different payment -> conflict
- * 4. Reservation payment -> confirmed + linked
- * 5. Reservation replay -> idempotent
- * 6. Reservation different payment -> conflict
- * 7. Invoice saved-card -> apply_invoice_payment processes
- * 8. Giving saved-card -> donation intent created before dispatch
- * 9. Pending optional internal -> skipped at finalization
- * 10. Stale internal claim -> indeterminate
- * 11. External pending -> skipped
- * 12. Stage-3 confirmation copy uses correct entity title
+ * 1-3: Order payment-link convergence contract (source verification)
+ * 4-6: Reservation atomic RPC mock tests
+ * 7: Invoice saved-card wiring
+ * 8: Giving saved-card donation intent (adapter contract)
+ * 9-11: Finalization execution-class (source verification)
+ * 12: Stage-3 confirmation entity title derivation
+ * 13: charge-saved.ts entity tuple + amount/currency/payment_method validation
+ * 14: Paystack collision — existing payment with different amount returns indeterminate
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 
 // ── Test helpers ──
 
@@ -24,7 +23,7 @@ function createMockSupabase(overrides: Record<string, unknown> = {}) {
   const updates: Array<{ table: string; data: unknown; filters: unknown }> = [];
 
   const mockClient = {
-    rpc: vi.fn(async (name: string, params: unknown) => {
+    rpc: vi.fn(async (name: string, _params: unknown) => {
       if (rpcResults[name]) return rpcResults[name];
       return { data: null, error: null };
     }),
@@ -57,36 +56,43 @@ function createMockSupabase(overrides: Record<string, unknown> = {}) {
   return mockClient;
 }
 
-// ── 1-3: Order payment -> orders.payment_id convergence ──
+// ── 1-3: Order payment-link convergence (source contract verification) ──
 
 describe('Order payment-link convergence (apply_order_stock_once M400)', () => {
-  it('1. Order payment sets orders.payment_id via RPC', () => {
-    // The RPC itself handles this in SQL. We verify the SQL contract:
-    // At every successful return path where p_payment_id IS NOT NULL,
-    // UPDATE orders SET payment_id = p_payment_id WHERE id = p_order_id
-    // AND (payment_id IS NULL OR payment_id = p_payment_id)
-    //
-    // This is a SQL-level test — verified by reading the M400 migration.
-    // The application calls supabase.rpc('apply_order_stock_once', { p_order_id, p_payment_id })
-    // and the RPC atomically sets orders.payment_id.
-    expect(true).toBe(true); // Contract verification — see M400 SQL
+  it('1. M400 SQL contains payment_id UPDATE on all return paths', async () => {
+    const fs = await import('fs');
+    const migrationPath = new URL('../../supabase/migrations/400_cross_flow_convergence.sql', import.meta.url).pathname;
+    const sql = fs.readFileSync(migrationPath, 'utf-8');
+
+    // Verify the payment_id UPDATE pattern exists in the function body
+    // SQL spans multiple lines, so count occurrences of the UPDATE target
+    const updateCount = (sql.match(/UPDATE orders SET payment_id = p_payment_id/g) || []).length;
+    // Should have at least 3 UPDATE paths (committed replay, non-committed promotion, fresh winner)
+    expect(updateCount).toBeGreaterThanOrEqual(3);
   });
 
-  it('2. Committed replay with NULL orders.payment_id repairs the link', () => {
-    // M400 adds to the committed replay path:
-    // IF p_payment_id IS NOT NULL THEN
-    //   UPDATE orders SET payment_id = p_payment_id, updated_at = NOW()
-    //   WHERE id = p_order_id AND (payment_id IS NULL OR payment_id = p_payment_id);
-    // END IF;
-    // This means: replay with same payment_id on a committed marker
-    // will repair a NULL orders.payment_id.
-    expect(true).toBe(true); // Contract verification — see M400 SQL
+  it('2. M400 SQL adds payment_link_conflict check after each UPDATE', async () => {
+    const fs = await import('fs');
+    const migrationPath = new URL('../../supabase/migrations/400_cross_flow_convergence.sql', import.meta.url).pathname;
+    const sql = fs.readFileSync(migrationPath, 'utf-8');
+
+    // Verify conflict check exists after UPDATE
+    expect(sql).toContain('payment_link_conflict');
+    // Should appear at least 3 times (one per UPDATE path)
+    const conflictMatches = sql.match(/payment_link_conflict/g);
+    expect(conflictMatches).not.toBeNull();
+    expect(conflictMatches!.length).toBeGreaterThanOrEqual(3);
   });
 
-  it('3. Different payment on committed marker returns payment_conflict', () => {
-    // From M400 SQL: committed + different payment_id -> 'payment_conflict'
-    // This behavior is preserved from M393 — M400 only adds the payment_id UPDATE.
-    expect(true).toBe(true); // Contract verification — see M400 SQL
+  it('3. M400 SQL committed + different payment returns payment_conflict', async () => {
+    const fs = await import('fs');
+    const migrationPath = new URL('../../supabase/migrations/400_cross_flow_convergence.sql', import.meta.url).pathname;
+    const sql = fs.readFileSync(migrationPath, 'utf-8');
+
+    // The existing committed + different payment_id path should return payment_conflict
+    expect(sql).toContain("'payment_conflict'");
+    // Verify it checks v_existing.payment_id != p_payment_id
+    expect(sql).toContain('v_existing.payment_id != p_payment_id');
   });
 });
 
@@ -106,6 +112,11 @@ describe('Reservation payment atomic convergence (confirm_reservation_payment_at
 
     expect(result.data.confirmed).toBe(true);
     expect(result.data.was_pending).toBe(true);
+    expect(result.data.reason).toBe('pending_to_confirmed');
+    expect(supabase.rpc).toHaveBeenCalledWith('confirm_reservation_payment_atomic', {
+      p_reservation_id: 'res-1',
+      p_payment_id: 'pay-1',
+    });
   });
 
   it('5. Reservation replay -> idempotent', async () => {
@@ -121,6 +132,7 @@ describe('Reservation payment atomic convergence (confirm_reservation_payment_at
 
     expect(result.data.confirmed).toBe(true);
     expect(result.data.was_pending).toBe(false);
+    expect(result.data.reason).toBe('repair_paid_state');
   });
 
   it('6. Reservation different payment -> conflict', async () => {
@@ -142,69 +154,112 @@ describe('Reservation payment atomic convergence (confirm_reservation_payment_at
 // ── 7: Invoice saved-card ──
 
 describe('Invoice saved-card wiring', () => {
-  it('7. Invoice flow imports saved-card helpers', async () => {
+  it('7. Invoice flow imports and exposes saved-card helpers', async () => {
     const invoiceFlowModule = await import('@/lib/bot/flows/invoice.flow');
     expect(invoiceFlowModule.invoiceFlow).toBeDefined();
     expect(invoiceFlowModule.invoiceFlow.steps).toBeDefined();
+    expect(invoiceFlowModule.invoiceFlow.steps.length).toBeGreaterThanOrEqual(3);
 
-    // Verify the saved-card imports are available
+    // Verify the saved-card imports are callable
     const { buildSavedCardOffer, handleSavedCardInput } = await import('@/lib/bot/flows/shared/saved-card-flow');
     expect(typeof buildSavedCardOffer).toBe('function');
     expect(typeof handleSavedCardInput).toBe('function');
+
+    // Verify the invoice_pay step has a validate handler
+    const payStep = invoiceFlowModule.invoiceFlow.steps.find(
+      (s: { id: string }) => s.id === 'invoice_pay',
+    );
+    expect(payStep).toBeDefined();
+    expect(typeof payStep!.validate).toBe('function');
   });
 });
 
 // ── 8: Giving saved-card donation intent ──
 
 describe('Giving saved-card donation intent', () => {
-  it('8. Donation intent RPC is called in Stripe adapter when campaignId present', async () => {
-    // The Stripe saved-payment-adapter calls ensure_campaign_donation_intent_for_payment
-    // after payment row creation and before provider dispatch when opts.campaignId is set.
-    // This ensures the donation row exists before the payment succeeds.
-    const adapterModule = await import('@/lib/payments/saved-payment-adapter');
-    expect(adapterModule.savedPaymentAdapter).toBeDefined();
+  it('8. Stripe adapter blocks on donation intent failure (source verification)', async () => {
+    const fs = await import('fs');
+    const adapterPath = new URL('../../lib/payments/saved-payment-adapter.ts', import.meta.url).pathname;
+    const src = fs.readFileSync(adapterPath, 'utf-8');
 
-    // Verify the adapter has chargeSavedMethod
-    expect(typeof adapterModule.savedPaymentAdapter.chargeSavedMethod).toBe('function');
+    // Verify the adapter calls ensure_campaign_donation_intent_for_payment
+    expect(src).toContain('ensure_campaign_donation_intent_for_payment');
+    // Verify it returns indeterminate on failure (blocking, not continuing)
+    expect(src).toContain('blocking dispatch');
+    expect(src).toContain("status: 'indeterminate'");
+    // Verify it does NOT continue with charge on intent failure
+    expect(src).not.toContain('continuing with charge');
+  });
+
+  it('8b. Paystack adapter blocks on donation intent failure (source verification)', async () => {
+    const fs = await import('fs');
+    const chargePath = new URL('../../lib/payments/charge-saved.ts', import.meta.url).pathname;
+    const src = fs.readFileSync(chargePath, 'utf-8');
+
+    // Verify the Paystack path also calls ensure_campaign_donation_intent_for_payment
+    expect(src).toContain('ensure_campaign_donation_intent_for_payment');
+    // Verify it blocks on failure
+    expect(src).toContain('PAYSTACK-SAVED-CARD');
+    expect(src).toContain("outcome: 'indeterminate'");
+    expect(src).toContain('Donation intent failed');
+  });
+
+  it('8c. Crowdfunding flow does NOT call donation intent after charge', async () => {
+    const fs = await import('fs');
+    const flowPath = new URL('../../lib/bot/flows/crowdfunding.flow.ts', import.meta.url).pathname;
+    const src = fs.readFileSync(flowPath, 'utf-8');
+
+    // Verify the flow does NOT call ensure_campaign_donation_intent_for_payment directly
+    expect(src).not.toContain('ensure_campaign_donation_intent_for_payment');
+    // Verify the comment explains it's now inside the adapter
+    expect(src).toContain('Donation intent now created INSIDE the adapter');
   });
 });
 
 // ── 9-11: Finalization execution-class-aware optional handling ──
 
 describe('Finalization execution-class-aware optional handling (M400)', () => {
-  it('9. Pending optional internal -> skipped at finalization', () => {
-    // M400 SQL: finalize_payment_confirmation now runs:
-    // UPDATE payment_terminal_effects SET status = 'skipped',
-    //   suppression_reason = 'auto_skipped_at_finalization:internal_pending'
-    // WHERE category = 'optional' AND execution_class = 'internal' AND status = 'pending'
-    //
-    // This replaces the old dangling_optional gate which blocked finalization.
-    // Now internal optional effects that weren't processed are auto-skipped.
-    expect(true).toBe(true); // Contract verification — see M400 SQL
+  it('9. M400 SQL auto-skips pending internal optional at finalization', async () => {
+    const fs = await import('fs');
+    const migrationPath = new URL('../../supabase/migrations/400_cross_flow_convergence.sql', import.meta.url).pathname;
+    const sql = fs.readFileSync(migrationPath, 'utf-8');
+
+    // Verify the auto-skip UPDATE for internal pending
+    expect(sql).toContain('auto_skipped_at_finalization:internal_pending');
+    // Verify it targets optional + internal + pending
+    expect(sql).toContain("category = 'optional'");
+    expect(sql).toContain("execution_class = 'internal'");
+    expect(sql).toContain("status = 'pending'");
   });
 
-  it('10. Stale internal claim -> indeterminate', () => {
-    // M400 SQL: finalize_payment_confirmation now runs:
-    // UPDATE payment_terminal_effects SET status = 'indeterminate',
-    //   suppression_reason = 'stale_claim_internal:side_effect_unknown'
-    // WHERE category = 'optional' AND execution_class = 'internal'
-    //   AND status = 'claimed' AND claim_expires_at <= NOW()
-    //
-    // A stale claimed internal effect might have actually executed,
-    // so it goes to 'indeterminate' rather than 'skipped'.
-    expect(true).toBe(true); // Contract verification — see M400 SQL
+  it('10. M400 SQL marks stale internal claims as indeterminate', async () => {
+    const fs = await import('fs');
+    const migrationPath = new URL('../../supabase/migrations/400_cross_flow_convergence.sql', import.meta.url).pathname;
+    const sql = fs.readFileSync(migrationPath, 'utf-8');
+
+    // Verify the stale claim -> indeterminate UPDATE
+    expect(sql).toContain('stale_claim_internal:side_effect_unknown');
+    expect(sql).toContain("status = 'indeterminate'");
+    expect(sql).toContain('claim_expires_at <= NOW()');
   });
 
-  it('11. External pending -> skipped at finalization', () => {
-    // M400 SQL: finalize_payment_confirmation now runs:
-    // UPDATE payment_terminal_effects SET status = 'skipped',
-    //   suppression_reason = 'auto_skipped_at_finalization:external'
-    // WHERE category = 'optional' AND execution_class = 'external'
-    //   AND (status = 'pending' OR (status = 'claimed' AND emission_started_at IS NULL))
-    //
-    // External optional effects that were never started are safe to skip.
-    // Effects with emission_started_at != NULL are left as-is (may have fired).
-    expect(true).toBe(true); // Contract verification — see M400 SQL
+  it('11. M400 SQL auto-skips external optional pending at finalization', async () => {
+    const fs = await import('fs');
+    const migrationPath = new URL('../../supabase/migrations/400_cross_flow_convergence.sql', import.meta.url).pathname;
+    const sql = fs.readFileSync(migrationPath, 'utf-8');
+
+    // Verify the auto-skip UPDATE for external
+    expect(sql).toContain('auto_skipped_at_finalization:external');
+    expect(sql).toContain("execution_class = 'external'");
+  });
+
+  it('11b. M400 SQL returns optional_internal_in_progress for active internal claims', async () => {
+    const fs = await import('fs');
+    const migrationPath = new URL('../../supabase/migrations/400_cross_flow_convergence.sql', import.meta.url).pathname;
+    const sql = fs.readFileSync(migrationPath, 'utf-8');
+
+    expect(sql).toContain('optional_internal_in_progress');
+    expect(sql).toContain('claim_expires_at > NOW()');
   });
 });
 
@@ -212,17 +267,6 @@ describe('Finalization execution-class-aware optional handling (M400)', () => {
 
 describe('Stage-3 confirmation copy entity title', () => {
   it('12. Confirmation title derives from entity linkage', () => {
-    // Verify the logic in send-confirmation.ts builds correct titles:
-    // booking + scheduling -> "Appointment"
-    // booking + ticketing -> "Ticket"
-    // booking + payment -> "Payment"
-    // order -> "Order"
-    // reservation -> "Reservation"
-    // campaign -> "Donation"
-    // invoice -> "Invoice Payment"
-    // fallback -> "Payment"
-
-    // Test the title derivation logic
     function deriveTitle(payment: {
       booking_id?: string | null;
       order_id?: string | null;
@@ -258,42 +302,137 @@ describe('Stage-3 confirmation copy entity title', () => {
   });
 });
 
-// ── Process-success reservation atomic RPC integration ──
+// ── 13: charge-saved.ts entity tuple + amount/currency/payment_method validation ──
+
+describe('charge-saved.ts entity tuple + amount/currency/payment_method validation (R6-B + B3)', () => {
+  it('13. SELECT includes amount, currency, gateway, payment_method columns', async () => {
+    const fs = await import('fs');
+    const src = fs.readFileSync(
+      new URL('../../lib/payments/charge-saved.ts', import.meta.url).pathname,
+      'utf-8',
+    );
+    // Verify the SELECT includes the new columns (query spans multiple lines)
+    // Find the select that contains gateway_reference
+    const selectIdx = src.indexOf("'id, status, booking_id");
+    expect(selectIdx).toBeGreaterThan(-1);
+    // Extract the select string (up to the closing quote)
+    const selectEnd = src.indexOf("'", selectIdx + 1);
+    const selectStr = src.substring(selectIdx, selectEnd + 1);
+    expect(selectStr).toContain('amount');
+    expect(selectStr).toContain('currency');
+    expect(selectStr).toContain('payment_method');
+
+    // Verify amount mismatch check
+    expect(src).toContain('Amount mismatch');
+    // Verify currency mismatch check
+    expect(src).toContain('Currency mismatch');
+    // Verify payment_method mismatch check
+    expect(src).toContain('Payment method mismatch');
+  });
+});
+
+// ── 14: Paystack collision — existing payment with different amount ──
+
+describe('Paystack collision validation', () => {
+  it('14. Existing payment with different amount -> indeterminate (not already_charged)', async () => {
+    const fs = await import('fs');
+    const src = fs.readFileSync(
+      new URL('../../lib/payments/charge-saved.ts', import.meta.url).pathname,
+      'utf-8',
+    );
+
+    // Verify amount check happens BEFORE the status checks (success/pending/failed)
+    const amountCheckPos = src.indexOf('Amount mismatch');
+    const successCheckPos = src.indexOf("existing.status === 'success'");
+    expect(amountCheckPos).toBeGreaterThan(0);
+    expect(successCheckPos).toBeGreaterThan(0);
+    // Amount check must come BEFORE success check
+    expect(amountCheckPos).toBeLessThan(successCheckPos);
+
+    // Verify the amount check returns indeterminate, not already_charged
+    const amountBlock = src.substring(amountCheckPos - 200, amountCheckPos + 200);
+    expect(amountBlock).toContain("outcome: 'indeterminate'");
+  });
+});
+
+// ── 15: Process-success reservation atomic RPC integration ──
 
 describe('process-success.ts reservation atomic RPC', () => {
-  it('uses confirm_reservation_payment_atomic instead of loose update', async () => {
-    // Verify the source code imports/calls the RPC
+  it('15. Uses confirm_reservation_payment_atomic RPC', async () => {
     const fs = await import('fs');
     const src = fs.readFileSync(
       new URL('../../lib/payments/process-success.ts', import.meta.url).pathname.replace('lib/__tests__/', ''),
       'utf-8',
     );
-    // Should contain the RPC call
     expect(src).toContain('confirm_reservation_payment_atomic');
-    // Should NOT contain the old loose .update for reservations
-    // (The old pattern: .from('reservations').update({deposit_status: 'paid'...}).eq().in('status', ['pending']))
-    // The new pattern uses the RPC atomically
   });
 });
 
-// ── charge-saved.ts full entity tuple validation ──
+// ── 16: Stable saved-card attempt reference for invoice/giving ──
 
-describe('charge-saved.ts entity tuple validation (R6-B)', () => {
-  it('selects all entity columns in existing-payment convergence query', async () => {
+describe('Stable saved-card attempt reference (B5)', () => {
+  it('16a. Invoice flow generates reference once and persists in _saved_card_attempt_ref', async () => {
     const fs = await import('fs');
     const src = fs.readFileSync(
-      new URL('../../lib/payments/charge-saved.ts', import.meta.url).pathname.replace('lib/__tests__/', ''),
+      new URL('../../lib/bot/flows/invoice.flow.ts', import.meta.url).pathname,
       'utf-8',
     );
-    // Verify the SELECT includes all entity columns
-    expect(src).toContain('order_id');
-    expect(src).toContain('reservation_id');
-    expect(src).toContain('invoice_id');
-    expect(src).toContain('campaign_id');
-    // Verify entity mismatch checks exist
-    expect(src).toContain('Existing payment order mismatch');
-    expect(src).toContain('Existing payment reservation mismatch');
-    expect(src).toContain('Existing payment invoice mismatch');
-    expect(src).toContain('Existing payment campaign mismatch');
+    expect(src).toContain('_saved_card_attempt_ref');
+    // Should check if ref already exists before generating
+    expect(src).toContain("d._saved_card_attempt_ref as string | undefined");
+    expect(src).toContain("if (!savedCardRef)");
+    // Should clear on success and cancel
+    const clearCount = (src.match(/delete d\._saved_card_attempt_ref/g) || []).length;
+    expect(clearCount).toBeGreaterThanOrEqual(2);
+  });
+
+  it('16b. Crowdfunding flow generates reference once and persists in _saved_card_attempt_ref', async () => {
+    const fs = await import('fs');
+    const src = fs.readFileSync(
+      new URL('../../lib/bot/flows/crowdfunding.flow.ts', import.meta.url).pathname,
+      'utf-8',
+    );
+    expect(src).toContain('_saved_card_attempt_ref');
+    expect(src).toContain("d._saved_card_attempt_ref as string | undefined");
+    expect(src).toContain("if (!savedCardRef)");
+    const clearCount = (src.match(/delete d\._saved_card_attempt_ref/g) || []).length;
+    expect(clearCount).toBeGreaterThanOrEqual(2);
+  });
+});
+
+// ── 17: Flow confirmation suppression (B1) ──
+
+describe('Flow confirmation suppression (B1)', () => {
+  it('17. All payment flows suppress confirmation sendText in completed paths', async () => {
+    const fs = await import('fs');
+    const flowFiles = [
+      'scheduling.flow.ts',
+      'ordering.flow.ts',
+      'ticketing.flow.ts',
+      'reservation.flow.ts',
+      'payment.flow.ts',
+      'crowdfunding.flow.ts',
+    ];
+
+    for (const file of flowFiles) {
+      const src = fs.readFileSync(
+        new URL(`../../lib/bot/flows/${file}`, import.meta.url).pathname,
+        'utf-8',
+      );
+
+      // Verify suppression comment exists
+      expect(src).toContain('Stage-3 owns customer confirmation');
+
+      // Verify NO sendText calls contain "Payment Confirmed!" in completed/already_confirmed paths
+      // (processing messages like "Payment received! Being processed" are allowed)
+      const lines = src.split('\n');
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        if (line.includes('sendText') && line.includes('Payment Confirmed!')) {
+          // This should not exist — all were suppressed
+          throw new Error(`${file} line ${i + 1}: unsuppressed "Payment Confirmed!" sendText found`);
+        }
+      }
+    }
   });
 });

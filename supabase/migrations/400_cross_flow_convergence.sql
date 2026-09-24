@@ -152,6 +152,12 @@ BEGIN
         IF p_payment_id IS NOT NULL THEN
           UPDATE orders SET payment_id = p_payment_id, updated_at = NOW()
           WHERE id = p_order_id AND (payment_id IS NULL OR payment_id = p_payment_id);
+          -- Verify convergence: if a DIFFERENT payment already won, fail closed
+          PERFORM id FROM orders WHERE id = p_order_id
+            AND payment_id IS NOT NULL AND payment_id != p_payment_id;
+          IF FOUND THEN
+            RETURN jsonb_build_object('applied', false, 'reason', 'payment_link_conflict');
+          END IF;
         END IF;
         RETURN jsonb_build_object('applied', true, 'already_applied', true,
           'order_confirmed', true);
@@ -186,6 +192,12 @@ BEGIN
         IF p_payment_id IS NOT NULL THEN
           UPDATE orders SET payment_id = p_payment_id, updated_at = NOW()
           WHERE id = p_order_id AND (payment_id IS NULL OR payment_id = p_payment_id);
+          -- Verify convergence: if a DIFFERENT payment already won, fail closed
+          PERFORM id FROM orders WHERE id = p_order_id
+            AND payment_id IS NOT NULL AND payment_id != p_payment_id;
+          IF FOUND THEN
+            RETURN jsonb_build_object('applied', false, 'reason', 'payment_link_conflict');
+          END IF;
         END IF;
 
         RETURN jsonb_build_object('applied', true, 'already_applied', true,
@@ -275,6 +287,12 @@ BEGIN
   IF p_payment_id IS NOT NULL THEN
     UPDATE orders SET payment_id = p_payment_id, updated_at = NOW()
     WHERE id = p_order_id AND (payment_id IS NULL OR payment_id = p_payment_id);
+    -- Verify convergence: if a DIFFERENT payment already won, fail closed
+    PERFORM id FROM orders WHERE id = p_order_id
+      AND payment_id IS NOT NULL AND payment_id != p_payment_id;
+    IF FOUND THEN
+      RETURN jsonb_build_object('applied', false, 'reason', 'payment_link_conflict');
+    END IF;
   END IF;
 
   RETURN jsonb_build_object('applied', true, 'already_applied', false, 'items', v_count,

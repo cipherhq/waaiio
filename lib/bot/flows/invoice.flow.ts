@@ -460,9 +460,15 @@ const invoicePayStep: FlowStepConfig = {
     const d = ctx.session.session_data;
     if (d._saved_method_id || d._awaiting_card_pin) {
       const invoiceRef = d._invoice_ref as string || 'INV';
+      // #389 B5: Generate reference ONCE, persist in session for PIN/retry reuse
+      let savedCardRef = d._saved_card_attempt_ref as string | undefined;
+      if (!savedCardRef) {
+        savedCardRef = `${invoiceRef}-saved-${Date.now().toString(36)}`;
+        d._saved_card_attempt_ref = savedCardRef;
+      }
       const savedResult = await handleSavedCardInput(input, ctx, {
         amount: d._pending_deposit as number || d._invoice_amount as number,
-        reference: `${invoiceRef}-saved-${Date.now().toString(36)}`,
+        reference: savedCardRef,
         entityId: { invoiceId: d._invoice_id as string },
         transactionCategory: 'invoice',
       });
@@ -489,6 +495,7 @@ const invoicePayStep: FlowStepConfig = {
     if (d._awaiting_card_pin) return 'invoice_pay';
     // #389: Saved-card outcomes
     if (d._saved_card_paid) {
+      delete d._saved_card_attempt_ref; // #389 B5: Clear stable ref on success
       const paymentId = d._saved_card_payment_id as string;
       if (paymentId) {
         const { reconcilePayment } = await import('@/lib/payments/reconcile');
@@ -508,11 +515,13 @@ const invoicePayStep: FlowStepConfig = {
       return 'await_invoice_payment';
     }
     if (d._saved_card_cancelled) {
+      delete d._saved_card_attempt_ref; // #389 B5: Clear stable ref on cancel
       await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('Invoice payment cancelled. Send *Hi* to start over.') });
       return null;
     }
     if (d._skip_saved_card && d._saved_method_id) {
       delete d._saved_method_id;
+      delete d._saved_card_attempt_ref; // #389 B5: Clear stable ref when switching to new card
       return 'invoice_pay';
     }
     if (d.bank_transfer_offered) return 'await_invoice_payment';

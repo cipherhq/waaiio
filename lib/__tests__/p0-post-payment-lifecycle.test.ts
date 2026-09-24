@@ -1031,10 +1031,8 @@ describe('Blocker 4: Real caller boundaries + explicit zero-reinit', () => {
     expect(result.data?._action).toBe('already_confirmed');
     // CRITICAL: initializePayment must NOT be called on post-success "I've Paid"
     expect(mockInitializePayment).not.toHaveBeenCalled();
-    // User should see Payment Confirmed message
-    expect(sendTextSpy).toHaveBeenCalled();
-    const sentText = sendTextSpy.mock.calls[0][0].text;
-    expect(sentText).toContain('Payment Confirmed');
+    // #389 B1: Stage-3 owns customer confirmation — flow-level sendText suppressed
+    expect(sendTextSpy).not.toHaveBeenCalled();
   });
 
   it('4.5 post-success zero-reinit: retry_payment after completed payment does NOT reinitialize', async () => {
