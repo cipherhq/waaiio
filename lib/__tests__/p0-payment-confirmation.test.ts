@@ -63,6 +63,12 @@ function setupPartialBalanceMock() {
       c.maybeSingle = vi.fn().mockResolvedValue({ data: { id: 'usr1', email: 'o@t.com', phone: '+234123' }, error: null });
       c.single = vi.fn().mockResolvedValue({ data: { id: 'usr1', email: 'o@t.com', phone: '+234123' }, error: null });
     }
+    if (table === 'payments') {
+      // #381 balance authority is successful payment history, not configured deposit.
+      // Model the already-paid $50 deposit linked to bk1.
+      c.then = (resolve: (value: unknown) => unknown, reject: (reason: unknown) => unknown) =>
+        Promise.resolve({ data: [{ amount: 50, refund_amount: 0 }], error: null }).then(resolve, reject);
+    }
     return c;
   });
 }
@@ -341,7 +347,7 @@ describe('P0-CONFIRM-1: Control-flow tests', () => {
     const { sendProactiveConfirmation } = await import('../payments/send-confirmation');
     await sendProactiveConfirmation(s, pay);
     expect(mockInitializePayment).toHaveBeenCalledTimes(1);
-    // Correct amount passed (balanceRemaining = 100 - 50 = 50)
+    // Correct amount passed (100 total - $50 successful payment history = $50 due)
     expect(mockInitializePayment).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ amount: 50 }));
     expect(mockRpc).toHaveBeenCalledWith('finalize_payment_confirmation', expect.objectContaining({ p_claim_token: 'tok-aaa' }));
   });
