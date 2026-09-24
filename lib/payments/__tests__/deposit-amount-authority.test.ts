@@ -12,7 +12,7 @@ import {
   getDepositConfigurationError,
   resolveRuntimeDeposit,
 } from '@/lib/payments/deposit-amount-authority';
-import { buildServicePayload } from '@/lib/services/payload-builders';
+import { buildAiSetupServiceRow, buildServicePayload } from '@/lib/services/payload-builders';
 
 function readSource(relPath: string): string {
   return fs.readFileSync(path.resolve(__dirname, '../../..', relPath), 'utf-8');
@@ -96,6 +96,16 @@ describe('#376 fixed-price configuration authority', () => {
       price_is_variable: true,
       deposit_amount: 200,
     }).deposit_amount).toBe(200);
+  });
+
+  it('AI Setup cannot bypass fixed-price deposit validation', () => {
+    expect(() => buildAiSetupServiceRow({
+      businessId: 'biz-1',
+      name: 'AI appointment',
+      price: 100,
+      deposit_amount: 200,
+      sortOrder: 0,
+    })).toThrow(/deposit cannot exceed/i);
   });
 });
 
