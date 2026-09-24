@@ -39,9 +39,12 @@ function currentVersion(): string {
 }
 
 /** Async psql for concurrent multi-session tests */
-function psqlAsync(sql: string): Promise<{ ok: boolean; result: string; error: string }> {
+function psqlAsync(sql: string, applicationName?: string): Promise<{ ok: boolean; result: string; error: string }> {
   return new Promise((resolve) => {
-    const proc = spawn('psql', [dbUrl, '-tAXq', '-v', 'ON_ERROR_STOP=1'], { timeout: 30000 });
+    const proc = spawn('psql', [dbUrl, '-tAXq', '-v', 'ON_ERROR_STOP=1'], {
+      timeout: 30000,
+      ...(applicationName ? { env: { ...process.env, PGAPPNAME: applicationName } } : {}),
+    });
     let stdout = '';
     let stderr = '';
     proc.stdin.write(sql);
@@ -2116,50 +2119,47 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
       VALUES ('${subId}'::uuid, 'flutterwave', 'flw_sub_t99', '${oldPeriodEnd}'::timestamptz, 'terminal_no_payment', 'test_t99');
     `);
 
-    // Session A: multi-statement script that holds the lock, waits for B to block, runs renewal, commits
-    // Uses application_name to identify Session B in pg_stat_activity
+    // Session A holds the subscription row lock until the test process observes
+    // Session B blocked behind it, then releases the barrier and commits renewal.
+    const barrierTable = `_m378_t99_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
+    psql(`
+      CREATE TABLE public."${barrierTable}" (id INTEGER PRIMARY KEY, proceed BOOLEAN NOT NULL);
+      INSERT INTO public."${barrierTable}" (id, proceed) VALUES (1, false);
+    `);
+
     const sessionASql = `
-      SET application_name = 'test99_renewal';
       BEGIN;
       SELECT id FROM subscriptions WHERE id = '${subId}'::uuid FOR UPDATE;
-      -- Now we hold the row lock. Wait for Session B to be blocked on it.
       DO $wait$
-      DECLARE v_attempts INTEGER := 0;
+      DECLARE v_attempts INTEGER := 0; v_proceed BOOLEAN := false;
       BEGIN
         LOOP
-          EXIT WHEN EXISTS (
-            SELECT 1 FROM pg_stat_activity
-            WHERE application_name = 'test99_expiry'
-              AND wait_event_type = 'Lock'
-              AND state = 'active'
-          );
+          SELECT proceed INTO v_proceed FROM public."${barrierTable}" WHERE id = 1;
+          EXIT WHEN COALESCE(v_proceed, false);
           v_attempts := v_attempts + 1;
-          IF v_attempts > 100 THEN
-            RAISE EXCEPTION 'Timeout waiting for expiry session to block on lock';
+          IF v_attempts > 400 THEN
+            RAISE EXCEPTION 'Timeout waiting for test process to release renewal barrier';
           END IF;
-          PERFORM pg_sleep(0.1);
+          PERFORM pg_sleep(0.05);
         END LOOP;
       END $wait$;
-      -- Session B is proven blocked on the subscription row lock.
-      -- Now run the REAL renewal finalizer within this transaction.
       SELECT finalize_flutterwave_subscription_renewal('${subId}'::uuid, 'tx_t99_renew', 1499900, 'NGN', '2026-07-01T12:00:00Z'::timestamptz);
       COMMIT;
     `;
 
-    // Session B: sets application_name for identification, then calls expiry
+    // Session B is identified at connection startup, then calls expiry.
     const sessionBSql = `
-      SET application_name = 'test99_expiry';
       SELECT expire_subscription_with_authority('${subId}'::uuid, '${oldPeriodEnd}'::timestamptz);
     `;
 
-    // Start Session A first. Do not launch B until pg_stat_activity proves
-    // A has passed FOR UPDATE and is inside its pg_sleep wait loop while holding
-    // the subscription row lock. The previous Promise.all launch raced which
-    // session acquired the lock first and made this "deterministic" proof flaky.
-    const sessionAPromise = psqlAsync(sessionASql);
+    const sessionAPromise = psqlAsync(sessionASql, 'test99_renewal');
+    let sessionBPromise: Promise<{ ok: boolean; result: string; error: string }> | undefined;
     let renewalOwnsLock = false;
-    for (let i = 0; i < 100; i += 1) {
-      const ready = psql(`
+    let expiryBlocked = false;
+    let rA: { ok: boolean; result: string; error: string } | undefined;
+    let rB: { ok: boolean; result: string; error: string } | undefined;
+    try {
+      renewalOwnsLock = await waitForActivity(`
         SELECT EXISTS (
           SELECT 1 FROM pg_stat_activity
           WHERE application_name = 'test99_renewal'
@@ -2167,28 +2167,41 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
             AND query LIKE 'DO $wait$%'
         );
       `);
-      if (ready === 't') {
-        renewalOwnsLock = true;
-        break;
+      if (renewalOwnsLock) {
+        sessionBPromise = psqlAsync(sessionBSql, 'test99_expiry');
+        expiryBlocked = await waitForActivity(`
+          SELECT EXISTS (
+            SELECT 1 FROM pg_stat_activity waiting
+            JOIN pg_stat_activity blocker
+              ON blocker.pid = ANY(pg_blocking_pids(waiting.pid))
+            WHERE waiting.application_name = 'test99_expiry'
+              AND waiting.state = 'active'
+              AND waiting.wait_event_type = 'Lock'
+              AND blocker.application_name = 'test99_renewal'
+          );
+        `);
       }
-      await new Promise(resolve => setTimeout(resolve, 50));
+    } finally {
+      psqlMayFail(`UPDATE public."${barrierTable}" SET proceed = true WHERE id = 1;`);
+      [rA, rB] = await Promise.all([
+        sessionAPromise,
+        sessionBPromise || Promise.resolve({ ok: false, result: '', error: 'expiry session was not started' }),
+      ]);
+      psqlMayFail(`DROP TABLE IF EXISTS public."${barrierTable}";`);
     }
-    expect(renewalOwnsLock).toBe(true);
 
-    // Only now launch expiry. It must block behind A's row lock; A's SQL
-    // independently proves that state before running the real renewal finalizer.
-    const sessionBPromise = psqlAsync(sessionBSql);
-    const [rA, rB] = await Promise.all([sessionAPromise, sessionBPromise]);
+    expect(renewalOwnsLock).toBe(true);
+    expect(expiryBlocked).toBe(true);
 
     // Unconditional assertions — no conditional branches, no alternate accepted outcomes
 
     // Session A (renewal) must succeed
-    expect(rA.ok).toBe(true);
-    expect(rA.result).toContain('"finalized": true');
+    expect(rA?.ok).toBe(true);
+    expect(rA?.result).toContain('"finalized": true');
 
     // Session B (expiry) must succeed and return exactly period_boundary_moved
-    expect(rB.ok).toBe(true);
-    expect(rB.result).toContain('period_boundary_moved');
+    expect(rB?.ok).toBe(true);
+    expect(rB?.result).toContain('period_boundary_moved');
 
     // Final subscription state: active with advanced period
     const finalStatus = psql(`SELECT status FROM subscriptions WHERE id = '${subId}'::uuid;`);
