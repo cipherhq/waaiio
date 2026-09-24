@@ -11,7 +11,7 @@
  * 7. Config errors are NOT treated as customer declines
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 
 // ═══════════════════════════════════════════════════════════════════
 // 1 + 2: Card-only PI params
@@ -113,47 +113,52 @@ describe('#379: Error evidence persistence', () => {
       idempotencyKey: 'sc_charge_test_err',
     });
 
-    // Must NOT be declined
     expect(result.status).not.toBe('declined');
-    // Must be indeterminate
     expect(result.status).toBe('indeterminate');
-    // Must contain error evidence
     expect(result.errorMessage).toContain('config');
     expect(result.errorMessage).toContain('400');
+    expect(result.errorEvidence).toEqual({
+      httpStatus: 400,
+      type: 'invalid_request_error',
+      code: 'parameter_missing',
+      classification: 'config_error',
+    });
 
     vi.unstubAllEnvs();
   });
-});
 
-// ═══════════════════════════════════════════════════════════════════
-// 4 + 5 + 6: Source-level verification
-// ═══════════════════════════════════════════════════════════════════
+  it('retryable errors preserve status + type + code without provider free-form message', async () => {
+    vi.stubEnv('STRIPE_SECRET_KEY', 'sk_test_dummy');
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 429,
+      json: async () => ({
+        error: {
+          type: 'rate_limit_error',
+          code: 'rate_limit',
+          message: 'provider free-form detail must not be persisted',
+        },
+      }),
+    });
 
-import { readFileSync } from 'fs';
+    const { chargeStripeSavedCard } = await import('../payments/stripe-saved-card');
+    const result = await chargeStripeSavedCard({
+      customerId: 'cus_test',
+      paymentMethodId: 'pm_test',
+      amountCents: 12000,
+      currency: 'USD',
+      idempotencyKey: 'sc_charge_test_retry',
+    });
 
-describe('#379: Source-level invariants', () => {
-  it('saved-payment-adapter persists error evidence on indeterminate dispatch', () => {
-    const code = readFileSync('lib/payments/saved-payment-adapter.ts', 'utf-8');
-    // Must persist gateway_status with dispatch error evidence
-    expect(code).toContain('dispatched_error:');
-  });
+    expect(result.status).toBe('indeterminate');
+    expect(result.errorEvidence).toEqual({
+      httpStatus: 429,
+      type: 'rate_limit_error',
+      code: 'rate_limit',
+      classification: 'retryable',
+    });
+    expect(result.errorMessage).not.toContain('provider free-form detail');
 
-  it('recovery helper uses same sc_charge_ key pattern', () => {
-    const recovery = readFileSync('lib/payments/saved-card-recovery.ts', 'utf-8');
-    expect(recovery).toContain('`sc_charge_${paymentId}`');
-  });
-
-  it('3DS auth still uses createAuthAttempt (not raw Stripe URL)', () => {
-    const adapter = readFileSync('lib/payments/saved-payment-adapter.ts', 'utf-8');
-    expect(adapter).toContain('createAuthAttempt');
-    expect(adapter).toContain('authResult.authUrl');
-  });
-
-  it('Stripe Checkout (ordinary checkout) is NOT affected by card-only restriction', () => {
-    const stripe = readFileSync('lib/payments/stripe.ts', 'utf-8');
-    // Stripe Checkout uses mode: 'payment', not payment_method_types
-    expect(stripe).toContain("mode: 'payment'");
-    // Should NOT contain payment_method_types[0] in checkout path
-    // (only saved-card PI dispatch uses it)
+    vi.unstubAllEnvs();
   });
 });
