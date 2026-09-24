@@ -1,4 +1,5 @@
 {
+  "ignoreCommand": "if [ \"$VERCEL_PROJECT_ID\" = \"prj_QkvBTiDA905GHTwX5DQCJVyZzd9d\" ]; then [ \"$VERCEL_GIT_COMMIT_REF\" != \"main\" ]; elif [ \"$VERCEL_PROJECT_ID\" = \"prj_h7YmC4fvpxhn429znCy34OjLZ6se\" ]; then [ \"$VERCEL_GIT_COMMIT_REF\" != \"staging\" ]; else exit 1; fi",
   "redirects": [
     {
       "source": "/:path*",
