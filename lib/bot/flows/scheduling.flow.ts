@@ -7,6 +7,7 @@ import { createWhatsAppUser, findUserByPhone } from './shared/user';
 import { initializePayment } from './shared/payment';
 import { truncTitle } from '../utils/truncate';
 import { savedPaymentAdapter } from '@/lib/payments/saved-payment-adapter';
+import { resolveRuntimeDeposit } from '@/lib/payments/deposit-amount-authority';
 import type { ChargeOutcome } from '@/lib/payments/saved-payment-adapter';
 import { safeButtons } from './shared/safe-interactive';
 import { createNotification } from './shared/notifications';
@@ -200,7 +201,7 @@ export const schedulingFlow: FlowDefinition = {
 
         let query = ctx.supabase
           .from('services')
-          .select('id, name, price, duration_minutes, buffer_minutes, max_capacity, auto_approve, billing_type, recurring_interval, available_days, available_from, available_to, requires_staff, staff_ids, allow_staff_selection, metadata, is_class, class_schedule')
+          .select('id, name, price, price_is_variable, duration_minutes, buffer_minutes, max_capacity, auto_approve, billing_type, recurring_interval, available_days, available_from, available_to, requires_staff, staff_ids, allow_staff_selection, metadata, is_class, class_schedule')
           .eq('business_id', ctx.business.id)
           .eq('is_active', true)
           .neq('service_type', 'giving')
@@ -313,7 +314,7 @@ export const schedulingFlow: FlowDefinition = {
         // Try exact ID match first (from list postback)
         const { data: service } = await ctx.supabase
           .from('services')
-          .select('id, name, price, duration_minutes, buffer_minutes, max_capacity, deposit_amount, billing_type, recurring_interval, available_days, available_from, available_to, requires_staff, staff_ids, allow_staff_selection, metadata, is_class, class_schedule')
+          .select('id, name, price, price_is_variable, duration_minutes, buffer_minutes, max_capacity, deposit_amount, billing_type, recurring_interval, available_days, available_from, available_to, requires_staff, staff_ids, allow_staff_selection, metadata, is_class, class_schedule')
           .eq('id', input)
           .eq('business_id', ctx.business!.id)
           .maybeSingle();
@@ -323,7 +324,7 @@ export const schedulingFlow: FlowDefinition = {
         if (!matched) {
           const { data: allServices } = await ctx.supabase
             .from('services')
-            .select('id, name, price, duration_minutes, buffer_minutes, max_capacity, deposit_amount, billing_type, recurring_interval, available_days, available_from, available_to, requires_staff, staff_ids, allow_staff_selection, metadata, is_class, class_schedule')
+            .select('id, name, price, price_is_variable, duration_minutes, buffer_minutes, max_capacity, deposit_amount, billing_type, recurring_interval, available_days, available_from, available_to, requires_staff, staff_ids, allow_staff_selection, metadata, is_class, class_schedule')
             .eq('business_id', ctx.business!.id)
             .eq('is_active', true)
             .neq('service_type', 'giving')
@@ -355,6 +356,7 @@ export const schedulingFlow: FlowDefinition = {
             service_id: matched.id,
             service_name: matched.name,
             service_price: matched.price,
+            _service_price_is_variable: (matched as Record<string, unknown>).price_is_variable === true,
             service_duration: matched.duration_minutes,
             service_deposit: matched.deposit_amount,
             service_billing_type: matched.billing_type || 'one_time',
@@ -385,7 +387,7 @@ export const schedulingFlow: FlowDefinition = {
 
         let skipQuery = ctx.supabase
           .from('services')
-          .select('id, name, price, duration_minutes, buffer_minutes, max_capacity, auto_approve, deposit_amount, billing_type, recurring_interval, available_days, available_from, available_to, requires_staff, staff_ids, allow_staff_selection, metadata, is_class, class_schedule')
+          .select('id, name, price, price_is_variable, duration_minutes, buffer_minutes, max_capacity, auto_approve, deposit_amount, billing_type, recurring_interval, available_days, available_from, available_to, requires_staff, staff_ids, allow_staff_selection, metadata, is_class, class_schedule')
           .eq('business_id', ctx.business.id)
           .eq('is_active', true)
           .neq('service_type', 'giving')
@@ -407,6 +409,7 @@ export const schedulingFlow: FlowDefinition = {
           ctx.session.session_data.service_id = null;
           ctx.session.session_data.service_name = 'General';
           ctx.session.session_data.service_price = 0;
+          ctx.session.session_data._service_price_is_variable = false;
           ctx.session.session_data.service_duration = 30;
           ctx.session.session_data.service_deposit = null;
           ctx.session.session_data.service_billing_type = 'one_time';
@@ -432,6 +435,7 @@ export const schedulingFlow: FlowDefinition = {
           ctx.session.session_data.service_id = s.id;
           ctx.session.session_data.service_name = s.name;
           ctx.session.session_data.service_price = s.price;
+          ctx.session.session_data._service_price_is_variable = (s as Record<string, unknown>).price_is_variable === true;
           ctx.session.session_data.service_duration = s.duration_minutes;
           ctx.session.session_data.service_deposit = s.deposit_amount;
           ctx.session.session_data.service_billing_type = s.billing_type || 'one_time';
@@ -2367,6 +2371,7 @@ export const schedulingFlow: FlowDefinition = {
         // Get payment amount
         const serviceDeposit = (d.service_deposit as number) || 0;
         const servicePrice = (d.service_price as number) || 0;
+        const servicePriceIsVariable = d._service_price_is_variable === true;
         const partySize = (d.party_size as number) || 1;
 
         // Apply promo discount to the service price before calculating deposit
@@ -2441,10 +2446,26 @@ export const schedulingFlow: FlowDefinition = {
         } else if (prepayMode === 'free') {
           totalDeposit = 0;
         } else if (serviceDeposit > 0) {
-          // Explicit deposit set on the service (not discounted — deposit is a fixed amount)
-          totalDeposit = serviceDeposit;
+          // Explicit deposit set on the service. #376: stale fixed-price
+          // configuration must never initialize a payment above transaction total.
+          const depositAuthority = resolveRuntimeDeposit({
+            requestedDeposit: serviceDeposit,
+            transactionTotal: finalServicePrice * partySize,
+            priceIsVariable: servicePriceIsVariable,
+          });
+          totalDeposit = depositAuthority.amount;
+          if (depositAuthority.corrected) {
+            logger.warn('[SCHEDULING] Corrected invalid service deposit before payment initialization', {
+              businessId: ctx.business?.id,
+              serviceId: d.service_id,
+              requestedDeposit: serviceDeposit,
+              transactionTotal: finalServicePrice * partySize,
+              correctedDeposit: totalDeposit,
+              reason: depositAuthority.reason,
+            });
+          }
         } else if (depositPerGuest > 0) {
-          // Per-guest deposit (restaurants)
+          // Per-guest deposit (restaurants) is a separate business-level authority.
           totalDeposit = depositPerGuest * partySize;
         } else if (isPrepay && finalServicePrice > 0) {
           // Service-based businesses: charge full service price (after promo discount)
@@ -2452,6 +2473,14 @@ export const schedulingFlow: FlowDefinition = {
         } else {
           totalDeposit = 0;
         }
+
+        // Booking total is transaction authority, not merely the upfront deposit.
+        // For variable-price offerings the configured price is only a starting
+        // price, so total must be at least the known upfront amount.
+        const baseTransactionTotal = finalServicePrice * partySize;
+        const bookingTotalAmount = servicePriceIsVariable
+          ? Math.max(baseTransactionTotal, totalDeposit)
+          : (servicePrice > 0 || serviceDeposit > 0 ? baseTransactionTotal : totalDeposit);
 
         // ── T&C cancel check (before gate) ──
         if (d._terms_cancelled) {
@@ -2511,7 +2540,7 @@ export const schedulingFlow: FlowDefinition = {
           guest_name: d.book_for_other ? (d.other_name as string) : `${d.first_name || ''} ${d.last_name || ''}`.trim(),
           guest_phone: ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`,
           guest_email: (d.email as string) || null,
-          total_amount: totalDeposit,
+          total_amount: bookingTotalAmount,
           quantity: partySize,
           location_id: (d.location_id as string) || null,
         };
@@ -2566,7 +2595,7 @@ export const schedulingFlow: FlowDefinition = {
                 p_end_date: (d.end_date as string) || null,
                 p_addons_snapshot: d._selected_addons || null,
                 p_promo_code_id: (d._promo_id as string) || null,
-                p_total_amount: totalDeposit,
+                p_total_amount: bookingTotalAmount,
                 p_staff_name: (d.staff_name as string) || null,
                 p_location_id: (d.location_id as string) || null,
                 p_appointment_id: isAppointment ? ((d.service_id as string) || null) : null,
@@ -2613,7 +2642,7 @@ export const schedulingFlow: FlowDefinition = {
                 p_end_date: (d.end_date as string) || null,
                 p_addons_snapshot: d._selected_addons || null,
                 p_promo_code_id: (d._promo_id as string) || null,
-                p_total_amount: totalDeposit,
+                p_total_amount: bookingTotalAmount,
                 p_staff_name: (d.staff_name as string) || null,
                 p_location_id: (d.location_id as string) || null,
                 p_appointment_id: isAppointment ? ((d.service_id as string) || null) : null,
