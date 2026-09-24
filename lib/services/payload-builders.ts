@@ -1,3 +1,5 @@
+import { assertValidDepositConfiguration } from '@/lib/payments/deposit-amount-authority';
+
 /**
  * Pure payload builders for service create/edit operations.
  *
@@ -73,6 +75,12 @@ export interface ServiceFormInput {
 }
 
 export function buildServicePayload(input: ServiceFormInput) {
+  assertValidDepositConfiguration({
+    price: input.price,
+    deposit: input.deposit_amount,
+    priceIsVariable: input.price_is_variable,
+  });
+
   return {
     business_id: input.businessId,
     name: input.name.trim(),
@@ -124,12 +132,21 @@ export interface AiSetupServiceInput {
 }
 
 export function buildAiSetupServiceRow(input: AiSetupServiceInput) {
+  const price = Math.max(0, Math.min(Number(input.price) || 0, 99999999));
+  const deposit = Math.max(0, Math.min(Number(input.deposit_amount) || 0, 99999999));
+
+  assertValidDepositConfiguration({
+    price,
+    deposit,
+    priceIsVariable: false,
+  });
+
   return {
     business_id: input.businessId,
     name: String(input.name).trim().slice(0, 200),
-    price: Math.max(0, Math.min(Number(input.price) || 0, 99999999)),
+    price,
     duration_minutes: Math.max(0, Math.min(Number(input.duration_minutes) || 30, 1440)),
-    deposit_amount: Math.max(0, Math.min(Number(input.deposit_amount) || 0, 99999999)),
+    deposit_amount: deposit,
     description: input.description ? String(input.description).slice(0, 1000) : null,
     price_is_variable: false,
     is_active: true,

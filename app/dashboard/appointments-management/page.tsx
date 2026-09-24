@@ -8,6 +8,7 @@ import EmptyState from '@/components/dashboard/EmptyState';
 import { PageHelp } from '@/components/dashboard/PageHelp';
 import { Tooltip } from '@/components/dashboard/Tooltip';
 import { FIELD_TOOLTIPS } from '@/lib/tooltips';
+import { getDepositConfigurationError } from '@/lib/payments/deposit-amount-authority';
 
 interface Appointment {
   id: string;
@@ -115,6 +116,15 @@ export default function AppointmentsManagementPage() {
 
   async function handleSave() {
     if (!form.name.trim()) return;
+    const depositError = getDepositConfigurationError({
+      price: form.price,
+      deposit: form.deposit_amount,
+      priceIsVariable: form.price_is_variable,
+    });
+    if (depositError) {
+      alert(depositError);
+      return;
+    }
     setSaving(true);
     const supabase = createClient();
     const payload = {
