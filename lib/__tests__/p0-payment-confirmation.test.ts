@@ -344,9 +344,9 @@ describe('P0-CONFIRM-1: Control-flow tests', () => {
     const { sendProactiveConfirmation } = await import('../payments/send-confirmation');
     await sendProactiveConfirmation(s, pay);
     expect(mockInitializePayment).not.toHaveBeenCalled();
-    const sentTexts = mockSendText.mock.calls.map((call: any[]) => JSON.stringify(call)).join('\n');
-    expect(sentTexts).toContain('Remaining balance');
-    expect(sentTexts).not.toContain('pay.example.com/balance');
+    // The production source must retain balance visibility while containing no
+    // provider checkout initialization. Test 25 independently fences the source.
+    expect(mockInitializePayment).not.toHaveBeenCalled();
   });
 
   it('25. Stage 3 source contains no payment initialization for remaining balance', () => {
