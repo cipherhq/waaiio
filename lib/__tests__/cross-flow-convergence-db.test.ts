@@ -254,7 +254,13 @@ describe.skipIf(!dbUrl)('M400 Cross-flow convergence (real PostgreSQL)', () => {
 
     expect(result).not.toBeNull();
     expect(result.applied).toBe(false);
-    expect(result.reason).toBe('payment_conflict');
+    expect(result.reason).toBe('payment_link_conflict');
+
+    // Conflict must be detected before marker/order mutation.
+    const markerWinner = psql(`SELECT payment_id FROM order_stock_applications WHERE order_id = '${ORDER_ID}'`);
+    expect(markerWinner).toBe(PAY_ID_1);
+    const orderWinner = psql(`SELECT payment_id FROM orders WHERE id = '${ORDER_ID}'`);
+    expect(orderWinner).toBe(PAY_ID_1);
   });
 
   // ── 3. confirm_reservation_payment_atomic: replay -> idempotent ──
