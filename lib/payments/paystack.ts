@@ -155,10 +155,10 @@ export class PaystackGateway implements PaymentGateway {
         paymentId = payment?.id || null;
       }
 
-      if (paymentId && opts.bookingId) {
+      if (paymentId && opts.bookingId && !opts.preserveEntityPaymentLink) {
         await opts.supabase.from('bookings').update({ payment_id: paymentId }).eq('id', opts.bookingId);
       }
-      if (paymentId && opts.invoiceId) {
+      if (paymentId && opts.invoiceId && !opts.preserveEntityPaymentLink) {
         await opts.supabase.from('invoices').update({ payment_id: paymentId }).eq('id', opts.invoiceId);
       }
 

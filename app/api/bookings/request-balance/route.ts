@@ -7,6 +7,7 @@ import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
 import { logger } from '@/lib/logger';
+import { getEntityBalance } from '@/lib/payments/entity-balance';
 
 export async function POST(request: NextRequest) {
   try {
@@ -52,9 +53,18 @@ export async function POST(request: NextRequest) {
     if (!booking) return NextResponse.json({ error: 'Booking not found' }, { status: 404 });
 
     const totalAmount = Number(booking.total_amount || 0);
-    const depositPaid = booking.deposit_status === 'paid' ? Number(booking.deposit_amount || 0) : 0;
-    const balance = totalAmount - depositPaid;
+    const balanceState = await getEntityBalance(serviceClient, {
+      ...(dbTable === 'reservations'
+        ? { reservationId: booking.id }
+        : { bookingId: booking.id }),
+      totalAmount,
+    });
 
+    if (!balanceState) {
+      return NextResponse.json({ error: 'Unable to determine balance safely' }, { status: 500 });
+    }
+
+    const balance = balanceState.balanceDue;
     if (balance <= 0) {
       return NextResponse.json({ error: 'No balance remaining' }, { status: 400 });
     }
@@ -75,6 +85,9 @@ export async function POST(request: NextRequest) {
       countryCode: cc,
       gatewayOverride: biz.payment_gateway,
       businessId: biz.id,
+      // #381: Balance requests create a new linked payment row but must not
+      // replace the successful deposit payment that confirmed the booking.
+      preserveEntityPaymentLink: true,
     });
 
     if (!result) {

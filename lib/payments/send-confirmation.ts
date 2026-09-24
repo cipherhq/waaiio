@@ -8,6 +8,7 @@ import { getCustomerName } from '@/lib/bot/flows/shared/user';
 import { getCalendarLinksText } from '@/lib/calendar/generate-links';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 import type { ResolvedChannel } from '@/lib/channels/channel-resolver';
+import { getEntityBalance } from '@/lib/payments/entity-balance';
 
 /** Log a non-fatal error with safe structured metadata. */
 function logSafeError(prefix: string, label: string, error: unknown): void {
@@ -239,12 +240,19 @@ export async function sendProactiveConfirmation(
         bookingAddress = biz?.address || undefined;
         bookingDuration = svc?.duration_minutes || undefined;
       }
-      // Check for remaining balance (deposit scenario)
+      // #381: Outstanding balance is based on actual successful payment
+      // history, not configured deposit_amount. This prevents a successful
+      // balance payment from spawning another balance link.
       const total = Number(booking.total_amount || 0);
-      const deposit = Number(booking.deposit_amount || 0);
-      if (total > 0 && deposit > 0 && total > deposit) {
-        balanceRemaining = total - deposit;
-        balanceBookingId = payment.booking_id!;
+      if (total > 0) {
+        const balance = await getEntityBalance(supabase, {
+          bookingId: payment.booking_id!,
+          totalAmount: total,
+        });
+        if (balance && balance.balanceDue > 0) {
+          balanceRemaining = balance.balanceDue;
+          balanceBookingId = payment.booking_id!;
+        }
       }
     }
   }
@@ -267,12 +275,17 @@ export async function sendProactiveConfirmation(
       const checkIn = new Date(reservation.check_in + 'T00:00').toLocaleDateString('en-US', { day: 'numeric', month: 'short' });
       const checkOut = new Date(reservation.check_out + 'T00:00').toLocaleDateString('en-US', { day: 'numeric', month: 'short' });
       serviceName = `Reservation ${checkIn} - ${checkOut}`;
-      // Check for remaining balance
+      // #381: Same canonical payment-history balance authority for reservations.
       const total = Number(reservation.total_amount || 0);
-      const deposit = Number(reservation.deposit_amount || 0);
-      if (total > 0 && deposit > 0 && total > deposit) {
-        balanceRemaining = total - deposit;
-        balanceReservationId = payment.reservation_id!;
+      if (total > 0) {
+        const balance = await getEntityBalance(supabase, {
+          reservationId: payment.reservation_id!,
+          totalAmount: total,
+        });
+        if (balance && balance.balanceDue > 0) {
+          balanceRemaining = balance.balanceDue;
+          balanceReservationId = payment.reservation_id!;
+        }
       }
     }
   }
@@ -584,11 +597,15 @@ export async function sendProactiveConfirmation(
           reservationId: balanceReservationId || undefined,
           userId: profile.id,
           amount: balanceRemaining,
-          referenceCode,
+          referenceCode: `${referenceCode}-BAL`,
           businessName,
           phone: phoneForLookup,
           countryCode,
           businessId,
+          // #381: This is a follow-on balance payment. Keep the successful
+          // deposit payment as the booking's canonical payment_id while the
+          // new payment row remains linked through booking_id.
+          preserveEntityPaymentLink: true,
         });
         if (result?.url) {
           lines.push(`💰 Pay now: ${result.url}`);

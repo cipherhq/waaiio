@@ -144,6 +144,7 @@ export default function BookingsPage() {
   const [messageText, setMessageText] = useState('');
   const [sendingMessage, setSendingMessage] = useState(false);
   const [requestingBalance, setRequestingBalance] = useState(false);
+  const [selectedPaymentSummary, setSelectedPaymentSummary] = useState<{ netPaid: number; balanceDue: number } | null>(null);
 
   // Bulk selection
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -322,6 +323,42 @@ export default function BookingsPage() {
   }
 
   const selected = bookings.find((b) => b.id === selectedId) || null;
+
+  // #381: Show the business the authoritative paid/balance amounts from all
+  // successful payments linked to this booking/reservation.
+  useEffect(() => {
+    let cancelled = false;
+    setSelectedPaymentSummary(null);
+    if (!selected) return;
+
+    (async () => {
+      const supabase = createClient();
+      const paymentColumn = selected._isReservation ? 'reservation_id' : 'booking_id';
+      const { data, error: paymentError } = await supabase
+        .from('payments')
+        .select('amount, refund_amount')
+        .eq(paymentColumn, selected.id)
+        .eq('status', 'success');
+
+      if (cancelled) return;
+      if (paymentError) {
+        // Fail closed in the UI: do not display or request a guessed balance.
+        return;
+      }
+
+      const netPaid = (data || []).reduce((sum, payment) => {
+        const amount = Number(payment.amount || 0);
+        const refunded = Number(payment.refund_amount || 0);
+        return sum + Math.max(0, amount - refunded);
+      }, 0);
+      setSelectedPaymentSummary({
+        netPaid,
+        balanceDue: Math.max(0, Number(selected.total_amount || 0) - netPaid),
+      });
+    })();
+
+    return () => { cancelled = true; };
+  }, [selected?.id, selected?._isReservation, selected?.total_amount]);
 
   // Filter by booking type tab (no "All" tab — show one type at a time)
   const filteredByType = !hasBothTypes ? bookings
@@ -1352,12 +1389,30 @@ export default function BookingsPage() {
                       )}
                     </p>
                   </div>
+                  <div>
+                    <span className="text-gray-400">Paid</span>
+                    <p className="font-medium text-gray-900">
+                      {selectedPaymentSummary
+                        ? formatCurrency(selectedPaymentSummary.netPaid, (business.country_code || 'NG') as CountryCode)
+                        : 'Calculating…'}
+                    </p>
+                  </div>
+                  <div>
+                    <span className="text-gray-400">Balance Due</span>
+                    <p className={`font-medium ${selectedPaymentSummary?.balanceDue === 0 ? 'text-green-700' : 'text-gray-900'}`}>
+                      {selectedPaymentSummary
+                        ? selectedPaymentSummary.balanceDue === 0
+                          ? 'Paid in full'
+                          : formatCurrency(selectedPaymentSummary.balanceDue, (business.country_code || 'NG') as CountryCode)
+                        : 'Calculating…'}
+                    </p>
+                  </div>
                 </div>
                 {selected.refund_amount && selected.refund_amount > 0 && (
                   <p className="mt-2 text-sm text-green-600">Refunded: {formatCurrency(selected.refund_amount, (business.country_code || 'NG') as CountryCode)}</p>
                 )}
                 {/* Balance request — show when deposit paid but total not fully covered */}
-                {selected.deposit_amount > 0 && selected.deposit_status === 'paid' && selected.total_amount > selected.deposit_amount && (
+                {selectedPaymentSummary && selectedPaymentSummary.balanceDue > 0 && (
                   <button onClick={async () => {
                     setRequestingBalance(true);
                     try {
@@ -1377,7 +1432,7 @@ export default function BookingsPage() {
                     setRequestingBalance(false);
                   }} disabled={requestingBalance}
                     className="mt-3 rounded-lg bg-brand px-3 py-1.5 text-xs font-medium text-white hover:bg-brand-600 disabled:opacity-50">
-                    {requestingBalance ? 'Sending...' : `Request Balance (${formatCurrency((selected.total_amount || 0) - (selected.deposit_amount || 0), (business.country_code || 'NG') as CountryCode)})`}
+                    {requestingBalance ? 'Sending...' : `Request Balance (${formatCurrency(selectedPaymentSummary.balanceDue, (business.country_code || 'NG') as CountryCode)})`}
                   </button>
                 )}
                 {selected.payment_id && selected.deposit_status === 'paid' && (

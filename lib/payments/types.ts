@@ -41,6 +41,13 @@ export interface InitPaymentOpts {
   channels?: string[];
   /** #264: Pre-created payment row ID — skip INSERT when v1 fee-policy row already exists */
   existingPaymentId?: string;
+  /**
+   * #381: Keep the entity's existing canonical payment_id unchanged.
+   * Used for follow-on balance payments so a new pending balance checkout does
+   * not replace the successful deposit payment that confirmed the booking.
+   * The new payment row still keeps booking_id/invoice_id linkage.
+   */
+  preserveEntityPaymentLink?: boolean;
 }
 
 export interface InitPaymentResult {

@@ -45,6 +45,8 @@ export async function initializePayment(
     confirmationOrigin?: 'whatsapp' | 'web';
     /** #264: Server-derived transaction category for fee policy */
     transactionCategory?: string;
+    /** #381: Do not overwrite an entity's existing successful payment_id. */
+    preserveEntityPaymentLink?: boolean;
   },
 ): Promise<{ url: string; reference: string } | null> {
   try {
@@ -506,6 +508,7 @@ export async function initializePayment(
       businessId: opts.businessId,
       channels,
       existingPaymentId: v1PaymentId || undefined,
+      preserveEntityPaymentLink: opts.preserveEntityPaymentLink,
     }));
 
     // ── V1: CAS provider_confirmed + update gateway_reference ──
