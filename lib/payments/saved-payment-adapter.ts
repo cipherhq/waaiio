@@ -486,6 +486,7 @@ class StripeSavedPaymentAdapterImpl implements SavedPaymentAdapter {
       const { data: existingPay } = await supabase.from('payments')
         .select('id, status, gateway_reference, provider_init_state')
         .eq(entityCol, entityId)
+        .eq('business_id', opts.businessId)
         .eq('gateway', 'stripe')
         .eq('payment_method', 'saved_card')
         .eq('amount', opts.amount)
