@@ -342,7 +342,7 @@ export default function BookingsPage() {
 
       if (cancelled) return;
       if (paymentError) {
-        console.error('[RESERVATIONS] Payment balance lookup failed:', paymentError.message);
+        // Fail closed in the UI: do not display or request a guessed balance.
         return;
       }
 
