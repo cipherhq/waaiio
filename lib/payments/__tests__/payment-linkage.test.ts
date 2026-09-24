@@ -34,8 +34,14 @@ interface InsertCapture {
   row: Record<string, unknown>;
 }
 
+interface UpdateCapture {
+  table: string;
+  row: Record<string, unknown>;
+}
+
 function createTestSupabase() {
   const inserts: InsertCapture[] = [];
+  const updates: UpdateCapture[] = [];
   const insertFn = vi.fn((row: Record<string, unknown>) => {
     inserts.push({ table: 'payments', row });
     return {
@@ -72,14 +78,17 @@ function createTestSupabase() {
           .mockResolvedValueOnce({ data: null, error: null })
           .mockResolvedValueOnce({ data: null, error: null })
           .mockResolvedValue({ data: { id: 'pay-mock', metadata: {} }, error: null }),
-        update: vi.fn().mockReturnValue({
-          eq: vi.fn().mockResolvedValue({ data: null, error: null }),
+        update: vi.fn((row: Record<string, unknown>) => {
+          updates.push({ table, row });
+          return {
+            eq: vi.fn().mockResolvedValue({ data: null, error: null }),
+          };
         }),
       };
     }),
   } as unknown as SupabaseClient;
 
-  return { client, inserts };
+  return { client, inserts, updates };
 }
 
 function baseOpts(supabase: SupabaseClient): InitPaymentOpts {
@@ -365,6 +374,57 @@ describe.each(liveCases)('$provider live-path linkage', ({ provider, envSetup, p
 
     // Provider was called (not mock mode)
     expect(globalThis.fetch).toHaveBeenCalled();
+  });
+
+
+  it('keeps a follow-on balance payment linked without replacing booking.payment_id', async () => {
+    const originalFetch = globalThis.fetch;
+
+    if (provider === 'paypal') {
+      globalThis.fetch = vi.fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ access_token: 'test_token', token_type: 'Bearer' }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({
+            id: 'PAYPAL-ORDER-001',
+            status: 'CREATED',
+            links: [{ rel: 'approve', href: 'https://sandbox.paypal.com/approve/test' }],
+          }),
+        }) as typeof fetch;
+    } else {
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve(providerResponse),
+      }) as typeof fetch;
+    }
+
+    restoreFetch = () => { globalThis.fetch = originalFetch; };
+
+    const gw = await loadGateway(provider);
+    const { client, inserts, updates } = createTestSupabase();
+
+    const result = await gw.initializePayment({
+      ...baseOpts(client),
+      bookingId: 'booking-partial-1',
+      businessId: 'biz-live-1',
+      preserveEntityPaymentLink: true,
+    });
+
+    expect(result).not.toBeNull();
+
+    const paymentInsert = inserts.find(i => i.table === 'payments');
+    expect(paymentInsert).toBeDefined();
+    expect(paymentInsert!.row.booking_id).toBe('booking-partial-1');
+
+    // #381: The balance payment remains historically linked by booking_id, but
+    // it must not replace the successful deposit payment stored on bookings.payment_id.
+    const bookingPaymentLinkUpdates = updates.filter(
+      u => u.table === 'bookings' && Object.prototype.hasOwnProperty.call(u.row, 'payment_id'),
+    );
+    expect(bookingPaymentLinkUpdates).toHaveLength(0);
   });
 });
 
