@@ -2713,8 +2713,8 @@ export const schedulingFlow: FlowDefinition = {
         d.booking_id = booking.id;
         d.reference_code = booking.reference_code;
         d.deposit_amount = totalDeposit;
-        // Store full service total for platform fee calculation (fee is on full price, not deposit)
-        d.total_amount = finalServicePrice * partySize;
+        // Store canonical transaction total (not merely the upfront deposit).
+        d.total_amount = bookingTotalAmount;
 
         // Store guest list if provided (group bookings)
         if (isNewBooking && Array.isArray(d.guest_list) && (d.guest_list as Array<{name: string}>).length > 0) {
@@ -2734,7 +2734,7 @@ export const schedulingFlow: FlowDefinition = {
               service_name: (d.service_name as string) || undefined,
               reference_code: booking.reference_code,
               reference_id: booking.id,
-              total_amount: totalDeposit,
+              total_amount: bookingTotalAmount,
               date: d.date as string,
               time: d.time as string,
               party_size: d.party_size as number,
