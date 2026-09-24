@@ -68,6 +68,10 @@ export interface ChargeOptions {
   campaignId?: string;
   userId?: string;
   transactionCategory?: string;
+  /** #382: Exact inbound WhatsApp channel that originated this payment. */
+  inboundChannelId?: string;
+  /** #382: Origin controls fail-closed confirmation routing. */
+  confirmationOrigin?: 'whatsapp' | 'web';
 }
 
 // ── Adapter interface ──
@@ -274,6 +278,8 @@ class PaystackSavedPaymentAdapter implements SavedPaymentAdapter {
       campaignId: opts.campaignId,
       userId: opts.userId,
       transactionCategory: opts.transactionCategory,
+      inboundChannelId: opts.inboundChannelId,
+      confirmationOrigin: opts.confirmationOrigin,
     });
 
     return mapOutcome(result);
@@ -524,6 +530,8 @@ class StripeSavedPaymentAdapterImpl implements SavedPaymentAdapter {
         saved_method_id: method.id,
         customer_phone: normalizePhone(opts.customerPhone),
         payment_origin: routing.paymentOrigin,
+        ...(opts.inboundChannelId && { _inbound_channel_id: opts.inboundChannelId }),
+        ...(opts.confirmationOrigin && { _confirmation_origin: opts.confirmationOrigin }),
         stripe_customer_id: method.stripe_customer_id,
         stripe_pm_id: method.stripe_payment_method_id,
         ...(routing.stripeAccountId && { provider_account_id: routing.stripeAccountId }),
