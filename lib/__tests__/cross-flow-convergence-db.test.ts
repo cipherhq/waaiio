@@ -144,14 +144,32 @@ describe.skipIf(!dbUrl)('M400 Cross-flow convergence (real PostgreSQL)', () => {
       );
     `);
 
-    // Apply M400
-    const fs = require('fs');
-    const m400Sql = fs.readFileSync(M400_PATH, 'utf-8');
-    psql(m400Sql);
+    // Apply M400 only if not already applied (CI migration shard composes all migrations)
+    const hasM400 = psql(`
+      SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+      WHERE n.nspname = 'public' AND p.proname = 'confirm_reservation_payment_atomic' LIMIT 1;
+    `).trim();
+    if (!hasM400) {
+      const fs = require('fs');
+      const m400Sql = fs.readFileSync(M400_PATH, 'utf-8');
+      psql(m400Sql);
+    }
 
-    // Seed test data
+    // Create test owner user for CI (real schema has businesses.owner_id NOT NULL FK to profiles)
     psql(`
-      INSERT INTO businesses (id, name) VALUES ('${BIZ_ID}', 'Test Biz') ON CONFLICT DO NOTHING;
+      DO $$ BEGIN
+        IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='auth' AND table_name='users') THEN
+          INSERT INTO auth.users (id, email) VALUES ('00000000-0000-0000-0000-0000000000a1', 'm400-test@test.local')
+          ON CONFLICT (id) DO NOTHING;
+        END IF;
+      END $$;
+    `);
+
+    // Seed test data (CI-compatible: includes required columns for real schema)
+    psql(`
+      INSERT INTO businesses (id, name, slug, owner_id, address, city, neighborhood, phone, status, payout_mode, country_code, verification_level)
+      VALUES ('${BIZ_ID}', 'Test Biz', 'm400-test-biz', '00000000-0000-0000-0000-0000000000a1', '1 Test', 'Test', 'Test', '+000', 'active', 'platform_managed', 'US', 'basic')
+      ON CONFLICT (id) DO NOTHING;
     `);
   });
 
@@ -159,13 +177,13 @@ describe.skipIf(!dbUrl)('M400 Cross-flow convergence (real PostgreSQL)', () => {
     if (!dbUrl) return;
     // Clean up test data
     psql(`
-      DELETE FROM payment_confirmation_deliveries;
-      DELETE FROM payment_terminal_effects;
-      DELETE FROM payment_terminal_manifests;
-      DELETE FROM campaign_donations;
-      DELETE FROM order_stock_applications;
-      DELETE FROM order_items;
-      DELETE FROM pending_transfers;
+      DELETE FROM payment_confirmation_deliveries WHERE payment_id IN ('${PAY_ID_1}', '${PAY_ID_2}', '${PAY_ID_3}');
+      DELETE FROM payment_terminal_effects WHERE payment_id IN ('${PAY_ID_1}', '${PAY_ID_2}', '${PAY_ID_3}');
+      DELETE FROM payment_terminal_manifests WHERE payment_id IN ('${PAY_ID_1}', '${PAY_ID_2}', '${PAY_ID_3}');
+      DELETE FROM campaign_donations WHERE business_id = '${BIZ_ID}';
+      DELETE FROM order_stock_applications WHERE order_id = '${ORDER_ID}';
+      DELETE FROM order_items WHERE order_id = '${ORDER_ID}';
+      DELETE FROM pending_transfers WHERE order_id = '${ORDER_ID}';
       DELETE FROM orders WHERE id = '${ORDER_ID}';
       DELETE FROM reservations WHERE id = '${RES_ID}';
       DELETE FROM campaigns WHERE id = '${CAMP_ID}';
@@ -182,8 +200,8 @@ describe.skipIf(!dbUrl)('M400 Cross-flow convergence (real PostgreSQL)', () => {
       DELETE FROM orders WHERE id = '${ORDER_ID}';
       DELETE FROM payments WHERE id = '${PAY_ID_1}';
 
-      INSERT INTO payments (id, business_id, amount, currency, status, order_id)
-      VALUES ('${PAY_ID_1}', '${BIZ_ID}', 100, 'NGN', 'success', '${ORDER_ID}');
+      INSERT INTO payments (id, business_id, amount, currency, status, gateway, gateway_reference, order_id)
+      VALUES ('${PAY_ID_1}', '${BIZ_ID}', 100, 'NGN', 'success', 'stripe', 'ref_m400_' || gen_random_uuid()::text, '${ORDER_ID}');
       INSERT INTO orders (id, business_id, status, payment_id, reference_code)
       VALUES ('${ORDER_ID}', '${BIZ_ID}', 'confirmed', NULL, 'ORD-TEST1');
       INSERT INTO order_stock_applications (order_id, payment_id, item_count, reservation_class)
@@ -212,10 +230,10 @@ describe.skipIf(!dbUrl)('M400 Cross-flow convergence (real PostgreSQL)', () => {
       DELETE FROM orders WHERE id = '${ORDER_ID}';
       DELETE FROM payments WHERE id IN ('${PAY_ID_1}', '${PAY_ID_2}');
 
-      INSERT INTO payments (id, business_id, amount, currency, status, order_id)
-      VALUES ('${PAY_ID_1}', '${BIZ_ID}', 100, 'NGN', 'success', '${ORDER_ID}');
-      INSERT INTO payments (id, business_id, amount, currency, status, order_id)
-      VALUES ('${PAY_ID_2}', '${BIZ_ID}', 100, 'NGN', 'success', '${ORDER_ID}');
+      INSERT INTO payments (id, business_id, amount, currency, status, gateway, gateway_reference, order_id)
+      VALUES ('${PAY_ID_1}', '${BIZ_ID}', 100, 'NGN', 'success', 'stripe', 'ref_m400_' || gen_random_uuid()::text, '${ORDER_ID}');
+      INSERT INTO payments (id, business_id, amount, currency, status, gateway, gateway_reference, order_id)
+      VALUES ('${PAY_ID_2}', '${BIZ_ID}', 100, 'NGN', 'success', 'stripe', 'ref_m400_' || gen_random_uuid()::text, '${ORDER_ID}');
       INSERT INTO orders (id, business_id, status, payment_id, reference_code)
       VALUES ('${ORDER_ID}', '${BIZ_ID}', 'confirmed', '${PAY_ID_1}', 'ORD-TEST2');
       INSERT INTO order_stock_applications (order_id, payment_id, item_count, reservation_class)
@@ -238,8 +256,8 @@ describe.skipIf(!dbUrl)('M400 Cross-flow convergence (real PostgreSQL)', () => {
       DELETE FROM reservations WHERE id = '${RES_ID}';
       DELETE FROM payments WHERE id = '${PAY_ID_1}';
 
-      INSERT INTO payments (id, business_id, amount, currency, status, reservation_id)
-      VALUES ('${PAY_ID_1}', '${BIZ_ID}', 50, 'NGN', 'success', '${RES_ID}');
+      INSERT INTO payments (id, business_id, amount, currency, status, gateway, gateway_reference, reservation_id)
+      VALUES ('${PAY_ID_1}', '${BIZ_ID}', 50, 'NGN', 'success', 'stripe', 'ref_m400_' || gen_random_uuid()::text, '${RES_ID}');
       INSERT INTO reservations (id, business_id, status, deposit_status, payment_id)
       VALUES ('${RES_ID}', '${BIZ_ID}', 'confirmed', 'paid', '${PAY_ID_1}');
     `);
@@ -261,10 +279,10 @@ describe.skipIf(!dbUrl)('M400 Cross-flow convergence (real PostgreSQL)', () => {
       DELETE FROM reservations WHERE id = '${RES_ID}';
       DELETE FROM payments WHERE id IN ('${PAY_ID_1}', '${PAY_ID_2}');
 
-      INSERT INTO payments (id, business_id, amount, currency, status, reservation_id)
-      VALUES ('${PAY_ID_1}', '${BIZ_ID}', 50, 'NGN', 'success', '${RES_ID}');
-      INSERT INTO payments (id, business_id, amount, currency, status, reservation_id)
-      VALUES ('${PAY_ID_2}', '${BIZ_ID}', 50, 'NGN', 'success', '${RES_ID}');
+      INSERT INTO payments (id, business_id, amount, currency, status, gateway, gateway_reference, reservation_id)
+      VALUES ('${PAY_ID_1}', '${BIZ_ID}', 50, 'NGN', 'success', 'stripe', 'ref_m400_' || gen_random_uuid()::text, '${RES_ID}');
+      INSERT INTO payments (id, business_id, amount, currency, status, gateway, gateway_reference, reservation_id)
+      VALUES ('${PAY_ID_2}', '${BIZ_ID}', 50, 'NGN', 'success', 'stripe', 'ref_m400_' || gen_random_uuid()::text, '${RES_ID}');
       INSERT INTO reservations (id, business_id, status, deposit_status, payment_id)
       VALUES ('${RES_ID}', '${BIZ_ID}', 'confirmed', 'paid', '${PAY_ID_1}');
     `);
@@ -288,8 +306,8 @@ describe.skipIf(!dbUrl)('M400 Cross-flow convergence (real PostgreSQL)', () => {
 
       INSERT INTO campaigns (id, business_id, title, goal_amount)
       VALUES ('${CAMP_ID}', '${BIZ_ID}', 'Test Campaign', 1000);
-      INSERT INTO payments (id, business_id, amount, currency, status, campaign_id)
-      VALUES ('${PAY_ID_1}', '${BIZ_ID}', 25, 'NGN', 'pending', '${CAMP_ID}');
+      INSERT INTO payments (id, business_id, amount, currency, status, gateway, gateway_reference, campaign_id)
+      VALUES ('${PAY_ID_1}', '${BIZ_ID}', 25, 'NGN', 'pending', 'stripe', 'ref_m400_' || gen_random_uuid()::text, '${CAMP_ID}');
     `);
 
     const result = psqlJson(`
@@ -335,9 +353,9 @@ describe.skipIf(!dbUrl)('M400 Cross-flow convergence (real PostgreSQL)', () => {
       DELETE FROM payment_terminal_manifests WHERE payment_id = '${PAY_ID_3}';
       DELETE FROM payments WHERE id = '${PAY_ID_3}';
 
-      INSERT INTO payments (id, business_id, amount, currency, status,
+      INSERT INTO payments (id, business_id, amount, currency, status, gateway, gateway_reference,
         confirmation_claim_token, payment_authority_version)
-      VALUES ('${PAY_ID_3}', '${BIZ_ID}', 100, 'NGN', 'success',
+      VALUES ('${PAY_ID_3}', '${BIZ_ID}', 100, 'NGN', 'success', 'stripe', 'ref_m400_fin1',
         '${claimToken}', 1);
 
       INSERT INTO payment_terminal_manifests (payment_id, initialization_state, expected_effect_count, expected_semantic_hash)
@@ -378,9 +396,9 @@ describe.skipIf(!dbUrl)('M400 Cross-flow convergence (real PostgreSQL)', () => {
       DELETE FROM payment_terminal_manifests WHERE payment_id = '${PAY_ID_3}';
       DELETE FROM payments WHERE id = '${PAY_ID_3}';
 
-      INSERT INTO payments (id, business_id, amount, currency, status,
+      INSERT INTO payments (id, business_id, amount, currency, status, gateway, gateway_reference,
         confirmation_claim_token, confirmation_sent_at, payment_authority_version)
-      VALUES ('${PAY_ID_3}', '${BIZ_ID}', 100, 'NGN', 'success',
+      VALUES ('${PAY_ID_3}', '${BIZ_ID}', 100, 'NGN', 'success', 'stripe', 'ref_m400_fin_' || gen_random_uuid()::text,
         '${claimToken}', NULL, 1);
 
       INSERT INTO payment_terminal_manifests (payment_id, initialization_state, expected_effect_count, expected_semantic_hash)
@@ -421,9 +439,9 @@ describe.skipIf(!dbUrl)('M400 Cross-flow convergence (real PostgreSQL)', () => {
       DELETE FROM payment_terminal_manifests WHERE payment_id = '${PAY_ID_3}';
       DELETE FROM payments WHERE id = '${PAY_ID_3}';
 
-      INSERT INTO payments (id, business_id, amount, currency, status,
+      INSERT INTO payments (id, business_id, amount, currency, status, gateway, gateway_reference,
         confirmation_claim_token, confirmation_sent_at, payment_authority_version)
-      VALUES ('${PAY_ID_3}', '${BIZ_ID}', 100, 'NGN', 'success',
+      VALUES ('${PAY_ID_3}', '${BIZ_ID}', 100, 'NGN', 'success', 'stripe', 'ref_m400_fin_' || gen_random_uuid()::text,
         '${claimToken}', NULL, 1);
 
       INSERT INTO payment_terminal_manifests (payment_id, initialization_state, expected_effect_count, expected_semantic_hash)
