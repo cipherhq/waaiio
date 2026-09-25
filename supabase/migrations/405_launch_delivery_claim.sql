@@ -16,6 +16,7 @@ CREATE OR REPLACE FUNCTION claim_launch_delivery(
 RETURNS JSONB
 LANGUAGE plpgsql
 SECURITY INVOKER
+SET search_path = public, extensions
 AS $$
 DECLARE
   v_row RECORD;
