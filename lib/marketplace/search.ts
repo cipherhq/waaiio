@@ -80,7 +80,11 @@ interface BusinessRow {
 // A business is publicly discoverable when ALL of:
 //   1. status = 'active'           — business lifecycle
 //   2. bot_code IS NOT NULL        — required for WhatsApp interaction
-//   3. discovery_enabled = true    — explicit opt-in via /dashboard/discovery
+//   3. discovery_enabled IS NOT false — opt-out model (null/true both pass)
+//
+// discovery_enabled=true is used as a ranking boost in search scoring,
+// not a hard gate. Businesses can set discovery_enabled=false to hide
+// themselves from the directory explicitly.
 
 /** Maximum results the directory will return in a single request. */
 const DIRECTORY_MAX_RESULTS = 50;
@@ -89,13 +93,17 @@ const DIRECTORY_MAX_RESULTS = 50;
  * Apply canonical directory eligibility filters to a Supabase query on the
  * businesses table. Used by both SSR pre-rendering and API/search paths
  * to ensure identical eligibility semantics.
+ *
+ * Eligible: status='active', bot_code IS NOT NULL, discovery_enabled is NOT false.
+ * Uses .or() to include both NULL (never configured) and true (opted in).
+ * Only explicit opt-out (discovery_enabled=false) hides a business.
  */
 // eslint-disable-next-line
 export function applyDirectoryEligibility(query: any): any {
   return query
     .eq('status', 'active')
     .not('bot_code', 'is', null)
-    .eq('discovery_enabled', true);
+    .or('discovery_enabled.is.null,discovery_enabled.eq.true');
 }
 
 // ── Search result type with error distinction ─────────
@@ -228,6 +236,11 @@ export async function searchMarketplace(
       if (biz.supports_delivery) {
         score += 5;
         if (criteria.supportsDelivery) reasons.push('Delivery available');
+      }
+
+      // Discovery opt-in boost
+      if (biz.discovery_enabled === true) {
+        score += 15;
       }
 
       // Verified

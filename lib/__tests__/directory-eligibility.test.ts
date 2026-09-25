@@ -66,11 +66,11 @@ describe('applyDirectoryEligibility', () => {
     applyDirectoryEligibility = mod.applyDirectoryEligibility;
   });
 
-  it('applies status=active, bot_code IS NOT NULL, discovery_enabled=true', () => {
+  it('applies status=active, bot_code IS NOT NULL, discovery_enabled is null or true', () => {
     const calls: FilterCall[] = [];
     // eslint-disable-next-line
     const fakeQuery: any = {};
-    for (const m of ['eq', 'not']) {
+    for (const m of ['eq', 'not', 'or']) {
       fakeQuery[m] = vi.fn((...args: unknown[]) => {
         calls.push({ method: m, args });
         return fakeQuery;
@@ -82,7 +82,7 @@ describe('applyDirectoryEligibility', () => {
     expect(calls).toEqual([
       { method: 'eq', args: ['status', 'active'] },
       { method: 'not', args: ['bot_code', 'is', null] },
-      { method: 'eq', args: ['discovery_enabled', true] },
+      { method: 'or', args: ['discovery_enabled.is.null,discovery_enabled.eq.true'] },
     ]);
   });
 });
@@ -217,25 +217,29 @@ describe('discovery_enabled behavior', () => {
     // and the mock-based searchMarketplace test returning results
   });
 
-  it('discovery_enabled=false → excluded by .eq(discovery_enabled, true)', () => {
-    // The canonical filter uses .eq('discovery_enabled', true)
-    // PostgREST will exclude rows where discovery_enabled = false
+  it('discovery_enabled=false → excluded by .or() filter', () => {
+    // The canonical filter uses .or('discovery_enabled.is.null,discovery_enabled.eq.true')
+    // This excludes rows where discovery_enabled = false
     const fs = require('fs');
     const src = fs.readFileSync('lib/marketplace/search.ts', 'utf-8');
     const helperBody = src.substring(
       src.indexOf('function applyDirectoryEligibility'),
       src.indexOf('// ── Search result type'),
     );
-    expect(helperBody).toContain(".eq('discovery_enabled', true)");
-    // Must NOT contain the old NULL-is-true backward compat
-    expect(helperBody).not.toContain('discovery_enabled.is.null');
+    expect(helperBody).toContain('discovery_enabled.is.null,discovery_enabled.eq.true');
   });
 
-  it('discovery_enabled=NULL → excluded (same as false, DEFAULT false since migration 239)', () => {
-    // Same assertion: .eq('discovery_enabled', true) excludes NULL
+  it('discovery_enabled=NULL → included (opt-out model, not opt-in)', () => {
+    // .or('discovery_enabled.is.null,...') explicitly includes NULL rows
     const fs = require('fs');
     const src = fs.readFileSync('lib/marketplace/search.ts', 'utf-8');
-    expect(src).not.toContain('discovery_enabled.is.null');
+    const helperBody = src.substring(
+      src.indexOf('function applyDirectoryEligibility'),
+      src.indexOf('// ── Search result type'),
+    );
+    expect(helperBody).toContain('discovery_enabled.is.null');
+    // Must NOT use the old strict opt-in as the only path
+    expect(helperBody).not.toMatch(/\.eq\('discovery_enabled',\s*true\)/);
   });
 });
 

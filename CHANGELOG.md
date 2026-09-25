@@ -3,6 +3,36 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-09-24 — Feature: Launch readiness — site announcement + directory fix (#395)
+
+### What changed
+- **`supabase/migrations/401_site_announcement_setting.sql`** (NEW): Seeds `site_announcement` key in `platform_settings`. Informational-only — does NOT disable WhatsApp, payments, or any runtime capability.
+- **`app/api/site-announcement/route.ts`** (NEW): Public GET endpoint returning announcement config. Fail-safe: any error returns `{ enabled: false }` so public site is never broken.
+- **`app/api/admin/site-announcement/route.ts`** (NEW): Admin-only GET/PUT for managing announcement config. Validates type, style, CTA link security. Requires `requirePlatformAdmin`.
+- **`components/marketing/SiteAnnouncement.tsx`** (NEW): Client component rendering announcement banner with countdown timer, CTA, dismiss button. Supports brand/warning/info styles.
+- **`app/(marketing)/layout.tsx`**: Added `<SiteAnnouncement />` above Navbar. Renders only when enabled.
+- **`admin/src/pages/SiteAnnouncement.tsx`** (NEW): Admin page for managing announcements — enable/disable toggle, type/style selectors, headline/message, countdown target date, CTA config.
+- **`admin/src/routes.tsx`**: Added `/site-announcement` route.
+- **`admin/src/components/AdminSidebar.tsx`**: Added Site Announcement link in system section.
+- **`lib/marketplace/search.ts`**: Changed `applyDirectoryEligibility` from `eq('discovery_enabled', true)` to `.or('discovery_enabled.is.null,discovery_enabled.eq.true')`. Businesses that never set discovery preferences (null) now appear in directory. Explicit opt-out (false) still hides them. Added +15 score boost for explicit opt-in.
+- **`lib/__tests__/issue-395-launch-readiness.test.ts`** (NEW): 22 tests covering announcement validation, directory eligibility (opt-in vs opt-out vs null), privacy (no sensitive fields), and maintenance mode isolation.
+- **`supabase/migrations/402_launch_subscribers.sql`** (NEW): `launch_subscribers` table for WhatsApp-first launch opt-in. UNIQUE on wa_number, RLS admin-only, CHECK constraints on status fields. Isolated from commerce/payment tables.
+- **`app/api/launch/regions/route.ts`** (NEW): Public GET endpoint returning active shared Waaiio WhatsApp numbers grouped by country. Reuses `whatsapp_channels` table — no hard-coded phone numbers.
+- **`app/(marketing)/launch/page.tsx`** + **`LaunchClient.tsx`** (NEW): Launch countdown page with Waaiio 101 explainer, region selector (auto-detected with manual override), QR code + WhatsApp CTA button (same action), countdown timer.
+- **`lib/bot/launch-optin.ts`** (NEW): Bot handler for launch opt-in messages. Pattern: "Notify me when Waaiio launches". Upserts into `launch_subscribers` with idempotent `onConflict: wa_number`. Detects signup source (qr/button/direct) from message suffix. Isolated from commerce flows — returns false for all non-matching messages.
+- **`lib/bot/bot.service.ts`**: Added launch opt-in intercept after STOP/START compliance, before any business/flow resolution. Import + 4-line call.
+- **`admin/src/pages/LaunchSubscribers.tsx`** (NEW): Admin page with total/active/opted-out counts, 7-day growth, breakdowns by market/source/notification status, subscriber table, CSV export.
+- **`admin/src/routes.tsx`** + **`admin/src/components/AdminSidebar.tsx`**: Added launch-subscribers route and sidebar entry.
+- **`lib/__tests__/issue-395-launch-optin.test.ts`** (NEW): 22 tests covering pattern matching, QR/button parity, source attribution, idempotency (onConflict), bot flow isolation, confirmation message, DB failure resilience, regional routing, and subscriber table schema.
+- **`supabase/migrations/403_discovery_default_on.sql`** (NEW): Changes `discovery_enabled` default from false to true. Backfills existing NULL values to true. Businesses are listed by default; only explicit opt-out hides them.
+- **`app/dashboard/discovery/page.tsx`**: DEFAULTS changed from `discovery_enabled: false` to `discovery_enabled: true`.
+- **`app/(marketing)/launch/LaunchClient.tsx`**: (CTO corrections) Removed hard-coded `LAUNCH_DATE` constant — countdown is now driven by admin-configured `target_date` from `/api/site-announcement`. Replaced external `api.qrserver.com` dependency with local `QRCodeSVG` from `qrcode.react`. Fixed `formatPhone` to handle international numbers (NG 234..., GH 233..., UK 44..., NANP). Hero dynamically shows date from announcement or "coming soon" fallback.
+- **`app/(marketing)/launch/page.tsx`**: Removed hard-coded "October 2" from metadata.
+- **Root cause (directory)**: `discovery_enabled` defaults to `false` in migration 239. Since no businesses had explicitly opted in via `/dashboard/discovery`, the directory returned zero results for all queries.
+- **Impact**: Directory now shows active businesses with a bot_code. Announcement system is separate from maintenance mode. Launch opt-in is isolated from all commerce/payment flows. No existing payment/bot flow code changed except the 4-line intercept in bot.service.ts.
+- **What could break**: Businesses that set `discovery_enabled=false` are still excluded. Businesses with `discovery_enabled=null` (never set) now appear — this is the intended fix. Launch opt-in pattern is narrow and won't match any existing bot codes or commands.
+- **Files**: migrations 401-402, `app/api/site-announcement/route.ts`, `app/api/admin/site-announcement/route.ts`, `app/api/launch/regions/route.ts`, `components/marketing/SiteAnnouncement.tsx`, `app/(marketing)/layout.tsx`, `app/(marketing)/launch/page.tsx`, `app/(marketing)/launch/LaunchClient.tsx`, `lib/bot/launch-optin.ts`, `lib/bot/bot.service.ts`, `admin/src/pages/SiteAnnouncement.tsx`, `admin/src/pages/LaunchSubscribers.tsx`, `admin/src/routes.tsx`, `admin/src/components/AdminSidebar.tsx`, `lib/marketplace/search.ts`, `lib/__tests__/issue-395-launch-readiness.test.ts`, `lib/__tests__/issue-395-launch-optin.test.ts`
+
 ## 2026-09-24 — Fix: Payment UX parity — one saved-card offer per payment attempt (#393)
 
 ### What changed

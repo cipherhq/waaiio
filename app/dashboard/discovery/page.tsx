@@ -24,7 +24,7 @@ interface DiscoveryConfig {
 }
 
 const DEFAULTS: DiscoveryConfig = {
-  discovery_enabled: false,
+  discovery_enabled: true,
   discovery_description: '',
   discovery_keywords: [],
   price_band: null,
