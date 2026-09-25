@@ -72,7 +72,6 @@ function makeCtx(overrides: Partial<FlowContext> = {}): FlowContext {
       session_data: {
         _inbound_channel_id: 'channel-test',
         _saved_method_id: 'method-123',
-        _awaiting_card_pin: true,
       },
       is_active: true,
       version: 1,

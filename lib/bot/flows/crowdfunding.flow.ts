@@ -364,6 +364,8 @@ const donationPaymentStep: FlowStepConfig = {
 
   async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
     const sd = ctx.session.session_data;
+    // #393: Suppress re-prompt while awaiting saved-card PIN entry
+    if (sd._awaiting_card_pin) return [];
     const amount = sd.donation_amount as number;
     const country = (ctx.business?.country_code || 'NG') as CountryCode;
 

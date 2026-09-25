@@ -3,6 +3,22 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-09-24 — Fix: Payment UX parity — one saved-card offer per payment attempt (#393)
+
+### What changed
+- **`lib/bot/flows/shared/saved-card-flow.ts`**: `buildSavedCardOffer()` now returns null when `_awaiting_card_pin` is set. Defense-in-depth guard at the shared layer prevents any flow from re-emitting the saved-card offer during PIN entry.
+- **`lib/bot/flows/crowdfunding.flow.ts`**: `donation_payment` prompt returns `[]` when `_awaiting_card_pin` is true.
+- **`lib/bot/flows/ordering.flow.ts`**: `process_order` prompt returns `[]` when `_awaiting_card_pin` is true.
+- **`lib/bot/flows/ticketing.flow.ts`**: `process_tickets` prompt returns `[]` when `_awaiting_card_pin` is true.
+- **`lib/bot/flows/reservation.flow.ts`**: `create_reservation` prompt returns `[]` when `_awaiting_card_pin` is true.
+- **`lib/bot/flows/invoice.flow.ts`**: `invoice_pay` prompt returns `[]` when `_awaiting_card_pin` is true.
+- **`lib/bot/flows/payment.flow.ts`**: `process_payment` prompt returns `[]` when `_awaiting_card_pin` is true.
+- **`lib/__tests__/issue-393-payment-ux-parity.test.ts`** (NEW): 37 regression tests covering all 6 affected domains + scheduling reference, duplicate webhook delivery, PIN retry, concurrent execution, session re-entry, appointment non-regression, normal path preservation, and pay-new fallback.
+- **Root cause**: When PIN was required, `validate()` returned `valid:true` with `_awaiting_card_pin`, then `next()` returned the same step name. The executor called `advanceToStep()` → `prompt()` again → `buildSavedCardOffer()` again → duplicate "Pay with saved card?" message. Scheduling was exempt because it used a dedicated `saved_card_prompt` step with empty prompt.
+- **Impact**: All 6 payment-capable flows (giving, ordering, ticketing, reservation, invoice, payment) now produce exactly one saved-card offer per payment attempt. Scheduling behavior unchanged.
+- **What could break**: None expected — the guard only suppresses prompt output during an already-active PIN entry state. All existing payment paths, PIN retry, pay-new fallback, and cancel behavior preserved.
+- **Files**: `lib/bot/flows/shared/saved-card-flow.ts`, `lib/bot/flows/crowdfunding.flow.ts`, `lib/bot/flows/ordering.flow.ts`, `lib/bot/flows/ticketing.flow.ts`, `lib/bot/flows/reservation.flow.ts`, `lib/bot/flows/invoice.flow.ts`, `lib/bot/flows/payment.flow.ts`, `lib/__tests__/issue-393-payment-ux-parity.test.ts`
+
 ## 2026-09-22 — Feature: Cross-flow convergence (#389)
 
 ### What changed

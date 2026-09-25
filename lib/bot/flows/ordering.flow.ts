@@ -2619,6 +2619,8 @@ export const orderingFlow: FlowDefinition = {
       },
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
         const d = ctx.session.session_data;
+        // #393: Suppress re-prompt while awaiting saved-card PIN entry
+        if (d._awaiting_card_pin) return [];
         const cart = (d.cart as CartItem[]) || [];
         const discount = (d.discount_amount as number) || 0;
 
