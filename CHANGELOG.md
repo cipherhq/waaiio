@@ -3,6 +3,24 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-09-24 — Feature: Launch readiness — site announcement + directory fix (#395)
+
+### What changed
+- **`supabase/migrations/401_site_announcement_setting.sql`** (NEW): Seeds `site_announcement` key in `platform_settings`. Informational-only — does NOT disable WhatsApp, payments, or any runtime capability.
+- **`app/api/site-announcement/route.ts`** (NEW): Public GET endpoint returning announcement config. Fail-safe: any error returns `{ enabled: false }` so public site is never broken.
+- **`app/api/admin/site-announcement/route.ts`** (NEW): Admin-only GET/PUT for managing announcement config. Validates type, style, CTA link security. Requires `requirePlatformAdmin`.
+- **`components/marketing/SiteAnnouncement.tsx`** (NEW): Client component rendering announcement banner with countdown timer, CTA, dismiss button. Supports brand/warning/info styles.
+- **`app/(marketing)/layout.tsx`**: Added `<SiteAnnouncement />` above Navbar. Renders only when enabled.
+- **`admin/src/pages/SiteAnnouncement.tsx`** (NEW): Admin page for managing announcements — enable/disable toggle, type/style selectors, headline/message, countdown target date, CTA config.
+- **`admin/src/routes.tsx`**: Added `/site-announcement` route.
+- **`admin/src/components/AdminSidebar.tsx`**: Added Site Announcement link in system section.
+- **`lib/marketplace/search.ts`**: Changed `applyDirectoryEligibility` from `eq('discovery_enabled', true)` to `neq('discovery_enabled', false)`. Businesses that never set discovery preferences (null) now appear in directory. Explicit opt-out (false) still hides them. Added +15 score boost for explicit opt-in.
+- **`lib/__tests__/issue-395-launch-readiness.test.ts`** (NEW): 22 tests covering announcement validation, directory eligibility (opt-in vs opt-out vs null), privacy (no sensitive fields), and maintenance mode isolation.
+- **Root cause (directory)**: `discovery_enabled` defaults to `false` in migration 239. Since no businesses had explicitly opted in via `/dashboard/discovery`, the directory returned zero results for all queries.
+- **Impact**: Directory now shows active businesses with a bot_code. Announcement system is separate from maintenance mode. No payment/bot/WhatsApp code changed.
+- **What could break**: Businesses that set `discovery_enabled=false` are still excluded. Businesses with `discovery_enabled=null` (never set) now appear — this is the intended fix.
+- **Files**: migration 401, `app/api/site-announcement/route.ts`, `app/api/admin/site-announcement/route.ts`, `components/marketing/SiteAnnouncement.tsx`, `app/(marketing)/layout.tsx`, `admin/src/pages/SiteAnnouncement.tsx`, `admin/src/routes.tsx`, `admin/src/components/AdminSidebar.tsx`, `lib/marketplace/search.ts`, `lib/__tests__/issue-395-launch-readiness.test.ts`
+
 ## 2026-09-24 — Fix: Payment UX parity — one saved-card offer per payment attempt (#393)
 
 ### What changed

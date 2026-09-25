@@ -153,6 +153,7 @@ const navSections: { label: string; items: NavItem[] }[] = [
       { icon: Zap, label: 'AI Setup Log', path: '/ai-setup-log', roles: ADMIN_PERMISSIONS['ai-setup-log'] },
       { icon: BrainCircuit, label: 'AI Usage', path: '/ai-usage', roles: ADMIN_PERMISSIONS['ai-usage'] },
       { icon: MessageCircle, label: 'Conversation Usage', path: '/conversation-usage', roles: ADMIN_PERMISSIONS['conversation-usage'] },
+      { icon: Sparkles, label: 'Site Announcement', path: '/site-announcement', roles: ADMIN_PERMISSIONS['platform-settings'] },
       { icon: Settings, label: 'Platform Settings', path: '/platform-settings', roles: ADMIN_PERMISSIONS['platform-settings'] },
       { icon: ScrollText, label: 'Audit Log', path: '/audit-log', roles: ADMIN_PERMISSIONS['audit-log'] },
       { icon: Activity, label: 'System Health', path: '/system-health', roles: ADMIN_PERMISSIONS['system-health'] },
