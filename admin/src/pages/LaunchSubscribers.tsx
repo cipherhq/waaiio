@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { adminDb } from '@/lib/supabase';
+import { adminApiFetch } from '@/lib/adminApi';
 import { downloadCSV } from '@/lib/csv';
-import { Rocket, Download, Users, Globe, QrCode, TrendingUp } from 'lucide-react';
+import { Rocket, Download, Users, Globe, QrCode, TrendingUp, Send, RefreshCw } from 'lucide-react';
 
 interface Subscriber {
   id: string;
@@ -28,17 +29,40 @@ interface SourceBreakdown {
 export default function LaunchSubscribers() {
   const [subscribers, setSubscribers] = useState<Subscriber[]>([]);
   const [loading, setLoading] = useState(true);
+  const [sending, setSending] = useState(false);
+  const [sendResult, setSendResult] = useState<{ sent: number; failed: number; skipped: number } | null>(null);
+  const [sendError, setSendError] = useState<string | null>(null);
+
+  async function loadSubscribers() {
+    const { data } = await adminDb
+      .from('launch_subscribers')
+      .select('*')
+      .order('created_at', { ascending: false });
+    setSubscribers(data || []);
+  }
 
   useEffect(() => {
-    (async () => {
-      const { data } = await adminDb
-        .from('launch_subscribers')
-        .select('*')
-        .order('created_at', { ascending: false });
-      setSubscribers(data || []);
-      setLoading(false);
-    })();
+    loadSubscribers().then(() => setLoading(false));
   }, []);
+
+  async function handleSendNotifications(retryOnly = false) {
+    setSending(true);
+    setSendResult(null);
+    setSendError(null);
+    try {
+      const res = await adminApiFetch('/api/admin/launch-notify', { retryOnly, limit: 50 });
+      const data = await res.json();
+      if (!res.ok) {
+        setSendError(data.error || 'Send failed');
+      } else {
+        setSendResult(data.summary);
+        await loadSubscribers(); // Refresh data
+      }
+    } catch (err) {
+      setSendError(err instanceof Error ? err.message : 'Unknown error');
+    }
+    setSending(false);
+  }
 
   // Compute breakdowns
   const total = subscribers.length;
@@ -139,6 +163,43 @@ export default function LaunchSubscribers() {
           <div className="flex items-center gap-2 text-sm text-red-500">Opted Out</div>
           <p className="mt-1 text-2xl font-bold text-red-600">{optedOut}</p>
         </div>
+      </div>
+
+      {/* Delivery controls */}
+      <div className="rounded-2xl border border-gray-200 bg-white p-5">
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="flex items-center gap-2 text-sm font-bold text-gray-700"><Send className="h-4 w-4" /> Launch Notification</h3>
+            <p className="mt-1 text-xs text-gray-500">
+              Send WhatsApp template notification to eligible subscribers.
+              Eligible: {active} active, {byNotification.pending} pending.
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => handleSendNotifications(true)}
+              disabled={sending || byNotification.failed === 0}
+              className="flex items-center gap-1.5 rounded-xl bg-amber-100 px-4 py-2 text-xs font-bold text-amber-700 transition hover:bg-amber-200 disabled:opacity-50"
+            >
+              <RefreshCw className="h-3.5 w-3.5" /> Retry Failed ({byNotification.failed})
+            </button>
+            <button
+              onClick={() => handleSendNotifications(false)}
+              disabled={sending || byNotification.pending === 0}
+              className="flex items-center gap-1.5 rounded-xl bg-brand px-4 py-2 text-xs font-bold text-white transition hover:bg-brand-600 disabled:opacity-50"
+            >
+              <Send className="h-3.5 w-3.5" /> {sending ? 'Sending...' : 'Send Notifications'}
+            </button>
+          </div>
+        </div>
+        {sendResult && (
+          <div className="mt-3 rounded-xl bg-green-50 px-4 py-2 text-sm text-green-700">
+            Sent: {sendResult.sent} | Failed: {sendResult.failed} | Skipped: {sendResult.skipped}
+          </div>
+        )}
+        {sendError && (
+          <div className="mt-3 rounded-xl bg-red-50 px-4 py-2 text-sm text-red-700">{sendError}</div>
+        )}
       </div>
 
       {/* Breakdowns */}
