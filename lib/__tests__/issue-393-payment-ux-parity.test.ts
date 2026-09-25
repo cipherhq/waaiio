@@ -434,17 +434,13 @@ describe('#393 §4: Duplicate webhook/message delivery', () => {
     mockRequiresPin.mockReset();
   });
 
-  it('second pay_saved while _awaiting_card_pin re-sends PIN prompt, does NOT re-offer card', async () => {
+  it('duplicate pay_saved while _awaiting_card_pin is fully idempotent — zero sends, zero provider calls', async () => {
     const { handleSavedCardInput } = await import('@/lib/bot/flows/shared/saved-card-flow');
-    // First delivery already set _awaiting_card_pin. Simulating second delivery:
-    mockRequiresPin.mockResolvedValue({ required: true, locked: false });
     const sendText = vi.fn().mockResolvedValue(undefined);
     const ctx = makeCtx(
       { _awaiting_card_pin: true, _saved_method_id: 'spm-1' },
       { sender: { sendText } as any },
     );
-    // "pay_saved" is handled by the first branch (line 110) — it tries requiresPin again.
-    // That's fine: it re-sends the PIN prompt but the prompt() guard prevents the duplicate offer.
     const result = await handleSavedCardInput('pay_saved', ctx, {
       amount: 5000,
       reference: 'REF-dup',
@@ -452,9 +448,39 @@ describe('#393 §4: Duplicate webhook/message delivery', () => {
       transactionCategory: 'giving',
     });
     expect(result).toBeTruthy();
-    expect(result!.data!._awaiting_card_pin).toBe(true);
-    // PIN prompt re-sent, but prompt() guard prevents duplicate saved-card offer
-    expect(sendText).toHaveBeenCalledOnce();
+    expect(result!.valid).toBe(true);
+    // No data mutation — stays in PIN-wait state
+    expect(result!.data).toBeUndefined();
+    // Zero sends — no PIN challenge re-sent
+    expect(sendText).not.toHaveBeenCalled();
+    // Zero provider calls — no requiresPin, no charge
+    expect(mockRequiresPin).not.toHaveBeenCalled();
+    expect(mockChargeSavedMethod).not.toHaveBeenCalled();
+  });
+
+  it('triple-replayed pay_saved produces zero cumulative side effects', async () => {
+    const { handleSavedCardInput } = await import('@/lib/bot/flows/shared/saved-card-flow');
+    const sendText = vi.fn().mockResolvedValue(undefined);
+    const baseOpts = {
+      amount: 5000,
+      reference: 'REF-triple',
+      entityId: {},
+      transactionCategory: 'giving',
+    };
+
+    for (let i = 0; i < 3; i++) {
+      const ctx = makeCtx(
+        { _awaiting_card_pin: true, _saved_method_id: 'spm-1' },
+        { sender: { sendText } as any },
+      );
+      const result = await handleSavedCardInput('pay_saved', ctx, baseOpts);
+      expect(result!.valid).toBe(true);
+      expect(result!.data).toBeUndefined();
+    }
+
+    expect(sendText).not.toHaveBeenCalled();
+    expect(mockRequiresPin).not.toHaveBeenCalled();
+    expect(mockChargeSavedMethod).not.toHaveBeenCalled();
   });
 
   it('buildSavedCardOffer called twice in same state returns null on second call', async () => {
@@ -565,6 +591,13 @@ describe('#393 §5: PIN retry path — no duplicate offer between attempts', () 
 // ═══════════════════════════════════════════════════════════════
 
 describe('#393 §6: Concurrent execution — guard is stateless per-call', () => {
+  beforeEach(() => {
+    mockGetSavedMethods.mockReset();
+    mockRequiresPin.mockReset();
+    mockVerifyPin.mockReset();
+    mockChargeSavedMethod.mockReset();
+  });
+
   it('two concurrent prompt() calls with _awaiting_card_pin both return []', async () => {
     // Simulates two workers reading the same session state concurrently
     for (const domain of DOMAINS) {
@@ -587,6 +620,72 @@ describe('#393 §6: Concurrent execution — guard is stateless per-call', () =>
       expect(msgs1).toEqual([]);
       expect(msgs2).toEqual([]);
     }
+  });
+
+  it('two concurrent handleSavedCardInput(pay_saved) during PIN wait — zero sends, zero provider calls', async () => {
+    const { handleSavedCardInput } = await import('@/lib/bot/flows/shared/saved-card-flow');
+    const sendText = vi.fn().mockResolvedValue(undefined);
+    const opts = {
+      amount: 5000,
+      reference: 'REF-concurrent',
+      entityId: {},
+      transactionCategory: 'giving',
+    };
+
+    const [r1, r2] = await Promise.all([
+      handleSavedCardInput('pay_saved', makeCtx(
+        { _awaiting_card_pin: true, _saved_method_id: 'spm-1' },
+        { sender: { sendText } as any },
+      ), opts),
+      handleSavedCardInput('pay_saved', makeCtx(
+        { _awaiting_card_pin: true, _saved_method_id: 'spm-1' },
+        { sender: { sendText } as any },
+      ), opts),
+    ]);
+
+    expect(r1!.valid).toBe(true);
+    expect(r1!.data).toBeUndefined();
+    expect(r2!.valid).toBe(true);
+    expect(r2!.data).toBeUndefined();
+    expect(sendText).not.toHaveBeenCalled();
+    expect(mockRequiresPin).not.toHaveBeenCalled();
+    expect(mockChargeSavedMethod).not.toHaveBeenCalled();
+  });
+
+  it('concurrent PIN entry + pay_saved replay — PIN processes, replay is no-op', async () => {
+    const { handleSavedCardInput } = await import('@/lib/bot/flows/shared/saved-card-flow');
+    mockVerifyPin.mockResolvedValue({ valid: true, locked: false });
+    mockChargeSavedMethod.mockResolvedValue({ status: 'charged', paymentId: 'pay-conc' });
+    const sendText = vi.fn().mockResolvedValue(undefined);
+    const opts = {
+      amount: 5000,
+      reference: 'REF-conc-mixed',
+      entityId: {},
+      transactionCategory: 'giving',
+    };
+
+    const [pinResult, replayResult] = await Promise.all([
+      handleSavedCardInput('1234', makeCtx(
+        { _awaiting_card_pin: true, _saved_method_id: 'spm-1' },
+      ), opts),
+      handleSavedCardInput('pay_saved', makeCtx(
+        { _awaiting_card_pin: true, _saved_method_id: 'spm-1' },
+        { sender: { sendText } as any },
+      ), opts),
+    ]);
+
+    // PIN entry processes normally
+    expect(pinResult!.valid).toBe(true);
+    expect(pinResult!.data!._saved_card_paid).toBe(true);
+    // Replay is fully idempotent — no additional PIN challenge or provider call
+    expect(replayResult!.valid).toBe(true);
+    expect(replayResult!.data).toBeUndefined();
+    // sendText not called by the replay (PIN path uses chargeSavedCard, not sendText)
+    expect(sendText).not.toHaveBeenCalled();
+    // requiresPin not called — replay skipped entirely
+    expect(mockRequiresPin).not.toHaveBeenCalled();
+    // chargeSavedMethod called exactly once — by the PIN entry, not the replay
+    expect(mockChargeSavedMethod).toHaveBeenCalledOnce();
   });
 
   it('buildSavedCardOffer is safe under concurrent calls', async () => {

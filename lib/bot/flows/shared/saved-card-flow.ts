@@ -113,6 +113,12 @@ export async function handleSavedCardInput(
 
   // ── "Pay with saved card" button ──
   if (action === 'pay_saved') {
+    // #393 R1: Duplicate/replayed pay_saved while already awaiting PIN must be
+    // idempotent — no requiresPin(), no re-sent PIN challenge, no provider side effect.
+    if (d._awaiting_card_pin) {
+      return { valid: true };
+    }
+
     const methodId = d._saved_method_id as string;
     if (!methodId || !ctx.business) {
       return { valid: true, data: { _skip_saved_card: true } };
