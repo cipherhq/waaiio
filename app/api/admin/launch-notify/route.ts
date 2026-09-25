@@ -12,11 +12,13 @@ import {
 export const dynamic = 'force-dynamic';
 
 /**
- * GET /api/admin/launch-notify
+ * GET /api/admin/launch-notify?retryOnly=false&limit=50
  *
- * Admin-only: Preview readiness counts and create a DB-backed confirmation token.
- * This is step 1 of the two-step flow. Preview NEVER sends.
- * The returned confirmToken must be passed to POST to authorize delivery.
+ * Admin-only: Preview readiness for the exact delivery scope.
+ * Accepts scope params (retryOnly, limit) so the preview represents
+ * exactly what Confirm & Send will execute.
+ * Creates a DB-backed confirmation token bound to admin + campaign + scope.
+ * Preview NEVER sends.
  */
 export async function GET(request: NextRequest) {
   const admin = await requirePlatformAdmin(request, { requiredRole: 'admin' });
@@ -34,9 +36,14 @@ export async function GET(request: NextRequest) {
     throw err;
   }
 
+  // Read intended scope from query params
+  const { searchParams } = new URL(request.url);
+  const retryOnly = searchParams.get('retryOnly') === 'true';
+  const sendLimit = Math.min(Number(searchParams.get('limit')) || 50, 200);
+
   const readiness = await getDeliveryReadiness(supabase, config.campaignVersion);
 
-  // Create DB-backed confirmation token (survives Vercel instance boundaries)
+  // Create DB-backed confirmation token bound to full scope
   const { data: confirmRow, error: insertError } = await supabase
     .from('launch_delivery_confirmations')
     .insert({
@@ -44,6 +51,8 @@ export async function GET(request: NextRequest) {
       campaign_version: config.campaignVersion,
       eligible_count: readiness.eligible,
       pending_count: readiness.pending,
+      retry_only: retryOnly,
+      send_limit: sendLimit,
     })
     .select('token')
     .single();
@@ -57,6 +66,10 @@ export async function GET(request: NextRequest) {
       templateName: config.templateName,
       templateLanguage: config.templateLanguage,
       campaignVersion: config.campaignVersion,
+    },
+    scope: {
+      retryOnly,
+      sendLimit,
     },
     readiness: {
       eligible: readiness.eligible,
@@ -73,11 +86,12 @@ export async function GET(request: NextRequest) {
 /**
  * POST /api/admin/launch-notify
  *
- * Admin-only: Step 2 — execute delivery ONLY with a valid confirmation token.
- * The token is atomically consumed (single-use, replay-protected, expiry-checked,
- * admin-bound, campaign-bound) via the consume_launch_confirmation RPC.
+ * Admin-only: Step 2 — execute delivery with a valid confirmation token.
+ * The token is atomically consumed with full scope verification:
+ * admin, campaign, retryOnly, sendLimit must ALL match the preview.
+ * Delivery scope comes from the consumed token, NOT from the request body.
  *
- * Body: { confirmToken: string, retryOnly?: boolean, limit?: number }
+ * Body: { confirmToken: string }
  */
 export async function POST(request: NextRequest) {
   const admin = await requirePlatformAdmin(request, { requiredRole: 'admin' });
@@ -95,7 +109,7 @@ export async function POST(request: NextRequest) {
 
   const supabase = createServiceClient();
 
-  // Load config first — fail closed
+  // Load config — fail closed
   let config;
   try {
     config = await loadDeliveryConfig(supabase);
@@ -106,13 +120,19 @@ export async function POST(request: NextRequest) {
     throw err;
   }
 
-  // Atomically consume the confirmation token via DB RPC
+  // Read the scope the caller claims — must match what was previewed
+  const retryOnly = body.retryOnly === true;
+  const sendLimit = Math.min(Number(body.limit) || 50, 200);
+
+  // Atomically consume with full scope verification
   const { data: consumeResult, error: consumeError } = await supabase.rpc(
     'consume_launch_confirmation',
     {
       p_token: confirmToken,
       p_admin_id: admin.userId,
       p_campaign_version: config.campaignVersion,
+      p_retry_only: retryOnly,
+      p_send_limit: sendLimit,
     },
   );
 
@@ -120,13 +140,14 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Confirmation check failed' }, { status: 500 });
   }
 
-  const consume = consumeResult as { consumed: boolean; reason?: string };
+  const consume = consumeResult as { consumed: boolean; reason?: string; retry_only?: boolean; send_limit?: number };
   if (!consume?.consumed) {
     const reasons: Record<string, string> = {
       not_found: 'Confirmation token not found. Preview again.',
       already_consumed: 'This confirmation was already used. Preview again for a fresh token.',
       wrong_admin: 'This confirmation belongs to a different admin.',
       campaign_mismatch: 'Campaign version changed since preview. Preview again.',
+      scope_mismatch: 'Delivery scope (retryOnly/limit) does not match preview. Preview again with the intended scope.',
       expired: 'Confirmation expired (5 min). Preview again.',
     };
     return NextResponse.json(
@@ -135,15 +156,12 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // Confirmation consumed — proceed with delivery
-  const retryOnly = body.retryOnly === true;
-  const limit = Math.min(Number(body.limit) || 50, 200);
-
+  // Delivery scope comes from the consumed confirmation
   const summary = await deliverLaunchNotifications(
     supabase,
     config,
     metaCloudSendTemplate,
-    { retryOnly, limit },
+    { retryOnly, limit: sendLimit },
   );
 
   return NextResponse.json({

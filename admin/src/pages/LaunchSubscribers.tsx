@@ -28,6 +28,7 @@ interface SourceBreakdown {
 
 interface PreviewData {
   config: { templateName: string; templateLanguage: string; campaignVersion: string };
+  scope: { retryOnly: boolean; sendLimit: number };
   readiness: { eligible: number; pending: number; sent: number; failed: number; skipped: number; opted_out: number };
   confirmToken: string;
 }
@@ -69,7 +70,8 @@ export default function LaunchSubscribers() {
       const token = session?.session?.access_token;
       if (!token) throw new Error('Not authenticated');
 
-      const res = await fetch(`${base}/api/admin/launch-notify`, {
+      const params = new URLSearchParams({ retryOnly: String(retry), limit: '50' });
+      const res = await fetch(`${base}/api/admin/launch-notify?${params}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       const data = await res.json();
@@ -92,8 +94,8 @@ export default function LaunchSubscribers() {
     try {
       const sendRes = await adminApiFetch('/api/admin/launch-notify', {
         confirmToken: preview.confirmToken,
-        retryOnly: retryMode,
-        limit: 50,
+        retryOnly: preview.scope.retryOnly,
+        limit: preview.scope.sendLimit,
       });
       const data = await sendRes.json();
       if (!sendRes.ok) {
@@ -251,7 +253,8 @@ export default function LaunchSubscribers() {
                 <div>Template: <span className="font-mono font-bold">{preview.config.templateName}</span></div>
                 <div>Language: <span className="font-bold">{preview.config.templateLanguage}</span></div>
                 <div>Campaign: <span className="font-mono font-bold">{preview.config.campaignVersion}</span></div>
-                <div>Mode: <span className="font-bold">{retryMode ? 'Retry failed only' : 'All pending'}</span></div>
+                <div>Mode: <span className="font-bold">{preview.scope.retryOnly ? 'Retry failed only' : 'All pending'}</span></div>
+                <div>Limit: <span className="font-bold">{preview.scope.sendLimit}</span></div>
               </div>
               <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
                 <div className="rounded-lg bg-white px-3 py-2 text-center">

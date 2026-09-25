@@ -392,6 +392,69 @@ describe('Admin API — DB-backed confirmation flow', () => {
     expect(src).toContain('LaunchConfigError');
     expect(src).toContain('422');
   });
+
+  it('scope mismatch fails (retryOnly/limit must match preview)', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('app/api/admin/launch-notify/route.ts', 'utf-8');
+    expect(src).toContain('scope_mismatch');
+    expect(src).toContain('p_retry_only');
+    expect(src).toContain('p_send_limit');
+  });
+
+  it('GET accepts scope params (retryOnly, limit) for preview', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('app/api/admin/launch-notify/route.ts', 'utf-8');
+    const getHandler = src.substring(src.indexOf('export async function GET'), src.indexOf('export async function POST'));
+    expect(getHandler).toContain('retryOnly');
+    expect(getHandler).toContain('sendLimit');
+    expect(getHandler).toContain('retry_only');
+    expect(getHandler).toContain('send_limit');
+  });
+
+  it('GET stores scope in confirmation token', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('app/api/admin/launch-notify/route.ts', 'utf-8');
+    const getHandler = src.substring(src.indexOf('export async function GET'), src.indexOf('export async function POST'));
+    expect(getHandler).toContain('retry_only: retryOnly');
+    expect(getHandler).toContain('send_limit: sendLimit');
+  });
+
+  it('POST passes scope to consume RPC for verification', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('app/api/admin/launch-notify/route.ts', 'utf-8');
+    const postHandler = src.substring(src.indexOf('export async function POST'));
+    expect(postHandler).toContain('p_retry_only');
+    expect(postHandler).toContain('p_send_limit');
+  });
+});
+
+// ── Scope-bound confirmation RPC ──
+
+describe('Migration 407 — scope-bound confirmation', () => {
+  it('adds retry_only and send_limit columns', () => {
+    const fs = require('fs');
+    const sql = fs.readFileSync('supabase/migrations/407_confirmation_scope_binding.sql', 'utf-8');
+    expect(sql).toContain('retry_only BOOLEAN');
+    expect(sql).toContain('send_limit INT');
+  });
+
+  it('consume RPC checks retry_only binding', () => {
+    const fs = require('fs');
+    const sql = fs.readFileSync('supabase/migrations/407_confirmation_scope_binding.sql', 'utf-8');
+    expect(sql).toContain('AND retry_only = p_retry_only');
+  });
+
+  it('consume RPC checks send_limit binding', () => {
+    const fs = require('fs');
+    const sql = fs.readFileSync('supabase/migrations/407_confirmation_scope_binding.sql', 'utf-8');
+    expect(sql).toContain('AND send_limit = p_send_limit');
+  });
+
+  it('scope mismatch returns specific reason', () => {
+    const fs = require('fs');
+    const sql = fs.readFileSync('supabase/migrations/407_confirmation_scope_binding.sql', 'utf-8');
+    expect(sql).toContain("'scope_mismatch'");
+  });
 });
 
 // ── DB confirmation RPC schema ──
@@ -482,6 +545,31 @@ describe('Admin UI — two-step Preview then Confirm & Send', () => {
     const src = fs.readFileSync('admin/src/pages/LaunchSubscribers.tsx', 'utf-8');
     expect(src).toContain('handleCancelPreview');
     expect(src).toContain('Cancel');
+  });
+
+  it('Preview passes scope (retryOnly, limit) as query params to GET', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('admin/src/pages/LaunchSubscribers.tsx', 'utf-8');
+    const previewFn = src.substring(src.indexOf('async function handlePreview'), src.indexOf('async function handleConfirmSend'));
+    expect(previewFn).toContain('retryOnly');
+    expect(previewFn).toContain("limit: '50'");
+  });
+
+  it('Confirm & Send passes scope from preview, not hardcoded values', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('admin/src/pages/LaunchSubscribers.tsx', 'utf-8');
+    const confirmFn = src.substring(src.indexOf('async function handleConfirmSend'), src.indexOf('function handleCancelPreview'));
+    // Must use preview.scope.retryOnly, not retryMode
+    expect(confirmFn).toContain('preview.scope.retryOnly');
+    expect(confirmFn).toContain('preview.scope.sendLimit');
+    expect(confirmFn).not.toContain('retryMode');
+  });
+
+  it('preview display shows scope (retryOnly, limit)', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('admin/src/pages/LaunchSubscribers.tsx', 'utf-8');
+    expect(src).toContain('preview.scope.retryOnly');
+    expect(src).toContain('preview.scope.sendLimit');
   });
 });
 
