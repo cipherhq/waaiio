@@ -196,7 +196,7 @@ export default function SiteAnnouncementPage() {
             maxLength={200}
             value={config.headline}
             onChange={(e) => setConfig({ ...config, headline: e.target.value })}
-            placeholder="e.g. Waaiio launches October 2!"
+            placeholder="e.g. Waaiio launches soon!"
             className="w-full rounded-xl border border-gray-300 px-3 py-2 text-sm"
           />
         </div>
