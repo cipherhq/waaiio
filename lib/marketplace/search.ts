@@ -94,16 +94,16 @@ const DIRECTORY_MAX_RESULTS = 50;
  * businesses table. Used by both SSR pre-rendering and API/search paths
  * to ensure identical eligibility semantics.
  *
- * Eligible: status='active', bot_code IS NOT NULL, discovery_enabled != false.
- * Businesses that have never touched their discovery settings (null) are
- * included — only explicit opt-out (false) hides them.
+ * Eligible: status='active', bot_code IS NOT NULL, discovery_enabled is NOT false.
+ * Uses .or() to include both NULL (never configured) and true (opted in).
+ * Only explicit opt-out (discovery_enabled=false) hides a business.
  */
 // eslint-disable-next-line
 export function applyDirectoryEligibility(query: any): any {
   return query
     .eq('status', 'active')
     .not('bot_code', 'is', null)
-    .neq('discovery_enabled', false);
+    .or('discovery_enabled.is.null,discovery_enabled.eq.true');
 }
 
 // ── Search result type with error distinction ─────────

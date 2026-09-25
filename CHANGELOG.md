@@ -14,7 +14,7 @@ If something breaks, check this log to find what changed and when.
 - **`admin/src/pages/SiteAnnouncement.tsx`** (NEW): Admin page for managing announcements — enable/disable toggle, type/style selectors, headline/message, countdown target date, CTA config.
 - **`admin/src/routes.tsx`**: Added `/site-announcement` route.
 - **`admin/src/components/AdminSidebar.tsx`**: Added Site Announcement link in system section.
-- **`lib/marketplace/search.ts`**: Changed `applyDirectoryEligibility` from `eq('discovery_enabled', true)` to `neq('discovery_enabled', false)`. Businesses that never set discovery preferences (null) now appear in directory. Explicit opt-out (false) still hides them. Added +15 score boost for explicit opt-in.
+- **`lib/marketplace/search.ts`**: Changed `applyDirectoryEligibility` from `eq('discovery_enabled', true)` to `.or('discovery_enabled.is.null,discovery_enabled.eq.true')`. Businesses that never set discovery preferences (null) now appear in directory. Explicit opt-out (false) still hides them. Added +15 score boost for explicit opt-in.
 - **`lib/__tests__/issue-395-launch-readiness.test.ts`** (NEW): 22 tests covering announcement validation, directory eligibility (opt-in vs opt-out vs null), privacy (no sensitive fields), and maintenance mode isolation.
 - **Root cause (directory)**: `discovery_enabled` defaults to `false` in migration 239. Since no businesses had explicitly opted in via `/dashboard/discovery`, the directory returned zero results for all queries.
 - **Impact**: Directory now shows active businesses with a bot_code. Announcement system is separate from maintenance mode. No payment/bot/WhatsApp code changed.

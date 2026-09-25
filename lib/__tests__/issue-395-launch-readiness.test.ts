@@ -99,18 +99,17 @@ describe('Directory eligibility — applyDirectoryEligibility', () => {
     expect(botCodeCall).toBeDefined();
   });
 
-  it('excludes discovery_enabled=false (opt-out)', () => {
+  it('includes discovery_enabled=null OR discovery_enabled=true (opt-out model)', () => {
     const { builder, calls } = createMockQuery();
     applyDirectoryEligibility(builder);
-    const discoveryCall = calls.find(c => c.method === 'neq' && c.args[0] === 'discovery_enabled');
-    expect(discoveryCall).toBeDefined();
-    expect(discoveryCall!.args[1]).toBe(false);
+    const orCall = calls.find(c => c.method === 'or');
+    expect(orCall).toBeDefined();
+    expect(orCall!.args[0]).toBe('discovery_enabled.is.null,discovery_enabled.eq.true');
   });
 
-  it('does NOT require discovery_enabled=true (allows null/unset)', () => {
+  it('does NOT use strict eq(discovery_enabled, true) — that was the old bug', () => {
     const { builder, calls } = createMockQuery();
     applyDirectoryEligibility(builder);
-    // Should NOT have eq('discovery_enabled', true) — that was the old bug
     const strictOptIn = calls.find(
       c => c.method === 'eq' && c.args[0] === 'discovery_enabled' && c.args[1] === true,
     );
