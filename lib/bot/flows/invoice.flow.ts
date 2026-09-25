@@ -189,6 +189,8 @@ const invoicePayStep: FlowStepConfig = {
   id: 'invoice_pay',
 
   async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
+    // #393: Suppress re-prompt while awaiting saved-card PIN entry
+    if (ctx.session.session_data._awaiting_card_pin) return [];
     const invoiceId = ctx.session.session_data._selected_invoice_id as string;
 
     const { data: invoice, error: invoiceError } = await ctx.supabase

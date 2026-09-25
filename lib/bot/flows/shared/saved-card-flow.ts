@@ -65,6 +65,10 @@ export async function buildSavedCardOffer(
   if (!ctx.business) return null;
   const d = ctx.session.session_data;
   if (d._skip_saved_card) return null;
+  // #393: Prevent duplicate offer when PIN entry is in progress.
+  // When validate() sends the PIN prompt and next() re-enters the same step,
+  // prompt() must not re-emit the saved-card offer.
+  if (d._awaiting_card_pin) return null;
 
   const methods = await savedPaymentAdapter.getSavedMethods(
     ctx.supabase, ctx.business.id, ctx.from,
