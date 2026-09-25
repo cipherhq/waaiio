@@ -50,13 +50,35 @@ export default function LaunchSubscribers() {
     setSendResult(null);
     setSendError(null);
     try {
-      const res = await adminApiFetch('/api/admin/launch-notify', { retryOnly, limit: 50 });
-      const data = await res.json();
-      if (!res.ok) {
+      const { getAdminApiBase } = await import('@/lib/adminApi');
+      const base = getAdminApiBase();
+      const { data: session } = await import('@/lib/supabase').then(m => m.supabase.auth.getSession());
+      const token = session?.session?.access_token;
+      if (!token) throw new Error('Not authenticated');
+
+      // Step 1: Preview — get confirmToken
+      const previewRes = await fetch(`${base}/api/admin/launch-notify`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const preview = await previewRes.json();
+      if (!previewRes.ok) {
+        setSendError(preview.error || 'Preview failed');
+        setSending(false);
+        return;
+      }
+
+      // Step 2: Confirm send with token
+      const sendRes = await adminApiFetch('/api/admin/launch-notify', {
+        confirmToken: preview.confirmToken,
+        retryOnly,
+        limit: 50,
+      });
+      const data = await sendRes.json();
+      if (!sendRes.ok) {
         setSendError(data.error || 'Send failed');
       } else {
         setSendResult(data.summary);
-        await loadSubscribers(); // Refresh data
+        await loadSubscribers();
       }
     } catch (err) {
       setSendError(err instanceof Error ? err.message : 'Unknown error');

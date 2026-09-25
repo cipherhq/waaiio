@@ -5,12 +5,13 @@
  * Uses each subscriber's recorded regional Waaiio sender (receiving_number).
  *
  * Safety invariants:
- * - Never sends to opted-out subscribers
- * - Idempotent per (wa_number, campaign_version) — safe against retries
+ * - Atomic claim/fencing: exactly one worker owns delivery per subscriber+campaign
+ * - Losing claims MUST NOT send — claim_token verified before and after Meta call
+ * - Never sends to opted-out subscribers (enforced by claim RPC)
  * - Uses approved WhatsApp templates, not free-form outbound
- * - Template name/language configurable via platform_settings
+ * - Fails closed when template/config is missing or invalid
  * - No changes to payment, fulfillment, or commerce flows
- * - No live Meta sends during tests (MetaCloudService is injected)
+ * - No live Meta sends during tests (sendTemplateFn is injected)
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -57,10 +58,12 @@ export interface LaunchDeliveryConfig {
   campaignVersion: string;
 }
 
-// ── Default config ──
-
-const DEFAULT_TEMPLATE_NAME = 'waaiio_launch_alert';
-const DEFAULT_TEMPLATE_LANGUAGE = 'en_US';
+export class LaunchConfigError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'LaunchConfigError';
+  }
+}
 
 // ── Readiness counts ──
 
@@ -74,12 +77,18 @@ export async function getDeliveryReadiness(
   failed: number;
   skipped: number;
   opted_out: number;
+  confirmToken: string;
 }> {
   const { data: all } = await supabase
     .from('launch_subscribers')
     .select('opt_in_status, notification_status, campaign_version');
 
   const rows = all || [];
+
+  // Generate a confirmation token for the admin to use when triggering send
+  const { randomUUID } = await import('crypto');
+  const confirmToken = randomUUID();
+
   return {
     eligible: rows.filter(r => r.opt_in_status === 'active').length,
     pending: rows.filter(r => r.opt_in_status === 'active' && (r.notification_status === 'pending' || r.notification_status === 'failed') && r.campaign_version !== campaignVersion).length,
@@ -87,27 +96,49 @@ export async function getDeliveryReadiness(
     failed: rows.filter(r => r.campaign_version === campaignVersion && r.notification_status === 'failed').length,
     skipped: rows.filter(r => r.notification_status === 'skipped' || r.opt_in_status === 'opted_out').length,
     opted_out: rows.filter(r => r.opt_in_status === 'opted_out').length,
+    confirmToken,
   };
 }
 
-// ── Load config from platform_settings ──
+// ── Load config from platform_settings — FAILS CLOSED ──
 
 export async function loadDeliveryConfig(
   supabase: SupabaseClient,
 ): Promise<LaunchDeliveryConfig> {
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from('platform_settings')
     .select('value')
     .eq('key', 'launch_notification_config')
     .single();
 
-  const config = (data?.value || {}) as Record<string, unknown>;
+  if (error || !data?.value) {
+    throw new LaunchConfigError(
+      'launch_notification_config not found in platform_settings. Seed it before sending.',
+    );
+  }
+
+  const config = data.value as Record<string, unknown>;
+
+  const templateName = config.template_name as string | undefined;
+  const templateLanguage = config.template_language as string | undefined;
+  const campaignVersion = config.campaign_version as string | undefined;
+
+  if (!templateName || templateName.trim().length === 0) {
+    throw new LaunchConfigError(
+      'launch_notification_config.template_name is missing or empty. Set an approved Meta template name.',
+    );
+  }
+  if (!campaignVersion || campaignVersion.trim().length === 0) {
+    throw new LaunchConfigError(
+      'launch_notification_config.campaign_version is missing or empty.',
+    );
+  }
 
   return {
-    templateName: (config.template_name as string) || DEFAULT_TEMPLATE_NAME,
-    templateLanguage: (config.template_language as string) || DEFAULT_TEMPLATE_LANGUAGE,
-    templateParams: (config.template_params as string[]) || ['Waaiio'],
-    campaignVersion: (config.campaign_version as string) || 'v1',
+    templateName: templateName.trim(),
+    templateLanguage: (templateLanguage || 'en_US').trim(),
+    templateParams: (config.template_params as string[]) || [],
+    campaignVersion: campaignVersion.trim(),
   };
 }
 
@@ -129,11 +160,11 @@ export async function resolveChannelCredentials(
   return data as ChannelCredentials;
 }
 
-// ── Send to a single subscriber ──
+// ── Atomic claim + send to a single subscriber ──
 
-export async function sendToSubscriber(
+export async function claimAndSendToSubscriber(
   supabase: SupabaseClient,
-  subscriber: LaunchSubscriber,
+  subscriberId: string,
   config: LaunchDeliveryConfig,
   sendTemplateFn: (
     credentials: ChannelCredentials,
@@ -143,75 +174,82 @@ export async function sendToSubscriber(
     params: string[],
   ) => Promise<{ messageId: string }>,
 ): Promise<DeliveryResult> {
-  const { id, wa_number, receiving_number, opt_in_status } = subscriber;
+  // Step 1: Atomic claim — only one worker can win
+  const { data: claimResult, error: claimError } = await supabase.rpc(
+    'claim_launch_delivery',
+    { p_subscriber_id: subscriberId, p_campaign_version: config.campaignVersion },
+  );
 
-  // Guard: never send to opted-out subscribers
-  if (opt_in_status !== 'active') {
-    await supabase
-      .from('launch_subscribers')
-      .update({ notification_status: 'skipped', updated_at: new Date().toISOString() })
-      .eq('id', id);
-    return { subscriberId: id, status: 'skipped', error: 'opted_out' };
+  if (claimError) {
+    logger.error(`[LAUNCH] Claim RPC error for subscriber=${subscriberId}:`, claimError.message);
+    return { subscriberId, status: 'failed', error: 'claim_rpc_error' };
   }
 
-  // Guard: idempotent — skip if already sent for this campaign
-  if (subscriber.campaign_version === config.campaignVersion && subscriber.notification_status === 'sent') {
-    return { subscriberId: id, status: 'skipped', error: 'already_sent' };
+  const claim = claimResult as { claimed: boolean; claim_token?: string; wa_number?: string; receiving_number?: string; reason?: string; already_sent?: boolean };
+
+  if (!claim?.claimed) {
+    if (claim?.already_sent) {
+      return { subscriberId, status: 'skipped', error: 'already_sent' };
+    }
+    if (claim?.reason === 'opted_out') {
+      return { subscriberId, status: 'skipped', error: 'opted_out' };
+    }
+    return { subscriberId, status: 'skipped', error: claim?.reason || 'claim_lost' };
   }
 
-  // Resolve channel credentials for the subscriber's regional sender
-  const credentials = await resolveChannelCredentials(supabase, receiving_number);
+  const claimToken = claim.claim_token!;
+  const waNumber = claim.wa_number!;
+  const receivingNumber = claim.receiving_number!;
+
+  // Step 2: Resolve channel credentials
+  const credentials = await resolveChannelCredentials(supabase, receivingNumber);
   if (!credentials) {
-    logger.warn(`[LAUNCH] No channel found for receiving_number=${receiving_number}, subscriber=${id}`);
-    await supabase
-      .from('launch_subscribers')
-      .update({
-        notification_status: 'failed',
-        delivery_error: 'no_channel_credentials',
-        campaign_version: config.campaignVersion,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', id);
-    return { subscriberId: id, status: 'failed', error: 'no_channel_credentials' };
+    logger.warn(`[LAUNCH] No channel for receiving_number=${receivingNumber}, subscriber=${subscriberId}`);
+    await supabase.rpc('complete_launch_delivery', {
+      p_subscriber_id: subscriberId,
+      p_claim_token: claimToken,
+      p_status: 'failed',
+      p_error: 'no_channel_credentials',
+    });
+    return { subscriberId, status: 'failed', error: 'no_channel_credentials' };
   }
 
+  // Step 3: Send template — ONLY if we hold the claim
   try {
     const result = await sendTemplateFn(
       credentials,
-      wa_number,
+      waNumber,
       config.templateName,
       config.templateLanguage,
       config.templateParams,
     );
 
-    await supabase
-      .from('launch_subscribers')
-      .update({
-        notification_status: 'sent',
-        provider_message_id: result.messageId,
-        campaign_version: config.campaignVersion,
-        delivery_error: null,
-        delivered_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', id);
+    // Step 4: Complete claim with success — claim_token is verified by RPC
+    const { data: completeResult } = await supabase.rpc('complete_launch_delivery', {
+      p_subscriber_id: subscriberId,
+      p_claim_token: claimToken,
+      p_status: 'sent',
+      p_message_id: result.messageId,
+    });
 
-    return { subscriberId: id, status: 'sent', messageId: result.messageId };
+    if (!(completeResult as { completed?: boolean })?.completed) {
+      // We sent but lost the claim — log but don't fail (message was delivered)
+      logger.warn(`[LAUNCH] Claim lost after send for subscriber=${subscriberId} — message delivered but status may be stale`);
+    }
+
+    return { subscriberId, status: 'sent', messageId: result.messageId };
   } catch (err) {
     const errText = err instanceof Error ? err.message : String(err);
-    logger.error(`[LAUNCH] Send failed for subscriber=${id}:`, errText);
+    logger.error(`[LAUNCH] Send failed for subscriber=${subscriberId}:`, errText);
 
-    await supabase
-      .from('launch_subscribers')
-      .update({
-        notification_status: 'failed',
-        delivery_error: errText.substring(0, 500),
-        campaign_version: config.campaignVersion,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', id);
+    await supabase.rpc('complete_launch_delivery', {
+      p_subscriber_id: subscriberId,
+      p_claim_token: claimToken,
+      p_status: 'failed',
+      p_error: errText.substring(0, 500),
+    });
 
-    return { subscriberId: id, status: 'failed', error: errText };
+    return { subscriberId, status: 'failed', error: errText };
   }
 }
 
@@ -231,50 +269,43 @@ export async function deliverLaunchNotifications(
 ): Promise<DeliverySummary> {
   const limit = options?.limit || 100;
 
-  // Query eligible subscribers
+  // Query candidate subscribers (actual eligibility enforced by claim RPC)
   let query = supabase
     .from('launch_subscribers')
-    .select('id, wa_number, market, receiving_number, opt_in_status, notification_status, campaign_version')
+    .select('id')
     .eq('opt_in_status', 'active')
     .limit(limit);
 
   if (options?.retryOnly) {
-    // Retry only failed/pending for this campaign version
     query = query
       .eq('campaign_version', config.campaignVersion)
       .in('notification_status', ['failed', 'pending']);
   } else {
-    // Send to pending or those not yet sent for this campaign
     query = query.in('notification_status', ['pending', 'failed']);
   }
 
-  const { data: subscribers, error } = await query;
+  const { data: candidates, error } = await query;
 
-  if (error || !subscribers) {
+  if (error || !candidates) {
     logger.error('[LAUNCH] Failed to query subscribers:', error?.message);
     return { total: 0, sent: 0, failed: 0, skipped: 0, results: [] };
   }
-
-  // Filter out already-sent for this campaign version (belt + suspenders for idempotency)
-  const eligible = subscribers.filter(
-    s => !(s.campaign_version === config.campaignVersion && s.notification_status === 'sent'),
-  );
 
   const results: DeliveryResult[] = [];
   let sent = 0;
   let failed = 0;
   let skipped = 0;
 
-  // Process sequentially to respect rate limits
-  for (const sub of eligible) {
-    const result = await sendToSubscriber(supabase, sub, config, sendTemplateFn);
+  // Process sequentially to respect rate limits + claim ordering
+  for (const candidate of candidates) {
+    const result = await claimAndSendToSubscriber(supabase, candidate.id, config, sendTemplateFn);
     results.push(result);
     if (result.status === 'sent') sent++;
     else if (result.status === 'failed') failed++;
     else skipped++;
   }
 
-  return { total: eligible.length, sent, failed, skipped, results };
+  return { total: candidates.length, sent, failed, skipped, results };
 }
 
 // ── Production send function (uses MetaCloudService) ──
@@ -286,7 +317,6 @@ export async function metaCloudSendTemplate(
   language: string,
   params: string[],
 ): Promise<{ messageId: string }> {
-  // Dynamic import to avoid loading Meta SDK in test context
   const { MetaCloudService } = await import('@/lib/channels/meta-cloud');
   const cloud = new MetaCloudService({
     accessToken: credentials.meta_access_token || process.env.META_CLOUD_ACCESS_TOKEN || '',
