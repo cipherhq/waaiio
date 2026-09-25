@@ -3,6 +3,26 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-09-25 — Feature: Launch alert delivery pipeline (#397)
+
+### What changed
+- **`supabase/migrations/404_launch_delivery_columns.sql`** (NEW): Adds `campaign_version`, `provider_message_id`, `delivery_error`, `delivered_at` columns to `launch_subscribers`. Unique index on `(wa_number, campaign_version)` for idempotent per-campaign delivery. Seeds `launch_notification_config` in `platform_settings` for configurable template name/language/params/campaign_version.
+- **`lib/launch/delivery.ts`** (NEW): Delivery service — resolves channel credentials per subscriber's `receiving_number`, sends approved WhatsApp template (not free-form), records delivery status. `sendToSubscriber()` handles individual delivery with opt-out guard + idempotency check. `deliverLaunchNotifications()` handles batch delivery. `metaCloudSendTemplate()` is the production send function (uses MetaCloudService with per-channel credentials). `loadDeliveryConfig()` reads template config from `platform_settings`. `getDeliveryReadiness()` returns eligible/pending/sent/failed/skipped/opted_out counts.
+- **`app/api/admin/launch-notify/route.ts`** (NEW): Admin-only GET (readiness counts) + POST (trigger delivery). Supports `dryRun`, `retryOnly`, and `limit` parameters.
+- **`lib/bot/bot.service.ts`**: Added fire-and-forget `launch_subscribers` opt-out update in STOP handler. Non-blocking — does not affect existing commerce STOP flow. 4 lines added.
+- **`admin/src/pages/LaunchSubscribers.tsx`**: Added delivery controls — Send Notifications button, Retry Failed button, result/error display.
+- **`lib/launch/__tests__/delivery.test.ts`** (NEW): 18 tests covering opt-out respect, idempotent replay, missing channel credentials, provider failure, batch delivery, STOP isolation, migration schema, config loading, commerce isolation, and template-only sending.
+- **`supabase/migrations/405_launch_delivery_claim.sql`** (NEW): Atomic claim/fencing RPCs — `claim_launch_delivery` (UPDATE...WHERE with claim_token, stale claim expiry 5min) and `complete_launch_delivery` (token-verified status update). Two concurrent callers cannot both win — exactly one worker owns delivery per subscriber+campaign.
+- **`lib/launch/delivery.ts`**: (CTO correction) Replaced read-then-write pattern with atomic claim RPC. `claimAndSendToSubscriber()` calls `claim_launch_delivery` before any Meta call — losing claims do not send. `loadDeliveryConfig()` now fails closed (throws `LaunchConfigError`) when config is missing or template_name/campaign_version is empty. Removed silent fallback defaults.
+- **`supabase/migrations/406_launch_delivery_confirmation.sql`** (NEW): DB-backed confirmation tokens for serverless-safe two-step admin flow. `launch_delivery_confirmations` table with admin_id/campaign_version/scope binding. `consume_launch_confirmation` RPC with atomic UPDATE...WHERE for replay protection, expiry (5min), admin binding, and campaign binding.
+- **`supabase/migrations/407_confirmation_scope_binding.sql`** (NEW): Adds `retry_only` and `send_limit` columns to confirmations table. Replaces `consume_launch_confirmation` RPC with scope-bound version that checks `AND retry_only = p_retry_only AND send_limit = p_send_limit`. Returns `scope_mismatch` on mismatch.
+- **`app/api/admin/launch-notify/route.ts`**: (CTO corrections R2+R3) DB-backed confirmation with full scope binding. GET accepts `?retryOnly=&limit=` query params, stores scope in confirmation row. POST passes scope to consume RPC for atomic verification — a token previewed for "all pending, limit 50" cannot authorize "retry only, limit 200". Delivery scope comes from the consumed token.
+- **`admin/src/pages/LaunchSubscribers.tsx`**: Updated send handler to GET confirmToken before POST.
+- **Root cause**: #395/#396 created launch subscribers but had no delivery path for actually sending the launch alert.
+- **Impact**: Admin can now trigger launch notifications. Template name/language/campaign_version are configurable. One notification per subscriber per campaign. Opted-out subscribers are never sent. Regional sender is used per subscriber.
+- **What could break**: None expected. Delivery service is fully isolated from commerce/payment/booking flows. No existing code changed except 4-line STOP handler addition (fire-and-forget). No live Meta sends in tests or during implementation.
+- **Files**: migration 404, `lib/launch/delivery.ts`, `app/api/admin/launch-notify/route.ts`, `lib/bot/bot.service.ts`, `admin/src/pages/LaunchSubscribers.tsx`, `lib/launch/__tests__/delivery.test.ts`
+
 ## 2026-09-24 — Feature: Launch readiness — site announcement + directory fix (#395)
 
 ### What changed

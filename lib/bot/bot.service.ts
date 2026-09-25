@@ -131,6 +131,13 @@ export class BotService {
         opted_out_at: new Date().toISOString(),
       }, { onConflict: 'phone,business_id,channel' }).select();
 
+      // #397: Also mark launch subscriber as opted-out (non-blocking, isolated)
+      this.supabase.from('launch_subscribers')
+        .update({ opt_in_status: 'opted_out', notification_status: 'skipped', updated_at: new Date().toISOString() })
+        .eq('wa_number', from)
+        .eq('opt_in_status', 'active')
+        .then(() => {}, () => {}); // fire-and-forget, never blocks commerce STOP
+
       await this.sendPlatformText(from, 'You have been unsubscribed. You will no longer receive promotional messages. Send START to resubscribe.');
       return;
     }
