@@ -71,6 +71,7 @@ import AIMarketplace from './pages/AIMarketplace';
 import Promotions from './pages/Promotions';
 import ClassSessions from './pages/ClassSessions';
 import SiteAnnouncementPage from './pages/SiteAnnouncement';
+import LaunchSubscribers from './pages/LaunchSubscribers';
 
 export const router = createBrowserRouter([
   { path: '/login', Component: Login },
@@ -139,6 +140,7 @@ export const router = createBrowserRouter([
       { path: 'permissions', element: <RoleGuard roles={ADMIN_PERMISSIONS['permissions']}><AdminPermissions /></RoleGuard> },
       { path: 'ai-marketplace', element: <RoleGuard roles={ADMIN_PERMISSIONS['ai-marketplace'] || ['admin']}><AIMarketplace /></RoleGuard> },
       { path: 'site-announcement', element: <RoleGuard roles={ADMIN_PERMISSIONS['platform-settings']}><SiteAnnouncementPage /></RoleGuard> },
+      { path: 'launch-subscribers', element: <RoleGuard roles={ADMIN_PERMISSIONS['platform-settings']}><LaunchSubscribers /></RoleGuard> },
     ],
   },
   { path: '*', element: <Navigate to="/dashboard" replace /> },
