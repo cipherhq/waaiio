@@ -317,33 +317,73 @@ describe('loadDeliveryConfig — fail closed', () => {
   });
 });
 
-// ── Admin preview-first flow ──
+// ── Admin two-step confirmation flow ──
 
-describe('Admin API — preview-first safety', () => {
-  it('admin API route requires confirmToken for POST', () => {
+describe('Admin API — DB-backed confirmation flow', () => {
+  it('Preview (GET) never calls deliverLaunchNotifications', () => {
     const fs = require('fs');
     const src = fs.readFileSync('app/api/admin/launch-notify/route.ts', 'utf-8');
-    expect(src).toContain('confirmToken');
+    // GET function should not contain deliverLaunchNotifications
+    const getHandler = src.substring(src.indexOf('export async function GET'), src.indexOf('export async function POST'));
+    expect(getHandler).not.toContain('deliverLaunchNotifications');
+    expect(getHandler).not.toContain('metaCloudSendTemplate');
+  });
+
+  it('POST without confirmToken fails with 400', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('app/api/admin/launch-notify/route.ts', 'utf-8');
     expect(src).toContain('Missing confirmToken');
+    expect(src).toContain('status: 400');
   });
 
-  it('GET returns a confirmToken', () => {
+  it('confirmation is DB-backed (not in-memory Map)', () => {
     const fs = require('fs');
     const src = fs.readFileSync('app/api/admin/launch-notify/route.ts', 'utf-8');
-    expect(src).toContain('readiness.confirmToken');
-    expect(src).toContain('pendingConfirmations.set');
+    // Must NOT use in-memory Map
+    expect(src).not.toContain('new Map');
+    expect(src).not.toContain('pendingConfirmations');
+    // Must use DB table
+    expect(src).toContain('launch_delivery_confirmations');
+    // Must use atomic consume RPC
+    expect(src).toContain('consume_launch_confirmation');
   });
 
-  it('confirmToken is single-use (consumed on POST)', () => {
+  it('confirmation is bound to admin (wrong_admin rejection)', () => {
     const fs = require('fs');
     const src = fs.readFileSync('app/api/admin/launch-notify/route.ts', 'utf-8');
-    expect(src).toContain('pendingConfirmations.delete(confirmToken)');
+    expect(src).toContain('wrong_admin');
+    expect(src).toContain('p_admin_id');
   });
 
-  it('POST rejects if campaign_version changed since preview', () => {
+  it('confirmation is bound to campaign version (campaign_mismatch rejection)', () => {
     const fs = require('fs');
     const src = fs.readFileSync('app/api/admin/launch-notify/route.ts', 'utf-8');
-    expect(src).toContain('Campaign version changed');
+    expect(src).toContain('campaign_mismatch');
+    expect(src).toContain('p_campaign_version');
+  });
+
+  it('replay fails (already_consumed rejection)', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('app/api/admin/launch-notify/route.ts', 'utf-8');
+    expect(src).toContain('already_consumed');
+    expect(src).toContain('already used');
+  });
+
+  it('expired confirmation fails', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('app/api/admin/launch-notify/route.ts', 'utf-8');
+    expect(src).toContain('expired');
+  });
+
+  it('only POST with valid consumed confirmation invokes delivery', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('app/api/admin/launch-notify/route.ts', 'utf-8');
+    // deliverLaunchNotifications must only appear AFTER consume check
+    const postHandler = src.substring(src.indexOf('export async function POST'));
+    const consumeIdx = postHandler.indexOf("consume?.consumed");
+    const deliverIdx = postHandler.indexOf('deliverLaunchNotifications');
+    expect(consumeIdx).toBeGreaterThan(-1);
+    expect(deliverIdx).toBeGreaterThan(consumeIdx);
   });
 
   it('config errors return 422 not 500', () => {
@@ -351,6 +391,97 @@ describe('Admin API — preview-first safety', () => {
     const src = fs.readFileSync('app/api/admin/launch-notify/route.ts', 'utf-8');
     expect(src).toContain('LaunchConfigError');
     expect(src).toContain('422');
+  });
+});
+
+// ── DB confirmation RPC schema ──
+
+describe('Migration 406 — DB-backed confirmation tokens', () => {
+  it('creates launch_delivery_confirmations table', () => {
+    const fs = require('fs');
+    const sql = fs.readFileSync('supabase/migrations/406_launch_delivery_confirmation.sql', 'utf-8');
+    expect(sql).toContain('launch_delivery_confirmations');
+    expect(sql).toContain('admin_id');
+    expect(sql).toContain('campaign_version');
+    expect(sql).toContain('consumed_at');
+  });
+
+  it('consume RPC checks admin_id binding', () => {
+    const fs = require('fs');
+    const sql = fs.readFileSync('supabase/migrations/406_launch_delivery_confirmation.sql', 'utf-8');
+    expect(sql).toContain('AND admin_id = p_admin_id');
+  });
+
+  it('consume RPC checks campaign_version binding', () => {
+    const fs = require('fs');
+    const sql = fs.readFileSync('supabase/migrations/406_launch_delivery_confirmation.sql', 'utf-8');
+    expect(sql).toContain('AND campaign_version = p_campaign_version');
+  });
+
+  it('consume RPC prevents replay (consumed_at IS NULL)', () => {
+    const fs = require('fs');
+    const sql = fs.readFileSync('supabase/migrations/406_launch_delivery_confirmation.sql', 'utf-8');
+    expect(sql).toContain('AND consumed_at IS NULL');
+  });
+
+  it('consume RPC enforces 5-minute expiry', () => {
+    const fs = require('fs');
+    const sql = fs.readFileSync('supabase/migrations/406_launch_delivery_confirmation.sql', 'utf-8');
+    expect(sql).toContain("INTERVAL '5 minutes'");
+  });
+
+  it('table has RLS enabled (admin-only)', () => {
+    const fs = require('fs');
+    const sql = fs.readFileSync('supabase/migrations/406_launch_delivery_confirmation.sql', 'utf-8');
+    expect(sql).toContain('ENABLE ROW LEVEL SECURITY');
+    expect(sql).toContain('is_admin()');
+  });
+
+  it('scope is recorded (eligible_count, pending_count)', () => {
+    const fs = require('fs');
+    const sql = fs.readFileSync('supabase/migrations/406_launch_delivery_confirmation.sql', 'utf-8');
+    expect(sql).toContain('eligible_count');
+    expect(sql).toContain('pending_count');
+  });
+});
+
+// ── Admin UI two-step flow ──
+
+describe('Admin UI — two-step Preview then Confirm & Send', () => {
+  it('has separate handlePreview and handleConfirmSend functions', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('admin/src/pages/LaunchSubscribers.tsx', 'utf-8');
+    expect(src).toContain('handlePreview');
+    expect(src).toContain('handleConfirmSend');
+  });
+
+  it('Preview button does not call adminApiFetch (no POST)', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('admin/src/pages/LaunchSubscribers.tsx', 'utf-8');
+    // handlePreview should use GET (fetch), not adminApiFetch (POST)
+    const previewFn = src.substring(src.indexOf('async function handlePreview'), src.indexOf('async function handleConfirmSend'));
+    expect(previewFn).not.toContain('adminApiFetch');
+  });
+
+  it('Confirm & Send button is separate from Preview', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('admin/src/pages/LaunchSubscribers.tsx', 'utf-8');
+    expect(src).toContain("'Preview Send'");
+    expect(src).toContain("'Confirm & Send'");
+  });
+
+  it('Confirm & Send only appears after preview data is loaded', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('admin/src/pages/LaunchSubscribers.tsx', 'utf-8');
+    // The Confirm & Send button is inside {preview && (...)}
+    expect(src).toContain('{preview && (');
+  });
+
+  it('has a Cancel button to dismiss preview without sending', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('admin/src/pages/LaunchSubscribers.tsx', 'utf-8');
+    expect(src).toContain('handleCancelPreview');
+    expect(src).toContain('Cancel');
   });
 });
 
