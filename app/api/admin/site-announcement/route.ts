@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requirePlatformAdmin } from '@/lib/admin-auth';
 import { createServiceClient } from '@/lib/supabase/service';
 
+export const dynamic = 'force-dynamic';
+
 const VALID_TYPES = ['launch_countdown', 'maintenance_notice', 'general'] as const;
 const VALID_STYLES = ['brand', 'warning', 'info'] as const;
 
