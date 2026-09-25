@@ -719,6 +719,8 @@ export const reservationFlow: FlowDefinition = {
       },
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
         const d = ctx.session.session_data;
+        // #393: Suppress re-prompt while awaiting saved-card PIN entry
+        if (d._awaiting_card_pin) return [];
         const cc = (ctx.business?.country_code || 'NG') as CountryCode;
 
         // Ensure user exists

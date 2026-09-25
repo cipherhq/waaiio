@@ -473,6 +473,8 @@ export const ticketingFlow: FlowDefinition = {
       },
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
         const d = ctx.session.session_data;
+        // #393: Suppress re-prompt while awaiting saved-card PIN entry
+        if (d._awaiting_card_pin) return [];
         const qty = d.ticket_quantity as number;
         const total = d.total_amount as number;
 
