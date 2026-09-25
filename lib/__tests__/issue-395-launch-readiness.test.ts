@@ -186,3 +186,116 @@ describe('Maintenance mode isolation', () => {
     expect(VALID_TYPES).not.toContain('maintenance_mode');
   });
 });
+
+// ── D. Discovery default-on ──────────────────────────────
+
+describe('Discovery default-on semantics', () => {
+  it('migration 403 changes column default from false to true', () => {
+    const fs = require('fs');
+    const migration = fs.readFileSync('supabase/migrations/403_discovery_default_on.sql', 'utf-8');
+    expect(migration).toContain('SET DEFAULT true');
+  });
+
+  it('migration 403 backfills NULL values to true', () => {
+    const fs = require('fs');
+    const migration = fs.readFileSync('supabase/migrations/403_discovery_default_on.sql', 'utf-8');
+    expect(migration).toContain('SET discovery_enabled = true WHERE discovery_enabled IS NULL');
+  });
+
+  it('dashboard discovery page defaults discovery_enabled to true', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('app/dashboard/discovery/page.tsx', 'utf-8');
+    expect(src).toContain('discovery_enabled: true');
+    // Must NOT contain the old false default
+    expect(src).not.toContain('discovery_enabled: false');
+  });
+
+  it('eligibility filter includes businesses with discovery_enabled=true (default-on)', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('lib/marketplace/search.ts', 'utf-8');
+    const helperBody = src.substring(
+      src.indexOf('function applyDirectoryEligibility'),
+      src.indexOf('// ── Search result type'),
+    );
+    // Must include true values
+    expect(helperBody).toContain('discovery_enabled.eq.true');
+  });
+
+  it('eligibility filter excludes businesses with discovery_enabled=false (explicit opt-out)', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('lib/marketplace/search.ts', 'utf-8');
+    const helperBody = src.substring(
+      src.indexOf('function applyDirectoryEligibility'),
+      src.indexOf('// ── Search result type'),
+    );
+    // .or() filter only includes null and true — false is excluded
+    expect(helperBody).not.toContain('discovery_enabled.eq.false');
+  });
+});
+
+// ── E. Announcement-driven launch date ───────────────────
+
+describe('Launch page — announcement-driven date', () => {
+  it('does NOT contain a hard-coded launch date constant', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('app/(marketing)/launch/LaunchClient.tsx', 'utf-8');
+    // Must not have LAUNCH_DATE constant or hard-coded October 2
+    expect(src).not.toContain("LAUNCH_DATE = '");
+    expect(src).not.toMatch(/2026-10-02/);
+    expect(src).not.toMatch(/October 2(?!\{)/); // No literal "October 2" (but "October 2" from formatLaunchDate is OK since it's dynamic)
+  });
+
+  it('fetches target_date from /api/site-announcement', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('app/(marketing)/launch/LaunchClient.tsx', 'utf-8');
+    expect(src).toContain('/api/site-announcement');
+    expect(src).toContain('target_date');
+  });
+
+  it('countdown is driven by announcement.target_date, not a constant', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('app/(marketing)/launch/LaunchClient.tsx', 'utf-8');
+    expect(src).toContain('announcement?.target_date');
+    expect(src).toContain('computeTimeLeft(announcement.target_date');
+  });
+
+  it('shows "coming soon" when no target_date is set', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('app/(marketing)/launch/LaunchClient.tsx', 'utf-8');
+    expect(src).toContain('coming soon');
+  });
+
+  it('page metadata does not hard-code a launch date', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('app/(marketing)/launch/page.tsx', 'utf-8');
+    expect(src).not.toContain('October 2');
+    expect(src).not.toMatch(/2026-10/);
+  });
+});
+
+// ── F. QR code — no external dependency ──────────────────
+
+describe('QR code — local generation', () => {
+  it('uses qrcode.react for QR generation (no external API)', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('app/(marketing)/launch/LaunchClient.tsx', 'utf-8');
+    expect(src).toContain("from 'qrcode.react'");
+    expect(src).toContain('QRCodeSVG');
+    // Must NOT reference external QR services
+    expect(src).not.toContain('api.qrserver.com');
+    expect(src).not.toContain('chart.googleapis.com');
+  });
+});
+
+// ── G. Phone formatting ──────────────────────────────────
+
+describe('Phone formatting — international numbers', () => {
+  it('does not assume 11-digit US numbers only', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('app/(marketing)/launch/LaunchClient.tsx', 'utf-8');
+    // Must handle Nigeria (234...), Ghana (233...), UK (44...)
+    expect(src).toContain('234');
+    expect(src).toContain('233');
+    expect(src).toContain("'44'");
+  });
+});

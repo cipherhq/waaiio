@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { QRCodeSVG } from 'qrcode.react';
 
 // ── Types ──
 
@@ -18,18 +19,25 @@ interface TimeLeft {
   seconds: number;
 }
 
+interface AnnouncementConfig {
+  enabled: boolean;
+  type: string;
+  headline: string;
+  message: string;
+  target_date: string | null;
+}
+
 // ── Constants ──
 
-const LAUNCH_DATE = '2026-10-02T00:00:00Z';
 const OPT_IN_MESSAGE = 'Notify me when Waaiio launches';
 
 const WAAIIO_101 = [
-  { emoji: '📅', text: 'Book appointments & reservations' },
-  { emoji: '💳', text: 'Accept payments on WhatsApp' },
-  { emoji: '🛒', text: 'Take orders & sell products' },
-  { emoji: '🎟️', text: 'Sell event tickets' },
-  { emoji: '💝', text: 'Receive donations & giving' },
-  { emoji: '🤖', text: 'AI-powered automation for 89+ business types' },
+  { emoji: '\u{1F4C5}', text: 'Book appointments & reservations' },
+  { emoji: '\u{1F4B3}', text: 'Accept payments on WhatsApp' },
+  { emoji: '\u{1F6D2}', text: 'Take orders & sell products' },
+  { emoji: '\u{1F3AB}', text: 'Sell event tickets' },
+  { emoji: '\u{1F49D}', text: 'Receive donations & giving' },
+  { emoji: '\u{1F916}', text: 'AI-powered automation for 89+ business types' },
 ];
 
 // ── Helpers ──
@@ -50,12 +58,43 @@ function buildWhatsAppLink(phone: string, source: 'button' | 'qr') {
   return `https://wa.me/${phone.replace(/\D/g, '')}?text=${msg}`;
 }
 
-function formatPhone(phone: string) {
+/** Format an international phone number for display. Handles variable-length numbers. */
+function formatPhone(phone: string): string {
   const digits = phone.replace(/\D/g, '');
-  if (digits.length === 11) {
-    return `+${digits.slice(0, 1)}-${digits.slice(1, 4)}-${digits.slice(4, 7)}-${digits.slice(7)}`;
+  // Group: country code (1-3 digits) then remaining in chunks of 3-4
+  if (digits.length <= 4) return digits;
+  // Try common patterns
+  if (digits.startsWith('1') && digits.length === 11) {
+    // NANP: 1-XXX-XXX-XXXX
+    return `${digits.slice(0, 1)} ${digits.slice(1, 4)} ${digits.slice(4, 7)} ${digits.slice(7)}`;
   }
-  return `+${digits}`;
+  if (digits.startsWith('44') && digits.length >= 12) {
+    // UK: 44 XXXX XXXXXX
+    return `${digits.slice(0, 2)} ${digits.slice(2, 6)} ${digits.slice(6)}`;
+  }
+  if (digits.startsWith('234') && digits.length >= 13) {
+    // Nigeria: 234 XXX XXX XXXX
+    return `${digits.slice(0, 3)} ${digits.slice(3, 6)} ${digits.slice(6, 9)} ${digits.slice(9)}`;
+  }
+  if (digits.startsWith('233') && digits.length >= 12) {
+    // Ghana: 233 XX XXX XXXX
+    return `${digits.slice(0, 3)} ${digits.slice(3, 5)} ${digits.slice(5, 8)} ${digits.slice(8)}`;
+  }
+  // Generic fallback: country code (1-3 digits) + groups of 3
+  const cc = digits.length > 10 ? digits.slice(0, digits.length - 10) : digits.slice(0, 1);
+  const rest = digits.slice(cc.length);
+  const groups = rest.match(/.{1,3}/g) || [];
+  return `${cc} ${groups.join(' ')}`;
+}
+
+/** Format a target date for display in the hero heading */
+function formatLaunchDate(isoDate: string): string {
+  try {
+    const d = new Date(isoDate);
+    return d.toLocaleDateString('en-US', { month: 'long', day: 'numeric' });
+  } catch {
+    return '';
+  }
 }
 
 // ── Geo detection (best-effort from timezone) ──
@@ -79,42 +118,49 @@ function detectCountryFromTimezone(): string | null {
 export default function LaunchClient() {
   const [regions, setRegions] = useState<Region[]>([]);
   const [selectedCode, setSelectedCode] = useState<string>('');
+  const [announcement, setAnnouncement] = useState<AnnouncementConfig | null>(null);
   const [timeLeft, setTimeLeft] = useState<TimeLeft | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // Fetch regions
+  // Fetch regions + announcement config in parallel
   useEffect(() => {
-    fetch('/api/launch/regions')
-      .then(r => r.ok ? r.json() : null)
-      .then(data => {
-        const list: Region[] = data?.regions || [];
-        setRegions(list);
+    Promise.all([
+      fetch('/api/launch/regions').then(r => r.ok ? r.json() : null).catch(() => null),
+      fetch('/api/site-announcement').then(r => r.ok ? r.json() : null).catch(() => null),
+    ]).then(([regionsData, announcementData]) => {
+      // Regions
+      const list: Region[] = regionsData?.regions || [];
+      setRegions(list);
+      const detected = detectCountryFromTimezone();
+      const match = list.find(r => r.code === detected);
+      setSelectedCode(match?.code || list[0]?.code || '');
 
-        // Auto-detect region, with fallback to first available
-        const detected = detectCountryFromTimezone();
-        const match = list.find(r => r.code === detected);
-        setSelectedCode(match?.code || list[0]?.code || '');
-        setLoading(false);
-      })
-      .catch(() => setLoading(false));
+      // Announcement (authoritative source for launch date)
+      if (announcementData?.enabled) {
+        setAnnouncement(announcementData);
+      }
+
+      setLoading(false);
+    });
   }, []);
 
-  // Countdown timer
+  // Countdown timer — driven by announcement target_date
   useEffect(() => {
-    const tick = () => setTimeLeft(computeTimeLeft(LAUNCH_DATE));
+    if (!announcement?.target_date) return;
+    const tick = () => setTimeLeft(computeTimeLeft(announcement.target_date!));
     tick();
     const id = setInterval(tick, 1000);
     return () => clearInterval(id);
-  }, []);
+  }, [announcement?.target_date]);
 
   const selectedRegion = regions.find(r => r.code === selectedCode);
   const waLink = selectedRegion ? buildWhatsAppLink(selectedRegion.phone, 'button') : '#';
   const qrLink = selectedRegion ? buildWhatsAppLink(selectedRegion.phone, 'qr') : '';
 
-  // QR code via public API (no key needed)
-  const qrImageUrl = qrLink
-    ? `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(qrLink)}`
-    : '';
+  // Derive display date from announcement
+  const launchDateDisplay = announcement?.target_date
+    ? formatLaunchDate(announcement.target_date)
+    : null;
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-brand-900 via-brand-800 to-brand-900 text-white">
@@ -123,18 +169,31 @@ export default function LaunchClient() {
         {/* Hero */}
         <div className="text-center">
           <h1 className="text-4xl font-extrabold tracking-tight sm:text-5xl">
-            Waaiio launches{' '}
-            <span className="bg-gradient-to-r from-accent to-orange-300 bg-clip-text text-transparent">
-              October 2
-            </span>
+            {launchDateDisplay ? (
+              <>
+                Waaiio launches{' '}
+                <span className="bg-gradient-to-r from-accent to-orange-300 bg-clip-text text-transparent">
+                  {launchDateDisplay}
+                </span>
+              </>
+            ) : (
+              <>
+                Waaiio is{' '}
+                <span className="bg-gradient-to-r from-accent to-orange-300 bg-clip-text text-transparent">
+                  coming soon
+                </span>
+              </>
+            )}
           </h1>
           <p className="mx-auto mt-4 max-w-xl text-lg text-brand-200">
-            Your customers book, pay, and order — all on WhatsApp.
-            Get notified when we go live.
+            {announcement?.headline || 'Your customers book, pay, and order — all on WhatsApp.'}
           </p>
+          {announcement?.message && (
+            <p className="mx-auto mt-2 max-w-lg text-sm text-brand-300">{announcement.message}</p>
+          )}
         </div>
 
-        {/* Countdown */}
+        {/* Countdown — only shown when announcement has a target_date */}
         {timeLeft && (
           <div className="mt-10 flex justify-center gap-3 sm:gap-4">
             {[
@@ -197,16 +256,15 @@ export default function LaunchClient() {
             </div>
           ) : selectedRegion ? (
             <div className="mt-6 flex flex-col items-center gap-6 sm:flex-row sm:justify-center">
-              {/* QR Code */}
+              {/* QR Code — locally generated, no external dependency */}
               <div className="flex flex-col items-center gap-2">
-                <div className="rounded-2xl border-2 border-gray-100 bg-white p-2">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={qrImageUrl}
-                    alt="Scan to message Waaiio on WhatsApp"
-                    width={160}
-                    height={160}
-                    className="rounded-xl"
+                <div className="rounded-2xl border-2 border-gray-100 bg-white p-3">
+                  <QRCodeSVG
+                    value={qrLink}
+                    size={160}
+                    level="M"
+                    bgColor="#ffffff"
+                    fgColor="#1a1a2e"
                   />
                 </div>
                 <span className="text-[10px] text-gray-400">Scan with phone camera</span>
