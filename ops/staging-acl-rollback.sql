@@ -1,6 +1,6 @@
--- B24 ACL Rollback Script
+-- B25 ACL Rollback Script
 -- Generated: 2026-09-25
--- Exact inverse of B24_acl_repair.sql
+-- Exact inverse of B25_acl_repair.sql (full Supabase default ACL baseline)
 
 BEGIN;
 
@@ -8,15 +8,15 @@ BEGIN;
 -- INVERSE PART 1: REVOKE DEFAULT PRIVILEGES
 -- ==============================================================
 
--- postgres role
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public REVOKE ALL ON TABLES FROM service_role;
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public REVOKE ALL ON SEQUENCES FROM service_role;
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public REVOKE ALL ON FUNCTIONS FROM service_role;
+-- postgres role — revoke full Supabase baseline: anon, authenticated, service_role
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public REVOKE ALL ON TABLES FROM anon, authenticated, service_role;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public REVOKE ALL ON SEQUENCES FROM anon, authenticated, service_role;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public REVOKE EXECUTE ON FUNCTIONS FROM anon, authenticated, service_role;
 
--- supabase_admin role
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public REVOKE ALL ON TABLES FROM service_role;
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public REVOKE ALL ON SEQUENCES FROM service_role;
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public REVOKE ALL ON FUNCTIONS FROM service_role;
+-- supabase_admin role — revoke full Supabase baseline: anon, authenticated, service_role
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public REVOKE ALL ON TABLES FROM anon, authenticated, service_role;
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public REVOKE ALL ON SEQUENCES FROM anon, authenticated, service_role;
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public REVOKE EXECUTE ON FUNCTIONS FROM anon, authenticated, service_role;
 
 -- ==============================================================
 -- INVERSE PART 2: REVOKE TABLE GRANTS

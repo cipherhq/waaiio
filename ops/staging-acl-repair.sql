@@ -1,6 +1,6 @@
--- B24 ACL Repair Script
+-- B25 ACL Repair Script
 -- Generated: 2026-09-25
--- Staging environment ACL repair
+-- Staging environment ACL repair (B2.5: full Supabase default ACL baseline)
 
 BEGIN;
 
@@ -38,15 +38,15 @@ END $$;
 -- PART 1: ALTER DEFAULT PRIVILEGES
 -- ==============================================================
 
--- postgres role
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON TABLES TO service_role;
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON SEQUENCES TO service_role;
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON FUNCTIONS TO service_role;
+-- postgres role — restore full Supabase baseline: anon, authenticated, service_role
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON TABLES TO anon, authenticated, service_role;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON SEQUENCES TO anon, authenticated, service_role;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO anon, authenticated, service_role;
 
--- supabase_admin role
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT ALL ON TABLES TO service_role;
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT ALL ON SEQUENCES TO service_role;
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT ALL ON FUNCTIONS TO service_role;
+-- supabase_admin role — restore full Supabase baseline: anon, authenticated, service_role
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT ALL ON TABLES TO anon, authenticated, service_role;
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT ALL ON SEQUENCES TO anon, authenticated, service_role;
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO anon, authenticated, service_role;
 
 -- ==============================================================
 -- PART 2: TABLE GRANTS (delta only)
@@ -957,9 +957,79 @@ BEGIN
   SELECT count(DISTINCT table_name) INTO v_auth_tables FROM information_schema.role_table_grants WHERE grantee = 'authenticated' AND table_schema = 'public';
   IF v_auth_tables <> 178 THEN RAISE EXCEPTION 'POSTCONDITION FAILED: authenticated expected 178 tables, got %', v_auth_tables; END IF;
 
-  -- 6 default ACLs installed
+  -- 6 default ACLs installed — verify count
   SELECT count(*) INTO v_defacl_count FROM pg_default_acl WHERE defaclnamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'public');
   IF v_defacl_count <> 6 THEN RAISE EXCEPTION 'POSTCONDITION FAILED: expected 6 default ACLs, got %', v_defacl_count; END IF;
+
+  -- Verify CONTENTS of all 6 default ACL rows match the Supabase baseline
+  -- Each row must grant to anon, authenticated, AND service_role
+  PERFORM 1 FROM pg_default_acl da
+    JOIN pg_roles r ON r.oid = da.defaclrole
+    WHERE da.defaclnamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'public')
+      AND r.rolname = 'postgres' AND da.defaclobjtype = 'r'
+      AND da.defaclacl @> ARRAY[
+        ('anon=arwdDxtm/' || r.rolname)::aclitem,
+        ('authenticated=arwdDxtm/' || r.rolname)::aclitem,
+        ('service_role=arwdDxtm/' || r.rolname)::aclitem
+      ];
+  IF NOT FOUND THEN RAISE EXCEPTION 'POSTCONDITION FAILED: postgres/tables default ACL does not grant ALL to anon+authenticated+service_role'; END IF;
+
+  PERFORM 1 FROM pg_default_acl da
+    JOIN pg_roles r ON r.oid = da.defaclrole
+    WHERE da.defaclnamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'public')
+      AND r.rolname = 'postgres' AND da.defaclobjtype = 'S'
+      AND da.defaclacl @> ARRAY[
+        ('anon=rwU/' || r.rolname)::aclitem,
+        ('authenticated=rwU/' || r.rolname)::aclitem,
+        ('service_role=rwU/' || r.rolname)::aclitem
+      ];
+  IF NOT FOUND THEN RAISE EXCEPTION 'POSTCONDITION FAILED: postgres/sequences default ACL does not grant ALL to anon+authenticated+service_role'; END IF;
+
+  PERFORM 1 FROM pg_default_acl da
+    JOIN pg_roles r ON r.oid = da.defaclrole
+    WHERE da.defaclnamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'public')
+      AND r.rolname = 'postgres' AND da.defaclobjtype = 'f'
+      AND da.defaclacl @> ARRAY[
+        ('anon=X/' || r.rolname)::aclitem,
+        ('authenticated=X/' || r.rolname)::aclitem,
+        ('service_role=X/' || r.rolname)::aclitem
+      ];
+  IF NOT FOUND THEN RAISE EXCEPTION 'POSTCONDITION FAILED: postgres/functions default ACL does not grant EXECUTE to anon+authenticated+service_role'; END IF;
+
+  PERFORM 1 FROM pg_default_acl da
+    JOIN pg_roles r ON r.oid = da.defaclrole
+    WHERE da.defaclnamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'public')
+      AND r.rolname = 'supabase_admin' AND da.defaclobjtype = 'r'
+      AND da.defaclacl @> ARRAY[
+        ('anon=arwdDxtm/' || r.rolname)::aclitem,
+        ('authenticated=arwdDxtm/' || r.rolname)::aclitem,
+        ('service_role=arwdDxtm/' || r.rolname)::aclitem
+      ];
+  IF NOT FOUND THEN RAISE EXCEPTION 'POSTCONDITION FAILED: supabase_admin/tables default ACL does not grant ALL to anon+authenticated+service_role'; END IF;
+
+  PERFORM 1 FROM pg_default_acl da
+    JOIN pg_roles r ON r.oid = da.defaclrole
+    WHERE da.defaclnamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'public')
+      AND r.rolname = 'supabase_admin' AND da.defaclobjtype = 'S'
+      AND da.defaclacl @> ARRAY[
+        ('anon=rwU/' || r.rolname)::aclitem,
+        ('authenticated=rwU/' || r.rolname)::aclitem,
+        ('service_role=rwU/' || r.rolname)::aclitem
+      ];
+  IF NOT FOUND THEN RAISE EXCEPTION 'POSTCONDITION FAILED: supabase_admin/sequences default ACL does not grant ALL to anon+authenticated+service_role'; END IF;
+
+  PERFORM 1 FROM pg_default_acl da
+    JOIN pg_roles r ON r.oid = da.defaclrole
+    WHERE da.defaclnamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'public')
+      AND r.rolname = 'supabase_admin' AND da.defaclobjtype = 'f'
+      AND da.defaclacl @> ARRAY[
+        ('anon=X/' || r.rolname)::aclitem,
+        ('authenticated=X/' || r.rolname)::aclitem,
+        ('service_role=X/' || r.rolname)::aclitem
+      ];
+  IF NOT FOUND THEN RAISE EXCEPTION 'POSTCONDITION FAILED: supabase_admin/functions default ACL does not grant EXECUTE to anon+authenticated+service_role'; END IF;
+
+  RAISE NOTICE 'DEFAULT ACL CONTENT VERIFICATION: all 6 rows verified with correct grantees (anon, authenticated, service_role)';
 
   -- business_payment_credentials has NO grants
   SELECT count(*) INTO v_bpc_count FROM information_schema.role_table_grants WHERE table_name = 'business_payment_credentials' AND table_schema = 'public';
