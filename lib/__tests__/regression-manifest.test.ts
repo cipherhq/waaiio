@@ -1,11 +1,15 @@
 import { describe, it, expect } from 'vitest';
+import { resolve } from 'path';
 import {
   REGRESSION_MANIFEST,
   getAffectedDomains,
   getRequiredTestSuites,
   getRelatedInvariants,
+  validateManifestPaths,
   type DomainEntry,
 } from '../release-gate/regression-manifest';
+
+const REPO_ROOT = resolve(__dirname, '../..');
 
 describe('Regression Manifest', () => {
   // ── Schema validation ──
@@ -27,21 +31,35 @@ describe('Regression Manifest', () => {
     }
   });
 
-  it('no path pattern appears in multiple domains', () => {
-    const seen = new Map<string, string>();
+  it('cross-domain path overlaps are documented and intentional', () => {
+    // Some paths intentionally map to multiple domains (e.g., Stripe webhook
+    // paths map to both 'payments' and 'stripe-paystack'). This test documents
+    // the known overlaps so unintentional duplicates are caught.
+    const patternToDomains = new Map<string, string[]>();
     for (const domain of REGRESSION_MANIFEST) {
       for (const pattern of domain.pathPatterns) {
-        const existing = seen.get(pattern);
-        if (existing) {
-          // Cross-domain patterns are allowed only if intentional overlap
-          // (e.g., payments and stripe-paystack may share webhook paths).
-          // For now, just warn — do not fail.
-        }
-        seen.set(pattern, domain.id);
+        const domains = patternToDomains.get(pattern) || [];
+        domains.push(domain.id);
+        patternToDomains.set(pattern, domains);
       }
     }
-    // This test validates the manifest loads without error
-    expect(REGRESSION_MANIFEST.length).toBeGreaterThan(0);
+
+    const overlaps = [...patternToDomains.entries()]
+      .filter(([, domains]) => domains.length > 1);
+
+    // Known intentional overlaps — update this list when adding new ones
+    const knownOverlaps = [
+      'app/api/webhook/stripe/',
+      'app/api/webhook/paystack/',
+    ];
+
+    for (const [pattern, domains] of overlaps) {
+      expect(
+        knownOverlaps,
+        `Unexpected cross-domain overlap: "${pattern}" maps to [${domains.join(', ')}]. ` +
+        `If intentional, add it to knownOverlaps in this test.`
+      ).toContain(pattern);
+    }
   });
 
   it('all test suite paths end with .test.ts', () => {
@@ -49,6 +67,17 @@ describe('Regression Manifest', () => {
       for (const suite of domain.testSuites) {
         expect(suite, `${domain.id}: ${suite}`).toMatch(/\.test\.ts$/);
       }
+    }
+  });
+
+  it('all test suite paths exist on disk', () => {
+    const missing = validateManifestPaths(REPO_ROOT);
+    if (missing.length > 0) {
+      const detail = missing.map(m => `  ${m.domain}: ${m.path}`).join('\n');
+      expect.fail(
+        `${missing.length} manifest test path(s) do not exist:\n${detail}\n` +
+        `Fix: remove stale paths or correct typos in regression-manifest.ts`
+      );
     }
   });
 
@@ -139,15 +168,48 @@ describe('Regression Manifest', () => {
     expect(domains).toHaveLength(0);
   });
 
+  // ── Deletion coverage ──
+
+  it('deleted payment file still maps to payments domain', () => {
+    // Simulates a deleted file appearing in the changed-files list
+    const domains = getAffectedDomains(['lib/payments/process-success.ts']);
+    const ids = domains.map(d => d.id);
+    expect(ids).toContain('payments');
+    const suites = getRequiredTestSuites(domains);
+    expect(suites.length).toBeGreaterThan(0);
+  });
+
+  it('deleted saved-card file still maps to saved-cards domain', () => {
+    const domains = getAffectedDomains(['lib/bot/handlers/saved-card-locator.ts']);
+    expect(domains.map(d => d.id)).toContain('saved-cards');
+  });
+
+  it('deleted appointment file still maps to appointments domain', () => {
+    const domains = getAffectedDomains(['lib/bot/flows/scheduling.flow.ts']);
+    expect(domains.map(d => d.id)).toContain('appointments');
+  });
+
+  it('deleted reservation file still maps to reservations domain', () => {
+    const domains = getAffectedDomains(['lib/bot/flows/reservation.flow.ts']);
+    expect(domains.map(d => d.id)).toContain('reservations');
+  });
+
+  it('deleted whatsapp session file still maps to whatsapp-session domain', () => {
+    const domains = getAffectedDomains(['lib/bot/bot.service.ts']);
+    expect(domains.map(d => d.id)).toContain('whatsapp-session');
+  });
+
+  it('deleted migration file still maps to migrations-rls-acl domain', () => {
+    const domains = getAffectedDomains(['supabase/migrations/999_removed.sql']);
+    expect(domains.map(d => d.id)).toContain('migrations-rls-acl');
+  });
+
   // ── Test suite collection ──
 
   it('collects deduplicated test suites across overlapping domains', () => {
-    // Stripe webhook change hits both payments and stripe-paystack
     const domains = getAffectedDomains(['app/api/webhook/stripe/route.ts']);
     const suites = getRequiredTestSuites(domains);
-    // Should have suites from both domains, deduplicated
     expect(suites.length).toBeGreaterThan(0);
-    // Check dedup: no duplicates
     expect(new Set(suites).size).toBe(suites.length);
   });
 
@@ -183,5 +245,25 @@ describe('Regression Manifest', () => {
     expect(ids).toContain('payments');
     expect(ids).toContain('appointments');
     expect(ids).toContain('migrations-rls-acl');
+  });
+
+  // ── Manifest integrity ──
+
+  it('validateManifestPaths detects a missing/stale path', () => {
+    // Inject a fake domain with a nonexistent test path, validate, then remove
+    const fakeDomain = {
+      id: 'test-fake',
+      label: 'Fake',
+      pathPatterns: ['fake/'],
+      testSuites: ['lib/__tests__/DOES_NOT_EXIST_12345.test.ts'],
+      invariants: [],
+    };
+    REGRESSION_MANIFEST.push(fakeDomain);
+    try {
+      const missing = validateManifestPaths(REPO_ROOT);
+      expect(missing.some(m => m.path.includes('DOES_NOT_EXIST'))).toBe(true);
+    } finally {
+      REGRESSION_MANIFEST.pop();
+    }
   });
 });

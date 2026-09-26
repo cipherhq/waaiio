@@ -36,7 +36,7 @@ export interface BlastRadiusResult {
  */
 export function getChangedFiles(baseSha: string, headSha: string): string[] {
   const output = execSync(
-    `git diff --name-only --diff-filter=ACMR ${baseSha}...${headSha}`,
+    `git diff --name-only --diff-filter=ACDMR ${baseSha}...${headSha}`,
     { encoding: 'utf-8' }
   ).trim();
   if (!output) return [];

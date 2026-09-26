@@ -345,3 +345,22 @@ export function getRelatedInvariants(domains: DomainEntry[]): string[] {
   }
   return [...ids].sort();
 }
+
+/**
+ * Validate that every testSuites path in the manifest exists on disk.
+ * Returns an array of {domain, path} for missing files.
+ * Uses synchronous fs check — safe for tests and CI.
+ */
+export function validateManifestPaths(repoRoot: string): { domain: string; path: string }[] {
+  const { existsSync } = require('fs') as typeof import('fs');
+  const { join } = require('path') as typeof import('path');
+  const missing: { domain: string; path: string }[] = [];
+  for (const domain of REGRESSION_MANIFEST) {
+    for (const suite of domain.testSuites) {
+      if (!existsSync(join(repoRoot, suite))) {
+        missing.push({ domain: domain.id, path: suite });
+      }
+    }
+  }
+  return missing;
+}
