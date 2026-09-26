@@ -3701,8 +3701,8 @@ jobs:
             fi
             sleep 2
           done
-          # Run smoke + auth specs, chromium only (mobile is supplementary)
-          npx playwright test e2e/smoke.spec.ts e2e/auth.spec.ts --project=chromium --reporter=list
+          # Run smoke + auth + marketing + responsive specs, chromium only
+          npx playwright test e2e/smoke.spec.ts e2e/auth.spec.ts e2e/marketing.spec.ts e2e/responsive.spec.ts --project=chromium --reporter=list
           TEST_EXIT=$?
           kill $SERVER_PID 2>/dev/null || true
           exit $TEST_EXIT
