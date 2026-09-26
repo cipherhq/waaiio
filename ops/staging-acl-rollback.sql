@@ -1,6 +1,6 @@
--- B25 ACL Rollback Script
+-- B26 ACL Rollback Script
 -- Generated: 2026-09-25
--- Exact inverse of B25_acl_repair.sql (full Supabase default ACL baseline)
+-- Exact inverse of B26_acl_repair.sql (full relation derivation — tables, views, sequences)
 
 BEGIN;
 
@@ -19,15 +19,17 @@ ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public REVOKE ALL ON 
 ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public REVOKE EXECUTE ON FUNCTIONS FROM anon, authenticated, service_role;
 
 -- ==============================================================
--- INVERSE PART 2: REVOKE TABLE GRANTS
+-- INVERSE PART 2: REVOKE RELATION GRANTS (tables, views, sequences)
 -- ==============================================================
 
--- Re-GRANT what repair revoked (restore pre-repair state)
-GRANT SELECT ON TABLE public.businesses_public TO anon;
-GRANT SELECT ON TABLE public.businesses_public TO authenticated;
-GRANT SELECT ON TABLE public.whatsapp_channels_public TO anon;
-GRANT SELECT ON TABLE public.whatsapp_channels_public TO authenticated;
+-- INVERSE PART 2A: REVOKE VIEW GRANTS (inverse of GRANT SELECT in repair)
+-- Note: staging had these before repair, so rollback revokes them to return
+-- to pre-repair state. Rollback to a state without view grants is correct
+-- because the original schema recreation already provided them.
+REVOKE SELECT ON public.businesses_public FROM anon, authenticated;
+REVOKE SELECT ON public.whatsapp_channels_public FROM anon, authenticated;
 
+-- INVERSE PART 2B: REVOKE TABLE GRANTS
 -- REVOKE ALL ON ... FROM anon
 REVOKE ALL ON public.admin_audit_logs, public.admin_broadcasts, public.admin_impersonation_tokens, public.admin_role_permissions, public.ai_classification_log, public.ai_conversation_config, public.ai_usage, public.alerts, public.api_keys, public.appointments FROM anon;
 REVOKE ALL ON public.attendance_log, public.audit_log, public.blocked_phones, public.booking_confirmation_intents, public.booking_slots, public.bookings, public.bot_rules, public.bot_sequence_enrollments, public.bot_sequence_steps, public.bot_sequences FROM anon;

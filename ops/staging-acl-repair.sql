@@ -1,6 +1,6 @@
--- B25 ACL Repair Script
+-- B26 ACL Repair Script
 -- Generated: 2026-09-25
--- Staging environment ACL repair (B2.5: full Supabase default ACL baseline)
+-- Staging environment ACL repair (B2.6: full relation derivation — tables, views, sequences)
 
 BEGIN;
 
@@ -49,15 +49,20 @@ ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT ALL ON S
 ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO anon, authenticated, service_role;
 
 -- ==============================================================
--- PART 2: TABLE GRANTS (delta only)
+-- PART 2: RELATION GRANTS (delta only — tables, views, sequences)
 -- ==============================================================
+-- Derivation covers: ordinary tables (relkind 'r'), views (relkind 'v'),
+-- materialized views (relkind 'm', none present), sequences (relkind 'S').
+-- No REVOKEs remain after B2.6 re-derivation — see proof below.
 
--- REVOKE grants that staging has but target does not want
-REVOKE SELECT ON TABLE public.businesses_public FROM anon;
-REVOKE SELECT ON TABLE public.businesses_public FROM authenticated;
-REVOKE SELECT ON TABLE public.whatsapp_channels_public FROM anon;
-REVOKE SELECT ON TABLE public.whatsapp_channels_public FROM authenticated;
+-- PART 2A: VIEW GRANTS (canonical per M223/M293)
+-- M293 creates security_barrier views and grants SELECT to anon, authenticated.
+-- Staging already has these; explicit GRANT SELECT is idempotent but ensures
+-- the derivation is self-contained regardless of staging pre-state.
+GRANT SELECT ON public.businesses_public TO anon, authenticated;
+GRANT SELECT ON public.whatsapp_channels_public TO anon, authenticated;
 
+-- PART 2B: TABLE GRANTS
 -- GRANT ALL ON ... TO anon
 GRANT ALL ON public.admin_audit_logs, public.admin_broadcasts, public.admin_impersonation_tokens, public.admin_role_permissions, public.ai_classification_log, public.ai_conversation_config, public.ai_usage, public.alerts, public.api_keys, public.appointments TO anon;
 GRANT ALL ON public.attendance_log, public.audit_log, public.blocked_phones, public.booking_confirmation_intents, public.booking_slots, public.bookings, public.bot_rules, public.bot_sequence_enrollments, public.bot_sequence_steps, public.bot_sequences TO anon;
@@ -1052,6 +1057,31 @@ BEGIN
   IF v_wac_anon <> 0 THEN RAISE EXCEPTION 'POSTCONDITION FAILED: whatsapp_channels/anon must have 0 grants, got %', v_wac_anon; END IF;
   SELECT count(*) INTO v_wac_sr FROM information_schema.role_table_grants WHERE table_name = 'whatsapp_channels' AND table_schema = 'public' AND grantee = 'service_role';
   IF v_wac_sr <> 7 THEN RAISE EXCEPTION 'POSTCONDITION FAILED: whatsapp_channels/service_role expected 7 privs, got %', v_wac_sr; END IF;
+
+  -- VIEW POSTCONDITIONS: businesses_public and whatsapp_channels_public
+  -- Canonical source: M293 — GRANT SELECT TO anon, authenticated
+  -- information_schema.role_table_grants includes views
+  PERFORM 1 FROM information_schema.role_table_grants
+    WHERE table_name = 'businesses_public' AND table_schema = 'public'
+      AND grantee = 'anon' AND privilege_type = 'SELECT';
+  IF NOT FOUND THEN RAISE EXCEPTION 'POSTCONDITION FAILED: businesses_public must have anon SELECT (M293)'; END IF;
+
+  PERFORM 1 FROM information_schema.role_table_grants
+    WHERE table_name = 'businesses_public' AND table_schema = 'public'
+      AND grantee = 'authenticated' AND privilege_type = 'SELECT';
+  IF NOT FOUND THEN RAISE EXCEPTION 'POSTCONDITION FAILED: businesses_public must have authenticated SELECT (M293)'; END IF;
+
+  PERFORM 1 FROM information_schema.role_table_grants
+    WHERE table_name = 'whatsapp_channels_public' AND table_schema = 'public'
+      AND grantee = 'anon' AND privilege_type = 'SELECT';
+  IF NOT FOUND THEN RAISE EXCEPTION 'POSTCONDITION FAILED: whatsapp_channels_public must have anon SELECT (M293)'; END IF;
+
+  PERFORM 1 FROM information_schema.role_table_grants
+    WHERE table_name = 'whatsapp_channels_public' AND table_schema = 'public'
+      AND grantee = 'authenticated' AND privilege_type = 'SELECT';
+  IF NOT FOUND THEN RAISE EXCEPTION 'POSTCONDITION FAILED: whatsapp_channels_public must have authenticated SELECT (M293)'; END IF;
+
+  RAISE NOTICE 'VIEW POSTCONDITIONS PASSED: businesses_public and whatsapp_channels_public retain anon+authenticated SELECT';
 
   RAISE NOTICE 'POSTCONDITIONS PASSED: sr_tables=%, anon_tables=%, auth_tables=%, defacls=%, bpc_grants=%', v_sr_tables, v_anon_tables, v_auth_tables, v_defacl_count, v_bpc_count;
 END $$;
