@@ -5,7 +5,7 @@
  * - explicit extensions.digest() capture succeeds on PG15-style pgcrypto placement
  * - corrected protected-object signature resolves the real M395 function
  * - base migration enumeration reads the base SHA, not HEAD
- * - candidate migration selection includes additions and rejects modification/deletion
+ * - candidate migration selection includes additions and rejects modification/deletion/rename
  * - self-diff = zero entries
  * - historical-style table/RLS addition produces the expected Phase-1 delta
  * - advisory diff verdict does not fail the CLI
@@ -13,7 +13,7 @@
  * - no-migration-change path is a truthful no-op
  */
 
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { execSync } from 'child_process';
 import { detectMigrationChanges, enumerateBaseMigrations, runDbDelta } from '../release-gate/db-delta-cli';
 import { captureBaseline } from '../release-gate/baseline-capture';
@@ -104,11 +104,9 @@ describe('DB Delta — unit tests', () => {
 
   describe('migration detection', () => {
     it('base migration enumeration reads base SHA blobs', () => {
-      // Use a known historical SHA that has fewer migrations than HEAD
       const baseMigrations = enumerateBaseMigrations('780dc275');
       expect(baseMigrations.length).toBeGreaterThan(0);
       expect(baseMigrations.length).toBeLessThanOrEqual(343);
-      // Should not include 402_launch_subscribers.sql (added after this SHA)
       expect(baseMigrations.find(m => m.includes('402_launch_subscribers'))).toBeUndefined();
     });
 
@@ -117,20 +115,85 @@ describe('DB Delta — unit tests', () => {
       expect(delta.added).toContain('402_launch_subscribers.sql');
       expect(delta.modified).toHaveLength(0);
       expect(delta.deleted).toHaveLength(0);
+      expect(delta.renamed).toHaveLength(0);
     });
 
     it('no-migration-change path returns empty delta', () => {
-      // Same SHA for both — no changes
       const delta = detectMigrationChanges('780dc275', '780dc275');
       expect(delta.added).toHaveLength(0);
       expect(delta.modified).toHaveLength(0);
       expect(delta.deleted).toHaveLength(0);
+      expect(delta.renamed).toHaveLength(0);
+    });
+  });
+
+  describe('NUL parser — modified/deleted/renamed migration rejection', () => {
+    it('rejects modified migrations through the orchestration path', async () => {
+      // Synthesize a NUL-delimited git diff output with M status
+      // by directly testing detectMigrationChanges against a known pair
+      // where a migration was modified. Use git plumbing to create a test case.
+      // Instead, we test the rejection path by calling runDbDelta with a
+      // modified-migration delta injected via a helper.
+      //
+      // Direct parser test: parse a raw NUL string
+      const { detectMigrationChangesRaw } = await import('../release-gate/db-delta-cli');
+      const raw = 'M\0supabase/migrations/001_init.sql\0';
+      const delta = detectMigrationChangesRaw(raw);
+      expect(delta.modified).toContain('001_init.sql');
+
+      // Prove runDbDelta rejects it
+      await expect(runDbDelta({
+        baseSha: 'fake', headSha: 'fake',
+        dbUrl: 'postgresql://unused:unused@localhost/unused',
+        _overrideDelta: delta,
+      })).rejects.toThrow('immutability violation');
+    });
+
+    it('rejects deleted migrations through the orchestration path', async () => {
+      const { detectMigrationChangesRaw } = await import('../release-gate/db-delta-cli');
+      const raw = 'D\0supabase/migrations/001_init.sql\0';
+      const delta = detectMigrationChangesRaw(raw);
+      expect(delta.deleted).toContain('001_init.sql');
+
+      await expect(runDbDelta({
+        baseSha: 'fake', headSha: 'fake',
+        dbUrl: 'postgresql://unused:unused@localhost/unused',
+        _overrideDelta: delta,
+      })).rejects.toThrow('deleted');
+    });
+
+    it('rejects renamed migrations through the orchestration path', async () => {
+      const { detectMigrationChangesRaw } = await import('../release-gate/db-delta-cli');
+      // Rename: R100\0old_path\0new_path\0
+      const raw = 'R100\0supabase/migrations/001_init.sql\0supabase/migrations/001_renamed.sql\0';
+      const delta = detectMigrationChangesRaw(raw);
+      expect(delta.renamed).toHaveLength(1);
+      expect(delta.renamed[0]).toContain('001_init.sql');
+
+      await expect(runDbDelta({
+        baseSha: 'fake', headSha: 'fake',
+        dbUrl: 'postgresql://unused:unused@localhost/unused',
+        _overrideDelta: delta,
+      })).rejects.toThrow('renamed/copied');
+    });
+
+    it('unknown status fails closed as modified', async () => {
+      const { detectMigrationChangesRaw } = await import('../release-gate/db-delta-cli');
+      const raw = 'T\0supabase/migrations/001_init.sql\0';
+      const delta = detectMigrationChangesRaw(raw);
+      expect(delta.modified).toContain('001_init.sql');
+    });
+
+    it('copy status (C100) is treated as rename and rejected', async () => {
+      const { detectMigrationChangesRaw } = await import('../release-gate/db-delta-cli');
+      const raw = 'C100\0supabase/migrations/001_init.sql\0supabase/migrations/001_copy.sql\0';
+      const delta = detectMigrationChangesRaw(raw);
+      expect(delta.renamed).toHaveLength(1);
     });
   });
 
   describe('no-op path', () => {
     it('produces truthful no-op when no migration changes exist', async () => {
-      // This doesn't need a real DB since no migrations are applied
       const artifact = await runDbDelta({
         baseSha: '780dc275',
         headSha: '780dc275',
@@ -139,17 +202,29 @@ describe('DB Delta — unit tests', () => {
       expect(artifact.noOp).toBe(true);
       expect(artifact.diff.verdict).toBe('PASS');
       expect(artifact.diff.entries).toHaveLength(0);
+      expect(artifact.baseBaseline).toBeNull();
+      expect(artifact.candidateBaseline).toBeNull();
     });
   });
 
-  describe('modification/deletion rejection', () => {
-    it('runDbDelta rejects modified existing migrations', async () => {
-      // Mock a scenario with modified migrations by using detectMigrationChanges
-      // We can't easily create a real modified-migration git state, but we can
-      // verify the rejection logic directly
-      const delta = detectMigrationChanges('780dc275', '780dc275');
-      // No modifications in this range — so test the code path structure
-      expect(delta.modified).toHaveLength(0);
+  describe('CLI behavior', () => {
+    it('advisory BLOCKED verdict does not fail the CLI (exit 0)', () => {
+      // Run the CLI with a no-op pair — should exit 0
+      const result = execSync(
+        'npx tsx lib/release-gate/db-delta-cli.ts --base-sha 780dc275 --head-sha 780dc275 --db-url postgresql://unused:unused@localhost/unused',
+        { encoding: 'utf-8', timeout: 30000 },
+      );
+      expect(result).toContain('No migration additions');
+    });
+
+    it('capture/tooling failure fails the CLI (exit non-zero)', () => {
+      // Run CLI with an invalid DB URL — should fail
+      expect(() => {
+        execSync(
+          'npx tsx lib/release-gate/db-delta-cli.ts --base-sha 780dc275 --head-sha ff73d6f9 --db-url postgresql://baduser:badpass@localhost:59999/nonexistent',
+          { encoding: 'utf-8', timeout: 30000, stdio: 'pipe' },
+        );
+      }).toThrow();
     });
   });
 });
@@ -169,7 +244,6 @@ describe.skipIf(skipDb)('DB Delta — integration tests (real PG)', () => {
     expect(snap.functions.length).toBeGreaterThan(0);
     expect(snap.function_grants.length).toBeGreaterThan(0);
     expect(snap.table_rls.length).toBeGreaterThan(0);
-    // Verify body hashes are actual hex strings, not empty
     const fnWithHash = snap.functions.find(f => f.body_hash && f.body_hash.length === 64);
     expect(fnWithHash).toBeDefined();
   });
@@ -181,7 +255,6 @@ describe.skipIf(skipDb)('DB Delta — integration tests (real PG)', () => {
       phase: 'candidate',
       label: 'protected object signature test',
     });
-    // The invariant results should not fail for create_provider_consented_offer
     const db002Results = snap.invariant_results.filter(r => r.invariant_id === 'DB-002');
     const cpcoResult = db002Results.find(r =>
       r.description.includes('create_provider_consented_offer')

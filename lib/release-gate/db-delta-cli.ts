@@ -51,7 +51,7 @@ function parseArgs(): CliArgs {
   }
 
   if (!baseSha || !headSha || !dbUrl) {
-    console.error('Usage: db-delta-cli.ts --base-sha <sha> --head-sha <sha> --db-url <url>');
+    process.stderr.write('Usage: db-delta-cli.ts --base-sha <sha> --head-sha <sha> --db-url <url>\n');
     process.exit(1);
   }
 
@@ -66,11 +66,52 @@ interface MigrationDelta {
   added: string[];       // filenames of new migrations
   modified: string[];    // filenames of modified existing migrations (error)
   deleted: string[];     // filenames of deleted migrations (error)
+  renamed: string[];     // filenames of renamed/copied migrations (error)
+}
+
+/** Parse raw NUL-delimited git diff --name-status output into a MigrationDelta.
+ *  Exported for direct testing of the parser. */
+export function detectMigrationChangesRaw(raw: string): MigrationDelta {
+  const result: MigrationDelta = { added: [], modified: [], deleted: [], renamed: [] };
+  if (!raw.trim()) return result;
+
+  const parts = raw.split('\0').filter(Boolean);
+  let i = 0;
+  while (i < parts.length) {
+    const status = parts[i].trim();
+    if (i + 1 >= parts.length) break;
+
+    if (status === 'A') {
+      result.added.push(basename(parts[i + 1].trim()));
+      i += 2;
+    } else if (status === 'M') {
+      result.modified.push(basename(parts[i + 1].trim()));
+      i += 2;
+    } else if (status === 'D') {
+      result.deleted.push(basename(parts[i + 1].trim()));
+      i += 2;
+    } else if (status.startsWith('R') || status.startsWith('C')) {
+      // Rename/copy: consumes two paths (old and new)
+      if (i + 2 >= parts.length) break;
+      const oldFile = basename(parts[i + 1].trim());
+      const newFile = basename(parts[i + 2].trim());
+      result.renamed.push(`${oldFile} → ${newFile}`);
+      i += 3;
+    } else {
+      // Unknown status — fail closed: treat as modified
+      result.modified.push(basename(parts[i + 1].trim()));
+      i += 2;
+    }
+  }
+
+  result.added.sort();
+  result.modified.sort();
+  result.deleted.sort();
+  result.renamed.sort();
+  return result;
 }
 
 export function detectMigrationChanges(baseSha: string, headSha: string): MigrationDelta {
-  const result: MigrationDelta = { added: [], modified: [], deleted: [] };
-
   let raw: string;
   try {
     raw = execSync(
@@ -81,26 +122,7 @@ export function detectMigrationChanges(baseSha: string, headSha: string): Migrat
     throw new Error(`Failed to detect migration changes between ${baseSha} and ${headSha}`);
   }
 
-  if (!raw.trim()) return result;
-
-  // NUL-delimited: status\0path\0status\0path\0...
-  const parts = raw.split('\0').filter(Boolean);
-  for (let i = 0; i < parts.length - 1; i += 2) {
-    const status = parts[i].trim();
-    const path = parts[i + 1].trim();
-    const file = basename(path);
-
-    if (status === 'A') result.added.push(file);
-    else if (status === 'M') result.modified.push(file);
-    else if (status === 'D') result.deleted.push(file);
-  }
-
-  // Sort deterministically by filename
-  result.added.sort();
-  result.modified.sort();
-  result.deleted.sort();
-
-  return result;
+  return detectMigrationChangesRaw(raw);
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -188,10 +210,12 @@ function bootstrapDeltaDb(dbUrl: string): void {
 // Artifact writing
 // ═══════════════════════════════════════════════════════════════════
 
-interface DeltaArtifact {
+export interface DeltaArtifact {
   baseSha: string;
   headSha: string;
   migrationDelta: MigrationDelta;
+  baseBaseline: BaselineSnapshot | null;
+  candidateBaseline: BaselineSnapshot | null;
   baseStats: { functions: number; grants: number; rls: number; policies: number; constraints: number; triggers: number };
   candidateStats: { functions: number; grants: number; rls: number; policies: number; constraints: number; triggers: number };
   diff: StateDiffResult;
@@ -263,14 +287,14 @@ function printSummary(artifact: DeltaArtifact): void {
 // Main
 // ═══════════════════════════════════════════════════════════════════
 
-export async function runDbDelta(args: CliArgs): Promise<DeltaArtifact> {
-  const { baseSha, headSha, dbUrl } = args;
+export async function runDbDelta(args: CliArgs & { _overrideDelta?: MigrationDelta }): Promise<DeltaArtifact> {
+  const { baseSha, headSha, dbUrl, _overrideDelta } = args;
 
-  // Step 1: Detect migration changes
+  // Step 1: Detect migration changes (or use test override)
   console.log(`Detecting migration changes: ${baseSha.substring(0, 8)}..${headSha.substring(0, 8)}`);
-  const delta = detectMigrationChanges(baseSha, headSha);
+  const delta = _overrideDelta ?? detectMigrationChanges(baseSha, headSha);
 
-  // Reject modified/deleted existing migrations
+  // Reject modified/deleted/renamed existing migrations — fail closed
   if (delta.modified.length > 0) {
     throw new Error(
       `GATE ERROR: ${delta.modified.length} existing migration(s) modified — immutability violation: ${delta.modified.join(', ')}`
@@ -281,12 +305,18 @@ export async function runDbDelta(args: CliArgs): Promise<DeltaArtifact> {
       `GATE ERROR: ${delta.deleted.length} existing migration(s) deleted: ${delta.deleted.join(', ')}`
     );
   }
+  if (delta.renamed.length > 0) {
+    throw new Error(
+      `GATE ERROR: ${delta.renamed.length} existing migration(s) renamed/copied — immutability violation: ${delta.renamed.join(', ')}`
+    );
+  }
 
   // No-op: no candidate migration additions
   if (delta.added.length === 0) {
     console.log('No migration additions detected — no delta to analyze.');
     const noOpArtifact: DeltaArtifact = {
       baseSha, headSha, migrationDelta: delta,
+      baseBaseline: null, candidateBaseline: null,
       baseStats: { functions: 0, grants: 0, rls: 0, policies: 0, constraints: 0, triggers: 0 },
       candidateStats: { functions: 0, grants: 0, rls: 0, policies: 0, constraints: 0, triggers: 0 },
       diff: {
@@ -340,6 +370,7 @@ export async function runDbDelta(args: CliArgs): Promise<DeltaArtifact> {
 
   return {
     baseSha, headSha, migrationDelta: delta,
+    baseBaseline, candidateBaseline,
     baseStats: snapshotStats(baseBaseline),
     candidateStats: snapshotStats(candidateBaseline),
     diff,
@@ -357,9 +388,17 @@ async function main() {
   try {
     const artifact = await runDbDelta(args);
 
-    // Write artifacts
-    writeFileSync('db-delta-result.json', JSON.stringify(artifact, null, 2));
-    console.log('Artifacts written to db-delta-result.json');
+    // Write all three artifacts with SHA provenance
+    if (artifact.baseBaseline) {
+      writeFileSync('db-delta-base-baseline.json', JSON.stringify(artifact.baseBaseline, null, 2));
+    }
+    if (artifact.candidateBaseline) {
+      writeFileSync('db-delta-candidate-baseline.json', JSON.stringify(artifact.candidateBaseline, null, 2));
+    }
+    // Delta result (summary + diff, without full baselines to keep artifact small)
+    const { baseBaseline: _b, candidateBaseline: _c, ...deltaOnly } = artifact;
+    writeFileSync('db-delta-result.json', JSON.stringify(deltaOnly, null, 2));
+    console.log('Artifacts written: db-delta-base-baseline.json, db-delta-candidate-baseline.json, db-delta-result.json');
 
     // Print summary
     printSummary(artifact);
@@ -367,7 +406,7 @@ async function main() {
     // Advisory mode: always exit 0 for diff verdicts
     process.exit(0);
   } catch (err) {
-    console.error(`DB Delta CLI FAILED: ${(err as Error).message}`);
+    process.stderr.write(`DB Delta CLI FAILED: ${(err as Error).message}\n`);
     process.exit(1);
   }
 }

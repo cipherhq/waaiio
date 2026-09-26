@@ -1550,12 +1550,15 @@ jobs:
           # Cleanup delta database
           psql -q -c "DROP DATABASE IF EXISTS waaiio_delta_test;"
 
-      - name: Upload DB delta artifact
+      - name: Upload DB delta artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: db-delta-result
-          path: db-delta-result.json
+          name: db-delta-artifacts
+          path: |
+            db-delta-base-baseline.json
+            db-delta-candidate-baseline.json
+            db-delta-result.json
           if-no-files-found: ignore
 
   migration-shard-b:
