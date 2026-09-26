@@ -203,6 +203,11 @@ jobs:
           fi
           echo "✅ Certificate provenance verified: release_sha=$CERT_SHA tested_commit_sha=$CERT_TESTED"
 
+      - name: Blast-radius analysis (advisory)
+        if: github.event_name == 'pull_request'
+        run: |
+          npx tsx lib/release-gate/blast-radius-cli.ts "${{ env.BASE_SHA }}" "${{ env.SOURCE_HEAD_SHA }}"
+
       - name: Upload release certificate artifact
         uses: actions/upload-artifact@v4
         with:
