@@ -88,6 +88,39 @@ describe('parseIdentity', () => {
   it('returns null for invalid JSON', () => {
     expect(parseIdentity('not json')).toBeNull();
   });
+
+  it('returns null for SHA that is not 40 hex chars', () => {
+    expect(parseIdentity(JSON.stringify({
+      ...GOOD_IDENTITY, sha: 'abc123', // too short
+    }))).toBeNull();
+    expect(parseIdentity(JSON.stringify({
+      ...GOOD_IDENTITY, sha: 'ZZZZ23def456abc123def456abc123def456abc1', // non-hex
+    }))).toBeNull();
+  });
+
+  it('returns null for projectId without prj_ prefix', () => {
+    expect(parseIdentity(JSON.stringify({
+      ...GOOD_IDENTITY, projectId: 'not_a_project',
+    }))).toBeNull();
+  });
+
+  it('returns null for deploymentId without dpl_ prefix', () => {
+    expect(parseIdentity(JSON.stringify({
+      ...GOOD_IDENTITY, deploymentId: 'not_a_deployment',
+    }))).toBeNull();
+  });
+
+  it('returns null for empty vercelEnv', () => {
+    expect(parseIdentity(JSON.stringify({
+      ...GOOD_IDENTITY, vercelEnv: '',
+    }))).toBeNull();
+  });
+
+  it('returns null for invalid timestamp', () => {
+    expect(parseIdentity(JSON.stringify({
+      ...GOOD_IDENTITY, timestamp: 'not-a-date',
+    }))).toBeNull();
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════════
@@ -203,6 +236,59 @@ describe('verifyDeployment — identity', () => {
     });
     expect(result.verdict).toBe('FAIL');
   });
+
+  it('malformed-but-present SHA (short hex) fails identity parse', async () => {
+    setupMocks({
+      '/api/release-identity': { status: 200, body: JSON.stringify({
+        ...GOOD_IDENTITY, sha: 'abc123', // valid hex but not 40 chars
+      })},
+    });
+    const result = await verifyDeployment({
+      targetUrl: 'https://staging.test',
+      expectedSha: 'abc123',
+      expectedProject: GOOD_IDENTITY.projectId,
+    });
+    expect(result.verdict).toBe('FAIL');
+    expect(result.checks.find(c => c.name === 'identity-parseable')?.status).toBe('fail');
+  });
+
+  it('malformed projectId without prj_ prefix fails identity parse', async () => {
+    setupMocks({
+      '/api/release-identity': { status: 200, body: JSON.stringify({
+        ...GOOD_IDENTITY, projectId: 'wrong_prefix_123',
+      })},
+    });
+    const result = await verifyDeployment({
+      targetUrl: 'https://staging.test',
+      expectedSha: GOOD_IDENTITY.sha,
+      expectedProject: 'wrong_prefix_123',
+    });
+    expect(result.verdict).toBe('FAIL');
+    expect(result.checks.find(c => c.name === 'identity-parseable')?.status).toBe('fail');
+  });
+
+  it('timeout on identity request fails', async () => {
+    mockFetch.mockImplementation(async (_url: string, opts?: RequestInit) => {
+      // Simulate a fetch that hangs until abort
+      return new Promise((_resolve, reject) => {
+        const signal = opts?.signal;
+        if (signal) {
+          signal.addEventListener('abort', () => {
+            reject(new Error('The operation was aborted'));
+          });
+        }
+      });
+    });
+    const result = await verifyDeployment({
+      targetUrl: 'https://staging.test',
+      expectedSha: GOOD_IDENTITY.sha,
+      expectedProject: GOOD_IDENTITY.projectId,
+      timeoutMs: 50, // very short timeout to trigger abort
+    });
+    expect(result.verdict).toBe('FAIL');
+    expect(result.checks.find(c => c.name === 'identity-reachable')?.status).toBe('fail');
+    expect(result.checks.find(c => c.name === 'identity-reachable')?.detail).toContain('Timeout');
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════════
@@ -269,6 +355,20 @@ describe('verifyDeployment — canary', () => {
       const method = opts?.method || 'GET';
       expect(method).toBe('GET');
     }
+  });
+
+  it('canary 301/302 redirect fails (not followed, not treated as success)', async () => {
+    setupMocks({
+      '/terms': { status: 301, body: '' },
+    });
+    const result = await verifyDeployment({
+      targetUrl: 'https://staging.test',
+      expectedSha: GOOD_IDENTITY.sha,
+      expectedProject: GOOD_IDENTITY.projectId,
+    });
+    expect(result.verdict).toBe('FAIL');
+    expect(result.checks.find(c => c.name === 'canary:/terms')?.status).toBe('fail');
+    expect(result.checks.find(c => c.name === 'canary:/terms')?.detail).toContain('Non-2xx');
   });
 
   it('canary skipped when identity fails', async () => {

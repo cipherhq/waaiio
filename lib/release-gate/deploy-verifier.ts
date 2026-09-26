@@ -53,6 +53,7 @@ export async function fetchWithTimeout(
     const res = await fetch(url, {
       method: 'GET',
       signal: controller.signal,
+      redirect: 'manual',
       headers: { 'Accept': 'application/json' },
     });
     const body = await res.text();
@@ -80,16 +81,18 @@ interface ReleaseIdentity {
   timestamp: string;
 }
 
+const SHA_RE = /^[0-9a-f]{40}$/;
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/;
+
 export function parseIdentity(body: string): ReleaseIdentity | null {
   try {
     const json = JSON.parse(body);
-    if (
-      typeof json.sha !== 'string' ||
-      typeof json.projectId !== 'string' ||
-      typeof json.deploymentId !== 'string'
-    ) {
-      return null;
-    }
+    // Strict shape: all fields must be strings with correct format
+    if (typeof json.sha !== 'string' || !SHA_RE.test(json.sha)) return null;
+    if (typeof json.projectId !== 'string' || !json.projectId.startsWith('prj_')) return null;
+    if (typeof json.deploymentId !== 'string' || !json.deploymentId.startsWith('dpl_')) return null;
+    if (typeof json.vercelEnv !== 'string' || !json.vercelEnv) return null;
+    if (typeof json.timestamp !== 'string' || !ISO_DATE_RE.test(json.timestamp)) return null;
     return json as ReleaseIdentity;
   } catch {
     return null;
@@ -215,13 +218,9 @@ async function checkCanary(
       continue;
     }
 
-    if (res.status >= 500) {
-      results.push({ name: `canary:${route.path}`, status: 'fail', detail: `Server error: HTTP ${res.status}` });
-      continue;
-    }
-
-    if (res.status >= 400) {
-      results.push({ name: `canary:${route.path}`, status: 'fail', detail: `Client error: HTTP ${res.status}` });
+    // Require 2xx — any non-2xx (3xx redirect, 4xx, 5xx) is a failure
+    if (res.status < 200 || res.status >= 300) {
+      results.push({ name: `canary:${route.path}`, status: 'fail', detail: `Non-2xx response: HTTP ${res.status}` });
       continue;
     }
 
