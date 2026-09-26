@@ -104,6 +104,8 @@ jobs:
           # For PRs: check out the exact PR head, not the synthetic merge commit.
           # For push/dispatch: uses the default (github.sha).
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || '' }}
+          # Full history needed for blast-radius merge-base analysis
+          fetch-depth: 0
 
       - name: Record execution provenance
         run: |
@@ -202,6 +204,11 @@ jobs:
             exit 1
           fi
           echo "✅ Certificate provenance verified: release_sha=$CERT_SHA tested_commit_sha=$CERT_TESTED"
+
+      - name: Blast-radius analysis (advisory)
+        if: github.event_name == 'pull_request'
+        run: |
+          npx tsx lib/release-gate/blast-radius-cli.ts "${{ env.BASE_SHA }}" "${{ env.SOURCE_HEAD_SHA }}"
 
       - name: Upload release certificate artifact
         uses: actions/upload-artifact@v4
