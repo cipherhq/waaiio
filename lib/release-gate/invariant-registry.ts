@@ -306,7 +306,7 @@ export const PROTECTED_OBJECTS: ProtectedObject[] = [
   },
   {
     type: 'function',
-    identifier: 'public.create_provider_consented_offer(uuid, text, uuid, text, text, text, text, uuid, uuid)',
+    identifier: 'public.create_provider_consented_offer(uuid, text, uuid, text, text, timestamp with time zone, text, uuid, uuid)',
     protected_properties: {
       security: 'definer',
     },
