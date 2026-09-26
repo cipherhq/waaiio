@@ -14,7 +14,7 @@ const baseSha = process.argv[2];
 const headSha = process.argv[3];
 
 if (!baseSha || !headSha) {
-  console.error('Usage: blast-radius-cli.ts <base_sha> <head_sha>');
+  process.stderr.write('Usage: blast-radius-cli.ts <base_sha> <head_sha>\n');
   process.exit(1);
 }
 
@@ -26,7 +26,7 @@ try {
   // In future, this can be tightened to fail when mapped suites are not run
   process.exit(0);
 } catch (error) {
-  console.error('Blast-radius evaluation failed (tooling error):');
-  console.error(error instanceof Error ? error.message : String(error));
+  process.stderr.write('Blast-radius evaluation failed (tooling error):\n');
+  process.stderr.write((error instanceof Error ? error.message : String(error)) + '\n');
   process.exit(1);
 }
