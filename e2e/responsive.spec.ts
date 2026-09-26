@@ -32,9 +32,10 @@ test.describe('Responsive Design', () => {
 
     await page.goto('/pricing');
     // In CI (no Supabase), page shows fallback. In production, tier cards.
-    await expect(
-      page.getByRole('heading', { name: /Starter|Pricing temporarily unavailable/i }).first()
-    ).toBeVisible();
+    // Wait for either valid state to render at tablet width.
+    const fallback = page.getByRole('heading', { name: /Pricing temporarily unavailable/i });
+    const starterHeading = page.getByRole('heading', { name: 'Starter' });
+    await expect(fallback.or(starterHeading)).toBeVisible();
 
     await context.close();
   });

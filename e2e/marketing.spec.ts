@@ -17,11 +17,21 @@ test.describe('Marketing Pages', () => {
   test('pricing page loads', async ({ page }) => {
     await page.goto('/pricing');
     // In CI (no Supabase), page shows "Pricing temporarily unavailable" fallback.
-    // In production, it shows tier cards (Starter/Pro/Premium).
-    // Both are valid — wait for either to appear.
-    await expect(
-      page.getByRole('heading', { name: /Starter|Pricing temporarily unavailable/i }).first()
-    ).toBeVisible();
+    // In production, it shows all three tier cards (Starter/Pro/Premium).
+    // Wait for the page to settle into one of the two valid states.
+    const fallback = page.getByRole('heading', { name: /Pricing temporarily unavailable/i });
+    const starterHeading = page.getByRole('heading', { name: 'Starter' });
+
+    // Wait for either state to render (client-side fetch + fallback takes a moment)
+    await expect(fallback.or(starterHeading)).toBeVisible();
+
+    const isFallback = await fallback.isVisible();
+    if (!isFallback) {
+      // Real pricing rendered — verify all three canonical tier headings
+      await expect(starterHeading).toBeVisible();
+      await expect(page.getByRole('heading', { name: 'Pro' })).toBeVisible();
+      await expect(page.getByRole('heading', { name: 'Premium' })).toBeVisible();
+    }
   });
 
   test('login page loads', async ({ page }) => {
