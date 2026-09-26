@@ -1,6 +1,6 @@
--- B26 ACL Repair Script
+-- B27 ACL Repair Script
 -- Generated: 2026-09-25
--- Staging environment ACL repair (B2.6: full relation derivation — tables, views, sequences)
+-- Staging environment ACL repair (B2.7: strict current→canonical delta)
 
 BEGIN;
 
@@ -53,16 +53,11 @@ ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT EXECUTE 
 -- ==============================================================
 -- Derivation covers: ordinary tables (relkind 'r'), views (relkind 'v'),
 -- materialized views (relkind 'm', none present), sequences (relkind 'S').
--- No REVOKEs remain after B2.6 re-derivation — see proof below.
+-- Strict current→canonical delta: only GRANTs absent in staging, required by target.
+-- Views: businesses_public and whatsapp_channels_public already have canonical
+-- SELECT for anon/authenticated in staging (M293). No repair action needed.
+-- Postconditions still verify their presence.
 
--- PART 2A: VIEW GRANTS (canonical per M223/M293)
--- M293 creates security_barrier views and grants SELECT to anon, authenticated.
--- Staging already has these; explicit GRANT SELECT is idempotent but ensures
--- the derivation is self-contained regardless of staging pre-state.
-GRANT SELECT ON public.businesses_public TO anon, authenticated;
-GRANT SELECT ON public.whatsapp_channels_public TO anon, authenticated;
-
--- PART 2B: TABLE GRANTS
 -- GRANT ALL ON ... TO anon
 GRANT ALL ON public.admin_audit_logs, public.admin_broadcasts, public.admin_impersonation_tokens, public.admin_role_permissions, public.ai_classification_log, public.ai_conversation_config, public.ai_usage, public.alerts, public.api_keys, public.appointments TO anon;
 GRANT ALL ON public.attendance_log, public.audit_log, public.blocked_phones, public.booking_confirmation_intents, public.booking_slots, public.bookings, public.bot_rules, public.bot_sequence_enrollments, public.bot_sequence_steps, public.bot_sequences TO anon;
