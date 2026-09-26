@@ -251,7 +251,7 @@ describe('Regression Manifest', () => {
 
   it('validateManifestPaths detects a missing/stale path', () => {
     // Inject a fake domain with a nonexistent test path, validate, then remove
-    const fakeDomain = {
+    const fakeDomain: DomainEntry = {
       id: 'test-fake',
       label: 'Fake',
       pathPatterns: ['fake/'],
@@ -265,5 +265,24 @@ describe('Regression Manifest', () => {
     } finally {
       REGRESSION_MANIFEST.pop();
     }
+  });
+
+  // ── B3a: Explicit manifest membership guards ──
+
+  it('payments domain includes entity-balance.test.ts', () => {
+    const payments = REGRESSION_MANIFEST.find(d => d.id === 'payments')!;
+    expect(payments.testSuites).toContain('lib/payments/__tests__/entity-balance.test.ts');
+  });
+
+  it('saved-cards domain includes B3a regression tests', () => {
+    const savedCards = REGRESSION_MANIFEST.find(d => d.id === 'saved-cards')!;
+    expect(savedCards.testSuites).toContain('lib/__tests__/reg-saved-card-reuse-chain.test.ts');
+    expect(savedCards.testSuites).toContain('lib/__tests__/reg-pin-lockout.test.ts');
+    expect(savedCards.testSuites).toContain('lib/__tests__/reg-saved-card-invoice-giving-parity.test.ts');
+  });
+
+  it('invoice-giving domain includes saved-card parity test', () => {
+    const invoiceGiving = REGRESSION_MANIFEST.find(d => d.id === 'invoice-giving')!;
+    expect(invoiceGiving.testSuites).toContain('lib/__tests__/reg-saved-card-invoice-giving-parity.test.ts');
   });
 });
