@@ -5,7 +5,8 @@
  * 1. Invoice flow — invoice_pay step validate()
  * 2. Crowdfunding flow — donation_payment step validate()
  *
- * This closes the gap where only source-string/importability was tested.
+ * Asserts the critical authority arguments passed into chargeSavedMethod:
+ * entity IDs, transaction category, amount, and saved method ID.
  *
  * @see #406 B3a — gap #5
  */
@@ -106,79 +107,84 @@ function findStep(flow: { steps: FlowStepConfig[] }, stepId: string): FlowStepCo
 describe('REG-SC-003: Saved-card runtime parity', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('invoice_pay validate() calls handleSavedCardInput with invoice entity/category when _saved_method_id is set', async () => {
+  it('invoice validate(pay_saved) charges with invoice entity ID, category, amount, and method ID', async () => {
     const { invoiceFlow } = await import('@/lib/bot/flows/invoice.flow');
     const step = findStep(invoiceFlow, 'invoice_pay');
 
     mockRequiresPin.mockResolvedValue({ required: false, locked: false });
-    mockChargeSavedMethod.mockResolvedValue({
-      status: 'charged',
-      paymentId: 'pay-inv-1',
-      reference: 'INV-saved-test',
-    });
+    mockChargeSavedMethod.mockResolvedValue({ status: 'charged', paymentId: 'pay-inv-1', reference: 'INV-saved-test' });
 
     const ctx = makeCtx({
-      _saved_method_id: 'spm-inv-1',
+      _saved_method_id: 'spm-inv-77',
       _invoice_id: 'inv-123',
       _invoice_ref: 'INV-001',
-      _pending_deposit: 5000,
+      _pending_deposit: 7500,
+      _invoice_amount: 7500,
     });
 
     const result = await step.validate!('pay_saved', ctx);
 
-    // handleSavedCardInput was reached — chargeSavedMethod was called
+    // Prove handleSavedCardInput reached chargeSavedMethod
     expect(mockChargeSavedMethod).toHaveBeenCalledOnce();
-    // Verify entity authority: invoiceId passed, transactionCategory is 'invoice'
-    const chargeArgs = mockChargeSavedMethod.mock.calls[0];
-    // The chargeArgs[2] should contain the opts with entityId
-    // Check result indicates saved-card payment succeeded
+    const chargeOpts = mockChargeSavedMethod.mock.calls[0][1];
+
+    // Assert invoice authority: entity ID, category, amount, method ID
+    expect(chargeOpts.invoiceId).toBe('inv-123');
+    expect(chargeOpts.transactionCategory).toBe('invoice');
+    expect(chargeOpts.amount).toBe(7500);
+    expect(chargeOpts.methodId).toBe('spm-inv-77');
+    expect(chargeOpts.businessId).toBe('biz-1');
+
+    // Prove payment succeeded
     expect(result).toBeTruthy();
     expect(result.data?._saved_card_paid).toBe(true);
   });
 
-  it('donation_payment validate() calls handleSavedCardInput with campaign entity/giving category', async () => {
+  it('crowdfunding validate(pay_saved) charges with campaign entity ID, giving category, amount, and method ID', async () => {
     const { crowdfundingFlow } = await import('@/lib/bot/flows/crowdfunding.flow');
     const step = findStep(crowdfundingFlow, 'donation_payment');
 
     mockRequiresPin.mockResolvedValue({ required: false, locked: false });
-    mockChargeSavedMethod.mockResolvedValue({
-      status: 'charged',
-      paymentId: 'pay-don-1',
-      reference: 'DON-saved-test',
-    });
+    mockChargeSavedMethod.mockResolvedValue({ status: 'charged', paymentId: 'pay-don-1', reference: 'DON-saved-test' });
 
     const ctx = makeCtx({
-      _saved_method_id: 'spm-don-1',
-      campaign_id: 'camp-123',
-      donation_ref_code: 'DON-001',
+      _saved_method_id: 'spm-don-88',
+      campaign_id: 'camp-456',
+      donation_ref_code: 'DON-002',
       donation_amount: 10000,
       donor_name: 'Test Donor',
     });
 
     const result = await step.validate!('pay_saved', ctx);
 
-    // handleSavedCardInput was reached — chargeSavedMethod was called
+    // Prove handleSavedCardInput reached chargeSavedMethod
     expect(mockChargeSavedMethod).toHaveBeenCalledOnce();
-    // Check result indicates saved-card payment succeeded
+    const chargeOpts = mockChargeSavedMethod.mock.calls[0][1];
+
+    // Assert giving authority: entity ID, category, amount, method ID, donorName
+    expect(chargeOpts.campaignId).toBe('camp-456');
+    expect(chargeOpts.transactionCategory).toBe('giving');
+    expect(chargeOpts.amount).toBe(10000);
+    expect(chargeOpts.methodId).toBe('spm-don-88');
+    expect(chargeOpts.businessId).toBe('biz-1');
+    expect(chargeOpts.donorName).toBe('Test Donor');
+
+    // Prove payment succeeded
     expect(result).toBeTruthy();
     expect(result.data?._saved_card_paid).toBe(true);
   });
 
-  it('invoice_pay next() stays on step while _awaiting_card_pin', async () => {
+  it('invoice next() stays on step during _awaiting_card_pin', async () => {
     const { invoiceFlow } = await import('@/lib/bot/flows/invoice.flow');
     const step = findStep(invoiceFlow, 'invoice_pay');
-
     const ctx = makeCtx({ _awaiting_card_pin: true, _saved_method_id: 'spm-1' });
-    const next = await step.next!(ctx);
-    expect(next).toBe('invoice_pay');
+    expect(await step.next!(ctx)).toBe('invoice_pay');
   });
 
-  it('donation_payment next() stays on step while _awaiting_card_pin', async () => {
+  it('crowdfunding next() stays on step during _awaiting_card_pin', async () => {
     const { crowdfundingFlow } = await import('@/lib/bot/flows/crowdfunding.flow');
     const step = findStep(crowdfundingFlow, 'donation_payment');
-
     const ctx = makeCtx({ _awaiting_card_pin: true, _saved_method_id: 'spm-1' });
-    const next = await step.next!(ctx);
-    expect(next).toBe('donation_payment');
+    expect(await step.next!(ctx)).toBe('donation_payment');
   });
 });
