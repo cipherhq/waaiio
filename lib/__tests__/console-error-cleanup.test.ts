@@ -83,6 +83,7 @@ describe('Production console.error allowlist (exact counts)', () => {
     'app/sign/[token]/page.tsx': { count: 1, client: true, reason: 'Browser error debugging for PDF rendering' },
     'app/api/cron/trial-activation/route.ts': { count: 6, client: false, reason: 'Cron error logging for trial activation + legacy reconciliation failures' },
     'app/api/public/pricing/route.ts': { count: 9, client: false, reason: 'Fail-closed error logging for public pricing projection (#270)' },
+    'lib/release-gate/db-delta-cli.ts': { count: 2, client: false, reason: 'CLI usage + fatal error output — db-delta orchestrator' },
   };
 
   function collectTsFiles(dir: string, base: string): string[] {
@@ -143,7 +144,7 @@ describe('Production console.error allowlist (exact counts)', () => {
 
   it('non-client allowances are only logger, cron routes, and public pricing', () => {
     const serverEntries = Object.entries(ALLOWLIST).filter(([, e]) => !e.client);
-    const allowedServerFiles = ['lib/logger.ts', 'app/api/cron/trial-activation/route.ts', 'app/api/public/pricing/route.ts'];
+    const allowedServerFiles = ['lib/logger.ts', 'app/api/cron/trial-activation/route.ts', 'app/api/public/pricing/route.ts', 'lib/release-gate/db-delta-cli.ts'];
     expect(serverEntries).toHaveLength(allowedServerFiles.length);
     for (const [file] of serverEntries) {
       expect(allowedServerFiles).toContain(file);
