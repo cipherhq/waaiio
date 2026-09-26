@@ -3675,6 +3675,20 @@ jobs:
       - name: Install Playwright browsers
         run: npx playwright install chromium --with-deps
 
+      - name: Guard — no dangerous secrets in Playwright environment
+        run: |
+          FAILED=0
+          for VAR in SUPABASE_SERVICE_ROLE_KEY META_CLOUD_ACCESS_TOKEN META_CLOUD_PHONE_NUMBER_ID STRIPE_SECRET_KEY PAYSTACK_SECRET_KEY INTERNAL_API_TOKEN; do
+            if [ -n "${!VAR}" ]; then
+              echo "::error::FAIL-CLOSED: $VAR is unexpectedly present in the Playwright job environment"
+              FAILED=1
+            fi
+          done
+          if [ "$FAILED" -eq 1 ]; then
+            exit 1
+          fi
+          echo "Guard passed: no dangerous secrets present"
+
       - name: Start server and run tests
         run: |
           npx next start &
@@ -3687,8 +3701,8 @@ jobs:
             fi
             sleep 2
           done
-          # Run only chromium (faster CI, mobile is supplementary)
-          npx playwright test e2e/smoke.spec.ts --project=chromium --reporter=list
+          # Run smoke + auth specs, chromium only (mobile is supplementary)
+          npx playwright test e2e/smoke.spec.ts e2e/auth.spec.ts --project=chromium --reporter=list
           TEST_EXIT=$?
           kill $SERVER_PID 2>/dev/null || true
           exit $TEST_EXIT
