@@ -129,12 +129,12 @@ export function detectMigrationChanges(baseSha: string, headSha: string): Migrat
 // Base migration enumeration (from base SHA's exact blobs)
 // ═══════════════════════════════════════════════════════════════════
 
-export function enumerateBaseMigrations(baseSha: string): string[] {
+export function enumerateBaseMigrations(baseSha: string, cwd?: string): string[] {
   let raw: string;
   try {
     raw = execSync(
       `git ls-tree --name-only "${baseSha}" -- supabase/migrations/`,
-      { encoding: 'utf-8', timeout: 30000 },
+      { encoding: 'utf-8', timeout: 30000, cwd },
     );
   } catch {
     throw new Error(`Failed to enumerate migrations at base SHA ${baseSha}`);
@@ -185,11 +185,22 @@ function applyBaseMigrations(dbUrl: string, baseSha: string, migrations: string[
   return applied;
 }
 
-function applyCandidateMigrations(dbUrl: string, migrationFiles: string[]): number {
+function getCandidateMigrationContent(headSha: string, file: string): string {
+  const path = `supabase/migrations/${file}`;
+  try {
+    return execSync(
+      `git show "${headSha}:${path}"`,
+      { encoding: 'utf-8', timeout: 30000 },
+    );
+  } catch {
+    throw new Error(`Failed to read candidate migration ${path} at SHA ${headSha}`);
+  }
+}
+
+function applyCandidateMigrations(dbUrl: string, headSha: string, migrationFiles: string[]): number {
   let applied = 0;
   for (const file of migrationFiles) {
-    const fullPath = resolve('supabase/migrations', file);
-    const content = readFileSync(fullPath, 'utf-8');
+    const content = getCandidateMigrationContent(headSha, file);
     applySQL(dbUrl, content, file);
     applied++;
   }
@@ -354,7 +365,7 @@ export async function runDbDelta(args: CliArgs & { _overrideDelta?: MigrationDel
 
   // Step 5: Apply candidate-only migrations from HEAD checkout
   console.log(`Applying ${delta.added.length} candidate migration(s)...`);
-  const candApplied = applyCandidateMigrations(dbUrl, delta.added);
+  const candApplied = applyCandidateMigrations(dbUrl, headSha, delta.added);
   console.log(`Applied ${candApplied} candidate migration(s).`);
 
   // Step 6: Capture candidate baseline
@@ -376,6 +387,17 @@ export async function runDbDelta(args: CliArgs & { _overrideDelta?: MigrationDel
     diff,
     noOp: false,
   };
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Exit decision (pure, testable)
+// ═══════════════════════════════════════════════════════════════════
+
+/** Advisory mode: diff verdicts (PASS or BLOCKED) always exit 0.
+ *  Only tooling/capture/migration errors exit non-zero. */
+export function advisoryExitCode(artifact: DeltaArtifact): number {
+  // Advisory mode — all diff verdicts succeed
+  return 0;
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -403,8 +425,7 @@ async function main() {
     // Print summary
     printSummary(artifact);
 
-    // Advisory mode: always exit 0 for diff verdicts
-    process.exit(0);
+    process.exit(advisoryExitCode(artifact));
   } catch (err) {
     process.stderr.write(`DB Delta CLI FAILED: ${(err as Error).message}\n`);
     process.exit(1);
