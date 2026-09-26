@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import Navbar from '@/components/marketing/Navbar';
 import Footer from '@/components/marketing/Footer';
+import SiteAnnouncement from '@/components/marketing/SiteAnnouncement';
 
 export const metadata: Metadata = {
   title: 'Waaiio — Customers Book & Pay on WhatsApp While You Sleep',
@@ -35,6 +36,7 @@ export default function MarketingLayout({
   return (
     <>
       <a href="#main-content" className="skip-link">Skip to content</a>
+      <SiteAnnouncement />
       <Navbar />
       <main id="main-content" style={{ overflowX: 'clip' }}>{children}</main>
       <Footer />

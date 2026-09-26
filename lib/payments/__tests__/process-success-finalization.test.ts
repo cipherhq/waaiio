@@ -55,6 +55,10 @@ function buildSupabase(opts: {
       if (opts.stockRpcError) return Promise.resolve({ data: null, error: opts.stockRpcError });
       return Promise.resolve({ data: { applied: true, already_applied: false, items: 1 }, error: null });
     }
+    if (name === 'confirm_reservation_payment_atomic') {
+      if (opts.reservationUpdateError) return Promise.resolve({ data: null, error: opts.reservationUpdateError });
+      return Promise.resolve({ data: { confirmed: true, reason: 'pending_to_confirmed', was_pending: true, was_null_link: true }, error: null });
+    }
     if (name === 'decrement_stock' || name === 'decrement_variant_stock') {
       if (opts.stockRpcError) return Promise.resolve({ data: null, error: opts.stockRpcError });
       return Promise.resolve({ data: null, error: null });
@@ -201,7 +205,7 @@ describe('processSuccessfulPayment — FinalizationResult', () => {
     const supabase = buildSupabase({ reservationUpdateError: { message: 'db down' } });
     const r = await processSuccessfulPayment(supabase, { id: 'p1', amount: 5000, booking_id: null, invoice_id: null, campaign_id: null, reservation_id: 'res1' });
     expect(r.criticalSuccess).toBe(false);
-    expect(r.errors).toContain('reservation_confirmation_failed');
+    expect(r.errors).toContain('reservation_confirmation_rpc_failed');
   });
 
   // ── No critical effects ──

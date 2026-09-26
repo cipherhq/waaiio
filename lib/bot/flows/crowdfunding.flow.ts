@@ -13,6 +13,7 @@ import { checkTierLimit } from '@/lib/tier-limits';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 import { getPoweredByFooter } from '@/lib/whitelabel';
 import { isToggleColumnMissing } from '@/lib/utils/campaign-column-fallback';
+import { buildSavedCardOffer, handleSavedCardInput } from './shared/saved-card-flow';
 
 const EXPANDED_CAMPAIGN_SELECT = 'id, title, description, goal_amount, raised_amount, donor_count, end_date, allow_after_end_date, allow_after_goal_met' as const;
 const LEGACY_CAMPAIGN_SELECT = 'id, title, description, goal_amount, raised_amount, donor_count, end_date' as const;
@@ -363,6 +364,8 @@ const donationPaymentStep: FlowStepConfig = {
 
   async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
     const sd = ctx.session.session_data;
+    // #393: Suppress re-prompt while awaiting saved-card PIN entry
+    if (sd._awaiting_card_pin) return [];
     const amount = sd.donation_amount as number;
     const country = (ctx.business?.country_code || 'NG') as CountryCode;
 
@@ -407,6 +410,16 @@ const donationPaymentStep: FlowStepConfig = {
 
     // Use name from the donor name step (or profile if skipped)
     const donorName = (sd.donor_display_name as string) || '';
+
+    // #389: Saved-card offer — check BEFORE payment link
+    const savedCardOffer = await buildSavedCardOffer(ctx, amount);
+    if (savedCardOffer) {
+      sd._saved_method_id = savedCardOffer.display.id;
+      sd._pending_deposit = amount;
+      sd.donation_ref_code = refCode;
+      sd.donor_name = donorName;
+      return [savedCardOffer.prompt];
+    }
 
     // Initialize payment
     const { initializePayment } = await import('./shared/payment');
@@ -569,11 +582,75 @@ const donationPaymentStep: FlowStepConfig = {
     ];
   },
 
-  async validate() {
+  async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
+    // #389: Handle saved-card input
+    const d = ctx.session.session_data;
+    if (d._saved_method_id || d._awaiting_card_pin) {
+      const donRef = d.donation_ref_code as string || 'DON';
+      // #389 B5: Generate reference ONCE, persist in session for PIN/retry reuse
+      let savedCardRef = d._saved_card_attempt_ref as string | undefined;
+      if (!savedCardRef) {
+        savedCardRef = `${donRef}-saved-${Date.now().toString(36)}`;
+        d._saved_card_attempt_ref = savedCardRef;
+      }
+      const savedResult = await handleSavedCardInput(input, ctx, {
+        amount: d._pending_deposit as number || d.donation_amount as number,
+        reference: savedCardRef,
+        entityId: { campaignId: d.campaign_id as string },
+        transactionCategory: 'giving',
+        donorName: (d.donor_name as string) || null,
+      });
+      if (savedResult) return savedResult;
+    }
     return { valid: true };
   },
 
-  async next() {
+  async next(ctx: FlowContext) {
+    const d = ctx.session.session_data;
+    // Stay on step while awaiting saved-card PIN
+    if (d._awaiting_card_pin) return 'donation_payment';
+    // #389: Saved-card outcomes
+    if (d._saved_card_paid) {
+      delete d._saved_card_attempt_ref; // #389 B5: Clear stable ref on success
+      const paymentId = d._saved_card_payment_id as string;
+      if (paymentId) {
+        // #389 B4: Donation intent now created INSIDE the adapter (charge-saved.ts / saved-payment-adapter.ts)
+        // before provider dispatch — no after-charge call needed here.
+
+        const { reconcilePayment } = await import('@/lib/payments/reconcile');
+        const result = await reconcilePayment(ctx.supabase, paymentId, 'saved_card');
+        const isComplete = result.lifecycle?.status === 'completed'
+          || result.lifecycle?.status === 'already_completed'
+          || result.lifecycle?.status === 'not_deliverable';
+        if (!isComplete) {
+          d.payment_reference = `${d.donation_ref_code as string}-saved`;
+          return 'await_donation_payment';
+        }
+      }
+      return null;
+    }
+    if (d._saved_card_indeterminate || d._saved_card_requires_auth) {
+      d.payment_reference = `${d.donation_ref_code as string}-saved`;
+      return 'await_donation_payment';
+    }
+    if (d._saved_card_cancelled) {
+      delete d._saved_card_attempt_ref; // #389 B5: Clear stable ref on cancel
+      // CAS: cancel donation only while still pending
+      const donRef = d.donation_ref_code as string;
+      if (donRef) {
+        await ctx.supabase.from('campaign_donations')
+          .update({ status: 'cancelled' })
+          .eq('reference_code', donRef)
+          .in('status', ['pending']);
+      }
+      await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('Donation cancelled. Send *Hi* to start over.') });
+      return null;
+    }
+    if (d._skip_saved_card && d._saved_method_id) {
+      delete d._saved_method_id;
+      delete d._saved_card_attempt_ref; // #389 B5: Clear stable ref when switching to new card
+      return 'donation_payment';
+    }
     return 'await_donation_payment';
   },
 };
@@ -629,7 +706,7 @@ const awaitDonationPaymentStep: FlowStepConfig = {
           const { data: don } = await ctx.supabase.from('campaign_donations')
             .select('status').eq('reference_code', refCode).maybeSingle();
           if (don?.status === 'success') {
-            await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('✅ Your donation has already been confirmed! Thank you for your generosity.\n\n💡 Type *my giving* to see your giving history.') });
+            // #389 B1: Stage-3 owns customer confirmation — suppress flow-level sendText
             return { valid: true, data: { _action: 'already_confirmed' } };
           }
           if (don?.status === 'cancelled') {
@@ -757,12 +834,8 @@ const awaitDonationPaymentStep: FlowStepConfig = {
       const recovery = await verifyAndReconcilePayment(ctx.supabase, ref);
 
       if (recovery.outcome === 'completed' || recovery.outcome === 'not_deliverable') {
-        const sd = ctx.session.session_data;
-        await ctx.sender.sendText({
-          to: ctx.from,
-          text: await ctx.t(`✅ *Donation Confirmed!*\n\n🙏 Thank you for supporting *${sd.campaign_title}*\n\n💡 Type *my giving* to see your giving history, or *receipt* for your donation receipt.`),
-        });
-        return { valid: true, data: { _action: 'already_confirmed' } };
+        // #389: Stage-3 owns customer confirmation — flow only sets action flag
+        return { valid: true, data: { _action: 'payment_confirmed' } };
       }
 
       if (recovery.outcome === 'processing' || recovery.outcome === 'retryable') {

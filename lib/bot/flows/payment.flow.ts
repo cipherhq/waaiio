@@ -285,6 +285,8 @@ export const paymentFlow: FlowDefinition = {
       },
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
         const d = ctx.session.session_data;
+        // #393: Suppress re-prompt while awaiting saved-card PIN entry
+        if (d._awaiting_card_pin) return [];
         const amount = d.amount as number;
 
         // ── T&C cancel check (before gate) ──
@@ -637,8 +639,7 @@ export const paymentFlow: FlowDefinition = {
               return null; // fail closed — no cancellation claim, no transfer cancel
             }
             if (bk.deposit_status === 'paid' || bk.status === 'confirmed') {
-              const isGiving = d.active_capability === 'giving';
-              await ctx.sender.sendText({ to: ctx.from, text: await ctx.t(`✅ Your ${isGiving ? 'giving' : 'payment'} has been confirmed! Type *my bookings* to view details.`) });
+              // #389 B1: Stage-3 owns customer confirmation — suppress flow-level sendText
               return null;
             }
             if (bk.status === 'cancelled') {
@@ -726,11 +727,7 @@ export const paymentFlow: FlowDefinition = {
             return { valid: true, data: { _action: 'retry_payment' } };
           }
           if (recovery.outcome === 'completed' || recovery.outcome === 'not_deliverable') {
-            const isGivingFlow = ctx.session.session_data.active_capability === 'giving';
-            const tips = isGivingFlow
-              ? '\n\n💡 Type *my giving* to see your giving history, or *receipt* for your payment receipt.'
-              : '\n\n💡 Type *my bookings* to view your bookings, or *receipt* for your payment receipt.';
-            await ctx.sender.sendText({ to: ctx.from, text: await ctx.t(`✅ Your payment has already been confirmed!${tips}`) });
+            // #389 B1: Stage-3 owns customer confirmation — suppress flow-level sendText
             return { valid: true, data: { _action: 'already_confirmed' } };
           }
           // provider_error, not_verified, processing, retryable — block fresh checkout
@@ -768,11 +765,7 @@ export const paymentFlow: FlowDefinition = {
                 return { valid: false, errorMessage: 'Something went wrong. Please try again.' };
               }
               if (bk.deposit_status === 'paid' || bk.status === 'confirmed') {
-                const isGivingFlow = d.active_capability === 'giving';
-                const tips = isGivingFlow
-                  ? '\n\n💡 Type *my giving* to see your giving history, or *receipt* for your payment receipt.'
-                  : '\n\n💡 Type *my bookings* to view details, or *receipt* for your payment receipt.';
-                await ctx.sender.sendText({ to: ctx.from, text: await ctx.t(`✅ Your payment has been confirmed! Your ${isGivingFlow ? 'giving' : 'booking'} is active.${tips}`) });
+                // #389 B1: Stage-3 owns customer confirmation — suppress flow-level sendText
                 return { valid: true, data: { _action: 'already_confirmed' } };
               }
               if (bk.status === 'cancelled') {
@@ -939,17 +932,7 @@ export const paymentFlow: FlowDefinition = {
           const recovery = await verifyAndReconcilePayment(ctx.supabase, ref);
 
           if (recovery.outcome === 'completed' || recovery.outcome === 'not_deliverable') {
-            // Payment Authority fully completed Stage 2+3. Customer confirmation,
-            // owner notification, receipts, and post-completion already handled by
-            // sendProactiveConfirmation. Bot provides only a brief acknowledgment.
-            const isGivingFlow = d.active_capability === 'giving';
-            const tips = isGivingFlow
-              ? '\n\n💡 Type *my giving* to see your giving history, or *receipt* for your payment receipt.'
-              : '\n\n💡 Type *my bookings* to view your bookings, or *receipt* for your payment receipt.';
-            await ctx.sender.sendText({
-              to: ctx.from,
-              text: await ctx.t(`✅ *Payment Confirmed!*\n\nRef: *${d.reference_code as string}*${tips}`),
-            });
+            // #389 B1: Stage-3 owns customer confirmation — suppress flow-level sendText
             return { valid: true, data: { _action: 'already_confirmed' } };
           }
 

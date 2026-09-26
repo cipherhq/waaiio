@@ -18,6 +18,7 @@ const mockBuildSavedCardPIParams = vi.fn(() => ({
 }));
 const mockCreateAuthAttempt = vi.fn();
 const mockReconcilePayment = vi.fn();
+const mockRecoverDispatchedSavedCardPayment = vi.fn();
 
 vi.mock('../payments/charge-saved', () => ({
   getSavedPaymentMethod: vi.fn().mockResolvedValue(null),
@@ -51,6 +52,10 @@ vi.mock('../payments/reconcile', () => ({
   reconcilePayment: (...args: unknown[]) => mockReconcilePayment(...args),
 }));
 
+vi.mock('../payments/saved-card-recovery', () => ({
+  recoverDispatchedSavedCardPayment: (...args: unknown[]) => mockRecoverDispatchedSavedCardPayment(...args),
+}));
+
 import { savedPaymentAdapter } from '../payments/saved-payment-adapter';
 
 const METHOD = {
@@ -72,16 +77,24 @@ interface MockState {
   inserts: Array<Record<string, unknown>>;
   updates: Array<Record<string, unknown>>;
   updateFilters: Array<Array<[string, unknown]>>;
+  rpcCalls: Array<{ name: string; params: Record<string, unknown> }>;
+  events: string[];
 }
 
 function makeSupabase(opts: {
   existingPayment?: Record<string, unknown> | null;
   paymentId?: string;
+  donationIntentResult?: { data?: unknown; error?: unknown };
 } = {}) {
-  const state: MockState = { inserts: [], updates: [], updateFilters: [] };
+  const state: MockState = { inserts: [], updates: [], updateFilters: [], rpcCalls: [], events: [] };
   const paymentId = opts.paymentId || 'pay-new-1';
 
   const supabase = {
+    rpc: vi.fn(async (name: string, params: Record<string, unknown>) => {
+      state.rpcCalls.push({ name, params });
+      state.events.push(`rpc:${name}`);
+      return opts.donationIntentResult || { data: { created: true, already_existed: false }, error: null };
+    }),
     from: vi.fn((table: string) => {
       let operation: 'read' | 'insert' | 'update' = 'read';
       let filters: Array<[string, unknown]> = [];
@@ -101,6 +114,7 @@ function makeSupabase(opts: {
         insert: vi.fn((payload: Record<string, unknown>) => {
           operation = 'insert';
           state.inserts.push(payload);
+          if (table === 'payments') state.events.push('payment_insert');
           return chain;
         }),
         update: vi.fn((payload: Record<string, unknown>) => {
@@ -157,6 +171,10 @@ const CHARGE_OPTS = {
 describe('#379 Stripe saved-payment adapter behavior', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockRecoverDispatchedSavedCardPayment.mockResolvedValue({
+      outcome: 'indeterminate',
+      message: 'provider_dispatch_ambiguous',
+    });
     mockBuildSavedCardPIParams.mockReturnValue({
       customer: 'cus_test',
       payment_method: 'pm_test',
@@ -240,9 +258,73 @@ describe('#379 Stripe saved-payment adapter behavior', () => {
     expect(result).toEqual({
       status: 'indeterminate',
       paymentId: 'pay-existing',
-      message: 'duplicate_tap_existing_dispatch',
+      message: 'provider_dispatch_ambiguous',
     });
     expect(state.inserts).toHaveLength(0);
+    expect(mockChargeStripeSavedCard).not.toHaveBeenCalled();
+    expect(mockRecoverDispatchedSavedCardPayment).toHaveBeenCalledWith(supabase, 'pay-existing');
+  });
+
+  it('creates and verifies a campaign donation intent before Stripe dispatch', async () => {
+    const { supabase, state } = makeSupabase({
+      paymentId: 'pay-giving-new',
+      donationIntentResult: { data: { created: false, reason: 'amount_mismatch' }, error: null },
+    });
+
+    const result = await savedPaymentAdapter.chargeSavedMethod(supabase, {
+      ...CHARGE_OPTS,
+      campaignId: 'campaign-1',
+      customerPhone: '+15712746425',
+      donorName: 'Ada Donor',
+    });
+
+    expect(result).toEqual({
+      status: 'indeterminate',
+      paymentId: 'pay-giving-new',
+      message: 'Donation intent creation failed',
+    });
+    expect(state.inserts).toHaveLength(1);
+    expect(state.inserts[0]).toMatchObject({ campaign_id: 'campaign-1', gateway: 'stripe' });
+    expect(state.rpcCalls).toHaveLength(1);
+    expect(state.rpcCalls[0]).toMatchObject({
+      name: 'ensure_campaign_donation_intent_for_payment',
+      params: {
+        p_payment_id: 'pay-giving-new',
+        p_donor_phone: '+15712746425',
+        p_donor_name: 'Ada Donor',
+      },
+    });
+    expect(state.events).toEqual([
+      'payment_insert',
+      'rpc:ensure_campaign_donation_intent_for_payment',
+    ]);
+    expect(mockChargeStripeSavedCard).not.toHaveBeenCalled();
+  });
+
+  it('blocks existing campaign recovery before reconciliation when intent verification fails', async () => {
+    const { supabase, state } = makeSupabase({
+      existingPayment: {
+        id: 'pay-giving-existing', status: 'pending', gateway_reference: 'pi_existing',
+        provider_init_state: 'provider_confirmed',
+      },
+      donationIntentResult: { data: { created: false, reason: 'donor_identity_mismatch' }, error: null },
+    });
+
+    const result = await savedPaymentAdapter.chargeSavedMethod(supabase, {
+      ...CHARGE_OPTS,
+      campaignId: 'campaign-1',
+      customerPhone: '+15712746425',
+      donorName: 'Ada Donor',
+    });
+
+    expect(result).toEqual({
+      status: 'indeterminate',
+      paymentId: 'pay-giving-existing',
+      message: 'Donation intent unavailable',
+    });
+    expect(state.rpcCalls).toHaveLength(1);
+    expect(mockReconcilePayment).not.toHaveBeenCalled();
+    expect(mockRecoverDispatchedSavedCardPayment).not.toHaveBeenCalled();
     expect(mockChargeStripeSavedCard).not.toHaveBeenCalled();
   });
 

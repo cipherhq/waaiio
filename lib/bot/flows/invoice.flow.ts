@@ -9,6 +9,7 @@ import { getPoweredByFooter } from '@/lib/whitelabel';
 import { analyzeReceipt, receiptMatchesExpected } from '@/lib/bot/receipt-ocr';
 import { parseIvePaidInput, isIvePaidInput } from '@/lib/bot/flows/shared/ive-paid-input';
 import { checkBankTransferEligibility, createPendingTransfer, formatBankTransferBlock, BANK_ONLY_BUTTONS } from './shared/bank-transfer';
+import { buildSavedCardOffer, handleSavedCardInput } from './shared/saved-card-flow';
 
 // ── Invoice List ──
 const invoiceListStep: FlowStepConfig = {
@@ -188,6 +189,8 @@ const invoicePayStep: FlowStepConfig = {
   id: 'invoice_pay',
 
   async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
+    // #393: Suppress re-prompt while awaiting saved-card PIN entry
+    if (ctx.session.session_data._awaiting_card_pin) return [];
     const invoiceId = ctx.session.session_data._selected_invoice_id as string;
 
     const { data: invoice, error: invoiceError } = await ctx.supabase
@@ -254,6 +257,20 @@ const invoicePayStep: FlowStepConfig = {
     }
 
     try {
+      // #389: Saved-card offer — check BEFORE payment link
+      const savedCardOffer = await buildSavedCardOffer(ctx, remainingAmount);
+      if (savedCardOffer) {
+        const sd = ctx.session.session_data;
+        sd._saved_method_id = savedCardOffer.display.id;
+        sd._pending_deposit = remainingAmount;
+        sd._invoice_id = invoice.id;
+        sd._invoice_ref = invoice.reference_code;
+        sd._invoice_amount = remainingAmount;
+        sd._invoice_business_id = invoice.business_id;
+        sd._invoice_customer_name = 'Customer';
+        return [savedCardOffer.prompt];
+      }
+
       const result = await initializePayment(ctx.supabase, {
         invoiceId: invoice.id,
         userId,
@@ -441,6 +458,24 @@ const invoicePayStep: FlowStepConfig = {
     if (input === 'done' && ctx.session.session_data._invoice_no_user) {
       return { valid: true, data: { _invoice_action: 'done' } };
     }
+    // #389: Handle saved-card input
+    const d = ctx.session.session_data;
+    if (d._saved_method_id || d._awaiting_card_pin) {
+      const invoiceRef = d._invoice_ref as string || 'INV';
+      // #389 B5: Generate reference ONCE, persist in session for PIN/retry reuse
+      let savedCardRef = d._saved_card_attempt_ref as string | undefined;
+      if (!savedCardRef) {
+        savedCardRef = `${invoiceRef}-saved-${Date.now().toString(36)}`;
+        d._saved_card_attempt_ref = savedCardRef;
+      }
+      const savedResult = await handleSavedCardInput(input, ctx, {
+        amount: d._pending_deposit as number || d._invoice_amount as number,
+        reference: savedCardRef,
+        entityId: { invoiceId: d._invoice_id as string },
+        transactionCategory: 'invoice',
+      });
+      if (savedResult) return savedResult;
+    }
     if (input === 'cap_invoice') {
       return { valid: true, data: { _invoice_action: 'retry' } };
     }
@@ -454,10 +489,44 @@ const invoicePayStep: FlowStepConfig = {
   },
 
   async next(ctx: FlowContext) {
-    const action = ctx.session.session_data._invoice_action;
+    const d = ctx.session.session_data;
+    const action = d._invoice_action;
     if (action === 'retry') return 'invoice_pay'; // re-prompt (retry payment)
     if (action === 'chat') return 'chat_start'; // route to live chat
-    if (ctx.session.session_data.bank_transfer_offered) return 'await_invoice_payment';
+    // Stay on step while awaiting saved-card PIN
+    if (d._awaiting_card_pin) return 'invoice_pay';
+    // #389: Saved-card outcomes
+    if (d._saved_card_paid) {
+      delete d._saved_card_attempt_ref; // #389 B5: Clear stable ref on success
+      const paymentId = d._saved_card_payment_id as string;
+      if (paymentId) {
+        const { reconcilePayment } = await import('@/lib/payments/reconcile');
+        const result = await reconcilePayment(ctx.supabase, paymentId, 'saved_card');
+        const isComplete = result.lifecycle?.status === 'completed'
+          || result.lifecycle?.status === 'already_completed'
+          || result.lifecycle?.status === 'not_deliverable';
+        if (!isComplete) {
+          d.payment_reference = `${d._invoice_ref as string}-saved`;
+          return 'await_invoice_payment';
+        }
+      }
+      return null;
+    }
+    if (d._saved_card_indeterminate || d._saved_card_requires_auth) {
+      d.payment_reference = `${d._invoice_ref as string}-saved`;
+      return 'await_invoice_payment';
+    }
+    if (d._saved_card_cancelled) {
+      delete d._saved_card_attempt_ref; // #389 B5: Clear stable ref on cancel
+      await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('Invoice payment cancelled. Send *Hi* to start over.') });
+      return null;
+    }
+    if (d._skip_saved_card && d._saved_method_id) {
+      delete d._saved_method_id;
+      delete d._saved_card_attempt_ref; // #389 B5: Clear stable ref when switching to new card
+      return 'invoice_pay';
+    }
+    if (d.bank_transfer_offered) return 'await_invoice_payment';
     return null; // done — end session
   },
 };
@@ -613,12 +682,8 @@ const awaitInvoicePaymentStep: FlowStepConfig = {
       const recovery = await verifyAndReconcilePayment(ctx.supabase, ref);
 
       if (recovery.outcome === 'completed' || recovery.outcome === 'not_deliverable') {
-        const invoiceNum = sd._invoice_ref as string;
-        await ctx.sender.sendText({
-          to: ctx.from,
-          text: await ctx.t(`✅ *Payment Confirmed!*\n\nInvoice ${invoiceNum} has been paid.\n\n💡 Type *my invoices* to check your invoices, or *receipt* for your payment receipt.`),
-        });
-        return { valid: true, data: { _action: 'already_confirmed' } };
+        // #389: Stage-3 owns customer confirmation — flow only sets action flag
+        return { valid: true, data: { _action: 'payment_confirmed' } };
       }
 
       if (recovery.outcome === 'processing' || recovery.outcome === 'retryable') {

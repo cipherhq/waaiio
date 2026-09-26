@@ -76,7 +76,7 @@ function buildCtx(sessionOverrides: Record<string, unknown> = {}, supabaseOverri
 describe('await_payment.validate — I\'ve Paid authority convergence', () => {
   beforeEach(() => { vi.clearAllMocks(); });
 
-  it('completed: brief ack, already_confirmed, no legacy writers', async () => {
+  it('completed: already_confirmed, no legacy writers, no sendText (#389 B1)', async () => {
     mockRecovery.mockResolvedValue({ outcome: 'completed', paymentId: 'p1' });
     const ctx = buildCtx();
 
@@ -85,18 +85,15 @@ describe('await_payment.validate — I\'ve Paid authority convergence', () => {
     expect(result.valid).toBe(true);
     expect(result.data?._action).toBe('already_confirmed');
     expect(mockRecovery).toHaveBeenCalledOnce();
-    // Brief ack sent
-    expect(ctx.sender.sendText).toHaveBeenCalledOnce();
-    const msg = (ctx.sender.sendText as ReturnType<typeof vi.fn>).mock.calls[0][0].text;
-    expect(msg).toContain('Payment Confirmed');
-    expect(msg).toContain('PAY-001');
+    // #389 B1: Stage-3 owns customer confirmation — flow-level sendText suppressed
+    expect(ctx.sender.sendText).not.toHaveBeenCalled();
     // No legacy writers invoked (supabase.from only called from mock setup, not from validate)
     const fromCalls = (ctx.supabase.from as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => c[0]);
     expect(fromCalls).not.toContain('customer_profiles');
     expect(fromCalls).not.toContain('platform_fees');
   });
 
-  it('completed (Giving): Giving-specific tips', async () => {
+  it('completed (Giving): already_confirmed, no sendText (#389 B1)', async () => {
     mockRecovery.mockResolvedValue({ outcome: 'completed', paymentId: 'p1' });
     const ctx = buildCtx({ active_capability: 'giving' });
 
@@ -104,11 +101,11 @@ describe('await_payment.validate — I\'ve Paid authority convergence', () => {
 
     expect(result.valid).toBe(true);
     expect(result.data?._action).toBe('already_confirmed');
-    const msg = (ctx.sender.sendText as ReturnType<typeof vi.fn>).mock.calls[0][0].text;
-    expect(msg).toContain('my giving');
+    // #389 B1: Stage-3 owns customer confirmation — flow-level sendText suppressed
+    expect(ctx.sender.sendText).not.toHaveBeenCalled();
   });
 
-  it('not_deliverable: terminal ack, already_confirmed', async () => {
+  it('not_deliverable: already_confirmed, no sendText (#389 B1)', async () => {
     mockRecovery.mockResolvedValue({ outcome: 'not_deliverable', paymentId: 'p1' });
     const ctx = buildCtx();
 
@@ -116,7 +113,8 @@ describe('await_payment.validate — I\'ve Paid authority convergence', () => {
 
     expect(result.valid).toBe(true);
     expect(result.data?._action).toBe('already_confirmed');
-    expect(ctx.sender.sendText).toHaveBeenCalledOnce();
+    // #389 B1: Stage-3 owns customer confirmation — flow-level sendText suppressed
+    expect(ctx.sender.sendText).not.toHaveBeenCalled();
   });
 
   it('processing: recoverable at await_payment, no false "not paid"', async () => {
@@ -233,8 +231,8 @@ describe('await_payment.validate — cancel CAS boundary', () => {
 
     expect(result.valid).toBe(true);
     expect(result.data?._action).toBe('already_confirmed');
-    const msg = (ctx.sender.sendText as ReturnType<typeof vi.fn>).mock.calls[0][0].text;
-    expect(msg).toContain('confirmed');
+    // #389 B1: Stage-3 owns customer confirmation — flow-level sendText suppressed
+    expect(ctx.sender.sendText).not.toHaveBeenCalled();
   });
 
   it('already cancelled: zero-row cancel → cancellation established, pending_transfer cancelled', async () => {

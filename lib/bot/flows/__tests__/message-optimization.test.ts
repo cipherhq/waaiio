@@ -595,7 +595,7 @@ describe('R7: Payment/Giving cancellation races', () => {
     const sd = { booking_id: 'bk-1', _saved_card_cancelled: true } as Record<string, unknown>;
     const result = await step.next(m.ctx(sd));
     expect(result).toBeNull();
-    expect(m.sentTexts.some(t => t.includes('confirmed'))).toBe(true);
+    // #389 B1: Stage-3 owns customer confirmation — sendText suppressed in flow
     expect(m.sentTexts.some(t => t.includes('cancelled'))).toBe(false);
     expect(m.wasTransferCancelCalled()).toBe(false);
   });
@@ -650,7 +650,7 @@ describe('R7: Ticketing cancellation races', () => {
     });
     const sd = { booking_id: 'bk-1', _saved_card_cancelled: true } as Record<string, unknown>;
     await step.next(m.ctx(sd));
-    expect(m.sentTexts.some(t => t.includes('confirmed'))).toBe(true);
+    // #389 B1: Stage-3 owns customer confirmation — sendText suppressed in flow
     expect(m.wasTransferCancelCalled()).toBe(false);
   });
 
@@ -691,7 +691,7 @@ describe('R7: Reservation cancellation races', () => {
     });
     const sd = { reservation_id: 'res-1', _saved_card_cancelled: true } as Record<string, unknown>;
     await step.next(m.ctx(sd));
-    expect(m.sentTexts.some(t => t.includes('confirmed'))).toBe(true);
+    // #389 B1: Stage-3 owns customer confirmation — sendText suppressed in flow
     expect(m.wasTransferCancelCalled()).toBe(false);
   });
 

@@ -414,53 +414,35 @@ export async function processSuccessfulPayment(
     }
   }
 
-  // 5. Confirm reservation
+  // 5. Confirm reservation (atomic RPC — M400)
   if (payment.reservation_id) {
     try {
-      const { error: resErr } = await supabase
-        .from('reservations')
-        .update({
-          deposit_status: 'paid',
-          status: 'confirmed',
-          confirmed_at: new Date().toISOString(),
-        })
-        .eq('id', payment.reservation_id)
-        .in('status', ['pending']);
+      const { data: resAtomicResult, error: resAtomicErr } = await supabase.rpc('confirm_reservation_payment_atomic', {
+        p_reservation_id: payment.reservation_id,
+        p_payment_id: payment.id,
+      });
 
-      if (resErr) {
-        criticalErrors.push('reservation_confirmation_failed');
-        logger.withContext({ op: 'process-success.reservation', ...safeLogErrorContext(resErr) }).error('[PROCESS-SUCCESS] Reservation confirmation DB error');
+      if (resAtomicErr) {
+        criticalErrors.push('reservation_confirmation_rpc_failed');
+        logger.withContext({ op: 'process-success.reservation-atomic', ...safeLogErrorContext(resAtomicErr) }).error('[PROCESS-SUCCESS] Reservation atomic RPC error');
+        return { criticalSuccess: false, errors: criticalErrors };
       }
 
-      // Stage-2 postcondition: verify reservation is in a legitimate paid state
-      // before proceeding to fee/spend consequences. Same pattern as booking postcondition.
-      const { data: resPost, error: resPostErr } = await supabase
-        .from('reservations')
-        .select('status, deposit_status')
-        .eq('id', payment.reservation_id)
-        .single();
-
-      if (resPostErr || !resPost) {
-        criticalErrors.push('reservation_postcondition_missing');
-        logger.error('[PROCESS-SUCCESS] Reservation postcondition read failed for', payment.reservation_id);
-        return { criticalSuccess: false, errors: criticalErrors };
-      } else if (resPost.status === 'cancelled') {
-        criticalErrors.push('reservation_cancelled_at_payment');
-        logger.error('[PROCESS-SUCCESS] Reservation cancelled before payment finalization', payment.reservation_id);
-        return { criticalSuccess: false, errors: criticalErrors };
-      } else if (resPost.deposit_status !== 'paid') {
-        // Repair deposit_status only for non-cancelled states
-        const { data: resRepair, error: resRepairErr } = await supabase.from('reservations')
-          .update({ deposit_status: 'paid' })
-          .eq('id', payment.reservation_id)
-          .in('status', ['confirmed', 'in_progress', 'completed'])
-          .select('status, deposit_status')
-          .single();
-        if (resRepairErr || !resRepair || resRepair.deposit_status !== 'paid') {
-          criticalErrors.push('reservation_deposit_repair_failed');
-          logger.error('[PROCESS-SUCCESS] Reservation deposit_status repair failed', payment.reservation_id);
+      if (!resAtomicResult?.confirmed) {
+        const reason = resAtomicResult?.reason || 'unknown';
+        if (reason === 'reservation_cancelled') {
+          criticalErrors.push('reservation_cancelled_at_payment');
+          logger.error('[PROCESS-SUCCESS] Reservation cancelled before payment finalization', payment.reservation_id);
           return { criticalSuccess: false, errors: criticalErrors };
         }
+        if (reason === 'payment_conflict') {
+          criticalErrors.push('reservation_payment_conflict');
+          logger.error('[PROCESS-SUCCESS] Reservation payment conflict', payment.reservation_id);
+          return { criticalSuccess: false, errors: criticalErrors };
+        }
+        criticalErrors.push(`reservation_confirmation_rejected:${reason}`);
+        logger.error('[PROCESS-SUCCESS] Reservation atomic confirmation rejected:', reason);
+        return { criticalSuccess: false, errors: criticalErrors };
       }
 
       try {

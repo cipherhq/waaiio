@@ -7,6 +7,7 @@ import type { MessageSender } from '@/lib/channels/message-sender';
 import { StandaloneService } from './standalone.service';
 import { BotIntelligenceService } from './bot-intelligence';
 import { FlowExecutor } from './flows/executor';
+import { handleLaunchOptIn } from './launch-optin';
 import { getLocale, formatCurrency, type BusinessCategoryKey, type FlowType, type CountryCode } from '@/lib/constants';
 import { loadCountries } from '@/lib/countries';
 import { getConfiguredCapabilities } from '@/lib/capabilities/service';
@@ -130,6 +131,13 @@ export class BotService {
         opted_out_at: new Date().toISOString(),
       }, { onConflict: 'phone,business_id,channel' }).select();
 
+      // #397: Also mark launch subscriber as opted-out (non-blocking, isolated)
+      this.supabase.from('launch_subscribers')
+        .update({ opt_in_status: 'opted_out', notification_status: 'skipped', updated_at: new Date().toISOString() })
+        .eq('wa_number', from)
+        .eq('opt_in_status', 'active')
+        .then(() => {}, () => {}); // fire-and-forget, never blocks commerce STOP
+
       await this.sendPlatformText(from, 'You have been unsubscribed. You will no longer receive promotional messages. Send START to resubscribe.');
       return;
     }
@@ -144,6 +152,13 @@ export class BotService {
       await this.sendPlatformText(from, 'You have been resubscribed. You will receive messages again.');
       return;
     }
+
+    // Launch opt-in (#395) — isolated from commerce/payment flows
+    const launchHandled = await handleLaunchOptIn(
+      this.supabase, from, text, destinationPhone,
+      (phone, msg) => this.sendPlatformText(phone, msg),
+    );
+    if (launchHandled) return;
 
     // Pre-check 1: Timeout
     const timeoutCheck = this.intelligence.isTimedOut(from);

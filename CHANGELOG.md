@@ -3,6 +3,91 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-09-25 — Feature: Launch alert delivery pipeline (#397)
+
+### What changed
+- **`supabase/migrations/404_launch_delivery_columns.sql`** (NEW): Adds `campaign_version`, `provider_message_id`, `delivery_error`, `delivered_at` columns to `launch_subscribers`. Unique index on `(wa_number, campaign_version)` for idempotent per-campaign delivery. Seeds `launch_notification_config` in `platform_settings` for configurable template name/language/params/campaign_version.
+- **`lib/launch/delivery.ts`** (NEW): Delivery service — resolves channel credentials per subscriber's `receiving_number`, sends approved WhatsApp template (not free-form), records delivery status. `sendToSubscriber()` handles individual delivery with opt-out guard + idempotency check. `deliverLaunchNotifications()` handles batch delivery. `metaCloudSendTemplate()` is the production send function (uses MetaCloudService with per-channel credentials). `loadDeliveryConfig()` reads template config from `platform_settings`. `getDeliveryReadiness()` returns eligible/pending/sent/failed/skipped/opted_out counts.
+- **`app/api/admin/launch-notify/route.ts`** (NEW): Admin-only GET (readiness counts) + POST (trigger delivery). Supports `dryRun`, `retryOnly`, and `limit` parameters.
+- **`lib/bot/bot.service.ts`**: Added fire-and-forget `launch_subscribers` opt-out update in STOP handler. Non-blocking — does not affect existing commerce STOP flow. 4 lines added.
+- **`admin/src/pages/LaunchSubscribers.tsx`**: Added delivery controls — Send Notifications button, Retry Failed button, result/error display.
+- **`lib/launch/__tests__/delivery.test.ts`** (NEW): 18 tests covering opt-out respect, idempotent replay, missing channel credentials, provider failure, batch delivery, STOP isolation, migration schema, config loading, commerce isolation, and template-only sending.
+- **`supabase/migrations/405_launch_delivery_claim.sql`** (NEW): Atomic claim/fencing RPCs — `claim_launch_delivery` (UPDATE...WHERE with claim_token, stale claim expiry 5min) and `complete_launch_delivery` (token-verified status update). Two concurrent callers cannot both win — exactly one worker owns delivery per subscriber+campaign.
+- **`lib/launch/delivery.ts`**: (CTO correction) Replaced read-then-write pattern with atomic claim RPC. `claimAndSendToSubscriber()` calls `claim_launch_delivery` before any Meta call — losing claims do not send. `loadDeliveryConfig()` now fails closed (throws `LaunchConfigError`) when config is missing or template_name/campaign_version is empty. Removed silent fallback defaults.
+- **`supabase/migrations/406_launch_delivery_confirmation.sql`** (NEW): DB-backed confirmation tokens for serverless-safe two-step admin flow. `launch_delivery_confirmations` table with admin_id/campaign_version/scope binding. `consume_launch_confirmation` RPC with atomic UPDATE...WHERE for replay protection, expiry (5min), admin binding, and campaign binding.
+- **`supabase/migrations/407_confirmation_scope_binding.sql`** (NEW): Adds `retry_only` and `send_limit` columns to confirmations table. Replaces `consume_launch_confirmation` RPC with scope-bound version that checks `AND retry_only = p_retry_only AND send_limit = p_send_limit`. Returns `scope_mismatch` on mismatch.
+- **`app/api/admin/launch-notify/route.ts`**: (CTO corrections R2+R3) DB-backed confirmation with full scope binding. GET accepts `?retryOnly=&limit=` query params, stores scope in confirmation row. POST passes scope to consume RPC for atomic verification — a token previewed for "all pending, limit 50" cannot authorize "retry only, limit 200". Delivery scope comes from the consumed token.
+- **`admin/src/pages/LaunchSubscribers.tsx`**: Updated send handler to GET confirmToken before POST.
+- **Root cause**: #395/#396 created launch subscribers but had no delivery path for actually sending the launch alert.
+- **Impact**: Admin can now trigger launch notifications. Template name/language/campaign_version are configurable. One notification per subscriber per campaign. Opted-out subscribers are never sent. Regional sender is used per subscriber.
+- **What could break**: None expected. Delivery service is fully isolated from commerce/payment/booking flows. No existing code changed except 4-line STOP handler addition (fire-and-forget). No live Meta sends in tests or during implementation.
+- **Files**: migration 404, `lib/launch/delivery.ts`, `app/api/admin/launch-notify/route.ts`, `lib/bot/bot.service.ts`, `admin/src/pages/LaunchSubscribers.tsx`, `lib/launch/__tests__/delivery.test.ts`
+
+## 2026-09-24 — Feature: Launch readiness — site announcement + directory fix (#395)
+
+### What changed
+- **`supabase/migrations/401_site_announcement_setting.sql`** (NEW): Seeds `site_announcement` key in `platform_settings`. Informational-only — does NOT disable WhatsApp, payments, or any runtime capability.
+- **`app/api/site-announcement/route.ts`** (NEW): Public GET endpoint returning announcement config. Fail-safe: any error returns `{ enabled: false }` so public site is never broken.
+- **`app/api/admin/site-announcement/route.ts`** (NEW): Admin-only GET/PUT for managing announcement config. Validates type, style, CTA link security. Requires `requirePlatformAdmin`.
+- **`components/marketing/SiteAnnouncement.tsx`** (NEW): Client component rendering announcement banner with countdown timer, CTA, dismiss button. Supports brand/warning/info styles.
+- **`app/(marketing)/layout.tsx`**: Added `<SiteAnnouncement />` above Navbar. Renders only when enabled.
+- **`admin/src/pages/SiteAnnouncement.tsx`** (NEW): Admin page for managing announcements — enable/disable toggle, type/style selectors, headline/message, countdown target date, CTA config.
+- **`admin/src/routes.tsx`**: Added `/site-announcement` route.
+- **`admin/src/components/AdminSidebar.tsx`**: Added Site Announcement link in system section.
+- **`lib/marketplace/search.ts`**: Changed `applyDirectoryEligibility` from `eq('discovery_enabled', true)` to `.or('discovery_enabled.is.null,discovery_enabled.eq.true')`. Businesses that never set discovery preferences (null) now appear in directory. Explicit opt-out (false) still hides them. Added +15 score boost for explicit opt-in.
+- **`lib/__tests__/issue-395-launch-readiness.test.ts`** (NEW): 22 tests covering announcement validation, directory eligibility (opt-in vs opt-out vs null), privacy (no sensitive fields), and maintenance mode isolation.
+- **`supabase/migrations/402_launch_subscribers.sql`** (NEW): `launch_subscribers` table for WhatsApp-first launch opt-in. UNIQUE on wa_number, RLS admin-only, CHECK constraints on status fields. Isolated from commerce/payment tables.
+- **`app/api/launch/regions/route.ts`** (NEW): Public GET endpoint returning active shared Waaiio WhatsApp numbers grouped by country. Reuses `whatsapp_channels` table — no hard-coded phone numbers.
+- **`app/(marketing)/launch/page.tsx`** + **`LaunchClient.tsx`** (NEW): Launch countdown page with Waaiio 101 explainer, region selector (auto-detected with manual override), QR code + WhatsApp CTA button (same action), countdown timer.
+- **`lib/bot/launch-optin.ts`** (NEW): Bot handler for launch opt-in messages. Pattern: "Notify me when Waaiio launches". Upserts into `launch_subscribers` with idempotent `onConflict: wa_number`. Detects signup source (qr/button/direct) from message suffix. Isolated from commerce flows — returns false for all non-matching messages.
+- **`lib/bot/bot.service.ts`**: Added launch opt-in intercept after STOP/START compliance, before any business/flow resolution. Import + 4-line call.
+- **`admin/src/pages/LaunchSubscribers.tsx`** (NEW): Admin page with total/active/opted-out counts, 7-day growth, breakdowns by market/source/notification status, subscriber table, CSV export.
+- **`admin/src/routes.tsx`** + **`admin/src/components/AdminSidebar.tsx`**: Added launch-subscribers route and sidebar entry.
+- **`lib/__tests__/issue-395-launch-optin.test.ts`** (NEW): 22 tests covering pattern matching, QR/button parity, source attribution, idempotency (onConflict), bot flow isolation, confirmation message, DB failure resilience, regional routing, and subscriber table schema.
+- **`supabase/migrations/403_discovery_default_on.sql`** (NEW): Changes `discovery_enabled` default from false to true. Backfills existing NULL values to true. Businesses are listed by default; only explicit opt-out hides them.
+- **`app/dashboard/discovery/page.tsx`**: DEFAULTS changed from `discovery_enabled: false` to `discovery_enabled: true`.
+- **`app/(marketing)/launch/LaunchClient.tsx`**: (CTO corrections) Removed hard-coded `LAUNCH_DATE` constant — countdown is now driven by admin-configured `target_date` from `/api/site-announcement`. Replaced external `api.qrserver.com` dependency with local `QRCodeSVG` from `qrcode.react`. Fixed `formatPhone` to handle international numbers (NG 234..., GH 233..., UK 44..., NANP). Hero dynamically shows date from announcement or "coming soon" fallback.
+- **`app/(marketing)/launch/page.tsx`**: Removed hard-coded "October 2" from metadata.
+- **Root cause (directory)**: `discovery_enabled` defaults to `false` in migration 239. Since no businesses had explicitly opted in via `/dashboard/discovery`, the directory returned zero results for all queries.
+- **Impact**: Directory now shows active businesses with a bot_code. Announcement system is separate from maintenance mode. Launch opt-in is isolated from all commerce/payment flows. No existing payment/bot flow code changed except the 4-line intercept in bot.service.ts.
+- **What could break**: Businesses that set `discovery_enabled=false` are still excluded. Businesses with `discovery_enabled=null` (never set) now appear — this is the intended fix. Launch opt-in pattern is narrow and won't match any existing bot codes or commands.
+- **Files**: migrations 401-402, `app/api/site-announcement/route.ts`, `app/api/admin/site-announcement/route.ts`, `app/api/launch/regions/route.ts`, `components/marketing/SiteAnnouncement.tsx`, `app/(marketing)/layout.tsx`, `app/(marketing)/launch/page.tsx`, `app/(marketing)/launch/LaunchClient.tsx`, `lib/bot/launch-optin.ts`, `lib/bot/bot.service.ts`, `admin/src/pages/SiteAnnouncement.tsx`, `admin/src/pages/LaunchSubscribers.tsx`, `admin/src/routes.tsx`, `admin/src/components/AdminSidebar.tsx`, `lib/marketplace/search.ts`, `lib/__tests__/issue-395-launch-readiness.test.ts`, `lib/__tests__/issue-395-launch-optin.test.ts`
+
+## 2026-09-24 — Fix: Payment UX parity — one saved-card offer per payment attempt (#393)
+
+### What changed
+- **`lib/bot/flows/shared/saved-card-flow.ts`**: `buildSavedCardOffer()` now returns null when `_awaiting_card_pin` is set. Defense-in-depth guard at the shared layer prevents any flow from re-emitting the saved-card offer during PIN entry.
+- **`lib/bot/flows/crowdfunding.flow.ts`**: `donation_payment` prompt returns `[]` when `_awaiting_card_pin` is true.
+- **`lib/bot/flows/ordering.flow.ts`**: `process_order` prompt returns `[]` when `_awaiting_card_pin` is true.
+- **`lib/bot/flows/ticketing.flow.ts`**: `process_tickets` prompt returns `[]` when `_awaiting_card_pin` is true.
+- **`lib/bot/flows/reservation.flow.ts`**: `create_reservation` prompt returns `[]` when `_awaiting_card_pin` is true.
+- **`lib/bot/flows/invoice.flow.ts`**: `invoice_pay` prompt returns `[]` when `_awaiting_card_pin` is true.
+- **`lib/bot/flows/payment.flow.ts`**: `process_payment` prompt returns `[]` when `_awaiting_card_pin` is true.
+- **`lib/__tests__/issue-393-payment-ux-parity.test.ts`** (NEW): 37 regression tests covering all 6 affected domains + scheduling reference, duplicate webhook delivery, PIN retry, concurrent execution, session re-entry, appointment non-regression, normal path preservation, and pay-new fallback.
+- **Root cause**: When PIN was required, `validate()` returned `valid:true` with `_awaiting_card_pin`, then `next()` returned the same step name. The executor called `advanceToStep()` → `prompt()` again → `buildSavedCardOffer()` again → duplicate "Pay with saved card?" message. Scheduling was exempt because it used a dedicated `saved_card_prompt` step with empty prompt.
+- **Impact**: All 6 payment-capable flows (giving, ordering, ticketing, reservation, invoice, payment) now produce exactly one saved-card offer per payment attempt. Scheduling behavior unchanged.
+- **What could break**: None expected — the guard only suppresses prompt output during an already-active PIN entry state. All existing payment paths, PIN retry, pay-new fallback, and cancel behavior preserved.
+- **Files**: `lib/bot/flows/shared/saved-card-flow.ts`, `lib/bot/flows/crowdfunding.flow.ts`, `lib/bot/flows/ordering.flow.ts`, `lib/bot/flows/ticketing.flow.ts`, `lib/bot/flows/reservation.flow.ts`, `lib/bot/flows/invoice.flow.ts`, `lib/bot/flows/payment.flow.ts`, `lib/__tests__/issue-393-payment-ux-parity.test.ts`
+
+## 2026-09-22 — Feature: Cross-flow convergence (#389)
+
+### What changed
+- **`supabase/migrations/400_cross_flow_convergence.sql`** (NEW): Migration with 4 RPC changes:
+  - `ensure_campaign_donation_intent_for_payment`: Creates donation intent row atomically before provider dispatch for saved-card giving payments. ON CONFLICT verifies entity tuple match (fail closed on mismatch).
+  - `apply_order_stock_once`: CREATE OR REPLACE adds `UPDATE orders SET payment_id = p_payment_id` at every successful return path where p_payment_id IS NOT NULL. Covers committed replay, non-committed upgrade, and fresh winner paths.
+  - `confirm_reservation_payment_atomic`: New RPC replacing loose `.update()` for reservations. Locks FOR UPDATE, validates payment exists/successful/matches, handles state transitions atomically (pending->confirmed, repair paid state), rejects conflicts.
+  - `finalize_payment_confirmation`: CREATE OR REPLACE removes `dangling_optional` gate. Phase 1 auto-skips internal optional pending, marks stale internal claims indeterminate. Phase 2 auto-skips external optional pending/unclaimed. Active internal claims still block.
+- **`lib/payments/process-success.ts`**: Reservation linkage now uses `confirm_reservation_payment_atomic` RPC instead of loose `.from('reservations').update()`. Validates RPC result and handles rejection reasons.
+- **`lib/payments/charge-saved.ts`**: Existing-payment convergence query now SELECTs all entity columns (booking_id, order_id, reservation_id, invoice_id, campaign_id) and validates full tuple match, not just booking_id.
+- **`lib/bot/flows/invoice.flow.ts`**: Added saved-card offer + handling (buildSavedCardOffer, handleSavedCardInput) with entity ID `{ invoiceId }`. Unique per-attempt reference. Stage-3 suppression: removed sendText confirmation in I've Paid path.
+- **`lib/bot/flows/crowdfunding.flow.ts`**: Added saved-card offer + handling with entity ID `{ campaignId }`. Calls `ensure_campaign_donation_intent_for_payment` RPC in next() after saved-card charge. Stage-3 suppression: removed sendText confirmation in I've Paid path.
+- **`lib/payments/saved-payment-adapter.ts`**: Stripe adapter calls `ensure_campaign_donation_intent_for_payment` after payment row creation, before provider dispatch, when campaignId is present.
+- **`lib/payments/send-confirmation.ts`**: Confirmation title now derived from entity linkage (Appointment/Ticket/Order/Reservation/Donation/Invoice Payment/Payment fallback).
+- **`lib/__tests__/cross-flow-convergence.test.ts`** (NEW): 12 test cases covering order/reservation/invoice/giving convergence, finalization optional handling, and entity title derivation.
+- **Impact**: Orders, reservations, invoices, and giving flows now have payment-link convergence parity. Saved-card payments available for invoice and crowdfunding flows. Finalization no longer blocks on unprocessed optional effects.
+- **What could break**: Reservation confirmation now goes through atomic RPC — if RPC fails, the error is surfaced rather than silently ignored. Invoice/crowdfunding I've Paid no longer sends inline confirmation (Stage-3 owns it).
+- **Files**: `supabase/migrations/400_cross_flow_convergence.sql`, `lib/payments/process-success.ts`, `lib/payments/charge-saved.ts`, `lib/bot/flows/invoice.flow.ts`, `lib/bot/flows/crowdfunding.flow.ts`, `lib/payments/saved-payment-adapter.ts`, `lib/payments/send-confirmation.ts`, `lib/__tests__/cross-flow-convergence.test.ts`
+
 ## 2026-09-24 — Fix: Stripe saved-card PI dispatch explicitly card-only (#379)
 
 ### What changed

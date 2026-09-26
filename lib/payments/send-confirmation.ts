@@ -205,8 +205,6 @@ export async function sendProactiveConfirmation(
   let bookingAddress: string | undefined;
   let bookingDuration: number | undefined;
   let balanceRemaining = 0;
-  let balanceBookingId: string | null = null;
-  let balanceReservationId: string | null = null;
   let bookingFlowType: string | undefined;
   let bookingServiceType: string | undefined;
 
@@ -251,7 +249,6 @@ export async function sendProactiveConfirmation(
         });
         if (balance && balance.balanceDue > 0) {
           balanceRemaining = balance.balanceDue;
-          balanceBookingId = payment.booking_id!;
         }
       }
     }
@@ -284,7 +281,6 @@ export async function sendProactiveConfirmation(
         });
         if (balance && balance.balanceDue > 0) {
           balanceRemaining = balance.balanceDue;
-          balanceReservationId = payment.reservation_id!;
         }
       }
     }
@@ -398,8 +394,24 @@ export async function sendProactiveConfirmation(
   logger.info(`${logPrefix} Sending proactive confirmation for ${businessName}`);
 
   // ── 4. Build confirmation message (local string work — no external calls) ──
+  // #389: Capability-aware Stage-3 confirmation title
+  let confirmationTitle = 'Payment';
+  if (payment.booking_id && bookingFlowType) {
+    if (bookingFlowType === 'scheduling' || bookingFlowType === 'appointment') confirmationTitle = 'Appointment';
+    else if (bookingFlowType === 'ticketing') confirmationTitle = 'Ticket';
+    else if (bookingFlowType === 'payment' && bookingServiceType === 'giving') confirmationTitle = 'Donation';
+    else confirmationTitle = 'Payment';
+  } else if (payment.order_id) {
+    confirmationTitle = 'Order';
+  } else if (payment.reservation_id) {
+    confirmationTitle = 'Reservation';
+  } else if (payment.campaign_id) {
+    confirmationTitle = 'Donation';
+  } else if (payment.invoice_id) {
+    confirmationTitle = 'Invoice Payment';
+  }
   const lines = [
-    `✅ *Payment Confirmed!*`,
+    `✅ *${confirmationTitle} Confirmed!*`,
     '',
     `🏢 ${businessName}`,
     `📋 ${serviceName}`,
@@ -573,48 +585,12 @@ export async function sendProactiveConfirmation(
     logger.warn(`${logPrefix} Manifest initialization error (legacy bypass):`, manifestErr);
   }
 
-  // Add balance info if deposit was partial
+  // #391: A successful deposit ends this payment journey. Stage 3 may tell the
+  // customer what remains due, but it must never create a second provider
+  // Checkout as a side effect of confirming the deposit. Balance collection is
+  // a separate explicit action (for example, the dashboard Request Balance flow).
   if (balanceRemaining > 0) {
     lines.push('', `💳 Remaining balance: *${formatCurrency(balanceRemaining, countryCode)}*`);
-
-    // Generate payment link for the balance — contacts the payment provider
-    try {
-      const phoneForLookup = customerPhone || '';
-      const phoneP = phoneForLookup.startsWith('+') ? phoneForLookup : `+${phoneForLookup}`;
-      const phoneN = phoneForLookup.startsWith('+') ? phoneForLookup.slice(1) : phoneForLookup;
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('id')
-        .or(`phone.eq.${sanitizeFilterValue(phoneP)},phone.eq.${sanitizeFilterValue(phoneN)}`)
-        .limit(1)
-        .maybeSingle();
-
-      if (profile && businessId) {
-        sideEffectsMayHaveOccurred = true; // Provider initialization — indeterminate on failure
-        const { initializePayment } = await import('@/lib/bot/flows/shared/payment');
-        const result = await initializePayment(supabase, {
-          bookingId: balanceBookingId || undefined,
-          reservationId: balanceReservationId || undefined,
-          userId: profile.id,
-          amount: balanceRemaining,
-          referenceCode: `${referenceCode}-BAL`,
-          businessName,
-          phone: phoneForLookup,
-          countryCode,
-          businessId,
-          // #381: This is a follow-on balance payment. Keep the successful
-          // deposit payment as the booking's canonical payment_id while the
-          // new payment row remains linked through booking_id.
-          preserveEntityPaymentLink: true,
-        });
-        if (result?.url) {
-          lines.push(`💰 Pay now: ${result.url}`);
-        }
-      }
-    } catch {
-      // Non-critical — balance info still shown without link.
-      // sideEffectsMayHaveOccurred remains true — provider may have accepted the request.
-    }
   }
 
   lines.push('', 'Type *receipt* to get your receipt', 'Type *my bookings* to view your bookings');

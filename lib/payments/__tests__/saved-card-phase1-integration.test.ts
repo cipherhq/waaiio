@@ -114,16 +114,6 @@ describe('Paystack durable acknowledgement', () => {
 // Duplicate-tap convergence
 // ──────────────────────────────────────────────────────────────
 
-describe('Duplicate-tap convergence', () => {
-  it('StripeSavedPaymentAdapter checks for existing pending payment before creating new row', async () => {
-    // Verify the adapter code contains the duplicate-tap fence
-    const fs = require('fs');
-    const adapterCode = fs.readFileSync('lib/payments/saved-payment-adapter.ts', 'utf-8');
-    expect(adapterCode).toContain('duplicate_tap_existing_dispatch');
-    expect(adapterCode).toContain('existing_payment_in_progress');
-  });
-});
-
 // ──────────────────────────────────────────────────────────────
 // Same-idempotency PI ambiguous recovery
 // ──────────────────────────────────────────────────────────────

@@ -473,6 +473,8 @@ export const ticketingFlow: FlowDefinition = {
       },
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
         const d = ctx.session.session_data;
+        // #393: Suppress re-prompt while awaiting saved-card PIN entry
+        if (d._awaiting_card_pin) return [];
         const qty = d.ticket_quantity as number;
         const total = d.total_amount as number;
 
@@ -910,7 +912,7 @@ export const ticketingFlow: FlowDefinition = {
               return null; // fail closed
             }
             if (bk.deposit_status === 'paid' || bk.status === 'confirmed') {
-              await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('✅ Your tickets have been confirmed! Type *my tickets* to view them.') });
+              // #389 B1: Stage-3 owns customer confirmation — suppress flow-level sendText
               return null;
             }
             if (bk.status === 'cancelled') {
@@ -996,10 +998,7 @@ export const ticketingFlow: FlowDefinition = {
             return { valid: true, data: { _retry_payment: true } };
           }
           if (recovery.outcome === 'completed' || recovery.outcome === 'not_deliverable') {
-            await ctx.sender.sendText({
-              to: ctx.from,
-              text: await ctx.t(`✅ *Payment Confirmed!*\n\nYour tickets for *${d.event_name as string}* are ready.\n\n💡 Type *my tickets* to view them, or *receipt* for your payment receipt.`),
-            });
+            // #389 B1: Stage-3 owns customer confirmation — suppress flow-level sendText
             return { valid: true, data: { _action: 'payment_confirmed' } };
           }
           ctx.session.session_data._payment_retry_blocked = true;
@@ -1031,7 +1030,7 @@ export const ticketingFlow: FlowDefinition = {
                 return { valid: false, errorMessage: '' };
               }
               if (bk?.deposit_status === 'paid' || bk?.status === 'confirmed') {
-                await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('Your payment has been confirmed! Your tickets are ready.\n\n💡 Type *my tickets* to view them.') });
+                // #389 B1: Stage-3 owns customer confirmation — suppress flow-level sendText
                 return { valid: true, data: { _action: 'already_confirmed' } };
               }
             }
@@ -1167,14 +1166,7 @@ export const ticketingFlow: FlowDefinition = {
           const recovery = await verifyAndReconcilePayment(ctx.supabase, ref);
 
           if (recovery.outcome === 'completed' || recovery.outcome === 'not_deliverable') {
-            // Payment Authority fully completed Stage 2+3. Ticket delivery and
-            // confirmation already handled by sendProactiveConfirmation.
-            // Bot provides brief acknowledgment — no duplicate delivery.
-            const d = ctx.session.session_data;
-            await ctx.sender.sendText({
-              to: ctx.from,
-              text: await ctx.t(`✅ *Payment Confirmed!*\n\nYour tickets for *${d.event_name as string}* are ready.\n\n💡 Type *my tickets* to view them, or *receipt* for your payment receipt.`),
-            });
+            // #389 B1: Stage-3 owns customer confirmation — suppress flow-level sendText
             return { valid: true, data: { _action: 'payment_confirmed' } };
           }
 

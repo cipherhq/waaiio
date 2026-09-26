@@ -65,6 +65,10 @@ export async function buildSavedCardOffer(
   if (!ctx.business) return null;
   const d = ctx.session.session_data;
   if (d._skip_saved_card) return null;
+  // #393: Prevent duplicate offer when PIN entry is in progress.
+  // When validate() sends the PIN prompt and next() re-enters the same step,
+  // prompt() must not re-emit the saved-card offer.
+  if (d._awaiting_card_pin) return null;
 
   const methods = await savedPaymentAdapter.getSavedMethods(
     ctx.supabase, ctx.business.id, ctx.from,
@@ -101,6 +105,7 @@ export async function handleSavedCardInput(
     reference: string;
     entityId: { bookingId?: string; orderId?: string; reservationId?: string; invoiceId?: string; campaignId?: string };
     transactionCategory: string;
+    donorName?: string | null;
   },
 ): Promise<ValidationResult | null> {
   const d = ctx.session.session_data;
@@ -108,6 +113,12 @@ export async function handleSavedCardInput(
 
   // ── "Pay with saved card" button ──
   if (action === 'pay_saved') {
+    // #393 R1: Duplicate/replayed pay_saved while already awaiting PIN must be
+    // idempotent — no requiresPin(), no re-sent PIN challenge, no provider side effect.
+    if (d._awaiting_card_pin) {
+      return { valid: true };
+    }
+
     const methodId = d._saved_method_id as string;
     if (!methodId || !ctx.business) {
       return { valid: true, data: { _skip_saved_card: true } };
@@ -210,6 +221,7 @@ async function chargeSavedCard(
     reference: string;
     entityId: { bookingId?: string; orderId?: string; reservationId?: string; invoiceId?: string; campaignId?: string };
     transactionCategory: string;
+    donorName?: string | null;
     clearPin?: boolean;
   },
 ): Promise<ValidationResult> {
@@ -252,6 +264,7 @@ async function chargeSavedCard(
     businessId: ctx.business!.id,
     ...opts.entityId,
     transactionCategory: opts.transactionCategory,
+    donorName: opts.donorName,
     inboundChannelId,
     confirmationOrigin: 'whatsapp',
   });
