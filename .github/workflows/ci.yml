@@ -255,6 +255,10 @@ jobs:
     name: "Migration validation (shard a)"
     runs-on: ubuntu-24.04
 
+    env:
+      SOURCE_HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+      BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || (github.event_name == 'push' && github.event.before || github.sha) }}
+
     services:
       postgres:
         image: postgres:15
@@ -274,6 +278,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -1508,6 +1514,49 @@ jobs:
             exit 1
           fi
           echo "✅ M400 cross-flow convergence DB tests complete — zero skips, zero failures."
+
+      - name: "DB delta analysis (advisory)"
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+        run: |
+          BASE="${{ env.BASE_SHA }}"
+          HEAD="${{ env.SOURCE_HEAD_SHA }}"
+
+          # For push-to-main: use before..after
+          if [ "${{ github.event_name }}" = "push" ] && [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            BEFORE="${{ github.event.before }}"
+            if [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
+              echo "Initial push — skipping DB delta."
+              exit 0
+            fi
+            BASE="$BEFORE"
+          fi
+
+          echo "Fetching base ref $BASE..."
+          git fetch --depth=1 origin "$BASE" 2>/dev/null || true
+
+          # Create isolated delta database (does not touch waaiio_test)
+          psql -q -c "CREATE DATABASE waaiio_delta_test;"
+
+          echo "Running DB delta: ${BASE:0:8}..${HEAD:0:8}"
+          npx tsx lib/release-gate/db-delta-cli.ts \
+            --base-sha "$BASE" \
+            --head-sha "$HEAD" \
+            --db-url "postgresql://postgres:postgres@localhost:5432/waaiio_delta_test"
+
+          # Cleanup delta database
+          psql -q -c "DROP DATABASE IF EXISTS waaiio_delta_test;"
+
+      - name: Upload DB delta artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: db-delta-result
+          path: db-delta-result.json
+          if-no-files-found: ignore
 
   migration-shard-b:
     name: "Migration validation (shard b)"

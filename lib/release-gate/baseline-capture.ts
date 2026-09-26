@@ -66,7 +66,7 @@ const FUNCTIONS_QUERY = `
     r.rolname,
     COALESCE(array_to_string(p.proconfig, '||'), ''),
     l.lanname,
-    encode(digest(pg_get_functiondef(p.oid)::text, 'sha256'), 'hex')
+    encode(extensions.digest(pg_get_functiondef(p.oid)::text, 'sha256'), 'hex')
   FROM pg_proc p
   JOIN pg_namespace n ON n.oid = p.pronamespace
   JOIN pg_roles r ON r.oid = p.proowner
@@ -117,8 +117,8 @@ const RLS_POLICIES_QUERY = `
     permissive,
     COALESCE(array_to_string(roles, ','), ''),
     cmd,
-    COALESCE(encode(digest(COALESCE(qual, '')::text, 'sha256'), 'hex'), ''),
-    COALESCE(encode(digest(COALESCE(with_check, '')::text, 'sha256'), 'hex'), '')
+    COALESCE(encode(extensions.digest(COALESCE(qual, '')::text, 'sha256'), 'hex'), ''),
+    COALESCE(encode(extensions.digest(COALESCE(with_check, '')::text, 'sha256'), 'hex'), '')
   FROM pg_policies
   WHERE schemaname = 'public'
   ORDER BY tablename, policyname;
@@ -140,7 +140,7 @@ const CONSTRAINTS_QUERY = `
     tc.table_name,
     tc.constraint_name,
     tc.constraint_type,
-    COALESCE(encode(digest(pg_get_constraintdef(c.oid)::text, 'sha256'), 'hex'), '')
+    COALESCE(encode(extensions.digest(pg_get_constraintdef(c.oid)::text, 'sha256'), 'hex'), '')
   FROM information_schema.table_constraints tc
   JOIN pg_constraint c ON c.conname = tc.constraint_name
     AND c.connamespace = (SELECT oid FROM pg_namespace WHERE nspname = tc.table_schema)
@@ -155,7 +155,7 @@ const TRIGGERS_QUERY = `
     trigger_name,
     event_manipulation,
     action_timing,
-    encode(digest(action_statement::text, 'sha256'), 'hex')
+    encode(extensions.digest(action_statement::text, 'sha256'), 'hex')
   FROM information_schema.triggers
   WHERE trigger_schema = 'public'
   ORDER BY event_object_table, trigger_name;
