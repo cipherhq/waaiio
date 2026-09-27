@@ -47,10 +47,11 @@ export function WhatsAppLinkGenerator({
       {open && (
         <div className="mt-3 space-y-3 rounded-xl border border-green-200 bg-green-50/40 p-4">
           <div>
-            <label className="mb-1 block text-xs font-semibold text-gray-700">
+            <label htmlFor="whatsapp-link-phone" className="mb-1 block text-xs font-semibold text-gray-700">
               Destination WhatsApp number
             </label>
             <input
+              id="whatsapp-link-phone"
               type="tel"
               value={phone}
               onChange={(event) => setPhone(event.target.value)}
@@ -64,10 +65,11 @@ export function WhatsAppLinkGenerator({
           </div>
 
           <div>
-            <label className="mb-1 block text-xs font-semibold text-gray-700">
+            <label htmlFor="whatsapp-link-message" className="mb-1 block text-xs font-semibold text-gray-700">
               Prefilled message <span className="font-normal text-gray-400">(optional)</span>
             </label>
             <textarea
+              id="whatsapp-link-message"
               rows={2}
               maxLength={1000}
               value={message}
