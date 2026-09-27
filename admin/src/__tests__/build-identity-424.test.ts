@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'fs';
+import { resolve } from 'path';
 import {
   normalizeAdminBuildIdentity,
   shortBuildId,
@@ -69,5 +71,14 @@ describe('#424 Admin build identity contract', () => {
     expect(shortBuildId('abcdef1234567890')).toBe('abcdef1234');
     expect(shortBuildId('short')).toBe('short');
     expect(shortBuildId(null)).toBe('unknown');
+  });
+
+  it('build config requires explicit Waaiio environment and does not infer from browser hostname', () => {
+    const config = readFileSync(resolve(__dirname, '../../vite.config.js'), 'utf-8');
+
+    expect(config).toContain('WAAIIO_ENVIRONMENT');
+    expect(config).toContain('VITE_WAAIIO_ENVIRONMENT');
+    expect(config).toContain("'unverified'");
+    expect(config).not.toContain('window.location.hostname');
   });
 });
