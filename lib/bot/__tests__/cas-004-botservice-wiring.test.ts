@@ -53,9 +53,11 @@ function createTableMock(config: {
   enabledLanguages?: string[];
   updateTracker?: Array<{ table: string; data: unknown }>;
   fromTracker?: string[];
+  insertTracker?: Array<{ table: string; data: Record<string, unknown> }>;
 }) {
   const updateTracker = config.updateTracker || [];
   const fromTracker = config.fromTracker || [];
+  const insertTracker = config.insertTracker || [];
   function makeChain(resolveData: unknown = null) {
     const chain: Record<string, any> = {};
     for (const m of ['select','insert','update','upsert','delete','eq','neq','or','in','is','not','ilike','like','gte','lte','gt','lt','order','limit','range','filter','match','contains','containedBy'])
@@ -71,7 +73,12 @@ function createTableMock(config: {
       if (table === 'bot_sessions') {
         const chain = makeChain(config.activeSession);
         const origUpdate = chain.update;
+        const origInsert = chain.insert;
         chain.update = vi.fn((data: unknown) => { updateTracker.push({ table: 'bot_sessions', data }); return origUpdate(data); });
+        chain.insert = vi.fn((data: Record<string, unknown>) => {
+          insertTracker.push({ table: 'bot_sessions', data });
+          return origInsert(data);
+        });
         chain.delete = vi.fn().mockReturnValue(chain);
         return chain;
       }
@@ -171,20 +178,23 @@ describe('CAS-004 BotService first-message semantic routing', () => {
 
   it('8. Free + Pidgin CREATE_NEW → deterministically enters scheduling without enabling translation/LLM', async () => {
     const sender = createCaptureSender();
-    const fromTracker: string[] = [];
+    const insertTracker: Array<{ table: string; data: Record<string, unknown> }> = [];
     const supabase = createTableMock({
       activeSession: null,
       business: { id: BIZ_ID, status: 'active', subscription_tier: 'free', trial_ends_at: null, category: 'salon', name: 'Salon', slug: 'salon', flow_type: 'scheduling', metadata: {}, country_code: 'NG', is_whitelabel: false },
       capabilities: [{ capability: 'scheduling', is_enabled: true, sort_order: 0 }],
       enabledLanguages: ['en'],
-      fromTracker,
+      insertTracker,
     });
     const bot = new BotService(supabase, sender, createMockStandalone(), createMockIntelligence());
     await bot.handleMessage(PHONE, 'I wan barb tomorrow morning', 'text', undefined, BIZ_ID);
 
     // Owner #268 override: comprehension is allowed even though translated
-    // replies remain English-only. Prove the real scheduling flow was entered.
-    expect(fromTracker).toContain('services');
+    // replies remain English-only. Prove canonical routing selected the real
+    // scheduling entry step before this harness intentionally fails insertion.
+    expect(insertTracker).toHaveLength(1);
+    expect(insertTracker[0].data.current_step).toBe('select_service');
+    expect((insertTracker[0].data.session_data as Record<string, unknown>).active_capability).toBe('scheduling');
     const msgs = sender.getMessages();
     const allText = msgs.map(m => (m as any).text || (m as any).body || '').join(' ').toLowerCase();
     expect(allText).not.toContain('please continue in');
@@ -193,20 +203,22 @@ describe('CAS-004 BotService first-message semantic routing', () => {
 
   it('13. unknown subscription tier → Free entitlement but deterministic Pidgin comprehension remains available', async () => {
     const sender = createCaptureSender();
-    const fromTracker: string[] = [];
+    const insertTracker: Array<{ table: string; data: Record<string, unknown> }> = [];
     const supabase = createTableMock({
       activeSession: null,
       business: { id: BIZ_ID, status: 'active', subscription_tier: 'platinum_ultra', trial_ends_at: null, category: 'salon', name: 'Salon', slug: 'salon', flow_type: 'scheduling', metadata: {}, country_code: 'NG', is_whitelabel: false },
       capabilities: [{ capability: 'scheduling', is_enabled: true, sort_order: 0 }],
       enabledLanguages: ['en'],
-      fromTracker,
+      insertTracker,
     });
     const bot = new BotService(supabase, sender, createMockStandalone(), createMockIntelligence());
     await bot.handleMessage(PHONE, 'I wan barb', 'text', undefined, BIZ_ID);
 
     // Unknown tier still fails closed for paid language/LLM entitlement, but
     // deterministic inbound comprehension is not a paid feature.
-    expect(fromTracker).toContain('services');
+    expect(insertTracker).toHaveLength(1);
+    expect(insertTracker[0].data.current_step).toBe('select_service');
+    expect((insertTracker[0].data.session_data as Record<string, unknown>).active_capability).toBe('scheduling');
     const { getEffectiveLanguages } = await import('../language-policy');
     const entitlement = getEffectiveLanguages('platinum_ultra');
     expect(entitlement.allowedLanguages).toEqual(['en']);
