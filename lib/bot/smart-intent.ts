@@ -38,6 +38,9 @@ function normalizeIntentText(text: string): string {
   return text
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[ƙƘ]/g, 'k')
+    .replace(/[ɛƐ]/g, 'e')
+    .replace(/[ɔƆ]/g, 'o')
     .toLowerCase();
 }
 
@@ -63,6 +66,12 @@ const BOOKING_PATTERNS = [
   // Yoruba / Yoruba-English code-switching
   /\bmo\s+(?:fe|nilo)\s+(?:book|reserve|gba\s+ipade|se\s+ipade)\b/i,
   /\bjowo\b.*\b(?:book|reserve|ipade)\b/i,
+  // Other supported languages — common transactional phrasing
+  /\bina\s+(?:son|so)(?:\s+in)?\s+(?:yi\s+)?(?:booking|book|reserve|appointment|ajiya)\b/i, // Hausa
+  /\bachoro\s+m\s+(?:i?book|booking|reserve|appointment)\b/i, // Igbo
+  /\bmepe\s+se\s+me(?:book|reserve)\b/i, // Twi
+  /\bje\s+veux\s+(?:reserver|prendre\s+(?:un\s+)?rendez[-\s]?vous)\b/i, // French
+  /\bquiero\s+(?:reservar|hacer\s+una\s+cita)\b/i, // Spanish
   // Pidgin — industry-specific
   /\b(i\s*wan|abeg)\b.*\b(lodge|sleep|stay|rest)\b/i,        // hotel
   /\b(i\s*wan|abeg)\b.*\b(wash|clean|iron)\b.*\b(cloth|car)\b/i, // laundry / car wash
@@ -81,6 +90,12 @@ const ORDERING_PATTERNS = [
   /\bmo\s+(?:fe|nilo)\s+(?:ra|pase|order|buy)\b/i,
   /\bjowo\b.*\b(?:ra|pase|order|buy)\b/i,
   /\b(?:ra|pase)\b.*\b(?:fun\s+mi|wa)\b/i,
+  // Other supported languages — common purchase phrasing
+  /\bina\s+(?:son|so)(?:\s+in)?\s+(?:saya|oda|order|buy)\b/i, // Hausa
+  /\bachoro\s+m\s+(?:izuta|zuta|order|buy)\b/i, // Igbo
+  /\bmepe\s+se\s+me(?:to|order|buy)\b/i, // Twi
+  /\bje\s+veux\s+(?:acheter|commander)\b/i, // French
+  /\bquiero\s+(?:comprar|pedir)\b/i, // Spanish
   // Pidgin — food
   /\b(wan|want)\b.*\b(chop|eat|order|buy|food)\b/i,
   /\b(abeg|pls|biko)\b.*\b(order|buy|bring|send|deliver)\b/i,
@@ -108,6 +123,12 @@ const PAYMENT_PATTERNS = [
   // Yoruba / Yoruba-English code-switching
   /\bmo\s+(?:fe|nilo)\s+(?:sanwo|san\s+owo|pay|donate|give)\b/i,
   /\bjowo\b.*\b(?:sanwo|san\s+owo|pay|donate)\b/i,
+  // Other supported languages — common payment phrasing
+  /\bina\s+(?:son|so)(?:\s+in)?\s+(?:biya|biyan|pay)\b/i, // Hausa
+  /\bachoro\s+m\s+(?:ikwu\s+ugwo|kwu\s+ugwo|pay)\b/i, // Igbo
+  /\bmepe\s+se\s+me(?:tua|pay)\b/i, // Twi
+  /\bje\s+veux\s+(?:payer|regler)\b/i, // French
+  /\bquiero\s+(?:pagar|abonar)\b/i, // Spanish
   // Pidgin — universal payment
   /\b(wan|want)\b.*\b(pay|give|donate|sow|settle|clear)\b/i,
   /\b(abeg|pls|biko|jowo)\b.*\b(pay|tithe|offering|seed|donate|give|settle)\b/i,
@@ -124,6 +145,12 @@ const TICKETING_PATTERNS = [
   // Yoruba / Yoruba-English code-switching
   /\bmo\s+(?:fe|nilo)\s+(?:ra\s+)?(?:tiketi|ticket)\b/i,
   /\bjowo\b.*\b(?:tiketi|ticket)\b/i,
+  // Other supported languages — common ticket phrasing
+  /\bina\s+(?:son|so)(?:\s+in)?\s+(?:saya\s+)?(?:tikiti|ticket)\b/i, // Hausa
+  /\bachoro\s+m\s+(?:izuta\s+)?(?:tikiti|ticket)\b/i, // Igbo
+  /\bmepe\s+se\s+me(?:to\s+)?(?:tikiti|ticket)\b/i, // Twi
+  /\bje\s+veux\s+(?:un\s+)?(?:billet|ticket)\b/i, // French
+  /\bquiero\s+(?:una?\s+)?(?:entrada|boleto|ticket)\b/i, // Spanish
   // Pidgin
   /\b(wan|want)\b.*\b(ticket|attend|go\s*to|see\s*show|watch)\b/i,
   /\b(i\s*wan|abeg|make\s*i)\b.*\b(ticket|go|attend|watch|see\s*movie)\b/i,
