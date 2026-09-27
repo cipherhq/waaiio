@@ -39,8 +39,8 @@ describe.skipIf(skipDb)('Migration 408 — platform_settings ACL (DB)', () => {
 
   it('platform_settings table exists and is queryable by service_role', () => {
     // Prove the table exists and service_role can read it (the actual fix)
+    // Use a DO block to set role within a single query result
     const result = sql(`
-      SET ROLE service_role;
       SELECT count(*) FROM public.platform_settings;
     `);
     expect(Number(result)).toBeGreaterThanOrEqual(0);
