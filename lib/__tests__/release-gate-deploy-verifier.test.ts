@@ -38,7 +38,7 @@ const GOOD_IDENTITY = {
   projectId: 'prj_test123',
   deploymentId: 'dpl_test456',
   vercelEnv: 'production',
-  timestamp: '2026-09-26T00:00:00Z',
+  timestamp: '2026-09-26T00:00:00.000Z',
 };
 
 const GOOD_HEALTH = { status: 'ok', timestamp: '2026-09-26T00:00:00Z' };
@@ -120,6 +120,31 @@ describe('parseIdentity', () => {
     expect(parseIdentity(JSON.stringify({
       ...GOOD_IDENTITY, timestamp: 'not-a-date',
     }))).toBeNull();
+  });
+
+  it('returns null for vercelEnv "banana" (not a known Vercel env)', () => {
+    expect(parseIdentity(JSON.stringify({
+      ...GOOD_IDENTITY, vercelEnv: 'banana',
+    }))).toBeNull();
+  });
+
+  it('returns null for impossible date 2026-99-99T99:99:99Z', () => {
+    expect(parseIdentity(JSON.stringify({
+      ...GOOD_IDENTITY, timestamp: '2026-99-99T99:99:99Z',
+    }))).toBeNull();
+  });
+
+  it('returns null for trailing-junk timestamp', () => {
+    expect(parseIdentity(JSON.stringify({
+      ...GOOD_IDENTITY, timestamp: '2026-09-26T00:00:00.000Z-JUNK',
+    }))).toBeNull();
+  });
+
+  it('accepts valid new Date().toISOString() timestamp', () => {
+    const ts = new Date().toISOString();
+    const result = parseIdentity(JSON.stringify({ ...GOOD_IDENTITY, timestamp: ts }));
+    expect(result).not.toBeNull();
+    expect(result!.timestamp).toBe(ts);
   });
 });
 

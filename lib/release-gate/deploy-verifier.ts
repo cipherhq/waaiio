@@ -82,17 +82,24 @@ interface ReleaseIdentity {
 }
 
 const SHA_RE = /^[0-9a-f]{40}$/;
-const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/;
+const VALID_VERCEL_ENVS = new Set(['production', 'preview', 'development']);
+
+function isValidISOTimestamp(value: string): boolean {
+  const d = new Date(value);
+  if (isNaN(d.getTime())) return false;
+  // Round-trip: a valid ISO string must re-serialize to itself (or a canonical equivalent)
+  // Reject impossible dates and trailing junk by checking the parse result is sane
+  return d.toISOString() === value;
+}
 
 export function parseIdentity(body: string): ReleaseIdentity | null {
   try {
     const json = JSON.parse(body);
-    // Strict shape: all fields must be strings with correct format
     if (typeof json.sha !== 'string' || !SHA_RE.test(json.sha)) return null;
     if (typeof json.projectId !== 'string' || !json.projectId.startsWith('prj_')) return null;
     if (typeof json.deploymentId !== 'string' || !json.deploymentId.startsWith('dpl_')) return null;
-    if (typeof json.vercelEnv !== 'string' || !json.vercelEnv) return null;
-    if (typeof json.timestamp !== 'string' || !ISO_DATE_RE.test(json.timestamp)) return null;
+    if (typeof json.vercelEnv !== 'string' || !VALID_VERCEL_ENVS.has(json.vercelEnv)) return null;
+    if (typeof json.timestamp !== 'string' || !isValidISOTimestamp(json.timestamp)) return null;
     return json as ReleaseIdentity;
   } catch {
     return null;
