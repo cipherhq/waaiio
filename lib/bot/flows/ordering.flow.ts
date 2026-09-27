@@ -1,5 +1,5 @@
 import type { FlowDefinition, FlowContext, PromptMessage, ValidationResult } from './types';
-import { createWhatsAppUser, findUserByPhone } from './shared/user';
+import { createWhatsAppUser, findUserByPhone, isReusableCustomerEmail } from './shared/user';
 import { initializePayment } from './shared/payment';
 import { truncTitle } from '../utils/truncate';
 import { getOrderConfirmationMessage } from './shared/templates';
@@ -1936,6 +1936,11 @@ export const orderingFlow: FlowDefinition = {
             ctx.session.session_data.first_name = user.first_name;
             ctx.session.session_data.last_name = user.last_name;
             ctx.session.session_data.email = user.email || '';
+            if (isReusableCustomerEmail(user.email)) {
+              // Ordering historically reads customer_email downstream. Keep both
+              // keys aligned so a known real email is not requested again.
+              ctx.session.session_data.customer_email = user.email.trim().toLowerCase();
+            }
             return true;
           }
         }
@@ -2048,9 +2053,17 @@ export const orderingFlow: FlowDefinition = {
         if (!emailRegex.test(email)) {
           return { valid: false, errorMessage: 'Please enter a valid email address.' };
         }
-        return { valid: true, data: { customer_email: email } };
+        return { valid: true, data: { customer_email: email, email } };
       },
       async next() { return 'review_order_summary'; },
+      async skipIf(ctx: FlowContext) {
+        const known = ctx.session.session_data.customer_email || ctx.session.session_data.email;
+        if (!isReusableCustomerEmail(known)) return false;
+        const normalized = known.trim().toLowerCase();
+        ctx.session.session_data.customer_email = normalized;
+        ctx.session.session_data.email = normalized;
+        return true;
+      },
     },
 
     // ── Review Order Summary ──
