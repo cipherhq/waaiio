@@ -126,7 +126,7 @@ export default function LaunchClient() {
   useEffect(() => {
     Promise.all([
       fetch('/api/launch/regions').then(r => r.ok ? r.json() : null).catch(() => null),
-      fetch('/api/site-announcement').then(r => r.ok ? r.json() : null).catch(() => null),
+      fetch('/api/site-announcement', { cache: 'no-store' }).then(r => r.ok ? r.json() : null).catch(() => null),
     ]).then(([regionsData, announcementData]) => {
       // Regions
       const list: Region[] = regionsData?.regions || [];
