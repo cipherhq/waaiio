@@ -132,6 +132,29 @@ describe('#420 Site Announcement Admin safety UX', () => {
     expect(updateCalls).toHaveLength(0);
   });
 
+  it('applies a generated WhatsApp link to the CTA draft without persisting, then Test CTA opens it', async () => {
+    const user = userEvent.setup();
+    render(<SiteAnnouncementPage />);
+
+    await user.click(await screen.findByRole('button', { name: /Generate WhatsApp Link/i }));
+    await user.type(screen.getByLabelText(/Destination WhatsApp number/i), '+1 301 555 0123');
+    await user.type(screen.getByLabelText(/Prefilled message/i), 'Hi Waaiio launch');
+    await user.click(screen.getByRole('button', { name: /Use This Link/i }));
+
+    const ctaLink = screen.getByPlaceholderText('/get-started or https://...');
+    expect(ctaLink).toHaveValue('https://wa.me/13015550123?text=Hi%20Waaiio%20launch');
+    expect(updateCalls).toHaveLength(0);
+
+    await user.click(screen.getByRole('button', { name: /Test CTA/i }));
+
+    expect(window.open).toHaveBeenCalledWith(
+      'https://wa.me/13015550123?text=Hi%20Waaiio%20launch',
+      '_blank',
+      'noopener,noreferrer',
+    );
+    expect(updateCalls).toHaveLength(0);
+  });
+
   it('does not claim Live when persistence fails', async () => {
     const user = userEvent.setup();
     setDraft({
