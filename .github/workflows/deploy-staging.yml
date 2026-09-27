@@ -157,32 +157,40 @@ jobs:
           # Mark that staging has been mutated — rollback is now required on failure
           echo "DEPLOY_MUTATED=true" >> "$GITHUB_ENV"
 
-          # Get new deployment ID from Vercel API (machine-readable, bound to exact project)
-          sleep 5
-          NEW_DEP_RESPONSE=$(curl -sS -f \
-            -H "Authorization: Bearer $VERCEL_TOKEN" \
-            "https://api.vercel.com/v6/deployments?projectId=${{ env.STAGING_PROJECT_ID }}&teamId=${{ env.STAGING_ORG_ID }}&target=production&state=READY&limit=1" \
-            2>&1) || {
-            echo "❌ Could not query Vercel API for new deployment."
+          # Capture the immutable deployment URL emitted by vercel deploy --prod
+          # vercel CLI prints the deployment URL as the last https://...vercel.app line
+          DEPLOY_URL=$(echo "$DEPLOY_OUTPUT" | grep -oE 'https://[^ ]+\.vercel\.app' | tail -1)
+          if [ -z "$DEPLOY_URL" ]; then
+            echo "❌ Could not capture deployment URL from vercel deploy output."
             exit 1
-          }
-
-          NEW_DEPLOYMENT_ID=$(echo "$NEW_DEP_RESPONSE" | node -e "
-            const d = JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
-            const dep = d.deployments && d.deployments[0];
-            if (!dep || !dep.uid || dep.uid === '${{ env.PREV_DEPLOYMENT_ID }}') { process.exit(1); }
-            console.log(dep.uid);
-          " 2>/dev/null) || {
-            echo "❌ Could not obtain new deployment ID distinct from rollback target."
-            exit 1
-          }
-
-          DEPLOY_URL=$(echo "$NEW_DEP_RESPONSE" | node -e "
-            const d = JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
-            console.log(d.deployments[0].url || '');
-          " 2>/dev/null)
-
+          fi
           echo "DEPLOY_URL=$DEPLOY_URL" >> "$GITHUB_ENV"
+          echo "  Captured deployment URL: $DEPLOY_URL"
+
+          # Query the exact deployment by its URL to get its immutable dpl_ ID
+          # This binds the ID to this exact deploy invocation, not "latest READY"
+          DEP_INSPECT=$(curl -sS -f \
+            -H "Authorization: Bearer $VERCEL_TOKEN" \
+            "https://api.vercel.com/v13/deployments/$(echo "$DEPLOY_URL" | sed 's|https://||')?teamId=${{ env.STAGING_ORG_ID }}" \
+            2>&1) || {
+            echo "❌ Could not inspect deployment at $DEPLOY_URL"
+            exit 1
+          }
+
+          NEW_DEPLOYMENT_ID=$(echo "$DEP_INSPECT" | node -e "
+            const d = JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
+            if (!d.id || !d.id.startsWith('dpl_')) { process.exit(1); }
+            // Verify this deployment belongs to the hardcoded staging project/org
+            if (d.projectId !== '${{ env.STAGING_PROJECT_ID }}') {
+              console.error('Deployment belongs to wrong project: ' + d.projectId);
+              process.exit(1);
+            }
+            console.log(d.id);
+          " 2>/dev/null) || {
+            echo "❌ Could not obtain dpl_ ID or deployment does not belong to staging project."
+            exit 1
+          }
+
           echo "NEW_DEPLOYMENT_ID=$NEW_DEPLOYMENT_ID" >> "$GITHUB_ENV"
           echo "✅ Deployment created: $NEW_DEPLOYMENT_ID ($DEPLOY_URL)"
 
@@ -212,7 +220,7 @@ jobs:
       # ── 8. Post-deploy verification ──
       - name: Run deploy verifier
         run: |
-          npx tsx lib/release-gate/deploy-verifier-cli.ts \
+          npx --no-install tsx lib/release-gate/deploy-verifier-cli.ts \
             --target-url "${{ env.STAGING_URL }}" \
             --expected-sha "${{ inputs.sha }}" \
             --expected-project "${{ env.STAGING_PROJECT_ID }}" \
@@ -234,22 +242,33 @@ jobs:
             exit 1
           }
 
-          # Verify rollback independently via Vercel API
+          # Verify rollback by checking the active production alias target
+          # Query the project to get its current active production deployment
           sleep 10
-          CURRENT_ID=$(curl -sS -f \
+          PROJECT_STATE=$(curl -sS -f \
             -H "Authorization: Bearer $VERCEL_TOKEN" \
-            "https://api.vercel.com/v6/deployments?projectId=${{ env.STAGING_PROJECT_ID }}&teamId=${{ env.STAGING_ORG_ID }}&target=production&state=READY&limit=1" \
-            | node -e "
-              const d = JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
-              console.log(d.deployments?.[0]?.uid || '');
-            " 2>/dev/null || echo '')
+            "https://api.vercel.com/v9/projects/${{ env.STAGING_PROJECT_ID }}?teamId=${{ env.STAGING_ORG_ID }}" \
+            2>&1) || {
+            echo "🚨 EMERGENCY: Could not query project state after rollback."
+            exit 1
+          }
 
-          if [ "$CURRENT_ID" = "${{ env.PREV_DEPLOYMENT_ID }}" ]; then
-            echo "✅ Rollback verified: staging is serving ${{ env.PREV_DEPLOYMENT_ID }}"
+          ACTIVE_ID=$(echo "$PROJECT_STATE" | node -e "
+            const p = JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
+            const targets = p.targets && p.targets.production;
+            if (targets && targets.id) { console.log(targets.id); }
+            else if (p.alias && p.alias.length > 0) {
+              // Fallback: check aliases for the production deployment
+              console.log(p.alias[0].deploymentId || '');
+            } else { console.log(''); }
+          " 2>/dev/null || echo '')
+
+          if [ "$ACTIVE_ID" = "${{ env.PREV_DEPLOYMENT_ID }}" ]; then
+            echo "✅ Rollback verified: active production target is ${{ env.PREV_DEPLOYMENT_ID }}"
           else
             echo "🚨 EMERGENCY: Rollback verification failed."
-            echo "   Expected deployment: ${{ env.PREV_DEPLOYMENT_ID }}"
-            echo "   Current deployment: $CURRENT_ID"
+            echo "   Expected active production deployment: ${{ env.PREV_DEPLOYMENT_ID }}"
+            echo "   Actual active production deployment: $ACTIVE_ID"
             exit 1
           fi
 

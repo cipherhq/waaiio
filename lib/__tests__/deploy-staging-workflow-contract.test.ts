@@ -174,6 +174,61 @@ describe('deploy-staging workflow contract', () => {
     const afterLoop = readinessRun.split('done').pop() || '';
     expect(afterLoop).toContain('exit 1');
   });
+
+  // ── Deployment ID derived from exact deploy URL, not "latest READY" ──
+  it('derives deployment ID from exact deploy URL, not latest READY query', () => {
+    const steps = getSteps();
+    const deployStep = steps.find(s => stepName(s).includes('Deploy exact SHA'));
+    const deployRun = deployStep?.run as string;
+
+    // Must capture the URL from vercel deploy output
+    expect(deployRun).toMatch(/DEPLOY_OUTPUT.*vercel deploy/);
+    // DEPLOY_URL is derived from grep on DEPLOY_OUTPUT, not from a READY query
+    expect(deployRun).toContain('DEPLOY_OUTPUT');
+    expect(deployRun).toContain('vercel.app');
+    expect(deployRun).toContain('grep');
+
+    // Must query the specific deployment by URL, not project-wide latest READY
+    expect(deployRun).toContain('api.vercel.com/v13/deployments/');
+    expect(deployRun).toContain('DEPLOY_URL');
+
+    // Must NOT use project-wide latest READY for new deployment discovery
+    // The deploy step should not have a "limit=1" READY query for the new deployment
+    const afterMutated = deployRun.split('DEPLOY_MUTATED')[1] || '';
+    expect(afterMutated).not.toContain('state=READY&limit=1');
+  });
+
+  // ── Rollback checks active production alias, not READY list ──
+  it('rollback verification checks active production target, not READY list', () => {
+    const steps = getSteps();
+    const rollbackStep = steps.find(s => stepName(s).includes('Rollback'));
+    const rollbackRun = rollbackStep?.run as string;
+
+    // Must query the project endpoint (v9/projects/) for active production target
+    expect(rollbackRun).toContain('api.vercel.com/v9/projects/');
+    expect(rollbackRun).toContain('STAGING_PROJECT_ID');
+
+    // Must NOT rely on deployments list with state=READY for rollback proof
+    // (the rollback step should check active alias/target, not READY list)
+    const afterRollbackCmd = rollbackRun.split('vercel rollback')[1] || '';
+    expect(afterRollbackCmd).not.toContain('state=READY&limit=1');
+  });
+
+  // ── tsx is pinned and invoked without remote fallback ──
+  it('verifier uses pinned tsx without remote fallback', () => {
+    const steps = getSteps();
+    const verifierStep = steps.find(s => stepName(s).includes('deploy verifier'));
+    const verifierRun = verifierStep?.run as string;
+
+    // Must use --no-install to prevent remote fetching of unpinned tsx
+    expect(verifierRun).toContain('--no-install');
+    expect(verifierRun).toContain('tsx');
+
+    // tsx must be in package.json as a devDependency (checked separately)
+    // Here we just verify the workflow doesn't use bare `npx tsx` without --no-install
+    expect(verifierRun).not.toMatch(/npx\s+tsx\s/);
+    expect(verifierRun).toMatch(/npx\s+--no-install\s+tsx/);
+  });
 });
 
 // Helpers
