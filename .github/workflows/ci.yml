@@ -1537,15 +1537,15 @@ jobs:
           if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
             SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
             if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
-              echo "❌ M408 platform_settings ACL tests had $SKIP_COUNT skipped. All 4 must execute."
+              echo "❌ M408 platform_settings ACL tests had $SKIP_COUNT skipped. All must execute."
               exit 1
             fi
           fi
-          if ! echo "$OUTPUT" | grep -q "4 passed"; then
-            echo "❌ Expected exactly 4 M408 tests to pass."
+          if ! echo "$OUTPUT" | grep -q "6 passed"; then
+            echo "❌ Expected exactly 6 M408 tests to pass (2 DB + 4 static)."
             exit 1
           fi
-          echo "✅ M408 platform_settings ACL tests complete — 4/4 passed, zero skips."
+          echo "✅ M408 platform_settings ACL tests complete — 6/6 passed, zero skips."
 
       - name: "DB delta analysis (advisory)"
         env:
