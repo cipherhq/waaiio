@@ -42,7 +42,11 @@ export function isTierLLMEligible(tier: string | null | undefined): boolean {
 }
 
 export interface LanguageEntitlement {
-  /** Languages the business is entitled to use */
+  /**
+   * Languages the business is entitled to ACTIVELY RESPOND/translate in.
+   * This is not an inbound-comprehension allowlist: supported customer
+   * messages may still be understood without enabling translated replies.
+   */
   allowedLanguages: string[];
   /** Whether paid LLM services are available */
   llmAllowed: boolean;
@@ -143,7 +147,11 @@ const LANGUAGE_MARKERS: Record<string, RegExp[]> = {
   pcm: [
     /\b(abeg|wetin|dey|sef|sha|joor|wahala|bros|oga|shey|abi|dis|dat|nor|una|dem|im|e\s+be|no\s+vex|i\s+wan|make\s+i)\b/i,
   ],
-  yo: [/\b(bawo|eku|ekaaro|ekale|ekasan|pele|jowo|omo)\b/i],
+  yo: [
+    /\b(bawo|eku|ekaaro|ekale|ekasan|pele|jowo|omo)\b/i,
+    /\bmo\s+(fe|nilo)\b/i,
+    /\be\s+jowo\b/i,
+  ],
   ha: [/\b(sannu|ina|yaya|barka|nagode|aboki)\b/i],
   ig: [/\b(kedu|biko|ndewo|nnoo|daalu|nwanne)\b/i],
   tw: [/\b(maakye|maaha|meda|wo\s+ho|mepa)\b/i],
@@ -157,8 +165,15 @@ const LANGUAGE_MARKERS: Record<string, RegExp[]> = {
  * Does NOT default to 'en' — caller must handle uncertainty.
  */
 export function detectLanguageDeterministic(text: string): string | null {
+  // Normalize diacritics so natural Yoruba/French/Spanish input is detected
+  // consistently while preserving the original message for downstream parsing.
+  const normalized = text
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+
   for (const [lang, patterns] of Object.entries(LANGUAGE_MARKERS)) {
-    if (patterns.some(p => p.test(text))) return lang;
+    if (patterns.some(p => p.test(normalized))) return lang;
   }
   // No non-English markers found. Could be English or unrecognized.
   // Do NOT assume ASCII = English. Return null for uncertain.
