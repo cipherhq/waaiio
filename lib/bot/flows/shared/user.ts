@@ -100,6 +100,23 @@ export async function createWhatsAppUser(
   }
 }
 
+/**
+ * True only for a reusable customer-provided email.
+ * Generated WhatsApp fallback addresses must not suppress a future email prompt.
+ */
+export function isReusableCustomerEmail(email: unknown): email is string {
+  if (typeof email !== 'string') return false;
+  const normalized = email.trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)) return false;
+
+  const fallbackDomain = (process.env.FALLBACK_EMAIL_DOMAIN || 'whatsapp.waaiio.com')
+    .trim()
+    .toLowerCase();
+  if (fallbackDomain && normalized.endsWith(`@${fallbackDomain}`)) return false;
+
+  return true;
+}
+
 export async function findUserByPhone(
   supabase: SupabaseClient,
   phone: string,

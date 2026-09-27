@@ -3,6 +3,17 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-09-27 — Bot optimization: multilingual understanding, safe repeat, known-email reuse (#268)
+
+### What changed
+- **Inbound multilingual understanding:** Yoruba/Pidgin (and LLM-supported language) comprehension is now separated from outbound translation entitlement. A supported-language customer message can be understood/routed without automatically enabling translated replies.
+- **Yoruba commerce parsing:** deterministic diacritic-normalized patterns recognize common Yoruba purchase/payment/ticket/booking phrasing such as `Mo fẹ́ ra...`.
+- **Pidgin intent precedence:** specific ordering/payment/ticket intents now win over the generic `I wan` booking marker.
+- **Safe repeat behavior:** natural reorder phrases plus Pidgin/Yoruba-style commands reuse the existing last-order cart path. Ambiguous `redo last transaction` is disambiguated into order/bookings/payment history and never silently charges or places a transaction.
+- **Known email reuse:** ordering now aligns profile `email` with downstream `customer_email` and skips the email prompt only for a real reusable address (not generated WhatsApp fallback addresses).
+- **Regression coverage:** added focused tests for Yoruba/Pidgin understanding, Free-tier comprehension without translation entitlement, repeat/reorder safety, and email prompt suppression.
+- **Safety:** no payment/provider authority, database schema, legal/T&C, OTP/PIN, receipt, or confirmation logic changed.
+
 ## 2026-09-25 — Feature: Launch alert delivery pipeline (#397)
 
 ### What changed

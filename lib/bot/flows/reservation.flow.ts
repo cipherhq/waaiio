@@ -3,7 +3,7 @@ import { formatCurrency, getLocale, getMaxQuantity, getCurrencyCode, type Countr
 import { analyzeReceipt, receiptMatchesExpected } from '@/lib/bot/receipt-ocr';
 import { parseIvePaidInput, isIvePaidInput } from '@/lib/bot/flows/shared/ive-paid-input';
 import { checkBankTransferEligibility, createPendingTransfer, formatBankTransferBlock, BANK_ONLY_BUTTONS } from './shared/bank-transfer';
-import { createWhatsAppUser, findUserByPhone } from './shared/user';
+import { createWhatsAppUser, findUserByPhone, isReusableCustomerEmail } from './shared/user';
 import { initializePayment } from './shared/payment';
 import { truncTitle } from '../utils/truncate';
 import { createNotification } from './shared/notifications';
@@ -705,7 +705,8 @@ export const reservationFlow: FlowDefinition = {
       },
       async next() { return 'create_reservation'; },
       async skipIf(ctx: FlowContext) {
-        return !!ctx.session.user_id;
+        // Do not confuse "known user" with "known email".
+        return isReusableCustomerEmail(ctx.session.session_data.email);
       },
     },
 

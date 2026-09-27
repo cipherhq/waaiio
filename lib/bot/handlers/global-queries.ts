@@ -26,7 +26,8 @@ export function isReferenceCodeMatch(text: string): RegExpMatchArray | null {
 }
 
 export function isBookingsQuery(text: string): boolean {
-  return /^(my\s+)?(bookings?|reservations?|appointments?|appts?|sessions?|upcoming|schedule)$/i.test(text)
+  return text === 'my_bookings'
+    || /^(my\s+)?(bookings?|reservations?|appointments?|appts?|sessions?|upcoming|schedule)$/i.test(text)
     || /^(check|view|show|list|see)\s+(my\s+)?(bookings?|reservations?|appointments?|appts?|schedule)$/i.test(text);
 }
 
@@ -117,8 +118,28 @@ export function isReferralQuery(text: string): boolean {
     || /^(refer\s+a\s+friend|invite\s+a?\s*friend)$/i.test(text);
 }
 
+function normalizeCommandText(text: string): string {
+  return text
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, ' ');
+}
+
 export function isReorderQuery(text: string): boolean {
-  return /^(reorder|re-order|same\s+again|order\s+(the\s+)?same(\s+thing)?|repeat\s+order|last\s+order)$/i.test(text);
+  const normalized = normalizeCommandText(text);
+  return /^(repeat_last_order|reorder|re-order|same\s+order\s+again|same\s+again|order\s+(the\s+)?same(\s+thing)?|repeat\s+(my\s+)?(last\s+)?order|last\s+order|order\s+am\s+again|abeg\s+(reorder|order\s+am\s+again)|tun\s+(order|ra)\s+.*(se|again)?)$/i.test(normalized);
+}
+
+/**
+ * Ambiguous "redo the last transaction" is intentionally NOT treated as a
+ * reorder. We first ask which safe history domain the customer means so a
+ * payment/giving transaction can never be silently repeated.
+ */
+export function isRepeatLastTransactionQuery(text: string): boolean {
+  const normalized = normalizeCommandText(text);
+  return /^(redo|repeat|do)\s+(my\s+)?(last|previous|most\s+recent)\s+(transaction|purchase|activity)\s*(again)?$|^tun\s+se\s+(transaction|ohun)\s+to\s+koja$/i.test(normalized);
 }
 
 // ── Main handler ────────────────────────────────────────────
@@ -328,6 +349,36 @@ export async function handleGlobalQuery(params: GlobalQueryParams): Promise<{ ha
   // ── Remove Card ──
   if (isRemoveCardQuery(text)) {
     await handleRemoveCard(supabase, sendText, from, session);
+    return { handled: true, session };
+  }
+
+  // ── Repeat last transaction/activity — safe disambiguation ──
+  if (isRepeatLastTransactionQuery(text)) {
+    if (!session?.business_id) {
+      await sendText(from, 'I can help with that. Type *my account* to choose the order, booking, or payment you want to revisit.');
+      return { handled: true, session };
+    }
+
+    const caps = (session.session_data?.capabilities as string[]) || [];
+    const buttons: Array<{ id: string; title: string }> = [];
+    if (caps.includes('ordering')) buttons.push({ id: 'repeat_last_order', title: 'Last Order' });
+    if (caps.some(c => ['appointment', 'scheduling', 'class_booking', 'table_reservation', 'reservation'].includes(c))) {
+      buttons.push({ id: 'my_bookings', title: 'My Bookings' });
+    }
+    if (caps.some(c => ['payment', 'giving'].includes(c))) {
+      buttons.push({ id: 'history', title: 'Last Payment' });
+    }
+
+    if (buttons.length === 0) {
+      await sendText(from, 'I could not find a repeatable activity here. Type *menu* to see what is available.');
+      return { handled: true, session };
+    }
+
+    await messageSender.sendButtons({
+      to: from,
+      body: 'Sure — which recent activity do you mean? I will not place an order, create a booking, or charge anything until you confirm through the normal flow.',
+      buttons: buttons.slice(0, 3),
+    });
     return { handled: true, session };
   }
 

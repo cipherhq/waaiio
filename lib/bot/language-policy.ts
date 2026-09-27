@@ -42,7 +42,11 @@ export function isTierLLMEligible(tier: string | null | undefined): boolean {
 }
 
 export interface LanguageEntitlement {
-  /** Languages the business is entitled to use */
+  /**
+   * Languages the business is entitled to ACTIVELY RESPOND/translate in.
+   * This is not an inbound-comprehension allowlist: supported customer
+   * messages may still be understood without enabling translated replies.
+   */
   allowedLanguages: string[];
   /** Whether paid LLM services are available */
   llmAllowed: boolean;
@@ -143,10 +147,23 @@ const LANGUAGE_MARKERS: Record<string, RegExp[]> = {
   pcm: [
     /\b(abeg|wetin|dey|sef|sha|joor|wahala|bros|oga|shey|abi|dis|dat|nor|una|dem|im|e\s+be|no\s+vex|i\s+wan|make\s+i)\b/i,
   ],
-  yo: [/\b(bawo|eku|ekaaro|ekale|ekasan|pele|jowo|omo)\b/i],
-  ha: [/\b(sannu|ina|yaya|barka|nagode|aboki)\b/i],
-  ig: [/\b(kedu|biko|ndewo|nnoo|daalu|nwanne)\b/i],
-  tw: [/\b(maakye|maaha|meda|wo\s+ho|mepa)\b/i],
+  yo: [
+    /\b(bawo|eku|ekaaro|ekale|ekasan|pele|jowo|omo)\b/i,
+    /\bmo\s+(fe|nilo)\b/i,
+    /\be\s+jowo\b/i,
+  ],
+  ha: [
+    /\b(sannu|ina|yaya|barka|nagode|aboki)\b/i,
+    /\bina\s+(son|so)\b/i,
+  ],
+  ig: [
+    /\b(kedu|biko|ndewo|nnoo|daalu|nwanne)\b/i,
+    /\bachoro\s+m\b/i,
+  ],
+  tw: [
+    /\b(maakye|maaha|meda|wo\s+ho|mepa)\b/i,
+    /\bmepe\s+se\b/i,
+  ],
   fr: [/\b(bonjour|merci|oui|s'il\s+vous|bonsoir|salut|je\s+veux|comment)\b/i],
   es: [/\b(hola|gracias|por\s+favor|buenos|quiero|necesito|reservar)\b/i],
 };
@@ -157,8 +174,24 @@ const LANGUAGE_MARKERS: Record<string, RegExp[]> = {
  * Does NOT default to 'en' — caller must handle uncertainty.
  */
 export function detectLanguageDeterministic(text: string): string | null {
-  for (const [lang, patterns] of Object.entries(LANGUAGE_MARKERS)) {
-    if (patterns.some(p => p.test(text))) return lang;
+  // Normalize diacritics so natural Yoruba/French/Spanish input is detected
+  // consistently while preserving the original message for downstream parsing.
+  const normalized = text
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    // NFD does not decompose a few common Hausa/Twi letters.
+    .replace(/[ƙƘ]/g, 'k')
+    .replace(/[ɛƐ]/g, 'e')
+    .replace(/[ɔƆ]/g, 'o')
+    .toLowerCase();
+
+  // Check distinct non-Pidgin languages before Pidgin. Pidgin deliberately
+  // contains English-like/West-African markers such as "una" that can collide
+  // with ordinary Spanish words ("una"). A strong language marker wins first.
+  const detectionOrder = ['yo', 'ha', 'ig', 'tw', 'fr', 'es', 'pcm'];
+  for (const lang of detectionOrder) {
+    const patterns = LANGUAGE_MARKERS[lang] || [];
+    if (patterns.some(p => p.test(normalized))) return lang;
   }
   // No non-English markers found. Could be English or unrecognized.
   // Do NOT assume ASCII = English. Return null for uncertain.
