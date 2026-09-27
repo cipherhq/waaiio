@@ -26,7 +26,8 @@ export function isReferenceCodeMatch(text: string): RegExpMatchArray | null {
 }
 
 export function isBookingsQuery(text: string): boolean {
-  return /^(my\s+)?(bookings?|reservations?|appointments?|appts?|sessions?|upcoming|schedule)$/i.test(text)
+  return text === 'my_bookings'
+    || /^(my\s+)?(bookings?|reservations?|appointments?|appts?|sessions?|upcoming|schedule)$/i.test(text)
     || /^(check|view|show|list|see)\s+(my\s+)?(bookings?|reservations?|appointments?|appts?|schedule)$/i.test(text);
 }
 
