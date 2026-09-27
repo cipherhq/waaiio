@@ -152,9 +152,18 @@ const LANGUAGE_MARKERS: Record<string, RegExp[]> = {
     /\bmo\s+(fe|nilo)\b/i,
     /\be\s+jowo\b/i,
   ],
-  ha: [/\b(sannu|ina|yaya|barka|nagode|aboki)\b/i],
-  ig: [/\b(kedu|biko|ndewo|nnoo|daalu|nwanne)\b/i],
-  tw: [/\b(maakye|maaha|meda|wo\s+ho|mepa)\b/i],
+  ha: [
+    /\b(sannu|ina|yaya|barka|nagode|aboki)\b/i,
+    /\bina\s+(son|so)\b/i,
+  ],
+  ig: [
+    /\b(kedu|biko|ndewo|nnoo|daalu|nwanne)\b/i,
+    /\bachoro\s+m\b/i,
+  ],
+  tw: [
+    /\b(maakye|maaha|meda|wo\s+ho|mepa)\b/i,
+    /\bmepe\s+se\b/i,
+  ],
   fr: [/\b(bonjour|merci|oui|s'il\s+vous|bonsoir|salut|je\s+veux|comment)\b/i],
   es: [/\b(hola|gracias|por\s+favor|buenos|quiero|necesito|reservar)\b/i],
 };
@@ -170,6 +179,10 @@ export function detectLanguageDeterministic(text: string): string | null {
   const normalized = text
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
+    // NFD does not decompose a few common Hausa/Twi letters.
+    .replace(/[ƙƘ]/g, 'k')
+    .replace(/[ɛƐ]/g, 'e')
+    .replace(/[ɔƆ]/g, 'o')
     .toLowerCase();
 
   for (const [lang, patterns] of Object.entries(LANGUAGE_MARKERS)) {
