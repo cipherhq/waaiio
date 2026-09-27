@@ -31,6 +31,16 @@ export interface SmartParseResult {
 
 // ── Intent patterns ──────────────────────────────────────
 
+
+// Normalize accents/diacritics for deterministic command/intent matching.
+// Keep the original message for entity/product matching and LLM fallback.
+function normalizeIntentText(text: string): string {
+  return text
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+}
+
 const BOOKING_PATTERNS = [
   // English
   /\b(book|reserve|appointment|schedule|check[\s-]*in|register)\b/i,
@@ -50,6 +60,9 @@ const BOOKING_PATTERNS = [
   /\b(abeg|pls|please|biko|jowo)\b.*\b(book|barb|cut|help|fix|reserve|lodge|register|wash)\b/i,
   /\b(make\s*i|lemme|let\s*me)\b.*\b(book|come|see|barb|cut|lodge|register|check[\s-]*in)\b/i,
   /\bi\s+wan\b/i,
+  // Yoruba / Yoruba-English code-switching
+  /\bmo\s+(?:fe|nilo)\s+(?:book|reserve|gba\s+ipade|se\s+ipade)\b/i,
+  /\bjowo\b.*\b(?:book|reserve|ipade)\b/i,
   // Pidgin — industry-specific
   /\b(i\s*wan|abeg)\b.*\b(lodge|sleep|stay|rest)\b/i,        // hotel
   /\b(i\s*wan|abeg)\b.*\b(wash|clean|iron)\b.*\b(cloth|car)\b/i, // laundry / car wash
@@ -64,6 +77,10 @@ const ORDERING_PATTERNS = [
   /\b(order|buy|purchase|deliver|delivery|send|ship)\b/i,
   /\b(chop|eat|food|hungry|menu)\b/i,
   /\b(drug|medicine|refill|prescription)\b/i,                   // pharmacy
+  // Yoruba / Yoruba-English code-switching
+  /\bmo\s+(?:fe|nilo)\s+(?:ra|pase|order|buy)\b/i,
+  /\bjowo\b.*\b(?:ra|pase|order|buy)\b/i,
+  /\b(?:ra|pase)\b.*\b(?:fun\s+mi|wa)\b/i,
   // Pidgin — food
   /\b(wan|want)\b.*\b(chop|eat|order|buy|food)\b/i,
   /\b(abeg|pls|biko)\b.*\b(order|buy|bring|send|deliver)\b/i,
@@ -88,6 +105,9 @@ const PAYMENT_PATTERNS = [
   /\b(school\s*fee|tuition|pta\s*levy|exam\s*fee|registration\s*fee)\b/i,
   // Government / utility
   /\b(tax|fine|license|permit|renewal|utility)\b/i,
+  // Yoruba / Yoruba-English code-switching
+  /\bmo\s+(?:fe|nilo)\s+(?:sanwo|san\s+owo|pay|donate|give)\b/i,
+  /\bjowo\b.*\b(?:sanwo|san\s+owo|pay|donate)\b/i,
   // Pidgin — universal payment
   /\b(wan|want)\b.*\b(pay|give|donate|sow|settle|clear)\b/i,
   /\b(abeg|pls|biko|jowo)\b.*\b(pay|tithe|offering|seed|donate|give|settle)\b/i,
@@ -101,6 +121,9 @@ const TICKETING_PATTERNS = [
   // English
   /\b(ticket|event|show|concert|movie|film|cinema|gig|festival)\b/i,
   /\b(bus|train|flight|ride|transport)\b.*\b(ticket|book)\b/i,
+  // Yoruba / Yoruba-English code-switching
+  /\bmo\s+(?:fe|nilo)\s+(?:ra\s+)?(?:tiketi|ticket)\b/i,
+  /\bjowo\b.*\b(?:tiketi|ticket)\b/i,
   // Pidgin
   /\b(wan|want)\b.*\b(ticket|attend|go\s*to|see\s*show|watch)\b/i,
   /\b(i\s*wan|abeg|make\s*i)\b.*\b(ticket|go|attend|watch|see\s*movie)\b/i,
@@ -564,6 +587,7 @@ function detectRequestedAction(text: string): import('./semantic-types').Request
 // ── Main parser ──────────────────────────────────────────
 
 export function parseSmartIntent(text: string, timezone?: string): SmartParseResult {
+  const intentText = normalizeIntentText(text);
   const result: SmartParseResult = {
     understood: false,
     intent: null,
@@ -577,14 +601,14 @@ export function parseSmartIntent(text: string, timezone?: string): SmartParseRes
   };
 
   // Detect intent
-  if (BOOKING_PATTERNS.some(p => p.test(text))) result.intent = 'booking';
-  else if (ORDERING_PATTERNS.some(p => p.test(text))) result.intent = 'ordering';
-  else if (PAYMENT_PATTERNS.some(p => p.test(text))) result.intent = 'payment';
-  else if (TICKETING_PATTERNS.some(p => p.test(text))) result.intent = 'ticketing';
+  if (BOOKING_PATTERNS.some(p => p.test(intentText))) result.intent = 'booking';
+  else if (ORDERING_PATTERNS.some(p => p.test(intentText))) result.intent = 'ordering';
+  else if (PAYMENT_PATTERNS.some(p => p.test(intentText))) result.intent = 'payment';
+  else if (TICKETING_PATTERNS.some(p => p.test(intentText))) result.intent = 'ticketing';
 
-  // CAS-004: Determine fine-grained semantic family from sub-patterns
-  result.semanticFamily = detectSemanticFamily(text, result.intent);
-  result.requestedAction = detectRequestedAction(text);
+  // CAS-004: Determine fine-grained semantic family from normalized text.
+  result.semanticFamily = detectSemanticFamily(intentText, result.intent);
+  result.requestedAction = detectRequestedAction(intentText);
 
   // Extract entities
   result.serviceKeywords = extractServiceKeywords(text);
