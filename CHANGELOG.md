@@ -3,6 +3,20 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-09-27 — Site Announcement pre-launch safety hardening (#420)
+
+### What changed
+- Added a real Admin preview of the public announcement banner, countdown, and CTA before activation.
+- Made the browser timezone explicit and fixed UTC ↔ `datetime-local` round-tripping so editing a launch time does not silently shift the stored instant.
+- Added a shared announcement validation contract used by both the Admin UI and the main-app Admin API.
+- Going live now requires a non-empty headline; launch countdowns additionally require a valid future target date/time.
+- CTA text/link must be provided together; CTA links remain restricted to safe relative paths or HTTPS.
+- Added **Test CTA** using the configured public app base so relative links do not accidentally open on the Admin host.
+- Failed toggle persistence no longer leaves the Admin UI falsely claiming the announcement is live.
+- Explicitly documented the existing expiry behavior: countdown disappears at zero, but the announcement remains visible until manually disabled/changed. No automatic-expiry product decision was introduced.
+- Added executable shared/API/Admin-component regression coverage.
+- No WhatsApp, payment, provider, database schema/migration, or runtime capability behavior changed.
+
 ## 2026-09-27 — WhatsApp list-row material detail preservation (#227)
 
 ### What changed
