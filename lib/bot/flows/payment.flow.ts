@@ -16,6 +16,7 @@ import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
 import { buildSavedCardOffer, handleSavedCardInput } from './shared/saved-card-flow';
 import { safeButtons } from './shared/safe-interactive';
+import { buildListItem } from '../utils/truncate';
 
 export const paymentFlow: FlowDefinition = {
   type: 'payment',
@@ -53,12 +54,15 @@ export const paymentFlow: FlowDefinition = {
           body,
           buttonLabel: 'Choose',
           items: services.map(s => {
-            let title = s.name;
             if (s.billing_type === 'recurring' && s.recurring_interval && s.price > 0) {
               const suffix = s.recurring_interval === 'weekly' ? '/week' : '/month';
-              title = `${s.name} — ${formatCurrency(s.price, cc)}${suffix}`;
+              return buildListItem({
+                name: s.name,
+                detail: `${formatCurrency(s.price, cc)}${suffix}`,
+                postbackText: s.id,
+              });
             }
-            return { title, postbackText: s.id };
+            return buildListItem({ name: s.name, postbackText: s.id });
           }),
         }];
       },

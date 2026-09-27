@@ -14,6 +14,7 @@ import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 import { getPoweredByFooter } from '@/lib/whitelabel';
 import { isToggleColumnMissing } from '@/lib/utils/campaign-column-fallback';
 import { buildSavedCardOffer, handleSavedCardInput } from './shared/saved-card-flow';
+import { buildListItem } from '../utils/truncate';
 
 const EXPANDED_CAMPAIGN_SELECT = 'id, title, description, goal_amount, raised_amount, donor_count, end_date, allow_after_end_date, allow_after_goal_met' as const;
 const LEGACY_CAMPAIGN_SELECT = 'id, title, description, goal_amount, raised_amount, donor_count, end_date' as const;
@@ -96,11 +97,11 @@ const selectCampaignStep: FlowStepConfig = {
         const progress = c.goal_amount > 0
           ? Math.round((c.raised_amount / c.goal_amount) * 100)
           : 0;
-        return {
-          title: c.title,
-          description: `${formatCurrency(c.raised_amount, country)} raised (${progress}%) - ${c.donor_count} donors`,
+        return buildListItem({
+          name: c.title,
+          detail: `${formatCurrency(c.raised_amount, country)} raised (${progress}%) - ${c.donor_count} donors`,
           postbackText: `campaign_${c.id}`,
-        };
+        });
       }),
     }];
   },

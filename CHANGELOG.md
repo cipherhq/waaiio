@@ -3,6 +3,18 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-09-27 — WhatsApp list-row material detail preservation (#227)
+
+### What changed
+- Added a shared `buildListItem()` formatter for WhatsApp list rows with the 24-character title / 72-character description contract.
+- Material detail such as price, recurring frequency, crowdfunding progress, and donor counts is given description priority before optional long-name context.
+- Payment/Giving recurring categories now keep the configured amount + interval visible instead of truncating it inside the row title.
+- Scheduling add-ons keep configured price visible without changing the add-on postback ID.
+- Crowdfunding campaign titles are safely compacted while progress/donor detail remains visible.
+- Title/description truncation now avoids splitting UTF-16 surrogate pairs.
+- Added executable regressions against the actual flow prompt functions, including the Biazo Conference case, long names, currency formatting, Unicode/emoji boundaries, and unchanged postback identities.
+- No sender, executor, database, payment authority, webhook, or provider behavior changed.
+
 ## 2026-09-27 — Bot optimization: multilingual understanding, safe repeat, known-email reuse (#268)
 
 ### What changed
