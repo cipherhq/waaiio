@@ -299,3 +299,28 @@ describe('Phone formatting — international numbers', () => {
     expect(src).toContain("'44'");
   });
 });
+
+
+// ── H. Announcement cache freshness regression (#416) ─────
+describe('Site announcement — cache freshness', () => {
+  it('forces the public API route dynamic and disables revalidation caching', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('app/api/site-announcement/route.ts', 'utf-8');
+    expect(src).toContain("export const dynamic = 'force-dynamic'");
+    expect(src).toContain('export const revalidate = 0');
+    expect(src).toContain("'Cache-Control': 'no-store, max-age=0'");
+    expect(src).not.toContain('s-maxage=30');
+  });
+
+  it('marketing banner bypasses browser/framework fetch caching', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('components/marketing/SiteAnnouncement.tsx', 'utf-8');
+    expect(src).toContain("fetch('/api/site-announcement', { cache: 'no-store' })");
+  });
+
+  it('launch page bypasses browser/framework fetch caching', () => {
+    const fs = require('fs');
+    const src = fs.readFileSync('app/(marketing)/launch/LaunchClient.tsx', 'utf-8');
+    expect(src).toContain("fetch('/api/site-announcement', { cache: 'no-store' })");
+  });
+});
