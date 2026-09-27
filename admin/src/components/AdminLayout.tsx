@@ -5,6 +5,7 @@ import { supabase } from '@/lib/supabase';
 import { loadCountries } from '@/lib/countries';
 import { AdminSidebar } from './AdminSidebar';
 import { IdleTimeout } from './IdleTimeout';
+import { EnvironmentIdentityBar } from './EnvironmentIdentityBar';
 
 const AdminSessionContext = createContext<AdminSession | null>(null);
 
@@ -94,6 +95,7 @@ export function AdminLayout() {
             <img src="/logo.png" alt="Waaiio" className="h-6" />
             <p className="text-[10px] text-gray-400">Admin</p>
           </div>
+          <EnvironmentIdentityBar />
           <div className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8">
             <Outlet />
           </div>
