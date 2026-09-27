@@ -600,11 +600,13 @@ export function parseSmartIntent(text: string, timezone?: string): SmartParseRes
     variantKeywords: [],
   };
 
-  // Detect intent
-  if (BOOKING_PATTERNS.some(p => p.test(intentText))) result.intent = 'booking';
-  else if (ORDERING_PATTERNS.some(p => p.test(intentText))) result.intent = 'ordering';
+  // Detect intent. Check specific commerce intents before booking because
+  // Pidgin phrases like "I wan buy/pay/ticket" also contain the generic
+  // booking marker "I wan". Specific intent must win deterministically.
+  if (TICKETING_PATTERNS.some(p => p.test(intentText))) result.intent = 'ticketing';
   else if (PAYMENT_PATTERNS.some(p => p.test(intentText))) result.intent = 'payment';
-  else if (TICKETING_PATTERNS.some(p => p.test(intentText))) result.intent = 'ticketing';
+  else if (ORDERING_PATTERNS.some(p => p.test(intentText))) result.intent = 'ordering';
+  else if (BOOKING_PATTERNS.some(p => p.test(intentText))) result.intent = 'booking';
 
   // CAS-004: Determine fine-grained semantic family from normalized text.
   result.semanticFamily = detectSemanticFamily(intentText, result.intent);
