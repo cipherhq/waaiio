@@ -185,7 +185,12 @@ export function detectLanguageDeterministic(text: string): string | null {
     .replace(/[ɔƆ]/g, 'o')
     .toLowerCase();
 
-  for (const [lang, patterns] of Object.entries(LANGUAGE_MARKERS)) {
+  // Check distinct non-Pidgin languages before Pidgin. Pidgin deliberately
+  // contains English-like/West-African markers such as "una" that can collide
+  // with ordinary Spanish words ("una"). A strong language marker wins first.
+  const detectionOrder = ['yo', 'ha', 'ig', 'tw', 'fr', 'es', 'pcm'];
+  for (const lang of detectionOrder) {
+    const patterns = LANGUAGE_MARKERS[lang] || [];
     if (patterns.some(p => p.test(normalized))) return lang;
   }
   // No non-English markers found. Could be English or unrecognized.
