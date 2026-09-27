@@ -40,12 +40,20 @@ describe('#426 WhatsApp click-to-chat link authority', () => {
     expect(() => normalizeWhatsAppPhone('+1 301 555 CALL')).toThrow();
     expect(() => normalizeWhatsAppPhone('+1 301 555 0123 x4')).toThrow();
     expect(() => normalizeWhatsAppPhone('+1 301 555 0123#')).toThrow();
+    expect(() => normalizeWhatsAppPhone('+1+3015550123')).toThrow(/only allowed at the beginning/i);
   });
 
   it('rejects impossible international lengths and leading-zero country code', () => {
     expect(() => normalizeWhatsAppPhone('+123')).toThrow(/between 7 and 15/i);
     expect(() => normalizeWhatsAppPhone('+0123456789')).toThrow(/non-zero country code/i);
     expect(() => normalizeWhatsAppPhone('+1234567890123456')).toThrow(/between 7 and 15/i);
+  });
+
+  it('rejects an oversized prefilled message', () => {
+    expect(() => buildWhatsAppLink({
+      phone: '+1 301 555 0123',
+      message: 'x'.repeat(1001),
+    })).toThrow(/1000 characters or fewer/i);
   });
 
   it('recognizes only canonical HTTPS wa.me phone URLs', () => {
