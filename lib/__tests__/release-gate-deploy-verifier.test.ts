@@ -187,6 +187,41 @@ describe('verifyDeployment — identity', () => {
     expect(result.checks.find(c => c.name === 'project-match')?.status).toBe('fail');
   });
 
+  it('deployment ID match passes when expected', async () => {
+    setupMocks();
+    const result = await verifyDeployment({
+      targetUrl: 'https://staging.test',
+      expectedSha: GOOD_IDENTITY.sha,
+      expectedProject: GOOD_IDENTITY.projectId,
+      expectedDeploymentId: GOOD_IDENTITY.deploymentId,
+    });
+    expect(result.verdict).toBe('PASS');
+    expect(result.checks.find(c => c.name === 'deployment-id-match')?.status).toBe('pass');
+  });
+
+  it('deployment ID mismatch fails', async () => {
+    setupMocks();
+    const result = await verifyDeployment({
+      targetUrl: 'https://staging.test',
+      expectedSha: GOOD_IDENTITY.sha,
+      expectedProject: GOOD_IDENTITY.projectId,
+      expectedDeploymentId: 'dpl_wrong',
+    });
+    expect(result.verdict).toBe('FAIL');
+    expect(result.checks.find(c => c.name === 'deployment-id-match')?.status).toBe('fail');
+  });
+
+  it('deployment ID check skipped when not expected', async () => {
+    setupMocks();
+    const result = await verifyDeployment({
+      targetUrl: 'https://staging.test',
+      expectedSha: GOOD_IDENTITY.sha,
+      expectedProject: GOOD_IDENTITY.projectId,
+      // no expectedDeploymentId
+    });
+    expect(result.checks.find(c => c.name === 'deployment-id-match')).toBeUndefined();
+  });
+
   it('malformed identity JSON fails', async () => {
     setupMocks({
       '/api/release-identity': { status: 200, body: '{"broken": true}' },
