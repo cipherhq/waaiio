@@ -3,6 +3,19 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-09-27 — Persistent Admin environment/build identity (#424)
+
+### What changed
+- Added a persistent Admin shell identity bar visible across Admin pages on desktop and mobile.
+- Logical Waaiio environment is sourced from explicit trusted build configuration (`WAAIIO_ENVIRONMENT` / `VITE_WAAIIO_ENVIRONMENT`) and is never inferred from browser hostname or Vercel target alone.
+- Missing/invalid logical environment fails visibly to **UNVERIFIED** instead of guessing.
+- Added non-secret Vercel build metadata where available: Admin Git SHA, deployment ID, project ID, and Vercel target environment.
+- Added configured Admin API origin to the banner to make wrong-target mistakes easier to spot.
+- Added `VITE_WAAIIO_ENVIRONMENT` to the Admin environment example.
+- Added executable tests for staging-vs-Vercel-production separation, production/development/unverified normalization, malformed API targets, build-ID formatting, hostname non-inference, and identity-bar rendering.
+- No Vercel environment values were mutated, no deployment was performed, and no CI/deploy workflow, Supabase, migration, Release Gate, payment, WhatsApp, or provider behavior changed.
+- Deployment prerequisite: the intended Admin Vercel projects must explicitly configure the logical Waaiio environment before this feature is relied on operationally.
+
 ## 2026-09-27 — Admin Role Permissions authority truthfulness (#422)
 
 ### What changed
