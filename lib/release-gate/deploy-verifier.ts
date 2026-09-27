@@ -16,6 +16,7 @@ export interface VerifyInput {
   targetUrl: string;
   expectedSha: string;
   expectedProject: string;
+  expectedDeploymentId?: string;
   timeoutMs?: number;
 }
 
@@ -111,6 +112,7 @@ async function checkIdentity(
   expectedSha: string,
   expectedProject: string,
   timeoutMs: number,
+  expectedDeploymentId?: string,
 ): Promise<CheckResult[]> {
   const results: CheckResult[] = [];
 
@@ -158,6 +160,15 @@ async function checkIdentity(
     results.push({ name: 'project-match', status: 'pass', detail: `Project matches: ${expectedProject}` });
   } else {
     results.push({ name: 'project-match', status: 'fail', detail: `Project mismatch: expected ${expectedProject}, got ${identity.projectId}` });
+  }
+
+  // Deployment ID comparison (optional — only when expected ID is provided)
+  if (expectedDeploymentId) {
+    if (identity.deploymentId === expectedDeploymentId) {
+      results.push({ name: 'deployment-id-match', status: 'pass', detail: `Deployment ID matches: ${expectedDeploymentId}` });
+    } else {
+      results.push({ name: 'deployment-id-match', status: 'fail', detail: `Deployment ID mismatch: expected ${expectedDeploymentId}, got ${identity.deploymentId}` });
+    }
   }
 
   return results;
@@ -256,7 +267,7 @@ export async function verifyDeployment(input: VerifyInput): Promise<VerifyResult
   const allChecks: CheckResult[] = [];
 
   // Phase 1: Identity
-  const identityChecks = await checkIdentity(base, expectedSha, expectedProject, timeoutMs);
+  const identityChecks = await checkIdentity(base, expectedSha, expectedProject, timeoutMs, input.expectedDeploymentId);
   allChecks.push(...identityChecks);
 
   // Phase 2: Health

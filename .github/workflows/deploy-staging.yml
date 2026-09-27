@@ -1,0 +1,233 @@
+name: Deploy to Staging
+
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: 'Exact Git SHA to deploy (must be merged on main)'
+        required: true
+        type: string
+
+# Staging-only constants — hardcoded, never from workflow inputs
+env:
+  STAGING_ORG_ID: team_AEcg69CktrGEptXDznpae8Rp
+  STAGING_PROJECT_ID: prj_h7YmC4fvpxhn429znCy34OjLZ6se
+  STAGING_URL: https://staging.waaiio.com
+  OWNER_ACTOR: cipherhq
+
+jobs:
+  deploy-staging:
+    name: "Deploy exact SHA to staging"
+    runs-on: ubuntu-latest
+
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: https://example.supabase.co
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: dummy
+      NEXT_PUBLIC_APP_URL: https://staging.waaiio.com
+      NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: pk_test_dummy
+      NEXT_PUBLIC_PAYSTACK_PUBLIC_KEY: pk_test_dummy
+      NEXT_PUBLIC_POSTHOG_KEY: dummy
+      NEXT_PUBLIC_META_APP_ID: dummy
+      NEXT_PUBLIC_SENTRY_DSN: https://dummy@sentry.io/0
+
+    steps:
+      # ── 0. Owner authorization gate ──
+      - name: Verify Owner authorization
+        run: |
+          if [ "${{ github.event_name }}" != "workflow_dispatch" ]; then
+            echo "❌ ABORT: This workflow may only be triggered via workflow_dispatch."
+            exit 1
+          fi
+          if [ "${{ github.actor }}" != "${{ env.OWNER_ACTOR }}" ]; then
+            echo "❌ ABORT: Only the Owner (${{ env.OWNER_ACTOR }}) may trigger staging deployments."
+            echo "   Triggered by: ${{ github.actor }}"
+            exit 1
+          fi
+          echo "✅ Owner authorization verified: ${{ github.actor }}"
+
+      # ── 1. Validate SHA format ──
+      - name: Validate SHA format
+        run: |
+          SHA="${{ inputs.sha }}"
+          if ! echo "$SHA" | grep -qE '^[0-9a-f]{40}$'; then
+            echo "❌ ABORT: SHA must be exactly 40 hex characters. Got: $SHA"
+            exit 1
+          fi
+          echo "✅ SHA format valid: ${SHA:0:8}"
+
+      # ── 2. Checkout exact SHA ──
+      - name: Checkout exact SHA
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.sha }}
+          fetch-depth: 0
+
+      # ── 3. Verify SHA provenance ──
+      - name: Verify SHA is on main and checkout is clean
+        run: |
+          SHA="${{ inputs.sha }}"
+
+          # Verify HEAD matches input SHA
+          CHECKOUT_SHA=$(git rev-parse HEAD)
+          if [ "$CHECKOUT_SHA" != "$SHA" ]; then
+            echo "❌ ABORT: Checkout HEAD ($CHECKOUT_SHA) does not match input SHA ($SHA)"
+            exit 1
+          fi
+
+          # Verify SHA is reachable from origin/main
+          git fetch origin main --quiet
+          if ! git merge-base --is-ancestor "$SHA" origin/main; then
+            echo "❌ ABORT: SHA $SHA is not an ancestor of origin/main. Only merged commits may be deployed."
+            exit 1
+          fi
+
+          # Verify clean working tree
+          DIRTY=$(git status --porcelain | wc -l | tr -d ' ')
+          if [ "$DIRTY" != "0" ]; then
+            echo "❌ ABORT: Working tree is not clean after checkout."
+            git status --short
+            exit 1
+          fi
+
+          echo "✅ Provenance verified: ${SHA:0:8} is on main, checkout is clean"
+
+      # ── 4. Setup ──
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.11.1
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Vercel CLI
+        run: npm install -g vercel@latest
+
+      # ── 5. Capture pre-deploy rollback target ──
+      - name: Capture current staging deployment for rollback
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          echo "Fetching current staging production deployment..."
+          PREV_DEPLOYMENT=$(vercel ls --prod --token "$VERCEL_TOKEN" \
+            --scope "${{ env.STAGING_ORG_ID }}" 2>/dev/null \
+            | grep -E '^\S+\s' | head -1 | awk '{print $2}' || true)
+
+          if [ -z "$PREV_DEPLOYMENT" ]; then
+            echo "⚠️  WARNING: Could not identify previous deployment for rollback."
+            echo "   Proceeding — manual rollback via Vercel dashboard may be required."
+            echo "PREV_DEPLOYMENT=none" >> "$GITHUB_ENV"
+          else
+            echo "PREV_DEPLOYMENT=$PREV_DEPLOYMENT" >> "$GITHUB_ENV"
+            echo "✅ Rollback target captured: $PREV_DEPLOYMENT"
+          fi
+
+      # ── 6. Deploy to staging ──
+      - name: Deploy exact SHA to staging
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ env.STAGING_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ env.STAGING_PROJECT_ID }}
+        run: |
+          SHA="${{ inputs.sha }}"
+          echo "Deploying ${SHA:0:8} to staging (production target)..."
+
+          DEPLOY_OUTPUT=$(vercel deploy --prod --yes --token "$VERCEL_TOKEN" 2>&1)
+          DEPLOY_EXIT=$?
+
+          echo "$DEPLOY_OUTPUT"
+
+          if [ $DEPLOY_EXIT -ne 0 ]; then
+            echo "❌ ABORT: Vercel deploy failed with exit code $DEPLOY_EXIT"
+            exit 1
+          fi
+
+          # Extract deployment URL from output (last line is typically the URL)
+          DEPLOY_URL=$(echo "$DEPLOY_OUTPUT" | grep -oE 'https://[^ ]+\.vercel\.app' | tail -1)
+          if [ -z "$DEPLOY_URL" ]; then
+            echo "⚠️  Could not extract deployment URL from output."
+            DEPLOY_URL="unknown"
+          fi
+          echo "DEPLOY_URL=$DEPLOY_URL" >> "$GITHUB_ENV"
+          echo "✅ Deployment submitted: $DEPLOY_URL"
+
+      # ── 7. Wait for deployment readiness ──
+      - name: Wait for staging to serve new deployment
+        run: |
+          echo "Waiting for ${{ env.STAGING_URL }} to serve the new deployment..."
+          SHA="${{ inputs.sha }}"
+          MAX_ATTEMPTS=30
+          ATTEMPT=0
+
+          while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
+            ATTEMPT=$((ATTEMPT + 1))
+            RESPONSE=$(curl -sS "${{ env.STAGING_URL }}/api/release-identity" 2>/dev/null || echo '{}')
+            RUNTIME_SHA=$(echo "$RESPONSE" | node -e "
+              try { const d = JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')); console.log(d.sha || ''); }
+              catch { console.log(''); }
+            " 2>/dev/null || echo '')
+
+            if [ "$RUNTIME_SHA" = "$SHA" ]; then
+              echo "✅ Staging is serving SHA ${SHA:0:8} (attempt $ATTEMPT)"
+              break
+            fi
+
+            if [ $ATTEMPT -eq $MAX_ATTEMPTS ]; then
+              echo "❌ Staging did not serve expected SHA after $MAX_ATTEMPTS attempts."
+              echo "   Expected: ${SHA:0:8}"
+              echo "   Got: ${RUNTIME_SHA:0:8}"
+              echo "VERIFICATION_FAILED=true" >> "$GITHUB_ENV"
+              break
+            fi
+
+            echo "  Attempt $ATTEMPT/$MAX_ATTEMPTS: runtime SHA is ${RUNTIME_SHA:0:8}, waiting..."
+            sleep 10
+          done
+
+      # ── 8. Post-deploy verification ──
+      - name: Run deploy verifier
+        if: env.VERIFICATION_FAILED != 'true'
+        run: |
+          npx tsx lib/release-gate/deploy-verifier-cli.ts \
+            --target-url "${{ env.STAGING_URL }}" \
+            --expected-sha "${{ inputs.sha }}" \
+            --expected-project "${{ env.STAGING_PROJECT_ID }}"
+
+      # ── 9. Rollback on failure ──
+      - name: Rollback on verification failure
+        if: failure()
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          if [ "${{ env.PREV_DEPLOYMENT }}" = "none" ]; then
+            echo "⚠️  EMERGENCY: No rollback target was captured. Manual rollback required via Vercel dashboard."
+            echo "   Staging project: ${{ env.STAGING_PROJECT_ID }}"
+            exit 1
+          fi
+
+          echo "Rolling back staging to previous deployment: ${{ env.PREV_DEPLOYMENT }}"
+          vercel rollback "${{ env.PREV_DEPLOYMENT }}" --yes --token "$VERCEL_TOKEN" \
+            --scope "${{ env.STAGING_ORG_ID }}" 2>&1 || {
+            echo "⚠️  EMERGENCY: Rollback command failed. Manual rollback required via Vercel dashboard."
+            echo "   Previous deployment: ${{ env.PREV_DEPLOYMENT }}"
+            echo "   Staging project: ${{ env.STAGING_PROJECT_ID }}"
+            exit 1
+          }
+
+          echo "✅ Rollback completed to: ${{ env.PREV_DEPLOYMENT }}"
+
+      # ── 10. Summary ──
+      - name: Deploy summary
+        if: success()
+        run: |
+          echo ""
+          echo "═══════════════════════════════════════════════════════════"
+          echo "  Staging Deployment Complete"
+          echo "═══════════════════════════════════════════════════════════"
+          echo "  SHA:         ${{ inputs.sha }}"
+          echo "  URL:         ${{ env.STAGING_URL }}"
+          echo "  Deploy URL:  ${{ env.DEPLOY_URL }}"
+          echo "  Rollback:    ${{ env.PREV_DEPLOYMENT }}"
+          echo "  Actor:       ${{ github.actor }}"
+          echo "═══════════════════════════════════════════════════════════"
