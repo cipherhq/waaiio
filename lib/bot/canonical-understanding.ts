@@ -5,11 +5,11 @@
  * Produces: semanticFamily, requestedAction, confidence, language, entities.
  *
  * Pipeline:
- * 1. Language entitlement check (deterministic detection first)
- * 2. Deterministic regex parse
- * 3. LLM hybrid (if entitled + regex not confident)
- * 4. LLM language validation (invalid → discard LLM semantic result)
- * 5. Canonical result with real confidence
+ * 1. Detect inbound language (deterministic first)
+ * 2. Deterministic regex parse for every supported inbound language
+ * 3. LLM hybrid when the BUSINESS TIER is entitled and regex is not confident
+ * 4. Validate LLM language/semantics
+ * 5. Keep response translation/activation entitlement separate from comprehension
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -79,15 +79,11 @@ export async function understandCanonicalMessage(params: {
     // 2. Deterministic language detection (no LLM cost)
     const detectedLang = detectLanguageDeterministic(text);
 
-    // 3. Language entitlement for clearly detected non-English
-    if (detectedLang && detectedLang !== 'en' && !langEntitlement.allowedLanguages.includes(detectedLang)) {
-      return {
-        ...EMPTY_RESULT, language: detectedLang,
-        languageEntitlement: langEntitlement, languageBlocked: true,
-        allowedLanguageNames: allowedNames,
-      };
-    }
-
+    // 3. Inbound comprehension is intentionally NOT blocked by outbound
+    // translation entitlement. A Yoruba/Pidgin customer can still be routed
+    // correctly; translated replies remain separately gated by allowedLanguages
+    // + certification in BotService/FlowExecutor.
+    
     // 4. Deterministic semantic parse (always runs — free for all tiers)
     const { parseSmartIntent } = await import('./smart-intent');
     const regexResult = parseSmartIntent(text, timezone);
@@ -100,8 +96,10 @@ export async function understandCanonicalMessage(params: {
       amount: regexResult.amount, variantKeywords: regexResult.variantKeywords,
     };
 
-    // 5. If regex is confident (intent + service keywords), use it
-    if (regexResult.intent && regexResult.serviceKeywords.length > 0) {
+    // 5. If regex is confident (specific semantic family or service keywords), use it.
+    // A deterministic family such as ordering/payment/ticketing is safe to route
+    // even when the user's product/service noun is not English.
+    if (regexResult.intent && (regexResult.serviceKeywords.length > 0 || !!regexResult.semanticFamily)) {
       return {
         broadIntent: regexResult.intent,
         semanticFamily: regexResult.semanticFamily || null,
@@ -150,16 +148,11 @@ export async function understandCanonicalMessage(params: {
       };
     }
 
-    // 9. Validate LLM-detected language against entitlement
-    if (llmLang !== 'en' && !langEntitlement.allowedLanguages.includes(llmLang)) {
-      return {
-        ...EMPTY_RESULT, language: llmLang,
-        languageEntitlement: langEntitlement, languageBlocked: true,
-        allowedLanguageNames: allowedNames,
-      };
-    }
-
-    // 10. LLM result is valid and entitled — use it
+    // 9. Do not reject valid LLM semantics only because outbound translation
+    // for that language is not enabled. BotService independently gates language
+    // activation/translated replies on entitlement + certification.
+    
+    // 10. LLM result is valid — use it
     return {
       broadIntent: hybridResult.intent,
       semanticFamily: hybridResult.semanticFamily || null,
