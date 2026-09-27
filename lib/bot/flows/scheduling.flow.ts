@@ -3,7 +3,7 @@ import { BOOKING_DEFAULTS, generateTimeSlots, formatCurrency, getLocale, getMaxQ
 import { getCategoryLabels } from '@/lib/categoryConfig';
 import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
-import { createWhatsAppUser, findUserByPhone } from './shared/user';
+import { createWhatsAppUser, findUserByPhone, isReusableCustomerEmail } from './shared/user';
 import { initializePayment } from './shared/payment';
 import { truncTitle } from '../utils/truncate';
 import { savedPaymentAdapter } from '@/lib/payments/saved-payment-adapter';
@@ -2288,7 +2288,9 @@ export const schedulingFlow: FlowDefinition = {
       },
       async next() { return 'create_booking'; },
       async skipIf(ctx: FlowContext) {
-        return !!ctx.session.user_id;
+        // Existing customer identity alone is not proof that a usable email is known.
+        // Skip only when a real customer email is already present.
+        return isReusableCustomerEmail(ctx.session.session_data.email);
       },
     },
 
