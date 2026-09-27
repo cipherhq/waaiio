@@ -3,6 +3,17 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-09-27 — Admin Role Permissions authority truthfulness (#422)
+
+### What changed
+- Replaced the misleading editable Role Permissions matrix with a read-only **Platform Access Reference** derived from the same `ADMIN_PERMISSIONS` map used by Admin navigation/route guards.
+- Removed direct `admin_role_permissions` reads/writes from the Permissions page so the UI no longer implies that a partial legacy matrix dynamically grants/revokes platform access.
+- Added explicit guidance that server Admin APIs and Supabase RLS/RPCs remain separate authorization layers and are not weakened by this reference.
+- Preserved full-admin-only access to the Permissions page and fail-closed behavior for unknown page keys.
+- Added executable Admin regressions proving the reference matches route authority, exposes no mutation controls, remains admin-only, and fails closed for unknown pages.
+- No database migration, role grant/revocation, API/RLS/RPC authorization change, payment, WhatsApp, or provider behavior changed.
+- A future dynamic RBAC system, if desired, must be separately designed to unify routes, APIs, RLS/RPCs, canonical role authority, resource taxonomy, audit, and failure behavior.
+
 ## 2026-09-27 — Site Announcement pre-launch safety hardening (#420)
 
 ### What changed
