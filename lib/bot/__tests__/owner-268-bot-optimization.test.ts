@@ -36,6 +36,24 @@ describe('#268 owner-scope bot optimization', () => {
       expect(parseSmartIntent('I wan ticket for concert').intent).toBe('ticketing');
     });
 
+    it('recognizes common zero-cost commerce intents across the supported language set', () => {
+      const cases = [
+        ['Ina son saya takalma', 'ha', 'ordering'],
+        ['Achọrọ m ịzụta akpụkpọ ụkwụ', 'ig', 'ordering'],
+        ['Mepɛ sɛ metɔ biribi', 'tw', 'ordering'],
+        ['Je veux acheter un produit', 'fr', 'ordering'],
+        ['Quiero comprar un producto', 'es', 'ordering'],
+        ['Ina son biya', 'ha', 'payment'],
+        ['Je veux payer', 'fr', 'payment'],
+        ['Quiero una entrada', 'es', 'ticketing'],
+      ] as const;
+
+      for (const [input, language, intent] of cases) {
+        expect(detectLanguageDeterministic(input)).toBe(language);
+        expect(parseSmartIntent(input).intent).toBe(intent);
+      }
+    });
+
     it('understands Yoruba on Free tier without opening outbound translation entitlement', async () => {
       const result = await understandCanonicalMessage({
         text: 'Mo fẹ́ ra bata',
