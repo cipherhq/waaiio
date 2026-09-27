@@ -1,11 +1,67 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requirePlatformAdmin } from '@/lib/admin-auth';
 import { createServiceClient } from '@/lib/supabase/service';
+import {
+  EMPTY_SITE_ANNOUNCEMENT,
+  validateSiteAnnouncementConfig,
+  type SiteAnnouncementConfig,
+  type SiteAnnouncementStyle,
+  type SiteAnnouncementType,
+} from '@/shared/site-announcement';
 
 export const dynamic = 'force-dynamic';
 
-const VALID_TYPES = ['launch_countdown', 'maintenance_notice', 'general'] as const;
-const VALID_STYLES = ['brand', 'warning', 'info'] as const;
+function optionalString(value: unknown, field: string): { value: string | null; error?: string } {
+  if (value === null || value === undefined || value === '') return { value: null };
+  if (typeof value !== 'string') return { value: null, error: `${field} must be a string` };
+  return { value };
+}
+
+function requiredString(value: unknown, field: string): { value: string; error?: string } {
+  if (value === undefined || value === null) return { value: '' };
+  if (typeof value !== 'string') return { value: '', error: `${field} must be a string` };
+  return { value };
+}
+
+function parseConfig(body: Record<string, unknown>): { config?: SiteAnnouncementConfig; error?: string } {
+  if (typeof body.enabled !== 'boolean') {
+    return { error: 'enabled must be a boolean' };
+  }
+
+  const headline = requiredString(body.headline, 'headline');
+  if (headline.error) return { error: headline.error };
+
+  const message = requiredString(body.message, 'message');
+  if (message.error) return { error: message.error };
+
+  const target = optionalString(body.target_date, 'target_date');
+  if (target.error) return { error: target.error };
+
+  const ctaText = optionalString(body.cta_text, 'cta_text');
+  if (ctaText.error) return { error: ctaText.error };
+
+  const ctaLink = optionalString(body.cta_link, 'cta_link');
+  if (ctaLink.error) return { error: ctaLink.error };
+
+  const config: SiteAnnouncementConfig = {
+    ...EMPTY_SITE_ANNOUNCEMENT,
+    enabled: body.enabled,
+    type: (body.type || 'general') as SiteAnnouncementType,
+    headline: headline.value,
+    message: message.value,
+    target_date: target.value,
+    cta_text: ctaText.value,
+    cta_link: ctaLink.value,
+    style: (body.style || 'brand') as SiteAnnouncementStyle,
+  };
+
+  const errors = validateSiteAnnouncementConfig(config);
+  if (errors.length > 0) {
+    return { error: errors[0] };
+  }
+
+  return { config };
+}
 
 /**
  * GET /api/admin/site-announcement
@@ -41,47 +97,23 @@ export async function PUT(request: NextRequest) {
   const admin = await requirePlatformAdmin(request, { requiredRole: 'admin' });
   if (!admin) return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
 
-  const body = await request.json();
-
-  // Validate required fields
-  if (typeof body.enabled !== 'boolean') {
-    return NextResponse.json({ error: 'enabled must be a boolean' }, { status: 400 });
+  let body: Record<string, unknown>;
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
   }
 
-  if (body.type && !VALID_TYPES.includes(body.type)) {
-    return NextResponse.json({ error: `type must be one of: ${VALID_TYPES.join(', ')}` }, { status: 400 });
+  const parsed = parseConfig(body);
+  if (!parsed.config) {
+    return NextResponse.json({ error: parsed.error || 'Invalid announcement config' }, { status: 400 });
   }
-
-  if (body.style && !VALID_STYLES.includes(body.style)) {
-    return NextResponse.json({ error: `style must be one of: ${VALID_STYLES.join(', ')}` }, { status: 400 });
-  }
-
-  // Validate CTA link if provided (must be relative or https)
-  if (body.cta_link && typeof body.cta_link === 'string') {
-    if (!body.cta_link.startsWith('/') && !body.cta_link.startsWith('https://')) {
-      return NextResponse.json({ error: 'cta_link must start with / or https://' }, { status: 400 });
-    }
-    if (body.cta_link.startsWith('//')) {
-      return NextResponse.json({ error: 'Invalid cta_link' }, { status: 400 });
-    }
-  }
-
-  const config = {
-    enabled: body.enabled,
-    type: body.type || 'general',
-    headline: (body.headline || '').slice(0, 200),
-    message: (body.message || '').slice(0, 500),
-    target_date: body.target_date || null,
-    cta_text: body.cta_text ? String(body.cta_text).slice(0, 50) : null,
-    cta_link: body.cta_link || null,
-    style: body.style || 'brand',
-  };
 
   const supabase = createServiceClient();
   const { error } = await supabase
     .from('platform_settings')
     .update({
-      value: config,
+      value: parsed.config,
       updated_by: admin.userId,
       updated_at: new Date().toISOString(),
     })
@@ -91,5 +123,5 @@ export async function PUT(request: NextRequest) {
     return NextResponse.json({ error: 'Failed to update announcement' }, { status: 500 });
   }
 
-  return NextResponse.json({ success: true, config });
+  return NextResponse.json({ success: true, config: parsed.config });
 }
