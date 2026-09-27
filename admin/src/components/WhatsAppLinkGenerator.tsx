@@ -69,11 +69,13 @@ export function WhatsAppLinkGenerator({
             </label>
             <textarea
               rows={2}
+              maxLength={1000}
               value={message}
               onChange={(event) => setMessage(event.target.value)}
               placeholder="Hi Waaiio, I want launch updates."
               className="w-full rounded-xl border border-gray-300 bg-white px-3 py-2 text-sm"
             />
+            <p className="mt-1 text-[11px] text-gray-400">{message.length}/1000 characters</p>
           </div>
 
           {generated.error && (
