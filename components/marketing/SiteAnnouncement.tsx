@@ -44,7 +44,7 @@ export default function SiteAnnouncement() {
 
   useEffect(() => {
     let mounted = true;
-    fetch('/api/site-announcement')
+    fetch('/api/site-announcement', { cache: 'no-store' })
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => {
         if (mounted && data?.enabled) setConfig(data);
