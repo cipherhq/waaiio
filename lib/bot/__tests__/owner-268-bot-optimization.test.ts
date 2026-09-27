@@ -7,6 +7,8 @@ import { understandCanonicalMessage } from '../canonical-understanding';
 import { isReorderQuery, isRepeatLastTransactionQuery } from '../handlers/global-queries';
 import { isReusableCustomerEmail } from '../flows/shared/user';
 import { orderingFlow } from '../flows/ordering.flow';
+import { schedulingFlow } from '../flows/scheduling.flow';
+import { reservationFlow } from '../flows/reservation.flow';
 
 function makeLanguageConfigSupabase(): SupabaseClient {
   const maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
@@ -100,6 +102,28 @@ describe('#268 owner-scope bot optimization', () => {
       } as unknown as FlowContext;
 
       expect(await step!.skipIf!(ctx)).toBe(false);
+    });
+
+    it('uses the same real-email rule for scheduling and reservations', async () => {
+      for (const flow of [schedulingFlow, reservationFlow]) {
+        const step = flow.steps.find(s => s.id === 'collect_email');
+        expect(step?.skipIf).toBeDefined();
+
+        const known = {
+          session: { user_id: 'user-1', session_data: { email: 'known@example.com' } },
+        } as unknown as FlowContext;
+        expect(await step!.skipIf!(known)).toBe(true);
+
+        const missing = {
+          session: { user_id: 'user-1', session_data: { email: '' } },
+        } as unknown as FlowContext;
+        expect(await step!.skipIf!(missing)).toBe(false);
+
+        const fallback = {
+          session: { user_id: 'user-1', session_data: { email: '15551234567@whatsapp.waaiio.com' } },
+        } as unknown as FlowContext;
+        expect(await step!.skipIf!(fallback)).toBe(false);
+      }
     });
   });
 });
