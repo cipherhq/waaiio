@@ -15,6 +15,7 @@ import {
   type SiteAnnouncementStyle,
   type SiteAnnouncementType,
 } from '@shared/site-announcement';
+import { WhatsAppLinkGenerator } from '@/components/WhatsAppLinkGenerator';
 import { Clock3, ExternalLink, Eye, EyeOff, Megaphone, Save } from 'lucide-react';
 
 const TYPES: Array<{ value: SiteAnnouncementType; label: string }> = [
@@ -407,6 +408,9 @@ export default function SiteAnnouncementPage() {
             <p className="mt-1 text-xs text-gray-400">
               CTA text and link must be provided together.
             </p>
+            <WhatsAppLinkGenerator
+              onUseLink={(url) => setConfig({ ...config, cta_link: url })}
+            />
           </div>
         </div>
 

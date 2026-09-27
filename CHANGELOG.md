@@ -3,6 +3,20 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-09-27 — Reusable Admin WhatsApp CTA link generator (#426)
+
+### What changed
+- Added a reusable Admin helper for canonical WhatsApp click-to-chat links using `https://wa.me/<international-number>`.
+- Destination numbers must be explicitly entered in international format beginning with `+` or `00`; common presentation characters are normalized while URLs, letters, extensions, malformed prefixes, unsupported characters, leading-zero country codes, and invalid lengths are rejected.
+- Optional prefilled messages are trimmed, URL-encoded, and capped at 1000 characters.
+- Added a reusable **Generate WhatsApp Link** UI with preview, **Open Preview**, and explicit **Use This Link** actions.
+- Wired the generator into Site Announcement CTA Link as the first bounded consumer.
+- **Use This Link** only updates the unsaved CTA draft; it does not persist, enable the announcement, send a WhatsApp message, or call Meta.
+- Existing Site Announcement CTA validation and **Test CTA** remain authoritative; generated HTTPS `wa.me` links flow through them unchanged.
+- No Waaiio production/staging phone number is hardcoded or stored by the generator.
+- Added executable helper, component, and Site Announcement integration regression coverage.
+- No DB schema/migration, Meta/WhatsApp provider action, payment, Vercel workflow, Release Gate, or deployment behavior changed.
+
 ## 2026-09-27 — Persistent Admin environment/build identity (#424)
 
 ### What changed
