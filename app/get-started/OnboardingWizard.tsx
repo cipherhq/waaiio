@@ -706,7 +706,38 @@ function OnboardingWizard() {
         return;
       }
 
-      // Not an existing user — proceed with signup
+      // Dedicated staging creates an immediately usable test account on the
+      // server, then signs in with the same email/password. Production returns
+      // 404 here and continues through the existing confirmation flow unchanged.
+      const stagingSignupRes = await fetch('/api/auth/staging-signup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      });
+
+      if (stagingSignupRes.ok) {
+        const { data: stagingSignInData, error: stagingSignInError } = await supabase.auth.signInWithPassword({
+          email,
+          password,
+        });
+        if (stagingSignInError || !stagingSignInData.session || !stagingSignInData.user) {
+          setError('Staging account was created, but sign-in failed. Please try signing in again.');
+          return;
+        }
+
+        setUser(stagingSignInData.user);
+        getPostHogClient()?.capture('signup_completed', { method: 'email', staging_test_mode: true });
+        setStep('category');
+        return;
+      }
+
+      if (stagingSignupRes.status !== 404) {
+        const stagingError = await stagingSignupRes.json().catch(() => ({}));
+        setError(stagingError.message || 'Unable to create staging account.');
+        return;
+      }
+
+      // Not an existing user — proceed with normal production signup
       const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
         email,
         password,
