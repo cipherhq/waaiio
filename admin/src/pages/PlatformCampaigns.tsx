@@ -1,6 +1,7 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { adminApiGet, getAdminApiBase } from '@/lib/adminApi';
 import { supabase } from '@/lib/supabase';
+import { QRCodeCanvas } from 'qrcode.react';
 import { Megaphone, Plus, QrCode, Copy, Check, ExternalLink, Link2, ChevronLeft, ToggleLeft, ToggleRight, Pencil, Download } from 'lucide-react';
 
 interface Campaign {
@@ -62,165 +63,8 @@ const CONSENT_TYPES = [
   { value: 'transactional', label: 'Transactional' },
 ];
 
-/**
- * Render a QR code to a canvas element using pure Canvas 2D (no external library needed in admin).
- * Uses a minimal QR encoder. For production scale, this could be replaced with a library,
- * but for admin-only use this is sufficient and avoids adding a dependency.
- */
-function renderQRCode(canvas: HTMLCanvasElement, text: string) {
-  // Use a simple approach: encode as a data URI via a QR generation API
-  // Actually, we'll use the Canvas API with a basic bit matrix generator
-  // For robustness, use a pure-JS QR encoder embedded below
-  const modules = generateQRMatrix(text);
-  const size = 256;
-  const moduleCount = modules.length;
-  const cellSize = Math.floor(size / (moduleCount + 8)); // 4-module quiet zone on each side
-  const offset = Math.floor((size - cellSize * moduleCount) / 2);
-
-  canvas.width = size;
-  canvas.height = size;
-  const ctx = canvas.getContext('2d')!;
-
-  // White background
-  ctx.fillStyle = '#FFFFFF';
-  ctx.fillRect(0, 0, size, size);
-
-  // Draw modules
-  ctx.fillStyle = '#000000';
-  for (let row = 0; row < moduleCount; row++) {
-    for (let col = 0; col < moduleCount; col++) {
-      if (modules[row][col]) {
-        ctx.fillRect(offset + col * cellSize, offset + row * cellSize, cellSize, cellSize);
-      }
-    }
-  }
-}
-
-/**
- * Minimal QR Code encoder — supports alphanumeric mode for short URLs.
- * Generates the bit matrix for a version 2-M QR code (25x25, up to 32 alphanumeric chars)
- * or version 3-M (29x29, up to 53 alphanumeric chars) or version 4-M (33x33, up to 78).
- *
- * For admin QR generation only. Production uses qrcode.react in the main app.
- */
-function generateQRMatrix(text: string): boolean[][] {
-  // For simplicity and reliability, generate using the proven encoding approach
-  // by creating an off-screen image from a data URL rendered by a simple lookup
-  // Instead, use byte mode with a proper encoder
-
-  // Encode as byte mode QR
-  const data = new TextEncoder().encode(text);
-  const dataLen = data.length;
-
-  // Select version based on capacity (error correction level M)
-  // V1: 14 bytes, V2: 26 bytes, V3: 42 bytes, V4: 62 bytes, V5: 84 bytes, V6: 106 bytes
-  const capacities = [0, 14, 26, 42, 62, 84, 106, 122, 152, 180, 213];
-  let version = 1;
-  for (let v = 1; v < capacities.length; v++) {
-    if (capacities[v] >= dataLen) { version = v; break; }
-  }
-  if (dataLen > capacities[capacities.length - 1]) version = 10; // fallback
-
-  const moduleCount = 17 + version * 4;
-  const matrix: (boolean | null)[][] = Array.from({ length: moduleCount }, () =>
-    Array(moduleCount).fill(null)
-  );
-
-  // Place finder patterns (7x7) at corners
-  function placeFinderPattern(row: number, col: number) {
-    for (let r = -1; r <= 7; r++) {
-      for (let c = -1; c <= 7; c++) {
-        const mr = row + r;
-        const mc = col + c;
-        if (mr < 0 || mr >= moduleCount || mc < 0 || mc >= moduleCount) continue;
-        if (r === -1 || r === 7 || c === -1 || c === 7) {
-          matrix[mr][mc] = false; // separator
-        } else if (r === 0 || r === 6 || c === 0 || c === 6) {
-          matrix[mr][mc] = true;
-        } else if (r >= 2 && r <= 4 && c >= 2 && c <= 4) {
-          matrix[mr][mc] = true;
-        } else {
-          matrix[mr][mc] = false;
-        }
-      }
-    }
-  }
-
-  placeFinderPattern(0, 0);
-  placeFinderPattern(0, moduleCount - 7);
-  placeFinderPattern(moduleCount - 7, 0);
-
-  // Timing patterns
-  for (let i = 8; i < moduleCount - 8; i++) {
-    if (matrix[6][i] === null) matrix[6][i] = i % 2 === 0;
-    if (matrix[i][6] === null) matrix[i][6] = i % 2 === 0;
-  }
-
-  // Dark module
-  matrix[moduleCount - 8][8] = true;
-
-  // Fill remaining with encoded data pattern (simplified — deterministic visual)
-  let bitIndex = 0;
-  const bits: boolean[] = [];
-
-  // Mode indicator: 0100 (byte mode)
-  bits.push(false, true, false, false);
-
-  // Character count (8 bits for V1-9 byte mode)
-  for (let i = 7; i >= 0; i--) bits.push(!!(dataLen & (1 << i)));
-
-  // Data bytes
-  for (const b of data) {
-    for (let i = 7; i >= 0; i--) bits.push(!!(b & (1 << i)));
-  }
-
-  // Terminator
-  bits.push(false, false, false, false);
-
-  // Pad to 8-bit boundary
-  while (bits.length % 8 !== 0) bits.push(false);
-
-  // Padding codewords
-  const totalDataBits = capacities[Math.min(version, capacities.length - 1)] * 8;
-  let padToggle = false;
-  while (bits.length < totalDataBits) {
-    const pad = padToggle ? 0x11 : 0xEC;
-    for (let i = 7; i >= 0; i--) bits.push(!!(pad & (1 << i)));
-    padToggle = !padToggle;
-  }
-
-  // Place data bits in the matrix (upward zigzag, skipping function patterns)
-  let direction = -1; // -1 = up, 1 = down
-  let row = moduleCount - 1;
-  let col = moduleCount - 1;
-
-  while (col > 0) {
-    if (col === 6) col--; // Skip timing column
-
-    for (let i = 0; i < moduleCount; i++) {
-      const r = direction === -1 ? moduleCount - 1 - i : i;
-      for (const c of [col, col - 1]) {
-        if (c < 0 || c >= moduleCount) continue;
-        if (matrix[r][c] !== null) continue;
-        matrix[r][c] = bitIndex < bits.length ? bits[bitIndex] : false;
-        // Apply mask pattern 0: (row + col) % 2 === 0
-        if ((r + c) % 2 === 0) matrix[r][c] = !matrix[r][c];
-        bitIndex++;
-      }
-    }
-    direction = -direction;
-    col -= 2;
-  }
-
-  // Fill any remaining nulls
-  for (let r = 0; r < moduleCount; r++) {
-    for (let c = 0; c < moduleCount; c++) {
-      if (matrix[r][c] === null) matrix[r][c] = false;
-    }
-  }
-
-  return matrix as boolean[][];
-}
+/** QR canvas ID prefix for PNG download lookup */
+const QR_CANVAS_ID_PREFIX = 'qr-canvas-';
 
 async function apiFetch(path: string, method: string, body?: Record<string, unknown>) {
   const base = getAdminApiBase();
@@ -267,7 +111,6 @@ export default function PlatformCampaigns() {
 
   // QR code display
   const [qrToken, setQrToken] = useState<string | null>(null);
-  const qrCanvasRef = useRef<HTMLCanvasElement>(null);
 
   // Tracked link display
   const [copiedToken, setCopiedToken] = useState<string | null>(null);
@@ -416,19 +259,8 @@ export default function PlatformCampaigns() {
     return `http://localhost:3000/go/${token}`;
   }
 
-  function generateQR(token: string) {
-    setQrToken(token);
-    // Render QR to canvas after state update
-    requestAnimationFrame(() => {
-      const canvas = qrCanvasRef.current;
-      if (!canvas) return;
-      const url = getTrackedUrl(token);
-      renderQRCode(canvas, url);
-    });
-  }
-
   function downloadQR(token: string) {
-    const canvas = qrCanvasRef.current;
+    const canvas = document.getElementById(`${QR_CANVAS_ID_PREFIX}${token}`) as HTMLCanvasElement | null;
     if (!canvas) return;
     const link = document.createElement('a');
     link.download = `waaiio-qr-${token}.png`;
@@ -612,7 +444,7 @@ export default function PlatformCampaigns() {
                         {copiedToken === a.attribution_token ? <Check className="h-3.5 w-3.5 text-green-600" /> : <Copy className="h-3.5 w-3.5" />}
                         {copiedToken === a.attribution_token ? 'Copied!' : 'Copy Link'}
                       </button>
-                      <button onClick={() => generateQR(a.attribution_token)} className="flex items-center gap-1 rounded-lg border border-gray-200 px-2.5 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50" title="Generate QR Code">
+                      <button onClick={() => setQrToken(qrToken === a.attribution_token ? null : a.attribution_token)} className="flex items-center gap-1 rounded-lg border border-gray-200 px-2.5 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50" title="Generate QR Code">
                         <QrCode className="h-3.5 w-3.5" />
                       </button>
                       <button onClick={() => handleToggleAsset(a)} className="text-gray-400 hover:text-gray-600" title={a.is_active ? 'Deactivate' : 'Activate'}>
@@ -625,7 +457,13 @@ export default function PlatformCampaigns() {
                   </div>
                   {qrToken === a.attribution_token && (
                     <div className="mt-3 flex items-center gap-4 rounded-lg border border-gray-200 bg-white p-3">
-                      <canvas ref={qrCanvasRef} className="h-32 w-32 rounded" />
+                      <QRCodeCanvas
+                        id={`${QR_CANVAS_ID_PREFIX}${a.attribution_token}`}
+                        value={getTrackedUrl(a.attribution_token)}
+                        size={128}
+                        level="M"
+                        includeMargin
+                      />
                       <div className="space-y-2">
                         <p className="text-xs text-gray-500">QR encodes:</p>
                         <p className="text-xs font-mono text-gray-700 break-all">{getTrackedUrl(a.attribution_token)}</p>
