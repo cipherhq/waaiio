@@ -3,6 +3,18 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-09-28 — Launch banner with country selector + WhatsApp QR (#446)
+
+### What changed
+- **`components/marketing/SiteAnnouncement.tsx`:** Upgraded `launch_countdown` announcements from a thin header strip to a prominent responsive launch banner with live countdown, country selector, WhatsApp button, and QR code. Non-launch announcements preserve compact behavior.
+- **`lib/launch/shared.ts`:** New shared helpers extracted from LaunchClient — `buildWhatsAppLink`, `formatPhone`, `formatLaunchDate`, `detectCountryFromTimezone`, `computeTimeLeft`, `LaunchRegion` type. Used by both SiteAnnouncement and /launch page.
+- **`app/(marketing)/launch/LaunchClient.tsx`:** Refactored to import from shared helpers instead of duplicating logic.
+- **Country selector:** Uses `/api/launch/regions` (shared channels only). Best-effort timezone detection preselects; if no match, selector is unselected and CTA/QR disabled until user chooses. Changing country regenerates both button (button) and QR (qr) URLs.
+- **`lib/__tests__/launch-banner-446.test.ts`:** 38 tests covering shared helpers, component contract, source/QR tagging, disabled states, no dedicated fallback, responsive layout, and /launch integrity.
+
+### What could break
+- Nothing — compact announcements unchanged. /launch page uses shared helpers with identical behavior.
+
 ## 2026-09-28 — Restore idempotent promote step + idempotent rollback (#406)
 
 ### What changed
