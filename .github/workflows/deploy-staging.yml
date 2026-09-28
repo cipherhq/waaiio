@@ -101,39 +101,55 @@ jobs:
         run: npm install -g "vercel@${{ env.VERCEL_CLI_VERSION }}"
 
       # ── 5. Capture pre-deploy rollback target (REQUIRED — fail-closed) ──
-      - name: Capture current staging deployment for rollback
+      - name: Capture current active staging deployment for rollback
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
         run: |
-          echo "Fetching current staging production deployment..."
+          echo "Fetching the staging project's current active production target..."
 
-          RESPONSE=$(curl -sS -f \
+          PROJECT_STATE=$(curl -sS -f \
             -H "Authorization: Bearer $VERCEL_TOKEN" \
-            "https://api.vercel.com/v6/deployments?projectId=${{ env.STAGING_PROJECT_ID }}&teamId=${{ env.STAGING_ORG_ID }}&target=production&state=READY&limit=1" \
-            2>&1) || {
-            echo "❌ ABORT: Failed to query Vercel API for current deployment."
+            "https://api.vercel.com/v9/projects/${{ env.STAGING_PROJECT_ID }}?teamId=${{ env.STAGING_ORG_ID }}" \
+            2>/dev/null) || {
+            echo "❌ ABORT: Failed to query Vercel project control plane."
             exit 1
           }
 
-          PREV_ID=$(echo "$RESPONSE" | node -e "
-            const d = JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
-            const dep = d.deployments && d.deployments[0];
-            if (!dep || !dep.uid) { process.exit(1); }
-            console.log(dep.uid);
+          PREV_ID=$(echo "$PROJECT_STATE" | node -e "
+            try {
+              const p = JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
+              const target = p.targets && p.targets.production;
+              if (!target || !target.id || !target.id.startsWith('dpl_')) process.exit(1);
+              console.log(target.id);
+            } catch { process.exit(1); }
           " 2>/dev/null) || {
-            echo "❌ ABORT: Could not identify a READY production deployment for staging project."
-            echo "   Cannot proceed without a proven rollback target."
+            echo "❌ ABORT: Could not prove the currently active staging production deployment."
+            echo "   Cannot proceed without the exact live rollback target."
             exit 1
           }
 
-          PREV_URL=$(echo "$RESPONSE" | node -e "
-            const d = JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
-            console.log(d.deployments[0].url || '');
-          " 2>/dev/null)
+          PREV_INSPECT=$(curl -sS -f \
+            -H "Authorization: Bearer $VERCEL_TOKEN" \
+            "https://api.vercel.com/v13/deployments/$PREV_ID?teamId=${{ env.STAGING_ORG_ID }}" \
+            2>/dev/null) || {
+            echo "❌ ABORT: Could not inspect active rollback deployment $PREV_ID."
+            exit 1
+          }
+
+          PREV_URL=$(echo "$PREV_INSPECT" | node -e "
+            try {
+              const d = JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
+              if (d.projectId !== '${{ env.STAGING_PROJECT_ID }}') process.exit(1);
+              console.log(d.url || '');
+            } catch { process.exit(1); }
+          " 2>/dev/null) || {
+            echo "❌ ABORT: Active rollback deployment is not bound to the hardcoded staging project."
+            exit 1
+          }
 
           echo "PREV_DEPLOYMENT_ID=$PREV_ID" >> "$GITHUB_ENV"
           echo "PREV_DEPLOYMENT_URL=$PREV_URL" >> "$GITHUB_ENV"
-          echo "✅ Rollback target captured: $PREV_ID ($PREV_URL)"
+          echo "✅ Active rollback target captured: $PREV_ID ($PREV_URL)"
 
       # ── 6. Deploy to staging ──
       - name: Deploy exact SHA to staging
@@ -155,9 +171,6 @@ jobs:
             echo "$DEPLOY_OUTPUT"
             exit 1
           fi
-
-          # Mark that staging has been mutated — rollback is now required on failure
-          echo "DEPLOY_MUTATED=true" >> "$GITHUB_ENV"
 
           # Capture the immutable deployment URL emitted by vercel deploy --prod
           # vercel CLI prints the deployment URL as the last https://...vercel.app line
@@ -196,7 +209,34 @@ jobs:
           echo "NEW_DEPLOYMENT_ID=$NEW_DEPLOYMENT_ID" >> "$GITHUB_ENV"
           echo "✅ Deployment created: $NEW_DEPLOYMENT_ID ($DEPLOY_URL)"
 
-      # ── 7. Wait for deployment readiness ──
+      # ── 7. Explicitly promote exact deployment to staging production traffic ──
+      - name: Promote exact deployment to staging
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ env.STAGING_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ env.STAGING_PROJECT_ID }}
+        run: |
+          echo "Promoting exact deployment ${{ env.NEW_DEPLOYMENT_ID }} to staging production traffic..."
+
+          # From this point onward, a failure may have changed live staging traffic.
+          # Set before the promotion attempt so every partial/failed promotion is rollback-protected.
+          echo "DEPLOY_MUTATED=true" >> "$GITHUB_ENV"
+
+          set +e
+          PROMOTE_OUTPUT=$(vercel promote "${{ env.DEPLOY_URL }}" --yes --timeout 5m \
+            --token "$VERCEL_TOKEN" --scope "${{ env.STAGING_ORG_ID }}" 2>&1)
+          PROMOTE_EXIT=$?
+          set -e
+
+          if [ $PROMOTE_EXIT -ne 0 ]; then
+            echo "❌ Promotion failed with exit code $PROMOTE_EXIT."
+            echo "$PROMOTE_OUTPUT"
+            exit 1
+          fi
+
+          echo "✅ Promotion command completed for ${{ env.NEW_DEPLOYMENT_ID }}"
+
+      # ── 8. Wait for deployment readiness ──
       - name: Wait for staging to serve new deployment
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
@@ -280,7 +320,7 @@ jobs:
           echo "   Exact control-plane target + exact runtime identity are both required."
           exit 1
 
-      # ── 8. Post-deploy verification ──
+      # ── 9. Post-deploy verification ──
       - name: Run deploy verifier
         run: |
           npx --no-install tsx lib/release-gate/deploy-verifier-cli.ts \
@@ -289,7 +329,7 @@ jobs:
             --expected-project "${{ env.STAGING_PROJECT_ID }}" \
             --expected-deployment-id "${{ env.NEW_DEPLOYMENT_ID }}"
 
-      # ── 9. Rollback on post-deploy failure (only if deployment actually mutated staging) ──
+      # ── 10. Rollback on post-deploy failure (only if promotion may have mutated staging) ──
       - name: Rollback on verification failure
         if: failure() && env.DEPLOY_MUTATED == 'true'
         env:
@@ -335,7 +375,7 @@ jobs:
             exit 1
           fi
 
-      # ── 10. Summary ──
+      # ── 11. Summary ──
       - name: Deploy summary
         if: success()
         run: |
