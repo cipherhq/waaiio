@@ -3,6 +3,44 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-09-28 — CTO re-review blockers corrected (#439 Slice 1)
+
+### What changed
+- **BLOCKER 1:** Migration 409 PostgreSQL tests now create deterministic fixtures (profile + shared channel) instead of relying on pre-existing data. All early-return `if (!fixture) return` patterns removed — missing fixtures now fail setup explicitly. CI step added to `.github/workflows/ci.yml` with `TEST_DATABASE_URL`, zero-skip enforcement, and nonzero exit propagation.
+- **BLOCKER 2:** 26 new executable route handler tests in `platform-campaigns-routes-439.test.ts` covering Campaign POST/PUT and Asset POST/PUT. Tests invoke real handlers with mocked Supabase: auth rejection, consent enforcement, malformed date rejection, date ordering with existing values, market_scope validation (non-array, non-string, normalization), channel authority (dedicated/inactive/out-of-scope), token collision retry, and no wa.me exposure.
+- **BLOCKER 3:** Real QR generation in Admin `PlatformCampaigns.tsx` using Canvas 2D renderer. QR encodes canonical `<VITE_API_URL>/go/<token>` URL (authoritative config, not string surgery). Download as PNG. `copyTrackedLink` also uses authoritative config.
+- **BLOCKER 4:** Canonical validation module `lib/platform-campaigns/validation.ts` with `validateISODate`, `validateDateOrdering`, `validateMarketScope`, `validateSourceLabel`. Campaign POST/PUT now reject unparseable dates (no `Invalid Date` fallthrough to Postgres), validate ordering against existing stored values on partial updates, normalize market codes to uppercase, reject non-string/non-array/empty entries. All produce 400 errors.
+- **BLOCKER 5:** Click reporting in campaign detail GET and `/clicks` endpoint replaced unbounded `select('asset_id').in(assetIds)` with bounded `select('id', { count: 'exact', head: true }).eq('asset_id', ...)` per asset. Errors surfaced as 500 instead of silently returning zero.
+- **Cleanup 1:** Removed `DEFAULT 'opt_in'` from `consent_type` in migration 409. DB contract now agrees with application contract (explicit consent required).
+- **Cleanup 2:** Asset PUT `source_label` validation uses `validateSourceLabel` — rejects non-string/non-null values with 400 instead of passing through to Postgres.
+- **Cleanup 3:** Admin campaign edit UI added — edit form for name, consent_type, starts_at, ends_at, market_scope. Edit button in detail view alongside status controls.
+
+### Files changed
+- `lib/platform-campaigns/validation.ts` (new) — canonical validators
+- `lib/__tests__/platform-campaigns-routes-439.test.ts` (new) — 26 executable route tests
+- `lib/__tests__/platform-campaigns-migration-439.test.ts` — deterministic fixtures, no early returns
+- `app/api/admin/platform-campaigns/route.ts` — date/market validation
+- `app/api/admin/platform-campaigns/[id]/route.ts` — date validation with existing values, bounded click counts
+- `app/api/admin/platform-campaigns/[id]/clicks/route.ts` — bounded click counts
+- `app/api/admin/platform-campaigns/[id]/assets/[assetId]/route.ts` — source_label validation
+- `admin/src/pages/PlatformCampaigns.tsx` — QR generation, edit form, authoritative URL config
+- `supabase/migrations/409_platform_campaigns.sql` — removed consent_type DEFAULT
+- `.github/workflows/ci.yml` — M409 CI step
+- `CHANGELOG.md`
+
+## 2026-09-28 — Platform Communications foundation (#439 Slice 1)
+
+### What changed
+- **Migration 409:** 5 new tables: `platform_campaigns`, `platform_campaign_assets`, `platform_campaign_participants`, `platform_campaign_events`, `platform_campaign_clicks`. Two-level attribution model (canonical participant state + immutable interaction events). Cross-campaign referential integrity via composite FKs. Inbound-event idempotency via `source_event_id`. Append-only events/clicks (SELECT/INSERT only). Consent defaults to `unknown` (not `opted_in`).
+- **Token utility:** `lib/platform-campaigns/token.ts` — cryptographically secure 6-char attribution tokens from 32-char unambiguous alphabet, collision retry, tracked message construction, ref extraction.
+- **Admin API routes:** Campaign CRUD (`GET/POST/PUT /api/admin/platform-campaigns`), asset creation with shared-channel authority + server-derived market (`POST /api/admin/platform-campaigns/[id]/assets`).
+- **Public tracked redirect:** `GET /go/[token]` — validates asset/campaign/channel authority, derives wa.me URL server-side, records bounded click metadata, 302 redirect. Fail-closed on any authority failure.
+- **Admin UI:** Basic Platform Campaigns page in admin panel with create/list.
+- 58 regression tests.
+
+### What did NOT change
+- launch_subscribers, launch delivery, admin broadcasts, keyword campaigns, business broadcasts, notifications, messaging_opt_outs, WhatsApp routing, payments, bot flows, Meta config.
+
 ## 2026-09-28 — Admin Broadcasts: disable misleading WhatsApp/SMS channels (#439 Slice 0C)
 
 ### What changed
