@@ -22,7 +22,7 @@ env:
   STAGING_PROJECT_ID: prj_h7YmC4fvpxhn429znCy34OjLZ6se
   STAGING_URL: https://staging.waaiio.com
   OWNER_ACTOR: cipherhq
-  VERCEL_CLI_VERSION: "41.4.1"
+  VERCEL_CLI_VERSION: "60.1.3"
 
 jobs:
   deploy-staging:
