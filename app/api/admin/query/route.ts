@@ -3,22 +3,10 @@ import { createServiceClient } from '@/lib/supabase/service';
 import { requirePlatformAdmin } from '@/lib/admin-auth';
 import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
-
-function corsHeaders(origin?: string | null) {
-  const allowedOrigins = [
-    process.env.ADMIN_ORIGIN || 'https://admin.waaiio.com',
-    'http://localhost:8083',
-  ];
-  const allowed = origin && allowedOrigins.includes(origin) ? origin : allowedOrigins[0];
-  return {
-    'Access-Control-Allow-Origin': allowed,
-    'Access-Control-Allow-Methods': 'POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-  };
-}
+import { adminCorsHeaders } from '@/lib/admin-cors';
 
 export async function OPTIONS(request: NextRequest) {
-  return new NextResponse(null, { status: 204, headers: corsHeaders(request.headers.get('origin')) });
+  return new NextResponse(null, { status: 204, headers: adminCorsHeaders(request.headers.get('origin')) });
 }
 
 /**
@@ -35,7 +23,7 @@ export async function OPTIONS(request: NextRequest) {
  */
 export async function POST(request: NextRequest) {
   const origin = request.headers.get('origin');
-  const cors = corsHeaders(origin);
+  const cors = adminCorsHeaders(origin);
 
   const admin = await requirePlatformAdmin(request);
   if (!admin) {

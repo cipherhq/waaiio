@@ -6,27 +6,15 @@ import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 import { checkBruteForce, recordFailure, clearFailures } from '@/lib/brute-force';
 import { randomInt, createHmac, timingSafeEqual } from 'crypto';
 import { logger } from '@/lib/logger';
-
-function corsHeaders(origin?: string | null) {
-  const allowedOrigins = [
-    process.env.ADMIN_ORIGIN || 'https://admin.waaiio.com',
-    'http://localhost:8083',
-  ];
-  const allowed = origin && allowedOrigins.includes(origin) ? origin : allowedOrigins[0];
-  return {
-    'Access-Control-Allow-Origin': allowed,
-    'Access-Control-Allow-Methods': 'POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-  };
-}
+import { adminCorsHeaders } from '@/lib/admin-cors';
 
 export async function OPTIONS(request: NextRequest) {
-  return new NextResponse(null, { status: 204, headers: corsHeaders(request.headers.get('origin')) });
+  return new NextResponse(null, { status: 204, headers: adminCorsHeaders(request.headers.get('origin')) });
 }
 
 export async function POST(request: NextRequest) {
   const origin = request.headers.get('origin');
-  const cors = corsHeaders(origin);
+  const cors = adminCorsHeaders(origin);
 
   try {
     const body = await request.json();

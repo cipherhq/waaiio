@@ -3,29 +3,17 @@ import { createServiceClient } from '@/lib/supabase/service';
 import { randomBytes } from 'crypto';
 import { logger } from '@/lib/logger';
 import { requirePlatformAdmin } from '@/lib/admin-auth';
-
-function corsHeaders(origin?: string | null) {
-  const allowedOrigins = [
-    process.env.ADMIN_ORIGIN || 'https://admin.waaiio.com',
-    'http://localhost:8083',
-  ];
-  const allowed = origin && allowedOrigins.includes(origin) ? origin : allowedOrigins[0];
-  return {
-    'Access-Control-Allow-Origin': allowed,
-    'Access-Control-Allow-Methods': 'POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-  };
-}
+import { adminCorsHeaders } from '@/lib/admin-cors';
 
 export async function OPTIONS() {
-  return NextResponse.json({}, { headers: corsHeaders() });
+  return NextResponse.json({}, { headers: adminCorsHeaders(null) });
 }
 
 export async function POST(request: NextRequest) {
   // Impersonation is admin-only — support role cannot impersonate businesses
   const admin = await requirePlatformAdmin(request, { requiredRole: 'admin' });
   if (!admin) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401, headers: corsHeaders() });
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401, headers: adminCorsHeaders(null) });
   }
 
   const supabase = createServiceClient();
@@ -34,7 +22,7 @@ export async function POST(request: NextRequest) {
   const { business_id } = body;
 
   if (!business_id) {
-    return NextResponse.json({ error: 'Missing business_id' }, { status: 400, headers: corsHeaders() });
+    return NextResponse.json({ error: 'Missing business_id' }, { status: 400, headers: adminCorsHeaders(null) });
   }
 
   // Verify the business exists
@@ -45,7 +33,7 @@ export async function POST(request: NextRequest) {
     .maybeSingle();
 
   if (!business) {
-    return NextResponse.json({ error: 'Business not found' }, { status: 404, headers: corsHeaders() });
+    return NextResponse.json({ error: 'Business not found' }, { status: 404, headers: adminCorsHeaders(null) });
   }
 
   try {
@@ -66,7 +54,7 @@ export async function POST(request: NextRequest) {
 
     if (insertError) {
       logger.error('Failed to create impersonation token:', insertError.message);
-      return NextResponse.json({ error: 'Failed to create token' }, { status: 500, headers: corsHeaders() });
+      return NextResponse.json({ error: 'Failed to create token' }, { status: 500, headers: adminCorsHeaders(null) });
     }
 
     // Log to impersonation_logs
@@ -82,9 +70,9 @@ export async function POST(request: NextRequest) {
     const appUrl = process.env.NEXT_PUBLIC_APP_URL || '';
     const url = `${appUrl}/dashboard/impersonate?token=${token}`;
 
-    return NextResponse.json({ url }, { headers: corsHeaders() });
+    return NextResponse.json({ url }, { headers: adminCorsHeaders(null) });
   } catch (error) {
     logger.error('Impersonate token error:', (error as Error).message);
-    return NextResponse.json({ error: 'Failed to generate impersonation token' }, { status: 500, headers: corsHeaders() });
+    return NextResponse.json({ error: 'Failed to generate impersonation token' }, { status: 500, headers: adminCorsHeaders(null) });
   }
 }
