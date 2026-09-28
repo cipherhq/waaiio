@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requirePlatformAdmin } from '@/lib/admin-auth';
 import { createServiceClient } from '@/lib/supabase/service';
 import { adminCorsHeaders } from '@/lib/admin-cors';
+import { validateSourceLabel } from '@/lib/platform-campaigns/validation';
 
 export const dynamic = 'force-dynamic';
 
@@ -44,11 +45,10 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
     updates.is_active = body.is_active;
   }
 
-  // Source label
+  // Source label — reject non-string/non-null values
   if (body.source_label !== undefined) {
-    if (body.source_label !== null && typeof body.source_label === 'string' && (body.source_label as string).length > 200) {
-      return NextResponse.json({ error: 'source_label must be 200 characters or fewer' }, { status: 400, headers: cors });
-    }
+    const labelErr = validateSourceLabel(body.source_label);
+    if (labelErr) return NextResponse.json({ error: labelErr }, { status: 400, headers: cors });
     updates.source_label = body.source_label;
   }
 

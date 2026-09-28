@@ -22,7 +22,7 @@ CREATE TABLE public.platform_campaigns (
   )),
   market_scope    TEXT[] NOT NULL DEFAULT '{}',
   message_config  JSONB NOT NULL DEFAULT '{}',
-  consent_type    TEXT NOT NULL DEFAULT 'opt_in' CHECK (consent_type IN (
+  consent_type    TEXT NOT NULL CHECK (consent_type IN (
     'opt_in', 'informational', 'transactional'
   )),
   starts_at       TIMESTAMPTZ,

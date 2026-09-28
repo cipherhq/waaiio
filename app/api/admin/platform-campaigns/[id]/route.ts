@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requirePlatformAdmin } from '@/lib/admin-auth';
 import { createServiceClient } from '@/lib/supabase/service';
 import { adminCorsHeaders } from '@/lib/admin-cors';
+import { validateISODate, validateDateOrdering, validateMarketScope } from '@/lib/platform-campaigns/validation';
 
 export const dynamic = 'force-dynamic';
 
@@ -40,16 +41,24 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   const assetsList = assetsRes.data || [];
   const assetIds = assetsList.map(a => a.id);
 
-  // Scoped click counts — only for this campaign's assets
+  // Bounded click counts — one count query per asset (head: true, never loads rows)
   const clicksByAsset = new Map<string, number>();
   if (assetIds.length > 0) {
-    const { data: clicks } = await supabase
-      .from('platform_campaign_clicks')
-      .select('asset_id')
-      .in('asset_id', assetIds);
+    const clickCountResults = await Promise.all(
+      assetIds.map(assetId =>
+        supabase
+          .from('platform_campaign_clicks')
+          .select('id', { count: 'exact', head: true })
+          .eq('asset_id', assetId)
+          .then(res => ({ assetId, count: res.count ?? 0, error: res.error }))
+      ),
+    );
 
-    for (const c of (clicks || [])) {
-      clicksByAsset.set(c.asset_id, (clicksByAsset.get(c.asset_id) || 0) + 1);
+    for (const r of clickCountResults) {
+      if (r.error) {
+        return NextResponse.json({ error: `Failed to load click counts for asset ${r.assetId}` }, { status: 500, headers: cors });
+      }
+      clicksByAsset.set(r.assetId, r.count);
     }
   }
 
@@ -107,22 +116,42 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
   }
 
   if (body.message_config !== undefined) allowed.message_config = body.message_config;
-  if (body.starts_at !== undefined) allowed.starts_at = body.starts_at;
-  if (body.ends_at !== undefined) allowed.ends_at = body.ends_at;
 
-  // Validate timing ordering
-  if (body.starts_at && body.ends_at && new Date(body.starts_at as string) >= new Date(body.ends_at as string)) {
-    return NextResponse.json({ error: 'starts_at must be before ends_at' }, { status: 400, headers: cors });
+  // Validate dates are parseable ISO strings
+  if (body.starts_at !== undefined) {
+    const err = validateISODate(body.starts_at, 'starts_at');
+    if (err) return NextResponse.json({ error: err }, { status: 400, headers: cors });
+    allowed.starts_at = body.starts_at;
+  }
+  if (body.ends_at !== undefined) {
+    const err = validateISODate(body.ends_at, 'ends_at');
+    if (err) return NextResponse.json({ error: err }, { status: 400, headers: cors });
+    allowed.ends_at = body.ends_at;
   }
 
   const supabase = createServiceClient();
 
-  // BLOCKER 7: market_scope update must not orphan active assets
+  // For date ordering, compare submitted values against existing stored values
+  if (body.starts_at !== undefined || body.ends_at !== undefined) {
+    const { data: existing } = await supabase
+      .from('platform_campaigns')
+      .select('starts_at, ends_at')
+      .eq('id', id)
+      .single();
+
+    const orderErr = validateDateOrdering(
+      { starts_at: body.starts_at, ends_at: body.ends_at },
+      existing || undefined,
+    );
+    if (orderErr) return NextResponse.json({ error: orderErr }, { status: 400, headers: cors });
+  }
+
+  // Validate and normalize market_scope
   if (body.market_scope !== undefined) {
-    if (!Array.isArray(body.market_scope)) {
-      return NextResponse.json({ error: 'market_scope must be an array' }, { status: 400, headers: cors });
-    }
-    const newScope = body.market_scope as string[];
+    const { normalized, error: scopeErr } = validateMarketScope(body.market_scope);
+    if (scopeErr) return NextResponse.json({ error: scopeErr }, { status: 400, headers: cors });
+
+    const newScope = normalized!;
     if (newScope.length > 0) {
       const { data: activeAssets } = await supabase
         .from('platform_campaign_assets')

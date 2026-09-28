@@ -24,26 +24,31 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
 
   const assetIds = (assets || []).map(a => a.id);
   if (assetIds.length === 0) {
-    return NextResponse.json({ data: [], total: 0, by_asset: [] }, { headers: cors });
+    return NextResponse.json({ total: 0, by_asset: [] }, { headers: cors });
   }
 
-  // Aggregate clicks per asset
-  const { data: clicks, error: clickErr } = await supabase
-    .from('platform_campaign_clicks')
-    .select('asset_id, clicked_at')
-    .in('asset_id', assetIds);
+  // Bounded click counts — one count query per asset (head: true, never loads rows)
+  const clickCountResults = await Promise.all(
+    assetIds.map(assetId =>
+      supabase
+        .from('platform_campaign_clicks')
+        .select('id', { count: 'exact', head: true })
+        .eq('asset_id', assetId)
+        .then(res => ({ assetId, count: res.count ?? 0, error: res.error }))
+    ),
+  );
 
-  if (clickErr) return NextResponse.json({ error: 'Failed to load click data' }, { status: 500, headers: cors });
-
-  const byAsset = new Map<string, number>();
-  for (const c of (clicks || [])) {
-    byAsset.set(c.asset_id, (byAsset.get(c.asset_id) || 0) + 1);
+  const byAsset: { asset_id: string; count: number }[] = [];
+  let total = 0;
+  for (const r of clickCountResults) {
+    if (r.error) {
+      return NextResponse.json({ error: `Failed to load click data for asset ${r.assetId}` }, { status: 500, headers: cors });
+    }
+    byAsset.push({ asset_id: r.assetId, count: r.count });
+    total += r.count;
   }
 
-  return NextResponse.json({
-    total: (clicks || []).length,
-    by_asset: Array.from(byAsset.entries()).map(([asset_id, count]) => ({ asset_id, count })),
-  }, { headers: cors });
+  return NextResponse.json({ total, by_asset: byAsset }, { headers: cors });
 }
 
 export async function OPTIONS(request: NextRequest) {

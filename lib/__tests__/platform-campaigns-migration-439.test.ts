@@ -1,21 +1,28 @@
 /**
  * Platform Campaigns Migration 409 — PostgreSQL constraint + ACL tests (#439)
  *
- * These tests run against a real disposable PostgreSQL database when
- * TEST_DATABASE_URL is set. Otherwise they are skipped.
+ * These tests run against a real PostgreSQL database with TEST_DATABASE_URL.
+ * They create all necessary fixtures deterministically — no reliance on
+ * pre-existing data in the test DB.
  *
  * Tests prove:
- * - Cross-campaign FK integrity (Campaign A asset cannot bind to Campaign B)
- * - source_event_id idempotency
- * - consent defaults to 'unknown'
- * - ACL: service_role cannot UPDATE/DELETE events/clicks
- * - ACL: anon/authenticated have no privileges
+ * - consent default is `unknown`
+ * - Campaign B participant cannot bind Campaign A asset
+ * - Campaign B event cannot bind Campaign A participant/asset
+ * - duplicate non-null source_event_id rejected
+ * - NULL source_event_id allowed
+ * - anon/authenticated privileges absent
+ * - service_role exact privileges
+ * - service_role UPDATE/DELETE on events/clicks rejected
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { execSync } from 'child_process';
 
 const dbUrl = process.env.TEST_DATABASE_URL;
-const canRunDbTests = !!dbUrl;
+
+// In CI, TEST_DATABASE_URL is always set — the CI step enforces zero skips.
+// Locally, these tests are skipped gracefully when no real PG is available.
+const describeDb = dbUrl ? describe : describe.skip;
 
 function sql(query: string): string {
   if (!dbUrl) throw new Error('No TEST_DATABASE_URL');
@@ -26,70 +33,117 @@ function sql(query: string): string {
   }).trim();
 }
 
-// These tests require a real PG with migration 409 applied.
-// In CI without TEST_DATABASE_URL, they are skipped gracefully.
-const describeDb = canRunDbTests ? describe : describe.skip;
-
 describeDb('Migration 409 — PostgreSQL constraint tests (#439)', () => {
-  // Setup: create test data
+  let profileId: string;
+  let channelId: string;
   let campaignAId: string;
   let campaignBId: string;
   let assetAId: string;
   let participantAId: string;
 
   beforeAll(() => {
-    // Need a profile for created_by FK
-    const profileId = sql(`SELECT id FROM public.profiles LIMIT 1`);
-    if (!profileId) throw new Error('No profiles in test DB');
+    // Create a deterministic test profile for FK references
+    profileId = sql(`
+      INSERT INTO public.profiles (id, email, full_name)
+      VALUES (gen_random_uuid(), 'test-m409@waaiio-ci.local', 'M409 CI Test')
+      ON CONFLICT (email) DO UPDATE SET full_name = 'M409 CI Test'
+      RETURNING id
+    `);
+    if (!profileId) throw new Error('Failed to create test profile');
 
-    // Need a shared channel for asset FK
-    const channelId = sql(`SELECT id FROM public.whatsapp_channels WHERE channel_type='shared' AND is_active=true LIMIT 1`);
-
-    campaignAId = sql(`INSERT INTO public.platform_campaigns (name, campaign_type, consent_type, created_by) VALUES ('Test A', 'opt_in', 'opt_in', '${profileId}') RETURNING id`);
-    campaignBId = sql(`INSERT INTO public.platform_campaigns (name, campaign_type, consent_type, created_by) VALUES ('Test B', 'survey', 'informational', '${profileId}') RETURNING id`);
-
-    if (channelId) {
-      assetAId = sql(`INSERT INTO public.platform_campaign_assets (campaign_id, source_type, market, channel_id, prefilled_message, attribution_token) VALUES ('${campaignAId}', 'website_button', 'US', '${channelId}', 'Test msg', 'TST001') RETURNING id`);
-      participantAId = sql(`INSERT INTO public.platform_campaign_participants (campaign_id, respondent_phone, market) VALUES ('${campaignAId}', '+12025551111', 'US') RETURNING id`);
+    // Create a deterministic shared channel for asset FK references
+    channelId = sql(`
+      INSERT INTO public.whatsapp_channels (id, phone_number, phone_number_id, country_code, channel_type, is_active, display_name)
+      VALUES (gen_random_uuid(), '+10000000409', 'test-m409-pnid', 'US', 'shared', true, 'M409 CI Channel')
+      ON CONFLICT DO NOTHING
+      RETURNING id
+    `);
+    // If conflict (phone_number_id already exists), look it up
+    if (!channelId) {
+      channelId = sql(`SELECT id FROM public.whatsapp_channels WHERE phone_number_id = 'test-m409-pnid'`);
     }
+    if (!channelId) throw new Error('Failed to create or find test channel');
+
+    // Create test campaigns (consent_type is now required, no default)
+    campaignAId = sql(`
+      INSERT INTO public.platform_campaigns (name, campaign_type, consent_type, created_by)
+      VALUES ('M409 Test A', 'opt_in', 'opt_in', '${profileId}')
+      RETURNING id
+    `);
+    if (!campaignAId) throw new Error('Failed to create campaign A');
+
+    campaignBId = sql(`
+      INSERT INTO public.platform_campaigns (name, campaign_type, consent_type, created_by)
+      VALUES ('M409 Test B', 'survey', 'informational', '${profileId}')
+      RETURNING id
+    `);
+    if (!campaignBId) throw new Error('Failed to create campaign B');
+
+    // Create test asset in campaign A
+    assetAId = sql(`
+      INSERT INTO public.platform_campaign_assets (campaign_id, source_type, market, channel_id, prefilled_message, attribution_token)
+      VALUES ('${campaignAId}', 'website_button', 'US', '${channelId}', 'M409 test msg', 'M409T1')
+      RETURNING id
+    `);
+    if (!assetAId) throw new Error('Failed to create test asset');
+
+    // Create test participant in campaign A
+    participantAId = sql(`
+      INSERT INTO public.platform_campaign_participants (campaign_id, respondent_phone, market)
+      VALUES ('${campaignAId}', '+12025550409', 'US')
+      RETURNING id
+    `);
+    if (!participantAId) throw new Error('Failed to create test participant');
   });
 
   afterAll(() => {
     try {
+      // Cleanup in dependency order
+      if (campaignAId) sql(`DELETE FROM public.platform_campaign_events WHERE campaign_id = '${campaignAId}'`);
+      if (campaignBId) sql(`DELETE FROM public.platform_campaign_events WHERE campaign_id = '${campaignBId}'`);
+      if (campaignAId) sql(`DELETE FROM public.platform_campaign_clicks WHERE asset_id IN (SELECT id FROM public.platform_campaign_assets WHERE campaign_id = '${campaignAId}')`);
+      if (campaignAId) sql(`DELETE FROM public.platform_campaign_participants WHERE campaign_id = '${campaignAId}'`);
+      if (campaignBId) sql(`DELETE FROM public.platform_campaign_participants WHERE campaign_id = '${campaignBId}'`);
+      if (campaignAId) sql(`DELETE FROM public.platform_campaign_assets WHERE campaign_id = '${campaignAId}'`);
       if (campaignAId) sql(`DELETE FROM public.platform_campaigns WHERE id = '${campaignAId}'`);
       if (campaignBId) sql(`DELETE FROM public.platform_campaigns WHERE id = '${campaignBId}'`);
+      if (channelId) sql(`DELETE FROM public.whatsapp_channels WHERE id = '${channelId}'`);
+      if (profileId) sql(`DELETE FROM public.profiles WHERE id = '${profileId}'`);
     } catch { /* cleanup best-effort */ }
   });
 
   it('consent_status defaults to unknown', () => {
-    if (!participantAId) return;
     const consent = sql(`SELECT consent_status FROM public.platform_campaign_participants WHERE id = '${participantAId}'`);
     expect(consent).toBe('unknown');
   });
 
   it('rejects cross-campaign participant-asset binding', () => {
-    if (!assetAId || !participantAId) return;
-    // Try to set last_asset_id to Campaign A's asset on Campaign B's hypothetical participant
+    // Try to create a Campaign B participant with Campaign A's asset as first_asset_id
     expect(() => {
       sql(`INSERT INTO public.platform_campaign_participants (campaign_id, respondent_phone, first_asset_id) VALUES ('${campaignBId}', '+12025559999', '${assetAId}')`);
     }).toThrow(); // FK violation: asset belongs to campaign A, not B
   });
 
+  it('rejects cross-campaign event-participant binding', () => {
+    // Try to create a Campaign B event with Campaign A's participant
+    expect(() => {
+      sql(`INSERT INTO public.platform_campaign_events (participant_id, campaign_id, receiving_number) VALUES ('${participantAId}', '${campaignBId}', '+1234')`);
+    }).toThrow(); // FK violation: participant belongs to campaign A, not B
+  });
+
   it('rejects duplicate non-null source_event_id in same campaign', () => {
-    if (!participantAId || !assetAId) return;
     // Insert first event with source_event_id
-    sql(`INSERT INTO public.platform_campaign_events (participant_id, campaign_id, receiving_number, source_event_id) VALUES ('${participantAId}', '${campaignAId}', '+1234', 'msg-001')`);
+    sql(`INSERT INTO public.platform_campaign_events (participant_id, campaign_id, receiving_number, source_event_id) VALUES ('${participantAId}', '${campaignAId}', '+1234', 'msg-m409-001')`);
     // Duplicate should fail
     expect(() => {
-      sql(`INSERT INTO public.platform_campaign_events (participant_id, campaign_id, receiving_number, source_event_id) VALUES ('${participantAId}', '${campaignAId}', '+1234', 'msg-001')`);
+      sql(`INSERT INTO public.platform_campaign_events (participant_id, campaign_id, receiving_number, source_event_id) VALUES ('${participantAId}', '${campaignAId}', '+1234', 'msg-m409-001')`);
     }).toThrow();
   });
 
   it('allows multiple NULL source_event_id in same campaign', () => {
-    if (!participantAId) return;
     sql(`INSERT INTO public.platform_campaign_events (participant_id, campaign_id, receiving_number) VALUES ('${participantAId}', '${campaignAId}', '+1234')`);
     sql(`INSERT INTO public.platform_campaign_events (participant_id, campaign_id, receiving_number) VALUES ('${participantAId}', '${campaignAId}', '+1234')`);
-    // Should succeed — NULLs are allowed
+    // Should succeed — NULLs are excluded from unique index
   });
 });
 

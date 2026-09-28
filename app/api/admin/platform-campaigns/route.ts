@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requirePlatformAdmin } from '@/lib/admin-auth';
 import { createServiceClient } from '@/lib/supabase/service';
 import { adminCorsHeaders } from '@/lib/admin-cors';
+import { validateISODate, validateDateOrdering, validateMarketScope } from '@/lib/platform-campaigns/validation';
 
 export const dynamic = 'force-dynamic';
 
@@ -69,10 +70,19 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: `consent_type is required and must be one of: ${validConsent.join(', ')}` }, { status: 400, headers: cors });
   }
 
-  // Validate timing
-  if (starts_at && ends_at && new Date(starts_at as string) >= new Date(ends_at as string)) {
-    return NextResponse.json({ error: 'starts_at must be before ends_at' }, { status: 400, headers: cors });
-  }
+  // Validate dates are parseable ISO strings
+  const startsErr = validateISODate(starts_at, 'starts_at');
+  if (startsErr) return NextResponse.json({ error: startsErr }, { status: 400, headers: cors });
+  const endsErr = validateISODate(ends_at, 'ends_at');
+  if (endsErr) return NextResponse.json({ error: endsErr }, { status: 400, headers: cors });
+
+  // Validate ordering
+  const orderErr = validateDateOrdering({ starts_at, ends_at });
+  if (orderErr) return NextResponse.json({ error: orderErr }, { status: 400, headers: cors });
+
+  // Validate and normalize market_scope
+  const { normalized: normalizedScope, error: scopeErr } = validateMarketScope(market_scope);
+  if (scopeErr) return NextResponse.json({ error: scopeErr }, { status: 400, headers: cors });
 
   const supabase = createServiceClient();
   const { data, error } = await supabase
@@ -80,7 +90,7 @@ export async function POST(request: NextRequest) {
     .insert({
       name: (name as string).trim().slice(0, 200),
       campaign_type,
-      market_scope: Array.isArray(market_scope) ? market_scope : [],
+      market_scope: normalizedScope || [],
       message_config: message_config || {},
       consent_type,
       starts_at: starts_at || null,
