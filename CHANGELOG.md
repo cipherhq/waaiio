@@ -3,6 +3,16 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-09-28 — Fix staging deploy false failure from redundant promotion (#439)
+
+### What changed
+- **`.github/workflows/deploy-staging.yml`:** Removed the separate `vercel promote` step (step 7). `vercel deploy --prod` already promotes the deployment to the staging production target, making the separate promote redundant. Vercel returned 409 ("already the current production deployment"), which the workflow treated as a hard failure, triggering unnecessary rollback.
+- **Fix:** `DEPLOY_MUTATED=true` is now set before `vercel deploy --prod` (was previously set in the removed promote step). Rollback behavior preserved.
+- **`lib/__tests__/deploy-staging-workflow-contract.test.ts`:** Updated contract tests to assert no separate promote step exists, and that `DEPLOY_MUTATED` is set before the deploy command.
+
+### What could break
+- Nothing — this removes a redundant step that caused false failures. The deploy command (`vercel deploy --prod`) is the sole promotion authority now.
+
 ## 2026-09-28 — CTO re-review blockers corrected (#439 Slice 1)
 
 ### What changed
