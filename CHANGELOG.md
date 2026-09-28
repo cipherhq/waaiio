@@ -3,6 +3,18 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-09-28 — Admin Broadcasts: disable misleading WhatsApp/SMS channels (#439 Slice 0C)
+
+### What changed
+- WhatsApp and SMS channel options in Admin Broadcasts are now disabled with "Coming soon" labels. They were previously selectable but only recorded to DB with no actual delivery.
+- Email remains enabled and functional.
+- No delivery backend changes. Existing broadcast history untouched.
+
+### Files changed
+- `admin/src/pages/Broadcasts.tsx` — disabled WhatsApp/SMS options
+- `admin/src/__tests__/broadcasts-channel-cleanup-439.test.tsx` (new) — 9 tests
+- `CHANGELOG.md`
+
 ## 2026-09-28 — Launch integrity: shared-sender authority + truthful opt-in (#439 Slice 0A/0B)
 
 ### What changed
