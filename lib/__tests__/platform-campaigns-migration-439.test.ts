@@ -153,6 +153,16 @@ describeDb('Migration 409 — ACL privilege tests (#439)', () => {
     return false;
   }
 
+  it('debug: print actual ACL state', () => {
+    const eventsAcl = sql(`SELECT array_to_string(relacl, ' | ') FROM pg_class WHERE relname = 'platform_campaign_events'`);
+    const clicksAcl = sql(`SELECT array_to_string(relacl, ' | ') FROM pg_class WHERE relname = 'platform_campaign_clicks'`);
+    const defPrivs = sql(`SELECT defaclrole::regrole || '>' || defaclobjtype || '>' || array_to_string(defaclacl, ',') FROM pg_default_acl WHERE defaclnamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'public')`);
+    console.log('Events ACL:', eventsAcl);
+    console.log('Clicks ACL:', clicksAcl);
+    console.log('Default privileges:', defPrivs || 'NONE');
+    expect(true).toBe(true); // always pass — diagnostic only
+  });
+
   it('service_role cannot UPDATE platform_campaign_events (ACL check)', () => {
     expect(roleHasPrivilege('platform_campaign_events', 'service_role', 'w')).toBe(false);
   });
