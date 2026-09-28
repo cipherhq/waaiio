@@ -214,6 +214,54 @@ describe('deploy-staging workflow contract', () => {
     expect(afterRollbackCmd).not.toContain('state=READY&limit=1');
   });
 
+  // ── Readiness requires both control-plane target + runtime identity ──
+  it('readiness queries the staging project control plane with step-scoped Vercel auth', () => {
+    const steps = getSteps();
+    const readinessStep = steps.find(s => stepName(s).toLowerCase().includes('wait'));
+    expect(readinessStep).toBeDefined();
+
+    const env = readinessStep!.env as Record<string, string>;
+    expect(env.VERCEL_TOKEN).toBe('${{ secrets.VERCEL_TOKEN }}');
+
+    const readinessRun = readinessStep!.run as string;
+    expect(readinessRun).toContain('api.vercel.com/v9/projects/');
+    expect(readinessRun).toContain('STAGING_PROJECT_ID');
+    expect(readinessRun).toContain('STAGING_ORG_ID');
+    expect(readinessRun).toContain('targets && p.targets.production');
+  });
+
+  it('readiness requires active production target to equal the exact new deployment ID', () => {
+    const steps = getSteps();
+    const readinessStep = steps.find(s => stepName(s).toLowerCase().includes('wait'));
+    const readinessRun = readinessStep?.run as string;
+
+    expect(readinessRun).toContain('EXPECTED_DEPLOYMENT="${{ env.NEW_DEPLOYMENT_ID }}"');
+    expect(readinessRun).toContain('[ "$ACTIVE_ID" = "$EXPECTED_DEPLOYMENT" ]');
+    expect(readinessRun).toContain('CONTROL_OK=true');
+  });
+
+  it('readiness preserves runtime HTTP status and requires exact SHA project and deployment identity', () => {
+    const steps = getSteps();
+    const readinessStep = steps.find(s => stepName(s).toLowerCase().includes('wait'));
+    const readinessRun = readinessStep?.run as string;
+
+    expect(readinessRun).toContain('-w "%{http_code}"');
+    expect(readinessRun).toContain('[ "$HTTP_STATUS" = "200" ]');
+    expect(readinessRun).toContain('[ "$RUNTIME_SHA" = "$SHA" ]');
+    expect(readinessRun).toContain('[ "$RUNTIME_PROJECT" = "$EXPECTED_PROJECT" ]');
+    expect(readinessRun).toContain('[ "$RUNTIME_DEPLOYMENT" = "$EXPECTED_DEPLOYMENT" ]');
+  });
+
+  it('readiness cannot pass from control-plane activation alone', () => {
+    const steps = getSteps();
+    const readinessStep = steps.find(s => stepName(s).toLowerCase().includes('wait'));
+    const readinessRun = readinessStep?.run as string;
+
+    expect(readinessRun).toContain('CONTROL_OK=false');
+    expect(readinessRun).toContain('RUNTIME_OK=false');
+    expect(readinessRun).toContain('[ "$CONTROL_OK" = "true" ] && [ "$RUNTIME_OK" = "true" ]');
+  });
+
   // ── tsx is pinned and invoked without remote fallback ──
   it('verifier uses pinned tsx without remote fallback', () => {
     const steps = getSteps();
