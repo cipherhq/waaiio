@@ -193,9 +193,3 @@ GRANT SELECT, INSERT, UPDATE ON public.platform_campaign_participants TO service
 -- service_role: events/clicks are append-only (SELECT/INSERT only, no UPDATE/DELETE)
 GRANT SELECT, INSERT ON public.platform_campaign_events TO service_role;
 GRANT SELECT, INSERT ON public.platform_campaign_clicks TO service_role;
-
--- Belt-and-suspenders: explicitly revoke UPDATE/DELETE on append-only tables.
--- This catches any implicit grants from default privileges or role inheritance
--- that the initial REVOKE ALL may not have covered.
-REVOKE UPDATE, DELETE ON public.platform_campaign_events FROM service_role;
-REVOKE UPDATE, DELETE ON public.platform_campaign_clicks FROM service_role;

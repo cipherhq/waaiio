@@ -2,7 +2,11 @@
  * Platform Campaigns Migration 409 — PostgreSQL constraint + ACL tests (#439)
  *
  * These tests run against a real PostgreSQL database with TEST_DATABASE_URL.
- * They create all necessary fixtures deterministically.
+ * They create deterministic fixtures and verify constraints + ACL grants.
+ *
+ * IMPORTANT: This test must run early in CI — immediately after migration
+ * application and basic verification, BEFORE mutation-heavy DB suites that
+ * may contaminate the shared database's ACL state.
  *
  * Tests prove:
  * - consent default is `unknown`
@@ -41,12 +45,10 @@ describeDb('Migration 409 — PostgreSQL constraint tests (#439)', () => {
   let participantAId: string;
 
   beforeAll(() => {
-    // Use an existing profile from the CI seed or find one from migrations
-    // The CI seeds auth.users with '00000000-0000-0000-0000-000000000000'
-    // and the handle_new_user trigger auto-creates a profiles row.
+    // Use an existing profile from the CI seed or find one from migrations.
+    // The CI seeds auth.users and the handle_new_user trigger auto-creates profiles.
     profileId = sql(`SELECT id FROM public.profiles LIMIT 1`);
     if (!profileId) {
-      // If no profiles exist, create one via auth.users (trigger creates profile)
       sql(`INSERT INTO auth.users (id, email) VALUES (gen_random_uuid(), 'test-m409-${Date.now()}@ci.local') ON CONFLICT DO NOTHING`);
       profileId = sql(`SELECT id FROM public.profiles LIMIT 1`);
     }
@@ -132,89 +134,40 @@ describeDb('Migration 409 — PostgreSQL constraint tests (#439)', () => {
 });
 
 describeDb('Migration 409 — ACL privilege tests (#439)', () => {
-  // Test ACL by inspecting the relacl column from pg_class directly.
-  // This is the authoritative source — it shows the exact privilege grants
-  // regardless of role attributes like BYPASSRLS or superuser context.
-
-  function getAclEntries(tableName: string): string[] {
-    const raw = sql(`SELECT array_to_string(relacl, ',') FROM pg_class WHERE relname = '${tableName}'`);
-    return raw ? raw.split(',') : [];
-  }
-
-  function roleHasPrivilege(tableName: string, roleName: string, privChar: string): boolean {
-    const entries = getAclEntries(tableName);
-    // ACL format: grantee=privileges/grantor
-    // e.g., service_role=r/postgres means service_role has SELECT, granted by postgres
-    // Privilege chars: r=SELECT, a=INSERT, w=UPDATE, d=DELETE
-    for (const entry of entries) {
-      const match = entry.match(new RegExp(`^${roleName}=([^/]+)/`));
-      if (match) return match[1].includes(privChar);
-    }
-    return false;
-  }
-
-  it('debug: print actual ACL state', () => {
-    const eventsAcl = sql(`SELECT array_to_string(relacl, ' | ') FROM pg_class WHERE relname = 'platform_campaign_events'`);
-    const clicksAcl = sql(`SELECT array_to_string(relacl, ' | ') FROM pg_class WHERE relname = 'platform_campaign_clicks'`);
-    const campaignsAcl = sql(`SELECT array_to_string(relacl, ' | ') FROM pg_class WHERE relname = 'platform_campaigns'`);
-    let defPrivs = 'NONE';
-    try {
-      // Check ALL default privileges (not just public schema)
-      defPrivs = sql(`SELECT string_agg(defaclrole::regrole::text || '>' || defaclobjtype::text || '>' || array_to_string(defaclacl, ',') || ' ns=' || COALESCE(nspname, 'GLOBAL'), '; ') FROM pg_default_acl LEFT JOIN pg_namespace ON pg_namespace.oid = defaclnamespace`) || 'NONE';
-    } catch (e) {
-      defPrivs = `query error: ${(e as Error).message?.slice(0, 200)}`;
-    }
-    // Also check if REVOKE actually works by doing it inline
-    let revokeTest = 'not-tested';
-    try {
-      sql(`REVOKE UPDATE, DELETE ON public.platform_campaign_events FROM service_role`);
-      const afterRevoke = sql(`SELECT array_to_string(relacl, ' | ') FROM pg_class WHERE relname = 'platform_campaign_events'`);
-      revokeTest = afterRevoke || 'NULL';
-    } catch (e) {
-      revokeTest = `revoke error: ${(e as Error).message?.slice(0, 200)}`;
-    }
-    console.log('Events ACL:', eventsAcl || 'NULL');
-    console.log('Clicks ACL:', clicksAcl || 'NULL');
-    console.log('Campaigns ACL:', campaignsAcl || 'NULL');
-    console.log('Default privileges (ALL schemas):', defPrivs);
-    console.log('Events ACL after inline REVOKE:', revokeTest);
-    expect(true).toBe(true); // always pass — diagnostic only
+  it('service_role cannot UPDATE platform_campaign_events', () => {
+    expect(sql(`SELECT has_table_privilege('service_role', 'public.platform_campaign_events', 'UPDATE')`)).toBe('f');
   });
 
-  it('service_role cannot UPDATE platform_campaign_events (ACL check)', () => {
-    expect(roleHasPrivilege('platform_campaign_events', 'service_role', 'w')).toBe(false);
+  it('service_role cannot DELETE platform_campaign_events', () => {
+    expect(sql(`SELECT has_table_privilege('service_role', 'public.platform_campaign_events', 'DELETE')`)).toBe('f');
   });
 
-  it('service_role cannot DELETE platform_campaign_events (ACL check)', () => {
-    expect(roleHasPrivilege('platform_campaign_events', 'service_role', 'd')).toBe(false);
+  it('service_role cannot UPDATE platform_campaign_clicks', () => {
+    expect(sql(`SELECT has_table_privilege('service_role', 'public.platform_campaign_clicks', 'UPDATE')`)).toBe('f');
   });
 
-  it('service_role cannot UPDATE platform_campaign_clicks (ACL check)', () => {
-    expect(roleHasPrivilege('platform_campaign_clicks', 'service_role', 'w')).toBe(false);
+  it('service_role cannot DELETE platform_campaign_clicks', () => {
+    expect(sql(`SELECT has_table_privilege('service_role', 'public.platform_campaign_clicks', 'DELETE')`)).toBe('f');
   });
 
-  it('service_role cannot DELETE platform_campaign_clicks (ACL check)', () => {
-    expect(roleHasPrivilege('platform_campaign_clicks', 'service_role', 'd')).toBe(false);
+  it('service_role CAN SELECT/INSERT events', () => {
+    expect(sql(`SELECT has_table_privilege('service_role', 'public.platform_campaign_events', 'SELECT')`)).toBe('t');
+    expect(sql(`SELECT has_table_privilege('service_role', 'public.platform_campaign_events', 'INSERT')`)).toBe('t');
   });
 
-  it('service_role CAN SELECT/INSERT events (ACL check)', () => {
-    expect(roleHasPrivilege('platform_campaign_events', 'service_role', 'r')).toBe(true);
-    expect(roleHasPrivilege('platform_campaign_events', 'service_role', 'a')).toBe(true);
+  it('service_role CAN SELECT/INSERT/UPDATE campaigns', () => {
+    expect(sql(`SELECT has_table_privilege('service_role', 'public.platform_campaigns', 'SELECT')`)).toBe('t');
+    expect(sql(`SELECT has_table_privilege('service_role', 'public.platform_campaigns', 'INSERT')`)).toBe('t');
+    expect(sql(`SELECT has_table_privilege('service_role', 'public.platform_campaigns', 'UPDATE')`)).toBe('t');
   });
 
-  it('service_role CAN SELECT/INSERT/UPDATE campaigns (ACL check)', () => {
-    expect(roleHasPrivilege('platform_campaigns', 'service_role', 'r')).toBe(true);
-    expect(roleHasPrivilege('platform_campaigns', 'service_role', 'a')).toBe(true);
-    expect(roleHasPrivilege('platform_campaigns', 'service_role', 'w')).toBe(true);
+  it('anon has no privileges on platform_campaigns', () => {
+    expect(sql(`SELECT has_table_privilege('anon', 'public.platform_campaigns', 'SELECT')`)).toBe('f');
+    expect(sql(`SELECT has_table_privilege('anon', 'public.platform_campaigns', 'INSERT')`)).toBe('f');
   });
 
-  it('anon has no privileges on platform_campaigns (ACL check)', () => {
-    expect(roleHasPrivilege('platform_campaigns', 'anon', 'r')).toBe(false);
-    expect(roleHasPrivilege('platform_campaigns', 'anon', 'a')).toBe(false);
-  });
-
-  it('authenticated has no privileges on platform_campaigns (ACL check)', () => {
-    expect(roleHasPrivilege('platform_campaigns', 'authenticated', 'r')).toBe(false);
-    expect(roleHasPrivilege('platform_campaigns', 'authenticated', 'a')).toBe(false);
+  it('authenticated has no privileges on platform_campaigns', () => {
+    expect(sql(`SELECT has_table_privilege('authenticated', 'public.platform_campaigns', 'SELECT')`)).toBe('f');
+    expect(sql(`SELECT has_table_privilege('authenticated', 'public.platform_campaigns', 'INSERT')`)).toBe('f');
   });
 });
