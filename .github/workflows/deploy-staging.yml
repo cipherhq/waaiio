@@ -198,25 +198,90 @@ jobs:
 
       # ── 7. Wait for deployment readiness ──
       - name: Wait for staging to serve new deployment
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
         run: |
-          echo "Waiting for ${{ env.STAGING_URL }} to serve the new deployment..."
+          echo "Waiting for Vercel control plane + ${{ env.STAGING_URL }} runtime to converge..."
           SHA="${{ inputs.sha }}"
+          EXPECTED_PROJECT="${{ env.STAGING_PROJECT_ID }}"
+          EXPECTED_DEPLOYMENT="${{ env.NEW_DEPLOYMENT_ID }}"
           MAX_ATTEMPTS=30
 
           for ATTEMPT in $(seq 1 $MAX_ATTEMPTS); do
-            RUNTIME_SHA=$(curl -sS "${{ env.STAGING_URL }}/api/release-identity" 2>/dev/null \
-              | node -e "try{const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));console.log(d.sha||'')}catch{console.log('')}" 2>/dev/null || echo '')
+            # Control-plane proof: the staging project's active production target
+            # must be the exact deployment created by this workflow.
+            PROJECT_STATE=$(curl -sS -f \
+              -H "Authorization: Bearer $VERCEL_TOKEN" \
+              "https://api.vercel.com/v9/projects/${{ env.STAGING_PROJECT_ID }}?teamId=${{ env.STAGING_ORG_ID }}" \
+              2>/dev/null || echo '')
 
-            if [ "$RUNTIME_SHA" = "$SHA" ]; then
-              echo "✅ Staging is serving SHA ${SHA:0:8} (attempt $ATTEMPT)"
+            ACTIVE_ID=$(echo "$PROJECT_STATE" | node -e "
+              try {
+                const p = JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
+                const target = p.targets && p.targets.production;
+                console.log(target && target.id ? target.id : '');
+              } catch { console.log(''); }
+            " 2>/dev/null || echo '')
+
+            # Runtime proof: preserve HTTP status and require the exact runtime
+            # identity tuple. Never pass readiness from control-plane state alone.
+            IDENTITY_BODY=$(mktemp)
+            HTTP_STATUS=$(curl -sS -o "$IDENTITY_BODY" -w "%{http_code}" \
+              "${{ env.STAGING_URL }}/api/release-identity" 2>/dev/null || echo '000')
+
+            RUNTIME_IDENTITY=$(node - "$IDENTITY_BODY" <<'NODE'
+const fs = require('fs');
+const path = process.argv[2];
+try {
+  const d = JSON.parse(fs.readFileSync(path, 'utf8'));
+  const values = [d.sha, d.projectId, d.deploymentId];
+  if (values.some(v => typeof v !== 'string')) process.exit(1);
+  process.stdout.write(values.join('|'));
+} catch {
+  process.exit(1);
+}
+NODE
+            2>/dev/null || echo '')
+            rm -f "$IDENTITY_BODY"
+
+            RUNTIME_SHA=$(echo "$RUNTIME_IDENTITY" | cut -d'|' -f1)
+            RUNTIME_PROJECT=$(echo "$RUNTIME_IDENTITY" | cut -d'|' -f2)
+            RUNTIME_DEPLOYMENT=$(echo "$RUNTIME_IDENTITY" | cut -d'|' -f3)
+
+            CONTROL_OK=false
+            RUNTIME_OK=false
+
+            if [ "$ACTIVE_ID" = "$EXPECTED_DEPLOYMENT" ]; then
+              CONTROL_OK=true
+            fi
+
+            if [ "$HTTP_STATUS" = "200" ] \
+              && [ "$RUNTIME_SHA" = "$SHA" ] \
+              && [ "$RUNTIME_PROJECT" = "$EXPECTED_PROJECT" ] \
+              && [ "$RUNTIME_DEPLOYMENT" = "$EXPECTED_DEPLOYMENT" ]; then
+              RUNTIME_OK=true
+            fi
+
+            if [ "$CONTROL_OK" = "true" ] && [ "$RUNTIME_OK" = "true" ]; then
+              echo "✅ Staging readiness proven on attempt $ATTEMPT"
+              echo "   active deployment: $EXPECTED_DEPLOYMENT"
+              echo "   runtime SHA: ${SHA:0:8}"
               exit 0
             fi
 
-            echo "  Attempt $ATTEMPT/$MAX_ATTEMPTS: runtime SHA is ${RUNTIME_SHA:0:8}, waiting..."
+            ACTIVE_DISPLAY=${ACTIVE_ID:-none}
+            SHA_DISPLAY=${RUNTIME_SHA:-none}
+            DEPLOY_DISPLAY=${RUNTIME_DEPLOYMENT:-none}
+            echo "  Attempt $ATTEMPT/$MAX_ATTEMPTS:"
+            echo "    control-plane active: $ACTIVE_DISPLAY (expected $EXPECTED_DEPLOYMENT)"
+            echo "    runtime HTTP: $HTTP_STATUS"
+            echo "    runtime SHA: ${SHA_DISPLAY:0:8} (expected ${SHA:0:8})"
+            echo "    runtime deployment: $DEPLOY_DISPLAY (expected $EXPECTED_DEPLOYMENT)"
             sleep 10
           done
 
-          echo "❌ Staging did not serve expected SHA after $MAX_ATTEMPTS attempts."
+          echo "❌ Staging readiness did not converge after $MAX_ATTEMPTS attempts."
+          echo "   Exact control-plane target + exact runtime identity are both required."
           exit 1
 
       # ── 8. Post-deploy verification ──
