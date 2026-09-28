@@ -256,23 +256,28 @@ describe('deploy-staging workflow contract', () => {
     expect(promoteRun).toContain('vercel promote');
     expect(promoteRun).toContain('${{ env.DEPLOY_URL }}');
 
-    // Must accept 409 "already current production deployment" as success
-    expect(promoteRun).toContain('already the current production deployment');
-
     // Must fail on other errors
     expect(promoteRun).toContain('exit 1');
   });
 
-  it('promote step does not accept arbitrary non-zero exits as success', () => {
+  it('promote idempotent exception requires all three evidence checks', () => {
     const steps = getSteps();
     const promoteStep = steps.find(s => stepName(s).includes('Promote exact deployment'));
     const promoteRun = promoteStep!.run as string;
 
-    // The 409 acceptance must be conditional on the specific message
-    // Not a blanket "ignore all errors"
-    expect(promoteRun).toContain('PROMOTE_EXIT');
-    expect(promoteRun).toContain('grep');
-    expect(promoteRun).toContain('already the current production deployment');
+    // The elif branch must check all three pieces of evidence in PROMOTE_OUTPUT:
+    // 1. The exact NEW_DEPLOYMENT_ID
+    expect(promoteRun).toContain('grep -q "${{ env.NEW_DEPLOYMENT_ID }}"');
+    // 2. The exact phrase
+    expect(promoteRun).toContain('grep -q "already the current production deployment"');
+    // 3. The explicit Vercel 409 status marker
+    expect(promoteRun).toContain('grep -q "(409)"');
+
+    // All three checks must be combined with && (not separate branches)
+    const elifBlock = promoteRun.split('elif')[1]?.split('then')[0] || '';
+    expect(elifBlock).toContain('NEW_DEPLOYMENT_ID');
+    expect(elifBlock).toContain('already the current production deployment');
+    expect(elifBlock).toContain('(409)');
   });
 
   // ── Rollback is idempotent — skips command when previous deployment is already active ──
