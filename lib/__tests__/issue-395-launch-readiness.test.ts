@@ -292,7 +292,8 @@ describe('QR code — local generation', () => {
 describe('Phone formatting — international numbers', () => {
   it('does not assume 11-digit US numbers only', () => {
     const fs = require('fs');
-    const src = fs.readFileSync('app/(marketing)/launch/LaunchClient.tsx', 'utf-8');
+    // Phone formatting lives in shared launch helpers (used by both LaunchClient and SiteAnnouncement)
+    const src = fs.readFileSync('lib/launch/shared.ts', 'utf-8');
     // Must handle Nigeria (234...), Ghana (233...), UK (44...)
     expect(src).toContain('234');
     expect(src).toContain('233');

@@ -2,22 +2,17 @@
 
 import { useEffect, useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
+import {
+  type LaunchRegion,
+  type TimeLeft,
+  computeTimeLeft,
+  buildWhatsAppLink,
+  formatPhone,
+  formatLaunchDate,
+  detectCountryFromTimezone,
+} from '@/lib/launch/shared';
 
 // ── Types ──
-
-interface Region {
-  phone: string;
-  code: string;
-  name: string;
-  flag: string;
-}
-
-interface TimeLeft {
-  days: number;
-  hours: number;
-  minutes: number;
-  seconds: number;
-}
 
 interface AnnouncementConfig {
   enabled: boolean;
@@ -29,8 +24,6 @@ interface AnnouncementConfig {
 
 // ── Constants ──
 
-const OPT_IN_MESSAGE = 'Notify me when Waaiio launches';
-
 const WAAIIO_101 = [
   { emoji: '\u{1F4C5}', text: 'Book appointments & reservations' },
   { emoji: '\u{1F4B3}', text: 'Accept payments on WhatsApp' },
@@ -40,83 +33,10 @@ const WAAIIO_101 = [
   { emoji: '\u{1F916}', text: 'AI-powered automation for 89+ business types' },
 ];
 
-// ── Helpers ──
-
-function computeTimeLeft(target: string): TimeLeft | null {
-  const diff = new Date(target).getTime() - Date.now();
-  if (diff <= 0) return null;
-  return {
-    days: Math.floor(diff / (1000 * 60 * 60 * 24)),
-    hours: Math.floor((diff / (1000 * 60 * 60)) % 24),
-    minutes: Math.floor((diff / (1000 * 60)) % 60),
-    seconds: Math.floor((diff / 1000) % 60),
-  };
-}
-
-function buildWhatsAppLink(phone: string, source: 'button' | 'qr') {
-  const msg = encodeURIComponent(`${OPT_IN_MESSAGE} (${source})`);
-  return `https://wa.me/${phone.replace(/\D/g, '')}?text=${msg}`;
-}
-
-/** Format an international phone number for display. Handles variable-length numbers. */
-function formatPhone(phone: string): string {
-  const digits = phone.replace(/\D/g, '');
-  // Group: country code (1-3 digits) then remaining in chunks of 3-4
-  if (digits.length <= 4) return digits;
-  // Try common patterns
-  if (digits.startsWith('1') && digits.length === 11) {
-    // NANP: 1-XXX-XXX-XXXX
-    return `${digits.slice(0, 1)} ${digits.slice(1, 4)} ${digits.slice(4, 7)} ${digits.slice(7)}`;
-  }
-  if (digits.startsWith('44') && digits.length >= 12) {
-    // UK: 44 XXXX XXXXXX
-    return `${digits.slice(0, 2)} ${digits.slice(2, 6)} ${digits.slice(6)}`;
-  }
-  if (digits.startsWith('234') && digits.length >= 13) {
-    // Nigeria: 234 XXX XXX XXXX
-    return `${digits.slice(0, 3)} ${digits.slice(3, 6)} ${digits.slice(6, 9)} ${digits.slice(9)}`;
-  }
-  if (digits.startsWith('233') && digits.length >= 12) {
-    // Ghana: 233 XX XXX XXXX
-    return `${digits.slice(0, 3)} ${digits.slice(3, 5)} ${digits.slice(5, 8)} ${digits.slice(8)}`;
-  }
-  // Generic fallback: country code (1-3 digits) + groups of 3
-  const cc = digits.length > 10 ? digits.slice(0, digits.length - 10) : digits.slice(0, 1);
-  const rest = digits.slice(cc.length);
-  const groups = rest.match(/.{1,3}/g) || [];
-  return `${cc} ${groups.join(' ')}`;
-}
-
-/** Format a target date for display in the hero heading */
-function formatLaunchDate(isoDate: string): string {
-  try {
-    const d = new Date(isoDate);
-    return d.toLocaleDateString('en-US', { month: 'long', day: 'numeric' });
-  } catch {
-    return '';
-  }
-}
-
-// ── Geo detection (best-effort from timezone) ──
-
-function detectCountryFromTimezone(): string | null {
-  try {
-    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    if (tz.startsWith('Africa/Lagos') || tz.startsWith('Africa/Abuja')) return 'NG';
-    if (tz.startsWith('Africa/Accra')) return 'GH';
-    if (tz.startsWith('America/New_York') || tz.startsWith('America/Chicago') || tz.startsWith('America/Denver') || tz.startsWith('America/Los_Angeles')) return 'US';
-    if (tz.startsWith('Europe/London')) return 'GB';
-    if (tz.startsWith('America/Toronto') || tz.startsWith('America/Vancouver')) return 'CA';
-    return null;
-  } catch {
-    return null;
-  }
-}
-
 // ── Component ──
 
 export default function LaunchClient() {
-  const [regions, setRegions] = useState<Region[]>([]);
+  const [regions, setRegions] = useState<LaunchRegion[]>([]);
   const [selectedCode, setSelectedCode] = useState<string>('');
   const [announcement, setAnnouncement] = useState<AnnouncementConfig | null>(null);
   const [timeLeft, setTimeLeft] = useState<TimeLeft | null>(null);
@@ -125,14 +45,14 @@ export default function LaunchClient() {
   // Fetch regions + announcement config in parallel
   useEffect(() => {
     Promise.all([
-      fetch('/api/launch/regions').then(r => r.ok ? r.json() : null).catch(() => null),
-      fetch('/api/site-announcement', { cache: 'no-store' }).then(r => r.ok ? r.json() : null).catch(() => null),
+      fetch('/api/launch/regions').then((r) => (r.ok ? r.json() : null)).catch(() => null),
+      fetch('/api/site-announcement', { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null)).catch(() => null),
     ]).then(([regionsData, announcementData]) => {
       // Regions
-      const list: Region[] = regionsData?.regions || [];
+      const list: LaunchRegion[] = regionsData?.regions || [];
       setRegions(list);
       const detected = detectCountryFromTimezone();
-      const match = list.find(r => r.code === detected);
+      const match = list.find((r) => r.code === detected);
       setSelectedCode(match?.code || list[0]?.code || '');
 
       // Announcement (authoritative source for launch date)
@@ -153,7 +73,7 @@ export default function LaunchClient() {
     return () => clearInterval(id);
   }, [announcement?.target_date]);
 
-  const selectedRegion = regions.find(r => r.code === selectedCode);
+  const selectedRegion = regions.find((r) => r.code === selectedCode);
   const waLink = selectedRegion ? buildWhatsAppLink(selectedRegion.phone, 'button') : '#';
   const qrLink = selectedRegion ? buildWhatsAppLink(selectedRegion.phone, 'qr') : '';
 
@@ -217,7 +137,7 @@ export default function LaunchClient() {
             WhatsApp automation for any business, any industry, any country.
           </p>
           <div className="mt-6 grid gap-3 sm:grid-cols-2">
-            {WAAIIO_101.map(item => (
+            {WAAIIO_101.map((item) => (
               <div key={item.text} className="flex items-center gap-3 rounded-xl bg-white/5 px-4 py-3">
                 <span className="text-2xl">{item.emoji}</span>
                 <span className="text-sm">{item.text}</span>
@@ -242,7 +162,7 @@ export default function LaunchClient() {
                 onChange={(e) => setSelectedCode(e.target.value)}
                 className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm focus:border-brand focus:ring-2 focus:ring-brand-100"
               >
-                {regions.map(r => (
+                {regions.map((r) => (
                   <option key={r.code} value={r.code}>{r.flag} {r.name}</option>
                 ))}
               </select>
