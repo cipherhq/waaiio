@@ -3,6 +3,19 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-09-28 — Platform Communications foundation (#439 Slice 1)
+
+### What changed
+- **Migration 409:** 5 new tables: `platform_campaigns`, `platform_campaign_assets`, `platform_campaign_participants`, `platform_campaign_events`, `platform_campaign_clicks`. Two-level attribution model (canonical participant state + immutable interaction events). Cross-campaign referential integrity via composite FKs. Inbound-event idempotency via `source_event_id`. Append-only events/clicks (SELECT/INSERT only). Consent defaults to `unknown` (not `opted_in`).
+- **Token utility:** `lib/platform-campaigns/token.ts` — cryptographically secure 6-char attribution tokens from 32-char unambiguous alphabet, collision retry, tracked message construction, ref extraction.
+- **Admin API routes:** Campaign CRUD (`GET/POST/PUT /api/admin/platform-campaigns`), asset creation with shared-channel authority + server-derived market (`POST /api/admin/platform-campaigns/[id]/assets`).
+- **Public tracked redirect:** `GET /go/[token]` — validates asset/campaign/channel authority, derives wa.me URL server-side, records bounded click metadata, 302 redirect. Fail-closed on any authority failure.
+- **Admin UI:** Basic Platform Campaigns page in admin panel with create/list.
+- 58 regression tests.
+
+### What did NOT change
+- launch_subscribers, launch delivery, admin broadcasts, keyword campaigns, business broadcasts, notifications, messaging_opt_outs, WhatsApp routing, payments, bot flows, Meta config.
+
 ## 2026-09-28 — Admin Broadcasts: disable misleading WhatsApp/SMS channels (#439 Slice 0C)
 
 ### What changed

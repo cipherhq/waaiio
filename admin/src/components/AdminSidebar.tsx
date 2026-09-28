@@ -46,6 +46,7 @@ import {
   ScanLine,
   Sparkles,
   Gift,
+  QrCode,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAdminSession } from './AdminLayout';
@@ -155,6 +156,7 @@ const navSections: { label: string; items: NavItem[] }[] = [
       { icon: MessageCircle, label: 'Conversation Usage', path: '/conversation-usage', roles: ADMIN_PERMISSIONS['conversation-usage'] },
       { icon: Sparkles, label: 'Site Announcement', path: '/site-announcement', roles: ADMIN_PERMISSIONS['platform-settings'] },
       { icon: Gift, label: 'Launch Subscribers', path: '/launch-subscribers', roles: ADMIN_PERMISSIONS['platform-settings'] },
+      { icon: QrCode, label: 'Platform Campaigns', path: '/platform-campaigns', roles: ADMIN_PERMISSIONS['platform-settings'] },
       { icon: Settings, label: 'Platform Settings', path: '/platform-settings', roles: ADMIN_PERMISSIONS['platform-settings'] },
       { icon: ScrollText, label: 'Audit Log', path: '/audit-log', roles: ADMIN_PERMISSIONS['audit-log'] },
       { icon: Activity, label: 'System Health', path: '/system-health', roles: ADMIN_PERMISSIONS['system-health'] },
