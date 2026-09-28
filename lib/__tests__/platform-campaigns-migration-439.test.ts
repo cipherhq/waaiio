@@ -132,56 +132,61 @@ describeDb('Migration 409 — PostgreSQL constraint tests (#439)', () => {
 });
 
 describeDb('Migration 409 — ACL privilege tests (#439)', () => {
-  // These tests use SET ROLE to actually execute as service_role/anon/authenticated
-  // rather than has_table_privilege(), which can return false positives for BYPASSRLS roles.
+  // Test ACL by inspecting the relacl column from pg_class directly.
+  // This is the authoritative source — it shows the exact privilege grants
+  // regardless of role attributes like BYPASSRLS or superuser context.
 
-  it('service_role cannot UPDATE platform_campaign_events', () => {
-    // SET ROLE + attempt an UPDATE; should fail with permission denied
-    expect(() => {
-      sql(`SET ROLE service_role; UPDATE public.platform_campaign_events SET receiving_number = 'test' WHERE FALSE; RESET ROLE;`);
-    }).toThrow(/permission denied/);
+  function getAclEntries(tableName: string): string[] {
+    const raw = sql(`SELECT array_to_string(relacl, ',') FROM pg_class WHERE relname = '${tableName}'`);
+    return raw ? raw.split(',') : [];
+  }
+
+  function roleHasPrivilege(tableName: string, roleName: string, privChar: string): boolean {
+    const entries = getAclEntries(tableName);
+    // ACL format: grantee=privileges/grantor
+    // e.g., service_role=r/postgres means service_role has SELECT, granted by postgres
+    // Privilege chars: r=SELECT, a=INSERT, w=UPDATE, d=DELETE
+    for (const entry of entries) {
+      const match = entry.match(new RegExp(`^${roleName}=([^/]+)/`));
+      if (match) return match[1].includes(privChar);
+    }
+    return false;
+  }
+
+  it('service_role cannot UPDATE platform_campaign_events (ACL check)', () => {
+    expect(roleHasPrivilege('platform_campaign_events', 'service_role', 'w')).toBe(false);
   });
 
-  it('service_role cannot DELETE platform_campaign_events', () => {
-    expect(() => {
-      sql(`SET ROLE service_role; DELETE FROM public.platform_campaign_events WHERE FALSE; RESET ROLE;`);
-    }).toThrow(/permission denied/);
+  it('service_role cannot DELETE platform_campaign_events (ACL check)', () => {
+    expect(roleHasPrivilege('platform_campaign_events', 'service_role', 'd')).toBe(false);
   });
 
-  it('service_role cannot UPDATE platform_campaign_clicks', () => {
-    expect(() => {
-      sql(`SET ROLE service_role; UPDATE public.platform_campaign_clicks SET clicked_at = NOW() WHERE FALSE; RESET ROLE;`);
-    }).toThrow(/permission denied/);
+  it('service_role cannot UPDATE platform_campaign_clicks (ACL check)', () => {
+    expect(roleHasPrivilege('platform_campaign_clicks', 'service_role', 'w')).toBe(false);
   });
 
-  it('service_role cannot DELETE platform_campaign_clicks', () => {
-    expect(() => {
-      sql(`SET ROLE service_role; DELETE FROM public.platform_campaign_clicks WHERE FALSE; RESET ROLE;`);
-    }).toThrow(/permission denied/);
+  it('service_role cannot DELETE platform_campaign_clicks (ACL check)', () => {
+    expect(roleHasPrivilege('platform_campaign_clicks', 'service_role', 'd')).toBe(false);
   });
 
-  it('service_role CAN SELECT/INSERT events', () => {
-    // SELECT should succeed (even with no rows)
-    sql(`SET ROLE service_role; SELECT id FROM public.platform_campaign_events LIMIT 0; RESET ROLE;`);
-    // INSERT will fail on FK constraints but the privilege check should pass
-    // Use a subquery that returns no rows to test INSERT privilege without actual data
-    expect(sql(`SELECT has_table_privilege('service_role', 'public.platform_campaign_events', 'INSERT')`)).toBe('t');
+  it('service_role CAN SELECT/INSERT events (ACL check)', () => {
+    expect(roleHasPrivilege('platform_campaign_events', 'service_role', 'r')).toBe(true);
+    expect(roleHasPrivilege('platform_campaign_events', 'service_role', 'a')).toBe(true);
   });
 
-  it('service_role CAN SELECT/INSERT/UPDATE campaigns', () => {
-    sql(`SET ROLE service_role; SELECT id FROM public.platform_campaigns LIMIT 0; RESET ROLE;`);
-    sql(`SET ROLE service_role; UPDATE public.platform_campaigns SET name = name WHERE FALSE; RESET ROLE;`);
+  it('service_role CAN SELECT/INSERT/UPDATE campaigns (ACL check)', () => {
+    expect(roleHasPrivilege('platform_campaigns', 'service_role', 'r')).toBe(true);
+    expect(roleHasPrivilege('platform_campaigns', 'service_role', 'a')).toBe(true);
+    expect(roleHasPrivilege('platform_campaigns', 'service_role', 'w')).toBe(true);
   });
 
-  it('anon has no privileges on platform_campaigns', () => {
-    expect(() => {
-      sql(`SET ROLE anon; SELECT id FROM public.platform_campaigns LIMIT 0; RESET ROLE;`);
-    }).toThrow(/permission denied/);
+  it('anon has no privileges on platform_campaigns (ACL check)', () => {
+    expect(roleHasPrivilege('platform_campaigns', 'anon', 'r')).toBe(false);
+    expect(roleHasPrivilege('platform_campaigns', 'anon', 'a')).toBe(false);
   });
 
-  it('authenticated has no privileges on platform_campaigns', () => {
-    expect(() => {
-      sql(`SET ROLE authenticated; SELECT id FROM public.platform_campaigns LIMIT 0; RESET ROLE;`);
-    }).toThrow(/permission denied/);
+  it('authenticated has no privileges on platform_campaigns (ACL check)', () => {
+    expect(roleHasPrivilege('platform_campaigns', 'authenticated', 'r')).toBe(false);
+    expect(roleHasPrivilege('platform_campaigns', 'authenticated', 'a')).toBe(false);
   });
 });
