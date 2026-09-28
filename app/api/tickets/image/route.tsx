@@ -1,6 +1,7 @@
 import { ImageResponse } from 'next/og';
 import { type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
+import { WORDMARK_PATH, WORDMARK_ALT, WORDMARK_DISPLAY } from '@/lib/brand';
 
 export const runtime = 'edge';
 
@@ -161,8 +162,8 @@ export async function GET(request: NextRequest) {
             </div>
             {business?.subscription_tier !== 'business' ? (
               /* eslint-disable-next-line @next/next/no-img-element */
-              <img src={`${process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com'}/logo.png`}
-                width={60} height={17} alt="Waaiio"
+              <img src={`${process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com'}${WORDMARK_PATH}`}
+                width={WORDMARK_DISPLAY.watermark.width} height={WORDMARK_DISPLAY.watermark.height} alt={WORDMARK_ALT}
                 style={{ opacity: 0.7 }} />
             ) : business?.logo_url ? (
               /* eslint-disable-next-line @next/next/no-img-element */

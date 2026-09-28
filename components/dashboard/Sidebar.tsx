@@ -7,6 +7,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { useDashboard, useCapabilities, useIsReseller } from './DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { APP_NAME } from '@/lib/constants';
+import { WORDMARK_PATH, WORDMARK_ALT, WORDMARK_DISPLAY } from '@/lib/brand';
 import { useCategoryConfig } from '@/hooks/useCategoryConfig';
 import { CAPABILITY_TIER_REQUIREMENTS, type CapabilityId } from '@/lib/capabilities/types';
 import { ThemeToggle } from './ThemeToggle';
@@ -722,7 +723,7 @@ export function Sidebar() {
     <>
       {/* Logo */}
       <div className="flex items-center gap-2 px-4 py-5">
-        <Image src="/logo.png" alt="Waaiio" width={120} height={35} className="h-8 w-auto" />
+        <Image src={WORDMARK_PATH} alt={WORDMARK_ALT} width={WORDMARK_DISPLAY.standard.width} height={WORDMARK_DISPLAY.standard.height} className="h-8 w-auto" />
       </div>
 
       {/* Business switcher */}

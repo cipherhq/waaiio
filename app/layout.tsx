@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from 'next';
 import { Inter } from 'next/font/google';
 import { PostHogProvider } from '@/components/PostHogProvider';
 import CookieConsent from '@/components/marketing/CookieConsent';
+import { BRAND_NAME, WORDMARK_PATH, WORDMARK_WIDTH, WORDMARK_HEIGHT, WORDMARK_ALT, FAVICON_PATH, ICON_PATH } from '@/lib/brand';
 import './globals.css';
 
 const inter = Inter({
@@ -26,17 +27,17 @@ export const metadata: Metadata = {
   metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com'),
   manifest: '/manifest.webmanifest',
   icons: {
-    icon: '/favicon.ico',
-    apple: '/apple-touch-icon.png',
+    icon: FAVICON_PATH,
+    apple: ICON_PATH,
   },
   openGraph: {
-    siteName: 'Waaiio',
+    siteName: BRAND_NAME,
     type: 'website',
-    images: [{ url: '/logo.png', width: 930, height: 271, alt: 'Waaiio' }],
+    images: [{ url: WORDMARK_PATH, width: WORDMARK_WIDTH, height: WORDMARK_HEIGHT, alt: WORDMARK_ALT }],
   },
   twitter: {
     card: 'summary_large_image',
-    images: ['/logo.png'],
+    images: [WORDMARK_PATH],
   },
   alternates: {
     canonical: process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com',

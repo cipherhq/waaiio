@@ -1,4 +1,5 @@
 import { ImageResponse } from 'next/og';
+import { BRAND_COLORS } from '@/lib/brand';
 
 export const runtime = 'edge';
 export const alt = 'Waaiio — AI-Powered WhatsApp Automation for Every Business';
@@ -35,9 +36,9 @@ export default async function Image() {
               letterSpacing: '-1px',
             }}
           >
-            <span style={{ color: '#0D8C4A' }}>W</span>
-            <span style={{ color: '#1BAF5C' }}>aaii</span>
-            <span style={{ color: '#25D366' }}>o</span>
+            <span style={{ color: BRAND_COLORS.green }}>wa</span>
+            <span style={{ color: BRAND_COLORS.orange }}>ai</span>
+            <span style={{ color: BRAND_COLORS.lavender }}>io</span>
           </span>
         </div>
 
