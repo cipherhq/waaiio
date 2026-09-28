@@ -23,10 +23,10 @@ interface Broadcast {
   created_at: string;
 }
 
-const CHANNEL_OPTIONS: { value: Channel; label: string }[] = [
+const CHANNEL_OPTIONS: { value: Channel; label: string; disabled?: boolean }[] = [
   { value: 'email', label: 'Email' },
-  { value: 'whatsapp', label: 'WhatsApp' },
-  { value: 'sms', label: 'SMS' },
+  { value: 'whatsapp', label: 'WhatsApp — coming soon', disabled: true },
+  { value: 'sms', label: 'SMS — coming soon', disabled: true },
 ];
 
 export default function Broadcasts() {
@@ -215,11 +215,14 @@ export default function Broadcasts() {
               {CHANNEL_OPTIONS.map(opt => (
                 <button
                   key={opt.value}
-                  onClick={() => setChannel(opt.value)}
+                  disabled={opt.disabled}
+                  onClick={() => !opt.disabled && setChannel(opt.value)}
                   className={`rounded-md px-4 py-2 text-sm font-medium transition ${
-                    channel === opt.value
-                      ? 'bg-brand text-white shadow-sm'
-                      : 'text-gray-500 hover:text-gray-700'
+                    opt.disabled
+                      ? 'text-gray-400 cursor-not-allowed opacity-50'
+                      : channel === opt.value
+                        ? 'bg-brand text-white shadow-sm'
+                        : 'text-gray-500 hover:text-gray-700'
                   }`}
                 >
                   {opt.label}
