@@ -145,8 +145,10 @@ jobs:
           SHA="${{ inputs.sha }}"
           echo "Deploying ${SHA:0:8} to staging (production target)..."
 
+          set +e
           DEPLOY_OUTPUT=$(vercel deploy --prod --yes --token "$VERCEL_TOKEN" 2>&1)
           DEPLOY_EXIT=$?
+          set -e
 
           if [ $DEPLOY_EXIT -ne 0 ]; then
             echo "❌ ABORT: Vercel deploy failed with exit code $DEPLOY_EXIT"
