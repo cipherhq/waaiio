@@ -32,7 +32,7 @@ export const metadata: Metadata = {
   openGraph: {
     siteName: 'Waaiio',
     type: 'website',
-    images: [{ url: '/logo.png', width: 512, height: 512, alt: 'Waaiio' }],
+    images: [{ url: '/logo.png', width: 930, height: 271, alt: 'Waaiio' }],
   },
   twitter: {
     card: 'summary_large_image',

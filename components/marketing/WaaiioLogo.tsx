@@ -7,7 +7,7 @@ import Image from 'next/image';
 
 export function WaaiioMark({ className = 'h-8' }: { className?: string }) {
   return (
-    <Image src="/logo.png" alt="Waaiio" width={120} height={32} className={className} priority />
+    <Image src="/logo.png" alt="Waaiio" width={120} height={35} className={className} priority />
   );
 }
 

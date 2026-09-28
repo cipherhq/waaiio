@@ -35,9 +35,9 @@ export default async function Image() {
               letterSpacing: '-1px',
             }}
           >
-            <span style={{ color: '#25D366' }}>wa</span>
-            <span style={{ color: '#E5993E' }}>ai</span>
-            <span style={{ color: '#B5A3E0' }}>io</span>
+            <span style={{ color: '#0D8C4A' }}>W</span>
+            <span style={{ color: '#1BAF5C' }}>aaii</span>
+            <span style={{ color: '#25D366' }}>o</span>
           </span>
         </div>
 

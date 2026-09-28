@@ -162,7 +162,7 @@ export async function GET(request: NextRequest) {
             {business?.subscription_tier !== 'business' ? (
               /* eslint-disable-next-line @next/next/no-img-element */
               <img src={`${process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com'}/logo.png`}
-                width={60} height={14} alt="Waaiio"
+                width={60} height={17} alt="Waaiio"
                 style={{ opacity: 0.7 }} />
             ) : business?.logo_url ? (
               /* eslint-disable-next-line @next/next/no-img-element */

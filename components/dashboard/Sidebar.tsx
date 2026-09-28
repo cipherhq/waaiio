@@ -722,7 +722,7 @@ export function Sidebar() {
     <>
       {/* Logo */}
       <div className="flex items-center gap-2 px-4 py-5">
-        <Image src="/logo.png" alt="Waaiio" width={120} height={32} className="h-8 w-auto" />
+        <Image src="/logo.png" alt="Waaiio" width={120} height={35} className="h-8 w-auto" />
       </div>
 
       {/* Business switcher */}
