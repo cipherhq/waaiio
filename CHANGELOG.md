@@ -3,6 +3,16 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-09-28 — Restore idempotent promote step + idempotent rollback (#406)
+
+### What changed
+- **`.github/workflows/deploy-staging.yml`:** Restored explicit `vercel promote` step after deployment capture. `vercel deploy --prod` does not always reliably activate the deployment as the production target (observed in deploy #10). Promote accepts normal success or the exact 409 "already the current production deployment" — all other errors fail hard.
+- **Idempotent rollback:** Before invoking `vercel rollback`, the workflow now checks whether the previous deployment is already the active production target. If it is, rollback is a no-op (avoids Vercel 422 rejection). Post-rollback verification still proves the correct deployment is active.
+- **`lib/__tests__/deploy-staging-workflow-contract.test.ts`:** Updated contract tests to prove promote exists with idempotent 409 handling, rollback checks active target before invoking rollback command, and step ordering is correct.
+
+### What could break
+- Nothing — this adds resilience to edge cases where `vercel deploy --prod` creates a READY production deployment without making it the active target, and where rollback targets a deployment that is already active.
+
 ## 2026-09-28 — Fix staging deploy false failure from redundant promotion (#439)
 
 ### What changed
