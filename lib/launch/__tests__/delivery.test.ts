@@ -36,8 +36,10 @@ function channelQueryMock(result = { phone_number_id: 'pn-1', meta_access_token:
     select: vi.fn().mockReturnValue({
       eq: vi.fn().mockReturnValue({
         eq: vi.fn().mockReturnValue({
-          limit: vi.fn().mockReturnValue({
-            maybeSingle: vi.fn().mockResolvedValue({ data: result, error: null }),
+          eq: vi.fn().mockReturnValue({
+            limit: vi.fn().mockReturnValue({
+              maybeSingle: vi.fn().mockResolvedValue({ data: result, error: null }),
+            }),
           }),
         }),
       }),
@@ -213,8 +215,10 @@ describe('claimAndSendToSubscriber — atomic claim concurrency', () => {
         select: vi.fn().mockReturnValue({
           eq: vi.fn().mockReturnValue({
             eq: vi.fn().mockReturnValue({
-              limit: vi.fn().mockReturnValue({
-                maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+              eq: vi.fn().mockReturnValue({
+                limit: vi.fn().mockReturnValue({
+                  maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+                }),
               }),
             }),
           }),
