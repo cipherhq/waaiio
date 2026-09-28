@@ -156,10 +156,17 @@ describeDb('Migration 409 — ACL privilege tests (#439)', () => {
   it('debug: print actual ACL state', () => {
     const eventsAcl = sql(`SELECT array_to_string(relacl, ' | ') FROM pg_class WHERE relname = 'platform_campaign_events'`);
     const clicksAcl = sql(`SELECT array_to_string(relacl, ' | ') FROM pg_class WHERE relname = 'platform_campaign_clicks'`);
-    const defPrivs = sql(`SELECT defaclrole::regrole || '>' || defaclobjtype || '>' || array_to_string(defaclacl, ',') FROM pg_default_acl WHERE defaclnamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'public')`);
-    console.log('Events ACL:', eventsAcl);
-    console.log('Clicks ACL:', clicksAcl);
-    console.log('Default privileges:', defPrivs || 'NONE');
+    const campaignsAcl = sql(`SELECT array_to_string(relacl, ' | ') FROM pg_class WHERE relname = 'platform_campaigns'`);
+    let defPrivs = 'NONE';
+    try {
+      defPrivs = sql(`SELECT defaclrole::regrole::text || '>' || defaclobjtype::text || '>' || array_to_string(defaclacl, ',') FROM pg_default_acl WHERE defaclnamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'public')`) || 'NONE';
+    } catch (e) {
+      defPrivs = `query error: ${(e as Error).message?.slice(0, 200)}`;
+    }
+    console.log('Events ACL:', eventsAcl || 'NULL');
+    console.log('Clicks ACL:', clicksAcl || 'NULL');
+    console.log('Campaigns ACL:', campaignsAcl || 'NULL');
+    console.log('Default privileges in public schema:', defPrivs);
     expect(true).toBe(true); // always pass — diagnostic only
   });
 
