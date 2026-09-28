@@ -67,7 +67,11 @@ export async function handleLaunchOptIn(
 
   if (error) {
     logger.error('[LAUNCH] Failed to record subscriber:', error.message);
-    // Still send confirmation — don't punish user for our DB issue
+    await sendReply(
+      from,
+      "We couldn't save your launch notification request right now. Please try again in a moment.",
+    );
+    return true;
   }
 
   await sendReply(
