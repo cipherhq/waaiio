@@ -229,19 +229,15 @@ jobs:
             HTTP_STATUS=$(curl -sS -o "$IDENTITY_BODY" -w "%{http_code}" \
               "${{ env.STAGING_URL }}/api/release-identity" 2>/dev/null || echo '000')
 
-            RUNTIME_IDENTITY=$(node - "$IDENTITY_BODY" <<'NODE'
-const fs = require('fs');
-const path = process.argv[2];
-try {
-  const d = JSON.parse(fs.readFileSync(path, 'utf8'));
-  const values = [d.sha, d.projectId, d.deploymentId];
-  if (values.some(v => typeof v !== 'string')) process.exit(1);
-  process.stdout.write(values.join('|'));
-} catch {
-  process.exit(1);
-}
-NODE
-            2>/dev/null || echo '')
+            RUNTIME_IDENTITY=$(node -e "
+              const fs = require('fs');
+              try {
+                const d = JSON.parse(fs.readFileSync(process.argv[1], 'utf8'));
+                const values = [d.sha, d.projectId, d.deploymentId];
+                if (values.some(v => typeof v !== 'string')) process.exit(1);
+                process.stdout.write(values.join('|'));
+              } catch { process.exit(1); }
+            " "$IDENTITY_BODY" 2>/dev/null || echo '')
             rm -f "$IDENTITY_BODY"
 
             RUNTIME_SHA=$(echo "$RUNTIME_IDENTITY" | cut -d'|' -f1)
