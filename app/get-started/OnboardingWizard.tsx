@@ -41,6 +41,12 @@ import type {
   DiscoveredWaba,
 } from './steps';
 
+const STAGING_SUPABASE_URL = 'https://tqjvrzopvtczxfxiwmnz.supabase.co';
+
+function isStagingEmailSignupClient(): boolean {
+  return String(process.env.NEXT_PUBLIC_SUPABASE_URL || '').trim().replace(/\/$/, '') === STAGING_SUPABASE_URL;
+}
+
 declare global {
   interface Window {
     FB: any;
