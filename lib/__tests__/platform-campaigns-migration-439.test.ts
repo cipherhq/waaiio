@@ -159,14 +159,25 @@ describeDb('Migration 409 — ACL privilege tests (#439)', () => {
     const campaignsAcl = sql(`SELECT array_to_string(relacl, ' | ') FROM pg_class WHERE relname = 'platform_campaigns'`);
     let defPrivs = 'NONE';
     try {
-      defPrivs = sql(`SELECT defaclrole::regrole::text || '>' || defaclobjtype::text || '>' || array_to_string(defaclacl, ',') FROM pg_default_acl WHERE defaclnamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'public')`) || 'NONE';
+      // Check ALL default privileges (not just public schema)
+      defPrivs = sql(`SELECT string_agg(defaclrole::regrole::text || '>' || defaclobjtype::text || '>' || array_to_string(defaclacl, ',') || ' ns=' || COALESCE(nspname, 'GLOBAL'), '; ') FROM pg_default_acl LEFT JOIN pg_namespace ON pg_namespace.oid = defaclnamespace`) || 'NONE';
     } catch (e) {
       defPrivs = `query error: ${(e as Error).message?.slice(0, 200)}`;
+    }
+    // Also check if REVOKE actually works by doing it inline
+    let revokeTest = 'not-tested';
+    try {
+      sql(`REVOKE UPDATE, DELETE ON public.platform_campaign_events FROM service_role`);
+      const afterRevoke = sql(`SELECT array_to_string(relacl, ' | ') FROM pg_class WHERE relname = 'platform_campaign_events'`);
+      revokeTest = afterRevoke || 'NULL';
+    } catch (e) {
+      revokeTest = `revoke error: ${(e as Error).message?.slice(0, 200)}`;
     }
     console.log('Events ACL:', eventsAcl || 'NULL');
     console.log('Clicks ACL:', clicksAcl || 'NULL');
     console.log('Campaigns ACL:', campaignsAcl || 'NULL');
-    console.log('Default privileges in public schema:', defPrivs);
+    console.log('Default privileges (ALL schemas):', defPrivs);
+    console.log('Events ACL after inline REVOKE:', revokeTest);
     expect(true).toBe(true); // always pass — diagnostic only
   });
 
