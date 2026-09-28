@@ -3,6 +3,28 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-09-28 — Certify signup email confirmation callback and redirect safety (#437)
+
+### What changed
+- **Callback route** (`app/auth/callback/route.ts`): Now checks `exchangeCodeForSession` and `verifyOtp` errors. On failure, redirects to `/login?error=<user-friendly message>` instead of silently proceeding to `next`. Missing code/token_hash also fails visibly. Does not leak raw Supabase errors.
+- **Login page** (`app/(auth)/login/page.tsx`): Reads `error` query param from URL and displays it on load — surfaces callback failure messages.
+- **Resend confirmation** (`app/get-started/steps/StepAuth.tsx`): Now checks `supabase.auth.resend()` result, surfaces rate-limit and generic errors, shows success feedback. No longer silently swallows failures.
+- **Open-redirect protection preserved**: `next` param must be relative path starting with `/` and not `//`.
+- Added 31 regression tests covering all 12 required scenarios.
+
+### Files changed
+- `app/auth/callback/route.ts` — error handling + fail-visible redirects
+- `app/(auth)/login/page.tsx` — reads error query param
+- `app/get-started/steps/StepAuth.tsx` — resend error handling + feedback
+- `lib/__tests__/auth-callback-437.test.ts` (new) — 31 regression tests
+- `CHANGELOG.md` — entry added
+
+### What could break
+- Users with genuinely expired/invalid confirmation links will now see an error on the login page instead of being silently redirected to onboarding without a session.
+
+### What did NOT change
+- Signup flow, email delivery, confirmation email content, WhatsApp, payments, providers, migrations, Admin panel, bot flows, middleware, RLS.
+
 ## 2026-09-28 — Fix staging Admin CORS, Site Announcement API path, environment identity (#435)
 
 ### What changed
