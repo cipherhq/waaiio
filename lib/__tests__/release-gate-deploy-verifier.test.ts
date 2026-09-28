@@ -50,7 +50,6 @@ function setupMocks(overrides: Record<string, { status: number; body: unknown }>
     '/': { status: 200, body: '<html><title>Waaiio</title></html>' },
     '/pricing': { status: 200, body: '<html>Starter plan</html>' },
     '/features': { status: 200, body: '<html>Features page</html>' },
-    '/login': { status: 200, body: '<html>Sign in</html>' },
     '/terms': { status: 200, body: '<html>Terms</html>' },
     '/privacy': { status: 200, body: '<html>Privacy</html>' },
   };
@@ -461,7 +460,7 @@ describe('verifyDeployment — full pass', () => {
     expect(result.verdict).toBe('PASS');
     expect(result.checks.every(c => c.status === 'pass')).toBe(true);
     // Should have: identity-reachable, identity-parseable, sha-match, project-match,
-    //              health-reachable, health-status, plus 6 canary routes = 12 total
-    expect(result.checks.length).toBe(12);
+    //              health-reachable, health-status, plus 5 canary routes = 11 total
+    expect(result.checks.length).toBe(11);
   });
 });
