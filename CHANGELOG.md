@@ -3,6 +3,35 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-09-28 — Fix staging Admin CORS, Site Announcement API path, environment identity (#435)
+
+### What changed
+- **CORS (Slice 1):** Created shared `lib/admin-cors.ts` with canonical admin-origin allowlist matching middleware.ts. Replaced 6 route-local `corsHeaders()` implementations in `otp`, `query`, `customers`, `class-sessions`, `impersonate`, `provider-config`. Staging origin (`admin-staging.waaiio.com`) is now allowed across all routes. Unknown origins fail closed (empty string) instead of falling back to production origin.
+- **Site Announcement (Slice 2):** Migrated `admin/src/pages/SiteAnnouncement.tsx` from direct `adminDb.from('platform_settings')` browser access to the existing authenticated server API (`GET/PUT /api/admin/site-announcement`). Added `adminApiGet()` and `adminApiPut()` to `admin/src/lib/adminApi.ts`. UI now surfaces server errors instead of `permission denied for table platform_settings`. Audit logging semantics preserved.
+- **Environment identity (Slice 3):** Documented that the admin-staging Vercel project requires `WAAIIO_ENVIRONMENT=staging` (or `VITE_WAAIIO_ENVIRONMENT=staging`) as an environment variable. No code change needed — existing `vite.config.js` design (#424) is correct; it just needs the config value injected at the deployment level.
+- Added 50 regression tests (CORS policy, route consistency, API migration proof, UI safety).
+
+### Files changed
+- `lib/admin-cors.ts` (new) — shared CORS helper
+- `app/api/admin/otp/route.ts` — uses shared CORS
+- `app/api/admin/query/route.ts` — uses shared CORS
+- `app/api/admin/customers/route.ts` — uses shared CORS
+- `app/api/admin/class-sessions/route.ts` — uses shared CORS
+- `app/api/admin/impersonate/route.ts` — uses shared CORS
+- `app/api/admin/provider-config/route.ts` — uses shared CORS
+- `admin/src/pages/SiteAnnouncement.tsx` — API-based read/write
+- `admin/src/lib/adminApi.ts` — added GET/PUT helpers
+- `admin/src/__tests__/site-announcement-safety-420.test.tsx` — updated mocks for API
+- `lib/__tests__/admin-cors.test.ts` (new) — CORS policy tests
+- `lib/__tests__/admin-cors-routes.test.ts` (new) — route consistency + API migration proof
+
+### What could break
+- If `ADMIN_ORIGIN` env var is set to a value not in the allowlist, it will still work as long as it matches — but explicit ADMIN_ORIGIN now coexists with the hardcoded staging/production origins rather than replacing them.
+- Admin Site Announcement page now requires the main app API to be reachable; direct DB access is no longer attempted.
+
+### What did NOT change
+- Production Admin origin behavior, local Admin development, OTP HMAC/rate-limit/brute-force, platform-admin authorization, generic Admin query table/column protections, Site Announcement validation/CTA/timezone, WhatsApp, payments, providers, migrations, customer flows, middleware CORS.
+
 ## 2026-09-27 — Reusable Admin WhatsApp CTA link generator (#426)
 
 ### What changed

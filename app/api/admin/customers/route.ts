@@ -1,28 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { requirePlatformAdmin } from '@/lib/admin-auth';
+import { adminCorsHeaders } from '@/lib/admin-cors';
 
-function corsHeaders(origin?: string | null) {
-  const allowedOrigins = [
-    process.env.ADMIN_ORIGIN || 'https://admin.waaiio.com',
-    'http://localhost:8083',
-  ];
-  const allowed = origin && allowedOrigins.includes(origin) ? origin : allowedOrigins[0];
-  return {
-    'Access-Control-Allow-Origin': allowed,
-    'Access-Control-Allow-Methods': 'GET, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-  };
-}
+const cors = adminCorsHeaders(null, 'GET, OPTIONS');
 
 export async function OPTIONS() {
-  return NextResponse.json({}, { headers: corsHeaders() });
+  return NextResponse.json({}, { headers: cors });
 }
 
 export async function GET(request: NextRequest) {
+  const origin = request.headers.get('origin');
+  const headers = adminCorsHeaders(origin, 'GET, OPTIONS');
   const admin = await requirePlatformAdmin(request, { requiredRole: ['admin', 'support'] });
   if (!admin) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 403, headers: corsHeaders() });
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 403, headers });
   }
 
   const supabase = createServiceClient();
@@ -83,5 +75,5 @@ export async function GET(request: NextRequest) {
     payments,
     businesses: businesses || [],
     profiles: profiles || [],
-  }, { headers: corsHeaders() });
+  }, { headers });
 }

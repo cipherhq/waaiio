@@ -43,3 +43,32 @@ export async function adminApiFetch(path: string, body: Record<string, unknown>)
     body: JSON.stringify(body),
   });
 }
+
+/**
+ * Authenticated GET to main-app Admin API. Attaches Bearer access_token.
+ */
+export async function adminApiGet(path: string): Promise<Response> {
+  const base = getAdminApiBase();
+  const { data: session } = await supabase.auth.getSession();
+  const token = session?.session?.access_token;
+  if (!token) throw new Error('Not authenticated — please sign in again.');
+  return fetch(`${base}${path}`, {
+    method: 'GET',
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+/**
+ * Authenticated PUT to main-app Admin API. Attaches Bearer access_token.
+ */
+export async function adminApiPut(path: string, body: Record<string, unknown>): Promise<Response> {
+  const base = getAdminApiBase();
+  const { data: session } = await supabase.auth.getSession();
+  const token = session?.session?.access_token;
+  if (!token) throw new Error('Not authenticated — please sign in again.');
+  return fetch(`${base}${path}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify(body),
+  });
+}

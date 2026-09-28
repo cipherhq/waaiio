@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
-import { adminDb } from '@/lib/supabase';
 import { useAdminSession } from '@/components/AdminLayout';
 import { logAudit } from '@/lib/auditLog';
-import { getAdminApiBase } from '@/lib/adminApi';
+import { adminApiGet, adminApiPut, getAdminApiBase } from '@/lib/adminApi';
 import {
   EMPTY_SITE_ANNOUNCEMENT,
   SITE_ANNOUNCEMENT_EXPIRY_POLICY,
@@ -140,16 +139,22 @@ export default function SiteAnnouncementPage() {
 
   useEffect(() => {
     (async () => {
-      const { data } = await adminDb
-        .from('platform_settings')
-        .select('value')
-        .eq('key', 'site_announcement')
-        .single();
-      if (data?.value) {
-        setConfig({
-          ...EMPTY_SITE_ANNOUNCEMENT,
-          ...(data.value as Partial<SiteAnnouncementConfig>),
-        });
+      try {
+        const res = await adminApiGet('/api/admin/site-announcement');
+        if (res.ok) {
+          const json = await res.json();
+          if (json.config) {
+            setConfig({
+              ...EMPTY_SITE_ANNOUNCEMENT,
+              ...(json.config as Partial<SiteAnnouncementConfig>),
+            });
+          }
+        } else {
+          const json = await res.json().catch(() => ({ error: 'Failed to load announcement' }));
+          setError(json.error || 'Failed to load announcement');
+        }
+      } catch {
+        setError('Failed to connect to the server');
       }
       setLoading(false);
     })();
@@ -160,15 +165,15 @@ export default function SiteAnnouncementPage() {
     return errors[0] || null;
   }
 
-  async function persist(next: SiteAnnouncementConfig) {
-    return adminDb
-      .from('platform_settings')
-      .update({
-        value: next,
-        updated_by: session?.userId ?? null,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('key', 'site_announcement');
+  async function persistViaApi(next: SiteAnnouncementConfig): Promise<{ ok: boolean; error?: string }> {
+    try {
+      const res = await adminApiPut('/api/admin/site-announcement', next as unknown as Record<string, unknown>);
+      if (res.ok) return { ok: true };
+      const json = await res.json().catch(() => ({ error: 'Server error' }));
+      return { ok: false, error: json.error || `Server error (${res.status})` };
+    } catch {
+      return { ok: false, error: 'Failed to connect to the server' };
+    }
   }
 
   async function handleSave() {
@@ -182,10 +187,10 @@ export default function SiteAnnouncementPage() {
     }
 
     setSaving(true);
-    const { error: dbError } = await persist(config);
+    const result = await persistViaApi(config);
 
-    if (dbError) {
-      setError(dbError.message);
+    if (!result.ok) {
+      setError(result.error || 'Failed to save');
     } else {
       setSaved(true);
       await logAudit('site_announcement_updated', {
@@ -209,11 +214,11 @@ export default function SiteAnnouncementPage() {
     }
 
     setToggling(true);
-    const { error: dbError } = await persist(next);
+    const result = await persistViaApi(next);
 
-    if (dbError) {
+    if (!result.ok) {
       // Do not leave the UI claiming "Live" when persistence failed.
-      setError(dbError.message);
+      setError(result.error || 'Failed to update');
       setToggling(false);
       return;
     }

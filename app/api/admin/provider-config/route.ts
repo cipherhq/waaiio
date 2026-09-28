@@ -25,24 +25,10 @@ import {
   verifyStripeReadiness,
 } from '@/lib/payments/provider-preflight';
 
-// ═══ CORS — strict Admin-origin only ═══
-const ALLOWED_ADMIN_ORIGINS = [
-  process.env.ADMIN_ORIGIN || 'https://admin.waaiio.com',
-  'http://localhost:8083', // local admin dev
-];
-
-function corsHeaders(origin: string | null): Record<string, string> {
-  const allowed = origin && ALLOWED_ADMIN_ORIGINS.includes(origin) ? origin : '';
-  return {
-    'Access-Control-Allow-Origin': allowed,
-    'Access-Control-Allow-Methods': 'POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-    'Access-Control-Max-Age': '86400',
-  };
-}
+import { adminCorsHeaders } from '@/lib/admin-cors';
 
 function withCors(response: NextResponse, origin: string | null): NextResponse {
-  const headers = corsHeaders(origin);
+  const headers = adminCorsHeaders(origin);
   for (const [key, value] of Object.entries(headers)) {
     response.headers.set(key, value);
   }
