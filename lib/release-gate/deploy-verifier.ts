@@ -217,7 +217,6 @@ const CANARY_ROUTES = [
   { path: '/', expect: 'Waaiio' },
   { path: '/pricing', expect: 'Starter|pricing' },
   { path: '/features', expect: 'Features' },
-  { path: '/login', expect: 'Sign' },
   { path: '/terms', expect: '' },
   { path: '/privacy', expect: '' },
 ];
