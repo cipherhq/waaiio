@@ -64,6 +64,12 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   if (!prefilled_message || typeof prefilled_message !== 'string' || !(prefilled_message as string).trim()) {
     return NextResponse.json({ error: 'prefilled_message is required' }, { status: 400, headers: cors });
   }
+  if ((prefilled_message as string).trim().length > 1000) {
+    return NextResponse.json({ error: 'prefilled_message must be 1000 characters or fewer' }, { status: 400, headers: cors });
+  }
+  if (source_label && typeof source_label === 'string' && (source_label as string).length > 200) {
+    return NextResponse.json({ error: 'source_label must be 200 characters or fewer' }, { status: 400, headers: cors });
+  }
 
   const supabase = createServiceClient();
 
@@ -137,10 +143,8 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     return NextResponse.json({ error: 'Failed to generate unique token after retries' }, { status: 500, headers: cors });
   }
 
-  // Build the tracked WhatsApp message and wa.me URL for the response
+  // Canonical publishable link is the tracked redirect only — no direct wa.me exposed
   const trackedMessage = buildTrackedMessage((prefilled_message as string).trim(), token);
-  const waPhone = channel.phone_number.replace(/\D/g, '');
-  const waUrl = `https://wa.me/${waPhone}?text=${encodeURIComponent(trackedMessage)}`;
 
   await supabase.from('admin_audit_logs').insert({
     actor_id: admin.userId,
@@ -152,9 +156,8 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
   return NextResponse.json({
     data: insertedAsset,
-    tracked_message: trackedMessage,
-    wa_url: waUrl,
-    redirect_url: `/go/${token}`,
+    tracked_link: `/go/${token}`,
+    tracked_message_preview: trackedMessage,
   }, { status: 201, headers: cors });
 }
 

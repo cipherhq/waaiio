@@ -177,12 +177,13 @@ CREATE POLICY "admin_all_platform_campaign_clicks"
 -- ACL — least-privilege grants
 -- ═══════════════════════════════════════════════════════════
 
--- Revoke all from PUBLIC, anon, authenticated (defense-in-depth)
-REVOKE ALL ON public.platform_campaigns FROM PUBLIC, anon, authenticated;
-REVOKE ALL ON public.platform_campaign_assets FROM PUBLIC, anon, authenticated;
-REVOKE ALL ON public.platform_campaign_participants FROM PUBLIC, anon, authenticated;
-REVOKE ALL ON public.platform_campaign_events FROM PUBLIC, anon, authenticated;
-REVOKE ALL ON public.platform_campaign_clicks FROM PUBLIC, anon, authenticated;
+-- Deterministic ACL: revoke everything first, then grant exact intended privileges.
+-- Includes service_role to clear any default privileges before narrowing.
+REVOKE ALL ON public.platform_campaigns FROM PUBLIC, anon, authenticated, service_role;
+REVOKE ALL ON public.platform_campaign_assets FROM PUBLIC, anon, authenticated, service_role;
+REVOKE ALL ON public.platform_campaign_participants FROM PUBLIC, anon, authenticated, service_role;
+REVOKE ALL ON public.platform_campaign_events FROM PUBLIC, anon, authenticated, service_role;
+REVOKE ALL ON public.platform_campaign_clicks FROM PUBLIC, anon, authenticated, service_role;
 
 -- service_role: campaigns/assets/participants get SELECT/INSERT/UPDATE (no DELETE)
 GRANT SELECT, INSERT, UPDATE ON public.platform_campaigns TO service_role;

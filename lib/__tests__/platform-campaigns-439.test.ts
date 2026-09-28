@@ -265,9 +265,8 @@ describe('Redirect route /go/[token] — structure (#439)', () => {
     expect(redirectSrc).not.toContain("from '@/lib/supabase/server'");
   });
 
-  it('validates token shape with regex', () => {
-    expect(redirectSrc).toMatch(/A-Z0-9/);
-    expect(redirectSrc).toContain('{6}');
+  it('validates token against actual alphabet via isValidToken', () => {
+    expect(redirectSrc).toContain('isValidToken');
   });
 
   it('checks asset is_active', () => {
@@ -293,9 +292,11 @@ describe('Redirect route /go/[token] — structure (#439)', () => {
     expect(redirectSrc).toContain('wa.me');
   });
 
-  it('records click best-effort (fire-and-forget)', () => {
+  it('records click with awaited lifecycle-safe insert', () => {
     expect(redirectSrc).toContain('platform_campaign_clicks');
-    expect(redirectSrc).toContain('.then(() => {}, () => {})');
+    expect(redirectSrc).toContain('await supabase');
+    // Must not use fire-and-forget
+    expect(redirectSrc).not.toContain('.then(() => {}, () => {})');
   });
 
   it('truncates user_agent and referrer to 512 chars', () => {

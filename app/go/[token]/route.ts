@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
-import { buildTrackedMessage } from '@/lib/platform-campaigns/token';
+import { buildTrackedMessage, isValidToken } from '@/lib/platform-campaigns/token';
 import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 
 export const dynamic = 'force-dynamic';
@@ -19,8 +19,8 @@ export const dynamic = 'force-dynamic';
 export async function GET(request: NextRequest, { params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
 
-  // Validate token shape
-  if (!token || !/^[A-Z0-9]{6}$/i.test(token)) {
+  // Validate token against actual generator alphabet (rejects chars generator never emits)
+  if (!token || !isValidToken(token)) {
     return new NextResponse('Not found', { status: 404 });
   }
 
@@ -78,13 +78,16 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   const waPhone = channel.phone_number.replace(/\D/g, '');
   const waUrl = `https://wa.me/${waPhone}?text=${encodeURIComponent(trackedMessage)}`;
 
-  // 6. Record click best-effort — bounded metadata, failure does not block redirect
+  // 6. Record click — awaited for lifecycle safety, error ignored for redirect validity
   const userAgent = (request.headers.get('user-agent') || '').slice(0, 512);
   const referrer = (request.headers.get('referer') || '').slice(0, 512);
-  supabase
-    .from('platform_campaign_clicks')
-    .insert({ asset_id: asset.id, user_agent: userAgent || null, referrer: referrer || null })
-    .then(() => {}, () => {}); // fire-and-forget
+  try {
+    await supabase
+      .from('platform_campaign_clicks')
+      .insert({ asset_id: asset.id, user_agent: userAgent || null, referrer: referrer || null });
+  } catch {
+    // Click analytics failure does not block a valid redirect
+  }
 
   // 7. 302 redirect
   return NextResponse.redirect(waUrl, 302);

@@ -58,10 +58,20 @@ export function buildTrackedMessage(prefilled: string, token: string): string {
   return `${prefilled.trim()} — Ref: ${token}`;
 }
 
-/** Extract a Ref token from an inbound WhatsApp message. */
+/** Regex for the exact token alphabet (excludes 0/O/1/I that the generator never emits). */
+const TOKEN_PATTERN = new RegExp(`^[${TOKEN_ALPHABET}]{${TOKEN_LENGTH}}$`);
+
+/** Validate that a token uses only characters from the generator's alphabet. */
+export function isValidToken(token: string): boolean {
+  return TOKEN_PATTERN.test(token.toUpperCase());
+}
+
+/** Extract a Ref token from an inbound WhatsApp message. Validates against actual alphabet. */
 export function extractRefToken(text: string): string | null {
-  const match = text.match(/Ref:\s*([A-Z0-9]{6})/i);
-  return match ? match[1].toUpperCase() : null;
+  const match = text.match(/Ref:\s*([A-Za-z0-9]{6})/);
+  if (!match) return null;
+  const candidate = match[1].toUpperCase();
+  return isValidToken(candidate) ? candidate : null;
 }
 
 // PostgreSQL error code for unique constraint violation

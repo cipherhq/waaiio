@@ -55,21 +55,34 @@ export async function POST(request: NextRequest) {
   if (!name || typeof name !== 'string' || !name.trim()) {
     return NextResponse.json({ error: 'name is required' }, { status: 400, headers: cors });
   }
+  if ((name as string).trim().length > 200) {
+    return NextResponse.json({ error: 'name must be 200 characters or fewer' }, { status: 400, headers: cors });
+  }
 
   const validTypes = ['opt_in', 'waitlist', 'survey', 'feedback', 'event_interest', 'data_collection', 'notification', 'broadcast'];
   if (!campaign_type || !validTypes.includes(campaign_type as string)) {
     return NextResponse.json({ error: `campaign_type must be one of: ${validTypes.join(', ')}` }, { status: 400, headers: cors });
   }
 
+  const validConsent = ['opt_in', 'informational', 'transactional'];
+  if (!consent_type || !validConsent.includes(consent_type as string)) {
+    return NextResponse.json({ error: `consent_type is required and must be one of: ${validConsent.join(', ')}` }, { status: 400, headers: cors });
+  }
+
+  // Validate timing
+  if (starts_at && ends_at && new Date(starts_at as string) >= new Date(ends_at as string)) {
+    return NextResponse.json({ error: 'starts_at must be before ends_at' }, { status: 400, headers: cors });
+  }
+
   const supabase = createServiceClient();
   const { data, error } = await supabase
     .from('platform_campaigns')
     .insert({
-      name: (name as string).trim(),
+      name: (name as string).trim().slice(0, 200),
       campaign_type,
       market_scope: Array.isArray(market_scope) ? market_scope : [],
       message_config: message_config || {},
-      consent_type: consent_type || 'opt_in',
+      consent_type,
       starts_at: starts_at || null,
       ends_at: ends_at || null,
       created_by: admin.userId,
