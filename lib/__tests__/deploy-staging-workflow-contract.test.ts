@@ -106,13 +106,13 @@ describe('deploy-staging workflow contract', () => {
   });
 
   // ── Mutation marker gates rollback ──
-  it('sets DEPLOY_MUTATED immediately before promotion attempt', () => {
+  it('sets DEPLOY_MUTATED before vercel deploy --prod', () => {
     const steps = getSteps();
-    const promoteStep = steps.find(s => stepName(s).includes('Promote exact deployment'));
-    expect(promoteStep).toBeDefined();
-    const promoteRun = promoteStep!.run as string;
-    const markerIdx = promoteRun.indexOf('DEPLOY_MUTATED=true');
-    const commandIdx = promoteRun.indexOf('vercel promote');
+    const deployStep = steps.find(s => stepName(s).includes('Deploy exact SHA'));
+    expect(deployStep).toBeDefined();
+    const deployRun = deployStep!.run as string;
+    const markerIdx = deployRun.indexOf('DEPLOY_MUTATED=true');
+    const commandIdx = deployRun.indexOf('vercel deploy --prod');
     expect(markerIdx).toBeGreaterThan(-1);
     expect(commandIdx).toBeGreaterThan(markerIdx);
   });
@@ -234,29 +234,22 @@ describe('deploy-staging workflow contract', () => {
     expect(afterRollbackCmd).not.toContain('state=READY&limit=1');
   });
 
-  // ── Exact deployment promotion precedes readiness ──
-  it('explicitly promotes the exact deployment URL to staging production traffic', () => {
+  // ── No separate promote step (vercel deploy --prod is the sole promotion authority) ──
+  it('does not have a separate vercel promote step', () => {
     const steps = getSteps();
     const promoteStep = steps.find(s => stepName(s).includes('Promote exact deployment'));
-    expect(promoteStep).toBeDefined();
-
-    const promoteRun = promoteStep!.run as string;
-    expect(promoteRun).toContain('vercel promote');
-    expect(promoteRun).toContain('${{ env.DEPLOY_URL }}');
-    expect(promoteRun).toContain('--yes');
-    expect(promoteRun).toContain('--timeout 5m');
-    expect(promoteRun).toContain('STAGING_ORG_ID');
+    expect(promoteStep).toBeUndefined();
+    // vercel promote should not appear anywhere in the workflow
+    expect(raw).not.toContain('vercel promote');
   });
 
-  it('promotes only after exact deployment identity is captured and before readiness begins', () => {
+  it('readiness follows deploy step', () => {
     const steps = getSteps();
     const deployIdx = steps.findIndex(s => stepName(s).includes('Deploy exact SHA'));
-    const promoteIdx = steps.findIndex(s => stepName(s).includes('Promote exact deployment'));
     const readinessIdx = steps.findIndex(s => stepName(s).toLowerCase().includes('wait'));
 
     expect(deployIdx).toBeGreaterThan(-1);
-    expect(promoteIdx).toBeGreaterThan(deployIdx);
-    expect(readinessIdx).toBeGreaterThan(promoteIdx);
+    expect(readinessIdx).toBeGreaterThan(deployIdx);
   });
 
   // ── Readiness requires both control-plane target + runtime identity ──

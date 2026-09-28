@@ -161,6 +161,10 @@ jobs:
           SHA="${{ inputs.sha }}"
           echo "Deploying ${SHA:0:8} to staging (production target)..."
 
+          # The deploy command below mutates the staging production target directly.
+          # Set DEPLOY_MUTATED before it so rollback is armed on any failure.
+          echo "DEPLOY_MUTATED=true" >> "$GITHUB_ENV"
+
           set +e
           DEPLOY_OUTPUT=$(vercel deploy --prod --yes --token "$VERCEL_TOKEN" 2>&1)
           DEPLOY_EXIT=$?
@@ -209,34 +213,7 @@ jobs:
           echo "NEW_DEPLOYMENT_ID=$NEW_DEPLOYMENT_ID" >> "$GITHUB_ENV"
           echo "✅ Deployment created: $NEW_DEPLOYMENT_ID ($DEPLOY_URL)"
 
-      # ── 7. Explicitly promote exact deployment to staging production traffic ──
-      - name: Promote exact deployment to staging
-        env:
-          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-          VERCEL_ORG_ID: ${{ env.STAGING_ORG_ID }}
-          VERCEL_PROJECT_ID: ${{ env.STAGING_PROJECT_ID }}
-        run: |
-          echo "Promoting exact deployment ${{ env.NEW_DEPLOYMENT_ID }} to staging production traffic..."
-
-          # From this point onward, a failure may have changed live staging traffic.
-          # Set before the promotion attempt so every partial/failed promotion is rollback-protected.
-          echo "DEPLOY_MUTATED=true" >> "$GITHUB_ENV"
-
-          set +e
-          PROMOTE_OUTPUT=$(vercel promote "${{ env.DEPLOY_URL }}" --yes --timeout 5m \
-            --token "$VERCEL_TOKEN" --scope "${{ env.STAGING_ORG_ID }}" 2>&1)
-          PROMOTE_EXIT=$?
-          set -e
-
-          if [ $PROMOTE_EXIT -ne 0 ]; then
-            echo "❌ Promotion failed with exit code $PROMOTE_EXIT."
-            echo "$PROMOTE_OUTPUT"
-            exit 1
-          fi
-
-          echo "✅ Promotion command completed for ${{ env.NEW_DEPLOYMENT_ID }}"
-
-      # ── 8. Wait for deployment readiness ──
+      # ── 7. Wait for deployment readiness ──
       - name: Wait for staging to serve new deployment
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
@@ -320,7 +297,7 @@ jobs:
           echo "   Exact control-plane target + exact runtime identity are both required."
           exit 1
 
-      # ── 9. Post-deploy verification ──
+      # ── 8. Post-deploy verification ──
       - name: Run deploy verifier
         run: |
           npx --no-install tsx lib/release-gate/deploy-verifier-cli.ts \
@@ -329,7 +306,7 @@ jobs:
             --expected-project "${{ env.STAGING_PROJECT_ID }}" \
             --expected-deployment-id "${{ env.NEW_DEPLOYMENT_ID }}"
 
-      # ── 10. Rollback on post-deploy failure (only if promotion may have mutated staging) ──
+      # ── 9. Rollback on post-deploy failure (only if deploy may have mutated staging) ──
       - name: Rollback on verification failure
         if: failure() && env.DEPLOY_MUTATED == 'true'
         env:
@@ -375,7 +352,7 @@ jobs:
             exit 1
           fi
 
-      # ── 11. Summary ──
+      # ── 10. Summary ──
       - name: Deploy summary
         if: success()
         run: |
