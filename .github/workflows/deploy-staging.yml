@@ -213,7 +213,32 @@ jobs:
           echo "NEW_DEPLOYMENT_ID=$NEW_DEPLOYMENT_ID" >> "$GITHUB_ENV"
           echo "✅ Deployment created: $NEW_DEPLOYMENT_ID ($DEPLOY_URL)"
 
-      # ── 7. Wait for deployment readiness ──
+      # ── 7. Explicitly promote exact deployment to staging production traffic ──
+      - name: Promote exact deployment to staging
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ env.STAGING_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ env.STAGING_PROJECT_ID }}
+        run: |
+          echo "Promoting exact deployment ${{ env.NEW_DEPLOYMENT_ID }} to staging production traffic..."
+
+          set +e
+          PROMOTE_OUTPUT=$(vercel promote "${{ env.DEPLOY_URL }}" --yes --timeout 5m \
+            --token "$VERCEL_TOKEN" --scope "${{ env.STAGING_ORG_ID }}" 2>&1)
+          PROMOTE_EXIT=$?
+          set -e
+
+          if [ $PROMOTE_EXIT -eq 0 ]; then
+            echo "✅ Promotion succeeded for ${{ env.NEW_DEPLOYMENT_ID }}"
+          elif echo "$PROMOTE_OUTPUT" | grep -q "already the current production deployment"; then
+            echo "✅ Deployment ${{ env.NEW_DEPLOYMENT_ID }} is already the active production target (idempotent 409)"
+          else
+            echo "❌ Promotion failed with exit code $PROMOTE_EXIT."
+            echo "$PROMOTE_OUTPUT"
+            exit 1
+          fi
+
+      # ── 8. Wait for deployment readiness ──
       - name: Wait for staging to serve new deployment
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
@@ -297,7 +322,7 @@ jobs:
           echo "   Exact control-plane target + exact runtime identity are both required."
           exit 1
 
-      # ── 8. Post-deploy verification ──
+      # ── 9. Post-deploy verification ──
       - name: Run deploy verifier
         run: |
           npx --no-install tsx lib/release-gate/deploy-verifier-cli.ts \
@@ -306,7 +331,7 @@ jobs:
             --expected-project "${{ env.STAGING_PROJECT_ID }}" \
             --expected-deployment-id "${{ env.NEW_DEPLOYMENT_ID }}"
 
-      # ── 9. Rollback on post-deploy failure (only if deploy may have mutated staging) ──
+      # ── 10. Rollback on post-deploy failure (only if deploy may have mutated staging) ──
       - name: Rollback on verification failure
         if: failure() && env.DEPLOY_MUTATED == 'true'
         env:
@@ -314,17 +339,37 @@ jobs:
         run: |
           echo "⚠️  Verification failed — rolling back staging to: ${{ env.PREV_DEPLOYMENT_ID }}"
 
-          vercel rollback "${{ env.PREV_DEPLOYMENT_ID }}" --yes --token "$VERCEL_TOKEN" \
-            --scope "${{ env.STAGING_ORG_ID }}" 2>&1 || {
-            echo "🚨 EMERGENCY: Rollback command failed."
-            echo "   Previous deployment: ${{ env.PREV_DEPLOYMENT_ID }}"
-            echo "   Staging project: ${{ env.STAGING_PROJECT_ID }}"
-            exit 1
-          }
+          # Check if previous deployment is already the active production target.
+          # This avoids a redundant rollback command that Vercel may reject (422).
+          PRE_ROLLBACK_STATE=$(curl -sS -f \
+            -H "Authorization: Bearer $VERCEL_TOKEN" \
+            "https://api.vercel.com/v9/projects/${{ env.STAGING_PROJECT_ID }}?teamId=${{ env.STAGING_ORG_ID }}" \
+            2>/dev/null || echo '')
+
+          PRE_ACTIVE_ID=$(echo "$PRE_ROLLBACK_STATE" | node -e "
+            try {
+              const p = JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
+              const target = p.targets && p.targets.production;
+              console.log(target && target.id ? target.id : '');
+            } catch { console.log(''); }
+          " 2>/dev/null || echo '')
+
+          if [ "$PRE_ACTIVE_ID" = "${{ env.PREV_DEPLOYMENT_ID }}" ]; then
+            echo "✅ Previous deployment ${{ env.PREV_DEPLOYMENT_ID }} is already the active production target — rollback is a no-op."
+          else
+            echo "  Active target is $PRE_ACTIVE_ID, rolling back to ${{ env.PREV_DEPLOYMENT_ID }}..."
+            vercel rollback "${{ env.PREV_DEPLOYMENT_ID }}" --yes --token "$VERCEL_TOKEN" \
+              --scope "${{ env.STAGING_ORG_ID }}" 2>&1 || {
+              echo "🚨 EMERGENCY: Rollback command failed."
+              echo "   Previous deployment: ${{ env.PREV_DEPLOYMENT_ID }}"
+              echo "   Staging project: ${{ env.STAGING_PROJECT_ID }}"
+              exit 1
+            }
+            sleep 10
+          fi
 
           # Verify rollback by checking the active production alias target
           # Query the project to get its current active production deployment
-          sleep 10
           PROJECT_STATE=$(curl -sS -f \
             -H "Authorization: Bearer $VERCEL_TOKEN" \
             "https://api.vercel.com/v9/projects/${{ env.STAGING_PROJECT_ID }}?teamId=${{ env.STAGING_ORG_ID }}" \
@@ -352,7 +397,7 @@ jobs:
             exit 1
           fi
 
-      # ── 10. Summary ──
+      # ── 11. Summary ──
       - name: Deploy summary
         if: success()
         run: |

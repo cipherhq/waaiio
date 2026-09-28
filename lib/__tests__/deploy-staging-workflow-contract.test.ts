@@ -234,22 +234,66 @@ describe('deploy-staging workflow contract', () => {
     expect(afterRollbackCmd).not.toContain('state=READY&limit=1');
   });
 
-  // ── No separate promote step (vercel deploy --prod is the sole promotion authority) ──
-  it('does not have a separate vercel promote step', () => {
-    const steps = getSteps();
-    const promoteStep = steps.find(s => stepName(s).includes('Promote exact deployment'));
-    expect(promoteStep).toBeUndefined();
-    // vercel promote should not appear anywhere in the workflow
-    expect(raw).not.toContain('vercel promote');
-  });
-
-  it('readiness follows deploy step', () => {
+  // ── Explicit idempotent promote step after deploy ──
+  it('has an explicit promote step after deploy and before readiness', () => {
     const steps = getSteps();
     const deployIdx = steps.findIndex(s => stepName(s).includes('Deploy exact SHA'));
+    const promoteIdx = steps.findIndex(s => stepName(s).includes('Promote exact deployment'));
     const readinessIdx = steps.findIndex(s => stepName(s).toLowerCase().includes('wait'));
 
     expect(deployIdx).toBeGreaterThan(-1);
-    expect(readinessIdx).toBeGreaterThan(deployIdx);
+    expect(promoteIdx).toBeGreaterThan(deployIdx);
+    expect(readinessIdx).toBeGreaterThan(promoteIdx);
+  });
+
+  it('promote step accepts normal success or idempotent 409 only', () => {
+    const steps = getSteps();
+    const promoteStep = steps.find(s => stepName(s).includes('Promote exact deployment'));
+    expect(promoteStep).toBeDefined();
+    const promoteRun = promoteStep!.run as string;
+
+    // Must invoke vercel promote
+    expect(promoteRun).toContain('vercel promote');
+    expect(promoteRun).toContain('${{ env.DEPLOY_URL }}');
+
+    // Must accept 409 "already current production deployment" as success
+    expect(promoteRun).toContain('already the current production deployment');
+
+    // Must fail on other errors
+    expect(promoteRun).toContain('exit 1');
+  });
+
+  it('promote step does not accept arbitrary non-zero exits as success', () => {
+    const steps = getSteps();
+    const promoteStep = steps.find(s => stepName(s).includes('Promote exact deployment'));
+    const promoteRun = promoteStep!.run as string;
+
+    // The 409 acceptance must be conditional on the specific message
+    // Not a blanket "ignore all errors"
+    expect(promoteRun).toContain('PROMOTE_EXIT');
+    expect(promoteRun).toContain('grep');
+    expect(promoteRun).toContain('already the current production deployment');
+  });
+
+  // ── Rollback is idempotent — skips command when previous deployment is already active ──
+  it('rollback checks if previous deployment is already active before invoking rollback command', () => {
+    const steps = getSteps();
+    const rollbackStep = steps.find(s => stepName(s).includes('Rollback'));
+    const rollbackRun = rollbackStep?.run as string;
+
+    // Must query active target before rollback command
+    const preCheckIdx = rollbackRun.indexOf('PRE_ACTIVE_ID');
+    const rollbackCmdIdx = rollbackRun.indexOf('vercel rollback');
+    expect(preCheckIdx).toBeGreaterThan(-1);
+    expect(rollbackCmdIdx).toBeGreaterThan(preCheckIdx);
+
+    // Must compare pre-active ID with PREV_DEPLOYMENT_ID
+    expect(rollbackRun).toContain('PRE_ACTIVE_ID');
+    expect(rollbackRun).toContain('PREV_DEPLOYMENT_ID');
+
+    // Must still verify post-rollback active target
+    const postVerifyIdx = rollbackRun.lastIndexOf('api.vercel.com/v9/projects/');
+    expect(postVerifyIdx).toBeGreaterThan(rollbackCmdIdx);
   });
 
   // ── Readiness requires both control-plane target + runtime identity ──
