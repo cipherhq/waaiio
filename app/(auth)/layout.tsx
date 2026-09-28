@@ -12,7 +12,7 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
       <header className="border-b border-gray-100/50 bg-white/60 backdrop-blur-sm">
         <div className="mx-auto flex max-w-md items-center justify-between px-4 py-4">
           <Link href="/" className="transition-opacity hover:opacity-80">
-            <Image src="/logo.png" alt="Waaiio" width={120} height={32} className="h-8 w-auto" priority />
+            <Image src="/logo.png" alt="Waaiio" width={120} height={35} className="h-8 w-auto" priority />
           </Link>
           <Link href="/get-started" className="text-xs font-medium text-brand hover:text-brand-600 transition">
             Create account &rarr;

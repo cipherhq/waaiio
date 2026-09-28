@@ -19,7 +19,7 @@ export const metadata: Metadata = {
     url: baseUrl,
     siteName: 'Waaiio',
     type: 'website',
-    images: [{ url: `${baseUrl}/logo.png`, width: 512, height: 512, alt: 'Waaiio' }],
+    images: [{ url: `${baseUrl}/logo.png`, width: 930, height: 271, alt: 'Waaiio' }],
   },
   twitter: {
     card: 'summary_large_image',
@@ -37,7 +37,7 @@ const JSON_LD_ORG = {
   '@type': 'Organization',
   name: 'Waaiio',
   url: baseUrl,
-  logo: { '@type': 'ImageObject', url: `${baseUrl}/logo.png`, width: 512, height: 512 },
+  logo: { '@type': 'ImageObject', url: `${baseUrl}/logo.png`, width: 930, height: 271 },
   description: 'AI-Powered WhatsApp Automation for Everyone',
   foundingDate: '2026',
   award: 'Meta Verified Tech Provider',

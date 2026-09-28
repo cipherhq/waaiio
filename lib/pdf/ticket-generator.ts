@@ -119,7 +119,7 @@ export async function generateTicketsPdf(opts: TicketPdfOptions): Promise<Buffer
     // Waaiio logo (small, top-left — shown on all tickets, subject to white-label)
     if (logoBuffer && !isWhiteLabel(opts.subscriptionTier)) {
       try {
-        doc.image(logoBuffer, margin, y, { width: 72, height: 17 });
+        doc.image(logoBuffer, margin, y, { width: 72, height: 21 });
         y += 24;
       } catch { /* skip */ }
     }
