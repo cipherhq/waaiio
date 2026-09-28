@@ -8,13 +8,6 @@ export async function POST(request: NextRequest) {
     return new NextResponse(null, { status: 404 });
   }
 
-  const limit = await rateLimitResponseAsync(
-    getRateLimitKey(request, 'staging-email-signup'),
-    20,
-    60 * 60 * 1000,
-  );
-  if (limit) return limit;
-
   let body: { email?: unknown; password?: unknown };
   try {
     body = await request.json();
@@ -31,6 +24,13 @@ export async function POST(request: NextRequest) {
   if (password.length < 6) {
     return NextResponse.json({ message: 'Password must be at least 6 characters.' }, { status: 400 });
   }
+
+  const limit = await rateLimitResponseAsync(
+    getRateLimitKey(request, 'staging-email-signup'),
+    20,
+    60 * 60 * 1000,
+  );
+  if (limit) return limit;
 
   const service = createServiceClient();
   const { error } = await service.auth.admin.createUser({
