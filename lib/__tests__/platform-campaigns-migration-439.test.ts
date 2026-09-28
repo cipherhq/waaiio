@@ -42,27 +42,30 @@ describeDb('Migration 409 — PostgreSQL constraint tests (#439)', () => {
   let participantAId: string;
 
   beforeAll(() => {
-    // Create a deterministic test profile for FK references
+    // Create auth.users row first (profiles.id references auth.users.id)
+    const authUserId = sql(`
+      INSERT INTO auth.users (id, email)
+      VALUES (gen_random_uuid(), 'test-m409-${Date.now()}@waaiio-ci.local')
+      RETURNING id
+    `);
+    if (!authUserId) throw new Error('Failed to create auth user');
+
+    // Create profile using the auth user's ID
     profileId = sql(`
-      INSERT INTO public.profiles (id, email, full_name)
-      VALUES (gen_random_uuid(), 'test-m409@waaiio-ci.local', 'M409 CI Test')
-      ON CONFLICT (email) DO UPDATE SET full_name = 'M409 CI Test'
+      INSERT INTO public.profiles (id, email, first_name, last_name)
+      VALUES ('${authUserId}', 'test-m409@waaiio-ci.local', 'M409', 'CITest')
       RETURNING id
     `);
     if (!profileId) throw new Error('Failed to create test profile');
 
     // Create a deterministic shared channel for asset FK references
+    // phone_number is UNIQUE so use a unique value with timestamp
     channelId = sql(`
-      INSERT INTO public.whatsapp_channels (id, phone_number, phone_number_id, country_code, channel_type, is_active, display_name)
-      VALUES (gen_random_uuid(), '+10000000409', 'test-m409-pnid', 'US', 'shared', true, 'M409 CI Channel')
-      ON CONFLICT DO NOTHING
+      INSERT INTO public.whatsapp_channels (id, phone_number, country_code, channel_type, is_active, display_name)
+      VALUES (gen_random_uuid(), '+100000${Date.now() % 100000}', 'US', 'shared', true, 'M409 CI Channel')
       RETURNING id
     `);
-    // If conflict (phone_number_id already exists), look it up
-    if (!channelId) {
-      channelId = sql(`SELECT id FROM public.whatsapp_channels WHERE phone_number_id = 'test-m409-pnid'`);
-    }
-    if (!channelId) throw new Error('Failed to create or find test channel');
+    if (!channelId) throw new Error('Failed to create test channel');
 
     // Create test campaigns (consent_type is now required, no default)
     campaignAId = sql(`
@@ -98,17 +101,12 @@ describeDb('Migration 409 — PostgreSQL constraint tests (#439)', () => {
 
   afterAll(() => {
     try {
-      // Cleanup in dependency order
-      if (campaignAId) sql(`DELETE FROM public.platform_campaign_events WHERE campaign_id = '${campaignAId}'`);
-      if (campaignBId) sql(`DELETE FROM public.platform_campaign_events WHERE campaign_id = '${campaignBId}'`);
-      if (campaignAId) sql(`DELETE FROM public.platform_campaign_clicks WHERE asset_id IN (SELECT id FROM public.platform_campaign_assets WHERE campaign_id = '${campaignAId}')`);
-      if (campaignAId) sql(`DELETE FROM public.platform_campaign_participants WHERE campaign_id = '${campaignAId}'`);
-      if (campaignBId) sql(`DELETE FROM public.platform_campaign_participants WHERE campaign_id = '${campaignBId}'`);
-      if (campaignAId) sql(`DELETE FROM public.platform_campaign_assets WHERE campaign_id = '${campaignAId}'`);
+      // Cleanup in dependency order (CASCADE handles most, but be explicit)
       if (campaignAId) sql(`DELETE FROM public.platform_campaigns WHERE id = '${campaignAId}'`);
       if (campaignBId) sql(`DELETE FROM public.platform_campaigns WHERE id = '${campaignBId}'`);
       if (channelId) sql(`DELETE FROM public.whatsapp_channels WHERE id = '${channelId}'`);
-      if (profileId) sql(`DELETE FROM public.profiles WHERE id = '${profileId}'`);
+      // profiles.id references auth.users.id with ON DELETE CASCADE
+      if (profileId) sql(`DELETE FROM auth.users WHERE id = '${profileId}'`);
     } catch { /* cleanup best-effort */ }
   });
 
