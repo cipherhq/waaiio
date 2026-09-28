@@ -152,6 +152,7 @@ export async function resolveChannelCredentials(
     .from('whatsapp_channels')
     .select('phone_number_id, meta_access_token, waba_id, phone_number')
     .eq('phone_number', receivingNumber)
+    .eq('channel_type', 'shared')
     .eq('is_active', true)
     .limit(1)
     .maybeSingle();

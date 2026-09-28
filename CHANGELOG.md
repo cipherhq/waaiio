@@ -3,6 +3,22 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-09-28 — Launch integrity: shared-sender authority + truthful opt-in (#439 Slice 0A/0B)
+
+### What changed
+- **Slice 0A:** `resolveChannelCredentials()` in `lib/launch/delivery.ts` now requires `channel_type = 'shared'` when resolving launch delivery sender credentials. Dedicated or inactive channels cannot be used as platform senders.
+- **Slice 0B:** `handleLaunchOptIn()` in `lib/bot/launch-optin.ts` no longer claims "You're on the list!" when the durable subscription write fails. On failure, sends truthful retry-safe message without STOP instruction (user is not subscribed). Success path unchanged.
+- 9 executable tests added.
+
+### Files changed
+- `lib/launch/delivery.ts` — added `channel_type = 'shared'` filter
+- `lib/bot/launch-optin.ts` — truthful error path
+- `lib/__tests__/launch-integrity-439.test.ts` (new)
+- `CHANGELOG.md`
+
+### What did NOT change
+- Launch subscribers schema, delivery RPCs, admin page, confirmation tokens, keyword campaigns, business broadcasts, payments, WhatsApp routing, Meta config.
+
 ## 2026-09-28 — Certify signup email confirmation callback and redirect safety (#437)
 
 ### What changed
