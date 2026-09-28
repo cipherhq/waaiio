@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router';
 import { supabase } from '@/lib/supabase';
+import { shouldSkipAdminOtp } from '@/lib/stagingAuth';
 
 type Step = 'credentials' | 'otp-method' | 'otp-verify';
 
@@ -55,6 +56,14 @@ export default function Login() {
       if (!appRole || !['admin', 'support', 'finance', 'operations'].includes(appRole)) {
         await supabase.auth.signOut();
         setError('This account does not have admin access.');
+        setLoading(false);
+        return;
+      }
+
+      // Dedicated staging Admin keeps password + role authorization, but
+      // goes straight to the dashboard for faster functional testing.
+      if (shouldSkipAdminOtp()) {
+        navigate(from, { replace: true });
         setLoading(false);
         return;
       }
