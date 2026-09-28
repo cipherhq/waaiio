@@ -713,15 +713,21 @@ function OnboardingWizard() {
       }
 
       // Dedicated staging creates an immediately usable test account on the
-      // server, then signs in with the same email/password. Production returns
-      // 404 here and continues through the existing confirmation flow unchanged.
-      const stagingSignupRes = await fetch('/api/auth/staging-signup', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
-      });
+      // server, then signs in with the same email/password. Production never
+      // calls this endpoint; it continues through the existing signup path.
+      if (isStagingEmailSignupClient()) {
+        const stagingSignupRes = await fetch('/api/auth/staging-signup', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, password }),
+        });
 
-      if (stagingSignupRes.ok) {
+        if (!stagingSignupRes.ok) {
+          const stagingError = await stagingSignupRes.json().catch(() => ({}));
+          setError(stagingError.message || 'Unable to create staging account.');
+          return;
+        }
+
         const { data: stagingSignInData, error: stagingSignInError } = await supabase.auth.signInWithPassword({
           email,
           password,
@@ -734,12 +740,6 @@ function OnboardingWizard() {
         setUser(stagingSignInData.user);
         getPostHogClient()?.capture('signup_completed', { method: 'email', staging_test_mode: true });
         setStep('category');
-        return;
-      }
-
-      if (stagingSignupRes.status !== 404) {
-        const stagingError = await stagingSignupRes.json().catch(() => ({}));
-        setError(stagingError.message || 'Unable to create staging account.');
         return;
       }
 
