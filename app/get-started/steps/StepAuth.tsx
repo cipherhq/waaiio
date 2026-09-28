@@ -16,6 +16,8 @@ export function StepAuth({
   setAuthLoading,
 }: StepAuthProps) {
   const [showPassword, setShowPassword] = useState(false);
+  const [resendStatus, setResendStatus] = useState<'idle' | 'sent' | 'error'>('idle');
+  const [resendError, setResendError] = useState('');
   return (
     <div>
       <h2 className="text-2xl font-bold text-gray-900">Create your account</h2>
@@ -39,14 +41,35 @@ export function StepAuth({
             disabled={authLoading}
             onClick={async () => {
               setAuthLoading(true);
-              const supabase = createClient();
-              await supabase.auth.resend({ type: 'signup', email, options: { emailRedirectTo: `${window.location.origin}/auth/callback?next=/get-started` } });
+              setResendStatus('idle');
+              setResendError('');
+              try {
+                const supabase = createClient();
+                const { error } = await supabase.auth.resend({ type: 'signup', email, options: { emailRedirectTo: `${window.location.origin}/auth/callback?next=/get-started` } });
+                if (error) {
+                  setResendStatus('error');
+                  setResendError(error.message.includes('rate limit')
+                    ? 'Too many attempts. Please wait a few minutes and try again.'
+                    : 'Failed to resend confirmation email. Please try again.');
+                } else {
+                  setResendStatus('sent');
+                }
+              } catch {
+                setResendStatus('error');
+                setResendError('Network error. Please check your connection and try again.');
+              }
               setAuthLoading(false);
             }}
             className="mt-4 rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white transition hover:bg-brand-600 disabled:opacity-50"
           >
             {authLoading ? 'Sending...' : 'Resend email'}
           </button>
+          {resendStatus === 'sent' && (
+            <p className="mt-2 text-sm font-medium text-green-600">Confirmation email resent! Check your inbox.</p>
+          )}
+          {resendStatus === 'error' && resendError && (
+            <p className="mt-2 text-sm font-medium text-red-600">{resendError}</p>
+          )}
           <button
             type="button"
             onClick={() => { setEmailSent(false); setEmail(''); setPassword(''); }}
