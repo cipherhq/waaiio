@@ -97,6 +97,27 @@ describe('#402 data-deletion page — truthfulness', () => {
   });
 });
 
+describe('#402 dashboard deletion banner — truthfulness', () => {
+  const dashboardSrc = readFileSync(
+    resolve(__dirname, '../../app/dashboard/page.tsx'),
+    'utf-8'
+  );
+
+  it('does not claim data will be permanently removed', () => {
+    expect(dashboardSrc).not.toMatch(/permanently\s+removed/i);
+    expect(dashboardSrc).not.toMatch(/All your data will be/i);
+  });
+
+  it('does not claim automatic deletion after the scheduled date', () => {
+    expect(dashboardSrc).not.toMatch(/automatically\s+(deleted|removed)/i);
+  });
+
+  it('describes current state (deactivated) and offers cancel action', () => {
+    expect(dashboardSrc).toContain('deactivated');
+    expect(dashboardSrc).toContain('Cancel Deletion');
+  });
+});
+
 describe('#402 backend alignment — soft-delete confirmation', () => {
   it('backend soft-deletes businesses (does not physically delete)', () => {
     // Both immediate and grace-period paths use soft-delete
