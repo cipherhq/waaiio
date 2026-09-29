@@ -12,6 +12,20 @@ If something breaks, check this log to find what changed and when.
 ### What could break
 - Nothing for non-WhatsApp-origin payments (fallback chain unchanged). WhatsApp-origin payments where `_inbound_channel_id` was not persisted (pre-#219 payments) will now show a manual return message instead of the ReturnToWhatsApp button — this is the correct fail-closed behavior (better than sending to a wrong country's number).
 
+## 2026-09-29 — Event creation ACL + error handling + ticket tier UX (#461)
+
+### What changed
+- **`supabase/migrations/412_events_authenticated_grants.sql`:** Grants SELECT, INSERT, UPDATE, DELETE on `events` and `event_ticket_types` to the `authenticated` role. Existing RLS policies enforce authorization. Fixes silent CRUD failures on staging where table-level privileges were missing.
+- **`app/dashboard/events/page.tsx`:** All Supabase mutations (insert, update, delete on events and event_ticket_types) now check for errors and surface them via `alert()`. Previously, failures were silently swallowed.
+- **`app/dashboard/events/page.tsx`:** Ticket types section now visible during initial event creation (add mode), not just edit mode. Uses a client-side buffer (`pendingTicketTypes`) that flushes after the event is created. Partial tier failure transitions to edit mode with the new event ID for retry.
+- **`app/dashboard/events/page.tsx`:** `duplicateEvent` is now async and copies active ticket type definitions (name, price, total_tickets, sort_order, is_active) from the source event. `tickets_sold` always starts at 0. Source-tier load failure is surfaced.
+- **`lib/__tests__/events-acl-assertions.test.ts`:** 6 tests verifying migration 412 grants correct privileges and does not over-grant (no anon, no TRUNCATE/TRIGGER/REFERENCES).
+- **`lib/__tests__/events-error-handling-tiers.test.ts`:** Tests verifying error handling, pending tier buffer, duplication with complete field copy, partial-failure recovery, and cancel-event API preservation.
+
+### What could break
+- If RLS policies on `events` or `event_ticket_types` are missing or misconfigured, the new GRANT would allow authenticated users broader access than intended. Verified: existing RLS policies enforce `business_id = owner_id` isolation.
+- `duplicateEvent` is now async; the `onClick` handlers calling it already handle async functions correctly (React event handlers support async).
+
 ## 2026-09-29 — Homepage simplification (#452)
 
 ### What changed

@@ -40,6 +40,12 @@ interface TicketType {
   is_active: boolean;
 }
 
+interface PendingTicketType {
+  name: string;
+  price: number;
+  total_tickets: number;
+}
+
 type ViewMode = 'list' | 'add' | 'edit';
 
 export default function EventsPage() {
@@ -54,6 +60,8 @@ export default function EventsPage() {
   const [newTypeName, setNewTypeName] = useState('');
   const [newTypePrice, setNewTypePrice] = useState(0);
   const [newTypeTotal, setNewTypeTotal] = useState(100);
+  // Buffered ticket types for initial event creation (before event has an ID)
+  const [pendingTicketTypes, setPendingTicketTypes] = useState<PendingTicketType[]>([]);
   const [uploading, setUploading] = useState(false);
   const [copiedEventId, setCopiedEventId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -102,13 +110,17 @@ export default function EventsPage() {
   async function addTicketType() {
     if (!newTypeName.trim() || !form.id) return;
     const supabase = createClient();
-    await supabase.from('event_ticket_types').insert({
+    const { error } = await supabase.from('event_ticket_types').insert({
       event_id: form.id,
       name: newTypeName.trim(),
       price: newTypePrice,
       total_tickets: newTypeTotal,
       sort_order: ticketTypes.length,
     });
+    if (error) {
+      alert(`Failed to add ticket type: ${error.message}`);
+      return;
+    }
     setNewTypeName('');
     setNewTypePrice(0);
     setNewTypeTotal(100);
@@ -118,8 +130,28 @@ export default function EventsPage() {
   async function removeTicketType(typeId: string) {
     if (!confirm('Remove this ticket type?')) return;
     const supabase = createClient();
-    await supabase.from('event_ticket_types').delete().eq('id', typeId);
+    const { error } = await supabase.from('event_ticket_types').delete().eq('id', typeId);
+    if (error) {
+      alert(`Failed to remove ticket type: ${error.message}`);
+      return;
+    }
     loadTicketTypes(form.id);
+  }
+
+  function addPendingTicketType() {
+    if (!newTypeName.trim()) return;
+    setPendingTicketTypes(prev => [...prev, {
+      name: newTypeName.trim(),
+      price: newTypePrice,
+      total_tickets: newTypeTotal,
+    }]);
+    setNewTypeName('');
+    setNewTypePrice(0);
+    setNewTypeTotal(100);
+  }
+
+  function removePendingTicketType(index: number) {
+    setPendingTicketTypes(prev => prev.filter((_, i) => i !== index));
   }
 
   async function handleImageUpload(file: File) {
@@ -143,6 +175,8 @@ export default function EventsPage() {
   function openAdd() {
     setForm({ id: '', name: '', description: '', date: '', time: '', venue: '', price: 0, total_tickets: 100, max_per_order: 0, status: 'published', self_checkin_enabled: false, image_url: null, refund_policy: 'refundable' });
     setOriginalDate('');
+    setTicketTypes([]);
+    setPendingTicketTypes([]);
     setView('add');
   }
 
@@ -167,7 +201,7 @@ export default function EventsPage() {
     loadTicketTypes(event.id);
   }
 
-  function duplicateEvent(event: EventItem) {
+  async function duplicateEvent(event: EventItem) {
     setForm({
       id: '', // New event
       name: event.name,
@@ -184,6 +218,19 @@ export default function EventsPage() {
       refund_policy: (event as any).refund_policy || 'refundable',
     });
     setOriginalDate('');
+    // Load and copy ticket types from source event (reset tickets_sold to 0)
+    const supabase = createClient();
+    const { data: sourceTiers } = await supabase
+      .from('event_ticket_types')
+      .select('name, price, total_tickets, is_active, sort_order')
+      .eq('event_id', event.id)
+      .eq('is_active', true)
+      .order('sort_order');
+    setPendingTicketTypes((sourceTiers || []).map(t => ({
+      name: t.name,
+      price: t.price,
+      total_tickets: t.total_tickets,
+    })));
     setView('add');
   }
 
@@ -237,9 +284,40 @@ export default function EventsPage() {
     };
 
     if (view === 'add') {
-      await supabase.from('events').insert(payload);
+      const { data: newEvent, error: insertError } = await supabase.from('events').insert(payload).select('id').single();
+      if (insertError) {
+        alert(`Failed to create event: ${insertError.message}`);
+        setSaving(false);
+        return;
+      }
+
+      // Flush buffered ticket types for newly created event
+      if (pendingTicketTypes.length > 0 && newEvent?.id) {
+        const tierPayloads = pendingTicketTypes.map((t, i) => ({
+          event_id: newEvent.id,
+          name: t.name,
+          price: t.price,
+          total_tickets: t.total_tickets,
+          sort_order: i,
+        }));
+        const { error: tierError } = await supabase.from('event_ticket_types').insert(tierPayloads);
+        if (tierError) {
+          alert(`Event created, but ticket tier setup failed: ${tierError.message}. Open the event to add tiers manually.`);
+          setPendingTicketTypes([]);
+          setSaving(false);
+          setView('list');
+          loadEvents();
+          return;
+        }
+        setPendingTicketTypes([]);
+      }
     } else {
-      await supabase.from('events').update(payload).eq('id', form.id);
+      const { error: updateError } = await supabase.from('events').update(payload).eq('id', form.id);
+      if (updateError) {
+        alert(`Failed to update event: ${updateError.message}`);
+        setSaving(false);
+        return;
+      }
     }
 
     setSaving(false);
@@ -262,7 +340,11 @@ export default function EventsPage() {
     }
 
     if (!confirm('Delete this event? This cannot be undone.')) return;
-    await supabase.from('events').delete().eq('id', id);
+    const { error: deleteError } = await supabase.from('events').delete().eq('id', id);
+    if (deleteError) {
+      alert(`Failed to delete event: ${deleteError.message}`);
+      return;
+    }
     if (view !== 'list') setView('list');
     loadEvents();
   }
@@ -436,68 +518,83 @@ export default function EventsPage() {
               </div>
             </div>
 
-            {/* Ticket Types (edit only) */}
-            {view === 'edit' && (
-              <div>
-                <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">Ticket Types</label>
-                <p className="mb-3 text-xs text-gray-400 dark:text-gray-500">Add different ticket tiers (e.g. Regular, VIP). If none are added, the event price above is used.</p>
+            {/* Ticket Types (add + edit) */}
+            <div>
+              <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">Ticket Types</label>
+              <p className="mb-3 text-xs text-gray-400 dark:text-gray-500">Add different ticket tiers (e.g. Regular, VIP). If none are added, the event price above is used.</p>
 
-                {ticketTypes.length > 0 && (
-                  <div className="mb-3 space-y-2">
-                    {ticketTypes.map(tt => (
-                      <div key={tt.id} className="flex items-center justify-between rounded-lg border border-gray-200 bg-white px-3 py-2">
-                        <div>
-                          <span className="text-sm font-medium text-gray-900">{tt.name}</span>
-                          <span className="ml-2 text-sm text-gray-500 dark:text-gray-400">{formatCurrency(tt.price, country)}</span>
-                          <span className="ml-2 text-xs text-gray-400 dark:text-gray-500">{tt.tickets_sold}/{tt.total_tickets} sold</span>
-                        </div>
-                        <button onClick={() => removeTicketType(tt.id)} className="text-xs text-red-500 hover:text-red-700">Remove</button>
+              {/* Edit mode: saved ticket types from DB */}
+              {view === 'edit' && ticketTypes.length > 0 && (
+                <div className="mb-3 space-y-2">
+                  {ticketTypes.map(tt => (
+                    <div key={tt.id} className="flex items-center justify-between rounded-lg border border-gray-200 bg-white px-3 py-2">
+                      <div>
+                        <span className="text-sm font-medium text-gray-900">{tt.name}</span>
+                        <span className="ml-2 text-sm text-gray-500 dark:text-gray-400">{formatCurrency(tt.price, country)}</span>
+                        <span className="ml-2 text-xs text-gray-400 dark:text-gray-500">{tt.tickets_sold}/{tt.total_tickets} sold</span>
                       </div>
-                    ))}
-                  </div>
-                )}
-
-                <div className="flex flex-wrap items-end gap-2">
-                  <div className="flex-1 min-w-[120px]">
-                    <input
-                      type="text"
-                      value={newTypeName}
-                      onChange={e => setNewTypeName(e.target.value)}
-                      placeholder="e.g. VIP"
-                      className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand dark:bg-gray-800 dark:border-gray-600 dark:text-gray-100"
-                    />
-                  </div>
-                  <div className="w-24">
-                    <input
-                      type="number"
-                      min={0}
-                      value={newTypePrice || ''}
-                      onChange={e => setNewTypePrice(Number(e.target.value))}
-                      placeholder="Price"
-                      className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand dark:bg-gray-800 dark:border-gray-600 dark:text-gray-100"
-                    />
-                  </div>
-                  <div className="w-20">
-                    <input
-                      type="number"
-                      min={1}
-                      value={newTypeTotal || ''}
-                      onChange={e => setNewTypeTotal(Number(e.target.value))}
-                      onFocus={e => e.target.select()}
-                      placeholder="Qty"
-                      className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand dark:bg-gray-800 dark:border-gray-600 dark:text-gray-100"
-                    />
-                  </div>
-                  <button
-                    onClick={addTicketType}
-                    disabled={!newTypeName.trim()}
-                    className="rounded-lg bg-brand px-3 py-2 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-50"
-                  >
-                    Add
-                  </button>
+                      <button onClick={() => removeTicketType(tt.id)} className="text-xs text-red-500 hover:text-red-700">Remove</button>
+                    </div>
+                  ))}
                 </div>
+              )}
+
+              {/* Add mode: buffered pending ticket types */}
+              {view === 'add' && pendingTicketTypes.length > 0 && (
+                <div className="mb-3 space-y-2">
+                  {pendingTicketTypes.map((pt, idx) => (
+                    <div key={idx} className="flex items-center justify-between rounded-lg border border-gray-200 bg-white px-3 py-2">
+                      <div>
+                        <span className="text-sm font-medium text-gray-900">{pt.name}</span>
+                        <span className="ml-2 text-sm text-gray-500 dark:text-gray-400">{formatCurrency(pt.price, country)}</span>
+                        <span className="ml-2 text-xs text-gray-400 dark:text-gray-500">{pt.total_tickets} tickets</span>
+                      </div>
+                      <button onClick={() => removePendingTicketType(idx)} className="text-xs text-red-500 hover:text-red-700">Remove</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div className="flex flex-wrap items-end gap-2">
+                <div className="flex-1 min-w-[120px]">
+                  <input
+                    type="text"
+                    value={newTypeName}
+                    onChange={e => setNewTypeName(e.target.value)}
+                    placeholder="e.g. VIP"
+                    className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand dark:bg-gray-800 dark:border-gray-600 dark:text-gray-100"
+                  />
+                </div>
+                <div className="w-24">
+                  <input
+                    type="number"
+                    min={0}
+                    value={newTypePrice || ''}
+                    onChange={e => setNewTypePrice(Number(e.target.value))}
+                    placeholder="Price"
+                    className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand dark:bg-gray-800 dark:border-gray-600 dark:text-gray-100"
+                  />
+                </div>
+                <div className="w-20">
+                  <input
+                    type="number"
+                    min={1}
+                    value={newTypeTotal || ''}
+                    onChange={e => setNewTypeTotal(Number(e.target.value))}
+                    onFocus={e => e.target.select()}
+                    placeholder="Qty"
+                    className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand dark:bg-gray-800 dark:border-gray-600 dark:text-gray-100"
+                  />
+                </div>
+                <button
+                  onClick={view === 'add' ? addPendingTicketType : addTicketType}
+                  disabled={!newTypeName.trim()}
+                  className="rounded-lg bg-brand px-3 py-2 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-50"
+                >
+                  Add
+                </button>
               </div>
-            )}
+            </div>
           </div>
 
           {/* Right: Settings */}
