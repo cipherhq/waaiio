@@ -35,11 +35,12 @@ describe('Events page: error handling contracts', () => {
       expect(src).toMatch(/supabase\.from\('event_ticket_types'\)\.insert\(tierPayloads\)/);
     });
 
-    it('handles partial tier failure — transitions to edit mode for recovery', () => {
+    it('handles partial tier failure — transitions to recovery mode', () => {
       expect(src).toContain('Event created, but ticket tier setup failed:');
-      expect(src).toContain('You can retry adding tiers below.');
-      // Must transition to edit mode with the new event ID
+      expect(src).toContain('click "Retry Ticket Tiers" below');
+      // Must set recovery flag and transition to edit mode with the new event ID
       expect(src).toMatch(/setForm\(prev\s*=>\s*\(\{\s*\.\.\.prev,\s*id:\s*newEvent\.id\s*\}\)\)/);
+      expect(src).toContain('setTierRecoveryPending(true)');
       expect(src).toContain("setView('edit')");
       // pendingTicketTypes must NOT be cleared — preserved for retry
       const partialSection = src.slice(
@@ -130,8 +131,8 @@ describe('Events page: ticket tier UX contracts', () => {
     expect(src).toMatch(/onClick=\{view === 'add' \? addPendingTicketType : addTicketType\}/);
   });
 
-  it('displays pending ticket types in add mode', () => {
-    expect(src).toContain("view === 'add' && pendingTicketTypes.length > 0");
+  it('displays pending ticket types in add mode and recovery mode', () => {
+    expect(src).toContain("(view === 'add' || tierRecoveryPending) && pendingTicketTypes.length > 0");
     expect(src).toContain('pendingTicketTypes.map');
   });
 });
@@ -160,14 +161,19 @@ describe('Events page: duplication copies tiers', () => {
     expect(dupSection).not.toContain('tickets_sold: t.tickets_sold');
   });
 
-  it('surfaces source-tier load failure instead of silently duplicating without tiers', () => {
+  it('fails closed on source-tier load failure — does not enter duplicate creation state', () => {
     const dupSection = src.slice(
       src.indexOf('async function duplicateEvent'),
       src.indexOf("setView('add');", src.indexOf('async function duplicateEvent')) + 20
     );
     expect(dupSection).toContain('tierLoadError');
     expect(dupSection).toContain('Failed to load ticket tiers from source event:');
-    expect(dupSection).toContain('Duplicating without tiers.');
+    expect(dupSection).toContain('Cannot duplicate until tiers are loaded.');
+    // Must return before setForm/setView — fail closed
+    const errorIdx = dupSection.indexOf('tierLoadError)');
+    const returnIdx = dupSection.indexOf('return;', errorIdx);
+    const setFormIdx = dupSection.indexOf('setForm(', errorIdx);
+    expect(returnIdx).toBeLessThan(setFormIdx); // return before setForm
   });
 });
 
@@ -178,6 +184,71 @@ describe('Events page: tier flush preserves sort_order and is_active', () => {
 
   it('flush payload uses is_active from pending type with fallback to true', () => {
     expect(src).toContain('is_active: t.is_active ?? true');
+  });
+});
+
+describe('Events page: tier recovery mechanism', () => {
+  it('has tierRecoveryPending state flag', () => {
+    expect(src).toContain('tierRecoveryPending');
+    expect(src).toMatch(/useState.*false.*tierRecoveryPending|tierRecoveryPending.*useState/);
+  });
+
+  it('retryPendingTiers function exists and inserts against existing event ID', () => {
+    expect(src).toMatch(/async function retryPendingTiers\(\)/);
+    const retrySection = src.slice(
+      src.indexOf('async function retryPendingTiers'),
+      src.indexOf('}', src.indexOf('loadTicketTypes(form.id)', src.indexOf('async function retryPendingTiers'))) + 1
+    );
+    // Uses form.id (the existing event ID)
+    expect(retrySection).toContain('event_id: form.id');
+    // Does NOT create the event again
+    expect(retrySection).not.toContain("from('events').insert");
+  });
+
+  it('retry success clears pending buffer and loads persisted tiers', () => {
+    const retrySection = src.slice(
+      src.indexOf('async function retryPendingTiers'),
+      src.indexOf('}', src.indexOf('loadTicketTypes(form.id)', src.indexOf('async function retryPendingTiers'))) + 1
+    );
+    expect(retrySection).toContain('setPendingTicketTypes([])');
+    expect(retrySection).toContain('setTierRecoveryPending(false)');
+    expect(retrySection).toContain('loadTicketTypes(form.id)');
+  });
+
+  it('retry failure keeps pending tiers intact and surfaces error', () => {
+    const retrySection = src.slice(
+      src.indexOf('async function retryPendingTiers'),
+      src.indexOf('}', src.indexOf('loadTicketTypes(form.id)', src.indexOf('async function retryPendingTiers'))) + 1
+    );
+    expect(retrySection).toContain('Ticket tier setup failed again:');
+    // Error path returns before clearing pending types
+    const errorIdx = retrySection.indexOf('Ticket tier setup failed again:');
+    const returnIdx = retrySection.indexOf('return;', errorIdx);
+    const clearIdx = retrySection.indexOf('setPendingTicketTypes([])', errorIdx);
+    expect(returnIdx).toBeLessThan(clearIdx); // return before clear
+  });
+
+  it('pending tiers are visible in recovery mode (edit + tierRecoveryPending)', () => {
+    // The pending tier list renders when tierRecoveryPending is true
+    expect(src).toContain("(view === 'add' || tierRecoveryPending) && pendingTicketTypes.length > 0");
+  });
+
+  it('shows Retry Ticket Tiers button in recovery mode', () => {
+    expect(src).toContain('Retry Ticket Tiers');
+    expect(src).toContain('retryPendingTiers');
+  });
+
+  it('recovery banner surfaces tier failure message', () => {
+    expect(src).toContain('Ticket tiers failed to save. Your definitions are preserved below.');
+  });
+
+  it('openAdd and openEdit clear recovery state', () => {
+    // openAdd clears tierRecoveryPending
+    const addSection = src.slice(src.indexOf('function openAdd'), src.indexOf("setView('add')", src.indexOf('function openAdd')) + 20);
+    expect(addSection).toContain('setTierRecoveryPending(false)');
+    // openEdit clears tierRecoveryPending
+    const editSection = src.slice(src.indexOf('function openEdit'), src.indexOf("setView('edit')", src.indexOf('function openEdit')) + 20);
+    expect(editSection).toContain('setTierRecoveryPending(false)');
   });
 });
 

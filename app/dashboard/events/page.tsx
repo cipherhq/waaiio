@@ -64,6 +64,8 @@ export default function EventsPage() {
   const [newTypeTotal, setNewTypeTotal] = useState(100);
   // Buffered ticket types for initial event creation (before event has an ID)
   const [pendingTicketTypes, setPendingTicketTypes] = useState<PendingTicketType[]>([]);
+  // Recovery flag: true when event was created but tier batch insert failed
+  const [tierRecoveryPending, setTierRecoveryPending] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [copiedEventId, setCopiedEventId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -156,6 +158,31 @@ export default function EventsPage() {
     setPendingTicketTypes(prev => prev.filter((_, i) => i !== index));
   }
 
+  async function retryPendingTiers() {
+    if (!form.id || pendingTicketTypes.length === 0) return;
+    setSaving(true);
+    const supabase = createClient();
+    const tierPayloads = pendingTicketTypes.map((t, i) => ({
+      event_id: form.id,
+      name: t.name,
+      price: t.price,
+      total_tickets: t.total_tickets,
+      sort_order: t.sort_order ?? i,
+      is_active: t.is_active ?? true,
+    }));
+    const { error } = await supabase.from('event_ticket_types').insert(tierPayloads);
+    if (error) {
+      alert(`Ticket tier setup failed again: ${error.message}. Your tier definitions are preserved — you can retry.`);
+      setSaving(false);
+      return;
+    }
+    // Success: clear pending buffer, exit recovery, load persisted tiers
+    setPendingTicketTypes([]);
+    setTierRecoveryPending(false);
+    setSaving(false);
+    loadTicketTypes(form.id);
+  }
+
   async function handleImageUpload(file: File) {
     if (file.size > 5 * 1024 * 1024) { alert('Image must be under 5MB'); return; }
     setUploading(true);
@@ -179,6 +206,7 @@ export default function EventsPage() {
     setOriginalDate('');
     setTicketTypes([]);
     setPendingTicketTypes([]);
+    setTierRecoveryPending(false);
     setView('add');
   }
 
@@ -199,11 +227,26 @@ export default function EventsPage() {
       refund_policy: (event as any).refund_policy || 'refundable',
     });
     setOriginalDate(event.date);
+    setPendingTicketTypes([]);
+    setTierRecoveryPending(false);
     setView('edit');
     loadTicketTypes(event.id);
   }
 
   async function duplicateEvent(event: EventItem) {
+    // Load source tiers FIRST — fail closed if load fails
+    const supabase = createClient();
+    const { data: sourceTiers, error: tierLoadError } = await supabase
+      .from('event_ticket_types')
+      .select('name, price, total_tickets, is_active, sort_order')
+      .eq('event_id', event.id)
+      .eq('is_active', true)
+      .order('sort_order');
+    if (tierLoadError) {
+      alert(`Failed to load ticket tiers from source event: ${tierLoadError.message}. Cannot duplicate until tiers are loaded.`);
+      return; // Fail closed — do not enter duplicate creation state
+    }
+
     setForm({
       id: '', // New event
       name: event.name,
@@ -220,26 +263,13 @@ export default function EventsPage() {
       refund_policy: (event as any).refund_policy || 'refundable',
     });
     setOriginalDate('');
-    // Load and copy ticket types from source event (reset tickets_sold to 0)
-    const supabase = createClient();
-    const { data: sourceTiers, error: tierLoadError } = await supabase
-      .from('event_ticket_types')
-      .select('name, price, total_tickets, is_active, sort_order')
-      .eq('event_id', event.id)
-      .eq('is_active', true)
-      .order('sort_order');
-    if (tierLoadError) {
-      alert(`Failed to load ticket tiers from source event: ${tierLoadError.message}. Duplicating without tiers.`);
-      setPendingTicketTypes([]);
-    } else {
-      setPendingTicketTypes((sourceTiers || []).map(t => ({
-        name: t.name,
-        price: t.price,
-        total_tickets: t.total_tickets,
-        sort_order: t.sort_order,
-        is_active: t.is_active,
-      })));
-    }
+    setPendingTicketTypes((sourceTiers || []).map(t => ({
+      name: t.name,
+      price: t.price,
+      total_tickets: t.total_tickets,
+      sort_order: t.sort_order,
+      is_active: t.is_active,
+    })));
     setView('add');
   }
 
@@ -312,10 +342,11 @@ export default function EventsPage() {
         }));
         const { error: tierError } = await supabase.from('event_ticket_types').insert(tierPayloads);
         if (tierError) {
-          alert(`Event created, but ticket tier setup failed: ${tierError.message}. You can retry adding tiers below.`);
-          // Transition to edit mode with the new event ID so tiers can be retried
-          // without creating the event a second time. Pending tiers are preserved.
+          alert(`Event created, but ticket tier setup failed: ${tierError.message}. Your tier definitions are preserved — click "Retry Ticket Tiers" below.`);
+          // Transition to edit mode with recovery flag. Pending tiers are preserved
+          // and visible for retry. The event is NOT inserted again.
           setForm(prev => ({ ...prev, id: newEvent.id }));
+          setTierRecoveryPending(true);
           setSaving(false);
           setView('edit');
           loadEvents();
@@ -551,19 +582,35 @@ export default function EventsPage() {
                 </div>
               )}
 
-              {/* Add mode: buffered pending ticket types */}
-              {view === 'add' && pendingTicketTypes.length > 0 && (
-                <div className="mb-3 space-y-2">
-                  {pendingTicketTypes.map((pt, idx) => (
-                    <div key={idx} className="flex items-center justify-between rounded-lg border border-gray-200 bg-white px-3 py-2">
-                      <div>
-                        <span className="text-sm font-medium text-gray-900">{pt.name}</span>
-                        <span className="ml-2 text-sm text-gray-500 dark:text-gray-400">{formatCurrency(pt.price, country)}</span>
-                        <span className="ml-2 text-xs text-gray-400 dark:text-gray-500">{pt.total_tickets} tickets</span>
-                      </div>
-                      <button onClick={() => removePendingTicketType(idx)} className="text-xs text-red-500 hover:text-red-700">Remove</button>
+              {/* Add mode OR recovery mode: buffered pending ticket types */}
+              {(view === 'add' || tierRecoveryPending) && pendingTicketTypes.length > 0 && (
+                <div className="mb-3">
+                  {tierRecoveryPending && (
+                    <div className="mb-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+                      <p className="text-xs font-medium text-amber-700">Ticket tiers failed to save. Your definitions are preserved below.</p>
                     </div>
-                  ))}
+                  )}
+                  <div className="space-y-2">
+                    {pendingTicketTypes.map((pt, idx) => (
+                      <div key={idx} className="flex items-center justify-between rounded-lg border border-gray-200 bg-white px-3 py-2">
+                        <div>
+                          <span className="text-sm font-medium text-gray-900">{pt.name}</span>
+                          <span className="ml-2 text-sm text-gray-500 dark:text-gray-400">{formatCurrency(pt.price, country)}</span>
+                          <span className="ml-2 text-xs text-gray-400 dark:text-gray-500">{pt.total_tickets} tickets</span>
+                        </div>
+                        <button onClick={() => removePendingTicketType(idx)} className="text-xs text-red-500 hover:text-red-700">Remove</button>
+                      </div>
+                    ))}
+                  </div>
+                  {tierRecoveryPending && (
+                    <button
+                      onClick={retryPendingTiers}
+                      disabled={saving}
+                      className="mt-2 rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-50"
+                    >
+                      {saving ? 'Retrying...' : 'Retry Ticket Tiers'}
+                    </button>
+                  )}
                 </div>
               )}
 
