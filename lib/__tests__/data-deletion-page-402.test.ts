@@ -62,6 +62,25 @@ describe('#402 data-deletion page — truthfulness', () => {
     expect(pageSrc).not.toMatch(/in\s+accordance\s+with\s+(?:GDPR|CCPA)/i);
   });
 
+  it('does not claim deletion automatically completes after grace period', () => {
+    // No cron/worker exists to execute final deletion after 30 days
+    expect(pageSrc).not.toMatch(/after\s+the\s+grace\s+period\s+expires/i);
+    expect(pageSrc).not.toMatch(/automatically\s+(deleted|removed|completed)/i);
+    expect(pageSrc).not.toMatch(/deletion\s+will\s+complete/i);
+  });
+
+  it('does not claim login alone cancels scheduled deletion', () => {
+    // PATCH /api/account exists but no login flow calls it automatically
+    expect(pageSrc).not.toMatch(/simply\s+log\s+back\s+in/i);
+    expect(pageSrc).not.toMatch(/logging\s+in\s+cancels/i);
+  });
+
+  it('directs users to dashboard Cancel Deletion action or privacy email', () => {
+    expect(pageSrc).toContain('Cancel Deletion');
+    // Must also offer fallback contact for users who cannot access dashboard
+    expect(pageSrc).toContain('privacy@waaiio.com');
+  });
+
   it('includes the Meta-required deletion instructions', () => {
     expect(pageSrc).toContain('Delete Account');
     expect(pageSrc).toContain('Dashboard');

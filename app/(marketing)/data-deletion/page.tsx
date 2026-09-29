@@ -79,10 +79,9 @@ export default function DataDeletionPage() {
                 <div className="rounded-xl border border-amber-200 bg-amber-50 p-5">
                   <h3 className="font-semibold text-amber-800">30-Day Grace Period</h3>
                   <p className="mt-2 text-sm leading-relaxed text-amber-700">
-                    Your account is scheduled for deletion in 30 days. During this
-                    time your businesses are deactivated but your login remains
-                    active. If you change your mind, simply log back in to cancel the
-                    deletion and reactivate your account.
+                    Your account is scheduled for deletion and your businesses are
+                    deactivated. Your login remains active during this period so you
+                    can cancel the request if you change your mind (see below).
                   </p>
                 </div>
               </div>
@@ -131,9 +130,9 @@ export default function DataDeletionPage() {
               </p>
               <ul className="mt-4 list-disc space-y-2 pl-6">
                 <li>
-                  <strong>Account and profile</strong> &mdash; your login
-                  credentials, name, email, and profile information are removed
-                  (immediately, or after the grace period expires).
+                  <strong>Account and profile</strong> &mdash; on the immediate
+                  path, your login credentials, name, email, and profile
+                  information are removed right away.
                 </li>
                 <li>
                   <strong>Businesses</strong> &mdash; all businesses you own are
@@ -193,12 +192,17 @@ export default function DataDeletionPage() {
                 Cancel a Pending Deletion
               </h2>
               <p className="mt-3 leading-relaxed">
-                If you chose the 30-day grace period and changed your mind, simply{' '}
-                <Link href="/login" className="text-brand hover:underline">
-                  log back in
-                </Link>{' '}
-                to your Waaiio account. Logging in cancels the pending deletion,
-                restores your profile, and reactivates your businesses.
+                If you chose the 30-day grace period and changed your mind, sign
+                in to your account and use the{' '}
+                <strong>Cancel Deletion</strong> option on your dashboard. If you
+                are unable to access your dashboard, contact us at{' '}
+                <a
+                  href="mailto:privacy@waaiio.com"
+                  className="text-brand hover:underline"
+                >
+                  privacy@waaiio.com
+                </a>{' '}
+                to request cancellation.
               </p>
             </section>
 
