@@ -9,7 +9,7 @@ const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
 export const metadata: Metadata = {
   title: 'Waaiio — Your Business, Running on WhatsApp',
   description:
-    'Customers book, order, pay, and get confirmations — just by messaging on WhatsApp. Waaiio automates bookings, payments, orders, and tickets for businesses in 5 countries.',
+    'Customers book, order, pay, and get confirmations — just by messaging on WhatsApp. Waaiio automates bookings, payments, orders, and tickets for businesses.',
   openGraph: {
     title: 'Waaiio — Your Business, Running on WhatsApp',
     description: 'Customers book, order, pay, and get confirmations — just by messaging on WhatsApp.',
@@ -61,7 +61,7 @@ const JSON_LD_ORG = {
     contactType: 'customer support',
     url: `${baseUrl}/contact`,
     email: 'hello@waaiio.com',
-    availableLanguage: ['English', 'French'],
+    availableLanguage: ['English'],
   },
   sameAs: [
     'https://www.instagram.com/waaiiobot',
@@ -103,7 +103,7 @@ const JSON_LD_APP = {
   applicationSubCategory: 'WhatsApp Automation Platform',
   operatingSystem: 'Web',
   url: baseUrl,
-  description: 'Automate bookings, payments, orders, and tickets on WhatsApp for businesses in 5 countries',
+  description: 'Automate bookings, payments, orders, and tickets on WhatsApp. Customers message, Waaiio gets it done.',
   featureList: 'Appointment booking, Payment processing, Online ordering, Event ticketing, Customer chat',
   creator: { '@type': 'Organization', name: 'Waaiio', url: baseUrl },
 };

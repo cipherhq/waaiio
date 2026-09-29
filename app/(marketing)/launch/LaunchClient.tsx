@@ -30,7 +30,7 @@ const WAAIIO_101 = [
   { emoji: '\u{1F6D2}', text: 'Take orders & sell products' },
   { emoji: '\u{1F3AB}', text: 'Sell event tickets' },
   { emoji: '\u{1F49D}', text: 'Receive donations & giving' },
-  { emoji: '\u{1F916}', text: 'AI-powered automation for 89+ business types' },
+  { emoji: '\u{1F916}', text: 'AI-powered setup and automation' },
 ];
 
 // ── Component ──
