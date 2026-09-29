@@ -35,9 +35,18 @@ describe('Events page: error handling contracts', () => {
       expect(src).toMatch(/supabase\.from\('event_ticket_types'\)\.insert\(tierPayloads\)/);
     });
 
-    it('handles partial tier failure — event created but tiers failed', () => {
+    it('handles partial tier failure — transitions to edit mode for recovery', () => {
       expect(src).toContain('Event created, but ticket tier setup failed:');
-      expect(src).toContain('Open the event to add tiers manually.');
+      expect(src).toContain('You can retry adding tiers below.');
+      // Must transition to edit mode with the new event ID
+      expect(src).toMatch(/setForm\(prev\s*=>\s*\(\{\s*\.\.\.prev,\s*id:\s*newEvent\.id\s*\}\)\)/);
+      expect(src).toContain("setView('edit')");
+      // pendingTicketTypes must NOT be cleared — preserved for retry
+      const partialSection = src.slice(
+        src.indexOf('Event created, but ticket tier setup failed:'),
+        src.indexOf('setPendingTicketTypes([])', src.indexOf('Event created, but ticket tier setup failed:'))
+      );
+      expect(partialSection).not.toContain('setPendingTicketTypes([])');
     });
   });
 
@@ -79,14 +88,16 @@ describe('Events page: error handling contracts', () => {
 });
 
 describe('Events page: ticket tier UX contracts', () => {
-  it('defines PendingTicketType interface at module level', () => {
-    // Must be defined outside the component function, after TicketType interface
+  it('defines PendingTicketType interface at module level with all approved fields', () => {
     const interfaceMatch = src.match(/interface PendingTicketType \{/);
     expect(interfaceMatch).toBeTruthy();
-    // Should appear before 'export default function EventsPage'
     const interfacePos = src.indexOf('interface PendingTicketType');
     const componentPos = src.indexOf('export default function EventsPage');
     expect(interfacePos).toBeLessThan(componentPos);
+    // Must include sort_order and is_active (optional for manually added tiers)
+    const interfaceBlock = src.slice(interfacePos, src.indexOf('}', interfacePos) + 1);
+    expect(interfaceBlock).toContain('sort_order');
+    expect(interfaceBlock).toContain('is_active');
   });
 
   it('has pendingTicketTypes state', () => {
@@ -132,12 +143,11 @@ describe('Events page: duplication copies tiers', () => {
     expect(src).toMatch(/\.eq\('is_active',\s*true\)/);
   });
 
-  it('sets pendingTicketTypes from source tiers', () => {
+  it('sets pendingTicketTypes from source tiers on success', () => {
     expect(src).toMatch(/setPendingTicketTypes\(\(sourceTiers \|\| \[\]\)\.map/);
   });
 
-  it('does not carry over tickets_sold (maps only name, price, total_tickets)', () => {
-    // The map inside duplicateEvent should only extract name, price, total_tickets
+  it('copies all approved tier definition fields and excludes tickets_sold', () => {
     const dupSection = src.slice(
       src.indexOf('async function duplicateEvent'),
       src.indexOf("setView('add');", src.indexOf('async function duplicateEvent')) + 20
@@ -145,7 +155,29 @@ describe('Events page: duplication copies tiers', () => {
     expect(dupSection).toContain('name: t.name');
     expect(dupSection).toContain('price: t.price');
     expect(dupSection).toContain('total_tickets: t.total_tickets');
+    expect(dupSection).toContain('sort_order: t.sort_order');
+    expect(dupSection).toContain('is_active: t.is_active');
     expect(dupSection).not.toContain('tickets_sold: t.tickets_sold');
+  });
+
+  it('surfaces source-tier load failure instead of silently duplicating without tiers', () => {
+    const dupSection = src.slice(
+      src.indexOf('async function duplicateEvent'),
+      src.indexOf("setView('add');", src.indexOf('async function duplicateEvent')) + 20
+    );
+    expect(dupSection).toContain('tierLoadError');
+    expect(dupSection).toContain('Failed to load ticket tiers from source event:');
+    expect(dupSection).toContain('Duplicating without tiers.');
+  });
+});
+
+describe('Events page: tier flush preserves sort_order and is_active', () => {
+  it('flush payload uses sort_order from pending type with fallback to index', () => {
+    expect(src).toContain('sort_order: t.sort_order ?? i');
+  });
+
+  it('flush payload uses is_active from pending type with fallback to true', () => {
+    expect(src).toContain('is_active: t.is_active ?? true');
   });
 });
 

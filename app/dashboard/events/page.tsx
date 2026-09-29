@@ -44,6 +44,8 @@ interface PendingTicketType {
   name: string;
   price: number;
   total_tickets: number;
+  sort_order?: number;
+  is_active?: boolean;
 }
 
 type ViewMode = 'list' | 'add' | 'edit';
@@ -220,17 +222,24 @@ export default function EventsPage() {
     setOriginalDate('');
     // Load and copy ticket types from source event (reset tickets_sold to 0)
     const supabase = createClient();
-    const { data: sourceTiers } = await supabase
+    const { data: sourceTiers, error: tierLoadError } = await supabase
       .from('event_ticket_types')
       .select('name, price, total_tickets, is_active, sort_order')
       .eq('event_id', event.id)
       .eq('is_active', true)
       .order('sort_order');
-    setPendingTicketTypes((sourceTiers || []).map(t => ({
-      name: t.name,
-      price: t.price,
-      total_tickets: t.total_tickets,
-    })));
+    if (tierLoadError) {
+      alert(`Failed to load ticket tiers from source event: ${tierLoadError.message}. Duplicating without tiers.`);
+      setPendingTicketTypes([]);
+    } else {
+      setPendingTicketTypes((sourceTiers || []).map(t => ({
+        name: t.name,
+        price: t.price,
+        total_tickets: t.total_tickets,
+        sort_order: t.sort_order,
+        is_active: t.is_active,
+      })));
+    }
     setView('add');
   }
 
@@ -298,14 +307,17 @@ export default function EventsPage() {
           name: t.name,
           price: t.price,
           total_tickets: t.total_tickets,
-          sort_order: i,
+          sort_order: t.sort_order ?? i,
+          is_active: t.is_active ?? true,
         }));
         const { error: tierError } = await supabase.from('event_ticket_types').insert(tierPayloads);
         if (tierError) {
-          alert(`Event created, but ticket tier setup failed: ${tierError.message}. Open the event to add tiers manually.`);
-          setPendingTicketTypes([]);
+          alert(`Event created, but ticket tier setup failed: ${tierError.message}. You can retry adding tiers below.`);
+          // Transition to edit mode with the new event ID so tiers can be retried
+          // without creating the event a second time. Pending tiers are preserved.
+          setForm(prev => ({ ...prev, id: newEvent.id }));
           setSaving(false);
-          setView('list');
+          setView('edit');
           loadEvents();
           return;
         }
