@@ -12,7 +12,6 @@
 // ── Brand Identity ──
 
 export const BRAND_NAME = 'Waaiio';
-export const BRAND_TAGLINE = 'WhatsApp Automation for Every Business';
 export const BRAND_URL = 'https://www.waaiio.com';
 
 // ── Canonical Wordmark Asset ──

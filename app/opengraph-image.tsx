@@ -1,5 +1,5 @@
 import { ImageResponse } from 'next/og';
-import { BRAND_COLORS } from '@/lib/brand';
+import { WORDMARK_PATH, WORDMARK_ALT } from '@/lib/brand';
 
 export const runtime = 'edge';
 export const alt = 'Waaiio — AI-Powered WhatsApp Automation for Every Business';
@@ -7,6 +7,8 @@ export const size = { width: 1200, height: 630 };
 export const contentType = 'image/png';
 
 export default async function Image() {
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
+
   return new ImageResponse(
     (
       <div
@@ -21,26 +23,15 @@ export default async function Image() {
           padding: '60px 80px',
         }}
       >
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '4px',
-            marginBottom: '32px',
-          }}
-        >
-          <span
-            style={{
-              fontSize: '56px',
-              fontWeight: 700,
-              letterSpacing: '-1px',
-            }}
-          >
-            <span style={{ color: BRAND_COLORS.green }}>wa</span>
-            <span style={{ color: BRAND_COLORS.orange }}>ai</span>
-            <span style={{ color: BRAND_COLORS.lavender }}>io</span>
-          </span>
-        </div>
+        {/* Canonical Waaiio wordmark PNG — preserves exact artwork including circular chat/phone "o" */}
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={`${appUrl}${WORDMARK_PATH}`}
+          alt={WORDMARK_ALT}
+          width={400}
+          height={89}
+          style={{ marginBottom: '32px' }}
+        />
 
         <div
           style={{

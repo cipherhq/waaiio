@@ -1,9 +1,9 @@
 import type { MetadataRoute } from 'next';
-import { BRAND_NAME, BRAND_TAGLINE } from '@/lib/brand';
+import { BRAND_NAME } from '@/lib/brand';
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: `${BRAND_NAME} — ${BRAND_TAGLINE}`,
+    name: `${BRAND_NAME} — WhatsApp Business Automation`,
     short_name: BRAND_NAME,
     description:
       'Automate bookings, payments, orders, and tickets on WhatsApp',
