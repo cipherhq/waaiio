@@ -16,6 +16,7 @@ import { observe } from '@/lib/observability';
 import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
 import { resolveTrialStatus } from '@/lib/trial-status';
+import { canonicalPublicOrigin } from '@/lib/url';
 
 export async function initializePayment(
   supabase: SupabaseClient,
@@ -222,7 +223,7 @@ export async function initializePayment(
                 return null;
               }
             }
-            const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
+            const appUrl = canonicalPublicOrigin();
             const shortRef = existingPayment.gateway_reference.slice(-8);
             return { url: `${appUrl}/api/pay?ref=${shortRef}`, reference: existingPayment.gateway_reference };
           }
@@ -629,7 +630,7 @@ export async function initializePayment(
         }
       }
 
-      const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
+      const appUrl = canonicalPublicOrigin();
       const shortRef = result.reference.slice(-8);
       result.url = `${appUrl}/api/pay?ref=${shortRef}`;
     }
