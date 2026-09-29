@@ -3,6 +3,20 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-09-29 — Homepage simplification (#452)
+
+### What changed
+- **`app/(marketing)/HomeClient.tsx`:** Major rewrite — 17 sections reduced to ~10. Removed: unsourced statistics, fabricated testimonials, quantity-led clutter (89+/30/thousands), 10-card capability wall, problem/fear section, Why Waaiio cards, comparison table, industry showcase, repeated NL examples. Added: dashboard proof grid, compact 5-capability summary. Hero changed to "Your business, running on WhatsApp." with launch CTAs.
+- **`app/(marketing)/page.tsx`:** FAQ reduced from 10 to 4 questions. JSON-LD cleaned (removed unverified Meta partnership claims, award, memberOf). Metadata updated. No server-side `platform_settings` read — preserves existing API/component boundary.
+- **`components/marketing/Navbar.tsx` + `MobileMenu.tsx`:** CTA changed from "Get Started" → "Get Updates" linking to /launch.
+- **Provider truth:** Homepage shows only Stripe + Paystack. Square/Flutterwave/PayPal removed from homepage.
+- **Meta wording:** Changed to "Built on WhatsApp Business Platform" — removed "Meta Business Partner", "Official Technology Partner", "Meta Verified Technology Provider".
+- **Pricing:** CTAs link to /pricing (Learn More) not /get-started. No new trial duration claims.
+
+### What could break
+- SEO: fewer FAQ entries means less indexed Q&A content (but removing low-quality content typically helps)
+- Any external links pointing to homepage sections with anchor IDs (comparison, industry showcase) will no longer find those sections
+
 ## 2026-09-28 — Launch banner with country selector + WhatsApp QR (#446)
 
 ### What changed
