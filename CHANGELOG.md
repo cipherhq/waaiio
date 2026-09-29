@@ -3,6 +3,15 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-09-29 — Exact-origin Return to WhatsApp (#230/#231)
+
+### What changed
+- **`app/payment-success/page.tsx`:** WhatsApp-origin payments now resolve the Return to WhatsApp phone number from `payments.metadata._inbound_channel_id` (the exact channel that originated the transaction) instead of the business-level channel fallback chain. If the exact-origin channel is missing, inactive, or fails cross-tenant validation, the page shows "Please return to your WhatsApp conversation manually" instead of falling back to a potentially wrong number. Non-WhatsApp-origin payments (web, legacy) continue using the existing fallback chain unchanged.
+- **`lib/__tests__/return-to-whatsapp-origin-230.test.ts`:** 10 source-analysis tests proving exact-origin resolution, fail-closed behavior, cross-tenant guard, manual return message, no hardcoded phone numbers, and ReturnToWhatsApp component unchanged.
+
+### What could break
+- Nothing for non-WhatsApp-origin payments (fallback chain unchanged). WhatsApp-origin payments where `_inbound_channel_id` was not persisted (pre-#219 payments) will now show a manual return message instead of the ReturnToWhatsApp button — this is the correct fail-closed behavior (better than sending to a wrong country's number).
+
 ## 2026-09-29 — Homepage simplification (#452)
 
 ### What changed
