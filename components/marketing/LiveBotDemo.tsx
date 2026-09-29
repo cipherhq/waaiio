@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence, useReducedMotion } from 'framer-motion';
 
 interface Message {
   from: 'user' | 'bot';
@@ -15,8 +15,6 @@ interface ScenarioStep {
   text: string;
   /** Options the visitor can tap to advance the conversation */
   options?: string[];
-  /** If set, this step auto-follows the previous without visitor input */
-  auto?: true;
   /** Delay in ms before this message appears (typing indicator shown first) */
   delay: number;
 }
@@ -29,17 +27,16 @@ interface Scenario {
   businessInitial: string;
   /** Opening bot greeting — always auto-shown */
   greeting: ScenarioStep;
-  /** Remaining conversation steps. Each step is a bot response keyed by the
-   *  visitor action that triggers it. '*' = any free-text input. */
+  /** Conversation steps keyed by trigger text. Every visible option must
+   *  have a matching trigger — no dead branches allowed. */
   steps: {
-    /** Which visitor action triggers this step (option text or '*' for free text) */
     trigger: string;
-    /** What the visitor's message will say when this trigger fires */
     userText: string;
-    /** Bot response(s) after the trigger */
     botReplies: ScenarioStep[];
   }[];
 }
+
+// ── Scenario data — every visible option has a modeled next step ──
 
 const SCENARIOS: Scenario[] = [
   {
@@ -50,58 +47,48 @@ const SCENARIOS: Scenario[] = [
     businessInitial: 'B',
     greeting: {
       from: 'bot',
-      text: "Hi! Welcome to Bella's Salon \u{1F485}\n\nHow can I help you today?",
-      options: ['Book Appointment', 'View Services'],
+      text: "Hi! Welcome to Bella's Salon \u{1F485}\n\nWhat would you like to book?",
+      options: ['Manicure', 'Pedicure'],
       delay: 600,
     },
     steps: [
       {
-        trigger: 'Book Appointment',
-        userText: 'Book Appointment',
-        botReplies: [
-          {
-            from: 'bot',
-            text: 'Which service would you like?\n\n\u{1F485} Manicure \u{2014} $35 (45 min)\n\u{1F484} Pedicure \u{2014} $50 (60 min)\n\u{2728} Gel Nails \u{2014} $60 (75 min)',
-            options: ['Manicure', 'Pedicure', 'Gel Nails'],
-            delay: 1200,
-          },
-        ],
-      },
-      {
         trigger: 'Manicure',
         userText: 'Manicure',
-        botReplies: [
-          {
-            from: 'bot',
-            text: 'When would you like to come in?',
-            options: ['Tomorrow 2pm', 'Tomorrow 4pm', 'Saturday 10am'],
-            delay: 800,
-          },
-        ],
+        botReplies: [{
+          from: 'bot',
+          text: 'Manicure \u{2014} $35 (45 min)\n\nWhen would you like to come in?',
+          options: ['Tomorrow 2pm', 'Tomorrow 4pm'],
+          delay: 1000,
+        }],
+      },
+      {
+        trigger: 'Pedicure',
+        userText: 'Pedicure',
+        botReplies: [{
+          from: 'bot',
+          text: 'Pedicure \u{2014} $50 (60 min)\n\nWhen would you like to come in?',
+          options: ['Tomorrow 2pm', 'Tomorrow 4pm'],
+          delay: 1000,
+        }],
       },
       {
         trigger: 'Tomorrow 2pm',
         userText: 'Tomorrow 2pm',
-        botReplies: [
-          {
-            from: 'bot',
-            text: "\u{2705} *Appointment Confirmed!*\n\n\u{1F485} Manicure\n\u{1F4C5} Tomorrow, 2:00 PM\n\u{1F550} 45 minutes\n\u{1F4B0} $35\n\u{1F511} Ref: BK-4291\n\nWe'll send you a reminder!",
-            delay: 1400,
-          },
-        ],
+        botReplies: [{
+          from: 'bot',
+          text: "\u{2705} *Appointment Confirmed!*\n\n\u{1F4C5} Tomorrow, 2:00 PM\n\u{1F511} Ref: BK-4291\n\nWe'll send you a reminder!",
+          delay: 1400,
+        }],
       },
-      // Free-text fallback for the booking scenario
       {
-        trigger: '*',
-        userText: '',
-        botReplies: [
-          {
-            from: 'bot',
-            text: "I can help you book! Which service would you like?",
-            options: ['Manicure', 'Pedicure', 'Gel Nails'],
-            delay: 1000,
-          },
-        ],
+        trigger: 'Tomorrow 4pm',
+        userText: 'Tomorrow 4pm',
+        botReplies: [{
+          from: 'bot',
+          text: "\u{2705} *Appointment Confirmed!*\n\n\u{1F4C5} Tomorrow, 4:00 PM\n\u{1F511} Ref: BK-4292\n\nWe'll send you a reminder!",
+          delay: 1400,
+        }],
       },
     ],
   },
@@ -114,56 +101,57 @@ const SCENARIOS: Scenario[] = [
     greeting: {
       from: 'bot',
       text: "Welcome to Fresh Kitchen! \u{1F373}\n\nWhat would you like to order?",
-      options: ['Jollof Rice', 'Fried Rice', 'View Full Menu'],
+      options: ['Jollof Rice', 'Fried Rice'],
       delay: 600,
     },
     steps: [
       {
         trigger: 'Jollof Rice',
         userText: 'Jollof Rice',
-        botReplies: [
-          {
-            from: 'bot',
-            text: "Jollof Rice \u{2014} \u{20A6}2,500 \u{2705}\n\nAnything else?",
-            options: ['Add Plantain \u{20A6}800', 'That\'s all'],
-            delay: 1000,
-          },
-        ],
+        botReplies: [{
+          from: 'bot',
+          text: "Jollof Rice \u{2014} \u{20A6}2,500 \u{2705}\n\nAdd a side?",
+          options: ['Add Plantain \u{20A6}800', 'No thanks, place order'],
+          delay: 1000,
+        }],
+      },
+      {
+        trigger: 'Fried Rice',
+        userText: 'Fried Rice',
+        botReplies: [{
+          from: 'bot',
+          text: "Fried Rice \u{2014} \u{20A6}2,800 \u{2705}\n\nAdd a side?",
+          options: ['Add Plantain \u{20A6}800', 'No thanks, place order'],
+          delay: 1000,
+        }],
       },
       {
         trigger: 'Add Plantain \u{20A6}800',
         userText: 'Add Plantain',
-        botReplies: [
-          {
-            from: 'bot',
-            text: "Your order:\n\n\u{1F35A} Jollof Rice \u{2014} \u{20A6}2,500\n\u{1F34C} Plantain \u{2014} \u{20A6}800\n\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\n\u{1F4B0} Total: \u{20A6}3,300",
-            options: ['Confirm Order', 'Add More'],
-            delay: 1200,
-          },
-        ],
+        botReplies: [{
+          from: 'bot',
+          text: "Added! \u{1F34C}\n\nReady to place your order?",
+          options: ['Place Order'],
+          delay: 800,
+        }],
       },
       {
-        trigger: 'Confirm Order',
-        userText: 'Confirm Order',
-        botReplies: [
-          {
-            from: 'bot',
-            text: "\u{2705} *Order Placed!*\n\n\u{1F511} Ref: ORD-8134\n\u{23F0} Ready in ~30 min\n\n\u{1F4B3} Pay here \u{1F447}\npay.waaiio.com/ord/8134",
-            delay: 1400,
-          },
-        ],
+        trigger: 'No thanks, place order',
+        userText: 'No thanks, place order',
+        botReplies: [{
+          from: 'bot',
+          text: "\u{2705} *Order Placed!*\n\n\u{1F511} Ref: ORD-8134\n\u{23F0} Ready in ~30 min\n\n\u{1F4B3} Pay here \u{1F447}\npay.waaiio.com/ord/8134",
+          delay: 1400,
+        }],
       },
       {
-        trigger: '*',
-        userText: '',
-        botReplies: [
-          {
-            from: 'bot',
-            text: "I can take your order! What would you like?",
-            options: ['Jollof Rice', 'Fried Rice', 'View Full Menu'],
-            delay: 1000,
-          },
-        ],
+        trigger: 'Place Order',
+        userText: 'Place Order',
+        botReplies: [{
+          from: 'bot',
+          text: "\u{2705} *Order Placed!*\n\n\u{1F511} Ref: ORD-8135\n\u{23F0} Ready in ~30 min\n\n\u{1F4B3} Pay here \u{1F447}\npay.waaiio.com/ord/8135",
+          delay: 1400,
+        }],
       },
     ],
   },
@@ -175,67 +163,62 @@ const SCENARIOS: Scenario[] = [
     businessInitial: 'N',
     greeting: {
       from: 'bot',
-      text: "Hey! Welcome to Naija Tech Fest \u{1F680}\n\n\u{1F4C5} Dec 14-15, Lagos\n\nHow can I help?",
-      options: ['Buy Tickets', 'Event Details'],
+      text: "Hey! Welcome to Naija Tech Fest \u{1F680}\n\n\u{1F4C5} Dec 14-15, Lagos\n\nWhat can I help with?",
+      options: ['Buy Tickets'],
       delay: 600,
     },
     steps: [
       {
         trigger: 'Buy Tickets',
         userText: 'Buy Tickets',
-        botReplies: [
-          {
-            from: 'bot',
-            text: "How many tickets?\n\n\u{1F3AB} General Admission \u{2014} \u{20A6}15,000 each",
-            options: ['1 Ticket', '2 Tickets', '3 Tickets'],
-            delay: 1000,
-          },
-        ],
+        botReplies: [{
+          from: 'bot',
+          text: "How many tickets?\n\n\u{1F3AB} General Admission \u{2014} \u{20A6}15,000 each",
+          options: ['1 Ticket', '2 Tickets'],
+          delay: 1000,
+        }],
+      },
+      {
+        trigger: '1 Ticket',
+        userText: '1 Ticket',
+        botReplies: [{
+          from: 'bot',
+          text: "1x General Admission\n\u{1F4B0} Total: \u{20A6}15,000\n\nConfirm?",
+          options: ['Confirm'],
+          delay: 1000,
+        }],
       },
       {
         trigger: '2 Tickets',
         userText: '2 Tickets',
-        botReplies: [
-          {
-            from: 'bot',
-            text: "2x General Admission\n\u{1F4B0} Total: \u{20A6}30,000\n\nConfirm purchase?",
-            options: ['Confirm', 'Change Quantity'],
-            delay: 1200,
-          },
-        ],
+        botReplies: [{
+          from: 'bot',
+          text: "2x General Admission\n\u{1F4B0} Total: \u{20A6}30,000\n\nConfirm?",
+          options: ['Confirm'],
+          delay: 1000,
+        }],
       },
       {
         trigger: 'Confirm',
         userText: 'Confirm',
-        botReplies: [
-          {
-            from: 'bot',
-            text: "\u{2705} *Tickets Confirmed!*\n\n\u{1F3AB} 2x General Admission\n\u{1F4C5} Saturday, Dec 14\n\u{1F511} Ref: TK-6720\n\n\u{1F4B3} Pay here \u{1F447}\npay.waaiio.com/tk/6720\n\nTickets will be sent after payment \u{2705}",
-            delay: 1600,
-          },
-        ],
-      },
-      {
-        trigger: '*',
-        userText: '',
-        botReplies: [
-          {
-            from: 'bot',
-            text: "I can help with tickets! What would you like?",
-            options: ['Buy Tickets', 'Event Details'],
-            delay: 1000,
-          },
-        ],
+        botReplies: [{
+          from: 'bot',
+          text: "\u{2705} *Tickets Confirmed!*\n\n\u{1F511} Ref: TK-6720\n\n\u{1F4B3} Pay here \u{1F447}\npay.waaiio.com/tk/6720\n\nTickets sent after payment \u{2705}",
+          delay: 1400,
+        }],
       },
     ],
   },
 ];
 
+// ── Component ──
+
 export default function LiveBotDemo() {
+  const prefersReducedMotion = useReducedMotion();
+  const noMotion = !!prefersReducedMotion;
   const [activeScenario, setActiveScenario] = useState(0);
   const [messages, setMessages] = useState<Message[]>([]);
   const [typing, setTyping] = useState(false);
-  const [stepIndex, setStepIndex] = useState(0);
   const [waitingForInput, setWaitingForInput] = useState(false);
   const [input, setInput] = useState('');
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -253,7 +236,6 @@ export default function LiveBotDemo() {
     return () => { if (timeoutRef.current) clearTimeout(timeoutRef.current); };
   }, []);
 
-  // Show bot response with typing indicator
   const showBotMessage = useCallback((step: ScenarioStep, onDone?: () => void) => {
     setTyping(true);
     timeoutRef.current = setTimeout(() => {
@@ -263,11 +245,10 @@ export default function LiveBotDemo() {
     }, step.delay);
   }, []);
 
-  // Show the greeting when scenario changes
+  // Show greeting when scenario changes
   useEffect(() => {
     setMessages([]);
     setTyping(false);
-    setStepIndex(0);
     setWaitingForInput(false);
     setInput('');
     if (timeoutRef.current) clearTimeout(timeoutRef.current);
@@ -285,26 +266,19 @@ export default function LiveBotDemo() {
     if (!waitingForInput) return;
     setWaitingForInput(false);
 
-    // Find matching step
-    const step = scenario.steps[stepIndex]
-      ? (scenario.steps[stepIndex].trigger === actionText || scenario.steps[stepIndex].trigger === '*')
-        ? scenario.steps[stepIndex]
-        : scenario.steps.find(s => s.trigger === actionText || s.trigger === '*')
-      : scenario.steps.find(s => s.trigger === actionText || s.trigger === '*');
+    // Find matching step by trigger
+    const step = scenario.steps.find(s => s.trigger === actionText);
 
     if (!step) {
-      // No matching step — show fallback
-      const fallback = scenario.steps.find(s => s.trigger === '*');
-      if (fallback) {
-        setMessages(prev => [...prev, { from: 'user', text: actionText }]);
-        showBotMessage(fallback.botReplies[0], () => setWaitingForInput(true));
-      }
+      // No match — show the visitor's text and re-show current options
+      setMessages(prev => [...prev, { from: 'user', text: actionText }]);
+      // Re-enable input so visitor can try a valid option
+      setWaitingForInput(true);
       return;
     }
 
     // Show user's message
-    const userDisplay = step.trigger === '*' ? actionText : step.userText;
-    setMessages(prev => [...prev, { from: 'user', text: userDisplay }]);
+    setMessages(prev => [...prev, { from: 'user', text: step.userText }]);
 
     // Show bot replies sequentially
     const replies = step.botReplies;
@@ -312,10 +286,6 @@ export default function LiveBotDemo() {
 
     const showNextReply = () => {
       if (replyIdx >= replies.length) {
-        // Advance step index for the next interaction
-        const currentIdx = scenario.steps.indexOf(step);
-        if (currentIdx >= 0) setStepIndex(currentIdx + 1);
-        // If the last reply has options, wait for input; otherwise conversation is done
         const lastReply = replies[replies.length - 1];
         if (lastReply.options) setWaitingForInput(true);
         return;
@@ -326,7 +296,7 @@ export default function LiveBotDemo() {
       });
     };
     showNextReply();
-  }, [waitingForInput, scenario, stepIndex, showBotMessage]);
+  }, [waitingForInput, scenario, showBotMessage]);
 
   function handleOptionClick(optionText: string) {
     processAction(optionText);
@@ -343,7 +313,6 @@ export default function LiveBotDemo() {
     if (timeoutRef.current) clearTimeout(timeoutRef.current);
     setMessages([]);
     setTyping(false);
-    setStepIndex(0);
     setWaitingForInput(false);
     setInput('');
 
@@ -358,6 +327,14 @@ export default function LiveBotDemo() {
     if (timeoutRef.current) clearTimeout(timeoutRef.current);
     setActiveScenario(index);
   }
+
+  // Framer Motion transition props — disabled when reduced motion is preferred
+  const msgTransition = noMotion
+    ? { initial: undefined, animate: undefined, transition: undefined }
+    : { initial: { opacity: 0, y: 10 }, animate: { opacity: 1, y: 0 }, transition: { duration: 0.2 } };
+  const typingTransition = noMotion
+    ? { initial: undefined, animate: undefined }
+    : { initial: { opacity: 0 }, animate: { opacity: 1 } };
 
   return (
     <div className="mx-auto max-w-md">
@@ -417,9 +394,7 @@ export default function LiveBotDemo() {
               return (
                 <motion.div
                   key={`${activeScenario}-${i}`}
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.2 }}
+                  {...msgTransition}
                   className={`flex ${from === 'user' ? 'justify-end' : 'justify-start'}`}
                 >
                   <div className="max-w-[85%]">
@@ -451,11 +426,7 @@ export default function LiveBotDemo() {
             })}
           </AnimatePresence>
           {typing && (
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              className="flex justify-start"
-            >
+            <motion.div {...typingTransition} className="flex justify-start">
               <div className="rounded-lg bg-white px-4 py-2">
                 <div className="flex gap-1">
                   <span className="h-2 w-2 animate-bounce rounded-full bg-gray-400 motion-reduce:animate-none" style={{ animationDelay: '0ms' }} />
@@ -467,7 +438,7 @@ export default function LiveBotDemo() {
           )}
         </div>
 
-        {/* Free-text input — allows natural language where supported */}
+        {/* Free-text input */}
         <div className="flex items-center gap-2 border-t border-gray-100 bg-gray-50 px-3 py-2">
           <input
             type="text"

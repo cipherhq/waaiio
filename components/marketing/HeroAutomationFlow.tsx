@@ -144,12 +144,12 @@ export default function HeroAutomationFlow() {
           className="mt-6 grid grid-cols-3 gap-2 rounded-2xl border border-white/10 bg-white/5 p-3"
         >
           <div className="text-center">
-            <p className="text-lg font-bold text-accent">{'\u{26A1}'}</p>
-            <p className="text-[10px] text-white/50">Instant Replies</p>
+            <p className="text-lg font-bold text-accent">{'\u{1F4AC}'}</p>
+            <p className="text-[10px] text-white/50">Automated Replies</p>
           </div>
           <div className="text-center">
-            <p className="text-lg font-bold text-accent">24/7</p>
-            <p className="text-[10px] text-white/50">Always On</p>
+            <p className="text-lg font-bold text-accent">{'\u{1F4F1}'}</p>
+            <p className="text-[10px] text-white/50">Works in WhatsApp</p>
           </div>
           <div className="text-center">
             <p className="text-lg font-bold text-accent">{'\u{1F512}'}</p>
