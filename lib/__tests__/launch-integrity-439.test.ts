@@ -200,7 +200,7 @@ describe('Slice 0B — handleLaunchOptIn truthful persistence (#439)', () => {
 
     expect(handled).toBe(true);
     expect(sendReply).toHaveBeenCalledOnce();
-    expect(replies[0]).toContain("You're on the list!");
+    expect(replies[0]).toContain("You're in!");
     expect(replies[0]).toContain('STOP');
   });
 
@@ -242,7 +242,7 @@ describe('Slice 0B — handleLaunchOptIn truthful persistence (#439)', () => {
       successSupabase, '+12025551111', 'Notify me when Waaiio launches',
       '+12025552222', vi.fn(async (_, msg) => { successReplies.push(msg); }),
     );
-    expect(successReplies[0]).toContain("You're on the list!");
+    expect(successReplies[0]).toContain("You're in!");
   });
 
   it('non-matching message returns false (not handled)', async () => {
