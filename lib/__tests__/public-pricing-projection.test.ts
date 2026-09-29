@@ -588,8 +588,10 @@ describe('JSON-LD fail-closed', () => {
     expect(source).not.toContain("price: '39.99'");
     // No ?? fallback on prices
     expect(source).not.toMatch(/price.*\?\?\s*\d+/);
-    // Offers are null when DB unavailable
-    expect(source).toContain('jsonLdOffers: Array<Record<string, string>> | null = null');
+    // Offers must be either null-initialized (DB-driven) or absent entirely (no price claims without DB)
+    const hasNullOffers = source.includes('jsonLdOffers: Array<Record<string, string>> | null = null');
+    const hasNoOffers = !source.includes('offers');
+    expect(hasNullOffers || hasNoOffers).toBe(true);
   });
 });
 

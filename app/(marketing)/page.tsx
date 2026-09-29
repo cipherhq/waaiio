@@ -1,22 +1,18 @@
 import type { Metadata } from 'next';
 import HomeClient from './HomeClient';
-import { getCategoryList } from '@/lib/categoryConfig';
-import { createServiceClient } from '@/lib/supabase/service';
-import { TIER_FEATURES } from '@/lib/constants';
 import { BRAND_NAME, WORDMARK_PATH, WORDMARK_WIDTH, WORDMARK_HEIGHT, WORDMARK_ALT } from '@/lib/brand';
 
 export const revalidate = 60;
 
-const CATEGORY_COUNT = getCategoryList().filter(c => c.key !== 'other').length;
 const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
 
 export const metadata: Metadata = {
-  title: 'Waaiio — AI-Powered WhatsApp Automation for Everyone',
+  title: 'Waaiio — Your Business, Running on WhatsApp',
   description:
-    'Automate bookings, payments, orders, donations, and tickets on WhatsApp for 89+ business types — churches, salons, clinics, restaurants, schools, shops, and more.',
+    'Customers book, order, pay, and get confirmations — just by messaging on WhatsApp. Waaiio automates bookings, payments, orders, and tickets for businesses in 5 countries.',
   openGraph: {
-    title: 'Waaiio — AI-Powered WhatsApp Automation for Everyone',
-    description: 'Automate bookings, payments, orders, donations, and tickets on WhatsApp for 89+ business types.',
+    title: 'Waaiio — Your Business, Running on WhatsApp',
+    description: 'Customers book, order, pay, and get confirmations — just by messaging on WhatsApp.',
     url: baseUrl,
     siteName: 'Waaiio',
     type: 'website',
@@ -24,7 +20,7 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: 'summary_large_image',
-    title: 'Waaiio — WhatsApp Automation for Everyone',
+    title: 'Waaiio — Your Business, Running on WhatsApp',
     description: 'Automate bookings, payments, orders & more on WhatsApp.',
     images: [`${baseUrl}${WORDMARK_PATH}`],
   },
@@ -33,26 +29,39 @@ export const metadata: Metadata = {
   },
 };
 
+const FAQ_DATA = [
+  {
+    question: 'What is Waaiio?',
+    answer: 'Waaiio automates your business on WhatsApp. Customers message you to book appointments, place orders, buy tickets, and make payments — the AI handles it all, 24/7.',
+  },
+  {
+    question: 'How do payments work?',
+    answer: 'When a customer needs to pay, they receive a secure payment link in the chat. We support Stripe (US, UK, Canada) and Paystack (Nigeria, Ghana). Funds go directly to your account.',
+  },
+  {
+    question: 'Do I need a developer?',
+    answer: 'No. Add your services, connect WhatsApp, and your bot is live. Everything is managed from a simple dashboard.',
+  },
+  {
+    question: 'Can I use my own WhatsApp number?',
+    answer: 'Yes. You can use your existing business WhatsApp number or start with a shared Waaiio number. You can upgrade to a dedicated number when ready.',
+  },
+];
+
 const JSON_LD_ORG = {
   '@context': 'https://schema.org',
   '@type': 'Organization',
   name: BRAND_NAME,
   url: baseUrl,
   logo: { '@type': 'ImageObject', url: `${baseUrl}${WORDMARK_PATH}`, width: WORDMARK_WIDTH, height: WORDMARK_HEIGHT },
-  description: 'AI-Powered WhatsApp Automation for Everyone',
+  description: 'WhatsApp automation for businesses',
   foundingDate: '2026',
-  award: 'Meta Verified Tech Provider',
-  memberOf: {
-    '@type': 'Organization',
-    name: 'Meta Business Partners',
-    url: 'https://www.facebook.com/business/partner-directory',
-  },
   contactPoint: {
     '@type': 'ContactPoint',
     contactType: 'customer support',
     url: `${baseUrl}/contact`,
     email: 'hello@waaiio.com',
-    availableLanguage: ['English', 'French', 'Yoruba', 'Igbo', 'Hausa', 'Twi', 'Pidgin'],
+    availableLanguage: ['English', 'French'],
   },
   sameAs: [
     'https://www.instagram.com/waaiiobot',
@@ -66,24 +75,7 @@ const JSON_LD_ORG = {
     { '@type': 'Country', name: 'Ghana' },
     { '@type': 'Country', name: 'United Kingdom' },
   ],
-  knowsAbout: [
-    'WhatsApp Business API', 'Business automation', 'AI chatbots',
-    'Payment processing', 'Appointment scheduling', 'Online ordering',
-  ],
 };
-
-const FAQ_DATA = [
-  { question: 'Who can use Waaiio?', answer: `Anyone — businesses, churches, event organisers, individuals, and anyone who wants WhatsApp automation. Salons, barbers, spas, mosques, schools, NGOs, clinics, shops, event companies, hotels, restaurants, pharmacies, and much more. We support ${CATEGORY_COUNT}+ use cases.` },
-  { question: 'Is there really a free plan?', answer: 'Yes! Start with our Starter plan — free trial with zero fees, then a small per-transaction fee. No monthly subscription required. No credit card needed.' },
-  { question: 'How do payments work?', answer: 'When a customer needs to pay, they receive a secure payment link in the chat. We support Paystack (Nigeria, Ghana), Stripe (US, UK, Canada), Square (US), Flutterwave (Africa), and PayPal (US, UK, Canada). Funds go directly to your account.' },
-  { question: 'Do I need a developer to set this up?', answer: 'No. Sign up, add your services, and connect your WhatsApp — your bot is live in under 5 minutes. Everything is managed from a simple dashboard.' },
-  { question: 'Can I use my own WhatsApp number?', answer: 'Yes! You can use your existing business WhatsApp number (dedicated) or use our shared number to get started instantly. Switch to your own number anytime.' },
-  { question: 'Can I customise the messages?', answer: 'Yes. You can set a custom assistant name, greeting, and personality that matches your brand. Premium-tier users get full white-label branding.' },
-  { question: 'What happens outside operating hours?', answer: 'The automation works 24/7 — it will take bookings and orders even at 2 AM. You can set operating hours so only available time slots are offered.' },
-  { question: 'What languages does the bot support?', answer: 'The bot speaks English, Pidgin, Yoruba, Igbo, Hausa, Twi, and French. Customers can chat naturally in their preferred language — the AI understands and responds accordingly.' },
-  { question: 'Is there a long-term contract?', answer: 'No. All plans are month-to-month with no lock-in. You can upgrade, downgrade, or cancel at any time.' },
-  { question: 'Is my data secure?', answer: 'Yes. We use bank-grade encryption, all webhooks are signature-verified, and your data is isolated per business. We are a Meta Verified Technology Provider and follow GDPR-compliant data practices.' },
-];
 
 const JSON_LD_FAQ = {
   '@context': 'https://schema.org',
@@ -100,71 +92,30 @@ const JSON_LD_WEBSITE = {
   '@type': 'WebSite',
   name: 'Waaiio',
   url: baseUrl,
-  description: 'AI-Powered WhatsApp Automation for Everyone',
-  potentialAction: {
-    '@type': 'SearchAction',
-    target: { '@type': 'EntryPoint', urlTemplate: `${baseUrl}/directory?search={search_term_string}` },
-    'query-input': 'required name=search_term_string',
-  },
+  description: 'WhatsApp automation for businesses',
 };
 
-export default async function HomePage() {
-  // Fetch real stats and pricing from DB (server-side, cached for 60s via revalidate)
-  let stats = { businesses: '25+', payments: '95+', countries: '5' };
-  // JSON-LD offers are omitted when DB pricing is unavailable (fail-closed)
-  let jsonLdOffers: Array<Record<string, string>> | null = null;
-  try {
-    const supabase = createServiceClient();
-    const [{ count: bizCount }, { count: payCount }, { data: countryData }, { data: usCountry }] = await Promise.all([
-      supabase.from('businesses').select('id', { count: 'exact', head: true }).eq('status', 'active'),
-      supabase.from('payments').select('id', { count: 'exact', head: true }).eq('status', 'success'),
-      supabase.from('businesses').select('country_code').eq('status', 'active'),
-      supabase.from('countries').select('pricing').eq('code', 'US').eq('is_active', true).single(),
-    ]);
-    const uniqueCountries = new Set((countryData || []).map(b => b.country_code)).size;
-    stats = {
-      businesses: `${bizCount || 25}+`,
-      payments: `${payCount || 95}+`,
-      countries: String(uniqueCountries || 5),
-    };
+const JSON_LD_APP = {
+  '@context': 'https://schema.org',
+  '@type': 'SoftwareApplication',
+  name: 'Waaiio',
+  applicationCategory: 'BusinessApplication',
+  applicationSubCategory: 'WhatsApp Automation Platform',
+  operatingSystem: 'Web',
+  url: baseUrl,
+  description: 'Automate bookings, payments, orders, and tickets on WhatsApp for businesses in 5 countries',
+  featureList: 'Appointment booking, Payment processing, Online ordering, Event ticketing, Customer chat',
+  creator: { '@type': 'Organization', name: 'Waaiio', url: baseUrl },
+};
 
-    // Build JSON-LD offers from DB US pricing — no hardcoded fallback
-    const usPricing = usCountry?.pricing as Record<string, Record<string, number>> | undefined;
-    const growthPrice = usPricing?.growth?.price;
-    const businessPrice = usPricing?.business?.price;
-    if (typeof growthPrice === 'number' && typeof businessPrice === 'number') {
-      jsonLdOffers = [
-        { '@type': 'Offer', name: TIER_FEATURES.free.marketingName, price: '0', priceCurrency: 'USD', description: 'Free plan with trial period', availability: 'https://schema.org/InStock' },
-        { '@type': 'Offer', name: TIER_FEATURES.growth.marketingName, price: String(growthPrice), priceCurrency: 'USD', description: 'Pro plan for scaling businesses', availability: 'https://schema.org/InStock' },
-        { '@type': 'Offer', name: TIER_FEATURES.business.marketingName, price: String(businessPrice), priceCurrency: 'USD', description: 'Full platform with white-label branding', availability: 'https://schema.org/InStock' },
-      ];
-    }
-  } catch {}
-
-  const JSON_LD_APP: Record<string, unknown> = {
-    '@context': 'https://schema.org',
-    '@type': 'SoftwareApplication',
-    name: 'Waaiio',
-    applicationCategory: 'BusinessApplication',
-    applicationSubCategory: 'WhatsApp Automation Platform',
-    operatingSystem: 'Web',
-    url: baseUrl,
-    description: `Automate bookings, payments, orders, donations, and tickets on WhatsApp for ${CATEGORY_COUNT}+ industries`,
-    featureList: 'Appointment booking, Payment processing, Online ordering, Event ticketing, Donation collection, Customer chat, Feedback surveys, Loyalty programs, Queue management, Invoice generation, E-signatures',
-    creator: { '@type': 'Organization', name: 'Waaiio', url: baseUrl },
-  };
-  // Only include price-bearing offers when authoritative DB pricing is available
-  if (jsonLdOffers) {
-    JSON_LD_APP.offers = jsonLdOffers;
-  }
-
+export default function HomePage() {
   return (
     <>
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(JSON_LD_ORG) }} />
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(JSON_LD_APP) }} />
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(JSON_LD_FAQ) }} />
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(JSON_LD_WEBSITE) }} />
-      <HomeClient stats={stats} />
+      <HomeClient faqData={FAQ_DATA} />
     </>
   );
 }

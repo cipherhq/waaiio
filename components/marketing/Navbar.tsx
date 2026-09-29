@@ -113,16 +113,18 @@ export default function Navbar() {
                 >
                   Log In
                 </Link>
+                {/* Pre-launch: route to /launch. When Admin-controlled signup gate
+                    opens (#453), this CTA must switch to /get-started for onboarding. */}
                 <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
                   <Link
-                    href="/get-started"
+                    href="/launch"
                     className={`hidden rounded-xl px-5 py-2 text-sm font-bold shadow-lg transition sm:inline-flex ${
                       scrolled || !isHeroPage
                         ? 'bg-accent text-gray-900 shadow-accent/20 hover:bg-accent-400'
                         : 'bg-white text-gray-900 shadow-white/10 hover:bg-gray-100'
                     }`}
                   >
-                    Get Started
+                    Get Updates
                   </Link>
                 </motion.div>
               </>
