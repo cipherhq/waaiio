@@ -66,7 +66,12 @@ export default function PromoCodesPage() {
         supabase.from('products').select('id, name').eq('business_id', business.id).is('deleted_at', null).order('name').limit(100),
       ]);
       const data = await res.json();
-      setCodes(data.error ? [] : (data.codes || []) as PromoCode[]);
+      if (data.error) {
+        setError(true);
+        setCodes([]);
+      } else {
+        setCodes((data.codes || []) as PromoCode[]);
+      }
       setProducts((prods || []) as ProductOption[]);
     } catch {
       setError(true);

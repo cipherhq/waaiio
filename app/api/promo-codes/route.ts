@@ -39,11 +39,15 @@ export async function GET(request: NextRequest) {
       .eq('business_id', businessId)
       .order('created_at', { ascending: false });
 
-    if (error) return NextResponse.json({ error: 'Failed to fetch promo codes' }, { status: 500 });
+    if (error) {
+      console.error('[promo-codes] GET error:', { code: error.code, message: error.message });
+      return NextResponse.json({ error: 'Failed to fetch promo codes' }, { status: 500 });
+    }
     const response = NextResponse.json({ codes: data });
     response.headers.set('Cache-Control', 'private, max-age=30, stale-while-revalidate=120');
     return response;
-  } catch {
+  } catch (err) {
+    console.error('[promo-codes] GET exception:', err instanceof Error ? err.message : 'unknown');
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
@@ -89,10 +93,12 @@ export async function POST(request: NextRequest) {
 
     if (error) {
       if (error.code === '23505') return NextResponse.json({ error: 'Code already exists' }, { status: 409 });
+      console.error('[promo-codes] POST insert error:', { code: error.code, message: error.message });
       return NextResponse.json({ error: 'Failed to create promo code' }, { status: 500 });
     }
     return NextResponse.json({ promoCode: data });
-  } catch {
+  } catch (err) {
+    console.error('[promo-codes] POST exception:', err instanceof Error ? err.message : 'unknown');
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
@@ -123,7 +129,9 @@ export async function PUT(request: NextRequest) {
     if (updates.minOrderAmount !== undefined) updateData.min_order_amount = updates.minOrderAmount;
     if (updates.maxUses !== undefined) updateData.max_uses = updates.maxUses;
     if (updates.validUntil !== undefined) updateData.valid_until = updates.validUntil;
-    if (updates.isActive !== undefined) updateData.is_active = updates.isActive;
+    // Accept both camelCase (isActive) and snake_case (is_active) for compatibility
+    const activeValue = updates.isActive ?? updates.is_active;
+    if (activeValue !== undefined) updateData.is_active = activeValue;
     if (updates.applicableServices !== undefined) updateData.applicable_services = updates.applicableServices;
 
     const { error } = await supabase
@@ -132,9 +140,13 @@ export async function PUT(request: NextRequest) {
       .eq('id', id)
       .eq('business_id', businessId);
 
-    if (error) return NextResponse.json({ error: 'Failed to update' }, { status: 500 });
+    if (error) {
+      console.error('[promo-codes] PUT error:', { code: error.code, message: error.message });
+      return NextResponse.json({ error: 'Failed to update' }, { status: 500 });
+    }
     return NextResponse.json({ success: true });
-  } catch {
+  } catch (err) {
+    console.error('[promo-codes] PUT exception:', err instanceof Error ? err.message : 'unknown');
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
@@ -160,9 +172,14 @@ export async function DELETE(request: NextRequest) {
     if ('error' in auth) return auth.error;
 
     const supabase = createServiceClient();
-    await supabase.from('promo_codes').delete().eq('id', id).eq('business_id', businessId);
+    const { error } = await supabase.from('promo_codes').delete().eq('id', id).eq('business_id', businessId);
+    if (error) {
+      console.error('[promo-codes] DELETE error:', { code: error.code, message: error.message });
+      return NextResponse.json({ error: 'Failed to delete promo code' }, { status: 500 });
+    }
     return NextResponse.json({ success: true });
-  } catch {
+  } catch (err) {
+    console.error('[promo-codes] DELETE exception:', err instanceof Error ? err.message : 'unknown');
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
