@@ -116,7 +116,7 @@ export default async function DashboardLayout({
         const businessWithCaps = { ...impBiz, capabilities, capabilityOverrides };
 
         return (
-          <DashboardProvider business={businessWithCaps} userId={user.id} isReseller={isReseller}>
+          <DashboardProvider business={businessWithCaps} userId={user.id} isReseller={isReseller} isImpersonating>
             <div data-dashboard className="flex h-screen overflow-hidden bg-gray-50 dark:bg-gray-900">
               <a href="#main-content" className="skip-link">Skip to content</a>
               <Sidebar />

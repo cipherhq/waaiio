@@ -68,6 +68,7 @@ interface DashboardContextType {
   switchingBusiness: boolean;
   switchBusiness: (businessId: string) => Promise<void>;
   isReseller: boolean;
+  isImpersonating: boolean;
 }
 
 const DashboardContext = createContext<DashboardContextType | null>(null);
@@ -77,12 +78,14 @@ export function DashboardProvider({
   userId,
   allBusinesses = [],
   isReseller = false,
+  isImpersonating = false,
   children,
 }: {
   business: Business;
   userId: string;
   allBusinesses?: BusinessSummary[];
   isReseller?: boolean;
+  isImpersonating?: boolean;
   children: ReactNode;
 }) {
   const router = useRouter();
@@ -114,7 +117,7 @@ export function DashboardProvider({
   }, [business.id, router]);
 
   return (
-    <DashboardContext.Provider value={{ business, userId, allBusinesses, switchingBusiness, switchBusiness, isReseller }}>
+    <DashboardContext.Provider value={{ business, userId, allBusinesses, switchingBusiness, switchBusiness, isReseller, isImpersonating }}>
       {children}
     </DashboardContext.Provider>
   );
