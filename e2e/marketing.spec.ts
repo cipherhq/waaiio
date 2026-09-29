@@ -74,7 +74,7 @@ test.describe('Marketing Pages', () => {
   });
 });
 
-// ── Launch banner integration (#446) ──
+// ── Launch strip + modal integration (#446 → #460 compact redesign) ──
 
 test.describe('Launch banner — mocked API integration', () => {
   const MOCK_ANNOUNCEMENT = {
@@ -105,7 +105,7 @@ test.describe('Launch banner — mocked API integration', () => {
     );
   }
 
-  test('enabled launch_countdown renders rich banner with country selector', async ({ page }) => {
+  test('enabled launch_countdown renders compact strip and auto-opens modal', async ({ page }) => {
     await setupMocks(page);
     // Override timezone detection — use a timezone with no supported country match
     await page.addInitScript(() => {
@@ -118,11 +118,15 @@ test.describe('Launch banner — mocked API integration', () => {
     });
 
     await page.goto('/');
-    // Rich launch banner should be visible
-    const banner = page.locator('[data-testid="launch-banner"]');
-    await expect(banner).toBeVisible({ timeout: 10000 });
+    // Compact launch strip should be visible
+    const strip = page.locator('[data-testid="launch-strip"]');
+    await expect(strip).toBeVisible({ timeout: 10000 });
 
-    // Country selector should be visible
+    // Modal should auto-open on first visit
+    const modal = page.locator('[data-testid="launch-modal"]');
+    await expect(modal).toBeVisible({ timeout: 10000 });
+
+    // Country selector should be inside modal
     const selector = page.locator('[data-testid="country-selector"]');
     await expect(selector).toBeVisible();
 
@@ -130,16 +134,12 @@ test.describe('Launch banner — mocked API integration', () => {
     const ctaButton = page.locator('[data-testid="whatsapp-button"]');
     await expect(ctaButton).not.toBeVisible();
 
-    // QR should be disabled
-    const qrCard = page.locator('[data-testid="qr-card"]');
-    await expect(qrCard).not.toBeVisible();
-
     // Disabled state text should be visible
     const disabledText = page.locator('[data-testid="cta-disabled"]');
     await expect(disabledText).toBeVisible();
   });
 
-  test('selecting country A enables button targeting country A with (button)', async ({ page }) => {
+  test('selecting country A enables button targeting country A (no source suffix)', async ({ page }) => {
     await setupMocks(page);
     await page.addInitScript(() => {
       const original = Intl.DateTimeFormat.prototype.resolvedOptions;
@@ -151,23 +151,21 @@ test.describe('Launch banner — mocked API integration', () => {
     });
 
     await page.goto('/');
-    const banner = page.locator('[data-testid="launch-banner"]');
-    await expect(banner).toBeVisible({ timeout: 10000 });
+    // Wait for modal to auto-open
+    const modal = page.locator('[data-testid="launch-modal"]');
+    await expect(modal).toBeVisible({ timeout: 10000 });
 
     // Select Nigeria
     const selector = page.locator('[data-testid="country-selector"]');
     await selector.selectOption('NG');
 
-    // Button should now be visible and target Nigeria
+    // Button should now be visible and target Nigeria — no (button) suffix
     const ctaButton = page.locator('[data-testid="whatsapp-button"]');
     await expect(ctaButton).toBeVisible();
     const href = await ctaButton.getAttribute('href');
     expect(href).toContain('wa.me/2348001234567');
-    expect(href).toContain(encodeURIComponent('(button)'));
-
-    // QR card should render for selected country
-    const qrCard = page.locator('[data-testid="qr-card"]');
-    await expect(qrCard).toBeVisible();
+    expect(href).not.toContain(encodeURIComponent('(button)'));
+    expect(href).not.toContain(encodeURIComponent('(qr)'));
   });
 
   test('switching to country B changes button destination', async ({ page }) => {
@@ -182,8 +180,9 @@ test.describe('Launch banner — mocked API integration', () => {
     });
 
     await page.goto('/');
-    const banner = page.locator('[data-testid="launch-banner"]');
-    await expect(banner).toBeVisible({ timeout: 10000 });
+    // Wait for modal to auto-open
+    const modal = page.locator('[data-testid="launch-modal"]');
+    await expect(modal).toBeVisible({ timeout: 10000 });
 
     const selector = page.locator('[data-testid="country-selector"]');
     const ctaButton = page.locator('[data-testid="whatsapp-button"]');
@@ -208,15 +207,21 @@ test.describe('Launch banner — mocked API integration', () => {
     await page.setViewportSize({ width: 375, height: 812 });
 
     await page.goto('/');
-    const banner = page.locator('[data-testid="launch-banner"]');
-    await expect(banner).toBeVisible({ timeout: 10000 });
+    // Compact strip should be visible
+    const strip = page.locator('[data-testid="launch-strip"]');
+    await expect(strip).toBeVisible({ timeout: 10000 });
 
-    // Select a country to fully render the banner with CTA + QR
+    // Open modal and select a country to render full content
+    await page.locator('[data-testid="launch-modal"]').waitFor({ state: 'visible', timeout: 10000 });
     const selector = page.locator('[data-testid="country-selector"]');
     await selector.selectOption('NG');
     await expect(page.locator('[data-testid="whatsapp-button"]')).toBeVisible();
 
-    // Check no horizontal overflow
+    // Close modal to check strip overflow
+    await page.locator('[aria-label="Close modal"]').click();
+    await expect(page.locator('[data-testid="launch-modal"]')).not.toBeVisible();
+
+    // Check no horizontal overflow with strip visible
     const bodyWidth = await page.evaluate(() => document.body.scrollWidth);
     const viewportWidth = await page.evaluate(() => window.innerWidth);
     expect(bodyWidth).toBeLessThanOrEqual(viewportWidth);

@@ -30,7 +30,7 @@ const WAAIIO_101 = [
   { emoji: '\u{1F6D2}', text: 'Take orders & sell products' },
   { emoji: '\u{1F3AB}', text: 'Sell event tickets' },
   { emoji: '\u{1F49D}', text: 'Receive donations & giving' },
-  { emoji: '\u{1F916}', text: 'AI-powered automation for 89+ business types' },
+  { emoji: '\u{1F916}', text: 'AI-powered setup and automation' },
 ];
 
 // ── Component ──
@@ -74,8 +74,7 @@ export default function LaunchClient() {
   }, [announcement?.target_date]);
 
   const selectedRegion = regions.find((r) => r.code === selectedCode);
-  const waLink = selectedRegion ? buildWhatsAppLink(selectedRegion.phone, 'button') : '#';
-  const qrLink = selectedRegion ? buildWhatsAppLink(selectedRegion.phone, 'qr') : '';
+  const waLink = selectedRegion ? buildWhatsAppLink(selectedRegion.phone) : '#';
 
   // Derive display date from announcement
   const launchDateDisplay = announcement?.target_date
@@ -83,25 +82,20 @@ export default function LaunchClient() {
     : null;
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-brand-900 via-brand-800 to-brand-900 text-white">
-      <div className="mx-auto max-w-4xl px-4 pt-24 pb-16">
-
-        {/* Hero */}
-        <div className="text-center">
+    <div className="min-h-screen bg-white">
+      {/* Hero header */}
+      <div className="bg-brand-900 text-white">
+        <div className="mx-auto max-w-4xl px-4 pt-24 pb-12 text-center">
           <h1 className="text-4xl font-extrabold tracking-tight sm:text-5xl">
             {launchDateDisplay ? (
               <>
                 Waaiio launches{' '}
-                <span className="bg-gradient-to-r from-accent to-orange-300 bg-clip-text text-transparent">
-                  {launchDateDisplay}
-                </span>
+                <span className="text-accent">{launchDateDisplay}</span>
               </>
             ) : (
               <>
                 Waaiio is{' '}
-                <span className="bg-gradient-to-r from-accent to-orange-300 bg-clip-text text-transparent">
-                  coming soon
-                </span>
+                <span className="text-accent">coming soon</span>
               </>
             )}
           </h1>
@@ -111,46 +105,49 @@ export default function LaunchClient() {
           {announcement?.message && (
             <p className="mx-auto mt-2 max-w-lg text-sm text-brand-300">{announcement.message}</p>
           )}
+
+          {/* Countdown */}
+          {timeLeft && (
+            <div className="mt-8 flex justify-center gap-3 sm:gap-4">
+              {[
+                { value: timeLeft.days, label: 'Days' },
+                { value: timeLeft.hours, label: 'Hours' },
+                { value: timeLeft.minutes, label: 'Min' },
+                { value: timeLeft.seconds, label: 'Sec' },
+              ].map(({ value, label }) => (
+                <div key={label} className="flex flex-col items-center rounded-2xl bg-white/10 backdrop-blur-sm px-4 py-3 min-w-[60px] sm:min-w-[80px]">
+                  <span className="text-3xl font-bold tabular-nums sm:text-4xl">{String(value).padStart(2, '0')}</span>
+                  <span className="mt-1 text-xs uppercase tracking-wide text-brand-300">{label}</span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
+      </div>
 
-        {/* Countdown — only shown when announcement has a target_date */}
-        {timeLeft && (
-          <div className="mt-10 flex justify-center gap-3 sm:gap-4">
-            {[
-              { value: timeLeft.days, label: 'Days' },
-              { value: timeLeft.hours, label: 'Hours' },
-              { value: timeLeft.minutes, label: 'Min' },
-              { value: timeLeft.seconds, label: 'Sec' },
-            ].map(({ value, label }) => (
-              <div key={label} className="flex flex-col items-center rounded-2xl bg-white/10 backdrop-blur-sm px-4 py-3 min-w-[60px] sm:min-w-[80px]">
-                <span className="text-3xl font-bold tabular-nums sm:text-4xl">{String(value).padStart(2, '0')}</span>
-                <span className="mt-1 text-xs uppercase tracking-wide text-brand-300">{label}</span>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* Waaiio 101 */}
-        <div className="mt-12 rounded-2xl bg-white/5 backdrop-blur-sm border border-white/10 p-6 sm:p-8">
-          <h2 className="text-center text-xl font-bold">What is Waaiio?</h2>
-          <p className="mt-2 text-center text-sm text-brand-300">
-            WhatsApp automation for any business, any industry, any country.
+      {/* Content */}
+      <div className="mx-auto max-w-4xl px-4 py-12">
+        {/* What is Waaiio */}
+        <div className="rounded-2xl border border-gray-100 bg-gray-50 p-6 sm:p-8">
+          <h2 className="text-center text-xl font-bold text-gray-900">What is Waaiio?</h2>
+          <p className="mt-2 text-center text-sm text-gray-500">
+            WhatsApp automation that handles bookings, payments, orders, and more.
           </p>
           <div className="mt-6 grid gap-3 sm:grid-cols-2">
             {WAAIIO_101.map((item) => (
-              <div key={item.text} className="flex items-center gap-3 rounded-xl bg-white/5 px-4 py-3">
+              <div key={item.text} className="flex items-center gap-3 rounded-xl bg-white px-4 py-3 border border-gray-100">
                 <span className="text-2xl">{item.emoji}</span>
-                <span className="text-sm">{item.text}</span>
+                <span className="text-sm text-gray-700">{item.text}</span>
               </div>
             ))}
           </div>
         </div>
 
         {/* WhatsApp CTA Section */}
-        <div className="mt-12 rounded-2xl bg-white p-6 text-gray-900 sm:p-8">
-          <h2 className="text-center text-xl font-bold">Get Notified on WhatsApp</h2>
+        <div className="mt-10 rounded-2xl border border-gray-100 bg-white p-6 sm:p-8">
+          <h2 className="text-center text-xl font-bold text-gray-900">Get Notified on WhatsApp</h2>
           <p className="mt-1 text-center text-sm text-gray-500">
-            Scan the QR code or tap the button — same action, your choice.
+            Scan the QR code or tap the button — we&apos;ll message you when we launch.
           </p>
 
           {/* Region selector */}
@@ -176,16 +173,10 @@ export default function LaunchClient() {
             </div>
           ) : selectedRegion ? (
             <div className="mt-6 flex flex-col items-center gap-6 sm:flex-row sm:justify-center">
-              {/* QR Code — locally generated, no external dependency */}
+              {/* QR Code */}
               <div className="flex flex-col items-center gap-2">
                 <div className="rounded-2xl border-2 border-gray-100 bg-white p-3">
-                  <QRCodeSVG
-                    value={qrLink}
-                    size={160}
-                    level="M"
-                    bgColor="#ffffff"
-                    fgColor="#1a1a2e"
-                  />
+                  <QRCodeSVG value={waLink} size={160} level="M" bgColor="#ffffff" fgColor="#1a1a2e" />
                 </div>
                 <span className="text-[10px] text-gray-400">Scan with phone camera</span>
               </div>
@@ -222,7 +213,7 @@ export default function LaunchClient() {
           )}
 
           <p className="mt-6 text-center text-[11px] text-gray-400">
-            You&apos;ll receive a single WhatsApp message when Waaiio launches. No spam, unsubscribe anytime.
+            One message when we launch. No spam, unsubscribe anytime.
           </p>
         </div>
       </div>

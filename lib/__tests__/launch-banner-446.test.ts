@@ -22,39 +22,27 @@ import {
 
 describe('shared launch helpers', () => {
   describe('buildWhatsAppLink', () => {
-    it('encodes (button) source in the URL', () => {
-      const link = buildWhatsAppLink('2348001234567', 'button');
+    it('builds a clean wa.me link without source suffixes (#460)', () => {
+      const link = buildWhatsAppLink('2348001234567');
       expect(link).toContain('wa.me/2348001234567');
-      expect(link).toContain(encodeURIComponent('(button)'));
-      expect(link).not.toContain(encodeURIComponent('(qr)'));
-    });
-
-    it('encodes (qr) source in the URL', () => {
-      const link = buildWhatsAppLink('2348001234567', 'qr');
-      expect(link).toContain('wa.me/2348001234567');
-      expect(link).toContain(encodeURIComponent('(qr)'));
-      expect(link).not.toContain(encodeURIComponent('(button)'));
+      // Must NOT contain customer-visible source attribution
+      expect(decodeURIComponent(link)).not.toContain('(button)');
+      expect(decodeURIComponent(link)).not.toContain('(qr)');
     });
 
     it('strips non-digit characters from phone', () => {
-      const link = buildWhatsAppLink('+234-800-123-4567', 'button');
+      const link = buildWhatsAppLink('+234-800-123-4567');
       expect(link).toContain('wa.me/2348001234567');
     });
 
     it('includes the canonical opt-in message', () => {
-      const link = buildWhatsAppLink('12025551234', 'button');
+      const link = buildWhatsAppLink('12025551234');
       expect(decodeURIComponent(link)).toContain(LAUNCH_OPT_IN_MESSAGE);
     });
 
-    it('button and qr links for the same phone differ only by source tag', () => {
-      const phone = '2348001234567';
-      const buttonLink = buildWhatsAppLink(phone, 'button');
-      const qrLink = buildWhatsAppLink(phone, 'qr');
-      // Same base URL
-      expect(buttonLink.split('?')[0]).toBe(qrLink.split('?')[0]);
-      // Different source tags
-      expect(buttonLink).toContain(encodeURIComponent('(button)'));
-      expect(qrLink).toContain(encodeURIComponent('(qr)'));
+    it('includes rocket emoji for clean customer experience', () => {
+      const link = buildWhatsAppLink('12025551234');
+      expect(decodeURIComponent(link)).toContain('🚀');
     });
   });
 
@@ -106,59 +94,56 @@ describe('shared launch helpers', () => {
   });
 });
 
+const MODAL_SHOWN_KEY_FOR_TEST = 'waaiio_launch_modal_shown';
+
 // ── SiteAnnouncement component source analysis ──
 
-describe('SiteAnnouncement component contract', () => {
+describe('SiteAnnouncement component contract (#460 strip + modal)', () => {
   const siteAnnouncementSrc = readFileSync(
     resolve(__dirname, '../../components/marketing/SiteAnnouncement.tsx'),
     'utf-8'
   );
 
-  it('renders launch banner for launch_countdown type', () => {
+  it('renders launch strip for launch_countdown type', () => {
     expect(siteAnnouncementSrc).toContain("config.type === 'launch_countdown'");
-    expect(siteAnnouncementSrc).toContain('LaunchBanner');
+    expect(siteAnnouncementSrc).toContain('LaunchStrip');
+  });
+
+  it('renders launch modal with rich content', () => {
+    expect(siteAnnouncementSrc).toContain('LaunchModal');
+    expect(siteAnnouncementSrc).toContain('launch-modal');
   });
 
   it('renders compact announcement for non-launch types', () => {
     expect(siteAnnouncementSrc).toContain('CompactAnnouncement');
   });
 
-  it('launch banner has a country selector', () => {
+  it('modal has a country selector', () => {
     expect(siteAnnouncementSrc).toContain('country-selector');
-    expect(siteAnnouncementSrc).toContain('Choose your country');
-    expect(siteAnnouncementSrc).toContain('banner-country-select');
+    expect(siteAnnouncementSrc).toContain('modal-country-select');
   });
 
   it('auto-selection only when a valid detected country exists', () => {
-    // Must call detectCountryFromTimezone and only set if match found
     expect(siteAnnouncementSrc).toContain('detectCountryFromTimezone');
     expect(siteAnnouncementSrc).toContain('match ? match.code : null');
   });
 
-  it('no selection disables CTA and QR', () => {
+  it('no selection disables CTA', () => {
     expect(siteAnnouncementSrc).toContain('cta-disabled');
-    expect(siteAnnouncementSrc).toContain('qr-disabled');
-    expect(siteAnnouncementSrc).toContain('Select a country above');
   });
 
-  it('button uses (button) source via buildWhatsAppLink', () => {
-    expect(siteAnnouncementSrc).toContain("buildWhatsAppLink(selectedRegion.phone, 'button')");
-  });
-
-  it('QR uses (qr) source via buildWhatsAppLink', () => {
-    expect(siteAnnouncementSrc).toContain("buildWhatsAppLink(selectedRegion.phone, 'qr')");
+  it('uses buildWhatsAppLink without source suffix (#460)', () => {
+    expect(siteAnnouncementSrc).toContain('buildWhatsAppLink(selectedRegion.phone)');
   });
 
   it('only uses shared channel regions from /api/launch/regions', () => {
     expect(siteAnnouncementSrc).toContain('/api/launch/regions');
-    // Must NOT hardcode any phone numbers
     expect(siteAnnouncementSrc).not.toMatch(/wa\.me\/\d+/);
   });
 
   it('does not reference dedicated channels or fallback to arbitrary numbers', () => {
     expect(siteAnnouncementSrc).not.toContain('dedicated');
     expect(siteAnnouncementSrc).not.toContain('channel_type');
-    // No hardcoded phone numbers
     expect(siteAnnouncementSrc).not.toMatch(/\+234\d{10}/);
     expect(siteAnnouncementSrc).not.toMatch(/\+1\d{10}/);
   });
@@ -168,31 +153,49 @@ describe('SiteAnnouncement component contract', () => {
     expect(siteAnnouncementSrc).toContain('computeTimeLeft');
   });
 
-  it('has QRCodeSVG for QR rendering', () => {
+  it('has QRCodeSVG for QR rendering in modal', () => {
     expect(siteAnnouncementSrc).toContain('QRCodeSVG');
     expect(siteAnnouncementSrc).toContain('qrcode.react');
   });
 
-  it('has whatsapp-button test ID', () => {
+  it('has whatsapp-button test ID in modal', () => {
     expect(siteAnnouncementSrc).toContain('whatsapp-button');
   });
 
-  it('renders launch-banner test ID for launch countdown', () => {
-    expect(siteAnnouncementSrc).toContain('launch-banner');
+  it('renders launch-strip test ID for launch countdown', () => {
+    expect(siteAnnouncementSrc).toContain('launch-strip');
   });
 
   it('renders compact-announcement test ID for non-launch types', () => {
     expect(siteAnnouncementSrc).toContain('compact-announcement');
   });
 
-  it('is responsive with no hardcoded widths that could overflow', () => {
-    // Must use responsive classes (flex-col on mobile, flex-row on desktop)
+  it('suppresses launch treatment on /launch page', () => {
+    expect(siteAnnouncementSrc).toContain("pathname === '/launch'");
+    expect(siteAnnouncementSrc).toContain('usePathname');
+  });
+
+  it('uses sessionStorage for once-per-session auto-open', () => {
+    expect(siteAnnouncementSrc).toContain('sessionStorage');
+    expect(siteAnnouncementSrc).toContain(MODAL_SHOWN_KEY_FOR_TEST);
+  });
+
+  it('modal is dismissible with Escape key', () => {
+    expect(siteAnnouncementSrc).toContain("e.key === 'Escape'");
+  });
+
+  it('modal closes on backdrop click', () => {
+    expect(siteAnnouncementSrc).toContain('e.target === e.currentTarget');
+  });
+
+  it('strip has a "Get notified" CTA to open modal', () => {
+    expect(siteAnnouncementSrc).toContain('Get notified');
+    expect(siteAnnouncementSrc).toContain('onOpenModal');
+  });
+
+  it('is responsive with max-w constraints', () => {
     expect(siteAnnouncementSrc).toContain('flex-col');
-    expect(siteAnnouncementSrc).toContain('lg:flex-row');
-    // Must use max-w constraint
     expect(siteAnnouncementSrc).toContain('max-w-');
-    // Country selector must be constrained
-    expect(siteAnnouncementSrc).toContain('max-w-xs');
   });
 });
 

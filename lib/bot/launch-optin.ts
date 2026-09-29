@@ -31,11 +31,9 @@ export async function handleLaunchOptIn(
     return false;
   }
 
-  // Determine signup source from the message suffix
-  const lowerText = text.trim().toLowerCase();
-  let signupSource: 'qr' | 'button' | 'direct' = 'direct';
-  if (lowerText.includes('(qr)')) signupSource = 'qr';
-  else if (lowerText.includes('(button)')) signupSource = 'button';
+  // Source attribution: always 'direct' — customer-visible message no longer
+  // contains (qr)/(button) suffixes per #460.
+  const signupSource = 'direct';
 
   // Detect market from the receiving Waaiio number
   let market = 'XX'; // fallback
@@ -76,7 +74,7 @@ export async function handleLaunchOptIn(
 
   await sendReply(
     from,
-    "You're on the list! 🚀\n\nWe'll notify you on WhatsApp when Waaiio launches. Stay tuned!\n\n_Send STOP to unsubscribe._",
+    "🎉 You're in!\n\nWaaiio is launching soon and we'll message you right here when it's time.\n\nSoon you'll be able to book, order, pay, sell tickets, and get things done — all through WhatsApp.\n\nSee you at launch 🚀\n\n_Send STOP to unsubscribe._",
   );
 
   return true;

@@ -51,10 +51,11 @@ export default function HomeClient({
         />
       )}
 
-      {/* ── 1. Hero ── */}
-      <section className="relative min-h-[85vh] overflow-hidden bg-gradient-to-br from-brand-900 via-brand to-brand-700">
+      {/* ── 1. Hero (white bg, purple accents) ── */}
+      <section className="relative min-h-[85vh] overflow-hidden bg-white">
+        {/* Subtle decorative blobs */}
         <motion.div style={{ y: heroY }} className="pointer-events-none absolute inset-0">
-          <div className="absolute -left-20 -top-20 h-[250px] w-[250px] sm:-left-40 sm:-top-40 sm:h-[500px] sm:w-[500px] rounded-full bg-brand-400/15 blur-3xl" />
+          <div className="absolute -left-20 -top-20 h-[250px] w-[250px] sm:-left-40 sm:-top-40 sm:h-[500px] sm:w-[500px] rounded-full bg-brand-100/40 blur-3xl" />
           <div className="absolute -bottom-16 right-0 h-[200px] w-[200px] sm:-bottom-32 sm:h-[400px] sm:w-[400px] rounded-full bg-accent/10 blur-3xl" />
         </motion.div>
 
@@ -63,10 +64,10 @@ export default function HomeClient({
             <div className="text-center lg:text-left">
               <motion.span
                 {...entrance(0.2)}
-                className="inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-4 py-1.5 text-sm font-medium text-white backdrop-blur"
+                className="inline-flex items-center gap-2 rounded-full border border-brand-200 bg-brand-50 px-4 py-1.5 text-sm font-medium text-brand-700"
               >
                 <span className="relative flex h-2 w-2">
-                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-75" />
+                  {!noMotion && <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-75" />}
                   <span className="relative inline-flex h-2 w-2 rounded-full bg-green-400" />
                 </span>
                 Just message. It understands.
@@ -74,17 +75,17 @@ export default function HomeClient({
 
               <motion.h1
                 {...entrance(0.4)}
-                className="mt-8 text-balance text-4xl font-extrabold leading-[1.08] tracking-tight text-white sm:text-5xl lg:text-[3.5rem]"
+                className="mt-8 text-balance text-4xl font-extrabold leading-[1.08] tracking-tight text-gray-900 sm:text-5xl lg:text-[3.5rem]"
               >
                 Your business,
                 <br />
                 running on{' '}
-                <span className="text-accent">WhatsApp.</span>
+                <span className="text-brand">WhatsApp.</span>
               </motion.h1>
 
               <motion.p
                 {...entrance(0.7)}
-                className="mx-auto mt-6 max-w-lg text-lg leading-relaxed text-brand-200 lg:mx-0"
+                className="mx-auto mt-6 max-w-lg text-lg leading-relaxed text-gray-500 lg:mx-0"
               >
                 Customers book, order, pay, and get confirmations &mdash; just by messaging.
               </motion.p>
@@ -95,26 +96,71 @@ export default function HomeClient({
               >
                 <Link
                   href="/launch"
-                  className="rounded-2xl bg-accent px-7 py-3.5 text-sm font-bold text-gray-900 shadow-xl shadow-accent/30 transition hover:bg-accent-400 hover:shadow-accent/50"
+                  className="rounded-2xl bg-brand px-7 py-3.5 text-sm font-bold text-white shadow-xl shadow-brand/20 transition hover:bg-brand-500 hover:shadow-brand/30"
                 >
                   Get Launch Updates
                 </Link>
                 <Link
                   href="/pricing"
-                  className="rounded-2xl border border-white/20 bg-white/5 px-7 py-3.5 text-sm font-semibold text-white/90 backdrop-blur transition hover:bg-white/15"
+                  className="rounded-2xl border border-gray-200 bg-white px-7 py-3.5 text-sm font-semibold text-gray-700 transition hover:bg-gray-50"
                 >
                   View Pricing
                 </Link>
               </motion.div>
             </div>
 
-            <HeroAutomationFlow />
+            {/* HeroAutomationFlow has its own dark glass card */}
+            <div className="rounded-3xl bg-gradient-to-br from-brand-900 via-brand to-brand-700 p-1">
+              <HeroAutomationFlow />
+            </div>
           </div>
         </motion.div>
       </section>
 
-      {/* ── 2. WhatsApp Demo ── */}
-      <section className="bg-gradient-to-b from-gray-50/80 to-white py-24">
+      {/* ── 2. Problem → Solution ── */}
+      <section className="bg-gray-50/60 py-20">
+        <div className="mx-auto max-w-5xl px-4">
+          <AnimatedSection className="text-center">
+            <h2 className="text-2xl font-bold text-gray-900 sm:text-3xl">
+              Business shouldn&apos;t stop while someone waits for a reply.
+            </h2>
+          </AnimatedSection>
+
+          <AnimatedSection className="mt-12">
+            <div className="grid gap-4 sm:grid-cols-3">
+              {[
+                {
+                  before: 'Waiting for replies',
+                  after: 'Instant answers',
+                  icon: '\u{26A1}',
+                },
+                {
+                  before: 'Manual back-and-forth',
+                  after: 'Automated actions',
+                  icon: '\u{2699}\u{FE0F}',
+                },
+                {
+                  before: 'Different apps and links',
+                  after: 'One WhatsApp conversation',
+                  icon: '\u{1F4AC}',
+                },
+              ].map((item) => (
+                <div
+                  key={item.after}
+                  className="rounded-2xl border border-gray-100 bg-white p-6 text-center"
+                >
+                  <span className="text-2xl">{item.icon}</span>
+                  <p className="mt-3 text-sm text-gray-400 line-through">{item.before}</p>
+                  <p className="mt-1 text-sm font-semibold text-gray-900">{item.after}</p>
+                </div>
+              ))}
+            </div>
+          </AnimatedSection>
+        </div>
+      </section>
+
+      {/* ── 3. Try Waaiio (WhatsApp Demo) ── */}
+      <section className="bg-gradient-to-b from-white to-gray-50/80 py-24">
         <div className="mx-auto max-w-6xl px-4">
           <AnimatedSection className="text-center">
             <p className="text-xs font-bold uppercase tracking-widest text-brand">See it in action</p>
@@ -122,7 +168,7 @@ export default function HomeClient({
               Try the WhatsApp experience
             </h2>
             <p className="mx-auto mt-3 max-w-xl text-gray-500">
-              Type a message and watch the AI respond. This is exactly what your customers experience.
+              Watch how customers book, order, and buy tickets &mdash; all through a WhatsApp conversation.
             </p>
           </AnimatedSection>
           <AnimatedSection className="mt-12">
@@ -133,8 +179,77 @@ export default function HomeClient({
         </div>
       </section>
 
-      {/* ── 3. Business Dashboard Proof ── */}
+      {/* ── 4. Ace Section ── */}
       <section className="bg-white py-24">
+        <div className="mx-auto max-w-5xl px-4">
+          <AnimatedSection className="text-center">
+            <p className="text-xs font-bold uppercase tracking-widest text-brand">Setup assistant</p>
+            <h2 className="mt-3 text-3xl font-bold text-gray-900 sm:text-4xl">
+              Meet Ace &mdash; your AI setup assistant
+            </h2>
+            <p className="mx-auto mt-4 max-w-2xl text-gray-500">
+              You describe it. Ace organizes it. Waaiio gets it ready.
+            </p>
+          </AnimatedSection>
+
+          <AnimatedSection className="mt-12">
+            <div className="mx-auto max-w-lg">
+              {/* Chat-style example */}
+              <div className="space-y-3 rounded-2xl border border-gray-100 bg-gray-50 p-6">
+                <div className="flex justify-end">
+                  <div className="rounded-lg bg-brand-50 px-4 py-2.5 text-sm text-gray-800">
+                    I run a nail salon. Manicure is $35, pedicure is $50.
+                  </div>
+                </div>
+                <div className="flex justify-start">
+                  <div className="rounded-lg bg-white px-4 py-2.5 text-sm text-gray-800 shadow-sm">
+                    Got it! How long does each service take?
+                  </div>
+                </div>
+                <div className="flex justify-end">
+                  <div className="rounded-lg bg-brand-50 px-4 py-2.5 text-sm text-gray-800">
+                    Manicure is 30 minutes, pedicure is 45.
+                  </div>
+                </div>
+                <div className="flex justify-start">
+                  <div className="flex items-center gap-2 rounded-lg bg-white px-4 py-2.5 text-sm font-medium text-green-700 shadow-sm">
+                    <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                    </svg>
+                    Services ready to review
+                  </div>
+                </div>
+              </div>
+
+              {/* What Ace does */}
+              <div className="mt-8 space-y-3">
+                {[
+                  'Reads your menu, price list, or photo',
+                  'Creates services and products automatically',
+                  'Sets your business hours',
+                  'Configures your WhatsApp greeting',
+                  'Review everything before it goes live',
+                ].map((item) => (
+                  <div key={item} className="flex items-start gap-3">
+                    <svg
+                      className="mt-0.5 h-4 w-4 flex-shrink-0 text-brand"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                    </svg>
+                    <span className="text-sm text-gray-600">{item}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </AnimatedSection>
+        </div>
+      </section>
+
+      {/* ── 5. Business Dashboard Proof ── */}
+      <section className="bg-gray-50/60 py-24">
         <div className="mx-auto max-w-5xl px-4">
           <AnimatedSection className="text-center">
             <h2 className="text-3xl font-bold text-gray-900 sm:text-4xl">
@@ -157,7 +272,7 @@ export default function HomeClient({
                 { icon: '\u{1F465}', label: 'Customers', desc: 'History, preferences, and repeat behavior' },
                 { icon: '\u{1F4CA}', label: 'Analytics', desc: 'Revenue, bookings, and customer insights' },
               ].map((item) => (
-                <div key={item.label} className="rounded-2xl border border-gray-100 bg-gray-50/50 p-6 text-center">
+                <div key={item.label} className="rounded-2xl border border-gray-100 bg-white p-6 text-center">
                   <span className="text-3xl">{item.icon}</span>
                   <h3 className="mt-3 text-sm font-semibold text-gray-900">{item.label}</h3>
                   <p className="mt-1 text-xs text-gray-500">{item.desc}</p>
@@ -168,8 +283,8 @@ export default function HomeClient({
         </div>
       </section>
 
-      {/* ── 4. Compact Capability Summary ── */}
-      <section className="bg-gray-50/60 py-20">
+      {/* ── 6. Compact Capability Summary ── */}
+      <section className="bg-white py-20">
         <div className="mx-auto max-w-4xl px-4 text-center">
           <AnimatedSection>
             <h2 className="text-2xl font-bold text-gray-900 sm:text-3xl">
@@ -187,7 +302,7 @@ export default function HomeClient({
                 { icon: '\u{1F504}', label: 'Follow Up' },
               ].map((cap) => (
                 <div key={cap.label} className="flex flex-col items-center gap-2">
-                  <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-white shadow-sm border border-gray-100">
+                  <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-gray-50 shadow-sm border border-gray-100">
                     <span className="text-2xl">{cap.icon}</span>
                   </div>
                   <span className="text-sm font-medium text-gray-700">{cap.label}</span>
@@ -207,8 +322,8 @@ export default function HomeClient({
         </div>
       </section>
 
-      {/* ── 5. How It Works ── */}
-      <section className="bg-white py-24">
+      {/* ── 7. How It Works ── */}
+      <section className="bg-gray-50/60 py-24">
         <div className="mx-auto max-w-5xl px-4">
           <AnimatedSection className="text-center">
             <p className="text-xs font-bold uppercase tracking-widest text-brand">Simple setup</p>
@@ -249,7 +364,7 @@ export default function HomeClient({
         </div>
       </section>
 
-      {/* ── 6. Trust Strip ── */}
+      {/* ── 8. Trust Strip ── */}
       <section className="border-y border-gray-100 bg-gray-50/50 py-10">
         <div className="mx-auto max-w-4xl px-4">
           <div className="flex flex-col items-center gap-8 sm:flex-row sm:justify-center sm:gap-16">
@@ -264,14 +379,11 @@ export default function HomeClient({
               <span className="text-sm font-bold text-[#635BFF]">Stripe</span>
               <span className="text-sm font-bold text-[#00C3F7]">Paystack</span>
             </div>
-            <div className="text-center">
-              <span className="text-sm text-gray-500">Available in <strong className="text-gray-700">5 countries</strong></span>
-            </div>
           </div>
         </div>
       </section>
 
-      {/* ── 7. Pricing Preview ── */}
+      {/* ── 9. Pricing Preview ── */}
       <section id="pricing" className="bg-white py-24">
         <div className="mx-auto max-w-6xl px-4">
           <AnimatedSection className="text-center">
@@ -341,7 +453,7 @@ export default function HomeClient({
         </div>
       </section>
 
-      {/* ── 8. FAQ ── */}
+      {/* ── 10. FAQ ── */}
       <section id="faq" className="bg-gray-50/60 py-24">
         <div className="mx-auto max-w-3xl px-4">
           <AnimatedSection className="text-center">
@@ -355,7 +467,7 @@ export default function HomeClient({
         </div>
       </section>
 
-      {/* ── 9. Final CTA ── */}
+      {/* ── 11. Final CTA ── */}
       <section className="bg-white py-20">
         <div className="mx-auto max-w-4xl px-4">
           <AnimatedSection>
