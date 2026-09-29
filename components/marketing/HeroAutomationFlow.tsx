@@ -70,7 +70,7 @@ export default function HeroAutomationFlow() {
           <span className="text-sm font-semibold text-white/90">Automation Flow</span>
           <div className="ml-auto flex items-center gap-1.5">
             <span className="relative flex h-2 w-2">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-75" />
+              {!noMotion && <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-75" />}
               <span className="relative inline-flex h-2 w-2 rounded-full bg-green-400" />
             </span>
             <span className="text-xs text-green-300">Live</span>
@@ -136,7 +136,7 @@ export default function HeroAutomationFlow() {
           ))}
         </div>
 
-        {/* Bottom stats */}
+        {/* Bottom stats — non-quantified truthful language only */}
         <motion.div
           initial={noMotion ? undefined : { opacity: 0 }}
           animate={noMotion ? undefined : { opacity: 1 }}
@@ -144,16 +144,16 @@ export default function HeroAutomationFlow() {
           className="mt-6 grid grid-cols-3 gap-2 rounded-2xl border border-white/10 bg-white/5 p-3"
         >
           <div className="text-center">
-            <p className="text-lg font-bold text-accent">0s</p>
-            <p className="text-[10px] text-white/50">Response Time</p>
+            <p className="text-lg font-bold text-accent">{'\u{26A1}'}</p>
+            <p className="text-[10px] text-white/50">Instant Replies</p>
           </div>
           <div className="text-center">
             <p className="text-lg font-bold text-accent">24/7</p>
             <p className="text-[10px] text-white/50">Always On</p>
           </div>
           <div className="text-center">
-            <p className="text-lg font-bold text-accent">100%</p>
-            <p className="text-[10px] text-white/50">Automated</p>
+            <p className="text-lg font-bold text-accent">{'\u{1F512}'}</p>
+            <p className="text-[10px] text-white/50">Secure Payments</p>
           </div>
         </motion.div>
       </div>
