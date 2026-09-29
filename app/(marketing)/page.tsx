@@ -61,7 +61,7 @@ const JSON_LD_ORG = {
     contactType: 'customer support',
     url: `${baseUrl}/contact`,
     email: 'hello@waaiio.com',
-    availableLanguage: ['English', 'French', 'Yoruba', 'Igbo', 'Hausa', 'Twi', 'Pidgin'],
+    availableLanguage: ['English', 'French'],
   },
   sameAs: [
     'https://www.instagram.com/waaiiobot',

@@ -291,6 +291,22 @@ describe('#452 homepage simplification — unsupported language claims', () => {
     expect(combined).not.toContain('7 languages');
     expect(combined).not.toMatch(/in \d+ languages/);
   });
+
+  it('structured metadata does not advertise uncertified Pidgin', () => {
+    expect(pageSrc).not.toMatch(/availableLanguage.*Pidgin/);
+  });
+
+  it('structured metadata availableLanguage contains only production-certified languages', () => {
+    const match = pageSrc.match(/availableLanguage:\s*\[([^\]]+)\]/);
+    expect(match).not.toBeNull();
+    const languages = match![1].replace(/'/g, '').split(',').map(s => s.trim());
+    // Must not contain uncertified languages
+    expect(languages).not.toContain('Pidgin');
+    expect(languages).not.toContain('Yoruba');
+    expect(languages).not.toContain('Igbo');
+    expect(languages).not.toContain('Hausa');
+    expect(languages).not.toContain('Twi');
+  });
 });
 
 describe('#452 homepage simplification — setup wording truth', () => {
