@@ -560,6 +560,23 @@ export async function POST(request: NextRequest) {
         );
       }
 
+      // Paid onboarding completion: transition business to active after proven
+      // activation authority. Matches free path behavior (line ~600).
+      // Payment/subscription evidence is already committed and will not be
+      // rolled back. The existing idempotent verify/RPC replay converges on retry.
+      const { error: paidStatusErr } = await service
+        .from('businesses')
+        .update({ status: 'active' })
+        .eq('id', businessId)
+        .eq('status', 'pending');
+      if (paidStatusErr) {
+        console.warn('[ONBOARDING-VERIFY] Paid business status update failed (retryable):', paidStatusErr);
+        return NextResponse.json(
+          { message: 'Business activation failed after payment. Please retry verification.', recoverable: true },
+          { status: 500 },
+        );
+      }
+
       // Post-authority provider identity update (only after successful activation)
       // For active-subscription replay, this is the only point where provider IDs change.
       if (existingSubIsActive && subscription?.id) {
