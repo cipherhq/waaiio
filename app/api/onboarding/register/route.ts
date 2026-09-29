@@ -27,6 +27,15 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ message: 'Unauthorized' }, { status: 401 });
     }
 
+    // ── Signup gate: block new business creation when signup is closed ──
+    const { isSignupOpen } = await import('@/lib/signup-gate');
+    if (!(await isSignupOpen())) {
+      return NextResponse.json(
+        { message: 'Public signup is not yet open. Check back at launch.' },
+        { status: 403 },
+      );
+    }
+
     await loadCategories();
     const body = await request.json();
     const { first_name, last_name, name, city, state, zip_code, address, phone, category, country, bot_alias, bot_greeting, wa_method, wa_own_phone, capabilities, bot_code: customBotCode, retryBusinessId } = body;

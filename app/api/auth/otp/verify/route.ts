@@ -132,6 +132,14 @@ export async function POST(request: NextRequest) {
       }
     } else {
       // New user — create account
+      // Signup gate: block new user creation when signup is closed
+      const { isSignupOpen } = await import('@/lib/signup-gate');
+      if (!(await isSignupOpen())) {
+        return NextResponse.json(
+          { message: 'Public signup is not yet open. Check back at launch.' },
+          { status: 403 },
+        );
+      }
       isNewUser = true;
       const tempPassword = generatePhonePassword(phone);
 

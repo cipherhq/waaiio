@@ -39,15 +39,16 @@ test.describe('Marketing Pages', () => {
     await expect(page.getByRole('heading', { name: /sign in|log in|welcome/i })).toBeVisible();
   });
 
-  test('signup page loads', async ({ page }) => {
+  test('signup page loads or redirects to launch when gate is closed', async ({ page }) => {
     await page.goto('/signup');
-    // May redirect to login or show signup form
-    await expect(page).toHaveURL(/signup|login|get-started/);
+    // When signup gate is closed, redirects to /launch; when open, to /get-started or /login
+    await expect(page).toHaveURL(/signup|login|get-started|launch/);
   });
 
-  test('get-started page loads', async ({ page }) => {
+  test('get-started page loads or redirects to launch when gate is closed', async ({ page }) => {
     await page.goto('/get-started');
-    await expect(page).toHaveURL(/get-started|login/);
+    // When signup gate is closed, redirects to /launch; when open, shows wizard or /login
+    await expect(page).toHaveURL(/get-started|login|launch/);
   });
 
   test('OG metadata is present', async ({ page }) => {

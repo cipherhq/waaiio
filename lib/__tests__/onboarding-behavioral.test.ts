@@ -30,6 +30,8 @@ const mockServiceFrom = vi.fn();
 const mockInitCapabilities = vi.fn();
 const mockFinalize = vi.fn();
 
+vi.mock('@/lib/signup-gate', () => ({ isSignupOpen: () => Promise.resolve(true) }));
+
 vi.mock('@/lib/supabase/server', () => ({
   createClient: () => Promise.resolve({
     auth: { getUser: mockGetUser },
