@@ -245,4 +245,32 @@ describe('check-name self-collision (#456)', () => {
     // Auth should NOT have been called
     expect(mockGetUser).not.toHaveBeenCalled();
   });
+
+  it('6. resumed-URL businessId (not pendingRetryId) excludes own pending business', async () => {
+    // Scenario: user created a pending business, left, came back via URL with
+    // ?business_id=xxx. OnboardingWizard sets businessId (not pendingRetryId).
+    // The frontend now sends businessId as business_id param to check-name.
+    // Server must exclude that pending business from collision checks.
+    mockGetUser.mockResolvedValue({ data: { user: { id: MOCK_USER_ID } } });
+
+    const RESUMED_BIZ_ID = 'biz-resumed-url';
+    const ownerChain = createChain({ data: { id: RESUMED_BIZ_ID } });
+    const sChain = createChain({ data: null });
+    const cChain = createChain({ data: null });
+
+    let callCount = 0;
+    mockServiceFrom.mockImplementation(() => {
+      callCount++;
+      if (callCount === 1) return ownerChain;
+      if (callCount === 2) return sChain;
+      return cChain;
+    });
+
+    const res = await GET(makeRequest({ name: 'Test Biz', business_id: RESUMED_BIZ_ID }));
+    const json = await res.json();
+
+    expect(json.available).toBe(true);
+    expect(sChain.neq).toHaveBeenCalledWith('id', RESUMED_BIZ_ID);
+    expect(cChain.neq).toHaveBeenCalledWith('id', RESUMED_BIZ_ID);
+  });
 });
