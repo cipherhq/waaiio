@@ -129,11 +129,8 @@ function LaunchBanner({
   const selectedRegion = selectedCode
     ? regions.find((r) => r.code === selectedCode)
     : null;
-  const buttonLink = selectedRegion
-    ? buildWhatsAppLink(selectedRegion.phone, 'button')
-    : '';
-  const qrLink = selectedRegion
-    ? buildWhatsAppLink(selectedRegion.phone, 'qr')
+  const waLink = selectedRegion
+    ? buildWhatsAppLink(selectedRegion.phone)
     : '';
 
   const launchDateDisplay = config.target_date
@@ -217,7 +214,7 @@ function LaunchBanner({
             {!loading && selectedRegion ? (
               <div className="mt-5">
                 <a
-                  href={buttonLink}
+                  href={waLink}
                   target="_blank"
                   rel="noopener noreferrer"
                   data-testid="whatsapp-button"
@@ -250,13 +247,13 @@ function LaunchBanner({
 
           {/* Right: QR code card */}
           <div className="flex-shrink-0 flex justify-center lg:justify-end">
-            {!loading && selectedRegion && qrLink ? (
+            {!loading && selectedRegion && waLink ? (
               <div
                 data-testid="qr-card"
                 className="flex flex-col items-center gap-3 rounded-2xl bg-white p-5 shadow-xl"
               >
                 <QRCodeSVG
-                  value={qrLink}
+                  value={waLink}
                   size={140}
                   level="M"
                   bgColor="#ffffff"

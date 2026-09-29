@@ -22,39 +22,27 @@ import {
 
 describe('shared launch helpers', () => {
   describe('buildWhatsAppLink', () => {
-    it('encodes (button) source in the URL', () => {
-      const link = buildWhatsAppLink('2348001234567', 'button');
+    it('builds a clean wa.me link without source suffixes (#460)', () => {
+      const link = buildWhatsAppLink('2348001234567');
       expect(link).toContain('wa.me/2348001234567');
-      expect(link).toContain(encodeURIComponent('(button)'));
-      expect(link).not.toContain(encodeURIComponent('(qr)'));
-    });
-
-    it('encodes (qr) source in the URL', () => {
-      const link = buildWhatsAppLink('2348001234567', 'qr');
-      expect(link).toContain('wa.me/2348001234567');
-      expect(link).toContain(encodeURIComponent('(qr)'));
-      expect(link).not.toContain(encodeURIComponent('(button)'));
+      // Must NOT contain customer-visible source attribution
+      expect(decodeURIComponent(link)).not.toContain('(button)');
+      expect(decodeURIComponent(link)).not.toContain('(qr)');
     });
 
     it('strips non-digit characters from phone', () => {
-      const link = buildWhatsAppLink('+234-800-123-4567', 'button');
+      const link = buildWhatsAppLink('+234-800-123-4567');
       expect(link).toContain('wa.me/2348001234567');
     });
 
     it('includes the canonical opt-in message', () => {
-      const link = buildWhatsAppLink('12025551234', 'button');
+      const link = buildWhatsAppLink('12025551234');
       expect(decodeURIComponent(link)).toContain(LAUNCH_OPT_IN_MESSAGE);
     });
 
-    it('button and qr links for the same phone differ only by source tag', () => {
-      const phone = '2348001234567';
-      const buttonLink = buildWhatsAppLink(phone, 'button');
-      const qrLink = buildWhatsAppLink(phone, 'qr');
-      // Same base URL
-      expect(buttonLink.split('?')[0]).toBe(qrLink.split('?')[0]);
-      // Different source tags
-      expect(buttonLink).toContain(encodeURIComponent('(button)'));
-      expect(qrLink).toContain(encodeURIComponent('(qr)'));
+    it('includes rocket emoji for clean customer experience', () => {
+      const link = buildWhatsAppLink('12025551234');
+      expect(decodeURIComponent(link)).toContain('🚀');
     });
   });
 
@@ -141,12 +129,11 @@ describe('SiteAnnouncement component contract', () => {
     expect(siteAnnouncementSrc).toContain('Select a country above');
   });
 
-  it('button uses (button) source via buildWhatsAppLink', () => {
-    expect(siteAnnouncementSrc).toContain("buildWhatsAppLink(selectedRegion.phone, 'button')");
-  });
-
-  it('QR uses (qr) source via buildWhatsAppLink', () => {
-    expect(siteAnnouncementSrc).toContain("buildWhatsAppLink(selectedRegion.phone, 'qr')");
+  it('uses buildWhatsAppLink without source suffix (#460)', () => {
+    expect(siteAnnouncementSrc).toContain('buildWhatsAppLink(selectedRegion.phone)');
+    // Must NOT contain customer-visible source attribution
+    expect(siteAnnouncementSrc).not.toContain("'button')");
+    expect(siteAnnouncementSrc).not.toContain("'qr')");
   });
 
   it('only uses shared channel regions from /api/launch/regions', () => {

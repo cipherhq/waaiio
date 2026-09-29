@@ -74,8 +74,7 @@ export default function LaunchClient() {
   }, [announcement?.target_date]);
 
   const selectedRegion = regions.find((r) => r.code === selectedCode);
-  const waLink = selectedRegion ? buildWhatsAppLink(selectedRegion.phone, 'button') : '#';
-  const qrLink = selectedRegion ? buildWhatsAppLink(selectedRegion.phone, 'qr') : '';
+  const waLink = selectedRegion ? buildWhatsAppLink(selectedRegion.phone) : '#';
 
   // Derive display date from announcement
   const launchDateDisplay = announcement?.target_date
@@ -180,7 +179,7 @@ export default function LaunchClient() {
               <div className="flex flex-col items-center gap-2">
                 <div className="rounded-2xl border-2 border-gray-100 bg-white p-3">
                   <QRCodeSVG
-                    value={qrLink}
+                    value={waLink}
                     size={160}
                     level="M"
                     bgColor="#ffffff"

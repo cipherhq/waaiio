@@ -39,8 +39,8 @@ export function computeTimeLeft(target: string): TimeLeft | null {
 
 // ── WhatsApp link ──
 
-export function buildWhatsAppLink(phone: string, source: 'button' | 'qr'): string {
-  const msg = encodeURIComponent(`${LAUNCH_OPT_IN_MESSAGE} (${source})`);
+export function buildWhatsAppLink(phone: string): string {
+  const msg = encodeURIComponent(`${LAUNCH_OPT_IN_MESSAGE} 🚀`);
   return `https://wa.me/${phone.replace(/\D/g, '')}?text=${msg}`;
 }
 
