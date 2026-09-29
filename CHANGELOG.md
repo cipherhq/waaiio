@@ -3,6 +3,18 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-09-29 — Giving page read-only guard during admin impersonation (#472)
+
+### What changed
+- **`components/dashboard/DashboardProvider.tsx`:** Added `isImpersonating` boolean to dashboard context. Defaults to `false`. Passed through `DashboardContext.Provider` value.
+- **`app/dashboard/layout.tsx`:** Impersonation path now passes `isImpersonating` prop to `DashboardProvider`. Normal (non-impersonation) path omits it (defaults to `false`).
+- **`app/dashboard/giving/page.tsx`:** When `isImpersonating` is true: shows amber read-only banner explaining impersonation is view-only; hides Add/Edit/Toggle/Delete controls; disables save button in add/edit form. Normal owner flow unchanged.
+- **`app/api/giving/save/route.ts`:** 403 response now includes `message: 'You do not have write access to this business.'` so the UI shows a meaningful error instead of generic "Failed to save."
+- **`lib/__tests__/giving-impersonation-472.test.ts`:** 21 tests covering owner create, unauth 401, non-owner 403 with message, recurring/tier guards, isImpersonating context plumbing, UI guard assertions.
+
+### What could break
+- Nothing — `isImpersonating` defaults to `false`, so all non-impersonation flows are unchanged. The API ownership check is preserved. The 403 response adds a `message` field but retains the same `reason` and status code.
+
 ## 2026-09-29 — Fix promo code staging 500 + API corrections (#473)
 
 ### What changed
