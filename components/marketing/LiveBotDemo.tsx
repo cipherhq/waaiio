@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 interface Message {
@@ -9,158 +9,259 @@ interface Message {
   buttons?: string[];
 }
 
-const DEMO_RESPONSES: Record<string, { text: string; buttons?: string[] }> = {
-  // Greetings
-  'hi': { text: "Welcome to King's Cuts! 💈\n\nWhat would you like to do?", buttons: ['Book Appointment', 'View Services', 'My Bookings'] },
-  'hello': { text: "Welcome to King's Cuts! 💈\n\nWhat would you like to do?", buttons: ['Book Appointment', 'View Services', 'My Bookings'] },
-  'hey': { text: "Welcome to King's Cuts! 💈\n\nWhat would you like to do?", buttons: ['Book Appointment', 'View Services', 'My Bookings'] },
-
-  // Booking intent
-  'book appointment': { text: "Great! What service would you like?\n\n1. Haircut — $30\n2. Beard Trim — $15\n3. Full Grooming — $50" },
-  'book': { text: "Great! What service would you like?\n\n1. Haircut — $30\n2. Beard Trim — $15\n3. Full Grooming — $50" },
-  '1': { text: "Haircut — $30 ✂️\n\nWhen would you like to come in?" },
-  '2': { text: "Beard Trim — $15 🪒\n\nWhen would you like to come in?" },
-  '3': { text: "Full Grooming — $50 💈\n\nWhen would you like to come in?" },
-  'haircut': { text: "Haircut — $30 ✂️\n\nWhen would you like to come in?" },
-
-  // Natural language
-  'i wan barb tomorrow 3pm': { text: "Got it! Looking up *Haircut* for *tomorrow* at *3:00 PM*... ✨\n\n✅ *Appointment Confirmed!*\n\n💈 Haircut\n📅 Tomorrow, 3:00 PM\n🔑 Ref: BK-7291\n\n💡 Type *my bookings* to view appointments" },
-  'i want a haircut tomorrow at 3pm': { text: "Got it! Looking up *Haircut* for *tomorrow* at *3:00 PM*... ✨\n\n✅ *Appointment Confirmed!*\n\n💈 Haircut\n📅 Tomorrow, 3:00 PM\n🔑 Ref: BK-7291\n\n💡 Type *my bookings* to view appointments" },
-  'tomorrow 3pm': { text: "✅ *Appointment Confirmed!*\n\n💈 Haircut\n📅 Tomorrow, 3:00 PM\n📍 King's Cuts\n🔑 Ref: BK-7291\n\n💳 Pay here 👇\npay.waaiio.com/bk/7291\n\n💡 Type *reschedule* to change time" },
-  'tomorrow 2pm': { text: "✅ *Appointment Confirmed!*\n\n💈 Haircut\n📅 Tomorrow, 2:00 PM\n📍 King's Cuts\n🔑 Ref: BK-4821\n\n💳 Pay here 👇\npay.waaiio.com/bk/4821\n\n💡 Type *reschedule* to change time" },
-
-  // Services
-  'view services': { text: "Here are our services:\n\n✂️ *Haircut* — $30 (30 min)\n🪒 *Beard Trim* — $15 (15 min)\n💈 *Full Grooming* — $50 (45 min)\n\nWhich one would you like?" },
-  'services': { text: "Here are our services:\n\n✂️ *Haircut* — $30 (30 min)\n🪒 *Beard Trim* — $15 (15 min)\n💈 *Full Grooming* — $50 (45 min)\n\nWhich one would you like?" },
-
-  // Bookings
-  'my bookings': { text: "📋 *Your Upcoming Bookings:*\n\n1. 💈 Haircut\n   📅 Tomorrow, 3:00 PM\n   🔑 Ref: BK-7291\n\nType a number to manage, or *book* for a new one." },
-  'reschedule': { text: "Which booking would you like to reschedule?\n\n1. 💈 Haircut — Tomorrow, 3:00 PM (BK-7291)\n\nType the number to select." },
-
-  // Payment
-  'pay tithe': { text: "How much would you like to give as tithe?" },
-  '50000': { text: "✅ Tithe of ₦50,000 recorded!\n\n💳 Pay here: pay.waaiio.com/t/NLC-4821\n\n🙏 God bless you!" },
-
-  // Fallback
-  'receipt': { text: "Generating your receipt... 📄\n\n🧾 *Payment Receipt*\n\n💈 King's Cuts\n✂️ Haircut\n💰 $30.00\n📅 Today\n🔑 Ref: BK-7291\n\nThank you!" },
-  'my points': { text: "🏆 *Your Loyalty Points*\n\n⭐ 150 points\n🎁 Next reward at 200 points\n\nKeep booking to earn more!" },
-};
-
-function findResponse(text: string): { text: string; buttons?: string[] } {
-  const lower = text.toLowerCase().trim();
-
-  // Exact match
-  if (DEMO_RESPONSES[lower]) return DEMO_RESPONSES[lower];
-
-  // Partial match
-  for (const [key, val] of Object.entries(DEMO_RESPONSES)) {
-    if (lower.includes(key) || key.includes(lower)) return val;
-  }
-
-  // AI-like fallback for booking-related text
-  if (/barb|cut|trim|groom|fade|lineup/i.test(lower)) {
-    return { text: "I can help you book that! When would you like to come in?" };
-  }
-  if (/tomorrow|today|monday|tuesday|wednesday|thursday|friday|saturday|sunday/i.test(lower)) {
-    return DEMO_RESPONSES['tomorrow 3pm'];
-  }
-
-  return {
-    text: "I can help you with:\n\n• *Book* — Schedule an appointment\n• *Services* — View our menu\n• *My bookings* — Check your appointments\n• *Receipt* — Get your last receipt\n\nOr just tell me what you need!",
-  };
+interface ScenarioTurn {
+  from: 'user' | 'bot';
+  text: string;
+  buttons?: string[];
+  /** Delay in ms before this message appears */
+  delay: number;
 }
 
-const SUGGESTIONS = ['Hi', 'I wan barb tomorrow 3pm', 'My bookings', 'View services'];
+interface Scenario {
+  id: string;
+  label: string;
+  icon: string;
+  businessName: string;
+  businessInitial: string;
+  turns: ScenarioTurn[];
+}
+
+const SCENARIOS: Scenario[] = [
+  {
+    id: 'book',
+    label: 'Book',
+    icon: '\u{1F4C5}',
+    businessName: "Bella's Salon",
+    businessInitial: 'B',
+    turns: [
+      { from: 'bot', text: "Hi! Welcome to Bella's Salon \u{1F485}\n\nHow can I help you today?", buttons: ['Book Appointment', 'View Services', 'My Bookings'], delay: 600 },
+      { from: 'user', text: 'I need a manicure tomorrow 2pm', delay: 1200 },
+      { from: 'bot', text: "Got it! Checking availability for *Manicure* tomorrow at *2:00 PM*... \u{2728}", delay: 1400 },
+      { from: 'bot', text: "\u{2705} *Appointment Confirmed!*\n\n\u{1F485} Manicure\n\u{1F4C5} Tomorrow, 2:00 PM\n\u{1F550} 45 minutes\n\u{1F4B0} $35\n\u{1F511} Ref: BK-4291\n\n\u{1F4A1} Type *my bookings* to manage", delay: 2000 },
+    ],
+  },
+  {
+    id: 'order',
+    label: 'Order',
+    icon: '\u{1F6D2}',
+    businessName: 'Fresh Kitchen',
+    businessInitial: 'F',
+    turns: [
+      { from: 'bot', text: "Welcome to Fresh Kitchen! \u{1F373}\n\nWhat would you like to order?", buttons: ['View Menu', 'My Orders', 'Delivery Info'], delay: 600 },
+      { from: 'user', text: 'I want jollof rice and plantain', delay: 1200 },
+      { from: 'bot', text: "Great choices! Here's your order:\n\n\u{1F35A} Jollof Rice \u{2014} \u{20A6}2,500\n\u{1F34C} Fried Plantain \u{2014} \u{20A6}800\n\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\n\u{1F4B0} Total: \u{20A6}3,300\n\nConfirm order?", buttons: ['Confirm Order', 'Add More Items'], delay: 1800 },
+      { from: 'user', text: 'Confirm Order', delay: 1200 },
+      { from: 'bot', text: "\u{2705} *Order Placed!*\n\n\u{1F511} Ref: ORD-8134\n\u{23F0} Ready in ~30 minutes\n\n\u{1F4B3} Pay here \u{1F447}\npay.waaiio.com/ord/8134\n\n\u{1F4A1} Type *my orders* to track", delay: 1600 },
+    ],
+  },
+  {
+    id: 'ticket',
+    label: 'Ticket',
+    icon: '\u{1F3AB}',
+    businessName: 'Naija Tech Fest',
+    businessInitial: 'N',
+    turns: [
+      { from: 'bot', text: "Hey! Welcome to Naija Tech Fest \u{1F680}\n\n\u{1F4C5} Dec 14-15, Lagos\n\nHow can I help?", buttons: ['Buy Tickets', 'Event Details', 'My Tickets'], delay: 600 },
+      { from: 'user', text: '2 tickets for Saturday', delay: 1200 },
+      { from: 'bot', text: "Saturday, Dec 14 \u{2014} 2 tickets\n\n\u{1F3AB} General Admission \u{2014} \u{20A6}15,000 each\n\u{1F4B0} Total: \u{20A6}30,000\n\nConfirm purchase?", buttons: ['Confirm', 'Change Quantity'], delay: 1600 },
+      { from: 'user', text: 'Confirm', delay: 1000 },
+      { from: 'bot', text: "\u{2705} *Tickets Confirmed!*\n\n\u{1F3AB} 2x General Admission\n\u{1F4C5} Saturday, Dec 14\n\u{1F511} Ref: TK-6720\n\n\u{1F4B3} Pay here \u{1F447}\npay.waaiio.com/tk/6720\n\nTickets will be sent after payment \u{2705}", delay: 1800 },
+    ],
+  },
+];
 
 export default function LiveBotDemo() {
-  const [messages, setMessages] = useState<Message[]>([
-    { from: 'bot', text: "👋 Try messaging this demo bot!\n\nType anything — like \"Hi\" or \"I wan barb tomorrow 3pm\"" },
-  ]);
-  const [input, setInput] = useState('');
+  const [activeScenario, setActiveScenario] = useState(0);
+  const [messages, setMessages] = useState<Message[]>([]);
   const [typing, setTyping] = useState(false);
+  const [playIndex, setPlayIndex] = useState(0);
+  const [isPlaying, setIsPlaying] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  const scenario = SCENARIOS[activeScenario];
+
+  // Scroll to bottom on new messages
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [messages, typing]);
 
-  async function handleSend(text?: string) {
-    const msg = (text || input).trim();
-    if (!msg) return;
+  // Clear timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    };
+  }, []);
 
-    const userMsg: Message = { from: 'user', text: msg };
-    setMessages(prev => [...prev, userMsg]);
-    setInput('');
-    setTyping(true);
-
-    try {
-      const res = await fetch('/api/demo/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: msg, category: 'barber' }),
-      });
-      const data = await res.json();
-      const botMsg: Message = {
-        from: 'bot',
-        text: data.text || 'Sorry, try again.',
-        buttons: data.buttons?.map((b: { id: string; title: string }) => b.title),
-      };
-      setMessages(prev => [...prev, botMsg]);
-    } catch {
-      // Fallback to local response if API fails
-      const response = findResponse(msg);
-      setMessages(prev => [...prev, { from: 'bot', text: response.text, buttons: response.buttons }]);
-    } finally {
+  const playNextTurn = useCallback((index: number, scenarioData: Scenario) => {
+    if (index >= scenarioData.turns.length) {
+      setIsPlaying(false);
       setTyping(false);
+      return;
     }
+
+    const turn = scenarioData.turns[index];
+
+    if (turn.from === 'bot') {
+      // Show typing indicator first
+      setTyping(true);
+      timeoutRef.current = setTimeout(() => {
+        setTyping(false);
+        setMessages(prev => [...prev, { from: turn.from, text: turn.text, buttons: turn.buttons }]);
+        setPlayIndex(index + 1);
+        // Schedule next turn
+        timeoutRef.current = setTimeout(() => {
+          playNextTurn(index + 1, scenarioData);
+        }, 400);
+      }, turn.delay);
+    } else {
+      // User messages appear after a pause
+      timeoutRef.current = setTimeout(() => {
+        setMessages(prev => [...prev, { from: turn.from, text: turn.text }]);
+        setPlayIndex(index + 1);
+        // Schedule next turn
+        timeoutRef.current = setTimeout(() => {
+          playNextTurn(index + 1, scenarioData);
+        }, 400);
+      }, turn.delay);
+    }
+  }, []);
+
+  // Start playing when scenario changes
+  useEffect(() => {
+    // Reset state
+    setMessages([]);
+    setTyping(false);
+    setPlayIndex(0);
+    setIsPlaying(true);
+
+    if (timeoutRef.current) clearTimeout(timeoutRef.current);
+
+    // Start first turn after a brief pause
+    const s = SCENARIOS[activeScenario];
+    timeoutRef.current = setTimeout(() => {
+      playNextTurn(0, s);
+    }, 300);
+
+    return () => {
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    };
+  }, [activeScenario, playNextTurn]);
+
+  function handleButtonClick(buttonText: string) {
+    // If conversation is still auto-playing, ignore
+    if (isPlaying) return;
+
+    // If there are remaining turns that match this button, resume
+    const nextIndex = playIndex;
+    if (nextIndex < scenario.turns.length) {
+      // Simulate user tapping the button
+      setMessages(prev => [...prev, { from: 'user', text: buttonText }]);
+      setIsPlaying(true);
+      // Continue from the next turn
+      timeoutRef.current = setTimeout(() => {
+        playNextTurn(nextIndex, scenario);
+      }, 400);
+    }
+  }
+
+  function handleReset() {
+    if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    setMessages([]);
+    setTyping(false);
+    setPlayIndex(0);
+    setIsPlaying(true);
+
+    const s = SCENARIOS[activeScenario];
+    timeoutRef.current = setTimeout(() => {
+      playNextTurn(0, s);
+    }, 300);
+  }
+
+  function switchScenario(index: number) {
+    if (index === activeScenario) return;
+    if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    setActiveScenario(index);
   }
 
   return (
     <div className="mx-auto max-w-md">
+      {/* Scenario tabs */}
+      <div className="mb-4 flex justify-center gap-2">
+        {SCENARIOS.map((s, i) => (
+          <button
+            key={s.id}
+            onClick={() => switchScenario(i)}
+            className={`flex items-center gap-1.5 rounded-full px-4 py-2 text-sm font-medium transition ${
+              activeScenario === i
+                ? 'bg-brand text-white shadow-md'
+                : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+            }`}
+          >
+            <span>{s.icon}</span>
+            <span>{s.label}</span>
+          </button>
+        ))}
+      </div>
+
       {/* Phone frame */}
       <div className="overflow-hidden rounded-[2rem] border-4 border-white/20 bg-white shadow-2xl">
         {/* WhatsApp header */}
         <div className="flex items-center gap-3 px-4 py-3" style={{ backgroundColor: '#075E54' }}>
-          <div className="flex h-9 w-9 items-center justify-center rounded-full bg-white/20 text-sm font-bold text-white">K</div>
+          <div className="flex h-9 w-9 items-center justify-center rounded-full bg-white/20 text-sm font-bold text-white">
+            {scenario.businessInitial}
+          </div>
           <div className="flex-1">
-            <p className="text-sm font-semibold text-white">King&apos;s Cuts</p>
+            <p className="text-sm font-semibold text-white">{scenario.businessName}</p>
             <p className="text-xs text-green-200">online</p>
           </div>
-          <span className="rounded-full bg-green-400 px-2 py-0.5 text-[10px] font-bold text-green-900">DEMO</span>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleReset}
+              className="rounded-full bg-white/15 px-2.5 py-1 text-[10px] font-semibold text-white transition hover:bg-white/25"
+              title="Replay conversation"
+            >
+              Replay
+            </button>
+            <span className="rounded-full bg-green-400 px-2 py-0.5 text-[10px] font-bold text-green-900">DEMO</span>
+          </div>
         </div>
 
         {/* Messages */}
         <div
           ref={scrollRef}
           className="space-y-2 overflow-y-auto p-3"
-          style={{ backgroundColor: '#ECE5DD', height: '320px' }}
+          style={{ backgroundColor: '#ECE5DD', height: '340px' }}
         >
           <AnimatePresence>
-            {messages.map((msg, i) => (
+            {messages.map((entry, i) => {
+              const { from, text, buttons: actions } = entry;
+              return (
               <motion.div
-                key={i}
+                key={`${activeScenario}-${i}`}
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.2 }}
-                className={`flex ${msg.from === 'user' ? 'justify-end' : 'justify-start'}`}
+                className={`flex ${from === 'user' ? 'justify-end' : 'justify-start'}`}
               >
                 <div className="max-w-[85%]">
                   <div
                     className={`whitespace-pre-line rounded-lg px-3 py-2 text-sm ${
-                      msg.from === 'user' ? 'text-gray-900' : 'bg-white text-gray-800'
+                      from === 'user' ? 'text-gray-900' : 'bg-white text-gray-800'
                     }`}
-                    style={msg.from === 'user' ? { backgroundColor: '#DCF8C6' } : undefined}
+                    style={from === 'user' ? { backgroundColor: '#DCF8C6' } : undefined}
                   >
-                    {msg.text}
+                    {text}
                   </div>
-                  {msg.buttons && (
+                  {/* Show tappable buttons after auto-play finishes */}
+                  {!isPlaying && actions && (
                     <div className="mt-1 space-y-1">
-                      {msg.buttons.map((btn) => (
+                      {actions.map((btn) => (
                         <button
                           key={btn}
-                          onClick={() => handleSend(btn)}
+                          onClick={() => handleButtonClick(btn)}
                           className="block w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-center text-xs font-medium text-blue-600 transition hover:bg-blue-50"
                         >
                           {btn}
@@ -170,7 +271,8 @@ export default function LiveBotDemo() {
                   )}
                 </div>
               </motion.div>
-            ))}
+              );
+            })}
           </AnimatePresence>
           {typing && (
             <motion.div
@@ -188,43 +290,9 @@ export default function LiveBotDemo() {
             </motion.div>
           )}
         </div>
-
-        {/* Suggestion chips */}
-        <div className="flex gap-1.5 overflow-x-auto bg-gray-50 px-3 py-2">
-          {SUGGESTIONS.map((s) => (
-            <button
-              key={s}
-              onClick={() => handleSend(s)}
-              className="shrink-0 rounded-full border border-gray-200 bg-white px-3 py-1 text-xs text-gray-600 transition hover:border-brand hover:text-brand"
-            >
-              {s}
-            </button>
-          ))}
-        </div>
-
-        {/* Input */}
-        <div className="flex items-center gap-2 border-t border-gray-100 bg-gray-50 px-3 py-2">
-          <input
-            type="text"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && handleSend()}
-            placeholder="Type a message..."
-            className="flex-1 rounded-full bg-white px-4 py-2 text-sm outline-none"
-          />
-          <button
-            onClick={() => handleSend()}
-            disabled={!input.trim()}
-            className="flex h-9 w-9 items-center justify-center rounded-full bg-whatsapp text-white transition hover:bg-whatsapp/85 disabled:opacity-30"
-          >
-            <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 24 24">
-              <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
-            </svg>
-          </button>
-        </div>
       </div>
       <p className="mt-3 text-center text-xs text-gray-400">
-        This is a simulation showing how the bot works. Sign up to get your own bot for your business.
+        This is a simulation showing how Waaiio conversations work.
       </p>
     </div>
   );
