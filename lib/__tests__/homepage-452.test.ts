@@ -255,3 +255,62 @@ describe('#452 homepage simplification — WhatsApp platform wording', () => {
     expect(homeClientSrc).toContain('Built on WhatsApp Business Platform');
   });
 });
+
+describe('#452 homepage simplification — reduced motion', () => {
+  it('imports useReducedMotion from framer-motion', () => {
+    expect(homeClientSrc).toContain('useReducedMotion');
+  });
+
+  it('uses useReducedMotion in the component body', () => {
+    // Must call useReducedMotion and use the result
+    expect(homeClientSrc).toContain('useReducedMotion()');
+    expect(homeClientSrc).toContain('noMotion');
+  });
+
+  it('disables parallax scroll when reduced motion is preferred', () => {
+    // heroY should resolve to 0 when noMotion is true
+    expect(homeClientSrc).toContain('noMotion ? 0 : 80');
+  });
+
+  it('hides scroll progress bar when reduced motion is preferred', () => {
+    expect(homeClientSrc).toContain('!noMotion');
+  });
+
+  it('does not contain unused REDUCED_MOTION_CLASS constant', () => {
+    expect(homeClientSrc).not.toContain('REDUCED_MOTION_CLASS');
+  });
+
+  it('PlanCard uses CSS motion-reduce instead of framer whileHover', () => {
+    expect(homeClientSrc).toContain('motion-reduce:hover:translate-y-0');
+  });
+});
+
+describe('#452 homepage simplification — unsupported language claims', () => {
+  it('does not claim a specific unsupported language count', () => {
+    const combined = homeClientSrc + pageSrc;
+    expect(combined).not.toContain('7 languages');
+    expect(combined).not.toMatch(/in \d+ languages/);
+  });
+});
+
+describe('#452 homepage simplification — setup wording truth', () => {
+  it('does not claim bot goes live instantly', () => {
+    expect(homeClientSrc).not.toContain('goes live instantly');
+  });
+
+  it('uses evidence-backed setup wording', () => {
+    expect(homeClientSrc).toContain('ready to receive messages');
+  });
+});
+
+describe('#452 homepage simplification — CTA post-launch handoff (#453)', () => {
+  it('navbar documents CTA must switch to /get-started when signup gate opens', () => {
+    expect(navbarSrc).toContain('#453');
+    expect(navbarSrc).toContain('/get-started');
+  });
+
+  it('mobile menu documents CTA must switch to /get-started when signup gate opens', () => {
+    expect(mobileMenuSrc).toContain('#453');
+    expect(mobileMenuSrc).toContain('/get-started');
+  });
+});

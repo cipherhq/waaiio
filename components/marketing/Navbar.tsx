@@ -113,6 +113,8 @@ export default function Navbar() {
                 >
                   Log In
                 </Link>
+                {/* Pre-launch: route to /launch. When Admin-controlled signup gate
+                    opens (#453), this CTA must switch to /get-started for onboarding. */}
                 <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
                   <Link
                     href="/launch"

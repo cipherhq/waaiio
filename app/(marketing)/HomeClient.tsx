@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useState, lazy, Suspense } from 'react';
-import { motion, useScroll, useTransform } from 'framer-motion';
+import { motion, useScroll, useTransform, useReducedMotion } from 'framer-motion';
 import AnimatedSection from '@/components/marketing/AnimatedSection';
 import HeroAutomationFlow from '@/components/marketing/HeroAutomationFlow';
 import { formatCurrency, getPricingTiers } from '@/lib/constants';
@@ -22,26 +22,34 @@ interface FaqEntry {
   answer: string;
 }
 
-const REDUCED_MOTION_CLASS = 'motion-safe:';
-
 export default function HomeClient({
   faqData,
 }: {
   faqData: FaqEntry[];
 }) {
+  const prefersReducedMotion = useReducedMotion();
+  const noMotion = !!prefersReducedMotion;
   const { scrollYProgress } = useScroll();
-  const heroY = useTransform(scrollYProgress, [0, 0.3], [0, 80]);
-  const heroOpacity = useTransform(scrollYProgress, [0, 0.25], [1, 0]);
+  const heroY = useTransform(scrollYProgress, [0, 0.3], [0, noMotion ? 0 : 80]);
+  const heroOpacity = useTransform(scrollYProgress, [0, 0.25], [1, noMotion ? 1 : 0]);
   const [priceCountry, setPriceCountry] = useState<'NG' | 'US' | 'GB' | 'CA' | 'GH'>('NG');
   const tiers = getPricingTiers(priceCountry);
 
+  // When reduced motion is preferred, entrance animations resolve immediately
+  const entrance = (delay = 0) =>
+    noMotion
+      ? { initial: undefined, animate: undefined, transition: undefined }
+      : { initial: { opacity: 0, y: 20 }, animate: { opacity: 1, y: 0 }, transition: { delay, duration: 0.6 } };
+
   return (
     <>
-      {/* Scroll progress */}
-      <motion.div
-        className="fixed top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-brand via-accent to-brand z-[60] origin-left"
-        style={{ scaleX: scrollYProgress }}
-      />
+      {/* Scroll progress — hidden when reduced motion is preferred */}
+      {!noMotion && (
+        <motion.div
+          className="fixed top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-brand via-accent to-brand z-[60] origin-left"
+          style={{ scaleX: scrollYProgress }}
+        />
+      )}
 
       {/* ── 1. Hero ── */}
       <section className="relative min-h-[85vh] overflow-hidden bg-gradient-to-br from-brand-900 via-brand to-brand-700">
@@ -54,9 +62,7 @@ export default function HomeClient({
           <div className="grid w-full items-center gap-12 lg:grid-cols-2">
             <div className="text-center lg:text-left">
               <motion.span
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.2, duration: 0.6 }}
+                {...entrance(0.2)}
                 className="inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-4 py-1.5 text-sm font-medium text-white backdrop-blur"
               >
                 <span className="relative flex h-2 w-2">
@@ -67,9 +73,7 @@ export default function HomeClient({
               </motion.span>
 
               <motion.h1
-                initial={{ opacity: 0, y: 30 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.4, duration: 0.6 }}
+                {...entrance(0.4)}
                 className="mt-8 text-balance text-4xl font-extrabold leading-[1.08] tracking-tight text-white sm:text-5xl lg:text-[3.5rem]"
               >
                 Your business,
@@ -79,18 +83,14 @@ export default function HomeClient({
               </motion.h1>
 
               <motion.p
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.7, duration: 0.6 }}
+                {...entrance(0.7)}
                 className="mx-auto mt-6 max-w-lg text-lg leading-relaxed text-brand-200 lg:mx-0"
               >
                 Customers book, order, pay, and get confirmations &mdash; just by messaging.
               </motion.p>
 
               <motion.div
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.9, duration: 0.6 }}
+                {...entrance(0.9)}
                 className="mt-10 flex flex-wrap justify-center gap-3 lg:justify-start"
               >
                 <Link
@@ -227,12 +227,12 @@ export default function HomeClient({
               {
                 step: '2',
                 title: 'Connect WhatsApp',
-                desc: 'Use your own number or start with a shared Waaiio number. Your bot goes live instantly.',
+                desc: 'Use your own number or start with a shared Waaiio number. Once connected, your bot is ready to receive messages.',
               },
               {
                 step: '3',
                 title: 'Customers start messaging',
-                desc: 'They type naturally in any of 7 languages and the bot handles bookings, orders, and payments.',
+                desc: 'They type naturally and the bot handles bookings, orders, and payments.',
               },
             ].map((s, i) => (
               <AnimatedSection key={s.step} delay={i * 0.1}>
@@ -412,9 +412,8 @@ function PlanCard({
   cta: { label: string; href: string; gold?: boolean };
 }) {
   return (
-    <motion.div
-      whileHover={{ y: -4 }}
-      className={`flex flex-col rounded-2xl border p-6 transition ${
+    <div
+      className={`flex flex-col rounded-2xl border p-6 transition hover:-translate-y-1 motion-reduce:hover:translate-y-0 ${
         highlight
           ? 'border-brand bg-brand-50/30 shadow-lg shadow-brand-50 ring-2 ring-brand'
           : 'border-gray-200 bg-white'
@@ -460,7 +459,7 @@ function PlanCard({
           {cta.label}
         </Link>
       </div>
-    </motion.div>
+    </div>
   );
 }
 

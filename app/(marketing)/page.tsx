@@ -32,7 +32,7 @@ export const metadata: Metadata = {
 const FAQ_DATA = [
   {
     question: 'What is Waaiio?',
-    answer: 'Waaiio automates your business on WhatsApp. Customers message you to book appointments, place orders, buy tickets, and make payments — the AI handles it all, 24/7, in 7 languages.',
+    answer: 'Waaiio automates your business on WhatsApp. Customers message you to book appointments, place orders, buy tickets, and make payments — the AI handles it all, 24/7.',
   },
   {
     question: 'How do payments work?',
@@ -44,7 +44,7 @@ const FAQ_DATA = [
   },
   {
     question: 'Can I use my own WhatsApp number?',
-    answer: 'Yes. You can use your existing business WhatsApp number or start with a shared Waaiio number. Switch anytime.',
+    answer: 'Yes. You can use your existing business WhatsApp number or start with a shared Waaiio number. You can upgrade to a dedicated number when ready.',
   },
 ];
 
