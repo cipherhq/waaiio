@@ -7,11 +7,11 @@ const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
 export const metadata: Metadata = {
   title: 'Data Deletion — Waaiio',
   description:
-    'How to delete your Waaiio account and all associated data. Self-service deletion with a 30-day grace period, or email privacy@waaiio.com.',
+    'How to delete your Waaiio account. Self-service deletion from the dashboard, with immediate or grace-period options.',
   openGraph: {
     title: 'Data Deletion — Waaiio',
     description:
-      'How to delete your Waaiio account and all associated data. Self-service deletion with a 30-day grace period.',
+      'How to delete your Waaiio account. Self-service deletion from the dashboard.',
     url: `${baseUrl}/data-deletion`,
     siteName: 'Waaiio',
     type: 'website',
@@ -33,7 +33,7 @@ export default function DataDeletionPage() {
             Data Deletion
           </h1>
           <p className="mx-auto mt-4 max-w-2xl text-lg text-brand-200">
-            How to delete your Waaiio account and all associated data.
+            How to delete your Waaiio account.
           </p>
         </div>
       </section>
@@ -49,8 +49,8 @@ export default function DataDeletionPage() {
                 Self-Service Account Deletion
               </h2>
               <p className="mt-3 leading-relaxed">
-                You can delete your Waaiio account and all associated data directly
-                from your dashboard. No need to contact support.
+                You can delete your Waaiio account directly from your dashboard.
+                No need to contact support.
               </p>
               <p className="mt-2 leading-relaxed">
                 Navigate to{' '}
@@ -59,10 +59,39 @@ export default function DataDeletionPage() {
               </p>
             </section>
 
+            {/* ── Deletion Options ───────────────────────────── */}
+            <section>
+              <h2 className="text-xl font-semibold text-gray-900">
+                Deletion Options
+              </h2>
+              <p className="mt-3 leading-relaxed">
+                When you delete your account, you may choose between two options:
+              </p>
+              <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                <div className="rounded-xl border border-gray-200 bg-white p-5">
+                  <h3 className="font-semibold text-gray-900">Immediate Deletion</h3>
+                  <p className="mt-2 text-sm leading-relaxed text-gray-600">
+                    Your authentication account and profile are removed right away.
+                    Any businesses you own are deactivated. Active payment
+                    subscriptions are cancelled and bot sessions are deactivated.
+                  </p>
+                </div>
+                <div className="rounded-xl border border-amber-200 bg-amber-50 p-5">
+                  <h3 className="font-semibold text-amber-800">30-Day Grace Period</h3>
+                  <p className="mt-2 text-sm leading-relaxed text-amber-700">
+                    Your account is scheduled for deletion in 30 days. During this
+                    time your businesses are deactivated but your login remains
+                    active. If you change your mind, simply log back in to cancel the
+                    deletion and reactivate your account.
+                  </p>
+                </div>
+              </div>
+            </section>
+
             {/* ── Step-by-Step Process ────────────────────────── */}
             <section>
               <h2 className="text-xl font-semibold text-gray-900">
-                How It Works
+                How to Delete Your Account
               </h2>
               <ol className="mt-4 list-decimal space-y-3 pl-6">
                 <li>
@@ -83,105 +112,58 @@ export default function DataDeletionPage() {
                   the deletion process.
                 </li>
                 <li>
-                  <strong>Re-authenticate</strong> your identity when prompted to
-                  confirm you are the account owner.
+                  <strong>Choose</strong> between immediate deletion or the 30-day
+                  grace period.
                 </li>
                 <li>
-                  <strong>Confirm</strong> your decision in the confirmation
-                  dialog.
-                </li>
-                <li>
-                  <strong>Wait up to 30 days</strong> for the deletion to
-                  complete. You will receive a confirmation email.
+                  <strong>Confirm</strong> your decision in the confirmation dialog.
                 </li>
               </ol>
             </section>
 
-            {/* ── 30-Day Grace Period ─────────────────────────── */}
-            <section>
-              <div className="rounded-xl border border-amber-200 bg-amber-50 p-6">
-                <div className="flex items-start gap-3">
-                  <svg
-                    className="mt-0.5 h-6 w-6 flex-shrink-0 text-amber-600"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                    aria-hidden="true"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
-                    />
-                  </svg>
-                  <div>
-                    <h3 className="text-lg font-semibold text-amber-800">
-                      30-Day Grace Period
-                    </h3>
-                    <p className="mt-1 text-sm text-amber-700">
-                      After you request deletion, your account enters a 30-day
-                      grace period. During this time your data is retained but
-                      your businesses are deactivated. If you change your mind,
-                      simply log back in to cancel the deletion and reactivate
-                      your account.
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </section>
-
-            {/* ── What Is Deleted ─────────────────────────────── */}
+            {/* ── What Happens to Your Data ───────────────────── */}
             <section>
               <h2 className="text-xl font-semibold text-gray-900">
-                What Is Deleted
+                What Happens to Your Data
               </h2>
               <p className="mt-3 leading-relaxed">
-                Once the deletion process is complete, the following data is
-                permanently removed:
+                When your account is deleted:
               </p>
               <ul className="mt-4 list-disc space-y-2 pl-6">
                 <li>
                   <strong>Account and profile</strong> &mdash; your login
-                  credentials, name, email, and profile information
+                  credentials, name, email, and profile information are removed
+                  (immediately, or after the grace period expires).
                 </li>
                 <li>
                   <strong>Businesses</strong> &mdash; all businesses you own are
-                  soft-deleted (deactivated and hidden)
+                  deactivated (soft-deleted) and hidden from public view.
                 </li>
                 <li>
-                  <strong>Bot configurations</strong> &mdash; WhatsApp bot
-                  sessions, flow settings, auto-replies, and conversation history
+                  <strong>Subscriptions</strong> &mdash; active payment
+                  subscriptions are cancelled on the respective gateways.
                 </li>
                 <li>
-                  <strong>Customer and booking data</strong> &mdash; appointments,
-                  orders, reservations, tickets, and related customer records
-                </li>
-                <li>
-                  <strong>Payment data</strong> &mdash; payment records, active
-                  subscriptions (cancelled on all gateways), and payout
-                  configurations
-                </li>
-                <li>
-                  <strong>Uploaded media</strong> &mdash; logos, images, and other
-                  files you uploaded to the platform
+                  <strong>Bot sessions</strong> &mdash; active WhatsApp bot
+                  sessions are deactivated.
                 </li>
               </ul>
             </section>
 
-            {/* ── Legal Retention ─────────────────────────────── */}
+            {/* ── Data Retention ──────────────────────────────── */}
             <section>
               <div className="rounded-xl border border-gray-200 bg-gray-50 p-6">
                 <h3 className="font-semibold text-gray-900">
-                  Legal Retention
+                  Data Retention
                 </h3>
                 <p className="mt-2 text-sm text-gray-600 leading-relaxed">
-                  Certain financial, tax, and regulatory records may be retained
-                  beyond the deletion date as required by applicable law. This
-                  includes transaction records needed for tax reporting, fraud
-                  prevention, and compliance with legal obligations. Retained
-                  records are stored securely and are not used for any other
-                  purpose.
+                  Certain operational, transaction, and financial records associated
+                  with your businesses may be retained after account deletion for
+                  legal, accounting, security, fraud-prevention, compliance, or
+                  referential-integrity reasons. This includes records such as
+                  payment transactions, booking history, and order records. Retained
+                  data is stored securely and is not used for marketing or unrelated
+                  purposes.
                 </p>
               </div>
             </section>
@@ -193,7 +175,7 @@ export default function DataDeletionPage() {
               </h2>
               <p className="mt-3 leading-relaxed">
                 If you are unable to sign in to your account, you can request
-                data deletion by emailing us at{' '}
+                account deletion by emailing us at{' '}
                 <a
                   href="mailto:privacy@waaiio.com"
                   className="text-brand hover:underline"
@@ -203,11 +185,6 @@ export default function DataDeletionPage() {
                 . Please include the email address associated with your Waaiio
                 account so we can verify your identity and process your request.
               </p>
-              <p className="mt-2 leading-relaxed">
-                We will respond to email deletion requests within 30 days, in
-                accordance with GDPR, CCPA, and other applicable data protection
-                regulations.
-              </p>
             </section>
 
             {/* ── Cancel Pending Deletion ─────────────────────── */}
@@ -216,8 +193,7 @@ export default function DataDeletionPage() {
                 Cancel a Pending Deletion
               </h2>
               <p className="mt-3 leading-relaxed">
-                Changed your mind? If your account is within the 30-day grace
-                period, simply{' '}
+                If you chose the 30-day grace period and changed your mind, simply{' '}
                 <Link href="/login" className="text-brand hover:underline">
                   log back in
                 </Link>{' '}
