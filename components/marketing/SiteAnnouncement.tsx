@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { usePathname } from 'next/navigation';
 import { QRCodeSVG } from 'qrcode.react';
 import {
@@ -115,8 +115,21 @@ function LaunchStrip({
     ? formatLaunchDate(config.target_date)
     : null;
 
+  const stripRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const el = stripRef.current;
+    if (el) {
+      const h = el.offsetHeight;
+      document.documentElement.style.setProperty('--announcement-h', `${h}px`);
+    }
+    return () => {
+      document.documentElement.style.setProperty('--announcement-h', '0px');
+    };
+  }, []);
+
   return (
-    <div data-testid="launch-strip" className="relative bg-brand-900 text-white">
+    <div ref={stripRef} data-testid="launch-strip" className="fixed left-0 right-0 top-0 z-50 bg-brand-900 text-white">
       <div className="mx-auto max-w-6xl px-4 py-2.5 sm:py-3">
         <div className="flex items-center justify-center gap-3 text-center sm:gap-4">
           <p className="text-sm font-medium sm:text-base">
@@ -384,7 +397,10 @@ export default function SiteAnnouncement() {
 
   const handleCloseModal = useCallback(() => setModalOpen(false), []);
   const handleOpenModal = useCallback(() => setModalOpen(true), []);
-  const handleDismiss = useCallback(() => setDismissed(true), []);
+  const handleDismiss = useCallback(() => {
+    setDismissed(true);
+    document.documentElement.style.setProperty('--announcement-h', '0px');
+  }, []);
 
   if (!config?.enabled) return null;
 
