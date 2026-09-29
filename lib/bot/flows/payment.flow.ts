@@ -17,6 +17,7 @@ import { safeLogErrorContext } from '@/lib/errors';
 import { buildSavedCardOffer, handleSavedCardInput } from './shared/saved-card-flow';
 import { safeButtons } from './shared/safe-interactive';
 import { buildListItem } from '../utils/truncate';
+import { canonicalPublicOrigin } from '@/lib/url';
 
 export const paymentFlow: FlowDefinition = {
   type: 'payment',
@@ -1256,7 +1257,7 @@ export const paymentFlow: FlowDefinition = {
           subscriptionCode = checkout.sessionId;
 
           // For Stripe, send shortened checkout link
-          const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
+          const appUrl = canonicalPublicOrigin();
           const shortRef = checkout.sessionId.slice(-12);
           const shortUrl = `${appUrl}/api/pay?ref=${shortRef}`;
 
