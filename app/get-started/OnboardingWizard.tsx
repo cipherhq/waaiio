@@ -447,11 +447,14 @@ function OnboardingWizard() {
     supabase.auth.getUser().then(({ data: { user: u } }) => {
       if (u) {
         setUser(u);
-        if (successStep === 'success' && successBusinessId) {
+        // Always capture business_id from URL for resumed onboarding.
+        // Server validates ownership + status='pending' before any exclusion.
+        if (successBusinessId) {
           setBusinessId(successBusinessId);
+        }
+        if (successStep === 'success' && successBusinessId) {
           setStep('success');
         } else if (successStep === 'whatsapp' && successBusinessId) {
-          setBusinessId(successBusinessId);
           setStep('success');
         } else {
           setStep('category');
