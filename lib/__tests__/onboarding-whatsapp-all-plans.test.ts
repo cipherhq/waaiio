@@ -128,6 +128,8 @@ describe('#346 Part A — Structural assertions', () => {
 
 // ── Mock infrastructure ──
 
+vi.mock('@/lib/signup-gate', () => ({ isSignupOpen: () => Promise.resolve(true) }));
+
 const mockGetUser = vi.fn();
 vi.mock('@/lib/supabase/server', () => ({
   createClient: () => Promise.resolve({

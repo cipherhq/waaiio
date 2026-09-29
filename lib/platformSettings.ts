@@ -65,6 +65,8 @@ export interface PlatformSettings {
   payout_verification_limits: Record<string, number>;
   /** Minimum amount for bank transfer option per country in major currency units (e.g. ₦10,000). Null = not configured (bank transfer disabled until admin sets via save_commercial_config). */
   minimum_bank_transfer: Record<string, number> | null;
+  /** Whether new public account creation is allowed. Defaults to false (closed before launch). */
+  signup_open: boolean;
 }
 
 // ── Sentinel Utility ──
@@ -122,6 +124,7 @@ function buildFallback(): PlatformSettings {
     abuse_cooldown_hard_minutes: 30,
     payout_verification_limits: { unverified: 0, basic: 500000, standard: 2000000, full: 999999999 },
     minimum_bank_transfer: null,
+    signup_open: false,
   };
 }
 
@@ -159,7 +162,7 @@ export async function loadPlatformSettings(
         'fraud_velocity_threshold', 'default_platform_fee_percent', 'bot_rate_limit_per_minute',
         'max_businesses_per_user', 'ocr_confidence_threshold', 'invoice_expiry_days',
         'contract_signing_hours', 'abuse_cooldown_soft_minutes', 'abuse_cooldown_hard_minutes',
-        'payout_verification_limits', 'minimum_bank_transfer',
+        'payout_verification_limits', 'minimum_bank_transfer', 'signup_open',
       ]);
 
     if (error) throw error;
@@ -228,6 +231,9 @@ export async function loadPlatformSettings(
       minimum_bank_transfer: map.has('minimum_bank_transfer')
         ? (map.get('minimum_bank_transfer') as Record<string, number>)
         : null,
+      signup_open: map.has('signup_open')
+        ? (map.get('signup_open') as boolean)
+        : false,
     };
     cacheTime = Date.now();
     return cache;

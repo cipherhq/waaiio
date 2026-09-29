@@ -33,6 +33,12 @@ export async function handleOnboardingComplete(
     return { success: false, error: 'Missing required fields' };
   }
 
+  // Signup gate: block new user/business creation when signup is closed
+  const { isSignupOpen } = await import('@/lib/signup-gate');
+  if (!(await isSignupOpen())) {
+    return { success: false, error: 'Public signup is not yet open. Check back at launch.' };
+  }
+
   const supabase = createServiceClient();
 
   try {
