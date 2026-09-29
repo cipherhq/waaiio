@@ -1,9 +1,10 @@
 import type { MetadataRoute } from 'next';
+import { BRAND_NAME } from '@/lib/brand';
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: 'Waaiio — WhatsApp Business Automation',
-    short_name: 'Waaiio',
+    name: `${BRAND_NAME} — WhatsApp Business Automation`,
+    short_name: BRAND_NAME,
     description:
       'Automate bookings, payments, orders, and tickets on WhatsApp',
     start_url: '/dashboard',

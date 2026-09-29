@@ -2,6 +2,7 @@ import PDFDocument from 'pdfkit';
 import QRCode from 'qrcode';
 import { isWhiteLabel } from '@/lib/whitelabel';
 import { formatCurrency, formatCurrencyCode, type CountryCode } from '@/lib/constants';
+import { WORDMARK_PATH, WORDMARK_DISPLAY } from '@/lib/brand';
 
 export interface TicketPdfOptions {
   eventName: string;
@@ -77,7 +78,7 @@ export async function generateTicketsPdf(opts: TicketPdfOptions): Promise<Buffer
 
   // Try to fetch Waaiio logo for no-flyer fallback
   let logoBuffer: Buffer | null = null;
-  const logoUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com'}/logo.png`;
+  const logoUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com'}${WORDMARK_PATH}`;
   logoBuffer = await fetchImageBuffer(logoUrl);
 
   for (let i = 0; i < opts.tickets.length; i++) {
@@ -119,7 +120,7 @@ export async function generateTicketsPdf(opts: TicketPdfOptions): Promise<Buffer
     // Waaiio logo (small, top-left — shown on all tickets, subject to white-label)
     if (logoBuffer && !isWhiteLabel(opts.subscriptionTier)) {
       try {
-        doc.image(logoBuffer, margin, y, { width: 72, height: 21 });
+        doc.image(logoBuffer, margin, y, { width: WORDMARK_DISPLAY.watermark.width, height: WORDMARK_DISPLAY.watermark.height });
         y += 24;
       } catch { /* skip */ }
     }

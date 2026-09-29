@@ -3,6 +3,7 @@ import HomeClient from './HomeClient';
 import { getCategoryList } from '@/lib/categoryConfig';
 import { createServiceClient } from '@/lib/supabase/service';
 import { TIER_FEATURES } from '@/lib/constants';
+import { BRAND_NAME, WORDMARK_PATH, WORDMARK_WIDTH, WORDMARK_HEIGHT, WORDMARK_ALT } from '@/lib/brand';
 
 export const revalidate = 60;
 
@@ -19,13 +20,13 @@ export const metadata: Metadata = {
     url: baseUrl,
     siteName: 'Waaiio',
     type: 'website',
-    images: [{ url: `${baseUrl}/logo.png`, width: 930, height: 271, alt: 'Waaiio' }],
+    images: [{ url: `${baseUrl}${WORDMARK_PATH}`, width: WORDMARK_WIDTH, height: WORDMARK_HEIGHT, alt: WORDMARK_ALT }],
   },
   twitter: {
     card: 'summary_large_image',
     title: 'Waaiio — WhatsApp Automation for Everyone',
     description: 'Automate bookings, payments, orders & more on WhatsApp.',
-    images: [`${baseUrl}/logo.png`],
+    images: [`${baseUrl}${WORDMARK_PATH}`],
   },
   alternates: {
     canonical: baseUrl,
@@ -35,9 +36,9 @@ export const metadata: Metadata = {
 const JSON_LD_ORG = {
   '@context': 'https://schema.org',
   '@type': 'Organization',
-  name: 'Waaiio',
+  name: BRAND_NAME,
   url: baseUrl,
-  logo: { '@type': 'ImageObject', url: `${baseUrl}/logo.png`, width: 930, height: 271 },
+  logo: { '@type': 'ImageObject', url: `${baseUrl}${WORDMARK_PATH}`, width: WORDMARK_WIDTH, height: WORDMARK_HEIGHT },
   description: 'AI-Powered WhatsApp Automation for Everyone',
   foundingDate: '2026',
   award: 'Meta Verified Tech Provider',
