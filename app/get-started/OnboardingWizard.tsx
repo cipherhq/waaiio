@@ -570,7 +570,8 @@ function OnboardingWizard() {
     nameCheckTimeoutRef.current = setTimeout(async () => {
       try {
         const codeParam = botCodeEdited && customBotCode ? `&bot_code=${encodeURIComponent(customBotCode)}` : '';
-        const res = await fetch(`/api/onboarding/check-name?name=${encodeURIComponent(value.trim())}${codeParam}`);
+        const pendingParam = pendingRetryId ? `&business_id=${encodeURIComponent(pendingRetryId)}` : '';
+        const res = await fetch(`/api/onboarding/check-name?name=${encodeURIComponent(value.trim())}${codeParam}${pendingParam}`);
         const data = await res.json();
         setNameCheckStatus(data.slug_available !== false ? (data.code_available ? 'available' : 'taken') : 'taken');
         setSuggestedBotCode(data.suggested_code || data.bot_code || '');
@@ -598,7 +599,8 @@ function OnboardingWizard() {
     setBotCodeStatus('checking');
     botCodeCheckRef.current = setTimeout(async () => {
       try {
-        const res = await fetch(`/api/onboarding/check-name?name=${encodeURIComponent(name.trim())}&bot_code=${encodeURIComponent(cleaned)}`);
+        const pendingParam = pendingRetryId ? `&business_id=${encodeURIComponent(pendingRetryId)}` : '';
+        const res = await fetch(`/api/onboarding/check-name?name=${encodeURIComponent(name.trim())}&bot_code=${encodeURIComponent(cleaned)}${pendingParam}`);
         const data = await res.json();
         setBotCodeStatus(data.code_available ? 'available' : 'taken');
       } catch {
