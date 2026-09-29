@@ -3,6 +3,15 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-09-29 — Staging launch ACL repair (#478)
+
+### What changed
+- **`supabase/migrations/415_staging_launch_acl_repair.sql`:** Least-privilege grants for 34 postgres-only table operations confirmed missing on staging. 25 service_role grants + 9 authenticated grants. Includes route dependency closure — transitive deps (loyalty_transactions, waiver_templates, bookings, bot_sessions, audit_log) are covered. Does NOT grant ALL, anon, PUBLIC, TRUNCATE, TRIGGER, or REFERENCES. Does NOT change RLS or policies. Does NOT duplicate M410/M412/M413/M414 scopes. Does NOT re-grant already-sufficient tables (services, products, product_variants, orders, order_items, appointments, business_capabilities) or tables already owned by other migrations (businesses, whatsapp_channels, profiles, messaging_allowances, platform_settings, refunds).
+- **`lib/__tests__/staging-acl-launch-478.test.ts`:** 55 regression tests proving safety invariants, dependency closure completeness, no scope duplication, already-sufficient/owned-elsewhere tables excluded, and every grant maps to an identified code path.
+
+### What could break
+- Nothing — GRANT is a no-op if privilege already exists. No existing privileges are modified or revoked.
+
 ## 2026-09-29 — Giving page read-only guard during admin impersonation (#472)
 
 ### What changed
