@@ -40,11 +40,12 @@ export default function Navbar() {
   return (
     <>
       <header
-        className={`fixed left-0 right-0 top-0 z-40 transition-all duration-300 ${
+        className={`fixed left-0 right-0 z-40 transition-all duration-300 ${
           scrolled || !isHeroPage
             ? 'border-b border-gray-200/60 bg-white/85 shadow-sm backdrop-blur-lg'
             : 'bg-transparent'
         }`}
+        style={{ top: 'var(--announcement-h, 0px)' }}
       >
         <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3">
           <Link href="/" className="flex items-center gap-2">

@@ -57,12 +57,15 @@ describe('#452 homepage simplification — removed claims', () => {
     expect(homeClientSrc).not.toContain('Join thousands');
   });
 
-  it('does not contain unsupported Meta partnership wording', () => {
+  it('does not contain unsupported Meta partnership wording beyond official badge', () => {
     const combined = homeClientSrc + pageSrc;
-    expect(combined).not.toContain('Meta Business Partner');
+    // #469: Official meta-business-partner.svg badge restored with factual alt text.
+    // Fabricated stronger partnership wording is still blocked.
     expect(combined).not.toContain('Official Technology Partner');
     expect(combined).not.toContain('Meta Verified Technology Provider');
-    expect(combined).not.toContain('meta-business-partner.svg');
+    // The official badge + factual alt text "Meta Business Partner" are approved (#469).
+    expect(homeClientSrc).toContain('meta-business-partner.svg');
+    expect(homeClientSrc).toContain('alt="Meta Business Partner"');
   });
 
   it('JSON-LD does not claim unverified awards or memberships', () => {
