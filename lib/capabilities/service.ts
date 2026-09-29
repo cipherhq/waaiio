@@ -143,7 +143,17 @@ export async function getCapabilityConfig(
 
 /**
  * Initialize capabilities for a new business based on its category.
- * Uses upsert for idempotency (safe to retry on the same business).
+ *
+ * Write ordering (fail-safe):
+ * 1. Upsert/enable the intended capabilities.
+ * 2. Only after that succeeds, disable previously-enabled capabilities
+ *    for this business that are NOT in the intended set.
+ *
+ * If step 1 fails: no stale cleanup is attempted; existing state preserved.
+ * If step 2 fails: intended capabilities are enabled but stale rows remain;
+ *   the operation throws so the caller knows cleanup was partial, and a
+ *   subsequent retry will converge.
+ *
  * Throws on Supabase write failure — callers must handle.
  */
 export async function initCapabilities(
@@ -161,6 +171,7 @@ export async function initCapabilities(
     is_enabled: true,
   }));
 
+  // Step 1: Enable the intended capabilities (upsert for idempotency)
   if (rows.length > 0) {
     const { error } = await supabase
       .from('business_capabilities')
@@ -169,5 +180,18 @@ export async function initCapabilities(
     if (error) {
       throw new Error(`Capability initialization failed: ${error.message}`);
     }
+  }
+
+  // Step 2: Disable stale capabilities that are no longer in the intended set.
+  // Only runs after step 1 succeeds — never leaves a business with zero capabilities.
+  const { error: staleError } = await supabase
+    .from('business_capabilities')
+    .update({ is_enabled: false })
+    .eq('business_id', businessId)
+    .eq('is_enabled', true)
+    .not('capability', 'in', `(${capabilities.join(',')})`);
+
+  if (staleError) {
+    throw new Error(`Capability stale cleanup failed (intended set is enabled): ${staleError.message}`);
   }
 }
