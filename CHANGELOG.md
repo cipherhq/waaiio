@@ -3,6 +3,18 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-09-29 — Fix promo code staging 500 + API corrections (#473)
+
+### What changed
+- **`supabase/migrations/413_promo_codes_service_role_grants.sql`:** Grants SELECT, INSERT, UPDATE, DELETE on `public.promo_codes` to `service_role`. Root cause of staging HTTP 500 — the table (created in migration 021) had RLS policies but zero table-level privileges for `service_role`. Same pattern as events #461/migration 412. Does NOT grant to anon, authenticated, or PUBLIC. Does NOT grant TRUNCATE, TRIGGER, or REFERENCES.
+- **`app/api/promo-codes/route.ts`:** Four corrections: (1) All DB error paths now log sanitized error code/message via `console.error` for Vercel observability. (2) PUT handler now accepts both `isActive` (camelCase from list toggle) and `is_active` (snake_case from edit form) — previously the edit form's active toggle was silently ignored. (3) DELETE now checks the Supabase response and returns 500 on failure instead of unconditional success. (4) All bare `catch` blocks replaced with `catch (err)` + logging.
+- **`app/dashboard/promo-codes/page.tsx`:** GET/list API errors now set `error=true` and show a retryable error banner instead of silently rendering "No promo codes yet" empty state.
+- **`lib/__tests__/promo-codes-api-473.test.ts`:** 41 tests covering migration grants, all CRUD operations, auth/ownership gates, error surfacing, PUT isActive fix, DELETE error handling, and business scoping.
+- **`lib/__tests__/console-error-cleanup.test.ts`:** Added `app/api/promo-codes/route.ts` (8 calls) to the server-side console.error allowlist.
+
+### What could break
+- Nothing — the GRANT is additive (idempotent no-op if privilege already exists). The API corrections are all backwards-compatible (PUT accepts both key names, error responses use existing status codes). Dashboard change only affects the failure path (success path unchanged).
+
 ## 2026-09-29 — Exact-origin Return to WhatsApp (#230/#231)
 
 ### What changed
