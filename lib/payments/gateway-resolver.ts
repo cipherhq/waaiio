@@ -103,44 +103,6 @@ export async function resolveCountryGateway(
   };
 }
 
-/**
- * Idempotent reconciliation: assign the canonical country-default gateway
- * to businesses that have a valid country but NULL payment_gateway.
- *
- * Returns the count of businesses updated.
- * Safe to call repeatedly — only touches rows where payment_gateway IS NULL.
- */
-export async function reconcileNullGateways(
-  supabase: SupabaseClient,
-): Promise<{ updated: number; errors: string[] }> {
-  // Get all active countries with configured gateways
-  const { data: countries, error: countriesErr } = await supabase
-    .from('countries')
-    .select('code, payment_gateway')
-    .eq('is_active', true)
-    .not('payment_gateway', 'is', null);
-
-  if (countriesErr || !countries) {
-    return { updated: 0, errors: ['Failed to load countries'] };
-  }
-
-  let updated = 0;
-  const errors: string[] = [];
-
-  for (const country of countries) {
-    const { data: rows, error: updateErr } = await supabase
-      .from('businesses')
-      .update({ payment_gateway: country.payment_gateway })
-      .eq('country_code', country.code)
-      .is('payment_gateway', null)
-      .select('id');
-
-    if (updateErr) {
-      errors.push(`${country.code}: ${updateErr.message}`);
-    } else {
-      updated += rows?.length ?? 0;
-    }
-  }
-
-  return { updated, errors };
-}
+// reconcileNullGateways removed (#493 Correction A) — unbounded all-business
+// mutation path is prohibited. Use the bounded admin endpoint
+// POST /api/admin/reconcile-gateways instead.

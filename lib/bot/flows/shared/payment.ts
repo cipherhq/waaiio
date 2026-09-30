@@ -32,7 +32,7 @@ export async function initializePayment(
     phone: string;
     userEmail?: string;
     countryCode?: CountryCode;
-    /** Per-business gateway override (from businesses.payment_gateway) */
+    /** @deprecated — processor selection now uses canonical country resolver. Kept for interface compatibility. */
     gatewayOverride?: string | null;
     /** Business ID for split payment lookup */
     businessId?: string;

@@ -2,8 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { requirePlatformAdmin } from '@/lib/admin-auth';
 import { adminCorsHeaders } from '@/lib/admin-cors';
-// reconcileNullGateways kept in gateway-resolver.ts for programmatic use
-// This endpoint uses bounded per-business CAS mutations instead
+// All reconciliation goes through this bounded endpoint — no unbounded helper.
 
 export async function OPTIONS(request: NextRequest) {
   return new NextResponse(null, { status: 204, headers: adminCorsHeaders(request.headers.get('origin')) });
