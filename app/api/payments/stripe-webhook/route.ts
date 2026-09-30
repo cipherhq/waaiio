@@ -4,6 +4,7 @@ import { createHmac, timingSafeEqual } from 'crypto';
 import { createServiceClient } from '@/lib/supabase/service';
 import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
+import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 import { createAlert } from '@/lib/alerts/create-alert';
 import { sendEmail } from '@/lib/email/client';
 import { subscriptionRenewalReceiptEmail } from '@/lib/email/templates';
@@ -357,6 +358,75 @@ export async function POST(request: NextRequest) {
               .update({ status: 'success', payment_method: 'card', paid_at: new Date().toISOString() })
               .eq('gateway_reference', sessionId)
               .neq('status', 'success');
+          }
+        }
+
+        // ── Messaging top-up checkout (#491) ──
+        if (metadata?.type === 'messaging_topup') {
+          const purchaseId = metadata.purchase_id;
+          const topupBusinessId = metadata.business_id;
+
+          if (!purchaseId || !topupBusinessId) {
+            logger.error('[STRIPE-WEBHOOK] messaging_topup checkout missing purchase_id or business_id', { sessionId, metadata });
+            return NextResponse.json({ error: 'messaging_topup checkout missing required metadata' }, { status: 500 });
+          }
+
+          if (paymentStatus !== 'paid') {
+            logger.warn('[STRIPE-WEBHOOK] messaging_topup checkout not paid', { sessionId, paymentStatus });
+            // Not paid yet — Stripe may send another event when payment completes
+          } else {
+            // Verify the purchase exists and belongs to this business
+            const { data: purchase, error: purchaseLookupErr } = await supabase
+              .from('messaging_topup_purchases')
+              .select('id, business_id, status')
+              .eq('id', purchaseId)
+              .single();
+
+            if (purchaseLookupErr || !purchase) {
+              logger.error('[STRIPE-WEBHOOK] messaging_topup purchase not found', { purchaseId, error: purchaseLookupErr });
+              return NextResponse.json({ error: 'Top-up purchase not found' }, { status: 500 });
+            }
+
+            if (purchase.business_id !== topupBusinessId) {
+              logger.error('[STRIPE-WEBHOOK] messaging_topup business_id mismatch', { purchaseId, expected: topupBusinessId, actual: purchase.business_id });
+              return NextResponse.json({ error: 'Top-up purchase business mismatch' }, { status: 500 });
+            }
+
+            // Update provider_reference to the canonical Stripe payment_intent ID
+            // (overwrites initial topup_<uuid> placeholder to enable refund/dispute correlation)
+            const providerRef = (data.payment_intent as string) || sessionId;
+            await supabase
+              .from('messaging_topup_purchases')
+              .update({ provider_reference: providerRef })
+              .eq('id', purchaseId);
+
+            // Grant the purchased allowance (RPC handles idempotent replay)
+            const { data: grantResult, error: grantErr } = await supabase.rpc(
+              'grant_purchased_messaging_allowance',
+              { p_purchase_id: purchaseId },
+            );
+
+            if (grantErr) {
+              logger.error('[STRIPE-WEBHOOK] messaging_topup grant RPC error', { purchaseId, error: grantErr });
+              return NextResponse.json({ error: 'Top-up grant RPC failed' }, { status: 500 });
+            }
+
+            if (grantResult?.granted) {
+              logger.info('[STRIPE-WEBHOOK] messaging_topup granted', {
+                purchaseId,
+                businessId: topupBusinessId,
+                allowanceId: grantResult.allowance_id,
+                amount: grantResult.amount_minor,
+              });
+            } else {
+              // already_completed is safe (idempotent replay); other reasons are failures
+              if (grantResult?.reason === 'already_completed') {
+                logger.info('[STRIPE-WEBHOOK] messaging_topup already granted (replay)', { purchaseId });
+              } else {
+                logger.error('[STRIPE-WEBHOOK] messaging_topup grant not confirmed', { purchaseId, result: grantResult });
+                return NextResponse.json({ error: 'Top-up grant not confirmed' }, { status: 500 });
+              }
+            }
           }
         }
       }
@@ -885,6 +955,94 @@ export async function POST(request: NextRequest) {
           })
           .eq('gateway_subscription_code', subscriptionId)
           .in('status', ['active', 'paused', 'past_due']);
+      }
+    }
+
+    // ── Messaging top-up refund handling (#491) ──
+    if (event === 'charge.refunded') {
+      const chargeId = data.id as string;
+      const paymentIntentId = data.payment_intent as string;
+      const refundAmountCents = data.amount_refunded as number;
+
+      if (chargeId && refundAmountCents > 0) {
+        // Look up messaging top-up purchase by provider_checkout_id or provider_reference
+        const { data: topupPurchase } = await supabase
+          .from('messaging_topup_purchases')
+          .select('id, status, package_amount_minor, gateway')
+          .eq('gateway', 'stripe')
+          .or(`provider_checkout_id.eq.${sanitizeFilterValue(chargeId)},provider_reference.eq.${sanitizeFilterValue(paymentIntentId || chargeId)}`)
+          .eq('status', 'completed')
+          .maybeSingle();
+
+        if (topupPurchase) {
+          const { data: refundResult, error: refundErr } = await supabase.rpc(
+            'process_topup_refund',
+            { p_purchase_id: topupPurchase.id, p_refund_amount_minor: refundAmountCents },
+          );
+
+          if (refundErr) {
+            logger.error('[STRIPE-WEBHOOK] messaging_topup refund RPC error', { purchaseId: topupPurchase.id, error: refundErr });
+            return NextResponse.json({ error: 'Top-up refund RPC failed' }, { status: 500 });
+          }
+
+          // Store the Stripe charge ID as refund_provider_ref for audit trail
+          if (refundResult?.processed) {
+            await supabase
+              .from('messaging_topup_purchases')
+              .update({ refund_provider_ref: chargeId })
+              .eq('id', topupPurchase.id);
+          }
+
+          logger.info('[STRIPE-WEBHOOK] messaging_topup refund processed', {
+            purchaseId: topupPurchase.id,
+            refundAmount: refundAmountCents,
+            result: refundResult,
+          });
+        }
+      }
+    }
+
+    // ── Messaging top-up dispute handling (#491) ──
+    if (event === 'charge.dispute.created') {
+      const disputedCharge = data.charge as string;
+      const disputeAmountCents = data.amount as number;
+      const disputePaymentIntent = data.payment_intent as string;
+
+      if (disputedCharge && disputeAmountCents > 0) {
+        // Look up messaging top-up purchase by provider_checkout_id or provider_reference
+        const { data: topupPurchase } = await supabase
+          .from('messaging_topup_purchases')
+          .select('id, status, package_amount_minor, gateway')
+          .eq('gateway', 'stripe')
+          .or(`provider_checkout_id.eq.${sanitizeFilterValue(disputedCharge)},provider_reference.eq.${sanitizeFilterValue(disputePaymentIntent || disputedCharge)}`)
+          .eq('status', 'completed')
+          .maybeSingle();
+
+        if (topupPurchase) {
+          const { data: refundResult, error: refundErr } = await supabase.rpc(
+            'process_topup_refund',
+            { p_purchase_id: topupPurchase.id, p_refund_amount_minor: disputeAmountCents },
+          );
+
+          if (refundErr) {
+            logger.error('[STRIPE-WEBHOOK] messaging_topup dispute refund RPC error', { purchaseId: topupPurchase.id, error: refundErr });
+            return NextResponse.json({ error: 'Top-up dispute RPC failed' }, { status: 500 });
+          }
+
+          // Update purchase status to 'disputed' and store dispute ref
+          if (refundResult?.processed) {
+            await supabase
+              .from('messaging_topup_purchases')
+              .update({ status: 'disputed', refund_provider_ref: data.id as string })
+              .eq('id', topupPurchase.id);
+          }
+
+          logger.info('[STRIPE-WEBHOOK] messaging_topup dispute processed', {
+            purchaseId: topupPurchase.id,
+            disputeAmount: disputeAmountCents,
+            result: refundResult,
+          });
+        }
       }
     }
 
