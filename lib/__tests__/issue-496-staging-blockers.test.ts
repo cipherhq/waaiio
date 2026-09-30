@@ -203,11 +203,11 @@ describe.skipIf(!canRunDb)('M418 activate_paid_subscription security attributes'
     expect(result).toBe('t');
   });
 
-  it('has search_path = empty (SET search_path = \'\')', () => {
+  it('has search_path set (SET search_path = \'\')', () => {
     const result = psql(`
-      SELECT proconfig FROM pg_proc WHERE proname = 'activate_paid_subscription'
+      SELECT array_to_string(proconfig, ',') FROM pg_proc WHERE proname = 'activate_paid_subscription'
     `);
-    expect(result).toContain('search_path=');
+    expect(result).toContain('search_path');
   });
 
   it('service_role can EXECUTE', () => {

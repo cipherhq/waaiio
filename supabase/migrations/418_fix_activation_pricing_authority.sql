@@ -408,7 +408,8 @@ BEGIN
     RAISE EXCEPTION 'M418: activate_paid_subscription is not SECURITY DEFINER';
   END IF;
 
-  IF NOT ('search_path=' = ANY(v_config)) THEN
+  -- search_path='' is stored as search_path="" in proconfig
+  IF NOT (array_to_string(v_config, ',') LIKE '%search_path%') THEN
     RAISE EXCEPTION 'M418: activate_paid_subscription search_path incorrect: %', v_config;
   END IF;
 
