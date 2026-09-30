@@ -261,8 +261,8 @@ $$;
 
 CREATE OR REPLACE FUNCTION public.save_messaging_config(
   p_messaging_pricing JSONB,
-  p_trial_credit JSONB,
-  p_subscription_included JSONB,
+  p_trial_credit_minor_by_currency JSONB,
+  p_subscription_included_minor_by_tier_currency JSONB,
   p_expected_version_id UUID,
   p_description TEXT DEFAULT NULL
 )
@@ -355,12 +355,12 @@ BEGIN
   END LOOP;
 
   -- ── Validate trial_credit_minor_by_currency ──
-  IF jsonb_typeof(p_trial_credit) <> 'object' THEN
+  IF jsonb_typeof(p_trial_credit_minor_by_currency) <> 'object' THEN
     RAISE EXCEPTION 'trial_credit_minor_by_currency must be a JSONB object';
   END IF;
 
   -- ── Validate subscription_included_minor_by_tier_currency ──
-  IF jsonb_typeof(p_subscription_included) <> 'object' THEN
+  IF jsonb_typeof(p_subscription_included_minor_by_tier_currency) <> 'object' THEN
     RAISE EXCEPTION 'subscription_included_minor_by_tier_currency must be a JSONB object';
   END IF;
 
@@ -370,11 +370,11 @@ BEGIN
   ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by, updated_at = EXCLUDED.updated_at;
 
   INSERT INTO platform_settings (key, value, description, updated_by, updated_at)
-  VALUES ('trial_credit_minor_by_currency', p_trial_credit, COALESCE(p_description, 'messaging bundle'), v_caller_id, clock_timestamp())
+  VALUES ('trial_credit_minor_by_currency', p_trial_credit_minor_by_currency, COALESCE(p_description, 'messaging bundle'), v_caller_id, clock_timestamp())
   ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by, updated_at = EXCLUDED.updated_at;
 
   INSERT INTO platform_settings (key, value, description, updated_by, updated_at)
-  VALUES ('subscription_included_minor_by_tier_currency', p_subscription_included, COALESCE(p_description, 'messaging bundle'), v_caller_id, clock_timestamp())
+  VALUES ('subscription_included_minor_by_tier_currency', p_subscription_included_minor_by_tier_currency, COALESCE(p_description, 'messaging bundle'), v_caller_id, clock_timestamp())
   ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by, updated_at = EXCLUDED.updated_at;
 
   -- ── Country activation gate ──
