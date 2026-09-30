@@ -86,7 +86,7 @@ export function NotificationsTab({ business, saving, setSaving, saved, setSaved,
   async function handleSave() {
     setSaving(true);
     const supabase = createClient();
-    await supabase
+    const { error } = await supabase
       .from('businesses')
       .update({
         metadata: {
@@ -96,6 +96,7 @@ export function NotificationsTab({ business, saving, setSaving, saved, setSaved,
       })
       .eq('id', business.id);
     setSaving(false);
+    if (error) return;
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
   }

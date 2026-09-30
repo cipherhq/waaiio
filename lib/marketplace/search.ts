@@ -11,6 +11,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { logger } from '@/lib/logger';
+import { formatDistance } from '@/lib/constants';
 
 // ── Public types ───────────────────────────────────────
 
@@ -221,7 +222,8 @@ export async function searchMarketplace(
         if (distanceKm < 2) score += 25;
         else if (distanceKm < 5) score += 15;
         else if (distanceKm < 10) score += 10;
-        reasons.push(`${distanceKm.toFixed(1)} km away`);
+        const countryCode = (biz.country_code as string) || 'NG';
+        reasons.push(`${formatDistance(distanceKm, countryCode)} away`);
       }
 
       // Open now
@@ -303,7 +305,9 @@ export function formatMarketplaceResults(
   results.forEach((r, i) => {
     lines.push(`${i + 1}. *${r.name}*`);
     const details: string[] = [];
-    if (r.distanceKm !== undefined) details.push(`${r.distanceKm.toFixed(1)} km away`);
+    if (r.distanceKm !== undefined) {
+      details.push(`${formatDistance(r.distanceKm, r.countryCode || 'NG')} away`);
+    }
     if (r.isOpenNow) details.push('Open now');
     if (r.supportsDelivery) details.push('Delivery available');
     if (details.length) lines.push(details.join(' · '));
