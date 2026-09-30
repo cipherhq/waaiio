@@ -127,17 +127,14 @@ test.describe('Launch banner — mocked API integration', () => {
     const modal = page.locator('[data-testid="launch-modal"]');
     await expect(modal).toBeVisible({ timeout: 10000 });
 
-    // Country selector should be inside modal
+    // Country selector should be inside modal (visible when >1 region)
     const selector = page.locator('[data-testid="country-selector"]');
     await expect(selector).toBeVisible();
 
-    // With no matching timezone, CTA should be disabled (no whatsapp-button visible)
+    // #481: With no matching timezone, fallback to first available region
+    // WhatsApp button should be visible (not a dead-end)
     const ctaButton = page.locator('[data-testid="whatsapp-button"]');
-    await expect(ctaButton).not.toBeVisible();
-
-    // Disabled state text should be visible
-    const disabledText = page.locator('[data-testid="cta-disabled"]');
-    await expect(disabledText).toBeVisible();
+    await expect(ctaButton).toBeVisible();
   });
 
   test('selecting country A enables button targeting country A (no source suffix)', async ({ page }) => {

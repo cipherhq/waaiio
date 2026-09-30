@@ -199,7 +199,7 @@ function LaunchModal({
         setRegions(list);
         const detected = detectCountryFromTimezone();
         const match = list.find((r) => r.code === detected);
-        setSelectedCode(match ? match.code : null);
+        setSelectedCode(match?.code || list[0]?.code || null);
         setLoading(false);
       })
       .catch(() => setLoading(false));
