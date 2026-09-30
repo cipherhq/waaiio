@@ -214,6 +214,100 @@ describe('GET /api/cron/subscription-renewal-recovery — actual route', () => {
     expect(recoverySpy).toHaveBeenCalledTimes(2);
     expect(data.paystackRecovered).toBe(1); // second succeeded
   });
+
+  it('active Paystack sub + pending business (partial convergence) reaches recovery', async () => {
+    mockServiceRpc.mockResolvedValue({ data: [], error: null });
+    const recoverySpy = vi.fn().mockResolvedValue('converged');
+    vi.doMock('@/lib/payments/paystack-activation-recovery', () => ({ processPaystackActivationRecovery: recoverySpy }));
+
+    let q = 0;
+    mockServiceFrom.mockImplementation((t: string) => {
+      if (t === 'subscriptions') {
+        q++;
+        if (q <= 2) {
+          const c = dc(null); c.eq = vi.fn(() => c); c.or = vi.fn(() => c);
+          c.limit = vi.fn(() => {
+            if (q === 1) return Promise.resolve({ data: [], error: null }); // Case A: no pending
+            // Case B: active sub + pending business (partial convergence)
+            return Promise.resolve({ data: [{ id: 'sub-pc', business_id: 'biz-pc', plan: 'business', gateway: 'paystack', status: 'active' }], error: null });
+          });
+          return c;
+        }
+        return { update: () => ({ eq: () => Promise.resolve({ error: null }) }) };
+      }
+      return dc(null);
+    });
+
+    const { GET } = await import('@/app/api/cron/subscription-renewal-recovery/route');
+    const data = await (await GET(makeReq('/c', undefined, 'GET'))).json();
+    expect(recoverySpy).toHaveBeenCalledTimes(1);
+    expect(recoverySpy.mock.calls[0][1]).toBe('sub-pc');
+    expect(data.paystackRecovered).toBe(1);
+  });
+
+  it('discovery queries use cooldown predicate and limit(10)', async () => {
+    mockServiceRpc.mockResolvedValue({ data: [], error: null });
+    vi.doMock('@/lib/payments/paystack-activation-recovery', () => ({ processPaystackActivationRecovery: vi.fn().mockResolvedValue('converged') }));
+
+    const orCalls: string[] = [];
+    const limitCalls: number[] = [];
+    let q = 0;
+    mockServiceFrom.mockImplementation((t: string) => {
+      if (t === 'subscriptions') {
+        q++;
+        if (q <= 2) {
+          const c = dc(null);
+          c.eq = vi.fn(() => c);
+          c.or = vi.fn((pred: string) => { orCalls.push(pred); return c; });
+          c.limit = vi.fn((n: number) => { limitCalls.push(n); return Promise.resolve({ data: [], error: null }); });
+          return c;
+        }
+        return { update: () => ({ eq: () => Promise.resolve({ error: null }) }) };
+      }
+      return dc(null);
+    });
+
+    const { GET } = await import('@/app/api/cron/subscription-renewal-recovery/route');
+    await GET(makeReq('/c', undefined, 'GET'));
+
+    // Both queries use .or() with the 4-hour cooldown predicate
+    expect(orCalls.length).toBe(2);
+    for (const pred of orCalls) {
+      expect(pred).toContain('last_reconciliation_attempt_at.is.null');
+      expect(pred).toContain('last_reconciliation_attempt_at.lt.');
+    }
+    // Both queries use .limit(10)
+    expect(limitCalls).toEqual([10, 10]);
+  });
+
+  it('same sub ID from both queries is recovered exactly once', async () => {
+    mockServiceRpc.mockResolvedValue({ data: [], error: null });
+    const recoverySpy = vi.fn().mockResolvedValue('converged');
+    vi.doMock('@/lib/payments/paystack-activation-recovery', () => ({ processPaystackActivationRecovery: recoverySpy }));
+
+    const dupSub = { id: 'sub-dup', business_id: 'biz-dup', plan: 'business', gateway: 'paystack', status: 'pending' };
+    let q = 0;
+    mockServiceFrom.mockImplementation((t: string) => {
+      if (t === 'subscriptions') {
+        q++;
+        if (q <= 2) {
+          const c = dc(null); c.eq = vi.fn(() => c); c.or = vi.fn(() => c);
+          // Both queries return the same sub ID
+          c.limit = vi.fn(() => Promise.resolve({ data: [dupSub], error: null }));
+          return c;
+        }
+        return { update: () => ({ eq: () => Promise.resolve({ error: null }) }) };
+      }
+      return dc(null);
+    });
+
+    const { GET } = await import('@/app/api/cron/subscription-renewal-recovery/route');
+    const data = await (await GET(makeReq('/c', undefined, 'GET'))).json();
+    // Despite appearing in both queries, recovery called only once (dedupe via seen set)
+    expect(recoverySpy).toHaveBeenCalledTimes(1);
+    expect(recoverySpy.mock.calls[0][1]).toBe('sub-dup');
+    expect(data.paystackRecovered).toBe(1);
+  });
 });
 
 // ═══════════════════════════════════════════════════════════
