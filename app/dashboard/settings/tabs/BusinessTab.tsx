@@ -65,6 +65,8 @@ export function BusinessTab({ business, capabilities, country, curr, saving, set
     }
   }
 
+  const [saveError, setSaveError] = useState('');
+
   const [form, setForm] = useState({
     name: business.name,
     description: business.description || '',
@@ -72,6 +74,9 @@ export function BusinessTab({ business, capabilities, country, curr, saving, set
     phone: business.phone,
     email: business.email || '',
     deposit_per_guest: business.deposit_per_guest,
+    latitude: (business as unknown as Record<string, unknown>).latitude as number | null ?? null,
+    longitude: (business as unknown as Record<string, unknown>).longitude as number | null ?? null,
+    city: business.city || '',
   });
 
   const [hours, setHours] = useState<WeekSchedule>(() => {
@@ -104,8 +109,9 @@ export function BusinessTab({ business, capabilities, country, curr, saving, set
 
   async function handleSave() {
     setSaving(true);
+    setSaveError('');
     const supabase = createClient();
-    await supabase
+    const { error } = await supabase
       .from('businesses')
       .update({
         name: form.name,
@@ -114,9 +120,16 @@ export function BusinessTab({ business, capabilities, country, curr, saving, set
         phone: form.phone,
         email: form.email || null,
         deposit_per_guest: form.deposit_per_guest,
+        latitude: form.latitude,
+        longitude: form.longitude,
+        city: form.city || null,
       })
       .eq('id', business.id);
     setSaving(false);
+    if (error) {
+      setSaveError('Failed to save profile. Please try again.');
+      return;
+    }
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
   }
@@ -131,12 +144,17 @@ export function BusinessTab({ business, capabilities, country, curr, saving, set
       }
     }
     setSaving(true);
+    setSaveError('');
     const supabase = createClient();
-    await supabase
+    const { error } = await supabase
       .from('businesses')
       .update({ operating_hours: hours })
       .eq('id', business.id);
     setSaving(false);
+    if (error) {
+      setSaveError('Failed to save hours. Please try again.');
+      return;
+    }
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
   }
@@ -296,7 +314,19 @@ export function BusinessTab({ business, capabilities, country, curr, saving, set
                   </div>
                   <PlacesAutocomplete
                     value={form.address}
-                    onChange={(value) => setForm({ ...form, address: value })}
+                    onChange={(value, placeData) => {
+                      if (placeData) {
+                        setForm(prev => ({
+                          ...prev,
+                          address: placeData.address,
+                          latitude: placeData.lat,
+                          longitude: placeData.lng,
+                          city: placeData.city || prev.city,
+                        }));
+                      } else {
+                        setForm(prev => ({ ...prev, address: value, latitude: null, longitude: null, city: '' }));
+                      }
+                    }}
                     placeholder="Enter your business address"
                     className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
                   />
@@ -318,13 +348,16 @@ export function BusinessTab({ business, capabilities, country, curr, saving, set
                   />
                 </div>
 
-                <button
-                  onClick={handleSave}
-                  disabled={saving}
-                  className="rounded-lg bg-brand px-6 py-2.5 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-50"
-                >
-                  {saving ? 'Saving...' : saved ? 'Saved!' : 'Save Changes'}
-                </button>
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={handleSave}
+                    disabled={saving}
+                    className="rounded-lg bg-brand px-6 py-2.5 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-50"
+                  >
+                    {saving ? 'Saving...' : saved ? 'Saved!' : 'Save Changes'}
+                  </button>
+                  {saveError && <span className="text-sm text-red-600">{saveError}</span>}
+                </div>
               </div>
             </div>
           </div>
@@ -558,8 +591,9 @@ export function BusinessTab({ business, capabilities, country, curr, saving, set
                       key={opt.value}
                       onClick={async () => {
                         const supabase = (await import('@/lib/supabase/client')).createClient();
-                        const meta = (business as any).metadata || {};
-                        await supabase.from('businesses').update({ metadata: { ...meta, time_format: opt.value } }).eq('id', business.id);
+                        const m = (business as unknown as Record<string, unknown>).metadata as Record<string, unknown> || {};
+                        const { error: tfErr } = await supabase.from('businesses').update({ metadata: { ...m, time_format: opt.value } }).eq('id', business.id);
+                        if (tfErr) { setSaveError('Failed to save time format.'); return; }
                         window.location.reload();
                       }}
                       className={`rounded-lg px-3 py-1.5 text-sm font-medium transition ${
@@ -827,7 +861,8 @@ export function BusinessTab({ business, capabilities, country, curr, saving, set
                   }))
                 : [];
               const supabase = createClient();
-              await supabase
+              setSaveError('');
+              const { error: bookErr } = await supabase
                 .from('businesses')
                 .update({
                   metadata: {
@@ -848,6 +883,7 @@ export function BusinessTab({ business, capabilities, country, curr, saving, set
                 })
                 .eq('id', business.id);
               setSaving(false);
+              if (bookErr) { setSaveError('Failed to save booking settings.'); return; }
               setSaved(true);
               setTimeout(() => setSaved(false), 2000);
             }}

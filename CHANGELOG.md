@@ -3,6 +3,25 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-09-30 — Discovery + Settings wiring consistency (#485)
+
+### What changed
+- **Fix A: `BusinessTab.tsx`** — PlacesAutocomplete now captures `placeData` (lat/lng) from the second callback arg and persists `latitude`, `longitude`, `city` alongside `address` in handleSave. Manual text edits set lat/lng to null, invalidating stale coordinates.
+- **Fix B: `discovery/page.tsx`** — `onManualChange` now sets `latitude: null, longitude: null` in state, preventing stale coordinates from being saved when the address is manually edited.
+- **Fix C: All Settings tabs** — 20 save handlers across 7 files now destructure `{ error }` from Supabase/API responses. Success indicators (Saved!/toast) are only shown when there is no error. Handlers that reload immediately (time format) only reload after confirmed success.
+- **Fix D: `lib/constants.ts` + discovery/page + marketplace/search** — Added `getDistanceUnit`, `kmToMiles`, `milesToKm`, `kmToDisplayUnit`, `displayUnitToKm`, `formatDistance` helpers. US/UK businesses see miles in the delivery radius UI and search results while retaining canonical km in the database.
+- **Fix E: `discovery/page.tsx`** — Discovery description field relabeled to "Short Listing Summary" with helper text. One-time prefill from `businesses.description` on first focus when `discovery_description` is blank.
+- **Fix F: `lib/bot/business-knowledge.ts`** — `supportsDelivery` now reads from top-level `biz.supports_delivery` column instead of `metadata.supports_delivery`. `deliveryArea` replaced with `deliveryRadius` reading from `biz.delivery_radius_km`.
+- **`lib/__tests__/discovery-settings-wiring-485.test.ts`** — 40 regression tests covering all 6 fixes.
+
+### Files changed
+`BusinessTab.tsx`, `discovery/page.tsx`, `FeaturesTab.tsx`, `PaymentsTab.tsx`, `NotificationsTab.tsx`, `AccountTab.tsx`, `IntegrationsTab.tsx`, `lib/constants.ts`, `lib/marketplace/search.ts`, `lib/bot/business-knowledge.ts`
+
+### What could break
+- **Businesses with US/UK country_code** will see delivery radius in miles. The underlying DB value (`delivery_radius_km`) is unchanged — only the UI conversion is new. A round-trip precision loss of ~0.1 is possible due to float rounding.
+- **Bot delivery responses** now show radius in km instead of the old free-form `deliveryArea` text. If a business had `metadata.delivery_area` set, that string is no longer surfaced (the field was rarely populated).
+- **Settings address save** now writes lat/lng/city. If a business edits their address via Settings, coordinates will be set/cleared — this is the intended fix, not a regression.
+
 ## 2026-09-29 — Staging launch ACL repair (#478)
 
 ### What changed
