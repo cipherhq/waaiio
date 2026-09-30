@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { requirePlatformAdmin } from '@/lib/admin-auth';
 import { adminCorsHeaders } from '@/lib/admin-cors';
-import { reconcileNullGateways } from '@/lib/payments/gateway-resolver';
+// reconcileNullGateways kept in gateway-resolver.ts for programmatic use
+// This endpoint uses bounded per-business CAS mutations instead
 
 export async function OPTIONS(request: NextRequest) {
   return new NextResponse(null, { status: 204, headers: adminCorsHeaders(request.headers.get('origin')) });
@@ -87,28 +88,71 @@ export async function POST(request: NextRequest) {
       }, { headers: cors });
     }
 
-    // Bulk reconciliation
-    if (dryRun) {
-      const { data: nullGatewayBiz } = await supabase
-        .from('businesses').select('id, name, country_code').is('payment_gateway', null).limit(100);
-      const { data: countries } = await supabase
-        .from('countries').select('code, payment_gateway').eq('is_active', true).not('payment_gateway', 'is', null);
+    // Bounded batch reconciliation
+    const batchSize = Math.min(Math.max(body.batch_size || 25, 1), 100);
+    const cursor = body.cursor as string | undefined; // business ID for deterministic ordering
 
-      const countryMap = new Map((countries || []).map(c => [c.code, c.payment_gateway]));
-      const preview = (nullGatewayBiz || []).map(b => ({
-        id: b.id, name: b.name, country_code: b.country_code,
-        resolved_gateway: countryMap.get(b.country_code) || null,
-      }));
+    // Fetch bounded batch of NULL-gateway businesses
+    let query = supabase
+      .from('businesses')
+      .select('id, name, country_code')
+      .is('payment_gateway', null)
+      .order('id', { ascending: true })
+      .limit(batchSize);
 
-      return NextResponse.json({
-        dry_run: true,
-        would_update: preview.filter(p => p.resolved_gateway),
-        no_gateway_available: preview.filter(p => !p.resolved_gateway),
-      }, { headers: cors });
+    if (cursor) {
+      query = query.gt('id', cursor);
     }
 
-    const result = await reconcileNullGateways(supabase);
-    return NextResponse.json({ dry_run: false, updated: result.updated, errors: result.errors }, { headers: cors });
+    const { data: batch } = await query;
+    if (!batch || batch.length === 0) {
+      return NextResponse.json({ dry_run: dryRun, updated: [], skipped: [], failed: [], next_cursor: null }, { headers: cors });
+    }
+
+    // Resolve country gateways for the batch
+    const { data: countries } = await supabase
+      .from('countries').select('code, payment_gateway').eq('is_active', true).not('payment_gateway', 'is', null);
+    const countryMap = new Map((countries || []).map(c => [c.code, c.payment_gateway]));
+
+    const wouldUpdate: Array<{ id: string; name: string; country_code: string; gateway: string }> = [];
+    const skipped: Array<{ id: string; name: string; reason: string }> = [];
+
+    for (const biz of batch) {
+      const gw = countryMap.get(biz.country_code);
+      if (gw) {
+        wouldUpdate.push({ id: biz.id, name: biz.name, country_code: biz.country_code, gateway: gw });
+      } else {
+        skipped.push({ id: biz.id, name: biz.name, reason: 'no_country_gateway' });
+      }
+    }
+
+    const nextCursor = batch.length === batchSize ? batch[batch.length - 1].id : null;
+
+    if (dryRun) {
+      return NextResponse.json({ dry_run: true, would_update: wouldUpdate, skipped, next_cursor: nextCursor }, { headers: cors });
+    }
+
+    // Execute bounded mutations — CAS: only NULL → canonical country processor
+    const updated: Array<{ id: string; gateway: string }> = [];
+    const failed: Array<{ id: string; error: string }> = [];
+
+    for (const item of wouldUpdate) {
+      const { data: rows, error: updateErr } = await supabase
+        .from('businesses')
+        .update({ payment_gateway: item.gateway })
+        .eq('id', item.id)
+        .is('payment_gateway', null)
+        .select('id');
+
+      if (updateErr) {
+        failed.push({ id: item.id, error: updateErr.message });
+      } else if (rows && rows.length > 0) {
+        updated.push({ id: item.id, gateway: item.gateway });
+      }
+      // rows.length === 0 means CAS failed (already set) — idempotent, not an error
+    }
+
+    return NextResponse.json({ dry_run: false, updated, skipped, failed, next_cursor: nextCursor }, { headers: cors });
   } catch (err) {
     return NextResponse.json({ error: 'Internal error', detail: String(err) }, { status: 500, headers: cors });
   }

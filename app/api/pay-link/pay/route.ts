@@ -42,7 +42,7 @@ export async function POST(request: NextRequest) {
   const { data: link } = await supabase
     .from('payment_links')
     .select(
-      'id, title, amount, currency, uses_count, expires_at, max_uses, business_id, is_active, businesses!inner(name, country_code, payment_gateway)',
+      'id, title, amount, currency, uses_count, expires_at, max_uses, business_id, is_active, businesses!inner(name, country_code, payment_gateway, status)',
     )
     .eq('token', token)
     .eq('is_active', true)
@@ -74,7 +74,16 @@ export async function POST(request: NextRequest) {
     name: string;
     country_code: string;
     payment_gateway: string;
+    status: string;
   };
+
+  // Business must be active to accept payments (#493 B3)
+  if (biz.status !== 'active') {
+    return NextResponse.json(
+      { error: 'This business is not yet set up to accept payments. Please contact the business owner.' },
+      { status: 503 },
+    );
+  }
 
   // Resolve canonical gateway — no silent fallback to any provider (#493)
   const { resolveBusinessGateway } = await import('@/lib/payments/gateway-resolver');

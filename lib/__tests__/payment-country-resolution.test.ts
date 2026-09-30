@@ -192,11 +192,10 @@ describe('Per-request country payment config resolution', () => {
     expect(args.currency).toBe('USD');
   });
 
-  it('BYO override handled by resolver — currency from country', async () => {
-    // #493: gatewayOverride is now handled by the canonical resolver internally.
-    // When a business has a BYO override, resolveBusinessGateway returns the override
-    // gateway with the country's currency.
-    mockResolveBusinessGateway.mockResolvedValueOnce({ gateway: 'stripe', currency: 'NGN', source: 'business_override' });
+  it('Country processor authority — BYO does not change processor', async () => {
+    // #493 R3: Country is sole processor authority. BYO only affects credentials.
+    // NG always resolves to Paystack regardless of BYO configuration.
+    mockResolveBusinessGateway.mockResolvedValueOnce({ gateway: 'paystack', currency: 'NGN', source: 'country_default' });
     const supabase = buildSupabase({
       data: { payment_gateway: 'paystack', currency_code: 'NGN' },
     });

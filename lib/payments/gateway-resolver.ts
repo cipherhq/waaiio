@@ -1,14 +1,17 @@
 /**
  * Canonical payment gateway resolver.
  *
- * Authority chain:
- *   1. Explicit BYO/dedicated business gateway (when configured and valid)
- *   2. Country-default from `countries.payment_gateway`
- *   3. Fail closed — no silent fallback to any provider
+ * Binding rule: Country chooses processor. Merchant/BYO configuration
+ * chooses credentials/account only — never the processor.
  *
- * Every payment surface (Scan to Pay, bot flows, onboarding, orders, etc.)
- * must use this resolver instead of reading `businesses.payment_gateway`
- * directly with a hardcoded fallback.
+ * Authority:
+ *   1. Country config from `countries.payment_gateway` — sole processor authority
+ *   2. Fail closed — no silent fallback to any provider
+ *
+ * BYO/dedicated merchant credentials are handled separately (credential
+ * selection, not processor selection). They do NOT override the country
+ * processor. An NG business always uses Paystack regardless of what
+ * `businesses.payment_gateway` says.
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -17,7 +20,7 @@ import type { PaymentGatewayName } from '@/lib/constants';
 export interface GatewayResolution {
   gateway: PaymentGatewayName;
   currency: string;
-  source: 'business_override' | 'country_default';
+  source: 'country_default';
 }
 
 export interface GatewayResolutionError {
@@ -36,6 +39,10 @@ const VALID_GATEWAYS: ReadonlySet<string> = new Set([
 /**
  * Resolve the canonical payment gateway for a business.
  *
+ * Reads the business's country_code, then resolves gateway + currency
+ * from the canonical countries table. BYO/merchant credentials do NOT
+ * affect processor selection.
+ *
  * @param supabase — any Supabase client (service or RLS-aware)
  * @param businessId — the business UUID
  * @returns resolved gateway + currency + source, or an error with reason
@@ -46,7 +53,7 @@ export async function resolveBusinessGateway(
 ): Promise<GatewayResult> {
   const { data: biz, error: bizErr } = await supabase
     .from('businesses')
-    .select('payment_gateway, country_code')
+    .select('country_code')
     .eq('id', businessId)
     .single();
 
@@ -54,21 +61,7 @@ export async function resolveBusinessGateway(
     return { gateway: null, currency: null, source: null, reason: 'business_not_found' };
   }
 
-  // 1. If business has an explicitly configured gateway override, use it
-  if (biz.payment_gateway && VALID_GATEWAYS.has(biz.payment_gateway)) {
-    // Still need currency from country
-    const currency = await resolveCountryCurrency(supabase, biz.country_code);
-    if (!currency) {
-      return { gateway: null, currency: null, source: null, reason: 'country_currency_not_configured' };
-    }
-    return {
-      gateway: biz.payment_gateway as PaymentGatewayName,
-      currency,
-      source: 'business_override',
-    };
-  }
-
-  // 2. Fall back to country default
+  // Country is the sole processor authority
   return resolveCountryGateway(supabase, biz.country_code);
 }
 
@@ -108,24 +101,6 @@ export async function resolveCountryGateway(
     currency: country.currency_code as string,
     source: 'country_default',
   };
-}
-
-/**
- * Resolve just the currency for a country (used when business override
- * provides the gateway but currency comes from country config).
- */
-async function resolveCountryCurrency(
-  supabase: SupabaseClient,
-  countryCode: string | null,
-): Promise<string | null> {
-  if (!countryCode) return null;
-  const { data } = await supabase
-    .from('countries')
-    .select('currency_code')
-    .eq('code', countryCode)
-    .eq('is_active', true)
-    .single();
-  return data?.currency_code ?? null;
 }
 
 /**

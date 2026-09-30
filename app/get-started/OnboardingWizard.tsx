@@ -940,7 +940,11 @@ function OnboardingWizard() {
 
       setBusinessId(registerData.business_id);
       setBotCode(registerData.bot_code);
-      getPostHogClient()?.capture('business_created', { category, country: selectedCountry, businessId: registerData.business_id });
+      // Surface payment readiness warning if country has no configured gateway (#493)
+      if (registerData.payment_ready === false && registerData.payment_readiness_reason) {
+        console.warn('[ONBOARDING]', registerData.payment_readiness_reason);
+      }
+      getPostHogClient()?.capture('business_created', { category, country: selectedCountry, businessId: registerData.business_id, payment_ready: registerData.payment_ready });
 
       // Step 2: Connect the WhatsApp channel
       const fbRes = await fetch('/api/auth/facebook/callback', {

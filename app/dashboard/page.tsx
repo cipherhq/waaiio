@@ -391,6 +391,18 @@ export default function DashboardOverview() {
       {/* Onboarding checklist (dismissible) */}
       <OnboardingChecklist />
 
+      {/* Payment readiness warning — shown when business has no configured gateway (#493) */}
+      {business.status === 'active' && !business.payment_gateway && (
+        <div className="flex items-center gap-3 rounded-lg border border-orange-200 bg-orange-50 px-4 py-3 mb-4">
+          <svg aria-hidden="true" className="h-4 w-4 text-orange-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          <p className="text-sm text-orange-800">
+            Payment processing is not yet configured for your region. Customers will not be able to make payments until this is set up. Please contact support for assistance.
+          </p>
+        </div>
+      )}
+
       {/* Compact banners — inline, not full-width blocks */}
       <div className="space-y-2 mb-6">
         <AISetupCard />
