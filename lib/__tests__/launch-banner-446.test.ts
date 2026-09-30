@@ -123,9 +123,9 @@ describe('SiteAnnouncement component contract (#460 strip + modal)', () => {
     expect(siteAnnouncementSrc).toContain('modal-country-select');
   });
 
-  it('auto-selection only when a valid detected country exists', () => {
+  it('auto-selection prefers detected country, falls back to first available region (#481)', () => {
     expect(siteAnnouncementSrc).toContain('detectCountryFromTimezone');
-    expect(siteAnnouncementSrc).toContain('match ? match.code : null');
+    expect(siteAnnouncementSrc).toContain("match?.code || list[0]?.code || null");
   });
 
   it('no selection disables CTA', () => {
