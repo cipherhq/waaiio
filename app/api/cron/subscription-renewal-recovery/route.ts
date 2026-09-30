@@ -52,7 +52,69 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  return NextResponse.json({ ok: true, finalized, evidenceRecorded, skipped, batchSize: (batch as unknown[]).length });
+  // ═══════════════════════════════════════════════════════════
+  // Pass 2: Paystack initial-activation recovery (#493 B1)
+  //
+  // claim_overdue_subscription_batch selects status='active' +
+  // gateway IN ('flutterwave','stripe'). Pending Paystack subs
+  // with successful payment evidence are never returned by it.
+  //
+  // This pass directly queries for:
+  //   A) pending subs with gateway='paystack' (initial activation never completed)
+  //   B) active Paystack subs where business is still pending
+  //      (partial convergence — RPC succeeded, business-status update failed)
+  // ═══════════════════════════════════════════════════════════
+  let paystackRecovered = 0;
+  try {
+    const cooldownCutoff = new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString();
+
+    const { data: pendingSubs } = await supabase
+      .from('subscriptions')
+      .select('id, business_id, plan, gateway, status')
+      .eq('status', 'pending')
+      .eq('gateway', 'paystack')
+      .or('last_reconciliation_attempt_at.is.null,last_reconciliation_attempt_at.lt.' + cooldownCutoff)
+      .limit(10);
+
+    const { data: partialSubs } = await supabase
+      .from('subscriptions')
+      .select('id, business_id, plan, gateway, status, businesses!inner ( status )')
+      .eq('status', 'active')
+      .eq('gateway', 'paystack')
+      .eq('businesses.status', 'pending')
+      .or('last_reconciliation_attempt_at.is.null,last_reconciliation_attempt_at.lt.' + cooldownCutoff)
+      .limit(10);
+
+    const seen = new Set<string>();
+    const allCandidates = [...(pendingSubs || []), ...(partialSubs || [])];
+
+    for (const sub of allCandidates) {
+      if (seen.has(sub.id)) continue;
+      seen.add(sub.id);
+      try {
+        await supabase
+          .from('subscriptions')
+          .update({ last_reconciliation_attempt_at: new Date().toISOString() })
+          .eq('id', sub.id);
+
+        await processPaystackActivationRecovery(supabase, {
+          sub_id: sub.id, business_id: sub.business_id,
+          plan: sub.plan, gateway: sub.gateway,
+        }, sub.id);
+        paystackRecovered++;
+      } catch (err) {
+        logger.error('[CRON:RENEWAL-RECOVERY] Paystack activation error', { subId: sub.id, error: String(err) });
+        skipped++;
+      }
+    }
+  } catch (err) {
+    logger.error('[CRON:RENEWAL-RECOVERY] Paystack discovery error', { error: String(err) });
+  }
+
+  return NextResponse.json({
+    ok: true, finalized, evidenceRecorded, skipped,
+    batchSize: (batch as unknown[]).length, paystackRecovered,
+  });
 
   // ═══════════════════════════════════════════════════════════
   // Flutterwave renewal recovery — exhaustive paginated search
@@ -437,7 +499,7 @@ export async function GET(request: NextRequest) {
   ) {
     const bizId = sub.business_id as string;
 
-    // Find successful payment evidence for this subscription that hasn't been activated
+    // Find successful payment evidence
     const { data: evidence } = await svc
       .from('subscription_payments')
       .select('id')
@@ -448,49 +510,55 @@ export async function GET(request: NextRequest) {
       .limit(1)
       .single();
 
-    if (!evidence) {
-      // No successful payment evidence — nothing to recover
-      skipped++;
-      return;
+    if (!evidence) { skipped++; return; }
+
+    // Check current state for partial convergence
+    const { data: currentSub } = await svc
+      .from('subscriptions').select('status').eq('id', subId).single();
+    const { data: currentBiz } = await svc
+      .from('businesses').select('status').eq('id', bizId).single();
+
+    const subAlreadyActive = currentSub?.status === 'active';
+    const bizAlreadyActive = currentBiz?.status === 'active';
+
+    // Fully converged — idempotent no-op
+    if (subAlreadyActive && bizAlreadyActive) {
+      logger.info('[CRON:RENEWAL-RECOVERY] Paystack already fully converged', { subId, bizId });
+      finalized++; return;
     }
 
-    // Attempt idempotent activation via the same RPC the verify route uses
-    const { data: activationResult, error: activationError } = await svc.rpc(
-      'activate_paid_subscription',
-      { p_payment_id: evidence.id },
-    );
-
-    if (activationError) {
-      logger.error('[CRON:RENEWAL-RECOVERY] Paystack activation RPC failed', {
-        subId, bizId, paymentId: evidence.id, error: String(activationError),
-      });
-      skipped++;
-      return;
+    // Subscription still pending — attempt RPC activation
+    if (!subAlreadyActive) {
+      const { data: activationResult, error: activationError } = await svc.rpc(
+        'activate_paid_subscription', { p_payment_id: evidence.id },
+      );
+      if (activationError) {
+        logger.error('[CRON:RENEWAL-RECOVERY] Paystack activation RPC failed', {
+          subId, bizId, paymentId: evidence.id, error: String(activationError),
+        });
+        skipped++; return;
+      }
+      if (!activationResult || activationResult.activated !== true) {
+        logger.warn('[CRON:RENEWAL-RECOVERY] Paystack activation rejected', {
+          subId, bizId, paymentId: evidence.id, reason: activationResult?.reason,
+        });
+        skipped++; return;
+      }
     }
 
-    if (!activationResult || activationResult.activated !== true) {
-      // RPC rejected — may be amount_mismatch or other validation failure
-      logger.warn('[CRON:RENEWAL-RECOVERY] Paystack activation rejected', {
-        subId, bizId, paymentId: evidence.id, reason: activationResult?.reason,
-      });
-      skipped++;
-      return;
-    }
-
-    // RPC succeeded — now transition business status from pending to active
-    // (same CAS guard as verify route)
-    const { error: statusErr } = await svc
-      .from('businesses')
-      .update({ status: 'active' })
-      .eq('id', bizId)
-      .eq('status', 'pending');
-
-    if (statusErr) {
-      logger.warn('[CRON:RENEWAL-RECOVERY] Paystack business status update failed (retryable)', {
-        subId, bizId, error: String(statusErr),
-      });
-      // Subscription was already activated by the RPC; business status will be
-      // recovered on next cron run or manual verify retry
+    // Subscription now active. Complete business status if still pending.
+    if (!bizAlreadyActive) {
+      const { error: statusErr } = await svc
+        .from('businesses')
+        .update({ status: 'active' })
+        .eq('id', bizId)
+        .eq('status', 'pending');
+      if (statusErr) {
+        logger.warn('[CRON:RENEWAL-RECOVERY] Paystack business status update failed (retryable)', {
+          subId, bizId, error: String(statusErr),
+        });
+        skipped++; return;
+      }
     }
 
     finalized++;

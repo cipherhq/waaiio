@@ -509,6 +509,10 @@ describe('Campaign dispatched guard — real handler', () => {
     vi.doMock('@/lib/logger', () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(), withContext: vi.fn().mockReturnThis() } }));
     vi.doMock('@/lib/observability', () => ({ observe: vi.fn((_n: string, _c: unknown, fn: () => unknown) => fn()), observeProvider: vi.fn((_c: unknown, fn: () => unknown) => fn()) }));
     vi.doMock('@/lib/errors', () => ({ safeLogErrorContext: vi.fn(() => ({})) }));
+    vi.doMock('@/lib/payments/gateway-resolver', () => ({
+      resolveBusinessGateway: vi.fn().mockResolvedValue({ gateway: 'paystack', currency: 'NGN', source: 'country_default' }),
+      resolveCountryGateway: vi.fn().mockResolvedValue({ gateway: 'paystack', currency: 'NGN', source: 'country_default' }),
+    }));
 
     const filters: string[] = [];
     let inCountriesQuery = false;

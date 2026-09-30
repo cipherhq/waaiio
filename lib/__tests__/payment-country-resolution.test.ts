@@ -57,9 +57,19 @@ vi.mock('@/lib/trial-status', () => ({
   resolveTrialCredit: vi.fn(async () => false),
 }));
 vi.mock('@/lib/countries', () => ({
-  getCountry: vi.fn(() => null), // unused by fixed code but needed by module import
+  getCountry: vi.fn(() => null),
   loadCountries: vi.fn(async () => []),
   invalidateCache: vi.fn(),
+}));
+
+// #493: initializePayment now uses canonical resolver instead of direct countries query.
+// Mock it to return Paystack/NGN by default; individual tests can override via mockResolvedValueOnce.
+const mockResolveBusinessGateway = vi.fn().mockResolvedValue({ gateway: 'paystack', currency: 'NGN', source: 'country_default' });
+const mockResolveCountryGateway = vi.fn().mockResolvedValue({ gateway: 'paystack', currency: 'NGN', source: 'country_default' });
+vi.mock('@/lib/payments/gateway-resolver', () => ({
+  resolveBusinessGateway: (...args: any[]) => mockResolveBusinessGateway(...args),
+  resolveCountryGateway: (...args: any[]) => mockResolveCountryGateway(...args),
+  reconcileNullGateways: vi.fn().mockResolvedValue({ updated: 0, errors: [] }),
 }));
 
 // ── Helpers ──
@@ -93,6 +103,25 @@ function makeThrowChain(err: Error) {
 }
 
 function buildSupabase(countriesConfig: { data?: unknown; error?: unknown; throw?: Error }) {
+  // #493: Also configure the gateway-resolver mock based on the country data
+  const countryData = countriesConfig.data as Record<string, unknown> | null | undefined;
+  if (countriesConfig.throw || countriesConfig.error || !countryData) {
+    // Error/missing → resolver returns failure
+    mockResolveCountryGateway.mockResolvedValue({ gateway: null, currency: null, source: null, reason: 'country_not_found_or_inactive' });
+    mockResolveBusinessGateway.mockResolvedValue({ gateway: null, currency: null, source: null, reason: 'country_not_found_or_inactive' });
+  } else if (!countryData.payment_gateway || (typeof countryData.payment_gateway === 'string' && !['paystack', 'stripe', 'flutterwave', 'square', 'paypal'].includes(countryData.payment_gateway))) {
+    mockResolveCountryGateway.mockResolvedValue({ gateway: null, currency: null, source: null, reason: 'country_gateway_not_configured' });
+    mockResolveBusinessGateway.mockResolvedValue({ gateway: null, currency: null, source: null, reason: 'country_gateway_not_configured' });
+  } else if (!countryData.currency_code || typeof countryData.currency_code !== 'string' || !/^[A-Z]{3}$/.test(countryData.currency_code)) {
+    mockResolveCountryGateway.mockResolvedValue({ gateway: null, currency: null, source: null, reason: 'country_currency_not_configured' });
+    mockResolveBusinessGateway.mockResolvedValue({ gateway: null, currency: null, source: null, reason: 'country_currency_not_configured' });
+  } else {
+    const gw = countryData.payment_gateway as string;
+    const cur = countryData.currency_code as string;
+    mockResolveCountryGateway.mockResolvedValue({ gateway: gw, currency: cur, source: 'country_default' });
+    mockResolveBusinessGateway.mockResolvedValue({ gateway: gw, currency: cur, source: 'country_default' });
+  }
+
   return {
     from: vi.fn((table: string) => {
       if (table === 'countries') {
@@ -145,9 +174,8 @@ describe('Per-request country payment config resolution', () => {
     expect(mockGatewayInit).toHaveBeenCalledTimes(1);
     const args = mockGatewayInit.mock.calls[0][0];
     expect(args.currency).toBe('NGN');
-    // countries table was queried
-    const fromCalls = (supabase.from as any).mock.calls.map((c: any) => c[0]);
-    expect(fromCalls).toContain('countries');
+    // #493: gateway resolved via canonical resolver (mocked)
+    expect(mockResolveBusinessGateway).toHaveBeenCalled();
   });
 
   it('alternate gateway: US → Stripe from DB, USD currency', async () => {
@@ -164,14 +192,16 @@ describe('Per-request country payment config resolution', () => {
     expect(args.currency).toBe('USD');
   });
 
-  it('gateway override honored — skips country gateway but still resolves currency from DB', async () => {
+  it('BYO override handled by resolver — currency from country', async () => {
+    // #493: gatewayOverride is now handled by the canonical resolver internally.
+    // When a business has a BYO override, resolveBusinessGateway returns the override
+    // gateway with the country's currency.
+    mockResolveBusinessGateway.mockResolvedValueOnce({ gateway: 'stripe', currency: 'NGN', source: 'business_override' });
     const supabase = buildSupabase({
-      data: { currency_code: 'NGN' }, // only currency needed when override is set
+      data: { payment_gateway: 'paystack', currency_code: 'NGN' },
     });
 
-    const result = await initializePayment(supabase as any, {
-      ...BASE_OPTS, gatewayOverride: 'stripe',
-    });
+    const result = await initializePayment(supabase as any, { ...BASE_OPTS });
 
     expect(mockGatewayInit).toHaveBeenCalledTimes(1);
     const args = mockGatewayInit.mock.calls[0][0];
@@ -185,7 +215,7 @@ describe('Per-request country payment config resolution', () => {
 
     expect(result).toBeNull();
     expect(mockGatewayInit).not.toHaveBeenCalled();
-    assertLoggerOp('payment.country-payment-config');
+    assertLoggerOp('payment.gateway-resolution');
   });
 
   it('country without payment_gateway → fail closed, provider count=0', async () => {
@@ -197,7 +227,7 @@ describe('Per-request country payment config resolution', () => {
 
     expect(result).toBeNull();
     expect(mockGatewayInit).not.toHaveBeenCalled();
-    assertLoggerOp('payment.country-payment-config');
+    assertLoggerOp('payment.gateway-resolution');
   });
 
   it('DB error on countries lookup → fail closed with payment.country-payment-config', async () => {
@@ -209,7 +239,7 @@ describe('Per-request country payment config resolution', () => {
 
     expect(result).toBeNull();
     expect(mockGatewayInit).not.toHaveBeenCalled();
-    assertLoggerOp('payment.country-payment-config');
+    assertLoggerOp('payment.gateway-resolution');
   });
 
   it('transport throw on countries lookup → fail closed', async () => {
@@ -221,7 +251,7 @@ describe('Per-request country payment config resolution', () => {
 
     expect(result).toBeNull();
     expect(mockGatewayInit).not.toHaveBeenCalled();
-    assertLoggerOp('payment.country-payment-config');
+    assertLoggerOp('payment.gateway-resolution');
   });
 
   it('unknown gateway (e.g. "paystak" typo) → fail closed, no silent Paystack routing', async () => {
@@ -233,7 +263,7 @@ describe('Per-request country payment config resolution', () => {
 
     expect(result).toBeNull();
     expect(mockGatewayInit).not.toHaveBeenCalled();
-    assertLoggerOp('payment.country-payment-config');
+    assertLoggerOp('payment.gateway-resolution');
   });
 
   it('empty currency_code → fail closed, no default/fallback', async () => {
@@ -245,7 +275,7 @@ describe('Per-request country payment config resolution', () => {
 
     expect(result).toBeNull();
     expect(mockGatewayInit).not.toHaveBeenCalled();
-    assertLoggerOp('payment.country-payment-config');
+    assertLoggerOp('payment.gateway-resolution');
   });
 
   it('malformed currency_code (lowercase, wrong length) → fail closed', async () => {
@@ -257,7 +287,7 @@ describe('Per-request country payment config resolution', () => {
 
     expect(result).toBeNull();
     expect(mockGatewayInit).not.toHaveBeenCalled();
-    assertLoggerOp('payment.country-payment-config');
+    assertLoggerOp('payment.gateway-resolution');
   });
 
   it('valid alternate gateway (stripe) with valid currency → provider reached', async () => {
@@ -273,88 +303,76 @@ describe('Per-request country payment config resolution', () => {
     expect(mockGatewayInit.mock.calls[0][0].currency).toBe('USD');
   });
 
-  it('gatewayOverride branch: empty currency_code → fail closed', async () => {
-    const supabase = buildSupabase({
-      data: { currency_code: '' },
-    });
+  // #493: gatewayOverride is no longer used by initializePayment.
+  // The canonical resolver handles BYO overrides internally.
+  // These tests now verify that the resolver's fail-closed behavior
+  // is properly propagated through initializePayment.
 
-    const result = await initializePayment(supabase as any, {
-      ...BASE_OPTS, gatewayOverride: 'stripe',
-    });
+  it('resolver returns no currency → fail closed', async () => {
+    mockResolveCountryGateway.mockResolvedValueOnce({ gateway: null, currency: null, source: null, reason: 'country_currency_not_configured' });
+    mockResolveBusinessGateway.mockResolvedValueOnce({ gateway: null, currency: null, source: null, reason: 'country_currency_not_configured' });
+    const supabase = buildSupabase({ data: { currency_code: '' } });
 
+    const result = await initializePayment(supabase as any, { ...BASE_OPTS });
     expect(result).toBeNull();
     expect(mockGatewayInit).not.toHaveBeenCalled();
-    assertLoggerOp('payment.country-payment-config');
+    assertLoggerOp('payment.gateway-resolution');
   });
 
-  it('gatewayOverride branch: malformed currency_code → fail closed', async () => {
-    const supabase = buildSupabase({
-      data: { currency_code: 'ng' }, // 2 chars, not ISO 4217
-    });
+  it('resolver returns invalid currency → fail closed', async () => {
+    mockResolveCountryGateway.mockResolvedValueOnce({ gateway: 'paystack', currency: 'ng', source: 'country_default' });
+    mockResolveBusinessGateway.mockResolvedValueOnce({ gateway: 'paystack', currency: 'ng', source: 'country_default' });
+    const supabase = buildSupabase({ data: { payment_gateway: 'paystack', currency_code: 'ng' } });
 
-    const result = await initializePayment(supabase as any, {
-      ...BASE_OPTS, gatewayOverride: 'paystack',
-    });
-
+    const result = await initializePayment(supabase as any, { ...BASE_OPTS });
     expect(result).toBeNull();
     expect(mockGatewayInit).not.toHaveBeenCalled();
-    assertLoggerOp('payment.country-payment-config');
+    assertLoggerOp('payment.gateway-resolution');
   });
 
-  // ── Gateway override validation ──
-
-  it('valid override "stripe" → Stripe selected, authoritative country currency used', async () => {
+  it('GB → Stripe + GBP via resolver', async () => {
     const supabase = buildSupabase({
-      data: { currency_code: 'GBP' },
+      data: { payment_gateway: 'stripe', currency_code: 'GBP' },
     });
 
     const result = await initializePayment(supabase as any, {
-      ...BASE_OPTS, gatewayOverride: 'stripe', countryCode: 'GB' as any,
+      ...BASE_OPTS, countryCode: 'GB' as any,
     });
 
     expect(mockGatewayInit).toHaveBeenCalledTimes(1);
     expect(mockGatewayInit.mock.calls[0][0].currency).toBe('GBP');
   });
 
-  it('valid override "paystack" → Paystack selected', async () => {
+  it('NG → Paystack + NGN via resolver', async () => {
     const supabase = buildSupabase({
-      data: { currency_code: 'NGN' },
+      data: { payment_gateway: 'paystack', currency_code: 'NGN' },
     });
 
-    const result = await initializePayment(supabase as any, {
-      ...BASE_OPTS, gatewayOverride: 'paystack',
-    });
-
+    const result = await initializePayment(supabase as any, { ...BASE_OPTS });
     expect(mockGatewayInit).toHaveBeenCalledTimes(1);
     expect(mockGatewayInit.mock.calls[0][0].currency).toBe('NGN');
   });
 
-  it('unknown override "paystak" (typo) → fail closed, no silent Paystack routing', async () => {
-    const supabase = buildSupabase({
-      data: { currency_code: 'NGN' },
-    });
+  it('resolver returns null gateway (unsupported country) → fail closed', async () => {
+    mockResolveCountryGateway.mockResolvedValueOnce({ gateway: null, currency: null, source: null, reason: 'country_gateway_not_configured' });
+    mockResolveBusinessGateway.mockResolvedValueOnce({ gateway: null, currency: null, source: null, reason: 'country_gateway_not_configured' });
+    const supabase = buildSupabase({ data: { currency_code: 'NGN' } });
 
-    const result = await initializePayment(supabase as any, {
-      ...BASE_OPTS, gatewayOverride: 'paystak',
-    });
-
+    const result = await initializePayment(supabase as any, { ...BASE_OPTS });
     expect(result).toBeNull();
     expect(mockGatewayInit).not.toHaveBeenCalled();
-    assertLoggerOp('payment.country-payment-config');
+    assertLoggerOp('payment.gateway-resolution');
   });
 
-  it('unknown override "strpe" (typo) → fail closed', async () => {
-    const supabase = buildSupabase({
-      data: { currency_code: 'USD' },
-    });
+  it('resolver throws → fail closed', async () => {
+    mockResolveCountryGateway.mockRejectedValueOnce(new Error('resolver error'));
+    mockResolveBusinessGateway.mockRejectedValueOnce(new Error('resolver error'));
+    const supabase = buildSupabase({ data: { payment_gateway: 'paystack', currency_code: 'NGN' } });
 
-    const result = await initializePayment(supabase as any, {
-      ...BASE_OPTS, gatewayOverride: 'strpe',
-    });
-
+    const result = await initializePayment(supabase as any, { ...BASE_OPTS });
     expect(result).toBeNull();
     expect(mockGatewayInit).not.toHaveBeenCalled();
-    assertLoggerOp('payment.country-payment-config');
+    assertLoggerOp('payment.gateway-resolution');
   });
 
   it('empty string override → treated as falsy (normal country path, not fail closed)', async () => {

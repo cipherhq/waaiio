@@ -138,6 +138,12 @@ vi.mock('@/lib/constants', () => ({
 }));
 vi.mock('@/lib/email/client', () => ({ sendEmail: vi.fn(() => Promise.resolve()) }));
 vi.mock('@/lib/email/templates', () => ({ welcomeEmail: () => ({ subject: 'x', html: 'x' }), businessRegisteredEmail: () => ({ subject: 'x', html: 'x' }) }));
+const mockResolveBusinessGw = vi.fn().mockResolvedValue({ gateway: 'paystack', currency: 'NGN', source: 'country_default' });
+const mockResolveCountryGw = vi.fn().mockResolvedValue({ gateway: 'paystack', currency: 'NGN', source: 'country_default' });
+vi.mock('@/lib/payments/gateway-resolver', () => ({
+  resolveBusinessGateway: (...args: any[]) => mockResolveBusinessGw(...args),
+  resolveCountryGateway: (...args: any[]) => mockResolveCountryGw(...args),
+}));
 vi.mock('@/lib/platformSettings', () => ({ loadPlatformSettings: () => Promise.resolve({ max_businesses_per_user: 5 }) }));
 vi.mock('@/lib/observability/server-events', () => ({ emitServerEvent: vi.fn() }));
 
@@ -155,6 +161,8 @@ function resetAll() {
   vi.resetAllMocks();
   candidateInserts = []; candidateUpdates = []; rpcCalls = []; lastBusinessInsert = null; eventLog = [];
   mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1', email: 't@t.com' } } });
+  mockResolveBusinessGw.mockResolvedValue({ gateway: 'paystack', currency: 'NGN', source: 'country_default' });
+  mockResolveCountryGw.mockResolvedValue({ gateway: 'paystack', currency: 'NGN', source: 'country_default' });
   mockAuthClientFrom.mockImplementation(() => ({ select: () => dc(defaultBiz) }));
   process.env.META_CLOUD_WABA_ID = 'waba-test';
   process.env.META_CLOUD_ACCESS_TOKEN = 'token-test';

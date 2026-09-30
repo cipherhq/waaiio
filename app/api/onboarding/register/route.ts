@@ -267,10 +267,15 @@ export async function POST(request: NextRequest) {
     // Resolve canonical payment gateway from country config (#493)
     const { resolveCountryGateway } = await import('@/lib/payments/gateway-resolver');
     const gatewayResult = await resolveCountryGateway(service, countryCode);
-    // Non-fatal: business can still be created without a gateway assignment
-    // (e.g. country has no configured gateway). Payment surfaces will fail
-    // closed later if gateway is still NULL.
     const inheritedGateway = gatewayResult.gateway ?? null;
+    // Payment readiness: explicit flag surfaced in response (#493 B5)
+    const paymentReady = inheritedGateway !== null;
+    if (!paymentReady) {
+      logger.warn('[ONBOARDING] Business created without payment gateway', {
+        countryCode,
+        reason: !gatewayResult.gateway ? (gatewayResult as { reason?: string }).reason : 'unknown',
+      });
+    }
 
     const { data: business, error: insertError } = await service
       .from('businesses')
@@ -406,6 +411,8 @@ export async function POST(request: NextRequest) {
       slug: business.slug,
       category,
       flow_type: flowType,
+      payment_ready: paymentReady,
+      ...(!paymentReady ? { payment_readiness_reason: 'No payment gateway configured for this country.' } : {}),
     });
   } catch (error) {
     logger.error('Onboarding register error:', error);
