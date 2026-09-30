@@ -1,6 +1,6 @@
 'use client';
 
-import { Fragment, useEffect, useState } from 'react';
+import { Fragment, useCallback, useEffect, useState } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { PageHelp } from '@/components/dashboard/PageHelp';
@@ -12,6 +12,7 @@ import {
   type SubscriptionTier,
 } from '@/lib/constants';
 import Link from 'next/link';
+import { useSearchParams, useRouter } from 'next/navigation';
 import {
   buildMessagingSummaries,
   type MessagingAllowanceRow,
@@ -68,9 +69,17 @@ interface FeeInvoiceRow {
   created_at: string;
 }
 
+interface TopUpPackage {
+  label: string;
+  amount_minor: number;
+  currency: string;
+}
+
 export default function BillingPage() {
   const business = useBusiness();
   const tier = ((business as any).subscription_tier || 'free') as SubscriptionTier;
+  const searchParams = useSearchParams();
+  const router = useRouter();
 
   const [loading, setLoading] = useState(true);
   const [subscription, setSubscription] = useState<SubscriptionRow | null>(null);
@@ -86,6 +95,17 @@ export default function BillingPage() {
   // Messaging allowance state
   const [messagingSummaries, setMessagingSummaries] = useState<CurrencyMessagingSummary[]>([]);
   const [messagingError, setMessagingError] = useState<string | null>(null);
+
+  // Top-up modal state
+  const [topUpOpen, setTopUpOpen] = useState(false);
+  const [topUpPackages, setTopUpPackages] = useState<TopUpPackage[]>([]);
+  const [topUpLoading, setTopUpLoading] = useState(false);
+  const [topUpError, setTopUpError] = useState<string | null>(null);
+  const [selectedPackage, setSelectedPackage] = useState<number | null>(null);
+  const [topUpSubmitting, setTopUpSubmitting] = useState(false);
+
+  // Top-up success/cancel banner
+  const [topUpBanner, setTopUpBanner] = useState<'success' | 'cancelled' | null>(null);
 
   useEffect(() => {
     async function load() {
@@ -188,6 +208,72 @@ export default function BillingPage() {
     load();
   }, [business.id]);
 
+  // Handle topup=success / topup=cancelled query params
+  useEffect(() => {
+    const topupParam = searchParams.get('topup');
+    if (topupParam === 'success' || topupParam === 'cancelled') {
+      setTopUpBanner(topupParam);
+      // Clear query param from URL without full reload
+      const url = new URL(window.location.href);
+      url.searchParams.delete('topup');
+      router.replace(url.pathname + url.search, { scroll: false });
+      // Auto-dismiss after 6 seconds
+      const timer = setTimeout(() => setTopUpBanner(null), 6000);
+      return () => clearTimeout(timer);
+    }
+  }, [searchParams, router]);
+
+  // Fetch top-up packages when modal opens
+  const openTopUp = useCallback(async () => {
+    setTopUpOpen(true);
+    setTopUpLoading(true);
+    setTopUpError(null);
+    setSelectedPackage(null);
+    try {
+      const res = await fetch(`/api/messaging/topup-packages?business_id=${business.id}`);
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || 'Failed to load packages');
+      }
+      const data = await res.json();
+      setTopUpPackages(data.packages || []);
+    } catch (err: any) {
+      setTopUpError(err.message || 'Failed to load packages');
+    } finally {
+      setTopUpLoading(false);
+    }
+  }, [business.id]);
+
+  // Submit top-up purchase
+  const submitTopUp = useCallback(async () => {
+    if (selectedPackage === null) return;
+    setTopUpSubmitting(true);
+    setTopUpError(null);
+    try {
+      const res = await fetch('/api/messaging/topup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          business_id: business.id,
+          package_amount_minor: selectedPackage,
+        }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || 'Failed to initiate top-up');
+      }
+      const data = await res.json();
+      if (data.authorization_url) {
+        window.location.href = data.authorization_url;
+      } else {
+        throw new Error('No payment URL returned');
+      }
+    } catch (err: any) {
+      setTopUpError(err.message || 'Something went wrong');
+      setTopUpSubmitting(false);
+    }
+  }, [business.id, selectedPackage]);
+
   if (loading) {
     return (
       <div className="flex min-h-[50vh] items-center justify-center">
@@ -248,6 +334,108 @@ export default function BillingPage() {
         title="Billing & Subscription"
         description="View your current plan, usage limits, and payment history. Upgrade or downgrade from the Settings page."
       />
+
+      {/* Top-up result banner */}
+      {topUpBanner && (
+        <div
+          className={`mt-4 flex items-center justify-between rounded-lg px-4 py-3 text-sm font-medium ${
+            topUpBanner === 'success'
+              ? 'bg-green-50 text-green-800 border border-green-200'
+              : 'bg-amber-50 text-amber-800 border border-amber-200'
+          }`}
+        >
+          <span>
+            {topUpBanner === 'success'
+              ? 'Payment received \u2014 your credit will appear shortly.'
+              : 'Top-up cancelled.'}
+          </span>
+          <button
+            onClick={() => setTopUpBanner(null)}
+            className="ml-4 text-current opacity-60 hover:opacity-100"
+            aria-label="Dismiss"
+          >
+            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+      )}
+
+      {/* Top-up modal */}
+      {topUpOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setTopUpOpen(false)}>
+          <div
+            className="w-full max-w-md rounded-xl bg-white p-6 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-semibold text-gray-900">Top Up Messaging Credit</h3>
+              <button onClick={() => setTopUpOpen(false)} className="text-gray-400 hover:text-gray-600">
+                <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            <div className="mt-4">
+              {topUpLoading ? (
+                <div className="flex items-center justify-center py-8">
+                  <div className="h-6 w-6 animate-spin rounded-full border-2 border-brand border-t-transparent" />
+                </div>
+              ) : topUpError && topUpPackages.length === 0 ? (
+                <div className="py-6 text-center">
+                  <p className="text-sm text-red-600">{topUpError}</p>
+                  <button
+                    onClick={openTopUp}
+                    className="mt-3 text-sm font-medium text-brand hover:text-brand-700"
+                  >
+                    Try again
+                  </button>
+                </div>
+              ) : topUpPackages.length === 0 ? (
+                <p className="py-6 text-center text-sm text-gray-500">
+                  No top-up packages available for your region.
+                </p>
+              ) : (
+                <>
+                  <div className="space-y-2">
+                    {topUpPackages.map((pkg) => (
+                      <button
+                        key={pkg.amount_minor}
+                        onClick={() => setSelectedPackage(pkg.amount_minor)}
+                        className={`w-full rounded-lg border p-4 text-left transition ${
+                          selectedPackage === pkg.amount_minor
+                            ? 'border-brand bg-brand-50 ring-2 ring-brand/30'
+                            : 'border-gray-200 hover:border-gray-300'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm font-medium text-gray-900">{pkg.label}</span>
+                          <span className="text-sm font-bold text-gray-900">
+                            {formatSmallestUnit(pkg.amount_minor, pkg.currency)}
+                          </span>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+
+                  {topUpError && (
+                    <p className="mt-3 text-sm text-red-600">{topUpError}</p>
+                  )}
+
+                  <button
+                    onClick={submitTopUp}
+                    disabled={selectedPackage === null || topUpSubmitting}
+                    className="mt-4 w-full rounded-lg bg-brand px-4 py-2.5 text-sm font-medium text-white transition hover:bg-brand-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {topUpSubmitting ? 'Redirecting\u2026' : 'Continue to Payment'}
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Current Plan Card */}
       <div className="mt-6 rounded-xl border border-gray-100 bg-white p-6">
@@ -319,11 +507,21 @@ export default function BillingPage() {
 
       {/* WhatsApp Messaging Allowance */}
       <div className="mt-6 rounded-xl border border-gray-100 bg-white">
-        <div className="border-b border-gray-100 px-6 py-4">
-          <h2 className="text-sm font-semibold text-gray-900">WhatsApp Messaging</h2>
-          <p className="mt-0.5 text-xs text-gray-400">
-            Messaging allowance, usage, and in-flight reservations
-          </p>
+        <div className="flex items-start justify-between border-b border-gray-100 px-6 py-4">
+          <div>
+            <h2 className="text-sm font-semibold text-gray-900">WhatsApp Messaging</h2>
+            <p className="mt-0.5 text-xs text-gray-400">
+              Messaging allowance, usage, and in-flight reservations
+            </p>
+          </div>
+          {business.country_code && (
+            <button
+              onClick={openTopUp}
+              className="shrink-0 rounded-lg bg-brand px-3 py-1.5 text-xs font-medium text-white hover:bg-brand-700 transition"
+            >
+              Top Up
+            </button>
+          )}
         </div>
         {messagingError ? (
           <div className="px-6 py-8 text-center">
@@ -342,11 +540,26 @@ export default function BillingPage() {
             <p className="mt-1 text-xs text-gray-400">
               Messaging allowances are granted with your plan or trial.
             </p>
+            {business.country_code && (
+              <button
+                onClick={openTopUp}
+                className="mt-3 inline-flex items-center gap-1 text-sm font-medium text-brand hover:text-brand-700 transition"
+              >
+                Top Up Now
+                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                </svg>
+              </button>
+            )}
           </div>
         ) : (
           <div className="divide-y divide-gray-50">
             {messagingSummaries.map((summary) => (
-              <MessagingCurrencySection key={summary.currency} summary={summary} />
+              <MessagingCurrencySection
+                key={summary.currency}
+                summary={summary}
+                onTopUp={business.country_code ? openTopUp : undefined}
+              />
             ))}
           </div>
         )}
@@ -635,7 +848,7 @@ const ALLOWANCE_TYPE_LABELS: Record<string, string> = {
   promotional: 'Promotional',
 };
 
-function MessagingCurrencySection({ summary }: { summary: CurrencyMessagingSummary }) {
+function MessagingCurrencySection({ summary, onTopUp }: { summary: CurrencyMessagingSummary; onTopUp?: () => void }) {
   const now = new Date();
   const hasActivity = summary.charged > 0 || summary.reserved > 0 || summary.available > 0 || summary.totalAllocated > 0;
 
@@ -709,32 +922,46 @@ function MessagingCurrencySection({ summary }: { summary: CurrencyMessagingSumma
       )}
 
       {/* Spend cap indicator (only if spend period exists) */}
-      {summary.hasSpendPeriod && summary.cap > 0 && (
-        <div className="mt-3">
-          <div className="flex items-center justify-between text-xs text-gray-500">
-            <span>Monthly spend cap</span>
-            <span>
-              {formatSmallestUnit(summary.charged + summary.reserved, summary.currency)}
-              {' / '}
-              {formatSmallestUnit(summary.cap, summary.currency)}
-            </span>
+      {summary.hasSpendPeriod && summary.cap > 0 && (() => {
+        const capUsed = summary.charged + summary.reserved;
+        const isAtCap = capUsed >= summary.cap;
+        return (
+          <div className="mt-3">
+            <div className="flex items-center justify-between text-xs text-gray-500">
+              <span>Monthly spend cap</span>
+              <div className="flex items-center gap-2">
+                <span>
+                  {formatSmallestUnit(capUsed, summary.currency)}
+                  {' / '}
+                  {formatSmallestUnit(summary.cap, summary.currency)}
+                </span>
+                {isAtCap && onTopUp && (
+                  <button
+                    onClick={onTopUp}
+                    className="font-medium text-brand hover:text-brand-700 transition"
+                  >
+                    Top Up
+                  </button>
+                )}
+              </div>
+            </div>
+            <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-gray-100">
+              <div
+                className={`h-full rounded-full transition-all ${
+                  isAtCap
+                    ? 'bg-red-500'
+                    : capUsed >= summary.cap * 0.8
+                      ? 'bg-amber-500'
+                      : 'bg-brand'
+                }`}
+                style={{
+                  width: `${Math.min((capUsed / summary.cap) * 100, 100)}%`,
+                }}
+              />
+            </div>
           </div>
-          <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-gray-100">
-            <div
-              className={`h-full rounded-full transition-all ${
-                summary.charged + summary.reserved >= summary.cap
-                  ? 'bg-red-500'
-                  : summary.charged + summary.reserved >= summary.cap * 0.8
-                    ? 'bg-amber-500'
-                    : 'bg-brand'
-              }`}
-              style={{
-                width: `${Math.min(((summary.charged + summary.reserved) / summary.cap) * 100, 100)}%`,
-              }}
-            />
-          </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Allowance breakdown */}
       {summary.allowances.length > 0 && (

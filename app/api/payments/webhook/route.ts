@@ -694,6 +694,107 @@ export async function POST(request: NextRequest) {
       logger.warn(`[PAYSTACK RECURRING] Unresolved charge.success (role F) preserved as reconciliation_required — ref: ${reference}`);
     }
 
+    // ── Messaging top-up via charge.success (#491) ──
+    if (event === 'charge.success' && metadata?.type === 'messaging_topup') {
+      const purchaseId = metadata.purchase_id;
+      const topupBusinessId = metadata.business_id;
+
+      if (!purchaseId || !topupBusinessId) {
+        logger.error('[PAYSTACK-WEBHOOK] messaging_topup charge missing purchase_id or business_id', { reference, metadata });
+        await supabase.from('processed_webhook_events').update({
+          status: 'failed',
+          last_error: 'messaging_topup charge missing required metadata',
+          last_attempted_at: new Date().toISOString(),
+        }).eq('event_id', eventId);
+        return NextResponse.json({ error: 'messaging_topup charge missing required metadata' }, { status: 500 });
+      }
+
+      // Verify the purchase exists and belongs to this business
+      const { data: purchase, error: purchaseLookupErr } = await supabase
+        .from('messaging_topup_purchases')
+        .select('id, business_id, status, package_amount_minor, currency_code')
+        .eq('id', purchaseId)
+        .single();
+
+      if (purchaseLookupErr || !purchase) {
+        logger.error('[PAYSTACK-WEBHOOK] messaging_topup purchase not found', { purchaseId, error: purchaseLookupErr });
+        await supabase.from('processed_webhook_events').update({
+          status: 'failed',
+          last_error: `Top-up purchase not found: ${purchaseId}`,
+          last_attempted_at: new Date().toISOString(),
+        }).eq('event_id', eventId);
+        return NextResponse.json({ error: 'Top-up purchase not found' }, { status: 500 });
+      }
+
+      if (purchase.business_id !== topupBusinessId) {
+        logger.error('[PAYSTACK-WEBHOOK] messaging_topup business_id mismatch', { purchaseId, expected: topupBusinessId, actual: purchase.business_id });
+        await supabase.from('processed_webhook_events').update({
+          status: 'failed',
+          last_error: `Top-up purchase business mismatch: ${purchaseId}`,
+          last_attempted_at: new Date().toISOString(),
+        }).eq('event_id', eventId);
+        return NextResponse.json({ error: 'Top-up purchase business mismatch' }, { status: 500 });
+      }
+
+      // Fail-closed: provider-confirmed amount/currency must exactly match durable purchase
+      const paystackAmount = data.amount as number | undefined;
+      const paystackCurrency = (data.currency as string | undefined)?.toUpperCase();
+      if (paystackAmount !== purchase.package_amount_minor || paystackCurrency !== purchase.currency_code) {
+        logger.error('[PAYSTACK-WEBHOOK] messaging_topup amount/currency mismatch', {
+          purchaseId,
+          paystackAmount, paystackCurrency,
+          purchaseAmount: purchase.package_amount_minor, purchaseCurrency: purchase.currency_code,
+        });
+        await supabase.from('processed_webhook_events').update({
+          status: 'failed',
+          last_error: `Top-up amount/currency mismatch: provider=${paystackAmount}/${paystackCurrency} purchase=${purchase.package_amount_minor}/${purchase.currency_code}`,
+          last_attempted_at: new Date().toISOString(),
+        }).eq('event_id', eventId);
+        return NextResponse.json({ error: 'Top-up amount/currency mismatch' }, { status: 400 });
+      }
+
+      // Update provider_reference with the Paystack reference
+      await supabase
+        .from('messaging_topup_purchases')
+        .update({ provider_reference: reference })
+        .eq('id', purchaseId)
+        .is('provider_reference', null);
+
+      // Grant the purchased allowance (RPC handles idempotent replay)
+      const { data: grantResult, error: grantErr } = await supabase.rpc(
+        'grant_purchased_messaging_allowance',
+        { p_purchase_id: purchaseId },
+      );
+
+      if (grantErr) {
+        logger.error('[PAYSTACK-WEBHOOK] messaging_topup grant RPC error', { purchaseId, error: grantErr });
+        await supabase.from('processed_webhook_events').update({
+          status: 'failed',
+          last_error: `Top-up grant RPC failed: ${String(grantErr.message).slice(0, 200)}`,
+          last_attempted_at: new Date().toISOString(),
+        }).eq('event_id', eventId);
+        return NextResponse.json({ error: 'Top-up grant RPC failed' }, { status: 500 });
+      }
+
+      if (grantResult?.granted) {
+        logger.info('[PAYSTACK-WEBHOOK] messaging_topup granted', {
+          purchaseId,
+          businessId: topupBusinessId,
+          allowanceId: grantResult.allowance_id,
+          amount: grantResult.amount_minor,
+          idempotent: grantResult.idempotent ?? false,
+        });
+      } else {
+        logger.error('[PAYSTACK-WEBHOOK] messaging_topup grant not confirmed', { purchaseId, result: grantResult });
+        await supabase.from('processed_webhook_events').update({
+          status: 'failed',
+          last_error: `Top-up grant not confirmed: ${JSON.stringify(grantResult).slice(0, 200)}`,
+          last_attempted_at: new Date().toISOString(),
+        }).eq('event_id', eventId);
+        return NextResponse.json({ error: 'Top-up grant not confirmed' }, { status: 500 });
+      }
+    }
+
     // Recurring invoice payment failed
     if (event === 'invoice.payment_failed') {
       const customerData = data.customer as Record<string, string> | undefined;
@@ -773,6 +874,45 @@ export async function POST(request: NextRequest) {
           })
           .eq('gateway_subscription_code', subCode)
           .in('status', ['active', 'paused', 'past_due']);
+      }
+    }
+
+    // ── Messaging top-up refund handling (#491) ──
+    // Paystack fires 'refund.processed' when a refund is completed
+    if (event === 'refund.processed') {
+      const txnObj = data.transaction as Record<string, unknown> | undefined;
+      const originalTxnReference = (txnObj?.reference as string) || (data.transaction_reference as string) || reference;
+      const refundAmountKobo = data.amount as number;
+      const paystackRefundId = (data.id as string) || reference || `paystack_refund_${eventId}`;
+
+      if (originalTxnReference && refundAmountKobo > 0) {
+        // Look up purchase (completed or partially_refunded — both accept further refunds)
+        const { data: topupPurchase } = await supabase
+          .from('messaging_topup_purchases')
+          .select('id, status, package_amount_minor, gateway')
+          .eq('gateway', 'paystack')
+          .or(`provider_checkout_id.eq.${sanitizeFilterValue(originalTxnReference)},provider_reference.eq.${sanitizeFilterValue(originalTxnReference)}`)
+          .in('status', ['completed', 'partially_refunded', 'review'])
+          .maybeSingle();
+
+        if (topupPurchase) {
+          const { data: refundResult, error: refundErr } = await supabase.rpc(
+            'process_topup_refund',
+            { p_purchase_id: topupPurchase.id, p_provider_refund_id: paystackRefundId, p_this_refund_amount_minor: refundAmountKobo },
+          );
+
+          if (refundErr) {
+            logger.error('[PAYSTACK-WEBHOOK] messaging_topup refund RPC error', { purchaseId: topupPurchase.id, error: refundErr });
+            return NextResponse.json({ error: 'Top-up refund RPC failed' }, { status: 500 });
+          }
+
+          logger.info('[PAYSTACK-WEBHOOK] messaging_topup refund processed', {
+            purchaseId: topupPurchase.id,
+            refundId: paystackRefundId,
+            refundAmount: refundAmountKobo,
+            result: refundResult,
+          });
+        }
       }
     }
 
