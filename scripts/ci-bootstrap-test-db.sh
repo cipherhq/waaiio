@@ -137,3 +137,15 @@ if [ "$FAILED" -eq 1 ]; then
   exit 1
 fi
 echo "✅ All migrations applied successfully."
+
+# ── 3. Post-migration: ensure profiles exist for stub users ──
+# auth.users were seeded before migrations, so the handle_new_user()
+# trigger (created in M001) didn't fire. Insert profiles now.
+echo "Ensuring profiles for stub users..."
+$PSQL_CONN -q -v ON_ERROR_STOP=1 <<'EOPROFILES'
+INSERT INTO profiles (id, email)
+SELECT id, email FROM auth.users
+WHERE id IN ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-000000000001')
+ON CONFLICT (id) DO NOTHING;
+EOPROFILES
+echo "✅ Post-migration seed complete."

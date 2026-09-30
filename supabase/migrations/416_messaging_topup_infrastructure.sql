@@ -313,16 +313,21 @@ BEGIN
   -- Serialize BEFORE cross-key reads/validation
   PERFORM pg_advisory_xact_lock(hashtext('commercial_config_write'));
 
-  -- CAS: verify expected version
+  -- CAS: verify expected version (matches M377 contract)
+  IF p_expected_version_id IS NULL THEN
+    RAISE EXCEPTION 'save_messaging_config requires a non-NULL expected_version_id for CAS';
+  END IF;
+
   SELECT id INTO v_latest_version_id
     FROM platform_config_versions
+    WHERE effective_from <= clock_timestamp()
     ORDER BY effective_from DESC LIMIT 1;
   IF v_latest_version_id IS DISTINCT FROM p_expected_version_id THEN
-    RAISE EXCEPTION 'Config version conflict: expected %, got %',
+    RAISE EXCEPTION 'config_version_conflict: expected % but latest is %',
       p_expected_version_id, v_latest_version_id;
   END IF;
 
-  -- ── Validate messaging_pricing ──
+  -- ── Validate messaging_pricing (matches M377 contract exactly) ──
   IF jsonb_typeof(p_messaging_pricing) <> 'object' THEN
     RAISE EXCEPTION 'messaging_pricing must be a JSONB object';
   END IF;
@@ -331,27 +336,80 @@ BEGIN
     IF jsonb_typeof(v_bucket) <> 'object' THEN
       RAISE EXCEPTION 'messaging_pricing[%] must be an object', v_currency;
     END IF;
-    IF v_bucket -> 'default_cost_minor' IS NULL OR jsonb_typeof(v_bucket -> 'default_cost_minor') <> 'number' THEN
-      RAISE EXCEPTION 'messaging_pricing[%].default_cost_minor is required and must be a number', v_currency;
+
+    -- default_spend_cap_minor required — must be positive integer
+    IF v_bucket -> 'default_spend_cap_minor' IS NULL
+       OR jsonb_typeof(v_bucket -> 'default_spend_cap_minor') <> 'number' THEN
+      RAISE EXCEPTION 'messaging_pricing[%].default_spend_cap_minor must be a positive integer', v_currency;
     END IF;
-    IF v_bucket -> 'default_spend_cap_minor' IS NULL OR jsonb_typeof(v_bucket -> 'default_spend_cap_minor') <> 'number' THEN
-      RAISE EXCEPTION 'messaging_pricing[%].default_spend_cap_minor is required and must be a number', v_currency;
-    END IF;
-    IF v_bucket -> 'rates' IS NOT NULL THEN
-      IF jsonb_typeof(v_bucket -> 'rates') <> 'object' THEN
-        RAISE EXCEPTION 'messaging_pricing[%].rates must be an object', v_currency;
+    DECLARE v_cap NUMERIC;
+    BEGIN
+      v_cap := (v_bucket ->> 'default_spend_cap_minor')::NUMERIC;
+      IF v_cap <= 0 OR v_cap <> FLOOR(v_cap) THEN
+        RAISE EXCEPTION 'messaging_pricing[%].default_spend_cap_minor must be a positive integer, got %', v_currency, v_cap;
       END IF;
-      FOR v_country_key, v_rate_val IN SELECT * FROM jsonb_each(v_bucket -> 'rates')
-      LOOP
-        IF v_country_key = ANY(v_seen_countries) THEN
-          RAISE EXCEPTION 'Country "%" appears in multiple currency buckets', v_country_key;
+    END;
+
+    -- default_cost_minor optional but must be non-negative integer if present
+    IF v_bucket -> 'default_cost_minor' IS NOT NULL THEN
+      IF jsonb_typeof(v_bucket -> 'default_cost_minor') <> 'number' THEN
+        RAISE EXCEPTION 'messaging_pricing[%].default_cost_minor must be a non-negative integer', v_currency;
+      END IF;
+      DECLARE v_cost NUMERIC;
+      BEGIN
+        v_cost := (v_bucket ->> 'default_cost_minor')::NUMERIC;
+        IF v_cost < 0 OR v_cost <> FLOOR(v_cost) THEN
+          RAISE EXCEPTION 'messaging_pricing[%].default_cost_minor must be a non-negative integer, got %', v_currency, v_cost;
         END IF;
-        v_seen_countries := v_seen_countries || v_country_key;
-        IF jsonb_typeof(v_rate_val) <> 'object' THEN
-          RAISE EXCEPTION 'messaging_pricing[%].rates[%] must be an object', v_currency, v_country_key;
-        END IF;
-      END LOOP;
+      END;
     END IF;
+
+    -- rates required
+    IF v_bucket -> 'rates' IS NULL OR jsonb_typeof(v_bucket -> 'rates') <> 'object' THEN
+      RAISE EXCEPTION 'messaging_pricing[%].rates must be an object', v_currency;
+    END IF;
+
+    -- Validate each country in rates
+    FOR v_country_key IN SELECT key FROM jsonb_each(v_bucket -> 'rates') LOOP
+      IF length(v_country_key) <> 2 OR v_country_key <> upper(v_country_key) THEN
+        RAISE EXCEPTION 'messaging_pricing[%].rates: invalid country code "%"', v_currency, v_country_key;
+      END IF;
+
+      IF v_country_key = ANY(v_seen_countries) THEN
+        RAISE EXCEPTION 'messaging_pricing: country "%" appears in multiple currency buckets', v_country_key;
+      END IF;
+      v_seen_countries := array_append(v_seen_countries, v_country_key);
+
+      v_rate_val := v_bucket -> 'rates' -> v_country_key;
+      IF jsonb_typeof(v_rate_val) <> 'object' THEN
+        RAISE EXCEPTION 'messaging_pricing[%].rates[%] must be an object with rate values', v_currency, v_country_key;
+      END IF;
+
+      -- Validate every rate entry: key must be a known category or wildcard
+      DECLARE
+        v_rate_entry_key TEXT;
+        v_rate_entry_val JSONB;
+        v_rate_num NUMERIC;
+        v_allowed_rate_keys TEXT[] := ARRAY['*', 'marketing', 'utility', 'authentication', 'service'];
+      BEGIN
+        FOR v_rate_entry_key IN SELECT key FROM jsonb_each(v_rate_val) LOOP
+          IF NOT (v_rate_entry_key = ANY(v_allowed_rate_keys)) THEN
+            RAISE EXCEPTION 'messaging_pricing[%].rates[%]: unknown rate key "%"; allowed: *, marketing, utility, authentication, service',
+              v_currency, v_country_key, v_rate_entry_key;
+          END IF;
+          v_rate_entry_val := v_rate_val -> v_rate_entry_key;
+          IF jsonb_typeof(v_rate_entry_val) <> 'number' THEN
+            RAISE EXCEPTION 'messaging_pricing[%].rates[%][%] must be a non-negative integer, got %',
+              v_currency, v_country_key, v_rate_entry_key, jsonb_typeof(v_rate_entry_val);
+          END IF;
+          v_rate_num := (v_rate_entry_val::TEXT)::NUMERIC;
+          IF v_rate_num < 0 OR v_rate_num <> FLOOR(v_rate_num) THEN
+            RAISE EXCEPTION 'messaging_pricing[%].rates[%][%] must be a non-negative integer, got %',
+              v_currency, v_country_key, v_rate_entry_key, v_rate_entry_val::TEXT;
+          END IF;
+        END LOOP;
+      END;
+    END LOOP;
   END LOOP;
 
   -- ── Validate trial_credit_minor_by_currency ──
@@ -468,7 +526,7 @@ BEGIN
         COALESCE(NEW.key, OLD.key);
     END IF;
   END IF;
-  RETURN NEW;
+  IF TG_OP = 'DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
 END;
 $$ LANGUAGE plpgsql;
 
