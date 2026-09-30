@@ -3718,6 +3718,7 @@ jobs:
           echo "✅ Phase 2D direct order Payment Authority tests complete — zero skips, zero failures."
 
       # ── M416: Messaging top-up refund RPC (#491) ──
+      # Uses canonical CI bootstrap helper for Supabase prerequisites + migration application
       - name: M416 messaging top-up refund DB tests
         env:
           PGHOST: localhost
@@ -3731,10 +3732,10 @@ jobs:
           cleanup() { dropdb --maintenance-db=waaiio_test --if-exists waaiio_m416_test; }
           trap cleanup EXIT
           export TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/waaiio_m416_test
-          echo "Applying migrations to waaiio_m416_test..."
-          for f in supabase/migrations/*.sql; do
-            psql "$TEST_DATABASE_URL" -q -v ON_ERROR_STOP=1 -f "$f" || { echo "❌ FAILED: $(basename $f)"; exit 1; }
-          done
+
+          # Bootstrap + apply migrations using canonical helper
+          bash scripts/ci-bootstrap-test-db.sh "$TEST_DATABASE_URL"
+
           echo "Running M416 messaging top-up refund DB tests..."
           set +e
           OUTPUT=$(npx vitest run lib/__tests__/messaging-topup-refund-db-491.test.ts 2>&1)
