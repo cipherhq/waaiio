@@ -143,11 +143,23 @@ const PAID_CONFIG = {
 
 function ensurePaidConfig(): string {
   const ts = nextConfigTimestamp();
-  return psql(`
+  const configId = psql(`
     INSERT INTO public.platform_config_versions (id, config_snapshot, effective_from, created_at)
     VALUES (gen_random_uuid(), '${JSON.stringify(PAID_CONFIG).replace(/'/g, "''")}'::jsonb, ${ts}, NOW())
     RETURNING id;
   `);
+  // M418: activate_paid_subscription now reads prices from countries.pricing
+  // (canonical pricing authority) instead of config_snapshot.pricing_tiers.
+  // Align test country pricing with test payment amounts (50 major units default).
+  psql(`
+    UPDATE public.countries
+    SET pricing = jsonb_set(
+      jsonb_set(COALESCE(pricing, '{}'::jsonb),
+        '{growth,price}', '50'),
+      '{business,price}', '150')
+    WHERE code = 'NG'
+  `);
+  return configId;
 }
 
 // ── Cleanup ─────────────────────────────────────────
