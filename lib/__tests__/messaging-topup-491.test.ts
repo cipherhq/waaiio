@@ -177,10 +177,14 @@ describe('Refund clawback without negative balances (#491)', () => {
 // ═══════════════════════════════════════════════════════
 
 describe('Purchase state machine transitions (#491)', () => {
-  const validStatuses = ['pending', 'completed', 'failed', 'refunded', 'disputed', 'review'];
+  const validStatuses = ['pending', 'completed', 'failed', 'partially_refunded', 'refunded', 'disputed', 'review'];
 
   it('purchase starts as pending', () => {
     expect(validStatuses).toContain('pending');
+  });
+
+  it('includes partially_refunded for sequential partial refunds', () => {
+    expect(validStatuses).toContain('partially_refunded');
   });
 
   it('only pending purchases can be completed', () => {
@@ -191,19 +195,27 @@ describe('Purchase state machine transitions (#491)', () => {
     expect(canComplete('refunded')).toBe(false);
   });
 
-  it('only completed purchases can be refunded', () => {
-    const canRefund = (status: string) => status === 'completed';
+  it('completed and partially_refunded purchases can receive refunds', () => {
+    const canRefund = (status: string) => ['completed', 'partially_refunded'].includes(status);
     expect(canRefund('completed')).toBe(true);
+    expect(canRefund('partially_refunded')).toBe(true);
     expect(canRefund('pending')).toBe(false);
     expect(canRefund('refunded')).toBe(false);
     expect(canRefund('review')).toBe(false);
+    expect(canRefund('disputed')).toBe(false);
   });
 
-  it('refund with shortfall transitions to review (not refunded)', () => {
-    const status = (shortfall: number) => shortfall > 0 ? 'review' : 'refunded';
-    expect(status(0)).toBe('refunded');
-    expect(status(1)).toBe('review');
-    expect(status(20000)).toBe('review');
+  it('determines correct status from cumulative refund state', () => {
+    const purchaseAmount = 50000;
+    function determineStatus(cumulativeRefunded: number, cumulativeShortfall: number): string {
+      if (cumulativeShortfall > 0) return 'review';
+      if (cumulativeRefunded >= purchaseAmount) return 'refunded';
+      return 'partially_refunded';
+    }
+    expect(determineStatus(10000, 0)).toBe('partially_refunded');
+    expect(determineStatus(50000, 0)).toBe('refunded');
+    expect(determineStatus(50000, 5000)).toBe('review');
+    expect(determineStatus(10000, 5000)).toBe('review');
   });
 });
 
@@ -345,5 +357,255 @@ describe('Gateway restrictions (#491)', () => {
 
   it('paypal is not supported for top-up', () => {
     expect(supportedGateways).not.toContain('paypal');
+  });
+});
+
+// ═══════════════════════════════════════════════════════
+// 11. Grant replay contract normalization (CTO Blocker 2)
+// ═══════════════════════════════════════════════════════
+
+describe('Grant replay contract normalization (#491 Blocker 2)', () => {
+  // Simulates the RPC result shape for all consumers to agree on
+  function simulateGrantRPC(purchaseStatus: string): Record<string, unknown> {
+    if (purchaseStatus === 'completed') {
+      // Replay: must return granted=true so all consumers see success
+      return { granted: true, idempotent: true, allowance_id: 'aaa', amount_minor: 50000, currency_code: 'NGN', source_ref: 'stripe:pi_123' };
+    }
+    if (purchaseStatus === 'pending') {
+      return { granted: true, idempotent: false, allowance_id: 'bbb', amount_minor: 50000, currency_code: 'NGN', source_ref: 'stripe:pi_456' };
+    }
+    return { granted: false, reason: 'invalid_status', current_status: purchaseStatus };
+  }
+
+  // Simulates what all webhook/callback handlers check
+  function handlerAcceptsResult(result: Record<string, unknown>): boolean {
+    return result.granted === true;
+  }
+
+  it('Stripe success replay returns granted=true (idempotent)', () => {
+    const result = simulateGrantRPC('completed');
+    expect(result.granted).toBe(true);
+    expect(result.idempotent).toBe(true);
+    expect(handlerAcceptsResult(result)).toBe(true);
+  });
+
+  it('Paystack success replay returns granted=true (idempotent)', () => {
+    const result = simulateGrantRPC('completed');
+    expect(handlerAcceptsResult(result)).toBe(true);
+  });
+
+  it('Paystack callback replay returns granted=true (idempotent)', () => {
+    const result = simulateGrantRPC('completed');
+    expect(handlerAcceptsResult(result)).toBe(true);
+  });
+
+  it('first grant returns granted=true, idempotent=false', () => {
+    const result = simulateGrantRPC('pending');
+    expect(result.granted).toBe(true);
+    expect(result.idempotent).toBe(false);
+    expect(handlerAcceptsResult(result)).toBe(true);
+  });
+
+  it('failed/refunded purchase returns granted=false', () => {
+    expect(simulateGrantRPC('failed').granted).toBe(false);
+    expect(simulateGrantRPC('refunded').granted).toBe(false);
+    expect(handlerAcceptsResult(simulateGrantRPC('failed'))).toBe(false);
+  });
+
+  it('all consumers use the same check: grantResult?.granted === true', () => {
+    // This test documents the normalized contract:
+    // - RPC returns {granted: true, ...} for both fresh and replay
+    // - All consumers check grantResult?.granted (not reason)
+    const freshResult = simulateGrantRPC('pending');
+    const replayResult = simulateGrantRPC('completed');
+    expect(freshResult.granted).toBe(true);
+    expect(replayResult.granted).toBe(true);
+    expect(handlerAcceptsResult(freshResult)).toBe(true);
+    expect(handlerAcceptsResult(replayResult)).toBe(true);
+  });
+});
+
+// ═══════════════════════════════════════════════════════
+// 12. Partial refund sequence (CTO Blocker 3)
+// ═══════════════════════════════════════════════════════
+
+describe('Partial refund sequence (#491 Blocker 3)', () => {
+  // Simulates the cumulative refund state machine in process_topup_refund
+  interface PurchaseState {
+    status: string;
+    packageAmount: number;
+    cumulativeRefunded: number;
+    cumulativeClawback: number;
+    cumulativeShortfall: number;
+    allowanceRemaining: number;
+    processedRefundIds: Set<string>;
+  }
+
+  function createPurchase(packageAmount: number): PurchaseState {
+    return {
+      status: 'completed',
+      packageAmount,
+      cumulativeRefunded: 0,
+      cumulativeClawback: 0,
+      cumulativeShortfall: 0,
+      allowanceRemaining: packageAmount,
+      processedRefundIds: new Set(),
+    };
+  }
+
+  function processRefund(
+    state: PurchaseState,
+    providerRefundId: string,
+    thisRefundAmount: number,
+  ): { processed: boolean; idempotent?: boolean; clawback: number; shortfall: number } {
+    // Idempotent: already processed this specific refund event
+    if (state.processedRefundIds.has(providerRefundId)) {
+      return { processed: true, idempotent: true, clawback: 0, shortfall: 0 };
+    }
+
+    // Can only refund completed or partially_refunded
+    if (!['completed', 'partially_refunded'].includes(state.status)) {
+      return { processed: false, clawback: 0, shortfall: 0 };
+    }
+
+    // Guard: cumulative refund cannot exceed original purchase
+    if (state.cumulativeRefunded + thisRefundAmount > state.packageAmount) {
+      return { processed: false, clawback: 0, shortfall: 0 };
+    }
+
+    // Clawback this refund's amount from remaining credit
+    const clawback = Math.min(state.allowanceRemaining, thisRefundAmount);
+    const shortfall = thisRefundAmount - clawback;
+
+    state.allowanceRemaining -= clawback;
+    state.cumulativeRefunded += thisRefundAmount;
+    state.cumulativeClawback += clawback;
+    state.cumulativeShortfall += shortfall;
+    state.processedRefundIds.add(providerRefundId);
+
+    // Determine new status
+    if (state.cumulativeShortfall > 0) {
+      state.status = 'review';
+    } else if (state.cumulativeRefunded >= state.packageAmount) {
+      state.status = 'refunded';
+    } else {
+      state.status = 'partially_refunded';
+    }
+
+    return { processed: true, idempotent: false, clawback, shortfall };
+  }
+
+  it('partial refund sequence: 20% → 30% → 50%', () => {
+    const purchase = createPurchase(100000); // ₦1,000
+
+    // First partial: 20%
+    const r1 = processRefund(purchase, 'refund_1', 20000);
+    expect(r1.processed).toBe(true);
+    expect(r1.clawback).toBe(20000);
+    expect(r1.shortfall).toBe(0);
+    expect(purchase.status).toBe('partially_refunded');
+    expect(purchase.allowanceRemaining).toBe(80000);
+    expect(purchase.cumulativeRefunded).toBe(20000);
+
+    // Second partial: 30%
+    const r2 = processRefund(purchase, 'refund_2', 30000);
+    expect(r2.processed).toBe(true);
+    expect(r2.clawback).toBe(30000);
+    expect(r2.shortfall).toBe(0);
+    expect(purchase.status).toBe('partially_refunded');
+    expect(purchase.allowanceRemaining).toBe(50000);
+    expect(purchase.cumulativeRefunded).toBe(50000);
+
+    // Final: remaining 50%
+    const r3 = processRefund(purchase, 'refund_3', 50000);
+    expect(r3.processed).toBe(true);
+    expect(r3.clawback).toBe(50000);
+    expect(r3.shortfall).toBe(0);
+    expect(purchase.status).toBe('refunded');
+    expect(purchase.allowanceRemaining).toBe(0);
+    expect(purchase.cumulativeRefunded).toBe(100000);
+  });
+
+  it('duplicate refund event does not double-claw back', () => {
+    const purchase = createPurchase(50000);
+
+    const r1 = processRefund(purchase, 'refund_abc', 10000);
+    expect(r1.processed).toBe(true);
+    expect(r1.clawback).toBe(10000);
+    expect(purchase.allowanceRemaining).toBe(40000);
+
+    // Same refund event replayed
+    const r2 = processRefund(purchase, 'refund_abc', 10000);
+    expect(r2.processed).toBe(true);
+    expect(r2.idempotent).toBe(true);
+    expect(r2.clawback).toBe(0);
+    // Balance unchanged — no double clawback
+    expect(purchase.allowanceRemaining).toBe(40000);
+    expect(purchase.cumulativeRefunded).toBe(10000);
+  });
+
+  it('refund after some credit consumed records correct shortfall', () => {
+    const purchase = createPurchase(50000);
+    // Simulate 30000 consumed: remaining drops to 20000
+    purchase.allowanceRemaining = 20000;
+
+    // Full refund of 50000, but only 20000 remaining
+    const r1 = processRefund(purchase, 'refund_full', 50000);
+    expect(r1.processed).toBe(true);
+    expect(r1.clawback).toBe(20000);
+    expect(r1.shortfall).toBe(30000);
+    expect(purchase.status).toBe('review'); // shortfall → review
+    expect(purchase.allowanceRemaining).toBe(0);
+    expect(purchase.cumulativeShortfall).toBe(30000);
+  });
+
+  it('review/disputed status blocks further refunds', () => {
+    const purchase = createPurchase(50000);
+    purchase.allowanceRemaining = 0; // all consumed
+    processRefund(purchase, 'refund_1', 50000);
+    expect(purchase.status).toBe('review');
+
+    // Further refund is blocked
+    const r2 = processRefund(purchase, 'refund_2', 10000);
+    expect(r2.processed).toBe(false);
+  });
+
+  it('cumulative refund cannot exceed original purchase amount', () => {
+    const purchase = createPurchase(50000);
+    processRefund(purchase, 'r1', 30000);
+
+    // This would exceed: 30000 + 30000 = 60000 > 50000
+    const r2 = processRefund(purchase, 'r2', 30000);
+    expect(r2.processed).toBe(false);
+    expect(purchase.cumulativeRefunded).toBe(30000);
+  });
+
+  it('partial refund with consumed credit: 20% consumed, then full refund', () => {
+    const purchase = createPurchase(100000);
+    // 20% consumed
+    purchase.allowanceRemaining = 80000;
+
+    // Full refund
+    const r1 = processRefund(purchase, 'refund_full', 100000);
+    expect(r1.processed).toBe(true);
+    expect(r1.clawback).toBe(80000);
+    expect(r1.shortfall).toBe(20000);
+    expect(purchase.status).toBe('review');
+    expect(purchase.cumulativeClawback).toBe(80000);
+    expect(purchase.cumulativeShortfall).toBe(20000);
+  });
+
+  it('per-refund-event idempotency key includes provider identity', () => {
+    // RPC uses source_key = 'refund:<purchase_id>:<provider_refund_id>'
+    const purchaseId = 'p-123';
+    const refundId1 = 'stripe_re_abc';
+    const refundId2 = 'stripe_re_xyz';
+
+    const key1 = `refund:${purchaseId}:${refundId1}`;
+    const key2 = `refund:${purchaseId}:${refundId2}`;
+    const key1replay = `refund:${purchaseId}:${refundId1}`;
+
+    expect(key1).not.toBe(key2); // different refunds → different keys
+    expect(key1).toBe(key1replay); // same refund → same key (idempotent)
   });
 });

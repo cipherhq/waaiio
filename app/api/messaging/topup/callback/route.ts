@@ -101,8 +101,8 @@ export async function GET(request: NextRequest) {
           return NextResponse.redirect(new URL(`${dashboardBase}?topup=pending`, request.nextUrl.origin));
         }
 
-        if (grantResult?.granted || grantResult?.reason === 'already_completed') {
-          logger.info('[TOPUP-CALLBACK] Grant succeeded (fallback)', { purchaseId: fallbackPurchase.id });
+        if (grantResult?.granted) {
+          logger.info('[TOPUP-CALLBACK] Grant succeeded (fallback)', { purchaseId: fallbackPurchase.id, idempotent: grantResult.idempotent ?? false });
           return NextResponse.redirect(new URL(`${dashboardBase}?topup=success`, request.nextUrl.origin));
         }
       }
@@ -134,8 +134,8 @@ export async function GET(request: NextRequest) {
       return NextResponse.redirect(new URL(`${dashboardBase}?topup=pending`, request.nextUrl.origin));
     }
 
-    if (grantResult?.granted || grantResult?.reason === 'already_completed') {
-      logger.info('[TOPUP-CALLBACK] Grant succeeded', { purchaseId: purchase.id, granted: grantResult.granted });
+    if (grantResult?.granted) {
+      logger.info('[TOPUP-CALLBACK] Grant succeeded', { purchaseId: purchase.id, idempotent: grantResult.idempotent ?? false });
       return NextResponse.redirect(new URL(`${dashboardBase}?topup=success`, request.nextUrl.origin));
     }
 

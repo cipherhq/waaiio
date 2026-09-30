@@ -417,15 +417,11 @@ export async function POST(request: NextRequest) {
                 businessId: topupBusinessId,
                 allowanceId: grantResult.allowance_id,
                 amount: grantResult.amount_minor,
+                idempotent: grantResult.idempotent ?? false,
               });
             } else {
-              // already_completed is safe (idempotent replay); other reasons are failures
-              if (grantResult?.reason === 'already_completed') {
-                logger.info('[STRIPE-WEBHOOK] messaging_topup already granted (replay)', { purchaseId });
-              } else {
-                logger.error('[STRIPE-WEBHOOK] messaging_topup grant not confirmed', { purchaseId, result: grantResult });
-                return NextResponse.json({ error: 'Top-up grant not confirmed' }, { status: 500 });
-              }
+              logger.error('[STRIPE-WEBHOOK] messaging_topup grant not confirmed', { purchaseId, result: grantResult });
+              return NextResponse.json({ error: 'Top-up grant not confirmed' }, { status: 500 });
             }
           }
         }
@@ -962,22 +958,26 @@ export async function POST(request: NextRequest) {
     if (event === 'charge.refunded') {
       const chargeId = data.id as string;
       const paymentIntentId = data.payment_intent as string;
-      const refundAmountCents = data.amount_refunded as number;
+      // Stripe sends cumulative amount_refunded; extract per-refund delta from latest refund
+      const refunds = (data.refunds as Record<string, unknown>)?.data as Array<Record<string, unknown>> | undefined;
+      const latestRefund = refunds?.[0]; // Stripe returns newest first
+      const refundId = (latestRefund?.id as string) || `stripe_refund_${eventId}`;
+      const thisRefundAmount = (latestRefund?.amount as number) || (data.amount_refunded as number);
 
-      if (chargeId && refundAmountCents > 0) {
-        // Look up messaging top-up purchase by provider_checkout_id or provider_reference
+      if (chargeId && thisRefundAmount > 0) {
+        // Look up purchase (completed or partially_refunded — both accept further refunds)
         const { data: topupPurchase } = await supabase
           .from('messaging_topup_purchases')
           .select('id, status, package_amount_minor, gateway')
           .eq('gateway', 'stripe')
           .or(`provider_checkout_id.eq.${sanitizeFilterValue(chargeId)},provider_reference.eq.${sanitizeFilterValue(paymentIntentId || chargeId)}`)
-          .eq('status', 'completed')
+          .in('status', ['completed', 'partially_refunded'])
           .maybeSingle();
 
         if (topupPurchase) {
           const { data: refundResult, error: refundErr } = await supabase.rpc(
             'process_topup_refund',
-            { p_purchase_id: topupPurchase.id, p_refund_amount_minor: refundAmountCents },
+            { p_purchase_id: topupPurchase.id, p_provider_refund_id: refundId, p_this_refund_amount_minor: thisRefundAmount },
           );
 
           if (refundErr) {
@@ -985,17 +985,10 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ error: 'Top-up refund RPC failed' }, { status: 500 });
           }
 
-          // Store the Stripe charge ID as refund_provider_ref for audit trail
-          if (refundResult?.processed) {
-            await supabase
-              .from('messaging_topup_purchases')
-              .update({ refund_provider_ref: chargeId })
-              .eq('id', topupPurchase.id);
-          }
-
           logger.info('[STRIPE-WEBHOOK] messaging_topup refund processed', {
             purchaseId: topupPurchase.id,
-            refundAmount: refundAmountCents,
+            refundId,
+            thisRefundAmount,
             result: refundResult,
           });
         }
@@ -1007,38 +1000,39 @@ export async function POST(request: NextRequest) {
       const disputedCharge = data.charge as string;
       const disputeAmountCents = data.amount as number;
       const disputePaymentIntent = data.payment_intent as string;
+      const disputeId = (data.id as string) || `stripe_dispute_${eventId}`;
 
       if (disputedCharge && disputeAmountCents > 0) {
-        // Look up messaging top-up purchase by provider_checkout_id or provider_reference
         const { data: topupPurchase } = await supabase
           .from('messaging_topup_purchases')
           .select('id, status, package_amount_minor, gateway')
           .eq('gateway', 'stripe')
           .or(`provider_checkout_id.eq.${sanitizeFilterValue(disputedCharge)},provider_reference.eq.${sanitizeFilterValue(disputePaymentIntent || disputedCharge)}`)
-          .eq('status', 'completed')
+          .in('status', ['completed', 'partially_refunded'])
           .maybeSingle();
 
         if (topupPurchase) {
           const { data: refundResult, error: refundErr } = await supabase.rpc(
             'process_topup_refund',
-            { p_purchase_id: topupPurchase.id, p_refund_amount_minor: disputeAmountCents },
+            { p_purchase_id: topupPurchase.id, p_provider_refund_id: disputeId, p_this_refund_amount_minor: disputeAmountCents },
           );
 
           if (refundErr) {
-            logger.error('[STRIPE-WEBHOOK] messaging_topup dispute refund RPC error', { purchaseId: topupPurchase.id, error: refundErr });
+            logger.error('[STRIPE-WEBHOOK] messaging_topup dispute RPC error', { purchaseId: topupPurchase.id, error: refundErr });
             return NextResponse.json({ error: 'Top-up dispute RPC failed' }, { status: 500 });
           }
 
-          // Update purchase status to 'disputed' and store dispute ref
+          // Override to disputed status after RPC (dispute is terminal)
           if (refundResult?.processed) {
             await supabase
               .from('messaging_topup_purchases')
-              .update({ status: 'disputed', refund_provider_ref: data.id as string })
+              .update({ status: 'disputed' })
               .eq('id', topupPurchase.id);
           }
 
           logger.info('[STRIPE-WEBHOOK] messaging_topup dispute processed', {
             purchaseId: topupPurchase.id,
+            disputeId,
             disputeAmount: disputeAmountCents,
             result: refundResult,
           });

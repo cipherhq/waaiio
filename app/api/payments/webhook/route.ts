@@ -765,9 +765,8 @@ export async function POST(request: NextRequest) {
           businessId: topupBusinessId,
           allowanceId: grantResult.allowance_id,
           amount: grantResult.amount_minor,
+          idempotent: grantResult.idempotent ?? false,
         });
-      } else if (grantResult?.reason === 'already_completed') {
-        logger.info('[PAYSTACK-WEBHOOK] messaging_topup already granted (replay)', { purchaseId });
       } else {
         logger.error('[PAYSTACK-WEBHOOK] messaging_topup grant not confirmed', { purchaseId, result: grantResult });
         await supabase.from('processed_webhook_events').update({
@@ -864,25 +863,25 @@ export async function POST(request: NextRequest) {
     // ── Messaging top-up refund handling (#491) ──
     // Paystack fires 'refund.processed' when a refund is completed
     if (event === 'refund.processed') {
-      // data.transaction.reference is the original payment reference; data.reference is the refund ref
       const txnObj = data.transaction as Record<string, unknown> | undefined;
       const originalTxnReference = (txnObj?.reference as string) || (data.transaction_reference as string) || reference;
       const refundAmountKobo = data.amount as number;
+      const paystackRefundId = (data.id as string) || reference || `paystack_refund_${eventId}`;
 
       if (originalTxnReference && refundAmountKobo > 0) {
-        // Look up messaging top-up purchase by provider_checkout_id or provider_reference
+        // Look up purchase (completed or partially_refunded — both accept further refunds)
         const { data: topupPurchase } = await supabase
           .from('messaging_topup_purchases')
           .select('id, status, package_amount_minor, gateway')
           .eq('gateway', 'paystack')
           .or(`provider_checkout_id.eq.${sanitizeFilterValue(originalTxnReference)},provider_reference.eq.${sanitizeFilterValue(originalTxnReference)}`)
-          .eq('status', 'completed')
+          .in('status', ['completed', 'partially_refunded'])
           .maybeSingle();
 
         if (topupPurchase) {
           const { data: refundResult, error: refundErr } = await supabase.rpc(
             'process_topup_refund',
-            { p_purchase_id: topupPurchase.id, p_refund_amount_minor: refundAmountKobo },
+            { p_purchase_id: topupPurchase.id, p_provider_refund_id: paystackRefundId, p_this_refund_amount_minor: refundAmountKobo },
           );
 
           if (refundErr) {
@@ -890,16 +889,9 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ error: 'Top-up refund RPC failed' }, { status: 500 });
           }
 
-          // Store refund reference for audit trail
-          if (refundResult?.processed) {
-            await supabase
-              .from('messaging_topup_purchases')
-              .update({ refund_provider_ref: reference })
-              .eq('id', topupPurchase.id);
-          }
-
           logger.info('[PAYSTACK-WEBHOOK] messaging_topup refund processed', {
             purchaseId: topupPurchase.id,
+            refundId: paystackRefundId,
             refundAmount: refundAmountKobo,
             result: refundResult,
           });

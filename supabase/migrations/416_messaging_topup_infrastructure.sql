@@ -28,9 +28,9 @@ CREATE TABLE IF NOT EXISTS public.messaging_topup_purchases (
   gateway           TEXT NOT NULL CHECK (gateway IN ('stripe', 'paystack')),
   provider_checkout_id  TEXT,
   provider_reference    TEXT,
-  -- State machine: pending → completed | failed | refunded | disputed
+  -- State machine: pending → completed | failed | partially_refunded | refunded | disputed | review
   status            TEXT NOT NULL DEFAULT 'pending'
-                    CHECK (status IN ('pending', 'completed', 'failed', 'refunded', 'disputed', 'review')),
+                    CHECK (status IN ('pending', 'completed', 'failed', 'partially_refunded', 'refunded', 'disputed', 'review')),
   -- Grant linkage (set on completion)
   allowance_id      UUID REFERENCES public.messaging_allowances(id),
   grant_source_ref  TEXT,
@@ -85,7 +85,7 @@ CREATE OR REPLACE FUNCTION public.save_commercial_config(
 RETURNS UUID
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public, pg_temp
+SET search_path = public, extensions, pg_temp
 AS $$
 DECLARE
   -- 19 unique snapshot keys: 16 individually mutable + 3 bundle-only
@@ -269,7 +269,7 @@ CREATE OR REPLACE FUNCTION public.save_messaging_config(
 RETURNS UUID
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public, pg_temp
+SET search_path = public, extensions, pg_temp
 AS $$
 DECLARE
   -- 19 unique snapshot keys (must match save_commercial_config)
@@ -498,10 +498,13 @@ BEGIN
     RETURN jsonb_build_object('granted', false, 'reason', 'purchase_not_found');
   END IF;
 
-  -- Idempotent: already completed
+  -- Idempotent: already completed — return success so webhook retries converge
   IF v_purchase.status = 'completed' THEN
-    RETURN jsonb_build_object('granted', false, 'idempotent', true,
-      'allowance_id', v_purchase.allowance_id::TEXT);
+    RETURN jsonb_build_object('granted', true, 'idempotent', true,
+      'allowance_id', v_purchase.allowance_id::TEXT,
+      'amount_minor', v_purchase.package_amount_minor,
+      'currency_code', v_purchase.currency_code,
+      'source_ref', v_purchase.grant_source_ref);
   END IF;
 
   -- Only pending purchases can be completed
@@ -554,13 +557,15 @@ REVOKE ALL ON FUNCTION public.grant_purchased_messaging_allowance(UUID) FROM aut
 GRANT EXECUTE ON FUNCTION public.grant_purchased_messaging_allowance(UUID) TO service_role;
 
 -- ══════════════════════════════════════════════════════════
--- 6. process_topup_refund(UUID, INTEGER)
---    Idempotent: claws back remaining credit, records shortfall
+-- 6. process_topup_refund(UUID, TEXT, INTEGER)
+--    Cumulative-safe, per-event idempotent refund clawback.
+--    Supports sequential partial refunds and duplicate provider events.
 -- ══════════════════════════════════════════════════════════
 
 CREATE OR REPLACE FUNCTION public.process_topup_refund(
   p_purchase_id UUID,
-  p_refund_amount_minor INTEGER
+  p_provider_refund_id TEXT,      -- provider event identity for per-event idempotency
+  p_this_refund_amount_minor INTEGER  -- amount of THIS refund event (not cumulative)
 )
 RETURNS JSONB
 LANGUAGE plpgsql
@@ -573,6 +578,12 @@ DECLARE
   v_clawback INTEGER;
   v_shortfall INTEGER;
   v_adjust_source TEXT;
+  v_prev_refund_total INTEGER;
+  v_new_refund_total INTEGER;
+  v_new_clawback_total INTEGER;
+  v_new_shortfall_total INTEGER;
+  v_new_status TEXT;
+  v_existing_adjust RECORD;
 BEGIN
   -- Lock purchase
   SELECT * INTO v_purchase
@@ -584,20 +595,35 @@ BEGIN
     RETURN jsonb_build_object('processed', false, 'reason', 'purchase_not_found');
   END IF;
 
-  -- Idempotent: already refunded/disputed
-  IF v_purchase.status IN ('refunded', 'disputed', 'review') THEN
+  -- Purchases in review/disputed are terminal — no further refunds
+  IF v_purchase.status IN ('disputed', 'review') THEN
     RETURN jsonb_build_object('processed', false, 'idempotent', true,
       'status', v_purchase.status);
   END IF;
 
-  -- Only completed purchases can be refunded
-  IF v_purchase.status <> 'completed' THEN
-    RETURN jsonb_build_object('processed', false, 'reason', 'not_completed',
+  -- Only completed or partially_refunded purchases can receive refunds
+  IF v_purchase.status NOT IN ('completed', 'partially_refunded') THEN
+    RETURN jsonb_build_object('processed', false, 'reason', 'not_refundable',
       'current_status', v_purchase.status);
   END IF;
 
   IF v_purchase.allowance_id IS NULL THEN
     RETURN jsonb_build_object('processed', false, 'reason', 'no_allowance_linked');
+  END IF;
+
+  -- Per-event idempotency: check if this specific refund event was already processed
+  v_adjust_source := 'refund:' || p_purchase_id::TEXT || ':' || p_provider_refund_id;
+  SELECT * INTO v_existing_adjust
+    FROM public.messaging_allowance_events
+    WHERE allowance_id = v_purchase.allowance_id
+      AND event_type = 'adjust'
+      AND source_key = v_adjust_source;
+
+  IF FOUND THEN
+    -- This exact refund event was already processed — idempotent success
+    RETURN jsonb_build_object('processed', true, 'idempotent', true,
+      'provider_refund_id', p_provider_refund_id,
+      'status', v_purchase.status);
   END IF;
 
   -- Lock the linked allowance
@@ -610,18 +636,29 @@ BEGIN
     RETURN jsonb_build_object('processed', false, 'reason', 'allowance_not_found');
   END IF;
 
-  -- Clawback: take back only remaining unused credit (floor at 0)
-  v_clawback := LEAST(v_allowance.remaining_minor, p_refund_amount_minor);
-  v_shortfall := p_refund_amount_minor - v_clawback;
+  -- Cumulative accounting
+  v_prev_refund_total := COALESCE(v_purchase.refund_amount_minor, 0);
+  v_new_refund_total := v_prev_refund_total + p_this_refund_amount_minor;
 
-  -- Decrement allowance
+  -- Guard: cumulative refund cannot exceed original purchase
+  IF v_new_refund_total > v_purchase.package_amount_minor THEN
+    RETURN jsonb_build_object('processed', false, 'reason', 'refund_exceeds_purchase',
+      'purchase_amount', v_purchase.package_amount_minor,
+      'already_refunded', v_prev_refund_total,
+      'this_refund', p_this_refund_amount_minor);
+  END IF;
+
+  -- Clawback THIS refund's amount from remaining credit (floor at 0)
+  v_clawback := LEAST(v_allowance.remaining_minor, p_this_refund_amount_minor);
+  v_shortfall := p_this_refund_amount_minor - v_clawback;
+
+  -- Decrement allowance for this refund slice
   IF v_clawback > 0 THEN
     UPDATE public.messaging_allowances
       SET remaining_minor = remaining_minor - v_clawback
       WHERE id = v_purchase.allowance_id;
 
-    -- Record adjust event with source_key for idempotency
-    v_adjust_source := 'refund:' || p_purchase_id::TEXT;
+    -- Record per-event adjust event (idempotent via unique source_key)
     INSERT INTO public.messaging_allowance_events (
       allowance_id, business_id, event_type, amount_minor,
       source_key, balance_after_minor
@@ -629,41 +666,63 @@ BEGIN
       v_purchase.allowance_id, v_purchase.business_id, 'adjust',
       -v_clawback, v_adjust_source,
       v_allowance.remaining_minor - v_clawback
-    )
-    ON CONFLICT (allowance_id, event_type, source_key)
-      WHERE event_type = 'adjust'
-    DO NOTHING;
+    );
+  ELSE
+    -- Zero clawback — still record adjust event for idempotency tracking
+    INSERT INTO public.messaging_allowance_events (
+      allowance_id, business_id, event_type, amount_minor,
+      source_key, balance_after_minor
+    ) VALUES (
+      v_purchase.allowance_id, v_purchase.business_id, 'adjust',
+      0, v_adjust_source,
+      v_allowance.remaining_minor
+    );
   END IF;
 
-  -- Update purchase record with refund details
+  -- Update cumulative totals on purchase
+  v_new_clawback_total := COALESCE(v_purchase.refund_clawback_minor, 0) + v_clawback;
+  v_new_shortfall_total := COALESCE(v_purchase.consumed_shortfall_minor, 0) + v_shortfall;
+
+  -- Determine new status
+  IF v_new_shortfall_total > 0 THEN
+    v_new_status := 'review';
+  ELSIF v_new_refund_total >= v_purchase.package_amount_minor THEN
+    v_new_status := 'refunded';
+  ELSE
+    v_new_status := 'partially_refunded';
+  END IF;
+
   UPDATE public.messaging_topup_purchases
-    SET status = CASE WHEN v_shortfall > 0 THEN 'review' ELSE 'refunded' END,
-        refund_amount_minor = p_refund_amount_minor,
-        refund_clawback_minor = v_clawback,
-        consumed_shortfall_minor = CASE WHEN v_shortfall > 0 THEN v_shortfall ELSE NULL END,
+    SET status = v_new_status,
+        refund_amount_minor = v_new_refund_total,
+        refund_clawback_minor = v_new_clawback_total,
+        consumed_shortfall_minor = CASE WHEN v_new_shortfall_total > 0 THEN v_new_shortfall_total ELSE NULL END,
+        refund_provider_ref = COALESCE(refund_provider_ref || ',' || p_provider_refund_id, p_provider_refund_id),
         refunded_at = NOW()
     WHERE id = p_purchase_id;
 
-  -- If shortfall exists (credit was consumed but refunded), suspend messaging
+  -- If any shortfall exists, suspend messaging for admin review
   IF v_shortfall > 0 THEN
     UPDATE public.businesses
       SET messaging_suspended = true
       WHERE id = v_purchase.business_id;
 
-    -- Create alert for admin review
     INSERT INTO public.alerts (business_id, type, severity, title, message, metadata)
     VALUES (
       v_purchase.business_id,
       'messaging_refund_review',
       'critical',
       'Messaging credit refund requires review',
-      'A refund of ' || p_refund_amount_minor || ' minor units was processed but ' ||
+      'A refund of ' || p_this_refund_amount_minor || ' minor units was processed but ' ||
         v_shortfall || ' minor units had already been consumed. Messaging has been suspended pending review.',
       jsonb_build_object(
         'purchase_id', p_purchase_id,
-        'refund_amount', p_refund_amount_minor,
-        'clawback', v_clawback,
-        'shortfall', v_shortfall
+        'provider_refund_id', p_provider_refund_id,
+        'this_refund_amount', p_this_refund_amount_minor,
+        'cumulative_refunded', v_new_refund_total,
+        'this_clawback', v_clawback,
+        'this_shortfall', v_shortfall,
+        'cumulative_shortfall', v_new_shortfall_total
       )
     );
   END IF;
@@ -672,16 +731,19 @@ BEGIN
     'processed', true,
     'clawback_minor', v_clawback,
     'shortfall_minor', v_shortfall,
-    'status', CASE WHEN v_shortfall > 0 THEN 'review' ELSE 'refunded' END,
-    'messaging_suspended', v_shortfall > 0
+    'cumulative_refunded_minor', v_new_refund_total,
+    'cumulative_shortfall_minor', v_new_shortfall_total,
+    'status', v_new_status,
+    'messaging_suspended', v_shortfall > 0,
+    'provider_refund_id', p_provider_refund_id
   );
 END;
 $$;
 
-REVOKE ALL ON FUNCTION public.process_topup_refund(UUID, INTEGER) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.process_topup_refund(UUID, INTEGER) FROM anon;
-REVOKE ALL ON FUNCTION public.process_topup_refund(UUID, INTEGER) FROM authenticated;
-GRANT EXECUTE ON FUNCTION public.process_topup_refund(UUID, INTEGER) TO service_role;
+REVOKE ALL ON FUNCTION public.process_topup_refund(UUID, TEXT, INTEGER) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.process_topup_refund(UUID, TEXT, INTEGER) FROM anon;
+REVOKE ALL ON FUNCTION public.process_topup_refund(UUID, TEXT, INTEGER) FROM authenticated;
+GRANT EXECUTE ON FUNCTION public.process_topup_refund(UUID, TEXT, INTEGER) TO service_role;
 
 -- ══════════════════════════════════════════════════════════
 -- 7. Migration verification
@@ -711,11 +773,11 @@ BEGIN
     RAISE EXCEPTION 'MIGRATION 416 VERIFICATION FAILED: grant_purchased_messaging_allowance not found';
   END IF;
 
-  -- Verify process_topup_refund exists and is SECURITY DEFINER
+  -- Verify process_topup_refund (3-arg) exists and is SECURITY DEFINER
   SELECT count(*) INTO v_count FROM pg_proc
-    WHERE proname = 'process_topup_refund' AND prosecdef = true;
+    WHERE proname = 'process_topup_refund' AND prosecdef = true AND pronargs = 3;
   IF v_count = 0 THEN
-    RAISE EXCEPTION 'MIGRATION 416 VERIFICATION FAILED: process_topup_refund not found';
+    RAISE EXCEPTION 'MIGRATION 416 VERIFICATION FAILED: process_topup_refund(uuid,text,integer) not found';
   END IF;
 
   -- Verify save_commercial_config includes messaging_topup_packages
