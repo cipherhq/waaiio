@@ -58,6 +58,12 @@ vi.mock('@/lib/trial-status', () => ({
   resolveTrialCredit: vi.fn(async () => false),
 }));
 
+vi.mock('@/lib/payments/gateway-resolver', () => ({
+  resolveBusinessGateway: vi.fn().mockResolvedValue({ gateway: 'paystack', currency: 'NGN', source: 'country_default' }),
+  resolveCountryGateway: vi.fn().mockResolvedValue({ gateway: 'paystack', currency: 'NGN', source: 'country_default' }),
+  reconcileNullGateways: vi.fn().mockResolvedValue({ updated: 0, errors: [] }),
+}));
+
 // Shared gateway spy — must use real class constructors for factory.ts module-level `new`
 const mockGatewayInit = vi.fn();
 
@@ -186,21 +192,21 @@ describe('Country-cache cold-start reproduction (actual modules)', () => {
     expect(providerArgs.amount).toBe(2000);
     expect(providerArgs.bookingId).toBe('booking-snapakit-001');
 
-    // countries table was queried (per-request, not from cache)
-    const fromCalls = (supabase.from as any).mock.calls.map((c: any) => c[0]);
-    expect(fromCalls).toContain('countries');
+    // #493: gateway resolved via canonical resolver (mocked), not direct countries query
+    const { resolveBusinessGateway } = await import('@/lib/payments/gateway-resolver');
+    expect(resolveBusinessGateway).toHaveBeenCalled();
   });
 
-  it('(2) FIX VERIFICATION: cold cache + countries DB error → fail closed with stage log, provider count=0', async () => {
+  it('(2) FIX VERIFICATION: cold cache + resolver error → fail closed with stage log, provider count=0', async () => {
     const countries = await import('@/lib/countries');
     expect(countries.getCountry('NG')).toBeNull();
 
+    // #493: Mock resolver to return failure (simulating country DB error)
+    const { resolveBusinessGateway } = await import('@/lib/payments/gateway-resolver');
+    (resolveBusinessGateway as any).mockResolvedValueOnce({ gateway: null, currency: null, source: null, reason: 'country_not_found_or_inactive' });
+
     const { initializePayment } = await import('@/lib/bot/flows/shared/payment');
     const supabase = buildPaymentSupabase();
-    (supabase.from as any).mockImplementation((table: string) => {
-      if (table === 'countries') return makeChain({ data: null, error: { message: 'connection refused' } });
-      return makeChain({ data: null, error: null });
-    });
 
     const result = await initializePayment(supabase as any, SCHEDULING_OPTS);
 
@@ -211,9 +217,9 @@ describe('Country-cache cold-start reproduction (actual modules)', () => {
     const { logger } = await import('@/lib/logger');
     const withContextCalls = (logger.withContext as any).mock.calls;
     const stageCall = withContextCalls.find(
-      (args: any[]) => args[0]?.op === 'payment.country-payment-config'
+      (args: any[]) => args[0]?.op === 'payment.gateway-resolution'
     );
-    expect(stageCall, 'Expected payment.country-payment-config log op').toBeDefined();
+    expect(stageCall, 'Expected payment.gateway-resolution log op').toBeDefined();
   });
 
   it('(4) Failed loadCountries leaves authoritative resolver unable to resolve NG', async () => {

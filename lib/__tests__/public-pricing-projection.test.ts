@@ -109,6 +109,11 @@ vi.mock('@/lib/supabase/service', () => ({
   createServiceClient: () => activeMock,
 }));
 
+vi.mock('@/lib/payments/gateway-resolver', () => ({
+  resolveBusinessGateway: vi.fn().mockResolvedValue({ gateway: 'paystack', currency: 'NGN', source: 'country_default' }),
+  resolveCountryGateway: vi.fn().mockResolvedValue({ gateway: 'paystack', currency: 'NGN', source: 'country_default' }),
+}));
+
 describe('Public Pricing Projection — runtime proofs', () => {
   beforeEach(() => {
     activeMock = buildSupabaseMock();

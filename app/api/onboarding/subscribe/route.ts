@@ -61,11 +61,23 @@ export async function POST(request: NextRequest) {
     }
     const countryCode = business.country_code as CountryCode;
 
-    // Read regional tier price directly from DB — fail closed, no hardcoded fallback
+    // Canonical gateway resolution — single authority (#493 B3)
     const service = createServiceClient();
+    const { resolveBusinessGateway } = await import('@/lib/payments/gateway-resolver');
+    const gatewayResult = await resolveBusinessGateway(service, business_id);
+    if (!gatewayResult.gateway) {
+      return NextResponse.json(
+        { message: 'Payment gateway not configured for this region.' },
+        { status: 503 },
+      );
+    }
+    const gateway = gatewayResult.gateway;
+    const currency = gatewayResult.currency;
+
+    // Regional tier pricing — separate from gateway resolution
     const { data: countryRow, error: countryError } = await service
       .from('countries')
-      .select('pricing, currency_code, payment_gateway')
+      .select('pricing')
       .eq('code', countryCode)
       .eq('is_active', true)
       .single();
@@ -87,15 +99,6 @@ export async function POST(request: NextRequest) {
     }
 
     const monthlyPrice = tierPricing.price;
-    const currency = countryRow.currency_code as string;
-    const gateway = countryRow.payment_gateway as string;
-
-    if (!currency) {
-      return NextResponse.json({ message: 'Currency not configured for this region.' }, { status: 503 });
-    }
-    if (!gateway) {
-      return NextResponse.json({ message: 'Payment gateway not configured for this region.' }, { status: 503 });
-    }
 
     const { data: profile } = await supabase
       .from('profiles')

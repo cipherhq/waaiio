@@ -67,6 +67,11 @@ vi.mock('@/lib/supabase/service', () => ({
   }),
 }));
 
+vi.mock('@/lib/payments/gateway-resolver', () => ({
+  resolveBusinessGateway: vi.fn().mockResolvedValue({ gateway: 'paystack', currency: 'NGN', source: 'country_default' }),
+  resolveCountryGateway: vi.fn().mockResolvedValue({ gateway: 'paystack', currency: 'NGN', source: 'country_default' }),
+}));
+
 // Import AFTER mocks
 const { POST: subscribePOST } = await import('@/app/api/onboarding/subscribe/route');
 

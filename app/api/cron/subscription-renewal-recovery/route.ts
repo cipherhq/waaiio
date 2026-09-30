@@ -40,6 +40,7 @@ export async function GET(request: NextRequest) {
       } else if (gateway === 'stripe') {
         await processStripeRenewal(supabase, sub, subId, periodEnd);
       } else {
+        // Paystack is handled by Pass 2 (initial-activation recovery)
         skipped++;
         continue;
       }
@@ -50,7 +51,72 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  return NextResponse.json({ ok: true, finalized, evidenceRecorded, skipped, batchSize: (batch as unknown[]).length });
+  // ═══════════════════════════════════════════════════════════
+  // Pass 2: Paystack initial-activation recovery (#493 B1)
+  //
+  // claim_overdue_subscription_batch selects status='active' +
+  // gateway IN ('flutterwave','stripe'). Pending Paystack subs
+  // with successful payment evidence are never returned by it.
+  //
+  // This pass directly queries for:
+  //   A) pending subs with gateway='paystack' (initial activation never completed)
+  //   B) active Paystack subs where business is still pending
+  //      (partial convergence — RPC succeeded, business-status update failed)
+  // ═══════════════════════════════════════════════════════════
+  let paystackRecovered = 0;
+  try {
+    const cooldownCutoff = new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString();
+
+    const { data: pendingSubs } = await supabase
+      .from('subscriptions')
+      .select('id, business_id, plan, gateway, status')
+      .eq('status', 'pending')
+      .eq('gateway', 'paystack')
+      .or('last_reconciliation_attempt_at.is.null,last_reconciliation_attempt_at.lt.' + cooldownCutoff)
+      .limit(10);
+
+    const { data: partialSubs } = await supabase
+      .from('subscriptions')
+      .select('id, business_id, plan, gateway, status, businesses!inner ( status )')
+      .eq('status', 'active')
+      .eq('gateway', 'paystack')
+      .eq('businesses.status', 'pending')
+      .or('last_reconciliation_attempt_at.is.null,last_reconciliation_attempt_at.lt.' + cooldownCutoff)
+      .limit(10);
+
+    const seen = new Set<string>();
+    const allCandidates = [...(pendingSubs || []), ...(partialSubs || [])];
+
+    for (const sub of allCandidates) {
+      if (seen.has(sub.id)) continue;
+      seen.add(sub.id);
+      try {
+        await supabase
+          .from('subscriptions')
+          .update({ last_reconciliation_attempt_at: new Date().toISOString() })
+          .eq('id', sub.id);
+
+        const { processPaystackActivationRecovery } = await import('@/lib/payments/paystack-activation-recovery');
+        const outcome = await processPaystackActivationRecovery(supabase, sub.id, sub.business_id);
+        if (outcome === 'converged' || outcome === 'already_converged') {
+          finalized++;
+          paystackRecovered++;
+        } else {
+          skipped++;
+        }
+      } catch (err) {
+        logger.error('[CRON:RENEWAL-RECOVERY] Paystack activation error', { subId: sub.id, error: String(err) });
+        skipped++;
+      }
+    }
+  } catch (err) {
+    logger.error('[CRON:RENEWAL-RECOVERY] Paystack discovery error', { error: String(err) });
+  }
+
+  return NextResponse.json({
+    ok: true, finalized, evidenceRecorded, skipped,
+    batchSize: (batch as unknown[]).length, paystackRecovered,
+  });
 
   // ═══════════════════════════════════════════════════════════
   // Flutterwave renewal recovery — exhaustive paginated search
@@ -414,6 +480,7 @@ export async function GET(request: NextRequest) {
       evidenceRecorded++;
     }
   }
+
 }
 
 // ═══════════════════════════════════════════════════════════

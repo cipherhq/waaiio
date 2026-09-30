@@ -21,12 +21,12 @@ const src = readFileSync(
 describe('Events page: error handling contracts', () => {
   describe('handleSave — create path', () => {
     it('captures insert error and alerts on failure', () => {
-      // insert must destructure error
-      expect(src).toMatch(/const\s*\{\s*data:\s*newEvent,\s*error:\s*insertError\s*\}\s*=\s*await\s+supabase\.from\('events'\)\.insert\(payload\)\.select\('id'\)\.single\(\)/);
-      // must alert with insertError.message
-      expect(src).toContain("alert(`Failed to create event: ${insertError.message}`)");
+      // #493: event creation uses extracted createEventAction
+      expect(src).toContain('createEventAction');
+      // must alert on failure
+      expect(src).toContain("alert(result.error || 'Failed to create event')");
       // must return early after alert
-      expect(src).toMatch(/alert\(`Failed to create event:.*?\);\s*\n\s*setSaving\(false\);\s*\n\s*return;/);
+      expect(src).toMatch(/alert\(result\.error.*?\);\s*\n\s*setSaving\(false\);\s*\n\s*return;/);
     });
 
     it('flushes pending ticket types after successful event insert', () => {

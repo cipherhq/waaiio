@@ -76,6 +76,11 @@ vi.mock('@/lib/trial-status', () => ({
   resolveTrialCredit: vi.fn(async () => false),
 }));
 
+vi.mock('@/lib/payments/gateway-resolver', () => ({
+  resolveBusinessGateway: vi.fn().mockResolvedValue({ gateway: 'paystack', currency: 'NGN', source: 'country_default' }),
+  resolveCountryGateway: vi.fn().mockResolvedValue({ gateway: 'paystack', currency: 'NGN', source: 'country_default' }),
+}));
+
 // Mock the capability guard to always allow — we're testing initializePayment, not capabilities
 vi.mock('@/lib/bot/flows/shared/capability-guard', () => ({
   requireCurrentCapability: vi.fn(async () => ({ allowed: true })),

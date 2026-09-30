@@ -41,7 +41,7 @@ function buildChain(table: string) {
   });
   self.single = vi.fn(() => {
     // Used after .insert().select().single() for event creation
-    return { data: self._insertData ?? null, error: self._insertError ?? null };
+    return Promise.resolve({ data: self._insertData ?? null, error: self._insertError ?? null });
   });
   self.maybeSingle = vi.fn(() => ({ data: null, error: null }));
   // For tier insert (no .select().single() chain), destructure directly

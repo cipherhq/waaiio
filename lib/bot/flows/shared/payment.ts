@@ -32,7 +32,7 @@ export async function initializePayment(
     phone: string;
     userEmail?: string;
     countryCode?: CountryCode;
-    /** Per-business gateway override (from businesses.payment_gateway) */
+    /** @deprecated — processor selection now uses canonical country resolver. Kept for interface compatibility. */
     gatewayOverride?: string | null;
     /** Business ID for split payment lookup */
     businessId?: string;
@@ -71,89 +71,32 @@ export async function initializePayment(
 
     const countryCode = opts.countryCode || 'NG';
 
-    // ── Per-request country payment config resolution ──
-    // Resolve payment_gateway and currency_code directly from the countries table
-    // via the passed Supabase client. No module-cache dependency, no static fallback.
-    // Fail closed on missing/inactive/error with stage-specific diagnostic.
+    // ── Canonical gateway resolution via shared resolver (#493 B3) ──
     let gateway: ReturnType<typeof getPaymentGatewayByName>;
     let currencyCode: string;
 
-    if (opts.gatewayOverride) {
-      // Per-business gateway override — validate before routing
-      if (!SUPPORTED_GATEWAYS.has(opts.gatewayOverride)) {
-        logger.withContext({ op: 'payment.country-payment-config', gateway: opts.gatewayOverride })
-          .error('[PAYMENT] Business gateway override is not a supported gateway — fail closed');
+    try {
+      const { resolveBusinessGateway, resolveCountryGateway } = await import('@/lib/payments/gateway-resolver');
+      const result = opts.businessId
+        ? await resolveBusinessGateway(supabase, opts.businessId)
+        : await resolveCountryGateway(supabase, countryCode);
+
+      if (!result.gateway || !result.currency) {
+        logger.withContext({ op: 'payment.gateway-resolution', countryCode, businessId: opts.businessId })
+          .error('[PAYMENT] Gateway resolution failed — fail closed');
         return null;
       }
-      gateway = getPaymentGatewayByName(opts.gatewayOverride as PaymentGatewayName);
-      // Still need authoritative currency from the countries table
-      try {
-        const { data: countryRow, error: countryErr } = await supabase
-          .from('countries')
-          .select('currency_code')
-          .eq('code', countryCode)
-          .eq('is_active', true)
-          .maybeSingle();
-
-        if (countryErr) {
-          logger.withContext({ op: 'payment.country-payment-config', countryCode, ...safeLogErrorContext(countryErr) })
-            .error('[PAYMENT] Country currency lookup failed — fail closed');
-          return null;
-        }
-        if (!countryRow) {
-          logger.withContext({ op: 'payment.country-payment-config', countryCode })
-            .error('[PAYMENT] Country not found or inactive — fail closed');
-          return null;
-        }
-        if (!isValidCurrencyCode(countryRow.currency_code)) {
-          logger.withContext({ op: 'payment.country-payment-config', countryCode, currency: countryRow.currency_code })
-            .error('[PAYMENT] Country has invalid currency_code — fail closed');
-          return null;
-        }
-        currencyCode = countryRow.currency_code;
-      } catch (countryThrow) {
-        logger.withContext({ op: 'payment.country-payment-config', countryCode, ...safeLogErrorContext(countryThrow) })
-          .error('[PAYMENT] Country payment config resolution threw — fail closed');
+      if (!isValidCurrencyCode(result.currency)) {
+        logger.withContext({ op: 'payment.gateway-resolution', currency: result.currency })
+          .error('[PAYMENT] Resolved currency is invalid — fail closed');
         return null;
       }
-    } else {
-      // No override — resolve both gateway and currency from the countries table
-      try {
-        const { data: countryRow, error: countryErr } = await supabase
-          .from('countries')
-          .select('payment_gateway, currency_code')
-          .eq('code', countryCode)
-          .eq('is_active', true)
-          .maybeSingle();
-
-        if (countryErr) {
-          logger.withContext({ op: 'payment.country-payment-config', countryCode, ...safeLogErrorContext(countryErr) })
-            .error('[PAYMENT] Country payment config lookup failed — fail closed');
-          return null;
-        }
-        if (!countryRow) {
-          logger.withContext({ op: 'payment.country-payment-config', countryCode })
-            .error('[PAYMENT] Country not found or inactive — fail closed');
-          return null;
-        }
-        if (!countryRow.payment_gateway || !SUPPORTED_GATEWAYS.has(countryRow.payment_gateway)) {
-          logger.withContext({ op: 'payment.country-payment-config', countryCode, gateway: countryRow.payment_gateway })
-            .error('[PAYMENT] Country has missing or unsupported payment_gateway — fail closed');
-          return null;
-        }
-        if (!isValidCurrencyCode(countryRow.currency_code)) {
-          logger.withContext({ op: 'payment.country-payment-config', countryCode, currency: countryRow.currency_code })
-            .error('[PAYMENT] Country has invalid currency_code — fail closed');
-          return null;
-        }
-
-        gateway = getPaymentGatewayByName(countryRow.payment_gateway as PaymentGatewayName);
-        currencyCode = countryRow.currency_code;
-      } catch (countryThrow) {
-        logger.withContext({ op: 'payment.country-payment-config', countryCode, ...safeLogErrorContext(countryThrow) })
-          .error('[PAYMENT] Country payment config resolution threw — fail closed');
-        return null;
-      }
+      gateway = getPaymentGatewayByName(result.gateway);
+      currencyCode = result.currency;
+    } catch (resolverThrow) {
+      logger.withContext({ op: 'payment.gateway-resolution', countryCode, ...safeLogErrorContext(resolverThrow) })
+        .error('[PAYMENT] Gateway resolution threw — fail closed');
+      return null;
     }
 
     // ── Idempotent reuse: check for an existing pending payment for this entity.

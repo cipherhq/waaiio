@@ -45,7 +45,22 @@ const mockServiceFrom = vi.fn((table: string) => {
   if (table === 'countries') {
     return {
       select: () => ({
-        eq: () => Promise.resolve(mockCountriesResponse),
+        eq: (_col: string, _val?: unknown) => {
+          // Support both chain patterns:
+          // 1. select().eq('is_active', true) -> Promise (country list)
+          // 2. select().eq('code', x).eq('is_active', true).single() -> Promise (gateway resolver)
+          const chainable = {
+            ...Promise.resolve(mockCountriesResponse),
+            then: (onfulfilled: (v: unknown) => unknown) => Promise.resolve(mockCountriesResponse).then(onfulfilled),
+            eq: () => ({
+              single: () => Promise.resolve({
+                data: { payment_gateway: 'paystack', currency_code: 'NGN' },
+                error: null,
+              }),
+            }),
+          };
+          return chainable;
+        },
       }),
     };
   }

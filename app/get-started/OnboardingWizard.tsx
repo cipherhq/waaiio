@@ -237,6 +237,7 @@ function OnboardingWizard() {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [paymentWarning, setPaymentWarning] = useState('');
 
   // Auth state
   const [authMode, setAuthMode] = useState<AuthMode>('email');
@@ -940,7 +941,11 @@ function OnboardingWizard() {
 
       setBusinessId(registerData.business_id);
       setBotCode(registerData.bot_code);
-      getPostHogClient()?.capture('business_created', { category, country: selectedCountry, businessId: registerData.business_id });
+      // Surface payment readiness warning to the merchant (#493)
+      if (registerData.payment_ready === false) {
+        setPaymentWarning('Payment processing is not yet available for your region. Your business has been created, but customers will not be able to make payments until payment setup is complete. Contact support for assistance.');
+      }
+      getPostHogClient()?.capture('business_created', { category, country: selectedCountry, businessId: registerData.business_id, payment_ready: registerData.payment_ready });
 
       // Step 2: Connect the WhatsApp channel
       const fbRes = await fetch('/api/auth/facebook/callback', {
@@ -1316,6 +1321,13 @@ function OnboardingWizard() {
               <div className="mb-6 rounded-xl bg-red-50 border border-red-100 p-4 text-sm text-red-700">
                 {error}
                 <button onClick={() => setError('')} className="ml-2 font-semibold underline">Dismiss</button>
+              </div>
+            )}
+
+            {paymentWarning && (
+              <div data-testid="payment-readiness-warning" className="mb-6 rounded-xl bg-orange-50 border border-orange-200 p-4 text-sm text-orange-800">
+                {paymentWarning}
+                <button onClick={() => setPaymentWarning('')} className="ml-2 font-semibold underline">Dismiss</button>
               </div>
             )}
 

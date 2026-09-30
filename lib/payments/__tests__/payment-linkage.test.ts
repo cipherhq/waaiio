@@ -472,6 +472,10 @@ describe('Shared payment wrapper forwarding', () => {
     vi.doMock('@/lib/getPlatformFees', () => ({
       getPlatformFees: vi.fn().mockResolvedValue({ feePercentage: 2.0, feeFlat: 0, feeTotal: 200 }),
     }));
+    vi.doMock('@/lib/payments/gateway-resolver', () => ({
+      resolveBusinessGateway: vi.fn().mockResolvedValue({ gateway: 'paystack', currency: 'NGN', source: 'country_default' }),
+      resolveCountryGateway: vi.fn().mockResolvedValue({ gateway: 'paystack', currency: 'NGN', source: 'country_default' }),
+    }));
 
     const { initializePayment } = await import('@/lib/bot/flows/shared/payment');
 
@@ -556,6 +560,10 @@ describe('Shared payment wrapper forwarding', () => {
     }));
     vi.doMock('@/lib/getPlatformFees', () => ({
       getPlatformFees: vi.fn().mockResolvedValue({ feePercentage: 2.0, feeFlat: 0, feeTotal: 200 }),
+    }));
+    vi.doMock('@/lib/payments/gateway-resolver', () => ({
+      resolveBusinessGateway: vi.fn().mockResolvedValue({ gateway: 'paystack', currency: 'NGN', source: 'country_default' }),
+      resolveCountryGateway: vi.fn().mockResolvedValue({ gateway: 'paystack', currency: 'NGN', source: 'country_default' }),
     }));
 
     const { initializePayment } = await import('@/lib/bot/flows/shared/payment');

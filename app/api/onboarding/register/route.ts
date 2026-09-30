@@ -264,6 +264,19 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // Resolve canonical payment gateway from country config (#493)
+    const { resolveCountryGateway } = await import('@/lib/payments/gateway-resolver');
+    const gatewayResult = await resolveCountryGateway(service, countryCode);
+    const inheritedGateway = gatewayResult.gateway ?? null;
+    // Payment readiness: explicit flag surfaced in response (#493 B5)
+    const paymentReady = inheritedGateway !== null;
+    if (!paymentReady) {
+      logger.warn('[ONBOARDING] Business created without payment gateway', {
+        countryCode,
+        reason: !gatewayResult.gateway ? (gatewayResult as { reason?: string }).reason : 'unknown',
+      });
+    }
+
     const { data: business, error: insertError } = await service
       .from('businesses')
       .insert({
@@ -282,6 +295,7 @@ export async function POST(request: NextRequest) {
         wa_method: 'shared',  // Always register as shared; dedicated set by /api/auth/facebook/callback after durable channel
         subscription_tier: 'free',
         status: 'pending',
+        payment_gateway: inheritedGateway,
       })
       .select('id, bot_code, slug')
       .single();
@@ -397,6 +411,8 @@ export async function POST(request: NextRequest) {
       slug: business.slug,
       category,
       flow_type: flowType,
+      payment_ready: paymentReady,
+      ...(!paymentReady ? { payment_readiness_reason: 'No payment gateway configured for this country.' } : {}),
     });
   } catch (error) {
     logger.error('Onboarding register error:', error);
