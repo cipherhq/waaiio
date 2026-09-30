@@ -123,13 +123,70 @@ describe('Fix A — Settings address captures Google coordinates', () => {
     expect(source).toContain('placeData.lng');
   });
 
-  it('manual text edit in Settings invalidates coordinates', () => {
+  it('manual text edit in Settings invalidates coordinates and city', () => {
     const source = readFileSync(
       resolve(__dirname, '../../app/dashboard/settings/tabs/BusinessTab.tsx'),
       'utf-8'
     );
-    // When no placeData, lat/lng must be set to null
+    // When no placeData, lat/lng must be set to null and city cleared
     expect(source).toContain('latitude: null, longitude: null');
+    // The manual-edit branch must also clear city
+    const manualBranch = source.slice(
+      source.indexOf('} else {', source.indexOf('onChange={(value, placeData)')),
+      source.indexOf('} else {', source.indexOf('onChange={(value, placeData)')) + 200
+    );
+    expect(manualBranch).toContain("city: ''");
+  });
+
+  it('selecting a different-city address updates city from placeData', () => {
+    const source = readFileSync(
+      resolve(__dirname, '../../app/dashboard/settings/tabs/BusinessTab.tsx'),
+      'utf-8'
+    );
+    // When placeData is present, city must be updated from placeData.city
+    const placeBranch = source.slice(
+      source.indexOf('if (placeData)', source.indexOf('onChange={(value, placeData)')),
+      source.indexOf('if (placeData)', source.indexOf('onChange={(value, placeData)')) + 300
+    );
+    expect(placeBranch).toContain('placeData.city');
+  });
+
+  it('PlacesAutocomplete PlaceData interface includes optional city', () => {
+    const source = readFileSync(
+      resolve(__dirname, '../../components/ui/PlacesAutocomplete.tsx'),
+      'utf-8'
+    );
+    expect(source).toContain('city?: string');
+  });
+
+  it('PlacesAutocomplete requests address_components from Google', () => {
+    const source = readFileSync(
+      resolve(__dirname, '../../components/ui/PlacesAutocomplete.tsx'),
+      'utf-8'
+    );
+    expect(source).toContain("'address_components'");
+  });
+
+  it('PlacesAutocomplete derives city with locality → postal_town → admin area fallback', () => {
+    const source = readFileSync(
+      resolve(__dirname, '../../components/ui/PlacesAutocomplete.tsx'),
+      'utf-8'
+    );
+    expect(source).toContain("'locality'");
+    expect(source).toContain("'postal_town'");
+    expect(source).toContain("'administrative_area_level_2'");
+  });
+
+  it('handleSave persists the newly derived city', () => {
+    const source = readFileSync(
+      resolve(__dirname, '../../app/dashboard/settings/tabs/BusinessTab.tsx'),
+      'utf-8'
+    );
+    const handleSaveBlock = source.slice(
+      source.indexOf('async function handleSave'),
+      source.indexOf('async function handleSave') + 900
+    );
+    expect(handleSaveBlock).toContain("city: form.city || null");
   });
 });
 

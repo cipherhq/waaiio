@@ -7,6 +7,7 @@ interface PlaceData {
   lat: number;
   lng: number;
   placeId: string;
+  city?: string;
 }
 
 interface PlacesAutocompleteProps {
@@ -157,7 +158,7 @@ export default function PlacesAutocomplete({
     placesServiceRef.current.getDetails(
       {
         placeId: prediction.place_id,
-        fields: ['formatted_address', 'geometry'],
+        fields: ['formatted_address', 'geometry', 'address_components'],
       },
       (place, status) => {
         if (
@@ -165,11 +166,20 @@ export default function PlacesAutocomplete({
           place?.formatted_address &&
           place?.geometry?.location
         ) {
+          // Derive city deterministically from address_components
+          let city: string | undefined;
+          if (place.address_components) {
+            const findType = (type: string) =>
+              place.address_components!.find(c => c.types.includes(type))?.long_name;
+            // Prefer locality, then postal_town (UK), then administrative_area_level_2
+            city = findType('locality') || findType('postal_town') || findType('administrative_area_level_2');
+          }
           onChange(place.formatted_address, {
             address: place.formatted_address,
             lat: place.geometry.location.lat(),
             lng: place.geometry.location.lng(),
             placeId: prediction.place_id,
+            city,
           });
         } else {
           onChange(prediction.description);

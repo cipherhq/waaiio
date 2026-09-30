@@ -316,9 +316,15 @@ export function BusinessTab({ business, capabilities, country, curr, saving, set
                     value={form.address}
                     onChange={(value, placeData) => {
                       if (placeData) {
-                        setForm(prev => ({ ...prev, address: placeData.address, latitude: placeData.lat, longitude: placeData.lng }));
+                        setForm(prev => ({
+                          ...prev,
+                          address: placeData.address,
+                          latitude: placeData.lat,
+                          longitude: placeData.lng,
+                          city: placeData.city || prev.city,
+                        }));
                       } else {
-                        setForm(prev => ({ ...prev, address: value, latitude: null, longitude: null }));
+                        setForm(prev => ({ ...prev, address: value, latitude: null, longitude: null, city: '' }));
                       }
                     }}
                     placeholder="Enter your business address"
