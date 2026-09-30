@@ -3,6 +3,23 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-09-30 — Staging launch-readiness (#493)
+
+### What changed
+- **S1: Canonical payment gateway resolver** (`lib/payments/gateway-resolver.ts`) — New `resolveBusinessGateway()` and `resolveCountryGateway()` functions. Authority chain: BYO override -> country default -> fail closed. `reconcileNullGateways()` for idempotent backfill of existing NULL-gateway businesses.
+- **S1: Register route** (`app/api/onboarding/register/route.ts`) — New businesses now inherit `payment_gateway` from `countries.payment_gateway` at registration time. No hardcoded country/provider mappings.
+- **S1: Scan to Pay** (`app/api/pay-link/pay/route.ts`) — Removed silent `|| 'paystack'` fallback. Uses canonical resolver. Returns 503 when no gateway is configured instead of misrouting.
+- **S2: Paystack activation recovery** (`app/api/cron/subscription-renewal-recovery/route.ts`) — Added `processPaystackActivationRecovery` inside the renewal-recovery cron. Finds stuck `subscription_payments` with `status='success'` for `pending` subscriptions and replays `activate_paid_subscription` RPC + business status CAS transition.
+- **S3: Admin launch-subscriber** (`admin/src/pages/LaunchSubscribers.tsx`, `app/api/admin/query/route.ts`) — Switched from direct `adminDb` query to server-side `adminApiFetch('/api/admin/query')`. Added `launch_subscribers` to ADMIN_TABLES whitelist. No broad `authenticated` grant.
+- **S4: Party create** (`app/dashboard/parties/page.tsx`) — Insert/update errors now destructured and surfaced via `statusMessage`. Success only shown after confirmed persistence.
+- **S5: Services label** (`components/dashboard/Sidebar.tsx`, `app/dashboard/services/page.tsx`) — Sidebar no longer renames "Services" to "Products" when `ordering` capability is active. PageHelp and EmptyState use dynamic `labels.serviceNamePlural`/`labels.serviceName`.
+- **Tests** (`lib/__tests__/issue-493-staging-readiness.test.ts`) — 35 executable tests: gateway resolution (NG/US/GB/CA), BYO override, missing gateway fail-closed, pending business guard, active business capabilities, party error handling, admin authorization, scan-to-pay canonical gateway, label collision, event/payment-link preservation, WhatsApp routing, Paystack cron recovery.
+
+### What could break
+- Businesses registered before this change still have `payment_gateway = NULL`. Use `reconcileNullGateways()` to backfill from country config.
+- Scan to Pay now returns 503 for businesses with NULL gateway (previously silently routed to Paystack). This is intentional — the prior behavior was a bug for non-NG countries.
+- Admin launch-subscriber page now goes through `/api/admin/query` server-side. Requires VITE_API_URL configured in admin env.
+
 ## 2026-09-30 — Discovery + Settings wiring consistency (#485)
 
 ### What changed
