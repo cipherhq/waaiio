@@ -39,9 +39,8 @@ export async function GET(request: NextRequest) {
         await processFlutterwaveRenewal(supabase, sub, subId, periodEnd, flwKey);
       } else if (gateway === 'stripe') {
         await processStripeRenewal(supabase, sub, subId, periodEnd);
-      } else if (gateway === 'paystack') {
-        await processPaystackActivationRecovery(supabase, sub, subId);
       } else {
+        // Paystack is handled by Pass 2 (initial-activation recovery)
         skipped++;
         continue;
       }
