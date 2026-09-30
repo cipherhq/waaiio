@@ -3,6 +3,20 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-09-30 — P0 staging post-deploy blockers (#496)
+
+### What changed
+- **M417: ACL reconciliation** (`supabase/migrations/417_staging_acl_authenticated_reconciliation.sql`) — Grants authenticated role table-level privileges on 5 tables missing them (parties S/I/U/D, category_templates S, event_tickets S, payment_links S, promo_codes S). Root cause: staging Supabase lacks ALTER DEFAULT PRIVILEGES.
+- **M418: Pricing authority fix** (`supabase/migrations/418_fix_activation_pricing_authority.sql`) — `activate_paid_subscription` step 6b now reads expected subscription price from `countries.pricing` (the canonical pricing authority) instead of `config_snapshot.pricing_tiers` which only stores entitlement/fee fields. Preserves SECURITY DEFINER + search_path + grant semantics.
+- **QR routing code hardening** (`app/dashboard/qr-code/page.tsx`) — Bot code (routing token) is now read-only on QR page for shared-number businesses. "Pre-filled message" renamed to "WhatsApp routing code". Deep-link suffix auto-set by template selection. Routing token cannot be accidentally removed.
+- **Tests** (`lib/__tests__/issue-496-staging-blockers.test.ts`) — 34 assertions for ACL grants, pricing activation, security attributes, country→processor authority, QR routing code, pending-business guards, directory eligibility, category config fallback.
+- **Subscribe-now-db test update** (`lib/__tests__/subscribe-now-db.test.ts`) — Test helper aligns NG country pricing with test payment amounts to match M418's pricing source change.
+
+### What could break
+- If staging `countries.pricing` for a given country is missing or has NULL `price` for a tier, `activate_paid_subscription` will fail closed with `pricing_config_missing` (this is intentional — the old behavior also failed, just for a different reason).
+- QR page no longer allows editing the routing code. Users who were manually customizing the pre-filled message to something other than their bot code will now see the read-only routing code instead. This is a safety improvement.
+- Any code that expected `config_snapshot.pricing_tiers` to contain subscription prices should use `countries.pricing` instead.
+
 ## 2026-09-30 — Staging launch-readiness (#493)
 
 ### What changed
