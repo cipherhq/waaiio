@@ -111,6 +111,7 @@ vi.mock('@/lib/logger', () => ({ logger: { error: vi.fn(), info: vi.fn(), debug:
 vi.mock('@/lib/rate-limit', () => ({ rateLimitResponseAsync: vi.fn(() => Promise.resolve(null)), getRateLimitKey: (_r: Request, p: string) => `${p}:127.0.0.1` }));
 vi.mock('@/lib/categoryConfig', () => ({ loadCategories: () => Promise.resolve(), getAllCategoryKeys: () => ['salon'] }));
 vi.mock('@/lib/capabilities/service', () => ({ initCapabilities: vi.fn(() => Promise.resolve()) }));
+vi.mock('@/lib/signup-gate', () => ({ isSignupOpen: () => Promise.resolve(true) }));
 vi.mock('@/lib/onboarding/finalize', () => ({ finalizeOnboarding: vi.fn(() => Promise.resolve()) }));
 vi.mock('@/lib/constants', () => ({
   generateSlug: () => 'ts', generateBotCode: () => 'TC', CATEGORY_FLOW_MAP: {},

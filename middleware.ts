@@ -1,6 +1,7 @@
 import { createServerClient, type CookieOptions } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
 import { fastHash, getCachedSession, setCachedSession, shouldTouch } from '@/lib/security/session-check';
+import { isStagingTestMode } from '@/lib/staging-test-mode';
 
 type CookieEntry = { name: string; value: string; options: CookieOptions };
 
@@ -23,6 +24,31 @@ async function isMaintenanceMode(supabase: ReturnType<typeof createServerClient>
     return isOn;
   } catch {
     return false; // fail open — don't block users if DB is down
+  }
+}
+
+// ── Signup Gate Cache (middleware-layer, independent of lib/signup-gate.ts) ──
+let signupGateCache: { value: boolean; expiresAt: number } | null = null;
+const SIGNUP_GATE_CACHE_TTL = 30_000; // 30 seconds
+
+async function isSignupOpenMiddleware(supabase: ReturnType<typeof createServerClient>): Promise<boolean> {
+  if (isStagingTestMode()) return true;
+  if (signupGateCache && Date.now() < signupGateCache.expiresAt) {
+    return signupGateCache.value;
+  }
+  try {
+    const { data } = await supabase
+      .from('platform_settings')
+      .select('value')
+      .eq('key', 'signup_open')
+      .single();
+    const isOpen = data?.value === true;
+    signupGateCache = { value: isOpen, expiresAt: Date.now() + SIGNUP_GATE_CACHE_TTL };
+    return isOpen;
+  } catch {
+    // Missing/error → fail closed
+    signupGateCache = { value: false, expiresAt: Date.now() + SIGNUP_GATE_CACHE_TTL };
+    return false;
   }
 }
 
@@ -274,6 +300,19 @@ export async function middleware(request: NextRequest) {
         url.pathname = '/maintenance';
         return applySecurityHeaders(NextResponse.redirect(url));
       }
+    }
+  }
+
+  // ── Signup Gate ──
+  // Block /get-started and /signup when signup_open is false
+  const signupPaths = ['/get-started', '/signup'];
+  const isSignupPath = signupPaths.some(p => request.nextUrl.pathname === p || request.nextUrl.pathname.startsWith(p + '/'));
+  if (isSignupPath && !user) {
+    const signupOpen = await isSignupOpenMiddleware(supabase);
+    if (!signupOpen) {
+      const url = request.nextUrl.clone();
+      url.pathname = '/launch';
+      return applySecurityHeaders(NextResponse.redirect(url));
     }
   }
 
