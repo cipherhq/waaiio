@@ -392,6 +392,102 @@ describe('Paystack webhook: messaging top-up grant (#491)', () => {
 });
 
 // ══════════════════════════════════════════════════════════
+// Paystack callback handler tests
+// ══════════════════════════════════════════════════════════
+
+describe('Paystack callback: messaging top-up grant (#491)', () => {
+  const originalFetch = globalThis.fetch;
+
+  function mockPaystackVerify(overrides: Partial<{ amount: number; currency: string }> = {}) {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        status: true,
+        data: { status: 'success', amount: overrides.amount ?? 50000, currency: overrides.currency ?? 'NGN', reference: 'topup_ref_cb' },
+      }),
+    }) as unknown as typeof fetch;
+  }
+
+  function setupCallbackMocks(opts: Partial<{ status: string; useFallback: boolean }> = {}) {
+    const purchaseStatus = opts.status ?? 'pending';
+    const useFallback = opts.useFallback ?? false;
+    const purchaseData = { id: PURCHASE_ID, status: purchaseStatus, package_amount_minor: 50000, currency_code: 'NGN' };
+    const primaryChain = supabaseChain(useFallback ? { data: null, error: { code: 'PGRST116' } } : { data: purchaseData, error: null });
+    const fallbackChain = supabaseChain(useFallback ? { data: purchaseData, error: null } : { data: null, error: null });
+    const defaultChain = supabaseChain({ data: null, error: null });
+    let lookupCount = 0;
+    mockServiceFrom.mockImplementation((table: string) => {
+      if (table === 'messaging_topup_purchases') { lookupCount++; return lookupCount === 1 ? primaryChain : lookupCount === 2 ? fallbackChain : defaultChain; }
+      return defaultChain;
+    });
+  }
+
+  async function callCallback(reference: string) {
+    const req = new NextRequest(`http://localhost/api/messaging/topup/callback?reference=${reference}`);
+    const { GET } = await import('@/app/api/messaging/topup/callback/route');
+    return GET(req);
+  }
+
+  afterEach(() => { globalThis.fetch = originalFetch; });
+
+  it('valid amount/currency + pending => grant + success redirect', async () => {
+    mockPaystackVerify();
+    setupCallbackMocks({ status: 'pending' });
+    mockServiceRpc.mockResolvedValue({ data: { granted: true, idempotent: false, allowance_id: 'alloc-cb-1' }, error: null });
+    const res = await callCallback('topup_ref_cb');
+    expect(res.status).toBe(307);
+    expect(res.headers.get('location')).toContain('topup=success');
+    expect(mockServiceRpc).toHaveBeenCalledWith('grant_purchased_messaging_allowance', { p_purchase_id: PURCHASE_ID });
+  });
+
+  it('already-completed => success redirect, no grant RPC', async () => {
+    mockPaystackVerify();
+    setupCallbackMocks({ status: 'completed' });
+    const res = await callCallback('topup_ref_cb');
+    expect(res.status).toBe(307);
+    expect(res.headers.get('location')).toContain('topup=success');
+    expect(mockServiceRpc).not.toHaveBeenCalledWith('grant_purchased_messaging_allowance', expect.anything());
+  });
+
+  it('amount mismatch => fail-closed, no grant', async () => {
+    mockPaystackVerify({ amount: 99999 });
+    setupCallbackMocks({ status: 'pending' });
+    const res = await callCallback('topup_ref_cb');
+    expect(res.status).toBe(307);
+    expect(res.headers.get('location')).toContain('amount_mismatch');
+    expect(mockServiceRpc).not.toHaveBeenCalledWith('grant_purchased_messaging_allowance', expect.anything());
+  });
+
+  it('currency mismatch => fail-closed, no grant', async () => {
+    mockPaystackVerify({ currency: 'USD' });
+    setupCallbackMocks({ status: 'pending' });
+    const res = await callCallback('topup_ref_cb');
+    expect(res.status).toBe(307);
+    expect(res.headers.get('location')).toContain('amount_mismatch');
+    expect(mockServiceRpc).not.toHaveBeenCalledWith('grant_purchased_messaging_allowance', expect.anything());
+  });
+
+  it('fallback by provider_checkout_id: valid => grant + success', async () => {
+    mockPaystackVerify();
+    setupCallbackMocks({ status: 'pending', useFallback: true });
+    mockServiceRpc.mockResolvedValue({ data: { granted: true, idempotent: false, allowance_id: 'alloc-fb' }, error: null });
+    const res = await callCallback('topup_ref_cb');
+    expect(res.status).toBe(307);
+    expect(res.headers.get('location')).toContain('topup=success');
+    expect(mockServiceRpc).toHaveBeenCalledWith('grant_purchased_messaging_allowance', { p_purchase_id: PURCHASE_ID });
+  });
+
+  it('fallback with amount mismatch => fail-closed', async () => {
+    mockPaystackVerify({ amount: 11111 });
+    setupCallbackMocks({ status: 'pending', useFallback: true });
+    const res = await callCallback('topup_ref_cb');
+    expect(res.status).toBe(307);
+    expect(res.headers.get('location')).toContain('amount_mismatch');
+    expect(mockServiceRpc).not.toHaveBeenCalledWith('grant_purchased_messaging_allowance', expect.anything());
+  });
+});
+
+// ══════════════════════════════════════════════════════════
 // Refund convergence after shortfall
 // ══════════════════════════════════════════════════════════
 

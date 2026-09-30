@@ -463,8 +463,8 @@ describe('Partial refund sequence (#491 Blocker 3)', () => {
       return { processed: true, idempotent: true, clawback: 0, shortfall: 0 };
     }
 
-    // Can only refund completed or partially_refunded
-    if (!['completed', 'partially_refunded'].includes(state.status)) {
+    // completed, partially_refunded, and review accept further refund events
+    if (!['completed', 'partially_refunded', 'review'].includes(state.status)) {
       return { processed: false, clawback: 0, shortfall: 0 };
     }
 
@@ -559,15 +559,22 @@ describe('Partial refund sequence (#491 Blocker 3)', () => {
     expect(purchase.cumulativeShortfall).toBe(30000);
   });
 
-  it('review/disputed status blocks further refunds', () => {
-    const purchase = createPurchase(50000);
+  it('review accepts further refunds; disputed is terminal', () => {
+    const purchase = createPurchase(100000);
     purchase.allowanceRemaining = 0; // all consumed
     processRefund(purchase, 'refund_1', 50000);
     expect(purchase.status).toBe('review');
 
-    // Further refund is blocked
-    const r2 = processRefund(purchase, 'refund_2', 10000);
-    expect(r2.processed).toBe(false);
+    // review accepts further refunds (financial accounting continues)
+    const r2 = processRefund(purchase, 'refund_2', 50000);
+    expect(r2.processed).toBe(true);
+    expect(purchase.cumulativeRefunded).toBe(100000);
+
+    // disputed IS terminal
+    const purchase2 = createPurchase(50000);
+    purchase2.status = 'disputed';
+    const r3 = processRefund(purchase2, 'refund_3', 10000);
+    expect(r3.processed).toBe(false);
   });
 
   it('cumulative refund cannot exceed original purchase amount', () => {
