@@ -98,8 +98,12 @@ export async function GET(request: NextRequest) {
 
         const { processPaystackActivationRecovery } = await import('@/lib/payments/paystack-activation-recovery');
         const outcome = await processPaystackActivationRecovery(supabase, sub.id, sub.business_id);
-        if (outcome === 'converged' || outcome === 'already_converged') { finalized++; } else { skipped++; }
-        paystackRecovered++;
+        if (outcome === 'converged' || outcome === 'already_converged') {
+          finalized++;
+          paystackRecovered++;
+        } else {
+          skipped++;
+        }
       } catch (err) {
         logger.error('[CRON:RENEWAL-RECOVERY] Paystack activation error', { subId: sub.id, error: String(err) });
         skipped++;

@@ -227,17 +227,19 @@ export default function PartiesPage() {
     };
 
     if (view === 'add') {
-      const { error: insertErr } = await supabase.from('parties').insert(payload);
-      if (insertErr) {
+      const { createParty } = await import('@/lib/actions/party-persistence');
+      const result = await createParty(supabase, payload);
+      if (!result.success) {
         setSaving(false);
-        setStatusMessage(`Failed to create party: ${insertErr.message}`);
+        setStatusMessage(result.error || 'Failed to create party');
         return;
       }
     } else {
-      const { error: updateErr } = await supabase.from('parties').update(payload).eq('id', form.id);
-      if (updateErr) {
+      const { updateParty } = await import('@/lib/actions/party-persistence');
+      const result = await updateParty(supabase, form.id, payload);
+      if (!result.success) {
         setSaving(false);
-        setStatusMessage(`Failed to update party: ${updateErr.message}`);
+        setStatusMessage(result.error || 'Failed to update party');
         return;
       }
     }

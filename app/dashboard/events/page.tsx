@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
+import { createEvent as createEventAction } from '@/lib/actions/event-persistence';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
@@ -323,12 +324,13 @@ export default function EventsPage() {
     };
 
     if (view === 'add') {
-      const { data: newEvent, error: insertError } = await supabase.from('events').insert(payload).select('id').single();
-      if (insertError) {
-        alert(`Failed to create event: ${insertError.message}`);
+      const result = await createEventAction(supabase, payload);
+      if (!result.success) {
+        alert(result.error || 'Failed to create event');
         setSaving(false);
         return;
       }
+      const newEvent = { id: result.eventId! };
 
       // Flush buffered ticket types for newly created event
       if (pendingTicketTypes.length > 0 && newEvent?.id) {
