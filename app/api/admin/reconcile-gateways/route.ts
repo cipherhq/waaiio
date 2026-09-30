@@ -72,19 +72,30 @@ export async function POST(request: NextRequest) {
         }, { headers: cors });
       }
 
-      const { error: updateErr } = await supabase
+      const { data: rows, error: updateErr } = await supabase
         .from('businesses')
         .update({ payment_gateway: result.gateway })
         .eq('id', businessId)
-        .is('payment_gateway', null);
+        .is('payment_gateway', null)
+        .select('id');
 
       if (updateErr) {
         return NextResponse.json({ error: 'Update failed', detail: updateErr.message }, { status: 500, headers: cors });
       }
 
+      const affected = rows?.length ?? 0;
+      if (affected === 0) {
+        return NextResponse.json({
+          dry_run: false,
+          updated: [],
+          skipped: [{ id: biz.id, reason: 'already_reconciled' }],
+        }, { headers: cors });
+      }
+
       return NextResponse.json({
-        dry_run: false, updated: 1,
-        business: { id: biz.id, name: biz.name, gateway: result.gateway },
+        dry_run: false,
+        updated: [{ id: biz.id, gateway: result.gateway }],
+        skipped: [],
       }, { headers: cors });
     }
 
@@ -148,8 +159,10 @@ export async function POST(request: NextRequest) {
         failed.push({ id: item.id, error: updateErr.message });
       } else if (rows && rows.length > 0) {
         updated.push({ id: item.id, gateway: item.gateway });
+      } else {
+        // CAS changed zero rows — gateway was set between read and write
+        skipped.push({ id: item.id, name: item.name, reason: 'already_reconciled' });
       }
-      // rows.length === 0 means CAS failed (already set) — idempotent, not an error
     }
 
     return NextResponse.json({ dry_run: false, updated, skipped, failed, next_cursor: nextCursor }, { headers: cors });

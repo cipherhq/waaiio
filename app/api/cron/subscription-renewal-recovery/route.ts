@@ -97,10 +97,9 @@ export async function GET(request: NextRequest) {
           .update({ last_reconciliation_attempt_at: new Date().toISOString() })
           .eq('id', sub.id);
 
-        await processPaystackActivationRecovery(supabase, {
-          sub_id: sub.id, business_id: sub.business_id,
-          plan: sub.plan, gateway: sub.gateway,
-        }, sub.id);
+        const { processPaystackActivationRecovery } = await import('@/lib/payments/paystack-activation-recovery');
+        const outcome = await processPaystackActivationRecovery(supabase, sub.id, sub.business_id);
+        if (outcome === 'converged' || outcome === 'already_converged') { finalized++; } else { skipped++; }
         paystackRecovered++;
       } catch (err) {
         logger.error('[CRON:RENEWAL-RECOVERY] Paystack activation error', { subId: sub.id, error: String(err) });
@@ -479,91 +478,6 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // Paystack initial-activation recovery (#493)
-  //
-  // Paystack initial subscriptions are one-time transactions whose
-  // activation depends entirely on /api/onboarding/verify succeeding
-  // end-to-end. If the verify route inserted payment evidence but
-  // the activate_paid_subscription RPC failed or the subsequent
-  // business status update failed, the subscription stays 'pending'
-  // with valid payment evidence sitting unused.
-  //
-  // This handler finds such stuck evidence and replays the RPC +
-  // business status transition idempotently.
-  // ═══════════════════════════════════════════════════════════
-  async function processPaystackActivationRecovery(
-    svc: ReturnType<typeof createServiceClient>,
-    sub: Record<string, unknown>,
-    subId: string,
-  ) {
-    const bizId = sub.business_id as string;
-
-    // Find successful payment evidence
-    const { data: evidence } = await svc
-      .from('subscription_payments')
-      .select('id')
-      .eq('subscription_id', subId)
-      .eq('status', 'success')
-      .eq('gateway', 'paystack')
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .single();
-
-    if (!evidence) { skipped++; return; }
-
-    // Check current state for partial convergence
-    const { data: currentSub } = await svc
-      .from('subscriptions').select('status').eq('id', subId).single();
-    const { data: currentBiz } = await svc
-      .from('businesses').select('status').eq('id', bizId).single();
-
-    const subAlreadyActive = currentSub?.status === 'active';
-    const bizAlreadyActive = currentBiz?.status === 'active';
-
-    // Fully converged — idempotent no-op
-    if (subAlreadyActive && bizAlreadyActive) {
-      logger.info('[CRON:RENEWAL-RECOVERY] Paystack already fully converged', { subId, bizId });
-      finalized++; return;
-    }
-
-    // Subscription still pending — attempt RPC activation
-    if (!subAlreadyActive) {
-      const { data: activationResult, error: activationError } = await svc.rpc(
-        'activate_paid_subscription', { p_payment_id: evidence.id },
-      );
-      if (activationError) {
-        logger.error('[CRON:RENEWAL-RECOVERY] Paystack activation RPC failed', {
-          subId, bizId, paymentId: evidence.id, error: String(activationError),
-        });
-        skipped++; return;
-      }
-      if (!activationResult || activationResult.activated !== true) {
-        logger.warn('[CRON:RENEWAL-RECOVERY] Paystack activation rejected', {
-          subId, bizId, paymentId: evidence.id, reason: activationResult?.reason,
-        });
-        skipped++; return;
-      }
-    }
-
-    // Subscription now active. Complete business status if still pending.
-    if (!bizAlreadyActive) {
-      const { error: statusErr } = await svc
-        .from('businesses')
-        .update({ status: 'active' })
-        .eq('id', bizId)
-        .eq('status', 'pending');
-      if (statusErr) {
-        logger.warn('[CRON:RENEWAL-RECOVERY] Paystack business status update failed (retryable)', {
-          subId, bizId, error: String(statusErr),
-        });
-        skipped++; return;
-      }
-    }
-
-    finalized++;
-    logger.info('[CRON:RENEWAL-RECOVERY] Paystack activation recovered', { subId, bizId });
-  }
 }
 
 // ═══════════════════════════════════════════════════════════
