@@ -595,24 +595,13 @@ BEGIN
     RETURN jsonb_build_object('processed', false, 'reason', 'purchase_not_found');
   END IF;
 
-  -- Disputed is terminal — no further refunds
-  IF v_purchase.status = 'disputed' THEN
-    RETURN jsonb_build_object('processed', false, 'idempotent', true,
-      'status', v_purchase.status);
-  END IF;
-
-  -- completed, partially_refunded, and review can all receive further refund events.
-  -- review keeps messaging suspended but must still account for later provider refunds.
-  IF v_purchase.status NOT IN ('completed', 'partially_refunded', 'review') THEN
-    RETURN jsonb_build_object('processed', false, 'reason', 'not_refundable',
-      'current_status', v_purchase.status);
-  END IF;
-
   IF v_purchase.allowance_id IS NULL THEN
     RETURN jsonb_build_object('processed', false, 'reason', 'no_allowance_linked');
   END IF;
 
-  -- Per-event idempotency: check if this specific refund event was already processed
+  -- ── Per-event idempotency FIRST ──
+  -- Must run before terminal status rejection so replays of already-processed
+  -- refund events return idempotent success even after terminal refunded/disputed.
   v_adjust_source := 'refund:' || p_purchase_id::TEXT || ':' || p_provider_refund_id;
   SELECT * INTO v_existing_adjust
     FROM public.messaging_allowance_events
@@ -621,10 +610,20 @@ BEGIN
       AND source_key = v_adjust_source;
 
   IF FOUND THEN
-    -- This exact refund event was already processed — idempotent success
     RETURN jsonb_build_object('processed', true, 'idempotent', true,
       'provider_refund_id', p_provider_refund_id,
       'status', v_purchase.status);
+  END IF;
+
+  -- ── Terminal/non-refundable check (new events only) ──
+  IF v_purchase.status = 'disputed' THEN
+    RETURN jsonb_build_object('processed', false, 'reason', 'not_refundable',
+      'current_status', v_purchase.status);
+  END IF;
+
+  IF v_purchase.status NOT IN ('completed', 'partially_refunded', 'review') THEN
+    RETURN jsonb_build_object('processed', false, 'reason', 'not_refundable',
+      'current_status', v_purchase.status);
   END IF;
 
   -- Lock the linked allowance

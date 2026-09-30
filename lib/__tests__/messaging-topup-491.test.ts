@@ -195,13 +195,13 @@ describe('Purchase state machine transitions (#491)', () => {
     expect(canComplete('refunded')).toBe(false);
   });
 
-  it('completed and partially_refunded purchases can receive refunds', () => {
-    const canRefund = (status: string) => ['completed', 'partially_refunded'].includes(status);
+  it('completed, partially_refunded, and review can receive new refunds', () => {
+    const canRefund = (status: string) => ['completed', 'partially_refunded', 'review'].includes(status);
     expect(canRefund('completed')).toBe(true);
     expect(canRefund('partially_refunded')).toBe(true);
+    expect(canRefund('review')).toBe(true);
     expect(canRefund('pending')).toBe(false);
     expect(canRefund('refunded')).toBe(false);
-    expect(canRefund('review')).toBe(false);
     expect(canRefund('disputed')).toBe(false);
   });
 
