@@ -59,7 +59,8 @@ function createPaidTestBusiness(opts: {
   const countryCode = opts.countryCode || 'NG';
   const tier = opts.tier || 'free';
   const plan = opts.plan || 'growth';
-  const amount = opts.amount || 5000;
+  // M418: default amount derived from canonical countries.pricing authority
+  const amount = opts.amount ?? resolveCountryPriceSmallest(countryCode, plan);
   const currency = opts.currency || 'NGN';
   const gateway = opts.gateway || 'paystack';
   const billingInterval = opts.billingInterval || 'month';
@@ -143,23 +144,23 @@ const PAID_CONFIG = {
 
 function ensurePaidConfig(): string {
   const ts = nextConfigTimestamp();
-  const configId = psql(`
+  return psql(`
     INSERT INTO public.platform_config_versions (id, config_snapshot, effective_from, created_at)
     VALUES (gen_random_uuid(), '${JSON.stringify(PAID_CONFIG).replace(/'/g, "''")}'::jsonb, ${ts}, NOW())
     RETURNING id;
   `);
-  // M418: activate_paid_subscription now reads prices from countries.pricing
-  // (canonical pricing authority) instead of config_snapshot.pricing_tiers.
-  // Align test country pricing with test payment amounts (50 major units default).
-  psql(`
-    UPDATE public.countries
-    SET pricing = jsonb_set(
-      jsonb_set(COALESCE(pricing, '{}'::jsonb),
-        '{growth,price}', '50'),
-      '{business,price}', '150')
-    WHERE code = 'NG'
+}
+
+/**
+ * M418: activate_paid_subscription now reads prices from countries.pricing
+ * (canonical pricing authority) instead of config_snapshot.pricing_tiers.
+ * Resolve the actual country price to use as the test payment amount.
+ */
+function resolveCountryPriceSmallest(countryCode: string, plan: string): number {
+  const priceMajor = psql(`
+    SELECT (pricing -> '${plan}' ->> 'price')::numeric FROM public.countries WHERE code = '${countryCode}'
   `);
-  return configId;
+  return Math.round(parseFloat(priceMajor) * 100);
 }
 
 // ── Cleanup ─────────────────────────────────────────
