@@ -2,29 +2,35 @@
 # ═══════════════════════════════════════════════════════════════════
 # Canonical CI test database bootstrap + migration application
 #
-# Creates Supabase schema prerequisites and applies all migrations
-# to a dedicated PostgreSQL test database.
+# Creates Supabase schema prerequisites and applies all migrations.
+# This is the SINGLE source of truth for CI test DB setup.
+# Both the normal migration shards (waaiio_test) and dedicated test
+# databases (e.g. waaiio_m416_test) must use this script.
 #
 # Usage:
-#   scripts/ci-bootstrap-test-db.sh <database_url>
+#   scripts/ci-bootstrap-test-db.sh [database_url]
 #
-# Expects PGHOST, PGUSER, PGPASSWORD, PGDATABASE to be set for
-# psql administrative commands (createdb/dropdb). The target database
-# URL is passed as the first argument.
+# If database_url is provided, psql connects via that URL.
+# If omitted, psql uses PGHOST/PGUSER/PGPASSWORD/PGDATABASE env vars.
 #
-# This script is the single source of truth for CI test DB setup.
-# Do NOT maintain parallel bootstrap/apply implementations.
+# Do NOT maintain parallel bootstrap/apply implementations in ci.yml.
 # ═══════════════════════════════════════════════════════════════════
 set -euo pipefail
 
-DB_URL="${1:?Usage: $0 <database_url>}"
+DB_ARG="${1:-}"
+
+# Build psql connection: either explicit URL or rely on PG* env vars
+if [ -n "$DB_ARG" ]; then
+  PSQL_CONN="psql $DB_ARG"
+else
+  PSQL_CONN="psql"
+fi
 
 echo "═══ CI Test DB Bootstrap ═══"
-echo "Target: $DB_URL"
 
 # ── 1. Supabase schema prerequisites ──
 echo "Creating Supabase schema prerequisites..."
-psql "$DB_URL" -q -v ON_ERROR_STOP=1 <<'EOSQL'
+$PSQL_CONN -q -v ON_ERROR_STOP=1 <<'EOSQL'
 CREATE SCHEMA IF NOT EXISTS auth;
 CREATE SCHEMA IF NOT EXISTS extensions;
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
@@ -41,6 +47,7 @@ CREATE OR REPLACE FUNCTION auth.role() RETURNS TEXT AS $$
 $$ LANGUAGE SQL STABLE;
 
 -- Minimal auth.users table (only CI-guaranteed columns)
+-- Must include phone column: handle_new_user() trigger references NEW.phone
 CREATE TABLE IF NOT EXISTS auth.users (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   email TEXT,
@@ -48,16 +55,22 @@ CREATE TABLE IF NOT EXISTS auth.users (
   raw_app_meta_data JSONB DEFAULT '{}'
 );
 
--- Supabase roles
+-- Supabase roles: required by GRANT/REVOKE in migrations
+-- 137, 176, 181, 233, 244 (GRANT EXECUTE ... TO service_role)
+-- 003, 017, 018, 023 (RLS policies using auth.role() = 'service_role')
 DO $$ BEGIN CREATE ROLE service_role BYPASSRLS; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+-- Match production Supabase: service_role has BYPASSRLS
 ALTER ROLE service_role BYPASSRLS;
 DO $$ BEGIN CREATE ROLE authenticated; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 DO $$ BEGIN CREATE ROLE anon; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
--- Realtime publication
+-- Realtime publication: required by ALTER PUBLICATION in migrations
+-- 001 (reservations), 020 (chat_messages), 025 (chat_conversations), 110 (queue_entries)
+-- Note: CREATE PUBLICATION IF NOT EXISTS requires PG16+; CI uses PG15
 DO $$ BEGIN CREATE PUBLICATION supabase_realtime; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
--- Storage schema
+-- Storage schema: required by bucket/object policies in migrations
+-- 018 (customer-reports bucket), 033 (business-documents bucket)
 CREATE SCHEMA IF NOT EXISTS storage;
 CREATE TABLE IF NOT EXISTS storage.buckets (
   id TEXT PRIMARY KEY,
@@ -76,17 +89,18 @@ CREATE TABLE IF NOT EXISTS storage.objects (
 );
 ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY;
 
+-- Supabase storage helper function used in bucket policies (migration 133)
 CREATE OR REPLACE FUNCTION storage.foldername(name TEXT)
 RETURNS TEXT[] AS $$
   SELECT string_to_array(name, '/');
 $$ LANGUAGE SQL IMMUTABLE;
 
--- Grant schema access to test roles
+-- Grant schema access to test roles (required for SET ROLE + auth.uid() in RLS tests)
 GRANT USAGE ON SCHEMA auth TO authenticated, service_role, anon;
 GRANT USAGE ON SCHEMA storage TO authenticated, service_role, anon;
 GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA auth TO authenticated, service_role, anon;
 
--- Seed common test user
+-- Seed common test user (many test suites reference this UUID)
 INSERT INTO auth.users (id, email) VALUES
   ('00000000-0000-0000-0000-000000000000', 'default-stub@test.local'),
   ('00000000-0000-0000-0000-000000000001', 'admin-stub@test.local')
@@ -99,17 +113,19 @@ echo "Applying migrations..."
 FAILED=0
 APPLIED=0
 for f in supabase/migrations/*.sql; do
-  # M383 requires atomic (single-transaction) application
+  echo "Applying $(basename "$f")..."
+  # M383 requires atomic (single-transaction) application for snapshot_version cutover
   if [[ "$(basename "$f")" == "383_"* ]]; then
-    if ! psql "$DB_URL" -1 -q -v ON_ERROR_STOP=1 -f "$f" 2>&1; then
+    if ! $PSQL_CONN -1 -q -v ON_ERROR_STOP=1 -f "$f" 2>&1; then
       echo "❌ FAILED (atomic): $(basename "$f")"
       FAILED=1
     else
       APPLIED=$((APPLIED + 1))
     fi
-  elif ! psql "$DB_URL" -q -v ON_ERROR_STOP=1 -f "$f" 2>&1; then
+  elif ! $PSQL_CONN -q -v ON_ERROR_STOP=1 -f "$f" 2>&1; then
     echo "❌ FAILED: $(basename "$f")"
     FAILED=1
+    # Continue to catch multiple failures
   else
     APPLIED=$((APPLIED + 1))
   fi
@@ -117,7 +133,7 @@ done
 echo ""
 echo "Applied: $APPLIED migrations"
 if [ "$FAILED" -eq 1 ]; then
-  echo "❌ Some migrations failed."
+  echo "❌ Some migrations failed. See errors above."
   exit 1
 fi
 echo "✅ All migrations applied successfully."
