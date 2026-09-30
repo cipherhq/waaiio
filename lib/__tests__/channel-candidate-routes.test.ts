@@ -81,7 +81,26 @@ const mockServiceFrom = vi.fn((table: string) => {
     };
   }
   if (table === 'whatsapp_channels') return { select: () => dc(null) };
-  if (table === 'countries') return { select: () => ({ eq: () => Promise.resolve({ data: [{ code: 'NG', dialing_code: '+234' }], error: null }) }) };
+  if (table === 'countries') {
+    const countriesListResponse = { data: [{ code: 'NG', dialing_code: '+234' }], error: null };
+    return {
+      select: () => ({
+        eq: (_col: string, _val?: unknown) => {
+          const chainable = {
+            ...Promise.resolve(countriesListResponse),
+            then: (onfulfilled: (v: unknown) => unknown) => Promise.resolve(countriesListResponse).then(onfulfilled),
+            eq: () => ({
+              single: () => Promise.resolve({
+                data: { payment_gateway: 'paystack', currency_code: 'NGN' },
+                error: null,
+              }),
+            }),
+          };
+          return chainable;
+        },
+      }),
+    };
+  }
   if (table === 'business_capabilities') return { select: () => ({ eq: () => Promise.resolve({ data: [{ capability: 'chat', is_enabled: true }], error: null }) }) };
   if (table === 'subscriptions') return { select: () => dc(null), upsert: () => ({ select: () => ({ single: () => Promise.resolve({ data: { id: 'sub-1' }, error: null }) }) }), update: () => dc(null) };
   if (table === 'whatsapp_config') return { insert: () => Promise.resolve({ error: null }) };

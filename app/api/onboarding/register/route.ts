@@ -264,6 +264,14 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // Resolve canonical payment gateway from country config (#493)
+    const { resolveCountryGateway } = await import('@/lib/payments/gateway-resolver');
+    const gatewayResult = await resolveCountryGateway(service, countryCode);
+    // Non-fatal: business can still be created without a gateway assignment
+    // (e.g. country has no configured gateway). Payment surfaces will fail
+    // closed later if gateway is still NULL.
+    const inheritedGateway = gatewayResult.gateway ?? null;
+
     const { data: business, error: insertError } = await service
       .from('businesses')
       .insert({
@@ -282,6 +290,7 @@ export async function POST(request: NextRequest) {
         wa_method: 'shared',  // Always register as shared; dedicated set by /api/auth/facebook/callback after durable channel
         subscription_tier: 'free',
         status: 'pending',
+        payment_gateway: inheritedGateway,
       })
       .select('id, bot_code, slug')
       .single();

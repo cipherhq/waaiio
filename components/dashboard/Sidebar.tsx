@@ -709,6 +709,8 @@ export function Sidebar() {
         const renamed = catLabels.serviceNamePlural;
         // Don't rename to "Appointments" if there's already an Appointments item
         if (renamed === 'Appointments' && capabilities.includes('appointment')) return 'Services';
+        // Don't rename to "Products" if the separate Products nav item is also active (#493)
+        if (renamed === 'Products' && capabilities.includes('ordering')) return 'Services';
         return renamed;
       }
     }

@@ -227,9 +227,19 @@ export default function PartiesPage() {
     };
 
     if (view === 'add') {
-      await supabase.from('parties').insert(payload);
+      const { error: insertErr } = await supabase.from('parties').insert(payload);
+      if (insertErr) {
+        setSaving(false);
+        setStatusMessage(`Failed to create party: ${insertErr.message}`);
+        return;
+      }
     } else {
-      await supabase.from('parties').update(payload).eq('id', form.id);
+      const { error: updateErr } = await supabase.from('parties').update(payload).eq('id', form.id);
+      if (updateErr) {
+        setSaving(false);
+        setStatusMessage(`Failed to update party: ${updateErr.message}`);
+        return;
+      }
     }
 
     setSaving(false);
