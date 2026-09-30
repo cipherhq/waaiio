@@ -26,6 +26,8 @@ let mockCountriesResponse: { data: Array<{ code: string; dialing_code: string }>
   error: null,
 };
 
+vi.mock('@/lib/signup-gate', () => ({ isSignupOpen: () => Promise.resolve(true) }));
+
 // ── Mock state ──
 const mockGetUser = vi.fn();
 vi.mock('@/lib/supabase/server', () => ({

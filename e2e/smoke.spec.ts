@@ -30,10 +30,10 @@ test.describe('Smoke tests — public pages', () => {
     await expect(page.getByRole('button', { name: /Sign In/i })).toBeVisible();
   });
 
-  test('onboarding page loads', async ({ page }) => {
+  test('onboarding page loads or redirects to launch when gate is closed', async ({ page }) => {
     await page.goto('/get-started');
-    // May redirect to login if unauthenticated, or show the onboarding wizard
-    await expect(page).toHaveURL(/get-started|login/);
+    // When signup gate is closed, redirects to /launch; when open, shows wizard or /login
+    await expect(page).toHaveURL(/get-started|login|launch/);
   });
 
   test('check-in page handles invalid business gracefully', async ({ page }) => {
