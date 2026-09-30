@@ -54,31 +54,31 @@ export async function GET(request: NextRequest) {
       return NextResponse.redirect(new URL(`${dashboardBase}?topup=failed&reason=payment_${txData.status}`, request.nextUrl.origin));
     }
 
+    // Extract provider-confirmed amount/currency from verified transaction
+    const verifiedAmount = txData.amount as number | undefined;
+    const verifiedCurrency = (txData.currency as string | undefined)?.toUpperCase();
+
     // Transaction verified as successful — look up the purchase
     const supabase = createServiceClient();
 
     const { data: purchase, error: lookupErr } = await supabase
       .from('messaging_topup_purchases')
-      .select('id, status')
+      .select('id, status, package_amount_minor, currency_code')
       .eq('provider_reference', reference)
       .single();
 
     if (lookupErr || !purchase) {
-      // The purchase might use provider_checkout_id instead, or the webhook hasn't set provider_reference yet.
-      // Try looking up by provider_checkout_id as fallback.
       const { data: fallbackPurchase, error: fallbackErr } = await supabase
         .from('messaging_topup_purchases')
-        .select('id, status')
+        .select('id, status, package_amount_minor, currency_code')
         .eq('provider_checkout_id', reference)
         .single();
 
       if (fallbackErr || !fallbackPurchase) {
         logger.warn('[TOPUP-CALLBACK] Purchase not found for reference', { reference });
-        // Redirect to success — the webhook will handle the grant asynchronously
         return NextResponse.redirect(new URL(`${dashboardBase}?topup=pending`, request.nextUrl.origin));
       }
 
-      // Update provider_reference on the fallback match
       await supabase
         .from('messaging_topup_purchases')
         .update({ provider_reference: reference })
@@ -89,6 +89,15 @@ export async function GET(request: NextRequest) {
         return NextResponse.redirect(new URL(`${dashboardBase}?topup=success`, request.nextUrl.origin));
       }
 
+      // Fail-closed: provider amount/currency must match durable purchase
+      if (verifiedAmount !== fallbackPurchase.package_amount_minor || verifiedCurrency !== fallbackPurchase.currency_code) {
+        logger.error('[TOPUP-CALLBACK] amount/currency mismatch (fallback)', {
+          purchaseId: fallbackPurchase.id, verifiedAmount, verifiedCurrency,
+          purchaseAmount: fallbackPurchase.package_amount_minor, purchaseCurrency: fallbackPurchase.currency_code,
+        });
+        return NextResponse.redirect(new URL(`${dashboardBase}?topup=failed&reason=amount_mismatch`, request.nextUrl.origin));
+      }
+
       if (fallbackPurchase.status === 'pending') {
         const { data: grantResult, error: grantErr } = await supabase.rpc(
           'grant_purchased_messaging_allowance',
@@ -97,7 +106,6 @@ export async function GET(request: NextRequest) {
 
         if (grantErr) {
           logger.error('[TOPUP-CALLBACK] Grant RPC error (fallback)', { purchaseId: fallbackPurchase.id, error: grantErr });
-          // Webhook will retry — redirect as pending
           return NextResponse.redirect(new URL(`${dashboardBase}?topup=pending`, request.nextUrl.origin));
         }
 
@@ -110,19 +118,24 @@ export async function GET(request: NextRequest) {
       return NextResponse.redirect(new URL(`${dashboardBase}?topup=failed&reason=grant_failed`, request.nextUrl.origin));
     }
 
-    // Purchase found by provider_reference
     if (purchase.status === 'completed') {
-      // Already completed (by webhook or prior callback) — success
       return NextResponse.redirect(new URL(`${dashboardBase}?topup=success`, request.nextUrl.origin));
     }
 
     if (purchase.status !== 'pending') {
-      // Non-pending, non-completed (failed/refunded/disputed) — can't grant
       logger.warn('[TOPUP-CALLBACK] Purchase in non-grantable state', { purchaseId: purchase.id, status: purchase.status });
       return NextResponse.redirect(new URL(`${dashboardBase}?topup=failed&reason=status_${purchase.status}`, request.nextUrl.origin));
     }
 
-    // Purchase is pending — call the grant RPC
+    // Fail-closed: provider amount/currency must match durable purchase
+    if (verifiedAmount !== purchase.package_amount_minor || verifiedCurrency !== purchase.currency_code) {
+      logger.error('[TOPUP-CALLBACK] amount/currency mismatch', {
+        purchaseId: purchase.id, verifiedAmount, verifiedCurrency,
+        purchaseAmount: purchase.package_amount_minor, purchaseCurrency: purchase.currency_code,
+      });
+      return NextResponse.redirect(new URL(`${dashboardBase}?topup=failed&reason=amount_mismatch`, request.nextUrl.origin));
+    }
+
     const { data: grantResult, error: grantErr } = await supabase.rpc(
       'grant_purchased_messaging_allowance',
       { p_purchase_id: purchase.id },
@@ -130,7 +143,6 @@ export async function GET(request: NextRequest) {
 
     if (grantErr) {
       logger.error('[TOPUP-CALLBACK] Grant RPC error', { purchaseId: purchase.id, error: grantErr });
-      // Webhook will retry — redirect as pending
       return NextResponse.redirect(new URL(`${dashboardBase}?topup=pending`, request.nextUrl.origin));
     }
 

@@ -595,14 +595,15 @@ BEGIN
     RETURN jsonb_build_object('processed', false, 'reason', 'purchase_not_found');
   END IF;
 
-  -- Purchases in review/disputed are terminal — no further refunds
-  IF v_purchase.status IN ('disputed', 'review') THEN
+  -- Disputed is terminal — no further refunds
+  IF v_purchase.status = 'disputed' THEN
     RETURN jsonb_build_object('processed', false, 'idempotent', true,
       'status', v_purchase.status);
   END IF;
 
-  -- Only completed or partially_refunded purchases can receive refunds
-  IF v_purchase.status NOT IN ('completed', 'partially_refunded') THEN
+  -- completed, partially_refunded, and review can all receive further refund events.
+  -- review keeps messaging suspended but must still account for later provider refunds.
+  IF v_purchase.status NOT IN ('completed', 'partially_refunded', 'review') THEN
     RETURN jsonb_build_object('processed', false, 'reason', 'not_refundable',
       'current_status', v_purchase.status);
   END IF;

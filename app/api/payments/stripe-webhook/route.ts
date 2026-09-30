@@ -378,7 +378,7 @@ export async function POST(request: NextRequest) {
             // Verify the purchase exists and belongs to this business
             const { data: purchase, error: purchaseLookupErr } = await supabase
               .from('messaging_topup_purchases')
-              .select('id, business_id, status')
+              .select('id, business_id, status, package_amount_minor, currency_code')
               .eq('id', purchaseId)
               .single();
 
@@ -390,6 +390,18 @@ export async function POST(request: NextRequest) {
             if (purchase.business_id !== topupBusinessId) {
               logger.error('[STRIPE-WEBHOOK] messaging_topup business_id mismatch', { purchaseId, expected: topupBusinessId, actual: purchase.business_id });
               return NextResponse.json({ error: 'Top-up purchase business mismatch' }, { status: 500 });
+            }
+
+            // Fail-closed: provider-confirmed amount/currency must exactly match durable purchase
+            const providerAmount = data.amount_total as number | undefined;
+            const providerCurrency = (data.currency as string | undefined)?.toUpperCase();
+            if (providerAmount !== purchase.package_amount_minor || providerCurrency !== purchase.currency_code) {
+              logger.error('[STRIPE-WEBHOOK] messaging_topup amount/currency mismatch', {
+                purchaseId,
+                providerAmount, providerCurrency,
+                purchaseAmount: purchase.package_amount_minor, purchaseCurrency: purchase.currency_code,
+              });
+              return NextResponse.json({ error: 'Top-up amount/currency mismatch' }, { status: 400 });
             }
 
             // Update provider_reference to the canonical Stripe payment_intent ID
@@ -971,7 +983,7 @@ export async function POST(request: NextRequest) {
           .select('id, status, package_amount_minor, gateway')
           .eq('gateway', 'stripe')
           .or(`provider_checkout_id.eq.${sanitizeFilterValue(chargeId)},provider_reference.eq.${sanitizeFilterValue(paymentIntentId || chargeId)}`)
-          .in('status', ['completed', 'partially_refunded'])
+          .in('status', ['completed', 'partially_refunded', 'review'])
           .maybeSingle();
 
         if (topupPurchase) {
@@ -1008,7 +1020,7 @@ export async function POST(request: NextRequest) {
           .select('id, status, package_amount_minor, gateway')
           .eq('gateway', 'stripe')
           .or(`provider_checkout_id.eq.${sanitizeFilterValue(disputedCharge)},provider_reference.eq.${sanitizeFilterValue(disputePaymentIntent || disputedCharge)}`)
-          .in('status', ['completed', 'partially_refunded'])
+          .in('status', ['completed', 'partially_refunded', 'review'])
           .maybeSingle();
 
         if (topupPurchase) {

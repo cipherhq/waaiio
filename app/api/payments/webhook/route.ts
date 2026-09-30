@@ -712,7 +712,7 @@ export async function POST(request: NextRequest) {
       // Verify the purchase exists and belongs to this business
       const { data: purchase, error: purchaseLookupErr } = await supabase
         .from('messaging_topup_purchases')
-        .select('id, business_id, status')
+        .select('id, business_id, status, package_amount_minor, currency_code')
         .eq('id', purchaseId)
         .single();
 
@@ -734,6 +734,23 @@ export async function POST(request: NextRequest) {
           last_attempted_at: new Date().toISOString(),
         }).eq('event_id', eventId);
         return NextResponse.json({ error: 'Top-up purchase business mismatch' }, { status: 500 });
+      }
+
+      // Fail-closed: provider-confirmed amount/currency must exactly match durable purchase
+      const paystackAmount = data.amount as number | undefined;
+      const paystackCurrency = (data.currency as string | undefined)?.toUpperCase();
+      if (paystackAmount !== purchase.package_amount_minor || paystackCurrency !== purchase.currency_code) {
+        logger.error('[PAYSTACK-WEBHOOK] messaging_topup amount/currency mismatch', {
+          purchaseId,
+          paystackAmount, paystackCurrency,
+          purchaseAmount: purchase.package_amount_minor, purchaseCurrency: purchase.currency_code,
+        });
+        await supabase.from('processed_webhook_events').update({
+          status: 'failed',
+          last_error: `Top-up amount/currency mismatch: provider=${paystackAmount}/${paystackCurrency} purchase=${purchase.package_amount_minor}/${purchase.currency_code}`,
+          last_attempted_at: new Date().toISOString(),
+        }).eq('event_id', eventId);
+        return NextResponse.json({ error: 'Top-up amount/currency mismatch' }, { status: 400 });
       }
 
       // Update provider_reference with the Paystack reference
@@ -875,7 +892,7 @@ export async function POST(request: NextRequest) {
           .select('id, status, package_amount_minor, gateway')
           .eq('gateway', 'paystack')
           .or(`provider_checkout_id.eq.${sanitizeFilterValue(originalTxnReference)},provider_reference.eq.${sanitizeFilterValue(originalTxnReference)}`)
-          .in('status', ['completed', 'partially_refunded'])
+          .in('status', ['completed', 'partially_refunded', 'review'])
           .maybeSingle();
 
         if (topupPurchase) {
