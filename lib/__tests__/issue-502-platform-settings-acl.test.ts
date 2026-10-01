@@ -28,6 +28,17 @@ function psql(sql: string): string {
   }).trim();
 }
 
+function psqlMayFail(sql: string): { ok: boolean; output: string } {
+  try {
+    const out = execSync(`psql "${dbUrl}" -tAXq -v ON_ERROR_STOP=1`, {
+      input: sql, encoding: 'utf-8', timeout: 15000,
+    }).toString().trim();
+    return { ok: true, output: out };
+  } catch (e: unknown) {
+    return { ok: false, output: String((e as { stderr?: string }).stderr || e) };
+  }
+}
+
 // ══════════════════════════════════════════════════════════════════════
 // A. DB ACL tests — require TEST_DATABASE_URL
 // ══════════════════════════════════════════════════════════════════════
@@ -66,6 +77,35 @@ describe.skipIf(!canRunDb)('M420: platform_settings ACL (DB)', () => {
       `SELECT rowsecurity FROM pg_tables WHERE schemaname = 'public' AND tablename = 'platform_settings'`,
     );
     expect(result).toBe('t');
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════
+// A2. DB UPDATE/readback proof — require TEST_DATABASE_URL
+// ══════════════════════════════════════════════════════════════════════
+
+describe.skipIf(!canRunDb)('M420: platform_settings real UPDATE proof (DB)', () => {
+  it('service_role can UPDATE platform_settings and read back the change', () => {
+    const readback = psql(`
+      BEGIN;
+      SET LOCAL ROLE service_role;
+      UPDATE platform_settings SET value = '"uat-502-proof"'::jsonb WHERE key = 'site_announcement';
+      SELECT value::text FROM platform_settings WHERE key = 'site_announcement';
+      ROLLBACK;
+    `);
+    expect(readback).toContain('uat-502-proof');
+  });
+
+  it('anon cannot UPDATE platform_settings', () => {
+    const r = psqlMayFail(`SET ROLE anon; UPDATE platform_settings SET value = '"hacked"'::jsonb WHERE key = 'site_announcement'; RESET ROLE;`);
+    expect(r.ok).toBe(false);
+    expect(r.output).toMatch(/permission denied/i);
+  });
+
+  it('authenticated cannot UPDATE platform_settings', () => {
+    const r = psqlMayFail(`SET ROLE authenticated; UPDATE platform_settings SET value = '"hacked"'::jsonb WHERE key = 'site_announcement'; RESET ROLE;`);
+    expect(r.ok).toBe(false);
+    expect(r.output).toMatch(/permission denied/i);
   });
 });
 
