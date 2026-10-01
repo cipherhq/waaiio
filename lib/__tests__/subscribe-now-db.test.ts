@@ -555,7 +555,7 @@ describe.skipIf(!canRun)('adversarial authority proofs', () => {
           plan, action, status, config_version_id, provider_reference, period_start, period_end,
           billing_interval
         ) VALUES (
-          '${bizId}', '${subId}', 5000, 'NGN', 'paystack', 'renewal-ref-${Date.now()}',
+          '${bizId}', '${subId}', ${resolveCountryPriceSmallest('NG', 'growth')}, 'NGN', 'paystack', 'renewal-ref-${Date.now()}',
           'growth', 'renewal', 'success', '${configId}', 'renewal-prov-${Date.now()}',
           NOW() + INTERVAL '30 days', NOW() + INTERVAL '60 days', 'month'
         ) RETURNING id;
@@ -718,7 +718,7 @@ describe.skipIf(!canRun)('canonical field fail-closed proofs', () => {
           business_id, subscription_id, amount, currency, gateway, gateway_reference,
           plan, action, status, config_version_id, provider_reference, period_start, period_end
         ) VALUES (
-          '${bizId}', '${subId}', 5000, 'NGN', 'paystack', 'dup-ref-${Date.now()}',
+          '${bizId}', '${subId}', ${resolveCountryPriceSmallest('NG', 'growth')}, 'NGN', 'paystack', 'dup-ref-${Date.now()}',
           'growth', 'renewal', 'success', '${configId}', 'dup-prov-${Date.now()}',
           '${periodStart}', NOW() + INTERVAL '30 days'
         );
@@ -813,7 +813,7 @@ describe.skipIf(!canRun)('canonical field fail-closed proofs', () => {
           plan, action, status, config_version_id, provider_reference, period_start, period_end,
           billing_interval
         ) VALUES (
-          '${bizId}', '${subId}', 5000, 'NGN', 'paystack', 'dup-replay-${Date.now()}',
+          '${bizId}', '${subId}', ${resolveCountryPriceSmallest('NG', 'growth')}, 'NGN', 'paystack', 'dup-replay-${Date.now()}',
           'growth', 'renewal', 'success', '${configId}', 'dup-replay-prov-${Date.now()}',
           '${periodStart}', NOW() + INTERVAL '30 days', 'month'
         );
