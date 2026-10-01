@@ -1525,6 +1525,27 @@ jobs:
           fi
           echo "✅ M419 capability_overrides ACL tests complete — zero skips, zero failures."
 
+      - name: "M420 platform_settings UPDATE ACL DB tests"
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/waaiio_test
+        run: |
+          echo "Running M420 platform_settings UPDATE ACL DB tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/issue-502-platform-settings-acl.test.ts --reporter=verbose 2>&1)
+          TEST_EXIT=$?
+          set -e
+          echo "$OUTPUT"
+          if [ $TEST_EXIT -ne 0 ]; then
+            echo "❌ M420 ACL tests exited with code $TEST_EXIT."
+            exit $TEST_EXIT
+          fi
+          echo "✅ M420 platform_settings UPDATE ACL tests complete."
+
       - name: "DB delta analysis (advisory)"
         env:
           PGHOST: localhost
