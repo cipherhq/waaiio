@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { requireCapability } from '@/lib/capabilities/api-guard';
+import { applyDirectoryEligibility } from '@/lib/marketplace/search';
 import { getPaymentLinkCreateDenial } from '@/lib/payments/payment-link-policy';
 import { resolveCountryGateway } from '@/lib/payments/gateway-resolver';
 
@@ -115,5 +116,32 @@ describe('#496 canonical country gateway policy', () => {
       source: null,
       reason: 'country_gateway_not_configured',
     });
+  });
+});
+
+describe('#496 canonical public-directory eligibility', () => {
+  it('uses the production helper to require active + bot_code + not opted out', () => {
+    const calls: Array<[string, ...unknown[]]> = [];
+    const query = {
+      eq(...args: unknown[]) {
+        calls.push(['eq', ...args]);
+        return query;
+      },
+      not(...args: unknown[]) {
+        calls.push(['not', ...args]);
+        return query;
+      },
+      or(...args: unknown[]) {
+        calls.push(['or', ...args]);
+        return query;
+      },
+    };
+
+    expect(applyDirectoryEligibility(query)).toBe(query);
+    expect(calls).toEqual([
+      ['eq', 'status', 'active'],
+      ['not', 'bot_code', 'is', null],
+      ['or', 'discovery_enabled.is.null,discovery_enabled.eq.true'],
+    ]);
   });
 });
