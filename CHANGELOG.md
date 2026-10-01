@@ -3,6 +3,18 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-10-01 — Launch QR channel resolution fix (#503)
+
+### What changed
+- **launch-optin.ts** (`lib/bot/launch-optin.ts`) — Channel lookup changed from `.eq('phone_number', destinationPhone)` to `.eq('phone_number_id', destinationPhone)` with bounded fallback to `phone_number` (shared+active only). Root cause: Meta webhooks pass `phone_number_id` (numeric API identifier) as `destinationPhone`, but the code compared it against the human-readable `phone_number` column. They never matched, so market always defaulted to `'XX'`.
+- **delivery.ts** (`lib/launch/delivery.ts`) — `resolveChannelCredentials()` changed from `.eq('phone_number', receivingNumber)` to `.eq('phone_number_id', receivingNumber)` with same bounded fallback pattern. Without this fix, delivery would fail with `no_channel_credentials` for every subscriber.
+- **launch-integrity-439.test.ts** (`lib/__tests__/launch-integrity-439.test.ts`) — Updated assertion to expect `phone_number_id` in primary query filter (was `phone_number`).
+- **Tests** (`lib/__tests__/issue-503-launch-channel-resolution.test.ts`) — 25 tests: phone_number_id primary resolution, market not XX, idempotency, re-activation, delivery credential resolution, unknown destination safety, STOP behavior, no live Meta sends, fallback path, #397 safety preservation, source file verification.
+
+### What could break
+- If any historical `launch_subscribers` rows have `receiving_number` stored as a human-readable phone number (e.g. `+12029226251`) instead of a Meta `phone_number_id`, the fallback query will handle them. Both primary and fallback require `channel_type='shared'` and `is_active=true`.
+- The `receiving_number` column in `launch_subscribers` stores whatever `destinationPhone` was at opt-in time. Going forward this will be the Meta `phone_number_id`.
+
 ## 2026-09-30 — P0 staging post-deploy blockers (#496)
 
 ### What changed

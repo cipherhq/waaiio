@@ -148,7 +148,22 @@ export async function resolveChannelCredentials(
   supabase: SupabaseClient,
   receivingNumber: string,
 ): Promise<ChannelCredentials | null> {
+  // Primary: match by Meta phone_number_id (the identifier stored by launch-optin
+  // and passed by Meta webhooks). This is a numeric API identifier, not human-readable.
   const { data } = await supabase
+    .from('whatsapp_channels')
+    .select('phone_number_id, meta_access_token, waba_id, phone_number')
+    .eq('phone_number_id', receivingNumber)
+    .eq('channel_type', 'shared')
+    .eq('is_active', true)
+    .limit(1)
+    .maybeSingle();
+
+  if (data?.phone_number_id) return data as ChannelCredentials;
+
+  // Bounded fallback: match by human-readable phone_number
+  // (handles any historical subscriber rows that stored the display format)
+  const { data: fallback } = await supabase
     .from('whatsapp_channels')
     .select('phone_number_id, meta_access_token, waba_id, phone_number')
     .eq('phone_number', receivingNumber)
@@ -157,8 +172,8 @@ export async function resolveChannelCredentials(
     .limit(1)
     .maybeSingle();
 
-  if (!data?.phone_number_id) return null;
-  return data as ChannelCredentials;
+  if (!fallback?.phone_number_id) return null;
+  return fallback as ChannelCredentials;
 }
 
 // ── Atomic claim + send to a single subscriber ──

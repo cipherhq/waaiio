@@ -35,17 +35,37 @@ export async function handleLaunchOptIn(
   // contains (qr)/(button) suffixes per #460.
   const signupSource = 'direct';
 
-  // Detect market from the receiving Waaiio number
+  // Detect market from the receiving Waaiio number.
+  // Meta webhooks pass phone_number_id (numeric API identifier, e.g. '469075'),
+  // NOT the human-readable phone_number (e.g. '+12029226251').
+  // Primary lookup: phone_number_id (correct for all webhook traffic).
+  // Bounded fallback: phone_number (handles any historical rows using the
+  // human-readable format). Fallback is restricted to shared+active channels.
   let market = 'XX'; // fallback
   if (destinationPhone) {
+    // Primary: match by Meta phone_number_id
     const { data: channel } = await supabase
       .from('whatsapp_channels')
       .select('country_code')
-      .eq('phone_number', destinationPhone)
+      .eq('phone_number_id', destinationPhone)
       .eq('is_active', true)
       .limit(1)
       .maybeSingle();
-    if (channel?.country_code) market = channel.country_code;
+    if (channel?.country_code) {
+      market = channel.country_code;
+    } else {
+      // Bounded fallback: match by human-readable phone_number
+      // (shared + active only — do not match dedicated/unrelated channels)
+      const { data: fallbackChannel } = await supabase
+        .from('whatsapp_channels')
+        .select('country_code')
+        .eq('phone_number', destinationPhone)
+        .eq('channel_type', 'shared')
+        .eq('is_active', true)
+        .limit(1)
+        .maybeSingle();
+      if (fallbackChannel?.country_code) market = fallbackChannel.country_code;
+    }
   }
 
   // Upsert subscriber (idempotent on wa_number)

@@ -46,8 +46,8 @@ describe('Slice 0A — resolveChannelCredentials shared-channel authority (#439)
     expect(result).not.toBeNull();
     expect(result!.phone_number_id).toBe('pn-123');
 
-    // Verify all three .eq() filters were applied
-    expect(eqFilters).toContainEqual({ col: 'phone_number', val: '+12025551234' });
+    // Verify all three .eq() filters were applied (#503: primary lookup is phone_number_id)
+    expect(eqFilters).toContainEqual({ col: 'phone_number_id', val: '+12025551234' });
     expect(eqFilters).toContainEqual({ col: 'channel_type', val: 'shared' });
     expect(eqFilters).toContainEqual({ col: 'is_active', val: true });
   });
