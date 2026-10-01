@@ -24,7 +24,8 @@ import { execSync } from 'child_process';
 const dbUrl = process.env.TEST_DATABASE_URL || '';
 const canRunDb = dbUrl.length > 0;
 
-// All DB tests MUST run — no skipIf. CI enforces zero-skip.
+// DB suites may skip in ordinary local/unit runs, but the dedicated CI step
+// always supplies TEST_DATABASE_URL and enforces zero skipped #496 tests.
 function psql(sql: string): string {
   return execSync(`psql "${dbUrl}" -tAXq -v ON_ERROR_STOP=1`, {
     input: sql, encoding: 'utf-8', timeout: 30000,
@@ -55,23 +56,43 @@ function adminContext(adminId: string): string {
   `;
 }
 
-/** Run a query as an authenticated user (JWT context + role). Returns the query result only. */
+/**
+ * Run a query as an authenticated user with the JWT claims and database role
+ * alive for the exact same PostgreSQL transaction as the query under test.
+ *
+ * This is intentionally transaction-scoped. The prior helper issued
+ * set_config(..., true) and SET LOCAL ROLE as separate autocommit statements,
+ * so PostgreSQL discarded that context before the protected query ran. That
+ * could make a tenant-isolation probe execute as the test database owner and
+ * bypass RLS entirely.
+ */
 function psqlAuthed(userId: string, sql: string): string {
-  // Use a DO block + temp table to avoid SET ROLE output contaminating results
   return psql(`
-    SELECT set_config('request.jwt.claims', '{"sub":"${userId}","role":"authenticated","aud":"authenticated"}', true);
-    SELECT set_config('request.jwt.claim.sub', '${userId}', true);
+    BEGIN;
+    DO $auth$
+    BEGIN
+      PERFORM set_config('request.jwt.claims', '{"sub":"${userId}","role":"authenticated","aud":"authenticated"}', true);
+      PERFORM set_config('request.jwt.claim.sub', '${userId}', true);
+    END
+    $auth$;
     SET LOCAL ROLE authenticated;
-    ${sql}
-  `).split('\n').filter(l => l.trim() !== '' && !l.startsWith('SET') && !l.includes('set_config')).pop() || '';
+    ${sql};
+    ROLLBACK;
+  `);
 }
 
 function psqlAuthedMayFail(userId: string, sql: string): string {
   return psqlMayFail(`
-    SELECT set_config('request.jwt.claims', '{"sub":"${userId}","role":"authenticated","aud":"authenticated"}', true);
-    SELECT set_config('request.jwt.claim.sub', '${userId}', true);
+    BEGIN;
+    DO $auth$
+    BEGIN
+      PERFORM set_config('request.jwt.claims', '{"sub":"${userId}","role":"authenticated","aud":"authenticated"}', true);
+      PERFORM set_config('request.jwt.claim.sub', '${userId}', true);
+    END
+    $auth$;
     SET LOCAL ROLE authenticated;
-    ${sql}
+    ${sql};
+    ROLLBACK;
   `);
 }
 
