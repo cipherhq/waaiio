@@ -60,11 +60,10 @@ function adminContext(adminId: string): string {
  * Run a query as an authenticated user with the JWT claims and database role
  * alive for the exact same PostgreSQL transaction as the query under test.
  *
- * This is intentionally transaction-scoped. The prior helper issued
- * set_config(..., true) and SET LOCAL ROLE as separate autocommit statements,
- * so PostgreSQL discarded that context before the protected query ran. That
- * could make a tenant-isolation probe execute as the test database owner and
- * bypass RLS entirely.
+ * Successful owner operations COMMIT so later read-back assertions observe
+ * the same persisted row. The prior helper used transaction-local auth state
+ * without an enclosing transaction; an intermediate repair then rolled back
+ * successful mutations, which made create/read proofs unreliable.
  */
 function psqlAuthed(userId: string, sql: string): string {
   return psql(`
@@ -77,7 +76,7 @@ function psqlAuthed(userId: string, sql: string): string {
     $auth$;
     SET LOCAL ROLE authenticated;
     ${sql};
-    ROLLBACK;
+    COMMIT;
   `);
 }
 
@@ -92,7 +91,7 @@ function psqlAuthedMayFail(userId: string, sql: string): string {
     $auth$;
     SET LOCAL ROLE authenticated;
     ${sql};
-    ROLLBACK;
+    COMMIT;
   `);
 }
 
@@ -138,7 +137,6 @@ describe.skipIf(!canRunDb)('B5: Tenant-level RLS on M417-affected tables', () =>
     ({ ownerId: ownerB, bizId: bizB } = createTestOwnerAndBusiness());
   });
 
-  // ── parties ──
   it('parties: owner can INSERT own party', () => {
     const id = psqlAuthed(ownerA, `INSERT INTO public.parties (business_id, name, date, venue) VALUES ('${bizA}', 'Test Party', NOW(), 'Lagos')
       RETURNING id`);
@@ -159,25 +157,21 @@ describe.skipIf(!canRunDb)('B5: Tenant-level RLS on M417-affected tables', () =>
     expect(r).toMatch(/permission denied|new row violates/i);
   });
 
-  // ── category_templates ──
   it('category_templates: authenticated can SELECT active templates', () => {
     const count = psqlAuthed(ownerA, `SELECT count(*) FROM public.category_templates WHERE is_active = true`);
     expect(parseInt(count)).toBeGreaterThan(0);
   });
 
-  // ── payment_links ──
   it('payment_links: owner can SELECT own links', () => {
     const count = psqlAuthed(ownerA, `SELECT count(*) FROM public.payment_links WHERE business_id = '${bizA}'`);
-    expect(parseInt(count)).toBe(0); // no links yet, but no 403
+    expect(parseInt(count)).toBe(0);
   });
 
-  // ── event_tickets ──
   it('event_tickets: authenticated can SELECT', () => {
     const count = psqlAuthed(ownerA, `SELECT count(*) FROM public.event_tickets WHERE business_id = '${bizA}'`);
     expect(parseInt(count)).toBe(0);
   });
 
-  // ── promo_codes ──
   it('promo_codes: owner can SELECT own promos', () => {
     const count = psqlAuthed(ownerA, `SELECT count(*) FROM public.promo_codes WHERE business_id = '${bizA}'`);
     expect(parseInt(count)).toBe(0);
@@ -225,26 +219,19 @@ describe.skipIf(!canRunDb)('B2+B3+B4: Paid activation convergence', () => {
     psqlCleanup(`DELETE FROM public.alerts WHERE business_id = '${bizId}'`);
   }
 
-  // B3: pending/free → active/paid convergence
   it('B3: pending/free business activates to growth tier', () => {
     const { bizId, paymentId } = createPendingBusinessWithPayment();
     try {
       const result = psqlJson(`SELECT public.activate_paid_subscription('${paymentId}') AS r`) as Record<string, unknown>;
       expect(result).toHaveProperty('activated', true);
-
-      const tier = psql(`SELECT subscription_tier FROM businesses WHERE id = '${bizId}'`);
-      expect(tier).toBe('growth');
-
-      const subStatus = psql(`SELECT status FROM subscriptions WHERE business_id = '${bizId}' AND plan = 'growth'`);
-      expect(subStatus).toBe('active');
+      expect(psql(`SELECT subscription_tier FROM businesses WHERE id = '${bizId}'`)).toBe('growth');
+      expect(psql(`SELECT status FROM subscriptions WHERE business_id = '${bizId}' AND plan = 'growth'`)).toBe('active');
     } finally { cleanup(bizId); }
   });
 
-  // B3: idempotent replay (needs channel for full allowance grant → idempotent path)
   it('B3: idempotent replay returns activated+idempotent', () => {
     const { bizId, paymentId } = createPendingBusinessWithPayment();
     try {
-      // Add a channel so the first activation grants the allowance (reaching idempotent path on replay)
       const channelId = psql(`
         INSERT INTO public.whatsapp_channels (
           business_id, provider, channel_type, phone_number_id, waba_id,
@@ -261,12 +248,11 @@ describe.skipIf(!canRunDb)('B2+B3+B4: Paid activation convergence', () => {
     } finally { cleanup(bizId); }
   });
 
-  // B3: fail-closed on amount mismatch
   it('B3: amount mismatch → rejected, tier unchanged', () => {
     const priceMajor = resolveNGGrowthPriceMajor();
     const { bizId, paymentId } = createPendingBusinessWithPayment({
       subAmountMajor: priceMajor,
-      paymentAmountMinor: 999999, // wrong amount
+      paymentAmountMinor: 999999,
     });
     try {
       const result = psqlJson(`SELECT public.activate_paid_subscription('${paymentId}') AS r`) as Record<string, unknown>;
@@ -275,10 +261,9 @@ describe.skipIf(!canRunDb)('B2+B3+B4: Paid activation convergence', () => {
     } finally { cleanup(bizId); }
   });
 
-  // B2: genuine pricing_config_missing (subscription.amount = 0 or NULL)
   it('B2: subscription with zero amount → pricing_config_missing', () => {
     const { bizId, paymentId } = createPendingBusinessWithPayment({
-      subAmountMajor: 0, // genuinely missing/zero price
+      subAmountMajor: 0,
       paymentAmountMinor: 100,
     });
     try {
@@ -288,26 +273,31 @@ describe.skipIf(!canRunDb)('B2+B3+B4: Paid activation convergence', () => {
     } finally { cleanup(bizId); }
   });
 
-  // B4: checkout-bound price survives later country price change
-  it('B4: old checkout amount validates even if country price changes later', () => {
+  it('B4: old checkout amount survives a later country price change', () => {
     const originalPrice = resolveNGGrowthPriceMajor();
+    const originalPricing = psql(`SELECT pricing::text FROM countries WHERE code = 'NG'`);
+    const escapedOriginalPricing = originalPricing.replace(/'/g, "''");
     const { bizId, paymentId } = createPendingBusinessWithPayment({
       subAmountMajor: originalPrice,
       paymentAmountMinor: Math.round(originalPrice * 100),
     });
     try {
-      // Activation uses subscription.amount (checkout-bound), not current countries.pricing
-      // Even if countries.pricing changed (as M377 test 25 does), activation succeeds
-      // because subscription.amount was set at checkout time.
+      psql(`UPDATE countries
+        SET pricing = jsonb_set(pricing, '{growth,price}', to_jsonb((${originalPrice} + 123)::numeric), false)
+        WHERE code = 'NG';`);
+      expect(resolveNGGrowthPriceMajor()).not.toBe(originalPrice);
+
       const result = psqlJson(`SELECT public.activate_paid_subscription('${paymentId}') AS r`) as Record<string, unknown>;
       expect(result).toHaveProperty('activated', true);
-    } finally { cleanup(bizId); }
+    } finally {
+      psqlCleanup(`UPDATE countries SET pricing = '${escapedOriginalPricing}'::jsonb WHERE code = 'NG';`);
+      cleanup(bizId);
+    }
   });
 
-  // B4: SECURITY DEFINER + search_path preserved
   it('B4: activate_paid_subscription is SECURITY DEFINER with search_path', () => {
     const secdef = psql(`SELECT prosecdef FROM pg_proc WHERE proname = 'activate_paid_subscription'`);
-    expect(secdef).toMatch(/^t/); // 't' or 'true'
+    expect(secdef).toMatch(/^t/);
     expect(psql(`SELECT array_to_string(proconfig, ',') FROM pg_proc WHERE proname = 'activate_paid_subscription'`)).toContain('search_path');
   });
 
@@ -324,8 +314,6 @@ describe.skipIf(!canRunDb)('B2+B3+B4: Paid activation convergence', () => {
 // ══════════════════════════════════════════════════════════
 // B7: Symptom → Proof Matrix (real PostgreSQL where applicable)
 // ══════════════════════════════════════════════════════════
-
-// ── Poll: pending denied, active succeeds ──
 describe.skipIf(!canRunDb)('B7-Poll: pending guard + active create', () => {
   it('pending business cannot have polls read via authenticated (RLS filters to 0)', () => {
     const { ownerId, bizId } = createTestOwnerAndBusiness({ status: 'pending' });
@@ -344,7 +332,6 @@ describe.skipIf(!canRunDb)('B7-Poll: pending guard + active create', () => {
   });
 });
 
-// ── Party: authorized create + cross-tenant denial ──
 describe.skipIf(!canRunDb)('B7-Party: create + cross-tenant denial', () => {
   it('owner creates party and reads it back', () => {
     const { ownerId, bizId } = createTestOwnerAndBusiness();
@@ -367,7 +354,6 @@ describe.skipIf(!canRunDb)('B7-Party: create + cross-tenant denial', () => {
   });
 });
 
-// ── Promo: create then immediate read ──
 describe.skipIf(!canRunDb)('B7-Promo: create + immediate refresh', () => {
   it('service_role creates promo, owner immediately reads it', () => {
     const { ownerId, bizId } = createTestOwnerAndBusiness();
@@ -375,14 +361,12 @@ describe.skipIf(!canRunDb)('B7-Promo: create + immediate refresh', () => {
       INSERT INTO public.promo_codes (business_id, code, discount_type, discount_value, is_active)
       VALUES ('${bizId}', 'LAUNCH496', 'percentage', 10, true) RETURNING id;`);
     expect(promoId).toBeTruthy();
-    // Owner reads immediately via authenticated
     const readCount = psqlAuthed(ownerId, `SELECT count(*) FROM public.promo_codes WHERE id = '${promoId}'`);
     expect(parseInt(readCount)).toBe(1);
     psqlCleanup(`DELETE FROM public.promo_codes WHERE id = '${promoId}'`);
   });
 });
 
-// ── Scan-to-Pay: pending denied, active NG → Paystack/NGN ──
 describe.skipIf(!canRunDb)('B7-ScanToPay: pending guard + country authority', () => {
   it('NG country resolves to paystack/NGN', () => {
     const gw = psql(`SELECT payment_gateway FROM countries WHERE code = 'NG'`);
@@ -398,19 +382,16 @@ describe.skipIf(!canRunDb)('B7-ScanToPay: pending guard + country authority', ()
   });
 });
 
-// ── Services: category config resolves service language ──
 describe.skipIf(!canRunDb)('B7-Services: category_templates read succeeds', () => {
   it('authenticated reads active category_templates (not Products fallback)', () => {
     const { ownerId } = createTestOwnerAndBusiness();
     const count = psqlAuthed(ownerId, `SELECT count(*) FROM public.category_templates WHERE is_active = true`);
     expect(parseInt(count)).toBeGreaterThan(0);
-    // Verify at least one has service-language labels
     const hasLabels = psqlAuthed(ownerId, `SELECT count(*) FROM public.category_templates WHERE is_active = true AND labels != '{}'`);
     expect(parseInt(hasLabels)).toBeGreaterThan(0);
   });
 });
 
-// ── Directory: eligibility filters ──
 describe.skipIf(!canRunDb)('B7-Directory: eligibility guards', () => {
   it('active + bot_code + not opted out → visible (applyDirectoryEligibility filters pass)', () => {
     const { bizId } = createTestOwnerAndBusiness({ status: 'active', withBotCode: true, discoveryEnabled: null });
@@ -423,9 +404,7 @@ describe.skipIf(!canRunDb)('B7-Directory: eligibility guards', () => {
 
   it('pending → hidden by status=active filter', () => {
     const { bizId } = createTestOwnerAndBusiness({ status: 'pending', withBotCode: true });
-    const count = psql(`
-      SELECT count(*) FROM public.businesses
-      WHERE id = '${bizId}' AND status = 'active'`);
+    const count = psql(`SELECT count(*) FROM public.businesses WHERE id = '${bizId}' AND status = 'active'`);
     expect(parseInt(count)).toBe(0);
   });
 
@@ -447,7 +426,6 @@ describe.skipIf(!canRunDb)('B7-Directory: eligibility guards', () => {
   });
 });
 
-// ── Country→processor authority ──
 describe.skipIf(!canRunDb)('B7-Country: processor/currency authority preserved', () => {
   const expected = [
     ['NG', 'paystack', 'NGN'], ['GH', 'paystack', 'GHS'],
@@ -468,22 +446,13 @@ describe('B6: QR production routing behavior', () => {
   beforeEach(() => { vi.resetModules(); });
 
   it('shared-number QR page renders read-only routing code (not editable input)', async () => {
-    // Import and render-trace the actual page component logic
-    // The production QR page derives prefillText from routingCode (bot_code)
-    // which is NOT user-editable. Verify the derivation logic:
     const page = await import('@/app/dashboard/qr-code/page');
-    expect(page.default).toBeDefined(); // component exists and exports
-    // The component uses: routingCode = isSharedNumber ? bot_code : ''
-    // prefillText = routingCode ? (deepLinkSuffix ? routingCode:suffix : routingCode) : 'Hi'
-    // There is NO setPrefillText or onChange handler for the routing code
+    expect(page.default).toBeDefined();
   });
 
   it('WhatsApp URL always contains bot_code for shared-number', () => {
-    // Production logic: activeLink = `https://wa.me/${phone}?text=${encodeURIComponent(prefillText)}`
-    // where prefillText always starts with routingCode when isSharedNumber
     const botCode = 'TESTBIZ';
     const phone = '2348012345678';
-    // Simulate ALL template selections — routing code is never removed
     const templates = ['generic', 'book', 'order', 'pay', 'ticket', 'donate', 'queue', 'chat'];
     for (const tmpl of templates) {
       const cap = { book: 'scheduling', order: 'ordering', pay: 'payment', ticket: 'ticketing',
@@ -496,7 +465,7 @@ describe('B6: QR production routing behavior', () => {
   });
 
   it('dedicated-number QR uses Hi (no routing code needed)', () => {
-    const prefill = 'Hi'; // wa_method !== 'shared' → no routingCode
+    const prefill = 'Hi';
     const url = `https://wa.me/2348012345678?text=${encodeURIComponent(prefill)}`;
     expect(url).toContain('text=Hi');
     expect(url).not.toContain('TESTBIZ');
