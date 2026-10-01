@@ -67,8 +67,9 @@ beforeEach(() => {
   };
 });
 
-function qrValue(): string {
-  return screen.getByTestId('qr-value').getAttribute('data-value') || '';
+/** Get all rendered QR values — production renders multiple QR instances sharing the same canonical URL */
+function allQrValues(): string[] {
+  return screen.getAllByTestId('qr-value').map(el => el.getAttribute('data-value') || '');
 }
 
 describe('#496 QR production routing safety', () => {
@@ -76,23 +77,33 @@ describe('#496 QR production routing safety', () => {
     render(<QRCodePage />);
 
     await waitFor(() => {
-      expect(qrValue()).toBe('https://wa.me/12025550199?text=TESTBIZ');
+      const values = allQrValues();
+      expect(values.length).toBeGreaterThanOrEqual(1);
+      for (const v of values) {
+        expect(v).toBe('https://wa.me/12025550199?text=TESTBIZ');
+      }
     });
   });
 
   it('keeps routing code immutable while adding production template suffixes', async () => {
     render(<QRCodePage />);
 
-    await waitFor(() => expect(qrValue()).toContain('text=TESTBIZ'));
+    await waitFor(() => {
+      for (const v of allQrValues()) expect(v).toContain('text=TESTBIZ');
+    });
 
     fireEvent.click(screen.getByRole('button', { name: /Scan to Pay/i }));
     await waitFor(() => {
-      expect(qrValue()).toBe('https://wa.me/12025550199?text=TESTBIZ%3Apayment');
+      for (const v of allQrValues()) {
+        expect(v).toBe('https://wa.me/12025550199?text=TESTBIZ%3Apayment');
+      }
     });
 
     fireEvent.click(screen.getByRole('button', { name: /Scan to Chat/i }));
     await waitFor(() => {
-      expect(qrValue()).toBe('https://wa.me/12025550199?text=TESTBIZ%3Achat');
+      for (const v of allQrValues()) {
+        expect(v).toBe('https://wa.me/12025550199?text=TESTBIZ%3Achat');
+      }
     });
   });
 
@@ -106,8 +117,12 @@ describe('#496 QR production routing safety', () => {
     render(<QRCodePage />);
 
     await waitFor(() => {
-      expect(qrValue()).toBe('https://wa.me/12025550199?text=Hi');
-      expect(qrValue()).not.toContain('SHOULD_NOT_APPEAR');
+      const values = allQrValues();
+      expect(values.length).toBeGreaterThanOrEqual(1);
+      for (const v of values) {
+        expect(v).toBe('https://wa.me/12025550199?text=Hi');
+        expect(v).not.toContain('SHOULD_NOT_APPEAR');
+      }
     });
   });
 });

@@ -137,6 +137,11 @@ describe.skipIf(!canRunDb)('B5: Tenant-level RLS on M417-affected tables', () =>
     ({ ownerId: ownerB, bizId: bizB } = createTestOwnerAndBusiness());
   });
 
+  it('auth.uid() resolves the JWT subject set by psqlAuthed', () => {
+    const resolvedUid = psqlAuthed(ownerA, `SELECT auth.uid()::text`);
+    expect(resolvedUid).toBe(ownerA);
+  });
+
   it('parties: owner can INSERT own party', () => {
     const id = psqlAuthed(ownerA, `INSERT INTO public.parties (business_id, name, date, venue) VALUES ('${bizA}', 'Test Party', NOW(), 'Lagos')
       RETURNING id`);

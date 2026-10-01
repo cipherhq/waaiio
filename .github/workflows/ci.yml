@@ -2184,7 +2184,7 @@ jobs:
           CREATE SCHEMA IF NOT EXISTS auth;
           CREATE SCHEMA IF NOT EXISTS extensions;
           CREATE EXTENSION IF NOT EXISTS pgcrypto SCHEMA extensions;
-          CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $$ SELECT gen_random_uuid(); $$ LANGUAGE SQL STABLE;
+          CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $$ SELECT COALESCE(NULLIF(current_setting('request.jwt.claim.sub', true), ''), NULLIF(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub')::uuid; $$ LANGUAGE SQL STABLE;
           CREATE OR REPLACE FUNCTION auth.role() RETURNS TEXT AS $$ SELECT 'authenticated'::TEXT; $$ LANGUAGE SQL STABLE;
           CREATE TABLE IF NOT EXISTS auth.users (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), email TEXT, phone TEXT, raw_app_meta_data JSONB DEFAULT '{}');
           DO $$ BEGIN CREATE ROLE service_role NOLOGIN BYPASSRLS; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
@@ -3050,7 +3050,7 @@ jobs:
           CREATE SCHEMA IF NOT EXISTS extensions;
           CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
           CREATE EXTENSION IF NOT EXISTS pgcrypto SCHEMA extensions;
-          CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $$ SELECT '00000000-0000-0000-0000-000000000000'::UUID; $$ LANGUAGE SQL STABLE;
+          CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $$ SELECT COALESCE(NULLIF(current_setting('request.jwt.claim.sub', true), ''), NULLIF(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub')::uuid; $$ LANGUAGE SQL STABLE;
           CREATE OR REPLACE FUNCTION auth.role() RETURNS TEXT AS $$ SELECT 'authenticated'::TEXT; $$ LANGUAGE SQL STABLE;
           CREATE TABLE IF NOT EXISTS auth.users (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), email TEXT, phone TEXT, raw_app_meta_data JSONB DEFAULT '{}');
           DO $$ BEGIN CREATE ROLE service_role BYPASSRLS; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
