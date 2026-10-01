@@ -1,17 +1,18 @@
 /**
- * Issue #496 — M419: capability_overrides service_role SELECT grant
+ * Issue #496 — M419: capability_overrides SQL-level ACL and migration proof
+ *
+ * Tests the DATABASE-LEVEL privileges and migration correctness of M419.
+ * Does NOT test the application-level requireCapability() guard behavior —
+ * that is covered by issue-496-production-policy.test.ts which executes
+ * the real guard implementation with injected clients.
  *
  * Proves:
  *   1. ACL: service_role has SELECT on capability_overrides (M419 fix)
- *   2. ACL: service_role does NOT have INSERT/UPDATE/DELETE
- *   3. ACL: anon has NO access
- *   4. ACL: authenticated SELECT governed by RLS (owner-scoped)
- *   5. Guard: requireCapability no longer returns override_read_error
- *   6. Guard: legitimately capable business proceeds (poll create allowed)
- *   7. Guard: missing capability returns controlled denial (not 500)
- *   8. Guard: pending business denied for create_new
- *   9. Guard: suspended business denied
- *  10. RLS: tenant isolation — cross-business override not visible
+ *   2. ACL: anon has NO access
+ *   3. ACL: RLS remains enabled
+ *   4. SQL path: service_role can SELECT overrides, capabilities, allowances
+ *   5. SQL path: authenticated role has NO table-level SELECT (server-side only)
+ *   6. Isolation: service_role reads per-business overrides correctly
  *
  * ALL tests require TEST_DATABASE_URL (real PostgreSQL). Zero skips.
  *
