@@ -7,10 +7,11 @@
 -- countries.pricing[tier].price — the canonical pricing authority used by
 -- the checkout UI (/api/public/pricing) and getPricingTiers().
 --
--- Fix: Read expected subscription price from countries.pricing using the
--- business's country_code. This is the same authority the checkout/payment
--- flow presents to the customer. Config version provenance is preserved
--- for entitlements, fees, and allowance configuration.
+-- Fix: Validate payment amount against subscription.amount — the durable
+-- checkout-bound price set when the customer was quoted. This avoids a
+-- price-change race (countries.pricing can change between checkout and
+-- activation). Config version provenance is preserved for entitlements,
+-- fees, and allowance configuration.
 --
 -- Preserves: SECURITY DEFINER, search_path = '', all grant/revoke semantics,
 -- all other steps unchanged.
@@ -29,7 +30,6 @@ DECLARE
   v_biz RECORD;
   v_config RECORD;
   v_payment RECORD;
-  v_country_pricing JSONB;
   v_expected_amount NUMERIC;
   v_included_config JSONB;
   v_tier_config JSONB;
@@ -175,32 +175,23 @@ BEGIN
       'billing_interval', v_sub.billing_interval);
   END IF;
 
-  -- 6b. Validate payment amount against canonical country pricing authority
-  -- (#496 fix): Read expected subscription price from countries.pricing,
-  -- which is the same authority the checkout UI and /api/public/pricing use.
-  -- Config snapshot pricing_tiers contains only entitlement/fee fields.
-  SELECT pricing -> v_sub.plan INTO v_country_pricing
-    FROM public.countries
-    WHERE code = v_biz.country_code;
-
-  IF v_country_pricing IS NULL OR jsonb_typeof(v_country_pricing) <> 'object' THEN
-    RETURN jsonb_build_object('activated', false, 'reason', 'pricing_config_missing',
-      'plan', v_sub.plan, 'country_code', v_biz.country_code);
-  END IF;
-
-  -- countries.pricing stores amounts in major units; payment amount is smallest unit
-  v_expected_amount := (v_country_pricing ->> 'price')::NUMERIC;
+  -- 6b. Validate payment amount against checkout-bound subscription amount
+  -- (#496 fix / CTO R2 BLOCKER 4): The subscription.amount is set from the
+  -- checkout intent or onboarding verify at the exact time the customer was
+  -- quoted a price. This is immutable durable evidence — it does not change
+  -- if countries.pricing is later updated. Validating against a mutable
+  -- re-read of countries.pricing would create a price-change race.
+  v_expected_amount := v_sub.amount;
   IF v_expected_amount IS NULL OR v_expected_amount <= 0 THEN
     RETURN jsonb_build_object('activated', false, 'reason', 'pricing_config_missing',
-      'plan', v_sub.plan, 'country_code', v_biz.country_code);
+      'plan', v_sub.plan, 'subscription_amount', v_sub.amount);
   END IF;
 
-  -- Convert payment amount from smallest to major (divide by 100)
+  -- subscription.amount is major units; payment.amount is smallest unit
   IF ABS((v_payment.amount::NUMERIC / 100.0) - v_expected_amount) > 0.01 THEN
     RETURN jsonb_build_object('activated', false, 'reason', 'amount_mismatch',
       'expected_major', v_expected_amount,
-      'actual_smallest', v_payment.amount,
-      'country_code', v_biz.country_code);
+      'actual_smallest', v_payment.amount);
   END IF;
 
   -- 6c. Validate currency: payment currency must match business resolved currency

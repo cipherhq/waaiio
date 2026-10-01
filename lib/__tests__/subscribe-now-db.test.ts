@@ -93,12 +93,15 @@ function createPaidTestBusiness(opts: {
     psql(`UPDATE public.businesses SET whatsapp_channel_id = '${channelId}', wa_method = 'transfer' WHERE id = '${bizId}'`);
   }
 
+  // subscription.amount is in MAJOR units (matching production: Math.round(amountSmallest / 100))
+  // payment.amount is in MINOR/smallest units
+  const subAmountMajor = Math.round(amount / 100);
   const subId = psql(`
     INSERT INTO public.subscriptions (
       business_id, plan, status, amount, currency, gateway, billing_interval,
       current_period_start, current_period_end
     ) VALUES (
-      '${bizId}', '${plan}', 'pending', ${amount}, '${currency}', '${gateway}', '${billingInterval}',
+      '${bizId}', '${plan}', 'pending', ${subAmountMajor}, '${currency}', '${gateway}', '${billingInterval}',
       NOW(), NOW() + INTERVAL '30 days'
     ) RETURNING id;
   `);
