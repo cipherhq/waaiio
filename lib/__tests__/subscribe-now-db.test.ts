@@ -157,10 +157,12 @@ function ensurePaidConfig(): string {
  * Resolve the actual country price to use as the test payment amount.
  */
 function resolveCountryPriceSmallest(countryCode: string, plan: string): number {
-  const priceMajor = psql(`
-    SELECT (pricing -> '${plan}' ->> 'price')::numeric FROM public.countries WHERE code = '${countryCode}'
+  const raw = psql(`
+    SELECT COALESCE((pricing -> '${plan}' ->> 'price')::numeric, 0) FROM public.countries WHERE code = '${countryCode}'
   `);
-  return Math.round(parseFloat(priceMajor) * 100);
+  const val = parseFloat(raw);
+  // Fall back to 5000 for plans that don't exist in country pricing (e.g. 'enterprise')
+  return isNaN(val) || val <= 0 ? 5000 : Math.round(val * 100);
 }
 
 // ── Cleanup ─────────────────────────────────────────
