@@ -1,20 +1,18 @@
 -- 418: Fix activate_paid_subscription pricing authority
 --
--- Root cause (#496): activate_paid_subscription step 6b reads expected price
+-- Root cause (#496): activate_paid_subscription step 6b read expected price
 -- from config_snapshot -> 'pricing_tiers' -> plan -> 'price', but the config
--- snapshot's pricing_tiers only contains entitlement/fee fields (feePercentage,
--- feeFlat, maxBookings, whitelabel). Actual subscription prices live in
--- countries.pricing[tier].price — the canonical pricing authority used by
--- the checkout UI (/api/public/pricing) and getPricingTiers().
+-- snapshot's pricing_tiers only contains entitlement/fee fields. Regional
+-- subscription prices are resolved before checkout.
 --
--- Fix: Validate payment amount against subscription.amount — the durable
--- checkout-bound price set when the customer was quoted. This avoids a
--- price-change race (countries.pricing can change between checkout and
--- activation). Config version provenance is preserved for entitlements,
--- fees, and allowance configuration.
+-- Fix: Validate the successful payment against the durable subscription quote
+-- captured from the provider-backed checkout: plan, amount, currency, gateway,
+-- billing interval, business, and provider reference. This avoids re-reading
+-- mutable regional pricing/country state after payment. Config version
+-- provenance remains authoritative for entitlements, fees, and allowances.
 --
 -- Preserves: SECURITY DEFINER, search_path = '', all grant/revoke semantics,
--- all other steps unchanged.
+-- and service_role-only execution.
 --
 -- DB-002 compliance: This CREATE OR REPLACE preserves SET search_path = ''
 -- from M375. No other ALTER attributes exist on this function.
@@ -37,13 +35,13 @@ DECLARE
   v_amount INTEGER;
   v_currency TEXT;
   v_pricing JSONB;
-  v_match_count INTEGER;
   v_source_ref TEXT;
   v_grant_result JSONB;
   v_has_channel BOOLEAN;
 BEGIN
   -- 1. Lock the exact payment row FOR UPDATE (evidence-first)
-  SELECT id, subscription_id, business_id, config_version_id, provider_reference, amount, currency,
+  SELECT id, subscription_id, business_id, config_version_id, provider_reference,
+         amount, currency, gateway AS payment_gateway,
          period_start, period_end, plan AS payment_plan, status AS payment_status,
          billing_interval AS payment_billing_interval
   INTO v_payment
@@ -68,6 +66,9 @@ BEGIN
   IF v_payment.currency IS NULL OR v_payment.currency = '' THEN
     RETURN jsonb_build_object('activated', false, 'reason', 'missing_payment_currency');
   END IF;
+  IF v_payment.payment_gateway IS NULL OR v_payment.payment_gateway = '' THEN
+    RETURN jsonb_build_object('activated', false, 'reason', 'missing_payment_gateway');
+  END IF;
   IF v_payment.provider_reference IS NULL OR v_payment.provider_reference = '' THEN
     RETURN jsonb_build_object('activated', false, 'reason', 'missing_provider_reference');
   END IF;
@@ -83,7 +84,7 @@ BEGIN
     RETURN jsonb_build_object('activated', false, 'reason', 'payment_missing_subscription');
   END IF;
 
-  SELECT id, business_id, plan, status, amount, currency, billing_interval,
+  SELECT id, business_id, plan, status, amount, currency, gateway, billing_interval,
          current_period_start, current_period_end
   INTO v_sub
   FROM public.subscriptions
@@ -123,9 +124,31 @@ BEGIN
       'billing_interval', v_payment.payment_billing_interval);
   END IF;
 
+  -- 2f. Bind provider-returned currency to the durable checkout subscription.
+  -- Do not re-resolve currency from mutable business country/config at activation.
+  IF v_sub.currency IS NULL OR v_sub.currency = '' THEN
+    RETURN jsonb_build_object('activated', false, 'reason', 'missing_subscription_currency');
+  END IF;
+  IF UPPER(v_payment.currency) <> UPPER(v_sub.currency) THEN
+    RETURN jsonb_build_object('activated', false, 'reason', 'currency_mismatch',
+      'payment_currency', v_payment.currency,
+      'subscription_currency', v_sub.currency);
+  END IF;
+
+  -- 2g. Bind the provider used for the successful payment to the checkout
+  -- subscription. Country chooses processor before checkout; activation must
+  -- never switch providers or silently fall back afterward.
+  IF v_sub.gateway IS NULL OR v_sub.gateway = '' THEN
+    RETURN jsonb_build_object('activated', false, 'reason', 'missing_subscription_gateway');
+  END IF;
+  IF LOWER(v_payment.payment_gateway) <> LOWER(v_sub.gateway) THEN
+    RETURN jsonb_build_object('activated', false, 'reason', 'gateway_mismatch',
+      'payment_gateway', v_payment.payment_gateway,
+      'subscription_gateway', v_sub.gateway);
+  END IF;
+
   -- 3. Lock business FOR UPDATE
-  SELECT id, subscription_tier, whatsapp_channel_id, wa_method, status,
-         country_code
+  SELECT id, subscription_tier, whatsapp_channel_id, wa_method, status
   INTO v_biz
   FROM public.businesses
   WHERE id = v_sub.business_id
@@ -175,12 +198,9 @@ BEGIN
       'billing_interval', v_sub.billing_interval);
   END IF;
 
-  -- 6b. Validate payment amount against checkout-bound subscription amount
-  -- (#496 fix / CTO R2 BLOCKER 4): The subscription.amount is set from the
-  -- checkout intent or onboarding verify at the exact time the customer was
-  -- quoted a price. This is immutable durable evidence — it does not change
-  -- if countries.pricing is later updated. Validating against a mutable
-  -- re-read of countries.pricing would create a price-change race.
+  -- 6b. Validate payment amount against checkout-bound subscription amount.
+  -- The subscription amount is set from the exact provider-backed checkout
+  -- evidence and does not change if regional pricing changes later.
   v_expected_amount := v_sub.amount;
   IF v_expected_amount IS NULL OR v_expected_amount <= 0 THEN
     RETURN jsonb_build_object('activated', false, 'reason', 'pricing_config_missing',
@@ -193,36 +213,6 @@ BEGIN
       'expected_major', v_expected_amount,
       'actual_smallest', v_payment.amount);
   END IF;
-
-  -- 6c. Validate currency: payment currency must match business resolved currency
-  DECLARE
-    v_biz_currency TEXT;
-    v_biz_match_count INTEGER := 0;
-    v_biz_pricing JSONB;
-    v_cur_iter TEXT;
-  BEGIN
-    v_biz_pricing := v_config.config_snapshot -> 'messaging_pricing';
-    IF v_biz_pricing IS NULL OR jsonb_typeof(v_biz_pricing) <> 'object' THEN
-      RETURN jsonb_build_object('activated', false, 'reason', 'currency_config_missing');
-    END IF;
-    FOR v_cur_iter IN SELECT key FROM jsonb_each(v_biz_pricing)
-    LOOP
-      IF v_biz_pricing -> v_cur_iter -> 'rates' -> v_biz.country_code IS NOT NULL THEN
-        v_biz_currency := v_cur_iter;
-        v_biz_match_count := v_biz_match_count + 1;
-      END IF;
-    END LOOP;
-    -- If match_count != 1, reject with specific reason
-    IF v_biz_match_count <> 1 THEN
-      RETURN jsonb_build_object('activated', false, 'reason', 'currency_resolution_failed',
-        'match_count', v_biz_match_count, 'country_code', v_biz.country_code);
-    END IF;
-    IF UPPER(v_payment.currency) <> UPPER(v_biz_currency) THEN
-      RETURN jsonb_build_object('activated', false, 'reason', 'currency_mismatch',
-        'payment_currency', v_payment.currency,
-        'business_currency', v_biz_currency);
-    END IF;
-  END;
 
   -- Build stable source_ref from the locked payment's provider_reference
   v_source_ref := 'sub:' || v_payment.subscription_id::TEXT || ':' || v_payment.provider_reference;
@@ -285,49 +275,24 @@ BEGIN
       'reason', 'missing_tier_allowance_config');
   END IF;
 
-  -- Resolve currency from business country via messaging_pricing (same as trial)
+  -- Allowance currency follows the same checkout-bound subscription currency.
+  -- Do not re-resolve from the business's mutable current country after payment.
+  v_currency := UPPER(v_sub.currency);
   v_pricing := v_config.config_snapshot -> 'messaging_pricing';
-  IF v_pricing IS NULL OR jsonb_typeof(v_pricing) <> 'object' THEN
+  IF v_pricing IS NULL OR jsonb_typeof(v_pricing) <> 'object'
+     OR v_pricing -> v_currency IS NULL
+     OR jsonb_typeof(v_pricing -> v_currency) <> 'object' THEN
     INSERT INTO public.alerts (business_id, type, severity, title, message)
     VALUES (v_sub.business_id, 'subscription_allowance_pending', 'warning',
       'Subscription allowance pending',
-      'messaging_pricing not configured')
+      'Checkout currency is not configured in messaging_pricing: ' || COALESCE(v_currency, 'NULL'))
     ON CONFLICT (business_id, type) WHERE type = 'subscription_allowance_pending' DO NOTHING;
 
     RETURN jsonb_build_object('activated', true, 'allowance_granted', false,
       'reason', 'currency_resolution_failed');
   END IF;
 
-  v_match_count := 0;
-  v_currency := NULL;
-  FOR v_currency IN SELECT key FROM jsonb_each(v_pricing)
-  LOOP
-    IF v_pricing -> v_currency -> 'rates' -> v_biz.country_code IS NOT NULL THEN
-      v_match_count := v_match_count + 1;
-    END IF;
-  END LOOP;
-
-  IF v_match_count <> 1 THEN
-    INSERT INTO public.alerts (business_id, type, severity, title, message)
-    VALUES (v_sub.business_id, 'subscription_allowance_pending', 'warning',
-      'Subscription allowance pending',
-      'Currency resolution failed (match_count=' || v_match_count || ')')
-    ON CONFLICT (business_id, type) WHERE type = 'subscription_allowance_pending' DO NOTHING;
-
-    RETURN jsonb_build_object('activated', true, 'allowance_granted', false,
-      'reason', 'currency_resolution_failed');
-  END IF;
-
-  -- Re-resolve single matching currency
-  v_currency := NULL;
-  FOR v_currency IN SELECT key FROM jsonb_each(v_pricing)
-  LOOP
-    IF v_pricing -> v_currency -> 'rates' -> v_biz.country_code IS NOT NULL THEN
-      EXIT;
-    END IF;
-  END LOOP;
-
-  -- Get amount for tier + currency
+  -- Get amount for tier + checkout currency
   BEGIN
     v_amount_raw := (v_tier_config ->> v_currency)::NUMERIC;
   EXCEPTION WHEN OTHERS THEN
@@ -348,7 +313,7 @@ BEGIN
       'amount_minor', v_amount, 'currency_code', v_currency);
   END IF;
 
-  -- 11. source_ref already built in step 5 using provider_reference
+  -- 11. source_ref already built from provider_reference
 
   -- 12. Grant subscription_included allowance (expiry from payment evidence, not subscription table)
   v_grant_result := public.grant_messaging_allowance(
