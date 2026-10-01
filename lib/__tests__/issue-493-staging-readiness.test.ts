@@ -509,8 +509,19 @@ describe('POST /api/pay-link/pay — actual route', () => {
 describe('POST /api/pay-link/manage — actual route', () => {
   beforeEach(() => { vi.clearAllMocks(); vi.resetModules(); });
   it('active business creates link', async () => {
-    vi.doMock('@/lib/api-auth', () => ({ authenticateRequest: vi.fn().mockResolvedValue({ user:{id:'user-1'},businessId:'biz-1',service:{from:(t:string)=>{if(t==='payment_links') return{insert:()=>({select:()=>({single:()=>Promise.resolve({data:{id:'pl-1',token:'tk',title:'Link'},error:null})})})}; return dc(null)}} }) }));
+    vi.doMock('@/lib/api-auth', () => ({ authenticateRequest: vi.fn().mockResolvedValue({ user:{id:'user-1'},businessId:'biz-1',service:{from:(t:string)=>{if(t==='payment_links') return{insert:()=>({select:()=>({single:()=>Promise.resolve({data:{id:'pl-1',token:'tk',title:'Link'},error:null})})})}; if(t==='businesses') return dc({status:'active'}); return dc(null)}} }) }));
     const{POST}=await import('@/app/api/pay-link/manage/route');
     expect((await POST(makeReq('/m',{businessId:'biz-1',title:'Test',amount:5000}))).status).toBeLessThan(400);
+  });
+
+  it('pending business is denied with zero insert side effects', async () => {
+    const insertSpy = vi.fn();
+    vi.doMock('@/lib/api-auth', () => ({ authenticateRequest: vi.fn().mockResolvedValue({ user:{id:'user-1'},businessId:'biz-1',service:{from:(t:string)=>{if(t==='payment_links') return{insert:(...a:unknown[])=>{insertSpy(...a);return{select:()=>({single:()=>Promise.resolve({data:null,error:null})})}}}; if(t==='businesses') return dc({status:'pending'}); return dc(null)}} }) }));
+    const{POST}=await import('@/app/api/pay-link/manage/route');
+    const res = await POST(makeReq('/m',{businessId:'biz-1',title:'Test',amount:5000}));
+    expect(res.status).toBe(403);
+    const json = await res.json();
+    expect(json.reason).toBe('business_setup_incomplete');
+    expect(insertSpy).not.toHaveBeenCalled();
   });
 });

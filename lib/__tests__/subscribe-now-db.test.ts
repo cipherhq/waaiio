@@ -59,7 +59,8 @@ function createPaidTestBusiness(opts: {
   const countryCode = opts.countryCode || 'NG';
   const tier = opts.tier || 'free';
   const plan = opts.plan || 'growth';
-  const amount = opts.amount || 5000;
+  // M418: default amount derived from canonical countries.pricing authority
+  const amount = opts.amount ?? resolveCountryPriceSmallest(countryCode, plan);
   const currency = opts.currency || 'NGN';
   const gateway = opts.gateway || 'paystack';
   const billingInterval = opts.billingInterval || 'month';
@@ -92,12 +93,15 @@ function createPaidTestBusiness(opts: {
     psql(`UPDATE public.businesses SET whatsapp_channel_id = '${channelId}', wa_method = 'transfer' WHERE id = '${bizId}'`);
   }
 
+  // subscription.amount is in MAJOR units (matching production: Math.round(amountSmallest / 100))
+  // payment.amount is in MINOR/smallest units
+  const subAmountMajor = Math.round(amount / 100);
   const subId = psql(`
     INSERT INTO public.subscriptions (
       business_id, plan, status, amount, currency, gateway, billing_interval,
       current_period_start, current_period_end
     ) VALUES (
-      '${bizId}', '${plan}', 'pending', ${amount}, '${currency}', '${gateway}', '${billingInterval}',
+      '${bizId}', '${plan}', 'pending', ${subAmountMajor}, '${currency}', '${gateway}', '${billingInterval}',
       NOW(), NOW() + INTERVAL '30 days'
     ) RETURNING id;
   `);
@@ -148,6 +152,20 @@ function ensurePaidConfig(): string {
     VALUES (gen_random_uuid(), '${JSON.stringify(PAID_CONFIG).replace(/'/g, "''")}'::jsonb, ${ts}, NOW())
     RETURNING id;
   `);
+}
+
+/**
+ * M418: activate_paid_subscription now reads prices from countries.pricing
+ * (canonical pricing authority) instead of config_snapshot.pricing_tiers.
+ * Resolve the actual country price to use as the test payment amount.
+ */
+function resolveCountryPriceSmallest(countryCode: string, plan: string): number {
+  const raw = psql(`
+    SELECT COALESCE((pricing -> '${plan}' ->> 'price')::numeric, 0) FROM public.countries WHERE code = '${countryCode}'
+  `);
+  const val = parseFloat(raw);
+  // Fall back to 5000 for plans that don't exist in country pricing (e.g. 'enterprise')
+  return isNaN(val) || val <= 0 ? 5000 : Math.round(val * 100);
 }
 
 // ── Cleanup ─────────────────────────────────────────
@@ -540,7 +558,7 @@ describe.skipIf(!canRun)('adversarial authority proofs', () => {
           plan, action, status, config_version_id, provider_reference, period_start, period_end,
           billing_interval
         ) VALUES (
-          '${bizId}', '${subId}', 5000, 'NGN', 'paystack', 'renewal-ref-${Date.now()}',
+          '${bizId}', '${subId}', ${resolveCountryPriceSmallest('NG', 'growth')}, 'NGN', 'paystack', 'renewal-ref-${Date.now()}',
           'growth', 'renewal', 'success', '${configId}', 'renewal-prov-${Date.now()}',
           NOW() + INTERVAL '30 days', NOW() + INTERVAL '60 days', 'month'
         ) RETURNING id;
@@ -703,7 +721,7 @@ describe.skipIf(!canRun)('canonical field fail-closed proofs', () => {
           business_id, subscription_id, amount, currency, gateway, gateway_reference,
           plan, action, status, config_version_id, provider_reference, period_start, period_end
         ) VALUES (
-          '${bizId}', '${subId}', 5000, 'NGN', 'paystack', 'dup-ref-${Date.now()}',
+          '${bizId}', '${subId}', ${resolveCountryPriceSmallest('NG', 'growth')}, 'NGN', 'paystack', 'dup-ref-${Date.now()}',
           'growth', 'renewal', 'success', '${configId}', 'dup-prov-${Date.now()}',
           '${periodStart}', NOW() + INTERVAL '30 days'
         );
@@ -798,7 +816,7 @@ describe.skipIf(!canRun)('canonical field fail-closed proofs', () => {
           plan, action, status, config_version_id, provider_reference, period_start, period_end,
           billing_interval
         ) VALUES (
-          '${bizId}', '${subId}', 5000, 'NGN', 'paystack', 'dup-replay-${Date.now()}',
+          '${bizId}', '${subId}', ${resolveCountryPriceSmallest('NG', 'growth')}, 'NGN', 'paystack', 'dup-replay-${Date.now()}',
           'growth', 'renewal', 'success', '${configId}', 'dup-replay-prov-${Date.now()}',
           '${periodStart}', NOW() + INTERVAL '30 days', 'month'
         );

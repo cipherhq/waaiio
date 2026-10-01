@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { authenticateRequest } from '@/lib/api-auth';
+import { getPaymentLinkCreateDenial } from '@/lib/payments/payment-link-policy';
 
 /**
  * CRUD for payment links — auth required, business ownership verified.
@@ -51,6 +52,28 @@ export async function POST(request: NextRequest) {
   if (auth instanceof NextResponse) return auth;
 
   const { service, businessId } = auth;
+
+  // Creating a payment link is new customer/payment activity. Keep the same
+  // setup-complete safety boundary used by other create_new surfaces (#496).
+  // Ownership was already proven by authenticateRequest; this read is only for
+  // lifecycle state and uses the server-side client to fail closed.
+  const { data: business, error: businessError } = await service
+    .from('businesses')
+    .select('status')
+    .eq('id', businessId)
+    .single();
+
+  if (businessError || !business) {
+    return NextResponse.json({ error: 'Unable to verify business status' }, { status: 500 });
+  }
+
+  const lifecycleDenial = getPaymentLinkCreateDenial(business.status);
+  if (lifecycleDenial) {
+    return NextResponse.json(
+      { error: lifecycleDenial.message, reason: lifecycleDenial.reason },
+      { status: lifecycleDenial.status },
+    );
+  }
 
   const title = (body.title as string)?.trim();
   if (!title || title.length > 200) {

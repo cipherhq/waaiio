@@ -1465,6 +1465,38 @@ jobs:
           fi
           echo "✅ M408 platform_settings ACL tests complete — 6/6 passed, zero skips."
 
+      - name: "Issue #496 staging-blockers DB tests"
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/waaiio_test
+        run: |
+          echo "Running Issue #496 staging-blockers DB tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/issue-496-staging-blockers.test.ts --reporter=verbose 2>&1)
+          TEST_EXIT=$?
+          set -e
+          echo "$OUTPUT"
+          if [ $TEST_EXIT -ne 0 ]; then
+            echo "❌ Issue #496 tests exited with code $TEST_EXIT."
+            exit $TEST_EXIT
+          fi
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ Issue #496 tests had $SKIP_COUNT skipped. All must execute."
+              exit 1
+            fi
+          fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then
+            echo "❌ No Issue #496 tests passed."
+            exit 1
+          fi
+          echo "✅ Issue #496 staging-blockers DB tests complete — zero skips, zero failures."
+
       - name: "DB delta analysis (advisory)"
         env:
           PGHOST: localhost
@@ -2152,7 +2184,7 @@ jobs:
           CREATE SCHEMA IF NOT EXISTS auth;
           CREATE SCHEMA IF NOT EXISTS extensions;
           CREATE EXTENSION IF NOT EXISTS pgcrypto SCHEMA extensions;
-          CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $$ SELECT gen_random_uuid(); $$ LANGUAGE SQL STABLE;
+          CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $$ SELECT COALESCE(NULLIF(current_setting('request.jwt.claim.sub', true), ''), NULLIF(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub')::uuid; $$ LANGUAGE SQL STABLE;
           CREATE OR REPLACE FUNCTION auth.role() RETURNS TEXT AS $$ SELECT 'authenticated'::TEXT; $$ LANGUAGE SQL STABLE;
           CREATE TABLE IF NOT EXISTS auth.users (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), email TEXT, phone TEXT, raw_app_meta_data JSONB DEFAULT '{}');
           DO $$ BEGIN CREATE ROLE service_role NOLOGIN BYPASSRLS; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
@@ -3018,7 +3050,7 @@ jobs:
           CREATE SCHEMA IF NOT EXISTS extensions;
           CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
           CREATE EXTENSION IF NOT EXISTS pgcrypto SCHEMA extensions;
-          CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $$ SELECT '00000000-0000-0000-0000-000000000000'::UUID; $$ LANGUAGE SQL STABLE;
+          CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $$ SELECT COALESCE(NULLIF(current_setting('request.jwt.claim.sub', true), ''), NULLIF(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub')::uuid; $$ LANGUAGE SQL STABLE;
           CREATE OR REPLACE FUNCTION auth.role() RETURNS TEXT AS $$ SELECT 'authenticated'::TEXT; $$ LANGUAGE SQL STABLE;
           CREATE TABLE IF NOT EXISTS auth.users (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), email TEXT, phone TEXT, raw_app_meta_data JSONB DEFAULT '{}');
           DO $$ BEGIN CREATE ROLE service_role BYPASSRLS; EXCEPTION WHEN duplicate_object THEN NULL; END $$;

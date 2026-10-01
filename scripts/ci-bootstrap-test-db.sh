@@ -36,9 +36,12 @@ CREATE SCHEMA IF NOT EXISTS extensions;
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS pgcrypto SCHEMA extensions;
 
--- Minimal auth.uid() stub for RLS policies
+-- auth.uid() stub that reads JWT claims (mirrors Supabase production behavior)
 CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $$
-  SELECT '00000000-0000-0000-0000-000000000000'::UUID;
+  SELECT COALESCE(
+    NULLIF(current_setting('request.jwt.claim.sub', true), ''),
+    NULLIF(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub'
+  )::uuid;
 $$ LANGUAGE SQL STABLE;
 
 -- Minimal auth.role() stub
