@@ -133,6 +133,17 @@ describe.skipIf(!canRunDb)('B5: Tenant-level RLS on M417-affected tables', () =>
   let ownerB: string, bizB: string;
 
   beforeAll(() => {
+    // Restore claims-reading auth.uid() — prior CI test suites replace it
+    // with hardcoded UUIDs and never restore it (shared database, 58+ files).
+    psql(`
+      CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $$
+        SELECT COALESCE(
+          NULLIF(current_setting('request.jwt.claim.sub', true), ''),
+          NULLIF(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub'
+        )::uuid;
+      $$ LANGUAGE SQL STABLE;
+      GRANT EXECUTE ON FUNCTION auth.uid() TO authenticated, service_role, anon;
+    `);
     ({ ownerId: ownerA, bizId: bizA } = createTestOwnerAndBusiness());
     ({ ownerId: ownerB, bizId: bizB } = createTestOwnerAndBusiness());
   });
