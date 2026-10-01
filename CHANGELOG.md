@@ -3,6 +3,16 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-10-01 — platform_settings service_role UPDATE grant (#502)
+
+### What changed
+- **M420: GRANT UPDATE** (`supabase/migrations/420_platform_settings_service_role_update.sql`) — Grants service_role UPDATE on `platform_settings`. Root cause: `PUT /api/admin/site-announcement` uses `createServiceClient()` to update the `site_announcement` row, but service_role only had SELECT (from M408), not UPDATE. No INSERT/DELETE granted. No authenticated/anon grants. RLS preserved. Includes verification block.
+- **Tests** (`lib/__tests__/issue-502-platform-settings-acl.test.ts`) — 7 assertions: 5 DB ACL checks (service_role SELECT/UPDATE, anon no UPDATE, authenticated no UPDATE, RLS enabled) + 2 route-level mock tests (admin PUT succeeds, non-admin PUT denied).
+- **CI wiring** (`.github/workflows/ci.yml`) — Added M420 DB test step in shard a, after M419 step.
+
+### What could break
+- Nothing. This is a strictly additive privilege grant. The row already exists (seeded in M414). No existing behavior is changed.
+
 ## 2026-09-30 — P0 staging post-deploy blockers (#496)
 
 ### What changed
