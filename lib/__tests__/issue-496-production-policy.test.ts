@@ -1,6 +1,51 @@
 import { describe, expect, it } from 'vitest';
+import { requireCapability } from '@/lib/capabilities/api-guard';
 import { getPaymentLinkCreateDenial } from '@/lib/payments/payment-link-policy';
 import { resolveCountryGateway } from '@/lib/payments/gateway-resolver';
+
+describe('#496 Poll production create_new guard', () => {
+  it('denies a pending business through the exact requireCapability path used by POST /api/polls', async () => {
+    const pendingBusiness = {
+      id: '11111111-1111-4111-8111-111111111111',
+      status: 'pending',
+      subscription_tier: 'free',
+      trial_ends_at: null,
+      category: 'restaurant',
+    };
+
+    const supabase = {
+      from(table: string) {
+        expect(table).toBe('businesses');
+        return {
+          select(columns: string) {
+            expect(columns).toContain('status');
+            const chain = {
+              eq: () => chain,
+              maybeSingle: async () => ({ data: pendingBusiness, error: null }),
+            };
+            return chain;
+          },
+        };
+      },
+    } as never;
+
+    const result = await requireCapability(supabase, {} as never, {
+      businessId: pendingBusiness.id,
+      userId: '22222222-2222-4222-8222-222222222222',
+      capability: 'poll',
+      action: 'create_new',
+    });
+
+    expect(result).toMatchObject({
+      allowed: false,
+      status: 403,
+      denial: {
+        reason: 'business_setup_incomplete',
+        detail: 'complete_onboarding_first',
+      },
+    });
+  });
+});
 
 describe('#496 Scan-to-Pay lifecycle policy', () => {
   it('denies pending businesses before payment-link creation', () => {
