@@ -167,6 +167,14 @@ describe('Slice 0B — handleLaunchOptIn truthful persistence (#439)', () => {
             select: vi.fn(() => ({
               eq: vi.fn(() => ({
                 eq: vi.fn(() => ({
+                  eq: vi.fn(() => ({
+                    limit: vi.fn(() => ({
+                      maybeSingle: vi.fn(async () => ({
+                        data: { country_code: 'US' },
+                        error: null,
+                      })),
+                    })),
+                  })),
                   limit: vi.fn(() => ({
                     maybeSingle: vi.fn(async () => ({
                       data: { country_code: 'US' },
@@ -178,8 +186,13 @@ describe('Slice 0B — handleLaunchOptIn truthful persistence (#439)', () => {
             })),
           };
         }
-        // launch_subscribers
+        // launch_subscribers — select (existing check) + upsert
         return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              maybeSingle: vi.fn(async () => ({ data: null, error: null })),
+            })),
+          })),
           upsert: vi.fn(async () => ({
             error: upsertError,
           })),

@@ -43,11 +43,13 @@ export async function handleLaunchOptIn(
   // human-readable format). Fallback is restricted to shared+active channels.
   let market = 'XX'; // fallback
   if (destinationPhone) {
-    // Primary: match by Meta phone_number_id
+    // Primary: match by Meta phone_number_id (shared channels only —
+    // dedicated business channels must not be accepted for launch opt-in)
     const { data: channel } = await supabase
       .from('whatsapp_channels')
       .select('country_code')
       .eq('phone_number_id', destinationPhone)
+      .eq('channel_type', 'shared')
       .eq('is_active', true)
       .limit(1)
       .maybeSingle();
@@ -67,6 +69,13 @@ export async function handleLaunchOptIn(
       if (fallbackChannel?.country_code) market = fallbackChannel.country_code;
     }
   }
+
+  // Check existing subscriber state BEFORE upsert to determine the right message
+  const { data: existing } = await supabase
+    .from('launch_subscribers')
+    .select('id, opt_in_status')
+    .eq('wa_number', from)
+    .maybeSingle();
 
   // Upsert subscriber (idempotent on wa_number)
   const { error } = await supabase
@@ -92,10 +101,23 @@ export async function handleLaunchOptIn(
     return true;
   }
 
-  await sendReply(
-    from,
-    "🎉 You're in!\n\nWaaiio is launching soon and we'll message you right here when it's time.\n\nSoon you'll be able to book, order, pay, sell tickets, and get things done — all through WhatsApp.\n\nSee you at launch 🚀\n\n_Send STOP to unsubscribe._",
-  );
+  // State-aware confirmation messages
+  let message: string;
+  if (!existing) {
+    // New subscriber — first opt-in
+    message =
+      "🎉 You're in!\n\nWaaiio is launching soon and we'll message you right here when it's time.\n\nSoon you'll be able to book, order, pay, sell tickets, and get things done — all through WhatsApp.\n\nSee you at launch 🚀\n\n_Send STOP to unsubscribe._";
+  } else if (existing.opt_in_status === 'active') {
+    // Already-active subscriber — duplicate signup
+    message =
+      "You're already on our launch list! We'll let you know when we're ready. 🙌\n\n_Send STOP to unsubscribe._";
+  } else {
+    // Reactivated subscriber (was opted_out, now re-opted in)
+    message =
+      "Welcome back! 🎉 You're subscribed again. We'll keep you posted on our launch.\n\n_Send STOP to unsubscribe._";
+  }
+
+  await sendReply(from, message);
 
   return true;
 }

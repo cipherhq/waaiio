@@ -71,16 +71,20 @@ function buildChannelMock(opts: {
 
 /**
  * Builds a full Supabase mock for handleLaunchOptIn tests.
- * Intercepts both 'whatsapp_channels' (for market resolution) and
- * 'launch_subscribers' (for upsert).
+ * Intercepts 'whatsapp_channels' (for market resolution),
+ * 'launch_subscribers' SELECT (for existing state check), and
+ * 'launch_subscribers' upsert.
  */
 function buildOptInSupabase(opts: {
   channelPrimaryResult?: { country_code: string } | null;
   channelFallbackResult?: { country_code: string } | null;
   upsertFn?: ReturnType<typeof vi.fn>;
+  existingSubscriber?: { id: string; opt_in_status: string } | null;
 }) {
   const upsertFn = opts.upsertFn || vi.fn().mockResolvedValue({ error: null });
+  const existingSubscriber = opts.existingSubscriber ?? null;
   let channelCallCount = 0;
+  let subscriberSelectDone = false;
 
   return {
     from: vi.fn().mockImplementation((table: string) => {
@@ -108,7 +112,18 @@ function buildOptInSupabase(opts: {
           }),
         };
       }
-      // launch_subscribers
+      // launch_subscribers — first call is SELECT (existing check), subsequent is upsert
+      if (!subscriberSelectDone) {
+        subscriberSelectDone = true;
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              maybeSingle: vi.fn().mockResolvedValue({ data: existingSubscriber, error: null }),
+            }),
+          }),
+          upsert: upsertFn,
+        };
+      }
       return { upsert: upsertFn };
     }),
   };
@@ -371,6 +386,105 @@ describe('Issue #503: Launch opt-in — channel resolution by phone_number_id', 
     );
 
     expect(upsertArgs[0]).toMatchObject({ market: 'GB' });
+  });
+
+  // ── Blocker 1: Dedicated channel rejection ──
+
+  it('does not accept a dedicated channel phone_number_id for launch opt-in', async () => {
+    const upsertArgs: unknown[] = [];
+    const upsertFn = vi.fn().mockImplementation((data: unknown) => {
+      upsertArgs.push(data);
+      return Promise.resolve({ error: null });
+    });
+
+    // Simulate: a dedicated channel exists with matching phone_number_id,
+    // but the primary lookup requires channel_type='shared' so it should NOT match.
+    // Both primary and fallback return null (dedicated channel is invisible).
+    const sb = buildOptInSupabase({
+      channelPrimaryResult: null,   // shared filter excludes the dedicated channel
+      channelFallbackResult: null,  // no shared channel with this phone_number either
+      upsertFn,
+    });
+
+    const sendReply = vi.fn().mockResolvedValue(undefined);
+
+    const result = await handleLaunchOptIn(
+      sb as any,
+      '+14155551234',
+      'Notify me when Waaiio launches',
+      '999888',  // phone_number_id of a dedicated business channel
+      sendReply,
+    );
+
+    expect(result).toBe(true);
+    // Market should fall back to 'XX' because the dedicated channel was excluded
+    expect(upsertArgs[0]).toMatchObject({ market: 'XX' });
+  });
+
+  // ── Blocker 2: State-aware signup UX ──
+
+  it('new subscriber gets "You\'re in!" confirmation', async () => {
+    const sendReply = vi.fn().mockResolvedValue(undefined);
+    const sb = buildOptInSupabase({
+      channelPrimaryResult: { country_code: 'US' },
+      existingSubscriber: null,  // no existing row — new subscriber
+    });
+
+    await handleLaunchOptIn(
+      sb as any,
+      '+14155550001',
+      'Notify me when Waaiio launches',
+      '469075',
+      sendReply,
+    );
+
+    expect(sendReply).toHaveBeenCalledOnce();
+    const msg = sendReply.mock.calls[0][1];
+    expect(msg).toContain("You're in!");
+    expect(msg).toContain('STOP');
+  });
+
+  it('already-active subscriber gets "already on our launch list" message', async () => {
+    const sendReply = vi.fn().mockResolvedValue(undefined);
+    const sb = buildOptInSupabase({
+      channelPrimaryResult: { country_code: 'US' },
+      existingSubscriber: { id: 'sub-existing', opt_in_status: 'active' },
+    });
+
+    await handleLaunchOptIn(
+      sb as any,
+      '+14155550002',
+      'Notify me when Waaiio launches',
+      '469075',
+      sendReply,
+    );
+
+    expect(sendReply).toHaveBeenCalledOnce();
+    const msg = sendReply.mock.calls[0][1];
+    expect(msg).toContain('already on our launch list');
+    expect(msg).not.toContain("You're in!");
+  });
+
+  it('reactivated subscriber (after opt-out) gets "Welcome back" message', async () => {
+    const sendReply = vi.fn().mockResolvedValue(undefined);
+    const sb = buildOptInSupabase({
+      channelPrimaryResult: { country_code: 'US' },
+      existingSubscriber: { id: 'sub-reactivate', opt_in_status: 'opted_out' },
+    });
+
+    await handleLaunchOptIn(
+      sb as any,
+      '+14155550003',
+      'Notify me when Waaiio launches',
+      '469075',
+      sendReply,
+    );
+
+    expect(sendReply).toHaveBeenCalledOnce();
+    const msg = sendReply.mock.calls[0][1];
+    expect(msg).toContain('Welcome back');
+    expect(msg).toContain('subscribed again');
+    expect(msg).not.toContain("You're in!");
   });
 });
 
@@ -647,10 +761,13 @@ describe('Issue #503: Source file fix verification', () => {
     expect(fallbackIdx).toBeGreaterThan(primaryIdx);
   });
 
-  it('launch-optin.ts fallback is bounded to shared+active channels only', () => {
+  it('launch-optin.ts primary AND fallback are bounded to shared+active channels only', () => {
     const fs = require('fs');
     const src = fs.readFileSync('lib/bot/launch-optin.ts', 'utf-8');
-    // The fallback section should contain channel_type shared
+    // Both primary and fallback should contain channel_type shared
+    const sharedMatches = src.match(/channel_type.*shared/g) || [];
+    expect(sharedMatches.length).toBeGreaterThanOrEqual(2); // primary + fallback
+    // The fallback section should also contain is_active
     const fallbackSection = src.substring(src.indexOf('Bounded fallback'));
     expect(fallbackSection).toContain("'shared'");
     expect(fallbackSection).toContain("'is_active'");

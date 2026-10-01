@@ -3,17 +3,25 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
-## 2026-10-01 — Launch QR channel resolution fix (#503)
+## 2026-10-01 — CTO corrections: shared-only primary lookup + state-aware signup UX (#503)
 
-### What changed
+### What changed (CTO R2 corrections)
+- **launch-optin.ts** (`lib/bot/launch-optin.ts`) — Blocker 1: Added `channel_type='shared'` constraint to the PRIMARY phone_number_id lookup. Previously only the fallback had this constraint, meaning a dedicated business channel with a matching phone_number_id could be incorrectly accepted for launch opt-in.
+- **launch-optin.ts** (`lib/bot/launch-optin.ts`) — Blocker 2: State-aware signup UX. Before the upsert, checks if subscriber already exists and their opt_in_status. New subscriber gets "You're in!", already-active gets "Already on our launch list!", reactivated (was opted_out) gets "Welcome back!".
+- **Tests** (`lib/__tests__/issue-503-launch-channel-resolution.test.ts`) — 4 new tests: dedicated channel rejection, new subscriber message, already-active subscriber message, reactivated subscriber message. Total now 33.
+- **Tests** (`lib/__tests__/issue-395-launch-optin.test.ts`, `lib/__tests__/launch-integrity-439.test.ts`) — Updated mocks to handle the new subscriber SELECT query and the additional `channel_type='shared'` eq on primary lookup.
+
+### Previous changes (initial PR)
 - **launch-optin.ts** (`lib/bot/launch-optin.ts`) — Channel lookup changed from `.eq('phone_number', destinationPhone)` to `.eq('phone_number_id', destinationPhone)` with bounded fallback to `phone_number` (shared+active only). Root cause: Meta webhooks pass `phone_number_id` (numeric API identifier) as `destinationPhone`, but the code compared it against the human-readable `phone_number` column. They never matched, so market always defaulted to `'XX'`.
 - **delivery.ts** (`lib/launch/delivery.ts`) — `resolveChannelCredentials()` changed from `.eq('phone_number', receivingNumber)` to `.eq('phone_number_id', receivingNumber)` with same bounded fallback pattern. Without this fix, delivery would fail with `no_channel_credentials` for every subscriber.
 - **launch-integrity-439.test.ts** (`lib/__tests__/launch-integrity-439.test.ts`) — Updated assertion to expect `phone_number_id` in primary query filter (was `phone_number`).
-- **Tests** (`lib/__tests__/issue-503-launch-channel-resolution.test.ts`) — 25 tests: phone_number_id primary resolution, market not XX, idempotency, re-activation, delivery credential resolution, unknown destination safety, STOP behavior, no live Meta sends, fallback path, #397 safety preservation, source file verification.
+- **Tests** (`lib/__tests__/issue-503-launch-channel-resolution.test.ts`) — 29 tests: phone_number_id primary resolution, market not XX, idempotency, re-activation, delivery credential resolution, unknown destination safety, STOP behavior, no live Meta sends, fallback path, #397 safety preservation, source file verification.
 
 ### What could break
 - If any historical `launch_subscribers` rows have `receiving_number` stored as a human-readable phone number (e.g. `+12029226251`) instead of a Meta `phone_number_id`, the fallback query will handle them. Both primary and fallback require `channel_type='shared'` and `is_active=true`.
 - The `receiving_number` column in `launch_subscribers` stores whatever `destinationPhone` was at opt-in time. Going forward this will be the Meta `phone_number_id`.
+- Repeat signups no longer get the same "You're in!" message. Already-active subscribers see "already on our launch list" and reactivated subscribers see "Welcome back". This is intentional UX improvement.
+- The extra SELECT query before upsert adds one more DB round-trip per opt-in. Negligible for launch marketing volume.
 
 ## 2026-09-30 — P0 staging post-deploy blockers (#496)
 
