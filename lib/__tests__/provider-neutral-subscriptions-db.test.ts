@@ -47,6 +47,22 @@ function currentVersion(): string {
   return psql("SELECT id FROM platform_config_versions WHERE effective_from <= clock_timestamp() ORDER BY effective_from DESC LIMIT 1;").trim();
 }
 
+/**
+ * M418: activate_paid_subscription now reads prices from countries.pricing.
+ * Resolve the actual NG growth price at test time (may have been modified
+ * by earlier M377 tests in the same CI job).
+ */
+function resolveNGGrowthPrice(): { major: number; minor: number } {
+  const raw = psql("SELECT (pricing -> 'growth' ->> 'price')::numeric FROM countries WHERE code = 'NG';");
+  const major = parseFloat(raw);
+  return { major, minor: Math.round(major * 100) };
+}
+function resolveNGBusinessPrice(): { major: number; minor: number } {
+  const raw = psql("SELECT (pricing -> 'business' ->> 'price')::numeric FROM countries WHERE code = 'NG';");
+  const major = parseFloat(raw);
+  return { major, minor: Math.round(major * 100) };
+}
+
 /** Async psql for concurrent multi-session tests */
 function psqlAsync(sql: string, applicationName?: string): Promise<{ ok: boolean; result: string; error: string }> {
   return new Promise((resolve) => {
@@ -172,7 +188,7 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
   });
 
   it('7. authenticated role denied on claim_checkout_initialization', () => {
-    const r = psqlMayFail(`${adminContext(adminId)} SELECT claim_checkout_initialization('${testBizId}'::uuid, 'growth', 'flutterwave', 'NGN', 14999, '243206', '${currentVersion()}'::uuid, 'test@test.com'); RESET ROLE;`);
+    const r = psqlMayFail(`${adminContext(adminId)} SELECT claim_checkout_initialization('${testBizId}'::uuid, 'growth', 'flutterwave', 'NGN', ${resolveNGGrowthPrice().major}, '243206', '${currentVersion()}'::uuid, 'test@test.com'); RESET ROLE;`);
     expect(r).toContain('permission denied');
   });
 
@@ -235,7 +251,7 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
 
   it('15. claim_checkout_initialization creates intent with valid idempotency key and actor', () => {
     const ver = currentVersion();
-    const r = psql(`SELECT intent_id, is_claimed, idempotency_key FROM claim_checkout_initialization('${testBizId}'::uuid, 'growth', 'flutterwave', 'NGN', 14999, '243206', '${ver}'::uuid, 'test@m378.com', 30, '${testUserId}'::uuid);`);
+    const r = psql(`SELECT intent_id, is_claimed, idempotency_key FROM claim_checkout_initialization('${testBizId}'::uuid, 'growth', 'flutterwave', 'NGN', ${resolveNGGrowthPrice().major}, '243206', '${ver}'::uuid, 'test@m378.com', 30, '${testUserId}'::uuid);`);
     const [intentId, isClaimed, idemKey] = r.split('|');
     expect(intentId).toBeTruthy();
     expect(isClaimed).toBe('t');
@@ -252,7 +268,7 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
 
   it('16. persist_checkout_provider_response sets provider_timeout_not_before via DB clock', () => {
     const ver = currentVersion();
-    const r = psql(`SELECT intent_id, idempotency_key FROM claim_checkout_initialization('${testBizId}'::uuid, 'growth', 'flutterwave', 'NGN', 14999, '243206', '${ver}'::uuid, 'test2@m378.com', 30, '${testUserId}'::uuid);`);
+    const r = psql(`SELECT intent_id, idempotency_key FROM claim_checkout_initialization('${testBizId}'::uuid, 'growth', 'flutterwave', 'NGN', ${resolveNGGrowthPrice().major}, '243206', '${ver}'::uuid, 'test2@m378.com', 30, '${testUserId}'::uuid);`);
     const [intentId, idemKey] = r.split('|');
     psql(`SELECT persist_checkout_provider_response('${intentId}'::uuid, 'https://flw.test/pay', '${idemKey}');`);
     const diffMin = psql(`SELECT EXTRACT(EPOCH FROM (provider_timeout_not_before - clock_timestamp())) / 60 FROM subscription_checkout_intents WHERE id='${intentId}'::uuid;`);
@@ -333,10 +349,10 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
   it('22. renewal rejects NULL provider_paid_at', () => {
     const subId = psql(`
       INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval, billing_config_version_id, current_period_start, current_period_end)
-      VALUES (gen_random_uuid(), '${testBizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month', '${currentVersion()}'::uuid, clock_timestamp(), clock_timestamp() + interval '30 days')
+      VALUES (gen_random_uuid(), '${testBizId}', 'growth', 'active', 'flutterwave', 'NGN', ${resolveNGGrowthPrice().major}, 'month', '${currentVersion()}'::uuid, clock_timestamp(), clock_timestamp() + interval '30 days')
       RETURNING id::text;
     `);
-    const r = psqlMayFail(`SELECT finalize_flutterwave_subscription_renewal('${subId}'::uuid, 'tx_null_test', 1499900, 'NGN', NULL);`);
+    const r = psqlMayFail(`SELECT finalize_flutterwave_subscription_renewal('${subId}'::uuid, 'tx_null_test', ${resolveNGGrowthPrice().minor}, 'NGN', NULL);`);
     expect(r).toContain('must not be NULL');
     psql(`DELETE FROM subscriptions WHERE id='${subId}'::uuid;`);
   });
@@ -344,10 +360,10 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
   it('23. renewal rejects out-of-order provider timestamp', () => {
     const subId = psql(`
       INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval, billing_config_version_id, current_period_start, current_period_end)
-      VALUES (gen_random_uuid(), '${testBizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month', '${currentVersion()}'::uuid, '2026-09-01'::timestamptz, '2026-10-01'::timestamptz)
+      VALUES (gen_random_uuid(), '${testBizId}', 'growth', 'active', 'flutterwave', 'NGN', ${resolveNGGrowthPrice().major}, 'month', '${currentVersion()}'::uuid, '2026-09-01'::timestamptz, '2026-10-01'::timestamptz)
       RETURNING id::text;
     `);
-    const r = psqlMayFail(`SELECT finalize_flutterwave_subscription_renewal('${subId}'::uuid, 'tx_old', 1499900, 'NGN', '2026-08-15'::timestamptz);`);
+    const r = psqlMayFail(`SELECT finalize_flutterwave_subscription_renewal('${subId}'::uuid, 'tx_old', ${resolveNGGrowthPrice().minor}, 'NGN', '2026-08-15'::timestamptz);`);
     expect(r).toContain('out-of-order');
     psql(`DELETE FROM subscriptions WHERE id='${subId}'::uuid;`);
   });
@@ -357,7 +373,7 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
   it('24. finalize_subscription_cancellation is idempotent', () => {
     const subId = psql(`
       INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval, current_period_start, current_period_end)
-      VALUES (gen_random_uuid(), '${testBizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month', clock_timestamp(), clock_timestamp() + interval '30 days')
+      VALUES (gen_random_uuid(), '${testBizId}', 'growth', 'active', 'flutterwave', 'NGN', ${resolveNGGrowthPrice().major}, 'month', clock_timestamp(), clock_timestamp() + interval '30 days')
       RETURNING id::text;
     `);
     // First cancellation
@@ -397,9 +413,9 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
 
   it('26. finalize_checkout rejects NULL provider_paid_at', () => {
     const ver = currentVersion();
-    const r1 = psql(`SELECT intent_id FROM claim_checkout_initialization('${testBizId}'::uuid, 'growth', 'flutterwave', 'NGN', 14999, '243206', '${ver}'::uuid, 'test-fin@m378.com', 30, '${testUserId}'::uuid);`);
+    const r1 = psql(`SELECT intent_id FROM claim_checkout_initialization('${testBizId}'::uuid, 'growth', 'flutterwave', 'NGN', ${resolveNGGrowthPrice().major}, '243206', '${ver}'::uuid, 'test-fin@m378.com', 30, '${testUserId}'::uuid);`);
     const intentId = r1.split('|')[0];
-    const r = psqlMayFail(`SELECT finalize_flutterwave_subscription_checkout('${intentId}'::uuid, 'tx_1', 'sub_1', 10944, 1499900, 'NGN', NULL);`);
+    const r = psqlMayFail(`SELECT finalize_flutterwave_subscription_checkout('${intentId}'::uuid, 'tx_1', 'sub_1', 10944, ${resolveNGGrowthPrice().minor}, 'NGN', NULL);`);
     expect(r).toContain('must not be NULL');
     psql(`DELETE FROM subscription_checkout_intents WHERE id='${intentId}'::uuid;`);
   });
@@ -411,7 +427,10 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
   // Seed config with pricing_tiers + messaging_pricing so M375 can validate amounts
   it('27-pre. seed pricing_tiers and messaging config for M375 validation', () => {
     // pricing_tiers is individually mutable — add 'price' fields needed by M375
-    psql(`${adminContext(adminId)} SELECT save_commercial_config('pricing_tiers', '{"free":{"feePercentage":2.5,"feeFlat":0.5,"maxBookings":50,"whitelabel":false,"price":0},"growth":{"feePercentage":1.5,"feeFlat":0.25,"maxBookings":500,"whitelabel":false,"price":14999},"business":{"feePercentage":1.0,"feeFlat":0.25,"maxBookings":999999999,"whitelabel":true,"price":39999}}'::jsonb); RESET ROLE;`);
+    // M418: pricing_tiers in config snapshot must match actual countries.pricing
+    const ngGrowth = resolveNGGrowthPrice().major;
+    const ngBusiness = resolveNGBusinessPrice().major;
+    psql(`${adminContext(adminId)} SELECT save_commercial_config('pricing_tiers', '{"free":{"feePercentage":2.5,"feeFlat":0.5,"maxBookings":50,"whitelabel":false,"price":0},"growth":{"feePercentage":1.5,"feeFlat":0.25,"maxBookings":500,"whitelabel":false,"price":${ngGrowth}},"business":{"feePercentage":1.0,"feeFlat":0.25,"maxBookings":999999999,"whitelabel":true,"price":${ngBusiness}}}'::jsonb); RESET ROLE;`);
 
     // messaging_pricing, trial_credit, subscription_included are bundle-only keys —
     // save_market_messaging_config requires ALL active markets to be included.
@@ -444,7 +463,7 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
 
     // Verify the config snapshot now has pricing_tiers.growth.price
     const price = psql(`SELECT config_snapshot->'pricing_tiers'->'growth'->>'price' FROM platform_config_versions WHERE effective_from <= clock_timestamp() ORDER BY effective_from DESC LIMIT 1;`);
-    expect(price).toBe('14999');
+    expect(price).toBe(String(resolveNGGrowthPrice().major));
   });
 
   // ── M375 success through finalizer ──
@@ -452,11 +471,11 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
   it('27. successful initial finalizer through M375 — subscription activated + tier upgraded', () => {
     const ver = currentVersion();
     // Create intent
-    const r1 = psql(`SELECT intent_id, idempotency_key FROM claim_checkout_initialization('${testBizId}'::uuid, 'growth', 'flutterwave', 'NGN', 14999, '243206', '${ver}'::uuid, 'test-m375@m378.com', 30, '${testUserId}'::uuid);`);
+    const r1 = psql(`SELECT intent_id, idempotency_key FROM claim_checkout_initialization('${testBizId}'::uuid, 'growth', 'flutterwave', 'NGN', ${resolveNGGrowthPrice().major}, '243206', '${ver}'::uuid, 'test-m375@m378.com', 30, '${testUserId}'::uuid);`);
     const [intentId, idemKey] = r1.split('|');
 
     // Finalize with valid data
-    const finResult = psql(`SELECT finalize_flutterwave_subscription_checkout('${intentId}'::uuid, 'tx_m375_ok', 'sub_m375_ok', 10944, 1499900, 'NGN', '2026-09-12T10:00:00Z'::timestamptz);`);
+    const finResult = psql(`SELECT finalize_flutterwave_subscription_checkout('${intentId}'::uuid, 'tx_m375_ok', 'sub_m375_ok', 10944, ${resolveNGGrowthPrice().minor}, 'NGN', '2026-09-12T10:00:00Z'::timestamptz);`);
     expect(finResult).toContain('"finalized": true');
 
     // Subscription is active
@@ -488,7 +507,7 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
       RETURNING id::text;
     `);
     const ver = currentVersion();
-    const r1 = psql(`SELECT intent_id FROM claim_checkout_initialization('${rejBizId}'::uuid, 'growth', 'flutterwave', 'NGN', 14999, '243206', '${ver}'::uuid, 'test-rej@m378.com', 30, '${testUserId}'::uuid);`);
+    const r1 = psql(`SELECT intent_id FROM claim_checkout_initialization('${rejBizId}'::uuid, 'growth', 'flutterwave', 'NGN', ${resolveNGGrowthPrice().major}, '243206', '${ver}'::uuid, 'test-rej@m378.com', 30, '${testUserId}'::uuid);`);
     const intentId = r1.split('|')[0];
 
     // Cause finalizer exception via amount mismatch — this RAISES EXCEPTION inside the
@@ -518,17 +537,17 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
 
   it('29. exact same provider tx → idempotent (no duplicate payment)', () => {
     const ver = currentVersion();
-    const r1 = psql(`SELECT intent_id FROM claim_checkout_initialization('${testBizId}'::uuid, 'growth', 'flutterwave', 'NGN', 14999, '243206', '${ver}'::uuid, 'test-idem@m378.com', 30, '${testUserId}'::uuid);`);
+    const r1 = psql(`SELECT intent_id FROM claim_checkout_initialization('${testBizId}'::uuid, 'growth', 'flutterwave', 'NGN', ${resolveNGGrowthPrice().major}, '243206', '${ver}'::uuid, 'test-idem@m378.com', 30, '${testUserId}'::uuid);`);
     const intentId = r1.split('|')[0];
 
     // First finalization — succeeds
-    const fin1 = psql(`SELECT finalize_flutterwave_subscription_checkout('${intentId}'::uuid, 'tx_idem_exact', 'sub_idem', 10944, 1499900, 'NGN', '2026-09-12T11:00:00Z'::timestamptz);`);
+    const fin1 = psql(`SELECT finalize_flutterwave_subscription_checkout('${intentId}'::uuid, 'tx_idem_exact', 'sub_idem', 10944, ${resolveNGGrowthPrice().minor}, 'NGN', '2026-09-12T11:00:00Z'::timestamptz);`);
     expect(fin1).toContain('"finalized": true');
 
     // Second finalization with SAME tx — idempotent
     // Need a new intent for the same business (the first is now completed)
     // Actually, the completed intent returns idempotent too
-    const fin2 = psql(`SELECT finalize_flutterwave_subscription_checkout('${intentId}'::uuid, 'tx_idem_exact', 'sub_idem', 10944, 1499900, 'NGN', '2026-09-12T11:00:00Z'::timestamptz);`);
+    const fin2 = psql(`SELECT finalize_flutterwave_subscription_checkout('${intentId}'::uuid, 'tx_idem_exact', 'sub_idem', 10944, ${resolveNGGrowthPrice().minor}, 'NGN', '2026-09-12T11:00:00Z'::timestamptz);`);
     expect(fin2).toContain('"idempotent": true');
 
     // Still only one payment
@@ -551,19 +570,19 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
     const ver = currentVersion();
 
     // First intent + finalization — creates subscription with a period_start
-    const r1 = psql(`SELECT intent_id FROM claim_checkout_initialization('${conflictBizId}'::uuid, 'growth', 'flutterwave', 'NGN', 14999, '243206', '${ver}'::uuid, 'conflict@m378.com', 30, '${testUserId}'::uuid);`);
+    const r1 = psql(`SELECT intent_id FROM claim_checkout_initialization('${conflictBizId}'::uuid, 'growth', 'flutterwave', 'NGN', ${resolveNGGrowthPrice().major}, '243206', '${ver}'::uuid, 'conflict@m378.com', 30, '${testUserId}'::uuid);`);
     const intentId1 = r1.split('|')[0];
-    const fin1 = psql(`SELECT finalize_flutterwave_subscription_checkout('${intentId1}'::uuid, 'tx_period_a', 'sub_period', 10944, 1499900, 'NGN', '2026-09-12T12:00:00Z'::timestamptz);`);
+    const fin1 = psql(`SELECT finalize_flutterwave_subscription_checkout('${intentId1}'::uuid, 'tx_period_a', 'sub_period', 10944, ${resolveNGGrowthPrice().minor}, 'NGN', '2026-09-12T12:00:00Z'::timestamptz);`);
     expect(fin1).toContain('"finalized": true');
 
     // Create a SECOND fresh intent directly (not via replace, since the first is completed)
     // Clean up old intent's pending status first — it's completed so claim will create new
-    const r2 = psql(`SELECT intent_id FROM claim_checkout_initialization('${conflictBizId}'::uuid, 'growth', 'flutterwave', 'NGN', 14999, '243206', '${ver}'::uuid, 'conflict2@m378.com', 30, '${testUserId}'::uuid);`);
+    const r2 = psql(`SELECT intent_id FROM claim_checkout_initialization('${conflictBizId}'::uuid, 'growth', 'flutterwave', 'NGN', ${resolveNGGrowthPrice().major}, '243206', '${ver}'::uuid, 'conflict2@m378.com', 30, '${testUserId}'::uuid);`);
     const intentId2 = r2.split('|')[0];
     expect(intentId2).toBeTruthy();
 
     // Finalize with DIFFERENT tx but same period_start → quarantine
-    const fin2 = psql(`SELECT finalize_flutterwave_subscription_checkout('${intentId2}'::uuid, 'tx_period_b', 'sub_period2', 10944, 1499900, 'NGN', '2026-09-12T12:00:00Z'::timestamptz);`);
+    const fin2 = psql(`SELECT finalize_flutterwave_subscription_checkout('${intentId2}'::uuid, 'tx_period_b', 'sub_period2', 10944, ${resolveNGGrowthPrice().minor}, 'NGN', '2026-09-12T12:00:00Z'::timestamptz);`);
     expect(fin2).toContain('"quarantine": true');
     expect(fin2).toContain('period_conflict');
 
@@ -595,7 +614,7 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
 
     // Renew — period must advance past current_period_end
     const currentEnd = psql(`SELECT current_period_end::text FROM subscriptions WHERE id='${subId}'::uuid;`);
-    const renewResult = psql(`SELECT finalize_flutterwave_subscription_renewal('${subId}'::uuid, 'tx_renewal_pinned', 1499900, 'NGN', '${currentEnd}'::timestamptz);`);
+    const renewResult = psql(`SELECT finalize_flutterwave_subscription_renewal('${subId}'::uuid, 'tx_renewal_pinned', ${resolveNGGrowthPrice().minor}, 'NGN', '${currentEnd}'::timestamptz);`);
     expect(renewResult).toContain('"finalized": true');
 
     // Renewal payment has the same config_version_id as the subscription
@@ -619,12 +638,12 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
     `);
 
     // First claim succeeds
-    const r1 = psql(`SELECT intent_id, is_claimed FROM claim_checkout_initialization('${concBizId}'::uuid, 'growth', 'flutterwave', 'NGN', 14999, '243206', '${ver}'::uuid, 'conc@m378.com', 30, '${testUserId}'::uuid);`);
+    const r1 = psql(`SELECT intent_id, is_claimed FROM claim_checkout_initialization('${concBizId}'::uuid, 'growth', 'flutterwave', 'NGN', ${resolveNGGrowthPrice().major}, '243206', '${ver}'::uuid, 'conc@m378.com', 30, '${testUserId}'::uuid);`);
     const [intentId1, claimed1] = r1.split('|');
     expect(claimed1).toBe('t');
 
     // Second claim for same (business, plan, gateway) — returns existing intent (not claimed, since recent)
-    const r2 = psql(`SELECT intent_id, is_claimed FROM claim_checkout_initialization('${concBizId}'::uuid, 'growth', 'flutterwave', 'NGN', 14999, '243206', '${ver}'::uuid, 'conc@m378.com', 30, '${testUserId}'::uuid);`);
+    const r2 = psql(`SELECT intent_id, is_claimed FROM claim_checkout_initialization('${concBizId}'::uuid, 'growth', 'flutterwave', 'NGN', ${resolveNGGrowthPrice().major}, '243206', '${ver}'::uuid, 'conc@m378.com', 30, '${testUserId}'::uuid);`);
     const [intentId2, claimed2] = r2.split('|');
     // Same intent returned — partial unique index ensures only one pending
     expect(intentId2).toBe(intentId1);
@@ -648,11 +667,11 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
     `);
 
     // Initial claim
-    const r1 = psql(`SELECT intent_id FROM claim_checkout_initialization('${replBizId}'::uuid, 'growth', 'flutterwave', 'NGN', 14999, '243206', '${ver}'::uuid, 'repl-conc@m378.com', 30, '${testUserId}'::uuid);`);
+    const r1 = psql(`SELECT intent_id FROM claim_checkout_initialization('${replBizId}'::uuid, 'growth', 'flutterwave', 'NGN', ${resolveNGGrowthPrice().major}, '243206', '${ver}'::uuid, 'repl-conc@m378.com', 30, '${testUserId}'::uuid);`);
     const oldIntentId = r1.split('|')[0];
 
     // Replace (marks old as failed, creates new)
-    const r2 = psql(`SELECT intent_id FROM replace_terminal_checkout_intent('${oldIntentId}'::uuid, '${replBizId}'::uuid, 'growth', 'flutterwave', 'NGN', 14999, '243206', '${ver}'::uuid, 'repl-conc@m378.com', 30, '${testUserId}'::uuid);`);
+    const r2 = psql(`SELECT intent_id FROM replace_terminal_checkout_intent('${oldIntentId}'::uuid, '${replBizId}'::uuid, 'growth', 'flutterwave', 'NGN', ${resolveNGGrowthPrice().major}, '243206', '${ver}'::uuid, 'repl-conc@m378.com', 30, '${testUserId}'::uuid);`);
     const newIntentId = r2.split('|')[0];
     expect(newIntentId).not.toBe(oldIntentId);
 
@@ -661,7 +680,7 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
     expect(psql(`SELECT status FROM subscription_checkout_intents WHERE id='${newIntentId}'::uuid;`)).toBe('pending');
 
     // Try to replace again (old already failed) — should return existing pending intent
-    const r3 = psql(`SELECT intent_id FROM replace_terminal_checkout_intent('${oldIntentId}'::uuid, '${replBizId}'::uuid, 'growth', 'flutterwave', 'NGN', 14999, '243206', '${ver}'::uuid, 'repl-conc@m378.com', 30, '${testUserId}'::uuid);`);
+    const r3 = psql(`SELECT intent_id FROM replace_terminal_checkout_intent('${oldIntentId}'::uuid, '${replBizId}'::uuid, 'growth', 'flutterwave', 'NGN', ${resolveNGGrowthPrice().major}, '243206', '${ver}'::uuid, 'repl-conc@m378.com', 30, '${testUserId}'::uuid);`);
     const dupIntentId = r3.split('|')[0];
     // Returns the existing pending intent — no duplicate created
     expect(dupIntentId).toBe(newIntentId);
@@ -686,13 +705,13 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
     const periodEnd = psql(`SELECT current_period_end::text FROM subscriptions WHERE id='${subId}'::uuid;`);
 
     // First renewal succeeds
-    const ren1 = psql(`SELECT finalize_flutterwave_subscription_renewal('${subId}'::uuid, 'tx_dup_ren_1', 1499900, 'NGN', '${periodEnd}'::timestamptz);`);
+    const ren1 = psql(`SELECT finalize_flutterwave_subscription_renewal('${subId}'::uuid, 'tx_dup_ren_1', ${resolveNGGrowthPrice().minor}, 'NGN', '${periodEnd}'::timestamptz);`);
     expect(ren1).toContain('"finalized": true');
 
     // Second renewal with DIFFERENT tx for same period_start → quarantine
     const newPeriodEnd = psql(`SELECT current_period_end::text FROM subscriptions WHERE id='${subId}'::uuid;`);
     // Use the same period_start as the first renewal (which is the old period_end)
-    const ren2 = psql(`SELECT finalize_flutterwave_subscription_renewal('${subId}'::uuid, 'tx_dup_ren_2', 1499900, 'NGN', '${periodEnd}'::timestamptz);`);
+    const ren2 = psql(`SELECT finalize_flutterwave_subscription_renewal('${subId}'::uuid, 'tx_dup_ren_2', ${resolveNGGrowthPrice().minor}, 'NGN', '${periodEnd}'::timestamptz);`);
     expect(ren2).toContain('"quarantine": true');
 
     // Only one successful payment for that period
@@ -711,11 +730,11 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
     const periodEnd = psql(`SELECT current_period_end::text FROM subscriptions WHERE id='${subId}'::uuid;`);
 
     // First renewal
-    const ren1 = psql(`SELECT finalize_flutterwave_subscription_renewal('${subId}'::uuid, 'tx_ren_idem', 1499900, 'NGN', '${periodEnd}'::timestamptz);`);
+    const ren1 = psql(`SELECT finalize_flutterwave_subscription_renewal('${subId}'::uuid, 'tx_ren_idem', ${resolveNGGrowthPrice().minor}, 'NGN', '${periodEnd}'::timestamptz);`);
     expect(ren1).toContain('"finalized": true');
 
     // Same tx again → idempotent
-    const ren2 = psql(`SELECT finalize_flutterwave_subscription_renewal('${subId}'::uuid, 'tx_ren_idem', 1499900, 'NGN', '${periodEnd}'::timestamptz);`);
+    const ren2 = psql(`SELECT finalize_flutterwave_subscription_renewal('${subId}'::uuid, 'tx_ren_idem', ${resolveNGGrowthPrice().minor}, 'NGN', '${periodEnd}'::timestamptz);`);
     expect(ren2).toContain('"idempotent": true');
 
     // Only one payment
@@ -740,14 +759,14 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
     expect(v2).not.toBe(v1);
 
     // Attempt claim with stale V1 — must be rejected
-    const staleResult = psqlMayFail(`SELECT claim_checkout_initialization('${casBizId}'::uuid, 'growth', 'flutterwave', 'NGN', 14999, '243206', '${v1}'::uuid, 'cas@m378.com', 30, '${testUserId}'::uuid);`);
+    const staleResult = psqlMayFail(`SELECT claim_checkout_initialization('${casBizId}'::uuid, 'growth', 'flutterwave', 'NGN', ${resolveNGGrowthPrice().major}, '243206', '${v1}'::uuid, 'cas@m378.com', 30, '${testUserId}'::uuid);`);
     expect(staleResult).toContain('config_version_conflict');
 
     // Zero intent created
     expect(psql(`SELECT count(*) FROM subscription_checkout_intents WHERE business_id='${casBizId}'::uuid;`)).toBe('0');
 
     // Fresh V2 claim succeeds
-    const freshResult = psql(`SELECT intent_id, is_claimed FROM claim_checkout_initialization('${casBizId}'::uuid, 'growth', 'flutterwave', 'NGN', 14999, '243206', '${v2}'::uuid, 'cas@m378.com', 30, '${testUserId}'::uuid);`);
+    const freshResult = psql(`SELECT intent_id, is_claimed FROM claim_checkout_initialization('${casBizId}'::uuid, 'growth', 'flutterwave', 'NGN', ${resolveNGGrowthPrice().major}, '243206', '${v2}'::uuid, 'cas@m378.com', 30, '${testUserId}'::uuid);`);
     const [intentId, claimed] = freshResult.split('|');
     expect(claimed).toBe('t');
     expect(intentId).toBeTruthy();
@@ -784,7 +803,7 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
     const bt = setupBarrierTable();
 
     // Launch two contestant sessions — each registers at barrier, waits for the other, then claims
-    const claimOp = `SELECT intent_id, is_claimed FROM claim_checkout_initialization('${concBizId}'::uuid, 'growth', 'flutterwave', 'NGN', 14999, '243206', '${ver}'::uuid, 'detconc@m378.com', 30, '${testUserId}'::uuid);`;
+    const claimOp = `SELECT intent_id, is_claimed FROM claim_checkout_initialization('${concBizId}'::uuid, 'growth', 'flutterwave', 'NGN', ${resolveNGGrowthPrice().major}, '243206', '${ver}'::uuid, 'detconc@m378.com', 30, '${testUserId}'::uuid);`;
     const [s1, s2] = await Promise.all([
       psqlAsync(barrieredSql(bt, 'A', 2, claimOp)),
       psqlAsync(barrieredSql(bt, 'B', 2, claimOp)),
@@ -817,13 +836,13 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
     `);
 
     // Create initial intent to replace
-    const r1 = psql(`SELECT intent_id FROM claim_checkout_initialization('${replBizId}'::uuid, 'growth', 'flutterwave', 'NGN', 14999, '243206', '${ver}'::uuid, 'detrepl@m378.com', 30, '${testUserId}'::uuid);`);
+    const r1 = psql(`SELECT intent_id FROM claim_checkout_initialization('${replBizId}'::uuid, 'growth', 'flutterwave', 'NGN', ${resolveNGGrowthPrice().major}, '243206', '${ver}'::uuid, 'detrepl@m378.com', 30, '${testUserId}'::uuid);`);
     const oldIntentId = r1.split('|')[0];
 
     const bt = setupBarrierTable();
 
     // Launch two contestant replacement sessions
-    const replOp = `SELECT intent_id FROM replace_terminal_checkout_intent('${oldIntentId}'::uuid, '${replBizId}'::uuid, 'growth', 'flutterwave', 'NGN', 14999, '243206', '${ver}'::uuid, 'detrepl@m378.com', 30, '${testUserId}'::uuid);`;
+    const replOp = `SELECT intent_id FROM replace_terminal_checkout_intent('${oldIntentId}'::uuid, '${replBizId}'::uuid, 'growth', 'flutterwave', 'NGN', ${resolveNGGrowthPrice().major}, '243206', '${ver}'::uuid, 'detrepl@m378.com', 30, '${testUserId}'::uuid);`;
     const [s1, s2] = await Promise.all([
       psqlAsync(barrieredSql(bt, 'A', 2, replOp)),
       psqlAsync(barrieredSql(bt, 'B', 2, replOp)),
@@ -856,9 +875,9 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
       RETURNING id::text;
     `);
     const ver = currentVersion();
-    const cr = psql(`SELECT intent_id FROM claim_checkout_initialization('${renBizId}'::uuid, 'growth', 'flutterwave', 'NGN', 14999, '243206', '${ver}'::uuid, 'detren@m378.com', 30, '${testUserId}'::uuid);`);
+    const cr = psql(`SELECT intent_id FROM claim_checkout_initialization('${renBizId}'::uuid, 'growth', 'flutterwave', 'NGN', ${resolveNGGrowthPrice().major}, '243206', '${ver}'::uuid, 'detren@m378.com', 30, '${testUserId}'::uuid);`);
     const intentId = cr.split('|')[0];
-    psql(`SELECT finalize_flutterwave_subscription_checkout('${intentId}'::uuid, 'tx_det_setup', 'sub_det_setup', 10944, 1499900, 'NGN', '2026-09-12T20:00:00Z'::timestamptz);`);
+    psql(`SELECT finalize_flutterwave_subscription_checkout('${intentId}'::uuid, 'tx_det_setup', 'sub_det_setup', 10944, ${resolveNGGrowthPrice().minor}, 'NGN', '2026-09-12T20:00:00Z'::timestamptz);`);
 
     const subId = psql(`SELECT id::text FROM subscriptions WHERE business_id='${renBizId}'::uuid AND gateway='flutterwave' LIMIT 1;`);
     const periodEnd = psql(`SELECT current_period_end::text FROM subscriptions WHERE id='${subId}'::uuid;`);
@@ -868,9 +887,9 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
     // Launch two contestant renewal sessions with DIFFERENT tx refs for SAME period
     const [s1, s2] = await Promise.all([
       psqlAsync(barrieredSql(bt, 'A', 2,
-        `SELECT finalize_flutterwave_subscription_renewal('${subId}'::uuid, 'tx_det_ren_A', 1499900, 'NGN', '${periodEnd}'::timestamptz);`)),
+        `SELECT finalize_flutterwave_subscription_renewal('${subId}'::uuid, 'tx_det_ren_A', ${resolveNGGrowthPrice().minor}, 'NGN', '${periodEnd}'::timestamptz);`)),
       psqlAsync(barrieredSql(bt, 'B', 2,
-        `SELECT finalize_flutterwave_subscription_renewal('${subId}'::uuid, 'tx_det_ren_B', 1499900, 'NGN', '${periodEnd}'::timestamptz);`)),
+        `SELECT finalize_flutterwave_subscription_renewal('${subId}'::uuid, 'tx_det_ren_B', ${resolveNGGrowthPrice().minor}, 'NGN', '${periodEnd}'::timestamptz);`)),
     ]);
 
     expect(s1.ok).toBe(true);
@@ -915,7 +934,7 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
 
   it('40. terminalize recent pending (within timeout) returns not_stale', () => {
     const ver = currentVersion();
-    const r = psql(`SELECT intent_id FROM claim_checkout_initialization('${testBizId}'::uuid, 'growth', 'flutterwave', 'NGN', 14999, '243206', '${ver}'::uuid, 't40@m380.com', 30, '${testUserId}'::uuid);`);
+    const r = psql(`SELECT intent_id FROM claim_checkout_initialization('${testBizId}'::uuid, 'growth', 'flutterwave', 'NGN', ${resolveNGGrowthPrice().major}, '243206', '${ver}'::uuid, 't40@m380.com', 30, '${testUserId}'::uuid);`);
     const intentId = r.split('|')[0];
     // Set provider_timeout_not_before to 1 hour in the future (not stale)
     psql(`UPDATE subscription_checkout_intents SET provider_timeout_not_before = clock_timestamp() + interval '1 hour' WHERE id = '${intentId}'::uuid;`);
@@ -929,7 +948,7 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
 
   it('41. terminalize stale pending (past provider_timeout_not_before) succeeds', () => {
     const ver = currentVersion();
-    const r = psql(`SELECT intent_id FROM claim_checkout_initialization('${testBizId}'::uuid, 'growth', 'flutterwave', 'NGN', 14999, '243206', '${ver}'::uuid, 't41@m380.com', 30, '${testUserId}'::uuid);`);
+    const r = psql(`SELECT intent_id FROM claim_checkout_initialization('${testBizId}'::uuid, 'growth', 'flutterwave', 'NGN', ${resolveNGGrowthPrice().major}, '243206', '${ver}'::uuid, 't41@m380.com', 30, '${testUserId}'::uuid);`);
     const intentId = r.split('|')[0];
     // Set provider_timeout_not_before to 1 hour in the past (stale)
     psql(`UPDATE subscription_checkout_intents SET provider_timeout_not_before = clock_timestamp() - interval '1 hour' WHERE id = '${intentId}'::uuid;`);
@@ -943,7 +962,7 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
 
   it('42. terminalize stale pending (no provider response, past 2x session duration) succeeds', () => {
     const ver = currentVersion();
-    const r = psql(`SELECT intent_id FROM claim_checkout_initialization('${testBizId}'::uuid, 'growth', 'flutterwave', 'NGN', 14999, '243206', '${ver}'::uuid, 't42@m380.com', 30, '${testUserId}'::uuid);`);
+    const r = psql(`SELECT intent_id FROM claim_checkout_initialization('${testBizId}'::uuid, 'growth', 'flutterwave', 'NGN', ${resolveNGGrowthPrice().major}, '243206', '${ver}'::uuid, 't42@m380.com', 30, '${testUserId}'::uuid);`);
     const intentId = r.split('|')[0];
     // No provider response — set created_at to 2 hours ago (session=30min, 2x=60min, well past)
     psql(`UPDATE subscription_checkout_intents SET provider_timeout_not_before = NULL, created_at = clock_timestamp() - interval '2 hours' WHERE id = '${intentId}'::uuid;`);
@@ -957,7 +976,7 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
 
   it('43. terminalize already completed intent returns already_completed, zero mutation', () => {
     const ver = currentVersion();
-    const r = psql(`SELECT intent_id FROM claim_checkout_initialization('${testBizId}'::uuid, 'growth', 'flutterwave', 'NGN', 14999, '243206', '${ver}'::uuid, 't43@m380.com', 30, '${testUserId}'::uuid);`);
+    const r = psql(`SELECT intent_id FROM claim_checkout_initialization('${testBizId}'::uuid, 'growth', 'flutterwave', 'NGN', ${resolveNGGrowthPrice().major}, '243206', '${ver}'::uuid, 't43@m380.com', 30, '${testUserId}'::uuid);`);
     const intentId = r.split('|')[0];
     psql(`UPDATE subscription_checkout_intents SET status = 'completed' WHERE id = '${intentId}'::uuid;`);
 
@@ -970,7 +989,7 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
 
   it('44. terminalize already failed intent returns already_failed', () => {
     const ver = currentVersion();
-    const r = psql(`SELECT intent_id FROM claim_checkout_initialization('${testBizId}'::uuid, 'growth', 'flutterwave', 'NGN', 14999, '243206', '${ver}'::uuid, 't44@m380.com', 30, '${testUserId}'::uuid);`);
+    const r = psql(`SELECT intent_id FROM claim_checkout_initialization('${testBizId}'::uuid, 'growth', 'flutterwave', 'NGN', ${resolveNGGrowthPrice().major}, '243206', '${ver}'::uuid, 't44@m380.com', 30, '${testUserId}'::uuid);`);
     const intentId = r.split('|')[0];
     psql(`UPDATE subscription_checkout_intents SET status = 'failed' WHERE id = '${intentId}'::uuid;`);
 
@@ -988,7 +1007,7 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
 
   it('46. no replacement intent created after terminalization', () => {
     const ver = currentVersion();
-    const r = psql(`SELECT intent_id FROM claim_checkout_initialization('${testBizId}'::uuid, 'growth', 'flutterwave', 'NGN', 14999, '243206', '${ver}'::uuid, 't46@m380.com', 30, '${testUserId}'::uuid);`);
+    const r = psql(`SELECT intent_id FROM claim_checkout_initialization('${testBizId}'::uuid, 'growth', 'flutterwave', 'NGN', ${resolveNGGrowthPrice().major}, '243206', '${ver}'::uuid, 't46@m380.com', 30, '${testUserId}'::uuid);`);
     const intentId = r.split('|')[0];
     psql(`UPDATE subscription_checkout_intents SET provider_timeout_not_before = clock_timestamp() - interval '1 hour' WHERE id = '${intentId}'::uuid;`);
 
@@ -1010,7 +1029,7 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
       VALUES (gen_random_uuid(), 'ConcTerm', 'conc-term-${Date.now()}', '${testUserId}', 'NG', 'restaurant', '400 ConcTerm St', 'Lagos', 'VI', '+2348077770047')
       RETURNING id::text;
     `);
-    const r = psql(`SELECT intent_id FROM claim_checkout_initialization('${concBizId}'::uuid, 'growth', 'flutterwave', 'NGN', 14999, '243206', '${ver}'::uuid, 't47@m380.com', 30, '${testUserId}'::uuid);`);
+    const r = psql(`SELECT intent_id FROM claim_checkout_initialization('${concBizId}'::uuid, 'growth', 'flutterwave', 'NGN', ${resolveNGGrowthPrice().major}, '243206', '${ver}'::uuid, 't47@m380.com', 30, '${testUserId}'::uuid);`);
     const intentId = r.split('|')[0];
     psql(`UPDATE subscription_checkout_intents SET provider_timeout_not_before = clock_timestamp() - interval '1 hour' WHERE id = '${intentId}'::uuid;`);
 
@@ -1046,7 +1065,7 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
     const subId = psql(`
       INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
         billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
-      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', ${resolveNGGrowthPrice().major}, 'month',
         '${currentVersion()}'::uuid, 'flw_sub_t48', clock_timestamp(), clock_timestamp() + interval '30 days')
       RETURNING id::text;
     `);
@@ -1089,7 +1108,7 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
     const subId = psql(`
       INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
         billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
-      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', ${resolveNGGrowthPrice().major}, 'month',
         '${currentVersion()}'::uuid, 'flw_sub_t50', clock_timestamp(), clock_timestamp() + interval '30 days')
       RETURNING id::text;
     `);
@@ -1110,7 +1129,7 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
     const flwSubId = psql(`
       INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
         billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
-      VALUES (gen_random_uuid(), '${flwBizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+      VALUES (gen_random_uuid(), '${flwBizId}', 'growth', 'active', 'flutterwave', 'NGN', ${resolveNGGrowthPrice().major}, 'month',
         '${currentVersion()}'::uuid, 'flw_sub_t51', clock_timestamp(), clock_timestamp() + interval '30 days')
       RETURNING id::text;
     `);
@@ -1139,7 +1158,7 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
     const sub1Id = psql(`
       INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
         billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
-      VALUES (gen_random_uuid(), '${biz1Id}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+      VALUES (gen_random_uuid(), '${biz1Id}', 'growth', 'active', 'flutterwave', 'NGN', ${resolveNGGrowthPrice().major}, 'month',
         '${currentVersion()}'::uuid, 'flw_sub_t52a', clock_timestamp(), clock_timestamp() + interval '30 days')
       RETURNING id::text;
     `);
@@ -1147,7 +1166,7 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
     const sub2Id = psql(`
       INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
         billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
-      VALUES (gen_random_uuid(), '${biz2Id}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+      VALUES (gen_random_uuid(), '${biz2Id}', 'growth', 'active', 'flutterwave', 'NGN', ${resolveNGGrowthPrice().major}, 'month',
         '${currentVersion()}'::uuid, 'flw_sub_t52b', clock_timestamp(), clock_timestamp() + interval '30 days')
       RETURNING id::text;
     `);
@@ -1171,7 +1190,7 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
     const subId = psql(`
       INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
         billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end, cancelled_at)
-      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'cancelled', 'flutterwave', 'NGN', 14999, 'month',
+      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'cancelled', 'flutterwave', 'NGN', ${resolveNGGrowthPrice().major}, 'month',
         '${currentVersion()}'::uuid, 'flw_sub_t53', clock_timestamp(), clock_timestamp() + interval '30 days', clock_timestamp())
       RETURNING id::text;
     `);
@@ -1189,7 +1208,7 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
     const subId = psql(`
       INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
         billing_config_version_id, current_period_start, current_period_end)
-      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'paystack', 'NGN', 14999, 'month',
+      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'paystack', 'NGN', ${resolveNGGrowthPrice().major}, 'month',
         '${currentVersion()}'::uuid, clock_timestamp(), clock_timestamp() + interval '30 days')
       RETURNING id::text;
     `);
@@ -1205,7 +1224,7 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
     const subId = psql(`
       INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
         billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
-      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', ${resolveNGGrowthPrice().major}, 'month',
         '${currentVersion()}'::uuid, 'flw_sub_t55', clock_timestamp(), clock_timestamp() + interval '30 days')
       RETURNING id::text;
     `);
@@ -1221,7 +1240,7 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
     const subId = psql(`
       INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
         billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
-      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', ${resolveNGGrowthPrice().major}, 'month',
         '${currentVersion()}'::uuid, 'flw_sub_t56', clock_timestamp(), clock_timestamp() + interval '30 days')
       RETURNING id::text;
     `);
@@ -1237,7 +1256,7 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
     const subId = psql(`
       INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
         billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
-      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', ${resolveNGGrowthPrice().major}, 'month',
         '${currentVersion()}'::uuid, 'flw_sub_t57', clock_timestamp(), clock_timestamp() + interval '30 days')
       RETURNING id::text;
     `);
@@ -1257,7 +1276,7 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
     const subId = psql(`
       INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
         billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
-      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', ${resolveNGGrowthPrice().major}, 'month',
         '${currentVersion()}'::uuid, 'flw_sub_t58_real', clock_timestamp(), clock_timestamp() + interval '30 days')
       RETURNING id::text;
     `);
@@ -1275,7 +1294,7 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
     const sub1Id = psql(`
       INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
         billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
-      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', ${resolveNGGrowthPrice().major}, 'month',
         '${currentVersion()}'::uuid, 'flw_sub_t59a', clock_timestamp(), clock_timestamp() + interval '30 days')
       RETURNING id::text;
     `);
@@ -1297,7 +1316,7 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
     const subId = psql(`
       INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
         billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
-      VALUES (gen_random_uuid(), '${concBizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+      VALUES (gen_random_uuid(), '${concBizId}', 'growth', 'active', 'flutterwave', 'NGN', ${resolveNGGrowthPrice().major}, 'month',
         '${currentVersion()}'::uuid, 'flw_sub_t60', clock_timestamp(), clock_timestamp() + interval '30 days')
       RETURNING id::text;
     `);
@@ -1335,7 +1354,7 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
     const subId = psql(`
       INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
         billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
-      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', ${resolveNGGrowthPrice().major}, 'month',
         '${currentVersion()}'::uuid, 'flw_sub_t61', clock_timestamp(), clock_timestamp() + interval '30 days')
       RETURNING id::text;
     `);
@@ -1353,7 +1372,7 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
     const subId = psql(`
       INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
         billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
-      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', ${resolveNGGrowthPrice().major}, 'month',
         '${currentVersion()}'::uuid, 'flw_sub_t62', clock_timestamp(), clock_timestamp() + interval '30 days')
       RETURNING id::text;
     `);
@@ -1372,7 +1391,7 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
     const subId = psql(`
       INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
         billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
-      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', ${resolveNGGrowthPrice().major}, 'month',
         '${currentVersion()}'::uuid, 'flw_sub_t63', clock_timestamp(), clock_timestamp() + interval '30 days')
       RETURNING id::text;
     `);
@@ -1393,7 +1412,7 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
     const subId = psql(`
       INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
         billing_config_version_id, flutterwave_subscription_id, stripe_subscription_id, current_period_start, current_period_end)
-      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', ${resolveNGGrowthPrice().major}, 'month',
         '${currentVersion()}'::uuid, 'flw_sub_t64', 'stripe_sub_t64', clock_timestamp(), clock_timestamp() + interval '30 days')
       RETURNING id::text;
     `);
@@ -1414,7 +1433,7 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
     const subId = psql(`
       INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
         billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
-      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', ${resolveNGGrowthPrice().major}, 'month',
         '${currentVersion()}'::uuid, 'flw_sub_t65', clock_timestamp(), clock_timestamp() + interval '30 days')
       RETURNING id::text;
     `);
@@ -1438,7 +1457,7 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
     const subId = psql(`
       INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
         billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
-      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', ${resolveNGGrowthPrice().major}, 'month',
         '${currentVersion()}'::uuid, 'flw_sub_t66', clock_timestamp(), clock_timestamp() + interval '30 days')
       RETURNING id::text;
     `);
@@ -1458,7 +1477,7 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
     const subId = psql(`
       INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
         billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
-      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', ${resolveNGGrowthPrice().major}, 'month',
         '${currentVersion()}'::uuid, 'flw_sub_t67', clock_timestamp(), clock_timestamp() + interval '30 days')
       RETURNING id::text;
     `);
@@ -1478,7 +1497,7 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
     const subId = psql(`
       INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
         billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
-      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', ${resolveNGGrowthPrice().major}, 'month',
         '${currentVersion()}'::uuid, 'flw_sub_t68', clock_timestamp(), clock_timestamp() + interval '30 days')
       RETURNING id::text;
     `);
@@ -1494,7 +1513,7 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
     const subId = psql(`
       INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
         billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
-      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', ${resolveNGGrowthPrice().major}, 'month',
         '${currentVersion()}'::uuid, 'flw_sub_t69', clock_timestamp(), clock_timestamp() + interval '30 days')
       RETURNING id::text;
     `);
@@ -1513,7 +1532,7 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
     const subId = psql(`
       INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
         billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
-      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', ${resolveNGGrowthPrice().major}, 'month',
         '${currentVersion()}'::uuid, 'flw_sub_t70', clock_timestamp(), clock_timestamp() + interval '30 days')
       RETURNING id::text;
     `);
@@ -1552,7 +1571,7 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
     const subId = psql(`
       INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
         billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
-      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', ${resolveNGGrowthPrice().major}, 'month',
         '${currentVersion()}'::uuid, 'flw_sub_t71', clock_timestamp(), clock_timestamp() + interval '30 days')
       RETURNING id::text;
     `);
@@ -1568,7 +1587,7 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
     const subId = psql(`
       INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
         billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
-      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', ${resolveNGGrowthPrice().major}, 'month',
         '${currentVersion()}'::uuid, 'flw_sub_t72', clock_timestamp(), clock_timestamp() + interval '30 days')
       RETURNING id::text;
     `);
@@ -1586,7 +1605,7 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
     const subId = psql(`
       INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
         billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
-      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', ${resolveNGGrowthPrice().major}, 'month',
         '${currentVersion()}'::uuid, 'flw_sub_t73', clock_timestamp(), clock_timestamp() + interval '30 days')
       RETURNING id::text;
     `);
@@ -1604,7 +1623,7 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
     const subId = psql(`
       INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
         billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
-      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', ${resolveNGGrowthPrice().major}, 'month',
         '${currentVersion()}'::uuid, 'flw_sub_t74', clock_timestamp(), clock_timestamp() + interval '30 days')
       RETURNING id::text;
     `);
@@ -1622,7 +1641,7 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
     const subId = psql(`
       INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
         billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
-      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', ${resolveNGGrowthPrice().major}, 'month',
         '${currentVersion()}'::uuid, 'flw_sub_t75', clock_timestamp(), clock_timestamp() + interval '30 days')
       RETURNING id::text;
     `);
@@ -1644,7 +1663,7 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
     const subId = psql(`
       INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
         billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
-      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', ${resolveNGGrowthPrice().major}, 'month',
         '${currentVersion()}'::uuid, 'flw_sub_t76', clock_timestamp(), clock_timestamp() + interval '30 days')
       RETURNING id::text;
     `);
@@ -1665,7 +1684,7 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
     const subId = psql(`
       INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
         billing_config_version_id, current_period_start, current_period_end)
-      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'paystack', 'NGN', 14999, 'month',
+      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'paystack', 'NGN', ${resolveNGGrowthPrice().major}, 'month',
         '${currentVersion()}'::uuid, clock_timestamp(), clock_timestamp() + interval '30 days')
       RETURNING id::text;
     `);
@@ -1737,7 +1756,7 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
     const subId = psql(`
       INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
         billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
-      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', ${resolveNGGrowthPrice().major}, 'month',
         '${currentVersion()}'::uuid, 'flw_sub_t81', '2026-07-01T00:00:00Z'::timestamptz, '${periodEnd}'::timestamptz)
       RETURNING id::text;
     `);
@@ -1761,7 +1780,7 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
     const subId = psql(`
       INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
         billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
-      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', ${resolveNGGrowthPrice().major}, 'month',
         '${currentVersion()}'::uuid, 'flw_sub_t82', '2026-07-01T00:00:00Z'::timestamptz, '${periodEnd}'::timestamptz)
       RETURNING id::text;
     `);
@@ -1782,7 +1801,7 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
     const subId = psql(`
       INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
         billing_config_version_id, current_period_start, current_period_end)
-      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'paystack', 'NGN', 14999, 'month',
+      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'paystack', 'NGN', ${resolveNGGrowthPrice().major}, 'month',
         '${currentVersion()}'::uuid, '2026-07-01T00:00:00Z'::timestamptz, '${periodEnd}'::timestamptz)
       RETURNING id::text;
     `);
@@ -1804,7 +1823,7 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
     const subId = psql(`
       INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
         billing_config_version_id, current_period_start, current_period_end)
-      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', NULL, 'NGN', 14999, 'month',
+      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', NULL, 'NGN', ${resolveNGGrowthPrice().major}, 'month',
         '${currentVersion()}'::uuid, '2026-07-01T00:00:00Z'::timestamptz, '${periodEnd}'::timestamptz)
       RETURNING id::text;
     `);
@@ -1825,7 +1844,7 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
     const subId = psql(`
       INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
         billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
-      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', ${resolveNGGrowthPrice().major}, 'month',
         '${currentVersion()}'::uuid, 'flw_sub_t85', '2026-07-01T00:00:00Z'::timestamptz, '${oldPeriodEnd}'::timestamptz)
       RETURNING id::text;
     `);
@@ -1853,7 +1872,7 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
     const subId = psql(`
       INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
         billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
-      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', ${resolveNGGrowthPrice().major}, 'month',
         '${currentVersion()}'::uuid, 'flw_sub_t86', '2026-07-01T00:00:00Z'::timestamptz, '${periodEnd}'::timestamptz)
       RETURNING id::text;
     `);
@@ -1883,7 +1902,7 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
     const subId = psql(`
       INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
         billing_config_version_id, flutterwave_subscription_id, current_period_start, current_period_end)
-      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'cancelled', 'flutterwave', 'NGN', 14999, 'month',
+      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'cancelled', 'flutterwave', 'NGN', ${resolveNGGrowthPrice().major}, 'month',
         '${currentVersion()}'::uuid, 'flw_sub_t87', '2026-07-01T00:00:00Z'::timestamptz, '${periodEnd}'::timestamptz)
       RETURNING id::text;
     `);
@@ -1904,7 +1923,7 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
     const bizId = m380Biz('t88');
     const ver = currentVersion();
     // Create a stale checkout intent
-    const r = psql(`SELECT intent_id FROM claim_checkout_initialization('${bizId}'::uuid, 'growth', 'flutterwave', 'NGN', 14999, '243206', '${ver}'::uuid, 't88@m381.com', 30, '${testUserId}'::uuid);`);
+    const r = psql(`SELECT intent_id FROM claim_checkout_initialization('${bizId}'::uuid, 'growth', 'flutterwave', 'NGN', ${resolveNGGrowthPrice().major}, '243206', '${ver}'::uuid, 't88@m381.com', 30, '${testUserId}'::uuid);`);
     const intentId = r.split('|')[0];
     // Make it stale
     psql(`UPDATE subscription_checkout_intents SET provider_timeout_not_before = clock_timestamp() - interval '3 hours' WHERE id = '${intentId}'::uuid;`);
@@ -1926,11 +1945,11 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
     const ver = currentVersion();
 
     // Create two stale intents
-    const r1 = psql(`SELECT intent_id FROM claim_checkout_initialization('${bizId1}'::uuid, 'growth', 'flutterwave', 'NGN', 14999, '243206', '${ver}'::uuid, 't89a@m381.com', 30, '${testUserId}'::uuid);`);
+    const r1 = psql(`SELECT intent_id FROM claim_checkout_initialization('${bizId1}'::uuid, 'growth', 'flutterwave', 'NGN', ${resolveNGGrowthPrice().major}, '243206', '${ver}'::uuid, 't89a@m381.com', 30, '${testUserId}'::uuid);`);
     const intentId1 = r1.split('|')[0];
     psql(`UPDATE subscription_checkout_intents SET provider_timeout_not_before = clock_timestamp() - interval '3 hours' WHERE id = '${intentId1}'::uuid;`);
 
-    const r2 = psql(`SELECT intent_id FROM claim_checkout_initialization('${bizId2}'::uuid, 'growth', 'flutterwave', 'NGN', 14999, '243206', '${ver}'::uuid, 't89b@m381.com', 30, '${testUserId}'::uuid);`);
+    const r2 = psql(`SELECT intent_id FROM claim_checkout_initialization('${bizId2}'::uuid, 'growth', 'flutterwave', 'NGN', ${resolveNGGrowthPrice().major}, '243206', '${ver}'::uuid, 't89b@m381.com', 30, '${testUserId}'::uuid);`);
     const intentId2 = r2.split('|')[0];
     psql(`UPDATE subscription_checkout_intents SET provider_timeout_not_before = clock_timestamp() - interval '3 hours' WHERE id = '${intentId2}'::uuid;`);
 
@@ -1953,7 +1972,7 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
   it('90. lease expired (>15 min) → row becomes eligible again', () => {
     const bizId = m380Biz('t90');
     const ver = currentVersion();
-    const r = psql(`SELECT intent_id FROM claim_checkout_initialization('${bizId}'::uuid, 'growth', 'flutterwave', 'NGN', 14999, '243206', '${ver}'::uuid, 't90@m381.com', 30, '${testUserId}'::uuid);`);
+    const r = psql(`SELECT intent_id FROM claim_checkout_initialization('${bizId}'::uuid, 'growth', 'flutterwave', 'NGN', ${resolveNGGrowthPrice().major}, '243206', '${ver}'::uuid, 't90@m381.com', 30, '${testUserId}'::uuid);`);
     const intentId = r.split('|')[0];
     // Make it stale
     psql(`UPDATE subscription_checkout_intents SET provider_timeout_not_before = clock_timestamp() - interval '3 hours' WHERE id = '${intentId}'::uuid;`);
@@ -1982,7 +2001,7 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
       INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
         billing_config_version_id, flutterwave_subscription_id, flutterwave_subscriber_email, flutterwave_plan_id,
         current_period_start, current_period_end)
-      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', ${resolveNGGrowthPrice().major}, 'month',
         '${currentVersion()}'::uuid, 'flw_sub_t91', 't91@m381.com', 243206,
         '2026-07-01T00:00:00Z'::timestamptz, clock_timestamp() - interval '1 day')
       RETURNING id::text;
@@ -2005,7 +2024,7 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
     const intentId = psql(`
       INSERT INTO subscription_checkout_intents (id, business_id, user_id, plan, gateway, country_code, currency, amount,
         config_version_id, subscriber_email, idempotency_key, status, provider_timeout_not_before, created_at)
-      VALUES (gen_random_uuid(), '${bizId}', '${testUserId}', 'growth', 'paystack', 'NG', 'NGN', 14999,
+      VALUES (gen_random_uuid(), '${bizId}', '${testUserId}', 'growth', 'paystack', 'NG', 'NGN', ${resolveNGGrowthPrice().major},
         '${currentVersion()}'::uuid, 't92@m381.com', 'idem_t92_' || extract(epoch from clock_timestamp())::text,
         'pending', clock_timestamp() - interval '3 hours', clock_timestamp() - interval '4 hours')
       RETURNING id::text;
@@ -2049,7 +2068,7 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
       INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
         billing_config_version_id, flutterwave_subscription_id, flutterwave_subscriber_email, flutterwave_plan_id,
         current_period_start, current_period_end, cancellation_checked_at)
-      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', ${resolveNGGrowthPrice().major}, 'month',
         '${currentVersion()}'::uuid, 'flw_sub_t96', 't96@m381.com', 243206,
         '2026-07-01T00:00:00Z'::timestamptz, '2026-08-01T00:00:00Z'::timestamptz, NULL)
       RETURNING id::text;
@@ -2072,7 +2091,7 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
       INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
         billing_config_version_id, flutterwave_subscription_id, flutterwave_subscriber_email, flutterwave_plan_id,
         current_period_start, current_period_end, cancellation_checked_at)
-      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', ${resolveNGGrowthPrice().major}, 'month',
         '${currentVersion()}'::uuid, 'flw_sub_t97', 't97@m381.com', 243206,
         '2026-07-01T00:00:00Z'::timestamptz, '2026-08-01T00:00:00Z'::timestamptz, NULL)
       RETURNING id::text;
@@ -2116,7 +2135,7 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
       INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
         billing_config_version_id, flutterwave_subscription_id, flutterwave_subscriber_email, flutterwave_plan_id,
         current_period_start, current_period_end)
-      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', ${resolveNGGrowthPrice().major}, 'month',
         '${ver}'::uuid, 'flw_sub_t99', 't99@m381.com', 243206,
         '2026-06-01T00:00:00Z'::timestamptz, '${oldPeriodEnd}'::timestamptz)
       RETURNING id::text;
@@ -2152,7 +2171,7 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
           PERFORM pg_sleep(0.05);
         END LOOP;
       END $wait$;
-      SELECT finalize_flutterwave_subscription_renewal('${subId}'::uuid, 'tx_t99_renew', 1499900, 'NGN', '2026-07-01T12:00:00Z'::timestamptz);
+      SELECT finalize_flutterwave_subscription_renewal('${subId}'::uuid, 'tx_t99_renew', ${resolveNGGrowthPrice().minor}, 'NGN', '2026-07-01T12:00:00Z'::timestamptz);
       COMMIT;
     `;
 
@@ -2242,7 +2261,7 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
       INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
         billing_config_version_id, flutterwave_subscription_id, flutterwave_subscriber_email, flutterwave_plan_id,
         current_period_start, current_period_end)
-      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+      VALUES (gen_random_uuid(), '${bizId}', 'growth', 'active', 'flutterwave', 'NGN', ${resolveNGGrowthPrice().major}, 'month',
         '${ver}'::uuid, 'flw_sub_t100', 't100@m381.com', 243206,
         '2026-06-01T00:00:00Z'::timestamptz, '${oldPeriodEnd}'::timestamptz)
       RETURNING id::text;
@@ -2295,7 +2314,7 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
       INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
         billing_config_version_id, flutterwave_subscription_id, flutterwave_subscriber_email, flutterwave_plan_id,
         current_period_start, current_period_end)
-      VALUES (gen_random_uuid(), '${biz1}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+      VALUES (gen_random_uuid(), '${biz1}', 'growth', 'active', 'flutterwave', 'NGN', ${resolveNGGrowthPrice().major}, 'month',
         '${ver}'::uuid, 'flw_sub_t101a', 't101a@m381.com', 243206,
         '2026-06-01T00:00:00Z'::timestamptz, '2026-07-01T00:00:00Z'::timestamptz)
       RETURNING id::text;
@@ -2305,7 +2324,7 @@ describe.skipIf(!canRun)('M378 Provider-Neutral Subscriptions — PostgreSQL pro
       INSERT INTO subscriptions (id, business_id, plan, status, gateway, currency, amount, billing_interval,
         billing_config_version_id, flutterwave_subscription_id, flutterwave_subscriber_email, flutterwave_plan_id,
         current_period_start, current_period_end)
-      VALUES (gen_random_uuid(), '${biz2}', 'growth', 'active', 'flutterwave', 'NGN', 14999, 'month',
+      VALUES (gen_random_uuid(), '${biz2}', 'growth', 'active', 'flutterwave', 'NGN', ${resolveNGGrowthPrice().major}, 'month',
         '${ver}'::uuid, 'flw_sub_t101b', 't101b@m381.com', 243207,
         '2026-06-01T00:00:00Z'::timestamptz, '2026-07-01T00:00:00Z'::timestamptz)
       RETURNING id::text;

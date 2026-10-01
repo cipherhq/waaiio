@@ -197,9 +197,6 @@ BEGIN
 
   -- Convert payment amount from smallest to major (divide by 100)
   IF ABS((v_payment.amount::NUMERIC / 100.0) - v_expected_amount) > 0.01 THEN
-    RAISE NOTICE 'M418 amount_mismatch diagnostic: country=%, plan=%, expected_major=%, payment_amount=%, payment_major=%, country_pricing=%',
-      v_biz.country_code, v_sub.plan, v_expected_amount, v_payment.amount,
-      v_payment.amount::NUMERIC / 100.0, v_country_pricing;
     RETURN jsonb_build_object('activated', false, 'reason', 'amount_mismatch',
       'expected_major', v_expected_amount,
       'actual_smallest', v_payment.amount,
