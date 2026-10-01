@@ -4,47 +4,128 @@ import { applyDirectoryEligibility } from '@/lib/marketplace/search';
 import { getPaymentLinkCreateDenial } from '@/lib/payments/payment-link-policy';
 import { resolveCountryGateway } from '@/lib/payments/gateway-resolver';
 
-describe('#496 Poll production create_new guard', () => {
-  it('denies a pending business through the exact requireCapability path used by POST /api/polls', async () => {
-    const pendingBusiness = {
-      id: '11111111-1111-4111-8111-111111111111',
-      status: 'pending',
-      subscription_tier: 'free',
-      trial_ends_at: null,
-      category: 'restaurant',
-    };
+// ── Helper: build a mock authenticated client that returns a specific business ──
+function mockAuthClient(business: Record<string, unknown> | null) {
+  return {
+    from(table: string) {
+      expect(table).toBe('businesses');
+      return {
+        select() {
+          const chain = {
+            eq: () => chain,
+            maybeSingle: async () => ({ data: business, error: null }),
+          };
+          return chain;
+        },
+      };
+    },
+  } as never;
+}
 
-    const supabase = {
-      from(table: string) {
-        expect(table).toBe('businesses');
-        return {
-          select(columns: string) {
-            expect(columns).toContain('status');
-            const chain = {
-              eq: () => chain,
-              maybeSingle: async () => ({ data: pendingBusiness, error: null }),
-            };
-            return chain;
-          },
-        };
-      },
-    } as never;
+// ── Helper: build a mock service client with per-table behavior ──
+// Supabase query builders are thenable — await resolves to { data, error }.
+function mockServiceClient(tables: Record<string, { data?: unknown; error?: unknown }>) {
+  return {
+    from(table: string) {
+      const behavior = tables[table] || { data: [], error: null };
+      return {
+        select() {
+          const chain: Record<string, unknown> = {};
+          const self = () => chain;
+          chain.eq = self;
+          chain.gt = self;
+          chain.limit = self;
+          chain.order = self;
+          chain.maybeSingle = async () => behavior;
+          // Make the chain thenable so `await service.from(t).select().eq()` resolves to { data, error }
+          chain.then = (resolve: (v: unknown) => void, reject?: (e: unknown) => void) =>
+            Promise.resolve(behavior).then(resolve, reject);
+          return chain;
+        },
+      };
+    },
+  } as never;
+}
 
-    const result = await requireCapability(supabase, {} as never, {
-      businessId: pendingBusiness.id,
-      userId: '22222222-2222-4222-8222-222222222222',
-      capability: 'poll',
-      action: 'create_new',
+describe('#496 requireCapability — real guard execution', () => {
+  const BUSINESS_ID = '11111111-1111-4111-8111-111111111111';
+  const USER_ID = '22222222-2222-4222-8222-222222222222';
+
+  const activeBusiness = {
+    id: BUSINESS_ID,
+    status: 'active',
+    subscription_tier: 'free',
+    trial_ends_at: null,
+    category: 'restaurant',
+  };
+
+  const pendingBusiness = { ...activeBusiness, status: 'pending' };
+
+  it('denies a pending business (lifecycle guard)', async () => {
+    const result = await requireCapability(mockAuthClient(pendingBusiness), {} as never, {
+      businessId: BUSINESS_ID, userId: USER_ID, capability: 'poll', action: 'create_new',
     });
 
     expect(result).toMatchObject({
       allowed: false,
       status: 403,
-      denial: {
-        reason: 'business_setup_incomplete',
-        detail: 'complete_onboarding_first',
-      },
+      denial: { reason: 'business_setup_incomplete', detail: 'complete_onboarding_first' },
     });
+  });
+
+  it('allows an active business with a configured and available capability', async () => {
+    const service = mockServiceClient({
+      business_capabilities: { data: [{ capability: 'poll', is_enabled: true, sort_order: 0 }] },
+      capability_overrides: { data: [] },
+      messaging_allowances: { data: [] },
+    });
+
+    const result = await requireCapability(mockAuthClient(activeBusiness), service, {
+      businessId: BUSINESS_ID, userId: USER_ID, capability: 'poll', action: 'create_new',
+    });
+
+    expect(result.allowed).toBe(true);
+    if (result.allowed) {
+      expect(result.business.id).toBe(BUSINESS_ID);
+      expect(result.business.status).toBe('active');
+    }
+  });
+
+  it('denies when capability is not configured (controlled denial, not 500)', async () => {
+    const service = mockServiceClient({
+      // poll NOT in the configured rows → unavailable
+      business_capabilities: { data: [{ capability: 'scheduling', is_enabled: true, sort_order: 0 }] },
+      capability_overrides: { data: [] },
+      messaging_allowances: { data: [] },
+    });
+
+    const result = await requireCapability(mockAuthClient(activeBusiness), service, {
+      businessId: BUSINESS_ID, userId: USER_ID, capability: 'poll', action: 'create_new',
+    });
+
+    expect(result.allowed).toBe(false);
+    if (!result.allowed) {
+      expect(result.status).toBe(403);
+      expect(result.denial.reason).toContain('capability');
+    }
+  });
+
+  it('fails closed with override_read_error when capability_overrides read fails', async () => {
+    const service = mockServiceClient({
+      business_capabilities: { data: [{ capability: 'poll', is_enabled: true, sort_order: 0 }] },
+      capability_overrides: { data: null, error: { message: 'permission denied for table capability_overrides' } },
+      messaging_allowances: { data: [] },
+    });
+
+    const result = await requireCapability(mockAuthClient(activeBusiness), service, {
+      businessId: BUSINESS_ID, userId: USER_ID, capability: 'poll', action: 'create_new',
+    });
+
+    expect(result.allowed).toBe(false);
+    if (!result.allowed) {
+      expect(result.status).toBe(500);
+      expect(result.denial.reason).toBe('override_read_error');
+    }
   });
 });
 
