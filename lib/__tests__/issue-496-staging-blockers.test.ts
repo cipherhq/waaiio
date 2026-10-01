@@ -55,12 +55,24 @@ function adminContext(adminId: string): string {
   `;
 }
 
-function authedContext(userId: string): string {
-  return `
-    SELECT set_config('request.jwt.claims', '{"sub":"${userId}","role":"authenticated","aud":"authenticated"}', false);
-    SELECT set_config('request.jwt.claim.sub', '${userId}', false);
-    SET ROLE authenticated;
-  `;
+/** Run a query as an authenticated user (JWT context + role). Returns the query result only. */
+function psqlAuthed(userId: string, sql: string): string {
+  // Use a DO block + temp table to avoid SET ROLE output contaminating results
+  return psql(`
+    SELECT set_config('request.jwt.claims', '{"sub":"${userId}","role":"authenticated","aud":"authenticated"}', true);
+    SELECT set_config('request.jwt.claim.sub', '${userId}', true);
+    SET LOCAL ROLE authenticated;
+    ${sql}
+  `).split('\n').filter(l => l.trim() !== '' && !l.startsWith('SET') && !l.includes('set_config')).pop() || '';
+}
+
+function psqlAuthedMayFail(userId: string, sql: string): string {
+  return psqlMayFail(`
+    SELECT set_config('request.jwt.claims', '{"sub":"${userId}","role":"authenticated","aud":"authenticated"}', true);
+    SELECT set_config('request.jwt.claim.sub', '${userId}', true);
+    SET LOCAL ROLE authenticated;
+    ${sql}
+  `);
 }
 
 function createTestOwnerAndBusiness(opts: {
@@ -107,17 +119,15 @@ describe.skipIf(!canRunDb)('B5: Tenant-level RLS on M417-affected tables', () =>
 
   // ── parties ──
   it('parties: owner can INSERT own party', () => {
-    const id = psql(`${authedContext(ownerA)}
-      INSERT INTO public.parties (business_id, name, date, venue) VALUES ('${bizA}', 'Test Party', NOW(), 'Lagos')
-      RETURNING id; RESET ROLE;`);
+    const id = psqlAuthed(ownerA, `INSERT INTO public.parties (business_id, name, date, venue) VALUES ('${bizA}', 'Test Party', NOW(), 'Lagos')
+      RETURNING id`);
     expect(id).toBeTruthy();
     psqlCleanup(`DELETE FROM public.parties WHERE id = '${id}'`);
   });
 
   it('parties: cross-tenant INSERT denied by RLS', () => {
-    const r = psqlMayFail(`${authedContext(ownerB)}
-      INSERT INTO public.parties (business_id, name, date, venue) VALUES ('${bizA}', 'Hacked', NOW(), 'X')
-      RETURNING id; RESET ROLE;`);
+    const r = psqlAuthedMayFail(ownerB, `INSERT INTO public.parties (business_id, name, date, venue) VALUES ('${bizA}', 'Hacked', NOW(), 'X')
+      RETURNING id`);
     expect(r).toMatch(/new row violates|0 rows/i);
   });
 
@@ -130,35 +140,30 @@ describe.skipIf(!canRunDb)('B5: Tenant-level RLS on M417-affected tables', () =>
 
   // ── category_templates ──
   it('category_templates: authenticated can SELECT active templates', () => {
-    const count = psql(`${authedContext(ownerA)}
-      SELECT count(*) FROM public.category_templates WHERE is_active = true; RESET ROLE;`);
+    const count = psqlAuthed(ownerA, `SELECT count(*) FROM public.category_templates WHERE is_active = true`);
     expect(parseInt(count)).toBeGreaterThan(0);
   });
 
   // ── payment_links ──
   it('payment_links: owner can SELECT own links', () => {
-    const count = psql(`${authedContext(ownerA)}
-      SELECT count(*) FROM public.payment_links WHERE business_id = '${bizA}'; RESET ROLE;`);
+    const count = psqlAuthed(ownerA, `SELECT count(*) FROM public.payment_links WHERE business_id = '${bizA}'`);
     expect(parseInt(count)).toBe(0); // no links yet, but no 403
   });
 
   // ── event_tickets ──
   it('event_tickets: authenticated can SELECT', () => {
-    const count = psql(`${authedContext(ownerA)}
-      SELECT count(*) FROM public.event_tickets WHERE business_id = '${bizA}'; RESET ROLE;`);
+    const count = psqlAuthed(ownerA, `SELECT count(*) FROM public.event_tickets WHERE business_id = '${bizA}'`);
     expect(parseInt(count)).toBe(0);
   });
 
   // ── promo_codes ──
   it('promo_codes: owner can SELECT own promos', () => {
-    const count = psql(`${authedContext(ownerA)}
-      SELECT count(*) FROM public.promo_codes WHERE business_id = '${bizA}'; RESET ROLE;`);
+    const count = psqlAuthed(ownerA, `SELECT count(*) FROM public.promo_codes WHERE business_id = '${bizA}'`);
     expect(parseInt(count)).toBe(0);
   });
 
   it('promo_codes: cross-tenant SELECT returns 0 rows (RLS)', () => {
-    const count = psql(`${authedContext(ownerB)}
-      SELECT count(*) FROM public.promo_codes WHERE business_id = '${bizA}'; RESET ROLE;`);
+    const count = psqlAuthed(ownerB, `SELECT count(*) FROM public.promo_codes WHERE business_id = '${bizA}'`);
     expect(parseInt(count)).toBe(0);
   });
 });
@@ -214,10 +219,21 @@ describe.skipIf(!canRunDb)('B2+B3+B4: Paid activation convergence', () => {
     } finally { cleanup(bizId); }
   });
 
-  // B3: idempotent replay
+  // B3: idempotent replay (needs channel for full allowance grant → idempotent path)
   it('B3: idempotent replay returns activated+idempotent', () => {
     const { bizId, paymentId } = createPendingBusinessWithPayment();
     try {
+      // Add a channel so the first activation grants the allowance (reaching idempotent path on replay)
+      const channelId = psql(`
+        INSERT INTO public.whatsapp_channels (
+          business_id, provider, channel_type, phone_number_id, waba_id,
+          phone_number, display_name, country_code, connection_method,
+          connection_status, is_active
+        ) VALUES ('${bizId}', 'meta_cloud', 'dedicated', 'pnid-496-idem-${testCounter}', 'waba-test',
+          '+234${Date.now()}', 'IdemTest', 'NG', 'transfer', 'active', true)
+        RETURNING id;`);
+      psql(`UPDATE public.businesses SET whatsapp_channel_id = '${channelId}', wa_method = 'transfer' WHERE id = '${bizId}'`);
+
       psql(`SELECT public.activate_paid_subscription('${paymentId}')`);
       const replay = psqlJson(`SELECT public.activate_paid_subscription('${paymentId}') AS r`) as Record<string, unknown>;
       expect(replay).toMatchObject({ activated: true, idempotent: true });
@@ -269,14 +285,18 @@ describe.skipIf(!canRunDb)('B2+B3+B4: Paid activation convergence', () => {
 
   // B4: SECURITY DEFINER + search_path preserved
   it('B4: activate_paid_subscription is SECURITY DEFINER with search_path', () => {
-    expect(psql(`SELECT prosecdef::text FROM pg_proc WHERE proname = 'activate_paid_subscription'`)).toBe('t');
+    const secdef = psql(`SELECT prosecdef FROM pg_proc WHERE proname = 'activate_paid_subscription'`);
+    expect(secdef).toMatch(/^t/); // 't' or 'true'
     expect(psql(`SELECT array_to_string(proconfig, ',') FROM pg_proc WHERE proname = 'activate_paid_subscription'`)).toContain('search_path');
   });
 
   it('B4: service_role can EXECUTE, authenticated/anon cannot', () => {
-    expect(psql(`SELECT has_function_privilege('service_role', 'public.activate_paid_subscription(uuid)', 'EXECUTE')::text`)).toBe('t');
-    expect(psql(`SELECT has_function_privilege('authenticated', 'public.activate_paid_subscription(uuid)', 'EXECUTE')::text`)).toBe('f');
-    expect(psql(`SELECT has_function_privilege('anon', 'public.activate_paid_subscription(uuid)', 'EXECUTE')::text`)).toBe('f');
+    const sr = psql(`SELECT has_function_privilege('service_role', 'public.activate_paid_subscription(uuid)', 'EXECUTE')`);
+    expect(sr).toMatch(/^t/);
+    const auth = psql(`SELECT has_function_privilege('authenticated', 'public.activate_paid_subscription(uuid)', 'EXECUTE')`);
+    expect(auth).toMatch(/^f/);
+    const anon = psql(`SELECT has_function_privilege('anon', 'public.activate_paid_subscription(uuid)', 'EXECUTE')`);
+    expect(anon).toMatch(/^f/);
   });
 });
 
@@ -288,19 +308,16 @@ describe.skipIf(!canRunDb)('B2+B3+B4: Paid activation convergence', () => {
 describe.skipIf(!canRunDb)('B7-Poll: pending guard + active create', () => {
   it('pending business cannot have polls read via authenticated (RLS filters to 0)', () => {
     const { ownerId, bizId } = createTestOwnerAndBusiness({ status: 'pending' });
-    const count = psql(`${authedContext(ownerId)}
-      SELECT count(*) FROM public.polls WHERE business_id = '${bizId}'; RESET ROLE;`);
+    const count = psqlAuthed(ownerId, `SELECT count(*) FROM public.polls WHERE business_id = '${bizId}'`);
     expect(parseInt(count)).toBe(0);
   });
 
   it('active business owner can INSERT + SELECT poll', () => {
     const { ownerId, bizId } = createTestOwnerAndBusiness({ status: 'active' });
-    const pollId = psql(`${authedContext(ownerId)}
-      INSERT INTO public.polls (business_id, question) VALUES ('${bizId}', 'Test poll?')
-      RETURNING id; RESET ROLE;`);
+    const pollId = psqlAuthed(ownerId, `INSERT INTO public.polls (business_id, question) VALUES ('${bizId}', 'Test poll?')
+      RETURNING id`);
     expect(pollId).toBeTruthy();
-    const count = psql(`${authedContext(ownerId)}
-      SELECT count(*) FROM public.polls WHERE id = '${pollId}'; RESET ROLE;`);
+    const count = psqlAuthed(ownerId, `SELECT count(*) FROM public.polls WHERE id = '${pollId}'`);
     expect(parseInt(count)).toBe(1);
     psqlCleanup(`DELETE FROM public.polls WHERE id = '${pollId}'`);
   });
@@ -310,12 +327,10 @@ describe.skipIf(!canRunDb)('B7-Poll: pending guard + active create', () => {
 describe.skipIf(!canRunDb)('B7-Party: create + cross-tenant denial', () => {
   it('owner creates party and reads it back', () => {
     const { ownerId, bizId } = createTestOwnerAndBusiness();
-    const partyId = psql(`${authedContext(ownerId)}
-      INSERT INTO public.parties (business_id, name, date, venue) VALUES ('${bizId}', 'Launch Party', NOW(), 'Lagos')
-      RETURNING id; RESET ROLE;`);
+    const partyId = psqlAuthed(ownerId, `INSERT INTO public.parties (business_id, name, date, venue) VALUES ('${bizId}', 'Launch Party', NOW(), 'Lagos')
+      RETURNING id`);
     expect(partyId).toBeTruthy();
-    const readBack = psql(`${authedContext(ownerId)}
-      SELECT name FROM public.parties WHERE id = '${partyId}'; RESET ROLE;`);
+    const readBack = psqlAuthed(ownerId, `SELECT name FROM public.parties WHERE id = '${partyId}'`);
     expect(readBack).toBe('Launch Party');
     psqlCleanup(`DELETE FROM public.parties WHERE id = '${partyId}'`);
   });
@@ -323,11 +338,9 @@ describe.skipIf(!canRunDb)('B7-Party: create + cross-tenant denial', () => {
   it('cross-tenant owner cannot read other business party', () => {
     const { ownerId: ownerA, bizId: bizA } = createTestOwnerAndBusiness();
     const { ownerId: ownerB } = createTestOwnerAndBusiness();
-    const partyId = psql(`${authedContext(ownerA)}
-      INSERT INTO public.parties (business_id, name, date, venue) VALUES ('${bizA}', 'Private', NOW(), 'X')
-      RETURNING id; RESET ROLE;`);
-    const crossRead = psql(`${authedContext(ownerB)}
-      SELECT count(*) FROM public.parties WHERE id = '${partyId}'; RESET ROLE;`);
+    const partyId = psqlAuthed(ownerA, `INSERT INTO public.parties (business_id, name, date, venue) VALUES ('${bizA}', 'Private', NOW(), 'X')
+      RETURNING id`);
+    const crossRead = psqlAuthed(ownerB, `SELECT count(*) FROM public.parties WHERE id = '${partyId}'`);
     expect(parseInt(crossRead)).toBe(0);
     psqlCleanup(`DELETE FROM public.parties WHERE id = '${partyId}'`);
   });
@@ -342,8 +355,7 @@ describe.skipIf(!canRunDb)('B7-Promo: create + immediate refresh', () => {
       VALUES ('${bizId}', 'LAUNCH496', 'percentage', 10, true) RETURNING id;`);
     expect(promoId).toBeTruthy();
     // Owner reads immediately via authenticated
-    const readCount = psql(`${authedContext(ownerId)}
-      SELECT count(*) FROM public.promo_codes WHERE id = '${promoId}'; RESET ROLE;`);
+    const readCount = psqlAuthed(ownerId, `SELECT count(*) FROM public.promo_codes WHERE id = '${promoId}'`);
     expect(parseInt(readCount)).toBe(1);
     psqlCleanup(`DELETE FROM public.promo_codes WHERE id = '${promoId}'`);
   });
@@ -360,8 +372,7 @@ describe.skipIf(!canRunDb)('B7-ScanToPay: pending guard + country authority', ()
 
   it('payment_links: owner reads own links (0 results, no 403)', () => {
     const { ownerId, bizId } = createTestOwnerAndBusiness();
-    const count = psql(`${authedContext(ownerId)}
-      SELECT count(*) FROM public.payment_links WHERE business_id = '${bizId}'; RESET ROLE;`);
+    const count = psqlAuthed(ownerId, `SELECT count(*) FROM public.payment_links WHERE business_id = '${bizId}'`);
     expect(parseInt(count)).toBe(0);
   });
 });
@@ -370,12 +381,10 @@ describe.skipIf(!canRunDb)('B7-ScanToPay: pending guard + country authority', ()
 describe.skipIf(!canRunDb)('B7-Services: category_templates read succeeds', () => {
   it('authenticated reads active category_templates (not Products fallback)', () => {
     const { ownerId } = createTestOwnerAndBusiness();
-    const count = psql(`${authedContext(ownerId)}
-      SELECT count(*) FROM public.category_templates WHERE is_active = true; RESET ROLE;`);
+    const count = psqlAuthed(ownerId, `SELECT count(*) FROM public.category_templates WHERE is_active = true`);
     expect(parseInt(count)).toBeGreaterThan(0);
     // Verify at least one has service-language labels
-    const hasLabels = psql(`${authedContext(ownerId)}
-      SELECT count(*) FROM public.category_templates WHERE is_active = true AND labels != '{}'; RESET ROLE;`);
+    const hasLabels = psqlAuthed(ownerId, `SELECT count(*) FROM public.category_templates WHERE is_active = true AND labels != '{}'`);
     expect(parseInt(hasLabels)).toBeGreaterThan(0);
   });
 });
