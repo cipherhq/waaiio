@@ -44,7 +44,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Failed to fetch promo codes' }, { status: 500 });
     }
     const response = NextResponse.json({ codes: data });
-    response.headers.set('Cache-Control', 'private, max-age=30, stale-while-revalidate=120');
+    response.headers.set('Cache-Control', 'private, no-store, max-age=0');
     return response;
   } catch (err) {
     console.error('[promo-codes] GET exception:', err instanceof Error ? err.message : 'unknown');
