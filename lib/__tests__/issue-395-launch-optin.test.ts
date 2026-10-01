@@ -52,6 +52,11 @@ describe('Launch opt-in handler', () => {
 
   it('QR and button produce the same opt-in action (both handled)', async () => {
     const mockUpsert = vi.fn().mockResolvedValue({ error: null });
+    const subscriberSelect = vi.fn().mockReturnValue({
+      eq: vi.fn().mockReturnValue({
+        maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+      }),
+    });
     const mockSupabase = {
       from: vi.fn((table: string) => {
         if (table === 'whatsapp_channels') {
@@ -59,6 +64,11 @@ describe('Launch opt-in handler', () => {
             select: vi.fn().mockReturnValue({
               eq: vi.fn().mockReturnValue({
                 eq: vi.fn().mockReturnValue({
+                  eq: vi.fn().mockReturnValue({
+                    limit: vi.fn().mockReturnValue({
+                      maybeSingle: vi.fn().mockResolvedValue({ data: { country_code: 'NG' }, error: null }),
+                    }),
+                  }),
                   limit: vi.fn().mockReturnValue({
                     maybeSingle: vi.fn().mockResolvedValue({ data: { country_code: 'NG' }, error: null }),
                   }),
@@ -67,7 +77,7 @@ describe('Launch opt-in handler', () => {
             }),
           };
         }
-        return { upsert: mockUpsert };
+        return { upsert: mockUpsert, select: subscriberSelect };
       }),
     // eslint-disable-next-line
     } as any;
@@ -93,9 +103,10 @@ describe('Launch opt-in handler', () => {
     const mockSupabase = {
       from: vi.fn((table: string) => {
         if (table === 'whatsapp_channels') {
-          return { select: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ limit: vi.fn().mockReturnValue({ maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }) }) }) }) }) };
+          return { select: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ limit: vi.fn().mockReturnValue({ maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }) }) }), limit: vi.fn().mockReturnValue({ maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }) }) }) }) }) };
         }
         return {
+          select: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }) }) }),
           upsert: vi.fn((data: unknown) => {
             upsertArgs.push(data);
             return Promise.resolve({ error: null });
@@ -114,9 +125,10 @@ describe('Launch opt-in handler', () => {
     const mockSupabase = {
       from: vi.fn((table: string) => {
         if (table === 'whatsapp_channels') {
-          return { select: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ limit: vi.fn().mockReturnValue({ maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }) }) }) }) }) };
+          return { select: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ limit: vi.fn().mockReturnValue({ maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }) }) }), limit: vi.fn().mockReturnValue({ maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }) }) }) }) }) };
         }
         return {
+          select: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }) }) }),
           upsert: vi.fn((data: unknown) => {
             upsertArgs.push(data);
             return Promise.resolve({ error: null });
@@ -143,9 +155,10 @@ describe('Launch opt-in handler', () => {
     const mockSupabase = {
       from: vi.fn((table: string) => {
         if (table === 'whatsapp_channels') {
-          return { select: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ limit: vi.fn().mockReturnValue({ maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }) }) }) }) }) };
+          return { select: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ limit: vi.fn().mockReturnValue({ maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }) }) }), limit: vi.fn().mockReturnValue({ maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }) }) }) }) }) };
         }
         return {
+          select: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }) }) }),
           upsert: vi.fn((_data: unknown, opts: unknown) => {
             upsertOptions = opts;
             return Promise.resolve({ error: null });
@@ -184,9 +197,12 @@ describe('Launch opt-in handler', () => {
     const mockSupabase = {
       from: vi.fn((table: string) => {
         if (table === 'whatsapp_channels') {
-          return { select: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ limit: vi.fn().mockReturnValue({ maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }) }) }) }) }) };
+          return { select: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ limit: vi.fn().mockReturnValue({ maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }) }) }), limit: vi.fn().mockReturnValue({ maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }) }) }) }) }) };
         }
-        return { upsert: vi.fn().mockResolvedValue({ error: null }) };
+        return {
+          select: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }) }) }),
+          upsert: vi.fn().mockResolvedValue({ error: null }),
+        };
       }),
     // eslint-disable-next-line
     } as any;
@@ -206,9 +222,12 @@ describe('Launch opt-in handler', () => {
     const mockSupabase = {
       from: vi.fn((table: string) => {
         if (table === 'whatsapp_channels') {
-          return { select: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ limit: vi.fn().mockReturnValue({ maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }) }) }) }) }) };
+          return { select: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ limit: vi.fn().mockReturnValue({ maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }) }) }), limit: vi.fn().mockReturnValue({ maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }) }) }) }) }) };
         }
-        return { upsert: vi.fn().mockResolvedValue({ error: { message: 'DB down' } }) };
+        return {
+          select: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }) }) }),
+          upsert: vi.fn().mockResolvedValue({ error: { message: 'DB down' } }),
+        };
       }),
     // eslint-disable-next-line
     } as any;
