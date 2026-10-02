@@ -138,6 +138,7 @@ export default function BookingForm({ business, services }: BookingFormProps) {
   const [otpLoading, setOtpLoading] = useState(false);
   const [otpError, setOtpError] = useState('');
   const [otpToken, setOtpToken] = useState('');
+  const [otpChallengeId, setOtpChallengeId] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
@@ -217,8 +218,9 @@ export default function BookingForm({ business, services }: BookingFormProps) {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: guestEmail.trim() }),
       });
-      if (!res.ok) { const d = await res.json(); setOtpError(d.error || 'Failed to send code'); }
-      else { setOtpSent(true); }
+      const d = await res.json();
+      if (!res.ok) { setOtpError(d.error || 'Failed to send code'); }
+      else { setOtpChallengeId(d.challengeId || ''); setOtpSent(true); }
     } catch { setOtpError('Network error'); }
     setOtpLoading(false);
   }
@@ -229,7 +231,7 @@ export default function BookingForm({ business, services }: BookingFormProps) {
     try {
       const res = await fetch('/api/auth/email-otp?action=verify', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: guestEmail.trim(), code: otpCode }),
+        body: JSON.stringify({ email: guestEmail.trim(), code: otpCode, challengeId: otpChallengeId }),
       });
       const d = await res.json();
       if (d.verified) { setEmailVerified(true); setOtpToken(d.otpToken || ''); setOtpSent(false); }

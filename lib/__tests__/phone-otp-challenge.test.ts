@@ -21,6 +21,7 @@ interface MockChallenge {
   failed_attempts: number;
   created_at: string;
   last_attempt_at: string | null;
+  channel: string;
 }
 
 let challengeStore: MockChallenge[] = [];
@@ -50,19 +51,30 @@ function buildServiceMock() {
             failed_attempts: 0,
             created_at: new Date().toISOString(),
             last_attempt_at: null,
+            channel: (data.channel as string) || 'phone',
           };
           challengeStore.push(record);
           return Promise.resolve({ error: null });
         }),
         select: vi.fn().mockImplementation(() => {
-          return {
-            eq: vi.fn().mockImplementation((_col: string, val: string) => ({
-              maybeSingle: vi.fn().mockImplementation(() => {
-                const found = challengeStore.find(c => c.challenge_id === val);
-                return Promise.resolve({ data: found ? { ...found } : null, error: null });
-              }),
-            })),
+          // Chainable eq() that supports .eq('challenge_id', x).eq('channel', y).maybeSingle()
+          let matchId: string | null = null;
+          let matchChannel: string | null = null;
+          const eqChain: Record<string, unknown> = {
+            eq: vi.fn().mockImplementation((col: string, val: string) => {
+              if (col === 'challenge_id') matchId = val;
+              if (col === 'channel') matchChannel = val;
+              return eqChain;
+            }),
+            maybeSingle: vi.fn().mockImplementation(() => {
+              const found = challengeStore.find(c =>
+                (!matchId || c.challenge_id === matchId) &&
+                (!matchChannel || c.channel === matchChannel),
+              );
+              return Promise.resolve({ data: found ? { ...found } : null, error: null });
+            }),
           };
+          return eqChain;
         }),
         update: vi.fn().mockReturnValue(makeNoopChain({ data: null, error: null })),
       };

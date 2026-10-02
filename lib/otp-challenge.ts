@@ -1,9 +1,13 @@
 /**
- * Phone OTP challenge system — server-side, single-use, opaque challenges.
+ * Channel-generic OTP challenge system — server-side, single-use, opaque challenges.
  *
- * The client receives only an opaque challenge ID (256-bit random hex).
- * The OTP code, phone number, and expiry are never embedded in or
- * recoverable from the client-visible value.
+ * Extends the phone OTP challenge pattern (lib/otp-phone-token.ts) to support
+ * email and recurring verification channels using the same phone_otp_challenges
+ * table with the M423 `channel` column.
+ *
+ * The `phone_hash` column stores an HMAC of the channel identifier:
+ * - channel='email': HMAC of the email address
+ * - channel='recurring': HMAC of the phone number
  *
  * OTP codes are stored as HMAC hashes, not plaintext.
  *
@@ -11,13 +15,12 @@
  *   PHONE_OTP_HMAC_SECRET — dedicated 64+ hex-char secret for OTP hashing.
  *   Falls back to SUPABASE_SERVICE_ROLE_KEY only in non-production.
  *   Fails closed in production when the dedicated secret is missing or invalid.
- *
- * Generate:
- *   openssl rand -hex 32
  */
 
 import { createHmac, timingSafeEqual, randomBytes, randomInt } from 'crypto';
 import { createServiceClient } from '@/lib/supabase/service';
+
+export type OtpChannel = 'email' | 'recurring';
 
 const OTP_TTL_MS = 5 * 60 * 1000; // 5 minutes
 const MAX_FAILED_ATTEMPTS = 5;
@@ -27,10 +30,8 @@ const HEX_PATTERN = /^[0-9a-fA-F]+$/;
 /**
  * Resolve and validate the OTP HMAC secret.
  *
- * Production: requires PHONE_OTP_HMAC_SECRET with ≥64 hex chars.
+ * Production: requires PHONE_OTP_HMAC_SECRET with >= 64 hex chars.
  * Non-production: falls back to SUPABASE_SERVICE_ROLE_KEY or a dev default.
- *
- * Never logs the secret value.
  */
 function getOtpSecret(): string {
   const dedicated = process.env.PHONE_OTP_HMAC_SECRET;
@@ -64,8 +65,13 @@ function safeCompare(a: string, b: string): boolean {
   return timingSafeEqual(Buffer.from(a), Buffer.from(b));
 }
 
-// Export for testing only — not part of the public API
+// Export for testing only
 export { hmacHash as _hmacHash, safeCompare as _safeCompare, MAX_FAILED_ATTEMPTS };
+
+export interface OtpVerifyResult {
+  valid: boolean;
+  reason?: 'invalid_challenge' | 'expired' | 'consumed' | 'wrong_identifier' | 'wrong_otp' | 'max_attempts' | 'concurrent';
+}
 
 /**
  * Generate a 6-digit OTP and create a server-side challenge.
@@ -74,28 +80,30 @@ export { hmacHash as _hmacHash, safeCompare as _safeCompare, MAX_FAILED_ATTEMPTS
  *   code — the 6-digit OTP to send to the user
  *   challengeId — opaque 256-bit hex identifier for the client
  */
-export async function generatePhoneOtp(phone: string): Promise<{ code: string; challengeId: string }> {
+export async function generateOtpChallenge(
+  channel: OtpChannel,
+  identifier: string,
+): Promise<{ code: string; challengeId: string }> {
   const code = String(randomInt(100000, 999999));
   const challengeId = randomBytes(32).toString('hex'); // 256-bit opaque ID
   const expiresAt = new Date(Date.now() + OTP_TTL_MS).toISOString();
 
-  // Hash the phone and OTP — never store plaintext
-  const phoneHash = hmacHash(phone);
-  const otpHash = hmacHash(`${phone}:${code}`);
+  // Hash the identifier and OTP — never store plaintext
+  const identifierHash = hmacHash(identifier);
+  const otpHash = hmacHash(`${identifier}:${code}`);
 
   const supabase = createServiceClient();
 
   // Opportunistic cleanup of expired challenges (non-blocking)
   supabase.rpc('cleanup_expired_otp_challenges').then(() => {}, () => {});
 
-  // Insert the challenge record — explicitly set channel='phone' (do not rely
-  // on DB default alone, per M423 channel isolation contract)
+  // Insert the challenge record with channel
   const { error } = await supabase.from('phone_otp_challenges').insert({
     challenge_id: challengeId,
-    phone_hash: phoneHash,
+    phone_hash: identifierHash, // physical column name kept as-is per CTO direction
     otp_hash: otpHash,
+    channel,
     expires_at: expiresAt,
-    channel: 'phone',
   });
 
   if (error) {
@@ -105,23 +113,23 @@ export async function generatePhoneOtp(phone: string): Promise<{ code: string; c
   return { code, challengeId };
 }
 
-export interface OtpVerifyResult {
-  valid: boolean;
-  reason?: 'invalid_challenge' | 'expired' | 'consumed' | 'wrong_phone' | 'wrong_otp' | 'max_attempts' | 'concurrent';
-}
-
 /**
- * Verify a phone OTP against a server-side challenge.
+ * Verify an OTP against a server-side challenge.
  *
- * - Validates the challenge exists and is not expired/consumed/locked
- * - Verifies the phone number matches (via HMAC comparison)
+ * - Validates the challenge exists for the given channel and is not expired/consumed/locked
+ * - Verifies the identifier matches (via HMAC comparison)
  * - Verifies the OTP code matches (via HMAC comparison)
  * - Atomically consumes the challenge via otp_consume_challenge RPC
  * - Atomically increments failed-attempt counter via otp_record_failed_attempt RPC
  * - Rejects replay of consumed challenges
  */
-export async function verifyPhoneOtp(phone: string, code: string, challengeId: string): Promise<OtpVerifyResult> {
-  if (!phone || !code || !challengeId) {
+export async function verifyOtpChallenge(
+  channel: OtpChannel,
+  identifier: string,
+  code: string,
+  challengeId: string,
+): Promise<OtpVerifyResult> {
+  if (!identifier || !code || !challengeId) {
     return { valid: false, reason: 'invalid_challenge' };
   }
 
@@ -132,13 +140,12 @@ export async function verifyPhoneOtp(phone: string, code: string, challengeId: s
 
   const supabase = createServiceClient();
 
-  // Fetch the challenge — scoped to channel='phone' to prevent cross-channel
-  // verification (M423: a recurring/email challenge must not satisfy phone verify)
+  // Fetch the challenge — filter by both challenge_id AND channel
   const { data: challenge, error: fetchErr } = await supabase
     .from('phone_otp_challenges')
     .select('id, phone_hash, otp_hash, expires_at, consumed_at, failed_attempts')
     .eq('challenge_id', challengeId)
-    .eq('channel', 'phone')
+    .eq('channel', channel)
     .maybeSingle();
 
   if (fetchErr || !challenge) {
@@ -160,15 +167,15 @@ export async function verifyPhoneOtp(phone: string, code: string, challengeId: s
     return { valid: false, reason: 'max_attempts' };
   }
 
-  // Verify phone matches
-  const phoneHash = hmacHash(phone);
-  if (!safeCompare(phoneHash, challenge.phone_hash)) {
+  // Verify identifier matches (phone_hash column stores HMAC of the identifier)
+  const identifierHash = hmacHash(identifier);
+  if (!safeCompare(identifierHash, challenge.phone_hash)) {
     await recordFailedAttempt(supabase, challenge.id);
-    return { valid: false, reason: 'wrong_phone' };
+    return { valid: false, reason: 'wrong_identifier' };
   }
 
   // Verify OTP matches
-  const otpHash = hmacHash(`${phone}:${code}`);
+  const otpHash = hmacHash(`${identifier}:${code}`);
   if (!safeCompare(otpHash, challenge.otp_hash)) {
     await recordFailedAttempt(supabase, challenge.id);
     return { valid: false, reason: 'wrong_otp' };
@@ -195,15 +202,4 @@ async function recordFailedAttempt(supabase: ReturnType<typeof createServiceClie
   await supabase.rpc('otp_record_failed_attempt', {
     p_challenge_id: challengeId,
   });
-}
-
-/**
- * Generate a one-time password for phone-based Supabase users.
- * Used to sign them in via Supabase's email/password auth.
- * Changes each time — not stored, not recoverable.
- */
-export function generatePhonePassword(phone: string): string {
-  const secret = getOtpSecret();
-  const nonce = randomBytes(16).toString('hex');
-  return createHmac('sha256', secret).update(`${phone}:${nonce}`).digest('hex');
 }

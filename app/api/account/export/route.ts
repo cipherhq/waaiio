@@ -14,8 +14,8 @@ import { logger } from '@/lib/logger';
  *   ?format=csv  — returns a ZIP of CSVs (one per table)
  *   ?format=json — returns a single JSON file (default)
  *
- * Rate limit uses platform_settings table with key `export:{userId}`
- * instead of in-memory Map (which doesn't persist across serverless invocations).
+ * Rate limit uses dedicated export_rate_limits table (M424)
+ * instead of platform_settings (which is a config table, not ephemeral state).
  */
 
 const EXPORT_COOLDOWN_MS = 24 * 60 * 60 * 1000; // 24 hours
@@ -52,18 +52,17 @@ export async function POST(request: NextRequest) {
 
     const serviceClient = createServiceClient();
 
-    // Rate limit: 1 export per 24 hours (persisted in DB)
-    const exportKey = `export:${user.id}`;
-    const { data: exportRecord } = await serviceClient
-      .from('platform_settings')
-      .select('value')
-      .eq('key', exportKey)
+    // Rate limit: 1 export per 24 hours (persisted in export_rate_limits table)
+    const { data: rateLimit } = await serviceClient
+      .from('export_rate_limits')
+      .select('last_export_at')
+      .eq('user_id', user.id)
       .maybeSingle();
 
-    if (exportRecord) {
-      const lastExportTime = Number(exportRecord.value);
-      if (!isNaN(lastExportTime) && Date.now() - lastExportTime < EXPORT_COOLDOWN_MS) {
-        const retryAfterSecs = Math.ceil((EXPORT_COOLDOWN_MS - (Date.now() - lastExportTime)) / 1000);
+    if (rateLimit?.last_export_at) {
+      const lastExport = new Date(rateLimit.last_export_at).getTime();
+      if (!isNaN(lastExport) && Date.now() - lastExport < EXPORT_COOLDOWN_MS) {
+        const retryAfterSecs = Math.ceil((EXPORT_COOLDOWN_MS - (Date.now() - lastExport)) / 1000);
         return NextResponse.json(
           { error: 'You can only request one data export every 24 hours.' },
           { status: 429, headers: { 'Retry-After': String(retryAfterSecs) } },
@@ -149,10 +148,10 @@ export async function POST(request: NextRequest) {
 
     // Record export timestamp in DB for rate limiting (upsert)
     await serviceClient
-      .from('platform_settings')
+      .from('export_rate_limits')
       .upsert(
-        { key: exportKey, value: String(Date.now()) },
-        { onConflict: 'key' },
+        { user_id: user.id, last_export_at: new Date().toISOString() },
+        { onConflict: 'user_id' },
       );
 
     // Audit log

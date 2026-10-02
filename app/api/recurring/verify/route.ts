@@ -2,13 +2,14 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 import { logger } from '@/lib/logger';
+import { generateOtpChallenge, verifyOtpChallenge } from '@/lib/otp-challenge';
 
 export async function POST(request: NextRequest) {
   try {
     const rateLimit = await rateLimitResponseAsync(getRateLimitKey(request, 'recurring-verify'), 5, 60_000);
     if (rateLimit) return rateLimit;
 
-    const { phone, otp, action } = await request.json();
+    const { phone, otp, action, challengeId } = await request.json();
 
     if (!phone) {
       return NextResponse.json({ error: 'Phone number required' }, { status: 400 });
@@ -18,18 +19,8 @@ export async function POST(request: NextRequest) {
     const supabase = createServiceClient();
 
     if (action === 'request') {
-      // Generate 6-digit OTP using crypto-safe random
-      const { randomInt } = await import('crypto');
-      const code = String(randomInt(100000, 999999));
-      const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString(); // 10 min
-
-      // Store OTP in DB (upsert by phone key)
-      await supabase
-        .from('platform_settings')
-        .upsert(
-          { key: `recurring-otp:${normalizedPhone}`, value: { code, expires_at: expiresAt }, description: 'Recurring verify OTP' },
-          { onConflict: 'key' },
-        );
+      // Generate challenge — hashed storage, atomic consume, failed-attempt tracking
+      const { code, challengeId } = await generateOtpChallenge('recurring', normalizedPhone);
 
       // Send via WhatsApp
       const whatsappToken = process.env.WHATSAPP_TOKEN;
@@ -48,44 +39,40 @@ export async function POST(request: NextRequest) {
             messaging_product: 'whatsapp',
             to: normalizedPhone.replace('+', ''),
             type: 'text',
-            text: { body: `Your verification code is: ${code}\n\nThis code expires in 10 minutes.` },
+            text: { body: `Your verification code is: ${code}\n\nThis code expires in 5 minutes.` },
           }),
         }));
       } else {
         logger.debug(`[mock OTP] ${normalizedPhone}: ${code}`);
       }
 
-      return NextResponse.json({ success: true });
+      return NextResponse.json({ success: true, challengeId });
     }
 
     if (action === 'verify') {
-      // Fetch OTP from DB
-      const { data } = await supabase
-        .from('platform_settings')
-        .select('value')
-        .eq('key', `recurring-otp:${normalizedPhone}`)
-        .maybeSingle();
-
-      if (!data?.value) {
-        return NextResponse.json({ error: 'Code expired. Please request a new one.' }, { status: 400 });
+      if (!otp || !challengeId) {
+        return NextResponse.json({ error: 'Code and challengeId required' }, { status: 400 });
       }
 
-      const stored = data.value as { code: string; expires_at: string };
-
-      if (new Date() > new Date(stored.expires_at)) {
-        // Cleanup expired
-        await supabase.from('platform_settings').delete().eq('key', `recurring-otp:${normalizedPhone}`);
-        return NextResponse.json({ error: 'Code expired. Please request a new one.' }, { status: 400 });
-      }
-
-      const { timingSafeEqual } = await import('crypto');
+      // Verify via challenge table — hashed comparison, atomic consume, failed-attempt tracking
       const otpStr = String(otp).trim();
-      if (otpStr.length !== stored.code.length || !timingSafeEqual(Buffer.from(stored.code), Buffer.from(otpStr))) {
-        return NextResponse.json({ error: 'Invalid verification code.' }, { status: 400 });
-      }
+      const result = await verifyOtpChallenge('recurring', normalizedPhone, otpStr, challengeId);
 
-      // Verified — delete from DB
-      await supabase.from('platform_settings').delete().eq('key', `recurring-otp:${normalizedPhone}`);
+      if (!result.valid) {
+        const errorMap: Record<string, string> = {
+          invalid_challenge: 'Code expired. Please request a new one.',
+          expired: 'Code expired. Please request a new one.',
+          consumed: 'Code already used. Please request a new one.',
+          wrong_identifier: 'Invalid verification code.',
+          wrong_otp: 'Invalid verification code.',
+          max_attempts: 'Too many failed attempts. Please request a new code.',
+          concurrent: 'Verification failed. Please try again.',
+        };
+        return NextResponse.json(
+          { error: errorMap[result.reason || ''] || 'Invalid verification code.' },
+          { status: 400 },
+        );
+      }
 
       // Fetch all subscriptions for this phone
       const { data: subs } = await supabase

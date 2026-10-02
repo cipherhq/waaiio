@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
-import { supabase, adminDb } from '@/lib/supabase';
+import { adminDb } from '@/lib/supabase';
 import { useAdminSession } from '@/components/AdminLayout';
-import { logAudit } from '@/lib/auditLog';
+import { adminApiPut, adminApiFetch, adminApiDelete } from '@/lib/adminApi';
 import { fmtDateTime } from '@/lib/formatters';
 import { Settings, Plus, Pencil, Trash2, Save, X, AlertCircle } from 'lucide-react';
 
@@ -322,7 +322,6 @@ export default function PlatformSettings() {
   const isFullAdmin = session?.role === 'admin';
   const [settings, setSettings] = useState<PlatformSetting[]>([]);
   const [loading, setLoading] = useState(true);
-  const [userId, setUserId] = useState<string | null>(null);
 
   if (!isFullAdmin) {
     return (
@@ -351,9 +350,6 @@ export default function PlatformSettings() {
   async function loadData() {
     setLoading(true);
     try {
-      const { data: sessionData } = await supabase.auth.getSession();
-      setUserId(sessionData?.session?.user?.id ?? null);
-
       const { data } = await adminDb
         .from('platform_settings')
         .select('*')
@@ -415,8 +411,7 @@ export default function PlatformSettings() {
 
   // Commercial config keys — routed through save_commercial_config() RPC
   // Note: messaging_pricing, trial_credit_minor_by_currency, and
-  // subscription_included_minor_by_tier_currency are bundle-only keys
-  // managed via save_messaging_config() through the Countries page.
+  // 16 individually writable commercial keys → save_commercial_config() RPC
   const COMMERCIAL_KEYS = new Set([
     'pricing_tiers', 'trial_days', 'broadcast_limits', 'conversation_limits',
     'default_platform_fee_percent', 'annual_discount_percentage',
@@ -424,7 +419,19 @@ export default function PlatformSettings() {
     'transfer_expiry_hours', 'minimum_bank_transfer',
     'messaging_financial_gate', 'messaging_reservation_ttl_seconds',
     'fee_policy_enabled', 'category_fee_rates',
+    'messaging_topup_packages',
   ]);
+
+  // 3 bundle-only messaging keys → managed atomically via save_messaging_config()
+  // through the Countries/Messaging configuration page. Read-only here.
+  const MESSAGING_BUNDLE_KEYS = new Set([
+    'messaging_pricing',
+    'trial_credit_minor_by_currency',
+    'subscription_included_minor_by_tier_currency',
+  ]);
+
+  // Combined 19-key protected set (for display classification / badges)
+  const ALL_PROTECTED_KEYS = new Set([...COMMERCIAL_KEYS, ...MESSAGING_BUNDLE_KEYS]);
 
   // Save a single setting
   async function handleSave(key: string) {
@@ -440,32 +447,24 @@ export default function PlatformSettings() {
         parsedValue = raw;
       }
 
-      if (COMMERCIAL_KEYS.has(key)) {
-        // Commercial keys: use the atomic versioned save RPC
+      if (MESSAGING_BUNDLE_KEYS.has(key)) {
+        alert('This key is managed through the Countries/Messaging configuration page. It cannot be edited individually here.');
+        return;
+      } else if (COMMERCIAL_KEYS.has(key)) {
+        // Individually writable commercial keys: versioned save RPC
         const { error } = await adminDb.rpc('save_commercial_config', {
           p_key: key,
           p_value: parsedValue,
         });
         if (error) throw error;
       } else {
-        // Non-commercial keys: direct update (unchanged)
-        const { error } = await adminDb
-          .from('platform_settings')
-          .update({
-            value: parsedValue,
-            updated_by: userId,
-            updated_at: new Date().toISOString(),
-          })
-          .eq('key', key);
-        if (error) throw error;
+        // Non-commercial keys: server-authorized API route
+        const res = await adminApiPut('/api/admin/platform-settings', { key, value: parsedValue });
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          throw new Error(body.error || 'Failed to update setting');
+        }
       }
-
-      await logAudit({
-        action: 'update_platform_setting',
-        entity_type: 'platform_setting',
-        entity_id: key,
-        details: { key, new_value: parsedValue },
-      });
 
       // Clear edit and reload
       setEdits(prev => { const next = { ...prev }; delete next[key]; return next; });
@@ -495,8 +494,11 @@ export default function PlatformSettings() {
       }
 
       const trimmedKey = newKey.trim();
-      if (COMMERCIAL_KEYS.has(trimmedKey)) {
-        // Commercial keys: use the atomic versioned save RPC
+      if (MESSAGING_BUNDLE_KEYS.has(trimmedKey)) {
+        alert('This key is managed through the Countries/Messaging configuration page.');
+        return;
+      } else if (COMMERCIAL_KEYS.has(trimmedKey)) {
+        // Individually writable commercial keys: versioned save RPC
         const { error } = await adminDb.rpc('save_commercial_config', {
           p_key: trimmedKey,
           p_value: parsedValue,
@@ -504,29 +506,17 @@ export default function PlatformSettings() {
         });
         if (error) throw error;
       } else {
-        // Non-commercial keys: direct insert (unchanged)
-        const { error } = await adminDb
-          .from('platform_settings')
-          .insert({
-            key: trimmedKey,
-            value: parsedValue,
-            description: newDescription.trim() || null,
-            updated_by: userId,
-            updated_at: new Date().toISOString(),
-          });
-        if (error) throw error;
-      }
-
-      await logAudit({
-        action: 'create_platform_setting',
-        entity_type: 'platform_setting',
-        entity_id: newKey.trim(),
-        details: {
-          key: newKey.trim(),
+        // Non-commercial keys: server-authorized API route
+        const res = await adminApiFetch('/api/admin/platform-settings', {
+          key: trimmedKey,
           value: parsedValue,
           description: newDescription.trim() || null,
-        },
-      });
+        });
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          throw new Error(body.error || 'Failed to add setting');
+        }
+      }
 
       setShowAdd(false);
       setNewKey('');
@@ -556,31 +546,27 @@ export default function PlatformSettings() {
         parsedValue = configValue;
       }
 
-      if (COMMERCIAL_KEYS.has(key)) {
+      if (MESSAGING_BUNDLE_KEYS.has(key)) {
+        alert('This key is managed through the Countries/Messaging configuration page.');
+        return;
+      } else if (COMMERCIAL_KEYS.has(key)) {
         const { error } = await adminDb.rpc('save_commercial_config', {
           p_key: key,
           p_value: parsedValue,
         });
         if (error) throw error;
       } else {
-        const { error } = await adminDb
-          .from('platform_settings')
-          .insert({
-            key,
-            value: parsedValue,
-            description: configDescription.trim() || null,
-            updated_by: userId,
-            updated_at: new Date().toISOString(),
-          });
-        if (error) throw error;
+        // Non-commercial keys: server-authorized API route
+        const res = await adminApiFetch('/api/admin/platform-settings', {
+          key,
+          value: parsedValue,
+          description: configDescription.trim() || null,
+        });
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          throw new Error(body.error || 'Failed to configure setting');
+        }
       }
-
-      await logAudit({
-        action: 'create_platform_setting',
-        entity_type: 'platform_setting',
-        entity_id: key,
-        details: { key, value: parsedValue },
-      });
 
       setConfiguringKey(null);
       setConfigValue('');
@@ -596,27 +582,21 @@ export default function PlatformSettings() {
 
   // Delete setting
   async function handleDelete(key: string) {
-    if (COMMERCIAL_KEYS.has(key)) {
-      alert('Commercial config keys cannot be deleted. They are protected by the config versioning system.');
+    if (COMMERCIAL_KEYS.has(key) || MESSAGING_BUNDLE_KEYS.has(key)) {
+      alert('Protected config keys cannot be deleted. They are managed through the config versioning system.');
       return;
     }
     if (!confirm(`Are you sure you want to delete the setting "${key}"? This action cannot be undone.`)) return;
 
     setDeleting(key);
     try {
-      const { error } = await adminDb
-        .from('platform_settings')
-        .delete()
-        .eq('key', key);
+      const res = await adminApiDelete('/api/admin/platform-settings', { key });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || 'Failed to delete setting');
+      }
 
-      if (error) throw error;
-
-      await logAudit({
-        action: 'delete_platform_setting',
-        entity_type: 'platform_setting',
-        entity_id: key,
-        details: { key },
-      });
+      // Server route handles audit.
 
       await loadData();
     } catch (error) {
@@ -761,38 +741,53 @@ export default function PlatformSettings() {
                           <span className="ml-2 font-mono text-xs text-gray-400">{setting.key}</span>
                         </div>
                         <div className="flex items-center gap-1.5">
-                          {changed && (
+                          {MESSAGING_BUNDLE_KEYS.has(setting.key) ? (
+                            <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-600">
+                              Managed in Countries config
+                            </span>
+                          ) : (
                             <>
+                              {changed && (
+                                <>
+                                  <button
+                                    onClick={() => handleSave(setting.key)}
+                                    disabled={isSaving}
+                                    className="rounded-lg bg-brand px-3 py-1 text-xs font-semibold text-white hover:bg-brand-600 disabled:opacity-50"
+                                  >
+                                    {isSaving ? 'Saving...' : 'Save'}
+                                  </button>
+                                  <button
+                                    onClick={() => setEdits(prev => { const next = { ...prev }; delete next[setting.key]; return next; })}
+                                    className="rounded-lg border border-gray-200 px-2 py-1 text-xs text-gray-500 hover:bg-gray-50"
+                                  >
+                                    Undo
+                                  </button>
+                                </>
+                              )}
                               <button
-                                onClick={() => handleSave(setting.key)}
-                                disabled={isSaving}
-                                className="rounded-lg bg-brand px-3 py-1 text-xs font-semibold text-white hover:bg-brand-600 disabled:opacity-50"
+                                onClick={() => handleDelete(setting.key)}
+                                disabled={deleting === setting.key}
+                                className="rounded-lg p-1.5 text-gray-300 transition hover:bg-red-50 hover:text-red-500"
+                                title="Delete"
                               >
-                                {isSaving ? 'Saving...' : 'Save'}
-                              </button>
-                              <button
-                                onClick={() => setEdits(prev => { const next = { ...prev }; delete next[setting.key]; return next; })}
-                                className="rounded-lg border border-gray-200 px-2 py-1 text-xs text-gray-500 hover:bg-gray-50"
-                              >
-                                Undo
+                                <Trash2 className="h-3.5 w-3.5" />
                               </button>
                             </>
                           )}
-                          <button
-                            onClick={() => handleDelete(setting.key)}
-                            disabled={deleting === setting.key}
-                            className="rounded-lg p-1.5 text-gray-300 transition hover:bg-red-50 hover:text-red-500"
-                            title="Delete"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
                         </div>
                       </div>
                       {setting.description && (
                         <p className="mb-2 text-xs text-gray-500">{setting.description}</p>
                       )}
-                      {/* Smart editor based on value type */}
-                      {renderSettingEditor(setting, val, changed, (newVal) => setEdits(prev => ({ ...prev, [setting.key]: newVal })))}
+                      {MESSAGING_BUNDLE_KEYS.has(setting.key) ? (
+                        /* Bundle-only keys: read-only value display, no editable controls */
+                        <div className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2 text-sm text-gray-600 font-mono whitespace-pre-wrap break-all" data-testid={`readonly-value-${setting.key}`}>
+                          {formatValue(setting.value)}
+                        </div>
+                      ) : (
+                        /* All other keys: interactive editor */
+                        renderSettingEditor(setting, val, changed, (newVal) => setEdits(prev => ({ ...prev, [setting.key]: newVal })))
+                      )}
                       {setting.updated_at && (
                         <p className="mt-1 text-xs text-gray-400">Updated {fmtDateTime(setting.updated_at)}</p>
                       )}
@@ -803,11 +798,12 @@ export default function PlatformSettings() {
                 {/* Unconfigured keys — visible placeholders for absent settings */}
                 {unconfiguredKeys.map(key => {
                   const friendlyName = key.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase());
-                  const isConfiguring = configuringKey === key;
+                  const isBundleOnly = MESSAGING_BUNDLE_KEYS.has(key);
+                  const isConfiguring = !isBundleOnly && configuringKey === key;
                   const isSaving = savingKey === key;
 
                   return (
-                    <div key={key} className="px-5 py-4 bg-amber-50/50">
+                    <div key={key} className="px-5 py-4 bg-amber-50/50" data-testid={`unconfigured-${key}`}>
                       <div className="flex items-baseline justify-between gap-3 mb-1.5">
                         <div className="flex items-center gap-2">
                           <AlertCircle className="h-4 w-4 text-amber-500 shrink-0" />
@@ -815,9 +811,15 @@ export default function PlatformSettings() {
                             {friendlyName}
                           </span>
                           <span className="ml-1 font-mono text-xs text-gray-400">{key}</span>
-                          <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-700">Not configured</span>
+                          {isBundleOnly ? (
+                            <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-600">
+                              Managed in Countries config
+                            </span>
+                          ) : (
+                            <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-700">Not configured</span>
+                          )}
                         </div>
-                        {!isConfiguring && (
+                        {!isBundleOnly && !isConfiguring && (
                           <button
                             onClick={() => {
                               setConfiguringKey(key);
@@ -830,7 +832,12 @@ export default function PlatformSettings() {
                           </button>
                         )}
                       </div>
-                      {KEY_DESCRIPTIONS[key] && !isConfiguring && (
+                      {isBundleOnly && (
+                        <p className="ml-6 text-xs text-gray-500">
+                          This setting is managed atomically through the Countries/Messaging configuration page via <code className="text-[10px]">save_messaging_config()</code>.
+                        </p>
+                      )}
+                      {!isBundleOnly && KEY_DESCRIPTIONS[key] && !isConfiguring && (
                         <p className="ml-6 text-xs text-gray-500">{KEY_DESCRIPTIONS[key]}</p>
                       )}
                       {isConfiguring && (

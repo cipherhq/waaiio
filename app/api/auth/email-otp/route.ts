@@ -1,10 +1,10 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { createServiceClient } from '@/lib/supabase/service';
 import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 import { sendEmail } from '@/lib/email/client';
 import { checkBruteForce, recordFailure, clearFailures } from '@/lib/brute-force';
 import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
+import { generateOtpChallenge, verifyOtpChallenge } from '@/lib/otp-challenge';
 
 export async function POST(request: NextRequest) {
   const { searchParams } = new URL(request.url);
@@ -37,19 +37,8 @@ async function handleSend(request: NextRequest) {
     const ipLimit = await rateLimitResponseAsync(getRateLimitKey(request, 'email-otp'), 10, 600_000);
     if (ipLimit) return ipLimit;
 
-    // Generate 6-digit code using crypto-safe random
-    const { randomInt } = await import('crypto');
-    const code = String(randomInt(100000, 999999));
-    const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString(); // 5 minutes
-
-    // Store in DB (upsert by email — replaces any existing code)
-    const supabase = createServiceClient();
-    await supabase
-      .from('platform_settings')
-      .upsert(
-        { key: `otp:${emailLower}`, value: { code, expires_at: expiresAt }, description: 'Email OTP' },
-        { onConflict: 'key' },
-      );
+    // Generate challenge — hashed storage, atomic consume, failed-attempt tracking
+    const { code, challengeId } = await generateOtpChallenge('email', emailLower);
 
     // Send email
     await sendEmail({
@@ -68,7 +57,7 @@ async function handleSend(request: NextRequest) {
       `,
     });
 
-    return NextResponse.json({ success: true });
+    return NextResponse.json({ success: true, challengeId });
   } catch (err) {
     logger.withContext({ op: 'email-otp.send', ...safeLogErrorContext(err) }).error('[EMAIL-OTP] Send error');
     return NextResponse.json({ error: 'Failed to send code' }, { status: 500 });
@@ -77,16 +66,16 @@ async function handleSend(request: NextRequest) {
 
 async function handleVerify(request: NextRequest) {
   try {
-    const { email, code } = await request.json();
+    const { email, code, challengeId } = await request.json();
 
-    if (!email || !code) {
-      return NextResponse.json({ error: 'Email and code required' }, { status: 400 });
+    if (!email || !code || !challengeId) {
+      return NextResponse.json({ error: 'Email, code, and challengeId required' }, { status: 400 });
     }
 
     const emailLower = email.toLowerCase().trim();
     const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown';
 
-    // Brute force: check both email-level and IP-level blocks
+    // Brute force: check both email-level and IP-level blocks (defense-in-depth)
     const emailBf = checkBruteForce(`otp:${emailLower}`);
     if (emailBf.blocked) {
       return NextResponse.json({ error: 'Too many failed attempts. Please try again later.' }, { status: 429 });
@@ -100,39 +89,34 @@ async function handleVerify(request: NextRequest) {
     const limit = await rateLimitResponseAsync(`email-otp-verify:${emailLower}`, 5, 15 * 60 * 1000);
     if (limit) return limit;
 
-    // Fetch from DB
-    const supabase = createServiceClient();
-    const { data } = await supabase
-      .from('platform_settings')
-      .select('value')
-      .eq('key', `otp:${emailLower}`)
-      .maybeSingle();
-
-    if (!data?.value) {
-      return NextResponse.json({ error: 'No code found. Request a new one.' }, { status: 400 });
-    }
-
-    const stored = data.value as { code: string; expires_at: string };
-
-    if (new Date() > new Date(stored.expires_at)) {
-      // Cleanup expired
-      await supabase.from('platform_settings').delete().eq('key', `otp:${emailLower}`);
-      return NextResponse.json({ error: 'Code expired. Request a new one.' }, { status: 400 });
-    }
-
-    const { timingSafeEqual } = await import('crypto');
+    // Verify via challenge table — hashed comparison, atomic consume, failed-attempt tracking
     const codeStr = String(code).trim();
-    if (codeStr.length !== stored.code.length || !timingSafeEqual(Buffer.from(stored.code), Buffer.from(codeStr))) {
-      // Record brute force failure for both email and IP
+    const result = await verifyOtpChallenge('email', emailLower, codeStr, challengeId);
+
+    if (!result.valid) {
+      // Record brute force failure for both email and IP (defense-in-depth)
       recordFailure(`otp:${emailLower}`);
       recordFailure(`ip:${ip}`);
-      return NextResponse.json({ error: 'Incorrect code' }, { status: 401 });
+
+      const errorMap: Record<string, string> = {
+        invalid_challenge: 'No code found. Request a new one.',
+        expired: 'Code expired. Request a new one.',
+        consumed: 'Code already used. Request a new one.',
+        wrong_identifier: 'Incorrect code',
+        wrong_otp: 'Incorrect code',
+        max_attempts: 'Too many failed attempts. Request a new code.',
+        concurrent: 'Verification failed. Please try again.',
+      };
+
+      return NextResponse.json(
+        { error: errorMap[result.reason || ''] || 'Incorrect code' },
+        { status: result.reason === 'expired' || result.reason === 'invalid_challenge' || result.reason === 'consumed' ? 400 : 401 },
+      );
     }
 
-    // Verified — clear brute force records, delete from DB, and issue a signed token
+    // Verified — clear brute force records
     clearFailures(`otp:${emailLower}`);
     clearFailures(`ip:${ip}`);
-    await supabase.from('platform_settings').delete().eq('key', `otp:${emailLower}`);
 
     // Generate HMAC token proving this email was verified (valid 15 min)
     const { createHmac } = await import('crypto');
