@@ -2,7 +2,8 @@
  * Issue #512: Site Announcement optimistic concurrency.
  *
  * Regression coverage for the lost-update bug where a stale Admin form could
- * overwrite newer fields in platform_settings.site_announcement.
+ * overwrite newer fields in platform_settings.site_announcement, plus the
+ * staging regression where a cached GET version made fresh forms look stale.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -55,6 +56,20 @@ async function setupCasResult(data: unknown, error: unknown = null) {
   return { from, update, eqKey, eqUpdatedAt, select, maybeSingle };
 }
 
+function createGetClient(data: unknown, error: unknown = null) {
+  const single = vi.fn().mockResolvedValue({ data, error });
+  const eq = vi.fn().mockReturnValue({ single });
+  const select = vi.fn().mockReturnValue({ eq });
+  const from = vi.fn().mockReturnValue({ select });
+  return { client: { from } as any, from, select, eq, single };
+}
+
+function makeGetRequest() {
+  return new Request('http://localhost/api/admin/site-announcement', {
+    method: 'GET',
+  });
+}
+
 function makePutRequest(body: Record<string, unknown>) {
   return new Request('http://localhost/api/admin/site-announcement', {
     method: 'PUT',
@@ -66,6 +81,45 @@ function makePutRequest(body: Record<string, unknown>) {
 describe('Issue #512: Site Announcement route optimistic concurrency', () => {
   beforeEach(() => {
     vi.resetAllMocks();
+  });
+
+  it('fresh GET bypasses the data cache and observes a newer DB version on the next read', async () => {
+    await setupAdmin();
+    const { createServiceClient } = await import('@/lib/supabase/service');
+
+    const first = createGetClient({
+      value: BASE_CONFIG,
+      updated_at: EXPECTED_VERSION,
+    });
+    const second = createGetClient({
+      value: { ...BASE_CONFIG, message: 'Updated elsewhere.' },
+      updated_at: NEXT_VERSION,
+    });
+
+    vi.mocked(createServiceClient)
+      .mockReturnValueOnce(first.client)
+      .mockReturnValueOnce(second.client);
+
+    const route = await import('@/app/api/admin/site-announcement/route');
+
+    const firstResponse = await route.GET(makeGetRequest() as any);
+    expect(firstResponse.status).toBe(200);
+    expect(await firstResponse.json()).toEqual({
+      config: BASE_CONFIG,
+      updated_at: EXPECTED_VERSION,
+    });
+
+    const secondResponse = await route.GET(makeGetRequest() as any);
+    expect(secondResponse.status).toBe(200);
+    expect(await secondResponse.json()).toEqual({
+      config: { ...BASE_CONFIG, message: 'Updated elsewhere.' },
+      updated_at: NEXT_VERSION,
+    });
+
+    expect(createServiceClient).toHaveBeenNthCalledWith(1, { noStore: true });
+    expect(createServiceClient).toHaveBeenNthCalledWith(2, { noStore: true });
+    expect(route.fetchCache).toBe('force-no-store');
+    expect(route.revalidate).toBe(0);
   });
 
   it('fresh save uses expected_updated_at as an atomic predicate and returns canonical config + new version', async () => {
@@ -181,5 +235,16 @@ describe('Issue #512: Admin client version contract', () => {
 
   it('does not silently retry without a version token', () => {
     expect(source).toContain('Unable to verify the current announcement version. Reload the page before saving.');
+  });
+});
+
+describe('Issue #512: no-store service client contract', () => {
+  const source = readFileSync(
+    resolve(process.cwd(), 'lib/supabase/service.ts'),
+    'utf8',
+  );
+
+  it('forces cache no-store when a route opts into fresh service reads', () => {
+    expect(source).toContain("cache: 'no-store'");
   });
 });
