@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation';
 import { cookies } from 'next/headers';
 import { createClient } from '@/lib/supabase/server';
+import { createServiceClient } from '@/lib/supabase/service';
 import { DashboardProvider } from '@/components/dashboard/DashboardProvider';
 import { Sidebar } from '@/components/dashboard/Sidebar';
 import { ImpersonationBanner } from '@/components/dashboard/ImpersonationBanner';
@@ -104,7 +105,10 @@ export default async function DashboardLayout({
             ['scheduling'];
         }
 
-        const { data: overrideRows } = await supabase
+        // capability_overrides is service-role-only (M419/M422 design);
+        // admin impersonation already verified above.
+        const serviceForOverrides = createServiceClient();
+        const { data: overrideRows } = await serviceForOverrides
           .from('capability_overrides')
           .select('capability')
           .eq('business_id', impBiz.id);
@@ -174,8 +178,11 @@ export default async function DashboardLayout({
     .order('sort_order', { ascending: true })
     .order('capability', { ascending: true });
 
-  // Load capability overrides
-  const { data: overrideRows, error: overrideError } = await supabase
+  // Load capability overrides via service client.
+  // capability_overrides is service-role-only (M419/M422 design);
+  // business ownership already verified above (owner_id = user.id).
+  const serviceForOverrides = createServiceClient();
+  const { data: overrideRows, error: overrideError } = await serviceForOverrides
     .from('capability_overrides')
     .select('capability')
     .eq('business_id', business.id);
