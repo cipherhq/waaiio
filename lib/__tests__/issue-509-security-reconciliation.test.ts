@@ -1,7 +1,7 @@
 /**
  * Issue #509: Admin security reconciliation
  *
- * Covers the security contracts established by migrations M421-M424:
+ * Covers the security contracts established by migrations M421-M425:
  *
  * A. DB-dependent tests (require TEST_DATABASE_URL — real PostgreSQL)
  *    1. Platform settings 6-key public RLS allowlist
@@ -9,6 +9,7 @@
  *    3. Capability overrides least-privilege (anon/authenticated none, service_role SELECT only)
  *    4. OTP challenge channel column exists and defaults to 'phone'
  *    5. Export rate limits table exists with correct schema
+ *    6. Export rate limits service_role ACL normalized incl. PG17 MAINTAIN (M425)
  *
  * B. Route-level tests (mock-based, no DB needed)
  *    6. Admin platform-settings route: commercial key rejection
@@ -383,6 +384,104 @@ describe.skipIf(!canRunDb)('M424: export_rate_limits table (DB)', () => {
       `SELECT has_table_privilege('authenticated', 'public.export_rate_limits', 'SELECT')`,
     );
     expect(result).toBe('f');
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════
+// A6. Export rate limits ACL normalization (M425)
+// ══════════════════════════════════════════════════════════════════════
+
+describe.skipIf(!canRunDb)('M425: export_rate_limits service_role ACL normalization (DB)', () => {
+  it('service_role has SELECT on export_rate_limits', () => {
+    const result = psql(
+      `SELECT has_table_privilege('service_role', 'public.export_rate_limits', 'SELECT')`,
+    );
+    expect(result).toBe('t');
+  });
+
+  it('service_role has INSERT on export_rate_limits', () => {
+    const result = psql(
+      `SELECT has_table_privilege('service_role', 'public.export_rate_limits', 'INSERT')`,
+    );
+    expect(result).toBe('t');
+  });
+
+  it('service_role has UPDATE on export_rate_limits', () => {
+    const result = psql(
+      `SELECT has_table_privilege('service_role', 'public.export_rate_limits', 'UPDATE')`,
+    );
+    expect(result).toBe('t');
+  });
+
+  it('service_role does NOT have DELETE on export_rate_limits', () => {
+    const result = psql(
+      `SELECT has_table_privilege('service_role', 'public.export_rate_limits', 'DELETE')`,
+    );
+    expect(result).toBe('f');
+  });
+
+  it('service_role does NOT have TRUNCATE on export_rate_limits', () => {
+    const result = psql(
+      `SELECT has_table_privilege('service_role', 'public.export_rate_limits', 'TRUNCATE')`,
+    );
+    expect(result).toBe('f');
+  });
+
+  it('service_role does NOT have REFERENCES on export_rate_limits', () => {
+    const result = psql(
+      `SELECT has_table_privilege('service_role', 'public.export_rate_limits', 'REFERENCES')`,
+    );
+    expect(result).toBe('f');
+  });
+
+  it('service_role does NOT have TRIGGER on export_rate_limits', () => {
+    const result = psql(
+      `SELECT has_table_privilege('service_role', 'public.export_rate_limits', 'TRIGGER')`,
+    );
+    expect(result).toBe('f');
+  });
+
+  it('anon retains NO access to export_rate_limits', () => {
+    const result = psql(
+      `SELECT has_table_privilege('anon', 'public.export_rate_limits', 'SELECT')`,
+    );
+    expect(result).toBe('f');
+  });
+
+  it('authenticated retains NO access to export_rate_limits', () => {
+    const result = psql(
+      `SELECT has_table_privilege('authenticated', 'public.export_rate_limits', 'SELECT')`,
+    );
+    expect(result).toBe('f');
+  });
+
+  it('RLS remains enabled on export_rate_limits', () => {
+    const result = psql(
+      `SELECT rowsecurity FROM pg_tables WHERE schemaname = 'public' AND tablename = 'export_rate_limits'`,
+    );
+    expect(result).toBe('t');
+  });
+
+  it('service_role does NOT have MAINTAIN on export_rate_limits (PG17+ only)', () => {
+    const pgVersion = psql(`SELECT current_setting('server_version_num')::int`);
+    if (parseInt(pgVersion, 10) < 170000) {
+      // MAINTAIN privilege does not exist before PG17; skip
+      return;
+    }
+    const result = psql(
+      `SELECT has_table_privilege('service_role', 'public.export_rate_limits', 'MAINTAIN')`,
+    );
+    expect(result).toBe('f');
+  });
+
+  it('export_rate_limits_service_only policy remains intact', () => {
+    const result = psql(`
+      SELECT COUNT(*) FROM pg_policy
+      WHERE polrelid = 'public.export_rate_limits'::regclass
+        AND polname = 'export_rate_limits_service_only'
+        AND pg_get_expr(polqual, polrelid) LIKE '%service_role%'
+    `);
+    expect(result).toBe('1');
   });
 });
 
