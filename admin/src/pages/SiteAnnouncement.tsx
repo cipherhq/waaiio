@@ -42,6 +42,13 @@ interface TimeLeft {
   seconds: number;
 }
 
+interface PersistResult {
+  ok: boolean;
+  config?: SiteAnnouncementConfig;
+  updatedAt?: string;
+  error?: string;
+}
+
 function computeTimeLeft(target: string | null): TimeLeft | null {
   if (!target) return null;
   const diff = new Date(target).getTime() - Date.now();
@@ -129,6 +136,7 @@ function AnnouncementPreview({ config }: { config: SiteAnnouncementConfig }) {
 export default function SiteAnnouncementPage() {
   const session = useAdminSession();
   const [config, setConfig] = useState<SiteAnnouncementConfig>(EMPTY_SITE_ANNOUNCEMENT);
+  const [version, setVersion] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [toggling, setToggling] = useState(false);
@@ -148,6 +156,7 @@ export default function SiteAnnouncementPage() {
               ...EMPTY_SITE_ANNOUNCEMENT,
               ...(json.config as Partial<SiteAnnouncementConfig>),
             });
+            setVersion(typeof json.updated_at === 'string' ? json.updated_at : null);
           }
         } else {
           const json = await res.json().catch(() => ({ error: 'Failed to load announcement' }));
@@ -165,12 +174,37 @@ export default function SiteAnnouncementPage() {
     return errors[0] || null;
   }
 
-  async function persistViaApi(next: SiteAnnouncementConfig): Promise<{ ok: boolean; error?: string }> {
+  async function persistViaApi(next: SiteAnnouncementConfig): Promise<PersistResult> {
+    if (!version) {
+      return {
+        ok: false,
+        error: 'Unable to verify the current announcement version. Reload the page before saving.',
+      };
+    }
+
     try {
-      const res = await adminApiPut('/api/admin/site-announcement', next as unknown as Record<string, unknown>);
-      if (res.ok) return { ok: true };
+      const res = await adminApiPut('/api/admin/site-announcement', {
+        ...next,
+        expected_updated_at: version,
+      } as unknown as Record<string, unknown>);
       const json = await res.json().catch(() => ({ error: 'Server error' }));
-      return { ok: false, error: json.error || `Server error (${res.status})` };
+
+      if (!res.ok) {
+        return { ok: false, error: json.error || `Server error (${res.status})` };
+      }
+
+      if (!json.config || typeof json.updated_at !== 'string') {
+        return { ok: false, error: 'Server returned an invalid announcement version. Reload before saving again.' };
+      }
+
+      return {
+        ok: true,
+        config: {
+          ...EMPTY_SITE_ANNOUNCEMENT,
+          ...(json.config as Partial<SiteAnnouncementConfig>),
+        },
+        updatedAt: json.updated_at,
+      };
     } catch {
       return { ok: false, error: 'Failed to connect to the server' };
     }
@@ -189,14 +223,16 @@ export default function SiteAnnouncementPage() {
     setSaving(true);
     const result = await persistViaApi(config);
 
-    if (!result.ok) {
+    if (!result.ok || !result.config || !result.updatedAt) {
       setError(result.error || 'Failed to save');
     } else {
+      setConfig(result.config);
+      setVersion(result.updatedAt);
       setSaved(true);
       await logAudit('site_announcement_updated', {
-        enabled: config.enabled,
-        type: config.type,
-        headline: config.headline,
+        enabled: result.config.enabled,
+        type: result.config.type,
+        headline: result.config.headline,
       });
       window.setTimeout(() => setSaved(false), 3000);
     }
@@ -216,17 +252,18 @@ export default function SiteAnnouncementPage() {
     setToggling(true);
     const result = await persistViaApi(next);
 
-    if (!result.ok) {
+    if (!result.ok || !result.config || !result.updatedAt) {
       // Do not leave the UI claiming "Live" when persistence failed.
       setError(result.error || 'Failed to update');
       setToggling(false);
       return;
     }
 
-    setConfig(next);
-    await logAudit(next.enabled ? 'site_announcement_enabled' : 'site_announcement_disabled', {
-      type: next.type,
-      headline: next.headline,
+    setConfig(result.config);
+    setVersion(result.updatedAt);
+    await logAudit(result.config.enabled ? 'site_announcement_enabled' : 'site_announcement_disabled', {
+      type: result.config.type,
+      headline: result.config.headline,
     });
     setToggling(false);
   }
