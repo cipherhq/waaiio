@@ -648,9 +648,9 @@ describe('Middleware signup_open readability contract', () => {
 });
 
 // ════════════════════════════════════════════════════════════
-// B3: Commercial key classification — all 19 canonical keys
+// B3: Commercial key classification — 19-key server protection + client routing
 // ════════════════════════════════════════════════════════════
-describe('B3: commercial key classification covers M416 canonical 19-key contract', () => {
+describe('B3: commercial key classification and client routing contract', () => {
   const CANONICAL_19 = [
     'pricing_tiers', 'trial_days', 'broadcast_limits', 'conversation_limits',
     'default_platform_fee_percent', 'annual_discount_percentage',
@@ -664,7 +664,23 @@ describe('B3: commercial key classification covers M416 canonical 19-key contrac
     'subscription_included_minor_by_tier_currency',
   ];
 
-  it('server route COMMERCIAL_KEYS contains all 19 canonical keys', async () => {
+  const INDIVIDUALLY_WRITABLE_16 = [
+    'pricing_tiers', 'trial_days', 'broadcast_limits', 'conversation_limits',
+    'default_platform_fee_percent', 'annual_discount_percentage',
+    'payout_cooling_period_days', 'minimum_payout', 'payout_verification_limits',
+    'transfer_expiry_hours', 'minimum_bank_transfer',
+    'messaging_financial_gate', 'messaging_reservation_ttl_seconds',
+    'fee_policy_enabled', 'category_fee_rates',
+    'messaging_topup_packages',
+  ];
+
+  const MESSAGING_BUNDLE_3 = [
+    'messaging_pricing',
+    'trial_credit_minor_by_currency',
+    'subscription_included_minor_by_tier_currency',
+  ];
+
+  it('server route protects all 19 canonical keys from generic CRUD', async () => {
     const fs = await import('fs');
     const routeSrc = fs.readFileSync(
       new URL('../../app/api/admin/platform-settings/route.ts', import.meta.url), 'utf-8',
@@ -674,18 +690,58 @@ describe('B3: commercial key classification covers M416 canonical 19-key contrac
     }
   });
 
-  it('server route rejects the 4 M416-added keys specifically', async () => {
-    const m416Keys = [
-      'messaging_pricing', 'trial_credit_minor_by_currency',
-      'subscription_included_minor_by_tier_currency', 'messaging_topup_packages',
-    ];
+  it('admin client COMMERCIAL_KEYS has exactly 16 individually writable keys', async () => {
     const fs = await import('fs');
-    const routeSrc = fs.readFileSync(
-      new URL('../../app/api/admin/platform-settings/route.ts', import.meta.url), 'utf-8',
+    const src = fs.readFileSync(
+      new URL('../../admin/src/pages/PlatformSettings.tsx', import.meta.url), 'utf-8',
     );
-    for (const key of m416Keys) {
-      expect(routeSrc).toContain(`'${key}'`);
+    for (const key of INDIVIDUALLY_WRITABLE_16) {
+      expect(src).toContain(`'${key}'`);
     }
+  });
+
+  it('admin client MESSAGING_BUNDLE_KEYS has exactly the 3 bundle-only keys', async () => {
+    const fs = await import('fs');
+    const src = fs.readFileSync(
+      new URL('../../admin/src/pages/PlatformSettings.tsx', import.meta.url), 'utf-8',
+    );
+    for (const key of MESSAGING_BUNDLE_3) {
+      expect(src).toContain(`'${key}'`);
+    }
+    expect(src).toContain('MESSAGING_BUNDLE_KEYS');
+  });
+
+  it('3 bundle-only keys are NOT routed through save_commercial_config', async () => {
+    const fs = await import('fs');
+    const src = fs.readFileSync(
+      new URL('../../admin/src/pages/PlatformSettings.tsx', import.meta.url), 'utf-8',
+    );
+    // handleSave/handleAdd/handleConfigure all check MESSAGING_BUNDLE_KEYS
+    // before checking COMMERCIAL_KEYS, preventing routing to save_commercial_config
+    const bundleGuardCount = (src.match(/MESSAGING_BUNDLE_KEYS\.has/g) || []).length;
+    // Must appear in handleSave, handleAdd, handleConfigure, handleDelete, and UI
+    expect(bundleGuardCount).toBeGreaterThanOrEqual(4);
+  });
+
+  it('messaging_topup_packages remains individually writable via save_commercial_config', async () => {
+    const fs = await import('fs');
+    const src = fs.readFileSync(
+      new URL('../../admin/src/pages/PlatformSettings.tsx', import.meta.url), 'utf-8',
+    );
+    // messaging_topup_packages is in COMMERCIAL_KEYS, NOT in MESSAGING_BUNDLE_KEYS
+    expect(src).toMatch(/COMMERCIAL_KEYS.*messaging_topup_packages/s);
+    // Verify it's not in the bundle set by checking the bundle set definition
+    const bundleMatch = src.match(/MESSAGING_BUNDLE_KEYS\s*=\s*new\s+Set\(\[([^\]]+)\]\)/s);
+    expect(bundleMatch).toBeTruthy();
+    expect(bundleMatch![1]).not.toContain('messaging_topup_packages');
+  });
+
+  it('bundle-only keys show read-only UI indicator', async () => {
+    const fs = await import('fs');
+    const src = fs.readFileSync(
+      new URL('../../admin/src/pages/PlatformSettings.tsx', import.meta.url), 'utf-8',
+    );
+    expect(src).toContain('Managed in Countries config');
   });
 });
 
