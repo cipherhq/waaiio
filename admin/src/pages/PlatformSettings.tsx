@@ -779,8 +779,15 @@ export default function PlatformSettings() {
                       {setting.description && (
                         <p className="mb-2 text-xs text-gray-500">{setting.description}</p>
                       )}
-                      {/* Smart editor based on value type */}
-                      {renderSettingEditor(setting, val, changed, (newVal) => setEdits(prev => ({ ...prev, [setting.key]: newVal })))}
+                      {MESSAGING_BUNDLE_KEYS.has(setting.key) ? (
+                        /* Bundle-only keys: read-only value display, no editable controls */
+                        <div className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2 text-sm text-gray-600 font-mono whitespace-pre-wrap break-all" data-testid={`readonly-value-${setting.key}`}>
+                          {formatValue(setting.value)}
+                        </div>
+                      ) : (
+                        /* All other keys: interactive editor */
+                        renderSettingEditor(setting, val, changed, (newVal) => setEdits(prev => ({ ...prev, [setting.key]: newVal })))
+                      )}
                       {setting.updated_at && (
                         <p className="mt-1 text-xs text-gray-400">Updated {fmtDateTime(setting.updated_at)}</p>
                       )}
@@ -791,11 +798,12 @@ export default function PlatformSettings() {
                 {/* Unconfigured keys — visible placeholders for absent settings */}
                 {unconfiguredKeys.map(key => {
                   const friendlyName = key.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase());
-                  const isConfiguring = configuringKey === key;
+                  const isBundleOnly = MESSAGING_BUNDLE_KEYS.has(key);
+                  const isConfiguring = !isBundleOnly && configuringKey === key;
                   const isSaving = savingKey === key;
 
                   return (
-                    <div key={key} className="px-5 py-4 bg-amber-50/50">
+                    <div key={key} className="px-5 py-4 bg-amber-50/50" data-testid={`unconfigured-${key}`}>
                       <div className="flex items-baseline justify-between gap-3 mb-1.5">
                         <div className="flex items-center gap-2">
                           <AlertCircle className="h-4 w-4 text-amber-500 shrink-0" />
@@ -803,9 +811,15 @@ export default function PlatformSettings() {
                             {friendlyName}
                           </span>
                           <span className="ml-1 font-mono text-xs text-gray-400">{key}</span>
-                          <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-700">Not configured</span>
+                          {isBundleOnly ? (
+                            <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-600">
+                              Managed in Countries config
+                            </span>
+                          ) : (
+                            <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-700">Not configured</span>
+                          )}
                         </div>
-                        {!isConfiguring && (
+                        {!isBundleOnly && !isConfiguring && (
                           <button
                             onClick={() => {
                               setConfiguringKey(key);
@@ -818,7 +832,12 @@ export default function PlatformSettings() {
                           </button>
                         )}
                       </div>
-                      {KEY_DESCRIPTIONS[key] && !isConfiguring && (
+                      {isBundleOnly && (
+                        <p className="ml-6 text-xs text-gray-500">
+                          This setting is managed atomically through the Countries/Messaging configuration page via <code className="text-[10px]">save_messaging_config()</code>.
+                        </p>
+                      )}
+                      {!isBundleOnly && KEY_DESCRIPTIONS[key] && !isConfiguring && (
                         <p className="ml-6 text-xs text-gray-500">{KEY_DESCRIPTIONS[key]}</p>
                       )}
                       {isConfiguring && (
@@ -845,9 +864,6 @@ export default function PlatformSettings() {
                           </div>
                           {COMMERCIAL_KEYS.has(key) && (
                             <p className="text-[10px] text-gray-400">This is a commercial config key. It will be saved via the versioned save_commercial_config RPC.</p>
-                          )}
-                          {MESSAGING_BUNDLE_KEYS.has(key) && (
-                            <p className="text-[10px] text-amber-500">⚠ This key is managed atomically through the Countries/Messaging configuration page. Individual edits are not supported here.</p>
                           )}
                           <div className="flex gap-2">
                             <button

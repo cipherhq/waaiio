@@ -743,6 +743,84 @@ describe('B3: commercial key classification and client routing contract', () => 
     );
     expect(src).toContain('Managed in Countries config');
   });
+
+  // ── Behavioral UI contract tests ──
+
+  it('configured bundle-only keys render non-editable read-only display, not renderSettingEditor', async () => {
+    const fs = await import('fs');
+    const src = fs.readFileSync(
+      new URL('../../admin/src/pages/PlatformSettings.tsx', import.meta.url), 'utf-8',
+    );
+    // The configured-key render path must branch on MESSAGING_BUNDLE_KEYS
+    // and show a read-only div instead of calling renderSettingEditor
+    expect(src).toContain('MESSAGING_BUNDLE_KEYS.has(setting.key) ?');
+    // Must use data-testid for read-only value (proves non-editable render)
+    expect(src).toContain('data-testid={`readonly-value-${setting.key}`}');
+    // The alternative branch calls renderSettingEditor (for writable keys)
+    expect(src).toContain('renderSettingEditor(setting, val, changed');
+  });
+
+  it('unconfigured bundle-only keys do NOT expose Configure button', async () => {
+    const fs = await import('fs');
+    const src = fs.readFileSync(
+      new URL('../../admin/src/pages/PlatformSettings.tsx', import.meta.url), 'utf-8',
+    );
+    // The unconfigured section must gate isBundleOnly before rendering Configure
+    expect(src).toContain('const isBundleOnly = MESSAGING_BUNDLE_KEYS.has(key)');
+    // Configure button is conditional on !isBundleOnly
+    expect(src).toContain('!isBundleOnly && !isConfiguring');
+    // isConfiguring is forced false for bundle keys
+    expect(src).toContain('const isConfiguring = !isBundleOnly && configuringKey === key');
+  });
+
+  it('unconfigured bundle-only keys show messaging config description instead of Configure', async () => {
+    const fs = await import('fs');
+    const src = fs.readFileSync(
+      new URL('../../admin/src/pages/PlatformSettings.tsx', import.meta.url), 'utf-8',
+    );
+    // Bundle-only unconfigured rows get a description about save_messaging_config
+    expect(src).toContain('save_messaging_config()');
+    expect(src).toContain('Countries/Messaging configuration page');
+  });
+
+  it('all three bundle-only keys are covered by MESSAGING_BUNDLE_KEYS', async () => {
+    const fs = await import('fs');
+    const src = fs.readFileSync(
+      new URL('../../admin/src/pages/PlatformSettings.tsx', import.meta.url), 'utf-8',
+    );
+    const bundleMatch = src.match(/MESSAGING_BUNDLE_KEYS\s*=\s*new\s+Set\(\[([^\]]+)\]\)/s);
+    expect(bundleMatch).toBeTruthy();
+    const bundleContent = bundleMatch![1];
+    expect(bundleContent).toContain("'messaging_pricing'");
+    expect(bundleContent).toContain("'trial_credit_minor_by_currency'");
+    expect(bundleContent).toContain("'subscription_included_minor_by_tier_currency'");
+    // Exactly 3 — no more, no less
+    const keyMatches = bundleContent.match(/'/g) || [];
+    expect(keyMatches.length).toBe(6); // 3 keys × 2 quotes each
+  });
+
+  it('16 individually writable commercial keys use save_commercial_config in handleSave', async () => {
+    const fs = await import('fs');
+    const src = fs.readFileSync(
+      new URL('../../admin/src/pages/PlatformSettings.tsx', import.meta.url), 'utf-8',
+    );
+    // handleSave routes COMMERCIAL_KEYS to save_commercial_config RPC
+    expect(src).toContain("adminDb.rpc('save_commercial_config'");
+    // COMMERCIAL_KEYS contains messaging_topup_packages (individually writable)
+    const commercialMatch = src.match(/const COMMERCIAL_KEYS\s*=\s*new\s+Set\(\[([^\]]+)\]\)/s);
+    expect(commercialMatch).toBeTruthy();
+    expect(commercialMatch![1]).toContain("'messaging_topup_packages'");
+  });
+
+  it('server route still protects all 19 keys from generic CRUD', async () => {
+    const fs = await import('fs');
+    const routeSrc = fs.readFileSync(
+      new URL('../../app/api/admin/platform-settings/route.ts', import.meta.url), 'utf-8',
+    );
+    for (const key of CANONICAL_19) {
+      expect(routeSrc).toContain(`'${key}'`);
+    }
+  });
 });
 
 // ════════════════════════════════════════════════════════════
