@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
-import { supabase, adminDb } from '@/lib/supabase';
+import { adminDb } from '@/lib/supabase';
 import { useAdminSession } from '@/components/AdminLayout';
 import { logAudit } from '@/lib/auditLog';
+import { adminApiPut, adminApiFetch, adminApiDelete } from '@/lib/adminApi';
 import { fmtDateTime } from '@/lib/formatters';
 import { Settings, Plus, Pencil, Trash2, Save, X, AlertCircle } from 'lucide-react';
 
@@ -322,7 +323,6 @@ export default function PlatformSettings() {
   const isFullAdmin = session?.role === 'admin';
   const [settings, setSettings] = useState<PlatformSetting[]>([]);
   const [loading, setLoading] = useState(true);
-  const [userId, setUserId] = useState<string | null>(null);
 
   if (!isFullAdmin) {
     return (
@@ -351,9 +351,6 @@ export default function PlatformSettings() {
   async function loadData() {
     setLoading(true);
     try {
-      const { data: sessionData } = await supabase.auth.getSession();
-      setUserId(sessionData?.session?.user?.id ?? null);
-
       const { data } = await adminDb
         .from('platform_settings')
         .select('*')
@@ -448,16 +445,12 @@ export default function PlatformSettings() {
         });
         if (error) throw error;
       } else {
-        // Non-commercial keys: direct update (unchanged)
-        const { error } = await adminDb
-          .from('platform_settings')
-          .update({
-            value: parsedValue,
-            updated_by: userId,
-            updated_at: new Date().toISOString(),
-          })
-          .eq('key', key);
-        if (error) throw error;
+        // Non-commercial keys: server-authorized API route
+        const res = await adminApiPut('/api/admin/platform-settings', { key, value: parsedValue });
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          throw new Error(body.error || 'Failed to update setting');
+        }
       }
 
       await logAudit({
@@ -504,17 +497,16 @@ export default function PlatformSettings() {
         });
         if (error) throw error;
       } else {
-        // Non-commercial keys: direct insert (unchanged)
-        const { error } = await adminDb
-          .from('platform_settings')
-          .insert({
-            key: trimmedKey,
-            value: parsedValue,
-            description: newDescription.trim() || null,
-            updated_by: userId,
-            updated_at: new Date().toISOString(),
-          });
-        if (error) throw error;
+        // Non-commercial keys: server-authorized API route
+        const res = await adminApiFetch('/api/admin/platform-settings', {
+          key: trimmedKey,
+          value: parsedValue,
+          description: newDescription.trim() || null,
+        });
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          throw new Error(body.error || 'Failed to add setting');
+        }
       }
 
       await logAudit({
@@ -563,16 +555,16 @@ export default function PlatformSettings() {
         });
         if (error) throw error;
       } else {
-        const { error } = await adminDb
-          .from('platform_settings')
-          .insert({
-            key,
-            value: parsedValue,
-            description: configDescription.trim() || null,
-            updated_by: userId,
-            updated_at: new Date().toISOString(),
-          });
-        if (error) throw error;
+        // Non-commercial keys: server-authorized API route
+        const res = await adminApiFetch('/api/admin/platform-settings', {
+          key,
+          value: parsedValue,
+          description: configDescription.trim() || null,
+        });
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          throw new Error(body.error || 'Failed to configure setting');
+        }
       }
 
       await logAudit({
@@ -604,12 +596,11 @@ export default function PlatformSettings() {
 
     setDeleting(key);
     try {
-      const { error } = await adminDb
-        .from('platform_settings')
-        .delete()
-        .eq('key', key);
-
-      if (error) throw error;
+      const res = await adminApiDelete('/api/admin/platform-settings', { key });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || 'Failed to delete setting');
+      }
 
       await logAudit({
         action: 'delete_platform_setting',

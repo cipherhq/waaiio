@@ -28,6 +28,7 @@ function ManageRecurringContent() {
   const [otp, setOtp] = useState('');
   const [step, setStep] = useState<'phone' | 'otp' | 'list'>('phone');
   const [subs, setSubs] = useState<Subscription[]>([]);
+  const [challengeId, setChallengeId] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [cancelling, setCancelling] = useState<string | null>(null);
@@ -48,6 +49,7 @@ function ManageRecurringContent() {
       });
       const data = await res.json();
       if (data.success) {
+        setChallengeId(data.challengeId || '');
         setStep('otp');
       } else {
         setError(data.error || 'Failed to send verification code.');
@@ -71,7 +73,7 @@ function ManageRecurringContent() {
       const res = await fetch('/api/recurring/verify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone, otp, action: 'verify' }),
+        body: JSON.stringify({ phone, otp, action: 'verify', challengeId }),
       });
       const data = await res.json();
       if (data.subscriptions) {

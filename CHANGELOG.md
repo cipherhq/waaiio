@@ -3,6 +3,25 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-10-02 — Admin security reconciliation (#509)
+
+### What changed
+- **M421: platform_settings security reconciliation** — Grants anon+authenticated SELECT (for RLS reads), revokes INSERT/UPDATE/DELETE from both. Rewrites `admin_all_platform_settings` to target authenticated-only (fixes anon is_admin() execution error). Expands `public_read_config_settings` to 6 keys: adds `signup_open` + `maintenance_mode` (launch blocker fix). Grants service_role INSERT+DELETE for server routes.
+- **M422: capability_overrides security reconciliation** — Revokes ALL from anon+authenticated. Replaces production's `capability_overrides_service_all USING(true)` with `USING(auth.role() = 'service_role')`. Retains service_role SELECT only per M419 contract.
+- **M423: OTP challenges channel support** — Adds `channel varchar(16)` column (default 'phone') to `phone_otp_challenges`. Enables email and recurring OTP to reuse the secure challenge pattern.
+- **M424: export_rate_limits table** — Moves `export:{userId}` ephemeral state out of `platform_settings` into a dedicated table with service_role-only access.
+- **Admin platform-settings server API** (`app/api/admin/platform-settings/route.ts`) — Server-authorized CRUD for non-commercial settings. Uses `requirePlatformAdmin` + `createServiceClient`. Commercial keys rejected (must use `save_commercial_config` RPC).
+- **PlatformSettings.tsx refactor** — Non-commercial key writes now route through the server API instead of direct browser `adminDb` writes. Commercial keys unchanged (still use RPC).
+- **OTP migration** (`lib/otp-challenge.ts`) — Email and recurring OTP now use `phone_otp_challenges` table with HMAC-hashed storage, atomic consume via SECURITY DEFINER RPC, and 5-attempt lockout. Replaces plaintext `platform_settings` storage.
+- **Email-otp + recurring/verify route updates** — Both routes now return `challengeId` on send and require it on verify. Client callers (BookingForm, EventPurchaseForm, recurring/manage) updated to pass challengeId.
+- **Export route update** (`app/api/account/export/route.ts`) — Rate limit check/record uses `export_rate_limits` table instead of `platform_settings`.
+- **Tests** (`lib/__tests__/issue-509-security-reconciliation.test.ts`) — 46 tests: DB ACL contract tests for all 4 migrations + route-level mock tests for admin settings API + middleware readability contract.
+
+### What could break
+- Admin panel PlatformSettings non-commercial key writes now go through the server API — if the API route is unreachable, saves will fail (previously went direct to DB).
+- Email OTP and recurring verify now require `challengeId` in the verify request — any client not passing challengeId will get a 400 error.
+- Export rate limit data in `platform_settings` (old `export:{userId}` keys) is orphaned — existing rate limits are effectively reset.
+
 ## 2026-10-01 — platform_settings service_role UPDATE grant (#502)
 
 ### What changed
