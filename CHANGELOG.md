@@ -3,6 +3,17 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-10-02 — M422 capability_overrides client correction (#313)
+
+### What changed
+- **`app/api/capabilities/configure/route.ts`** — Override read moved from authenticated client to service client. Business ownership still verified via authenticated client before the override read. Required because M422 revokes authenticated table-level SELECT on `capability_overrides`.
+- **`app/dashboard/layout.tsx`** — Both impersonation and normal-flow override reads moved from authenticated client to service client. Admin impersonation and business ownership authorization unchanged.
+- **Regression tests** (`lib/__tests__/m422-override-client-regression.test.ts`) — 4 tests: verifies service client used for overrides, authenticated client used for ownership, ownership denial short-circuits override read, and override data flows correctly to RPC snapshot.
+
+### What could break
+- If `createServiceClient()` is misconfigured or unavailable, override reads fail (fail-closed: returns 500 or empty overrides). Previously this would degrade to authenticated-client read; now it's an explicit failure.
+- No other callers affected — all other override reads already use service client (api-guard.ts, bot.service.ts, capability-guard.ts).
+
 ## 2026-10-02 — Admin security reconciliation (#509)
 
 ### What changed
