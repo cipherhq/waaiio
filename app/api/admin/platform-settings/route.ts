@@ -5,16 +5,26 @@ import { createServiceClient } from '@/lib/supabase/service';
 export const dynamic = 'force-dynamic';
 
 /**
- * Commercial config keys — managed exclusively via save_commercial_config() RPC.
- * This route refuses to modify them; they must go through the versioned RPC path.
+ * Commercial config keys — managed exclusively via save_commercial_config()
+ * or save_messaging_config() RPCs. This route refuses to modify them.
+ *
+ * Canonical 19-key contract from M416's save_commercial_config +
+ * save_messaging_config + guard_commercial_settings allowlists.
+ * Server route is authoritative; client duplicates for display only.
  */
 const COMMERCIAL_KEYS = new Set([
+  // save_commercial_config keys (M359/M375/M376/M416)
   'pricing_tiers', 'trial_days', 'broadcast_limits', 'conversation_limits',
   'default_platform_fee_percent', 'annual_discount_percentage',
   'payout_cooling_period_days', 'minimum_payout', 'payout_verification_limits',
   'transfer_expiry_hours', 'minimum_bank_transfer',
   'messaging_financial_gate', 'messaging_reservation_ttl_seconds',
   'fee_policy_enabled', 'category_fee_rates',
+  'messaging_topup_packages',
+  // save_messaging_config bundle keys (M416)
+  'messaging_pricing',
+  'trial_credit_minor_by_currency',
+  'subscription_included_minor_by_tier_currency',
 ]);
 
 /**
@@ -60,7 +70,8 @@ export async function PUT(request: NextRequest) {
     return NextResponse.json({ error: 'Failed to update setting' }, { status: 500 });
   }
 
-  // Server-side audit
+  // Server-side audit — single source of truth; mutation is not considered
+  // successful unless the audit record is persisted.
   const { error: auditError } = await supabase.from('admin_audit_logs').insert({
     actor_id: admin.userId,
     action: 'update_platform_setting',
@@ -70,6 +81,7 @@ export async function PUT(request: NextRequest) {
   });
   if (auditError) {
     console.error('[PLATFORM_SETTINGS] Audit log failed for PUT:', auditError.message);
+    return NextResponse.json({ error: 'Setting updated but audit failed — contact engineering' }, { status: 500 });
   }
 
   return NextResponse.json({ success: true });
@@ -119,7 +131,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Failed to create setting' }, { status: 500 });
   }
 
-  // Server-side audit
+  // Server-side audit — single source of truth
   const { error: auditError } = await supabase.from('admin_audit_logs').insert({
     actor_id: admin.userId,
     action: 'create_platform_setting',
@@ -129,6 +141,7 @@ export async function POST(request: NextRequest) {
   });
   if (auditError) {
     console.error('[PLATFORM_SETTINGS] Audit log failed for POST:', auditError.message);
+    return NextResponse.json({ error: 'Setting created but audit failed — contact engineering' }, { status: 500 });
   }
 
   return NextResponse.json({ success: true });
@@ -172,7 +185,7 @@ export async function DELETE(request: NextRequest) {
     return NextResponse.json({ error: 'Failed to delete setting' }, { status: 500 });
   }
 
-  // Server-side audit
+  // Server-side audit — single source of truth
   const { error: auditError } = await supabase.from('admin_audit_logs').insert({
     actor_id: admin.userId,
     action: 'delete_platform_setting',
@@ -182,6 +195,7 @@ export async function DELETE(request: NextRequest) {
   });
   if (auditError) {
     console.error('[PLATFORM_SETTINGS] Audit log failed for DELETE:', auditError.message);
+    return NextResponse.json({ error: 'Setting deleted but audit failed — contact engineering' }, { status: 500 });
   }
 
   return NextResponse.json({ success: true });

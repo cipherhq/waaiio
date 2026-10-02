@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import { adminDb } from '@/lib/supabase';
 import { useAdminSession } from '@/components/AdminLayout';
-import { logAudit } from '@/lib/auditLog';
 import { adminApiPut, adminApiFetch, adminApiDelete } from '@/lib/adminApi';
 import { fmtDateTime } from '@/lib/formatters';
 import { Settings, Plus, Pencil, Trash2, Save, X, AlertCircle } from 'lucide-react';
@@ -412,6 +411,9 @@ export default function PlatformSettings() {
 
   // Commercial config keys — routed through save_commercial_config() RPC
   // Note: messaging_pricing, trial_credit_minor_by_currency, and
+  // Canonical 19-key commercial contract from M416. Server route is authoritative;
+  // this client set is for display classification only (badges, routing to RPC).
+  // messaging_pricing, trial_credit_minor_by_tier_currency,
   // subscription_included_minor_by_tier_currency are bundle-only keys
   // managed via save_messaging_config() through the Countries page.
   const COMMERCIAL_KEYS = new Set([
@@ -421,6 +423,10 @@ export default function PlatformSettings() {
     'transfer_expiry_hours', 'minimum_bank_transfer',
     'messaging_financial_gate', 'messaging_reservation_ttl_seconds',
     'fee_policy_enabled', 'category_fee_rates',
+    'messaging_topup_packages',
+    'messaging_pricing',
+    'trial_credit_minor_by_currency',
+    'subscription_included_minor_by_tier_currency',
   ]);
 
   // Save a single setting
@@ -453,12 +459,8 @@ export default function PlatformSettings() {
         }
       }
 
-      await logAudit({
-        action: 'update_platform_setting',
-        entity_type: 'platform_setting',
-        entity_id: key,
-        details: { key, new_value: parsedValue },
-      });
+      // Server route handles audit for non-commercial keys;
+      // save_commercial_config RPC is self-auditing via config versioning.
 
       // Clear edit and reload
       setEdits(prev => { const next = { ...prev }; delete next[key]; return next; });
@@ -509,16 +511,8 @@ export default function PlatformSettings() {
         }
       }
 
-      await logAudit({
-        action: 'create_platform_setting',
-        entity_type: 'platform_setting',
-        entity_id: newKey.trim(),
-        details: {
-          key: newKey.trim(),
-          value: parsedValue,
-          description: newDescription.trim() || null,
-        },
-      });
+      // Server route handles audit for non-commercial keys;
+      // save_commercial_config RPC is self-auditing.
 
       setShowAdd(false);
       setNewKey('');
@@ -567,12 +561,7 @@ export default function PlatformSettings() {
         }
       }
 
-      await logAudit({
-        action: 'create_platform_setting',
-        entity_type: 'platform_setting',
-        entity_id: key,
-        details: { key, value: parsedValue },
-      });
+      // Server route handles audit.
 
       setConfiguringKey(null);
       setConfigValue('');
@@ -602,12 +591,7 @@ export default function PlatformSettings() {
         throw new Error(body.error || 'Failed to delete setting');
       }
 
-      await logAudit({
-        action: 'delete_platform_setting',
-        entity_type: 'platform_setting',
-        entity_id: key,
-        details: { key },
-      });
+      // Server route handles audit.
 
       await loadData();
     } catch (error) {

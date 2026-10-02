@@ -38,6 +38,11 @@ REVOKE INSERT, UPDATE, DELETE ON public.platform_settings FROM authenticated;
 -- DELETE: OTP cleanup, export rate limit (until migrated out)
 GRANT INSERT, DELETE ON public.platform_settings TO service_role;
 
+-- admin_audit_logs: service_role INSERT for server-authorized audit trail.
+-- The admin platform-settings server route writes audit rows via service_role.
+-- Staging currently lacks this grant (confirmed via MCP).
+GRANT INSERT ON public.admin_audit_logs TO service_role;
+
 -- ══════════════════════════════════════════════════════════
 -- RLS policy reconciliation
 -- ══════════════════════════════════════════════════════════
@@ -138,6 +143,11 @@ BEGIN
       AND polname = 'public_read_config_settings'
   ) THEN
     RAISE EXCEPTION 'M421: public_read_config_settings must exist';
+  END IF;
+
+  -- 9. service_role CAN INSERT into admin_audit_logs (for server-authorized audit trail)
+  IF NOT has_table_privilege('service_role', 'public.admin_audit_logs', 'INSERT') THEN
+    RAISE EXCEPTION 'M421: service_role must have INSERT on admin_audit_logs';
   END IF;
 
   RAISE NOTICE 'M421: All checks passed — platform_settings security reconciliation complete';

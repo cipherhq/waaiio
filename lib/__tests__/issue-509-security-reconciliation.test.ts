@@ -646,3 +646,118 @@ describe('Middleware signup_open readability contract', () => {
     expect(middlewareSrc).toContain('isMaintenanceMode');
   });
 });
+
+// ════════════════════════════════════════════════════════════
+// B3: Commercial key classification — all 19 canonical keys
+// ════════════════════════════════════════════════════════════
+describe('B3: commercial key classification covers M416 canonical 19-key contract', () => {
+  const CANONICAL_19 = [
+    'pricing_tiers', 'trial_days', 'broadcast_limits', 'conversation_limits',
+    'default_platform_fee_percent', 'annual_discount_percentage',
+    'payout_cooling_period_days', 'minimum_payout', 'payout_verification_limits',
+    'transfer_expiry_hours', 'minimum_bank_transfer',
+    'messaging_financial_gate', 'messaging_reservation_ttl_seconds',
+    'fee_policy_enabled', 'category_fee_rates',
+    'messaging_topup_packages',
+    'messaging_pricing',
+    'trial_credit_minor_by_currency',
+    'subscription_included_minor_by_tier_currency',
+  ];
+
+  it('server route COMMERCIAL_KEYS contains all 19 canonical keys', async () => {
+    const fs = await import('fs');
+    const routeSrc = fs.readFileSync(
+      new URL('../../app/api/admin/platform-settings/route.ts', import.meta.url), 'utf-8',
+    );
+    for (const key of CANONICAL_19) {
+      expect(routeSrc).toContain(`'${key}'`);
+    }
+  });
+
+  it('server route rejects the 4 M416-added keys specifically', async () => {
+    const m416Keys = [
+      'messaging_pricing', 'trial_credit_minor_by_currency',
+      'subscription_included_minor_by_tier_currency', 'messaging_topup_packages',
+    ];
+    const fs = await import('fs');
+    const routeSrc = fs.readFileSync(
+      new URL('../../app/api/admin/platform-settings/route.ts', import.meta.url), 'utf-8',
+    );
+    for (const key of m416Keys) {
+      expect(routeSrc).toContain(`'${key}'`);
+    }
+  });
+});
+
+// ════════════════════════════════════════════════════════════
+// B4: OTP channel isolation — cross-channel rejection
+// ════════════════════════════════════════════════════════════
+describe('B4: OTP channel isolation', () => {
+  it('generatePhoneOtp explicitly writes channel=phone', async () => {
+    const fs = await import('fs');
+    const src = fs.readFileSync(
+      new URL('../otp-phone-token.ts', import.meta.url), 'utf-8',
+    );
+    expect(src).toContain("channel: 'phone'");
+  });
+
+  it('verifyPhoneOtp filters by channel=phone', async () => {
+    const fs = await import('fs');
+    const src = fs.readFileSync(
+      new URL('../otp-phone-token.ts', import.meta.url), 'utf-8',
+    );
+    expect(src).toContain(".eq('channel', 'phone')");
+  });
+
+  it('generic generateOtpChallenge writes the provided channel', async () => {
+    const fs = await import('fs');
+    const src = fs.readFileSync(
+      new URL('../otp-challenge.ts', import.meta.url), 'utf-8',
+    );
+    // Must insert with channel parameter
+    expect(src).toMatch(/channel[,:\s]/);
+    // Must support email and recurring
+    expect(src).toContain("'email'");
+    expect(src).toContain("'recurring'");
+  });
+
+  it('generic verifyOtpChallenge filters by channel', async () => {
+    const fs = await import('fs');
+    const src = fs.readFileSync(
+      new URL('../otp-challenge.ts', import.meta.url), 'utf-8',
+    );
+    expect(src).toContain(".eq('channel',");
+  });
+
+  it('phone verifier cannot accept a recurring challenge (source contract)', () => {
+    // The phone verifier queries .eq('channel', 'phone').
+    // A recurring challenge has channel='recurring', so it will not match.
+    // This is a static contract assertion — the runtime behavior follows from
+    // the .eq('channel', 'phone') filter in verifyPhoneOtp.
+    const fs = require('fs');
+    const phoneSrc = fs.readFileSync(
+      require('path').resolve(__dirname, '../otp-phone-token.ts'), 'utf-8',
+    );
+    const challengeSrc = fs.readFileSync(
+      require('path').resolve(__dirname, '../otp-challenge.ts'), 'utf-8',
+    );
+    // Phone verifier scopes to 'phone'
+    expect(phoneSrc).toContain(".eq('channel', 'phone')");
+    // Generic verifier scopes to the provided channel
+    expect(challengeSrc).toContain(".eq('channel',");
+    // Recurring challenges write channel='recurring', not 'phone'
+    expect(challengeSrc).toContain("'recurring'");
+  });
+
+  it('audit log failure causes server route to return error', async () => {
+    const fs = await import('fs');
+    const routeSrc = fs.readFileSync(
+      new URL('../../app/api/admin/platform-settings/route.ts', import.meta.url), 'utf-8',
+    );
+    // All three handlers must return 500 when audit fails
+    const auditFailMatches = routeSrc.match(/audit failed/gi) || [];
+    expect(auditFailMatches.length).toBeGreaterThanOrEqual(3);
+    // Must NOT silently continue after audit failure
+    expect(routeSrc).not.toMatch(/auditError\)\s*\{\s*console\.error[^}]*\}\s*\n\s*return NextResponse\.json\(\{ success: true \}\)/);
+  });
+});
