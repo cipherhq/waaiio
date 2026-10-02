@@ -11,6 +11,8 @@ import {
 
 export const dynamic = 'force-dynamic';
 
+const STALE_WRITE_MESSAGE = 'This announcement was updated elsewhere. Reload the latest version before saving.';
+
 function optionalString(value: unknown, field: string): { value: string | null; error?: string } {
   if (value === null || value === undefined || value === '') return { value: null };
   if (typeof value !== 'string') return { value: null, error: `${field} must be a string` };
@@ -63,6 +65,19 @@ function parseConfig(body: Record<string, unknown>): { config?: SiteAnnouncement
   return { config };
 }
 
+function parseExpectedUpdatedAt(body: Record<string, unknown>): { value?: string; error?: string } {
+  if (typeof body.expected_updated_at !== 'string' || !body.expected_updated_at.trim()) {
+    return { error: 'expected_updated_at is required. Reload the latest announcement before saving.' };
+  }
+
+  const value = body.expected_updated_at.trim();
+  if (!Number.isFinite(new Date(value).getTime())) {
+    return { error: 'expected_updated_at must be a valid timestamp' };
+  }
+
+  return { value };
+}
+
 /**
  * GET /api/admin/site-announcement
  * Admin-only: read current announcement config.
@@ -92,6 +107,9 @@ export async function GET(request: NextRequest) {
  * This is purely informational — it does NOT disable WhatsApp,
  * payments, bookings, or any runtime capability. That is the
  * exclusive domain of the existing maintenance_mode setting.
+ *
+ * Updates are optimistic-concurrency guarded by expected_updated_at so
+ * a stale Admin form cannot silently overwrite a newer announcement.
  */
 export async function PUT(request: NextRequest) {
   const admin = await requirePlatformAdmin(request, { requiredRole: 'admin' });
@@ -109,19 +127,36 @@ export async function PUT(request: NextRequest) {
     return NextResponse.json({ error: parsed.error || 'Invalid announcement config' }, { status: 400 });
   }
 
+  const expected = parseExpectedUpdatedAt(body);
+  if (!expected.value) {
+    return NextResponse.json({ error: expected.error || 'Invalid announcement version' }, { status: 400 });
+  }
+
+  const nextUpdatedAt = new Date().toISOString();
   const supabase = createServiceClient();
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from('platform_settings')
     .update({
       value: parsed.config,
       updated_by: admin.userId,
-      updated_at: new Date().toISOString(),
+      updated_at: nextUpdatedAt,
     })
-    .eq('key', 'site_announcement');
+    .eq('key', 'site_announcement')
+    .eq('updated_at', expected.value)
+    .select('value, updated_at')
+    .maybeSingle();
 
   if (error) {
     return NextResponse.json({ error: 'Failed to update announcement' }, { status: 500 });
   }
 
-  return NextResponse.json({ success: true, config: parsed.config });
+  if (!data) {
+    return NextResponse.json({ error: STALE_WRITE_MESSAGE, code: 'STALE_WRITE' }, { status: 409 });
+  }
+
+  return NextResponse.json({
+    success: true,
+    config: data.value as SiteAnnouncementConfig,
+    updated_at: data.updated_at,
+  });
 }
