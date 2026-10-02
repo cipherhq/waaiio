@@ -9,7 +9,7 @@
  *    3. Capability overrides least-privilege (anon/authenticated none, service_role SELECT only)
  *    4. OTP challenge channel column exists and defaults to 'phone'
  *    5. Export rate limits table exists with correct schema
- *    6. Export rate limits service_role ACL normalized (M425)
+ *    6. Export rate limits service_role ACL normalized incl. PG17 MAINTAIN (M425)
  *
  * B. Route-level tests (mock-based, no DB needed)
  *    6. Admin platform-settings route: commercial key rejection
@@ -460,6 +460,18 @@ describe.skipIf(!canRunDb)('M425: export_rate_limits service_role ACL normalizat
       `SELECT rowsecurity FROM pg_tables WHERE schemaname = 'public' AND tablename = 'export_rate_limits'`,
     );
     expect(result).toBe('t');
+  });
+
+  it('service_role does NOT have MAINTAIN on export_rate_limits (PG17+ only)', () => {
+    const pgVersion = psql(`SELECT current_setting('server_version_num')::int`);
+    if (parseInt(pgVersion, 10) < 170000) {
+      // MAINTAIN privilege does not exist before PG17; skip
+      return;
+    }
+    const result = psql(
+      `SELECT has_table_privilege('service_role', 'public.export_rate_limits', 'MAINTAIN')`,
+    );
+    expect(result).toBe('f');
   });
 
   it('export_rate_limits_service_only policy remains intact', () => {

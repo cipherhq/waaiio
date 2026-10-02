@@ -6,8 +6,8 @@ If something breaks, check this log to find what changed and when.
 ## 2026-10-02 — M425 export_rate_limits ACL normalization (#313)
 
 ### What changed
-- **M425: `export_rate_limits` service_role ACL normalization** — Revokes all table privileges from service_role then re-grants exactly SELECT/INSERT/UPDATE. Closes residual DELETE/TRUNCATE/REFERENCES/TRIGGER/MAINTAIN inherited from production's ALTER DEFAULT Privileges. No application code, RLS policy, or data changes.
-- **Tests** (`lib/__tests__/issue-509-security-reconciliation.test.ts`) — 11 DB contract tests: proves service_role has exactly SELECT/INSERT/UPDATE, no DELETE/TRUNCATE/REFERENCES/TRIGGER, anon/authenticated retain no access, RLS enabled, service-only policy intact.
+- **M425: `export_rate_limits` service_role ACL normalization** — Revokes all table privileges from service_role then re-grants exactly SELECT/INSERT/UPDATE. Closes residual DELETE/TRUNCATE/REFERENCES/TRIGGER/MAINTAIN inherited from production's ALTER Default Privileges. 12-check migration verification (PG17-gated MAINTAIN check). No application code, RLS policy, or data changes.
+- **Tests** (`lib/__tests__/issue-509-security-reconciliation.test.ts`) — 12 DB contract tests: proves service_role has exactly SELECT/INSERT/UPDATE, no DELETE/TRUNCATE/REFERENCES/TRIGGER, PG17-gated MAINTAIN = false, anon/authenticated retain no access, RLS enabled, service-only policy intact.
 
 ### What could break
 - Nothing — service_role retains SELECT/INSERT/UPDATE (the only operations the export route uses). No application code references DELETE on this table.

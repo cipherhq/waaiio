@@ -76,7 +76,14 @@ BEGIN
     RAISE EXCEPTION 'M425: RLS must remain enabled on export_rate_limits';
   END IF;
 
-  -- 11. Service-only RLS policy remains intact
+  -- 11. service_role does NOT have MAINTAIN (PG17+ only)
+  IF current_setting('server_version_num')::int >= 170000 THEN
+    IF has_table_privilege('service_role', 'public.export_rate_limits', 'MAINTAIN') THEN
+      RAISE EXCEPTION 'M425: service_role must NOT have MAINTAIN on export_rate_limits';
+    END IF;
+  END IF;
+
+  -- 12. Service-only RLS policy remains intact
   IF NOT EXISTS (
     SELECT 1 FROM pg_policy
     WHERE polrelid = 'public.export_rate_limits'::regclass
@@ -86,5 +93,5 @@ BEGIN
     RAISE EXCEPTION 'M425: export_rate_limits_service_only policy must exist with service_role predicate';
   END IF;
 
-  RAISE NOTICE 'M425: All checks passed — export_rate_limits service_role ACL normalized to SELECT/INSERT/UPDATE only';
+  RAISE NOTICE 'M425: All 12 checks passed — export_rate_limits service_role ACL normalized to SELECT/INSERT/UPDATE only';
 END $$;
