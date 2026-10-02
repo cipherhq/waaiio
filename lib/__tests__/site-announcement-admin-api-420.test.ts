@@ -14,12 +14,22 @@ vi.mock('@/lib/admin-auth', () => ({
 vi.mock('@/lib/supabase/service', () => ({
   createServiceClient: () => ({
     from: vi.fn(() => ({
-      update: vi.fn((payload: unknown) => ({
-        eq: vi.fn(async () => {
-          updateCalls.push(payload);
-          return { error: null };
-        }),
-      })),
+      update: vi.fn((payload: unknown) => {
+        updateCalls.push(payload);
+        const p = payload as Record<string, unknown>;
+        return {
+          eq: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              select: vi.fn(() => ({
+                maybeSingle: vi.fn(async () => ({
+                  data: { value: p.value, updated_at: new Date().toISOString() },
+                  error: null,
+                })),
+              })),
+            })),
+          })),
+        };
+      }),
     })),
   }),
 }));
@@ -87,6 +97,7 @@ describe('#420 Admin site announcement API activation safety', () => {
       cta_text: 'Get Updates',
       cta_link: '/launch',
       style: 'brand',
+      expected_updated_at: '2026-10-02T10:00:00.000Z',
     }));
 
     expect(response.status).toBe(200);

@@ -157,10 +157,27 @@ describe('PUT /api/admin/site-announcement (route-level)', () => {
       role: 'admin',
     });
 
+    const savedConfig = {
+      enabled: true,
+      type: 'general',
+      headline: 'Test headline',
+      message: 'Test message',
+      target_date: null,
+      cta_text: null,
+      cta_link: null,
+      style: 'brand',
+    };
+    const savedUpdatedAt = '2026-10-02T12:00:00.000Z';
+
     const { createServiceClient } = await import('@/lib/supabase/service');
-    const mockUpdate = vi.fn().mockReturnValue({
-      eq: vi.fn().mockResolvedValue({ error: null }),
+    const maybeSingle = vi.fn().mockResolvedValue({
+      data: { value: savedConfig, updated_at: savedUpdatedAt },
+      error: null,
     });
+    const select = vi.fn().mockReturnValue({ maybeSingle });
+    const eqUpdatedAt = vi.fn().mockReturnValue({ select });
+    const eqKey = vi.fn().mockReturnValue({ eq: eqUpdatedAt });
+    const mockUpdate = vi.fn().mockReturnValue({ eq: eqKey });
     vi.mocked(createServiceClient).mockReturnValue({
       from: vi.fn().mockReturnValue({ update: mockUpdate }),
     } as any);
@@ -178,6 +195,7 @@ describe('PUT /api/admin/site-announcement (route-level)', () => {
         headline: 'Test headline',
         message: 'Test message',
         style: 'brand',
+        expected_updated_at: '2026-10-02T10:00:00.000Z',
       }),
     });
 
@@ -187,5 +205,6 @@ describe('PUT /api/admin/site-announcement (route-level)', () => {
     expect(body.success).toBe(true);
     expect(body.config.enabled).toBe(true);
     expect(body.config.headline).toBe('Test headline');
+    expect(body.updated_at).toBe(savedUpdatedAt);
   });
 });
