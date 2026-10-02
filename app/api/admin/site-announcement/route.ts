@@ -10,6 +10,8 @@ import {
 } from '@/shared/site-announcement';
 
 export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+export const fetchCache = 'force-no-store';
 
 const STALE_WRITE_MESSAGE = 'This announcement was updated elsewhere. Reload the latest version before saving.';
 
@@ -86,7 +88,9 @@ export async function GET(request: NextRequest) {
   const admin = await requirePlatformAdmin(request, { requiredRole: 'admin' });
   if (!admin) return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
 
-  const supabase = createServiceClient();
+  // #512: the version token must come from a live DB read. A cached version
+  // makes every otherwise-fresh Admin save look stale and correctly return 409.
+  const supabase = createServiceClient({ noStore: true });
   const { data, error } = await supabase
     .from('platform_settings')
     .select('value, updated_at')
