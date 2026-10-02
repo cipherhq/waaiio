@@ -25,7 +25,16 @@ const { state, apiPutCalls, logAuditMock, mockAdminApiGet, mockAdminApiPut } = v
       if (state.apiError) {
         return { ok: false, json: async () => ({ error: state.apiError }) };
       }
-      return { ok: true, json: async () => ({ success: true, config: body }) };
+      const config = { ...body };
+      delete config.expected_updated_at;
+      return {
+        ok: true,
+        json: async () => ({
+          success: true,
+          config,
+          updated_at: new Date().toISOString(),
+        }),
+      };
     }),
   };
 });
@@ -174,12 +183,16 @@ describe('#420 Site Announcement Admin safety UX', () => {
     expect(await screen.findByRole('button', { name: 'Live' })).toBeInTheDocument();
     expect(mockAdminApiPut).toHaveBeenCalledWith(
       '/api/admin/site-announcement',
-      expect.objectContaining({ enabled: true }),
+      expect.objectContaining({
+        enabled: true,
+        expected_updated_at: expect.any(String),
+      }),
     );
 
     const body = apiPutCalls[0] as Record<string, unknown>;
     expect(body.enabled).toBe(true);
     expect(body.target_date).toBe('2099-10-11T16:00:00.000Z');
+    expect(body.expected_updated_at).toEqual(expect.any(String));
     expect(logAuditMock).toHaveBeenCalledWith(
       'site_announcement_enabled',
       expect.objectContaining({ headline: 'Waaiio launches soon' }),
@@ -200,7 +213,10 @@ describe('#420 Site Announcement Admin safety UX', () => {
     await waitFor(() => expect(apiPutCalls).toHaveLength(1));
     expect(mockAdminApiPut).toHaveBeenCalledWith(
       '/api/admin/site-announcement',
-      expect.objectContaining({ headline: 'Test headline' }),
+      expect.objectContaining({
+        headline: 'Test headline',
+        expected_updated_at: expect.any(String),
+      }),
     );
   });
 });
