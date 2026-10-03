@@ -184,6 +184,7 @@ Before creating a migration:
 | Version | Description | Branch | Reserved by | Date |
 |---------|-------------|--------|-------------|------|
 | 292 | atomic_payout_execution | fix/fin-002-atomic-payout | claude | 2026-07-26 |
+| 426 | staging_payment_setup_parity (#527) | claude/project-thread-irtaf1 | claude | 2026-10-03 |
 
 ### Stranded Reservations (PR #21)
 
