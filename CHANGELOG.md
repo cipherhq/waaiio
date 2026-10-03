@@ -3,6 +3,21 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-10-03 — M426 staging payment setup parity (#527)
+
+### What changed
+- **M426: `business_payment_credentials` restore + least-privilege ACLs** (`supabase/migrations/426_staging_payment_setup_parity.sql`) — Creates the table only if missing (staging), with the complete column contract, the gateway / connection_type / `chk_credentials_mode` CHECKs, and the `idx_bpc_active` partial unique index. RLS on; a single owner policy `bpc_owner_select` (SELECT only, `owner_id = auth.uid()`). Grants: service_role SELECT/INSERT/UPDATE (no DELETE); authenticated column-level SELECT on 9 non-secret metadata columns (never `secret_key` / `public_key`, no writes); anon nothing.
+- **M426: bot sequence access matrix** — service_role SELECT on `bot_sequences` + `bot_sequence_steps`, SELECT/INSERT/UPDATE on `bot_sequence_enrollments`; authenticated SELECT/INSERT/UPDATE/DELETE on `bot_sequences` + `bot_sequence_steps`, SELECT on enrollments. Existing M040 RLS policies unchanged.
+- **M426: golden payment journey grants** — service_role SELECT/INSERT on `platform_fees` (fee insert + verify-read in `process-success.ts` / `shared/payment.ts`); service_role SELECT on `payment_confirmation_deliveries` (status read in `send-confirmation.ts`; writes stay behind the M342 SECURITY DEFINER RPCs).
+- No blanket or default-privilege grants. Every grant is additive; on a production-shaped database the migration is a no-op (proved by test). Self-verification block fails the migration if any positive or negative privilege is wrong.
+- **Tests** (`lib/__tests__/staging-payment-parity-527-db.test.ts`) — 57 role-faithful PostgreSQL tests (`SET ROLE` service_role / authenticated / anon with JWT claims) driving the real classifier, routing authority, and `triggerSequences` code: privilege matrix, schema constraints, credential classification (empty/platform, subaccount, Connect, BYO, ambiguous, inactive), owner positive and cross-tenant negative paths, anon denial, sequence runtime + dashboard, fee + confirmation reads, idempotency, and RED baselines.
+- **CI** (`.github/workflows/ci.yml`) — New migration-shard-b step "M426 staging payment setup parity DB tests" on a dedicated database; zero skips enforced.
+
+### What could break
+- Any authenticated client that selects `*`, `secret_key`, or `public_key` from `business_payment_credentials` now gets 42501. No current caller does (the settings GET route selects explicit metadata columns; all secret reads use the service client).
+- Any service-role code path that DELETEs credentials, sequences, steps, enrollments, or platform_fees, or writes `payment_confirmation_deliveries` directly, gets 42501. No current golden-journey caller does; admin/cron/reseller platform_fees paths are out of scope (systemic ACL reconciliation follow-up).
+- Not included: `fee_policy_enabled` staging config (separate canonical commercial-config gate), `saved_payment_methods`, production ACL hardening.
+
 ## 2026-10-02 — M425 export_rate_limits ACL normalization (#313)
 
 ### What changed
