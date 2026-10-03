@@ -1998,9 +1998,6 @@ jobs:
           echo "$OUTPUT"
           if [ $EXIT_CODE -ne 0 ]; then
             echo "❌ ACC-202 DB tests failed with exit code $EXIT_CODE"
-Warning: truncated output (original token count: 7028)
-Total output lines: 500
-
             exit 1
           fi
           SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '\d+ skipped' | grep -oP '\d+' || echo "0")
@@ -2251,7 +2248,7 @@ Total output lines: 500
           CREATE TABLE IF NOT EXISTS business_locations (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), business_id UUID REFERENCES businesses(id), name TEXT, is_active BOOLEAN DEFAULT true);
           CREATE TABLE IF NOT EXISTS services (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), business_id UUID REFERENCES businesses(id), name TEXT, price INTEGER DEFAULT 0, duration_minutes INTEGER DEFAULT 60, max_capacity INTEGER DEFAULT 1, is_class BOOLEAN DEFAULT false, is_active BOOLEAN DEFAULT true, class_schedule JSONB DEFAULT '[]', requires_staff BOOLEAN DEFAULT false, buffer_minutes INTEGER DEFAULT 0, created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW());
           CREATE TABLE IF NOT EXISTS appointments (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), business_id UUID REFERENCES businesses(id), max_capacity INTEGER DEFAULT 1, buffer_minutes INTEGER DEFAULT 0, duration_minutes INTEGER DEFAULT 30, requires_staff BOOLEAN DEFAULT false);
-          DO $$…28 tokens truncated…,'recurring','crowdfunding','giving','class'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+          DO $$ BEGIN CREATE TYPE flow_type AS ENUM ('scheduling','appointment','ordering','reservation','ticketing','payment','recurring','crowdfunding','giving','class'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
           DO $$ BEGIN CREATE TYPE booking_channel AS ENUM ('whatsapp','dashboard','api','web'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
           DO $$ BEGIN CREATE TYPE deposit_status AS ENUM ('none','pending','paid','refunded'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
           DO $$ BEGIN CREATE TYPE reservation_status AS ENUM ('pending','confirmed','cancelled','completed','no_show','in_progress'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
