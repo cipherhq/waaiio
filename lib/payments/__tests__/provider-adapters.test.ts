@@ -66,7 +66,7 @@ describe('Provider adapters', () => {
   // ── PAYSTACK ──
 
   it('1. Paystack platform → platform credential', async () => {
-    mockFetch.mockResolvedValueOnce({ ok: true, status: 200, json: () => ({ data: { status: 'success', amount: 500000, currency: 'NGN', id: 'tx1', channel: 'card', authorization: { last4: '1234' }, fees: 750 } }) });
+    mockFetch.mockResolvedValueOnce({ ok: true, status: 200, json: () => ({ data: { status: 'success', amount: 500000, currency: 'NGN', id: 'tx1', channel: 'card', authorization: { reusable: true, authorization_code: 'AUTH-1', last4: '1234', brand: 'visa', exp_month: 12, exp_year: 2030 }, customer: { email: 'payer@example.test', customer_code: 'CUS-1' }, fees: 750 } }) });
     const { verifyWithProvider } = await import('../provider-adapters');
     const r = await verifyWithProvider(buildSupabase(), {
       provider: 'paystack', gatewayReference: 'REF-1', expectedAmount: 5000, expectedCurrency: 'NGN',
@@ -77,6 +77,9 @@ describe('Provider adapters', () => {
       expect(r.result.amount).toBe(5000); // 500000 kobo → 5000
       expect(r.result.currency).toBe('NGN');
       expect(r.result.provider).toBe('paystack');
+      expect(r.result.cardAuthorization).toEqual(expect.objectContaining({
+        authorization_code: 'AUTH-1', email: 'payer@example.test', reusable: true,
+      }));
     }
     expect(mockFetch).toHaveBeenCalledTimes(1);
     expect(mockFetch.mock.calls[0][1].headers.Authorization).toContain('test_pk_platform_stub');
