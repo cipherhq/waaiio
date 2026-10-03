@@ -185,6 +185,7 @@ Before creating a migration:
 |---------|-------------|--------|-------------|------|
 | 292 | atomic_payout_execution | fix/fin-002-atomic-payout | claude | 2026-07-26 |
 | 426 | staging_payment_setup_parity (#527) | claude/project-thread-irtaf1 | claude | 2026-10-03 |
+| 427 | paystack_saved_card_persistence (#530) | fix/530-paystack-saved-card-ingestion | Codex | 2026-10-03 |
 
 ### Stranded Reservations (PR #21)
 

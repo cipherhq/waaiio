@@ -4,6 +4,7 @@ import { getServerPostHog } from '@/lib/posthog/server';
 import { createAlert } from '@/lib/alerts/create-alert';
 import { logger } from '@/lib/logger';
 import { reconcilePayment } from './reconcile';
+import { normalizePaystackCardAuthorization, persistPaystackCardAuthorization } from './paystack-card-authorization';
 
 /**
  * Shared webhook processing logic for both platform and BYO payment webhooks.
@@ -22,6 +23,19 @@ export async function processPaystackChargeSuccess(
     .single();
 
   if (!existingPayment) return;
+
+  const authorization = data.authorization as Record<string, unknown> | undefined;
+  const customer = data.customer as Record<string, unknown> | undefined;
+  const cardAuthorization = normalizePaystackCardAuthorization(authorization, customer);
+
+  // Authorization enrichment is independent of financial finalization. Do it
+  // first so a late success webhook can repair a missing reusable token while
+  // the already-finalized payment remains financially idempotent.
+  if (cardAuthorization) {
+    const amount = Number(data.amount) / 100;
+    const currency = typeof data.currency === 'string' ? data.currency : '';
+    await persistPaystackCardAuthorization(supabase, existingPayment.id, amount, currency, cardAuthorization);
+  }
 
   // For new-authority payments: always reconcile (Stage 2/3 may be incomplete even if provider-paid)
   // For legacy payments: skip if already success (preserve existing behavior)
@@ -49,7 +63,6 @@ export async function processPaystackChargeSuccess(
 
   // Persist non-authoritative provider metadata (card info, fee) WITHOUT setting status.
   // Authority owns the pending → success transition (Stage 1).
-  const authorization = data.authorization as Record<string, unknown> | undefined;
   await supabase
     .from('payments')
     .update({
@@ -59,32 +72,6 @@ export async function processPaystackChargeSuccess(
       gateway_fee: gatewayFee,
     })
     .eq('gateway_reference', reference);
-
-  // Card saving is consent-based — customer must type "save card" after payment.
-  // Store authorization data on the payment metadata so it's available for later opt-in.
-  if (authorization?.reusable && authorization?.authorization_code) {
-    const customer = data.customer as Record<string, string> | undefined;
-    const { data: currentPayment } = await supabase
-      .from('payments').select('metadata').eq('gateway_reference', reference).single();
-    const existingMeta = (currentPayment?.metadata || {}) as Record<string, unknown>;
-    await supabase.from('payments').update({
-      metadata: {
-        ...existingMeta,
-        _card_authorization: {
-          authorization_code: authorization.authorization_code,
-          customer_code: (customer?.customer_code as string) || null,
-          email: (customer?.email as string) || null,
-          last4: (authorization.last4 as string) || null,
-          brand: (authorization.brand as string) || null,
-          exp_month: authorization.exp_month ? Number(authorization.exp_month) : null,
-          exp_year: authorization.exp_year ? Number(authorization.exp_year) : null,
-          card_type: (authorization.card_type as string) || null,
-          bank: (authorization.bank as string) || null,
-          reusable: true,
-        },
-      },
-    }).eq('gateway_reference', reference);
-  }
 
   // Track payment success
   const posthog = getServerPostHog();
@@ -119,6 +106,7 @@ export async function processPaystackChargeSuccess(
       paymentMethod: (data.channel as string) || 'card',
       cardLast4: (authorization?.last4 as string) || undefined,
       cardBrand: (authorization?.brand as string) || undefined,
+      cardAuthorization,
       gatewayFee,
       providerStatus: 'success',
       verifiedAt: new Date().toISOString(),
@@ -168,4 +156,3 @@ export async function processPaystackChargeFailed(
     });
   }
 }
-

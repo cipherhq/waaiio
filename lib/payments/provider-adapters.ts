@@ -11,6 +11,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
 import type { VerifiedPaymentResult, PaymentProviderName } from './authority';
+import { normalizePaystackCardAuthorization } from './paystack-card-authorization';
 
 /** Outcome from attempting provider verification. */
 export type ProviderVerificationOutcome =
@@ -294,7 +295,8 @@ async function verifyPaystack(
     if (txStatus === 'success') {
       const providerAmountKobo = data.data.amount as number;
       const providerCurrency = (data.data.currency as string || '').toUpperCase();
-      const authorization = data.data.authorization as Record<string, string> | undefined;
+      const authorization = data.data.authorization as Record<string, unknown> | undefined;
+      const cardAuthorization = normalizePaystackCardAuthorization(authorization, data.data.customer);
 
       return {
         status: 'verified',
@@ -305,8 +307,9 @@ async function verifyPaystack(
           amount: providerAmountKobo / 100, // kobo → naira
           currency: providerCurrency,
           paymentMethod: (data.data.channel as string) || 'card',
-          cardLast4: authorization?.last4,
-          cardBrand: authorization?.brand,
+          cardLast4: typeof authorization?.last4 === 'string' ? authorization.last4 : undefined,
+          cardBrand: typeof authorization?.brand === 'string' ? authorization.brand : undefined,
+          cardAuthorization,
           gatewayFee: data.data.fees ? (data.data.fees as number) / 100 : undefined,
           providerStatus: 'success',
           verifiedAt: new Date().toISOString(),
