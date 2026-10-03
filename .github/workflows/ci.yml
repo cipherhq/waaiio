@@ -1,6 +1,3 @@
-Warning: truncated output (original token count: 43589)
-Total output lines: 3818
-
 name: CI
 
 # ── Trigger semantics (#304) ──
@@ -705,7 +702,2474 @@ jobs:
             if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
               echo "❌ Recurring Billing DB tests had $SKIP_COUNT skipped. All must execute."; exit 1
             fi
-      …29589 tokens truncated…*) FROM information_schema.columns WHERE table_schema='public' AND table_name='refunds' AND column_name='dispatched_at') = 1, 'dispatched_at missing';
+          fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then echo "❌ No Recurring Billing DB tests passed."; exit 1; fi
+          echo "✅ Recurring Billing contention tests complete — zero skips, zero failures."
+
+      - name: Payment confirmation ownership database tests
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+        run: |
+          set -e
+          dropdb --maintenance-db=waaiio_test --if-exists waaiio_p0_confirmation_test
+          createdb --maintenance-db=waaiio_test waaiio_p0_confirmation_test
+          cleanup() { dropdb --maintenance-db=waaiio_test --if-exists waaiio_p0_confirmation_test; }
+          trap cleanup EXIT
+          export TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/waaiio_p0_confirmation_test
+          echo "Running P0-CONFIRM-1 real PostgreSQL ownership tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/p0-payment-confirmation-db.test.ts 2>&1)
+          TEST_EXIT=$?
+          set -e
+          echo "$OUTPUT"
+          if [ "$TEST_EXIT" -ne 0 ]; then echo "❌ Payment confirmation DB tests failed."; exit "$TEST_EXIT"; fi
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ Payment confirmation DB tests had $SKIP_COUNT skipped. All must execute."; exit 1
+            fi
+          fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then echo "❌ No payment confirmation DB tests passed."; exit 1; fi
+          echo "✅ Payment confirmation ownership tests complete — zero skips, zero failures."
+
+      - name: Terminal effect manifest database tests
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+        run: |
+          set -e
+          dropdb --maintenance-db=waaiio_test --if-exists waaiio_terminal_manifest_test
+          createdb --maintenance-db=waaiio_test waaiio_terminal_manifest_test
+          cleanup() { dropdb --maintenance-db=waaiio_test --if-exists waaiio_terminal_manifest_test; }
+          trap cleanup EXIT
+          export TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/waaiio_terminal_manifest_test
+          echo "Running Phase A v15 terminal manifest DB tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/p0-terminal-manifest-db.test.ts 2>&1)
+          TEST_EXIT=$?
+          set -e
+          echo "$OUTPUT"
+          if [ "$TEST_EXIT" -ne 0 ]; then echo "❌ Terminal manifest DB tests failed."; exit "$TEST_EXIT"; fi
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ Terminal manifest DB tests had $SKIP_COUNT skipped. All must execute."; exit 1
+            fi
+          fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then echo "❌ No terminal manifest DB tests passed."; exit 1; fi
+          echo "✅ Terminal manifest DB tests complete — zero skips, zero failures."
+
+      - name: Terminal effect application RPC database tests
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+        run: |
+          set -e
+          dropdb --maintenance-db=waaiio_test --if-exists waaiio_terminal_app_test
+          createdb --maintenance-db=waaiio_test waaiio_terminal_app_test
+          cleanup() { dropdb --maintenance-db=waaiio_test --if-exists waaiio_terminal_app_test; }
+          trap cleanup EXIT
+          export TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/waaiio_terminal_app_test
+          echo "Running Phase A v15 terminal application RPC DB tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/p0-terminal-application-db.test.ts 2>&1)
+          TEST_EXIT=$?
+          set -e
+          echo "$OUTPUT"
+          if [ "$TEST_EXIT" -ne 0 ]; then echo "❌ Terminal application DB tests failed."; exit "$TEST_EXIT"; fi
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ Terminal application DB tests had $SKIP_COUNT skipped. All must execute."; exit 1
+            fi
+          fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then echo "❌ No terminal application DB tests passed."; exit 1; fi
+          echo "✅ Terminal application DB tests complete — zero skips, zero failures."
+
+      - name: Terminal effect rule-seal database tests
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+        run: |
+          set -e
+          dropdb --maintenance-db=waaiio_test --if-exists waaiio_terminal_seal_test
+          createdb --maintenance-db=waaiio_test waaiio_terminal_seal_test
+          cleanup() { dropdb --maintenance-db=waaiio_test --if-exists waaiio_terminal_seal_test; }
+          trap cleanup EXIT
+          export TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/waaiio_terminal_seal_test
+          echo "Running Phase A v15 terminal rule-seal DB tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/p0-terminal-rule-seal-db.test.ts 2>&1)
+          TEST_EXIT=$?
+          set -e
+          echo "$OUTPUT"
+          if [ "$TEST_EXIT" -ne 0 ]; then echo "❌ Terminal rule-seal DB tests failed."; exit "$TEST_EXIT"; fi
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ Terminal rule-seal DB tests had $SKIP_COUNT skipped. All must execute."; exit 1
+            fi
+          fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then echo "❌ No terminal rule-seal DB tests passed."; exit 1; fi
+          echo "✅ Terminal rule-seal DB tests complete — zero skips, zero failures."
+
+      - name: Production-shaped migration gap reconciliation proof
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+        timeout-minutes: 15
+        run: |
+          set -e
+          dropdb --maintenance-db=waaiio_test --if-exists waaiio_gap_recon_test
+          createdb --maintenance-db=waaiio_test waaiio_gap_recon_test
+          cleanup() { dropdb --maintenance-db=waaiio_test --if-exists waaiio_gap_recon_test; }
+          trap cleanup EXIT
+          export TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/waaiio_gap_recon_test
+          echo "Running production-shaped migration gap reconciliation proof..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/p0-migration-gap-reconciliation.test.ts 2>&1)
+          TEST_EXIT=$?
+          set -e
+          echo "$OUTPUT"
+          if [ "$TEST_EXIT" -ne 0 ]; then echo "❌ Migration gap reconciliation proof failed."; exit "$TEST_EXIT"; fi
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ Migration gap reconciliation had $SKIP_COUNT skipped. All must execute."; exit 1
+            fi
+          fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then echo "❌ No migration gap tests passed."; exit 1; fi
+          echo "✅ Migration gap reconciliation proof complete — zero skips, zero failures."
+
+      - name: Package redemption database tests
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+        run: |
+          set -e
+          dropdb --maintenance-db=waaiio_test --if-exists waaiio_pkg_test
+          createdb --maintenance-db=waaiio_test waaiio_pkg_test
+          cleanup() { dropdb --maintenance-db=waaiio_test --if-exists waaiio_pkg_test; }
+          trap cleanup EXIT
+          export TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/waaiio_pkg_test
+          echo "Running P1-PKG-1 real PostgreSQL package redemption tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/p1-pkg1-package-redemption-db.test.ts 2>&1)
+          TEST_EXIT=$?
+          set -e
+          echo "$OUTPUT"
+          if [ "$TEST_EXIT" -ne 0 ]; then echo "❌ Package redemption DB tests failed."; exit "$TEST_EXIT"; fi
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ Package redemption DB tests had $SKIP_COUNT skipped. All must execute."; exit 1
+            fi
+          fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then echo "❌ No package redemption DB tests passed."; exit 1; fi
+          echo "✅ Package redemption tests complete — zero skips, zero failures."
+
+      - name: FIN-002 database tests
+        if: hashFiles('scripts/test-fin-002-db.sql') != ''
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+        run: |
+          echo "Running FIN-002 real PostgreSQL tests..."
+          psql -v ON_ERROR_STOP=1 -f scripts/test-fin-002-db.sql
+          echo "✅ FIN-002 database tests complete."
+
+      - name: FIN-002 two-session contention test
+        if: hashFiles('scripts/test-fin-002-db.sql') != ''
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+        run: |
+          echo "=== FIN-002: Two-session contention test ==="
+
+          # Trap-based cleanup — runs even on test failure
+          cleanup() {
+            echo "Cleaning up contention test data..."
+            psql -c "DROP TABLE IF EXISTS _contention_winner_token" 2>/dev/null || true
+            psql -c "DELETE FROM business_payouts WHERE id='99999999-9999-9999-9999-999999999999'" 2>/dev/null || true
+            psql -c "DELETE FROM payout_accounts WHERE id='99cccccc-cccc-cccc-cccc-cccccccccccc'" 2>/dev/null || true
+            psql -c "DELETE FROM businesses WHERE id='99bbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'" 2>/dev/null || true
+            psql -c "DELETE FROM profiles WHERE id='99aaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'" 2>/dev/null || true
+            psql -c "ALTER TABLE auth.users DISABLE TRIGGER ALL; DELETE FROM auth.users WHERE id='99aaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'; ALTER TABLE auth.users ENABLE TRIGGER ALL;" 2>/dev/null || true
+            rm -f /tmp/session_a_result.txt /tmp/session_b_result.txt
+          }
+          trap cleanup EXIT
+
+          # Create fresh test data for the contention test
+          psql -v ON_ERROR_STOP=1 <<'SETUP'
+          ALTER TABLE auth.users DISABLE TRIGGER ALL;
+          INSERT INTO auth.users (id, email) VALUES ('99aaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'contention@test.local') ON CONFLICT DO NOTHING;
+          ALTER TABLE auth.users ENABLE TRIGGER ALL;
+          INSERT INTO profiles (id, first_name, last_name, email) VALUES ('99aaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'CT', 'Test', 'ct@test.local') ON CONFLICT DO NOTHING;
+          INSERT INTO businesses (id, name, slug, owner_id, address, city, neighborhood, phone, status, payout_mode, country_code, verification_level)
+          VALUES ('99bbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'Contention Test', 'contention-test', '99aaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '1 Test', 'Lagos', 'VI', '+0000', 'active', 'platform_managed', 'NG', 'basic') ON CONFLICT DO NOTHING;
+          INSERT INTO payout_accounts (id, business_id, gateway, bank_name, account_name, bank_code, account_number, is_active, verified_at)
+          VALUES ('99cccccc-cccc-cccc-cccc-cccccccccccc', '99bbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'paystack', 'Test', 'Test', '058', '0123456789', true, NOW()) ON CONFLICT DO NOTHING;
+          INSERT INTO business_payouts (id, business_id, payout_account_id, period_start, period_end, gross_amount, platform_fee, gateway_fee, net_amount, status)
+          VALUES ('99999999-9999-9999-9999-999999999999', '99bbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', '99cccccc-cccc-cccc-cccc-cccccccccccc', '2024-06-01', '2024-06-07', 8000, 400, 80, 7520, 'pending') ON CONFLICT DO NOTHING;
+          SETUP
+
+          # Create a persistent table to hold Session A's returned token for
+          # cross-session comparison (temp tables are session-scoped).
+          psql -v ON_ERROR_STOP=1 -c "CREATE TABLE IF NOT EXISTS _contention_winner_token (claimed_token UUID);"
+
+          # Session A: claim inside a transaction, hold lock with pg_sleep.
+          # Store the returned token into the persistent comparison table (not printed).
+          psql -v ON_ERROR_STOP=1 -t -A <<'SESSION_A' > /tmp/session_a_result.txt 2>&1 &
+          BEGIN;
+          INSERT INTO _contention_winner_token
+            SELECT claimed_token FROM claim_payout_for_transfer('99999999-9999-9999-9999-999999999999', 'paystack_transfer', NULL);
+          SELECT COUNT(*) FROM _contention_winner_token;
+          -- Hold the transaction open for 2 seconds so Session B overlaps
+          SELECT pg_sleep(2);
+          COMMIT;
+          SESSION_A
+          PID_A=$!
+
+          # Wait briefly to ensure Session A has started and locked the row
+          sleep 0.5
+
+          # Session B: attempt to claim the same payout while A holds the lock
+          psql -v ON_ERROR_STOP=1 -t -A <<'SESSION_B' > /tmp/session_b_result.txt 2>&1 &
+          SELECT COUNT(*) FROM claim_payout_for_transfer('99999999-9999-9999-9999-999999999999', 'paystack_transfer', NULL);
+          SESSION_B
+          PID_B=$!
+
+          # Wait for both sessions
+          wait $PID_A
+          EXIT_A=$?
+          wait $PID_B
+          EXIT_B=$?
+
+          echo "Session A exit code: $EXIT_A"
+          echo "Session B exit code: $EXIT_B"
+
+          # Parse results — only claim counts, no sensitive token values
+          SESSION_A_COUNT=$(grep -E '^[0-9]+$' /tmp/session_a_result.txt | head -1 | tr -d '[:space:]')
+          SESSION_B_COUNT=$(grep -E '^[0-9]+$' /tmp/session_b_result.txt | head -1 | tr -d '[:space:]')
+          echo "Session A claim count: $SESSION_A_COUNT"
+          echo "Session B claim count: $SESSION_B_COUNT"
+
+          # Verify the payout state — compare values without printing tokens
+          FINAL_STATUS=$(psql -t -A -c "SELECT status FROM business_payouts WHERE id='99999999-9999-9999-9999-999999999999'")
+          TOKEN_NOT_NULL=$(psql -t -A -c "SELECT claim_token IS NOT NULL FROM business_payouts WHERE id='99999999-9999-9999-9999-999999999999'")
+          KEY_MATCHES=$(psql -t -A -c "SELECT provider_idempotency_key = 'payout_99999999-9999-9999-9999-999999999999' FROM business_payouts WHERE id='99999999-9999-9999-9999-999999999999'")
+
+          # Verify winner's returned token matches the persisted claim_token
+          # (without printing either value). Session A stored its returned token
+          # in _contention_winner_token; compare it to the payout's claim_token.
+          WINNER_TOKEN_MATCHES=$(psql -t -A <<'VERIFY'
+          SELECT (SELECT claimed_token FROM _contention_winner_token) IS NOT NULL
+            AND (SELECT claimed_token FROM _contention_winner_token)
+              = (SELECT claim_token FROM business_payouts WHERE id='99999999-9999-9999-9999-999999999999');
+          VERIFY
+          )
+
+          echo "Final status: $FINAL_STATUS"
+          echo "Token not null: $TOKEN_NOT_NULL"
+          echo "Key matches expected: $KEY_MATCHES"
+
+          # Assertions
+          FAILED=0
+          if [ "$EXIT_A" -ne 0 ]; then echo "FAIL: Session A errored"; FAILED=1; fi
+          if [ "$EXIT_B" -ne 0 ]; then echo "FAIL: Session B errored"; FAILED=1; fi
+          if [ "$SESSION_A_COUNT" != "1" ]; then echo "FAIL: Session A (winner) should claim 1, got $SESSION_A_COUNT"; FAILED=1; fi
+          if [ "$SESSION_B_COUNT" != "0" ]; then echo "FAIL: Session B (loser) should claim 0, got $SESSION_B_COUNT"; FAILED=1; fi
+          TOTAL_CLAIMS=$((SESSION_A_COUNT + SESSION_B_COUNT))
+          if [ "$TOTAL_CLAIMS" != "1" ]; then echo "FAIL: exactly one total winner expected, got $TOTAL_CLAIMS"; FAILED=1; fi
+          if [ "$FINAL_STATUS" != "processing" ]; then echo "FAIL: status should be processing, got $FINAL_STATUS"; FAILED=1; fi
+          if [ "$TOKEN_NOT_NULL" != "t" ]; then echo "FAIL: claim_token should not be null"; FAILED=1; fi
+          if [ "$KEY_MATCHES" != "t" ]; then echo "FAIL: provider_idempotency_key mismatch"; FAILED=1; fi
+          if [ "$WINNER_TOKEN_MATCHES" != "t" ]; then echo "FAIL: winner token not persisted correctly"; FAILED=1; fi
+
+          if [ "$FAILED" -eq 1 ]; then
+            echo "❌ Two-session contention test FAILED"
+            exit 1
+          fi
+
+          echo "✅ Two-session contention test PASSED"
+          echo "  - Session A won the claim (1 row returned)"
+          echo "  - Session B returned 0 rows (loser)"
+          echo "  - Exactly 1 total winner across both sessions"
+          echo "  - Sessions overlapped (B blocked while A held row lock)"
+          echo "  - Final status = processing"
+          echo "  - Token persisted, key = payout_{id}"
+
+      - name: Migration 311 reseller payout integrity DB tests
+        if: hashFiles('lib/__tests__/migration-311-reseller-payout-integrity-db.test.ts') != ''
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/waaiio_test
+        run: |
+          echo "Running Migration 311 real PostgreSQL reseller payout integrity tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/migration-311-reseller-payout-integrity-db.test.ts 2>&1)
+          EXIT_CODE=$?
+          set -e
+          echo "$OUTPUT"
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ Migration 311 DB tests had $SKIP_COUNT skipped tests. All must execute."
+              exit 1
+            fi
+          fi
+          if [ $EXIT_CODE -ne 0 ]; then echo "❌ Migration 311 DB tests failed."; exit 1; fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then echo "❌ No Migration 311 DB tests passed."; exit 1; fi
+          echo "✅ Migration 311 reseller payout integrity DB tests complete — zero skips, zero failures."
+
+      - name: Migration 311 two-session concurrency tests
+        if: hashFiles('scripts/test-migration-311-concurrency.sh') != ''
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+        run: |
+          echo "Running Migration 311 two-session concurrency tests..."
+          bash scripts/test-migration-311-concurrency.sh
+
+      - name: MK-3 manual booking concurrency tests
+        if: hashFiles('scripts/test-mk3-manual-booking-concurrency.sh') != ''
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+        run: |
+          echo "Running MK-3 manual booking concurrency tests..."
+          bash scripts/test-mk3-manual-booking-concurrency.sh
+
+      - name: CONFLICT-1 slot authority agreement DB tests
+        if: hashFiles('lib/__tests__/conflict-1-slot-authority-db.test.ts') != ''
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/waaiio_test
+        run: |
+          echo "Running CONFLICT-1 slot authority DB tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/conflict-1-slot-authority-db.test.ts 2>&1)
+          EXIT_CODE=$?
+          set -e
+          echo "$OUTPUT"
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ CONFLICT-1 DB tests had $SKIP_COUNT skipped tests. All must execute."
+              exit 1
+            fi
+          fi
+          if [ $EXIT_CODE -ne 0 ]; then echo "❌ CONFLICT-1 DB tests failed."; exit 1; fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then echo "❌ No CONFLICT-1 DB tests passed."; exit 1; fi
+          echo "✅ CONFLICT-1 slot authority DB tests complete."
+
+      - name: P1-CHAT-1 team member mark-read RLS DB tests
+        if: hashFiles('lib/__tests__/p1-chat-team-mark-read-db.test.ts') != ''
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/waaiio_test
+        run: |
+          echo "Running P1-CHAT-1 team member mark-read RLS DB tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/p1-chat-team-mark-read-db.test.ts 2>&1)
+          EXIT_CODE=$?
+          set -e
+          echo "$OUTPUT"
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ P1-CHAT-1 DB tests had $SKIP_COUNT skipped tests. All must execute."
+              exit 1
+            fi
+          fi
+          if [ $EXIT_CODE -ne 0 ]; then echo "❌ P1-CHAT-1 DB tests failed."; exit 1; fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then echo "❌ No P1-CHAT-1 DB tests passed."; exit 1; fi
+          echo "✅ P1-CHAT-1 team member mark-read RLS DB tests complete."
+
+      - name: P1-QUEUE schema contract DB tests
+        if: hashFiles('lib/__tests__/p1-queue-schema-contracts-db.test.ts') != ''
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/waaiio_test
+        run: |
+          echo "Running P1-QUEUE schema contract DB tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/p1-queue-schema-contracts-db.test.ts 2>&1)
+          EXIT_CODE=$?
+          set -e
+          echo "$OUTPUT"
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ P1-QUEUE DB tests had $SKIP_COUNT skipped tests. All must execute."
+              exit 1
+            fi
+          fi
+          if [ $EXIT_CODE -ne 0 ]; then echo "❌ P1-QUEUE DB tests failed."; exit 1; fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then echo "❌ No P1-QUEUE DB tests passed."; exit 1; fi
+          echo "✅ P1-QUEUE schema contract DB tests complete."
+
+      - name: Migration 312 ticket-row identity concurrency tests
+        if: hashFiles('lib/__tests__/ticket-row-identity-db.test.ts') != ''
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/waaiio_test
+        run: |
+          echo "Running Migration 312 ticket-row identity concurrency tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/ticket-row-identity-db.test.ts 2>&1)
+          EXIT_CODE=$?
+          set -e
+          echo "$OUTPUT"
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ Migration 312 DB tests had $SKIP_COUNT skipped tests. All must execute."
+              exit 1
+            fi
+          fi
+          if [ $EXIT_CODE -ne 0 ]; then echo "❌ Migration 312 DB tests failed."; exit 1; fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then echo "❌ No Migration 312 DB tests passed."; exit 1; fi
+          echo "✅ Migration 312 ticket-row identity concurrency tests complete — zero skips, zero failures."
+
+      - name: "Migration 355 refund convergence tests (hermetic proof)"
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/waaiio_test
+        run: |
+          echo "Running migration 355 refund convergence tests (hermetic — no shared-DB dependency)..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/acc-232-refund-convergence-db.test.ts 2>&1)
+          TEST_EXIT=$?
+          set -e
+          echo "$OUTPUT"
+          if [ "$TEST_EXIT" -ne 0 ]; then
+            echo "❌ Migration 355 refund convergence tests exited with code $TEST_EXIT."
+            exit "$TEST_EXIT"
+          fi
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ Migration 355 refund convergence tests had $SKIP_COUNT skipped tests. All must execute."
+              exit 1
+            fi
+          fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then
+            echo "❌ No migration 355 refund convergence tests passed. Something is wrong."
+            exit 1
+          fi
+          echo "✅ Migration 355 refund convergence tests complete — zero skips, zero failures."
+
+      - name: "Migration 374 admin helper ACL tests"
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/waaiio_test
+        run: |
+          echo "Running Migration 374 admin helper ACL tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/admin-helper-acl-db.test.ts 2>&1)
+          TEST_EXIT=$?
+          set -e
+          echo "$OUTPUT"
+          if [ $TEST_EXIT -ne 0 ]; then
+            echo "❌ Migration 374 ACL tests exited with code $TEST_EXIT."
+            exit $TEST_EXIT
+          fi
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ Migration 374 ACL tests had $SKIP_COUNT skipped. All must execute."
+              exit 1
+            fi
+          fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then
+            echo "❌ No Migration 374 ACL tests passed."
+            exit 1
+          fi
+          echo "✅ Migration 374 admin helper ACL tests complete — zero skips, zero failures."
+
+      - name: "Migration 375 subscribe-now tests"
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/waaiio_test
+        run: |
+          echo "Running Migration 375 subscribe-now tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/subscribe-now-db.test.ts 2>&1)
+          TEST_EXIT=$?
+          set -e
+          echo "$OUTPUT"
+          if [ $TEST_EXIT -ne 0 ]; then
+            echo "❌ Migration 375 tests exited with code $TEST_EXIT."
+            exit $TEST_EXIT
+          fi
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ Migration 375 tests had $SKIP_COUNT skipped. All must execute."
+              exit 1
+            fi
+          fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then
+            echo "❌ No Migration 375 tests passed."
+            exit 1
+          fi
+          echo "✅ Migration 375 subscribe-now tests complete — zero skips, zero failures."
+
+      - name: "Migration 376 fee-policy tests"
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/waaiio_test
+        run: |
+          echo "Running Migration 376 fee-policy tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/fee-policy-db.test.ts 2>&1)
+          TEST_EXIT=$?
+          set -e
+          echo "$OUTPUT"
+          if [ $TEST_EXIT -ne 0 ]; then
+            echo "❌ Migration 376 tests exited with code $TEST_EXIT."
+            exit 1
+          fi
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ Migration 376 tests had $SKIP_COUNT skipped. All must execute."
+              exit 1
+            fi
+          fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then
+            echo "❌ No Migration 376 tests passed."
+            exit 1
+          fi
+          echo "✅ Migration 376 fee-policy tests complete — zero skips, zero failures."
+
+      - name: "Migration 377 dynamic-market-controls tests"
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/waaiio_test
+        run: |
+          echo "Running Migration 377 dynamic-market-controls tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/dynamic-market-controls-db.test.ts 2>&1)
+          TEST_EXIT=$?
+          set -e
+          echo "$OUTPUT"
+          if [ $TEST_EXIT -ne 0 ]; then
+            echo "❌ Migration 377 tests exited with code $TEST_EXIT."
+            exit 1
+          fi
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ Migration 377 tests had $SKIP_COUNT skipped. All must execute."
+              exit 1
+            fi
+          fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then
+            echo "❌ No Migration 377 tests passed."
+            exit 1
+          fi
+          echo "✅ Migration 377 dynamic-market-controls tests complete — zero skips, zero failures."
+
+      - name: "Migration 378 provider-neutral-subscriptions tests"
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/waaiio_test
+        run: |
+          echo "Running Migration 378 provider-neutral-subscriptions tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/provider-neutral-subscriptions-db.test.ts 2>&1)
+          TEST_EXIT=$?
+          set -e
+          echo "$OUTPUT"
+          if [ $TEST_EXIT -ne 0 ]; then
+            echo "❌ Migration 378 tests exited with code $TEST_EXIT."
+            exit 1
+          fi
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ Migration 378 tests had $SKIP_COUNT skipped. All must execute."
+              exit 1
+            fi
+          fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then
+            echo "❌ No Migration 378 tests passed."
+            exit 1
+          fi
+          echo "✅ Migration 378 provider-neutral-subscriptions tests complete — zero skips, zero failures."
+
+      - name: "M398 saved-card session normalization DB tests"
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/waaiio_test
+        run: |
+          echo "Running M398 saved-card session normalization DB tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/saved-card-session-db.test.ts --reporter=verbose 2>&1)
+          TEST_EXIT=$?
+          set -e
+          echo "$OUTPUT"
+          if [ $TEST_EXIT -ne 0 ]; then
+            echo "❌ M398 saved-card session DB tests exited with code $TEST_EXIT."
+            exit 1
+          fi
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ M398 saved-card session DB tests had $SKIP_COUNT skipped. All must execute."
+              exit 1
+            fi
+          fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then
+            echo "❌ No M398 saved-card session DB tests passed."
+            exit 1
+          fi
+          echo "✅ M398 saved-card session normalization DB tests complete — zero skips, zero failures."
+
+      - name: "M400 cross-flow convergence DB tests"
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/waaiio_test
+        run: |
+          echo "Running M400 cross-flow convergence DB tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/cross-flow-convergence-db.test.ts --reporter=verbose 2>&1)
+          TEST_EXIT=$?
+          set -e
+          echo "$OUTPUT"
+          if [ $TEST_EXIT -ne 0 ]; then
+            echo "❌ M400 cross-flow convergence DB tests exited with code $TEST_EXIT."
+            exit 1
+          fi
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ M400 cross-flow convergence DB tests had $SKIP_COUNT skipped. All must execute."
+              exit 1
+            fi
+          fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then
+            echo "❌ No M400 cross-flow convergence DB tests passed."
+            exit 1
+          fi
+          echo "✅ M400 cross-flow convergence DB tests complete — zero skips, zero failures."
+
+      - name: "M408 platform_settings ACL tests"
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/waaiio_test
+        run: |
+          echo "Running M408 platform_settings ACL tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/migration-408-platform-settings-acl.test.ts --reporter=verbose 2>&1)
+          TEST_EXIT=$?
+          set -e
+          echo "$OUTPUT"
+          if [ $TEST_EXIT -ne 0 ]; then
+            echo "❌ M408 platform_settings ACL tests exited with code $TEST_EXIT."
+            exit 1
+          fi
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ M408 platform_settings ACL tests had $SKIP_COUNT skipped. All must execute."
+              exit 1
+            fi
+          fi
+          if ! echo "$OUTPUT" | grep -q "6 passed"; then
+            echo "❌ Expected exactly 6 M408 tests to pass (2 DB + 4 static)."
+            exit 1
+          fi
+          echo "✅ M408 platform_settings ACL tests complete — 6/6 passed, zero skips."
+
+      - name: "Issue #496 staging-blockers DB tests"
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/waaiio_test
+        run: |
+          echo "Running Issue #496 staging-blockers DB tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/issue-496-staging-blockers.test.ts --reporter=verbose 2>&1)
+          TEST_EXIT=$?
+          set -e
+          echo "$OUTPUT"
+          if [ $TEST_EXIT -ne 0 ]; then
+            echo "❌ Issue #496 tests exited with code $TEST_EXIT."
+            exit $TEST_EXIT
+          fi
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ Issue #496 tests had $SKIP_COUNT skipped. All must execute."
+              exit 1
+            fi
+          fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then
+            echo "❌ No Issue #496 tests passed."
+            exit 1
+          fi
+          echo "✅ Issue #496 staging-blockers DB tests complete — zero skips, zero failures."
+
+      - name: "M419 capability_overrides ACL DB tests"
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/waaiio_test
+        run: |
+          echo "Running M419 capability_overrides ACL DB tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/issue-496-capability-overrides-acl.test.ts --reporter=verbose 2>&1)
+          TEST_EXIT=$?
+          set -e
+          echo "$OUTPUT"
+          if [ $TEST_EXIT -ne 0 ]; then
+            echo "❌ M419 ACL tests exited with code $TEST_EXIT."
+            exit $TEST_EXIT
+          fi
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ M419 ACL tests had $SKIP_COUNT skipped. All must execute."
+              exit 1
+            fi
+          fi
+          echo "✅ M419 capability_overrides ACL tests complete — zero skips, zero failures."
+
+      - name: "M420 platform_settings UPDATE ACL DB tests"
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/waaiio_test
+        run: |
+          echo "Running M420 platform_settings UPDATE ACL DB tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/issue-502-platform-settings-acl.test.ts --reporter=verbose 2>&1)
+          TEST_EXIT=$?
+          set -e
+          echo "$OUTPUT"
+          if [ $TEST_EXIT -ne 0 ]; then
+            echo "❌ M420 ACL tests exited with code $TEST_EXIT."
+            exit $TEST_EXIT
+          fi
+          echo "✅ M420 platform_settings UPDATE ACL tests complete."
+
+      - name: "DB delta analysis (advisory)"
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+        run: |
+          BASE="${{ env.BASE_SHA }}"
+          HEAD="${{ env.SOURCE_HEAD_SHA }}"
+
+          # For push-to-main: use before..after
+          if [ "${{ github.event_name }}" = "push" ] && [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            BEFORE="${{ github.event.before }}"
+            if [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
+              echo "Initial push — skipping DB delta."
+              exit 0
+            fi
+            BASE="$BEFORE"
+          fi
+
+          echo "Fetching base ref $BASE..."
+          git fetch --depth=1 origin "$BASE" 2>/dev/null || true
+
+          # Create isolated delta database (does not touch waaiio_test)
+          psql -q -c "CREATE DATABASE waaiio_delta_test;"
+
+          echo "Running DB delta: ${BASE:0:8}..${HEAD:0:8}"
+          npx tsx lib/release-gate/db-delta-cli.ts \
+            --base-sha "$BASE" \
+            --head-sha "$HEAD" \
+            --db-url "postgresql://postgres:postgres@localhost:5432/waaiio_delta_test"
+
+          # Cleanup delta database
+          psql -q -c "DROP DATABASE IF EXISTS waaiio_delta_test;"
+
+      - name: Upload DB delta artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: db-delta-artifacts
+          path: |
+            db-delta-base-baseline.json
+            db-delta-candidate-baseline.json
+            db-delta-result.json
+          if-no-files-found: ignore
+
+  migration-shard-b:
+    name: "Migration validation (shard b)"
+    runs-on: ubuntu-24.04
+
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: waaiio_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.11.1
+          cache: npm
+
+      - name: Install Node.js dependencies
+        run: npm ci
+
+      - name: Verify PostgreSQL client
+        run: |
+          command -v psql
+          psql --version
+
+      - name: Bootstrap Supabase prerequisites + apply all migrations
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+        run: bash scripts/ci-bootstrap-test-db.sh
+
+      - name: Verify key tables exist
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+        run: |
+          echo "Verifying key tables..."
+          TABLES="businesses bookings payments orders products events event_tickets attendance_log whatsapp_channels processed_webhook_events promo_campaigns promo_campaign_codes promo_redemptions class_sessions class_recurrence_rules"
+          MISSING=0
+          for t in $TABLES; do
+            if psql -tAc "SELECT 1 FROM information_schema.tables WHERE table_name='$t'" | grep -q 1; then
+              echo "  ✅ $t"
+            else
+              echo "  ❌ $t MISSING"
+              MISSING=1
+            fi
+          done
+          if [ "$MISSING" -eq 1 ]; then
+            echo "❌ Some expected tables are missing."
+            exit 1
+          fi
+          echo "✅ All key tables verified."
+
+      - name: Verify RLS is enabled
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+        run: |
+          echo "Checking RLS on user-facing tables..."
+          NO_RLS=$(psql -tAc "
+            SELECT tablename FROM pg_tables
+            WHERE schemaname = 'public'
+            AND tablename NOT IN ('schema_migrations', 'spatial_ref_sys')
+            AND tablename NOT IN (
+              SELECT tablename FROM pg_tables t
+              JOIN pg_class c ON c.relname = t.tablename
+              WHERE c.relrowsecurity = true
+            )
+          ")
+          if [ -n "$NO_RLS" ]; then
+            echo "⚠️  Tables without RLS (may be intentional):"
+            echo "$NO_RLS"
+          fi
+          echo "✅ RLS check complete."
+
+
+      - name: Migration 313 atomic reschedule DB tests
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+        run: |
+          set -e
+          dropdb --maintenance-db=waaiio_test --if-exists waaiio_m313_test
+          createdb --maintenance-db=waaiio_test waaiio_m313_test
+          cleanup() { dropdb --maintenance-db=waaiio_test --if-exists waaiio_m313_test; }
+          trap cleanup EXIT
+          export TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/waaiio_m313_test
+          echo "Running Migration 313 real PostgreSQL atomic reschedule tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/atomic-reschedule-db.test.ts 2>&1)
+          TEST_EXIT=$?
+          set -e
+          echo "$OUTPUT"
+          if [ "$TEST_EXIT" -ne 0 ]; then echo "❌ Migration 313 DB tests failed."; exit "$TEST_EXIT"; fi
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ Migration 313 DB tests had $SKIP_COUNT skipped. All must execute."; exit 1
+            fi
+          fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then echo "❌ No Migration 313 DB tests passed."; exit 1; fi
+          echo "✅ Migration 313 atomic reschedule tests complete — zero skips, zero failures."
+
+      - name: Migration 314 payment authority DB tests
+        if: hashFiles('lib/__tests__/payment-authority-db.test.ts') != ''
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+        run: |
+          set -e
+          dropdb --maintenance-db=waaiio_test --if-exists waaiio_m314_test
+          createdb --maintenance-db=waaiio_test waaiio_m314_test
+          cleanup() { dropdb --maintenance-db=waaiio_test --if-exists waaiio_m314_test; }
+          trap cleanup EXIT
+          export TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/waaiio_m314_test
+          echo "Running Migration 314 payment authority DB tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/payment-authority-db.test.ts 2>&1)
+          EXIT_CODE=$?
+          set -e
+          echo "$OUTPUT"
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ Migration 314 DB tests had $SKIP_COUNT skipped tests. All must execute."
+              exit 1
+            fi
+          fi
+          if [ $EXIT_CODE -ne 0 ]; then echo "❌ Migration 314 DB tests failed."; exit 1; fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then echo "❌ No Migration 314 DB tests passed."; exit 1; fi
+          echo "✅ Migration 314 payment authority DB tests complete — zero skips, zero failures."
+
+      - name: P1-APPT appointment booking authority DB tests
+        if: hashFiles('lib/__tests__/p1-appointment-closure.test.ts') != ''
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/waaiio_test
+        run: |
+          echo "Running P1-APPT real PostgreSQL appointment booking authority tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/p1-appointment-closure.test.ts 2>&1)
+          EXIT_CODE=$?
+          set -e
+          echo "$OUTPUT"
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ P1-APPT DB tests had $SKIP_COUNT skipped tests. All must execute."
+              exit 1
+            fi
+          fi
+          if [ $EXIT_CODE -ne 0 ]; then echo "❌ P1-APPT DB tests failed."; exit 1; fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then echo "❌ No P1-APPT DB tests passed."; exit 1; fi
+          echo "✅ P1-APPT appointment booking authority tests complete — zero skips, zero failures."
+
+      - name: P1-STAFF-1 staff booking authority DB tests
+        if: hashFiles('lib/__tests__/p1-staff-booking-authority.test.ts') != ''
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+        run: |
+          set -e
+          dropdb --maintenance-db=waaiio_test --if-exists waaiio_staff_test
+          createdb --maintenance-db=waaiio_test waaiio_staff_test
+          export TEST_DATABASE_URL="postgresql://postgres:postgres@localhost:5432/waaiio_staff_test"
+          echo "Running P1-STAFF-1 real PostgreSQL staff booking authority tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/p1-staff-booking-authority.test.ts 2>&1)
+          EXIT_CODE=$?
+          set -e
+          echo "$OUTPUT"
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ P1-STAFF-1 DB tests had $SKIP_COUNT skipped tests. All must execute."
+              exit 1
+            fi
+          fi
+          if [ $EXIT_CODE -ne 0 ]; then echo "❌ P1-STAFF-1 DB tests failed."; exit 1; fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then echo "❌ No P1-STAFF-1 DB tests passed."; exit 1; fi
+          echo "✅ P1-STAFF-1 staff booking authority tests complete — zero skips, zero failures."
+
+      - name: PROMO-1 promotion code authority DB tests
+        if: hashFiles('lib/__tests__/promo-1-claim-authority-db.test.ts') != ''
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+        run: |
+          set -e
+          dropdb --maintenance-db=waaiio_test --if-exists waaiio_promo_test
+          createdb --maintenance-db=waaiio_test waaiio_promo_test
+          cleanup() { dropdb --maintenance-db=waaiio_test --if-exists waaiio_promo_test; }
+          trap cleanup EXIT
+          export TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/waaiio_promo_test
+          echo "Running PROMO-1 real PostgreSQL promotion code authority tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/promo-1-claim-authority-db.test.ts 2>&1)
+          EXIT_CODE=$?
+          set -e
+          echo "$OUTPUT"
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ PROMO-1 DB tests had $SKIP_COUNT skipped tests. All must execute."
+              exit 1
+            fi
+          fi
+          if [ $EXIT_CODE -ne 0 ]; then echo "❌ PROMO-1 DB tests failed."; exit 1; fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then echo "❌ No PROMO-1 DB tests passed."; exit 1; fi
+          echo "✅ PROMO-1 promotion code authority DB tests complete — zero skips, zero failures."
+
+      - name: PROMO #188 claim crypto schema DB test
+        if: hashFiles('lib/__tests__/promo-claim-crypto-schema-db.test.ts') != ''
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+        run: |
+          set -e
+          dropdb --maintenance-db=waaiio_test --if-exists waaiio_promo188
+          createdb --maintenance-db=waaiio_test waaiio_promo188
+          cleanup() { dropdb --maintenance-db=waaiio_test --if-exists waaiio_promo188; }
+          trap cleanup EXIT
+          export TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/waaiio_promo188
+          echo "Running PROMO #188 claim crypto schema regression tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/promo-claim-crypto-schema-db.test.ts 2>&1)
+          EXIT_CODE=$?
+          set -e
+          echo "$OUTPUT"
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ PROMO #188 DB tests had $SKIP_COUNT skipped tests. All must execute."
+              exit 1
+            fi
+          fi
+          if [ $EXIT_CODE -ne 0 ]; then echo "❌ PROMO #188 DB tests failed."; exit 1; fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then echo "❌ No PROMO #188 DB tests passed."; exit 1; fi
+          echo "✅ PROMO #188 claim crypto schema DB tests complete — zero skips, zero failures."
+
+      - name: PROMO-1 generation contention DB tests
+        if: hashFiles('lib/__tests__/promo-generation-contention-db.test.ts') != ''
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+        run: |
+          set -e
+          dropdb --maintenance-db=waaiio_test --if-exists waaiio_promo_cont_test
+          createdb --maintenance-db=waaiio_test waaiio_promo_cont_test
+          cleanup() { dropdb --maintenance-db=waaiio_test --if-exists waaiio_promo_cont_test; }
+          trap cleanup EXIT
+          export TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/waaiio_promo_cont_test
+          echo "Running PROMO-1 real two-connection generation contention tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/promo-generation-contention-db.test.ts 2>&1)
+          EXIT_CODE=$?
+          set -e
+          echo "$OUTPUT"
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ PROMO-1 contention tests had $SKIP_COUNT skipped. All must execute."
+              exit 1
+            fi
+          fi
+          if [ $EXIT_CODE -ne 0 ]; then echo "❌ PROMO-1 contention tests failed."; exit 1; fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then echo "❌ No PROMO-1 contention tests passed."; exit 1; fi
+          echo "✅ PROMO-1 generation contention tests complete — zero skips, zero failures."
+
+      - name: ACC-184 promo history tenant isolation DB tests
+        if: hashFiles('lib/__tests__/acc-184-promo-history-db.test.ts') != ''
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+        run: |
+          set -e
+          export TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/waaiio_test
+          echo "Running ACC-184 promo history tenant isolation tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/acc-184-promo-history-db.test.ts 2>&1)
+          EXIT_CODE=$?
+          set -e
+          echo "$OUTPUT"
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ ACC-184 DB tests had $SKIP_COUNT skipped tests. All must execute."
+              exit 1
+            fi
+          fi
+          if [ $EXIT_CODE -ne 0 ]; then echo "❌ ACC-184 DB tests failed."; exit 1; fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then echo "❌ No ACC-184 DB tests passed."; exit 1; fi
+          echo "✅ ACC-184 promo history tenant isolation DB tests complete — zero skips, zero failures."
+
+      - name: ACC-186 promo audit UUID regression DB tests
+        if: hashFiles('lib/__tests__/acc-186-promo-audit-uuid-db.test.ts') != ''
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+        run: |
+          set -e
+          export TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/waaiio_test
+          echo "Running ACC-186 promo audit UUID regression tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/acc-186-promo-audit-uuid-db.test.ts 2>&1)
+          EXIT_CODE=$?
+          set -e
+          echo "$OUTPUT"
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ ACC-186 DB tests had $SKIP_COUNT skipped tests. All must execute."
+              exit 1
+            fi
+          fi
+          if [ $EXIT_CODE -ne 0 ]; then echo "❌ ACC-186 DB tests failed."; exit 1; fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then echo "❌ No ACC-186 DB tests passed."; exit 1; fi
+          echo "✅ ACC-186 promo audit UUID regression DB tests complete — zero skips, zero failures."
+
+      - name: ACC-199A winner response DB tests
+        if: hashFiles('lib/__tests__/acc-199a-winner-response.test.ts') != ''
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+        run: |
+          set -e
+          export TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/waaiio_test
+          echo "Running ACC-199A winner response tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/acc-199a-winner-response.test.ts 2>&1)
+          EXIT_CODE=$?
+          set -e
+          echo "$OUTPUT"
+          if [ $EXIT_CODE -ne 0 ]; then
+            echo "❌ ACC-199A DB tests failed with exit code $EXIT_CODE"
+            exit 1
+          fi
+          SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '\d+ skipped' | grep -oP '\d+' || echo "0")
+          if [ "$SKIP_COUNT" != "0" ] && [ "$SKIP_COUNT" != "" ]; then
+            echo "❌ ACC-199A DB tests had $SKIP_COUNT skipped tests. All must execute."
+            exit 1
+          fi
+          echo "✅ ACC-199A DB tests passed with zero skips."
+
+      - name: ACC-202 winner authorization DB tests
+        if: hashFiles('lib/__tests__/acc-202-winner-authorization-db.test.ts') != ''
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+        run: |
+          set -e
+          export TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/waaiio_test
+          echo "Running ACC-202 winner authorization tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/acc-202-winner-authorization-db.test.ts 2>&1)
+          EXIT_CODE=$?
+          set -e
+          echo "$OUTPUT"
+          if [ $EXIT_CODE -ne 0 ]; then
+            echo "❌ ACC-202 DB tests failed with exit code $EXIT_CODE"
+Warning: truncated output (original token count: 7028)
+Total output lines: 500
+
+            exit 1
+          fi
+          SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '\d+ skipped' | grep -oP '\d+' || echo "0")
+          if [ "$SKIP_COUNT" != "0" ] && [ "$SKIP_COUNT" != "" ]; then
+            echo "❌ ACC-202 DB tests had $SKIP_COUNT skipped tests. All must execute."
+            exit 1
+          fi
+          echo "✅ ACC-202 DB tests passed with zero skips."
+
+      - name: ACC-203 delivery lifecycle DB tests
+        if: hashFiles('lib/__tests__/acc-203-delivery-lifecycle-db.test.ts') != ''
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+        run: |
+          set -e
+          export TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/waaiio_test
+          echo "Running ACC-203 delivery lifecycle DB tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/acc-203-delivery-lifecycle-db.test.ts 2>&1)
+          EXIT_CODE=$?
+          set -e
+          echo "$OUTPUT"
+          if [ $EXIT_CODE -ne 0 ]; then
+            echo "❌ ACC-203 DB tests failed with exit code $EXIT_CODE"
+            exit 1
+          fi
+          SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '\d+ skipped' | grep -oP '\d+' || echo "0")
+          if [ "$SKIP_COUNT" != "0" ] && [ "$SKIP_COUNT" != "" ]; then
+            echo "❌ ACC-203 DB tests had $SKIP_COUNT skipped tests. All must execute."
+            exit 1
+          fi
+          echo "✅ ACC-203 DB tests passed with zero skips."
+
+      - name: ACC-204 fulfillment notification DB tests
+        if: hashFiles('lib/__tests__/acc-204-fulfillment-notification-db.test.ts') != ''
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+        run: |
+          set -e
+          export TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/waaiio_test
+          echo "Running ACC-204 fulfillment notification tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/acc-204-fulfillment-notification-db.test.ts 2>&1)
+          EXIT_CODE=$?
+          set -e
+          echo "$OUTPUT"
+          if [ $EXIT_CODE -ne 0 ]; then
+            echo "❌ ACC-204 DB tests failed with exit code $EXIT_CODE"
+            exit 1
+          fi
+          SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '\d+ skipped' | grep -oP '\d+' || echo "0")
+          if [ "$SKIP_COUNT" != "0" ] && [ "$SKIP_COUNT" != "" ]; then
+            echo "❌ ACC-204 DB tests had $SKIP_COUNT skipped tests. All must execute."
+            exit 1
+          fi
+          echo "✅ ACC-204 DB tests passed with zero skips."
+
+      - name: "#219 notification_type enum DB tests"
+        if: hashFiles('lib/__tests__/issue-219-notification-enum-db.test.ts') != ''
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+        run: |
+          set -e
+          export TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/waaiio_test
+          echo "Running #219 notification enum DB tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/issue-219-notification-enum-db.test.ts 2>&1)
+          EXIT_CODE=$?
+          set -e
+          echo "$OUTPUT"
+          if [ $EXIT_CODE -ne 0 ]; then
+            echo "❌ #219 notification enum DB tests failed with exit code $EXIT_CODE"
+            exit 1
+          fi
+          SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '\d+ skipped' | grep -oP '\d+' || echo "0")
+          if [ "$SKIP_COUNT" != "0" ] && [ "$SKIP_COUNT" != "" ]; then
+            echo "❌ #219 notification enum DB tests had $SKIP_COUNT skipped tests. All must execute."
+            exit 1
+          fi
+          echo "✅ #219 notification enum DB tests passed with zero skips."
+
+      - name: P1-CLASS-1 class session booking authority DB tests
+        if: hashFiles('lib/__tests__/p1-class-session-booking.test.ts') != ''
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+        run: |
+          set -e
+          dropdb --maintenance-db=waaiio_test --if-exists waaiio_class_test
+          createdb --maintenance-db=waaiio_test waaiio_class_test
+          cleanup() { dropdb --maintenance-db=waaiio_test --if-exists waaiio_class_test; }
+          trap cleanup EXIT
+          export TEST_DATABASE_URL="postgresql://postgres:postgres@localhost:5432/waaiio_class_test"
+          echo "Running P1-CLASS-1 real PostgreSQL class session booking authority tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/p1-class-session-booking.test.ts 2>&1)
+          EXIT_CODE=$?
+          set -e
+          echo "$OUTPUT"
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ P1-CLASS-1 DB tests had $SKIP_COUNT skipped tests. All must execute."
+              exit 1
+            fi
+          fi
+          if [ $EXIT_CODE -ne 0 ]; then echo "❌ P1-CLASS-1 DB tests failed."; exit 1; fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then echo "❌ No P1-CLASS-1 DB tests passed."; exit 1; fi
+          echo "✅ P1-CLASS-1 class session booking authority tests complete — zero skips, zero failures."
+
+      - name: BOT-PERF get_bot_context authority DB tests
+        if: hashFiles('lib/__tests__/bot-context-rpc.test.ts') != ''
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+        run: |
+          set -e
+          dropdb --maintenance-db=waaiio_test --if-exists waaiio_botctx_test
+          createdb --maintenance-db=waaiio_test waaiio_botctx_test
+          cleanup() { dropdb --maintenance-db=waaiio_test --if-exists waaiio_botctx_test; }
+          trap cleanup EXIT
+          export TEST_DATABASE_URL="postgresql://postgres:postgres@localhost:5432/waaiio_botctx_test"
+          echo "Running BOT-PERF get_bot_context real PostgreSQL authority tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/bot-context-rpc.test.ts 2>&1)
+          EXIT_CODE=$?
+          set -e
+          echo "$OUTPUT"
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ BOT-PERF DB tests had $SKIP_COUNT skipped tests. All must execute."
+              exit 1
+            fi
+          fi
+          if [ $EXIT_CODE -ne 0 ]; then echo "❌ BOT-PERF DB tests failed."; exit 1; fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then echo "❌ No BOT-PERF DB tests passed."; exit 1; fi
+          echo "✅ BOT-PERF get_bot_context authority tests complete — zero skips, zero failures."
+
+      - name: PRA payment confirmation RPC grant tests
+        if: hashFiles('lib/__tests__/payment-confirmation-rpc-grants.test.ts') != ''
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+        run: |
+          set -e
+          dropdb --maintenance-db=waaiio_test --if-exists waaiio_pra_test
+          createdb --maintenance-db=waaiio_test waaiio_pra_test
+          cleanup() { dropdb --maintenance-db=waaiio_test --if-exists waaiio_pra_test; }
+          trap cleanup EXIT
+          export TEST_DATABASE_URL="postgresql://postgres:postgres@localhost:5432/waaiio_pra_test"
+          echo "Running PRA real PostgreSQL payment confirmation RPC grant tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/payment-confirmation-rpc-grants.test.ts 2>&1)
+          EXIT_CODE=$?
+          set -e
+          echo "$OUTPUT"
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ PRA DB tests had $SKIP_COUNT skipped tests. All must execute."
+              exit 1
+            fi
+          fi
+          if [ $EXIT_CODE -ne 0 ]; then echo "❌ PRA DB tests failed."; exit 1; fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then echo "❌ No PRA DB tests passed."; exit 1; fi
+          echo "✅ PRA payment confirmation RPC grant tests complete — zero skips, zero failures."
+
+      - name: Production drift reconciliation tests (dedicated database)
+        if: hashFiles('lib/__tests__/production-drift-reconciliation.test.ts') != ''
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+        run: |
+          set -e
+          dropdb --maintenance-db=waaiio_test --if-exists waaiio_drift_clean
+          dropdb --maintenance-db=waaiio_test --if-exists waaiio_drift_prod
+          export TEST_DATABASE_URL="postgresql://postgres:postgres@localhost:5432/waaiio_test"
+          echo "Running production drift reconciliation tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/production-drift-reconciliation.test.ts 2>&1)
+          EXIT_CODE=$?
+          set -e
+          echo "$OUTPUT"
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ Drift reconciliation tests had $SKIP_COUNT skipped tests. All must execute."
+              exit 1
+            fi
+          fi
+          if [ $EXIT_CODE -ne 0 ]; then echo "❌ Drift reconciliation tests failed."; exit 1; fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then echo "❌ No drift reconciliation tests passed."; exit 1; fi
+          # Cleanup
+          dropdb --maintenance-db=waaiio_test --if-exists waaiio_drift_clean
+          dropdb --maintenance-db=waaiio_test --if-exists waaiio_drift_prod
+          echo "✅ Production drift reconciliation tests complete — zero skips, zero failures."
+
+      - name: Production postcondition verifier (canonical 321+322+323)
+        if: hashFiles('docs/sql/verify-production-321-322-postconditions.sql') != ''
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+        run: |
+          set -e
+          echo "Building canonical database for verifier..."
+          dropdb --maintenance-db=waaiio_test --if-exists waaiio_verifier
+          createdb --maintenance-db=waaiio_test waaiio_verifier
+          cleanup() { dropdb --maintenance-db=waaiio_test --if-exists waaiio_verifier; }
+          trap cleanup EXIT
+          export DBURL="postgresql://postgres:postgres@localhost:5432/waaiio_verifier"
+          # Apply prerequisite stubs
+          psql "$DBURL" -v ON_ERROR_STOP=1 -q << 'STUBS'
+          CREATE SCHEMA IF NOT EXISTS auth;
+          CREATE SCHEMA IF NOT EXISTS extensions;
+          CREATE EXTENSION IF NOT EXISTS pgcrypto SCHEMA extensions;
+          CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $$ SELECT COALESCE(NULLIF(current_setting('request.jwt.claim.sub', true), ''), NULLIF(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub')::uuid; $$ LANGUAGE SQL STABLE;
+          CREATE OR REPLACE FUNCTION auth.role() RETURNS TEXT AS $$ SELECT 'authenticated'::TEXT; $$ LANGUAGE SQL STABLE;
+          CREATE TABLE IF NOT EXISTS auth.users (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), email TEXT, phone TEXT, raw_app_meta_data JSONB DEFAULT '{}');
+          DO $$ BEGIN CREATE ROLE service_role NOLOGIN BYPASSRLS; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+          ALTER ROLE service_role BYPASSRLS;
+          DO $$ BEGIN CREATE ROLE authenticated NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+          DO $$ BEGIN CREATE ROLE anon NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+          GRANT USAGE ON SCHEMA public TO service_role, anon, authenticated;
+          CREATE TABLE IF NOT EXISTS businesses (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), name TEXT NOT NULL, slug TEXT, owner_id UUID REFERENCES auth.users(id), status TEXT DEFAULT 'active', subscription_tier TEXT DEFAULT 'free', created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW());
+          CREATE TABLE IF NOT EXISTS business_members (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), business_id UUID REFERENCES businesses(id), user_id UUID REFERENCES auth.users(id));
+          CREATE TABLE IF NOT EXISTS admin_audit_logs (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), actor_id UUID, action TEXT, entity_type TEXT, entity_id UUID, details JSONB, created_at TIMESTAMPTZ DEFAULT NOW());
+          CREATE TABLE IF NOT EXISTS business_staff (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), business_id UUID REFERENCES businesses(id), name TEXT, is_active BOOLEAN DEFAULT true);
+          CREATE TABLE IF NOT EXISTS business_locations (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), business_id UUID REFERENCES businesses(id), name TEXT, is_active BOOLEAN DEFAULT true);
+          CREATE TABLE IF NOT EXISTS services (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), business_id UUID REFERENCES businesses(id), name TEXT, price INTEGER DEFAULT 0, duration_minutes INTEGER DEFAULT 60, max_capacity INTEGER DEFAULT 1, is_class BOOLEAN DEFAULT false, is_active BOOLEAN DEFAULT true, class_schedule JSONB DEFAULT '[]', requires_staff BOOLEAN DEFAULT false, buffer_minutes INTEGER DEFAULT 0, created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW());
+          CREATE TABLE IF NOT EXISTS appointments (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), business_id UUID REFERENCES businesses(id), max_capacity INTEGER DEFAULT 1, buffer_minutes INTEGER DEFAULT 0, duration_minutes INTEGER DEFAULT 30, requires_staff BOOLEAN DEFAULT false);
+          DO $$…28 tokens truncated…,'recurring','crowdfunding','giving','class'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+          DO $$ BEGIN CREATE TYPE booking_channel AS ENUM ('whatsapp','dashboard','api','web'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+          DO $$ BEGIN CREATE TYPE deposit_status AS ENUM ('none','pending','paid','refunded'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+          DO $$ BEGIN CREATE TYPE reservation_status AS ENUM ('pending','confirmed','cancelled','completed','no_show','in_progress'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+          CREATE TABLE IF NOT EXISTS bookings (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), business_id UUID REFERENCES businesses(id), user_id UUID, service_id UUID REFERENCES services(id), appointment_id UUID REFERENCES appointments(id), staff_id UUID, date DATE, time TIME, party_size INTEGER DEFAULT 1, flow_type flow_type, channel booking_channel DEFAULT 'whatsapp', deposit_amount INTEGER DEFAULT 0, deposit_status deposit_status DEFAULT 'none', status reservation_status DEFAULT 'pending', guest_name TEXT, guest_phone TEXT, created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW());
+          CREATE TABLE IF NOT EXISTS promo_codes (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), business_id UUID REFERENCES businesses(id), code TEXT, created_at TIMESTAMPTZ DEFAULT NOW());
+          CREATE TABLE IF NOT EXISTS bot_sessions (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), whatsapp_number TEXT NOT NULL, business_id UUID, current_step TEXT, session_data JSONB DEFAULT '{}', is_active BOOLEAN DEFAULT true, version INT DEFAULT 0, user_id UUID, expires_at TIMESTAMPTZ DEFAULT NOW() + INTERVAL '1 hour', created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW());
+          CREATE TABLE IF NOT EXISTS business_capabilities (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), business_id UUID, capability TEXT, is_enabled BOOLEAN DEFAULT true, sort_order INT DEFAULT 0);
+          CREATE TABLE IF NOT EXISTS capability_overrides (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), business_id UUID, capability TEXT);
+          CREATE OR REPLACE FUNCTION check_appointment_schedule(p_appointment_id UUID, p_business_id UUID, p_date DATE, p_time TEXT) RETURNS TABLE(allowed BOOLEAN, reason TEXT) AS $$ SELECT true, NULL::text; $$ LANGUAGE SQL;
+          CREATE OR REPLACE FUNCTION check_staff_availability(p_staff_id UUID, p_business_id UUID, p_date DATE, p_time TEXT, p_duration INTEGER DEFAULT 60) RETURNS TABLE(allowed BOOLEAN, reason TEXT) AS $$ SELECT true, NULL::text; $$ LANGUAGE SQL;
+          GRANT USAGE ON SCHEMA auth TO authenticated, service_role, anon;
+          GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA auth TO authenticated, service_role, anon;
+          STUBS
+          echo "Applying canonical migrations 321, 322, 323..."
+          psql "$DBURL" -v ON_ERROR_STOP=1 -q -f supabase/migrations/321_promotions_schema.sql
+          psql "$DBURL" -v ON_ERROR_STOP=1 -q -f supabase/migrations/322_class_session_booking.sql
+          psql "$DBURL" -v ON_ERROR_STOP=1 -q -f supabase/migrations/323_get_bot_context.sql
+          echo "Running production postcondition verifier..."
+          psql "$DBURL" -v ON_ERROR_STOP=1 -f docs/sql/verify-production-321-322-postconditions.sql
+          echo "✅ Production postcondition verifier complete — all checks passed."
+
+      - name: Class ACL reconciliation tests (migration 326)
+        if: hashFiles('lib/__tests__/class-acl-reconciliation.test.ts') != ''
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+        run: |
+          set -e
+          dropdb --maintenance-db=waaiio_test --if-exists waaiio_acl326_test
+          createdb --maintenance-db=waaiio_test waaiio_acl326_test
+          cleanup() { dropdb --maintenance-db=waaiio_test --if-exists waaiio_acl326_test; }
+          trap cleanup EXIT
+          export TEST_DATABASE_URL="postgresql://postgres:postgres@localhost:5432/waaiio_acl326_test"
+          echo "Running class ACL reconciliation tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/class-acl-reconciliation.test.ts 2>&1)
+          EXIT_CODE=$?
+          set -e
+          echo "$OUTPUT"
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ ACL 326 tests had $SKIP_COUNT skipped tests. All must execute."
+              exit 1
+            fi
+          fi
+          if [ $EXIT_CODE -ne 0 ]; then echo "❌ ACL 326 tests failed."; exit 1; fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then echo "❌ No ACL 326 tests passed."; exit 1; fi
+          echo "✅ Class ACL reconciliation tests complete — zero skips, zero failures."
+
+      - name: Order stock authority database tests (dedicated database)
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+        run: |
+          set -e
+          dropdb --maintenance-db=waaiio_test --if-exists waaiio_order_stock_test
+          createdb --maintenance-db=waaiio_test waaiio_order_stock_test
+          cleanup() { dropdb --maintenance-db=waaiio_test --if-exists waaiio_order_stock_test; }
+          trap cleanup EXIT
+          export TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/waaiio_order_stock_test
+          echo "Running order stock authority tests (waaiio_order_stock_test)..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/order-stock-authority.test.ts 2>&1)
+          TEST_EXIT=$?
+          set -e
+          echo "$OUTPUT"
+          if [ "$TEST_EXIT" -ne 0 ]; then
+            echo "❌ Order stock authority DB tests exited with code $TEST_EXIT."
+            exit "$TEST_EXIT"
+          fi
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ Order stock authority DB tests had $SKIP_COUNT skipped tests. All must execute."
+              exit 1
+            fi
+          fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then
+            echo "❌ No order stock authority DB tests passed. Something is wrong."
+            exit 1
+          fi
+          echo "✅ Order stock authority tests complete — zero skips, zero failures."
+
+      - name: Migration 333 promo reservation database tests (dedicated database)
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+        run: |
+          set -e
+          dropdb --maintenance-db=waaiio_test --if-exists waaiio_m333_test
+          createdb --maintenance-db=waaiio_test waaiio_m333_test
+          cleanup() { dropdb --maintenance-db=waaiio_test --if-exists waaiio_m333_test; }
+          trap cleanup EXIT
+          export TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/waaiio_m333_test
+          echo "Running migration 333 promo reservation tests (waaiio_m333_test)..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/migration-333-promo-db.test.ts 2>&1)
+          TEST_EXIT=$?
+          set -e
+          echo "$OUTPUT"
+          if [ "$TEST_EXIT" -ne 0 ]; then
+            echo "❌ Migration 333 DB tests exited with code $TEST_EXIT."
+            exit "$TEST_EXIT"
+          fi
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ Migration 333 DB tests had $SKIP_COUNT skipped tests. All must execute."
+              exit 1
+            fi
+          fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then
+            echo "❌ No migration 333 DB tests passed. Something is wrong."
+            exit 1
+          fi
+          echo "✅ Migration 333 promo reservation tests complete — zero skips, zero failures."
+
+      - name: Payment vs cancellation concurrency tests (dedicated database)
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+        run: |
+          set -e
+          dropdb --maintenance-db=waaiio_test --if-exists waaiio_pvc_test
+          createdb --maintenance-db=waaiio_test waaiio_pvc_test
+          cleanup() { dropdb --maintenance-db=waaiio_test --if-exists waaiio_pvc_test; }
+          trap cleanup EXIT
+          export TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/waaiio_pvc_test
+          echo "Running payment vs cancellation concurrency tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/payment-vs-cancel-concurrency.test.ts 2>&1)
+          TEST_EXIT=$?
+          set -e
+          echo "$OUTPUT"
+          if [ "$TEST_EXIT" -ne 0 ]; then
+            echo "❌ Payment vs cancel concurrency tests exited with code $TEST_EXIT."
+            exit "$TEST_EXIT"
+          fi
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ Payment vs cancel tests had $SKIP_COUNT skipped. All must execute."
+              exit 1
+            fi
+          fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then
+            echo "❌ No payment vs cancel tests passed."
+            exit 1
+          fi
+          echo "✅ Payment vs cancellation concurrency tests complete — zero skips, zero failures."
+
+      - name: Payment spend marker database tests (dedicated database)
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+        run: |
+          set -e
+          dropdb --maintenance-db=waaiio_test --if-exists waaiio_spend_test
+          createdb --maintenance-db=waaiio_test waaiio_spend_test
+          cleanup() { dropdb --maintenance-db=waaiio_test --if-exists waaiio_spend_test; }
+          trap cleanup EXIT
+          export TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/waaiio_spend_test
+          echo "Running payment spend marker tests (waaiio_spend_test)..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/payment-spend-marker.test.ts 2>&1)
+          TEST_EXIT=$?
+          set -e
+          echo "$OUTPUT"
+          if [ "$TEST_EXIT" -ne 0 ]; then echo "❌ Payment spend marker tests failed."; exit "$TEST_EXIT"; fi
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ Payment spend marker tests had $SKIP_COUNT skipped."; exit 1
+            fi
+          fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then echo "❌ No payment spend marker tests passed."; exit 1; fi
+          echo "✅ Payment spend marker tests complete — zero skips, zero failures."
+
+      - name: "#177 Stripe recurring finalization DB tests (dedicated database)"
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+        run: |
+          set -e
+          dropdb --maintenance-db=waaiio_test --if-exists waaiio_stripe_fin_test
+          createdb --maintenance-db=waaiio_test waaiio_stripe_fin_test
+          cleanup() { dropdb --maintenance-db=waaiio_test --if-exists waaiio_stripe_fin_test; }
+          trap cleanup EXIT
+          export TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/waaiio_stripe_fin_test
+
+          # Bootstrap + apply all migrations using canonical helper
+          bash scripts/ci-bootstrap-test-db.sh "$TEST_DATABASE_URL"
+
+          # Set flag so the test skips its own migration application
+          export MIGRATIONS_PRE_APPLIED=1
+
+          echo "Running #177 Stripe recurring finalization DB tests (waaiio_stripe_fin_test)..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/stripe-recurring-finalization-db.test.ts 2>&1)
+          TEST_EXIT=$?
+          set -e
+          echo "$OUTPUT"
+          if [ "$TEST_EXIT" -ne 0 ]; then
+            echo "❌ Stripe recurring finalization DB tests failed with exit code $TEST_EXIT."
+            exit "$TEST_EXIT"
+          fi
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ Stripe recurring finalization DB tests had $SKIP_COUNT skipped. All must execute."
+              exit 1
+            fi
+          fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then
+            echo "❌ No Stripe recurring finalization DB tests passed."
+            exit 1
+          fi
+          echo "✅ #177 Stripe recurring finalization DB tests complete — zero skips, zero failures."
+
+      - name: "Migration 342-343 confirmation delivery lifecycle tests"
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/waaiio_test
+        run: |
+          echo "Running migration 342-343 confirmation delivery lifecycle tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/payments/__tests__/confirmation-delivery-db.test.ts 2>&1)
+          TEST_EXIT=$?
+          set -e
+          echo "$OUTPUT"
+          if [ "$TEST_EXIT" -ne 0 ]; then
+            echo "❌ Migration 342-343 DB tests exited with code $TEST_EXIT."
+            exit "$TEST_EXIT"
+          fi
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ Migration 342-343 DB tests had $SKIP_COUNT skipped tests. All must execute."
+              exit 1
+            fi
+          fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then
+            echo "❌ No migration 342-343 DB tests passed. Something is wrong."
+            exit 1
+          fi
+          echo "✅ Migration 342-343 confirmation delivery lifecycle tests complete — zero skips, zero failures."
+
+      - name: Migration 349 recurring setup intents tests
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/waaiio_test
+        run: |
+          echo "Running migration 349 recurring setup intents tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/payments/__tests__/recurring-setup-intents-db.test.ts 2>&1)
+          TEST_EXIT=$?
+          set -e
+          echo "$OUTPUT"
+          if [ "$TEST_EXIT" -ne 0 ]; then
+            echo "❌ Migration 349 DB tests exited with code $TEST_EXIT."
+            exit "$TEST_EXIT"
+          fi
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ Migration 349 DB tests had $SKIP_COUNT skipped tests. All must execute."
+              exit 1
+            fi
+          fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then
+            echo "❌ No migration 349 DB tests passed. Something is wrong."
+            exit 1
+          fi
+          echo "✅ Migration 349 recurring setup intents tests complete — zero skips, zero failures."
+
+      - name: Migration 351 ACL hardening tests
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/waaiio_test
+        run: |
+          echo "Running migration 351 ACL hardening tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/migration-351-acl-hardening-db.test.ts 2>&1)
+          TEST_EXIT=$?
+          set -e
+          echo "$OUTPUT"
+          if [ "$TEST_EXIT" -ne 0 ]; then
+            echo "❌ Migration 351 DB tests exited with code $TEST_EXIT."
+            exit "$TEST_EXIT"
+          fi
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ Migration 351 DB tests had $SKIP_COUNT skipped tests. All must execute."
+              exit 1
+            fi
+          fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then
+            echo "❌ No migration 351 DB tests passed. Something is wrong."
+            exit 1
+          fi
+          echo "✅ Migration 351 ACL hardening tests complete — zero skips, zero failures."
+
+      - name: AUTH-001 profiles role hardening tests
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/waaiio_test
+        run: |
+          echo "Running AUTH-001 profiles role hardening tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/auth001-profiles-role-hardening-db.test.ts 2>&1)
+          TEST_EXIT=$?
+          set -e
+          echo "$OUTPUT"
+          if [ "$TEST_EXIT" -ne 0 ]; then
+            echo "❌ AUTH-001 DB tests exited with code $TEST_EXIT."
+            exit "$TEST_EXIT"
+          fi
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ AUTH-001 DB tests had $SKIP_COUNT skipped tests. All must execute."
+              exit 1
+            fi
+          fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then
+            echo "❌ No AUTH-001 DB tests passed. Something is wrong."
+            exit 1
+          fi
+          echo "✅ AUTH-001 profiles role hardening tests complete — zero skips, zero failures."
+
+      - name: Ticket purchase security tests
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/waaiio_test
+        run: |
+          echo "Running ticket purchase security tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/ticket-purchase-security-db.test.ts 2>&1)
+          TEST_EXIT=$?
+          set -e
+          echo "$OUTPUT"
+          if [ "$TEST_EXIT" -ne 0 ]; then
+            echo "❌ Ticket purchase security tests exited with code $TEST_EXIT."
+            exit "$TEST_EXIT"
+          fi
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ Ticket purchase security tests had $SKIP_COUNT skipped tests. All must execute."
+              exit 1
+            fi
+          fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then
+            echo "❌ No ticket purchase security tests passed. Something is wrong."
+            exit 1
+          fi
+          echo "✅ Ticket purchase security tests complete — zero skips, zero failures."
+
+      - name: Migration 356 Customer360/Financials tests
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/waaiio_test
+        run: |
+          echo "Running migration 356 Customer360/Financials DB tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/acc-224-226-customer360-financials-db.test.ts 2>&1)
+          TEST_EXIT=$?
+          set -e
+          echo "$OUTPUT"
+          if [ "$TEST_EXIT" -ne 0 ]; then
+            echo "❌ Migration 356 DB tests exited with code $TEST_EXIT."
+            exit "$TEST_EXIT"
+          fi
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ Migration 356 DB tests had $SKIP_COUNT skipped tests. All must execute."
+              exit 1
+            fi
+          fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then
+            echo "❌ No migration 356 DB tests passed. Something is wrong."
+            exit 1
+          fi
+          echo "✅ Migration 356 Customer360/Financials tests complete — zero skips, zero failures."
+
+      - name: "Migration 359 config versioning tests"
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/waaiio_test
+        run: |
+          echo "Running Migration 359 config versioning real PostgreSQL tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/config-versioning-db.test.ts 2>&1)
+          TEST_EXIT=$?
+          set -e
+          echo "$OUTPUT"
+          if [ $TEST_EXIT -ne 0 ]; then
+            echo "❌ Migration 359 config versioning tests exited with code $TEST_EXIT."
+            exit 1
+          fi
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ Migration 359 config versioning tests had $SKIP_COUNT skipped tests. All must execute."
+              exit 1
+            fi
+          fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then
+            echo "❌ No Migration 359 config versioning tests passed. Something is wrong."
+            exit 1
+          fi
+          echo "✅ Migration 359 config versioning tests complete — zero skips, zero failures."
+
+      - name: "Migration 362 webhook claim fencing tests"
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/waaiio_test
+        run: |
+          echo "Running Migration 362 webhook claim fencing real PostgreSQL tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/acc-271b-webhook-claim-fencing-db.test.ts 2>&1)
+          TEST_EXIT=$?
+          set -e
+          echo "$OUTPUT"
+          if [ $TEST_EXIT -ne 0 ]; then
+            echo "❌ Migration 362 webhook claim fencing tests exited with code $TEST_EXIT."
+            exit 1
+          fi
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ Migration 362 webhook claim fencing tests had $SKIP_COUNT skipped tests. All must execute."
+              exit 1
+            fi
+          fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then
+            echo "❌ No Migration 362 webhook claim fencing tests passed. Something is wrong."
+            exit 1
+          fi
+          echo "✅ Migration 362 webhook claim fencing tests complete — zero skips, zero failures."
+
+      - name: "Migration 363 emergency hard-stop tests"
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/waaiio_test
+        run: |
+          echo "Running Migration 363 emergency hard-stop real PostgreSQL tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/emergency-hard-stop-db.test.ts 2>&1)
+          TEST_EXIT=$?
+          set -e
+          echo "$OUTPUT"
+          if [ $TEST_EXIT -ne 0 ]; then
+            echo "❌ Migration 363 emergency hard-stop tests exited with code $TEST_EXIT."
+            exit 1
+          fi
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ Migration 363 tests had $SKIP_COUNT skipped tests. All must execute."
+              exit 1
+            fi
+          fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then
+            echo "❌ No Migration 363 tests passed. Something is wrong."
+            exit 1
+          fi
+          echo "✅ Migration 363 emergency hard-stop tests complete — zero skips, zero failures."
+
+      - name: "Migration 364 CAS business_id tests"
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/waaiio_test
+        run: |
+          echo "Running Migration 364 CAS business_id real PostgreSQL tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/acc-271c-cas-business-id-db.test.ts 2>&1)
+          TEST_EXIT=$?
+          set -e
+          echo "$OUTPUT"
+          if [ $TEST_EXIT -ne 0 ]; then
+            echo "❌ Migration 364 CAS tests exited with code $TEST_EXIT."
+            exit 1
+          fi
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ Migration 364 CAS tests had $SKIP_COUNT skipped. All must execute."
+              exit 1
+            fi
+          fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then
+            echo "❌ No Migration 364 CAS tests passed."
+            exit 1
+          fi
+          echo "✅ Migration 364 CAS business_id tests complete — zero skips, zero failures."
+
+      - name: "Migration 365 platform role authority tests"
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/waaiio_test
+        run: |
+          echo "Running Migration 365 platform role authority real PostgreSQL tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/platform-role-authority-db.test.ts 2>&1)
+          TEST_EXIT=$?
+          set -e
+          echo "$OUTPUT"
+          if [ $TEST_EXIT -ne 0 ]; then
+            echo "❌ Migration 365 platform role authority tests exited with code $TEST_EXIT."
+            exit 1
+          fi
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ Migration 365 tests had $SKIP_COUNT skipped. All must execute."
+              exit 1
+            fi
+          fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then
+            echo "❌ No Migration 365 tests passed."
+            exit 1
+          fi
+          echo "✅ Migration 365 platform role authority tests complete — zero skips, zero failures."
+
+      - name: "Migration 366 suspension RPC ACL tests"
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/waaiio_test
+        run: |
+          echo "Running Migration 366 suspension RPC ACL real PostgreSQL tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/suspension-rpc-acl-db.test.ts 2>&1)
+          TEST_EXIT=$?
+          set -e
+          echo "$OUTPUT"
+          if [ $TEST_EXIT -ne 0 ]; then
+            echo "❌ Migration 366 suspension RPC ACL tests exited with code $TEST_EXIT."
+            exit 1
+          fi
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ Migration 366 tests had $SKIP_COUNT skipped. All must execute."
+              exit 1
+            fi
+          fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then
+            echo "❌ No Migration 366 tests passed."
+            exit 1
+          fi
+          echo "✅ Migration 366 suspension RPC ACL tests complete — zero skips, zero failures."
+
+      - name: "Migration 367 message send attempts tests"
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/waaiio_test
+        run: |
+          echo "Running Migration 367 message send attempts real PostgreSQL tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/message-send-attempts-db.test.ts 2>&1)
+          TEST_EXIT=$?
+          set -e
+          echo "$OUTPUT"
+          if [ $TEST_EXIT -ne 0 ]; then
+            echo "❌ Migration 367 tests exited with code $TEST_EXIT."
+            exit 1
+          fi
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ Migration 367 tests had $SKIP_COUNT skipped. All must execute."
+              exit 1
+            fi
+          fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then
+            echo "❌ No Migration 367 tests passed."
+            exit 1
+          fi
+          echo "✅ Migration 367 message send attempts tests complete — zero skips, zero failures."
+
+      - name: "Migration 368 messaging allowance tests"
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/waaiio_test
+        run: |
+          echo "Running Migration 368 messaging allowance real PostgreSQL tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/messaging-allowance-db.test.ts 2>&1)
+          TEST_EXIT=$?
+          set -e
+          echo "$OUTPUT"
+          if [ $TEST_EXIT -ne 0 ]; then
+            echo "❌ Migration 368 tests exited with code $TEST_EXIT."
+            exit 1
+          fi
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ Migration 368 tests had $SKIP_COUNT skipped. All must execute."
+              exit 1
+            fi
+          fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then
+            echo "❌ No Migration 368 tests passed."
+            exit 1
+          fi
+          echo "✅ Migration 368 messaging allowance tests complete — zero skips, zero failures."
+
+      - name: "Migration 369 message cost events tests"
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/waaiio_test
+        run: |
+          echo "Running Migration 369 message cost events real PostgreSQL tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/message-cost-events-db.test.ts 2>&1)
+          TEST_EXIT=$?
+          set -e
+          echo "$OUTPUT"
+          if [ $TEST_EXIT -ne 0 ]; then
+            echo "❌ Migration 369 tests exited with code $TEST_EXIT."
+            exit 1
+          fi
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ Migration 369 tests had $SKIP_COUNT skipped. All must execute."
+              exit 1
+            fi
+          fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then
+            echo "❌ No Migration 369 tests passed."
+            exit 1
+          fi
+          echo "✅ Migration 369 message cost events tests complete — zero skips, zero failures."
+
+      - name: "Migration 370 financial authorization/settlement tests"
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/waaiio_test
+        run: |
+          echo "Running Migration 370 financial authorization real PostgreSQL tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/financial-authorization-db.test.ts 2>&1)
+          TEST_EXIT=$?
+          set -e
+          echo "$OUTPUT"
+          if [ $TEST_EXIT -ne 0 ]; then
+            echo "❌ Migration 370 tests exited with code $TEST_EXIT."
+            exit 1
+          fi
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ Migration 370 tests had $SKIP_COUNT skipped. All must execute."
+              exit 1
+            fi
+          fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then
+            echo "❌ No Migration 370 tests passed."
+            exit 1
+          fi
+          echo "✅ Migration 370 financial authorization tests complete — zero skips, zero failures."
+
+      - name: "Migration 371 runtime financial integration tests"
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/waaiio_test
+        run: |
+          echo "Running Migration 371 runtime financial integration tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/runtime-financial-integration-db.test.ts 2>&1)
+          TEST_EXIT=$?
+          set -e
+          echo "$OUTPUT"
+          if [ $TEST_EXIT -ne 0 ]; then
+            echo "❌ Migration 371 tests exited with code $TEST_EXIT."
+            exit 1
+          fi
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ Migration 371 tests had $SKIP_COUNT skipped. All must execute."
+              exit 1
+            fi
+          fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then
+            echo "❌ No Migration 371 tests passed."
+            exit 1
+          fi
+          echo "✅ Migration 371 runtime financial integration tests complete — zero skips, zero failures."
+
+      - name: "Migration 372 trial lifecycle tests"
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/waaiio_test
+        run: |
+          echo "Running Migration 372 trial lifecycle tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/trial-lifecycle-db.test.ts 2>&1)
+          TEST_EXIT=$?
+          set -e
+          echo "$OUTPUT"
+          if [ $TEST_EXIT -ne 0 ]; then
+            echo "❌ Migration 372 tests exited with code $TEST_EXIT."
+            exit 1
+          fi
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ Migration 372 tests had $SKIP_COUNT skipped. All must execute."
+              exit 1
+            fi
+          fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then
+            echo "❌ No Migration 372 tests passed."
+            exit 1
+          fi
+          echo "✅ Migration 372 trial lifecycle tests complete — zero skips, zero failures."
+
+      - name: "Sender expiry-race integration test"
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/waaiio_test
+        run: |
+          echo "Running sender expiry-race integration test..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/sender-expiry-race-integration.test.ts 2>&1)
+          TEST_EXIT=$?
+          set -e
+          echo "$OUTPUT"
+          if [ $TEST_EXIT -ne 0 ]; then
+            echo "❌ Sender expiry-race integration test exited with code $TEST_EXIT."
+            exit 1
+          fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then
+            echo "❌ No sender expiry-race tests passed."
+            exit 1
+          fi
+          echo "✅ Sender expiry-race integration test complete."
+
+      - name: "Production-shaped 355→356 convergence proof"
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+        run: |
+          echo "Building dedicated production-shaped convergence database..."
+          # 1. Create fresh isolated DB
+          psql -c "DROP DATABASE IF EXISTS waaiio_test_convergence;" || true
+          psql -c "CREATE DATABASE waaiio_test_convergence;"
+          # 1b. Apply auth/role/storage stubs (same as main CI DB setup)
+          psql -d waaiio_test_convergence -q -v ON_ERROR_STOP=1 <<'EOSQL'
+          CREATE SCHEMA IF NOT EXISTS auth;
+          CREATE SCHEMA IF NOT EXISTS extensions;
+          CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+          CREATE EXTENSION IF NOT EXISTS pgcrypto SCHEMA extensions;
+          CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $$ SELECT COALESCE(NULLIF(current_setting('request.jwt.claim.sub', true), ''), NULLIF(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub')::uuid; $$ LANGUAGE SQL STABLE;
+          CREATE OR REPLACE FUNCTION auth.role() RETURNS TEXT AS $$ SELECT 'authenticated'::TEXT; $$ LANGUAGE SQL STABLE;
+          CREATE TABLE IF NOT EXISTS auth.users (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), email TEXT, phone TEXT, raw_app_meta_data JSONB DEFAULT '{}');
+          DO $$ BEGIN CREATE ROLE service_role BYPASSRLS; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+          -- Match production Supabase: service_role has BYPASSRLS
+          ALTER ROLE service_role BYPASSRLS;
+          DO $$ BEGIN CREATE ROLE authenticated; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+          DO $$ BEGIN CREATE ROLE anon; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+          DO $$ BEGIN CREATE PUBLICATION supabase_realtime; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+          CREATE SCHEMA IF NOT EXISTS storage;
+          CREATE TABLE IF NOT EXISTS storage.buckets (id TEXT PRIMARY KEY, name TEXT, public BOOLEAN DEFAULT FALSE);
+          CREATE TABLE IF NOT EXISTS storage.objects (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), bucket_id TEXT REFERENCES storage.buckets(id), name TEXT, owner UUID);
+          ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY;
+          EOSQL
+          echo "✅ Auth/role stubs applied"
+          # 2. Apply migrations 001-354 (production baseline) — fail-closed
+          BASELINE_FAIL=0
+          for f in supabase/migrations/*.sql; do
+            NUM=$(basename "$f" | grep -oP '^\d+' || echo "999")
+            if [ "$NUM" -le "354" ]; then
+              if ! psql -d waaiio_test_convergence -v ON_ERROR_STOP=1 -f "$f" 2>&1; then
+                echo "⚠️  Migration $(basename $f) failed — checking if critical..."
+                # Some migrations have CI-only incompatibilities (e.g., cron, vault).
+                # Critical tables (businesses, payments, bookings, services, profiles) must exist.
+                if echo "$f" | grep -qP '(001|002|003|010|021|034|108)_'; then
+                  echo "❌ CRITICAL baseline migration failed: $(basename $f)"
+                  BASELINE_FAIL=1
+                fi
+              fi
+            fi
+          done
+          if [ "$BASELINE_FAIL" -eq 1 ]; then
+            echo "❌ Critical baseline migration failed. Cannot proceed."
+            exit 1
+          fi
+          # Validate critical tables exist
+          psql -d waaiio_test_convergence -v ON_ERROR_STOP=1 -c "
+            DO \$\$ BEGIN
+              ASSERT (SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public' AND table_name='businesses') = 1, 'businesses table missing';
+              ASSERT (SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public' AND table_name='payments') = 1, 'payments table missing';
+              ASSERT (SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public' AND table_name='bookings') = 1, 'bookings table missing';
+              ASSERT (SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public' AND table_name='profiles') = 1, 'profiles table missing';
+            END \$\$;
+          "
+          echo "✅ Applied baseline through 354 — critical tables verified"
+          # 3. Model production drift: remove 034's effective objects
+          psql -d waaiio_test_convergence -v ON_ERROR_STOP=1 -c "
+            DROP TABLE IF EXISTS public.refunds CASCADE;
+            ALTER TABLE public.payments DROP COLUMN IF EXISTS refund_amount;
+            ALTER TABLE public.payments DROP COLUMN IF EXISTS refund_reason;
+            ALTER TABLE public.payments DROP COLUMN IF EXISTS refunded_by;
+            ALTER TABLE public.payments DROP COLUMN IF EXISTS refunded_at;
+          " 2>&1
+          echo "✅ Modeled production drift (034 objects removed)"
+          # 4. Execute actual 355 + 356 with ON_ERROR_STOP
+          echo "Applying 355_refund_convergence.sql..."
+          psql -d waaiio_test_convergence -v ON_ERROR_STOP=1 -f supabase/migrations/355_refund_convergence.sql
+          echo "✅ Migration 355 applied"
+          echo "Applying 356_customer360_financial_projection.sql..."
+          psql -d waaiio_test_convergence -v ON_ERROR_STOP=1 -f supabase/migrations/356_customer360_financial_projection.sql
+          echo "✅ Migration 356 applied"
+          # 5. Verify postconditions with fail-closed ASSERT
+          echo "Verifying postconditions..."
+          psql -d waaiio_test_convergence -v ON_ERROR_STOP=1 -c "
+            DO \$\$ BEGIN
+              -- Refund table + convergence columns
+              ASSERT (SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public' AND table_name='refunds') = 1, 'refunds table missing';
+              ASSERT (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='refunds' AND column_name='dispatched_at') = 1, 'dispatched_at missing';
               ASSERT (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='refunds' AND column_name='provider_refund_id') = 1, 'provider_refund_id missing';
               ASSERT (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='refunds' AND column_name='recovery_token') = 1, 'recovery_token missing';
               ASSERT (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='refunds' AND column_name='provider_connection_id') = 1, 'provider_connection_id missing';
