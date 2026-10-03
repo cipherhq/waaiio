@@ -61,8 +61,10 @@ CREATE OR REPLACE FUNCTION public.persist_verified_paystack_card_authorization(
   p_authorization JSONB
 ) RETURNS BOOLEAN
 LANGUAGE plpgsql
-SECURITY INVOKER
-SET search_path = public
+-- service_role deliberately has no direct UPDATE grant on payments. This
+-- narrowly scoped definer RPC performs only the validated metadata merge below.
+SECURITY DEFINER
+SET search_path = pg_catalog, pg_temp
 AS $$
 DECLARE
   v_safe_authorization JSONB;

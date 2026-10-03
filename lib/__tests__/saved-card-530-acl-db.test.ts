@@ -16,6 +16,7 @@ describe.skipIf(!dbUrl)('M427 saved-card ACL and RPC', () => {
       expect(sql(`SELECT has_table_privilege('authenticated','public.saved_payment_methods','${p}')`)).toBe('f');
     }
     const id = '00000000-0000-4530-a000-000000000001';
+    expect(sql(`SELECT has_table_privilege('service_role','public.payments','UPDATE')`)).toBe('f');
     sql(`DELETE FROM payments WHERE id='${id}'; INSERT INTO payments(id,amount,currency,gateway_reference,gateway,status,metadata) VALUES ('${id}',5000,'NGN','REF-530-TEST','paystack','pending','{"payment_origin":"platform","keep":"yes"}')`);
     const auth = `'{"authorization_code":"AUTH-530","email":"customer@example.test","reusable":true,"pan":"4111111111111111","cvv":"123"}'::jsonb`;
     const args = `'${id}',5000,'NGN',${auth}`;
