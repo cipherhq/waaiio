@@ -79,13 +79,15 @@ export type RecommendedAction =
   | 'show_recommendations' | 'handoff_to_human' | 'fallback_menu'
   | 'apply_correction';
 
-// ── Correction result ───────────────────────────────────
+// ── Correction result ────────────────────────────────────
 
 export interface CorrectionResult {
   field: string;
   oldValue: unknown;
   newValue: unknown;
   confidence: number;
+  /** Existing authoritative flow step that must regain control before applying the correction. */
+  targetStep?: string;
 }
 
 // ── Per-business conversation config ────────────────────
