@@ -1,11 +1,25 @@
 import type { BotSession, BotContext } from '../bot-types';
+import {
+  normalizeInboundCommand,
+  recognizeNavigationCommand,
+  type NavigationCommand,
+} from '../inbound-command-normalization';
+import { handleCorrectionReentry } from './correction-reentry';
 
-// ── Navigation commands: always hardcoded, never overridable ──
-export const CANCEL_PATTERN = /^cancel$/i;
-export const EXIT_PATTERNS = [/^exit$/i, /^quit$/i, /^stop$/i, /^end$/i];
-export const MENU_PATTERNS = [/^menu$/i, /^restart$/i, /^start\s*over$/i];
-export const HOME_PATTERN = /^home$/i;
-export const BACK_PATTERNS = [/^back$/i, /^go\s*back$/i, /^previous$/i];
+type TestableCommandPattern = { test(value: string): boolean };
+
+function commandPattern(command: NavigationCommand): TestableCommandPattern {
+  return { test: (value: string) => recognizeNavigationCommand(value) === command };
+}
+
+// ── Navigation commands: deterministic, exact/anchored, never overridable ──
+// Keep the historical exported .test() surface so existing callers do not need
+// to own language normalization or command aliases.
+export const CANCEL_PATTERN = commandPattern('cancel');
+export const EXIT_PATTERNS = [commandPattern('exit')];
+export const MENU_PATTERNS = [commandPattern('menu'), commandPattern('restart')];
+export const HOME_PATTERN = commandPattern('home');
+export const BACK_PATTERNS = [commandPattern('back')];
 // Combined for legacy checks — excludes "back" (handled in executor) and "menu"/"home" (handled separately)
 export const ESCAPE_HATCH_PATTERNS = [
   CANCEL_PATTERN,
@@ -15,18 +29,7 @@ export const ESCAPE_HATCH_PATTERNS = [
 
 /**
  * Handle escape hatch commands: back/cancel, menu/restart, exit/quit/stop.
- *
- * @param ctx - BotContext with supabase, messageSender, intelligence, flowExecutor
- * @param from - Customer WhatsApp number
- * @param session - Active bot session
- * @param text - Raw message text (already trimmed by caller)
- * @param messageType - WhatsApp message type
- * @param destinationPhone - Destination phone (for routing)
- * @param step - Current session step
- * @param sendText - Callback to send plain text
- * @param deactivateSession - Callback to deactivate a session
- * @param handleMessage - Recursive callback for restarting flows
- * @returns `{ handled: true }` if the escape hatch was consumed, `{ handled: false }` to fall through
+ * Recognition is multilingual, but existing transition owners retain side effects.
  */
 export async function handleEscapeHatch(
   ctx: BotContext,
@@ -45,10 +48,30 @@ export async function handleEscapeHatch(
   const isChatMode = step === 'chat_handoff' || step === 'chat_start';
   const isBookingMgmt = step === 'my_bookings' || step === 'modify_booking' || step === 'my_orders' || step === 'order_detail' || step === 'list_subscriptions' || step === 'loyalty_menu' || step === 'invoice_list';
   const trimmedText = text.trim();
+  const normalizedText = normalizeInboundCommand(trimmedText);
+  const navigationCommand = recognizeNavigationCommand(trimmedText);
+
+  // English "help" is owned by BotService immediately before this handler.
+  // Canonicalize multilingual aliases back into that same owner rather than
+  // duplicating help behavior here.
+  if (navigationCommand === 'help' && normalizedText !== 'help') {
+    await handleMessage(from, 'help', messageType, destinationPhone);
+    return { handled: true };
+  }
+
+  // Slice 2 correction re-entry: this is only wiring. The deterministic parser
+  // proposes a target, CAS persists the rewind, and the existing FlowExecutor
+  // retains all validation/availability/stock authority. Chat/free-text handoff
+  // remains untouched.
+  if (!isChatMode) {
+    const correctionReentry = await handleCorrectionReentry(ctx, from, session, trimmedText);
+    if (correctionReentry.handled) return correctionReentry;
+  }
+
   // Simplified: cancel = back (go back one step)
-  const isCancelOrBack = CANCEL_PATTERN.test(trimmedText) || BACK_PATTERNS.some(p => p.test(trimmedText));
-  const isExitWord = EXIT_PATTERNS.some(p => p.test(trimmedText));
-  const isMenuWord = MENU_PATTERNS.some(p => p.test(trimmedText));
+  const isCancelOrBack = navigationCommand === 'cancel' || navigationCommand === 'back';
+  const isExitWord = navigationCommand === 'exit';
+  const isMenuWord = navigationCommand === 'menu' || navigationCommand === 'restart';
   const isEscapeHatch = isCancelOrBack || isExitWord || isMenuWord;
 
   // ── 3 SIMPLE COMMANDS: back/cancel, menu, exit ──
@@ -80,8 +103,9 @@ export async function handleEscapeHatch(
     return { handled: true };
   }
 
-  // "back" or "cancel" in flow steps → handled by executor (let it fall through)
-  // The executor pops step history and re-prompts the previous step
+  // "back" or "cancel" in flow steps → existing executor remains the owner.
+  // For multilingual aliases, canonicalize to the executor's historical English
+  // command instead of duplicating its step-history/CAS transition here.
 
   if (isEscapeHatch && (session.business_id || isBookingMgmt) && !isChatMode) {
     intelligence.resetAbuse(from);
@@ -159,7 +183,28 @@ export async function handleEscapeHatch(
         });
         return { handled: true };
       }
-      // Other non-free-text steps: fall through to executor (it handles back/cancel)
+
+      // Preserve the FlowExecutor as owner of ordinary step-history navigation.
+      // Existing English forms fall through unchanged. Multilingual aliases are
+      // converted to the canonical English command the executor already owns.
+      const legacyExecutorWords = new Set(['back', 'go back', 'previous', 'cancel']);
+      if (!legacyExecutorWords.has(normalizedText) && session.business_id) {
+        const { data: biz } = await supabase
+          .from('businesses')
+          .select('id, name, slug, category, flow_type, subscription_tier, trial_ends_at, metadata, country_code, payment_gateway')
+          .eq('id', session.business_id)
+          .single();
+        if (biz) {
+          await flowExecutor.execute(
+            from,
+            navigationCommand === 'cancel' ? 'cancel' : 'back',
+            session as unknown as BotSession,
+            biz,
+          );
+          return { handled: true };
+        }
+      }
+      // Existing English non-free-text steps fall through to executor unchanged.
     }
 
     // ── "exit" / "quit" / "stop" → leave business ──
@@ -167,50 +212,50 @@ export async function handleEscapeHatch(
       await deactivateSession(session.id);
 
       // Cancel any pending booking/order created during this session
-    const d = session.session_data || {};
-    if (d.booking_id) {
-      await supabase.from('bookings')
-        .update({ status: 'cancelled', cancelled_at: new Date().toISOString() })
-        .eq('id', d.booking_id as string)
-        .in('status', ['pending']);
-    }
-    if (d.order_id) {
-      await supabase.from('orders')
-        .update({ status: 'cancelled' })
-        .eq('id', d.order_id as string)
-        .eq('status', 'pending');
-    }
+      const d = session.session_data || {};
+      if (d.booking_id) {
+        await supabase.from('bookings')
+          .update({ status: 'cancelled', cancelled_at: new Date().toISOString() })
+          .eq('id', d.booking_id as string)
+          .in('status', ['pending']);
+      }
+      if (d.order_id) {
+        await supabase.from('orders')
+          .update({ status: 'cancelled' })
+          .eq('id', d.order_id as string)
+          .eq('status', 'pending');
+      }
 
-    // Find the business — from session or from history
-    let escBizId = session.business_id;
-    if (!escBizId) {
-      const { data: lastSess } = await supabase
-        .from('bot_sessions')
-        .select('business_id')
-        .eq('whatsapp_number', from)
-        .not('business_id', 'is', null)
-        .order('updated_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      escBizId = lastSess?.business_id || null;
-    }
+      // Find the business — from session or from history
+      let escBizId = session.business_id;
+      if (!escBizId) {
+        const { data: lastSess } = await supabase
+          .from('bot_sessions')
+          .select('business_id')
+          .eq('whatsapp_number', from)
+          .not('business_id', 'is', null)
+          .order('updated_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        escBizId = lastSess?.business_id || null;
+      }
 
-    // Always show clear options — never dead-end text
-    if (escBizId) {
-      const { data: escBiz } = await supabase.from('businesses').select('name').eq('id', escBizId).single();
-      const bizName = escBiz?.name || 'the business';
-      await messageSender.sendButtons({
-        to: from,
-        body: `You've left ${bizName}. What next?`,
-        buttons: [
-          { id: 'go_back_biz', title: 'Back to Menu' },
-          { id: 'switch_biz', title: 'Switch Business' },
-        ],
-      });
-    } else {
-      // No business found at all — guide them
-      await sendText(from, 'Send a *business code* to get started, or visit waaiio.com/directory to find a business.');
-    }
+      // Always show clear options — never dead-end text
+      if (escBizId) {
+        const { data: escBiz } = await supabase.from('businesses').select('name').eq('id', escBizId).single();
+        const bizName = escBiz?.name || 'the business';
+        await messageSender.sendButtons({
+          to: from,
+          body: `You've left ${bizName}. What next?`,
+          buttons: [
+            { id: 'go_back_biz', title: 'Back to Menu' },
+            { id: 'switch_biz', title: 'Switch Business' },
+          ],
+        });
+      } else {
+        // No business found at all — guide them
+        await sendText(from, 'Send a *business code* to get started, or visit waaiio.com/directory to find a business.');
+      }
       return { handled: true };
     }
   }
