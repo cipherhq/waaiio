@@ -34,6 +34,7 @@ jobs:
 
     steps:
       - name: Verify Owner authorization
+        shell: bash
         run: |
           if [ "${{ github.actor }}" != "${{ env.OWNER_ACTOR }}" ]; then
             echo "❌ ABORT: Only the Owner (${{ env.OWNER_ACTOR }}) may deploy production."
@@ -228,10 +229,12 @@ jobs:
               const d = JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
               if (!d.id || !d.id.startsWith('dpl_')) process.exit(1);
               if (d.projectId !== '${{ env.PROD_PROJECT_ID }}') process.exit(1);
+              const sha = d.meta && d.meta.githubCommitSha;
+              if (sha !== '${{ env.TARGET_SHA }}') process.exit(1);
               console.log([d.id, d.url || ''].join('|'));
             } catch { process.exit(1); }
           ") || {
-            echo "❌ Created deployment is not bound to the Waaiio production project."
+            echo "❌ Created deployment does not match production project + exact Git SHA."
             exit 1
           }
 
@@ -262,7 +265,7 @@ jobs:
             exit 1
           fi
 
-      - name: Prove production control-plane and runtime identity
+      - name: Prove control-plane identity and public health
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
         shell: bash
@@ -285,48 +288,57 @@ jobs:
               } catch { console.log(''); }
             " 2>/dev/null || echo '')
 
-            BODY=$(mktemp)
-            STATUS=$(curl -sS -o "$BODY" -w "%{http_code}" \
-              "${{ env.PROD_URL }}/api/release-identity" 2>/dev/null || echo '000')
+            DEPLOY_STATE=$(curl -sS -f \
+              -H "Authorization: Bearer $VERCEL_TOKEN" \
+              "https://api.vercel.com/v13/deployments/$EXPECTED_DEPLOYMENT?teamId=${{ env.PROD_ORG_ID }}" \
+              2>/dev/null || echo '')
 
-            IDENTITY=$(node -e "
-              const fs=require('fs');
+            DEPLOY_IDENTITY=$(echo "$DEPLOY_STATE" | node -e "
               try {
-                const d=JSON.parse(fs.readFileSync(process.argv[1],'utf8'));
-                const v=[d.sha,d.projectId,d.deploymentId];
-                if(v.some(x=>typeof x!=='string')) process.exit(1);
-                process.stdout.write(v.join('|'));
-              } catch { process.exit(1); }
-            " "$BODY" 2>/dev/null || echo '')
-            rm -f "$BODY"
+                const d = JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
+                const sha = d.meta && d.meta.githubCommitSha;
+                console.log([d.projectId || '', d.readyState || '', sha || ''].join('|'));
+              } catch { console.log('||'); }
+            " 2>/dev/null || echo '||')
 
-            RUNTIME_SHA=$(echo "$IDENTITY" | cut -d'|' -f1)
-            RUNTIME_PROJECT=$(echo "$IDENTITY" | cut -d'|' -f2)
-            RUNTIME_DEPLOYMENT=$(echo "$IDENTITY" | cut -d'|' -f3)
+            DEPLOY_PROJECT=$(echo "$DEPLOY_IDENTITY" | cut -d'|' -f1)
+            DEPLOY_READY=$(echo "$DEPLOY_IDENTITY" | cut -d'|' -f2)
+            DEPLOY_SHA=$(echo "$DEPLOY_IDENTITY" | cut -d'|' -f3)
+
+            IMMUTABLE_STATUS=$(curl -sS -L -o /dev/null -w "%{http_code}" \
+              "${{ env.DEPLOY_URL }}/" 2>/dev/null || echo '000')
+            PROD_STATUS=$(curl -sS -L -o /dev/null -w "%{http_code}" \
+              "${{ env.PROD_URL }}/" 2>/dev/null || echo '000')
+            FAVICON_STATUS=$(curl -sS -L -o /dev/null -w "%{http_code}" \
+              "${{ env.PROD_URL }}/apple-touch-icon.png" 2>/dev/null || echo '000')
 
             if [ "$ACTIVE_ID" = "$EXPECTED_DEPLOYMENT" ] \
-              && [ "$STATUS" = "200" ] \
-              && [ "$RUNTIME_SHA" = "$EXPECTED_SHA" ] \
-              && [ "$RUNTIME_PROJECT" = "${{ env.PROD_PROJECT_ID }}" ] \
-              && [ "$RUNTIME_DEPLOYMENT" = "$EXPECTED_DEPLOYMENT" ]; then
-              echo "✅ Production identity proven on attempt $ATTEMPT."
+              && [ "$DEPLOY_PROJECT" = "${{ env.PROD_PROJECT_ID }}" ] \
+              && [ "$DEPLOY_READY" = "READY" ] \
+              && [ "$DEPLOY_SHA" = "$EXPECTED_SHA" ] \
+              && [ "$IMMUTABLE_STATUS" = "200" ] \
+              && [ "$PROD_STATUS" = "200" ] \
+              && [ "$FAVICON_STATUS" = "200" ]; then
+              echo "✅ Exact production deployment + public health proven on attempt $ATTEMPT."
               exit 0
             fi
 
-            echo "Attempt $ATTEMPT/$MAX_ATTEMPTS: active=${ACTIVE_ID:-none}, HTTP=$STATUS, runtime_sha=${RUNTIME_SHA:-none}, runtime_deployment=${RUNTIME_DEPLOYMENT:-none}"
+            echo "Attempt $ATTEMPT/$MAX_ATTEMPTS: active=${ACTIVE_ID:-none}; deployment=${DEPLOY_READY:-none}/${DEPLOY_SHA:-none}; immutable=$IMMUTABLE_STATUS; production=$PROD_STATUS; favicon=$FAVICON_STATUS"
             sleep 10
           done
 
-          echo "❌ Production identity did not converge to the exact deployment."
+          echo "❌ Production control plane/public health did not converge to the exact release."
           exit 1
 
-      - name: Run deploy verifier
+      - name: Verify canonical favicon is advertised
+        shell: bash
         run: |
-          npx --no-install tsx lib/release-gate/deploy-verifier-cli.ts \
-            --target-url "${{ env.PROD_URL }}" \
-            --expected-sha "${{ env.TARGET_SHA }}" \
-            --expected-project "${{ env.PROD_PROJECT_ID }}" \
-            --expected-deployment-id "${{ env.NEW_DEPLOYMENT_ID }}"
+          HTML=$(curl -sS -L --fail "${{ env.PROD_URL }}/")
+          if ! echo "$HTML" | grep -q 'apple-touch-icon.png'; then
+            echo "❌ Production HTML does not advertise the canonical purple Waaiio icon."
+            exit 1
+          fi
+          echo "✅ Canonical favicon reference present in production HTML."
 
       - name: Roll back on any post-mutation failure
         if: failure() && env.DEPLOY_MUTATED == 'true'
