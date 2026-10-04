@@ -1322,6 +1322,40 @@ export class BotService {
         tierInfo = tier;
       }
 
+      // #524: A customer-wide response preference is presentation state only.
+      // Read it after #266 has authoritatively bound the business, then re-check it
+      // against this business's live entitlement and the production certification
+      // boundary. It must never participate in tenant resolution above.
+      let rememberedLanguageOffer: string | null = null;
+      if (business && profile?.id) {
+        const {
+          readPreferredResponseLanguage,
+          resolveEffectiveResponseLanguage,
+        } = await import('./language-preference');
+        // The preference helper accepts only its narrow profiles-query surface;
+        // the runtime Supabase client implements that surface.
+        const rememberedLanguage = await readPreferredResponseLanguage(this.supabase as never, profile.id);
+        if (rememberedLanguage) {
+          const configuredLanguages = await loadBusinessLanguages(this.supabase, business.id);
+          const rememberedEntitlement = getEffectiveLanguages(
+            business.subscription_tier,
+            configuredLanguages,
+          );
+          const { CERTIFIED_LANGUAGES } = await import('./language-policy');
+          const rememberedResolution = resolveEffectiveResponseLanguage({
+            rememberedLanguage,
+            entitlement: rememberedEntitlement,
+            certifiedLanguages: CERTIFIED_LANGUAGES,
+          });
+          // English is already the fail-closed response language and needs no offer.
+          // A non-English remembered value is offered once; it is not activated here.
+          if (rememberedResolution.shouldOfferRemembered
+              && rememberedResolution.language !== 'en') {
+            rememberedLanguageOffer = rememberedResolution.language;
+          }
+        }
+      }
+
       // ACC-180: First-message promo verification for trusted business context.
       // Evaluated AFTER business/block/capability/tier checks, BEFORE canonical semantic routing.
       // Only trusted resolution sources (pre_resolved, dedicated_number, restart) may claim.
@@ -1508,6 +1542,11 @@ export class BotService {
             ...(inboundChannelId ? { _inbound_channel_id: inboundChannelId } : {}),
             ...(forceCapabilityMenu ? { _force_capability_menu: true } : {}),
             ...(canonicalActivatedLanguage ? { _detected_language: canonicalActivatedLanguage } : {}),
+            ...(!canonicalActivatedLanguage && rememberedLanguageOffer ? {
+              _pending_language: rememberedLanguageOffer,
+              _pending_language_source: 'remembered',
+              _remembered_language_offered: true,
+            } : {}),
             // ACC-204 Blocker 1: Persist authoritative provenance so active-session path
             // can read it back instead of trusting a hardcoded literal.
             ...(bizResolution ? { biz_resolution: bizResolution } : {}),
@@ -1555,6 +1594,7 @@ export class BotService {
       // only prompt confirmation if canonical language policy allows it AND
       // the language is production-certified.
       if (text.length >= 3 && !canonicalActivatedLanguage && canonicalResult?.language
+          && !rememberedLanguageOffer
           && canonicalResult.language !== 'en'
           && canonicalResult.languageEntitlement.allowedLanguages.includes(canonicalResult.language)) {
         // Language was detected but not high-confidence-activated.
@@ -1579,6 +1619,22 @@ export class BotService {
           } catch (err) {
             logger.error('[BOT] Language confirm send error:', err);
           }
+        }
+      }
+
+      if (!canonicalActivatedLanguage && rememberedLanguageOffer) {
+        const langName = getLanguageName(rememberedLanguageOffer);
+        try {
+          await this.messageSender.sendButtons({
+            to: from,
+            body: `You previously chose ${langName}. Would you like me to respond in ${langName} here?`,
+            buttons: [
+              { id: 'lang_yes', title: `Yes, ${langName}` },
+              { id: 'lang_no', title: 'English is fine' },
+            ],
+          });
+        } catch (err) {
+          logger.error('[BOT] Remembered language offer send error:', err);
         }
       }
 
@@ -2009,6 +2065,7 @@ export class BotService {
     if (pendingLang && (text === 'lang_yes' || text === 'lang_no')) {
       const updatedData = { ...session.session_data };
       delete updatedData._pending_language;
+      delete updatedData._pending_language_source;
 
       if (text === 'lang_yes') {
         // Re-validate entitlement + certification before persisting — policy may have

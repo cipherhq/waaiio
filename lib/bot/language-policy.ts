@@ -8,9 +8,14 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { logger } from '@/lib/logger';
+import {
+  CERTIFIED_LANGUAGES,
+  SUPPORTED_LANGUAGES,
+  type SupportedLanguage,
+} from './languages';
 
-/** All Waaiio architecture-supported language codes */
-export const SUPPORTED_LANGUAGES = ['en', 'pcm', 'yo', 'ig', 'ha', 'tw', 'fr', 'es'] as const;
+export { CERTIFIED_LANGUAGES, SUPPORTED_LANGUAGES };
+export type { SupportedLanguage };
 
 /**
  * Production-certified languages — passed linguistic quality certification.
@@ -23,8 +28,6 @@ export const SUPPORTED_LANGUAGES = ['en', 'pcm', 'yo', 'ig', 'ha', 'tw', 'fr', '
  * Architecture supports more codes (en, pcm, yo, ig, ha, tw, fr, es) but
  * only certified languages are selectable in UI and activatable in production.
  */
-export const CERTIFIED_LANGUAGES: readonly string[] = ['en'];
-export type SupportedLanguage = typeof SUPPORTED_LANGUAGES[number];
 
 /** Maximum additional languages for Growth tier (beyond English) */
 const GROWTH_MAX_ADDITIONAL = 2;
