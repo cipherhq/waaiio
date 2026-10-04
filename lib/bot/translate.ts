@@ -3,6 +3,10 @@ import { isFeatureEnabledServer, FLAGS } from '@/lib/posthog/flags';
 import { checkRateLimit } from '@/lib/rate-limit';
 import { logger } from '@/lib/logger';
 import type { LanguageEntitlement } from './language-policy';
+import {
+  getLanguageName as getCatalogLanguageName,
+  isSupportedLanguage as isCatalogSupportedLanguage,
+} from './languages';
 
 /**
  * Translation context — replaces module-global mutable state.
@@ -13,17 +17,6 @@ export interface TranslationContext {
   businessId: string;
   supabase: unknown; // SupabaseClient — kept as unknown to avoid circular deps
 }
-
-const SUPPORTED_LANGUAGES: Record<string, string> = {
-  en: 'English',
-  pcm: 'Nigerian Pidgin',
-  yo: 'Yoruba',
-  ig: 'Igbo',
-  ha: 'Hausa',
-  tw: 'Twi',
-  fr: 'French',
-  es: 'Spanish',
-};
 
 // Cache translations to avoid repeat API calls
 const cache = new Map<string, { text: string; expiry: number }>();
@@ -51,7 +44,7 @@ export async function translateBotResponse(
   }
 
   // No translation needed for English or unknown languages
-  if (!language || language === 'en' || !SUPPORTED_LANGUAGES[language]) {
+  if (!language || language === 'en' || !isCatalogSupportedLanguage(language)) {
     return text;
   }
 
@@ -90,7 +83,7 @@ export async function translateBotResponse(
     }
 
     const anthropic = getClient();
-    const langName = SUPPORTED_LANGUAGES[language];
+    const langName = getCatalogLanguageName(language);
 
     const response = await anthropic.messages.create({
       model: 'claude-haiku-4-5-20251001',
@@ -182,7 +175,7 @@ export async function detectLanguage(text: string): Promise<string> {
     }
 
     const code = response.content[0].type === 'text' ? response.content[0].text.trim().toLowerCase() : 'en';
-    return SUPPORTED_LANGUAGES[code] ? code : 'en';
+    return isCatalogSupportedLanguage(code) ? code : 'en';
   } catch (err) {
     logger.warn('[TRANSLATE] Language detection failed, defaulting to English:', err);
     return 'en';
@@ -193,12 +186,12 @@ export async function detectLanguage(text: string): Promise<string> {
  * Check if a language code is supported for translation.
  */
 export function isSupportedLanguage(lang: string): boolean {
-  return lang in SUPPORTED_LANGUAGES;
+  return isCatalogSupportedLanguage(lang);
 }
 
 /**
  * Get the display name for a language code.
  */
 export function getLanguageName(lang: string): string {
-  return SUPPORTED_LANGUAGES[lang] || 'English';
+  return getCatalogLanguageName(lang);
 }

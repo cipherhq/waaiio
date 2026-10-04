@@ -3,6 +3,11 @@ import * as Sentry from '@sentry/nextjs';
 import type { MessageSender } from '@/lib/channels/message-sender';
 import { translateBotResponse, type TranslationContext } from '@/lib/bot/translate';
 import { getEffectiveLanguages, loadBusinessLanguages } from '@/lib/bot/language-policy';
+import type { SupportedLanguage } from '@/lib/bot/languages';
+import {
+  parseLanguagePreferenceIntent,
+  writePreferredResponseLanguage,
+} from '@/lib/bot/language-preference';
 import type { StandaloneService } from '@/lib/bot/standalone.service';
 import type { BotIntelligenceService } from '@/lib/bot/bot-intelligence';
 import type { FlowContext, PromptMessage } from './types';
@@ -385,10 +390,67 @@ export class FlowExecutor {
       return;
     }
 
+    // #524: Explicit durable intent is distinct from an ordinary session switch.
+    // It may write only through the canonical profile identity already attached to
+    // the authoritatively routed session, and only after live policy validation.
+    const languagePreferenceIntent = parseLanguagePreferenceIntent(input);
+    if (languagePreferenceIntent?.persistence === 'persistent') {
+      const targetLang = languagePreferenceIntent.language as SupportedLanguage;
+      const { CERTIFIED_LANGUAGES } = await import('@/lib/bot/language-policy');
+      const mayActivate = CERTIFIED_LANGUAGES.includes(targetLang)
+        && entitlement.allowedLanguages.includes(targetLang)
+        && (targetLang === 'en'
+          || (entitlement.translationAllowed && entitlement.llmAllowed));
+
+      if (mayActivate) {
+        session.session_data._detected_language = targetLang === 'en'
+          ? undefined
+          : targetLang;
+        const langSaved = await this.casUpdateSession(session, {
+          current_step: session.current_step,
+          session_data: session.session_data,
+        });
+        if (!langSaved) return;
+
+        if (session.user_id) {
+          try {
+            // The helper intentionally exposes only the narrow profiles operations it
+            // needs; the runtime Supabase client provides that same surface.
+            await writePreferredResponseLanguage(this.supabase as never, session.user_id, targetLang);
+          } catch (err) {
+            // Preference persistence is non-transactional presentation state. Keep
+            // the valid session switch working, but fail closed on the durable write.
+            logger.warn('[EXECUTOR] Could not persist response-language preference:', err);
+          }
+        }
+
+        const { getLanguageName } = await import('@/lib/bot/translate');
+        const confirmation = targetLang === 'en'
+          ? 'Switched to English. ✅'
+          : await translateBotResponse(
+            `Switched to ${getLanguageName(targetLang)}. ✅`,
+            targetLang,
+            translationCtx,
+          );
+        await this.sendText(from, confirmation, scopedSender);
+      } else {
+        const { getLanguageName } = await import('@/lib/bot/translate');
+        await this.sendText(
+          from,
+          `${getLanguageName(targetLang)} is not available for this business right now.`,
+          scopedSender,
+        );
+      }
+
+      const retryMsgs = await step.prompt(ctx);
+      await this.sendMessages(from, retryMsgs, session, translationCtx, scopedSender);
+      return;
+    }
+
     // Language switching escape hatch: "switch to yoruba" / "speak hausa" / "parle français"
     const langSwitchMatch = lowerInput.match(/\b(?:switch\s+to|speak|change\s+(?:to|language\s+to)|use)\s+(pidgin|yoruba|igbo|hausa|twi|french|spanish|english|français|español)\b/i);
     if (langSwitchMatch) {
-      const langMap: Record<string, string> = {
+      const langMap: Record<string, SupportedLanguage> = {
         pidgin: 'pcm', yoruba: 'yo', igbo: 'ig', hausa: 'ha', twi: 'tw',
         french: 'fr', français: 'fr', spanish: 'es', español: 'es', english: 'en',
       };
