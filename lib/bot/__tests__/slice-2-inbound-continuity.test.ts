@@ -143,31 +143,38 @@ describe('Slice 2 multilingual explicit language commands', () => {
   });
 });
 
-describe('Slice 2 multilingual corrections fail closed at authority boundaries', () => {
+describe('Slice 2 multilingual corrections preserve authority boundaries', () => {
   it.each([
-    ['pcm', 'abeg change am to tomorrow', 'select_date', 'date', 'tomorrow'],
-    ['yo', 'yi date pada si ọla', 'select_date', 'date', 'tomorrow'],
-    ['ig', 'gbanwee oge ka o buru 4pm', 'select_time', 'time', '4pm'],
-    ['ha', 'canza adadi zuwa 3', 'select_quantity', 'quantity', 3],
-    ['tw', 'sesa dodow no ko 2', 'select_quantity', 'quantity', 2],
-    ['fr', 'changer la date a demain', 'select_date', 'date', 'tomorrow'],
-    ['es', 'cambia la fecha a mañana', 'select_date', 'date', 'tomorrow'],
-    ['en', 'change to Friday', 'select_date', 'date', 'friday'],
-  ])('recognizes safe %s correction without LLM', (_language, text, step, field, newValue) => {
+    ['pcm', 'abeg change am to tomorrow', 'select_date', 'date', 'tomorrow', 'select_date'],
+    ['yo', 'yi date pada si ọla', 'select_date', 'date', 'tomorrow', 'select_date'],
+    ['ig', 'gbanwee oge ka o buru 4pm', 'select_time', 'time', '4pm', 'select_time'],
+    ['ha', 'canza adadi zuwa 3', 'select_quantity', 'quantity', 3, 'select_quantity'],
+    ['tw', 'sesa dodow no ko 2', 'select_quantity', 'quantity', 2, 'select_quantity'],
+    ['fr', 'changer la date a demain', 'select_date', 'date', 'tomorrow', 'select_date'],
+    ['es', 'cambia la fecha a mañana', 'select_date', 'date', 'tomorrow', 'select_date'],
+    ['en', 'change to Friday', 'select_date', 'date', 'friday', 'select_date'],
+  ] as const)('recognizes safe %s correction without LLM', (_language, text, step, field, newValue, targetStep) => {
     const result = detectCorrection(text, session(step));
-    expect(result?.field).toBe(field);
-    expect(result?.newValue).toBe(newValue);
+    expect(result).toMatchObject({ field, newValue, targetStep });
   });
 
   it('recognizes variant reselection only at an existing variant authority step', () => {
     const result = detectCorrection('cambiar la talla', session('select_variant', { active_capability: 'ordering' }));
-    expect(result?.field).toBe('variant');
-    expect(result?.newValue).toBeNull();
+    expect(result).toMatchObject({ field: 'variant', newValue: null, targetStep: 'select_variant' });
   });
 
-  it('refuses the same correction after review/confirmation to avoid stale authority', () => {
-    expect(detectCorrection('changer la date a demain', session('review_booking'))).toBeNull();
-    expect(detectCorrection('canza adadi zuwa 3', session('confirm_booking'))).toBeNull();
-    expect(detectCorrection('cambiar la talla', session('confirm_order', { active_capability: 'ordering' }))).toBeNull();
+  it('allows scheduling confirmation edits by routing back to existing authority', () => {
+    expect(detectCorrection('changer la date a demain', session('confirmation'))).toMatchObject({
+      field: 'date', targetStep: 'select_date',
+    });
+    expect(detectCorrection('canza adadi zuwa 3', session('confirmation'))).toMatchObject({
+      field: 'quantity', targetStep: 'select_quantity',
+    });
+  });
+
+  it('keeps payment and ordering review edits fail closed', () => {
+    expect(detectCorrection('change to Friday', session('confirm_payment', { active_capability: 'payment' }))).toBeNull();
+    expect(detectCorrection('canza adadi zuwa 3', session('review_order_summary', { active_capability: 'ordering' }))).toBeNull();
+    expect(detectCorrection('cambiar la talla', session('review_order_summary', { active_capability: 'ordering' }))).toBeNull();
   });
 });
