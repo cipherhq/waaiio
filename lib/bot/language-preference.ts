@@ -1,4 +1,5 @@
 import type { LanguageEntitlement } from './language-policy';
+import { normalizeInboundCommand } from './inbound-command-normalization';
 import {
   isSupportedLanguage,
   normalizeLanguageAlias,
@@ -11,25 +12,70 @@ export interface LanguagePreferenceIntent {
   persistence: PreferencePersistence;
 }
 
-const LANGUAGE_SWITCH = new RegExp(
-  '^(?:always\\s+)?(?:speak|use)\\s+(.+?)(?:\\s+(?:for now|from now on))?$'
-    + '|^reply\\s+to\\s+me\\s+in\\s+(.+?)(?:\\s+from now on)?$'
-    + '|^switch\\s+to\\s+(.+?)$',
-  'i',
-);
+const LANGUAGE_SWITCH_PATTERNS: readonly RegExp[] = [
+  // English / code-switched commands
+  /^(?:always\s+)?(?:speak|use)\s+(.+?)(?:\s+(?:for now|from now on))?$/,
+  /^reply\s+to\s+me\s+in\s+(.+?)(?:\s+from now on)?$/,
+  /^switch\s+to\s+(.+?)$/,
+  /^(?:change|set)\s+(?:my\s+)?language\s+to\s+(.+?)$/,
+  // Nigerian Pidgin
+  /^(?:abeg\s+)?(?:speak|use)\s+(.+?)(?:\s+for\s+now)?$/,
+  /^reply\s+me\s+(?:for|in)\s+(.+?)$/,
+  // Yoruba (normalized ASCII form also covers native orthography)
+  /^(?:jowo\s+)?so\s+(?:ede\s+)?(.+?)(?:\s+fun\s+mi)?$/,
+  /^dahun\s+si\s+mi\s+ni\s+(.+?)$/,
+  // Igbo
+  /^(?:biko\s+)?kwuo\s+(.+?)$/,
+  /^za\s+m\s+na\s+(.+?)$/,
+  // Hausa
+  /^(?:don\s+allah\s+)?yi\s+magana\s+da\s+ni\s+da\s+(.+?)$/,
+  /^amsa\s+mini\s+da\s+(.+?)$/,
+  // Twi
+  /^(?:mesre\s+wo\s+)?ka\s+(.+?)\s+kyere\s+me$/,
+  /^ma\s+me\s+mmuae\s+wo\s+(.+?)$/,
+  // French
+  /^(?:s'il\s+vous\s+plait\s+)?parle(?:z)?\s+(?:moi\s+en\s+)?(.+?)$/,
+  /^utilise(?:z)?\s+(.+?)$/,
+  /^reponds?(?:ez)?\s+moi\s+en\s+(.+?)$/,
+  // Spanish
+  /^(?:por\s+favor\s+)?habla\s+(?:conmigo\s+en\s+)?(.+?)$/,
+  /^usa\s+(.+?)$/,
+  /^respondeme\s+en\s+(.+?)$/,
+];
+
+const PERSISTENT_MARKERS = [
+  /\balways\b/, /\bfrom now on\b/,
+  /\btoujours\b/, /\bdesormais\b/,
+  /\bsiempre\b/, /\bde ahora en adelante\b/,
+  /\bnigbagbogbo\b/, /\blati isisiyi lo\b/,
+  /\bmgbe niile\b/, /\bkullum\b/, /\bdaga yanzu\b/,
+];
 
 export function parseLanguagePreferenceIntent(
   text: string,
 ): LanguagePreferenceIntent | null {
-  const normalized = text.trim().replace(/\s+/g, ' ');
-  const match = LANGUAGE_SWITCH.exec(normalized);
-  const alias = match?.slice(1).find(Boolean);
+  const normalized = normalizeInboundCommand(text);
+  let alias: string | undefined;
+
+  for (const pattern of LANGUAGE_SWITCH_PATTERNS) {
+    const match = pattern.exec(normalized);
+    if (match?.[1]) {
+      alias = match[1].trim();
+      break;
+    }
+  }
   if (!alias) return null;
+
+  // Remove persistence suffixes before alias lookup; the marker itself is
+  // explicit user intent and is evaluated separately below.
+  alias = alias
+    .replace(/\s+(?:from now on|toujours|desormais|siempre|de ahora en adelante|nigbagbogbo|lati isisiyi lo|mgbe niile|kullum|daga yanzu)$/i, '')
+    .trim();
 
   const language = normalizeLanguageAlias(alias);
   if (!language) return null;
 
-  const persistent = /^(?:always\b)|\bfrom now on$/i.test(normalized);
+  const persistent = PERSISTENT_MARKERS.some(pattern => pattern.test(normalized));
   return {
     language,
     persistence: persistent ? 'persistent' : 'session',
