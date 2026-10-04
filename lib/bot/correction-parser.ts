@@ -76,7 +76,7 @@ const VARIANT_CORRECTIONS = [
 ];
 
 const REPEAT_PATTERNS = [
-  /^(?:same as (?:last|before|previous)|do (?:it|the same) again|repeat|reorder)$/,
+  /^(?:same as (?:last|before|previous)(?: time| order| booking)?|do (?:it|the same) again|repeat|reorder)$/,
   /^(?:abeg\s+)?(?:do am again|order am again)$/,
   /^tun\s+(?:se|ra)\b/,
   /^mee\s+ya\s+ozo$/,
