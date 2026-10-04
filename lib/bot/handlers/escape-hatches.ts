@@ -87,9 +87,6 @@ export async function handleEscapeHatch(
     return { handled: true };
   }
 
-  // "back" or "cancel" in flow steps → handled by executor (let it fall through)
-  // The executor pops step history and re-prompts the previous step
-
   if (isEscapeHatch && (session.business_id || isBookingMgmt) && !isChatMode) {
     intelligence.resetAbuse(from);
 
@@ -118,7 +115,8 @@ export async function handleEscapeHatch(
     // ── "cancel" / "back" → go back one step ──
     if (isCancelOrBack) {
       // For free-text steps (enter_amount, collect_name, etc.), the executor
-      // won't intercept back/cancel. Handle it here instead.
+      // intentionally won't intercept back/cancel. Handle those existing
+      // escape-hatch-owned transitions here instead.
       const FREE_TEXT_STEPS = ['collect_name', 'collect_other_name', 'collect_email', 'special_requests', 'review_text', 'enter_amount', 'collect_address', 'collect_pickup_address', 'collect_dropoff_address', 'collect_package_description', 'collect_venue', 'enter_promo_code'];
       if (FREE_TEXT_STEPS.includes(step)) {
         const history = (session.session_data._step_history as string[]) || [];
@@ -166,7 +164,27 @@ export async function handleEscapeHatch(
         });
         return { handled: true };
       }
-      // Other non-free-text steps: fall through to executor (it handles back/cancel)
+
+      // Guided steps remain FlowExecutor-owned. For multilingual aliases we
+      // hand the executor its existing canonical command so it performs the
+      // same history pop, CAS update and re-prompt as English. No parallel
+      // navigation execution path is introduced here.
+      if (session.business_id) {
+        const { data: biz } = await supabase
+          .from('businesses')
+          .select('*')
+          .eq('id', session.business_id)
+          .single();
+        if (biz) {
+          await flowExecutor.execute(
+            from,
+            navigationConcept === 'cancel' ? 'cancel' : 'back',
+            session as unknown as BotSession,
+            biz,
+          );
+          return { handled: true };
+        }
+      }
     }
 
     // ── "exit" / "quit" / "stop" → leave business ──
