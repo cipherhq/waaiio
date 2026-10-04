@@ -1,146 +1,163 @@
 /**
- * Correction Parser — detects when a user wants to change a previous answer.
- *
- * Examples:
- *   "actually make it 3pm" -> correction to time
- *   "change to tomorrow"   -> correction to date
- *   "no, 4 people"         -> correction to quantity
- *   "not that service"     -> clear service selection
- *   "same as last time"    -> repeat last booking/order
- *
- * All patterns are deterministic regex — no LLM calls.
+ * Deterministic correction recognition. Recognition never selects a tenant,
+ * confirms an irreversible action, or calls an LLM.
  */
-
 import type { CorrectionResult } from './conversation-types';
 import type { BotSession } from './bot-types';
+import { normalizeInboundCommandText } from './inbound-command-normalization';
 
-// ── Deterministic correction patterns ───────────────────
-
-const CORRECTION_PATTERNS: Array<{
-  pattern: RegExp;
-  field: string;
-  extractor: (match: RegExpMatchArray) => unknown;
-}> = [
-  // Date corrections: "actually today", "actually tomorrow", "actually monday"
-  {
-    pattern: /^actually\s+(today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday)/i,
-    field: 'date',
-    extractor: (m) => m[1].toLowerCase(),
-  },
-  // Date corrections: "change/switch/move it to <day>"
-  {
-    pattern: /^(?:change|switch|move)\s+(?:it\s+)?to\s+(today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday)/i,
-    field: 'date',
-    extractor: (m) => m[1].toLowerCase(),
-  },
-  // Time corrections: "actually 3pm", "i meant 2:30pm"
-  {
-    pattern: /^(?:actually|i\s+meant)\s+(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)/i,
-    field: 'time',
-    extractor: (m) => m[1].trim(),
-  },
-  // Time corrections: "change/make the time to 3pm"
-  {
-    pattern: /^(?:change|make)\s+(?:it|the\s+time)\s+(?:to\s+)?(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)/i,
-    field: 'time',
-    extractor: (m) => m[1].trim(),
-  },
-  // Quantity/party size corrections: "actually 4 people", "make it 3 guests"
-  {
-    pattern: /^(?:actually|make\s+it|change\s+(?:it\s+)?to)\s+(\d+)\s*(?:people|persons?|guests?|pax)?/i,
-    field: 'quantity',
-    extractor: (m) => parseInt(m[1], 10),
-  },
-  // Quantity: "for 4 people", "make it 3 guests"
-  {
-    pattern: /^(?:for|make\s+it)\s+(\d+)\s*(?:people|persons?|guests?|pax)/i,
-    field: 'quantity',
-    extractor: (m) => parseInt(m[1], 10),
-  },
-  // Service rejection: "not that service", "wrong one"
-  {
-    pattern: /^(?:not\s+that|wrong)\s+(?:service|one|item)/i,
-    field: 'service',
-    extractor: () => null, // Clear the selection
-  },
-  // Repeat last: "same as last time", "do it again", "reorder"
-  {
-    pattern: /^(?:same\s+as\s+(?:last|before|previous)|do\s+(?:it|the\s+same)\s+again|repeat|reorder)/i,
-    field: 'repeat_last',
-    extractor: () => true,
-  },
-];
-
-// Quick-check triggers — skip pattern matching if none match
-const CORRECTION_TRIGGERS = [
-  /\b(actually|change|switch|no\b.*\binstead|correct|update|modify|wrong)\b/i,
-  /\b(not\s+\d|not\s+that|i\s+meant?)\b/i,
-  /\b(make\s+it|change\s+it\s+to|switch\s+to)\b/i,
-  /\b(same\s+as\s+last|do\s+it\s+again|repeat|reorder)\b/i,
-  /^for\s+\d+\s+(?:people|persons?|guests?|pax)/i,
-];
-
-// Maps correction field names to session_data keys
 const FIELD_TO_SESSION_KEY: Record<string, string> = {
-  date: 'selected_date',
-  time: 'selected_time',
+  date: 'date',
+  time: 'time',
   quantity: 'party_size',
   service: 'selected_service_id',
 };
 
-/**
- * Detect if a message is a correction to a previous flow answer.
- * Only runs during active flow sessions (has current_step).
- */
-export function detectCorrection(
-  text: string,
-  session: BotSession,
-): CorrectionResult | null {
+const RESELECT: Array<{ field: string; targetStep: string; phrases: string[] }> = [
+  {
+    field: 'date', targetStep: 'select_date', phrases: [
+      'change date', 'change the date', 'different date',
+      'change date abeg', 'another date abeg',
+      'yi ojo pada', 'ojo miiran',
+      'gbanwee ubochi', 'ubochi ozo',
+      'canza rana', 'wata rana',
+      'sesa da', 'da foforo',
+      'changer la date', 'autre date',
+      'cambiar fecha', 'otra fecha',
+    ],
+  },
+  {
+    field: 'time', targetStep: 'select_time', phrases: [
+      'change time', 'change the time', 'different time',
+      'change time abeg', 'another time abeg',
+      'yi akoko pada', 'akoko miiran',
+      'gbanwee oge', 'oge ozo',
+      'canza lokaci', 'wani lokaci',
+      'sesa bere', 'bere foforo',
+      'changer l heure', 'autre heure',
+      'cambiar hora', 'otra hora',
+    ],
+  },
+  {
+    field: 'quantity', targetStep: 'select_party_size', phrases: [
+      'change quantity', 'change number', 'different quantity',
+      'change quantity abeg', 'change number abeg',
+      'yi iye pada',
+      'gbanwee onu',
+      'canza adadi',
+      'sesa dodow',
+      'changer la quantite', 'changer le nombre',
+      'cambiar cantidad', 'cambiar numero',
+    ],
+  },
+  {
+    field: 'service', targetStep: 'select_service', phrases: [
+      'change service', 'different service', 'another service', 'not that service', 'wrong service',
+      'change service abeg', 'another service abeg',
+      'yi ise pada', 'ise miiran',
+      'gbanwee oru', 'oru ozo',
+      'canza sabis', 'wani sabis',
+      'sesa service',
+      'changer de service', 'autre service',
+      'cambiar servicio', 'otro servicio',
+    ],
+  },
+];
+
+const REPEAT_PHRASES = new Set([
+  'same as last time', 'same as before', 'same as previous', 'do it again', 'do the same again', 'repeat', 'reorder',
+  'same thing again abeg', 'do am again',
+  'tun se', 'mee ya ozo', 'sake yi', 'san ye bio',
+  'repeter', 'refaire', 'repetir', 'hacerlo de nuevo',
+]);
+
+function quantityTarget(session: BotSession): string {
+  const cap = String(session.session_data?.active_capability || '');
+  return ['ordering', 'order', 'ticketing', 'ticket', 'retail'].includes(cap)
+    ? 'select_quantity'
+    : 'select_party_size';
+}
+
+export function detectCorrection(text: string, session: BotSession): CorrectionResult | null {
   if (!session.is_active || !session.current_step) return null;
+  const normalized = normalizeInboundCommandText(text);
+  if (!normalized) return null;
 
-  const normalized = text.trim();
+  // Explicit English numeric corrections retain their supplied value. They are
+  // still revalidated by the target flow step; this parser never authorizes it.
+  let m = normalized.match(/^(?:actually|i meant|change(?: the)? time(?: to)?|make (?:it|the time)(?: to)?)\s+(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)$/);
+  if (m) return correction(session, 'time', m[1].trim(), 'select_time');
 
-  // Quick check — does the message look like a correction?
-  if (!CORRECTION_TRIGGERS.some(p => p.test(normalized))) {
-    return null;
-  }
+  m = normalized.match(/^(?:actually|make it|change(?: it)? to|for)\s+(\d+)\s*(?:people|persons?|guests?|pax|items?|tickets?)?$/);
+  if (m) return correction(session, 'quantity', parseInt(m[1], 10), quantityTarget(session));
 
-  for (const { pattern, field, extractor } of CORRECTION_PATTERNS) {
-    const match = normalized.match(pattern);
-    if (match) {
-      const newValue = extractor(match);
-      const sessionData = session.session_data || {};
-      const sessionKey = FIELD_TO_SESSION_KEY[field] || field;
-      const oldValue = sessionData[sessionKey] ?? null;
+  m = normalized.match(/^(?:actually|change|switch|move)(?: it)?(?: to)?\s+(today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday)$/);
+  if (m) return correction(session, 'date', m[1], 'select_date');
 
-      return {
-        field,
-        oldValue,
-        newValue,
-        confidence: 0.90,
-      };
+  for (const rule of RESELECT) {
+    if (rule.phrases.includes(normalized)) {
+      return correction(
+        session,
+        rule.field,
+        null,
+        rule.field === 'quantity' ? quantityTarget(session) : rule.targetStep,
+      );
     }
   }
 
+  if (REPEAT_PHRASES.has(normalized)) {
+    return {
+      field: 'repeat_last', oldValue: null, newValue: true, confidence: 0.9,
+    };
+  }
   return null;
 }
 
+function correction(
+  session: BotSession,
+  field: string,
+  newValue: unknown,
+  targetStep: string,
+): CorrectionResult {
+  const key = FIELD_TO_SESSION_KEY[field] || field;
+  return {
+    field,
+    oldValue: session.session_data?.[key] ?? null,
+    newValue,
+    confidence: 0.9,
+    targetStep,
+  };
+}
+
 /**
- * Apply a correction to session data.
- * Returns a new session_data object with the correction applied.
+ * Apply only data changes/invalidation. The existing BotService CAS +
+ * FlowExecutor own persistence and execution. Downstream values are cleared so
+ * no stale availability, price, stock or confirmation can survive a correction.
  */
 export function applyCorrection(
   sessionData: Record<string, unknown>,
-  correction: CorrectionResult,
+  correctionResult: CorrectionResult,
 ): Record<string, unknown> {
   const updated = { ...sessionData };
-  const sessionKey = FIELD_TO_SESSION_KEY[correction.field] || correction.field;
+  const sessionKey = FIELD_TO_SESSION_KEY[correctionResult.field] || correctionResult.field;
 
-  if (correction.newValue === null) {
-    delete updated[sessionKey];
-  } else {
-    updated[sessionKey] = correction.newValue;
+  if (correctionResult.newValue === null) delete updated[sessionKey];
+  else updated[sessionKey] = correctionResult.newValue;
+
+  const clear = (...keys: string[]) => keys.forEach(k => delete updated[k]);
+  switch (correctionResult.field) {
+    case 'service':
+      clear('selected_staff_id', 'staff_id', 'date', 'time', 'selected_date', 'selected_time', 'slot_id', 'selected_slot_id', 'availability', 'booking_id', 'confirmation', 'confirmed');
+      break;
+    case 'date':
+      clear('time', 'selected_time', 'slot_id', 'selected_slot_id', 'availability', 'booking_id', 'confirmation', 'confirmed');
+      break;
+    case 'time':
+      clear('slot_id', 'selected_slot_id', 'availability', 'booking_id', 'confirmation', 'confirmed');
+      break;
+    case 'quantity':
+      clear('price', 'total', 'total_amount', 'stock_reservation_id', 'reservation_id', 'payment_url', 'payment_reference', 'confirmation', 'confirmed');
+      break;
   }
-
   return updated;
 }
