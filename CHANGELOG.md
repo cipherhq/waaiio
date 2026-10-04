@@ -3,6 +3,16 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-10-03 — Paystack saved-card persistence (#530)
+
+### What changed
+- Paystack verify results and signed `charge.success` webhooks now normalize reusable authorization metadata. The shared persistence RPC atomically enriches the canonical platform payment before Save Card confirmation; completed webhook replays can add authorization metadata without replaying payment effects.
+- Migration 427 repairs missing `service_role` CRUD grants on `saved_payment_methods` while retaining RLS and denying client-role access on the repair path. It adds a service-only RPC that validates provider, amount, currency, status, and platform origin, and allows only card metadata fields. A production-shaped table ACL with existing service-role SELECT is left unchanged; production client grants remain a separate hardening task.
+- CI now runs M427 PostgreSQL ACL and persistence checks with the M426 database tests.
+
+### What could break
+- BYO/Connect Paystack payments remain ineligible for saved-card persistence under the accepted platform-origin policy. Persistence failures do not block successful payment confirmation.
+
 ## 2026-10-03 — M426 staging payment setup parity (#527)
 
 ### What changed

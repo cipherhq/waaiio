@@ -3,6 +3,7 @@ import * as Sentry from '@sentry/nextjs';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { createServiceClient } from '@/lib/supabase/service';
 import { processPaystackChargeSuccess, processPaystackChargeFailed } from '@/lib/payments/webhook-handler';
+import { normalizePaystackCardAuthorization, persistPaystackCardAuthorization } from '@/lib/payments/paystack-card-authorization';
 import { sendProactiveConfirmation } from '@/lib/payments/send-confirmation';
 import { notifyCustomerChargeFailed } from '@/lib/payments/notify-charge-failed';
 import { createAlert } from '@/lib/alerts/create-alert';
@@ -85,6 +86,24 @@ export async function POST(request: NextRequest) {
 
     // Already successfully processed — skip
     if (claimed.status === 'completed') {
+      // A replay can carry authorization data omitted from the first delivery.
+      // Enrich the canonical payment only; do not replay confirmation effects.
+      if (event === 'charge.success') {
+        const authorization = normalizePaystackCardAuthorization(data.authorization, data.customer);
+        if (authorization) {
+          const { data: payment } = await supabase.from('payments')
+            .select('id')
+            .eq('gateway_reference', reference)
+            .eq('gateway', 'paystack')
+            .maybeSingle();
+          if (payment) {
+            await persistPaystackCardAuthorization(
+              supabase, payment.id, Number(data.amount) / 100,
+              typeof data.currency === 'string' ? data.currency : '', authorization,
+            );
+          }
+        }
+      }
       wh.duplicate({ webhookEventId: eventId || undefined });
       return NextResponse.json({ received: true }, { status: 200 });
     }
