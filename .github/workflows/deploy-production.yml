@@ -1,0 +1,387 @@
+name: Deploy to Production
+
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: 'Exact Git SHA to deploy (40 hex chars)'
+        required: true
+        type: string
+  push:
+    branches:
+      - 'prod-deploy/**'
+    paths:
+      - '.release/production-sha.txt'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+env:
+  PROD_ORG_ID: team_AEcg69CktrGEptXDznpae8Rp
+  PROD_PROJECT_ID: prj_QkvBTiDA905GHTwX5DQCJVyZzd9d
+  PROD_URL: https://www.waaiio.com
+  OWNER_ACTOR: cipherhq
+  VERCEL_CLI_VERSION: "60.1.3"
+
+jobs:
+  deploy-production:
+    name: "Deploy exact SHA to production"
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Verify Owner authorization
+        run: |
+          if [ "${{ github.actor }}" != "${{ env.OWNER_ACTOR }}" ]; then
+            echo "❌ ABORT: Only the Owner (${{ env.OWNER_ACTOR }}) may deploy production."
+            echo "   Triggered by: ${{ github.actor }}"
+            exit 1
+          fi
+
+          case "${{ github.event_name }}" in
+            workflow_dispatch|push) ;;
+            *)
+              echo "❌ ABORT: Unsupported trigger: ${{ github.event_name }}"
+              exit 1
+              ;;
+          esac
+
+          echo "✅ Owner authorization verified: ${{ github.actor }}"
+
+      - name: Checkout trigger ref
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve exact target SHA
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            SHA="${{ inputs.sha }}"
+          else
+            if [ ! -f .release/production-sha.txt ]; then
+              echo "❌ ABORT: .release/production-sha.txt is required for push-triggered production deploys."
+              exit 1
+            fi
+            SHA=$(tr -d '[:space:]' < .release/production-sha.txt)
+          fi
+
+          if ! echo "$SHA" | grep -qE '^[0-9a-f]{40}$'; then
+            echo "❌ ABORT: Target SHA must be exactly 40 lowercase hex characters. Got: $SHA"
+            exit 1
+          fi
+
+          echo "TARGET_SHA=$SHA" >> "$GITHUB_ENV"
+          echo "✅ Target SHA resolved: ${SHA:0:8}"
+
+      - name: Checkout exact target SHA
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TARGET_SHA }}
+          fetch-depth: 0
+
+      - name: Verify checkout integrity
+        shell: bash
+        run: |
+          CHECKOUT_SHA=$(git rev-parse HEAD)
+          if [ "$CHECKOUT_SHA" != "${{ env.TARGET_SHA }}" ]; then
+            echo "❌ ABORT: checkout HEAD $CHECKOUT_SHA does not match requested SHA ${{ env.TARGET_SHA }}"
+            exit 1
+          fi
+
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "❌ ABORT: working tree is not clean."
+            git status --short
+            exit 1
+          fi
+
+          echo "✅ Exact clean checkout proven: ${CHECKOUT_SHA:0:8}"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.11.1
+          cache: npm
+
+      - name: Install dependencies and pinned Vercel CLI
+        run: |
+          npm ci
+          npm install -g "vercel@${{ env.VERCEL_CLI_VERSION }}"
+
+      - name: Capture live production target and prove safe lineage
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        shell: bash
+        run: |
+          PROJECT_STATE=$(curl -sS -f \
+            -H "Authorization: Bearer $VERCEL_TOKEN" \
+            "https://api.vercel.com/v9/projects/${{ env.PROD_PROJECT_ID }}?teamId=${{ env.PROD_ORG_ID }}") || {
+            echo "❌ ABORT: failed to query production project control plane."
+            exit 1
+          }
+
+          PREV_ID=$(echo "$PROJECT_STATE" | node -e "
+            try {
+              const p = JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
+              const t = p.targets && p.targets.production;
+              if (!t || typeof t.id !== 'string' || !t.id.startsWith('dpl_')) process.exit(1);
+              console.log(t.id);
+            } catch { process.exit(1); }
+          ") || {
+            echo "❌ ABORT: could not prove current production deployment ID."
+            exit 1
+          }
+
+          PREV_INSPECT=$(curl -sS -f \
+            -H "Authorization: Bearer $VERCEL_TOKEN" \
+            "https://api.vercel.com/v13/deployments/$PREV_ID?teamId=${{ env.PROD_ORG_ID }}") || {
+            echo "❌ ABORT: could not inspect current production deployment $PREV_ID."
+            exit 1
+          }
+
+          LIVE_INFO=$(echo "$PREV_INSPECT" | node -e "
+            try {
+              const d = JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
+              if (d.projectId !== '${{ env.PROD_PROJECT_ID }}') process.exit(1);
+              if (d.readyState !== 'READY') process.exit(1);
+              const sha = d.meta && d.meta.githubCommitSha;
+              if (typeof sha !== 'string' || !/^[0-9a-f]{40}$/.test(sha)) process.exit(1);
+              console.log([d.id, sha, d.url || ''].join('|'));
+            } catch { process.exit(1); }
+          ") || {
+            echo "❌ ABORT: active deployment lacks a valid production Git identity."
+            exit 1
+          }
+
+          LIVE_SHA=$(echo "$LIVE_INFO" | cut -d'|' -f2)
+          PREV_URL=$(echo "$LIVE_INFO" | cut -d'|' -f3)
+
+          if ! git cat-file -e "$LIVE_SHA^{commit}" 2>/dev/null; then
+            git fetch origin "$LIVE_SHA" --quiet || {
+              echo "❌ ABORT: live Git SHA $LIVE_SHA is not available from origin."
+              exit 1
+            }
+          fi
+
+          if ! git merge-base --is-ancestor "$LIVE_SHA" "${{ env.TARGET_SHA }}"; then
+            echo "❌ ABORT: target SHA is not a descendant of the currently live production SHA."
+            echo "   live:   $LIVE_SHA"
+            echo "   target: ${{ env.TARGET_SHA }}"
+            exit 1
+          fi
+
+          CHANGED=$(git diff --name-only "$LIVE_SHA..${{ env.TARGET_SHA }}")
+          echo "Release delta from live production:"
+          echo "$CHANGED"
+
+          if echo "$CHANGED" | grep -qE '^supabase/migrations/'; then
+            echo "❌ ABORT: production app deployment contains database migration files."
+            echo "   Database mutation is a separate Owner authorization gate."
+            exit 1
+          fi
+
+          echo "PREV_DEPLOYMENT_ID=$PREV_ID" >> "$GITHUB_ENV"
+          echo "PREV_DEPLOYMENT_URL=$PREV_URL" >> "$GITHUB_ENV"
+          echo "LIVE_GIT_SHA=$LIVE_SHA" >> "$GITHUB_ENV"
+          echo "✅ Live target captured: $PREV_ID / ${LIVE_SHA:0:8}"
+          echo "✅ Lineage proven and no migration delta detected."
+
+      - name: Deploy exact SHA to production project
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ env.PROD_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ env.PROD_PROJECT_ID }}
+        shell: bash
+        run: |
+          echo "DEPLOY_MUTATED=true" >> "$GITHUB_ENV"
+          echo "Deploying exact SHA ${{ env.TARGET_SHA }} to Waaiio production..."
+
+          set +e
+          DEPLOY_OUTPUT=$(vercel deploy --prod --yes --token "$VERCEL_TOKEN" 2>&1)
+          DEPLOY_EXIT=$?
+          set -e
+
+          if [ $DEPLOY_EXIT -ne 0 ]; then
+            echo "❌ Vercel deploy failed with exit code $DEPLOY_EXIT"
+            echo "$DEPLOY_OUTPUT"
+            exit 1
+          fi
+
+          DEPLOY_URL=$(echo "$DEPLOY_OUTPUT" | grep -oE 'https://[^ ]+\.vercel\.app' | tail -1)
+          if [ -z "$DEPLOY_URL" ]; then
+            echo "❌ Could not capture immutable deployment URL."
+            exit 1
+          fi
+
+          DEP_INSPECT=$(curl -sS -f \
+            -H "Authorization: Bearer $VERCEL_TOKEN" \
+            "https://api.vercel.com/v13/deployments/$(echo "$DEPLOY_URL" | sed 's|https://||')?teamId=${{ env.PROD_ORG_ID }}") || {
+            echo "❌ Could not inspect created deployment."
+            exit 1
+          }
+
+          NEW_INFO=$(echo "$DEP_INSPECT" | node -e "
+            try {
+              const d = JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
+              if (!d.id || !d.id.startsWith('dpl_')) process.exit(1);
+              if (d.projectId !== '${{ env.PROD_PROJECT_ID }}') process.exit(1);
+              console.log([d.id, d.url || ''].join('|'));
+            } catch { process.exit(1); }
+          ") || {
+            echo "❌ Created deployment is not bound to the Waaiio production project."
+            exit 1
+          }
+
+          NEW_ID=$(echo "$NEW_INFO" | cut -d'|' -f1)
+          echo "NEW_DEPLOYMENT_ID=$NEW_ID" >> "$GITHUB_ENV"
+          echo "DEPLOY_URL=$DEPLOY_URL" >> "$GITHUB_ENV"
+          echo "✅ Production deployment created: $NEW_ID ($DEPLOY_URL)"
+
+      - name: Promote exact deployment
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        shell: bash
+        run: |
+          set +e
+          OUTPUT=$(vercel promote "${{ env.DEPLOY_URL }}" --yes --timeout 5m \
+            --token "$VERCEL_TOKEN" --scope "${{ env.PROD_ORG_ID }}" 2>&1)
+          EXIT_CODE=$?
+          set -e
+
+          if [ $EXIT_CODE -eq 0 ]; then
+            echo "✅ Exact deployment promoted."
+          elif echo "$OUTPUT" | grep -q "${{ env.NEW_DEPLOYMENT_ID }}" \
+            && echo "$OUTPUT" | grep -q "already the current production deployment"; then
+            echo "✅ Exact deployment is already active (idempotent promotion)."
+          else
+            echo "❌ Promotion failed."
+            echo "$OUTPUT"
+            exit 1
+          fi
+
+      - name: Prove production control-plane and runtime identity
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        shell: bash
+        run: |
+          EXPECTED_SHA="${{ env.TARGET_SHA }}"
+          EXPECTED_DEPLOYMENT="${{ env.NEW_DEPLOYMENT_ID }}"
+          MAX_ATTEMPTS=30
+
+          for ATTEMPT in $(seq 1 $MAX_ATTEMPTS); do
+            PROJECT_STATE=$(curl -sS -f \
+              -H "Authorization: Bearer $VERCEL_TOKEN" \
+              "https://api.vercel.com/v9/projects/${{ env.PROD_PROJECT_ID }}?teamId=${{ env.PROD_ORG_ID }}" \
+              2>/dev/null || echo '')
+
+            ACTIVE_ID=$(echo "$PROJECT_STATE" | node -e "
+              try {
+                const p = JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
+                const t = p.targets && p.targets.production;
+                console.log(t && t.id ? t.id : '');
+              } catch { console.log(''); }
+            " 2>/dev/null || echo '')
+
+            BODY=$(mktemp)
+            STATUS=$(curl -sS -o "$BODY" -w "%{http_code}" \
+              "${{ env.PROD_URL }}/api/release-identity" 2>/dev/null || echo '000')
+
+            IDENTITY=$(node -e "
+              const fs=require('fs');
+              try {
+                const d=JSON.parse(fs.readFileSync(process.argv[1],'utf8'));
+                const v=[d.sha,d.projectId,d.deploymentId];
+                if(v.some(x=>typeof x!=='string')) process.exit(1);
+                process.stdout.write(v.join('|'));
+              } catch { process.exit(1); }
+            " "$BODY" 2>/dev/null || echo '')
+            rm -f "$BODY"
+
+            RUNTIME_SHA=$(echo "$IDENTITY" | cut -d'|' -f1)
+            RUNTIME_PROJECT=$(echo "$IDENTITY" | cut -d'|' -f2)
+            RUNTIME_DEPLOYMENT=$(echo "$IDENTITY" | cut -d'|' -f3)
+
+            if [ "$ACTIVE_ID" = "$EXPECTED_DEPLOYMENT" ] \
+              && [ "$STATUS" = "200" ] \
+              && [ "$RUNTIME_SHA" = "$EXPECTED_SHA" ] \
+              && [ "$RUNTIME_PROJECT" = "${{ env.PROD_PROJECT_ID }}" ] \
+              && [ "$RUNTIME_DEPLOYMENT" = "$EXPECTED_DEPLOYMENT" ]; then
+              echo "✅ Production identity proven on attempt $ATTEMPT."
+              exit 0
+            fi
+
+            echo "Attempt $ATTEMPT/$MAX_ATTEMPTS: active=${ACTIVE_ID:-none}, HTTP=$STATUS, runtime_sha=${RUNTIME_SHA:-none}, runtime_deployment=${RUNTIME_DEPLOYMENT:-none}"
+            sleep 10
+          done
+
+          echo "❌ Production identity did not converge to the exact deployment."
+          exit 1
+
+      - name: Run deploy verifier
+        run: |
+          npx --no-install tsx lib/release-gate/deploy-verifier-cli.ts \
+            --target-url "${{ env.PROD_URL }}" \
+            --expected-sha "${{ env.TARGET_SHA }}" \
+            --expected-project "${{ env.PROD_PROJECT_ID }}" \
+            --expected-deployment-id "${{ env.NEW_DEPLOYMENT_ID }}"
+
+      - name: Roll back on any post-mutation failure
+        if: failure() && env.DEPLOY_MUTATED == 'true'
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        shell: bash
+        run: |
+          echo "⚠️ Production verification failed — rolling back to ${{ env.PREV_DEPLOYMENT_ID }}"
+
+          PROJECT_STATE=$(curl -sS -f \
+            -H "Authorization: Bearer $VERCEL_TOKEN" \
+            "https://api.vercel.com/v9/projects/${{ env.PROD_PROJECT_ID }}?teamId=${{ env.PROD_ORG_ID }}" \
+            2>/dev/null || echo '')
+          ACTIVE_ID=$(echo "$PROJECT_STATE" | node -e "
+            try {
+              const p=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
+              const t=p.targets&&p.targets.production;
+              console.log(t&&t.id?t.id:'');
+            } catch { console.log(''); }
+          " 2>/dev/null || echo '')
+
+          if [ "$ACTIVE_ID" != "${{ env.PREV_DEPLOYMENT_ID }}" ]; then
+            vercel rollback "${{ env.PREV_DEPLOYMENT_ID }}" --yes \
+              --token "$VERCEL_TOKEN" --scope "${{ env.PROD_ORG_ID }}" || {
+              echo "🚨 EMERGENCY: automatic production rollback failed."
+              exit 1
+            }
+            sleep 10
+          fi
+
+          VERIFY=$(curl -sS -f \
+            -H "Authorization: Bearer $VERCEL_TOKEN" \
+            "https://api.vercel.com/v9/projects/${{ env.PROD_PROJECT_ID }}?teamId=${{ env.PROD_ORG_ID }}") || exit 1
+          RESTORED=$(echo "$VERIFY" | node -e "
+            const p=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
+            const t=p.targets&&p.targets.production;
+            console.log(t&&t.id?t.id:'');
+          ")
+
+          if [ "$RESTORED" != "${{ env.PREV_DEPLOYMENT_ID }}" ]; then
+            echo "🚨 EMERGENCY: rollback verification failed. Expected ${{ env.PREV_DEPLOYMENT_ID }}, got $RESTORED"
+            exit 1
+          fi
+
+          echo "✅ Rollback verified: $RESTORED"
+
+      - name: Production deployment summary
+        if: success()
+        run: |
+          echo "═══════════════════════════════════════════════════════════"
+          echo "  Waaiio Production Deployment Complete"
+          echo "═══════════════════════════════════════════════════════════"
+          echo "  SHA:            ${{ env.TARGET_SHA }}"
+          echo "  URL:            ${{ env.PROD_URL }}"
+          echo "  Deployment ID:  ${{ env.NEW_DEPLOYMENT_ID }}"
+          echo "  Previous:       ${{ env.PREV_DEPLOYMENT_ID }}"
+          echo "  Actor:          ${{ github.actor }}"
+          echo "═══════════════════════════════════════════════════════════"
