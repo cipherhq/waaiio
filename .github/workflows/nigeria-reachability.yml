@@ -1,0 +1,101 @@
+name: Nigeria Reachability Gate
+
+# #537 — read-only regional launch diagnostics.
+# This workflow never changes DNS, Vercel, Supabase, providers, or application state.
+# It runs Globalping measurements from Nigerian probes and compares Waaiio custom
+# domains against Vercel-hosted controls so custom-domain failures are visible.
+
+on:
+  workflow_dispatch:
+    inputs:
+      location:
+        description: 'Globalping location filter (for example Nigeria or Lagos+Nigeria)'
+        required: false
+        default: 'Nigeria'
+        type: string
+      probes:
+        description: 'Number of probes per measurement'
+        required: false
+        default: 2
+        type: number
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/nigeria-reachability.yml'
+      - 'scripts/ops/nigeria-reachability-gate.sh'
+  schedule:
+    # Four automatic checks per day. Manual workflow_dispatch remains available
+    # for immediate pre-launch/retest evidence without permanently burning credits.
+    - cron: '17 */6 * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nigeria-reachability-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  reachability:
+    name: Nigeria DNS / HTTP / TLS reachability
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    env:
+      GLOBALPING_LOCATION: ${{ inputs.location || 'Nigeria' }}
+      GLOBALPING_PROBES: ${{ inputs.probes || 2 }}
+      GLOBALPING_TIMEOUT: '20'
+      # Optional. The workflow works without it; a free Globalping token raises
+      # measurement limits if GLOBALPING_TOKEN is later configured in GitHub.
+      GLOBALPING_TOKEN: ${{ secrets.GLOBALPING_TOKEN }}
+
+    steps:
+      - name: Checkout exact ref
+        uses: actions/checkout@v4
+
+      - name: Install pinned Globalping CLI v1.6.0
+        shell: bash
+        run: |
+          set -euo pipefail
+          url='https://github.com/jsdelivr/globalping-cli/releases/download/v1.6.0/globalping_1.6.0_linux_amd64.deb'
+          file='/tmp/globalping_1.6.0_linux_amd64.deb'
+          expected='048a5a87dfdccc6a6cec4b5ca48a94f917215660d7e5e2e784e1105afb664db6'
+          curl --fail --location --silent --show-error "$url" --output "$file"
+          echo "$expected  $file" | sha256sum --check --strict
+          sudo dpkg -i "$file"
+          globalping version
+
+      - name: Run Nigeria reachability gate
+        id: gate
+        continue-on-error: true
+        shell: bash
+        run: bash scripts/ops/nigeria-reachability-gate.sh
+
+      - name: Publish reachability summary
+        if: always()
+        shell: bash
+        run: |
+          if [[ -f artifacts/nigeria-reachability/summary.md ]]; then
+            cat artifacts/nigeria-reachability/summary.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo '## Nigeria Reachability Gate' >> "$GITHUB_STEP_SUMMARY"
+            echo 'No summary was produced; inspect the job log.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload raw probe evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nigeria-reachability-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/nigeria-reachability/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Enforce launch gate verdict
+        if: always()
+        shell: bash
+        run: |
+          if [[ '${{ steps.gate.outcome }}' != 'success' ]]; then
+            echo 'Nigeria reachability gate did not pass. Review the job summary and raw artifact.' >&2
+            exit 1
+          fi
