@@ -26,11 +26,11 @@ export const WORDMARK_ASPECT_RATIO = WORDMARK_WIDTH / WORDMARK_HEIGHT; // ~4.52
 export const WORDMARK_ALT = 'Waaiio';
 
 // ── Canonical Square Icon Asset ──
-// Used for favicon, PWA icons, apple-touch-icon.
+// Purple Waaiio O/Q mark used for favicon, PWA icons, and apple-touch-icon.
 // Located at public/apple-touch-icon.png (and sized variants).
 
 export const ICON_PATH = '/apple-touch-icon.png';
-export const FAVICON_PATH = '/favicon.ico';
+export const FAVICON_PATH = ICON_PATH;
 
 // ── Common Display Sizes ──
 // Intrinsic width/height hints for Next.js Image component.
