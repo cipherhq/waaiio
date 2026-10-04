@@ -50,7 +50,7 @@ const NAVIGATION_ALIASES: Readonly<Record<NavigationConcept, ReadonlySet<string>
     'back', 'go back', 'previous',
     // Nigerian Pidgin
     'go back abeg', 'take me back',
-    // Yoruba (native folds to the same ASCII representation)
+    // Yoruba (native orthography folds to this form)
     'pada', 'lo pada',
     // Igbo
     'laghachi', 'gaa azu',
@@ -71,24 +71,30 @@ const NAVIGATION_ALIASES: Readonly<Record<NavigationConcept, ReadonlySet<string>
     'soke',
     'annuler',
     'cancelar',
+    // Existing flow-specific cancellation aliases. Keep these on the
+    // step-level cancellation path rather than upgrading them to business exit.
+    'dawo',
+    'dake',
+    'gyae',
+    'kwusi',
   ]),
   menu: new Set([
     'menu',
     'show menu',
     'akojo',
     'menu principal',
-    'menu principal',
   ]),
   home: new Set([
     'home',
     'ile',
+    'ulo',
     'gida',
+    'fie',
     'accueil',
     'inicio',
   ]),
   restart: new Set([
-    'restart', 'start over', 'start again',
-    'begin again',
+    'restart', 'start over', 'start again', 'begin again',
     'tun bere',
     'malite ozo',
     'sake farawa',
@@ -99,11 +105,7 @@ const NAVIGATION_ALIASES: Readonly<Record<NavigationConcept, ReadonlySet<string>
   exit: new Set([
     'exit', 'quit', 'stop', 'end',
     'comot',
-    'dawo',
-    'kwusi',
-    'dake',
-    'gyae',
-    'arreter', 'quitter',
+    'quitter',
     'salir',
   ]),
   help: new Set([
