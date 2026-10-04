@@ -2,10 +2,9 @@
  * Correction Parser — deterministic mid-flow edits without LLM calls.
  *
  * Slice 2 (#524) recognizes common correction language across the eight
- * architecture-supported languages while failing closed outside steps where
- * the existing flow can safely revalidate downstream authority.
+ * architecture-supported languages. Recognition returns a target authority
+ * step where the existing flow must revalidate the correction.
  */
-
 import type { CorrectionResult } from './conversation-types';
 import type { BotSession } from './bot-types';
 import { normalizeInboundCommand } from './inbound-command-normalization';
@@ -53,14 +52,32 @@ const QUANTITY_CUES = [
   /\b(quantite|cantidad)\b/,
 ];
 
+const DATE_RESELECT = new Set([
+  'change date', 'change the date', 'different date', 'change date abeg', 'another date abeg',
+  'yi ojo pada', 'ojo miiran', 'gbanwee ubochi', 'ubochi ozo', 'canza rana', 'wata rana',
+  'sesa da', 'da foforo', 'changer la date', 'autre date', 'cambiar fecha', 'otra fecha',
+].map(normalizeInboundCommand));
+
+const TIME_RESELECT = new Set([
+  'change time', 'change the time', 'different time', 'change time abeg', 'another time abeg',
+  'yi akoko pada', 'akoko miiran', 'gbanwee oge', 'oge ozo', 'canza lokaci', 'wani lokaci',
+  'sesa bere', 'bere foforo', "changer l'heure", 'autre heure', 'cambiar hora', 'otra hora',
+].map(normalizeInboundCommand));
+
+const QUANTITY_RESELECT = new Set([
+  'change quantity', 'change number', 'different quantity', 'change quantity abeg', 'change number abeg',
+  'yi iye pada', 'gbanwee onu', 'canza adadi', 'sesa dodow', 'changer la quantite',
+  'changer le nombre', 'cambiar cantidad', 'cambiar numero',
+].map(normalizeInboundCommand));
+
 const SERVICE_CORRECTIONS = [
   /^(?:not that|wrong|another|change)\s+(?:service|one|item)$/,
   /^(?:abeg\s+)?change\s+service$/,
-  /^yi\s+service\s+pada$/,
-  /^gbanwee\s+service$/,
-  /^canza\s+service$/,
+  /^yi\s+(?:ise|service)\s+pada$/,
+  /^gbanwee\s+(?:oru|service)$/,
+  /^canza\s+(?:sabis|service)$/,
   /^sesa\s+service$/,
-  /^changer\s+(?:le\s+)?service$/,
+  /^changer\s+(?:de\s+|le\s+)?service$/,
   /^cambiar\s+(?:el\s+)?servicio$/,
 ];
 
@@ -81,17 +98,17 @@ const REPEAT_PATTERNS = [
   /^tun\s+(?:se|ra)\b/,
   /^mee\s+ya\s+ozo$/,
   /^sake\s+yi$/,
-  /^san\s+ye$/,
+  /^san\s+ye(?:\s+bio)?$/,
   /^refaire$/,
+  /^repeter$/,
   /^repetir$/,
 ];
 
-const SAFE_STEPS: Record<string, ReadonlySet<string>> = {
-  date: new Set(['select_date', 'select_time']),
-  time: new Set(['select_time']),
-  quantity: new Set(['select_quantity']),
-  service: new Set(['select_service']),
-  variant: new Set(['select_option_axis', 'select_variant', 'select_variant_error']),
+const FIELD_TO_TARGET: Readonly<Record<string, string>> = {
+  date: 'select_date',
+  time: 'select_time',
+  quantity: 'select_quantity',
+  service: 'select_service',
 };
 
 function hasCue(normalized: string, patterns: readonly RegExp[]): boolean {
@@ -100,7 +117,6 @@ function hasCue(normalized: string, patterns: readonly RegExp[]): boolean {
 
 function canonicalDateFromText(normalized: string): string | null {
   const padded = ` ${normalized} `;
-  // Prefer longer aliases first (e.g. aujourd'hui before a shorter token).
   const aliases = [...DATE_ALIASES].sort((a, b) => b[0].length - a[0].length);
   for (const [alias, canonical] of aliases) {
     if (padded.includes(` ${alias} `)) return canonical;
@@ -108,17 +124,50 @@ function canonicalDateFromText(normalized: string): string | null {
   return null;
 }
 
-function isSafeAtCurrentStep(field: string, step: string): boolean {
-  if (field === 'repeat_last') return true;
-  const allowed = SAFE_STEPS[field];
-  return !!allowed?.has(step);
+/**
+ * Resolve the existing flow step that is allowed to regain authority.
+ * Review-stage rewind is deliberately narrow: only scheduling/appointment
+ * confirmation can rewind date/time/quantity. Payment/order review remains
+ * fail-closed until those flows have an equally authoritative edit path.
+ */
+function correctionTargetStep(field: string, session: BotSession): string | null {
+  const step = session.current_step;
+  const cap = String(session.session_data?.active_capability || '');
+
+  if (field === 'repeat_last') return null;
+
+  if (field === 'date') {
+    if (step === 'select_date' || step === 'select_time') return 'select_date';
+    if (step === 'confirmation' && (cap === 'scheduling' || cap === 'appointment')) return 'select_date';
+    return null;
+  }
+
+  if (field === 'time') {
+    if (step === 'select_time') return 'select_time';
+    if (step === 'confirmation' && (cap === 'scheduling' || cap === 'appointment')) return 'select_time';
+    return null;
+  }
+
+  if (field === 'quantity') {
+    if (step === 'select_quantity') return 'select_quantity';
+    if (step === 'confirmation' && (cap === 'scheduling' || cap === 'appointment')) return 'select_quantity';
+    return null;
+  }
+
+  if (field === 'service') {
+    return step === 'select_service' ? FIELD_TO_TARGET.service : null;
+  }
+
+  if (field === 'variant') {
+    return ['select_option_axis', 'select_variant', 'select_variant_error'].includes(step)
+      ? step
+      : null;
+  }
+
+  return null;
 }
 
-/**
- * Detect if a message is a safe correction to an active flow answer.
- * Recognition outside a safe pre-confirmation step fails closed so a correction
- * can never carry stale availability, stock, price, or confirmation state.
- */
+/** Detect a deterministic correction. Recognition itself never mutates state. */
 export function detectCorrection(
   text: string,
   session: BotSession,
@@ -133,18 +182,24 @@ export function detectCorrection(
   let newValue: unknown = null;
 
   if (REPEAT_PATTERNS.some(pattern => pattern.test(normalized))) {
-    field = 'repeat_last';
-    newValue = true;
+    return {
+      field: 'repeat_last',
+      oldValue: null,
+      newValue: true,
+      confidence: 0.90,
+    };
   }
 
-  if (!field && SERVICE_CORRECTIONS.some(pattern => pattern.test(normalized))) {
+  if (SERVICE_CORRECTIONS.some(pattern => pattern.test(normalized))) {
     field = 'service';
-    newValue = null;
-  }
-
-  if (!field && VARIANT_CORRECTIONS.some(pattern => pattern.test(normalized))) {
+  } else if (VARIANT_CORRECTIONS.some(pattern => pattern.test(normalized))) {
     field = 'variant';
-    newValue = null;
+  } else if (DATE_RESELECT.has(normalized)) {
+    field = 'date';
+  } else if (TIME_RESELECT.has(normalized)) {
+    field = 'time';
+  } else if (QUANTITY_RESELECT.has(normalized)) {
+    field = 'quantity';
   }
 
   const hasGeneralCue = hasCue(normalized, GENERAL_CORRECTION_CUES);
@@ -177,7 +232,6 @@ export function detectCorrection(
     }
   }
 
-  // Preserve existing concise English forms that do not contain a general cue.
   if (!field) {
     const conciseTime = normalized.match(/^(?:actually|i meant)\s+(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)$/);
     if (conciseTime) {
@@ -185,6 +239,7 @@ export function detectCorrection(
       newValue = conciseTime[1].replace(/\s+/g, '');
     }
   }
+
   if (!field) {
     const conciseQty = normalized.match(/^(?:for|make it|make am)\s+(\d+)\s*(?:people|persons?|guests?|pax|tickets?|items?)?$/);
     if (conciseQty) {
@@ -193,7 +248,9 @@ export function detectCorrection(
     }
   }
 
-  if (!field || !isSafeAtCurrentStep(field, session.current_step)) return null;
+  if (!field) return null;
+  const targetStep = correctionTargetStep(field, session);
+  if (!targetStep) return null;
 
   const oldValue = (() => {
     if (field === 'date') return sessionData.date ?? sessionData.selected_date ?? null;
@@ -204,7 +261,7 @@ export function detectCorrection(
     return sessionData[field] ?? null;
   })();
 
-  return { field, oldValue, newValue, confidence: 0.90 };
+  return { field, oldValue, newValue, confidence: 0.90, targetStep };
 }
 
 function clearKeys(target: Record<string, unknown>, keys: readonly string[]): void {
@@ -212,10 +269,11 @@ function clearKeys(target: Record<string, unknown>, keys: readonly string[]): vo
 }
 
 /**
- * Apply only the state mutation that is safe for the current pre-confirmation
- * step, while invalidating any dependent cached/selected authority.
+ * Prepare state for an authoritative correction re-entry. This deliberately
+ * DOES NOT apply the user's new value. FlowExecutor's existing validator owns
+ * that value and persists it through the normal CAS path.
  */
-export function applyCorrection(
+export function prepareCorrectionReentry(
   sessionData: Record<string, unknown>,
   correction: CorrectionResult,
 ): Record<string, unknown> {
@@ -223,39 +281,90 @@ export function applyCorrection(
 
   switch (correction.field) {
     case 'date':
-      updated.date = correction.newValue;
-      updated.selected_date = correction.newValue;
       clearKeys(updated, [
-        'time', 'selected_time', '_selected_slot', 'slot_id', 'booking_slot_id',
-        '_availability_checked', '_availability_snapshot',
+        'date', 'selected_date', 'time', 'selected_time',
+        'staff_id', 'selected_staff_id', 'staff_name', '_available_staff', '_staff_unavailable',
+        '_selected_slot', 'slot_id', 'selected_slot_id', 'booking_slot_id',
+        '_availability_checked', '_availability_snapshot', 'confirmation', 'confirmed',
       ]);
       break;
     case 'time':
-      updated.time = correction.newValue;
-      updated.selected_time = correction.newValue;
-      clearKeys(updated, ['_selected_slot', 'slot_id', 'booking_slot_id', '_availability_checked', '_availability_snapshot']);
+      clearKeys(updated, [
+        'time', 'selected_time', '_selected_slot', 'slot_id', 'selected_slot_id', 'booking_slot_id',
+        '_availability_checked', '_availability_snapshot', 'confirmation', 'confirmed',
+      ]);
       break;
-    case 'quantity': {
-      const activeCapability = String(updated.active_capability || '');
-      if (activeCapability === 'ordering') updated.current_quantity = correction.newValue;
-      else if (activeCapability === 'ticketing') updated.quantity = correction.newValue;
-      else updated.party_size = correction.newValue;
-      clearKeys(updated, ['_price_snapshot', '_availability_snapshot', '_stock_snapshot']);
+    case 'quantity':
+      clearKeys(updated, [
+        'party_size', 'current_quantity', 'quantity', 'guest_list',
+        '_price_snapshot', '_availability_snapshot', '_stock_snapshot',
+        'confirmation', 'confirmed',
+      ]);
       break;
-    }
     case 'service':
       clearKeys(updated, [
         'service_id', 'selected_service_id', 'service_name', '_service_name', '_service_metadata',
-        '_service_is_class', 'staff_id', 'selected_staff_id', 'date', 'selected_date', 'time',
-        'selected_time', 'party_size', 'addons', 'selected_addons', '_selected_slot', 'slot_id',
-        'booking_slot_id', '_availability_checked', '_availability_snapshot',
+        '_service_is_class', 'staff_id', 'selected_staff_id', 'staff_name', 'date', 'selected_date',
+        'time', 'selected_time', 'party_size', 'guest_list', 'addons', 'selected_addons',
+        '_selected_slot', 'slot_id', 'selected_slot_id', 'booking_slot_id',
+        '_availability_checked', '_availability_snapshot', 'confirmation', 'confirmed',
       ]);
       break;
     case 'variant':
       clearKeys(updated, [
         'variant_id', 'selected_variant_id', 'current_variant_id', 'current_variant_label',
         'current_selected_options', 'current_option_axis_index', '_variant_hints', '_stock_snapshot',
+        'confirmation', 'confirmed',
       ]);
+      break;
+  }
+
+  if (correction.targetStep) {
+    const history = Array.isArray(updated._step_history)
+      ? [...(updated._step_history as string[])]
+      : [];
+    const targetIndex = history.lastIndexOf(correction.targetStep);
+    updated._step_history = targetIndex >= 0
+      ? history.slice(0, targetIndex + 1)
+      : [...history, correction.targetStep];
+  }
+
+  return updated;
+}
+
+/**
+ * Legacy data-only application for targetless consumers. Runtime target-step
+ * corrections are intercepted earlier and revalidated by FlowExecutor.
+ */
+export function applyCorrection(
+  sessionData: Record<string, unknown>,
+  correction: CorrectionResult,
+): Record<string, unknown> {
+  const updated = prepareCorrectionReentry(sessionData, correction);
+
+  switch (correction.field) {
+    case 'date':
+      if (correction.newValue !== null) {
+        updated.date = correction.newValue;
+        updated.selected_date = correction.newValue;
+      }
+      break;
+    case 'time':
+      if (correction.newValue !== null) {
+        updated.time = correction.newValue;
+        updated.selected_time = correction.newValue;
+      }
+      break;
+    case 'quantity': {
+      if (correction.newValue === null) break;
+      const activeCapability = String(updated.active_capability || '');
+      if (activeCapability === 'ordering') updated.current_quantity = correction.newValue;
+      else if (activeCapability === 'ticketing') updated.quantity = correction.newValue;
+      else updated.party_size = correction.newValue;
+      break;
+    }
+    case 'service':
+    case 'variant':
       break;
     default:
       if (correction.newValue === null) delete updated[correction.field];
