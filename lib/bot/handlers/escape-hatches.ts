@@ -4,6 +4,7 @@ import {
   recognizeNavigationCommand,
   type NavigationCommand,
 } from '../inbound-command-normalization';
+import { handleCorrectionReentry } from './correction-reentry';
 
 type TestableCommandPattern = { test(value: string): boolean };
 
@@ -56,6 +57,15 @@ export async function handleEscapeHatch(
   if (navigationCommand === 'help' && normalizedText !== 'help') {
     await handleMessage(from, 'help', messageType, destinationPhone);
     return { handled: true };
+  }
+
+  // Slice 2 correction re-entry: this is only wiring. The deterministic parser
+  // proposes a target, CAS persists the rewind, and the existing FlowExecutor
+  // retains all validation/availability/stock authority. Chat/free-text handoff
+  // remains untouched.
+  if (!isChatMode) {
+    const correctionReentry = await handleCorrectionReentry(ctx, from, session, trimmedText);
+    if (correctionReentry.handled) return correctionReentry;
   }
 
   // Simplified: cancel = back (go back one step)
