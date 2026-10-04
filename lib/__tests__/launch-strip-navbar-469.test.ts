@@ -36,7 +36,6 @@ const layoutSource = readFileSync(
 
 describe('#469 Launch strip + navbar stacking', () => {
   it('launch strip uses fixed positioning at top-0 with z-50', () => {
-    // data-testid="launch-strip" must have fixed + top-0 + z-50
     expect(siteAnnouncementSource).toContain('data-testid="launch-strip"');
     expect(siteAnnouncementSource).toContain('fixed left-0 right-0 top-0 z-50');
   });
@@ -48,10 +47,7 @@ describe('#469 Launch strip + navbar stacking', () => {
   });
 
   it('navbar uses --announcement-h for top offset instead of hardcoded top-0', () => {
-    // Navbar must NOT have top-0 in its className
-    // It should use style={{ top: 'var(--announcement-h, 0px)' }}
     expect(navbarSource).toContain("top: 'var(--announcement-h, 0px)'");
-    // Should NOT have top-0 in the header className
     const headerClassLine = navbarSource.split('\n').find(l =>
       l.includes('className') && l.includes('fixed') && l.includes('z-40')
     );
@@ -59,20 +55,30 @@ describe('#469 Launch strip + navbar stacking', () => {
     expect(headerClassLine).not.toContain('top-0');
   });
 
+  it('homepage reserves the measured announcement height so navbar logo cannot overlap hero content', () => {
+    expect(navbarSource).toContain('{isHeroPage && (');
+    expect(navbarSource).toContain("height: 'var(--announcement-h, 0px)'");
+
+    const headerEnd = navbarSource.indexOf('</header>');
+    const reservedHeight = navbarSource.indexOf("height: 'var(--announcement-h, 0px)'");
+    const mobileMenu = navbarSource.indexOf('<MobileMenu');
+
+    expect(headerEnd).toBeGreaterThan(-1);
+    expect(reservedHeight).toBeGreaterThan(headerEnd);
+    expect(mobileMenu).toBeGreaterThan(reservedHeight);
+  });
+
   it('Get notified button is present in launch strip', () => {
     expect(siteAnnouncementSource).toContain('Get notified');
-    // Button must have onClick={onOpenModal}
     expect(siteAnnouncementSource).toContain('onClick={onOpenModal}');
   });
 
   it('dismiss handler resets --announcement-h to 0px', () => {
-    // handleDismiss must set --announcement-h to 0px
     expect(siteAnnouncementSource).toContain("setProperty('--announcement-h', '0px')");
     expect(siteAnnouncementSource).toContain('setDismissed(true)');
   });
 
   it('cleanup on unmount resets --announcement-h to 0px', () => {
-    // The useEffect cleanup in LaunchStrip must reset
     const cleanupPattern = /return\s*\(\)\s*=>\s*\{[^}]*--announcement-h[^}]*0px/;
     expect(siteAnnouncementSource).toMatch(cleanupPattern);
   });
