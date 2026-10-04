@@ -86,6 +86,8 @@ export interface CorrectionResult {
   oldValue: unknown;
   newValue: unknown;
   confidence: number;
+  /** Existing flow step that must regain authority after this correction. */
+  targetStep?: string;
 }
 
 // ── Per-business conversation config ────────────────────
