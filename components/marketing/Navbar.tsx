@@ -147,6 +147,17 @@ export default function Navbar() {
         </div>
       </header>
 
+      {/* The announcement is fixed and therefore does not reserve document flow.
+          On the homepage, reserve exactly its measured height so the existing
+          hero pt-16 can continue to account for the fixed navbar itself. */}
+      {isHeroPage && (
+        <div
+          aria-hidden="true"
+          className="w-full shrink-0"
+          style={{ height: 'var(--announcement-h, 0px)' }}
+        />
+      )}
+
       <MobileMenu
         isOpen={menuOpen}
         onClose={() => setMenuOpen(false)}
