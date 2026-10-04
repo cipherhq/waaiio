@@ -1,10 +1,16 @@
 import type { BotSession, BotContext } from '../bot-types';
+import { detectNavigationConcept } from '../inbound-command-normalization';
 
 // ── Navigation commands: always hardcoded, never overridable ──
+// Legacy exports remain for callers/tests. Runtime escape recognition below uses
+// the shared exact-match concept recognizer so aliases stay centralized.
 export const CANCEL_PATTERN = /^cancel$/i;
 export const EXIT_PATTERNS = [/^exit$/i, /^quit$/i, /^stop$/i, /^end$/i];
 export const MENU_PATTERNS = [/^menu$/i, /^restart$/i, /^start\s*over$/i];
-export const HOME_PATTERN = /^home$/i;
+// BotService currently owns the platform-level home side effect. Keep this
+// exact/anchored and broaden only the accepted literal aliases; no substring
+// matching, so merchant/free-text values cannot trigger platform navigation.
+export const HOME_PATTERN = /^(?:home|ile|ilé|ulo|ụlọ|gida|fie|accueil|inicio)$/i;
 export const BACK_PATTERNS = [/^back$/i, /^go\s*back$/i, /^previous$/i];
 // Combined for legacy checks — excludes "back" (handled in executor) and "menu"/"home" (handled separately)
 export const ESCAPE_HATCH_PATTERNS = [
@@ -45,10 +51,11 @@ export async function handleEscapeHatch(
   const isChatMode = step === 'chat_handoff' || step === 'chat_start';
   const isBookingMgmt = step === 'my_bookings' || step === 'modify_booking' || step === 'my_orders' || step === 'order_detail' || step === 'list_subscriptions' || step === 'loyalty_menu' || step === 'invoice_list';
   const trimmedText = text.trim();
+  const navigationConcept = detectNavigationConcept(trimmedText);
   // Simplified: cancel = back (go back one step)
-  const isCancelOrBack = CANCEL_PATTERN.test(trimmedText) || BACK_PATTERNS.some(p => p.test(trimmedText));
-  const isExitWord = EXIT_PATTERNS.some(p => p.test(trimmedText));
-  const isMenuWord = MENU_PATTERNS.some(p => p.test(trimmedText));
+  const isCancelOrBack = navigationConcept === 'cancel' || navigationConcept === 'back';
+  const isExitWord = navigationConcept === 'exit';
+  const isMenuWord = navigationConcept === 'menu' || navigationConcept === 'restart';
   const isEscapeHatch = isCancelOrBack || isExitWord || isMenuWord;
 
   // ── 3 SIMPLE COMMANDS: back/cancel, menu, exit ──
@@ -80,9 +87,6 @@ export async function handleEscapeHatch(
     return { handled: true };
   }
 
-  // "back" or "cancel" in flow steps → handled by executor (let it fall through)
-  // The executor pops step history and re-prompts the previous step
-
   if (isEscapeHatch && (session.business_id || isBookingMgmt) && !isChatMode) {
     intelligence.resetAbuse(from);
 
@@ -111,7 +115,8 @@ export async function handleEscapeHatch(
     // ── "cancel" / "back" → go back one step ──
     if (isCancelOrBack) {
       // For free-text steps (enter_amount, collect_name, etc.), the executor
-      // won't intercept back/cancel. Handle it here instead.
+      // intentionally won't intercept back/cancel. Handle those existing
+      // escape-hatch-owned transitions here instead.
       const FREE_TEXT_STEPS = ['collect_name', 'collect_other_name', 'collect_email', 'special_requests', 'review_text', 'enter_amount', 'collect_address', 'collect_pickup_address', 'collect_dropoff_address', 'collect_package_description', 'collect_venue', 'enter_promo_code'];
       if (FREE_TEXT_STEPS.includes(step)) {
         const history = (session.session_data._step_history as string[]) || [];
@@ -159,7 +164,27 @@ export async function handleEscapeHatch(
         });
         return { handled: true };
       }
-      // Other non-free-text steps: fall through to executor (it handles back/cancel)
+
+      // Guided steps remain FlowExecutor-owned. For multilingual aliases we
+      // hand the executor its existing canonical command so it performs the
+      // same history pop, CAS update and re-prompt as English. No parallel
+      // navigation execution path is introduced here.
+      if (session.business_id) {
+        const { data: biz } = await supabase
+          .from('businesses')
+          .select('*')
+          .eq('id', session.business_id)
+          .single();
+        if (biz) {
+          await flowExecutor.execute(
+            from,
+            navigationConcept === 'cancel' ? 'cancel' : 'back',
+            session as unknown as BotSession,
+            biz,
+          );
+          return { handled: true };
+        }
+      }
     }
 
     // ── "exit" / "quit" / "stop" → leave business ──
@@ -167,50 +192,50 @@ export async function handleEscapeHatch(
       await deactivateSession(session.id);
 
       // Cancel any pending booking/order created during this session
-    const d = session.session_data || {};
-    if (d.booking_id) {
-      await supabase.from('bookings')
-        .update({ status: 'cancelled', cancelled_at: new Date().toISOString() })
-        .eq('id', d.booking_id as string)
-        .in('status', ['pending']);
-    }
-    if (d.order_id) {
-      await supabase.from('orders')
-        .update({ status: 'cancelled' })
-        .eq('id', d.order_id as string)
-        .eq('status', 'pending');
-    }
+      const d = session.session_data || {};
+      if (d.booking_id) {
+        await supabase.from('bookings')
+          .update({ status: 'cancelled', cancelled_at: new Date().toISOString() })
+          .eq('id', d.booking_id as string)
+          .in('status', ['pending']);
+      }
+      if (d.order_id) {
+        await supabase.from('orders')
+          .update({ status: 'cancelled' })
+          .eq('id', d.order_id as string)
+          .eq('status', 'pending');
+      }
 
-    // Find the business — from session or from history
-    let escBizId = session.business_id;
-    if (!escBizId) {
-      const { data: lastSess } = await supabase
-        .from('bot_sessions')
-        .select('business_id')
-        .eq('whatsapp_number', from)
-        .not('business_id', 'is', null)
-        .order('updated_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      escBizId = lastSess?.business_id || null;
-    }
+      // Find the business — from session or from history
+      let escBizId = session.business_id;
+      if (!escBizId) {
+        const { data: lastSess } = await supabase
+          .from('bot_sessions')
+          .select('business_id')
+          .eq('whatsapp_number', from)
+          .not('business_id', 'is', null)
+          .order('updated_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        escBizId = lastSess?.business_id || null;
+      }
 
-    // Always show clear options — never dead-end text
-    if (escBizId) {
-      const { data: escBiz } = await supabase.from('businesses').select('name').eq('id', escBizId).single();
-      const bizName = escBiz?.name || 'the business';
-      await messageSender.sendButtons({
-        to: from,
-        body: `You've left ${bizName}. What next?`,
-        buttons: [
-          { id: 'go_back_biz', title: 'Back to Menu' },
-          { id: 'switch_biz', title: 'Switch Business' },
-        ],
-      });
-    } else {
-      // No business found at all — guide them
-      await sendText(from, 'Send a *business code* to get started, or visit waaiio.com/directory to find a business.');
-    }
+      // Always show clear options — never dead-end text
+      if (escBizId) {
+        const { data: escBiz } = await supabase.from('businesses').select('name').eq('id', escBizId).single();
+        const bizName = escBiz?.name || 'the business';
+        await messageSender.sendButtons({
+          to: from,
+          body: `You've left ${bizName}. What next?`,
+          buttons: [
+            { id: 'go_back_biz', title: 'Back to Menu' },
+            { id: 'switch_biz', title: 'Switch Business' },
+          ],
+        });
+      } else {
+        // No business found at all — guide them
+        await sendText(from, 'Send a *business code* to get started, or visit waaiio.com/directory to find a business.');
+      }
       return { handled: true };
     }
   }

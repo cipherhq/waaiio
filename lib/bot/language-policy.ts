@@ -13,6 +13,7 @@ import {
   SUPPORTED_LANGUAGES,
   type SupportedLanguage,
 } from './languages';
+import { normalizeInboundCommandText } from './inbound-command-normalization';
 
 export { CERTIFIED_LANGUAGES, SUPPORTED_LANGUAGES };
 export type { SupportedLanguage };
@@ -177,16 +178,9 @@ const LANGUAGE_MARKERS: Record<string, RegExp[]> = {
  * Does NOT default to 'en' — caller must handle uncertainty.
  */
 export function detectLanguageDeterministic(text: string): string | null {
-  // Normalize diacritics so natural Yoruba/French/Spanish input is detected
-  // consistently while preserving the original message for downstream parsing.
-  const normalized = text
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    // NFD does not decompose a few common Hausa/Twi letters.
-    .replace(/[ƙƘ]/g, 'k')
-    .replace(/[ɛƐ]/g, 'e')
-    .replace(/[ɔƆ]/g, 'o')
-    .toLowerCase();
+  // Recognition uses the shared copy-only normalizer. The raw inbound message
+  // remains untouched for merchant/entity/free-text parsing.
+  const normalized = normalizeInboundCommandText(text);
 
   // Check distinct non-Pidgin languages before Pidgin. Pidgin deliberately
   // contains English-like/West-African markers such as "una" that can collide
