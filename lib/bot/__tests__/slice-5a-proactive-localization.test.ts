@@ -412,6 +412,103 @@ describe('Proactive localization helper', () => {
 });
 
 // ═══════════════════════════════════════════════════════════════
+// B1: Calendar URL protection
+// ═══════════════════════════════════════════════════════════════
+
+describe('B1 — URL extraction + protection', () => {
+  it('send-confirmation.ts extracts URLs from final message into protectedValues', () => {
+    const source = readFileSync(resolve(ROOT, 'lib/payments/send-confirmation.ts'), 'utf-8');
+    // URL extraction regex must exist before translation
+    expect(source).toContain("localizedText.match(/https?:\\/\\/[^\\s)]+/g)");
+    expect(source).toContain('protectedValues.push(...urlMatches)');
+  });
+
+  it('calendar URL survives translation via explicit protectedValues', async () => {
+    const ctx = entitledCtx();
+    const calUrl = 'https://calendar.google.com/calendar/render?action=TEMPLATE&text=Haircut&dates=20260810';
+    mockTranslation('📅 Ajouter au calendrier: __V1__');
+
+    const result = await translateBotResponse(
+      `📅 Add to calendar: ${calUrl}`,
+      'fr', ctx,
+      { protectedValues: [calUrl] },
+    );
+
+    expect(result).toContain(calUrl);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// B2: PIN/lockout localization completeness
+// ═══════════════════════════════════════════════════════════════
+
+describe('B2 — saved-card PIN/security localization', () => {
+  it('handleCardPinStep uses localSend for all customer-facing messages', () => {
+    const source = readFileSync(resolve(ROOT, 'lib/bot/handlers/saved-cards.ts'), 'utf-8');
+    // Between handleCardPinStep and handleReplacementPinStep, all sends should use localSend
+    const start = source.indexOf('export async function handleCardPinStep');
+    const end = source.indexOf('export async function handleReplacementPinStep');
+    const block = source.slice(start, end);
+    // No raw sendText(from, calls should remain (only localSend)
+    const rawSendCalls = (block.match(/await sendText\(from,/g) || []).length;
+    expect(rawSendCalls).toBe(0);
+  });
+
+  it('handleReplacementPinStep uses localSend for all customer-facing messages', () => {
+    const source = readFileSync(resolve(ROOT, 'lib/bot/handlers/saved-cards.ts'), 'utf-8');
+    const start = source.indexOf('export async function handleReplacementPinStep');
+    const block = source.slice(start);
+    const rawSendCalls = (block.match(/await sendText\(from,/g) || []).length;
+    expect(rawSendCalls).toBe(0);
+  });
+
+  it('lockout "30 minutes" and attempts count are numeric and survive as-is', async () => {
+    const ctx = entitledCtx();
+    mockTranslation('🔒 Trop de tentatives. Votre carte est verrouillée pour __V1__ minutes.');
+
+    const result = await translateBotResponse(
+      '🔒 Too many wrong attempts. Your card is locked for 30 minutes. Try again later.',
+      'fr', ctx,
+      { protectedValues: ['30'] },
+    );
+
+    expect(result).toContain('30');
+  });
+
+  it('attempts remaining count survives translation', async () => {
+    const ctx = entitledCtx();
+    mockTranslation('❌ Mauvais PIN. __V1__ tentative(s) restante(s).');
+
+    const result = await translateBotResponse(
+      '❌ Wrong PIN. 2 attempts remaining.',
+      'fr', ctx,
+      { protectedValues: ['2'] },
+    );
+
+    expect(result).toContain('2');
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// B3: Stale-payment recovery localization
+// ═══════════════════════════════════════════════════════════════
+
+describe('B3 — stale-payment recovery localization', () => {
+  it('bot.service.ts uses sendSessionLocalizedText for recovery messages', () => {
+    const source = readFileSync(resolve(ROOT, 'lib/bot/bot.service.ts'), 'utf-8');
+    // The recovery switch statement should use sendSessionLocalizedText
+    expect(source).toContain("sendSessionLocalizedText(from, result.message, session, recoveryOpts)");
+  });
+
+  it('recovery protected values include reference code and amount', () => {
+    const source = readFileSync(resolve(ROOT, 'lib/bot/bot.service.ts'), 'utf-8');
+    const recoverySection = source.slice(source.indexOf('recoveryProtected'), source.indexOf('recoveryProtected') + 500);
+    expect(recoverySection).toContain("result.referenceCode");
+    expect(recoverySection).toContain("formatCurrency");
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
 // Regression: no scope violations
 // ═══════════════════════════════════════════════════════════════
 

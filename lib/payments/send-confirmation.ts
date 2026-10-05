@@ -687,6 +687,9 @@ export async function sendProactiveConfirmation(
       if (bookingDate) protectedValues.push(bookingDate);
       if (bookingTime) protectedValues.push(bookingTime);
       if (bookingAddress) protectedValues.push(bookingAddress);
+      // B1: Extract and protect ALL URLs in the final message (calendar links, etc.)
+      const urlMatches = localizedText.match(/https?:\/\/[^\s)]+/g);
+      if (urlMatches) protectedValues.push(...urlMatches);
 
       localizedText = await proactiveTranslate(localizedText, protectedValues);
     } catch (err) {

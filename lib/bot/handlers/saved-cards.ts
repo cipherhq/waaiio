@@ -257,7 +257,7 @@ export async function handleCardPinStep(
   const { canonicalSavedCardPhone } = await import('@/lib/payments/saved-card-compat');
   const phoneP = canonicalSavedCardPhone(from);
   if (!phoneP) {
-    await sendText(from, 'Invalid phone number. Cannot save card.');
+    await localSend(from, 'Invalid phone number. Cannot save card.');
     return;
   }
   const phoneN = phoneP.slice(1);
@@ -269,22 +269,22 @@ export async function handleCardPinStep(
       .select('id, status, gateway, metadata')
       .eq('id', paymentId).eq('status', 'success').maybeSingle();
     if (!sourcePayment) {
-      await sendText(from, 'The payment is no longer available. Please type *save card* again.');
+      await localSend(from, 'The payment is no longer available. Please type *save card* again.');
       return;
     }
     if (sourcePayment.gateway !== 'paystack' && sourcePayment.gateway !== 'stripe') {
-      await sendText(from, 'Card saving is not available for this payment method.');
+      await localSend(from, 'Card saving is not available for this payment method.');
       return;
     }
     const freshMeta = (sourcePayment.metadata || {}) as Record<string, unknown>;
     if (freshMeta.payment_origin === 'byo' || freshMeta.payment_origin === 'connect') {
-      await sendText(from, 'This payment cannot be used to save a card.');
+      await localSend(from, 'This payment cannot be used to save a card.');
       return;
     }
     if (sourcePayment.gateway === 'paystack') {
       const freshAuth = freshMeta._card_authorization as Record<string, unknown> | undefined;
       if (!freshAuth?.authorization_code || !freshAuth?.email || freshAuth?.reusable !== true) {
-        await sendText(from, 'Card authorization is no longer valid. Please type *save card* again.');
+        await localSend(from, 'Card authorization is no longer valid. Please type *save card* again.');
         return;
       }
     }
@@ -316,13 +316,13 @@ export async function handleCardPinStep(
     }
     // 4. CAS won — update local version then send the recovery message
     session.version = casPinResult.version;
-    await sendText(from, 'Something went wrong. Please type *save card* again.');
+    await localSend(from, 'Something went wrong. Please type *save card* again.');
     return;
   }
 
   // C6: Revalidate invariants before credential write — dispatch by gateway
   if (gateway !== 'paystack' && gateway !== 'stripe') {
-    await sendText(from, 'Card saving is not available for this payment method.');
+    await localSend(from, 'Card saving is not available for this payment method.');
     return;
   }
 
@@ -337,7 +337,7 @@ export async function handleCardPinStep(
   if (gateway === 'paystack') {
     // ── Paystack first-save (existing behavior, unchanged) ──
     if (auth.reusable !== true) {
-      await sendText(from, 'Your card is not reusable. Please try again after your next payment.');
+      await localSend(from, 'Your card is not reusable. Please try again after your next payment.');
       return;
     }
     const authEmail = (auth.email as string) || null;
@@ -347,7 +347,7 @@ export async function handleCardPinStep(
         p_current_step: 'select_capability', p_session_data: {},
       });
       if (casResetResult?.success) session.version = casResetResult.version;
-      await sendText(from, 'Card authorization email is missing. Please try again after your next payment.');
+      await localSend(from, 'Card authorization email is missing. Please try again after your next payment.');
       return;
     }
 
@@ -387,13 +387,13 @@ export async function handleCardPinStep(
         const { data: existing } = await supabase.from('saved_payment_methods')
           .select('authorization_code').in('customer_phone', [phoneP, phoneN]).eq('is_active', true).eq('gateway', 'paystack').maybeSingle();
         if (existing?.authorization_code === (auth.authorization_code as string)) {
-          await sendText(from, 'Your card is already saved.');
+          await localSend(from, 'Your card is already saved.');
         } else {
-          await sendText(from, 'A card is already saved. Type *save card* again to replace it.');
+          await localSend(from, 'A card is already saved. Type *save card* again to replace it.');
         }
       } else {
         logger.error('[SAVED_CARDS] first-save-insert-failed:', insertError.message);
-        await sendText(from, 'Failed to save card. Please try again.');
+        await localSend(from, 'Failed to save card. Please try again.');
       }
       return;
     }
@@ -436,7 +436,7 @@ export async function handleCardPinStep(
     const pmId = auth.stripe_payment_method_id as string;
     const custId = auth.stripe_customer_id as string;
     if (!pmId || !custId) {
-      await sendText(from, 'Stripe card details are not available. Please try again after your next payment.');
+      await localSend(from, 'Stripe card details are not available. Please try again after your next payment.');
       return;
     }
 
@@ -470,10 +470,10 @@ export async function handleCardPinStep(
       session.version = casCleanResult.version;
 
       if (insertError.code === '23505') {
-        await sendText(from, 'Your card is already saved.');
+        await localSend(from, 'Your card is already saved.');
       } else {
         logger.error('[SAVED_CARDS] Stripe first-save-insert-failed:', insertError.message);
-        await sendText(from, 'Failed to save card. Please try again.');
+        await localSend(from, 'Failed to save card. Please try again.');
       }
       return;
     }
@@ -602,7 +602,7 @@ export async function handleCardPinStep(
     // These don't have fenced delivery; sendText is acceptable here.
     const confirmationMsg = `💳 Card saved! *${cardLabel}*\n\n🔒 Waaiio PIN set successfully. You'll need this Waaiio PIN when using your saved card.\n\nFor privacy, you can delete your PIN message from this chat. Type *remove card* anytime to delete this card.`;
     try {
-      await sendText(from, confirmationMsg);
+      await localSend(from, confirmationMsg);
     } catch (confirmErr) {
       logger.error('[SAVED_CARDS] Legacy confirmation delivery failed', { confirmErr });
     }
@@ -620,10 +620,12 @@ export async function handleReplacementPinStep(
   text: string,
 ): Promise<void> {
   const input = text.trim();
+  // Slice 5A: localized send wrapper for replacement PIN messages
+  const localSend = await buildLocalizedSend(supabase, sendText, session);
   const { canonicalSavedCardPhone } = await import('@/lib/payments/saved-card-compat');
   const phoneP = canonicalSavedCardPhone(from);
   if (!phoneP) {
-    await sendText(from, 'Invalid phone number.');
+    await localSend(from, 'Invalid phone number.');
     return;
   }
   const phoneN = phoneP.slice(1);
@@ -645,12 +647,12 @@ export async function handleReplacementPinStep(
       p_session_data: cleanData,
     });
     if (casResult?.success) session.version = casResult.version;
-    await sendText(from, 'Card replacement cancelled. Your existing card is unchanged.');
+    await localSend(from, 'Card replacement cancelled. Your existing card is unchanged.');
     return;
   }
 
   if (!/^\d{4}$/.test(input)) {
-    await sendText(from, 'Please enter your *4-digit Waaiio PIN* to confirm replacement, or type *cancel*:');
+    await localSend(from, 'Please enter your *4-digit Waaiio PIN* to confirm replacement, or type *cancel*:');
     return;
   }
 
@@ -663,7 +665,7 @@ export async function handleReplacementPinStep(
       p_session_data: {},
     });
     if (casResult?.success) session.version = casResult.version;
-    await sendText(from, 'Something went wrong. Please type *save card* again.');
+    await localSend(from, 'Something went wrong. Please type *save card* again.');
     return;
   }
 
@@ -679,7 +681,7 @@ export async function handleReplacementPinStep(
     .maybeSingle();
 
   if (!method) {
-    await sendText(from, 'Your saved card was removed during replacement. Type *save card* to save a new card.');
+    await localSend(from, 'Your saved card was removed during replacement. Type *save card* to save a new card.');
     // Clean session
     await supabase.rpc('update_session_cas', {
       p_session_id: session.id, p_expected_version: session.version ?? 0,
@@ -699,7 +701,7 @@ export async function handleReplacementPinStep(
     .maybeSingle();
 
   if (!paymentRow) {
-    await sendText(from, 'The payment is no longer available. Please try again after your next payment.');
+    await localSend(from, 'The payment is no longer available. Please try again after your next payment.');
     await supabase.rpc('update_session_cas', {
       p_session_id: session.id, p_expected_version: session.version ?? 0,
       p_current_step: 'select_capability', p_session_data: {},
@@ -710,7 +712,7 @@ export async function handleReplacementPinStep(
   const meta = (paymentRow.metadata || {}) as Record<string, unknown>;
   // C7: Revalidate source origin + reusable + compatibility at PIN completion
   if (meta.payment_origin !== 'platform') {
-    await sendText(from, 'This payment cannot be used to replace your card.');
+    await localSend(from, 'This payment cannot be used to replace your card.');
     await supabase.rpc('update_session_cas', {
       p_session_id: session.id, p_expected_version: session.version ?? 0,
       p_current_step: 'select_capability', p_session_data: {},
@@ -719,7 +721,7 @@ export async function handleReplacementPinStep(
   }
   const newAuth = meta._card_authorization as Record<string, unknown> | undefined;
   if (!newAuth?.authorization_code || !newAuth?.customer_code || newAuth?.reusable !== true) {
-    await sendText(from, 'The payment card cannot be saved. Please try again after your next payment.');
+    await localSend(from, 'The payment card cannot be saved. Please try again after your next payment.');
     await supabase.rpc('update_session_cas', {
       p_session_id: session.id, p_expected_version: session.version ?? 0,
       p_current_step: 'select_capability', p_session_data: {},
@@ -730,7 +732,7 @@ export async function handleReplacementPinStep(
   // 3. Verify customer_code matches
   if (method.customer_code !== (newAuth.customer_code as string)) {
     logger.error('[SAVED_CARDS] replacement-pin-customer-code-mismatch', { methodId: method.id });
-    await sendText(from, 'The new card belongs to a different account. Please type *remove card* first, then *save card*.');
+    await localSend(from, 'The new card belongs to a different account. Please type *remove card* first, then *save card*.');
     await supabase.rpc('update_session_cas', {
       p_session_id: session.id, p_expected_version: session.version ?? 0,
       p_current_step: 'select_capability', p_session_data: {},
@@ -744,9 +746,9 @@ export async function handleReplacementPinStep(
   if (currentStateHash !== expectedStateHash) {
     // State changed since replacement was initiated — check if idempotent
     if (method.authorization_code === (newAuth.authorization_code as string)) {
-      await sendText(from, 'Your saved card is already up to date.');
+      await localSend(from, 'Your saved card is already up to date.');
     } else {
-      await sendText(from, 'Your card was already updated. Type *save card* again if needed.');
+      await localSend(from, 'Your card was already updated. Type *save card* again if needed.');
     }
     await supabase.rpc('update_session_cas', {
       p_session_id: session.id, p_expected_version: session.version ?? 0,
@@ -757,7 +759,7 @@ export async function handleReplacementPinStep(
 
   // F7+R5: Require businessId and re-resolve compatibility before credential UPDATE
   if (!businessId) {
-    await sendText(from, 'Could not determine the business. Please try again.');
+    await localSend(from, 'Could not determine the business. Please try again.');
     await supabase.rpc('update_session_cas', {
       p_session_id: session.id, p_expected_version: session.version ?? 0,
       p_current_step: 'select_capability', p_session_data: {},
@@ -768,7 +770,7 @@ export async function handleReplacementPinStep(
     const { isSharedPlatformPaystackCompatible } = await import('@/lib/payments/saved-card-compat');
     const compat = await isSharedPlatformPaystackCompatible(supabase, businessId);
     if (!compat.compatible) {
-      await sendText(from, 'Card replacement is not available for this business\'s payment setup.');
+      await localSend(from, 'Card replacement is not available for this business\'s payment setup.');
       await supabase.rpc('update_session_cas', {
         p_session_id: session.id, p_expected_version: session.version ?? 0,
         p_current_step: 'select_capability', p_session_data: {},
@@ -783,9 +785,9 @@ export async function handleReplacementPinStep(
 
   if (!pinResult.valid) {
     if (pinResult.locked) {
-      await sendText(from, '🔒 Too many wrong attempts. Your card is locked for 30 minutes. Try again later.');
+      await localSend(from, '🔒 Too many wrong attempts. Your card is locked for 30 minutes. Try again later.');
     } else {
-      await sendText(from, `❌ Wrong PIN. ${pinResult.attemptsRemaining} attempt${pinResult.attemptsRemaining === 1 ? '' : 's'} remaining.`);
+      await localSend(from, `❌ Wrong PIN. ${pinResult.attemptsRemaining} attempt${pinResult.attemptsRemaining === 1 ? '' : 's'} remaining.`);
     }
     return; // Old card completely unchanged (PIN wrong/locked)
   }
@@ -793,7 +795,7 @@ export async function handleReplacementPinStep(
   // Require authorization_email from the new payment
   const newAuthEmail = (newAuth.email as string) || null;
   if (!newAuthEmail) {
-    await sendText(from, 'Card authorization email is missing. Please try again after your next payment.');
+    await localSend(from, 'Card authorization email is missing. Please try again after your next payment.');
     await supabase.rpc('update_session_cas', {
       p_session_id: session.id, p_expected_version: session.version ?? 0,
       p_current_step: 'select_capability', p_session_data: {},
@@ -829,7 +831,7 @@ export async function handleReplacementPinStep(
 
   if (updateError) {
     logger.error('[SAVED_CARDS] replacement-update-error:', updateError.message);
-    await sendText(from, 'Failed to update your card. Please try again.');
+    await localSend(from, 'Failed to update your card. Please try again.');
     return;
   }
 
@@ -847,7 +849,7 @@ export async function handleReplacementPinStep(
       logger.info('[SAVED_CARDS] replacement-idempotent-success', { methodId });
     } else {
       // Stale conflict — another replacement won
-      await sendText(from, 'Your card was already updated by another request. Type *save card* to check.');
+      await localSend(from, 'Your card was already updated by another request. Type *save card* to check.');
       await supabase.rpc('update_session_cas', {
         p_session_id: session.id, p_expected_version: session.version ?? 0,
         p_current_step: 'select_capability', p_session_data: {},
@@ -892,7 +894,7 @@ export async function handleReplacementPinStep(
   }
 
   try {
-    await sendText(from, `💳 Card updated to *${newLabel}*!\n\n🔒 Your existing Waaiio PIN still works. Type *remove card* anytime to remove.`);
+    await localSend(from, `💳 Card updated to *${newLabel}*!\n\n🔒 Your existing Waaiio PIN still works. Type *remove card* anytime to remove.`);
     // Delivery proven → confirm
     if (replaceOfferId) {
       const { data: confirmResult } = await supabase.rpc('confirm_saved_card_offer', {
