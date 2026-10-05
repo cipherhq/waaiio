@@ -2470,13 +2470,20 @@ export class BotService {
           result = await recoverGeneric(recoveryCtx);
         }
 
+        // Slice 5A: Localize recovery messages (session-based, existing sendSessionLocalizedText)
+        // Protected values: references, amounts, purpose labels
+        const recoveryProtected: string[] = [];
+        if ('referenceCode' in result && result.referenceCode) recoveryProtected.push(result.referenceCode);
+        if ('amount' in result) recoveryProtected.push(formatCurrency((result as { amount: number }).amount, cc));
+        const recoveryOpts = recoveryProtected.length ? { protectedValues: recoveryProtected } : undefined;
+
         switch (result.type) {
           case 'confirmed':
           case 'reconciling':
           case 'not_found':
           case 'integrity_error':
           case 'error':
-            await this.sendText(from, result.message);
+            await this.sendSessionLocalizedText(from, result.message, session, recoveryOpts);
             return;
 
           case 'disambiguation': {
@@ -2486,10 +2493,21 @@ export class BotService {
               id: `i_paid_ref:${c.gatewayReference}`,
               title: c.referenceCode.slice(0, 20),
             }));
+            // Localize disambiguation body; button IDs/titles are authoritative references
+            // Translate the disambiguation body with protected values
+            let disambigBody = result.message;
+            const disambigLang = (session.session_data._detected_language as string) || '';
+            if (disambigLang && disambigLang !== 'en' && session.business_id) {
+              try {
+                const disambigTier = (await this.supabase.from('businesses').select('subscription_tier').eq('id', session.business_id).single()).data?.subscription_tier || 'free';
+                const disambigTCtx = await this.buildTranslationContext(session.business_id, disambigTier);
+                disambigBody = await translateBotResponse(disambigBody, disambigLang, disambigTCtx, recoveryOpts);
+              } catch { /* fail closed to English */ }
+            }
             // Use this.messageSender (bound to inbound channel) — not resolveByBusinessId (#219)
             await this.messageSender.sendButtons({
               to: from,
-              body: result.message,
+              body: disambigBody,
               buttons,
             });
             return;
