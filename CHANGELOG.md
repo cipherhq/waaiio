@@ -3,6 +3,19 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-10-04 — Outbound localization boundary — Slice 3 (#524)
+
+### What changed
+- **outbound-localizer.ts** — New canonical localization boundary (`localizeMessage`, `localizeText`) that translates all Waaiio-owned presentation fields (body, title, buttonLabel, section titles, footers, captions) while preserving merchant-entered item titles and action/postback IDs byte-for-byte.
+- **translate.ts** — Added `protectedValues` option to `translateBotResponse`. Explicit strings (merchant names, URLs, product names) are placeholdered longest-first before the LLM call and restored after, on top of existing regex-based protection for dates/times/amounts/references.
+- **executor.ts** — `translateMessage` now delegates to the shared outbound localizer instead of maintaining its own inline translation logic. Footers now localize (previously skipped). Document captions now localize.
+- **bot.service.ts** — 20+ raw `sendText` calls in customer-facing paths (session expiry, help menu, payment recovery, recurring decline, disambiguation) replaced with `sendSessionLocalizedText` which resolves translation context from the session's business tier and detected language.
+- **20 regression tests** — ID stability across languages, protected value preservation, merchant title passthrough, entitlement fail-closed (zero LLM calls for free tier), English baseline, document/image/footer localization, routing invariant (button/list IDs identical across fr/pcm).
+
+### What could break
+- Footer text in button and list messages now gets translated (previously hardcoded English). If any footer contains machine-parseable commands that the bot matches on, those commands would be translated and no longer match. Current codebase footers are display-only hints.
+- `sendSessionLocalizedText` adds a DB query for business subscription_tier on each non-English send. This is acceptable for the session-active path but would be a concern if called in a tight loop (it isn't).
+
 ## 2026-10-03 — Paystack saved-card persistence (#530)
 
 ### What changed
