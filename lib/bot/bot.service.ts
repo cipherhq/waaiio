@@ -2597,14 +2597,21 @@ export class BotService {
       'book_for_other': new Set(['myself', 'me', 'someone else', 'other', 'for_myself', 'for_other']),
       'addon_continue': new Set(['more', 'add more', 'done', 'continue', 'more_addons', 'done_addons']),
       'list_subscriptions': new Set(['back_to_account']),
-      // select_campaign + poll_question accept free-form name/index input — all input is step-owned
-      'select_campaign': null as unknown as Set<string>, // marker: all input owned
-      'poll_question': null as unknown as Set<string>, // marker: all input owned
     };
     const isFreeTextStepForKeywords = isChatMode || ['collect_name', 'collect_other_name', 'collect_email', 'special_requests', 'review_text', 'enter_amount', 'collect_address', 'queue_collect_name', 'select_business_suggestion', 'enter_referral_code', 'collect_pickup_address', 'collect_dropoff_address', 'collect_package_description', 'collect_venue', 'enter_promo_code', 'save_card_pin', 'verify_card_pin', 'replace_card_pin'].includes(step);
     const stepOwnedSet = STEP_OWNED_INPUTS[step];
-    // null marker = all input is step-owned (free-form name/index steps)
-    const inputOwnedByStep = stepOwnedSet !== undefined && (stepOwnedSet === null || stepOwnedSet.has(text.toLowerCase().trim()));
+    // Bounded ownership: poll_question owns postback/numeric/escape inputs only
+    const isPollOwned = step === 'poll_question' && (
+      /^poll_vote_\d+$/.test(text) || /^\d{1,2}$/.test(text.trim()) ||
+      ['cancel', 'skip', 'exit', 'no thanks'].includes(text.toLowerCase().trim())
+    );
+    // Bounded ownership: select_campaign owns postback/go_back/numeric inputs only;
+    // typed campaign names go through keyword routing first (if no keyword matches, they reach the step validator)
+    const isCampaignOwned = step === 'select_campaign' && (
+      text.startsWith('campaign_') || text === 'go_back' || /^\d{1,2}$/.test(text.trim())
+    );
+    const inputOwnedByStep = isPollOwned || isCampaignOwned ||
+      (stepOwnedSet !== undefined && stepOwnedSet.has(text.toLowerCase().trim()));
 
     if (!isFreeTextStepForKeywords && !inputOwnedByStep) {
       // Use cached category from session_data (saved during session creation)
