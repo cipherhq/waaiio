@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import * as Sentry from '@sentry/nextjs';
 import type { MessageSender } from '@/lib/channels/message-sender';
 import { translateBotResponse, type TranslationContext } from '@/lib/bot/translate';
+import { localizeMessage } from '@/lib/bot/outbound-localizer';
 import { getEffectiveLanguages, loadBusinessLanguages } from '@/lib/bot/language-policy';
 import type { SupportedLanguage } from '@/lib/bot/languages';
 import {
@@ -877,40 +878,19 @@ export class FlowExecutor {
     }
   }
 
-  /** Translate a single prompt message — text, body, button labels, list items */
+  /**
+   * Translate a single prompt message through the canonical outbound localizer.
+   * Localizes all Waaiio-owned presentation fields (title, body, buttonLabel,
+   * section titles, footer, captions). Preserves merchant item titles and all
+   * action/postback IDs unchanged.
+   */
   private async translateMessage(msg: PromptMessage, lang: string, tCtx: TranslationContext): Promise<PromptMessage> {
-    switch (msg.type) {
-      case 'text':
-        return { ...msg, text: await translateBotResponse(msg.text, lang, tCtx) };
-      case 'buttons':
-        return {
-          ...msg,
-          body: await translateBotResponse(msg.body, lang, tCtx),
-          footer: msg.footer, // Don't translate — commands are English-only
-          buttons: await Promise.all(msg.buttons.map(async b => ({
-            ...b,
-            title: await translateBotResponse(b.title, lang, tCtx),
-          }))),
-        };
-      case 'list':
-        return {
-          ...msg,
-          body: await translateBotResponse(msg.body, lang, tCtx),
-          footer: msg.footer, // Don't translate — commands are English-only
-          items: await Promise.all(msg.items.map(async item => ({
-            ...item,
-            description: item.description ? await translateBotResponse(item.description, lang, tCtx) : item.description,
-            // Keep title as-is for service/product names — business entered them
-          }))),
-        };
-      case 'image':
-        return {
-          ...msg,
-          caption: msg.caption ? await translateBotResponse(msg.caption, lang, tCtx) : msg.caption,
-        };
-      default:
-        return msg;
-    }
+    // Delegate to the shared outbound localizer.
+    // waaiioOwnedItemTitles defaults to false — merchant-entered list items
+    // stay untranslated. Individual flows that build Waaiio-owned menus
+    // (capability-selection, navigation) should pass waaiioOwnedItemTitles: true
+    // via the new localizeMessage API when needed.
+    return localizeMessage(msg, lang, tCtx);
   }
 
   private async sendSingleMessage(to: string, msg: PromptMessage, sender?: MessageSender): Promise<void> {
@@ -1053,9 +1033,7 @@ export class FlowExecutor {
       ];
     }
 
-    const body = lang
-      ? await translateBotResponse('What would you like to do next?', lang, tCtx)
-      : 'What would you like to do next?';
+    const bodyText = 'What would you like to do next?';
 
     // Keep session alive on post_completion step so buttons work
     const saved = await this.casUpdateSession(session, {
@@ -1064,8 +1042,17 @@ export class FlowExecutor {
     });
     if (!saved) return; // stale — another worker owns this session
 
+    // Localize the entire post-completion message through the canonical boundary
+    const postCompletionMsg: PromptMessage = { type: 'buttons', body: bodyText, buttons };
+    const shouldTranslate = lang && lang !== 'en';
+    const localizedMsg = shouldTranslate
+      ? await localizeMessage(postCompletionMsg, lang, tCtx)
+      : postCompletionMsg;
+
     const s = sender || this.sender;
-    await s.sendButtons({ to: from, body, buttons });
+    if (localizedMsg.type === 'buttons') {
+      await s.sendButtons({ to: from, body: localizedMsg.body, buttons: localizedMsg.buttons });
+    }
   }
 
   /** Map a capability to its corresponding FlowType */
