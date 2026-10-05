@@ -1,0 +1,103 @@
+name: Nigeria AS60068 DNS Deep Diagnostic
+
+on:
+  push:
+    branches:
+      - diag/nigeria-dns-as60068
+
+permissions:
+  contents: read
+
+jobs:
+  diagnostic:
+    name: Datacamp Lagos DNS diagnostics
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GLOBALPING_TOKEN: ${{ secrets.GLOBALPING_TOKEN }}
+    steps:
+      - name: Run Globalping DNS diagnostics from Nigeria + AS60068
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/nigeria-dns-as60068
+
+          api='https://api.globalping.io/v1/measurements'
+          location='Nigeria+AS60068'
+
+          auth_args=()
+          if [[ -n "${GLOBALPING_TOKEN:-}" ]]; then
+            auth_args=(-H "Authorization: Bearer ${GLOBALPING_TOKEN}")
+          fi
+
+          run_measurement() {
+            local label="$1"
+            local target="$2"
+            local qtype="$3"
+            local protocol="$4"
+            local trace="$5"
+            local payload id status result_file
+
+            payload="$(jq -nc \
+              --arg target "$target" \
+              --arg loc "$location" \
+              --arg qtype "$qtype" \
+              --arg protocol "$protocol" \
+              --argjson trace "$trace" \
+              '{target:$target,type:"dns",locations:[{magic:$loc,limit:1}],limit:1,timeout:20,measurementOptions:{query:{type:$qtype},protocol:$protocol,trace:$trace}}')"
+
+            echo "### ${label}" | tee -a artifacts/nigeria-dns-as60068/summary.md
+            echo '```json' >> artifacts/nigeria-dns-as60068/summary.md
+            echo "$payload" >> artifacts/nigeria-dns-as60068/summary.md
+            echo '```' >> artifacts/nigeria-dns-as60068/summary.md
+
+            id="$(curl --fail --silent --show-error -X POST "$api" \
+              -H 'Content-Type: application/json' \
+              "${auth_args[@]}" \
+              --data "$payload" | tee artifacts/nigeria-dns-as60068/${label}.create.json | jq -r '.id')"
+
+            if [[ -z "$id" || "$id" == "null" ]]; then
+              echo "Measurement creation failed for $label" | tee -a artifacts/nigeria-dns-as60068/summary.md
+              return 0
+            fi
+
+            result_file="artifacts/nigeria-dns-as60068/${label}.json"
+            for _ in $(seq 1 30); do
+              curl --fail --silent --show-error "${auth_args[@]}" "$api/$id" > "$result_file"
+              status="$(jq -r '.status // empty' "$result_file")"
+              [[ "$status" == "finished" ]] && break
+              sleep 2
+            done
+
+            jq '{id,status,target,measurementOptions,results:[.results[]? | {probe:{country:.probe.country,city:.probe.city,asn:.probe.asn,network:.probe.network,tags:.probe.tags,resolvers:.probe.resolvers},result:{status:.result.status,failureSource:.result.failureSource,statusCodeName:.result.statusCodeName,resolver:.result.resolver,answers:.result.answers,rawOutput:.result.rawOutput,hops:.result.hops}}]}' "$result_file" \
+              | tee "artifacts/nigeria-dns-as60068/${label}.compact.json"
+            echo >> artifacts/nigeria-dns-as60068/summary.md
+          }
+
+          : > artifacts/nigeria-dns-as60068/summary.md
+          echo '# Nigeria / Datacamp AS60068 DNS deep diagnostic' >> artifacts/nigeria-dns-as60068/summary.md
+          echo >> artifacts/nigeria-dns-as60068/summary.md
+          echo 'Read-only Globalping measurements. No DNS, Vercel, provider, or production mutation.' >> artifacts/nigeria-dns-as60068/summary.md
+          echo >> artifacts/nigeria-dns-as60068/summary.md
+
+          for host in waaiio.com www.waaiio.com staging.waaiio.com; do
+            safe="${host//./_}"
+            run_measurement "${safe}_a_udp" "$host" A UDP false
+            run_measurement "${safe}_a_tcp" "$host" A TCP false
+          done
+
+          # DNSSEC/delegation evidence. Globalping does not expose raw dig +cdflag/+noedns,
+          # so use DS/DNSKEY plus delegation trace to determine whether DNSSEC or the
+          # authoritative path is implicated.
+          run_measurement "waaiio_com_ds_udp" "waaiio.com" DS UDP false
+          run_measurement "waaiio_com_dnskey_udp" "waaiio.com" DNSKEY UDP false
+          run_measurement "waaiio_com_trace_udp" "waaiio.com" A UDP true
+
+      - name: Upload diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nigeria-dns-as60068-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/nigeria-dns-as60068/
+          if-no-files-found: warn
+          retention-days: 7
