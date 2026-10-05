@@ -2580,10 +2580,34 @@ export class BotService {
     }
 
     // ── Unified keyword matching (replaces detectIntent + old keyword + quick reply checks) ──
-    // Only fire on non-free-text steps
+    // Only fire on non-free-text steps AND non-guided-alias steps.
+    // Slice 4: guided steps that gained typed aliases must own their inputs before
+    // keyword routing can consume them. Without this, a business keyword colliding with
+    // an alias (e.g. "history", "join", "details", "my bookings") would intercept the
+    // message before the flow validator sees it.
+    const GUIDED_ALIAS_STEPS = new Set([
+      'post_completion',
+      // crowdfunding
+      'select_campaign', 'campaign_view',
+      // invoice
+      'invoice_detail',
+      // loyalty
+      'loyalty_menu', 'loyalty_redeem',
+      // recurring
+      'list_subscriptions', 'select_action', 'subscription_details',
+      // queue
+      'queue_start', 'queue_check_status',
+      // poll
+      'poll_question',
+      // scheduling
+      'book_for_other',
+      // ordering
+      'addon_continue',
+    ]);
     const isFreeTextStepForKeywords = isChatMode || ['collect_name', 'collect_other_name', 'collect_email', 'special_requests', 'review_text', 'enter_amount', 'collect_address', 'queue_collect_name', 'select_business_suggestion', 'enter_referral_code', 'collect_pickup_address', 'collect_dropoff_address', 'collect_package_description', 'collect_venue', 'enter_promo_code', 'save_card_pin', 'verify_card_pin', 'replace_card_pin'].includes(step);
+    const isGuidedAliasStep = GUIDED_ALIAS_STEPS.has(step);
 
-    if (!isFreeTextStepForKeywords) {
+    if (!isFreeTextStepForKeywords && !isGuidedAliasStep) {
       // Use cached category from session_data (saved during session creation)
       const businessCategory = (session.session_data?.business_category as string) || null;
 
