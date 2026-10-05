@@ -73,6 +73,11 @@ tls_authorized_count() {
   jq '[.. | objects | select(has("authorized")) | .authorized | select(. == true)] | length' "$file" 2>/dev/null || echo 0
 }
 
+dns_result_count() {
+  local file="$1"
+  jq '[.results[]?] | length' "$file" 2>/dev/null || echo 0
+}
+
 dns_noerror_count() {
   local file="$1"
   jq '[.results[]? | (.result.rawOutput? // "") | select(test("status: NOERROR"))] | length' "$file" 2>/dev/null || echo 0
@@ -81,6 +86,16 @@ dns_noerror_count() {
 dns_servfail_count() {
   local file="$1"
   jq '[.results[]? | (.result.rawOutput? // "") | select(test("SERVFAIL"; "i"))] | length' "$file" 2>/dev/null || echo 0
+}
+
+dns_exit_code() {
+  local name="$1"
+  local rc_file="$OUT_DIR/${name}.exitcode"
+  if [[ -f "$rc_file" ]]; then
+    cat "$rc_file"
+  else
+    echo 1
+  fi
 }
 
 record_http_summary() {
@@ -178,36 +193,94 @@ for host in waaiio.com www.waaiio.com staging.waaiio.com; do
   record_dns_summary "$host AAAA via 1.1.1.1" "dns_${safe}_aaaa_cloudflare"
 done
 
-# Launch decision: require both production custom domains and the production
-# Vercel control to succeed from every returned probe. Also fail if an ISP/default
-# resolver emits SERVFAIL for the production A query even when dig later falls
-# back to another resolver and obtains a successful answer. That fallback can
-# hide the exact failure a normal subscriber experiences on a single ISP DNS path.
+# Launch decision:
+# - production apex/www and the production Vercel control must succeed from every
+#   returned probe;
+# - explicit public-resolver production A queries must be healthy;
+# - default-resolver SERVFAIL is a hard failure if it appears on any non-datacenter
+#   probe or spans >=2 independent ASNs;
+# - an anomaly isolated to one datacenter ASN is reported as a warning rather than
+#   a launch blocker when customer-facing HTTP/TLS and public DNS remain healthy.
 prod_apex_total="$(http_result_count "$OUT_DIR/http_prod_apex.json")"
 prod_apex_good="$(http_success_count "$OUT_DIR/http_prod_apex.json")"
 prod_www_total="$(http_result_count "$OUT_DIR/http_prod_www.json")"
 prod_www_good="$(http_success_count "$OUT_DIR/http_prod_www.json")"
 control_total="$(http_result_count "$OUT_DIR/http_prod_vercel_control.json")"
 control_good="$(http_success_count "$OUT_DIR/http_prod_vercel_control.json")"
-prod_apex_dns_servfail="$(dns_servfail_count "$OUT_DIR/dns_waaiio_com_a_isp.json")"
-prod_www_dns_servfail="$(dns_servfail_count "$OUT_DIR/dns_www_waaiio_com_a_isp.json")"
+
+prod_apex_public_name='dns_waaiio_com_a_cloudflare'
+prod_www_public_name='dns_www_waaiio_com_a_cloudflare'
+prod_apex_public_file="$OUT_DIR/${prod_apex_public_name}.json"
+prod_www_public_file="$OUT_DIR/${prod_www_public_name}.json"
+prod_apex_public_total="$(dns_result_count "$prod_apex_public_file")"
+prod_apex_public_noerror="$(dns_noerror_count "$prod_apex_public_file")"
+prod_apex_public_servfail="$(dns_servfail_count "$prod_apex_public_file")"
+prod_apex_public_exit="$(dns_exit_code "$prod_apex_public_name")"
+prod_www_public_total="$(dns_result_count "$prod_www_public_file")"
+prod_www_public_noerror="$(dns_noerror_count "$prod_www_public_file")"
+prod_www_public_servfail="$(dns_servfail_count "$prod_www_public_file")"
+prod_www_public_exit="$(dns_exit_code "$prod_www_public_name")"
+
+prod_default_dns_files=(
+  "$OUT_DIR/dns_waaiio_com_a_isp.json"
+  "$OUT_DIR/dns_www_waaiio_com_a_isp.json"
+)
+
+prod_dns_servfail_total="$(jq -s '[.[] | .results[]? | select((.result.rawOutput? // "") | test("SERVFAIL"; "i"))] | length' "${prod_default_dns_files[@]}" 2>/dev/null || echo 0)"
+prod_dns_servfail_unique_asns="$(jq -s '[.[] | .results[]? | select((.result.rawOutput? // "") | test("SERVFAIL"; "i")) | (.probe.asn? // empty)] | unique | length' "${prod_default_dns_files[@]}" 2>/dev/null || echo 0)"
+prod_dns_servfail_non_datacenter="$(jq -s '[.[] | .results[]? | select((.result.rawOutput? // "") | test("SERVFAIL"; "i")) | select(((.probe.tags? // []) | index("datacenter-network")) == null)] | length' "${prod_default_dns_files[@]}" 2>/dev/null || echo 0)"
+prod_dns_servfail_datacenter_asns="$(jq -sr '[.[] | .results[]? | select((.result.rawOutput? // "") | test("SERVFAIL"; "i")) | select(((.probe.tags? // []) | index("datacenter-network")) != null) | (.probe.asn? // empty)] | unique | map(tostring) | join(", ")' "${prod_default_dns_files[@]}" 2>/dev/null || echo '')"
+
+public_dns_pass=true
+if [[ "$prod_apex_public_exit" != "0" || "$prod_apex_public_total" -le 0 || "$prod_apex_public_noerror" -ne "$prod_apex_public_total" || "$prod_apex_public_servfail" -gt 0 ]]; then public_dns_pass=false; fi
+if [[ "$prod_www_public_exit" != "0" || "$prod_www_public_total" -le 0 || "$prod_www_public_noerror" -ne "$prod_www_public_total" || "$prod_www_public_servfail" -gt 0 ]]; then public_dns_pass=false; fi
+
+resolver_hard_fail=false
+resolver_warning=false
+if [[ "$prod_dns_servfail_non_datacenter" -gt 0 || "$prod_dns_servfail_unique_asns" -ge 2 ]]; then
+  resolver_hard_fail=true
+elif [[ "$prod_dns_servfail_total" -gt 0 && "$prod_dns_servfail_unique_asns" -eq 1 ]]; then
+  resolver_warning=true
+fi
+
+printf '\n## Resolver anomaly classification\n\n' >> "$SUMMARY"
+printf -- '- Production A-query SERVFAIL/fallback observations: **%s**\n' "$prod_dns_servfail_total" >> "$SUMMARY"
+printf -- '- Independent ASNs with SERVFAIL: **%s**\n' "$prod_dns_servfail_unique_asns" >> "$SUMMARY"
+printf -- '- SERVFAIL observations from non-datacenter probes: **%s**\n' "$prod_dns_servfail_non_datacenter" >> "$SUMMARY"
+if [[ -n "$prod_dns_servfail_datacenter_asns" ]]; then
+  printf -- '- Datacenter ASN(s) with SERVFAIL: `%s`\n' "$prod_dns_servfail_datacenter_asns" >> "$SUMMARY"
+fi
+if [[ "$resolver_warning" == "true" ]]; then
+  printf -- '- Classification: ⚠️ **ISOLATED DATACENTER RESOLVER WARNING** — one datacenter ASN showed recursive-resolver SERVFAIL before fallback; this is diagnostic while production HTTP/TLS and public DNS remain healthy.\n' >> "$SUMMARY"
+elif [[ "$resolver_hard_fail" == "true" ]]; then
+  printf -- '- Classification: ❌ **REPRESENTATIVE / MULTI-ASN RESOLVER FAILURE** — SERVFAIL affected a non-datacenter probe or multiple independent ASNs.\n' >> "$SUMMARY"
+else
+  printf -- '- Classification: ✅ **NO PRODUCTION DEFAULT-RESOLVER SERVFAIL OBSERVED**.\n' >> "$SUMMARY"
+fi
 
 launch_pass=true
 if [[ "$prod_apex_total" -le 0 || "$prod_apex_good" -ne "$prod_apex_total" ]]; then launch_pass=false; fi
 if [[ "$prod_www_total" -le 0 || "$prod_www_good" -ne "$prod_www_total" ]]; then launch_pass=false; fi
 if [[ "$control_total" -le 0 || "$control_good" -ne "$control_total" ]]; then launch_pass=false; fi
-if [[ "$prod_apex_dns_servfail" -gt 0 || "$prod_www_dns_servfail" -gt 0 ]]; then launch_pass=false; fi
+if [[ "$public_dns_pass" != "true" ]]; then launch_pass=false; fi
+if [[ "$resolver_hard_fail" == "true" ]]; then launch_pass=false; fi
 
 printf '\n## Launch gate\n\n' >> "$SUMMARY"
 if [[ "$launch_pass" == "true" ]]; then
-  printf '✅ **PASS** — production apex, production `www`, and the production Vercel control all succeeded from every returned Nigerian probe, with no SERVFAIL observed on the production A queries through probe/default resolvers.\n' >> "$SUMMARY"
+  if [[ "$resolver_warning" == "true" ]]; then
+    printf '✅ **PASS WITH WARNING** — production apex, production `www`, the production Vercel control, and explicit public DNS all succeeded. A recursive-resolver SERVFAIL was isolated to one datacenter ASN (`%s`) and is retained as diagnostic evidence rather than treated as a Nigeria-wide launch blocker.\n' "$prod_dns_servfail_datacenter_asns" >> "$SUMMARY"
+  else
+    printf '✅ **PASS** — production apex, production `www`, the production Vercel control, and explicit public DNS all succeeded, with no representative or multi-ASN default-resolver SERVFAIL observed.\n' >> "$SUMMARY"
+  fi
   cat "$SUMMARY"
   exit 0
 fi
 
 if [[ "$control_total" -gt 0 && "$control_good" -eq "$control_total" ]]; then
-  if [[ "$prod_apex_dns_servfail" -gt 0 || "$prod_www_dns_servfail" -gt 0 ]]; then
-    printf '❌ **FAIL — NIGERIAN RESOLVER / CUSTOM DOMAIN DNS PATH** — the production Vercel control succeeded, but at least one Nigerian probe/default resolver returned SERVFAIL for a production Waaiio A query before fallback. Treat this as a launch blocker even if fallback later reached the site.\n' >> "$SUMMARY"
+  if [[ "$public_dns_pass" != "true" ]]; then
+    printf '❌ **FAIL — PUBLIC DNS / CUSTOM DOMAIN PATH** — the production Vercel control succeeded, but explicit 1.1.1.1 production A-resolution did not succeed cleanly for every returned result. Investigate authoritative/public DNS before launch.\n' >> "$SUMMARY"
+  elif [[ "$resolver_hard_fail" == "true" ]]; then
+    printf '❌ **FAIL — REPRESENTATIVE / MULTI-ASN NIGERIAN RESOLVER PATH** — the production Vercel control and public DNS succeeded, but default-resolver SERVFAIL affected a non-datacenter probe or at least two independent ASNs. Treat this as a launch blocker.\n' >> "$SUMMARY"
   else
     printf '❌ **FAIL — CUSTOM DOMAIN PATH** — the production Vercel control succeeded, while one or more Waaiio production custom-domain HTTP/TLS probes failed. Investigate DNS/TLS/custom-domain routing before launch.\n' >> "$SUMMARY"
   fi
