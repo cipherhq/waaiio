@@ -16,7 +16,7 @@ import { resolveTrialCredit } from '@/lib/trial-status';
 import { getCategoryLabels } from '@/lib/categoryConfig';
 import type { CapabilityId } from '@/lib/capabilities/types';
 import { parseSmartIntent, parseSmartIntentHybrid, matchServiceFromKeywords, buildAcknowledgment } from './smart-intent';
-import { translateBotResponse, detectLanguage, getLanguageName, type TranslationContext } from './translate';
+import { translateBotResponse, detectLanguage, getLanguageName, type TranslationContext, type TranslateOptions } from './translate';
 import { getEffectiveLanguages, loadBusinessLanguages } from './language-policy';
 import { loadPlatformSettings } from '@/lib/platformSettings';
 import { checkAIFeature, isLanguageAllowed } from './ai-tier-guard';
@@ -737,7 +737,7 @@ export class BotService {
             }
             session.version = casCapResult.version;
 
-            await this.sendText(from, recoveryMsg);
+            await this.sendSessionLocalizedText(from, recoveryMsg, session);
             return;
           }
 
@@ -767,7 +767,7 @@ export class BotService {
             'refund_select', 'refund_confirm', 'chat_handoff', 'post_completion',
           ]);
           if (!MANAGE_EXISTING_STEPS.has(session.current_step)) {
-            await this.sendText(from, "We're having trouble verifying what's available right now. Please try again in a moment.");
+            await this.sendSessionLocalizedText(from, "We're having trouble verifying what's available right now. Please try again in a moment.", session);
             return;
           }
         }
@@ -780,7 +780,7 @@ export class BotService {
           'refund_select', 'refund_confirm', 'chat_handoff', 'post_completion',
         ]);
         if (!MANAGE_EXISTING_STEPS.has(session.current_step)) {
-          await this.sendText(from, "We're having trouble verifying what's available right now. Please try again in a moment.");
+          await this.sendSessionLocalizedText(from, "We're having trouble verifying what's available right now. Please try again in a moment.", session);
           return;
         }
       }
@@ -2052,11 +2052,16 @@ export class BotService {
       await this.deactivateSession(session.id);
       // Personalize the expired message with business name if available
       let expiredMsg = 'Your session has expired.';
+      const protectedVals: string[] = [];
       if (session.business_id) {
         const { data: biz } = await this.supabase.from('businesses').select('name').eq('id', session.business_id).single();
-        if (biz?.name) expiredMsg = `Your session with *${biz.name}* has expired.`;
+        if (biz?.name) {
+          expiredMsg = `Your session with *${biz.name}* has expired.`;
+          protectedVals.push(biz.name);
+        }
       }
-      await this.sendText(from, `${expiredMsg} Send *Hi* to start over. 🙏`);
+      await this.sendSessionLocalizedText(from, `${expiredMsg} Send *Hi* to start over. 🙏`, session,
+        protectedVals.length ? { protectedValues: protectedVals } : undefined);
       return;
     }
 
@@ -2128,7 +2133,7 @@ export class BotService {
         '_Need human help? Type *chat* to reach the business owner._',
       ].filter(Boolean);
 
-      await this.sendText(from, helpLines.join('\n'));
+      await this.sendSessionLocalizedText(from, helpLines.join('\n'), session);
       return;
     }
 
@@ -2157,7 +2162,7 @@ export class BotService {
           buttons: quickPick.map((s, i) => ({ id: `biz_${i}`, title: truncTitle(s.name) })),
         });
       } else {
-        await this.sendText(from, 'Type the name or code of the business you\'d like to visit.');
+        await this.sendSessionLocalizedText(from, 'Type the name or code of the business you\'d like to visit.', session);
       }
       return;
     }
@@ -2341,20 +2346,21 @@ export class BotService {
     if (session.business_id && (text === 'cap_promo_verification' || text === 'promo_verification')) {
       const caps = (session.session_data?.capabilities as string[]) || [];
       if (!caps.includes('promo_verification')) {
-        await this.sendText(from, 'This feature is not available right now.');
+        await this.sendSessionLocalizedText(from, 'This feature is not available right now.', session);
         return;
       }
       try {
         const { getActivePromoEntryCampaigns, renderPromoEntryMessage } = await import('@/lib/promotions/entry');
         const campaigns = await getActivePromoEntryCampaigns(session.business_id);
         if (campaigns.length === 0) {
-          await this.sendText(from, 'No active promotions right now. Check back later! 🎰');
+          await this.sendSessionLocalizedText(from, 'No active promotions right now. Check back later! 🎰', session);
         } else {
+          // renderPromoEntryMessage returns merchant-authored content — passthrough
           await this.sendText(from, renderPromoEntryMessage(campaigns));
         }
       } catch (err) {
         logger.error('[BOT] Instant Win entry error:', err);
-        await this.sendText(from, 'Something went wrong. Please try again.');
+        await this.sendSessionLocalizedText(from, 'Something went wrong. Please try again.', session);
       }
       return; // Terminate — booking/reservation/FlowExecutor cannot consume this action
     }
@@ -2404,30 +2410,33 @@ export class BotService {
           switch (scRecovery.type) {
             case 'completed':
             case 'already_completed':
-              await this.sendText(from, '✅ *Payment Confirmed!*\n\nYour payment has been verified and processed.\n\n💡 Type *my bookings* to view details, or *receipt* for your payment receipt.');
+              await this.sendSessionLocalizedText(from, '✅ *Payment Confirmed!*\n\nYour payment has been verified and processed.\n\n💡 Type *my bookings* to view details, or *receipt* for your payment receipt.', session);
               return;
             case 'requires_auth':
-              await this.sendText(from, `🔒 Your bank requires verification.\n\nPlease complete here 👇\n${scRecovery.authUrl}\n\n⚠️ Return to WhatsApp after verifying.`);
+              // authUrl is a protected transactional value — preserve exactly
+              await this.sendSessionLocalizedText(from, `🔒 Your bank requires verification.\n\nPlease complete here 👇\n${scRecovery.authUrl}\n\n⚠️ Return to WhatsApp after verifying.`, session,
+                { protectedValues: [scRecovery.authUrl].filter(Boolean) as string[] });
               return;
             case 'terminal_decline':
-              await this.sendText(from, `❌ Payment could not be completed: ${scRecovery.message || 'card declined'}.\n\nPlease try again with a different payment method by typing *Hi*.`);
+              await this.sendSessionLocalizedText(from, `❌ Payment could not be completed: ${scRecovery.message || 'card declined'}.\n\nPlease try again with a different payment method by typing *Hi*.`, session,
+                scRecovery.message ? { protectedValues: [scRecovery.message] } : undefined);
               return;
             case 'quarantined':
-              await this.sendText(from, 'Your payment session has expired. Please start a new payment by typing *Hi*.');
+              await this.sendSessionLocalizedText(from, 'Your payment session has expired. Please start a new payment by typing *Hi*.', session);
               return;
             case 'indeterminate':
-              await this.sendText(from, "We're still verifying your previous payment. Tap *I've Paid* again shortly.");
+              await this.sendSessionLocalizedText(from, "We're still verifying your previous payment. Tap *I've Paid* again shortly.", session);
               return;
             case 'provider_confirmed':
-              await this.sendText(from, "Your payment is confirmed by the provider and is still being finalized. Tap *I've Paid* again shortly.");
+              await this.sendSessionLocalizedText(from, "Your payment is confirmed by the provider and is still being finalized. Tap *I've Paid* again shortly.", session);
               return;
             case 'authority_rejected':
               // Provider may already have collected funds. Keep payment-ID authority
               // fenced and never fall through to ordinary reference recovery / retry.
-              await this.sendText(from, "Your payment was received by the payment provider, but Waaiio could not safely finalize it. Please do NOT pay again. Tap *I've Paid* to check the same payment again while we resolve it.");
+              await this.sendSessionLocalizedText(from, "Your payment was received by the payment provider, but Waaiio could not safely finalize it. Please do NOT pay again. Tap *I've Paid* to check the same payment again while we resolve it.", session);
               return;
             case 'error':
-              await this.sendText(from, 'We could not verify your saved-card payment right now. Please try again shortly.');
+              await this.sendSessionLocalizedText(from, 'We could not verify your saved-card payment right now. Please try again shortly.', session);
               return;
             case 'not_applicable':
               // Only genuinely non-saved-card cases may use reference recovery.
@@ -2507,7 +2516,7 @@ export class BotService {
           const intentId = parts[1];
           if (intentId) {
             if (!session.user_id) {
-              await this.sendText(from, 'Unable to verify your identity.');
+              await this.sendSessionLocalizedText(from, 'Unable to verify your identity.', session);
               return;
             }
 
@@ -2520,19 +2529,19 @@ export class BotService {
             if (declineErr || !result?.declined) {
               const reason = String(result?.reason || declineErr?.message || 'unknown');
               if (reason === 'expired') {
-                await this.sendText(from, 'This recurring offer has expired. Your payment is already confirmed.');
+                await this.sendSessionLocalizedText(from, 'This recurring offer has expired. Your payment is already confirmed.', session);
               } else if (reason === 'user_mismatch') {
-                await this.sendText(from, 'This offer is for a different account.');
+                await this.sendSessionLocalizedText(from, 'This offer is for a different account.', session);
               } else if (reason === 'tenant_mismatch') {
-                await this.sendText(from, 'Unable to process this request.');
+                await this.sendSessionLocalizedText(from, 'Unable to process this request.', session);
               } else if (reason?.startsWith('invalid_state_')) {
-                await this.sendText(from, 'This offer is no longer available.');
+                await this.sendSessionLocalizedText(from, 'This offer is no longer available.', session);
               } else {
-                await this.sendText(from, 'Could not decline the offer. Please try again.');
+                await this.sendSessionLocalizedText(from, 'Could not decline the offer. Please try again.', session);
               }
               return;
             }
-            await this.sendText(from, 'No problem! Your payment is confirmed.');
+            await this.sendSessionLocalizedText(from, 'No problem! Your payment is confirmed.', session);
             return;
           }
         } else {
@@ -2616,7 +2625,7 @@ export class BotService {
       const isNo = /^(biz_no|no|nah|nope|wrong|not)$/i.test(text);
       if (isNo) {
         await this.deactivateSession(session.id);
-        await this.sendText(from, 'No problem! Send a *business code* to connect to a business.\n\nOr type *switch* followed by a name, e.g.:\n_switch Bukka Hut_');
+        await this.sendSessionLocalizedText(from, 'No problem! Send a *business code* to connect to a business.\n\nOr type *switch* followed by a name, e.g.:\n_switch Bukka Hut_', session);
         return;
       }
 
@@ -2655,7 +2664,7 @@ export class BotService {
         await this.deactivateSession(session.id);
         return this.handleMessage(from, selectedBiz.bot_code, messageType, destinationPhone);
       } else {
-        await this.sendText(from, 'Please select one of the options above, or send a *business code* to connect.');
+        await this.sendSessionLocalizedText(from, 'Please select one of the options above, or send a *business code* to connect.', session);
         return;
       }
     }
@@ -3218,6 +3227,32 @@ export class BotService {
   private async sendLocalizedText(to: string, text: string, session: { session_data: Record<string, unknown> } | null, tCtx: TranslationContext): Promise<void> {
     const lang = (session?.session_data?._detected_language as string) || '';
     const translated = lang ? await translateBotResponse(text, lang, tCtx) : text;
+    return sendBotText(this.messageSender, to, translated);
+  }
+
+  /**
+   * Localized send — resolves translation context from session's business.
+   * For Waaiio-owned customer-facing text in the active-session path.
+   * If session has no business or no detected language, sends English (no LLM call).
+   *
+   * Callers that interpolate dynamic values (merchant names, URLs, references)
+   * MUST pass them as protectedValues so they survive translation byte-for-byte.
+   */
+  private async sendSessionLocalizedText(
+    to: string,
+    text: string,
+    session: { session_data: Record<string, unknown>; business_id?: string | null },
+    opts?: TranslateOptions,
+  ): Promise<void> {
+    const lang = (session.session_data._detected_language as string) || '';
+    if (!lang || lang === 'en') {
+      return sendBotText(this.messageSender, to, text);
+    }
+    const tier = session.business_id
+      ? (await this.supabase.from('businesses').select('subscription_tier').eq('id', session.business_id).single()).data?.subscription_tier || 'free'
+      : 'free';
+    const tCtx = await this.buildTranslationContext(session.business_id || null, tier);
+    const translated = await translateBotResponse(text, lang, tCtx, opts);
     return sendBotText(this.messageSender, to, translated);
   }
 

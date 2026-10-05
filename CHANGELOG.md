@@ -3,6 +3,31 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-10-05 — Slice 3 CTO correction — protected values and ownership metadata (#524 / PR #541)
+
+### What changed
+- **Blocker 1 fix:** `sendSessionLocalizedText` now accepts optional `TranslateOptions`. Payment auth URL (`scRecovery.authUrl`), provider decline messages, and business names are now passed as explicit `protectedValues` at each BotService call site that interpolates dynamic values.
+- **Blocker 2 fix:** Session-expiry path now protects `biz.name` as a protected value. Capability-selection flow attaches `_localization` metadata with `protectedValues: [bizName, ...customLabels]` so merchant names and custom labels survive translation byte-for-byte.
+- **Blocker 3 fix:** Added `LocalizationMeta` interface and optional `_localization` field on `PromptMessage` (types.ts). `localizeMessage` now reads and merges message-level metadata with caller-supplied opts. Capability-selection sets `waaiioOwnedItemTitles: true` so Waaiio UI labels ("My Account", default cap labels) translate while merchant custom labels are protected.
+- **Cache invariant test:** Proves same template with two different businesses' protected values returns each business's own value — no cross-tenant leakage.
+- **12 new correction tests** covering all CTO-required executable proofs.
+
+### What could break
+- Any flow that constructs a PromptMessage with fields that should NOT be translated must now consider whether to attach `_localization` metadata. Without it, the existing default-passthrough behavior for item titles continues (safe).
+
+## 2026-10-04 — Outbound localization boundary — Slice 3 (#524)
+
+### What changed
+- **outbound-localizer.ts** — New canonical localization boundary (`localizeMessage`, `localizeText`) that translates all Waaiio-owned presentation fields (body, title, buttonLabel, section titles, footers, captions) while preserving merchant-entered item titles and action/postback IDs byte-for-byte.
+- **translate.ts** — Added `protectedValues` option to `translateBotResponse`. Explicit strings (merchant names, URLs, product names) are placeholdered longest-first before the LLM call and restored after, on top of existing regex-based protection for dates/times/amounts/references.
+- **executor.ts** — `translateMessage` now delegates to the shared outbound localizer instead of maintaining its own inline translation logic. Footers now localize (previously skipped). Document captions now localize.
+- **bot.service.ts** — 20+ raw `sendText` calls in customer-facing paths (session expiry, help menu, payment recovery, recurring decline, disambiguation) replaced with `sendSessionLocalizedText` which resolves translation context from the session's business tier and detected language.
+- **20 regression tests** — ID stability across languages, protected value preservation, merchant title passthrough, entitlement fail-closed (zero LLM calls for free tier), English baseline, document/image/footer localization, routing invariant (button/list IDs identical across fr/pcm).
+
+### What could break
+- Footer text in button and list messages now gets translated (previously hardcoded English). If any footer contains machine-parseable commands that the bot matches on, those commands would be translated and no longer match. Current codebase footers are display-only hints.
+- `sendSessionLocalizedText` adds a DB query for business subscription_tier on each non-English send. This is acceptable for the session-active path but would be a concern if called in a tight loop (it isn't).
+
 ## 2026-10-03 — Paystack saved-card persistence (#530)
 
 ### What changed

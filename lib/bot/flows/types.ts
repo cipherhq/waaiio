@@ -47,7 +47,25 @@ export interface PromptDocument {
   caption?: string;
 }
 
-export type PromptMessage = PromptText | PromptList | PromptButtons | PromptImage | PromptDocument;
+/**
+ * Optional localization metadata — attached by flows to declare ownership
+ * and protected dynamic values for the outbound localization boundary.
+ *
+ * - protectedValues: strings that must survive translation byte-for-byte
+ *   (merchant names, URLs, transaction references, etc.)
+ * - waaiioOwnedItemTitles: when true, list item titles are Waaiio-owned
+ *   UI labels (capability menus, navigation) and should be translated.
+ *   Default false — merchant-entered product/service names pass through.
+ */
+export interface LocalizationMeta {
+  protectedValues?: string[];
+  waaiioOwnedItemTitles?: boolean;
+}
+
+export type PromptMessage = (PromptText | PromptList | PromptButtons | PromptImage | PromptDocument) & {
+  /** Optional localization metadata for the outbound translation boundary */
+  _localization?: LocalizationMeta;
+};
 
 // ── Validation result ──
 
