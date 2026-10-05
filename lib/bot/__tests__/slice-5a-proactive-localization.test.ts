@@ -521,38 +521,15 @@ describe('B2 — saved-card PIN/security localization', () => {
 // B3: Stale-payment recovery localization
 // ═══════════════════════════════════════════════════════════════
 
-describe('B3 — stale-payment recovery localization', () => {
-  it('recovery send uses sendSessionLocalizedText with protected reference + amount', () => {
+// B3/F2: Stale-payment recovery runtime tests are in:
+//   lib/bot/__tests__/slice-5a-stale-payment-recovery-runtime.test.ts
+// Those tests invoke real BotService.handleMessage() with mocked recovery functions
+// and verify localized presentation, exact references, button IDs, and no mutations.
+
+describe('B3 — stale-payment recovery (supplementary structural)', () => {
+  it('bot.service.ts wires sendSessionLocalizedText for recovery sends', () => {
     const source = readFileSync(resolve(ROOT, 'lib/bot/bot.service.ts'), 'utf-8');
     expect(source).toContain("sendSessionLocalizedText(from, result.message, session, recoveryOpts)");
-    // Protected values constructed from result
-    const recoverySection = source.slice(source.indexOf('recoveryProtected'), source.indexOf('recoveryProtected') + 500);
-    expect(recoverySection).toContain("result.referenceCode");
-    expect(recoverySection).toContain("formatCurrency");
-  });
-
-  it('disambiguation button IDs are authoritative references, not translated', () => {
-    const source = readFileSync(resolve(ROOT, 'lib/bot/bot.service.ts'), 'utf-8');
-    const disambigSection = source.slice(source.indexOf("'disambiguation':"), source.indexOf("'disambiguation':") + 500);
-    // Button IDs use gateway references — never translated
-    expect(disambigSection).toContain('`i_paid_ref:${c.gatewayReference}`');
-    // Button titles use reference codes — authoritative, not translated
-    expect(disambigSection).toContain('c.referenceCode.slice(0, 20)');
-  });
-
-  it('stale-payment-recovery.ts returns messages with authoritative references', async () => {
-    // Exercise the real recovery functions to prove message structure
-    // (not a BotService test — tests the recovery module itself)
-    const source = readFileSync(resolve(ROOT, 'lib/payments/stale-payment-recovery.ts'), 'utf-8');
-    // All returned messages are in the expected format with references
-    expect(source).toContain('purposeLabel(purpose)');
-    expect(source).toContain('formatCurrency(amount, countryCode)');
-    // Recovery functions return typed results, not sending directly
-    expect(source).toContain("type: 'confirmed'");
-    expect(source).toContain("type: 'reconciling'");
-    expect(source).toContain("type: 'not_found'");
-    expect(source).toContain("type: 'disambiguation'");
-    expect(source).toContain("type: 'error'");
   });
 });
 
