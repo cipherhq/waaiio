@@ -500,11 +500,20 @@ describe('Slice 4 — behavioral alias convergence', () => {
 describe('Slice 4 — scope containment', () => {
   it('no migration, routing, capability, or provider files in the PR diff', async () => {
     const { execSync } = await import('child_process');
-    // Compare PR branch to baseline
-    const diff = execSync(
-      'git diff --name-only 0eb5b9cbe4496aa46748978a2d73c52603b43b5c...HEAD',
-      { cwd: ROOT, encoding: 'utf-8' },
-    );
+    // Use merge-base for shallow-clone compatibility, fallback to HEAD~2
+    let diff = '';
+    try {
+      const mergeBase = execSync('git merge-base origin/main HEAD', { cwd: ROOT, encoding: 'utf-8' }).trim();
+      diff = execSync(`git diff --name-only ${mergeBase}...HEAD`, { cwd: ROOT, encoding: 'utf-8' });
+    } catch {
+      // Shallow clone — compare HEAD to parent commits
+      try {
+        diff = execSync('git diff --name-only HEAD~2...HEAD', { cwd: ROOT, encoding: 'utf-8' });
+      } catch {
+        // Ultra-shallow — list tracked modified files only
+        diff = execSync('git diff --name-only HEAD~1', { cwd: ROOT, encoding: 'utf-8' });
+      }
+    }
     const files = diff.split('\n').filter(Boolean);
     const forbidden = files.filter(f =>
       f.includes('supabase/migrations') ||
