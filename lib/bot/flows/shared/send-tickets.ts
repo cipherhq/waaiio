@@ -302,6 +302,16 @@ export async function deliverTicketsEmail(opts: TicketDeliveryContext): Promise<
   if (bizError) throw new Error(`ticket_email_business_lookup_failed:${bizError.message}`);
 
   const { isWhiteLabel: isWl } = await import('@/lib/whitelabel');
+  // Slice 5B: Translate ticket email labels if non-English customer
+  let ticketEmailLabels: import('@/lib/email/localize-email').TicketEmailLabels | undefined;
+  if (opts.translate) {
+    try {
+      const { resolveProactiveLocalization } = await import('@/lib/payments/proactive-localization');
+      const { translateLabels, DEFAULT_TICKET_LABELS } = await import('@/lib/email/localize-email');
+      const l10n = await resolveProactiveLocalization(opts.supabase, guestPhone, businessId);
+      ticketEmailLabels = await translateLabels(DEFAULT_TICKET_LABELS, l10n, [eventName, venue, referenceCode]) as unknown as typeof DEFAULT_TICKET_LABELS;
+    } catch { /* fail closed to English */ }
+  }
   const emailContent = ticketConfirmationEmail({
     firstName: guestName.split(' ')[0] || 'there',
     businessName: biz?.name || 'Event',
@@ -314,6 +324,7 @@ export async function deliverTicketsEmail(opts: TicketDeliveryContext): Promise<
     formattedAmount: opts.amount ? formatCurrency(opts.amount, opts.countryCode || 'US') : 'Paid',
     ticketCodes: tickets.map(t => t.ticketCode),
     whitelabel: isWl(biz?.subscription_tier),
+    labels: ticketEmailLabels,
   });
   const result = await sendEmail({ to: email, ...emailContent });
   if (!result.success) throw new Error('ticket_email_send_failed');
