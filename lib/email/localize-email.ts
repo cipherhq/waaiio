@@ -1,11 +1,12 @@
 /**
  * Email Localization — Slice 5B (#524)
  *
- * Translates Waaiio-owned email presentation labels before HTML rendering.
- * NEVER translates completed HTML. Translation happens at the string layer.
+ * Complete Waaiio-owned email presentation labels for customer transactional emails.
+ * Labels are translated BEFORE HTML rendering — NEVER on completed HTML.
  *
- * Protected values (amounts, references, URLs, merchant names) are passed
- * through translateBotResponse's protectedValues mechanism.
+ * Every label value MUST be HTML-escaped via esc() at the render boundary.
+ * Protected authoritative values (amounts, references, URLs, names) are
+ * passed as separate data parameters and escaped independently.
  *
  * Reuses the existing Slice 5A proactive localization infrastructure.
  */
@@ -14,27 +15,32 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { resolveProactiveLocalization, type ProactiveLocalization } from '@/lib/payments/proactive-localization';
 import { logger } from '@/lib/logger';
 
-/** Pre-translated labels for booking confirmation email */
+// ═══════════════════════════════════════════════════════════════
+// Booking Confirmation Email Labels
+// ═══════════════════════════════════════════════════════════════
+
 export interface BookingEmailLabels {
-  subjectPrefix: string;   // "Confirmed at"
-  heading: string;         // "Confirmed"
-  greeting: string;        // "you're all set with"
+  subject: string;         // "Confirmed at {business} {emoji}"
+  heading: string;         // "Confirmed {emoji}"
+  greeting: string;        // "Hi {name}, you're all set with {business}!"
   reminderNote: string;    // "We'll send you a reminder beforehand. See you soon!"
   calendarBtn: string;     // "Add to Calendar"
-  // Field labels
   lblReference: string;
   lblDate: string;
   lblTime: string;
   lblAmount: string;
 }
 
-/** Pre-translated labels for ticket confirmation email */
+// ═══════════════════════════════════════════════════════════════
+// Ticket Confirmation Email Labels
+// ═══════════════════════════════════════════════════════════════
+
 export interface TicketEmailLabels {
-  heading: string;         // "Ticket Confirmed!"
-  greetingPrefix: string;  // "your {N} tickets for"
-  confirmed: string;       // "is confirmed" / "are confirmed"
+  subject: string;         // "Your tickets for {event} 🎫"
+  heading: string;         // "Ticket Confirmed! 🎫"
+  greeting: string;        // "Hi {name}, your {N} ticket(s) for {event} confirmed!"
   showQr: string;          // "Show your QR code or ticket code at the entrance..."
-  enjoyEvent: string;      // "Enjoy the event!"
+  enjoyEvent: string;      // "Enjoy the event! 🎉"
   lblEvent: string;
   lblOrganizer: string;
   lblDate: string;
@@ -44,13 +50,17 @@ export interface TicketEmailLabels {
   lblAmount: string;
   lblReference: string;
   lblTicketCodes: string;  // "Your Ticket Codes:"
-  ticketLabel: string;     // "ticket" / "tickets"
+  lblTicketN: string;      // "Ticket" (for "Ticket 1", "Ticket 2")
 }
 
-/** Pre-translated labels for donation receipt email */
+// ═══════════════════════════════════════════════════════════════
+// Donation Receipt Email Labels
+// ═══════════════════════════════════════════════════════════════
+
 export interface DonationEmailLabels {
+  subject: string;         // "Donation receipt — {amount} to {campaign}"
   heading: string;         // "Donation Received"
-  thankYou: string;        // "thank you for your generous donation to"
+  greeting: string;        // "Hi {name}, thank you for your generous donation to {campaign}!"
   support: string;         // "Your support makes a difference. Thank you!"
   lblCampaign: string;
   lblOrganizer: string;
@@ -58,12 +68,14 @@ export interface DonationEmailLabels {
   lblReference: string;
 }
 
-/** Pre-translated labels for invoice email */
+// ═══════════════════════════════════════════════════════════════
+// Invoice Email Labels
+// ═══════════════════════════════════════════════════════════════
+
 export interface InvoiceEmailLabels {
-  subjectPrefix: string;   // "Invoice"
-  subjectFrom: string;     // "from"
-  heading: string;         // "Invoice from"
-  greeting: string;        // "you have received an invoice from"
+  subject: string;         // "Invoice {ref} from {business}"
+  heading: string;         // "Invoice from {business}"
+  greeting: string;        // "Hi {name}, you have received an invoice from {business}."
   viewPay: string;         // "View & Pay Invoice"
   copyLink: string;        // "You can also copy and paste this link into your browser:"
   lblReference: string;
@@ -75,36 +87,109 @@ export interface InvoiceEmailLabels {
   colAmount: string;       // "Amount"
 }
 
-/** English defaults — used when no translation is needed */
+// ═══════════════════════════════════════════════════════════════
+// Booking Reminder Email Labels
+// ═══════════════════════════════════════════════════════════════
+
+export interface BookingReminderEmailLabels {
+  subject: string;         // "Reminder: {service} at {business} tomorrow"
+  heading: string;         // "Reminder"
+  greeting: string;        // "Hi {name}, this is a friendly reminder about {business} tomorrow."
+  details: string;         // "Here are your booking details:"
+  seeYou: string;          // "See you tomorrow!"
+  lblService: string;
+  lblDate: string;
+  lblTime: string;
+  lblReference: string;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Payment Received Email Labels (customer-facing when sent to customer)
+// ═══════════════════════════════════════════════════════════════
+
+export interface PaymentReceivedEmailLabels {
+  subject: string;         // "Payment received — {amount}"
+  heading: string;         // "Payment Received"
+  message: string;         // "A payment has been received."
+  lblService: string;
+  lblAmount: string;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Email wrapper labels
+// ═══════════════════════════════════════════════════════════════
+
+export interface EmailWrapperLabels {
+  footer: string;          // "All rights reserved."
+  tagline: string;         // "Automate your business with WhatsApp"
+  htmlLang: string;        // "en" | "fr" | etc.
+}
+
+// ═══════════════════════════════════════════════════════════════
+// English defaults
+// ═══════════════════════════════════════════════════════════════
+
 export const DEFAULT_BOOKING_LABELS: BookingEmailLabels = {
-  subjectPrefix: 'Confirmed at', heading: 'Confirmed', greeting: "you're all set with",
+  subject: 'Confirmed at {business} {emoji}',
+  heading: 'Confirmed {emoji}',
+  greeting: "Hi {name}, you're all set with {business}!",
   reminderNote: "We'll send you a reminder beforehand. See you soon!",
   calendarBtn: 'Add to Calendar',
   lblReference: 'Reference', lblDate: 'Date', lblTime: 'Time', lblAmount: 'Amount',
 };
 
 export const DEFAULT_TICKET_LABELS: TicketEmailLabels = {
-  heading: 'Ticket Confirmed!', greetingPrefix: 'your', confirmed: 'confirmed',
+  subject: 'Your {count} {ticketWord} for {event} 🎫',
+  heading: 'Ticket Confirmed! 🎫',
+  greeting: 'Hi {name}, your {count} {ticketWord} for {event} confirmed!',
   showQr: 'Show your QR code or ticket code at the entrance. Your tickets are also available on WhatsApp.',
-  enjoyEvent: 'Enjoy the event!',
+  enjoyEvent: 'Enjoy the event! 🎉',
   lblEvent: 'Event', lblOrganizer: 'Organizer', lblDate: 'Date', lblTime: 'Time',
   lblVenue: 'Venue', lblTickets: 'Tickets', lblAmount: 'Amount', lblReference: 'Reference',
-  lblTicketCodes: 'Your Ticket Codes:', ticketLabel: 'ticket',
+  lblTicketCodes: 'Your Ticket Codes:', lblTicketN: 'Ticket',
 };
 
 export const DEFAULT_DONATION_LABELS: DonationEmailLabels = {
-  heading: 'Donation Received', thankYou: 'thank you for your generous donation to',
+  subject: 'Donation receipt — {amount} to {campaign}',
+  heading: 'Donation Received',
+  greeting: 'Hi {name}, thank you for your generous donation to {campaign}!',
   support: 'Your support makes a difference. Thank you!',
   lblCampaign: 'Campaign', lblOrganizer: 'Organizer', lblAmount: 'Amount', lblReference: 'Reference',
 };
 
 export const DEFAULT_INVOICE_LABELS: InvoiceEmailLabels = {
-  subjectPrefix: 'Invoice', subjectFrom: 'from', heading: 'Invoice from',
-  greeting: 'you have received an invoice from',
+  subject: 'Invoice {ref} from {business}',
+  heading: 'Invoice from {business}',
+  greeting: 'Hi {name}, you have received an invoice from {business}.',
   viewPay: 'View & Pay Invoice', copyLink: 'You can also copy and paste this link into your browser:',
   lblReference: 'Reference', lblAmount: 'Amount', lblDueDate: 'Due Date',
   lblItems: 'Items:', colItem: 'Item', colQty: 'Qty', colAmount: 'Amount',
 };
+
+export const DEFAULT_REMINDER_LABELS: BookingReminderEmailLabels = {
+  subject: 'Reminder: {service} at {business} tomorrow',
+  heading: 'Reminder',
+  greeting: 'Hi {name}, this is a friendly reminder about {business} tomorrow.',
+  details: 'Here are your booking details:', seeYou: 'See you tomorrow!',
+  lblService: 'Service', lblDate: 'Date', lblTime: 'Time', lblReference: 'Reference',
+};
+
+export const DEFAULT_PAYMENT_RECEIVED_LABELS: PaymentReceivedEmailLabels = {
+  subject: 'Payment received — {amount}',
+  heading: 'Payment Received',
+  message: 'A new payment has been received.',
+  lblService: 'Service', lblAmount: 'Amount',
+};
+
+export const DEFAULT_WRAPPER_LABELS: EmailWrapperLabels = {
+  footer: 'All rights reserved.',
+  tagline: 'Automate your business with WhatsApp',
+  htmlLang: 'en',
+};
+
+// ═══════════════════════════════════════════════════════════════
+// Helpers
+// ═══════════════════════════════════════════════════════════════
 
 /**
  * Resolve localization context for email/PDF rendering.
@@ -142,4 +227,17 @@ export async function translateLabels<T extends Record<string, string>>(
     logger.warn('[EMAIL-L10N] Label translation failed (non-fatal), using English:', err);
     return labels;
   }
+}
+
+/**
+ * Interpolate placeholder tokens in label strings.
+ * Placeholders are {name}, {business}, {amount}, etc.
+ * Values are NOT HTML-escaped here — the caller must escape at the render boundary.
+ */
+export function fillLabel(template: string, values: Record<string, string>): string {
+  let result = template;
+  for (const [key, value] of Object.entries(values)) {
+    result = result.replace(new RegExp(`\\{${key}\\}`, 'g'), value);
+  }
+  return result;
 }

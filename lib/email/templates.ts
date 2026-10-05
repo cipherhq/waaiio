@@ -2,10 +2,13 @@
 
 const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
 
-// Slice 5B: import email label defaults
+// Slice 5B: import email localization
 import {
   DEFAULT_BOOKING_LABELS, DEFAULT_TICKET_LABELS, DEFAULT_DONATION_LABELS, DEFAULT_INVOICE_LABELS,
+  DEFAULT_REMINDER_LABELS, DEFAULT_PAYMENT_RECEIVED_LABELS, DEFAULT_WRAPPER_LABELS,
+  fillLabel,
   type BookingEmailLabels, type TicketEmailLabels, type DonationEmailLabels, type InvoiceEmailLabels,
+  type BookingReminderEmailLabels, type PaymentReceivedEmailLabels, type EmailWrapperLabels,
 } from './localize-email';
 
 // ─── HTML escape ──────────────────────────────────────────────────
@@ -25,6 +28,7 @@ interface WrapOptions {
   businessName?: string;
   logoUrl?: string;
   whitelabel?: boolean;
+  wrapperLabels?: EmailWrapperLabels;
 }
 
 export function wrap(body: string, opts?: WrapOptions): string {
@@ -43,8 +47,9 @@ export function wrap(body: string, opts?: WrapOptions): string {
         <td style="font-size:18px;font-weight:700"><span style="color:#25D366">wa</span><span style="color:#E5993E">ai</span><span style="color:#B5A3E0">io</span></td>
       </tr></table>`;
 
+  const WL = opts?.wrapperLabels || DEFAULT_WRAPPER_LABELS;
   return `<!DOCTYPE html>
-<html lang="en">
+<html lang="${esc(WL.htmlLang)}">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -70,10 +75,10 @@ export function wrap(body: string, opts?: WrapOptions): string {
   ${wl ? '' : `<tr>
     <td style="padding:24px 32px;border-top:1px solid #e4e4e7;text-align:center">
       <p style="margin:0;font-size:12px;color:#a1a1aa">
-        &copy; ${new Date().getFullYear()} Waaiio. All rights reserved.
+        &copy; ${new Date().getFullYear()} Waaiio. ${esc(WL.footer)}
       </p>
       <p style="margin:4px 0 0;font-size:12px;color:#a1a1aa">
-        Automate your business with AI-powered WhatsApp bots.
+        ${esc(WL.tagline)}
       </p>
     </td>
   </tr>`}
@@ -298,6 +303,7 @@ export function bookingConfirmationEmail(details: {
   const { firstName, businessName, businessLogoUrl, date, time, quantity, referenceCode, amount, formattedAmount, quantityLabel, confirmationEmoji, googleCalendarUrl, whitelabel } = details;
   const L = details.labels || DEFAULT_BOOKING_LABELS;
   const amountDisplay = formattedAmount || (amount > 0 ? amount.toLocaleString() : '');
+  const vals = { business: businessName, name: firstName, emoji: confirmationEmoji };
   const calendarBtn = googleCalendarUrl
     ? `<table cellpadding="0" cellspacing="0" style="margin:16px 0"><tr>
         <td style="background:#4285f4;border-radius:8px;padding:10px 20px">
@@ -306,20 +312,20 @@ export function bookingConfirmationEmail(details: {
       </tr></table>`
     : '';
   return {
-    subject: `${L.subjectPrefix} ${businessName} ${confirmationEmoji}`,
+    subject: fillLabel(L.subject, vals),
     from: businessFrom(businessName),
     html: wrap(`
-      ${h(`${L.heading} ${confirmationEmoji}`)}
-      ${p(`Hi ${esc(firstName)}, ${L.greeting} <strong>${esc(businessName)}</strong>!`)}
+      ${h(esc(fillLabel(L.heading, vals)))}
+      ${p(esc(fillLabel(L.greeting, vals)))}
       ${table(
-        kv(L.lblReference, `<code style="background:#f4f4f5;padding:2px 6px;border-radius:4px;font-family:monospace">${esc(referenceCode)}</code>`) +
-        kv(L.lblDate, esc(date)) +
-        kv(L.lblTime, esc(time)) +
+        kv(esc(L.lblReference), `<code style="background:#f4f4f5;padding:2px 6px;border-radius:4px;font-family:monospace">${esc(referenceCode)}</code>`) +
+        kv(esc(L.lblDate), esc(date)) +
+        kv(esc(L.lblTime), esc(time)) +
         kv(esc(quantityLabel), String(quantity)) +
-        (amount > 0 ? kv(L.lblAmount, esc(amountDisplay)) : '')
+        (amount > 0 ? kv(esc(L.lblAmount), esc(amountDisplay)) : '')
       )}
       ${calendarBtn}
-      ${p(L.reminderNote)}
+      ${p(esc(L.reminderNote))}
     `, { businessName, logoUrl: businessLogoUrl, whitelabel }),
   };
 }
@@ -609,6 +615,7 @@ export function invoiceEmail(details: {
 }) {
   const { businessName, businessLogoUrl, referenceCode, totalAmount, dueDate, customerName, items, invoiceUrl } = details;
   const L = details.labels || DEFAULT_INVOICE_LABELS;
+  const vals = { ref: referenceCode, business: businessName, name: customerName };
 
   const itemRows = items.map(i =>
     `<tr>
@@ -619,18 +626,18 @@ export function invoiceEmail(details: {
   ).join('');
 
   return {
-    subject: `${L.subjectPrefix} ${referenceCode} ${L.subjectFrom} ${businessName}`,
+    subject: fillLabel(L.subject, vals),
     from: businessFrom(businessName),
     html: wrap(`
-      ${h(`${L.heading} ${esc(businessName)}`)}
-      ${p(`Hi ${esc(customerName)}, ${L.greeting} <strong>${esc(businessName)}</strong>.`)}
+      ${h(esc(fillLabel(L.heading, vals)))}
+      ${p(esc(fillLabel(L.greeting, vals)))}
       ${table(
-        kv(L.lblReference, `<code style="background:#f4f4f5;padding:2px 6px;border-radius:4px;font-family:monospace">${esc(referenceCode)}</code>`) +
-        kv(L.lblAmount, `<strong>${esc(totalAmount)}</strong>`) +
-        kv(L.lblDueDate, esc(dueDate))
+        kv(esc(L.lblReference), `<code style="background:#f4f4f5;padding:2px 6px;border-radius:4px;font-family:monospace">${esc(referenceCode)}</code>`) +
+        kv(esc(L.lblAmount), `<strong>${esc(totalAmount)}</strong>`) +
+        kv(esc(L.lblDueDate), esc(dueDate))
       )}
       ${items.length > 0 ? `
-        ${p(`<strong>${L.lblItems}</strong>`)}
+        ${p(`<strong>${esc(L.lblItems)}</strong>`)}
         <table cellpadding="0" cellspacing="0" style="width:100%;margin:0 0 16px">
           <tr>
             <td style="padding:6px 0;font-size:11px;font-weight:600;color:#71717a;border-bottom:1px solid #e4e4e7">${esc(L.colItem)}</td>
@@ -640,8 +647,8 @@ export function invoiceEmail(details: {
           ${itemRows}
         </table>
       ` : ''}
-      ${btn(L.viewPay, invoiceUrl)}
-      ${p(L.copyLink)}
+      ${btn(esc(L.viewPay), invoiceUrl)}
+      ${p(esc(L.copyLink))}
       ${p(`<a href="${invoiceUrl}" style="color:#7c3aed;word-break:break-all">${invoiceUrl}</a>`)}
     `, { businessName, logoUrl: businessLogoUrl, whitelabel: details.whitelabel }),
   };
@@ -665,28 +672,29 @@ export function ticketConfirmationEmail(details: {
 }) {
   const { firstName, businessName, businessLogoUrl, eventName, eventDate, eventTime, venue, quantity, referenceCode, formattedAmount, ticketCodes } = details;
   const L = details.labels || DEFAULT_TICKET_LABELS;
-  const ticketLabel = quantity === 1 ? L.ticketLabel : `${L.ticketLabel}s`;
-  const ticketList = ticketCodes.map((code, i) => kv(`${L.ticketLabel} ${i + 1}`, `<code style="background:#f4f4f5;padding:2px 6px;border-radius:4px;font-family:monospace">${esc(code)}</code>`)).join('');
+  const ticketWord = quantity === 1 ? 'ticket' : 'tickets';
+  const vals = { name: firstName, count: String(quantity), ticketWord, event: eventName };
+  const ticketList = ticketCodes.map((code, i) => kv(esc(`${L.lblTicketN} ${i + 1}`), `<code style="background:#f4f4f5;padding:2px 6px;border-radius:4px;font-family:monospace">${esc(code)}</code>`)).join('');
 
   return {
-    subject: `Your ${ticketLabel} for ${eventName} 🎫`,
+    subject: fillLabel(L.subject, vals),
     from: businessFrom(businessName),
     html: wrap(`
-      ${h(`${L.heading} 🎫`)}
-      ${p(`Hi ${esc(firstName)}, ${L.greetingPrefix} ${quantity} ${ticketLabel} for <strong>${esc(eventName)}</strong> ${quantity === 1 ? 'is' : 'are'} ${L.confirmed}!`)}
+      ${h(esc(L.heading))}
+      ${p(esc(fillLabel(L.greeting, vals)))}
       ${table(
-        kv(L.lblEvent, `<strong>${esc(eventName)}</strong>`) +
-        kv(L.lblOrganizer, esc(businessName)) +
-        kv(L.lblDate, esc(eventDate)) +
-        (eventTime ? kv(L.lblTime, esc(eventTime)) : '') +
-        (venue ? kv(L.lblVenue, esc(venue)) : '') +
-        kv(L.lblTickets, String(quantity)) +
-        kv(L.lblAmount, esc(formattedAmount)) +
-        kv(L.lblReference, `<code style="background:#f4f4f5;padding:2px 6px;border-radius:4px;font-family:monospace">${esc(referenceCode)}</code>`)
+        kv(esc(L.lblEvent), `<strong>${esc(eventName)}</strong>`) +
+        kv(esc(L.lblOrganizer), esc(businessName)) +
+        kv(esc(L.lblDate), esc(eventDate)) +
+        (eventTime ? kv(esc(L.lblTime), esc(eventTime)) : '') +
+        (venue ? kv(esc(L.lblVenue), esc(venue)) : '') +
+        kv(esc(L.lblTickets), String(quantity)) +
+        kv(esc(L.lblAmount), esc(formattedAmount)) +
+        kv(esc(L.lblReference), `<code style="background:#f4f4f5;padding:2px 6px;border-radius:4px;font-family:monospace">${esc(referenceCode)}</code>`)
       )}
-      ${ticketList ? `${p(`<strong>${L.lblTicketCodes}</strong>`)}${table(ticketList)}` : ''}
-      ${p(L.showQr)}
-      ${p(`${L.enjoyEvent} 🎉`)}
+      ${ticketList ? `${p(`<strong>${esc(L.lblTicketCodes)}</strong>`)}${table(ticketList)}` : ''}
+      ${p(esc(L.showQr))}
+      ${p(esc(L.enjoyEvent))}
     `, { businessName, logoUrl: businessLogoUrl, whitelabel: details.whitelabel }),
   };
 }
@@ -704,20 +712,21 @@ export function donationReceiptEmail(details: {
   const { donorName, businessName, campaignTitle, formattedAmount, referenceCode } = details;
   const L = details.labels || DEFAULT_DONATION_LABELS;
   const firstName = donorName.split(' ')[0] || 'there';
+  const vals = { name: firstName, campaign: campaignTitle, amount: formattedAmount };
 
   return {
-    subject: `Donation receipt — ${formattedAmount} to ${campaignTitle}`,
+    subject: fillLabel(L.subject, vals),
     from: businessFrom(businessName),
     html: wrap(`
-      ${h(L.heading)}
-      ${p(`Hi ${esc(firstName)}, ${L.thankYou} <strong>${esc(campaignTitle)}</strong>!`)}
+      ${h(esc(L.heading))}
+      ${p(esc(fillLabel(L.greeting, vals)))}
       ${table(
-        kv(L.lblCampaign, `<strong>${esc(campaignTitle)}</strong>`) +
-        kv(L.lblOrganizer, esc(businessName)) +
-        kv(L.lblAmount, esc(formattedAmount)) +
-        kv(L.lblReference, `<code style="background:#f4f4f5;padding:2px 6px;border-radius:4px;font-family:monospace">${esc(referenceCode)}</code>`)
+        kv(esc(L.lblCampaign), `<strong>${esc(campaignTitle)}</strong>`) +
+        kv(esc(L.lblOrganizer), esc(businessName)) +
+        kv(esc(L.lblAmount), esc(formattedAmount)) +
+        kv(esc(L.lblReference), `<code style="background:#f4f4f5;padding:2px 6px;border-radius:4px;font-family:monospace">${esc(referenceCode)}</code>`)
       )}
-      ${p(L.support)}
+      ${p(esc(L.support))}
     `, { businessName, whitelabel: details.whitelabel }),
   };
 }
