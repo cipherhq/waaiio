@@ -27,6 +27,8 @@ export interface TicketPdfOptions {
   section?: string;        // optional section
   row?: string;            // optional row
   seat?: string;           // optional seat
+  /** Slice 5B: pre-translated Waaiio-owned labels */
+  labels?: import('./localize-pdf').TicketPdfLabels;
 }
 
 // Brand colors
@@ -58,6 +60,10 @@ async function fetchImageBuffer(url: string): Promise<Buffer | null> {
 }
 
 export async function generateTicketsPdf(opts: TicketPdfOptions): Promise<Buffer> {
+  // Slice 5B: Use localized labels or English defaults
+  const { DEFAULT_TICKET_LABELS: TICKET_DEFAULTS } = await import('./localize-pdf');
+  const TL = opts.labels || TICKET_DEFAULTS;
+
   // A5 landscape: 595.28 x 419.53 points
   const pageWidth = 595.28;
   const pageHeight = 419.53;
@@ -148,17 +154,17 @@ export async function generateTicketsPdf(opts: TicketPdfOptions): Promise<Buffer
     const detailLineHeight = 20;
 
     const detailRows: [string, string][] = [
-      ['DATE', opts.eventDate],
+      [TL.lblDate, opts.eventDate],
     ];
-    if (opts.eventTime) detailRows.push(['TIME', opts.eventTime]);
-    if (opts.venue) detailRows.push(['VENUE', opts.venue]);
-    detailRows.push(['ATTENDEE', opts.guestName]);
-    detailRows.push(['REF', opts.referenceCode]);
+    if (opts.eventTime) detailRows.push([TL.lblTime, opts.eventTime]);
+    if (opts.venue) detailRows.push([TL.lblVenue, opts.venue]);
+    detailRows.push([TL.lblAttendee, opts.guestName]);
+    detailRows.push([TL.lblRef, opts.referenceCode]);
     if (opts.price !== undefined && opts.price > 0) {
       const priceStr = opts.currencyCode
         ? formatCurrencyCode(opts.price, opts.currencyCode)
         : formatCurrency(opts.price, (opts.countryCode || 'NG') as CountryCode);
-      detailRows.push(['PRICE', priceStr]);
+      detailRows.push([TL.lblPrice, priceStr]);
     }
     // Section/Row/Seat
     const seatParts: string[] = [];
@@ -166,7 +172,7 @@ export async function generateTicketsPdf(opts: TicketPdfOptions): Promise<Buffer
     if (opts.row) seatParts.push(`Row ${opts.row}`);
     if (opts.seat) seatParts.push(`Seat ${opts.seat}`);
     if (seatParts.length > 0) {
-      detailRows.push(['SEAT', seatParts.join(' · ')]);
+      detailRows.push([TL.lblSeat, seatParts.join(' · ')]);
     }
 
     for (const [label, value] of detailRows) {
@@ -180,7 +186,7 @@ export async function generateTicketsPdf(opts: TicketPdfOptions): Promise<Buffer
     // Ticket count
     y += 4;
     doc.fontSize(9).font('Helvetica').fillColor(TEXT_SECONDARY)
-      .text(`Ticket ${ticket.ticketNumber} of ${ticket.totalTickets}`, margin, y);
+      .text(`${TL.ticketOf} ${ticket.ticketNumber} / ${ticket.totalTickets}`, margin, y);
 
     // ── RIGHT SIDE: QR code + ticket code ──
     const rightX = margin + leftWidth + 20;
@@ -222,7 +228,7 @@ export async function generateTicketsPdf(opts: TicketPdfOptions): Promise<Buffer
     // "Scan to verify" label
     const scanY = qrY + qrSize + 16;
     doc.fontSize(8).font('Helvetica').fillColor(TEXT_MUTED)
-      .text('Scan to verify', rightX, scanY, { width: rightWidth, align: 'center' });
+      .text(TL.scanVerify, rightX, scanY, { width: rightWidth, align: 'center' });
 
     // Ticket code badge
     const codeY = scanY + 20;
@@ -238,7 +244,7 @@ export async function generateTicketsPdf(opts: TicketPdfOptions): Promise<Buffer
     const footerY = pageHeight - margin - 6;
     if (!isWhiteLabel(opts.subscriptionTier)) {
       doc.fontSize(7).font('Helvetica').fillColor('#bbbbbb')
-        .text('Powered by Waaiio  ·  waaiio.com', margin, footerY, { width: contentWidth, align: 'center' });
+        .text(`${TL.footer}  ·  waaiio.com`, margin, footerY, { width: contentWidth, align: 'center' });
     }
   }
 

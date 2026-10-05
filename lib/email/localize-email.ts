@@ -208,7 +208,7 @@ export async function resolveEmailLocalization(
  * Each label is translated individually with the provided protectedValues.
  * Returns the original labels on any failure (fail-closed to English).
  */
-export async function translateLabels<T extends Record<string, string>>(
+export async function translateLabels<T extends { [K in keyof T]: string }>(
   labels: T,
   l10n: ProactiveLocalization,
   protectedValues?: string[],
