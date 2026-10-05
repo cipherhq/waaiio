@@ -195,20 +195,31 @@ describe('Blocker 1 — BotService guided action executes, not just keyword skip
       },
       business: BIZ, capabilities: [{ capability: 'scheduling', is_enabled: true, sort_order: 0 }], enabledLanguages: ['en'],
     });
+    // Intercept bot_sessions update calls to capture the payload
+    const sessionUpdatePayloads: unknown[] = [];
+    const origFrom = supabase.from;
+    supabase.from = vi.fn((table: string) => {
+      const chain = origFrom(table);
+      if (table === 'bot_sessions') {
+        const origUpdate = chain.update;
+        chain.update = vi.fn((data: unknown) => {
+          sessionUpdatePayloads.push(data);
+          return origUpdate(data);
+        });
+      }
+      return chain;
+    });
+
     const bot = new BotService(supabase, sender, createMockStandalone(), createMockIntelligence());
     await bot.handleMessage(PHONE, 'my bookings', 'text', undefined, BIZ_ID);
 
     // 1. Keyword action NOT called
     expect(mockExecuteKeywordAction).not.toHaveBeenCalled();
-    // 2. The pc_history path executed — session updated to 'my_bookings' step
-    const sessionUpdates = supabase.from.mock.calls
-      .filter(([t]: [string]) => t === 'bot_sessions');
-    // The post_completion handler calls supabase.from('bot_sessions').update({ current_step: 'my_bookings' })
-    const updateCalls = sessionUpdates.flatMap(([, ...rest]: unknown[]) => rest);
-    // Verify the session step was changed to my_bookings (production pc_history behavior)
-    const allFromCalls = supabase.from.mock.calls.map(([t]: [string]) => t);
-    // The handler routes to handleMyBookings which reads bookings
-    expect(allFromCalls).toContain('bot_sessions');
+    // 2. The pc_history path set current_step to 'my_bookings'
+    const stepUpdates = sessionUpdatePayloads.filter(
+      (p: any) => p?.current_step === 'my_bookings',
+    );
+    expect(stepUpdates.length).toBeGreaterThan(0);
   });
 });
 
@@ -263,6 +274,87 @@ describe('Blocker 3 — bounded poll/campaign ownership', () => {
     const source = readFileSync(resolve(ROOT, 'lib/bot/bot.service.ts'), 'utf-8');
     expect(source).not.toContain("'select_campaign': null");
     expect(source).not.toContain("'poll_question': null");
+  });
+
+  it('poll_question: exact current option text owns input via session_data.poll_options', () => {
+    const source = readFileSync(resolve(ROOT, 'lib/bot/bot.service.ts'), 'utf-8');
+    expect(source).toContain('session.session_data?.poll_options');
+    expect(source).toContain('.some(opt => opt.toLowerCase() === text.toLowerCase().trim())');
+  });
+
+  it('select_campaign: exact current campaign title owns input via session_data._campaign_titles', () => {
+    const source = readFileSync(resolve(ROOT, 'lib/bot/bot.service.ts'), 'utf-8');
+    expect(source).toContain('session.session_data?._campaign_titles');
+    expect(source).toContain('.some(t => t.toLowerCase() === text.toLowerCase().trim())');
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// Dynamic ownership collision tests (real BotService runtime)
+// ═══════════════════════════════════════════════════════════════
+
+describe('Dynamic ownership — poll option beats colliding keyword (real BotService)', () => {
+  it('poll_question: exact option "Pricing" beats colliding "pricing" keyword', async () => {
+    const sender = createCaptureSender();
+    const collidingKw = { id: 'kw-pr', keyword: 'pricing', match_type: 'exact', action_type: 'navigate_step', payload: '{"action":"show_pricing"}', priority: 10, scope: 'system', category: null, business_id: null, campaign_id: null, description: null };
+    mockLoadUnifiedKeywords.mockResolvedValue([collidingKw]);
+    mockMatchUnifiedKeyword.mockImplementation((t: string) => t.toLowerCase().trim() === 'pricing' ? collidingKw : null);
+
+    const supabase = createTableMock({
+      activeSession: {
+        id: 'sess-poll', whatsapp_number: PHONE, business_id: BIZ_ID, user_id: 'user-1',
+        current_step: 'poll_question', is_active: true, version: 1,
+        session_data: {
+          capabilities: ['poll'], business_category: 'salon',
+          poll_id: 'poll-1', poll_options: ['Pricing', 'Quality', 'Service'],
+          poll_allow_change: false,
+        },
+        conversation_log: [], expires_at: new Date(Date.now() + 86400000).toISOString(),
+      },
+      business: BIZ, capabilities: [{ capability: 'poll', is_enabled: true, sort_order: 0 }], enabledLanguages: ['en'],
+    });
+    const bot = new BotService(supabase, sender, createMockStandalone(), createMockIntelligence());
+    const executeSpy = vi.spyOn(bot['flowExecutor'], 'execute');
+
+    await bot.handleMessage(PHONE, 'Pricing', 'text', undefined, BIZ_ID);
+
+    // Keyword action NOT called — poll step owns the exact option text
+    expect(mockExecuteKeywordAction).not.toHaveBeenCalled();
+    // FlowExecutor receives the input
+    expect(executeSpy).toHaveBeenCalled();
+    expect(executeSpy.mock.calls[0][1]).toBe('Pricing');
+  });
+});
+
+describe('Dynamic ownership — campaign title beats colliding keyword (real BotService)', () => {
+  it('select_campaign: exact title "Building Fund" beats colliding keyword', async () => {
+    const sender = createCaptureSender();
+    const collidingKw = { id: 'kw-bf', keyword: 'building fund', match_type: 'exact', action_type: 'reply', payload: '{"message":"keyword reply"}', priority: 10, scope: 'business', category: null, business_id: BIZ_ID, campaign_id: null, description: null };
+    mockLoadUnifiedKeywords.mockResolvedValue([collidingKw]);
+    mockMatchUnifiedKeyword.mockImplementation((t: string) => t.toLowerCase().trim() === 'building fund' ? collidingKw : null);
+
+    const supabase = createTableMock({
+      activeSession: {
+        id: 'sess-camp', whatsapp_number: PHONE, business_id: BIZ_ID, user_id: 'user-1',
+        current_step: 'select_campaign', is_active: true, version: 1,
+        session_data: {
+          capabilities: ['crowdfunding'], business_category: 'church',
+          _campaign_titles: ['Building Fund', 'Youth Education'],
+        },
+        conversation_log: [], expires_at: new Date(Date.now() + 86400000).toISOString(),
+      },
+      business: { ...BIZ, category: 'church' }, capabilities: [{ capability: 'crowdfunding', is_enabled: true, sort_order: 0 }], enabledLanguages: ['en'],
+    });
+    const bot = new BotService(supabase, sender, createMockStandalone(), createMockIntelligence());
+    const executeSpy = vi.spyOn(bot['flowExecutor'], 'execute');
+
+    await bot.handleMessage(PHONE, 'Building Fund', 'text', undefined, BIZ_ID);
+
+    // Keyword action NOT called — campaign step owns the exact title
+    expect(mockExecuteKeywordAction).not.toHaveBeenCalled();
+    // FlowExecutor receives the input
+    expect(executeSpy).toHaveBeenCalled();
+    expect(executeSpy.mock.calls[0][1]).toBe('Building Fund');
   });
 });
 

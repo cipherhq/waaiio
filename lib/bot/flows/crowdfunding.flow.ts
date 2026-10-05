@@ -88,6 +88,9 @@ const selectCampaignStep: FlowStepConfig = {
 
     const country = (ctx.business.country_code || 'NG') as CountryCode;
 
+    // Store campaign titles in session for BotService step-owned input matching
+    ctx.session.session_data._campaign_titles = campaigns.map(c => c.title);
+
     return [{
       type: 'list',
       title: 'Active Campaigns',

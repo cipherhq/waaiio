@@ -2600,15 +2600,20 @@ export class BotService {
     };
     const isFreeTextStepForKeywords = isChatMode || ['collect_name', 'collect_other_name', 'collect_email', 'special_requests', 'review_text', 'enter_amount', 'collect_address', 'queue_collect_name', 'select_business_suggestion', 'enter_referral_code', 'collect_pickup_address', 'collect_dropoff_address', 'collect_package_description', 'collect_venue', 'enter_promo_code', 'save_card_pin', 'verify_card_pin', 'replace_card_pin'].includes(step);
     const stepOwnedSet = STEP_OWNED_INPUTS[step];
-    // Bounded ownership: poll_question owns postback/numeric/escape inputs only
+    // Bounded ownership: poll_question owns postback/numeric/escape + exact current option text
     const isPollOwned = step === 'poll_question' && (
       /^poll_vote_\d+$/.test(text) || /^\d{1,2}$/.test(text.trim()) ||
-      ['cancel', 'skip', 'exit', 'no thanks'].includes(text.toLowerCase().trim())
+      ['cancel', 'skip', 'exit', 'no thanks'].includes(text.toLowerCase().trim()) ||
+      // Dynamic: exact current poll option text from session_data
+      ((session.session_data?.poll_options as string[]) || [])
+        .some(opt => opt.toLowerCase() === text.toLowerCase().trim())
     );
-    // Bounded ownership: select_campaign owns postback/go_back/numeric inputs only;
-    // typed campaign names go through keyword routing first (if no keyword matches, they reach the step validator)
+    // Bounded ownership: select_campaign owns postback/go_back/numeric + exact current campaign title
     const isCampaignOwned = step === 'select_campaign' && (
-      text.startsWith('campaign_') || text === 'go_back' || /^\d{1,2}$/.test(text.trim())
+      text.startsWith('campaign_') || text === 'go_back' || /^\d{1,2}$/.test(text.trim()) ||
+      // Dynamic: exact current eligible campaign title from session_data
+      ((session.session_data?._campaign_titles as string[]) || [])
+        .some(t => t.toLowerCase() === text.toLowerCase().trim())
     );
     const inputOwnedByStep = isPollOwned || isCampaignOwned ||
       (stepOwnedSet !== undefined && stepOwnedSet.has(text.toLowerCase().trim()));
