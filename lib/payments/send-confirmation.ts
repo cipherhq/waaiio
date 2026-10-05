@@ -9,6 +9,7 @@ import { getCalendarLinksText } from '@/lib/calendar/generate-links';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 import type { ResolvedChannel } from '@/lib/channels/channel-resolver';
 import { getEntityBalance } from '@/lib/payments/entity-balance';
+import { resolveProactiveLocalization } from '@/lib/payments/proactive-localization';
 
 /** Log a non-fatal error with safe structured metadata. */
 function logSafeError(prefix: string, label: string, error: unknown): void {
@@ -410,6 +411,20 @@ export async function sendProactiveConfirmation(
   } else if (payment.invoice_id) {
     confirmationTitle = 'Invoice Payment';
   }
+
+  // Slice 5A: Resolve proactive localization once for reuse in confirmation + post-completion
+  let proactiveTranslate: ((text: string, pv?: string[]) => Promise<string>) | undefined;
+  if (customerPhone && businessId) {
+    try {
+      const proactiveL10n = await resolveProactiveLocalization(supabase, customerPhone, businessId);
+      if (proactiveL10n.language !== 'en') {
+        proactiveTranslate = proactiveL10n.translate;
+      }
+    } catch (err) {
+      logger.warn(`${logPrefix} Proactive localization setup failed (non-fatal):`, err);
+    }
+  }
+
   const lines = [
     `✅ *${confirmationTitle} Confirmed!*`,
     '',
@@ -655,7 +670,41 @@ export async function sendProactiveConfirmation(
   // Save/Replace Card CTA is now a separate button message sent AFTER finalization.
   // See checkAndOfferSavedCard() called after finalizeConfirmationClaim.
 
-  // ── 5. Resolve channel + send (protected by checkpoint 1 above) ──
+  // ── 4b. Localize the FULLY ASSEMBLED confirmation message (Slice 5A) ──
+  // Translation happens AFTER all customer-facing content is assembled (balance,
+  // guidance, calendar) and BEFORE the delivery claim/send. Protected values
+  // preserve all authoritative financial/merchant/reference data byte-for-byte.
+  let localizedText = lines.join('\n');
+  if (proactiveTranslate) {
+    try {
+      const protectedValues: string[] = [
+        businessName,
+        serviceName,
+        formatCurrency(payment.amount, countryCode),
+        referenceCode,
+      ].filter(Boolean);
+      if (balanceRemaining > 0) protectedValues.push(formatCurrency(balanceRemaining, countryCode));
+      if (bookingDate) protectedValues.push(bookingDate);
+      if (bookingTime) protectedValues.push(bookingTime);
+      if (bookingAddress) protectedValues.push(bookingAddress);
+
+      localizedText = await proactiveTranslate(localizedText, protectedValues);
+    } catch (err) {
+      // Fail closed to English — no state change, no retry disruption
+      logger.warn(`${logPrefix} Proactive localization failed (non-fatal):`, err);
+    }
+  }
+
+  // ── PRE-DELIVERY RENEWAL: Revalidate claim after translation, before delivery claim/send ──
+  // This is additive to existing CHECKPOINT 1 — if ownership was lost during translation,
+  // do not proceed to claim/authorize/send the customer WhatsApp delivery.
+  const preDelivery = await renewConfirmationClaim(supabase, payment.id, claimToken, logPrefix);
+  if (!preDelivery.ok) {
+    logger.warn(`${logPrefix} Ownership lost after translation, before delivery: ${preDelivery.reason}`);
+    return { status: 'processing', retryable: true };
+  }
+
+  // ── 5. Resolve channel + send (protected by checkpoint 1 + pre-delivery renewal above) ──
   try {
     if (whatsappOriginMissingChannel) {
       logger.warn(`${logPrefix} Customer WhatsApp send skipped — no origin channel for WhatsApp-originated payment ${payment.id}`);
@@ -694,7 +743,7 @@ export async function sendProactiveConfirmation(
         if (sendAuth?.authorized) {
           sideEffectsMayHaveOccurred = true;
           try {
-            const sendResult = await resolved.sender.sendText({ to: phone, text: lines.join('\n') });
+            const sendResult = await resolved.sender.sendText({ to: phone, text: localizedText });
             const wamid = sendResult?.messageId;
 
             if (wamid) {
@@ -839,6 +888,7 @@ export async function sendProactiveConfirmation(
           skipLoyalty: isGivingPayment || isAmbiguousPayment,
           serviceName, referenceCode,
           currencyCode: paymentCurrencyCode,
+          translate: proactiveTranslate ? ((text: string) => proactiveTranslate!(text, [businessName, serviceName, referenceCode].filter(Boolean))) : undefined,
         });
       } catch (pcErr) {
         logSafeError(logPrefix, 'post-completion', pcErr);
@@ -1196,6 +1246,9 @@ export async function sendProactiveConfirmation(
                 ticketTypeName,
                 ticketPrice,
                 currencyCode: paymentCurrencyCode,
+                translate: proactiveTranslate ? ((text: string) => proactiveTranslate!(text, [
+                  event?.name, ticketBooking.guest_name, referenceCode, event?.venue,
+                ].filter(Boolean) as string[])) : undefined,
               };
 
               let ticketResult: Awaited<ReturnType<typeof ticketModule.ensureCanonicalTicketRows>> | null = null;

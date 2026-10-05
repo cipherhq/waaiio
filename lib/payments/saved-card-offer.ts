@@ -167,6 +167,19 @@ export async function checkAndOfferSavedCard(
       ];
     }
 
+    // Slice 5A: Localize the offer body while preserving card label
+    try {
+      const { resolveProactiveLocalization } = await import('@/lib/payments/proactive-localization');
+      const l10n = await resolveProactiveLocalization(supabase, customerPhone, businessId);
+      if (l10n.language !== 'en') {
+        body = await l10n.translate(body, [eligibility.cardDisplay].filter(Boolean) as string[]);
+        // Button titles are Waaiio-owned UI — localize; IDs must remain exact
+        for (let i = 0; i < buttons.length; i++) {
+          buttons[i] = { ...buttons[i], title: await l10n.translate(buttons[i].title) };
+        }
+      }
+    } catch { /* fail closed to English */ }
+
     // D5: Error classification using real error classes from attempt-recording
     try {
       const result = await sender.sendButtons({ to, body, buttons });

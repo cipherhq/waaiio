@@ -284,7 +284,8 @@ describe('P0-CONFIRM-1: Control-flow tests', () => {
     mockRpc.mockImplementation((name: string) => {
       if (name === 'renew_payment_confirmation_claim') {
         renewCount++;
-        if (renewCount <= 4) return Promise.resolve({ data: { renewed: true }, error: null });
+        // Allow 5 successes (original 4 checkpoints + 1 Slice 5A pre-delivery), fail on 6th (checkpoint 5)
+        if (renewCount <= 5) return Promise.resolve({ data: { renewed: true }, error: null });
         return Promise.resolve({ data: { renewed: false, reason: 'token_mismatch' }, error: null });
       }
       if (name === 'claim_payment_confirmation') return Promise.resolve(CLAIM_OK);
@@ -293,7 +294,7 @@ describe('P0-CONFIRM-1: Control-flow tests', () => {
     const { sendProactiveConfirmation } = await import('../payments/send-confirmation');
     await sendProactiveConfirmation(s, pay);
     expect(mockRpc).not.toHaveBeenCalledWith('finalize_payment_confirmation', expect.anything());
-    expect(renewCount).toBe(5);
+    expect(renewCount).toBe(6); // 5 existing checkpoints + 1 Slice 5A pre-delivery renewal
   });
 
   it('20. successful flow reaches all 5 checkpoints + finalize', async () => {
@@ -309,7 +310,7 @@ describe('P0-CONFIRM-1: Control-flow tests', () => {
     });
     const { sendProactiveConfirmation } = await import('../payments/send-confirmation');
     await sendProactiveConfirmation(s, pay);
-    expect(renewCount).toBe(5);
+    expect(renewCount).toBe(6); // 5 existing checkpoints + 1 Slice 5A pre-delivery renewal
     expect(mockRpc).toHaveBeenCalledWith('finalize_payment_confirmation', expect.objectContaining({ p_claim_token: 'tok-aaa' }));
   });
 
@@ -367,7 +368,7 @@ describe('P0-CONFIRM-1: Control-flow tests', () => {
     });
     const { sendProactiveConfirmation } = await import('../payments/send-confirmation');
     await sendProactiveConfirmation(s, pay); // default mock: total=deposit=50 → no balance
-    expect(renewCount).toBe(5);
+    expect(renewCount).toBe(6); // 5 existing checkpoints + 1 Slice 5A pre-delivery renewal
     expect(mockInitializePayment).not.toHaveBeenCalled();
     expect(mockRpc).toHaveBeenCalledWith('finalize_payment_confirmation', expect.anything());
   });

@@ -4,6 +4,33 @@ import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 import { logger } from '@/lib/logger';
 
 /**
+ * Slice 5A: Build a localized sendText wrapper for saved-card messages.
+ * Uses the session's _detected_language + business entitlement.
+ * Falls back to raw sendText on any failure.
+ */
+async function buildLocalizedSend(
+  supabase: SupabaseClient,
+  sendText: (to: string, text: string) => Promise<void>,
+  session: BotSession,
+): Promise<(to: string, text: string, protectedValues?: string[]) => Promise<void>> {
+  const lang = (session.session_data?._detected_language as string) || '';
+  if (!lang || lang === 'en' || !session.business_id) {
+    return async (to, text) => sendText(to, text);
+  }
+  try {
+    const { resolveProactiveLocalization } = await import('@/lib/payments/proactive-localization');
+    const l10n = await resolveProactiveLocalization(supabase, session.whatsapp_number || '', session.business_id);
+    if (l10n.language === 'en') return async (to, text) => sendText(to, text);
+    return async (to, text, protectedValues?) => {
+      const translated = await l10n.translate(text, protectedValues);
+      return sendText(to, translated);
+    };
+  } catch {
+    return async (to, text) => sendText(to, text);
+  }
+}
+
+/**
  * Handle "save card" command — D1: LOCATOR ONLY.
  * Finds the most recent eligible payment ID and delegates to startSavedCardFromPaymentId().
  * All auth/origin/compat/save-replace logic lives in the shared exact-payment helper.
@@ -202,6 +229,8 @@ export async function handleCardPinStep(
   text: string,
 ): Promise<void> {
   const pin = text.trim();
+  // Slice 5A: localized send wrapper for PIN messages
+  const localSend = await buildLocalizedSend(supabase, sendText, session);
 
   if (pin === 'cancel' || pin === 'exit') {
     const updatedData = { ...session.session_data };
@@ -212,12 +241,12 @@ export async function handleCardPinStep(
     await supabase.from('bot_sessions')
       .update({ current_step: 'select_capability', session_data: updatedData })
       .eq('id', session.id);
-    await sendText(from, 'Card save cancelled.');
+    await localSend(from, 'Card save cancelled.');
     return;
   }
 
   if (!/^\d{4}$/.test(pin)) {
-    await sendText(from, 'Please enter exactly *4 digits* for your Waaiio PIN:');
+    await localSend(from, 'Please enter exactly *4 digits* for your Waaiio PIN:', ['Waaiio']);
     return;
   }
 
