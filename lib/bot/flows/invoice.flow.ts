@@ -172,9 +172,10 @@ const invoiceDetailStep: FlowStepConfig = {
   },
 
   async validate(input: string): Promise<ValidationResult> {
-    if (input === 'pay') return { valid: true, data: { _invoice_action: 'pay' } };
-    if (input === 'back') return { valid: true, data: { _invoice_action: 'back' } };
-    return { valid: false, errorMessage: 'Tap one of the buttons above to continue.' };
+    const lower = input.toLowerCase().trim();
+    if (lower === 'pay' || lower === 'pay now') return { valid: true, data: { _invoice_action: 'pay' } };
+    if (lower === 'back' || lower === 'back to list' || lower === 'go back') return { valid: true, data: { _invoice_action: 'back' } };
+    return { valid: false, errorMessage: 'Type *pay* or *back*, or tap a button above.' };
   },
 
   async next(ctx: FlowContext) {

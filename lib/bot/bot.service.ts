@@ -2671,9 +2671,18 @@ export class BotService {
 
     // Handle post-completion menu (after successful transaction)
     if (step === 'post_completion') {
+      // Normalize typed aliases to canonical postback IDs
+      const pcLower = text.toLowerCase().trim();
+      const pcAliasMap: Record<string, string> = {
+        'view options': 'pc_options', 'options': 'pc_options',
+        'book again': 'pc_again', 'order again': 'pc_again', 'give again': 'pc_again', 'buy more tickets': 'pc_again',
+        'my bookings': 'pc_history', 'my orders': 'pc_history', 'my tickets': 'pc_history', 'my giving': 'pc_history',
+      };
+      const pcText = pcAliasMap[pcLower] || text;
+
       // ACC-204 R4: Read provenance from session BEFORE deactivation for all pc_ paths
       const pcProvenance = deriveReentryProvenance(session.session_data?.biz_resolution as string | undefined);
-      if (text === 'pc_options' || text === 'pc_done') {
+      if (pcText === 'pc_options' || pcText === 'pc_done') {
         // View Options — restart at capability menu for same business
         await this.deactivateSession(session.id);
         if (session.business_id) {
@@ -2682,7 +2691,7 @@ export class BotService {
         }
         return;
       }
-      if (text === 'pc_again') {
+      if (pcText === 'pc_again') {
         // Start over at the same business
         await this.deactivateSession(session.id);
         if (session.business_id) {
@@ -2693,7 +2702,7 @@ export class BotService {
         }
         return;
       }
-      if (text === 'pc_history') {
+      if (pcText === 'pc_history') {
         // Route to the appropriate history view based on capability
         const cap = session.session_data._post_completion_cap as string || '';
         if (cap === 'ordering') {

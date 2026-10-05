@@ -81,12 +81,13 @@ const loyaltyMenuStep: FlowStepConfig = {
   },
 
   async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
-    if (input === 'back_to_account') return { valid: true, data: { _loyalty_action: 'back_to_account' } };
-    if (input === 'view_history') return { valid: true, data: { _loyalty_action: 'history' } };
-    if (input === 'redeem') return { valid: true, data: { _loyalty_action: 'redeem' } };
+    const lower = input.toLowerCase().trim();
+    if (lower === 'back_to_account' || lower === 'back') return { valid: true, data: { _loyalty_action: 'back_to_account' } };
+    if (lower === 'view_history' || lower === 'history' || lower === 'points') return { valid: true, data: { _loyalty_action: 'history' } };
+    if (lower === 'redeem' || lower === 'redeem reward') return { valid: true, data: { _loyalty_action: 'redeem' } };
     // If no loyalty record, any input routes back to my account
     if (ctx.session.session_data._loyalty_empty) return { valid: true, data: { _loyalty_action: 'back_to_account' } };
-    return { valid: false, errorMessage: 'Please select an option.' };
+    return { valid: false, errorMessage: 'Type *history*, *redeem*, or *back*.' };
   },
 
   async next(ctx: FlowContext) {
@@ -200,6 +201,8 @@ const loyaltyRedeemStep: FlowStepConfig = {
   async validate(input: string): Promise<ValidationResult> {
     if (input === 'confirm_redeem') return { valid: true, data: { _redeem_action: 'confirm' } };
     if (input === 'skip_redeem') return { valid: true, data: { _redeem_action: 'skip' } };
+    // Bug fix: handle go_back button from low-balance path
+    if (input === 'go_back') return { valid: true, data: { _redeem_action: 'skip' } };
     return { valid: false, errorMessage: 'Tap one of the buttons above to continue.' };
   },
 

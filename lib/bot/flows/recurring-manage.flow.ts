@@ -77,8 +77,16 @@ export const recurringManageFlow: FlowDefinition = {
         }
 
         const subs = ctx.session.session_data._recurring_subs as Array<{ id: string; label: string }>;
-        const selected = subs?.find(s => s.id === input);
-        if (!selected) return { valid: false, errorMessage: 'Please select a recurring payment from the list.' };
+        // Try exact ID match first
+        let selected = subs?.find(s => s.id === input);
+        // Numeric index fallback (1, 2, 3…)
+        if (!selected && subs) {
+          const numIdx = parseInt(input.trim(), 10) - 1;
+          if (!isNaN(numIdx) && numIdx >= 0 && numIdx < subs.length) {
+            selected = subs[numIdx];
+          }
+        }
+        if (!selected) return { valid: false, errorMessage: 'Please select a recurring payment from the list, or type a number.' };
         return { valid: true, data: { _selected_sub_id: selected.id, _selected_sub_label: selected.label } };
       },
       async next(ctx: FlowContext) {
@@ -121,12 +129,13 @@ export const recurringManageFlow: FlowDefinition = {
         }];
       },
       async validate(input: string): Promise<ValidationResult> {
-        const text = input.toLowerCase();
-        if (text === 'cancel_sub') return { valid: true, data: { _sub_action: 'cancel' } };
-        if (text === 'pause_sub') return { valid: true, data: { _sub_action: 'pause' } };
+        const text = input.toLowerCase().trim();
+        if (text === 'cancel_sub' || text === 'cancel subscription' || text === 'cancel recurring payment') return { valid: true, data: { _sub_action: 'cancel' } };
+        if (text === 'pause_sub' || text === 'pause') return { valid: true, data: { _sub_action: 'pause' } };
+        // resume_sub: no aliases — routes directly to process_resume (irreversible, no confirmation gate)
         if (text === 'resume_sub') return { valid: true, data: { _sub_action: 'resume' } };
-        if (text === 'view_details') return { valid: true, data: { _sub_action: 'details' } };
-        if (text === 'payment_history') return { valid: true, data: { _sub_action: 'history' } };
+        if (text === 'view_details' || text === 'details') return { valid: true, data: { _sub_action: 'details' } };
+        if (text === 'payment_history' || text === 'history') return { valid: true, data: { _sub_action: 'history' } };
         return { valid: false, errorMessage: 'Please choose an option from the buttons.' };
       },
       async next(ctx: FlowContext) {
@@ -435,10 +444,10 @@ export const recurringManageFlow: FlowDefinition = {
         }];
       },
       async validate(input: string): Promise<ValidationResult> {
-        const text = input.toLowerCase();
-        if (text === 'payment_history') return { valid: true, data: { _details_action: 'history' } };
+        const text = input.toLowerCase().trim();
+        if (text === 'payment_history' || text === 'history' || text === 'payments') return { valid: true, data: { _details_action: 'history' } };
         if (text === 'back_subs' || text === 'back') return { valid: true, data: { _details_action: 'back' } };
-        return { valid: false, errorMessage: 'Please choose an option.' };
+        return { valid: false, errorMessage: 'Type *history* or *back*, or tap a button.' };
       },
       async next(ctx: FlowContext) {
         if (ctx.session.session_data._details_action === 'history') return 'payment_history';

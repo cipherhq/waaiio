@@ -2004,13 +2004,14 @@ export const schedulingFlow: FlowDefinition = {
         }];
       },
       async validate(input: string): Promise<ValidationResult> {
-        if (input.toLowerCase() === 'for_myself') {
+        const lower = input.toLowerCase().trim();
+        if (lower === 'for_myself' || lower === 'myself' || lower === 'me') {
           return { valid: true, data: { book_for_other: false } };
         }
-        if (input.toLowerCase() === 'for_other') {
+        if (lower === 'for_other' || lower === 'someone else' || lower === 'other') {
           return { valid: true, data: { book_for_other: true } };
         }
-        return { valid: false, errorMessage: 'Please tap *Myself* or *Someone else*.' };
+        return { valid: false, errorMessage: 'Type *myself* or *someone else*, or tap a button.' };
       },
       async next(ctx: FlowContext) {
         return ctx.session.session_data.book_for_other ? 'collect_other_name' : 'confirmation';

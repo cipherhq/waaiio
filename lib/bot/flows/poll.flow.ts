@@ -116,11 +116,16 @@ const pollQuestionStep: FlowStepConfig = {
     const match = input.match(/poll_vote_(\d+)/);
     const optIndex = match ? parseInt(match[1], 10) : -1;
 
-    // Also try matching by option text
+    // Also try matching by option text or numeric index (1-based)
     let resolvedIndex = optIndex;
     if (resolvedIndex < 0) {
       const lower = input.toLowerCase().trim();
       resolvedIndex = options.findIndex(o => o.toLowerCase() === lower);
+      // Numeric index fallback: "1", "2", etc.
+      if (resolvedIndex < 0 && /^\d+$/.test(lower)) {
+        const numIdx = parseInt(lower, 10) - 1;
+        if (numIdx >= 0 && numIdx < options.length) resolvedIndex = numIdx;
+      }
     }
 
     if (resolvedIndex < 0 || resolvedIndex >= options.length) {
