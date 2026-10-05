@@ -10,88 +10,74 @@ permissions:
 
 jobs:
   diagnostic:
-    name: Datacamp Lagos DNS diagnostics
+    name: Exact Nigeria probe DNS diagnostics
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
       GLOBALPING_TOKEN: ${{ secrets.GLOBALPING_TOKEN }}
     steps:
-      - name: Run Globalping DNS diagnostics from Nigeria + AS60068
+      - name: Install pinned Globalping CLI v1.6.0
         shell: bash
         run: |
           set -euo pipefail
+          url='https://github.com/jsdelivr/globalping-cli/releases/download/v1.6.0/globalping_1.6.0_linux_amd64.deb'
+          file='/tmp/globalping_1.6.0_linux_amd64.deb'
+          expected='048a5a87dfdccc6a6cec4b5ca48a94f917215660d7e5e2e784e1105afb664db6'
+          curl --fail --location --silent --show-error "$url" --output "$file"
+          echo "$expected  $file" | sha256sum --check --strict
+          sudo dpkg -i "$file"
+          globalping version
+
+      - name: Run DNS diagnostics on exact probes from the 5-probe run
+        shell: bash
+        run: |
+          set -uo pipefail
           mkdir -p artifacts/nigeria-dns-as60068
+          out='artifacts/nigeria-dns-as60068'
+          # dns_waaiio_com_a_isp measurement from run 37296788873.
+          # Globalping accepts a previous measurement ID as the location selector,
+          # which reuses those exact five probes (including Datacamp Lagos AS60068).
+          probe_set='2a9SepExOVZX9w8zt00021GCK'
 
-          api='https://api.globalping.io/v1/measurements'
-          location='Nigeria+AS60068'
-
-          auth_args=()
-          if [[ -n "${GLOBALPING_TOKEN:-}" ]]; then
-            auth_args=(-H "Authorization: Bearer ${GLOBALPING_TOKEN}")
-          fi
-
-          run_measurement() {
+          run_dns() {
             local label="$1"
-            local target="$2"
-            local qtype="$3"
-            local protocol="$4"
-            local trace="$5"
-            local payload id status result_file
-
-            payload="$(jq -nc \
-              --arg target "$target" \
-              --arg loc "$location" \
-              --arg qtype "$qtype" \
-              --arg protocol "$protocol" \
-              --argjson trace "$trace" \
-              '{target:$target,type:"dns",locations:[{magic:$loc,limit:1}],limit:1,timeout:20,measurementOptions:{query:{type:$qtype},protocol:$protocol,trace:$trace}}')"
-
-            echo "### ${label}" | tee -a artifacts/nigeria-dns-as60068/summary.md
-            echo '```json' >> artifacts/nigeria-dns-as60068/summary.md
-            echo "$payload" >> artifacts/nigeria-dns-as60068/summary.md
-            echo '```' >> artifacts/nigeria-dns-as60068/summary.md
-
-            id="$(curl --fail --silent --show-error -X POST "$api" \
-              -H 'Content-Type: application/json' \
-              "${auth_args[@]}" \
-              --data "$payload" | tee artifacts/nigeria-dns-as60068/${label}.create.json | jq -r '.id')"
-
-            if [[ -z "$id" || "$id" == "null" ]]; then
-              echo "Measurement creation failed for $label" | tee -a artifacts/nigeria-dns-as60068/summary.md
-              return 0
-            fi
-
-            result_file="artifacts/nigeria-dns-as60068/${label}.json"
-            for _ in $(seq 1 30); do
-              curl --fail --silent --show-error "${auth_args[@]}" "$api/$id" > "$result_file"
-              status="$(jq -r '.status // empty' "$result_file")"
-              [[ "$status" == "finished" ]] && break
-              sleep 2
-            done
-
-            jq '{id,status,target,measurementOptions,results:[.results[]? | {probe:{country:.probe.country,city:.probe.city,asn:.probe.asn,network:.probe.network,tags:.probe.tags,resolvers:.probe.resolvers},result:{status:.result.status,failureSource:.result.failureSource,statusCodeName:.result.statusCodeName,resolver:.result.resolver,answers:.result.answers,rawOutput:.result.rawOutput,hops:.result.hops}}]}' "$result_file" \
-              | tee "artifacts/nigeria-dns-as60068/${label}.compact.json"
-            echo >> artifacts/nigeria-dns-as60068/summary.md
+            local host="$2"
+            shift 2
+            local rc=0
+            globalping dns "$host" from "$probe_set" \
+              --timeout 20 --ci --json "$@" \
+              >"$out/${label}.json" 2>"$out/${label}.stderr.txt" || rc=$?
+            echo "$rc" >"$out/${label}.exitcode"
           }
-
-          : > artifacts/nigeria-dns-as60068/summary.md
-          echo '# Nigeria / Datacamp AS60068 DNS deep diagnostic' >> artifacts/nigeria-dns-as60068/summary.md
-          echo >> artifacts/nigeria-dns-as60068/summary.md
-          echo 'Read-only Globalping measurements. No DNS, Vercel, provider, or production mutation.' >> artifacts/nigeria-dns-as60068/summary.md
-          echo >> artifacts/nigeria-dns-as60068/summary.md
 
           for host in waaiio.com www.waaiio.com staging.waaiio.com; do
             safe="${host//./_}"
-            run_measurement "${safe}_a_udp" "$host" A UDP false
-            run_measurement "${safe}_a_tcp" "$host" A TCP false
+            run_dns "${safe}_a_udp" "$host" --type A --protocol udp
+            run_dns "${safe}_a_tcp" "$host" --type A --protocol tcp
           done
 
-          # DNSSEC/delegation evidence. Globalping does not expose raw dig +cdflag/+noedns,
-          # so use DS/DNSKEY plus delegation trace to determine whether DNSSEC or the
-          # authoritative path is implicated.
-          run_measurement "waaiio_com_ds_udp" "waaiio.com" DS UDP false
-          run_measurement "waaiio_com_dnskey_udp" "waaiio.com" DNSKEY UDP false
-          run_measurement "waaiio_com_trace_udp" "waaiio.com" A UDP true
+          run_dns waaiio_com_ds_udp waaiio.com --type DS --protocol udp
+          run_dns waaiio_com_dnskey_udp waaiio.com --type DNSKEY --protocol udp
+          run_dns waaiio_com_trace_udp waaiio.com --type A --protocol udp --trace
+
+          {
+            echo '# Nigeria / Datacamp AS60068 DNS deep diagnostic'
+            echo
+            echo 'Read-only Globalping measurements using the exact five probes from run 37296788873.'
+            echo
+            for file in "$out"/*.json; do
+              [[ -s "$file" ]] || continue
+              label="$(basename "$file" .json)"
+              echo "## $label"
+              jq -r '
+                .results[]?
+                | select(.probe.asn == 60068)
+                | "Probe: \(.probe.city), \(.probe.country) | \(.probe.network) AS\(.probe.asn) | tags=\(.probe.tags|join(",")) | configured_resolvers=\(.probe.resolvers|join(","))\nstatus=\(.result.status) failureSource=\(.result.failureSource // "") resolver=\(.result.resolver // "") statusCode=\(.result.statusCodeName // "")\n--- RAW ---\n\(.result.rawOutput // "")\n"' "$file"
+              echo
+            done
+          } > "$out/summary.md"
+
+          cat "$out/summary.md"
 
       - name: Upload diagnostic evidence
         if: always()
