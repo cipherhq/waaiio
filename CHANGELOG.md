@@ -3,6 +3,18 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-10-05 — Slice 3 CTO correction — protected values and ownership metadata (#524 / PR #541)
+
+### What changed
+- **Blocker 1 fix:** `sendSessionLocalizedText` now accepts optional `TranslateOptions`. Payment auth URL (`scRecovery.authUrl`), provider decline messages, and business names are now passed as explicit `protectedValues` at each BotService call site that interpolates dynamic values.
+- **Blocker 2 fix:** Session-expiry path now protects `biz.name` as a protected value. Capability-selection flow attaches `_localization` metadata with `protectedValues: [bizName, ...customLabels]` so merchant names and custom labels survive translation byte-for-byte.
+- **Blocker 3 fix:** Added `LocalizationMeta` interface and optional `_localization` field on `PromptMessage` (types.ts). `localizeMessage` now reads and merges message-level metadata with caller-supplied opts. Capability-selection sets `waaiioOwnedItemTitles: true` so Waaiio UI labels ("My Account", default cap labels) translate while merchant custom labels are protected.
+- **Cache invariant test:** Proves same template with two different businesses' protected values returns each business's own value — no cross-tenant leakage.
+- **12 new correction tests** covering all CTO-required executable proofs.
+
+### What could break
+- Any flow that constructs a PromptMessage with fields that should NOT be translated must now consider whether to attach `_localization` metadata. Without it, the existing default-passthrough behavior for item titles continues (safe).
+
 ## 2026-10-04 — Outbound localization boundary — Slice 3 (#524)
 
 ### What changed

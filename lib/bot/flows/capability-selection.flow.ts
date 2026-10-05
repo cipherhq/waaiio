@@ -244,6 +244,20 @@ const selectCapabilityStep: FlowStepConfig = {
       : 'What would you like to do? 👇';
     if (greeting) delete ctx.session.session_data._greeting;
 
+    // Localization metadata for the outbound translation boundary:
+    // - waaiioOwnedItemTitles: true — Waaiio UI labels (My Account, default cap labels) translate
+    // - protectedValues: merchant custom labels + business name survive byte-for-byte
+    const merchantProtected: string[] = [];
+    for (const cap of userFacing) {
+      if (customLabels[cap]) merchantProtected.push(customLabels[cap]);
+    }
+    const bizName = ctx.business?.name;
+    if (bizName) merchantProtected.push(bizName);
+    const locMeta = {
+      waaiioOwnedItemTitles: true,
+      ...(merchantProtected.length ? { protectedValues: merchantProtected } : {}),
+    };
+
     // SAFETY: never send an empty buttons/list payload to WhatsApp
     if (capItems.length === 0) {
       logger.warn('[CAPABILITY-MENU] Zero renderable capabilities', { businessId: ctx.business?.id });
@@ -259,6 +273,7 @@ const selectCapabilityStep: FlowStepConfig = {
         type: 'buttons' as const,
         body: bodyText,
         buttons: capItems.map(i => ({ id: i.id, title: i.title })),
+        _localization: locMeta,
       }];
     }
 
@@ -267,10 +282,11 @@ const selectCapabilityStep: FlowStepConfig = {
     const listBody = bodyText.length > 1000 ? bodyText.slice(0, 997) + '...' : bodyText;
     return [{
       type: 'list' as const,
-      title: ctx.business?.name || 'Menu',
+      title: bizName || 'Menu',
       body: listBody,
       buttonLabel: 'View Options',
       items: capItems.map(i => ({ title: i.title, postbackText: i.postbackText })),
+      _localization: locMeta,
     }];
   },
 

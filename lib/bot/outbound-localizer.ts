@@ -14,7 +14,7 @@
  */
 
 import { translateBotResponse, type TranslationContext, type TranslateOptions } from './translate';
-import type { PromptMessage, PromptList, PromptButtons } from './flows/types';
+import type { PromptMessage, PromptList, PromptButtons, LocalizationMeta } from './flows/types';
 
 /**
  * Localize a single PromptMessage through the canonical translation boundary.
@@ -38,7 +38,16 @@ export async function localizeMessage(
   tCtx: TranslationContext,
   opts?: TranslateOptions & { waaiioOwnedItemTitles?: boolean },
 ): Promise<PromptMessage> {
-  const tOpts: TranslateOptions | undefined = opts?.protectedValues?.length ? { protectedValues: opts.protectedValues } : undefined;
+  // Merge caller-supplied opts with message-level _localization metadata.
+  // Message-level metadata is set by flows at construction time; caller opts
+  // are set by the executor or direct callers. Both contribute.
+  const meta: LocalizationMeta | undefined = msg._localization;
+  const mergedProtected = [
+    ...(opts?.protectedValues || []),
+    ...(meta?.protectedValues || []),
+  ].filter(Boolean);
+  const tOpts: TranslateOptions | undefined = mergedProtected.length ? { protectedValues: mergedProtected } : undefined;
+  const waaiioOwned = opts?.waaiioOwnedItemTitles ?? meta?.waaiioOwnedItemTitles ?? false;
 
   switch (msg.type) {
     case 'text':
@@ -48,7 +57,7 @@ export async function localizeMessage(
       return localizeButtons(msg, lang, tCtx, tOpts);
 
     case 'list':
-      return localizeList(msg, lang, tCtx, tOpts, opts?.waaiioOwnedItemTitles);
+      return localizeList(msg, lang, tCtx, tOpts, waaiioOwned);
 
     case 'image':
       return {

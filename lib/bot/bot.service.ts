@@ -16,7 +16,7 @@ import { resolveTrialCredit } from '@/lib/trial-status';
 import { getCategoryLabels } from '@/lib/categoryConfig';
 import type { CapabilityId } from '@/lib/capabilities/types';
 import { parseSmartIntent, parseSmartIntentHybrid, matchServiceFromKeywords, buildAcknowledgment } from './smart-intent';
-import { translateBotResponse, detectLanguage, getLanguageName, type TranslationContext } from './translate';
+import { translateBotResponse, detectLanguage, getLanguageName, type TranslationContext, type TranslateOptions } from './translate';
 import { getEffectiveLanguages, loadBusinessLanguages } from './language-policy';
 import { loadPlatformSettings } from '@/lib/platformSettings';
 import { checkAIFeature, isLanguageAllowed } from './ai-tier-guard';
@@ -2052,11 +2052,16 @@ export class BotService {
       await this.deactivateSession(session.id);
       // Personalize the expired message with business name if available
       let expiredMsg = 'Your session has expired.';
+      const protectedVals: string[] = [];
       if (session.business_id) {
         const { data: biz } = await this.supabase.from('businesses').select('name').eq('id', session.business_id).single();
-        if (biz?.name) expiredMsg = `Your session with *${biz.name}* has expired.`;
+        if (biz?.name) {
+          expiredMsg = `Your session with *${biz.name}* has expired.`;
+          protectedVals.push(biz.name);
+        }
       }
-      await this.sendSessionLocalizedText(from, `${expiredMsg} Send *Hi* to start over. 🙏`, session);
+      await this.sendSessionLocalizedText(from, `${expiredMsg} Send *Hi* to start over. 🙏`, session,
+        protectedVals.length ? { protectedValues: protectedVals } : undefined);
       return;
     }
 
@@ -2409,10 +2414,12 @@ export class BotService {
               return;
             case 'requires_auth':
               // authUrl is a protected transactional value — preserve exactly
-              await this.sendSessionLocalizedText(from, `🔒 Your bank requires verification.\n\nPlease complete here 👇\n${scRecovery.authUrl}\n\n⚠️ Return to WhatsApp after verifying.`, session);
+              await this.sendSessionLocalizedText(from, `🔒 Your bank requires verification.\n\nPlease complete here 👇\n${scRecovery.authUrl}\n\n⚠️ Return to WhatsApp after verifying.`, session,
+                { protectedValues: [scRecovery.authUrl].filter(Boolean) as string[] });
               return;
             case 'terminal_decline':
-              await this.sendSessionLocalizedText(from, `❌ Payment could not be completed: ${scRecovery.message || 'card declined'}.\n\nPlease try again with a different payment method by typing *Hi*.`, session);
+              await this.sendSessionLocalizedText(from, `❌ Payment could not be completed: ${scRecovery.message || 'card declined'}.\n\nPlease try again with a different payment method by typing *Hi*.`, session,
+                scRecovery.message ? { protectedValues: [scRecovery.message] } : undefined);
               return;
             case 'quarantined':
               await this.sendSessionLocalizedText(from, 'Your payment session has expired. Please start a new payment by typing *Hi*.', session);
@@ -3227,11 +3234,15 @@ export class BotService {
    * Localized send — resolves translation context from session's business.
    * For Waaiio-owned customer-facing text in the active-session path.
    * If session has no business or no detected language, sends English (no LLM call).
+   *
+   * Callers that interpolate dynamic values (merchant names, URLs, references)
+   * MUST pass them as protectedValues so they survive translation byte-for-byte.
    */
   private async sendSessionLocalizedText(
     to: string,
     text: string,
     session: { session_data: Record<string, unknown>; business_id?: string | null },
+    opts?: TranslateOptions,
   ): Promise<void> {
     const lang = (session.session_data._detected_language as string) || '';
     if (!lang || lang === 'en') {
@@ -3241,7 +3252,7 @@ export class BotService {
       ? (await this.supabase.from('businesses').select('subscription_tier').eq('id', session.business_id).single()).data?.subscription_tier || 'free'
       : 'free';
     const tCtx = await this.buildTranslationContext(session.business_id || null, tier);
-    const translated = await translateBotResponse(text, lang, tCtx);
+    const translated = await translateBotResponse(text, lang, tCtx, opts);
     return sendBotText(this.messageSender, to, translated);
   }
 
