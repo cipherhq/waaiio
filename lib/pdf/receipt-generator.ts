@@ -20,6 +20,8 @@ export interface ReceiptData {
   fees?: number;
   paymentMethod?: string; // e.g. "Card ****4242", "Bank Transfer"
   currencyCode?: string;  // authoritative ISO 4217 code (overrides country-derived)
+  /** Slice 5B: pre-translated Waaiio-owned labels (optional — English defaults used when absent) */
+  labels?: import('./localize-pdf').ReceiptPdfLabels;
 }
 
 export interface HistoryRow {
@@ -125,9 +127,13 @@ export async function generateReceiptPdf(data: ReceiptData): Promise<Buffer> {
     } catch { /* skip */ }
   }
 
-  // "RECEIPT" header
+  // Slice 5B: Use pre-translated labels or English defaults
+  const { DEFAULT_RECEIPT_LABELS } = await import('./localize-pdf');
+  const L = data.labels || DEFAULT_RECEIPT_LABELS;
+
+  // Title header
   doc.fontSize(18).font('Helvetica-Bold').fillColor(TEXT_PRIMARY)
-    .text('RECEIPT', margin, headerY, { width: contentWidth, align: 'center' });
+    .text(L.title, margin, headerY, { width: contentWidth, align: 'center' });
   headerY += 22;
 
   // Business name
@@ -156,10 +162,10 @@ export async function generateReceiptPdf(data: ReceiptData): Promise<Buffer> {
   const lineHeight = 22;
 
   const detailRows: [string, string][] = [
-    ['Reference', data.referenceCode],
-    ['Date', formatDate(data.date)],
-    ['Service', data.serviceName],
-    ['Customer', data.customerName],
+    [L.lblReference, data.referenceCode],
+    [L.lblDate, formatDate(data.date)],
+    [L.lblService, data.serviceName],
+    [L.lblCustomer, data.customerName],
     ['Phone', maskPhone(data.customerPhone)],
   ];
   if (data.paymentMethod) {
@@ -203,7 +209,7 @@ export async function generateReceiptPdf(data: ReceiptData): Promise<Buffer> {
     const footerY = pageHeight - margin - 10;
     doc.moveTo(margin, footerY - 12).lineTo(pageWidth - margin, footerY - 12).strokeColor(DIVIDER).lineWidth(0.5).stroke();
     doc.fontSize(7).font('Helvetica').fillColor('#bbbbbb')
-      .text('Powered by Waaiio  ·  waaiio.com', margin, footerY, { width: contentWidth, align: 'center' });
+      .text(`${L.footer}  ·  waaiio.com`, margin, footerY, { width: contentWidth, align: 'center' });
   }
 
   doc.end();
