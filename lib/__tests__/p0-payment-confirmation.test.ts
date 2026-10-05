@@ -532,4 +532,119 @@ describe('B4: Slice 5A translation + claim fencing', () => {
     // At minimum 2 renewals (checkpoint 1 + pre-delivery)
     expect(renewCount).toBeGreaterThanOrEqual(2);
   });
+
+  it('non-English translate() is called, then pre-delivery renewal, then delivery claim (exact ordering)', async () => {
+    const eventLog: string[] = [];
+    const { resolveProactiveLocalization } = await import('../payments/proactive-localization');
+    (resolveProactiveLocalization as any).mockResolvedValueOnce({
+      language: 'fr',
+      translationContext: { entitlement: { allowedLanguages: ['en', 'fr'], llmAllowed: true, translationAllowed: true }, businessId: 'b1', supabase: {} },
+      translate: vi.fn().mockImplementation(async (text: string) => {
+        eventLog.push('translate');
+        return text; // pass through
+      }),
+    });
+
+    const s = buildMock({ claim_payment_confirmation: CLAIM_OK, finalize_payment_confirmation: FIN_OK });
+    mockRpc.mockImplementation((name: string) => {
+      eventLog.push(name);
+      if (name === 'renew_payment_confirmation_claim') return Promise.resolve({ data: { renewed: true }, error: null });
+      if (name === 'claim_payment_confirmation') return Promise.resolve(CLAIM_OK);
+      if (name === 'finalize_payment_confirmation') return Promise.resolve(FIN_OK);
+      return Promise.resolve({ data: null, error: null });
+    });
+    const { sendProactiveConfirmation } = await import('../payments/send-confirmation');
+    await sendProactiveConfirmation(s, pay);
+
+    // Prove exact ordering: translate → renew (pre-delivery) → rest of flow
+    const translateIdx = eventLog.indexOf('translate');
+    const renewAfterTranslate = eventLog.indexOf('renew_payment_confirmation_claim', translateIdx + 1);
+    expect(translateIdx).toBeGreaterThan(-1);
+    expect(renewAfterTranslate).toBeGreaterThan(translateIdx);
+  });
+
+  it('translate() receives FULL message including balance, guidance, and calendar content', async () => {
+    let capturedText = '';
+    const { resolveProactiveLocalization } = await import('../payments/proactive-localization');
+    (resolveProactiveLocalization as any).mockResolvedValueOnce({
+      language: 'fr',
+      translationContext: { entitlement: { allowedLanguages: ['en', 'fr'], llmAllowed: true, translationAllowed: true }, businessId: 'b1', supabase: {} },
+      translate: vi.fn().mockImplementation(async (text: string) => { capturedText = text; return text; }),
+    });
+    mockCalendarLinks.mockReturnValue('\n📅 Add to calendar: https://calendar.google.com/test-cal-url');
+
+    const s = buildMock({ claim_payment_confirmation: CLAIM_OK, finalize_payment_confirmation: FIN_OK });
+    mockRpc.mockImplementation((name: string) => {
+      if (name === 'renew_payment_confirmation_claim') return Promise.resolve({ data: { renewed: true }, error: null });
+      if (name === 'claim_payment_confirmation') return Promise.resolve(CLAIM_OK);
+      if (name === 'finalize_payment_confirmation') return Promise.resolve(FIN_OK);
+      return Promise.resolve({ data: null, error: null });
+    });
+    const { sendProactiveConfirmation } = await import('../payments/send-confirmation');
+    await sendProactiveConfirmation(s, pay);
+
+    // Translator must receive the full message including guidance + calendar
+    expect(capturedText).toContain('receipt');
+    expect(capturedText).toContain('my bookings');
+    expect(capturedText).toContain('calendar.google.com');
+  });
+
+  it('ownership loss AFTER translate → no delivery claim, no send, no finalize', async () => {
+    let translateCalled = false;
+    const { resolveProactiveLocalization } = await import('../payments/proactive-localization');
+    (resolveProactiveLocalization as any).mockResolvedValueOnce({
+      language: 'fr',
+      translationContext: { entitlement: { allowedLanguages: ['en', 'fr'], llmAllowed: true, translationAllowed: true }, businessId: 'b1', supabase: {} },
+      translate: vi.fn().mockImplementation(async (text: string) => { translateCalled = true; return text; }),
+    });
+
+    let renewCount = 0;
+    const rpcLog: string[] = [];
+    const s = buildMock({ claim_payment_confirmation: CLAIM_OK });
+    mockRpc.mockImplementation((name: string) => {
+      rpcLog.push(name);
+      if (name === 'renew_payment_confirmation_claim') {
+        renewCount++;
+        // Fail on 2nd renewal (pre-delivery) — simulates ownership loss after translation
+        if (renewCount >= 2) return Promise.resolve({ data: { renewed: false, reason: 'token_mismatch' }, error: null });
+        return Promise.resolve({ data: { renewed: true }, error: null });
+      }
+      if (name === 'claim_payment_confirmation') return Promise.resolve(CLAIM_OK);
+      return Promise.resolve({ data: null, error: null });
+    });
+    const { sendProactiveConfirmation } = await import('../payments/send-confirmation');
+    const result = await sendProactiveConfirmation(s, pay);
+
+    // Translate was called
+    expect(translateCalled).toBe(true);
+    // But delivery was prevented by ownership loss
+    expect(rpcLog).not.toContain('claim_confirmation_delivery');
+    expect(rpcLog).not.toContain('begin_confirmation_send');
+    expect(rpcLog).not.toContain('finalize_payment_confirmation');
+    expect(result.status).toBe('processing');
+  });
+
+  it('translate() throws → English sent, normal claim/fencing intact', async () => {
+    const { resolveProactiveLocalization } = await import('../payments/proactive-localization');
+    (resolveProactiveLocalization as any).mockResolvedValueOnce({
+      language: 'fr',
+      translationContext: { entitlement: { allowedLanguages: ['en', 'fr'], llmAllowed: true, translationAllowed: true }, businessId: 'b1', supabase: {} },
+      translate: vi.fn().mockRejectedValue(new Error('LLM timeout')),
+    });
+
+    let renewCount = 0;
+    const s = buildMock({ claim_payment_confirmation: CLAIM_OK, finalize_payment_confirmation: FIN_OK });
+    mockRpc.mockImplementation((name: string) => {
+      if (name === 'renew_payment_confirmation_claim') { renewCount++; return Promise.resolve({ data: { renewed: true }, error: null }); }
+      if (name === 'claim_payment_confirmation') return Promise.resolve(CLAIM_OK);
+      if (name === 'finalize_payment_confirmation') return Promise.resolve(FIN_OK);
+      return Promise.resolve({ data: null, error: null });
+    });
+    const { sendProactiveConfirmation } = await import('../payments/send-confirmation');
+    const result = await sendProactiveConfirmation(s, pay);
+
+    // Flow completes normally with all renewals
+    expect(renewCount).toBe(6); // 5 existing checkpoints + 1 Slice 5A pre-delivery renewal
+    expect(result.status).toBe('completed');
+  });
 });

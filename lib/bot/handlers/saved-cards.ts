@@ -560,7 +560,15 @@ export async function handleCardPinStep(
         }
         const claimCardDisplay = claim.committed_card_display as string;
 
-        const confirmationMsg = `💳 Card saved! *${claimCardDisplay}*\n\n🔒 Waaiio PIN set successfully. You'll need this Waaiio PIN when using your saved card.\n\nFor privacy, you can delete your PIN message from this chat. Type *remove card* anytime to delete this card.`;
+        let confirmationMsg = `💳 Card saved! *${claimCardDisplay}*\n\n🔒 Waaiio PIN set successfully. You'll need this Waaiio PIN when using your saved card.\n\nFor privacy, you can delete your PIN message from this chat. Type *remove card* anytime to delete this card.`;
+        // Slice 5A: Localize presentation before fenced delivery — protect card display + brand
+        try {
+          const { resolveProactiveLocalization } = await import('@/lib/payments/proactive-localization');
+          const l10n = await resolveProactiveLocalization(supabase, claimCustomerPhone, claimBusinessId);
+          if (l10n.language !== 'en') {
+            confirmationMsg = await l10n.translate(confirmationMsg, [claimCardDisplay, 'Waaiio']);
+          }
+        } catch { /* fail closed to English */ }
 
         if (!claimChannelId) {
           logger.warn('[SAVED_CARDS] Claim has no channel_id — releasing for recovery', { finalOfferId });
@@ -602,7 +610,7 @@ export async function handleCardPinStep(
     // These don't have fenced delivery; sendText is acceptable here.
     const confirmationMsg = `💳 Card saved! *${cardLabel}*\n\n🔒 Waaiio PIN set successfully. You'll need this Waaiio PIN when using your saved card.\n\nFor privacy, you can delete your PIN message from this chat. Type *remove card* anytime to delete this card.`;
     try {
-      await localSend(from, confirmationMsg);
+      await localSend(from, confirmationMsg, [cardLabel, 'Waaiio']);
     } catch (confirmErr) {
       logger.error('[SAVED_CARDS] Legacy confirmation delivery failed', { confirmErr });
     }
@@ -652,7 +660,7 @@ export async function handleReplacementPinStep(
   }
 
   if (!/^\d{4}$/.test(input)) {
-    await localSend(from, 'Please enter your *4-digit Waaiio PIN* to confirm replacement, or type *cancel*:');
+    await localSend(from, 'Please enter your *4-digit Waaiio PIN* to confirm replacement, or type *cancel*:', ['4', 'Waaiio']);
     return;
   }
 
@@ -785,9 +793,9 @@ export async function handleReplacementPinStep(
 
   if (!pinResult.valid) {
     if (pinResult.locked) {
-      await localSend(from, '🔒 Too many wrong attempts. Your card is locked for 30 minutes. Try again later.');
+      await localSend(from, '🔒 Too many wrong attempts. Your card is locked for 30 minutes. Try again later.', ['30']);
     } else {
-      await localSend(from, `❌ Wrong PIN. ${pinResult.attemptsRemaining} attempt${pinResult.attemptsRemaining === 1 ? '' : 's'} remaining.`);
+      await localSend(from, `❌ Wrong PIN. ${pinResult.attemptsRemaining} attempt${pinResult.attemptsRemaining === 1 ? '' : 's'} remaining.`, [String(pinResult.attemptsRemaining)]);
     }
     return; // Old card completely unchanged (PIN wrong/locked)
   }
@@ -894,7 +902,7 @@ export async function handleReplacementPinStep(
   }
 
   try {
-    await localSend(from, `💳 Card updated to *${newLabel}*!\n\n🔒 Your existing Waaiio PIN still works. Type *remove card* anytime to remove.`);
+    await localSend(from, `💳 Card updated to *${newLabel}*!\n\n🔒 Your existing Waaiio PIN still works. Type *remove card* anytime to remove.`, [newLabel, 'Waaiio']);
     // Delivery proven → confirm
     if (replaceOfferId) {
       const { data: confirmResult } = await supabase.rpc('confirm_saved_card_offer', {
