@@ -2580,10 +2580,45 @@ export class BotService {
     }
 
     // ── Unified keyword matching (replaces detectIntent + old keyword + quick reply checks) ──
-    // Only fire on non-free-text steps
+    // Only fire on non-free-text steps.
+    // Slice 4: bounded step-owned input precedence — when the current step has typed
+    // aliases and the input matches one, skip keyword routing so the step validator
+    // owns it. Unrelated keywords still fire normally on these steps.
+    const STEP_OWNED_INPUTS: Record<string, Set<string>> = {
+      'post_completion': new Set(['view options', 'options', 'book again', 'order again', 'give again', 'buy more tickets', 'my bookings', 'my orders', 'my tickets', 'my giving']),
+      'campaign_view': new Set(['donate', 'yes', 'back', 'donate_yes', 'donate_back']),
+      'invoice_detail': new Set(['pay', 'pay now', 'back', 'back to list', 'go back']),
+      'loyalty_menu': new Set(['history', 'points', 'redeem', 'redeem reward', 'back', 'view_history', 'back_to_account']),
+      'loyalty_redeem': new Set(['confirm_redeem', 'skip_redeem', 'go_back']),
+      'select_action': new Set(['cancel subscription', 'cancel recurring payment', 'pause', 'details', 'history', 'cancel_sub', 'pause_sub', 'resume_sub', 'view_details', 'payment_history']),
+      'subscription_details': new Set(['history', 'payments', 'back', 'payment_history', 'back_subs']),
+      'queue_start': new Set(['join', 'join queue', 'status', 'my position', 'queue_checkin', 'queue_status', 'check in']),
+      'queue_check_status': new Set(['join', 'join queue', 'leave', 'queue_checkin', 'leave_queue']),
+      'book_for_other': new Set(['myself', 'me', 'someone else', 'other', 'for_myself', 'for_other']),
+      'addon_continue': new Set(['more', 'add more', 'done', 'continue', 'more_addons', 'done_addons']),
+      'list_subscriptions': new Set(['back_to_account']),
+    };
     const isFreeTextStepForKeywords = isChatMode || ['collect_name', 'collect_other_name', 'collect_email', 'special_requests', 'review_text', 'enter_amount', 'collect_address', 'queue_collect_name', 'select_business_suggestion', 'enter_referral_code', 'collect_pickup_address', 'collect_dropoff_address', 'collect_package_description', 'collect_venue', 'enter_promo_code', 'save_card_pin', 'verify_card_pin', 'replace_card_pin'].includes(step);
+    const stepOwnedSet = STEP_OWNED_INPUTS[step];
+    // Bounded ownership: poll_question owns postback/numeric/escape + exact current option text
+    const isPollOwned = step === 'poll_question' && (
+      /^poll_vote_\d+$/.test(text) || /^\d{1,2}$/.test(text.trim()) ||
+      ['cancel', 'skip', 'exit', 'no thanks'].includes(text.toLowerCase().trim()) ||
+      // Dynamic: exact current poll option text from session_data
+      ((session.session_data?.poll_options as string[]) || [])
+        .some(opt => opt.toLowerCase() === text.toLowerCase().trim())
+    );
+    // Bounded ownership: select_campaign owns postback/go_back/numeric + exact current campaign title
+    const isCampaignOwned = step === 'select_campaign' && (
+      text.startsWith('campaign_') || text === 'go_back' || /^\d{1,2}$/.test(text.trim()) ||
+      // Dynamic: exact current eligible campaign title from session_data
+      ((session.session_data?._campaign_titles as string[]) || [])
+        .some(t => t.toLowerCase() === text.toLowerCase().trim())
+    );
+    const inputOwnedByStep = isPollOwned || isCampaignOwned ||
+      (stepOwnedSet !== undefined && stepOwnedSet.has(text.toLowerCase().trim()));
 
-    if (!isFreeTextStepForKeywords) {
+    if (!isFreeTextStepForKeywords && !inputOwnedByStep) {
       // Use cached category from session_data (saved during session creation)
       const businessCategory = (session.session_data?.business_category as string) || null;
 
@@ -2671,9 +2706,18 @@ export class BotService {
 
     // Handle post-completion menu (after successful transaction)
     if (step === 'post_completion') {
+      // Normalize typed aliases to canonical postback IDs
+      const pcLower = text.toLowerCase().trim();
+      const pcAliasMap: Record<string, string> = {
+        'view options': 'pc_options', 'options': 'pc_options',
+        'book again': 'pc_again', 'order again': 'pc_again', 'give again': 'pc_again', 'buy more tickets': 'pc_again',
+        'my bookings': 'pc_history', 'my orders': 'pc_history', 'my tickets': 'pc_history', 'my giving': 'pc_history',
+      };
+      const pcText = pcAliasMap[pcLower] || text;
+
       // ACC-204 R4: Read provenance from session BEFORE deactivation for all pc_ paths
       const pcProvenance = deriveReentryProvenance(session.session_data?.biz_resolution as string | undefined);
-      if (text === 'pc_options' || text === 'pc_done') {
+      if (pcText === 'pc_options' || pcText === 'pc_done') {
         // View Options — restart at capability menu for same business
         await this.deactivateSession(session.id);
         if (session.business_id) {
@@ -2682,7 +2726,7 @@ export class BotService {
         }
         return;
       }
-      if (text === 'pc_again') {
+      if (pcText === 'pc_again') {
         // Start over at the same business
         await this.deactivateSession(session.id);
         if (session.business_id) {
@@ -2693,7 +2737,7 @@ export class BotService {
         }
         return;
       }
-      if (text === 'pc_history') {
+      if (pcText === 'pc_history') {
         // Route to the appropriate history view based on capability
         const cap = session.session_data._post_completion_cap as string || '';
         if (cap === 'ordering') {

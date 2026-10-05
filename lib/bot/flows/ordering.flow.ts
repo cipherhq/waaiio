@@ -1196,9 +1196,10 @@ export const orderingFlow: FlowDefinition = {
         }];
       },
       async validate(input: string): Promise<ValidationResult> {
-        if (input === 'more_addons') return { valid: true, data: { _addon_continue: 'more' } };
-        if (input === 'done_addons') return { valid: true, data: { _addon_continue: 'done' } };
-        return { valid: false, errorMessage: 'Please tap *Add more* or *Continue*.' };
+        const lower = input.toLowerCase().trim();
+        if (lower === 'more_addons' || lower === 'more' || lower === 'add more') return { valid: true, data: { _addon_continue: 'more' } };
+        if (lower === 'done_addons' || lower === 'done' || lower === 'continue') return { valid: true, data: { _addon_continue: 'done' } };
+        return { valid: false, errorMessage: 'Type *more* or *done*, or tap a button.' };
       },
       async next(ctx: FlowContext) {
         return ctx.session.session_data._addon_continue === 'more' ? 'select_addons' : 'add_to_cart';

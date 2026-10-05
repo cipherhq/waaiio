@@ -88,6 +88,9 @@ const selectCampaignStep: FlowStepConfig = {
 
     const country = (ctx.business.country_code || 'NG') as CountryCode;
 
+    // Store campaign titles in session for BotService step-owned input matching
+    ctx.session.session_data._campaign_titles = campaigns.map(c => c.title);
+
     return [{
       type: 'list',
       title: 'Active Campaigns',
@@ -111,29 +114,85 @@ const selectCampaignStep: FlowStepConfig = {
       return { valid: true, data: { _campaign_action: 'back_to_menu' } };
     }
 
-    if (!input.startsWith('campaign_')) {
-      return { valid: false, errorMessage: 'I didn\'t find that campaign. Tap an option from the list above.' };
+    if (!ctx.business) {
+      return { valid: false, errorMessage: 'Something went wrong. Send *Hi* to start over.' };
     }
 
-    const campaignId = input.replace('campaign_', '');
-    const { data: campaign, error } = await ctx.supabase
-      .from('campaigns')
-      .select('*')
-      .eq('id', campaignId)
-      .single();
+    // Try postback ID first (campaign_<uuid>)
+    let campaign: Record<string, unknown> | null = null;
+    if (input.startsWith('campaign_')) {
+      const campaignId = input.replace('campaign_', '');
+      // Tenant-scoped: must belong to ctx.business.id
+      const { data, error } = await ctx.supabase
+        .from('campaigns')
+        .select('*')
+        .eq('id', campaignId)
+        .eq('business_id', ctx.business.id)
+        .single();
+      if (!error && data) campaign = data as Record<string, unknown>;
+    }
 
-    if (error || !campaign) {
-      return { valid: false, errorMessage: 'Campaign not found. Please tap one of the options above.' };
+    // Fallback: name match or numeric index against business-scoped eligible campaigns
+    if (!campaign) {
+      const todayFetch = new Date().toISOString().split('T')[0];
+      const { data: allCampaigns } = await ctx.supabase
+        .from('campaigns')
+        .select('*')
+        .eq('business_id', ctx.business.id)
+        .eq('status', 'active')
+        .is('deleted_at', null)
+        .order('created_at', { ascending: false })
+        .limit(20);
+
+      const eligible = (allCampaigns || []).filter((c: Record<string, unknown>) => {
+        const allowEnd = (c.allow_after_end_date ?? true) as boolean;
+        const allowGoal = (c.allow_after_goal_met ?? true) as boolean;
+        if (c.end_date && (c.end_date as string) < todayFetch && !allowEnd) return false;
+        if ((c.goal_amount as number) > 0 && (c.raised_amount as number) >= (c.goal_amount as number) && !allowGoal) return false;
+        return true;
+      });
+
+      if (eligible.length > 0) {
+        const lower = input.trim().toLowerCase();
+        // Numeric index (1, 2, 3…)
+        const numIdx = parseInt(lower, 10) - 1;
+        if (!isNaN(numIdx) && numIdx >= 0 && numIdx < eligible.length) {
+          campaign = eligible[numIdx] as Record<string, unknown>;
+        }
+        if (!campaign) {
+          // Exact name match
+          const exactMatch = eligible.find((c: Record<string, unknown>) => (c.title as string).toLowerCase() === lower);
+          if (exactMatch) {
+            campaign = exactMatch as Record<string, unknown>;
+          } else {
+            // Substring match — unique only (fail closed on ambiguity)
+            const subMatches = eligible.filter((c: Record<string, unknown>) => {
+              const title = (c.title as string).toLowerCase();
+              return title.includes(lower) || lower.includes(title);
+            });
+            if (subMatches.length === 1) {
+              campaign = subMatches[0] as Record<string, unknown>;
+            } else if (subMatches.length > 1) {
+              const names = subMatches.map((c: Record<string, unknown>) => `• ${c.title}`).join('\n');
+              return { valid: false, errorMessage: `Multiple campaigns match. Which one?\n\n${names}` };
+            }
+          }
+        }
+      }
+    }
+
+    if (!campaign) {
+      return { valid: false, errorMessage: 'Campaign not found. Tap an option from the list, or type the campaign name.' };
     }
 
     // Re-check eligibility (campaign state may have changed)
     const todayStr = new Date().toISOString().split('T')[0];
-    const allowAfterEnd = (campaign as Record<string, unknown>).allow_after_end_date ?? true;
-    const allowAfterGoal = (campaign as Record<string, unknown>).allow_after_goal_met ?? true;
-    if (campaign.end_date && campaign.end_date < todayStr && !allowAfterEnd) {
+    const allowAfterEnd = (campaign.allow_after_end_date ?? true) as boolean;
+    const allowAfterGoal = (campaign.allow_after_goal_met ?? true) as boolean;
+    if (campaign.end_date && (campaign.end_date as string) < todayStr && !allowAfterEnd) {
       return { valid: false, errorMessage: 'This campaign has ended and is no longer accepting donations.' };
     }
-    if (campaign.goal_amount > 0 && campaign.raised_amount >= campaign.goal_amount && !allowAfterGoal) {
+    if ((campaign.goal_amount as number) > 0 && (campaign.raised_amount as number) >= (campaign.goal_amount as number) && !allowAfterGoal) {
       return { valid: false, errorMessage: 'This campaign has reached its goal and is no longer accepting donations. Thank you!' };
     }
 
@@ -199,9 +258,10 @@ const campaignViewStep: FlowStepConfig = {
   },
 
   async validate(input: string) {
-    if (input === 'donate_yes') return { valid: true, data: {} };
-    if (input === 'donate_back') return { valid: true, data: { go_back: true } };
-    return { valid: false, errorMessage: 'Please select an option.' };
+    const lower = input.toLowerCase().trim();
+    if (lower === 'donate_yes' || lower === 'donate' || lower === 'yes') return { valid: true, data: {} };
+    if (lower === 'donate_back' || lower === 'back') return { valid: true, data: { go_back: true } };
+    return { valid: false, errorMessage: 'Please tap *Donate Now* or *Back to Campaigns*, or type *donate* or *back*.' };
   },
 
   async next(ctx: FlowContext) {
