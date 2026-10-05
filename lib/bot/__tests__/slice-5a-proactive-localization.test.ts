@@ -468,6 +468,13 @@ describe('B2 — saved-card PIN/security localization', () => {
     expect(source).toContain("'🔒 Too many wrong attempts. Your card is locked for 30 minutes. Try again later.', ['30']");
   });
 
+  it('initial PIN prompt passes "4" AND "Waaiio" as protectedValues', () => {
+    const source = readFileSync(resolve(ROOT, 'lib/bot/handlers/saved-cards.ts'), 'utf-8');
+    const pinLine = source.split('\n').find(l => l.includes('4 digits') && l.includes('Waaiio PIN:'));
+    expect(pinLine).toBeTruthy();
+    expect(pinLine).toContain("['4', 'Waaiio']");
+  });
+
   it('replacement PIN prompt passes "4" and "Waaiio" as protectedValues', () => {
     const source = readFileSync(resolve(ROOT, 'lib/bot/handlers/saved-cards.ts'), 'utf-8');
     // The replacement PIN prompt line must include both protected values

@@ -246,7 +246,7 @@ export async function handleCardPinStep(
   }
 
   if (!/^\d{4}$/.test(pin)) {
-    await localSend(from, 'Please enter exactly *4 digits* for your Waaiio PIN:', ['Waaiio']);
+    await localSend(from, 'Please enter exactly *4 digits* for your Waaiio PIN:', ['4', 'Waaiio']);
     return;
   }
 
