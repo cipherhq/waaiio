@@ -44,6 +44,29 @@ export interface TranslateOptions {
 }
 
 /**
+ * Validate that a translated template contains exactly the expected placeholders.
+ * Each __Vi__ (for i in 1..expectedCount) must appear exactly once.
+ * No unexpected __V\d+__ placeholders may be present.
+ * Returns false if any placeholder is missing, duplicated, or spurious.
+ */
+function validatePlaceholderIntegrity(template: string, expectedCount: number): boolean {
+  // Find all __Vn__ occurrences in the template
+  const found = template.match(/__V\d+__/g) || [];
+
+  // Must have exactly the expected number of placeholders
+  if (found.length !== expectedCount) return false;
+
+  // Each expected placeholder __V1__ through __V{expectedCount}__ must appear exactly once
+  for (let i = 1; i <= expectedCount; i++) {
+    const placeholder = `__V${i}__`;
+    const count = found.filter(p => p === placeholder).length;
+    if (count !== 1) return false;
+  }
+
+  return true;
+}
+
+/**
  * Translate a bot response to the user's detected language.
  * Returns the original text if language is English or unsupported.
  * Falls back to original text on any error (fail-closed).
@@ -99,6 +122,12 @@ export async function translateBotResponse(
   const cacheKey = `${language}:${templateText}`;
   const cached = cache.get(cacheKey);
   if (cached && cached.expiry > Date.now()) {
+    // Validate cached template still has intact placeholders before restoring
+    if (replacements.length > 0 && !validatePlaceholderIntegrity(cached.text, replacements.length)) {
+      logger.warn('[TRANSLATE] Cached template failed placeholder integrity — evicting and returning original');
+      cache.delete(cacheKey);
+      return text;
+    }
     // Re-insert original values
     let result = cached.text;
     replacements.forEach((val, i) => { result = result.replace(`__V${i + 1}__`, val); });
@@ -131,7 +160,17 @@ export async function translateBotResponse(
 
     const translatedTemplate = response.content[0].type === 'text' ? response.content[0].text.trim() : templateText;
 
-    // Cache the translated template (with placeholders)
+    // Placeholder integrity check — fail closed if LLM dropped, mutated, or duplicated placeholders.
+    // Model compliance must not be the security boundary for authoritative values (auth URLs, merchant names).
+    if (replacements.length > 0 && !validatePlaceholderIntegrity(translatedTemplate, replacements.length)) {
+      logger.warn('[TRANSLATE] LLM response failed placeholder integrity check — returning original text', {
+        language, expectedCount: replacements.length,
+      });
+      // Do NOT cache this invalid template
+      return text;
+    }
+
+    // Cache the translated template (with placeholders) — integrity already verified
     cache.set(cacheKey, { text: translatedTemplate, expiry: Date.now() + CACHE_TTL });
 
     // Track AI usage for this business (non-blocking)

@@ -891,3 +891,126 @@ describe('cache invariant — no cross-business protected-value leakage', () => 
     expect(mockCreate).toHaveBeenCalledTimes(1);
   });
 });
+
+// ═══════════════════════════════════════════════════════════════
+// Part 15: Placeholder integrity — fail closed on LLM corruption
+// ═══════════════════════════════════════════════════════════════
+
+describe('placeholder integrity — fail closed on LLM corruption', () => {
+  it('dropped placeholder: returns original text with auth URL intact', async () => {
+    const ctx = growthCtx();
+    const authUrl = 'https://checkout.paystack.com/3dsecure/verify/abc123';
+    // LLM drops the __V1__ placeholder entirely
+    mockTranslation('🔒 Votre banque exige une vérification.\n\nVeuillez compléter ici 👇\n\n⚠️ Retournez sur WhatsApp après vérification.');
+
+    const original = `🔒 Your bank requires verification.\n\nPlease complete here 👇\n${authUrl}\n\n⚠️ Return to WhatsApp after verifying.`;
+    const result = await translateBotResponse(original, 'fr', ctx, { protectedValues: [authUrl] });
+
+    // Must fail closed to original text — auth URL intact
+    expect(result).toBe(original);
+    expect(result).toContain(authUrl);
+  });
+
+  it('mutated placeholder: returns original text', async () => {
+    const ctx = growthCtx();
+    const bizName = "Mama's Kitchen";
+    // LLM mutates __V1__ to __v1__ (lowercase) — invalid
+    mockTranslation('Votre session avec *__v1__* a expiré.');
+
+    const original = `Your session with *${bizName}* has expired.`;
+    const result = await translateBotResponse(original, 'fr', ctx, { protectedValues: [bizName] });
+
+    // Must fail closed — mutated placeholder is not valid
+    expect(result).toBe(original);
+    expect(result).toContain(bizName);
+  });
+
+  it('duplicated placeholder: returns original text', async () => {
+    const ctx = growthCtx();
+    const bizName = 'FacesByKoph';
+    // LLM duplicates __V1__ — appears twice
+    mockTranslation('Bienvenue chez __V1__. Merci __V1__ pour votre visite.');
+
+    const original = `Welcome to ${bizName}. Thank you for visiting.`;
+    const result = await translateBotResponse(original, 'fr', ctx, { protectedValues: [bizName] });
+
+    // Must fail closed — duplicated placeholder means ambiguous restoration
+    expect(result).toBe(original);
+    expect(result).toContain(bizName);
+  });
+
+  it('spurious extra placeholder: returns original text', async () => {
+    const ctx = growthCtx();
+    const bizName = 'Bukka Hut';
+    // LLM invents an extra __V2__ that was never in the input
+    mockTranslation('Bienvenue chez __V1__ — promotion __V2__');
+
+    const original = `Welcome to ${bizName} — enjoy your visit`;
+    const result = await translateBotResponse(original, 'fr', ctx, { protectedValues: [bizName] });
+
+    // Must fail closed — extra placeholder is unexpected
+    expect(result).toBe(original);
+    expect(result).toContain(bizName);
+  });
+
+  it('valid translation is cached; corrupted one is not', async () => {
+    const ctx = growthCtx();
+
+    // First call: valid translation with intact placeholder
+    mockTranslation('Bienvenue chez __V1__ pour la première fois.');
+    const result1 = await translateBotResponse(
+      'Welcome to Bukka Hut for the first time.',
+      'fr', ctx, { protectedValues: ['Bukka Hut'] },
+    );
+    expect(result1).toContain('Bukka Hut');
+
+    // Clear cache to test a corrupted response for a DIFFERENT template
+    _clearTranslationCache();
+
+    // Second call with different text: LLM drops placeholder
+    mockTranslation('Merci pour votre visite.');
+    const result2 = await translateBotResponse(
+      'Thank you for visiting FacesByKoph.',
+      'fr', ctx, { protectedValues: ['FacesByKoph'] },
+    );
+    // Must fail closed — original returned
+    expect(result2).toBe('Thank you for visiting FacesByKoph.');
+
+    // Third call: same text again — should NOT hit cache (corrupted was not cached),
+    // so it makes a new LLM call
+    mockTranslation('Merci pour votre visite chez __V1__.');
+    const result3 = await translateBotResponse(
+      'Thank you for visiting FacesByKoph.',
+      'fr', ctx, { protectedValues: ['FacesByKoph'] },
+    );
+    // This time LLM returns valid response — should work
+    expect(result3).toContain('FacesByKoph');
+
+    // Total LLM calls: 3 (valid, corrupted, retry)
+    expect(mockCreate).toHaveBeenCalledTimes(3);
+  });
+
+  it('no placeholders: LLM response is accepted without integrity check', async () => {
+    const ctx = growthCtx();
+    // Text with no protected values or regex-matched patterns — no placeholders generated
+    mockTranslation('Bonjour le monde');
+
+    const result = await translateBotResponse('Hello world', 'fr', ctx);
+    // Should translate normally — no integrity check needed when no placeholders
+    expect(result).toBe('Bonjour le monde');
+    expect(mockCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it('regex-protected values also trigger integrity check', async () => {
+    const ctx = growthCtx();
+    // Input has a currency amount (regex-protected) — LLM drops the placeholder
+    mockTranslation('Le total est de seulement.');
+
+    const original = 'The total is only ₦5,000.';
+    const result = await translateBotResponse(original, 'fr', ctx);
+
+    // Must fail closed — regex-protected currency placeholder was dropped
+    expect(result).toBe(original);
+    expect(result).toContain('₦5,000');
+  });
+});
