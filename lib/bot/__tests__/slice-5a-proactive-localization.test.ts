@@ -76,11 +76,12 @@ beforeEach(() => {
 // Layer 1: Production-policy resolver
 // ═══════════════════════════════════════════════════════════════
 
-describe('Layer 1 — production policy (no CERTIFIED_LANGUAGES modification)', () => {
-  it('CERTIFIED_LANGUAGES remains English-only', () => {
+describe('Layer 1 — production certification policy', () => {
+  it('CERTIFIED_LANGUAGES includes English and Pidgin', () => {
     const catalog = readFileSync(resolve(ROOT, 'lib/bot/languages.ts'), 'utf-8');
-    expect((catalog.match(/certified:\s*true/g) || []).length).toBe(1);
+    expect((catalog.match(/certified:\s*true/g) || []).length).toBe(2);
     expect(catalog).toMatch(/code:\s*'en'[^}]*certified:\s*true/);
+    expect(catalog).toMatch(/code:\s*'pcm'[^}]*certified:\s*true/);
   });
 
   it('resolveEffectiveResponseLanguage falls back to English when non-English is uncertified', async () => {
@@ -537,11 +538,11 @@ describe('B3 — stale-payment recovery (supplementary structural)', () => {
 // Regression: no scope violations
 // ═══════════════════════════════════════════════════════════════
 
-describe('Slice 5A — no scope violations', () => {
-  it('CERTIFIED_LANGUAGES not modified', () => {
+describe('Slice 5A — scope containment', () => {
+  it('CERTIFIED_LANGUAGES includes only English and Pidgin', () => {
     const catalog = readFileSync(resolve(ROOT, 'lib/bot/languages.ts'), 'utf-8');
     const certifiedCount = (catalog.match(/certified:\s*true/g) || []).length;
-    expect(certifiedCount).toBe(1);
+    expect(certifiedCount).toBe(2);
   });
 
   it('no migration files in diff', async () => {

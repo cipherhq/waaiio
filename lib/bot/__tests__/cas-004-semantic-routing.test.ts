@@ -697,10 +697,10 @@ describe('CAS-004 LLM tier authority', () => {
 
   it('Q: uncertified language cannot activate', async () => {
     const { CERTIFIED_LANGUAGES, getEffectiveLanguages } = await import('../language-policy');
-    // Only English is certified
-    expect(CERTIFIED_LANGUAGES).toEqual(['en']);
-    // Business tier only gets certified languages
+    // English and Pidgin are certified
+    expect(CERTIFIED_LANGUAGES).toEqual(['en', 'pcm']);
+    // Business tier gets all certified languages
     const ent = getEffectiveLanguages('business');
-    expect(ent.allowedLanguages).toEqual(['en']);
+    expect(ent.allowedLanguages).toEqual(['en', 'pcm']);
   });
 });
