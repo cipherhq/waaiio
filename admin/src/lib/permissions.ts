@@ -12,6 +12,7 @@ export const ADMIN_PERMISSIONS: Record<string, AdminRole[]> = {
 
   // Businesses
   'businesses': ['admin', 'support', 'operations'],
+  'customer-onboarding': ['admin'],
   'verification': ['admin', 'operations'],
   'category-templates': ['admin'],
   'impersonation': ['admin'],

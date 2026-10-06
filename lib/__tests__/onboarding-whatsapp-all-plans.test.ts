@@ -85,9 +85,10 @@ describe('#346 Part A — Structural assertions', () => {
   describe('Registration route — server-enforced shared', () => {
     it('C1: route hardcodes wa_method to shared, ignoring caller value', () => {
       // The insert payload must use 'shared', not the caller-supplied wa_method
-      const insertBlock = registerRouteSource.slice(
-        registerRouteSource.indexOf('.insert({'),
-        registerRouteSource.indexOf('status: \'pending\'') + 20
+      const provisioningSource = readFileSync(join(process.cwd(), 'lib/onboarding/provision-business.ts'), 'utf-8');
+      const insertBlock = provisioningSource.slice(
+        provisioningSource.indexOf('.insert({'),
+        provisioningSource.indexOf('status: \'pending\'') + 20
       );
       expect(insertBlock).toContain("wa_method: 'shared'");
       expect(insertBlock).not.toMatch(/wa_method:\s*wa_method/);

@@ -9,7 +9,6 @@ import {
   type BusinessCategoryKey,
   type CountryCode,
 } from '@/lib/constants';
-import { loadCategories, getAllCategoryKeys } from '@/lib/categoryConfig';
 import { initCapabilities } from '@/lib/capabilities/service';
 import type { CapabilityId } from '@/lib/capabilities/types';
 import { sendEmail } from '@/lib/email/client';
@@ -17,6 +16,8 @@ import { loadPlatformSettings } from '@/lib/platformSettings';
 import { welcomeEmail, businessRegisteredEmail } from '@/lib/email/templates';
 import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 import { logger } from '@/lib/logger';
+import { OnboardingValidationError, validateBusinessAuthorityInputs } from '@/lib/onboarding/validation';
+import { OnboardingProvisionError, provisionPendingBusiness } from '@/lib/onboarding/provision-business';
 
 export async function POST(request: NextRequest) {
   try {
@@ -36,7 +37,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    await loadCategories();
     const body = await request.json();
     const { first_name, last_name, name, city, state, zip_code, address, phone, category, country, bot_alias, bot_greeting, wa_method, wa_own_phone, capabilities, bot_code: customBotCode, retryBusinessId } = body;
 
@@ -113,56 +113,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ message: `Maximum number of businesses reached (${settings.max_businesses_per_user}). Contact support to increase.` }, { status: 400 });
     }
 
-    // ── Authoritative country validation from DB (not browser cache) ──
-    const normalizedCountry = String(country || '').trim().toUpperCase();
-    const { data: activeCountries, error: countriesError } = await svcCheck
-      .from('countries')
-      .select('code, dialing_code')
-      .eq('is_active', true);
-
-    if (countriesError) {
-      logger.error('[ONBOARDING] Countries table read failed:', countriesError);
-      return NextResponse.json(
-        { message: 'Country configuration unavailable. Please try again later.' },
-        { status: 503 },
-      );
-    }
-    if (!activeCountries || activeCountries.length === 0) {
-      logger.error('[ONBOARDING] No active countries found in countries table');
-      return NextResponse.json(
-        { message: 'Country configuration unavailable. Please try again later.' },
-        { status: 503 },
-      );
-    }
-
-    const activeCountryCodes = new Set(activeCountries.map((c: { code: string }) => c.code));
-    if (!activeCountryCodes.has(normalizedCountry)) {
-      return NextResponse.json(
-        { message: 'Invalid or unsupported country. Please select a valid country.' },
-        { status: 400 },
-      );
-    }
-    const countryCode = normalizedCountry as CountryCode;
-
-    // Validate country matches phone number to prevent fee arbitrage (DB-derived)
-    if (phone) {
-      const dialingCodeMap: Record<string, string[]> = {};
-      for (const row of activeCountries) {
-        if (row.dialing_code) {
-          const dc = String(row.dialing_code);
-          if (!dialingCodeMap[dc]) dialingCodeMap[dc] = [];
-          dialingCodeMap[dc].push(row.code);
-        }
-      }
-      const matchedEntry = Object.entries(dialingCodeMap).find(([code]) => phone.startsWith(code));
-      if (matchedEntry && !matchedEntry[1].includes(countryCode)) {
-        return NextResponse.json(
-          { message: `Phone number doesn't match selected country. A ${phone.slice(0, 4)} number should use ${matchedEntry[1].join(' or ')}.` },
-          { status: 400 },
-        );
-      }
-    }
-
     if (!name || !city || !address || !phone || !category) {
       return NextResponse.json(
         { message: 'Missing required fields: name, city, address, phone, category' },
@@ -170,215 +120,31 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const validCategories = getAllCategoryKeys();
-    if (!validCategories.includes(category)) {
-      return NextResponse.json(
-        { message: 'Invalid category' },
-        { status: 400 },
-      );
+    let countryCode: CountryCode;
+    try {
+      ({ countryCode } = await validateBusinessAuthorityInputs(svcCheck, { country, category, phone }));
+    } catch (validationError) {
+      if (validationError instanceof OnboardingValidationError) {
+        return NextResponse.json({ message: validationError.message }, { status: validationError.status });
+      }
+      throw validationError;
     }
 
     const service = createServiceClient();
-
-    const slug = generateSlug(name);
-
-    // Use custom bot code if provided, otherwise auto-generate from name
-    let botCode = customBotCode
-      ? String(customBotCode).trim().toUpperCase().replace(/\s+/g, '-').replace(/[^A-Z0-9-]/g, '').replace(/-+/g, '-').slice(0, 30)
-      : generateBotCode(name);
-
-    // Validate minimum length
-    if (botCode.length < 2) botCode = generateBotCode(name);
-
-    // Fetch template from DB (with fallback to hardcoded constants)
-    const { data: template } = await service
-      .from('category_templates')
-      .select('flow_type, default_services, default_greeting, metadata')
-      .eq('key', category)
-      .eq('is_active', true)
-      .maybeSingle();
-
-    const flowType = template?.flow_type || CATEGORY_FLOW_MAP[category as BusinessCategoryKey];
-
-    // Handle bot_code collision
-    const { data: existing } = await service
-      .from('businesses')
-      .select('bot_code')
-      .eq('bot_code', botCode)
-      .maybeSingle();
-
-    if (existing) {
-      // If user chose a custom code and it collides, reject it
-      if (customBotCode) {
-        return NextResponse.json(
-          { message: 'Bot code is already taken. Please choose a different one.' },
-          { status: 409 },
-        );
-      }
-      // Auto-generated code collision: append suffix as fallback
-      let resolved = false;
-      for (let i = 1; i <= 99; i++) {
-        const candidate = `${botCode}-${String(i).padStart(2, '0')}`.slice(0, 30);
-        const { data: collision } = await service
-          .from('businesses')
-          .select('bot_code')
-          .eq('bot_code', candidate)
-          .maybeSingle();
-        if (!collision) {
-          botCode = candidate;
-          resolved = true;
-          break;
-        }
-      }
-      if (!resolved) {
-        // All 99 suffixes taken — append random chars
-        botCode = `${botCode.slice(0, 24)}-${Math.random().toString(36).slice(2, 7)}`;
-      }
-    }
-
-    // Handle slug collision
-    let finalSlug = slug;
-    const { data: slugExists } = await service
-      .from('businesses')
-      .select('slug')
-      .eq('slug', slug)
-      .maybeSingle();
-
-    if (slugExists) {
-      let slugResolved = false;
-      for (let i = 1; i <= 99; i++) {
-        const candidate = `${slug}-${i}`;
-        const { data: collision } = await service
-          .from('businesses')
-          .select('slug')
-          .eq('slug', candidate)
-          .maybeSingle();
-        if (!collision) {
-          finalSlug = candidate;
-          slugResolved = true;
-          break;
-        }
-      }
-      if (!slugResolved) {
-        finalSlug = `${slug.slice(0, 44)}-${Math.random().toString(36).slice(2, 7)}`;
-      }
-    }
-
-    // Resolve canonical payment gateway from country config (#493)
-    const { resolveCountryGateway } = await import('@/lib/payments/gateway-resolver');
-    const gatewayResult = await resolveCountryGateway(service, countryCode);
-    const inheritedGateway = gatewayResult.gateway ?? null;
-    // Payment readiness: explicit flag surfaced in response (#493 B5)
-    const paymentReady = inheritedGateway !== null;
-    if (!paymentReady) {
-      logger.warn('[ONBOARDING] Business created without payment gateway', {
-        countryCode,
-        reason: !gatewayResult.gateway ? (gatewayResult as { reason?: string }).reason : 'unknown',
-      });
-    }
-
-    const { data: business, error: insertError } = await service
-      .from('businesses')
-      .insert({
-        owner_id: user.id,
-        name,
-        slug: finalSlug,
-        bot_code: botCode,
-        city,
-        state: state || null,
-        zip_code: zip_code || null,
-        address,
-        phone,
-        category,
-        flow_type: flowType,
-        country_code: countryCode,
-        wa_method: 'shared',  // Always register as shared; dedicated set by /api/auth/facebook/callback after durable channel
-        subscription_tier: 'free',
-        status: 'pending',
-        payment_gateway: inheritedGateway,
-      })
-      .select('id, bot_code, slug')
-      .single();
-
-    if (insertError || !business) {
-      // Handle unique constraint violations cleanly (concurrent signup race condition)
-      const isDuplicate = insertError?.code === '23505';
-      if (isDuplicate) {
-        const field = insertError.message?.includes('bot_code') ? 'bot code' : insertError.message?.includes('slug') ? 'URL slug' : 'business name';
-        return NextResponse.json(
-          { message: `This ${field} is already taken. Please try a different name.` },
-          { status: 409 },
-        );
-      }
-      logger.error('[ONBOARDING] Business insert failed:', insertError);
-      return NextResponse.json(
-        { message: 'Failed to create business. Please try again.' },
-        { status: 500 },
-      );
-    }
-
-    // Create WhatsApp config — prefer DB template greeting, then user-provided, then hardcoded
-    // Non-critical: if any of these fail, the business is already created and can be re-initialized later
-    const templateGreeting = template?.default_greeting
-      ? (template.default_greeting as string).replace(/\{\{name\}\}/g, name)
-      : null;
-    const defaultGreeting = bot_greeting || templateGreeting || getDefaultGreeting(name, category as BusinessCategoryKey);
+    let business: Awaited<ReturnType<typeof provisionPendingBusiness>>;
     try {
-      const { error: configErr } = await service.from('whatsapp_config').insert({
-        business_id: business.id,
-        bot_greeting: defaultGreeting,
-        bot_alias: bot_alias || null,
-        auto_confirm: true,
-        welcome_buttons: getDefaultWelcomeButtons(category as BusinessCategoryKey),
-      });
-      if (configErr) logger.error('[ONBOARDING] whatsapp_config insert failed:', configErr);
-    } catch (err) {
-      logger.error('[ONBOARDING] whatsapp_config insert exception:', err);
-    }
-
-    // NOTE: We intentionally do NOT auto-create sample services, appointments, or properties.
-    // The business owner should add their own from the dashboard.
-    // The bot automatically hides capabilities that have no backing data,
-    // so there's no risk of showing empty options to customers.
-    // The onboarding checklist guides the owner to "Set up your business" as step 1.
-
-    // Auto-create capabilities
-    // Priority: user-selected > template metadata > hardcoded defaults
-    // Uses upsert for idempotency — safe to retry on the same business
-    const templateCaps = (template?.metadata as Record<string, unknown>)?.default_capabilities as CapabilityId[] | undefined;
-    const capsToInit = (capabilities as CapabilityId[] | undefined) || (templateCaps?.length ? templateCaps : undefined);
-    try {
-      await initCapabilities(
-        service,
-        business.id,
-        category,
-        capsToInit,
-      );
-    } catch (err) {
-      logger.error('[ONBOARDING] initCapabilities failed:', err);
-      // Capability initialization is required for a complete business setup.
-      // Return a recoverable error — the business exists but is not fully configured.
-      return NextResponse.json(
-        { error: 'Capability setup failed. Please try again.', recoverable: true, businessId: business.id },
-        { status: 500 },
-      );
-    }
-
-    // Shared finalization — canned responses + profile update
-    try {
-      await finalizeOnboarding(service, {
-        businessId: business.id,
-        userId: user.id,
-        capabilities: capsToInit || [],
+      business = await provisionPendingBusiness(service, {
+        ownerId: user.id, name, city, state, zipCode: zip_code, address, phone,
+        category, countryCode, customBotCode, botAlias: bot_alias, botGreeting: bot_greeting,
+        capabilities: capabilities as CapabilityId[] | undefined,
         firstName: first_name ? String(first_name) : undefined,
         lastName: last_name ? String(last_name) : undefined,
       });
-    } catch (err) {
-      logger.error('[ONBOARDING] Finalization failed:', err);
-      return NextResponse.json(
-        { error: 'Setup finalization failed. Please try again.', recoverable: true, businessId: business.id },
-        { status: 500 },
-      );
+    } catch (error) {
+      if (error instanceof OnboardingProvisionError) {
+        return NextResponse.json({ message: error.message, error: error.message, recoverable: error.status >= 500, businessId: error.businessId }, { status: error.status });
+      }
+      throw error;
     }
 
     // Send emails (optional, non-blocking)
@@ -410,9 +176,9 @@ export async function POST(request: NextRequest) {
       bot_code: business.bot_code,
       slug: business.slug,
       category,
-      flow_type: flowType,
-      payment_ready: paymentReady,
-      ...(!paymentReady ? { payment_readiness_reason: 'No payment gateway configured for this country.' } : {}),
+      flow_type: business.flowType,
+      payment_ready: business.paymentReady,
+      ...(!business.paymentReady ? { payment_readiness_reason: 'No payment gateway configured for this country.' } : {}),
     });
   } catch (error) {
     logger.error('Onboarding register error:', error);

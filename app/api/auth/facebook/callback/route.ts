@@ -60,7 +60,7 @@ export async function POST(request: NextRequest) {
     // Verify business ownership
     const { data: business } = await supabase
       .from('businesses')
-      .select('id, owner_id, name, country_code, address, assigned_channel_id, whatsapp_channel_id, wa_method')
+      .select('id, owner_id, name, country_code, address, assigned_channel_id, whatsapp_channel_id, wa_method, status')
       .eq('id', business_id)
       .single();
 
@@ -375,6 +375,25 @@ export async function POST(request: NextRequest) {
       logger.debug('[FB-CALLBACK] Templates provisioned:', templateResult);
     } catch (err) {
       logger.error('[FB-CALLBACK] Template provisioning warning:', err);
+    }
+
+    // Finish an assisted onboarding only after both canonical business activation
+    // and the customer's successful Meta authorization are proven.
+    if (business.status === 'active') {
+      const { data: assisted } = await service.from('admin_onboarding_invites')
+        .select('id, created_by_admin_id, target_user_id').eq('business_id', business_id)
+        .eq('status', 'customer_action_required').in('whatsapp_method', ['dedicated', 'coexistence']).maybeSingle();
+      if (assisted) {
+        const activatedAt = new Date().toISOString();
+        const { error: auditError } = await service.from('admin_audit_logs').insert({ actor_id: assisted.created_by_admin_id, action: 'admin_onboarding_activated', entity_type: 'admin_onboarding', entity_id: assisted.id, details: { target_user_id: assisted.target_user_id, business_id, meta_authorized_by_customer: true, channel_id: channelId } });
+        if (auditError) {
+          logger.error('[FB-CALLBACK] Assisted onboarding completion audit failed:', auditError);
+        } else {
+          await service.from('admin_onboarding_invites')
+            .update({ status: 'active', activated_at: activatedAt, last_error: null })
+            .eq('id', assisted.id).eq('status', 'customer_action_required');
+        }
+      }
     }
 
     return NextResponse.json({

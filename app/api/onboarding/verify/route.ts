@@ -4,6 +4,7 @@ import { createServiceClient } from '@/lib/supabase/service';
 import { finalizeOnboarding } from '@/lib/onboarding/finalize';
 import { PRICING_TIERS, type SubscriptionTier } from '@/lib/constants';
 import type { CapabilityId } from '@/lib/capabilities/types';
+import { initCapabilities } from '@/lib/capabilities/service';
 
 export async function POST(request: NextRequest) {
   try {
@@ -622,6 +623,46 @@ export async function POST(request: NextRequest) {
       .select('bot_code, slug')
       .eq('id', businessId)
       .single();
+
+    // Admin-assisted onboarding converges here, after the canonical payment/free
+    // entitlement authority has activated the exact owned business. Dedicated or
+    // coexistence requests remain customer-action-required until Meta authorization.
+    try {
+      const { data: assisted } = await service.from('admin_onboarding_invites')
+        .select('id, created_by_admin_id, whatsapp_method, status, intended_plan, metadata')
+        .eq('business_id', businessId).eq('target_user_id', user.id)
+        .eq('status', 'customer_action_required').maybeSingle();
+      const requestedCapabilities = ((assisted?.metadata as { input?: { capabilities?: CapabilityId[] } } | null)?.input?.capabilities || []);
+      if (assisted?.intended_plan === plan && requestedCapabilities.length > 0) {
+        const { data: activatedBusiness } = await service.from('businesses').select('category, status, subscription_tier').eq('id', businessId).single();
+        if (activatedBusiness?.status === 'active' && activatedBusiness.subscription_tier === plan) {
+          await initCapabilities(service, businessId, activatedBusiness.category, requestedCapabilities);
+        }
+      }
+      if (assisted?.whatsapp_method === 'shared') {
+      const activatedAt = new Date().toISOString();
+      const { data: completed } = await service.from('admin_onboarding_invites')
+        .update({ status: 'active', activated_at: activatedAt, last_error: null })
+        .eq('id', assisted.id).eq('status', 'customer_action_required').select('id').maybeSingle();
+      if (completed) {
+        const { error: assistedAuditError } = await service.from('admin_audit_logs').insert({
+          actor_id: assisted.created_by_admin_id,
+          action: 'admin_onboarding_activated',
+          entity_type: 'admin_onboarding',
+          entity_id: assisted.id,
+          details: { target_user_id: user.id, business_id: businessId, plan, completed_by_customer: true },
+        });
+        if (assistedAuditError) {
+          await service.from('admin_onboarding_invites').update({ status: 'customer_action_required', activated_at: null, last_error: 'Completion audit failed' }).eq('id', assisted.id).eq('status', 'active');
+          return NextResponse.json({ message: 'Activation completed, but onboarding audit failed. Contact support.', recoverable: true }, { status: 500 });
+        }
+      }
+      }
+    } catch (assistedError) {
+      // Completion tracking is ancillary to the canonical activation authority.
+      // A missing migration during a rolling deploy must not break public signup.
+      console.warn('[ONBOARDING-VERIFY] Assisted onboarding status sync deferred:', assistedError);
+    }
 
     return NextResponse.json({
       status: 'success',

@@ -73,6 +73,7 @@ import ClassSessions from './pages/ClassSessions';
 import SiteAnnouncementPage from './pages/SiteAnnouncement';
 import LaunchSubscribers from './pages/LaunchSubscribers';
 import PlatformCampaigns from './pages/PlatformCampaigns';
+import CustomerOnboarding from './pages/CustomerOnboarding';
 
 export const router = createBrowserRouter([
   { path: '/login', Component: Login },
@@ -88,6 +89,7 @@ export const router = createBrowserRouter([
       { path: 'admin-team', element: <RoleGuard roles={ADMIN_PERMISSIONS['admin-team']}><AdminTeam /></RoleGuard> },
       // Businesses
       { path: 'businesses', element: <RoleGuard roles={ADMIN_PERMISSIONS['businesses']}><Businesses /></RoleGuard> },
+      { path: 'customer-onboarding', element: <RoleGuard roles={ADMIN_PERMISSIONS['customer-onboarding']}><CustomerOnboarding /></RoleGuard> },
       { path: 'verification', element: <RoleGuard roles={ADMIN_PERMISSIONS['verification']}><Verification /></RoleGuard> },
       { path: 'category-templates', element: <RoleGuard roles={ADMIN_PERMISSIONS['category-templates']}><CategoryTemplates /></RoleGuard> },
       { path: 'impersonation', element: <RoleGuard roles={ADMIN_PERMISSIONS['impersonation']}><ImpersonationMode /></RoleGuard> },
