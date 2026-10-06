@@ -231,11 +231,11 @@ describe('G1 — atomic email localization failure', () => {
 // ═══════════════════════════════════════════════════════════════
 
 describe('G1 — scope containment', () => {
-  it('CERTIFIED_LANGUAGES remains English-only', async () => {
+  it('CERTIFIED_LANGUAGES includes English and Pidgin', async () => {
     const { readFileSync } = await import('fs');
     const { resolve } = await import('path');
     const catalog = readFileSync(resolve(__dirname, '../bot/languages.ts'), 'utf-8');
-    expect((catalog.match(/certified:\s*true/g) || []).length).toBe(1);
+    expect((catalog.match(/certified:\s*true/g) || []).length).toBe(2);
   });
 
   it('contract/legal PDFs are untouched', async () => {

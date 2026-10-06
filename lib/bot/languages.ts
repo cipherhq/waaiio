@@ -1,6 +1,6 @@
 export const LANGUAGE_CATALOG = [
   { code: 'en', displayName: 'English', nativeName: 'English', certified: true },
-  { code: 'pcm', displayName: 'Nigerian Pidgin', nativeName: 'Naijá', certified: false },
+  { code: 'pcm', displayName: 'Nigerian Pidgin', nativeName: 'Naijá', certified: true },
   { code: 'yo', displayName: 'Yoruba', nativeName: 'Yorùbá', certified: false },
   { code: 'ig', displayName: 'Igbo', nativeName: 'Igbo', certified: false },
   { code: 'ha', displayName: 'Hausa', nativeName: 'Hausa', certified: false },

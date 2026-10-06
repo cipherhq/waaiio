@@ -550,10 +550,11 @@ describe('select_campaign tenant isolation + ambiguity', () => {
 // ═══════════════════════════════════════════════════════════════
 
 describe('CERTIFIED_LANGUAGES', () => {
-  it('only en certified', () => {
+  it('English and Pidgin certified', () => {
     const cat = readFileSync(resolve(ROOT, 'lib/bot/languages.ts'), 'utf-8');
-    expect((cat.match(/certified:\s*true/g) || []).length).toBe(1);
+    expect((cat.match(/certified:\s*true/g) || []).length).toBe(2);
     expect(cat).toMatch(/code:\s*'en'[^}]*certified:\s*true/);
+    expect(cat).toMatch(/code:\s*'pcm'[^}]*certified:\s*true/);
   });
 });
 
