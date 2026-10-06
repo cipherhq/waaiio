@@ -22,12 +22,8 @@ export type { SupportedLanguage };
  * Production-certified languages — passed linguistic quality certification.
  * Architecture may support more codes, but only certified languages are
  * selectable in UI and activatable in production.
- * Expand after controlled language-quality acceptance testing.
- */
-/**
- * Production-certified = English only until separate linguistic certification.
- * Architecture supports more codes (en, pcm, yo, ig, ha, tw, fr, es) but
- * only certified languages are selectable in UI and activatable in production.
+ * Expand one language at a time after controlled certification and human QA.
+ * Current certification: English + Nigerian Pidgin (pcm).
  */
 
 /** Maximum additional languages for Growth tier (beyond English) */
