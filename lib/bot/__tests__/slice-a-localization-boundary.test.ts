@@ -410,11 +410,11 @@ describe('Slice A — real FlowExecutor language-switch + outbound behavior', ()
 
     const session = createTestSession();
     // Mock Anthropic responses:
-    // (1) "Switched to French. ✅" confirmation text
-    // (2) "Pick a date:" → "Choisissez une date :" via ctx.t in the re-prompt
-    // (3) sendMessages re-translates the already-French prompt (by-design double-pass;
+    // Confirmation is now deterministic (getFlowCopy → English for uncertified 'fr'),
+    // so no Anthropic call is needed for it. Only the re-prompt translations remain:
+    // (1) "Pick a date:" → "Choisissez une date :" via ctx.t in the re-prompt
+    // (2) sendMessages re-translates the already-French prompt (by-design double-pass;
     //     in production the cache would absorb this, but in tests each mock is consumed once)
-    setupAnthropicResponse('Passage au français. ✅');
     setupAnthropicResponse('Choisissez une date :');
     setupAnthropicResponse('Choisissez une date :');
 
@@ -434,9 +434,13 @@ describe('Slice A — real FlowExecutor language-switch + outbound behavior', ()
       }),
     );
 
-    // Must send translated confirmation
+    // Must send confirmation — now deterministic via getFlowCopy.
+    // Since 'fr' is not in CERTIFIED_LANGUAGES, the confirmation falls back to English.
+    // The fillFlowCopy(targetLang, 'lang.switched', ...) call will use English because
+    // getFlowCopy gates on certification. This is intentional — the language switch
+    // still activates _detected_language for LLM translation of subsequent prompts.
     const msgs = sender.getMessages();
-    expect(msgs.some(m => m.type === 'text' && m.text?.includes('Passage au français'))).toBe(true);
+    expect(msgs.some(m => m.type === 'text' && m.text?.includes('Switched to French'))).toBe(true);
 
     // The re-prompt must have been called via ctx.t and the French translation consumed
     expect(ctxTStep.prompt).toHaveBeenCalled();

@@ -13,6 +13,7 @@ import type { StandaloneService } from '@/lib/bot/standalone.service';
 import type { BotIntelligenceService } from '@/lib/bot/bot-intelligence';
 import type { FlowContext, PromptMessage } from './types';
 import type { FlowType, BusinessCategoryKey, CountryCode } from '@/lib/constants';
+import { getFlowCopy, fillFlowCopy } from './flow-localization';
 import { getFlowDefinition, getFlowStep, getFlowStepAcrossFlows, getExtendedFlowDefinition } from './registry';
 import type { CapabilityId } from '@/lib/capabilities/types';
 import { checkConversationLimit, trackOutboundMessage, getConversationLimitMessage } from '@/lib/bot/conversation-guard';
@@ -169,8 +170,8 @@ export class FlowExecutor {
 
     if (!step) {
       Sentry.captureMessage('Flow step not found', { level: 'warning', extra: { stepId, flowType, sessionId: session.id } });
-      let errMsg = 'Something went wrong on our end. Send *Hi* to start over.';
-      errMsg = await this.maybeTranslate(errMsg, session, translationCtx);
+      const errLang = (session.session_data._detected_language as string) || 'en';
+      const errMsg = getFlowCopy(errLang, 'error.generic');
       if (!session.conversation_log) session.conversation_log = [];
       session.conversation_log.push({ role: 'bot', content: errMsg, timestamp: new Date().toISOString() });
       if (!await this.persistConversationLog(session, session.conversation_log)) return;
@@ -341,7 +342,8 @@ export class FlowExecutor {
         }
         return;
       } else {
-        const noBackMsg = await this.maybeTranslate('You\'re at the beginning. Type *menu* to see the main menu.', session, translationCtx);
+        const noBackLang = (session.session_data._detected_language as string) || 'en';
+        const noBackMsg = getFlowCopy(noBackLang, 'nav.at_beginning');
         session.conversation_log.push({ role: 'bot', content: noBackMsg, timestamp: new Date().toISOString() });
         if (!await this.persistConversationLog(session, session.conversation_log)) return;
         await this.sendText(from, noBackMsg, scopedSender);
@@ -364,7 +366,8 @@ export class FlowExecutor {
           .eq('reference_code', transferRef as string)
           .eq('status', 'pending');
       }
-      const cancelMsg = await this.maybeTranslate('Cancelled. Send *Hi* to start over.', session, translationCtx);
+      const cancelLang = (session.session_data._detected_language as string) || 'en';
+      const cancelMsg = getFlowCopy(cancelLang, 'nav.cancelled');
       session.conversation_log.push({ role: 'bot', content: cancelMsg, timestamp: new Date().toISOString() });
       if (!await this.persistConversationLog(session, session.conversation_log)) return;
       await this.deactivateSession(session.id);
@@ -382,7 +385,8 @@ export class FlowExecutor {
           .eq('reference_code', transferRef as string)
           .eq('status', 'pending');
       }
-      const restartMsg = await this.maybeTranslate('No problem! Send *Hi* to start over.', session, translationCtx);
+      const restartLang = (session.session_data._detected_language as string) || 'en';
+      const restartMsg = getFlowCopy(restartLang, 'nav.no_problem');
       session.conversation_log.push({ role: 'bot', content: restartMsg, timestamp: new Date().toISOString() });
       if (!await this.persistConversationLog(session, session.conversation_log)) return;
       await this.deactivateSession(session.id);
@@ -427,20 +431,13 @@ export class FlowExecutor {
 
         const { getLanguageName } = await import('@/lib/bot/translate');
         const confirmation = targetLang === 'en'
-          ? 'Switched to English. ✅'
-          : await translateBotResponse(
-            `Switched to ${getLanguageName(targetLang)}. ✅`,
-            targetLang,
-            translationCtx,
-          );
+          ? getFlowCopy('en', 'lang.switched_english')
+          : fillFlowCopy(targetLang, 'lang.switched', { langName: getLanguageName(targetLang) });
         await this.sendText(from, confirmation, scopedSender);
       } else {
         const { getLanguageName } = await import('@/lib/bot/translate');
-        await this.sendText(
-          from,
-          `${getLanguageName(targetLang)} is not available for this business right now.`,
-          scopedSender,
-        );
+        const unavailMsg = fillFlowCopy('en', 'lang.not_available', { langName: getLanguageName(targetLang) });
+        await this.sendText(from, unavailMsg, scopedSender);
       }
 
       const retryMsgs = await step.prompt(ctx);
@@ -465,7 +462,7 @@ export class FlowExecutor {
             session_data: session.session_data,
           });
           if (!langSaved) return;
-          await this.sendText(from, 'Switched to English. ✅', scopedSender);
+          await this.sendText(from, getFlowCopy('en', 'lang.switched_english'), scopedSender);
         } else {
           // Validate target language against entitlement + certification before persisting
           const { CERTIFIED_LANGUAGES } = await import('@/lib/bot/language-policy');
@@ -473,7 +470,7 @@ export class FlowExecutor {
               || !entitlement.allowedLanguages.includes(targetLang)
               || !CERTIFIED_LANGUAGES.includes(targetLang)) {
             const langName = getLanguageName(targetLang);
-            await this.sendText(from, `${langName} is not available for this business right now.`, scopedSender);
+            await this.sendText(from, fillFlowCopy('en', 'lang.not_available', { langName }), scopedSender);
             // Re-prompt current step without changing language
             const retryMsgs = await step.prompt(ctx);
             await this.sendMessages(from, retryMsgs, session, translationCtx, scopedSender);
@@ -485,8 +482,7 @@ export class FlowExecutor {
             session_data: session.session_data,
           });
           if (!langSaved) return;
-          const { translateBotResponse: translateFn } = await import('@/lib/bot/translate');
-          const msg = await translateFn(`Switched to ${getLanguageName(targetLang)}. ✅`, targetLang, translationCtx);
+          const msg = fillFlowCopy(targetLang, 'lang.switched', { langName: getLanguageName(targetLang) });
           await this.sendText(from, msg, scopedSender);
         }
         // Re-prompt current step in new language
@@ -531,11 +527,8 @@ export class FlowExecutor {
         });
         if (!result.success) {
           // Escalation failed — send recoverable message, do not leave false state
-          const failMsg = await this.maybeTranslate(
-            "Sorry, I couldn't connect you to a team member right now. Please try again in a moment, or type *menu* to continue with the assistant.",
-            session,
-            translationCtx,
-          );
+          const escLang = (session.session_data._detected_language as string) || 'en';
+          const failMsg = getFlowCopy(escLang, 'error.escalation_failed');
           session.conversation_log.push({ role: 'bot', content: failMsg, timestamp: new Date().toISOString() });
           if (!await this.persistConversationLog(session, session.conversation_log || [])) return;
           await this.sendText(from, failMsg, scopedSender);
@@ -545,11 +538,8 @@ export class FlowExecutor {
         return;
       } else {
         // CAS-008: Chat capability not enabled — tell the customer clearly
-        const unavailableMsg = await this.maybeTranslate(
-          `Live chat isn't available for *${business.name}* right now.\n\nYou can continue with the assistant — type *menu* to see what's available.`,
-          session,
-          translationCtx,
-        );
+        const chatLang = (session.session_data._detected_language as string) || 'en';
+        const unavailableMsg = fillFlowCopy(chatLang, 'chat.unavailable', { businessName: business.name });
         session.conversation_log.push({ role: 'bot', content: unavailableMsg, timestamp: new Date().toISOString() });
         if (!await this.persistConversationLog(session, session.conversation_log || [])) return;
         await this.sendText(from, unavailableMsg, scopedSender);
@@ -564,12 +554,9 @@ export class FlowExecutor {
     const isMediaMessage = mediaType && ['image', 'audio', 'video', 'sticker', 'voice', 'document'].includes(mediaType);
     const isEmptyOrMediaOnly = !input.trim() || (isMediaMessage && !input.trim());
     if (isMediaMessage && isEmptyOrMediaOnly && !step.acceptsMedia) {
-      const mediaHint = await this.maybeTranslate(
-        'Please reply with text. Photos and voice notes aren\'t supported at this step.',
-        session,
-        translationCtx,
-      );
-      const cancelHint = await this.maybeTranslate('Type *back* to go back, *menu* to restart, or *exit* to leave.', session, translationCtx);
+      const mediaLang = (session.session_data._detected_language as string) || 'en';
+      const mediaHint = getFlowCopy(mediaLang, 'error.media_unsupported');
+      const cancelHint = getFlowCopy(mediaLang, 'cancelHint');
       const errText = `${mediaHint}\n\n_${cancelHint}_`;
       session.conversation_log.push({ role: 'bot', content: errText, timestamp: new Date().toISOString() });
       // Re-send interactive prompts so user gets fresh clickable options
@@ -958,11 +945,13 @@ export class FlowExecutor {
     if (messages.length === 0) return;
 
     // Inject navigation footer on interactive messages (buttons/list) if not already set
-    // Footer: 40 chars — within WhatsApp's 60-char limit
-    const NAV_FOOTER = 'Type: back, menu (restart), or exit (leave)';
-    for (const msg of messages) {
-      if ((msg.type === 'buttons' || msg.type === 'list') && !msg.footer) {
-        msg.footer = NAV_FOOTER;
+    // Uses deterministic static copy — no LLM call (#561)
+    const copyLang = (session?.session_data?._detected_language as string) || 'en';
+    const localizedFooter = getFlowCopy(copyLang, 'nav.footer');
+    for (const m of messages) {
+      if ((m.type === 'buttons' || m.type === 'list') && !m.footer) {
+        // Assign deterministic footer — replaces hardcoded NAV_FOOTER (#561-B)
+        Object.assign(m, { footer: localizedFooter });
       }
     }
 
