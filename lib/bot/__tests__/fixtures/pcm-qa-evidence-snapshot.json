@@ -56,19 +56,19 @@
           "FacesByKoph",
           "5,000"
         ],
-        "subjectLine": "Confirmed at FacesByKoph ✅",
+        "subjectLine": "Don Confirm for FacesByKoph ✅",
         "translatedLabels": {
-          "subject": "Confirmed at {business} {emoji}",
-          "heading": "Confirmed {emoji}",
-          "greeting": "Hi {name}, you're all set with {business}!",
-          "reminderNote": "We'll send you a reminder beforehand. See you soon!",
-          "calendarBtn": "Add to Calendar",
+          "subject": "Don Confirm for {business} {emoji}",
+          "heading": "Don Confirm {emoji}",
+          "greeting": "Hello {name}, everything don set for {business}!",
+          "reminderNote": "We go remind you before time. See you soon!",
+          "calendarBtn": "Put am for Calendar",
           "lblReference": "Reference",
           "lblDate": "Date",
           "lblTime": "Time",
           "lblAmount": "Amount"
         },
-        "bodyExcerpt": "FacesByKoph FacesByKoph via wa ai io Confirmed ✅ Hi Emeka, you&#39;re all set with FacesByKoph! Reference WA-BK-QA-001 Date 2026-12-01 Time 10:00 AM Guests 1 Amount 5,000 We&#39;ll send you a reminder beforehand. See you soon! &copy; 2026 Waaiio. All rights reserved. Automate your business with WhatsApp"
+        "bodyExcerpt": "FacesByKoph FacesByKoph via wa ai io Don Confirm ✅ Hello Emeka, everything don set for FacesByKoph! Reference WA-BK-QA-001 Date 2026-12-01 Time 10:00 AM Guests 1 Amount 5,000 We go remind you before time. See you soon! &copy; 2026 Waaiio. All rights reserved. Automate your business with WhatsApp"
       },
       {
         "template": "ticketConfirmationEmail",
@@ -84,10 +84,10 @@
         "subjectLine": "Your ticket(s) for Afrobeats Fest 🎫",
         "translatedLabels": {
           "subject": "Your ticket(s) for {event} 🎫",
-          "heading": "Ticket Confirmed! 🎫",
-          "greeting": "Hi {name}, your {count} ticket(s) for {event} confirmed!",
-          "showQr": "Show your QR code or ticket code at the entrance. Your tickets are also available on WhatsApp.",
-          "enjoyEvent": "Enjoy the event! 🎉",
+          "heading": "Ticket Don Confirm! 🎫",
+          "greeting": "Hello {name}, your {count} ticket(s) for {event} don confirm!",
+          "showQr": "Show your QR code or ticket code for gate. Your tickets dey WhatsApp too.",
+          "enjoyEvent": "Enjoy the show! 🎉",
           "lblEvent": "Event",
           "lblOrganizer": "Organizer",
           "lblDate": "Date",
@@ -99,7 +99,7 @@
           "lblTicketCodes": "Your Ticket Codes:",
           "lblTicketN": "Ticket"
         },
-        "bodyExcerpt": "ShowHub ShowHub via wa ai io Ticket Confirmed! 🎫 Hi Emeka, your 2 ticket(s) for Afrobeats Fest confirmed! Event Afrobeats Fest Organizer ShowHub Date Dec 1, 2026 Venue Eko Centre Tickets 2 Amount ₦10,000 Reference WA-TK-QA-002 Your Ticket Codes: Ticket 1 TK-QA-001 Ticket 2 TK-QA-002 Show your QR code or ticket code at the entrance. Your tickets are also available on WhatsApp. Enjoy the event! 🎉 &copy; 2026 Waaiio. All rights reserved. Automate your business with WhatsApp"
+        "bodyExcerpt": "ShowHub ShowHub via wa ai io Ticket Don Confirm! 🎫 Hello Emeka, your 2 ticket(s) for Afrobeats Fest don confirm! Event Afrobeats Fest Organizer ShowHub Date Dec 1, 2026 Venue Eko Centre Tickets 2 Amount ₦10,000 Reference WA-TK-QA-002 Your Ticket Codes: Ticket 1 TK-QA-001 Ticket 2 TK-QA-002 Show your QR code or ticket code for gate. Your tickets dey WhatsApp too. Enjoy the show! 🎉 &copy; 2026 Waaiio. All rights reserved. Automate your business with WhatsApp"
       },
       {
         "template": "invoiceEmail",
@@ -115,9 +115,9 @@
         "translatedLabels": {
           "subject": "Invoice {ref} from {business}",
           "heading": "Invoice from {business}",
-          "greeting": "Hi {name}, you have received an invoice from {business}.",
+          "greeting": "Hello {name}, you get invoice from {business}.",
           "viewPay": "View & Pay Invoice",
-          "copyLink": "You can also copy and paste this link into your browser:",
+          "copyLink": "You fit copy and paste this link for your browser:",
           "lblReference": "Reference",
           "lblAmount": "Amount",
           "lblDueDate": "Due Date",
@@ -126,7 +126,7 @@
           "colQty": "Qty",
           "colAmount": "Amount"
         },
-        "bodyExcerpt": "TestBiz Salon TestBiz Salon via wa ai io Invoice from TestBiz Salon Hi Emeka Johnson, you have received an invoice from TestBiz Salon. Reference INV-QA-003 Amount ₦15,000 Due Date Dec 31, 2026 Items: Item Qty Amount VIP Treatment x1 15,000 View &amp; Pay Invoice You can also copy and paste this link into your browser: https://waaiio.com/invoice/token-qa &copy; 2026 Waaiio. All rights reserved. Automate your business with WhatsApp"
+        "bodyExcerpt": "TestBiz Salon TestBiz Salon via wa ai io Invoice from TestBiz Salon Hello Emeka Johnson, you get invoice from TestBiz Salon. Reference INV-QA-003 Amount ₦15,000 Due Date Dec 31, 2026 Items: Item Qty Amount VIP Treatment x1 15,000 View &amp; Pay Invoice You fit copy and paste this link for your browser: https://waaiio.com/invoice/token-qa &copy; 2026 Waaiio. All rights reserved. Automate your business with WhatsApp"
       }
     ],
     "pdf": [

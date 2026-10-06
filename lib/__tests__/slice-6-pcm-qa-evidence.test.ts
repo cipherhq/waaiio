@@ -20,26 +20,42 @@ import { resolve } from 'path';
 
 // ── Deterministic mock translator via production seam ──
 const DETERMINISTIC_PIDGIN: Record<string, string> = {
-  // Booking email labels
-  'Booking Confirmed': 'Booking Don Confirm',
-  'Your booking has been confirmed.': 'Your booking don confirm.',
+  // ── Booking email labels (DEFAULT_BOOKING_LABELS) ──
+  'Confirmed at {business} {emoji}': 'Don Confirm for {business} {emoji}',
+  'Confirmed {emoji}': 'Don Confirm {emoji}',
+  "Hi {name}, you're all set with {business}!": 'Hello {name}, everything don set for {business}!',
+  "We'll send you a reminder beforehand. See you soon!": 'We go remind you before time. See you soon!',
+  'Add to Calendar': 'Put am for Calendar',
   'Reference': 'Reference',
   'Date': 'Date',
   'Time': 'Time',
   'Amount': 'Amount',
-  'Thank you for your booking!': 'We dey thank you for your booking!',
-  // Ticket email labels
-  'Your Tickets': 'Your Tickets',
-  'ticket': 'ticket',
-  // Invoice email labels
-  'Invoice': 'Invoice',
-  'Amount Due': 'Amount Wey You Go Pay',
+  // ── Ticket email labels (DEFAULT_TICKET_LABELS) ──
+  'Your ticket(s) for {event} 🎫': 'Your ticket(s) for {event} 🎫',
+  'Ticket Confirmed! 🎫': 'Ticket Don Confirm! 🎫',
+  'Hi {name}, your {count} ticket(s) for {event} confirmed!': 'Hello {name}, your {count} ticket(s) for {event} don confirm!',
+  'Show your QR code or ticket code at the entrance. Your tickets are also available on WhatsApp.': 'Show your QR code or ticket code for gate. Your tickets dey WhatsApp too.',
+  'Enjoy the event! 🎉': 'Enjoy the show! 🎉',
+  'Event': 'Event',
+  'Organizer': 'Organizer',
+  'Venue': 'Venue',
+  'Tickets': 'Tickets',
+  'Your Ticket Codes:': 'Your Ticket Codes:',
+  'Ticket': 'Ticket',
+  // ── Invoice email labels (DEFAULT_INVOICE_LABELS) ──
+  'Invoice {ref} from {business}': 'Invoice {ref} from {business}',
+  'Invoice from {business}': 'Invoice from {business}',
+  'Hi {name}, you have received an invoice from {business}.': 'Hello {name}, you get invoice from {business}.',
+  'View & Pay Invoice': 'View & Pay Invoice',
+  'You can also copy and paste this link into your browser:': 'You fit copy and paste this link for your browser:',
+  'Items:': 'Items:',
+  'Item': 'Item',
+  'Qty': 'Qty',
   'Due Date': 'Due Date',
-  'Pay Now': 'Pay Now',
-  // Wrapper
+  // ── Wrapper labels ──
   'All rights reserved.': 'All rights reserved.',
-  'Powered by Waaiio': 'Waaiio power am',
-  // WhatsApp text
+  'Automate your business with WhatsApp': 'Automate your business with WhatsApp',
+  // ── WhatsApp text samples ──
   'Your booking is confirmed! Reference: {ref}. See you at {time}.': 'Your booking don confirm! Reference: {ref}. We go see for {time}.',
   'Please pay {amount} for {service}. Tap below to pay.': 'Abeg pay {amount} for {service}. Press below make you pay.',
   'Here are your tickets for {event}. Show this at the entrance.': 'See your tickets for {event}. Show am for gate.',
@@ -47,8 +63,30 @@ const DETERMINISTIC_PIDGIN: Record<string, string> = {
   'Sorry, something went wrong. Please try again or type "menu" to start over.': 'Sorry, something no work well. Try again or type "menu" make you start over.',
 };
 
-const mockTranslate = vi.fn().mockImplementation(async (text: string) => {
+/**
+ * Segment-aware deterministic mock translator.
+ * translateLabels sends a concatenated block with __WAAIIO_EMAIL_SEGMENT_N__ markers.
+ * This mock translates each segment individually, preserving the markers exactly.
+ */
+const SEGMENT_MARKER_RE = /(__WAAIIO_EMAIL_SEGMENT_\d+__)/;
+
+function translateSegmentBlock(text: string): string {
+  // If text contains segment markers, handle each segment
+  if (text.includes('__WAAIIO_EMAIL_SEGMENT_')) {
+    const parts = text.split(SEGMENT_MARKER_RE);
+    return parts.map(part => {
+      if (SEGMENT_MARKER_RE.test(part)) return part; // Preserve marker exactly
+      const trimmed = part.trim();
+      if (!trimmed) return part;
+      return DETERMINISTIC_PIDGIN[trimmed] ?? `[PCM] ${trimmed}`;
+    }).join('');
+  }
+  // Simple text (WhatsApp localizeText path)
   return DETERMINISTIC_PIDGIN[text] ?? `[PCM] ${text}`;
+}
+
+const mockTranslate = vi.fn().mockImplementation(async (text: string) => {
+  return translateSegmentBlock(text);
 });
 
 vi.mock('@/lib/bot/translate', async () => {
@@ -271,11 +309,30 @@ describe('D2 — Pidgin QA evidence: deterministic and snapshot-stable', () => {
       expect(wa.source).toBe('mock-llm-via-localizeText');
     }
 
-    // ── Email evidence contains actual reviewable Pidgin content ──
+    // ── Email evidence contains actual Pidgin content (not all-English) ──
+    const bookingArtifact = artifact.sections.email.find(e => e.template === 'bookingConfirmationEmail')!;
+    expect(bookingArtifact.translatedLabels.heading).toContain('Don Confirm');
+    expect(bookingArtifact.translatedLabels.greeting).toContain('don set');
+    expect(bookingArtifact.bodyExcerpt).toContain('Don Confirm');
+    expect(bookingArtifact.bodyExcerpt.length).toBeGreaterThan(100);
+
+    const ticketArtifact = artifact.sections.email.find(e => e.template === 'ticketConfirmationEmail')!;
+    expect(ticketArtifact.translatedLabels.heading).toContain('Don Confirm');
+    expect(ticketArtifact.translatedLabels.greeting).toContain('don confirm');
+    expect(ticketArtifact.bodyExcerpt.length).toBeGreaterThan(100);
+
+    const invoiceArtifact = artifact.sections.email.find(e => e.template === 'invoiceEmail')!;
+    expect(invoiceArtifact.translatedLabels.greeting).toContain('get invoice');
+    expect(invoiceArtifact.bodyExcerpt.length).toBeGreaterThan(100);
+
+    // No email should have ALL labels identical to English defaults
     for (const email of artifact.sections.email) {
-      expect(Object.keys(email.translatedLabels).length).toBeGreaterThan(0);
-      // Body excerpt contains the translated labels (human-reviewable content)
-      expect(email.bodyExcerpt.length).toBeGreaterThan(100);
+      const labelsStr = JSON.stringify(email.translatedLabels);
+      // At least one label must differ from English (contain Pidgin markers)
+      const hasPidginContent = labelsStr.includes('Don Confirm') || labelsStr.includes('don set')
+        || labelsStr.includes('don confirm') || labelsStr.includes('get invoice')
+        || labelsStr.includes('[PCM]');
+      expect(hasPidginContent).toBe(true);
     }
 
     // ── Compare against committed snapshot (do NOT rewrite) ──
