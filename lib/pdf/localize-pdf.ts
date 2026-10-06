@@ -6,6 +6,7 @@
  * Runtime callers must resolve the effective response language through the existing
  * certification/entitlement authority before selecting a bundle.
  */
+import type { SupabaseClient } from '@supabase/supabase-js';
 
 export type PdfStatusLabels = Record<string, string>;
 
@@ -250,4 +251,33 @@ const BUNDLES: Record<string, PdfLocalizationBundle> = {
 /** Deterministic bundle selection only. Caller authority determines the language. */
 export function getPdfLocalizationBundle(language: string | null | undefined): PdfLocalizationBundle {
   return (language && BUNDLES[language]) || BUNDLES.en;
+}
+
+/**
+ * Production-owned seam: resolve customer language → select deterministic PDF bundle.
+ * Returns undefined for English or on any failure (fail-closed to English defaults).
+ *
+ * Callers: send-tickets.ts (ticket), post-completion.ts (receipt), invoices/send/route.ts (invoice)
+ */
+export async function resolvePdfLabels<K extends keyof PdfLocalizationBundle>(
+  supabase: SupabaseClient,
+  customerPhone: string,
+  businessId: string,
+  docType: K,
+  resolver: 'proactive' | 'email',
+): Promise<PdfLocalizationBundle[K] | undefined> {
+  try {
+    let language: string;
+    if (resolver === 'proactive') {
+      const { resolveProactiveLocalization } = await import('@/lib/payments/proactive-localization');
+      const l10n = await resolveProactiveLocalization(supabase, customerPhone, businessId);
+      language = l10n.language;
+    } else {
+      const { resolveEmailLocalization } = await import('@/lib/email/localize-email');
+      const l10n = await resolveEmailLocalization(supabase, customerPhone, businessId);
+      language = l10n.language;
+    }
+    if (language !== 'en') return getPdfLocalizationBundle(language)[docType];
+  } catch { /* fail closed to English */ }
+  return undefined;
 }

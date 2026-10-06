@@ -220,15 +220,9 @@ export async function POST(request: NextRequest) {
 
           // Slice 5B: Resolve deterministic PDF labels for customer language
           if (invoice.customer_phone) {
-            try {
-              const { resolveEmailLocalization } = await import('@/lib/email/localize-email');
-              const { getPdfLocalizationBundle } = await import('@/lib/pdf/localize-pdf');
-              const l10n = await resolveEmailLocalization(supabase, invoice.customer_phone, invoice.business_id);
-              if (l10n.language !== 'en') {
-                const bundle = getPdfLocalizationBundle(l10n.language);
-                (pdfData as any).labels = bundle.invoice;
-              }
-            } catch { /* fail closed to English */ }
+            const { resolvePdfLabels } = await import('@/lib/pdf/localize-pdf');
+            const invoicePdfLabels = await resolvePdfLabels(supabase, invoice.customer_phone, invoice.business_id, 'invoice', 'email');
+            if (invoicePdfLabels) (pdfData as any).labels = invoicePdfLabels;
           }
           const pdfBuffer = await generateInvoicePdf(pdfData);
 

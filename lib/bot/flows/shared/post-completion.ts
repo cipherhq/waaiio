@@ -170,12 +170,8 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
       // Slice 5B: Resolve deterministic receipt PDF labels
       let receiptPdfLabels: import('@/lib/pdf/localize-pdf').ReceiptPdfLabels | undefined;
       if (translate !== ((text: string) => Promise.resolve(text))) {
-        try {
-          const { resolveProactiveLocalization } = await import('@/lib/payments/proactive-localization');
-          const { getPdfLocalizationBundle } = await import('@/lib/pdf/localize-pdf');
-          const l10n = await resolveProactiveLocalization(supabase, customerPhone, businessId);
-          if (l10n.language !== 'en') receiptPdfLabels = getPdfLocalizationBundle(l10n.language).receipt;
-        } catch { /* fail closed to English */ }
+        const { resolvePdfLabels } = await import('@/lib/pdf/localize-pdf');
+        receiptPdfLabels = await resolvePdfLabels(supabase, customerPhone, businessId, 'receipt', 'proactive');
       }
       const generateAndStoreReceipt = async () => {
         const pdfBuffer = await generateReceiptPdf({

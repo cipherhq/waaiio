@@ -219,12 +219,8 @@ export async function deliverTicketsWhatsApp(opts: TicketDeliveryContext): Promi
     // Slice 5B: Resolve deterministic ticket PDF labels
     let ticketPdfLabels: import('@/lib/pdf/localize-pdf').TicketPdfLabels | undefined;
     if (opts.translate) {
-      try {
-        const { resolveProactiveLocalization } = await import('@/lib/payments/proactive-localization');
-        const { getPdfLocalizationBundle } = await import('@/lib/pdf/localize-pdf');
-        const l10n = await resolveProactiveLocalization(opts.supabase, guestPhone, businessId);
-        if (l10n.language !== 'en') ticketPdfLabels = getPdfLocalizationBundle(l10n.language).ticket;
-      } catch { /* fail closed to English */ }
+      const { resolvePdfLabels } = await import('@/lib/pdf/localize-pdf');
+      ticketPdfLabels = await resolvePdfLabels(opts.supabase, guestPhone, businessId, 'ticket', 'proactive');
     }
     const pdfBuffer = await generateTicketsPdf({
       eventName, eventDate, eventTime, venue, guestName, referenceCode, tickets, verifyBaseUrl, subscriptionTier,
