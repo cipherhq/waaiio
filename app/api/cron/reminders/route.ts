@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { sendEmail } from '@/lib/email/client';
 import { bookingReminderEmail, businessNotificationEmail } from '@/lib/email/templates';
+import { resolveEmailLocalization, translateLabels, DEFAULT_REMINDER_LABELS, DEFAULT_WRAPPER_LABELS, type BookingReminderEmailLabels, type EmailWrapperLabels } from '@/lib/email/localize-email';
 import { verifyCronAuth } from '@/lib/cron-auth';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { sendOrEmail, findCustomerEmail } from '@/lib/channels/send-or-email';
@@ -10,6 +11,21 @@ import { logger } from '@/lib/logger';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
+
+// Slice 5B: resolve localized reminder email labels
+async function resolveReminderLabels(
+  supabase: ReturnType<typeof createServiceClient>,
+  phone: string, bizId: string, protectedNames: string[],
+): Promise<{ labels?: BookingReminderEmailLabels; wrapperLabels?: EmailWrapperLabels }> {
+  try {
+    const l10n = await resolveEmailLocalization(supabase as any, phone, bizId);
+    if (l10n.language === 'en') return {};
+    const labels = await translateLabels(DEFAULT_REMINDER_LABELS, l10n, protectedNames) as unknown as BookingReminderEmailLabels;
+    const { localizeWrapperLabels } = await import('@/lib/email/localize-email');
+    const wl = await localizeWrapperLabels(l10n);
+    return { labels, wrapperLabels: wl };
+  } catch { return {}; }
+}
 
 export async function GET(request: NextRequest) {
   const authError = verifyCronAuth(request);
@@ -101,10 +117,11 @@ export async function GET(request: NextRequest) {
         const resolved = await resolver.resolveByBusinessId(booking.business_id);
         if (resolved) {
           const emailPayload = email
-            ? (() => {
-                const { subject, html } = bookingReminderEmail(businessName, customerName, serviceName, booking.date, booking.time || '', booking.reference_code || '');
+            ? (await (async () => {
+                const rl = await resolveReminderLabels(supabase, booking.guest_phone, booking.business_id, [businessName, serviceName]);
+                const { subject, html } = bookingReminderEmail(businessName, customerName, serviceName, booking.date, booking.time || '', booking.reference_code || '', undefined, undefined, rl.labels, rl.wrapperLabels);
                 return { address: email!, subject, html };
-              })()
+              })())
             : null;
 
           const result = await sendOrEmail({
@@ -130,7 +147,8 @@ export async function GET(request: NextRequest) {
         }
       } else if (email) {
         // No phone — email only
-        const { subject, html } = bookingReminderEmail(businessName, customerName, serviceName, booking.date, booking.time || '', booking.reference_code || '');
+        const rl = await resolveReminderLabels(supabase, booking.guest_phone, booking.business_id, [businessName, serviceName]);
+        const { subject, html } = bookingReminderEmail(businessName, customerName, serviceName, booking.date, booking.time || '', booking.reference_code || '', undefined, undefined, rl.labels, rl.wrapperLabels);
         await sendEmail({ to: email, subject, html }).catch(err => logger.error('[REMINDERS] Email error:', err));
         remindersSent++;
       }
@@ -161,10 +179,11 @@ export async function GET(request: NextRequest) {
       const resolved = await resolver.resolveByBusinessId(res.business_id);
       if (resolved) {
         const emailPayload = email
-          ? (() => {
-              const { subject, html } = bookingReminderEmail(bizName, guestName, 'your stay', res.check_in, '', res.reference_code || '');
+          ? (await (async () => {
+              const rl = await resolveReminderLabels(supabase, res.guest_phone, res.business_id, [bizName]);
+              const { subject, html } = bookingReminderEmail(bizName, guestName, 'your stay', res.check_in, '', res.reference_code || '', undefined, undefined, rl.labels, rl.wrapperLabels);
               return { address: email!, subject, html };
-            })()
+            })())
           : null;
 
         const result = await sendOrEmail({
@@ -182,6 +201,7 @@ export async function GET(request: NextRequest) {
       }
     } else if (email) {
       // No phone — email only
+      // No phone for language resolution — fail closed to English
       const { subject, html } = bookingReminderEmail(bizName, guestName, 'your stay', res.check_in, '', res.reference_code || '');
       await sendEmail({ to: email, subject, html }).catch(() => {});
       remindersSent++;
@@ -219,10 +239,11 @@ export async function GET(request: NextRequest) {
       const resolved = await resolver.resolveByBusinessId(event.business_id);
       if (resolved) {
         const emailPayload = ticket.guest_email
-          ? (() => {
-              const { subject, html } = bookingReminderEmail(bizName, guestName, event.name, event.date, event.time || '', '');
+          ? (await (async () => {
+              const rl = await resolveReminderLabels(supabase, ticket.guest_phone, event.business_id, [bizName, event.name]);
+              const { subject, html } = bookingReminderEmail(bizName, guestName, event.name, event.date, event.time || '', '', undefined, undefined, rl.labels, rl.wrapperLabels);
               return { address: ticket.guest_email!, subject, html };
-            })()
+            })())
           : null;
 
         const result = await sendOrEmail({

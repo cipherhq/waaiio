@@ -1340,6 +1340,20 @@ export async function sendProactiveConfirmation(
               googleCalUrl = generateGoogleCalendarUrl(calEvent);
             }
           }
+          // Slice 5B: Translate email labels if non-English customer
+          let bookingEmailLabels: import('@/lib/email/localize-email').BookingEmailLabels | undefined;
+          let bookingWrapperLabels: import('@/lib/email/localize-email').EmailWrapperLabels | undefined;
+          if (proactiveTranslate) {
+            try {
+              const { translateLabels, DEFAULT_BOOKING_LABELS, DEFAULT_WRAPPER_LABELS } = await import('@/lib/email/localize-email');
+              const l10n = await resolveProactiveLocalization(supabase, customerPhone!, businessId!);
+              if (l10n.language !== 'en') {
+                bookingEmailLabels = await translateLabels(DEFAULT_BOOKING_LABELS, l10n, [businessName, referenceCode]) as unknown as typeof DEFAULT_BOOKING_LABELS;
+                const { localizeWrapperLabels } = await import('@/lib/email/localize-email');
+                bookingWrapperLabels = await localizeWrapperLabels(l10n);
+              }
+            } catch { /* fail closed to English */ }
+          }
           const emailContent = bookingConfirmationEmail({
             firstName: emailBooking?.guest_name?.split(' ')[0] || 'there',
             businessName,
@@ -1353,6 +1367,8 @@ export async function sendProactiveConfirmation(
             confirmationEmoji: '✅',
             googleCalendarUrl: googleCalUrl,
             whitelabel: isWl,
+            labels: bookingEmailLabels,
+            wrapperLabels: bookingWrapperLabels,
           });
           const sendBookingEmail = async () => {
             const result = await sendEmail({ to: guestEmail, ...emailContent });
@@ -1402,6 +1418,20 @@ export async function sendProactiveConfirmation(
             const campaignTitle = (donation.campaigns as unknown as { title: string } | null)?.title || 'Campaign';
             const { sendEmail } = await import('@/lib/email/client');
             const { donationReceiptEmail } = await import('@/lib/email/templates');
+            // Slice 5B: Translate donation email labels
+            let donationEmailLabels: import('@/lib/email/localize-email').DonationEmailLabels | undefined;
+            let donationWrapperLabels: import('@/lib/email/localize-email').EmailWrapperLabels | undefined;
+            if (proactiveTranslate) {
+              try {
+                const { translateLabels: tl, DEFAULT_DONATION_LABELS, DEFAULT_WRAPPER_LABELS: DWL } = await import('@/lib/email/localize-email');
+                const l10n = await resolveProactiveLocalization(supabase, customerPhone!, businessId!);
+                if (l10n.language !== 'en') {
+                  donationEmailLabels = await tl(DEFAULT_DONATION_LABELS, l10n, [businessName, campaignTitle, referenceCode]) as unknown as typeof DEFAULT_DONATION_LABELS;
+                  const { localizeWrapperLabels: lwl } = await import('@/lib/email/localize-email');
+                  donationWrapperLabels = await lwl(l10n);
+                }
+              } catch { /* fail closed to English */ }
+            }
             const emailContent = donationReceiptEmail({
               donorName: donation.donor_name || 'Donor',
               businessName,
@@ -1409,6 +1439,8 @@ export async function sendProactiveConfirmation(
               formattedAmount: formatCurrency(payment.amount, countryCode),
               referenceCode: donation.reference_code || referenceCode,
               whitelabel: isWl,
+              labels: donationEmailLabels,
+              wrapperLabels: donationWrapperLabels,
             });
             const sendDonationEmail = async () => {
               const result = await sendEmail({ to: donorEmail, ...emailContent });
