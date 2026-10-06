@@ -293,14 +293,14 @@ export const PIDGIN_CORPUS: LanguageCorpus = {
     {
       text: 'Go back abeg', category: 'navigation',
       expectedInboundLanguage: 'pcm',
-      scenario: GROWTH_PCM, expectedEffectiveResponseLanguage: 'pcm',
+      scenario: { ...GROWTH_PCM, sessionLanguage: 'pcm' }, expectedEffectiveResponseLanguage: 'pcm',
       shouldActivateLanguage: false,
       notes: 'Navigation command — does not activate language, uses existing session language',
     },
     {
       text: 'I wan start over', category: 'navigation',
       expectedInboundLanguage: 'pcm',
-      scenario: GROWTH_PCM, expectedEffectiveResponseLanguage: 'pcm',
+      scenario: { ...GROWTH_PCM, sessionLanguage: 'pcm' }, expectedEffectiveResponseLanguage: 'pcm',
       shouldActivateLanguage: false,
     },
     {
@@ -312,7 +312,7 @@ export const PIDGIN_CORPUS: LanguageCorpus = {
     {
       text: 'Abeg help me, I no sabi wetin to do', category: 'navigation',
       expectedInboundLanguage: 'pcm',
-      scenario: GROWTH_PCM, expectedEffectiveResponseLanguage: 'pcm',
+      scenario: { ...GROWTH_PCM, sessionLanguage: 'pcm' }, expectedEffectiveResponseLanguage: 'pcm',
       shouldActivateLanguage: false,
     },
 
@@ -322,9 +322,9 @@ export const PIDGIN_CORPUS: LanguageCorpus = {
     {
       text: 'Speak Pidgin for me', category: 'lang-switch',
       expectedInboundLanguage: null, // English sentence requesting Pidgin
-      scenario: GROWTH_PCM, expectedEffectiveResponseLanguage: 'pcm',
+      scenario: { ...GROWTH_PCM, sessionLanguage: 'pcm' }, expectedEffectiveResponseLanguage: 'pcm',
       shouldActivateLanguage: true,
-      notes: 'English request to switch to Pidgin — parseLanguagePreferenceIntent handles this',
+      notes: 'Explicit switch — parseLanguagePreferenceIntent sets explicit language, then session is updated',
     },
     {
       text: 'Abeg reply me for Naija', category: 'lang-switch',
@@ -335,9 +335,9 @@ export const PIDGIN_CORPUS: LanguageCorpus = {
     {
       text: 'Use Pidgin from now on always', category: 'lang-switch',
       expectedInboundLanguage: null,
-      scenario: GROWTH_PCM, expectedEffectiveResponseLanguage: 'pcm',
+      scenario: { ...GROWTH_PCM, sessionLanguage: 'pcm' }, expectedEffectiveResponseLanguage: 'pcm',
       shouldActivateLanguage: true,
-      notes: '"from now on always" triggers persistent preference write',
+      notes: 'Explicit persistent switch — parseLanguagePreferenceIntent sets session + profile',
     },
 
     // ═══════════════════════════════════════════════════════════════
@@ -358,8 +358,9 @@ export const PIDGIN_CORPUS: LanguageCorpus = {
     {
       text: 'Wrong service abeg, na the other one I wan', category: 'correction',
       expectedInboundLanguage: 'pcm',
-      scenario: GROWTH_PCM, expectedEffectiveResponseLanguage: 'pcm',
+      scenario: { ...GROWTH_PCM, sessionLanguage: 'pcm' }, expectedEffectiveResponseLanguage: 'pcm',
       shouldActivateLanguage: false,
+      notes: 'Mid-flow correction — session already has pcm active',
     },
 
     // ═══════════════════════════════════════════════════════════════

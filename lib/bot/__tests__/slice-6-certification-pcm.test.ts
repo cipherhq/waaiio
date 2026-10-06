@@ -432,3 +432,38 @@ describe('English regression — unchanged with pcm in CERTIFIED', () => {
     expect(result.source).toBe('fallback');
   });
 });
+
+// ═══════════════════════════════════════════════════════════════
+// 9. S6-B4 — Corpus authority enforcement
+//    Every corpus entry's response-authority expectation validated
+//    through the production resolveEffectiveResponseLanguage seam.
+// ═══════════════════════════════════════════════════════════════
+
+describe('B4 — corpus authority expectations enforced per-utterance', () => {
+  const authorityEntries = PIDGIN_CORPUS.utterances.filter(
+    u => u.scenario && u.expectedEffectiveResponseLanguage,
+  );
+
+  it.each(authorityEntries.map((u, i) => [`#${i + 1} "${u.text.slice(0, 40)}..." (${u.category})`, u]))(
+    '%s → expected %s',
+    (_label, entry) => {
+      const u = entry as typeof authorityEntries[0];
+      const entitlement = hypotheticalEntitlement(u.scenario.tier, u.scenario.configuredLanguages);
+
+      // Determine which language would be in the session based on detection
+      const sessionLang = u.expectedInboundLanguage && u.shouldActivateLanguage
+        ? u.expectedInboundLanguage
+        : u.scenario.sessionLanguage ?? null;
+
+      const result = resolveEffectiveResponseLanguage({
+        explicitLanguage: null,
+        sessionLanguage: sessionLang,
+        rememberedLanguage: u.scenario.rememberedLanguage ?? null,
+        entitlement,
+        certifiedLanguages: CERTIFIED_WITH_PCM,
+      });
+
+      expect(result.language).toBe(u.expectedEffectiveResponseLanguage);
+    },
+  );
+});
