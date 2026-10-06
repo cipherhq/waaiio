@@ -166,10 +166,10 @@ export async function generateReceiptPdf(data: ReceiptData): Promise<Buffer> {
     [L.lblDate, formatDate(data.date)],
     [L.lblService, data.serviceName],
     [L.lblCustomer, data.customerName],
-    ['Phone', maskPhone(data.customerPhone)],
+    [L.lblPhone, maskPhone(data.customerPhone)],
   ];
   if (data.paymentMethod) {
-    detailRows.push(['Payment', data.paymentMethod]);
+    detailRows.push([L.lblPayment, data.paymentMethod]);
   }
 
   for (const [label, value] of detailRows) {
@@ -185,12 +185,12 @@ export async function generateReceiptPdf(data: ReceiptData): Promise<Buffer> {
 
   // Subtotal/fees if available
   if (data.subtotal !== undefined) {
-    doc.fontSize(10).font('Helvetica').fillColor(TEXT_SECONDARY).text('Subtotal', labelX, y);
+    doc.fontSize(10).font('Helvetica').fillColor(TEXT_SECONDARY).text(L.lblSubtotal, labelX, y);
     doc.text(fmtAmount(data.subtotal, data.countryCode, data.currencyCode), valueX + 60, y, { width: 100, align: 'right' });
     y += lineHeight;
   }
   if (data.fees !== undefined && data.fees > 0) {
-    doc.fontSize(10).font('Helvetica').fillColor(TEXT_SECONDARY).text('Fees', labelX, y);
+    doc.fontSize(10).font('Helvetica').fillColor(TEXT_SECONDARY).text(L.lblFees, labelX, y);
     doc.text(fmtAmount(data.fees, data.countryCode, data.currencyCode), valueX + 60, y, { width: 100, align: 'right' });
     y += lineHeight;
   }
@@ -200,7 +200,7 @@ export async function generateReceiptPdf(data: ReceiptData): Promise<Buffer> {
     doc.moveTo(margin + 80, y - 4).lineTo(pageWidth - margin, y - 4).strokeColor(DIVIDER).lineWidth(0.5).stroke();
     y += 4;
   }
-  doc.fontSize(12).font('Helvetica-Bold').fillColor(TEXT_PRIMARY).text('Total', labelX, y);
+  doc.fontSize(12).font('Helvetica-Bold').fillColor(TEXT_PRIMARY).text(L.lblTotal, labelX, y);
   doc.fontSize(14).font('Helvetica-Bold').fillColor(BRAND_PURPLE)
     .text(fmtAmount(data.amount, data.countryCode, data.currencyCode), valueX + 40, y - 2, { width: 120, align: 'right' });
 

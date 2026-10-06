@@ -1342,11 +1342,15 @@ export async function sendProactiveConfirmation(
           }
           // Slice 5B: Translate email labels if non-English customer
           let bookingEmailLabels: import('@/lib/email/localize-email').BookingEmailLabels | undefined;
+          let bookingWrapperLabels: import('@/lib/email/localize-email').EmailWrapperLabels | undefined;
           if (proactiveTranslate) {
             try {
-              const { translateLabels, DEFAULT_BOOKING_LABELS } = await import('@/lib/email/localize-email');
+              const { translateLabels, DEFAULT_BOOKING_LABELS, DEFAULT_WRAPPER_LABELS } = await import('@/lib/email/localize-email');
               const l10n = await resolveProactiveLocalization(supabase, customerPhone!, businessId!);
-              bookingEmailLabels = await translateLabels(DEFAULT_BOOKING_LABELS, l10n, [businessName, referenceCode]) as unknown as typeof DEFAULT_BOOKING_LABELS;
+              if (l10n.language !== 'en') {
+                bookingEmailLabels = await translateLabels(DEFAULT_BOOKING_LABELS, l10n, [businessName, referenceCode]) as unknown as typeof DEFAULT_BOOKING_LABELS;
+                bookingWrapperLabels = { ...DEFAULT_WRAPPER_LABELS, htmlLang: l10n.language };
+              }
             } catch { /* fail closed to English */ }
           }
           const emailContent = bookingConfirmationEmail({
@@ -1363,6 +1367,7 @@ export async function sendProactiveConfirmation(
             googleCalendarUrl: googleCalUrl,
             whitelabel: isWl,
             labels: bookingEmailLabels,
+            wrapperLabels: bookingWrapperLabels,
           });
           const sendBookingEmail = async () => {
             const result = await sendEmail({ to: guestEmail, ...emailContent });
@@ -1414,11 +1419,15 @@ export async function sendProactiveConfirmation(
             const { donationReceiptEmail } = await import('@/lib/email/templates');
             // Slice 5B: Translate donation email labels
             let donationEmailLabels: import('@/lib/email/localize-email').DonationEmailLabels | undefined;
+            let donationWrapperLabels: import('@/lib/email/localize-email').EmailWrapperLabels | undefined;
             if (proactiveTranslate) {
               try {
-                const { translateLabels: tl, DEFAULT_DONATION_LABELS } = await import('@/lib/email/localize-email');
+                const { translateLabels: tl, DEFAULT_DONATION_LABELS, DEFAULT_WRAPPER_LABELS: DWL } = await import('@/lib/email/localize-email');
                 const l10n = await resolveProactiveLocalization(supabase, customerPhone!, businessId!);
-                donationEmailLabels = await tl(DEFAULT_DONATION_LABELS, l10n, [businessName, campaignTitle, referenceCode]) as unknown as typeof DEFAULT_DONATION_LABELS;
+                if (l10n.language !== 'en') {
+                  donationEmailLabels = await tl(DEFAULT_DONATION_LABELS, l10n, [businessName, campaignTitle, referenceCode]) as unknown as typeof DEFAULT_DONATION_LABELS;
+                  donationWrapperLabels = { ...DWL, htmlLang: l10n.language };
+                }
               } catch { /* fail closed to English */ }
             }
             const emailContent = donationReceiptEmail({
@@ -1429,6 +1438,7 @@ export async function sendProactiveConfirmation(
               referenceCode: donation.reference_code || referenceCode,
               whitelabel: isWl,
               labels: donationEmailLabels,
+              wrapperLabels: donationWrapperLabels,
             });
             const sendDonationEmail = async () => {
               const result = await sendEmail({ to: donorEmail, ...emailContent });

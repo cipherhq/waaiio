@@ -59,9 +59,9 @@ describe('Slice 5B — email template localization', () => {
       venue: 'Main Hall', quantity: 2, referenceCode: 'WA-TK-5678', formattedAmount: '₦10,000',
       ticketCodes: ['TK-ABC', 'TK-DEF'],
       labels: {
-        subject: 'Vos {count} {ticketWord} pour {event} 🎫',
+        subject: 'Vos {count} billet(s) pour {event} 🎫',
         heading: 'Billets Confirmés! 🎫',
-        greeting: 'Bonjour {name}, vos {count} {ticketWord} pour {event} confirmés!',
+        greeting: 'Bonjour {name}, vos {count} billet(s) pour {event} confirmés!',
         showQr: 'Montrez votre QR code.', enjoyEvent: 'Profitez!',
         lblEvent: 'Événement', lblOrganizer: 'Organisateur', lblDate: 'Date',
         lblTime: 'Heure', lblVenue: 'Lieu', lblTickets: 'Billets', lblAmount: 'Montant',

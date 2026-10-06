@@ -304,12 +304,16 @@ export async function deliverTicketsEmail(opts: TicketDeliveryContext): Promise<
   const { isWhiteLabel: isWl } = await import('@/lib/whitelabel');
   // Slice 5B: Translate ticket email labels if non-English customer
   let ticketEmailLabels: import('@/lib/email/localize-email').TicketEmailLabels | undefined;
+  let ticketWrapperLabels: import('@/lib/email/localize-email').EmailWrapperLabels | undefined;
   if (opts.translate) {
     try {
       const { resolveProactiveLocalization } = await import('@/lib/payments/proactive-localization');
-      const { translateLabels, DEFAULT_TICKET_LABELS } = await import('@/lib/email/localize-email');
+      const { translateLabels, DEFAULT_TICKET_LABELS, DEFAULT_WRAPPER_LABELS } = await import('@/lib/email/localize-email');
       const l10n = await resolveProactiveLocalization(opts.supabase, guestPhone, businessId);
-      ticketEmailLabels = await translateLabels(DEFAULT_TICKET_LABELS, l10n, [eventName, venue, referenceCode]) as unknown as typeof DEFAULT_TICKET_LABELS;
+      if (l10n.language !== 'en') {
+        ticketEmailLabels = await translateLabels(DEFAULT_TICKET_LABELS, l10n, [eventName, venue, referenceCode]) as unknown as typeof DEFAULT_TICKET_LABELS;
+        ticketWrapperLabels = { ...DEFAULT_WRAPPER_LABELS, htmlLang: l10n.language };
+      }
     } catch { /* fail closed to English */ }
   }
   const emailContent = ticketConfirmationEmail({
@@ -325,6 +329,7 @@ export async function deliverTicketsEmail(opts: TicketDeliveryContext): Promise<
     ticketCodes: tickets.map(t => t.ticketCode),
     whitelabel: isWl(biz?.subscription_tier),
     labels: ticketEmailLabels,
+    wrapperLabels: ticketWrapperLabels,
   });
   const result = await sendEmail({ to: email, ...emailContent });
   if (!result.success) throw new Error('ticket_email_send_failed');

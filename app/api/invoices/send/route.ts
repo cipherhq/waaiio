@@ -248,6 +248,19 @@ export async function POST(request: NextRequest) {
 
     // Send via email
     if ((sendVia === 'email' || sendVia === 'both') && invoice.customer_email) {
+      // Slice 5B: Resolve customer language for invoice email
+      let invLabels: undefined | import('@/lib/email/localize-email').InvoiceEmailLabels;
+      let invWrapperLabels: undefined | import('@/lib/email/localize-email').EmailWrapperLabels;
+      if (invoice.customer_phone) {
+        try {
+          const { resolveEmailLocalization, translateLabels, DEFAULT_INVOICE_LABELS, DEFAULT_WRAPPER_LABELS } = await import('@/lib/email/localize-email');
+          const l10n = await resolveEmailLocalization(supabase, invoice.customer_phone, invoice.business_id);
+          if (l10n.language !== 'en') {
+            invLabels = await translateLabels(DEFAULT_INVOICE_LABELS, l10n, [biz.name, invoice.reference_code]) as unknown as typeof DEFAULT_INVOICE_LABELS;
+            invWrapperLabels = { ...DEFAULT_WRAPPER_LABELS, htmlLang: l10n.language };
+          }
+        } catch { /* fail closed to English */ }
+      }
       const emailContent = invoiceEmail({
         businessName: biz.name,
         referenceCode: invoice.reference_code,
@@ -262,6 +275,8 @@ export async function POST(request: NextRequest) {
         })),
         invoiceUrl,
         currency: invoice.currency,
+        labels: invLabels,
+        wrapperLabels: invWrapperLabels,
       });
 
       await sendEmail({
