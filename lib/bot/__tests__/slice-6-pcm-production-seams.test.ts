@@ -578,71 +578,113 @@ describe('C2 — capability authority: Pidgin input cannot bypass', () => {
   });
 });
 
-describe('C2 — payment authority: Pidgin input cannot bypass confirmation', () => {
-  it('payment confirmation requires canonical payment context, not language', async () => {
-    // The payment flow's "I've Paid" confirmation checks the payments table
-    // for a matching payment record. Language plays no role in this check.
-    // Proof: the payment verification query takes businessId + referenceCode, not language.
+describe('D1 — payment authority: real verifyAndReconcilePayment production seam', () => {
+  it('unverified payment → not_verified via real production authority', async () => {
+    const { verifyAndReconcilePayment } = await import('@/lib/payments/bot-recovery');
 
-    // Simulate the payment verification query pattern from payment.flow.ts
+    // Mock supabase: no payment found for this gateway reference
+    const endChain: any = {};
+    endChain.eq = vi.fn().mockReturnValue(endChain);
+    endChain.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
     const supabase = {
-      from: vi.fn().mockImplementation((table: string) => {
-        if (table === 'payments') {
-          return {
-            select: vi.fn().mockReturnValue({
-              eq: vi.fn().mockReturnValue({
-                eq: vi.fn().mockReturnValue({
-                  maybeSingle: vi.fn().mockResolvedValue({
-                    data: null, // No payment found
-                    error: null,
-                  }),
-                }),
-              }),
-            }),
-          };
-        }
-        return { select: vi.fn().mockReturnValue({ eq: vi.fn().mockResolvedValue({ data: null, error: null }) }) };
-      }),
+      from: vi.fn().mockReturnValue({ select: vi.fn().mockReturnValue(endChain) }),
     } as any;
 
-    // Query for payment by business_id + reference — no language parameter
-    const { data: payment } = await supabase
-      .from('payments')
-      .select('id, amount, status')
-      .eq('business_id', 'biz-1')
-      .eq('reference_code', 'WA-BK-1234')
-      .maybeSingle();
+    // Customer says "I've paid" in Pidgin — but payment doesn't exist.
+    // The production function takes (supabase, paymentReference) — no language param.
+    const result = await verifyAndReconcilePayment(supabase, 'PAY-PIDGIN-FAKE-REF');
 
-    // Payment not found — confirmation cannot proceed regardless of language
-    expect(payment).toBeNull();
+    // Payment not found → cannot complete
+    expect(result.outcome).toBe('not_verified');
+    expect(result.paymentId).toBeUndefined();
+    // Pidgin input cannot bypass this — the function never sees language
+  });
+
+  it('mismatched reference → not_verified via real production authority', async () => {
+    const { verifyAndReconcilePayment } = await import('@/lib/payments/bot-recovery');
+
+    // Mock: payment exists but for a DIFFERENT reference
+    const endChain: any = {};
+    endChain.eq = vi.fn().mockReturnValue(endChain);
+    endChain.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
+    const supabase = {
+      from: vi.fn().mockReturnValue({ select: vi.fn().mockReturnValue(endChain) }),
+    } as any;
+
+    const result = await verifyAndReconcilePayment(supabase, 'WRONG-REFERENCE');
+    expect(result.outcome).toBe('not_verified');
   });
 });
 
-describe('C2 — stock authority: Pidgin input cannot bypass availability', () => {
-  it('product stock check uses quantity, not language', async () => {
-    // Stock check pattern from ordering.flow.ts: queries products.stock_quantity
+describe('D1 — stock authority: real orderingFlow browse_catalog.validate()', () => {
+  it('out-of-stock product rejected via real production flow validate()', async () => {
+    const { orderingFlow } = await import('@/lib/bot/flows/ordering.flow');
+    const browseCatalog = orderingFlow.steps.find(s => s.id === 'browse_catalog');
+    expect(browseCatalog).toBeDefined();
+    expect(browseCatalog!.validate).toBeDefined();
+
+    // Mock supabase: product exists but stock_quantity = 0
+    const endChain: any = {};
+    endChain.eq = vi.fn().mockReturnValue(endChain);
+    endChain.is = vi.fn().mockReturnValue(endChain);
+    endChain.single = vi.fn().mockResolvedValue({
+      data: {
+        id: 'prod-oos-1', name: 'Limited Pidgin Item',
+        price: 5000, stock_quantity: 0, has_variants: false,
+        image_url: null, variant_options: null, min_order_qty: null,
+      },
+      error: null,
+    });
     const supabase = {
-      from: vi.fn().mockReturnValue({
-        select: vi.fn().mockReturnValue({
-          eq: vi.fn().mockReturnValue({
-            single: vi.fn().mockResolvedValue({
-              data: { id: 'prod-1', name: 'Limited Item', stock_quantity: 0, track_inventory: true },
-              error: null,
-            }),
-          }),
-        }),
-      }),
+      from: vi.fn().mockReturnValue({ select: vi.fn().mockReturnValue(endChain) }),
     } as any;
 
-    const { data: product } = await supabase
-      .from('products')
-      .select('id, name, stock_quantity, track_inventory')
-      .eq('id', 'prod-1')
-      .single();
+    // Minimal FlowContext with the fields browse_catalog.validate() actually uses
+    const ctx = {
+      supabase,
+      business: { id: 'biz-1' },
+      session: { session_data: {} },
+      t: async (text: string) => text, // Pidgin translation function — irrelevant to stock check
+    } as any;
 
-    // Stock is zero — cannot be ordered regardless of language
-    const outOfStock = product.track_inventory && product.stock_quantity !== null && product.stock_quantity <= 0;
-    expect(outOfStock).toBe(true);
-    // The stock query takes product ID, not language — Pidgin input cannot bypass this
+    // Customer selected a product ID (could have been browsing in Pidgin)
+    const result = await browseCatalog!.validate!('prod-oos-1', ctx);
+
+    // Stock is zero → rejection
+    expect(result.valid).toBe(false);
+    expect(result.errorMessage).toContain('out of stock');
+    // The validate function checked stock_quantity from the DB, not the language
+  });
+
+  it('available product accepted via real production flow validate()', async () => {
+    const { orderingFlow } = await import('@/lib/bot/flows/ordering.flow');
+    const browseCatalog = orderingFlow.steps.find(s => s.id === 'browse_catalog');
+
+    const endChain: any = {};
+    endChain.eq = vi.fn().mockReturnValue(endChain);
+    endChain.is = vi.fn().mockReturnValue(endChain);
+    endChain.single = vi.fn().mockResolvedValue({
+      data: {
+        id: 'prod-ok-1', name: 'Available Pidgin Item',
+        price: 3000, stock_quantity: 10, has_variants: false,
+        image_url: null, variant_options: null, min_order_qty: null,
+      },
+      error: null,
+    });
+    const supabase = {
+      from: vi.fn().mockReturnValue({ select: vi.fn().mockReturnValue(endChain) }),
+    } as any;
+
+    const ctx = {
+      supabase,
+      business: { id: 'biz-1' },
+      session: { session_data: {} },
+      t: async (text: string) => text,
+    } as any;
+
+    const result = await browseCatalog!.validate!('prod-ok-1', ctx);
+
+    // Stock > 0 → accepted
+    expect(result.valid).toBe(true);
   });
 });

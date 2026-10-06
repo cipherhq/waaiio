@@ -1,6 +1,6 @@
 {
   "language": "pcm",
-  "generatedAt": "2026-10-06T11:56:01.579Z",
+  "generatedAt": "2026-10-06T00:00:00.000Z",
   "generationMethod": "Production seams with deterministic mock LLM translation. Static PDF labels are real deterministic bundles.",
   "sections": {
     "whatsapp": [
@@ -57,7 +57,18 @@
           "5,000"
         ],
         "subjectLine": "Confirmed at FacesByKoph ✅",
-        "htmlSnippet": "<!DOCTYPE html>\n<html lang=\"pcm\">\n<head>\n<meta charset=\"UTF-8\">\n<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n<title>FacesByKoph</title>\n</head>\n<body style=\"margin:0;padding:0;background:#f4f4f5;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif\">\n<table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#f4f4f5;padding:32px 16px\">\n<tr><td align=\"center\">\n<table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"max-width:560px;background:#ffffff;border-radius:12px;overflow:hidden\">\n  <!-- Header -->\n  <tr>\n    <td style=\"background:#7"
+        "translatedLabels": {
+          "subject": "Confirmed at {business} {emoji}",
+          "heading": "Confirmed {emoji}",
+          "greeting": "Hi {name}, you're all set with {business}!",
+          "reminderNote": "We'll send you a reminder beforehand. See you soon!",
+          "calendarBtn": "Add to Calendar",
+          "lblReference": "Reference",
+          "lblDate": "Date",
+          "lblTime": "Time",
+          "lblAmount": "Amount"
+        },
+        "bodyExcerpt": "FacesByKoph FacesByKoph via wa ai io Confirmed ✅ Hi Emeka, you&#39;re all set with FacesByKoph! Reference WA-BK-QA-001 Date 2026-12-01 Time 10:00 AM Guests 1 Amount 5,000 We&#39;ll send you a reminder beforehand. See you soon! &copy; 2026 Waaiio. All rights reserved. Automate your business with WhatsApp"
       },
       {
         "template": "ticketConfirmationEmail",
@@ -71,7 +82,24 @@
           "ShowHub"
         ],
         "subjectLine": "Your ticket(s) for Afrobeats Fest 🎫",
-        "htmlSnippet": "<!DOCTYPE html>\n<html lang=\"pcm\">\n<head>\n<meta charset=\"UTF-8\">\n<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n<title>ShowHub</title>\n</head>\n<body style=\"margin:0;padding:0;background:#f4f4f5;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif\">\n<table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#f4f4f5;padding:32px 16px\">\n<tr><td align=\"center\">\n<table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"max-width:560px;background:#ffffff;border-radius:12px;overflow:hidden\">\n  <!-- Header -->\n  <tr>\n    <td style=\"background:#7c3ae"
+        "translatedLabels": {
+          "subject": "Your ticket(s) for {event} 🎫",
+          "heading": "Ticket Confirmed! 🎫",
+          "greeting": "Hi {name}, your {count} ticket(s) for {event} confirmed!",
+          "showQr": "Show your QR code or ticket code at the entrance. Your tickets are also available on WhatsApp.",
+          "enjoyEvent": "Enjoy the event! 🎉",
+          "lblEvent": "Event",
+          "lblOrganizer": "Organizer",
+          "lblDate": "Date",
+          "lblTime": "Time",
+          "lblVenue": "Venue",
+          "lblTickets": "Tickets",
+          "lblAmount": "Amount",
+          "lblReference": "Reference",
+          "lblTicketCodes": "Your Ticket Codes:",
+          "lblTicketN": "Ticket"
+        },
+        "bodyExcerpt": "ShowHub ShowHub via wa ai io Ticket Confirmed! 🎫 Hi Emeka, your 2 ticket(s) for Afrobeats Fest confirmed! Event Afrobeats Fest Organizer ShowHub Date Dec 1, 2026 Venue Eko Centre Tickets 2 Amount ₦10,000 Reference WA-TK-QA-002 Your Ticket Codes: Ticket 1 TK-QA-001 Ticket 2 TK-QA-002 Show your QR code or ticket code at the entrance. Your tickets are also available on WhatsApp. Enjoy the event! 🎉 &copy; 2026 Waaiio. All rights reserved. Automate your business with WhatsApp"
       },
       {
         "template": "invoiceEmail",
@@ -84,7 +112,21 @@
           "TestBiz Salon"
         ],
         "subjectLine": "Invoice INV-QA-003 from TestBiz Salon",
-        "htmlSnippet": "<!DOCTYPE html>\n<html lang=\"pcm\">\n<head>\n<meta charset=\"UTF-8\">\n<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n<title>TestBiz Salon</title>\n</head>\n<body style=\"margin:0;padding:0;background:#f4f4f5;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif\">\n<table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#f4f4f5;padding:32px 16px\">\n<tr><td align=\"center\">\n<table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"max-width:560px;background:#ffffff;border-radius:12px;overflow:hidden\">\n  <!-- Header -->\n  <tr>\n    <td style=\"background:"
+        "translatedLabels": {
+          "subject": "Invoice {ref} from {business}",
+          "heading": "Invoice from {business}",
+          "greeting": "Hi {name}, you have received an invoice from {business}.",
+          "viewPay": "View & Pay Invoice",
+          "copyLink": "You can also copy and paste this link into your browser:",
+          "lblReference": "Reference",
+          "lblAmount": "Amount",
+          "lblDueDate": "Due Date",
+          "lblItems": "Items:",
+          "colItem": "Item",
+          "colQty": "Qty",
+          "colAmount": "Amount"
+        },
+        "bodyExcerpt": "TestBiz Salon TestBiz Salon via wa ai io Invoice from TestBiz Salon Hi Emeka Johnson, you have received an invoice from TestBiz Salon. Reference INV-QA-003 Amount ₦15,000 Due Date Dec 31, 2026 Items: Item Qty Amount VIP Treatment x1 15,000 View &amp; Pay Invoice You can also copy and paste this link into your browser: https://waaiio.com/invoice/token-qa &copy; 2026 Waaiio. All rights reserved. Automate your business with WhatsApp"
       }
     ],
     "pdf": [
