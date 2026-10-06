@@ -216,6 +216,16 @@ export async function deliverTicketsWhatsApp(opts: TicketDeliveryContext): Promi
 
   // 3. Try to generate and send PDF (optional — may fail on serverless due to PDFKit fonts)
   try {
+    // Slice 5B: Resolve deterministic ticket PDF labels
+    let ticketPdfLabels: import('@/lib/pdf/localize-pdf').TicketPdfLabels | undefined;
+    if (opts.translate) {
+      try {
+        const { resolveProactiveLocalization } = await import('@/lib/payments/proactive-localization');
+        const { getPdfLocalizationBundle } = await import('@/lib/pdf/localize-pdf');
+        const l10n = await resolveProactiveLocalization(opts.supabase, guestPhone, businessId);
+        if (l10n.language !== 'en') ticketPdfLabels = getPdfLocalizationBundle(l10n.language).ticket;
+      } catch { /* fail closed to English */ }
+    }
     const pdfBuffer = await generateTicketsPdf({
       eventName, eventDate, eventTime, venue, guestName, referenceCode, tickets, verifyBaseUrl, subscriptionTier,
       flyerUrl: opts.flyerUrl,
@@ -223,6 +233,7 @@ export async function deliverTicketsWhatsApp(opts: TicketDeliveryContext): Promi
       price: opts.ticketPrice,
       countryCode: opts.countryCode,
       currencyCode: opts.currencyCode,
+      labels: ticketPdfLabels,
     });
 
     const storagePath = `tickets/${businessId}/${bookingId}.pdf`;

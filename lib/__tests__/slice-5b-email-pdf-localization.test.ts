@@ -169,9 +169,14 @@ describe('Slice 5B — email localization helper', () => {
     expect(l10n.translate).not.toHaveBeenCalled();
   });
 
-  it('translateLabels calls translate for non-English', async () => {
+  it('translateLabels calls translate for non-English (atomic)', async () => {
     const { translateLabels, DEFAULT_BOOKING_LABELS } = await import('../email/localize-email');
-    const mockTranslate = vi.fn().mockImplementation(async (text: string) => `[FR] ${text}`);
+    // The new atomic translateLabels sends all labels + wrapper as one combined string.
+    // Mock translator must preserve markers and return modified content.
+    const mockTranslate = vi.fn().mockImplementation(async (text: string) => {
+      // Replace each label value with a [FR] prefixed version while preserving markers
+      return text.replace(/(?<=__WAAIIO_EMAIL_SEGMENT_\d+__)[^_\n]+/g, (match) => `[FR] ${match.trim()}`);
+    });
     const l10n = { language: 'fr', translationContext: {} as any, translate: mockTranslate };
     const result = await translateLabels(DEFAULT_BOOKING_LABELS, l10n);
     expect(mockTranslate).toHaveBeenCalled();

@@ -167,6 +167,16 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
     try {
       const cc = (biz?.country_code || 'NG') as CountryCode;
       const isWhitelabel = PRICING_TIERS[(biz?.subscription_tier || 'free') as SubscriptionTier]?.whitelabel === true;
+      // Slice 5B: Resolve deterministic receipt PDF labels
+      let receiptPdfLabels: import('@/lib/pdf/localize-pdf').ReceiptPdfLabels | undefined;
+      if (translate !== ((text: string) => Promise.resolve(text))) {
+        try {
+          const { resolveProactiveLocalization } = await import('@/lib/payments/proactive-localization');
+          const { getPdfLocalizationBundle } = await import('@/lib/pdf/localize-pdf');
+          const l10n = await resolveProactiveLocalization(supabase, customerPhone, businessId);
+          if (l10n.language !== 'en') receiptPdfLabels = getPdfLocalizationBundle(l10n.language).receipt;
+        } catch { /* fail closed to English */ }
+      }
       const generateAndStoreReceipt = async () => {
         const pdfBuffer = await generateReceiptPdf({
           businessName: bizName,
@@ -181,6 +191,7 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
           whitelabel: isWhitelabel,
           logoUrl: (biz as any)?.logo_url || undefined,
           currencyCode: params.currencyCode || undefined,
+          labels: receiptPdfLabels,
         });
 
         const stableId = paymentId || crypto.randomUUID();
