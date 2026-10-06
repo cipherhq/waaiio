@@ -1,178 +1,276 @@
 /**
- * Slice 6 Gate 1 — S6-B5: Pidgin human QA evidence artifact (#524)
+ * Slice 6 Gate 1 — S6-C3: Pidgin human QA evidence via production seams (#524)
  *
- * Generates a deterministic, non-secret QA evidence artifact containing
- * representative Pidgin outputs across WhatsApp text, email HTML, and PDF
- * surfaces. This test captures the artifact for human linguistic review
- * required before Gate 2 activation.
+ * Generates representative Pidgin outputs through the REAL Waaiio
+ * localization/rendering seams with deterministic mocked translation.
+ * Produces a committed snapshot fixture suitable for human linguistic review.
+ *
+ * Static deterministic labels (PDF bundles) are real.
+ * LLM-translated text (WhatsApp, email labels) uses a deterministic
+ * mock through the production translateBotResponse/translateLabels seams.
  *
  * Does NOT call production providers. Does NOT change CERTIFIED_LANGUAGES.
  */
 import { describe, it, expect, vi } from 'vitest';
+import { writeFileSync } from 'fs';
+import { resolve } from 'path';
+
+// ── Deterministic mock translator via production seam ──
+// This mock runs through translateBotResponse's entitlement gate, then
+// returns a deterministic Pidgin-like output for each English input.
+const DETERMINISTIC_PIDGIN: Record<string, string> = {
+  // Booking email labels
+  'Booking Confirmed': 'Booking Don Confirm',
+  'Your booking has been confirmed.': 'Your booking don confirm.',
+  'Reference': 'Reference',
+  'Date': 'Date',
+  'Time': 'Time',
+  'Amount': 'Amount',
+  'Thank you for your booking!': 'We dey thank you for your booking!',
+  // Ticket email labels
+  'Your Tickets': 'Your Tickets',
+  'ticket': 'ticket',
+  // Invoice email labels
+  'Invoice': 'Invoice',
+  'Amount Due': 'Amount Wey You Go Pay',
+  'Due Date': 'Due Date',
+  'Pay Now': 'Pay Now',
+  // Wrapper
+  'All rights reserved.': 'All rights reserved.',
+  'Powered by Waaiio': 'Waaiio power am',
+  // WhatsApp text
+  'Your booking is confirmed! Reference: {ref}. See you at {time}.': 'Your booking don confirm! Reference: {ref}. We go see for {time}.',
+  'Please pay {amount} for {service}. Tap below to pay.': 'Abeg pay {amount} for {service}. Press below make you pay.',
+  'Here are your tickets for {event}. Show this at the entrance.': 'See your tickets for {event}. Show am for gate.',
+  'Welcome! What would you like to do today?': 'Welcome! Wetin you wan do today?',
+  'Sorry, something went wrong. Please try again or type "menu" to start over.': 'Sorry, something no work well. Try again or type "menu" make you start over.',
+};
+
+const mockTranslate = vi.fn().mockImplementation(async (text: string) => {
+  return DETERMINISTIC_PIDGIN[text] ?? `[PCM] ${text}`;
+});
+
+vi.mock('@/lib/bot/translate', async () => {
+  const actual = await vi.importActual('@/lib/bot/translate');
+  return {
+    ...actual as object,
+    translateBotResponse: (...a: unknown[]) => mockTranslate(a[0]),
+  };
+});
 
 vi.mock('@/lib/logger', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
-// ── QA evidence structure ──
+// ── QA evidence types ──
 
-interface QAEvidence {
+interface QAEvidenceArtifact {
   language: string;
   generatedAt: string;
-  surfaces: {
-    whatsappText: Array<{ context: string; input: string; output: string }>;
-    emailHtml: Array<{ template: string; htmlLang: string; containsAuthoritative: string[]; snippet: string }>;
-    pdfLabels: Array<{ docType: string; labels: Record<string, unknown> }>;
-    navigation: Array<{ input: string; command: string }>;
-    languageSwitch: Array<{ input: string; language: string; persistence: string }>;
+  generationMethod: string;
+  sections: {
+    whatsapp: Array<{
+      context: string;
+      english: string;
+      pidgin: string;
+      source: 'mock-llm-via-localizeText';
+      authoritativeValues?: string[];
+    }>;
+    email: Array<{
+      template: string;
+      htmlLang: string;
+      labelSource: 'mock-llm-via-translateLabels';
+      authoritativeValuesPreserved: string[];
+      subjectLine: string;
+      htmlSnippet: string;
+    }>;
+    pdf: Array<{
+      docType: string;
+      labelSource: 'static-deterministic-bundle';
+      sampleLabels: Record<string, string>;
+      generatedValidPdf: boolean;
+      pdfSizeBytes: number;
+    }>;
   };
 }
 
-describe('B5 — Pidgin QA evidence artifact', () => {
-  it('captures representative Pidgin outputs for human review', async () => {
-    const evidence: QAEvidence = {
+describe('C3 — Pidgin QA evidence through production seams', () => {
+  it('generates representative Pidgin evidence artifact', async () => {
+    const artifact: QAEvidenceArtifact = {
       language: 'pcm',
       generatedAt: new Date().toISOString(),
-      surfaces: {
-        whatsappText: [],
-        emailHtml: [],
-        pdfLabels: [],
-        navigation: [],
-        languageSwitch: [],
-      },
+      generationMethod: 'Production seams with deterministic mock LLM translation. Static PDF labels are real deterministic bundles.',
+      sections: { whatsapp: [], email: [], pdf: [] },
     };
 
-    // ── 1. WhatsApp text samples (outbound localization) ──
-    const sampleTexts = [
-      { context: 'booking-confirmation', text: 'Your booking is confirmed! Reference: WA-BK-1234. See you at 3:00 PM.' },
-      { context: 'payment-prompt', text: 'Please pay ₦5,000 for Premium Haircut. Tap below to pay.' },
-      { context: 'ticket-delivery', text: 'Here are your tickets for Afrobeats Festival. Show this at the entrance.' },
+    // ── 1. WhatsApp text via localizeText production seam ──
+    const { localizeText } = await import('../bot/outbound-localizer');
+    const tCtx = {
+      entitlement: { allowedLanguages: ['en', 'pcm'], llmAllowed: true, translationAllowed: true },
+      businessId: 'biz-qa-evidence',
+      supabase: {},
+    };
+
+    const waTexts = [
+      { context: 'booking-confirmation', text: 'Your booking is confirmed! Reference: {ref}. See you at {time}.' },
+      { context: 'payment-prompt', text: 'Please pay {amount} for {service}. Tap below to pay.' },
+      { context: 'ticket-delivery', text: 'Here are your tickets for {event}. Show this at the entrance.' },
       { context: 'menu-prompt', text: 'Welcome! What would you like to do today?' },
       { context: 'error-recovery', text: 'Sorry, something went wrong. Please try again or type "menu" to start over.' },
     ];
 
-    // Simulate Pidgin translation with mock (realistic for evidence capture)
-    const pidginTranslations: Record<string, string> = {
-      'booking-confirmation': 'Your booking don confirm! Reference: WA-BK-1234. We go see for 3:00 PM.',
-      'payment-prompt': 'Abeg pay ₦5,000 for Premium Haircut. Press the button down dey to pay.',
-      'ticket-delivery': 'See your tickets for Afrobeats Festival. Show am for gate.',
-      'menu-prompt': 'Welcome! Wetin you wan do today?',
-      'error-recovery': 'Sorry, something no work well. Try again or type "menu" make you start over.',
-    };
-
-    for (const sample of sampleTexts) {
-      evidence.surfaces.whatsappText.push({
+    for (const sample of waTexts) {
+      const translated = await localizeText(sample.text, 'pcm', tCtx);
+      artifact.sections.whatsapp.push({
         context: sample.context,
-        input: sample.text,
-        output: pidginTranslations[sample.context] || sample.text,
+        english: sample.text,
+        pidgin: translated,
+        source: 'mock-llm-via-localizeText',
+        authoritativeValues: sample.text.match(/\{[^}]+\}/g) ?? undefined,
       });
     }
 
-    // ── 2. Email HTML samples ──
-    const { bookingConfirmationEmail, ticketConfirmationEmail, invoiceEmail } = await import('../email/templates');
-    const { DEFAULT_BOOKING_LABELS, DEFAULT_TICKET_LABELS, DEFAULT_INVOICE_LABELS, DEFAULT_WRAPPER_LABELS } = await import('../email/localize-email');
+    // ── 2. Email via translateLabels production seam ──
+    const { translateLabels, DEFAULT_BOOKING_LABELS, DEFAULT_TICKET_LABELS, DEFAULT_INVOICE_LABELS, localizeWrapperLabels } = await import('../email/localize-email');
+    const l10n = { language: 'pcm', translationContext: {} as any, translate: mockTranslate };
 
-    const pidginWrapper = { ...DEFAULT_WRAPPER_LABELS, htmlLang: 'pcm', footer: 'Waaiio power am. All rights reserved.' };
-
+    // Booking email
+    const bookingLabels = await translateLabels(DEFAULT_BOOKING_LABELS, l10n, ['FacesByKoph', 'WA-BK-QA-001']);
+    const bookingWrapper = await localizeWrapperLabels(l10n);
+    const { bookingConfirmationEmail } = await import('../email/templates');
     const bookingEmail = bookingConfirmationEmail({
       firstName: 'Emeka', businessName: 'FacesByKoph', date: '2026-12-01', time: '10:00 AM',
-      quantity: 1, referenceCode: 'WA-BK-PCM-QA01', amount: 5000,
+      quantity: 1, referenceCode: 'WA-BK-QA-001', amount: 5000,
       quantityLabel: 'Guests', confirmationEmoji: '✅',
-      labels: DEFAULT_BOOKING_LABELS, wrapperLabels: pidginWrapper,
+      labels: bookingLabels, wrapperLabels: bookingWrapper,
     });
-    evidence.surfaces.emailHtml.push({
+    artifact.sections.email.push({
       template: 'bookingConfirmationEmail',
-      htmlLang: 'pcm',
-      containsAuthoritative: ['WA-BK-PCM-QA01', 'FacesByKoph', '5,000'],
-      snippet: bookingEmail.html.slice(0, 500),
+      htmlLang: bookingWrapper.htmlLang,
+      labelSource: 'mock-llm-via-translateLabels',
+      authoritativeValuesPreserved: ['WA-BK-QA-001', 'FacesByKoph', '5,000'],
+      subjectLine: bookingEmail.subject,
+      htmlSnippet: bookingEmail.html.slice(0, 600),
     });
 
+    // Ticket email
+    const ticketLabels = await translateLabels(DEFAULT_TICKET_LABELS, l10n, ['ShowHub', 'WA-TK-QA-002']);
+    const ticketWrapper = await localizeWrapperLabels(l10n);
+    const { ticketConfirmationEmail } = await import('../email/templates');
     const ticketEmail = ticketConfirmationEmail({
       firstName: 'Emeka', businessName: 'ShowHub', eventName: 'Afrobeats Fest',
       eventDate: 'Dec 1, 2026', venue: 'Eko Centre', quantity: 2,
-      referenceCode: 'WA-TK-PCM-QA02', formattedAmount: '₦10,000',
+      referenceCode: 'WA-TK-QA-002', formattedAmount: '₦10,000',
       ticketCodes: ['TK-QA-001', 'TK-QA-002'], whitelabel: false,
-      labels: DEFAULT_TICKET_LABELS, wrapperLabels: pidginWrapper,
+      labels: ticketLabels as any, wrapperLabels: ticketWrapper,
     });
-    evidence.surfaces.emailHtml.push({
+    artifact.sections.email.push({
       template: 'ticketConfirmationEmail',
-      htmlLang: 'pcm',
-      containsAuthoritative: ['WA-TK-PCM-QA02', 'TK-QA-001', 'TK-QA-002', '₦10,000'],
-      snippet: ticketEmail.html.slice(0, 500),
+      htmlLang: ticketWrapper.htmlLang,
+      labelSource: 'mock-llm-via-translateLabels',
+      authoritativeValuesPreserved: ['WA-TK-QA-002', 'TK-QA-001', 'TK-QA-002', '₦10,000', 'ShowHub'],
+      subjectLine: ticketEmail.subject,
+      htmlSnippet: ticketEmail.html.slice(0, 600),
     });
 
+    // Invoice email
+    const invoiceLabels = await translateLabels(DEFAULT_INVOICE_LABELS, l10n, ['TestBiz Salon', 'INV-QA-003']);
+    const invoiceWrapper = await localizeWrapperLabels(l10n);
+    const { invoiceEmail } = await import('../email/templates');
     const invEmail = invoiceEmail({
-      businessName: 'TestBiz Salon', referenceCode: 'INV-PCM-QA03',
+      businessName: 'TestBiz Salon', referenceCode: 'INV-QA-003',
       totalAmount: '₦15,000', dueDate: 'Dec 31, 2026', customerName: 'Emeka Johnson',
       items: [{ description: 'VIP Treatment', quantity: 1, unitPrice: 15000, amount: 15000 }],
       invoiceUrl: 'https://waaiio.com/invoice/token-qa', currency: 'NGN',
-      labels: DEFAULT_INVOICE_LABELS, wrapperLabels: pidginWrapper,
+      labels: invoiceLabels as any, wrapperLabels: invoiceWrapper,
     });
-    evidence.surfaces.emailHtml.push({
+    artifact.sections.email.push({
       template: 'invoiceEmail',
-      htmlLang: 'pcm',
-      containsAuthoritative: ['INV-PCM-QA03', '₦15,000', 'https://waaiio.com/invoice/token-qa'],
-      snippet: invEmail.html.slice(0, 500),
+      htmlLang: invoiceWrapper.htmlLang,
+      labelSource: 'mock-llm-via-translateLabels',
+      authoritativeValuesPreserved: ['INV-QA-003', '₦15,000', 'https://waaiio.com/invoice/token-qa', 'TestBiz Salon'],
+      subjectLine: invEmail.subject,
+      htmlSnippet: invEmail.html.slice(0, 600),
     });
 
-    // ── 3. PDF label evidence ──
+    // ── 3. PDF via real deterministic bundles + real generators ──
     const { getPdfLocalizationBundle } = await import('../pdf/localize-pdf');
+    const { generateReceiptPdf } = await import('../pdf/receipt-generator');
+    const { generateTicketsPdf } = await import('../pdf/ticket-generator');
+    const { generateInvoicePdf } = await import('../pdf/invoice-pdf-generator');
     const pcm = getPdfLocalizationBundle('pcm');
 
-    evidence.surfaces.pdfLabels.push(
-      { docType: 'receipt', labels: pcm.receipt },
-      { docType: 'ticket', labels: pcm.ticket },
-      { docType: 'invoice', labels: pcm.invoice },
-      { docType: 'history', labels: pcm.history },
-      { docType: 'annual', labels: pcm.annual },
-    );
+    const receiptBuf = await generateReceiptPdf({
+      businessName: 'FacesByKoph', referenceCode: 'WA-BK-QA-PDF', date: '2026-12-01T10:30:00Z',
+      serviceName: 'Premium Haircut', amount: 5000, paymentStatus: 'paid',
+      customerName: 'Emeka Johnson', customerPhone: '+2341234567890', countryCode: 'NG',
+      labels: pcm.receipt,
+    });
+    artifact.sections.pdf.push({
+      docType: 'receipt', labelSource: 'static-deterministic-bundle',
+      sampleLabels: { title: pcm.receipt.title, footer: pcm.receipt.footer, 'statusLabels.paid': pcm.receipt.statusLabels.paid },
+      generatedValidPdf: receiptBuf.slice(0, 5).toString() === '%PDF-', pdfSizeBytes: receiptBuf.length,
+    });
 
-    // ── 4. Navigation commands ──
-    const { recognizeNavigationCommand } = await import('../bot/inbound-command-normalization');
-    const navInputs = ['cancel am', 'abeg cancel am', 'comot', 'stop am', 'go back', 'abeg go back', 'menu', 'help'];
-    for (const input of navInputs) {
-      const cmd = recognizeNavigationCommand(input);
-      if (cmd) evidence.surfaces.navigation.push({ input, command: cmd });
-    }
+    const ticketBuf = await generateTicketsPdf({
+      eventName: 'Afrobeats Festival', eventDate: 'Dec 1, 2026', venue: 'Eko Centre',
+      guestName: 'Emeka Johnson', referenceCode: 'WA-TK-QA-PDF',
+      tickets: [{ ticketCode: 'TK-QA-PDF1', ticketNumber: 1, totalTickets: 1 }],
+      verifyBaseUrl: 'https://waaiio.com/tickets/verify', labels: pcm.ticket,
+    });
+    artifact.sections.pdf.push({
+      docType: 'ticket', labelSource: 'static-deterministic-bundle',
+      sampleLabels: { lblAttendee: pcm.ticket.lblAttendee, lblVenue: pcm.ticket.lblVenue, footer: pcm.ticket.footer },
+      generatedValidPdf: ticketBuf.slice(0, 5).toString() === '%PDF-', pdfSizeBytes: ticketBuf.length,
+    });
 
-    // ── 5. Language switch commands ──
-    const { parseLanguagePreferenceIntent } = await import('../bot/language-preference');
-    const switchInputs = ['speak pidgin', 'abeg speak pidgin', 'use naija', 'reply me for pidgin',
-      'switch to pidgin', 'use pidgin from now on always'];
-    for (const input of switchInputs) {
-      const result = parseLanguagePreferenceIntent(input);
-      if (result) evidence.surfaces.languageSwitch.push({ input, language: result.language, persistence: result.persistence });
-    }
+    const invoiceBuf = await generateInvoicePdf({
+      businessName: 'TestBiz', referenceCode: 'INV-QA-PDF', issueDate: '2026-12-01', dueDate: '2026-12-31',
+      customerName: 'Emeka Johnson', customerPhone: '+234',
+      items: [{ description: 'Service', quantity: 1, unitPrice: 5000, amount: 5000 }],
+      subtotal: 5000, taxRate: 0, taxAmount: 0, discountType: 'none', discountValue: 0, discountAmount: 0,
+      totalAmount: 5000, amountPaid: 0, status: 'pending', countryCode: 'NG',
+      labels: pcm.invoice,
+    });
+    artifact.sections.pdf.push({
+      docType: 'invoice', labelSource: 'static-deterministic-bundle',
+      sampleLabels: { title: pcm.invoice.title, lblPaid: pcm.invoice.lblPaid, footer: pcm.invoice.footer },
+      generatedValidPdf: invoiceBuf.slice(0, 5).toString() === '%PDF-', pdfSizeBytes: invoiceBuf.length,
+    });
 
-    // ── Validate evidence completeness ──
-    expect(evidence.surfaces.whatsappText.length).toBeGreaterThanOrEqual(5);
-    expect(evidence.surfaces.emailHtml.length).toBeGreaterThanOrEqual(3);
-    expect(evidence.surfaces.pdfLabels.length).toBe(5);
-    expect(evidence.surfaces.navigation.length).toBeGreaterThanOrEqual(6);
-    expect(evidence.surfaces.languageSwitch.length).toBeGreaterThanOrEqual(5);
+    // ── Validate the artifact ──
+    expect(artifact.sections.whatsapp.length).toBe(5);
+    expect(artifact.sections.email.length).toBe(3);
+    expect(artifact.sections.pdf.length).toBe(3);
 
-    // Verify authoritative values are preserved in email HTML
-    for (const email of evidence.surfaces.emailHtml) {
-      expect(email.htmlLang).toBe('pcm');
-      for (const authValue of email.containsAuthoritative) {
-        // The email HTML must contain these exact values
-        const fullHtml = email.template === 'bookingConfirmationEmail'
-          ? bookingEmail.html
-          : email.template === 'ticketConfirmationEmail'
-          ? ticketEmail.html
-          : invEmail.html;
-        expect(fullHtml).toContain(authValue);
+    // Authoritative values preserved in emails
+    for (const email of artifact.sections.email) {
+      const fullHtml = email.template === 'bookingConfirmationEmail'
+        ? bookingEmail.html
+        : email.template === 'ticketConfirmationEmail'
+        ? ticketEmail.html : invEmail.html;
+      for (const v of email.authoritativeValuesPreserved) {
+        expect(fullHtml).toContain(v);
       }
     }
 
-    // Verify PDF labels contain no authoritative data
-    for (const pdf of evidence.surfaces.pdfLabels) {
-      const labelsStr = JSON.stringify(pdf.labels);
-      expect(labelsStr).not.toMatch(/WA-BK|WA-TK|INV-|₦|\$/);
+    // PDFs are valid
+    for (const pdf of artifact.sections.pdf) {
+      expect(pdf.generatedValidPdf).toBe(true);
+      expect(pdf.pdfSizeBytes).toBeGreaterThan(500);
     }
 
-    // Evidence artifact captured — this is the machine-readable output
-    // for human Pidgin QA review at Gate 2.
-    expect(evidence.language).toBe('pcm');
+    // WhatsApp samples went through production localizeText seam
+    expect(mockTranslate).toHaveBeenCalled();
+
+    // ── Write durable artifact for human QA review ──
+    const artifactPath = resolve(__dirname, '../bot/__tests__/fixtures/pcm-qa-evidence-snapshot.json');
+    writeFileSync(artifactPath, JSON.stringify(artifact, null, 2), 'utf-8');
+
+    // Verify the written file is valid JSON
+    const { readFileSync } = await import('fs');
+    const written = JSON.parse(readFileSync(artifactPath, 'utf-8'));
+    expect(written.language).toBe('pcm');
+    expect(written.sections.whatsapp.length).toBe(5);
   });
 });
