@@ -95,13 +95,13 @@ export async function generateInvoicePdf(data: InvoicePdfData): Promise<Buffer> 
   // Reference + dates on right
   const headerRightX = pageWidth - margin - 180;
   doc.fontSize(9).font('Helvetica').fillColor('#666666');
-  doc.text(`Ref: ${data.referenceCode}`, headerRightX, margin, { width: 180, align: 'right' });
-  doc.text(`Issue Date: ${formatDate(data.issueDate)}`, headerRightX, margin + 14, { width: 180, align: 'right' });
-  doc.text(`Due Date: ${formatDate(data.dueDate)}`, headerRightX, margin + 28, { width: 180, align: 'right' });
+  doc.text(`${IL.lblRef}: ${data.referenceCode}`, headerRightX, margin, { width: 180, align: 'right' });
+  doc.text(`${IL.lblIssueDate}: ${formatDate(data.issueDate)}`, headerRightX, margin + 14, { width: 180, align: 'right' });
+  doc.text(`${IL.lblDueDate}: ${formatDate(data.dueDate)}`, headerRightX, margin + 28, { width: 180, align: 'right' });
 
   if (data.status === 'paid') {
     doc.fontSize(12).font('Helvetica-Bold').fillColor('#16a34a')
-      .text(IL.title === 'INVOICE' ? 'PAID' : IL.title, headerRightX, margin + 46, { width: 180, align: 'right' });
+      .text(IL.lblPaid, headerRightX, margin + 46, { width: 180, align: 'right' });
   }
 
   // Divider
@@ -145,9 +145,9 @@ export async function generateInvoicePdf(data: InvoicePdfData): Promise<Buffer> 
   doc.fillColor('#555555').fontSize(8).font('Helvetica-Bold');
   doc.text('#', colX.num + 4, y + 5, { width: colW.num });
   doc.text(IL.colDescription, colX.desc, y + 5, { width: colW.desc });
-  doc.text('Qty', colX.qty, y + 5, { width: colW.qty, align: 'right' });
+  doc.text(IL.colQty, colX.qty, y + 5, { width: colW.qty, align: 'right' });
   doc.text(IL.colUnitPrice, colX.price, y + 5, { width: colW.price, align: 'right' });
-  doc.text('Amount', colX.amount, y + 5, { width: colW.amount, align: 'right' });
+  doc.text(IL.colAmount, colX.amount, y + 5, { width: colW.amount, align: 'right' });
   y += 22;
 
   // Table rows
@@ -197,22 +197,22 @@ export async function generateInvoicePdf(data: InvoicePdfData): Promise<Buffer> 
   summaryRow(IL.lblSubtotal, fmtCurrency(data.subtotal, data.countryCode));
 
   if (data.taxRate > 0) {
-    summaryRow(`Tax (${data.taxRate}%)`, fmtCurrency(data.taxAmount, data.countryCode));
+    summaryRow(`${IL.lblTax} (${data.taxRate}%)`, fmtCurrency(data.taxAmount, data.countryCode));
   }
 
   if (data.discountAmount > 0) {
     const discountLabel = data.discountType === 'percent'
-      ? `Discount (${data.discountValue}%)`
-      : 'Discount';
+      ? `${IL.lblDiscount} (${data.discountValue}%)`
+      : IL.lblDiscount;
     summaryRow(discountLabel, `-${fmtCurrency(data.discountAmount, data.countryCode)}`);
   }
 
   summaryRow(IL.lblTotal, fmtCurrency(data.totalAmount, data.countryCode), true);
 
   if (data.amountPaid > 0) {
-    summaryRow(IL.lblTotal === 'Total' ? 'Amount Paid' : IL.lblTotal, fmtCurrency(data.amountPaid, data.countryCode));
+    summaryRow(IL.lblAmountPaid, fmtCurrency(data.amountPaid, data.countryCode));
     const balance = data.totalAmount - data.amountPaid;
-    summaryRow('Balance Due', fmtCurrency(balance, data.countryCode), true);
+    summaryRow(IL.lblBalanceDue, fmtCurrency(balance, data.countryCode), true);
   }
 
   // ── Notes & Terms ──
@@ -231,7 +231,7 @@ export async function generateInvoicePdf(data: InvoicePdfData): Promise<Buffer> 
   if (data.terms) {
     if (y + 40 > doc.page.height - 60) { doc.addPage(); y = margin; }
     doc.fontSize(9).font('Helvetica-Bold').fillColor('#555555')
-      .text('Terms & Conditions', margin, y);
+      .text(IL.lblTerms, margin, y);
     y += 14;
     doc.fontSize(8).font('Helvetica').fillColor('#888888')
       .text(data.terms, margin, y, { width: contentWidth - 100 });

@@ -299,6 +299,7 @@ export function bookingConfirmationEmail(details: {
   whitelabel?: boolean;
   /** Slice 5B: pre-translated Waaiio-owned labels (optional — English defaults used when absent) */
   labels?: BookingEmailLabels;
+  wrapperLabels?: EmailWrapperLabels;
 }) {
   const { firstName, businessName, businessLogoUrl, date, time, quantity, referenceCode, amount, formattedAmount, quantityLabel, confirmationEmoji, googleCalendarUrl, whitelabel } = details;
   const L = details.labels || DEFAULT_BOOKING_LABELS;
@@ -326,7 +327,7 @@ export function bookingConfirmationEmail(details: {
       )}
       ${calendarBtn}
       ${p(esc(L.reminderNote))}
-    `, { businessName, logoUrl: businessLogoUrl, whitelabel }),
+    `, { businessName, logoUrl: businessLogoUrl, whitelabel, wrapperLabels: details.wrapperLabels }),
   };
 }
 
@@ -339,21 +340,25 @@ export function bookingReminderEmail(
   referenceCode: string,
   businessLogoUrl?: string,
   whitelabel?: boolean,
+  labels?: BookingReminderEmailLabels,
+  wrapperLabels?: EmailWrapperLabels,
 ) {
+  const L = labels || DEFAULT_REMINDER_LABELS;
+  const vals = { name: guestName, business: businessName, service: serviceName };
   return {
-    subject: `Reminder: ${businessName} is tomorrow`,
+    subject: fillLabel(L.subject, vals),
     from: businessFrom(businessName),
     html: wrap(`
-      ${h('Reminder')}
-      ${p(`Hi ${esc(guestName)}, this is a friendly reminder about <strong>${esc(businessName)}</strong> tomorrow.`)}
+      ${h(esc(L.heading))}
+      ${p(esc(fillLabel(L.greeting, vals)))}
       ${table(
-        kv('Service', esc(serviceName)) +
-        kv('Date', esc(date)) +
-        (time ? kv('Time', esc(time)) : '') +
-        kv('Reference', `<code style="background:#f4f4f5;padding:2px 6px;border-radius:4px;font-family:monospace">${esc(referenceCode)}</code>`)
+        kv(esc(L.lblService), esc(serviceName)) +
+        kv(esc(L.lblDate), esc(date)) +
+        (time ? kv(esc(L.lblTime), esc(time)) : '') +
+        kv(esc(L.lblReference), `<code style="background:#f4f4f5;padding:2px 6px;border-radius:4px;font-family:monospace">${esc(referenceCode)}</code>`)
       )}
-      ${p('If you need to reschedule or cancel, please contact the business directly.')}
-    `, { businessName, logoUrl: businessLogoUrl, whitelabel }),
+      ${p(esc(L.seeYou))}
+    `, { businessName, logoUrl: businessLogoUrl, whitelabel, wrapperLabels }),
   };
 }
 
@@ -612,6 +617,7 @@ export function invoiceEmail(details: {
   whitelabel?: boolean;
   /** Slice 5B: pre-translated labels */
   labels?: InvoiceEmailLabels;
+  wrapperLabels?: EmailWrapperLabels;
 }) {
   const { businessName, businessLogoUrl, referenceCode, totalAmount, dueDate, customerName, items, invoiceUrl } = details;
   const L = details.labels || DEFAULT_INVOICE_LABELS;
@@ -650,7 +656,7 @@ export function invoiceEmail(details: {
       ${btn(esc(L.viewPay), invoiceUrl)}
       ${p(esc(L.copyLink))}
       ${p(`<a href="${invoiceUrl}" style="color:#7c3aed;word-break:break-all">${invoiceUrl}</a>`)}
-    `, { businessName, logoUrl: businessLogoUrl, whitelabel: details.whitelabel }),
+    `, { businessName, logoUrl: businessLogoUrl, whitelabel: details.whitelabel, wrapperLabels: details.wrapperLabels }),
   };
 }
 
@@ -669,11 +675,12 @@ export function ticketConfirmationEmail(details: {
   whitelabel?: boolean;
   /** Slice 5B: pre-translated labels */
   labels?: TicketEmailLabels;
+  wrapperLabels?: EmailWrapperLabels;
 }) {
   const { firstName, businessName, businessLogoUrl, eventName, eventDate, eventTime, venue, quantity, referenceCode, formattedAmount, ticketCodes } = details;
   const L = details.labels || DEFAULT_TICKET_LABELS;
-  const ticketWord = quantity === 1 ? 'ticket' : 'tickets';
-  const vals = { name: firstName, count: String(quantity), ticketWord, event: eventName };
+  // Singular/plural comes from the label, not English grammar
+  const vals = { name: firstName, count: String(quantity), event: eventName };
   const ticketList = ticketCodes.map((code, i) => kv(esc(`${L.lblTicketN} ${i + 1}`), `<code style="background:#f4f4f5;padding:2px 6px;border-radius:4px;font-family:monospace">${esc(code)}</code>`)).join('');
 
   return {
@@ -695,7 +702,7 @@ export function ticketConfirmationEmail(details: {
       ${ticketList ? `${p(`<strong>${esc(L.lblTicketCodes)}</strong>`)}${table(ticketList)}` : ''}
       ${p(esc(L.showQr))}
       ${p(esc(L.enjoyEvent))}
-    `, { businessName, logoUrl: businessLogoUrl, whitelabel: details.whitelabel }),
+    `, { businessName, logoUrl: businessLogoUrl, whitelabel: details.whitelabel, wrapperLabels: details.wrapperLabels }),
   };
 }
 
@@ -708,6 +715,7 @@ export function donationReceiptEmail(details: {
   whitelabel?: boolean;
   /** Slice 5B: pre-translated labels */
   labels?: DonationEmailLabels;
+  wrapperLabels?: EmailWrapperLabels;
 }) {
   const { donorName, businessName, campaignTitle, formattedAmount, referenceCode } = details;
   const L = details.labels || DEFAULT_DONATION_LABELS;
@@ -727,7 +735,7 @@ export function donationReceiptEmail(details: {
         kv(esc(L.lblReference), `<code style="background:#f4f4f5;padding:2px 6px;border-radius:4px;font-family:monospace">${esc(referenceCode)}</code>`)
       )}
       ${p(esc(L.support))}
-    `, { businessName, whitelabel: details.whitelabel }),
+    `, { businessName, whitelabel: details.whitelabel, wrapperLabels: details.wrapperLabels }),
   };
 }
 

@@ -139,9 +139,9 @@ export const DEFAULT_BOOKING_LABELS: BookingEmailLabels = {
 };
 
 export const DEFAULT_TICKET_LABELS: TicketEmailLabels = {
-  subject: 'Your {count} {ticketWord} for {event} 🎫',
+  subject: 'Your ticket(s) for {event} 🎫',
   heading: 'Ticket Confirmed! 🎫',
-  greeting: 'Hi {name}, your {count} {ticketWord} for {event} confirmed!',
+  greeting: 'Hi {name}, your {count} ticket(s) for {event} confirmed!',
   showQr: 'Show your QR code or ticket code at the entrance. Your tickets are also available on WhatsApp.',
   enjoyEvent: 'Enjoy the event! 🎉',
   lblEvent: 'Event', lblOrganizer: 'Organizer', lblDate: 'Date', lblTime: 'Time',

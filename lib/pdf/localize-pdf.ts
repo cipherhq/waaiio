@@ -14,7 +14,12 @@ export interface ReceiptPdfLabels {
   lblReference: string;  // "Reference"
   lblService: string;    // "Service"
   lblCustomer: string;   // "Customer"
+  lblPhone: string;      // "Phone"
   lblDate: string;       // "Date"
+  lblPayment: string;    // "Payment"
+  lblSubtotal: string;   // "Subtotal"
+  lblFees: string;       // "Fees"
+  lblTotal: string;      // "Total"
   lblAmount: string;     // "Amount"
   lblStatus: string;     // "Status"
   footer: string;        // "Powered by Waaiio"
@@ -37,9 +42,10 @@ export interface TicketPdfLabels {
 /** Invoice PDF labels */
 export interface InvoicePdfLabels {
   title: string;           // "INVOICE"
+  lblPaid: string;         // "PAID"
   lblBillTo: string;       // "BILL TO"
-  lblInvoiceNo: string;    // "Invoice No."
-  lblDate: string;         // "Date"
+  lblRef: string;          // "Ref"
+  lblIssueDate: string;    // "Issue Date"
   lblDueDate: string;      // "Due Date"
   colDescription: string;  // "Description"
   colQty: string;          // "Qty"
@@ -49,15 +55,19 @@ export interface InvoicePdfLabels {
   lblTax: string;          // "Tax"
   lblDiscount: string;     // "Discount"
   lblTotal: string;        // "Total"
+  lblAmountPaid: string;   // "Amount Paid"
+  lblBalanceDue: string;   // "Balance Due"
   lblNotes: string;        // "Notes"
-  lblTerms: string;        // "Terms"
+  lblTerms: string;        // "Terms & Conditions"
   footer: string;          // "Powered by Waaiio"
 }
 
 export const DEFAULT_RECEIPT_LABELS: ReceiptPdfLabels = {
   title: 'RECEIPT', lblReference: 'Reference', lblService: 'Service',
-  lblCustomer: 'Customer', lblDate: 'Date', lblAmount: 'Amount',
-  lblStatus: 'Status', footer: 'Powered by Waaiio',
+  lblCustomer: 'Customer', lblPhone: 'Phone', lblDate: 'Date',
+  lblPayment: 'Payment', lblSubtotal: 'Subtotal', lblFees: 'Fees',
+  lblTotal: 'Total', lblAmount: 'Amount', lblStatus: 'Status',
+  footer: 'Powered by Waaiio',
 };
 
 export const DEFAULT_TICKET_LABELS: TicketPdfLabels = {
@@ -68,10 +78,12 @@ export const DEFAULT_TICKET_LABELS: TicketPdfLabels = {
 };
 
 export const DEFAULT_INVOICE_LABELS: InvoicePdfLabels = {
-  title: 'INVOICE', lblBillTo: 'BILL TO', lblInvoiceNo: 'Invoice No.',
-  lblDate: 'Date', lblDueDate: 'Due Date',
+  title: 'INVOICE', lblPaid: 'PAID', lblBillTo: 'BILL TO',
+  lblRef: 'Ref', lblIssueDate: 'Issue Date', lblDueDate: 'Due Date',
   colDescription: 'Description', colQty: 'Qty', colUnitPrice: 'Unit Price',
   colAmount: 'Amount', lblSubtotal: 'Subtotal', lblTax: 'Tax',
   lblDiscount: 'Discount', lblTotal: 'Total',
-  lblNotes: 'Notes', lblTerms: 'Terms', footer: 'Powered by Waaiio',
+  lblAmountPaid: 'Amount Paid', lblBalanceDue: 'Balance Due',
+  lblNotes: 'Notes', lblTerms: 'Terms & Conditions',
+  footer: 'Powered by Waaiio',
 };
