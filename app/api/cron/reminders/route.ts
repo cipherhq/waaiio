@@ -21,7 +21,8 @@ async function resolveReminderLabels(
     const l10n = await resolveEmailLocalization(supabase as any, phone, bizId);
     if (l10n.language === 'en') return {};
     const labels = await translateLabels(DEFAULT_REMINDER_LABELS, l10n, protectedNames) as unknown as BookingReminderEmailLabels;
-    const wl = { ...DEFAULT_WRAPPER_LABELS, htmlLang: l10n.language };
+    const { localizeWrapperLabels } = await import('@/lib/email/localize-email');
+    const wl = await localizeWrapperLabels(l10n);
     return { labels, wrapperLabels: wl };
   } catch { return {}; }
 }

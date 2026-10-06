@@ -77,6 +77,56 @@ export const DEFAULT_TICKET_LABELS: TicketPdfLabels = {
   ticketOf: 'Ticket', footer: 'Powered by Waaiio',
 };
 
+/** History PDF labels */
+export interface HistoryPdfLabels {
+  title: string;           // "TRANSACTION HISTORY"
+  lblGenerated: string;    // "Generated:"
+  colDate: string;         // "Date"
+  colService: string;      // "Service"
+  colBusiness: string;     // "Business"
+  colRef: string;          // "Ref"
+  colAmount: string;       // "Amount"
+  colStatus: string;       // "Status"
+  lblTotalTransactions: string; // "Total Transactions:"
+  lblTotal: string;        // "Total:"
+  footer: string;          // "Powered by Waaiio"
+}
+
+/** Annual Statement PDF labels */
+export interface AnnualStatementPdfLabels {
+  title: string;           // "ANNUAL STATEMENT — {year}"
+  lblGenerated: string;    // "Generated:"
+  colDate: string;
+  colService: string;
+  colBusiness: string;
+  colRef: string;
+  colAmount: string;
+  colStatus: string;
+  lblSubtotal: string;     // "Subtotal:"
+  lblGrandTotal: string;   // "Grand Total:"
+  lblTotalTransactions: string;
+  taxDisclaimer: string;   // "This statement is provided..."
+  footer: string;
+}
+
+export const DEFAULT_HISTORY_LABELS: HistoryPdfLabels = {
+  title: 'TRANSACTION HISTORY', lblGenerated: 'Generated:',
+  colDate: 'Date', colService: 'Service', colBusiness: 'Business',
+  colRef: 'Ref', colAmount: 'Amount', colStatus: 'Status',
+  lblTotalTransactions: 'Total Transactions:', lblTotal: 'Total:',
+  footer: 'Powered by Waaiio',
+};
+
+export const DEFAULT_ANNUAL_LABELS: AnnualStatementPdfLabels = {
+  title: 'ANNUAL STATEMENT', lblGenerated: 'Generated:',
+  colDate: 'Date', colService: 'Service', colBusiness: 'Business',
+  colRef: 'Ref', colAmount: 'Amount', colStatus: 'Status',
+  lblSubtotal: 'Subtotal:', lblGrandTotal: 'Grand Total:',
+  lblTotalTransactions: 'Total Transactions:',
+  taxDisclaimer: 'This statement is provided for your records. Please consult your tax advisor regarding the deductibility of any amounts shown.',
+  footer: 'Powered by Waaiio',
+};
+
 export const DEFAULT_INVOICE_LABELS: InvoicePdfLabels = {
   title: 'INVOICE', lblPaid: 'PAID', lblBillTo: 'BILL TO',
   lblRef: 'Ref', lblIssueDate: 'Issue Date', lblDueDate: 'Due Date',

@@ -39,6 +39,7 @@ export interface HistoryData {
   countryCode: CountryCode;
   rows: HistoryRow[];
   whitelabel?: boolean;
+  labels?: import('./localize-pdf').HistoryPdfLabels;
 }
 
 // ── Brand colors ──
@@ -219,6 +220,9 @@ export async function generateReceiptPdf(data: ReceiptData): Promise<Buffer> {
 // ── Transaction History PDF (A4, table layout) ──
 
 export async function generateHistoryPdf(data: HistoryData): Promise<Buffer> {
+  const { DEFAULT_HISTORY_LABELS } = await import('./localize-pdf');
+  const HL = data.labels || DEFAULT_HISTORY_LABELS;
+
   const doc: any = new PDFDocument({ size: 'A4', margin: 40 });
   const bufferPromise = collectPdfBuffer(doc);
 
@@ -234,7 +238,7 @@ export async function generateHistoryPdf(data: HistoryData): Promise<Buffer> {
 
   // Header
   doc.fontSize(18).font('Helvetica-Bold').fillColor(TEXT_PRIMARY)
-    .text('TRANSACTION HISTORY', 40, 44, { width: contentWidth, align: 'center' });
+    .text(HL.title, 40, 44, { width: contentWidth, align: 'center' });
 
   doc.fontSize(10).font('Helvetica').fillColor(TEXT_SECONDARY)
     .text(`${data.customerName}  ·  ${maskPhone(data.customerPhone)}`, 40, 68, {
@@ -242,7 +246,7 @@ export async function generateHistoryPdf(data: HistoryData): Promise<Buffer> {
     });
 
   doc.fontSize(9).font('Helvetica').fillColor(TEXT_MUTED)
-    .text(`Generated: ${formatDate(new Date().toISOString())}`, 40, 83, {
+    .text(`${HL.lblGenerated} ${formatDate(new Date().toISOString())}`, 40, 83, {
       width: contentWidth, align: 'center',
     });
 
@@ -261,12 +265,12 @@ export async function generateHistoryPdf(data: HistoryData): Promise<Buffer> {
   doc.opacity(1).fillColor(TEXT_SECONDARY);
 
   doc.fontSize(8).font('Helvetica-Bold');
-  doc.text('Date', cols.date.x, y, { width: cols.date.w });
-  doc.text('Service', cols.service.x, y, { width: cols.service.w });
-  doc.text('Business', cols.business.x, y, { width: cols.business.w });
-  doc.text('Ref', cols.ref.x, y, { width: cols.ref.w });
-  doc.text('Amount', cols.amount.x, y, { width: cols.amount.w, align: 'right' });
-  doc.text('Status', cols.status.x, y, { width: cols.status.w });
+  doc.text(HL.colDate, cols.date.x, y, { width: cols.date.w });
+  doc.text(HL.colService, cols.service.x, y, { width: cols.service.w });
+  doc.text(HL.colBusiness, cols.business.x, y, { width: cols.business.w });
+  doc.text(HL.colRef, cols.ref.x, y, { width: cols.ref.w });
+  doc.text(HL.colAmount, cols.amount.x, y, { width: cols.amount.w, align: 'right' });
+  doc.text(HL.colStatus, cols.status.x, y, { width: cols.status.w });
 
   y += 20;
 
@@ -308,9 +312,9 @@ export async function generateHistoryPdf(data: HistoryData): Promise<Buffer> {
   y += 10;
 
   doc.fillColor(TEXT_PRIMARY).fontSize(10).font('Helvetica-Bold')
-    .text(`Total Transactions: ${rows.length}`, 40, y);
+    .text(`${HL.lblTotalTransactions} ${rows.length}`, 40, y);
   doc.fillColor(BRAND_PURPLE)
-    .text(`Total: ${formatCurrency(totalAmount, data.countryCode)}`, 300, y, {
+    .text(`${HL.lblTotal} ${formatCurrency(totalAmount, data.countryCode)}`, 300, y, {
       width: contentWidth - 260, align: 'right',
     });
 
@@ -318,7 +322,7 @@ export async function generateHistoryPdf(data: HistoryData): Promise<Buffer> {
   if (!data.whitelabel) {
     y += 30;
     doc.fontSize(7).font('Helvetica').fillColor('#bbbbbb')
-      .text('Powered by Waaiio  ·  waaiio.com', 40, y, { width: contentWidth, align: 'center' });
+      .text(`${HL.footer}  ·  waaiio.com`, 40, y, { width: contentWidth, align: 'center' });
   }
 
   doc.end();
@@ -335,9 +339,13 @@ export interface AnnualStatementData {
   businessName?: string;
   rows: HistoryRow[];
   whitelabel?: boolean;
+  labels?: import('./localize-pdf').AnnualStatementPdfLabels;
 }
 
 export async function generateAnnualStatementPdf(data: AnnualStatementData): Promise<Buffer> {
+  const { DEFAULT_ANNUAL_LABELS } = await import('./localize-pdf');
+  const AL = data.labels || DEFAULT_ANNUAL_LABELS;
+
   const doc: any = new PDFDocument({ size: 'A4', margin: 40 });
   const bufferPromise = collectPdfBuffer(doc);
 
@@ -350,7 +358,7 @@ export async function generateAnnualStatementPdf(data: AnnualStatementData): Pro
 
   // Header
   doc.fontSize(18).font('Helvetica-Bold').fillColor(TEXT_PRIMARY)
-    .text(`ANNUAL STATEMENT — ${data.year}`, 40, 44, { width: contentWidth, align: 'center' });
+    .text(`${AL.title} — ${data.year}`, 40, 44, { width: contentWidth, align: 'center' });
 
   if (data.businessName) {
     doc.fontSize(11).font('Helvetica').fillColor(TEXT_SECONDARY)
@@ -364,7 +372,7 @@ export async function generateAnnualStatementPdf(data: AnnualStatementData): Pro
     });
 
   doc.fontSize(9).font('Helvetica').fillColor(TEXT_MUTED)
-    .text(`Generated: ${formatDate(new Date().toISOString())}`, 40, subHeaderY + 15, {
+    .text(`${AL.lblGenerated} ${formatDate(new Date().toISOString())}`, 40, subHeaderY + 15, {
       width: contentWidth, align: 'center',
     });
 
@@ -409,11 +417,11 @@ export async function generateAnnualStatementPdf(data: AnnualStatementData): Pro
     doc.rect(40, y - 3, contentWidth, 18).fillColor(BRAND_PURPLE).opacity(0.06).fill();
     doc.opacity(1).fillColor(TEXT_SECONDARY);
     doc.fontSize(8).font('Helvetica-Bold');
-    doc.text('Date', cols.date.x, y, { width: cols.date.w });
-    doc.text('Service', cols.service.x, y, { width: cols.service.w });
-    doc.text('Business', cols.business.x, y, { width: cols.business.w });
-    doc.text('Ref', cols.ref.x, y, { width: cols.ref.w });
-    doc.text('Amount', cols.amount.x, y, { width: cols.amount.w, align: 'right' });
+    doc.text(AL.colDate, cols.date.x, y, { width: cols.date.w });
+    doc.text(AL.colService, cols.service.x, y, { width: cols.service.w });
+    doc.text(AL.colBusiness, cols.business.x, y, { width: cols.business.w });
+    doc.text(AL.colRef, cols.ref.x, y, { width: cols.ref.w });
+    doc.text(AL.colAmount, cols.amount.x, y, { width: cols.amount.w, align: 'right' });
     doc.text('Status', cols.status.x, y, { width: cols.status.w });
     y += 20;
 
@@ -456,9 +464,9 @@ export async function generateAnnualStatementPdf(data: AnnualStatementData): Pro
   y += 12;
 
   doc.fillColor(TEXT_PRIMARY).fontSize(11).font('Helvetica-Bold')
-    .text(`Total Transactions: ${data.rows.length}`, 40, y);
+    .text(`${AL.lblTotalTransactions} ${data.rows.length}`, 40, y);
   doc.fillColor(BRAND_PURPLE)
-    .text(`Grand Total: ${formatCurrency(grandTotal, data.countryCode)}`, 300, y, {
+    .text(`${AL.lblGrandTotal} ${formatCurrency(grandTotal, data.countryCode)}`, 300, y, {
       width: contentWidth - 260, align: 'right',
     });
 
@@ -466,7 +474,7 @@ export async function generateAnnualStatementPdf(data: AnnualStatementData): Pro
   y += 25;
   doc.fontSize(8).font('Helvetica').fillColor(TEXT_MUTED)
     .text(
-      'This statement is provided for your records. Please consult your tax advisor regarding the deductibility of any amounts shown.',
+      AL.taxDisclaimer,
       40, y, { width: contentWidth, align: 'center' },
     );
 
@@ -474,7 +482,7 @@ export async function generateAnnualStatementPdf(data: AnnualStatementData): Pro
   if (!data.whitelabel) {
     y += 25;
     doc.fontSize(7).font('Helvetica').fillColor('#bbbbbb')
-      .text('Powered by Waaiio  ·  waaiio.com', 40, y, { width: contentWidth, align: 'center' });
+      .text(`${AL.footer}  ·  waaiio.com`, 40, y, { width: contentWidth, align: 'center' });
   }
 
   doc.end();

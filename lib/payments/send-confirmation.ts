@@ -1349,7 +1349,8 @@ export async function sendProactiveConfirmation(
               const l10n = await resolveProactiveLocalization(supabase, customerPhone!, businessId!);
               if (l10n.language !== 'en') {
                 bookingEmailLabels = await translateLabels(DEFAULT_BOOKING_LABELS, l10n, [businessName, referenceCode]) as unknown as typeof DEFAULT_BOOKING_LABELS;
-                bookingWrapperLabels = { ...DEFAULT_WRAPPER_LABELS, htmlLang: l10n.language };
+                const { localizeWrapperLabels } = await import('@/lib/email/localize-email');
+                bookingWrapperLabels = await localizeWrapperLabels(l10n);
               }
             } catch { /* fail closed to English */ }
           }
@@ -1426,7 +1427,8 @@ export async function sendProactiveConfirmation(
                 const l10n = await resolveProactiveLocalization(supabase, customerPhone!, businessId!);
                 if (l10n.language !== 'en') {
                   donationEmailLabels = await tl(DEFAULT_DONATION_LABELS, l10n, [businessName, campaignTitle, referenceCode]) as unknown as typeof DEFAULT_DONATION_LABELS;
-                  donationWrapperLabels = { ...DWL, htmlLang: l10n.language };
+                  const { localizeWrapperLabels: lwl } = await import('@/lib/email/localize-email');
+                  donationWrapperLabels = await lwl(l10n);
                 }
               } catch { /* fail closed to English */ }
             }

@@ -257,7 +257,8 @@ export async function POST(request: NextRequest) {
           const l10n = await resolveEmailLocalization(supabase, invoice.customer_phone, invoice.business_id);
           if (l10n.language !== 'en') {
             invLabels = await translateLabels(DEFAULT_INVOICE_LABELS, l10n, [biz.name, invoice.reference_code]) as unknown as typeof DEFAULT_INVOICE_LABELS;
-            invWrapperLabels = { ...DEFAULT_WRAPPER_LABELS, htmlLang: l10n.language };
+            const { localizeWrapperLabels } = await import('@/lib/email/localize-email');
+            invWrapperLabels = await localizeWrapperLabels(l10n);
           }
         } catch { /* fail closed to English */ }
       }

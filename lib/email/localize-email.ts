@@ -230,6 +230,24 @@ export async function translateLabels<T extends { [K in keyof T]: string }>(
 }
 
 /**
+ * Localize the email wrapper labels. Sets htmlLang deterministically
+ * from the language code, and translates footer/tagline through the
+ * approved translation path. Fail-closed to English defaults.
+ */
+export async function localizeWrapperLabels(
+  l10n: ProactiveLocalization,
+): Promise<EmailWrapperLabels> {
+  if (l10n.language === 'en') return DEFAULT_WRAPPER_LABELS;
+  try {
+    const footer = await l10n.translate(DEFAULT_WRAPPER_LABELS.footer);
+    const tagline = await l10n.translate(DEFAULT_WRAPPER_LABELS.tagline);
+    return { htmlLang: l10n.language, footer, tagline };
+  } catch {
+    return { ...DEFAULT_WRAPPER_LABELS, htmlLang: l10n.language };
+  }
+}
+
+/**
  * Interpolate placeholder tokens in label strings.
  * Placeholders are {name}, {business}, {amount}, etc.
  * Values are NOT HTML-escaped here — the caller must escape at the render boundary.

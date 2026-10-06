@@ -312,7 +312,8 @@ export async function deliverTicketsEmail(opts: TicketDeliveryContext): Promise<
       const l10n = await resolveProactiveLocalization(opts.supabase, guestPhone, businessId);
       if (l10n.language !== 'en') {
         ticketEmailLabels = await translateLabels(DEFAULT_TICKET_LABELS, l10n, [eventName, venue, referenceCode]) as unknown as typeof DEFAULT_TICKET_LABELS;
-        ticketWrapperLabels = { ...DEFAULT_WRAPPER_LABELS, htmlLang: l10n.language };
+        const { localizeWrapperLabels } = await import('@/lib/email/localize-email');
+        ticketWrapperLabels = await localizeWrapperLabels(l10n);
       }
     } catch { /* fail closed to English */ }
   }
