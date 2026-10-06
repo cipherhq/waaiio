@@ -631,6 +631,41 @@ export class FlowExecutor {
       }
     }
 
+    // ── #559: Handle pending reroute confirmation ──
+    const pendingReroute = session.session_data._pending_reroute as { capability: string } | undefined;
+    if (pendingReroute) {
+      const isYes = input === 'REROUTE_YES' || /^(yes|yeah|yep|yea|y|confam|confirm|ok|okay|sure)\s*$/i.test(input.trim());
+      // Any non-YES response (including REROUTE_NO) clears the pending state and re-prompts
+      delete session.session_data._pending_reroute;
+      if (isYes) {
+        // Revalidate: target capability must still be enabled for this business
+        const { getEnabledCapabilities } = await import('@/lib/capabilities/service');
+        const currentCaps = await getEnabledCapabilities(this.supabase, session.business_id!);
+        const targetCap = pendingReroute.capability as CapabilityId;
+        if (currentCaps.includes(targetCap)) {
+          // Recompute firstStep from server-side authority (never from stored state)
+          const { capabilityToFirstStep } = await import('@/lib/bot/handlers/flow-routing');
+          const targetStep = capabilityToFirstStep(targetCap);
+          session.session_data.active_capability = targetCap;
+          await this.advanceToStep(session, targetStep, from, ctx, translationCtx, scopedSender);
+          return;
+        }
+        // Capability no longer valid — fail closed, re-prompt current step
+      }
+      // Clear pending state via CAS, then re-prompt current step
+      const retryMessages = await step.prompt(ctx);
+      if (retryMessages.some(m => m.type === 'buttons' || m.type === 'list')) {
+        this.logPromptMessages(session, retryMessages);
+      }
+      if (!await this.casUpdateSession(session, {
+        current_step: session.current_step,
+        session_data: session.session_data,
+        conversation_log: session.conversation_log,
+      })) return; // Stale — send nothing
+      await this.sendMessages(from, retryMessages, undefined, translationCtx, scopedSender);
+      return;
+    }
+
     // Validate input
     _fmark('pre_validate');
     const result = await step.validate(input, ctx);
@@ -640,11 +675,82 @@ export class FlowExecutor {
       // CAS-005: Stale worker must exit silently — no messages, no persistence
       if (result.abortSilently) return;
 
-      // CAS-005: Build complete conversation_log BEFORE CAS persistence
+      // ── #559: Mid-flow reroute probe (deterministic, zero LLM) ──
+      // Only on non-free-text guided steps, only for create_new intents
+      if (!FREE_TEXT_STEPS.includes(stepId)) {
+        const { parseSmartIntent } = await import('@/lib/bot/smart-intent');
+        const probe = parseSmartIntent(input);
+        if (probe.understood && probe.intent && (probe.requestedAction === 'create_new' || !probe.requestedAction)) {
+          const activeCap = session.session_data.active_capability as CapabilityId | undefined;
+          let targetFamily = probe.semanticFamily;
+          // If family is null (ambiguous "book"), disambiguate by business category
+          if (!targetFamily && probe.intent === 'booking') {
+            const { disambiguateByCategory } = await import('@/lib/bot/semantic-resolver');
+            const { getEnabledCapabilities } = await import('@/lib/capabilities/service');
+            const caps = await getEnabledCapabilities(this.supabase, session.business_id!);
+            targetFamily = disambiguateByCategory(business?.category || null, caps);
+          }
+          if (targetFamily) {
+            const { resolveSemanticCapability } = await import('@/lib/bot/semantic-resolver');
+            const { getEnabledCapabilities } = await import('@/lib/capabilities/service');
+            const caps = await getEnabledCapabilities(this.supabase, session.business_id!);
+            const resolution = resolveSemanticCapability(targetFamily, 'create_new', caps);
+            if (resolution.canRoute && resolution.matchedCapability && resolution.matchedCapability !== activeCap) {
+              // Offer reroute — persist pending state via CAS BEFORE sending buttons
+              const { getFlowCopy, getRerouteKey } = await import('./flow-localization');
+              const effectiveLang = session.session_data._detected_language as string | undefined;
+              // Check entitlement for static copy
+              const langEntitlement = getEffectiveLanguages(
+                business?.subscription_tier || 'free',
+                await loadBusinessLanguages(this.supabase, session.business_id!),
+              );
+              const copyLang = effectiveLang && langEntitlement.allowedLanguages.includes(effectiveLang)
+                ? effectiveLang : 'en';
+
+              session.session_data._pending_reroute = { capability: resolution.matchedCapability };
+              const rerouteBody = getFlowCopy(copyLang, getRerouteKey(probe.intent));
+              session.conversation_log.push({ role: 'bot', content: rerouteBody, timestamp: new Date().toISOString() });
+
+              const casSaved = await this.casUpdateSession(session, {
+                current_step: session.current_step,
+                session_data: session.session_data,
+                conversation_log: session.conversation_log,
+              });
+              if (!casSaved) return; // Stale — send nothing
+
+              const rerouteMsg: PromptMessage = {
+                type: 'buttons',
+                body: rerouteBody,
+                buttons: [
+                  { id: 'REROUTE_YES', title: getFlowCopy(copyLang, 'yes') },
+                  { id: 'REROUTE_NO', title: getFlowCopy(copyLang, 'stayHere') },
+                ],
+              };
+              await this.sendMessages(from, [rerouteMsg], undefined, translationCtx, scopedSender);
+              return;
+            }
+          }
+        }
+      }
+
+      // ── Standard validation failure: localized error + re-prompt ──
+      const { getFlowCopy } = await import('./flow-localization');
+      const effectiveLang = session.session_data._detected_language as string | undefined;
+      const langEntitlement = getEffectiveLanguages(
+        business?.subscription_tier || 'free',
+        await loadBusinessLanguages(this.supabase, session.business_id!),
+      );
+      const copyLang = effectiveLang && langEntitlement.allowedLanguages.includes(effectiveLang)
+        ? effectiveLang : 'en';
+
       let errText = '';
       if (result.errorMessage) {
-        const translatedError = await this.maybeTranslate(result.errorMessage, session, translationCtx);
-        const cancelHint = await this.maybeTranslate('Type *back* to go back, *menu* to restart, or *exit* to leave.', session, translationCtx);
+        // Use deterministic copy for known messages, LLM for dynamic ones
+        const knownError = result.errorMessage === 'That option is not available. Tap one of the choices above.';
+        const translatedError = knownError
+          ? getFlowCopy(copyLang, 'invalidSelection')
+          : await this.maybeTranslate(result.errorMessage, session, translationCtx);
+        const cancelHint = getFlowCopy(copyLang, 'cancelHint');
         errText = `${translatedError}\n\n_${cancelHint}_`;
         session.conversation_log.push({ role: 'bot', content: errText, timestamp: new Date().toISOString() });
       }
