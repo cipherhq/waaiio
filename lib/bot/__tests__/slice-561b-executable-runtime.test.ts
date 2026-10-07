@@ -354,69 +354,120 @@ describe('561-B: scheduling flow prompt() returns localized copy', () => {
   });
 });
 
-describe('561-B: payment flow prompt() returns localized chrome', () => {
-  it('select_category with no categories returns localized error', async () => {
+describe('561-B: payment flow returns localized deterministic chrome', () => {
+  it('confirm_amount step exists', async () => {
     const { paymentFlow } = await import('../flows/payment.flow');
-    const catStep = paymentFlow.steps.find(s => s.id === 'select_category');
-    expect(catStep).toBeDefined();
-
-    const enCtx = buildMockCtx({
-      copyLang: 'en',
-      sessionData: { _giving_mode: false },
-      supabaseData: { payment_categories: [] },
-    });
-    const enMsgs = await catStep!.prompt(enCtx as never);
-    expect(enMsgs.length).toBeGreaterThan(0);
+    const step = paymentFlow.steps.find(s => s.id === 'confirm_amount');
+    expect(step).toBeDefined();
   });
 
-  it('confirm_amount validate returns localized hint', async () => {
+  it('confirm_amount validate returns English hint on invalid input', async () => {
     const { paymentFlow } = await import('../flows/payment.flow');
-    const confirmStep = paymentFlow.steps.find(s => s.id === 'confirm_amount');
-    if (!confirmStep) return; // Step may have different name
+    const step = paymentFlow.steps.find(s => s.id === 'confirm_amount')!;
+    const ctx = buildMockCtx({ copyLang: 'en', sessionData: { amount: 5000, service_name: 'Test' } });
+    const result = await step.validate('invalid_input', ctx as never);
+    expect(result.valid).toBe(false);
+    expect(result.errorMessage).toBe('Please tap *Confirm* or *Cancel*.');
+  });
 
-    const enCtx = buildMockCtx({ copyLang: 'en', sessionData: { amount: 5000, service_name: 'Test' } });
-    const result = await confirmStep.validate('invalid_input', enCtx as never);
-    if (!result.valid && result.errorMessage) {
-      expect(result.errorMessage).toContain('Confirm');
-    }
+  it('confirm_amount validate returns Pidgin hint on invalid input', async () => {
+    const { paymentFlow } = await import('../flows/payment.flow');
+    const step = paymentFlow.steps.find(s => s.id === 'confirm_amount')!;
+    const ctx = buildMockCtx({ copyLang: 'pcm', sessionData: { amount: 5000, service_name: 'Test' } });
+    const result = await step.validate('invalid_input', ctx as never);
+    expect(result.valid).toBe(false);
+    expect(result.errorMessage).toContain('Abeg tap *Confirm* or *Cancel*');
+  });
+
+  it('collect_name validate returns English error', async () => {
+    const { paymentFlow } = await import('../flows/payment.flow');
+    const step = paymentFlow.steps.find(s => s.id === 'collect_name')!;
+    expect(step).toBeDefined();
+    const ctx = buildMockCtx({ copyLang: 'en' });
+    const result = await step.validate('X', ctx as never);
+    expect(result.valid).toBe(false);
+    expect(result.errorMessage).toBe('Please enter a valid name.');
+  });
+
+  it('collect_name validate returns Pidgin error', async () => {
+    const { paymentFlow } = await import('../flows/payment.flow');
+    const step = paymentFlow.steps.find(s => s.id === 'collect_name')!;
+    const ctx = buildMockCtx({ copyLang: 'pcm' });
+    const result = await step.validate('X', ctx as never);
+    expect(result.valid).toBe(false);
+    expect(result.errorMessage).toContain('Abeg enter valid name');
   });
 });
 
 describe('561-B: capability-selection returns localized account menu', () => {
-  it('account menu step produces localized titles', async () => {
-    const capModule = await import('../flows/capability-selection.flow');
-    const flow = capModule.capabilitySelectionFlow || capModule.default;
-    expect(flow).toBeDefined();
+  it('my_account_menu step exists', async () => {
+    const { capabilitySelectionFlow } = await import('../flows/capability-selection.flow');
+    const step = capabilitySelectionFlow.steps.find(s => s.id === 'my_account_menu');
+    expect(step).toBeDefined();
+  });
 
-    const accountStep = flow.steps.find((s: any) => s.id === 'my_account_menu');
-    if (!accountStep) return; // Step name may differ
+  it('English account menu returns list with correct title and items', async () => {
+    vi.doMock('@/lib/promotions/history', () => ({ hasPromoHistory: vi.fn().mockResolvedValue(false) }));
+    const { capabilitySelectionFlow } = await import('../flows/capability-selection.flow');
+    const step = capabilitySelectionFlow.steps.find(s => s.id === 'my_account_menu')!;
 
-    // English context
-    const enCtx = buildMockCtx({
+    const ctx = buildMockCtx({
       copyLang: 'en',
-      sessionData: { active_capability: 'scheduling' },
+      sessionData: { capabilities: ['scheduling', 'ordering', 'giving'] },
     });
-    const enMsgs = await accountStep.prompt(enCtx as never);
-    expect(enMsgs.length).toBeGreaterThan(0);
-    const msg = enMsgs[0] as any;
-    if (msg.type === 'list') {
-      expect(msg.title).toContain('My Account');
-      // Check item titles contain account menu entries
-      const titles = msg.items?.map((i: any) => i.title) || [];
-      expect(titles).toContain('My Bookings');
-    }
+    const msgs = await step.prompt(ctx as never);
+    expect(msgs).toHaveLength(1);
 
-    // Pidgin context
-    const pcmCtx = buildMockCtx({
+    const msg = msgs[0] as any;
+    expect(msg.type).toBe('list');
+    expect(msg.title).toBe('My Account');
+    expect(msg.body).toContain('Manage your bookings');
+    expect(msg.buttonLabel).toBe('My Account');
+
+    const titles = msg.items.map((i: any) => i.title);
+    expect(titles).toContain('My Bookings');
+    expect(titles).toContain('My Orders');
+    expect(titles).toContain('My Giving');
+    expect(titles).toContain('Get Receipt');
+    expect(titles).toContain('Switch Business');
+    expect(titles).toContain('← Back');
+  });
+
+  it('Pidgin account menu returns list with Pidgin body', async () => {
+    vi.doMock('@/lib/promotions/history', () => ({ hasPromoHistory: vi.fn().mockResolvedValue(false) }));
+    const { capabilitySelectionFlow } = await import('../flows/capability-selection.flow');
+    const step = capabilitySelectionFlow.steps.find(s => s.id === 'my_account_menu')!;
+
+    const ctx = buildMockCtx({
       copyLang: 'pcm',
-      sessionData: { active_capability: 'scheduling' },
+      sessionData: { capabilities: ['scheduling'] },
     });
-    const pcmMsgs = await accountStep.prompt(pcmCtx as never);
-    const pcmMsg = pcmMsgs[0] as any;
-    if (pcmMsg.type === 'list') {
-      // PCM account title is also 'My Account' (kept for recognizability)
-      expect(pcmMsg.title).toBeDefined();
-    }
+    const msgs = await step.prompt(ctx as never);
+    expect(msgs).toHaveLength(1);
+
+    const msg = msgs[0] as any;
+    expect(msg.type).toBe('list');
+    expect(msg.body).toContain('comot'); // Pidgin cancel hint
+    expect(msg.buttonLabel).toBe('My Account'); // Kept for recognizability
+
+    const descriptions = msg.items.map((i: any) => i.description);
+    // Pidgin descriptions should differ from English
+    expect(descriptions).toContain('Go back to main menu'); // pcm nav.back_desc
+  });
+
+  it('account menu validate returns localized error for invalid input', async () => {
+    const { capabilitySelectionFlow } = await import('../flows/capability-selection.flow');
+    const step = capabilitySelectionFlow.steps.find(s => s.id === 'my_account_menu')!;
+
+    const enCtx = buildMockCtx({ copyLang: 'en' });
+    const enResult = await step.validate('garbage_input', enCtx as never);
+    expect(enResult.valid).toBe(false);
+    expect(enResult.errorMessage).toBe('Please pick an option from the list.');
+
+    const pcmCtx = buildMockCtx({ copyLang: 'pcm' });
+    const pcmResult = await step.validate('garbage_input', pcmCtx as never);
+    expect(pcmResult.valid).toBe(false);
+    expect(pcmResult.errorMessage).toContain('Abeg pick one option');
   });
 });
 
@@ -446,17 +497,57 @@ describe('561-B: ticketing flow returns localized chrome', () => {
 });
 
 describe('561-B: ordering flow returns localized chrome', () => {
-  it('browse_catalog with nothing available returns localized message', async () => {
+  it('select_variant_error step exists', async () => {
     const { orderingFlow } = await import('../flows/ordering.flow');
-    const browseStep = orderingFlow.steps.find(s => s.id === 'browse_catalog');
-    expect(browseStep).toBeDefined();
+    const step = orderingFlow.steps.find(s => s.id === 'select_variant_error');
+    expect(step).toBeDefined();
+  });
 
-    const enCtx = buildMockCtx({
-      copyLang: 'en',
-      supabaseData: { products: [] },
-    });
-    const enMsgs = await browseStep!.prompt(enCtx as never);
-    expect(enMsgs.length).toBeGreaterThan(0);
+  it('select_variant_error prompt returns English deterministic copy', async () => {
+    const { orderingFlow } = await import('../flows/ordering.flow');
+    const step = orderingFlow.steps.find(s => s.id === 'select_variant_error')!;
+
+    const ctx = buildMockCtx({ copyLang: 'en' });
+    const msgs = await step.prompt(ctx as never);
+    expect(msgs).toHaveLength(1);
+
+    const msg = msgs[0] as any;
+    expect(msg.type).toBe('buttons');
+    expect(msg.body).toBe('Sorry, that combination is not available.');
+    expect(msg.buttons).toHaveLength(2);
+    expect(msg.buttons[0].title).toBe('Try Another');
+    expect(msg.buttons[1].title).toBe('Cancel');
+  });
+
+  it('select_variant_error prompt returns Pidgin deterministic copy', async () => {
+    const { orderingFlow } = await import('../flows/ordering.flow');
+    const step = orderingFlow.steps.find(s => s.id === 'select_variant_error')!;
+
+    const ctx = buildMockCtx({ copyLang: 'pcm' });
+    const msgs = await step.prompt(ctx as never);
+    expect(msgs).toHaveLength(1);
+
+    const msg = msgs[0] as any;
+    expect(msg.type).toBe('buttons');
+    expect(msg.body).toContain('combination no dey available');
+    expect(msg.buttons[0].title).toBe('Try Another');
+    expect(msg.buttons[1].title).toBe('Cancel'); // pcm nav.cancel is 'Cancel'
+  });
+
+  it('browse_catalog validate returns localized item-not-found error', async () => {
+    const { orderingFlow } = await import('../flows/ordering.flow');
+    const step = orderingFlow.steps.find(s => s.id === 'browse_category_items');
+    expect(step).toBeDefined();
+
+    const enCtx = buildMockCtx({ copyLang: 'en', sessionData: { _selected_category: 'Food' } });
+    const result = await step!.validate('nonexistent_product_id', enCtx as never);
+    expect(result.valid).toBe(false);
+    expect(result.errorMessage).toContain("didn't find that item");
+
+    const pcmCtx = buildMockCtx({ copyLang: 'pcm', sessionData: { _selected_category: 'Food' } });
+    const pcmResult = await step!.validate('nonexistent_product_id', pcmCtx as never);
+    expect(pcmResult.valid).toBe(false);
+    expect(pcmResult.errorMessage).toContain('no see that item');
   });
 });
 
