@@ -1,4 +1,6 @@
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
+import { resolveProactiveLocalization } from '@/lib/payments/proactive-localization';
+import { fillFlowCopy } from '@/lib/bot/flows/flow-localization';
 import { logger } from '@/lib/logger';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
@@ -87,7 +89,8 @@ async function sendNotifications({
         ? entry.customer_phone.slice(1)
         : entry.customer_phone;
       const name = entry.customer_name || 'there';
-      const msg = `Hi ${name}! A slot just opened up at *${businessName}* on *${displayDate}*. Would you like to book? Reply *Hi* to get started.`;
+      const l10n = await resolveProactiveLocalization(supabase, entry.customer_phone, businessId);
+      const msg = fillFlowCopy(l10n.language, 'notification.waitlist_slot_open', { name, businessName, displayDate });
 
       await resolved.sender.sendText({ to: phone, text: msg });
       await supabase

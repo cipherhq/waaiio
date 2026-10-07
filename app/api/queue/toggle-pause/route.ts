@@ -1,6 +1,8 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
+import { resolveProactiveLocalization } from '@/lib/payments/proactive-localization';
+import { fillFlowCopy } from '@/lib/bot/flows/flow-localization';
 import { authenticateRequest } from '@/lib/api-auth';
 import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 import { logger } from '@/lib/logger';
@@ -70,9 +72,10 @@ export async function POST(request: NextRequest) {
                   ? sub.customer_phone.slice(1)
                   : sub.customer_phone;
 
+                const l10n = await resolveProactiveLocalization(supabase, sub.customer_phone, businessId);
                 await resolved.sender.sendText({
                   to: phone,
-                  text: `The queue at *${bizName}* is now open! Send *Hi* to join the queue.`,
+                  text: fillFlowCopy(l10n.language, 'notification.queue_reopened', { businessName: bizName }),
                 });
 
                 // Mark as notified — only count if exactly one row transitioned

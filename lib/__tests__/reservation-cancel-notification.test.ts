@@ -66,6 +66,10 @@ vi.mock('@/lib/channels/channel-resolver', () => ({
   ChannelResolver: class { resolveByBusinessId = mockResolve; },
 }));
 
+vi.mock('@/lib/payments/proactive-localization', () => ({
+  resolveProactiveLocalization: vi.fn().mockResolvedValue({ language: 'en', translate: async (t: string) => t }),
+}));
+
 vi.mock('@/lib/rate-limit', () => ({
   rateLimitResponseAsync: vi.fn().mockResolvedValue(null),
   getRateLimitKey: vi.fn().mockReturnValue('test'),

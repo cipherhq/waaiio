@@ -5,6 +5,7 @@ import { safeLogErrorContext } from '@/lib/errors';
 import { getEnabledCapabilities } from '@/lib/capabilities/service';
 import type { CapabilityId } from '@/lib/capabilities/types';
 import { generateReceiptPdf } from '@/lib/pdf/receipt-generator';
+import { getFlowCopy } from '@/lib/bot/flows/flow-localization';
 import { PRICING_TIERS, type CountryCode, type SubscriptionTier } from '@/lib/constants';
 import { triggerSequences } from '@/lib/bot/automation/sequence-service';
 import { evaluateRules } from '@/lib/bot/automation/rules-engine';
@@ -165,6 +166,13 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
   // and sendProactiveConfirmation already sends a confirmation text with amount/ref/tips)
   if (amountPaid && amountPaid > 0) {
     try {
+      // Resolve customer language for receipt caption
+      let receiptLang = 'en';
+      try {
+        const { resolveProactiveLocalization } = await import('@/lib/payments/proactive-localization');
+        const receiptL10n = await resolveProactiveLocalization(supabase, customerPhone, businessId);
+        receiptLang = receiptL10n.language;
+      } catch { /* fall back to English */ }
       const cc = (biz?.country_code || 'NG') as CountryCode;
       const isWhitelabel = PRICING_TIERS[(biz?.subscription_tier || 'free') as SubscriptionTier]?.whitelabel === true;
       // Slice 5B: Resolve deterministic receipt PDF labels
@@ -235,7 +243,7 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
                 to: phone,
                 documentUrl: signedUrlData.signedUrl,
                 filename: `receipt-${referenceCode || paymentId.slice(0, 8)}.pdf`,
-                caption: 'Your payment receipt',
+                caption: getFlowCopy(receiptLang, 'notification.receipt_caption'),
               });
               return true;
             },
@@ -259,7 +267,7 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
             to: phone,
             documentUrl: signedUrlData.signedUrl,
             filename: `receipt-${referenceCode || 'payment'}.pdf`,
-            caption: 'Your payment receipt',
+            caption: getFlowCopy(receiptLang, 'notification.receipt_caption'),
           });
         }
       }

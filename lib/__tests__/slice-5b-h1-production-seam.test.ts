@@ -348,8 +348,8 @@ describe('H3 — localization failure does not suppress send or mutate state', (
       // No translate function → free/non-entitled path
     });
 
-    // Resolver never called (no translate → no localization attempt)
-    expect(mockResolveProactive).not.toHaveBeenCalled();
+    // 561-E: resolver IS now called to determine deterministic caption language,
+    // but the no-translate path still does not use LLM translation.
     // Generator still called with English defaults
     expect(mockGenerateTicketsPdf).toHaveBeenCalledOnce();
     expect(mockGenerateTicketsPdf.mock.calls[0][0].labels).toBeUndefined();

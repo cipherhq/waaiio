@@ -1,5 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { MessageSender } from '@/lib/channels/message-sender';
+import { resolveProactiveLocalization } from '@/lib/payments/proactive-localization';
+import { fillFlowCopy, getFlowCopy } from '@/lib/bot/flows/flow-localization';
 import { logger } from '@/lib/logger';
 import { dispatchWebhook } from '@/lib/webhooks/dispatcher';
 
@@ -40,6 +42,10 @@ export async function escalateToHuman(params: EscalateParams): Promise<EscalateR
   // are excluded from instrumentation counting. Falls back to sender if not provided.
   const ownerSender = notificationSender || sender;
 
+  // Resolve customer language for localized messages
+  const l10n = await resolveProactiveLocalization(supabase, from, businessId);
+  const copyLang = l10n.language;
+
   // Atomic handoff: session update + conversation upsert in one transaction
   const { data: rpcResult, error: rpcErr } = await supabase.rpc('atomic_escalate_to_human', {
     p_session_id: sessionId,
@@ -79,7 +85,7 @@ export async function escalateToHuman(params: EscalateParams): Promise<EscalateR
   if (outcome === 'already_active') {
     await sender.sendText({
       to: from,
-      text: `You're already connected to the team at *${businessName}*. A team member will respond shortly.\n\nType *end chat* to return to the menu.`,
+      text: fillFlowCopy(copyLang, 'handoff.already_connected', { businessName }),
     });
     return { success: true, reason: 'already_active' };
   }
@@ -87,7 +93,7 @@ export async function escalateToHuman(params: EscalateParams): Promise<EscalateR
   // Transaction succeeded (created or repaired) — now send customer confirmation
   await sender.sendText({
     to: from,
-    text: `Connecting you to a team member at *${businessName}*... 🙋\n\nType *end chat* to close this session and return to the menu.`,
+    text: fillFlowCopy(copyLang, 'handoff.connecting', { businessName }),
   });
 
   // Non-critical: insert system message in chat_messages
@@ -158,8 +164,9 @@ export async function resolveConversation(params: ResolveParams): Promise<void> 
 
   // 3. Send resolution message to customer
   const phone = customerPhone.startsWith('+') ? customerPhone.slice(1) : customerPhone;
+  const resolveLang = (await resolveProactiveLocalization(supabase, customerPhone, businessId)).language;
   await sender.sendText({
     to: phone,
-    text: "This chat session has been closed. ✅\n\nSend *Hi* to continue with bookings, payments, and other services. 🙏\n\n💡 *What you can do:*\n• Type *Hi* to start a new conversation\n• Type *my bookings* to check your bookings",
+    text: getFlowCopy(resolveLang, 'handoff.session_closed'),
   });
 }

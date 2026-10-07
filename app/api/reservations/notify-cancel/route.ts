@@ -2,6 +2,8 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
+import { resolveProactiveLocalization } from '@/lib/payments/proactive-localization';
+import { fillFlowCopy } from '@/lib/bot/flows/flow-localization';
 import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 import { logger } from '@/lib/logger';
 
@@ -71,16 +73,10 @@ export async function POST(request: NextRequest) {
       weekday: 'short', day: 'numeric', month: 'short',
     });
 
+    const l10n = await resolveProactiveLocalization(serviceClient, reservation.guest_phone, businessId);
     await resolved.sender.sendText({
       to: toPhone,
-      text: [
-        `Your reservation at *${biz.name}* has been cancelled.`,
-        '',
-        `🔑 Ref: *${reservation.reference_code}*`,
-        `📅 Check-in: ${checkInLabel}`,
-        '',
-        `Contact us if you have questions.`,
-      ].join('\n'),
+      text: fillFlowCopy(l10n.language, 'notification.reservation_cancelled', { businessName: biz.name, referenceCode: reservation.reference_code, checkInDate: checkInLabel }),
     });
 
     return NextResponse.json({ success: true, notified: true });
