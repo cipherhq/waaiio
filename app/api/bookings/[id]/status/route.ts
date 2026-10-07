@@ -2,6 +2,8 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { requireAnyCapability } from '@/lib/capabilities/api-guard';
+import { resolveProactiveLocalization } from '@/lib/payments/proactive-localization';
+import { fillFlowCopy } from '@/lib/bot/flows/flow-localization';
 import { logger } from '@/lib/logger';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { notifyWaitlistOnSlotOpen } from '@/lib/waitlist/auto-notify';
@@ -66,6 +68,11 @@ export async function PATCH(
     let customerMessage: string | null = null;
     const cc = (biz.country_code || 'NG') as CountryCode;
 
+    // Resolve customer language for localized notifications
+    const l10n = booking.guest_phone
+      ? await resolveProactiveLocalization(service, booking.guest_phone, booking.business_id)
+      : { language: 'en' as const };
+
     if (action === 'check_in') {
       if (booking.checked_in_at) {
         return NextResponse.json({ error: 'Already checked in' }, { status: 400 });
@@ -76,14 +83,7 @@ export async function PATCH(
       updateData.status = 'in_progress';
 
       if (notify_customer !== false) {
-        customerMessage = [
-          `*You're checked in!*`,
-          '',
-          `${biz.name}`,
-          `Ref: *${booking.reference_code}*`,
-          '',
-          'Your appointment is starting. Enjoy your experience!',
-        ].join('\n');
+        customerMessage = fillFlowCopy(l10n.language, 'notification.checked_in', { businessName: biz.name, referenceCode: booking.reference_code });
       }
     } else if (action === 'check_out') {
       if (booking.checked_out_at) {
@@ -151,17 +151,10 @@ export async function PATCH(
       }
 
       if (notify_customer !== false) {
-        const reasonText = reason ? `\nReason: ${reason}` : '';
-        customerMessage = [
-          `*Missed Appointment*`,
-          '',
-          `${biz.name}`,
-          `Ref: *${booking.reference_code}*`,
-          `Date: ${booking.date} at ${booking.time}`,
-          reasonText,
-          '',
-          'Please contact us to reschedule. Type *Hi* to book again.',
-        ].filter(Boolean).join('\n');
+        customerMessage = fillFlowCopy(l10n.language, 'notification.no_show', { businessName: biz.name, referenceCode: booking.reference_code, date: booking.date, time: booking.time });
+        if (reason) {
+          customerMessage += fillFlowCopy(l10n.language, 'notification.no_show_reason', { reason });
+        }
       }
 
       // Auto-notify waitlisted customers when a no-show frees a slot
@@ -220,7 +213,7 @@ export async function PATCH(
 
       // Notify customer about cancellation
       if (notify_customer !== false && booking.guest_phone) {
-        customerMessage = `Your booking at ${biz.name} on ${booking.date} has been cancelled. Contact us if you have questions.`;
+        customerMessage = fillFlowCopy(l10n.language, 'notification.booking_cancelled', { businessName: biz.name, date: booking.date });
       }
 
       // Auto-notify waitlisted customers when cancellation frees a slot
