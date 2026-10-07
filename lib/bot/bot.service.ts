@@ -2103,6 +2103,10 @@ export class BotService {
         const confirmMsg = await translateBotResponse(`Great! I'll respond in ${langName} from now on.`, pendingLang, confirmEntitlement);
         await this.sendText(from, confirmMsg);
       } else {
+        // User explicitly chose English — persist as session response language
+        // so the canonical resolver sees sessionLanguage='en' and does not
+        // fall through to the remembered preference (#561-C).
+        updatedData._detected_language = 'en';
         await this.supabase.from('bot_sessions')
           .update({ session_data: updatedData })
           .eq('id', session.id);
