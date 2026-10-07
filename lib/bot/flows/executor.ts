@@ -3,11 +3,13 @@ import * as Sentry from '@sentry/nextjs';
 import type { MessageSender } from '@/lib/channels/message-sender';
 import { translateBotResponse, type TranslationContext } from '@/lib/bot/translate';
 import { localizeMessage } from '@/lib/bot/outbound-localizer';
-import { getEffectiveLanguages, loadBusinessLanguages } from '@/lib/bot/language-policy';
+import { getEffectiveLanguages, loadBusinessLanguages, type LanguageEntitlement } from '@/lib/bot/language-policy';
 import type { SupportedLanguage } from '@/lib/bot/languages';
+import { CERTIFIED_LANGUAGES } from '@/lib/bot/languages';
 import {
   parseLanguagePreferenceIntent,
   writePreferredResponseLanguage,
+  resolveEffectiveResponseLanguage,
 } from '@/lib/bot/language-preference';
 import type { StandaloneService } from '@/lib/bot/standalone.service';
 import type { BotIntelligenceService } from '@/lib/bot/bot-intelligence';
@@ -1035,18 +1037,29 @@ export class FlowExecutor {
 
   /**
    * Resolve the deterministic copy language for a session.
-   * Uses the canonical effective/certified/entitled policy — NOT raw _detected_language.
-   * Returns 'en' unless the detected language is both certified AND entitled for this business.
+   * Delegates to the canonical resolveEffectiveResponseLanguage —
+   * the same authority the rest of Waaiio uses for response-language selection.
+   * No second policy implementation.
    */
   private resolveCopyLang(
-    session: { session_data: Record<string, unknown> },
-    entitlement: { allowedLanguages: readonly string[] },
+    session: { session_data: Record<string, unknown>; user_id?: string | null },
+    entitlement: LanguageEntitlement,
   ): string {
-    const detected = session.session_data._detected_language as string | undefined;
-    if (!detected || detected === 'en') return 'en';
-    // Language must be entitled for this business/session AND certified (getFlowCopy checks certification)
-    if (!entitlement.allowedLanguages.includes(detected)) return 'en';
-    return detected;
+    const result = resolveEffectiveResponseLanguage({
+      // No explicit language intent at this point — that's handled separately
+      // by the language-switch escape hatches above
+      explicitLanguage: null,
+      // _detected_language is the session-scoped response language (set when
+      // language was confirmed/auto-activated by CAS-004 or explicit switch)
+      sessionLanguage: (session.session_data._detected_language as string) || null,
+      // Remembered preference is read during session creation, not per-message.
+      // At this point the session already has _detected_language set if
+      // a remembered preference was activated. Pass null to avoid double-lookup.
+      rememberedLanguage: null,
+      entitlement,
+      certifiedLanguages: CERTIFIED_LANGUAGES,
+    });
+    return result.language;
   }
 
   /** Extract text from prompt messages and append to session's conversation_log */
