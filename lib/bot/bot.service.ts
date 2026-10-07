@@ -2103,6 +2103,10 @@ export class BotService {
         const confirmMsg = await translateBotResponse(`Great! I'll respond in ${langName} from now on.`, pendingLang, confirmEntitlement);
         await this.sendText(from, confirmMsg);
       } else {
+        // User explicitly chose English — persist as session response language
+        // so the canonical resolver sees sessionLanguage='en' and does not
+        // fall through to the remembered preference (#561-C).
+        updatedData._detected_language = 'en';
         await this.supabase.from('bot_sessions')
           .update({ session_data: updatedData })
           .eq('id', session.id);
@@ -2336,6 +2340,7 @@ export class BotService {
       this.sendText.bind(this),
       this.deactivateSession.bind(this),
       this.handleMessage.bind(this),
+      await this.resolveHandlerCopyLang(session),
     );
     if (escapeResult.handled) return;
 
@@ -3175,6 +3180,19 @@ export class BotService {
     return _capabilityToFirstStep(cap);
   }
 
+  // ── Canonical copy-language resolver for handlers (#561-C) ──
+  // Delegates to the exported resolveHandlerCopyLang — same production code
+  // path is exercised by both BotService and tests.
+  private async resolveHandlerCopyLang(session: BotSession): Promise<string> {
+    const { resolveHandlerCopyLang: resolve } = await import('./resolve-handler-copy-lang');
+    return resolve({
+      supabase: this.supabase,
+      businessId: session.business_id,
+      userId: session.user_id,
+      sessionLanguage: (session.session_data._detected_language as string) || null,
+    });
+  }
+
   // ── My Bookings (delegated to handlers/my-bookings.ts) ──
 
   private async handleMyBookings(session: BotSession, from: string, input: string): Promise<void> {
@@ -3182,7 +3200,8 @@ export class BotService {
   }
 
   private async handleRefundRequest(session: BotSession, from: string, input: string): Promise<void> {
-    return _handleRefundRequest(this.supabase, this.messageSender, this.sendText.bind(this), session, from, input);
+    const lang = await this.resolveHandlerCopyLang(session);
+    return _handleRefundRequest(this.supabase, this.messageSender, this.sendText.bind(this), session, from, input, lang);
   }
 
   private async handleViewTicket(session: BotSession, from: string, ticketId: string): Promise<void> {
@@ -3200,15 +3219,18 @@ export class BotService {
   // ── My Orders (delegated to handlers/my-orders.ts) ──
 
   private async handleMyOrders(session: BotSession, from: string, input: string): Promise<void> {
-    return _handleMyOrders(this.supabase, this.messageSender, this.sendText.bind(this), this.routeToMyAccountMenu.bind(this), session, from, input);
+    const lang = await this.resolveHandlerCopyLang(session);
+    return _handleMyOrders(this.supabase, this.messageSender, this.sendText.bind(this), this.routeToMyAccountMenu.bind(this), session, from, input, lang);
   }
 
   private async handleOrderDetail(session: BotSession, from: string, orderId: string): Promise<void> {
-    return _handleOrderDetail(this.supabase, this.messageSender, this.sendText.bind(this), session, from, orderId);
+    const lang = await this.resolveHandlerCopyLang(session);
+    return _handleOrderDetail(this.supabase, this.messageSender, this.sendText.bind(this), session, from, orderId, lang);
   }
 
   private async handleOrderDetailAction(session: BotSession, from: string, input: string): Promise<void> {
-    return _handleOrderDetailAction(this.supabase, this.messageSender, this.sendText.bind(this), this.routeToMyAccountMenu.bind(this), session, from, input);
+    const lang = await this.resolveHandlerCopyLang(session);
+    return _handleOrderDetailAction(this.supabase, this.messageSender, this.sendText.bind(this), this.routeToMyAccountMenu.bind(this), session, from, input, lang);
   }
 
   // ── Route to My Account Menu (delegated to handlers/my-account-menu.ts) ──
@@ -3219,8 +3241,8 @@ export class BotService {
 
   // ── Transaction Document Handler ──────────────────────────
 
-  private async handleTransactionDocument(from: string, userId: string, type: 'history' | 'receipt' | 'annual'): Promise<void> {
-    return _handleTransactionDocument(this.supabase, this.messageSender, this.sendText.bind(this), from, userId, type);
+  private async handleTransactionDocument(from: string, userId: string, type: 'history' | 'receipt' | 'annual', lang?: string): Promise<void> {
+    return _handleTransactionDocument(this.supabase, this.messageSender, this.sendText.bind(this), from, userId, type, lang);
   }
 
   // ── Quote Response Handler ──────────────────────────────

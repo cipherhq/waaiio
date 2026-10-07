@@ -665,7 +665,7 @@ const myAccountMenuStep: FlowStepConfig = {
         // Delegate to the same handler used by typing "receipt" — handles PDF, image, and text fallbacks
         const { handleTransactionDocument } = await import('../handlers/transaction-docs');
         const sendText = async (to: string, text: string) => { await ctx.sender.sendText({ to, text: await ctx.t(text) }); };
-        await handleTransactionDocument(ctx.supabase, ctx.sender, sendText, ctx.from, userId, 'receipt');
+        await handleTransactionDocument(ctx.supabase, ctx.sender, sendText, ctx.from, userId, 'receipt', ctx.copyLang);
         // Small delay so WhatsApp renders the receipt image before showing menu
         await new Promise(resolve => setTimeout(resolve, 1500));
       } else {

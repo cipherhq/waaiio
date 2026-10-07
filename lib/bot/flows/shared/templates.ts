@@ -1,5 +1,6 @@
 import { formatCurrency, type CountryCode } from '@/lib/constants';
 import { getPoweredByFooter } from '@/lib/whitelabel';
+import { getFlowCopy } from '../flow-localization';
 
 export function fillTemplate(
   template: string,
@@ -23,25 +24,27 @@ export function getConfirmationMessage(opts: {
   amount?: number;
   countryCode?: CountryCode;
   subscriptionTier?: string | null;
+  lang?: string;
 }): string {
   const cc = opts.countryCode || 'NG';
+  const l = opts.lang || 'en';
   const lines = [
-    `✅ *${opts.emoji} Confirmed!*`,
+    `✅ *${opts.emoji} ${getFlowCopy(l, 'confirm.confirmed')}*`,
     '',
     `${opts.emoji} ${opts.businessName}`,
     `📅 ${opts.dateLabel}`,
     `🕐 ${opts.time}`,
     `👥 ${opts.quantity} ${opts.quantityLabel}`,
-    `🔑 Ref: *${opts.referenceCode}*`,
+    `🔑 ${getFlowCopy(l, 'confirm.lbl_ref')} *${opts.referenceCode}*`,
   ];
 
   if (opts.amount && opts.amount > 0) {
-    lines.push(`💰 Amount: ${formatCurrency(opts.amount, cc)}`);
+    lines.push(`💰 ${getFlowCopy(l, 'confirm.lbl_amount')} ${formatCurrency(opts.amount, cc)}`);
   }
 
-  lines.push('', 'Thank you! 🙏');
+  lines.push('', getFlowCopy(l, 'confirm.thank_you'));
   const footer = getPoweredByFooter(opts.subscriptionTier);
-  if (footer) lines.push('', '_Powered by Waaiio_');
+  if (footer) lines.push('', getFlowCopy(l, 'greeting.powered_by'));
   return lines.join('\n');
 }
 
@@ -53,18 +56,20 @@ export function getPaymentReceiptMessage(opts: {
   referenceCode: string;
   countryCode?: CountryCode;
   subscriptionTier?: string | null;
+  lang?: string;
 }): string {
   const cc = opts.countryCode || 'NG';
+  const l = opts.lang || 'en';
   return [
-    `✅ *Payment Received!*`,
+    getFlowCopy(l, 'confirm.payment_received'),
     '',
     `${opts.emoji} ${opts.businessName}`,
     `📋 ${opts.categoryName}`,
     `💰 ${formatCurrency(opts.amount, cc)}`,
-    `🔑 Ref: *${opts.referenceCode}*`,
+    `🔑 ${getFlowCopy(l, 'confirm.lbl_ref')} *${opts.referenceCode}*`,
     '',
-    'Thank you for your payment! 🙏',
-    ...(getPoweredByFooter(opts.subscriptionTier) ? ['', '_Powered by Waaiio_'] : []),
+    getFlowCopy(l, 'confirm.thank_payment'),
+    ...(getPoweredByFooter(opts.subscriptionTier) ? ['', getFlowCopy(l, 'greeting.powered_by')] : []),
   ].join('\n');
 }
 
@@ -81,8 +86,10 @@ export function getOrderConfirmationMessage(opts: {
   volumeDiscountAmount?: number;
   countryCode?: CountryCode;
   subscriptionTier?: string | null;
+  lang?: string;
 }): string {
   const cc = opts.countryCode || 'NG';
+  const l = opts.lang || 'en';
   const itemLines: string[] = [];
   for (const i of opts.items) {
     const label = i.variant_label ? `${i.name} (${i.variant_label})` : i.name;
@@ -95,39 +102,39 @@ export function getOrderConfirmationMessage(opts: {
   }
 
   const lines = [
-    `✅ *Order Confirmed!*`,
+    getFlowCopy(l, 'confirm.order_confirmed'),
     '',
     `🛒 ${opts.businessName}`,
-    `🔑 Ref: *${opts.referenceCode}*`,
+    `🔑 ${getFlowCopy(l, 'confirm.lbl_ref')} *${opts.referenceCode}*`,
     '',
-    '📦 *Items:*',
+    getFlowCopy(l, 'confirm.lbl_items'),
     ...itemLines,
   ];
 
   if (opts.addonsTotal && opts.addonsTotal > 0) {
-    lines.push(`  🔧 Add-ons: ${formatCurrency(opts.addonsTotal, cc)}`);
+    lines.push(`  ${getFlowCopy(l, 'confirm.lbl_addons')} ${formatCurrency(opts.addonsTotal, cc)}`);
   }
 
   if (opts.volumeDiscountAmount && opts.volumeDiscountAmount > 0) {
-    lines.push(`  🎁 Volume Discount: -${formatCurrency(opts.volumeDiscountAmount, cc)}`);
+    lines.push(`  ${getFlowCopy(l, 'confirm.lbl_volume_discount')} -${formatCurrency(opts.volumeDiscountAmount, cc)}`);
   }
 
   if (opts.deliveryZoneName) {
     const zonePrice = opts.deliveryZonePrice || 0;
-    lines.push(`  🚚 ${opts.deliveryZoneName}: ${zonePrice > 0 ? formatCurrency(zonePrice, cc) : 'FREE'}`);
+    lines.push(`  🚚 ${opts.deliveryZoneName}: ${zonePrice > 0 ? formatCurrency(zonePrice, cc) : getFlowCopy(l, 'confirm.free')}`);
   } else if (opts.shippingCost && opts.shippingCost > 0) {
-    lines.push(`  🚚 Shipping: ${formatCurrency(opts.shippingCost, cc)}`);
+    lines.push(`  ${getFlowCopy(l, 'confirm.lbl_shipping')} ${formatCurrency(opts.shippingCost, cc)}`);
   }
 
-  lines.push('', `💰 *Total: ${formatCurrency(opts.totalAmount, cc)}*`);
+  lines.push('', `💰 *${getFlowCopy(l, 'confirm.lbl_total')} ${formatCurrency(opts.totalAmount, cc)}*`);
 
   if (opts.deliveryAddress) {
-    lines.push('', `📍 Delivery to: ${opts.deliveryAddress}`);
+    lines.push('', `${getFlowCopy(l, 'confirm.lbl_delivery_to')} ${opts.deliveryAddress}`);
   }
 
-  lines.push('', 'Thank you for your order! 🙏');
+  lines.push('', getFlowCopy(l, 'confirm.thank_order'));
   const orderFooter = getPoweredByFooter(opts.subscriptionTier);
-  if (orderFooter) lines.push('', '_Powered by Waaiio_');
+  if (orderFooter) lines.push('', getFlowCopy(l, 'greeting.powered_by'));
   return lines.join('\n');
 }
 
@@ -185,28 +192,30 @@ export function getReservationConfirmationMessage(opts: {
   referenceCode: string;
   countryCode?: CountryCode;
   subscriptionTier?: string | null;
+  lang?: string;
 }): string {
   const cc = opts.countryCode || 'NG';
+  const l = opts.lang || 'en';
   const lines = [
-    `🏨 *Reservation Summary*`,
+    getFlowCopy(l, 'confirm.reservation_summary'),
     '',
     `🏨 ${opts.businessName}`,
     `🏠 ${opts.apartmentName}`,
-    `📅 Check-in: ${opts.checkInLabel}`,
-    `📅 Check-out: ${opts.checkOutLabel}`,
+    `📅 ${getFlowCopy(l, 'confirm.lbl_checkin')} ${opts.checkInLabel}`,
+    `📅 ${getFlowCopy(l, 'confirm.lbl_checkout')} ${opts.checkOutLabel}`,
     `🌙 ${opts.nights} night${opts.nights > 1 ? 's' : ''} × ${formatCurrency(opts.nightlyRate, cc)}/night`,
     `👥 ${opts.guests} guest${opts.guests > 1 ? 's' : ''}`,
     '',
-    `💰 *Total: ${formatCurrency(opts.totalAmount, cc)}*`,
+    `💰 *${getFlowCopy(l, 'confirm.lbl_total')} ${formatCurrency(opts.totalAmount, cc)}*`,
   ];
 
   if (opts.depositAmount > 0) {
-    lines.push(`💳 Deposit: ${formatCurrency(opts.depositAmount, cc)}`);
+    lines.push(`💳 ${getFlowCopy(l, 'confirm.lbl_deposit')} ${formatCurrency(opts.depositAmount, cc)}`);
   }
 
-  lines.push(`🔑 Ref: *${opts.referenceCode}*`);
+  lines.push(`🔑 ${getFlowCopy(l, 'confirm.lbl_ref')} *${opts.referenceCode}*`);
   const resFooter = getPoweredByFooter(opts.subscriptionTier);
-  if (resFooter) lines.push('', '_Powered by Waaiio_');
+  if (resFooter) lines.push('', getFlowCopy(l, 'greeting.powered_by'));
   return lines.join('\n');
 }
 
@@ -219,25 +228,27 @@ export function getTicketConfirmationMessage(opts: {
   referenceCode: string;
   countryCode?: CountryCode;
   subscriptionTier?: string | null;
+  lang?: string;
 }): string {
   const cc = opts.countryCode || 'NG';
+  const l = opts.lang || 'en';
   return [
-    `🎫 *Tickets Confirmed!*`,
+    getFlowCopy(l, 'confirm.tickets_confirmed'),
     '',
     `🎪 ${opts.eventName}`,
     `📅 ${opts.dateLabel}`,
     `📍 ${opts.venue}`,
     `🎟️ ${opts.quantity} ticket${opts.quantity > 1 ? 's' : ''}`,
     `💰 ${formatCurrency(opts.totalAmount, cc)}`,
-    `🔑 Ref: *${opts.referenceCode}*`,
+    `🔑 ${getFlowCopy(l, 'confirm.lbl_ref')} *${opts.referenceCode}*`,
     '',
-    'See you there!',
+    getFlowCopy(l, 'confirm.see_you'),
     '',
-    `💡 *What you can do:*`,
-    `• Type *my bookings* to view your tickets`,
-    `• Type *receipt* to get your purchase receipt`,
-    `• Type *Hi* to buy more tickets`,
+    getFlowCopy(l, 'tips.header'),
+    getFlowCopy(l, 'tips.my_tickets'),
+    getFlowCopy(l, 'tips.receipt_purchase'),
+    getFlowCopy(l, 'tips.hi_tickets'),
     '',
-    ...(getPoweredByFooter(opts.subscriptionTier) ? ['_Powered by Waaiio_'] : []),
+    ...(getPoweredByFooter(opts.subscriptionTier) ? [getFlowCopy(l, 'greeting.powered_by')] : []),
   ].join('\n');
 }

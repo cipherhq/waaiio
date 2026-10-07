@@ -7,6 +7,7 @@ import { formatCurrency, type CountryCode } from '@/lib/constants';
 import { createNotification } from '../flows/shared/notifications';
 import { notifyOwnerGeneric } from '../flows/shared/notify-owner';
 import { getPoweredByHtml } from '@/lib/whitelabel';
+import { getFlowCopy } from '../flows/flow-localization';
 
 /**
  * Handle the refund request flow inline (no full flow executor needed).
@@ -21,13 +22,14 @@ export async function handleRefundRequest(
   session: BotSession,
   from: string,
   input: string,
+  lang?: string,
 ): Promise<void> {
   const step = session.current_step;
 
   if (step === 'refund_select') {
-    await handleRefundSelect(supabase, messageSender, sendText, session, from, input);
+    await handleRefundSelect(supabase, messageSender, sendText, session, from, input, lang);
   } else if (step === 'refund_reason') {
-    await handleRefundReason(supabase, messageSender, sendText, session, from, input);
+    await handleRefundReason(supabase, messageSender, sendText, session, from, input, lang);
   }
 }
 
@@ -43,7 +45,9 @@ async function handleRefundSelect(
   session: BotSession,
   from: string,
   input: string,
+  lang?: string,
 ): Promise<void> {
+  const l = lang || 'en';
   const phoneP = from.startsWith('+') ? from : `+${from}`;
   const phoneN = from.startsWith('+') ? from.slice(1) : from;
 
@@ -61,7 +65,7 @@ async function handleRefundSelect(
       .limit(20);
 
     if (!payments || payments.length === 0) {
-      await sendText(from, "You don't have any recent payments eligible for refund.");
+      await sendText(from, getFlowCopy(l, 'refund.no_eligible'));
       await supabase.rpc('deactivate_session_atomic', { p_session_id: session.id });
       return;
     }
@@ -93,7 +97,7 @@ async function handleRefundSelect(
     }).slice(0, 5);
 
     if (eligible.length === 0) {
-      await sendText(from, "You don't have any recent payments eligible for refund.");
+      await sendText(from, getFlowCopy(l, 'refund.no_eligible'));
       await supabase.rpc('deactivate_session_atomic', { p_session_id: session.id });
       return;
     }
@@ -155,15 +159,15 @@ async function handleRefundSelect(
       // Use buttons for single item
       await messageSender.sendButtons({
         to: from,
-        body: 'Which payment would you like to request a refund for?',
+        body: getFlowCopy(l, 'refund.which_payment'),
         buttons: [{ id: 'refund_1', title: items[0].title }],
       });
     } else {
       await messageSender.sendList({
         to: from,
-        title: 'Refund Request',
-        body: 'Select the payment you want to request a refund for:',
-        buttonLabel: 'View Payments',
+        title: getFlowCopy(l, 'refund.title'),
+        body: getFlowCopy(l, 'refund.select_body'),
+        buttonLabel: getFlowCopy(l, 'refund.view_payments'),
         items,
       });
     }
@@ -173,7 +177,7 @@ async function handleRefundSelect(
   // User selected a payment — validate and move to reason step
   const paymentMap = session.session_data.refund_payments as Record<string, { id: string; amount: number; currency: string; refundAmount: number; businessId: string; bookingId: string | null }> | undefined;
   if (!paymentMap || !paymentMap[input]) {
-    await sendText(from, "I didn't recognize that selection. Please choose from the list above, or type *cancel* to exit.");
+    await sendText(from, getFlowCopy(l, 'refund.invalid_selection'));
     return;
   }
 
@@ -200,7 +204,7 @@ async function handleRefundSelect(
   }
   session.version = cas7b.version;
 
-  await sendText(from, 'Please tell us the reason for your refund request:');
+  await sendText(from, getFlowCopy(l, 'refund.enter_reason'));
 }
 
 /**
@@ -213,9 +217,11 @@ async function handleRefundReason(
   session: BotSession,
   from: string,
   input: string,
+  lang?: string,
 ): Promise<void> {
+  const l = lang || 'en';
   if (!input || input.trim().length < 3) {
-    await sendText(from, 'Please provide a reason for your refund request (at least a few words):');
+    await sendText(from, getFlowCopy(l, 'refund.reason_too_short'));
     return;
   }
 
@@ -229,7 +235,7 @@ async function handleRefundReason(
   } | undefined;
 
   if (!selected) {
-    await sendText(from, 'Something went wrong. Please type *refund* to start over.');
+    await sendText(from, getFlowCopy(l, 'refund.error'));
     await supabase.rpc('deactivate_session_atomic', { p_session_id: session.id });
     return;
   }
@@ -270,7 +276,7 @@ async function handleRefundReason(
     .maybeSingle();
 
   if (existing) {
-    await sendText(from, 'You already have a pending refund request for this payment. The business will review it shortly.');
+    await sendText(from, getFlowCopy(l, 'refund.already_pending'));
     await supabase.rpc('deactivate_session_atomic', { p_session_id: session.id });
     return;
   }
@@ -289,7 +295,7 @@ async function handleRefundReason(
 
   if (insertError) {
     logger.error('[REFUND-REQUEST] Failed to insert refund request:', insertError);
-    await sendText(from, 'Something went wrong on our end. Please try again later.');
+    await sendText(from, getFlowCopy(l, 'refund.generic_error'));
     await supabase.rpc('deactivate_session_atomic', { p_session_id: session.id });
     return;
   }
@@ -317,7 +323,7 @@ async function handleRefundReason(
   }).catch(err => logger.error('[REFUND-REQUEST] Failed to notify owner:', err));
 
   // Confirm to customer
-  await sendText(from, 'Your refund request has been submitted. The business will review it shortly.');
+  await sendText(from, getFlowCopy(l, 'refund.submitted'));
 
   // Deactivate session
   await supabase.rpc('deactivate_session_atomic', { p_session_id: session.id });

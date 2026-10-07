@@ -3,6 +3,7 @@ import { logger } from '@/lib/logger';
 import type { MessageSender } from '@/lib/channels/message-sender';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
+import { getFlowCopy, fillFlowCopy } from '../flows/flow-localization';
 
 /**
  * Handle a transaction document request (history, receipt, or annual statement).
@@ -14,12 +15,14 @@ export async function handleTransactionDocument(
   from: string,
   userId: string,
   type: 'history' | 'receipt' | 'annual',
+  lang?: string,
 ): Promise<void> {
+  const l = lang || 'en';
   const labelMap = { history: 'transaction history', receipt: 'receipt', annual: 'annual statement' };
   const label = labelMap[type];
   const phoneP = from.startsWith('+') ? from : `+${from}`;
   const phoneN = from.startsWith('+') ? from.slice(1) : from;
-  await sendText(from, `Generating your ${label}... 📄`);
+  await sendText(from, fillFlowCopy(l, 'docs.generating', { docType: label }));
   logger.debug(`[RECEIPT] userId=${userId}, phone=${from}, type=${type}`);
 
   try {
@@ -33,7 +36,7 @@ export async function handleTransactionDocument(
           to: from,
           documentUrl: result.url,
           filename: result.filename,
-          caption: type === 'history' ? 'Your transaction history' : type === 'annual' ? 'Your annual statement' : 'Your latest receipt',
+          caption: type === 'history' ? getFlowCopy(l, 'docs.caption_history') : type === 'annual' ? getFlowCopy(l, 'docs.caption_annual') : getFlowCopy(l, 'docs.caption_receipt'),
         });
         pdfSent = true;
       }
@@ -100,23 +103,24 @@ export async function handleTransactionDocument(
       }
 
       // Always send text receipt as well
-      const textReceipt = await buildTextReceipt(supabase, userId, from, type);
+      const textReceipt = await buildTextReceipt(supabase, userId, from, type, l);
       if (textReceipt) {
         await sendText(from, textReceipt);
       } else {
-        await sendText(from, `No transactions found. Make a booking first, then come back for your ${label}!`);
+        await sendText(from, fillFlowCopy(l, 'docs.no_transactions', { docType: label }));
       }
     }
   } catch (err) {
     logger.error('[BOT] handleTransactionDocument error:', err);
-    await sendText(from, `Sorry, I couldn't generate your ${label} right now. Please try again later.`);
+    await sendText(from, fillFlowCopy(l, 'docs.error_generating', { docType: label }));
   }
 }
 
 /**
  * Build a text-based receipt when PDF generation fails.
  */
-export async function buildTextReceipt(supabase: SupabaseClient, userId: string, phone: string, type: string): Promise<string | null> {
+export async function buildTextReceipt(supabase: SupabaseClient, userId: string, phone: string, type: string, lang?: string): Promise<string | null> {
+  const l = lang || 'en';
   const phoneP = phone.startsWith('+') ? phone : `+${phone}`;
   const phoneN = phone.startsWith('+') ? phone.slice(1) : phone;
 
@@ -175,14 +179,14 @@ export async function buildTextReceipt(supabase: SupabaseClient, userId: string,
     const dateStr = new Date(b.created_at).toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' });
 
     lines.push(
-      '🧾 *Receipt*',
+      getFlowCopy(l, 'docs.receipt_header'),
       '',
-      `🏢 Business: *${biz?.name || 'Business'}*`,
-      `📋 Service: ${svc?.name || b.reference_code || 'Service'}`,
-      `📅 Date: ${dateStr}`,
-      `💰 Amount: ${formatCurrency(b.total_amount || 0, cc)}`,
-      `🔖 Ref: *${b.reference_code}*`,
-      `✅ Status: ${b.status}`,
+      `🏢 ${getFlowCopy(l, 'docs.lbl_business')} *${biz?.name || 'Business'}*`,
+      `📋 ${getFlowCopy(l, 'docs.lbl_service')} ${svc?.name || b.reference_code || 'Service'}`,
+      `📅 ${getFlowCopy(l, 'docs.lbl_date')} ${dateStr}`,
+      `💰 ${getFlowCopy(l, 'docs.lbl_amount')} ${formatCurrency(b.total_amount || 0, cc)}`,
+      `🔖 ${getFlowCopy(l, 'docs.lbl_ref')} *${b.reference_code}*`,
+      `✅ ${getFlowCopy(l, 'docs.lbl_status')} ${b.status}`,
     );
   } else if (orders && orders.length > 0) {
     const o = orders[0];
@@ -191,14 +195,14 @@ export async function buildTextReceipt(supabase: SupabaseClient, userId: string,
     const dateStr = new Date(o.created_at).toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' });
 
     lines.push(
-      '🧾 *Order Receipt*',
+      getFlowCopy(l, 'docs.order_receipt_header'),
       '',
-      `🏢 Business: *${biz?.name || 'Business'}*`,
+      `🏢 ${getFlowCopy(l, 'docs.lbl_business')} *${biz?.name || 'Business'}*`,
       `📋 Order: ${o.reference_code}`,
-      `📅 Date: ${dateStr}`,
-      `💰 Amount: ${formatCurrency(o.total_amount || 0, cc)}`,
-      `🔖 Ref: *${o.reference_code}*`,
-      `✅ Status: ${o.status}`,
+      `📅 ${getFlowCopy(l, 'docs.lbl_date')} ${dateStr}`,
+      `💰 ${getFlowCopy(l, 'docs.lbl_amount')} ${formatCurrency(o.total_amount || 0, cc)}`,
+      `🔖 ${getFlowCopy(l, 'docs.lbl_ref')} *${o.reference_code}*`,
+      `✅ ${getFlowCopy(l, 'docs.lbl_status')} ${o.status}`,
     );
   } else if (payments && payments.length > 0) {
     const p = payments[0];
@@ -207,13 +211,13 @@ export async function buildTextReceipt(supabase: SupabaseClient, userId: string,
     const dateStr = new Date(p.created_at).toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' });
 
     lines.push(
-      '🧾 *Receipt*',
+      getFlowCopy(l, 'docs.receipt_header'),
       '',
-      `🏢 Business: *${biz?.name || 'Business'}*`,
-      `📅 Date: ${dateStr}`,
-      `💰 Amount: ${formatCurrency(p.amount || 0, cc)}`,
-      `🔖 Ref: *${p.gateway_reference}*`,
-      `✅ Status: Paid`,
+      `🏢 ${getFlowCopy(l, 'docs.lbl_business')} *${biz?.name || 'Business'}*`,
+      `📅 ${getFlowCopy(l, 'docs.lbl_date')} ${dateStr}`,
+      `💰 ${getFlowCopy(l, 'docs.lbl_amount')} ${formatCurrency(p.amount || 0, cc)}`,
+      `🔖 ${getFlowCopy(l, 'docs.lbl_ref')} *${p.gateway_reference}*`,
+      `✅ ${getFlowCopy(l, 'docs.lbl_status')} Paid`,
     );
   } else if (donations && donations.length > 0) {
     const d = donations[0];
@@ -223,13 +227,13 @@ export async function buildTextReceipt(supabase: SupabaseClient, userId: string,
     const dateStr = new Date(d.created_at).toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' });
 
     lines.push(
-      '🙏 *Donation Receipt*',
+      getFlowCopy(l, 'docs.donation_receipt_header'),
       '',
       `🏢 Organization: *${biz?.name || 'Organization'}*`,
       `📋 Campaign: ${campaign?.name || 'Donation'}`,
-      `📅 Date: ${dateStr}`,
-      `💰 Amount: ${formatCurrency(Number(d.amount), cc)}`,
-      `🔖 Ref: *${d.reference_code}*`,
+      `📅 ${getFlowCopy(l, 'docs.lbl_date')} ${dateStr}`,
+      `💰 ${getFlowCopy(l, 'docs.lbl_amount')} ${formatCurrency(Number(d.amount), cc)}`,
+      `🔖 ${getFlowCopy(l, 'docs.lbl_ref')} *${d.reference_code}*`,
     );
   } else if (invoices && invoices.length > 0) {
     const inv = invoices[0];
@@ -238,12 +242,12 @@ export async function buildTextReceipt(supabase: SupabaseClient, userId: string,
     const dateStr = inv.paid_at ? new Date(inv.paid_at).toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
 
     lines.push(
-      '🧾 *Invoice Receipt*',
+      getFlowCopy(l, 'docs.invoice_receipt_header'),
       '',
-      `🏢 Business: *${biz?.name || 'Business'}*`,
+      `🏢 ${getFlowCopy(l, 'docs.lbl_business')} *${biz?.name || 'Business'}*`,
       `📋 Invoice: ${inv.invoice_number}`,
       `📅 Paid: ${dateStr}`,
-      `💰 Amount: ${formatCurrency(Number(inv.total_amount), cc)}`,
+      `💰 ${getFlowCopy(l, 'docs.lbl_amount')} ${formatCurrency(Number(inv.total_amount), cc)}`,
     );
   }
 
@@ -255,6 +259,6 @@ export async function buildTextReceipt(supabase: SupabaseClient, userId: string,
     lines.push('', `🔗 View receipt: ${appUrl}/api/receipts/image?ref=${allBookings[0].reference_code}`);
   }
 
-  lines.push('', 'Type *Hi* to continue');
+  lines.push('', getFlowCopy(l, 'docs.continue_hint'));
   return lines.join('\n');
 }
