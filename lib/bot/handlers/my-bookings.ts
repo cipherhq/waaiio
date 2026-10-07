@@ -7,6 +7,7 @@ import { safeLogErrorContext } from '@/lib/errors';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 import { handleTransactionDocument } from './transaction-docs';
 import { routeToMyAccountMenu } from './my-account-menu';
+import { formatDisplayDate } from '@/lib/bot/format-date';
 
 /**
  * Show and navigate the user's bookings, tickets, and reservations.
@@ -24,7 +25,7 @@ export async function handleMyBookings(
     // Fetch upcoming bookings
     const { data: upcoming } = await supabase
       .from('bookings')
-      .select('id, date, time, party_size, reference_code, businesses (name)')
+      .select('id, date, time, party_size, reference_code, businesses (name, country_code)')
       .eq('user_id', session.user_id!)
       .in('status', ['confirmed', 'pending'])
       .gte('date', new Date().toISOString().split('T')[0])
@@ -47,7 +48,7 @@ export async function handleMyBookings(
     const phoneN = from.startsWith('+') ? from.slice(1) : from;
     const { data: reservations } = await supabase
       .from('reservations')
-      .select('id, check_in, check_out, reference_code, guest_name, status, property_id, businesses:business_id(name)')
+      .select('id, check_in, check_out, reference_code, guest_name, status, property_id, businesses:business_id(name, country_code)')
       .or(`guest_phone.eq.${sanitizeFilterValue(phoneP)},guest_phone.eq.${sanitizeFilterValue(phoneN)}`)
       .in('status', ['confirmed', 'pending', 'checked_in'])
       .gte('check_out', new Date().toISOString().split('T')[0])
@@ -58,10 +59,8 @@ export async function handleMyBookings(
 
     if (upcoming) {
       for (const r of upcoming) {
-        const biz = r.businesses as unknown as { name: string } | null;
-        const dateLabel = new Date(r.date + 'T00:00').toLocaleDateString('en-US', {
-          weekday: 'short', day: 'numeric', month: 'short',
-        });
+        const biz = r.businesses as unknown as { name: string; country_code?: string } | null;
+        const dateLabel = formatDisplayDate(r.date, 'short', biz?.country_code || 'NG');
         items.push({
           title: biz?.name || 'Business',
           description: `${dateLabel} at ${r.time} • ${r.party_size} guests`,
@@ -74,7 +73,7 @@ export async function handleMyBookings(
       for (const t of tickets) {
         const evt = t.event as unknown as { name: string; date: string; time?: string; venue?: string } | null;
         const dateLabel = evt?.date
-          ? new Date(evt.date + 'T00:00').toLocaleDateString('en-US', { weekday: 'short', day: 'numeric', month: 'short' })
+          ? formatDisplayDate(evt.date, 'short', 'NG')
           : '';
         items.push({
           title: evt?.name || 'Event',
@@ -86,9 +85,10 @@ export async function handleMyBookings(
 
     if (reservations && reservations.length > 0) {
       for (const r of reservations) {
-        const biz = r.businesses as unknown as { name: string } | null;
-        const checkIn = new Date(r.check_in + 'T00:00').toLocaleDateString('en-US', { day: 'numeric', month: 'short' });
-        const checkOut = new Date(r.check_out + 'T00:00').toLocaleDateString('en-US', { day: 'numeric', month: 'short' });
+        const biz = r.businesses as unknown as { name: string; country_code?: string } | null;
+        const cc = biz?.country_code || 'NG';
+        const checkIn = formatDisplayDate(r.check_in, 'brief', cc);
+        const checkOut = formatDisplayDate(r.check_out, 'brief', cc);
         items.push({
           title: biz?.name || 'Stay',
           description: `${checkIn} → ${checkOut} • Ref: ${r.reference_code}`,
@@ -307,7 +307,7 @@ export async function handleViewTicket(
 
   const evt = ticket.event as unknown as { name: string; date: string; time?: string; venue?: string } | null;
   const dateLabel = evt?.date
-    ? new Date(evt.date + 'T00:00').toLocaleDateString('en-US', { weekday: 'long', day: 'numeric', month: 'long' })
+    ? formatDisplayDate(evt.date, 'long', 'NG')
     : 'TBD';
 
   const statusLabel = ticket.status === 'used' ? 'Used' : ticket.status === 'cancelled' ? 'Cancelled' : 'Valid';
@@ -357,8 +357,9 @@ export async function handleViewReservation(
   }
 
   const biz = reservation.businesses as unknown as { name: string; country_code?: string } | null;
-  const checkIn = new Date(reservation.check_in + 'T00:00').toLocaleDateString('en-US', { weekday: 'long', day: 'numeric', month: 'long' });
-  const checkOut = new Date(reservation.check_out + 'T00:00').toLocaleDateString('en-US', { weekday: 'long', day: 'numeric', month: 'long' });
+  const cc = biz?.country_code || 'NG';
+  const checkIn = formatDisplayDate(reservation.check_in, 'long', cc);
+  const checkOut = formatDisplayDate(reservation.check_out, 'long', cc);
   const statusMap: Record<string, string> = {
     confirmed: '✅ Confirmed',
     pending: '⏳ Pending',
@@ -427,7 +428,7 @@ export async function handleModifyBooking(
   if (!input) {
     const { data: booking } = await supabase
       .from('bookings')
-      .select('id, date, time, party_size, reference_code, business_id, businesses (name)')
+      .select('id, date, time, party_size, reference_code, business_id, businesses (name, country_code)')
       .eq('id', bookingId)
       .eq('user_id', session.user_id!)
       .single();
@@ -438,10 +439,8 @@ export async function handleModifyBooking(
       return;
     }
 
-    const biz = booking.businesses as unknown as { name: string } | null;
-    const dateLabel = new Date(booking.date + 'T00:00').toLocaleDateString('en-US', {
-      weekday: 'long', day: 'numeric', month: 'long',
-    });
+    const biz = booking.businesses as unknown as { name: string; country_code?: string } | null;
+    const dateLabel = formatDisplayDate(booking.date, 'long', biz?.country_code || 'NG');
 
     await sendText(from, [
       `📋 *${biz?.name || 'Business'}*`,
@@ -515,9 +514,7 @@ export async function handleModifyBooking(
     // Only notify staff AFTER confirmed cancellation
     if (cancelledBooking?.staff_id && cancelledBooking.business_id) {
       import('../flows/shared/notify-staff').then(({ notifyStaffBookingCancelled }) => {
-        const dateLabel = new Date(cancelledBooking.date + 'T00:00').toLocaleDateString('en-US', {
-          weekday: 'long', day: 'numeric', month: 'long',
-        });
+        const dateLabel = formatDisplayDate(cancelledBooking.date, 'long', 'NG');
         notifyStaffBookingCancelled({
           supabase,
           sender: messageSender,

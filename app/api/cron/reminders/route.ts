@@ -4,6 +4,7 @@ import { sendEmail } from '@/lib/email/client';
 import { bookingReminderEmail, businessNotificationEmail } from '@/lib/email/templates';
 import { resolveEmailLocalization, translateLabels, DEFAULT_REMINDER_LABELS, DEFAULT_WRAPPER_LABELS, type BookingReminderEmailLabels, type EmailWrapperLabels } from '@/lib/email/localize-email';
 import { verifyCronAuth } from '@/lib/cron-auth';
+import { formatDisplayDate, formatDisplayTime } from '@/lib/bot/format-date';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { sendOrEmail, findCustomerEmail } from '@/lib/channels/send-or-email';
 import { logger } from '@/lib/logger';
@@ -211,7 +212,7 @@ export async function GET(request: NextRequest) {
   // ── EVENT REMINDERS (event tomorrow) ──
   const { data: tomorrowEvents } = await supabase
     .from('events')
-    .select('id, name, date, time, venue, business_id, businesses!inner(name)')
+    .select('id, name, date, time, venue, business_id, businesses!inner(name, country_code)')
     .eq('date', tomorrow)
     .eq('status', 'published');
 
@@ -224,8 +225,9 @@ export async function GET(request: NextRequest) {
       .eq('reminder_sent', false);
 
     const bizName = (event as any).businesses?.name || 'Events';
+    const eventCc = (event as any).businesses?.country_code || 'NG';
     const timeLabel = event.time ? ` at ${event.time}` : '';
-    const dateLabel = new Date(event.date + 'T00:00').toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' });
+    const dateLabel = formatDisplayDate(event.date, 'long', eventCc);
 
     for (const ticket of tickets || []) {
       if (!ticket.guest_phone) continue;
@@ -270,7 +272,7 @@ export async function GET(request: NextRequest) {
   // Send followup_message to confirmed guests X days before party date
   const { data: parties } = await supabase
     .from('parties')
-    .select('id, name, date, time, venue, followup_message, followup_days_before, business_id')
+    .select('id, name, date, time, venue, followup_message, followup_days_before, business_id, businesses:business_id(country_code)')
     .not('followup_message', 'is', null)
     .gte('date', new Date().toISOString().split('T')[0]);
 
@@ -296,15 +298,11 @@ export async function GET(request: NextRequest) {
     for (const guest of guests || []) {
       if (!guest.guest_phone) continue;
 
-      const dateLabel = partyDate.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' });
+      const partyCc = (party as any).businesses?.country_code || 'NG';
+      const dateLabel = formatDisplayDate(partyDate, 'long', partyCc);
       let timeLabel = '';
       if (party.time) {
-        try {
-          const [h, m] = party.time.split(':');
-          const dt = new Date();
-          dt.setHours(parseInt(h, 10), parseInt(m, 10));
-          timeLabel = ` at ${dt.toLocaleTimeString('en-GB', { hour: 'numeric', minute: '2-digit' })}`;
-        } catch { timeLabel = ` at ${party.time}`; }
+        timeLabel = ` at ${formatDisplayTime(party.time, partyCc)}`;
       }
 
       const message = [

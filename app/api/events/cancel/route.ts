@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
+import { formatDisplayDate } from '@/lib/bot/format-date';
 import { logger } from '@/lib/logger';
 
 /**
@@ -26,7 +27,7 @@ export async function POST(request: NextRequest) {
     // Verify ownership: event belongs to a business owned by this user
     const { data: event } = await supabase
       .from('events')
-      .select('id, name, date, time, business_id, status, businesses!inner(owner_id)')
+      .select('id, name, date, time, business_id, status, businesses!inner(owner_id, country_code)')
       .eq('id', event_id)
       .single();
 
@@ -34,7 +35,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Event not found' }, { status: 404 });
     }
 
-    const businessOwner = (event.businesses as unknown as { owner_id: string })?.owner_id;
+    const businessOwner = (event.businesses as unknown as { owner_id: string; country_code?: string })?.owner_id;
     if (businessOwner !== user.id) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
@@ -71,8 +72,9 @@ export async function POST(request: NextRequest) {
       .eq('status', 'valid');
 
     // 4. Send WhatsApp notifications to ticket holders
+    const bizCc = (event.businesses as unknown as { country_code?: string })?.country_code || 'NG';
     const eventDate = event.date
-      ? new Date(event.date).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })
+      ? formatDisplayDate(event.date, 'long-year', bizCc)
       : 'TBD';
     const cancelMessage = `Event "${event.name}" on ${eventDate} has been cancelled. A refund will be processed if applicable. We apologize for any inconvenience.`;
 

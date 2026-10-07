@@ -1,6 +1,7 @@
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { resolveProactiveLocalization } from '@/lib/payments/proactive-localization';
 import { fillFlowCopy } from '@/lib/bot/flows/flow-localization';
+import { formatDisplayDate } from '@/lib/bot/format-date';
 import { logger } from '@/lib/logger';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
@@ -75,11 +76,8 @@ async function sendNotifications({
   const resolved = await resolver.resolveByBusinessId(businessId);
   if (!resolved) return 0;
 
-  const displayDate = new Date(date + 'T00:00').toLocaleDateString('en-US', {
-    weekday: 'long',
-    day: 'numeric',
-    month: 'long',
-  });
+  const { data: bizInfo } = await supabase.from('businesses').select('country_code').eq('id', businessId).maybeSingle();
+  const displayDate = formatDisplayDate(date, 'long', bizInfo?.country_code || 'NG');
 
   let notifiedCount = 0;
 

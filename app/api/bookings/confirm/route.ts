@@ -7,6 +7,7 @@ import { findCustomerEmail } from '@/lib/channels/send-or-email';
 import { businessNotificationEmail } from '@/lib/email/templates';
 import { sendEmail } from '@/lib/email/client';
 import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
+import { formatDisplayDate } from '@/lib/bot/format-date';
 import { logger } from '@/lib/logger';
 
 /**
@@ -139,7 +140,7 @@ export async function POST(request: NextRequest) {
       ? (bookingData.service as any)?.name || (bookingData.appointment as any)?.name || 'Booking'
       : 'Booking';
     const dateLabel = bookingData
-      ? new Date(bookingData.date + 'T00:00').toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' })
+      ? formatDisplayDate(bookingData.date, 'long', biz.country_code || 'NG')
       : '';
 
     // ── WhatsApp confirmation via durable intent lifecycle ──

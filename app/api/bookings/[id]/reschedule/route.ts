@@ -6,6 +6,7 @@ import { authenticateRequest } from '@/lib/api-auth';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { sendOrEmail } from '@/lib/channels/send-or-email';
 import { businessNotificationEmail } from '@/lib/email/templates';
+import { formatDisplayDate } from '@/lib/bot/format-date';
 import { logger } from '@/lib/logger';
 import { notifyWaitlistOnSlotOpen } from '@/lib/waitlist/auto-notify';
 
@@ -120,12 +121,7 @@ export async function POST(
     }
 
     // Format date for display
-    const displayDate = new Date(newDate + 'T00:00').toLocaleDateString('en-US', {
-      weekday: 'long',
-      day: 'numeric',
-      month: 'long',
-      year: 'numeric',
-    });
+    const displayDate = formatDisplayDate(newDate, 'long-year', biz?.country_code || 'NG');
     const displayTime = newTime.slice(0, 5);
 
     // Send reschedule notification via WhatsApp (with email fallback/dual-delivery)

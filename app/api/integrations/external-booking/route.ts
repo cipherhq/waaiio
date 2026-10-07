@@ -4,6 +4,7 @@ import { validateApiKey } from '@/lib/api-keys';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { handlePostCompletion } from '@/lib/bot/flows/shared/post-completion';
 import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
+import { formatDisplayDate } from '@/lib/bot/format-date';
 import { logger } from '@/lib/logger';
 
 /**
@@ -134,9 +135,7 @@ export async function POST(request: NextRequest) {
 
       if (resolved) {
         const phone = customerPhone.startsWith('+') ? customerPhone.slice(1) : customerPhone;
-        const dateLabel = new Date(date + 'T00:00').toLocaleDateString('en-GB', {
-          weekday: 'long', day: 'numeric', month: 'long',
-        });
+        const dateLabel = formatDisplayDate(date, 'long', business.country_code || 'NG');
 
         await resolved.sender.sendText({
           to: phone,

@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
+import { formatDisplayDate } from '@/lib/bot/format-date';
 import { logger } from '@/lib/logger';
 
 /**
@@ -26,7 +27,7 @@ export async function POST(request: NextRequest) {
     // Verify ownership
     const { data: biz } = await supabase
       .from('businesses')
-      .select('id, name')
+      .select('id, name, country_code')
       .eq('id', businessId)
       .eq('owner_id', user.id)
       .single();
@@ -61,7 +62,7 @@ export async function POST(request: NextRequest) {
           '',
           `Welcome to *${biz.name}*!`,
           `🔑 Ref: *${reservation.reference_code}*`,
-          `📅 Check-out: ${new Date(reservation.check_out + 'T00:00').toLocaleDateString('en-US', { weekday: 'short', day: 'numeric', month: 'short' })}`,
+          `📅 Check-out: ${formatDisplayDate(reservation.check_out, 'short', biz.country_code || 'NG')}`,
           '',
           `We hope you enjoy your stay! If you need anything, just send us a message here.`,
         ].join('\n'),

@@ -3,6 +3,7 @@ import { createServiceClient } from '@/lib/supabase/service';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { sendWithTemplate } from '@/lib/channels/send-with-template';
 import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
+import { formatDisplayDate, formatDisplayTime } from '@/lib/bot/format-date';
 import { logger } from '@/lib/logger';
 
 /**
@@ -91,17 +92,16 @@ export async function POST(request: NextRequest) {
           const resolved = await resolver.resolveByBusinessId(target.business_id);
           if (resolved) {
             // Get host name
-            const { data: biz } = await supabase.from('businesses').select('name, owner_id, subscription_tier').eq('id', target.business_id).single();
+            const { data: biz } = await supabase.from('businesses').select('name, owner_id, subscription_tier, country_code').eq('id', target.business_id).single();
             let hostName = biz?.name || '';
             if (biz?.owner_id) {
               const { data: owner } = await supabase.from('profiles').select('first_name, last_name').eq('id', biz.owner_id).single();
               if (owner?.first_name) hostName = `${owner.first_name}${owner.last_name ? ` ${owner.last_name}` : ''}`;
             }
 
-            let dateLabel = target.date;
-            try { dateLabel = new Date(target.date + 'T00:00').toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }); } catch {}
-            let timeLabel = '';
-            if (target.time) { try { const [h, m] = target.time.split(':'); const dt = new Date(); dt.setHours(parseInt(h, 10), parseInt(m, 10)); timeLabel = dt.toLocaleTimeString('en-GB', { hour: 'numeric', minute: '2-digit' }); } catch { timeLabel = target.time; } }
+            const cc = biz?.country_code || 'NG';
+            const dateLabel = formatDisplayDate(target.date, 'long-year', cc);
+            const timeLabel = target.time ? formatDisplayTime(target.time, cc) : '';
 
             const message = [
               `🎉 *You're Invited!*`, '',
@@ -186,7 +186,7 @@ export async function POST(request: NextRequest) {
     // Get host name
     const { data: biz } = await supabase
       .from('businesses')
-      .select('name, owner_id, subscription_tier')
+      .select('name, owner_id, subscription_tier, country_code')
       .eq('id', target.business_id)
       .single();
 
@@ -203,22 +203,9 @@ export async function POST(request: NextRequest) {
     }
 
     // Format date
-    let dateLabel = target.date;
-    try {
-      dateLabel = new Date(target.date + 'T00:00').toLocaleDateString('en-GB', {
-        weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
-      });
-    } catch { /* keep raw */ }
-
-    let timeLabel = '';
-    if (target.time) {
-      try {
-        const [h, m] = target.time.split(':');
-        const dt = new Date();
-        dt.setHours(parseInt(h, 10), parseInt(m, 10));
-        timeLabel = dt.toLocaleTimeString('en-GB', { hour: 'numeric', minute: '2-digit' });
-      } catch { timeLabel = target.time; }
-    }
+    const bizCc = biz?.country_code || 'NG';
+    const dateLabel = formatDisplayDate(target.date, 'long-year', bizCc);
+    const timeLabel = target.time ? formatDisplayTime(target.time, bizCc) : '';
 
     // Send WhatsApp invite (opt-in — they submitted their number)
     let whatsappSent = false;
