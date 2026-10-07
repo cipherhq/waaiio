@@ -82,6 +82,7 @@ const navSections: { label: string; items: NavItem[] }[] = [
     label: 'Accounts',
     items: [
       { icon: Building2, label: 'Accounts', path: '/businesses', roles: ADMIN_PERMISSIONS['businesses'] },
+      { icon: UserCog, label: 'Onboard Customer', path: '/customer-onboarding', roles: ADMIN_PERMISSIONS['customer-onboarding'] },
       { icon: BadgeCheck, label: 'Verification', path: '/verification', roles: ADMIN_PERMISSIONS['verification'] },
       { icon: Layers, label: 'Category Templates', path: '/category-templates', roles: ADMIN_PERMISSIONS['category-templates'] },
       { icon: UserCog, label: 'Impersonation', path: '/impersonation', roles: ADMIN_PERMISSIONS['impersonation'] },

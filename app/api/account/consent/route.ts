@@ -21,6 +21,8 @@ interface ConsentPreferences {
   updated_at: string;
   policy_version?: string;
   consented_at?: string;
+  terms_accepted_at?: string;
+  terms_version?: string;
 }
 
 const DEFAULT_CONSENT: ConsentPreferences = {
@@ -64,7 +66,7 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { marketing_emails, analytics, ai_processing } = body;
+    const { marketing_emails, analytics, ai_processing, terms_accepted } = body;
 
     // Validate inputs are booleans
     if (
@@ -106,6 +108,12 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    let termsVersion = '1.0';
+    const { data: termsVersionRow } = await serviceClient.from('platform_settings').select('value').eq('key', 'terms_version').maybeSingle();
+    if (termsVersionRow?.value) {
+      try { termsVersion = JSON.parse(termsVersionRow.value); } catch { termsVersion = termsVersionRow.value; }
+    }
+
     const consentPreferences: ConsentPreferences = {
       marketing_emails,
       analytics,
@@ -113,6 +121,7 @@ export async function POST(request: NextRequest) {
       updated_at: new Date().toISOString(),
       policy_version: policyVersion,
       consented_at: new Date().toISOString(),
+      ...(terms_accepted === true ? { terms_accepted_at: new Date().toISOString(), terms_version: termsVersion } : {}),
     };
 
     // Merge with existing metadata
