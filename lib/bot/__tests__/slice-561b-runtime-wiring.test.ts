@@ -377,3 +377,208 @@ describe('561-B: #559 backward compatibility', () => {
     }
   });
 });
+
+// ═══════════════════════════════════════════════════════════════
+// ENTITLEMENT BOUNDARY — canonical language authority
+// ═══════════════════════════════════════════════════════════════
+
+describe('561-B: entitlement boundary — resolveCopyLang equivalent', () => {
+  // Simulates the resolveCopyLang helper logic: detected + entitled + certified = locale copy
+  function resolveCopyLangSimulated(
+    detected: string | undefined,
+    allowedLanguages: readonly string[],
+  ): string {
+    if (!detected || detected === 'en') return 'en';
+    if (!allowedLanguages.includes(detected)) return 'en';
+    return detected;
+  }
+
+  it('detected pcm + NOT entitled => English', () => {
+    // Free tier, English-only business
+    const lang = resolveCopyLangSimulated('pcm', ['en']);
+    expect(lang).toBe('en');
+    expect(getFlowCopy(lang, 'nav.footer')).toBe(getFlowCopy('en', 'nav.footer'));
+    expect(getFlowCopy(lang, 'error.generic')).toBe(getFlowCopy('en', 'error.generic'));
+    expect(getFlowCopy(lang, 'nav.cancelled')).toBe(getFlowCopy('en', 'nav.cancelled'));
+    expect(getFlowCopy(lang, 'booking.no_locations')).toBe(getFlowCopy('en', 'booking.no_locations'));
+    expect(getFlowCopy(lang, 'payment.ive_paid')).toBe(getFlowCopy('en', 'payment.ive_paid'));
+  });
+
+  it('detected pcm + entitled => Pidgin copy', () => {
+    // Growth tier, pcm configured
+    const lang = resolveCopyLangSimulated('pcm', ['en', 'pcm']);
+    expect(lang).toBe('pcm');
+    // Footer should be Pidgin
+    expect(getFlowCopy(lang, 'nav.footer')).toContain('comot');
+    expect(getFlowCopy(lang, 'nav.footer')).not.toBe(getFlowCopy('en', 'nav.footer'));
+    // Error messages should be Pidgin
+    expect(getFlowCopy(lang, 'error.generic')).toContain('no go well');
+    // Navigation should be Pidgin
+    expect(getFlowCopy(lang, 'nav.cancelled')).toContain('Don cancel');
+    // Booking chrome should be Pidgin
+    expect(getFlowCopy(lang, 'booking.no_locations')).toContain('Abeg');
+    // Payment buttons should be Pidgin
+    expect(getFlowCopy(lang, 'payment.ive_paid')).toBe('I Don Pay');
+  });
+
+  it('detected yo (uncertified) + entitled => English fallback', () => {
+    // Even if business entitled to yo, it is NOT certified
+    const lang = resolveCopyLangSimulated('yo', ['en', 'yo']);
+    expect(lang).toBe('yo');
+    // getFlowCopy gates on certification — yo is NOT certified, falls back to English
+    expect(getFlowCopy(lang, 'nav.footer')).toBe(getFlowCopy('en', 'nav.footer'));
+    expect(getFlowCopy(lang, 'error.generic')).toBe(getFlowCopy('en', 'error.generic'));
+  });
+
+  it('no detected language => English', () => {
+    const lang = resolveCopyLangSimulated(undefined, ['en', 'pcm']);
+    expect(lang).toBe('en');
+    expect(getFlowCopy(lang, 'nav.footer')).toBe(getFlowCopy('en', 'nav.footer'));
+  });
+
+  it('detected en => English', () => {
+    const lang = resolveCopyLangSimulated('en', ['en', 'pcm']);
+    expect(lang).toBe('en');
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// EXECUTABLE FLOW RUNTIME — scheduling prompt output
+// ═══════════════════════════════════════════════════════════════
+
+describe('561-B: scheduling flow uses getFlowCopy for static chrome', () => {
+  it('scheduling.flow.ts imports getFlowCopy', async () => {
+    // Verify the file exports functions that use getFlowCopy
+    const flowModule = await import('../flows/scheduling.flow');
+    expect(flowModule).toBeDefined();
+    // The flow definition should exist
+    expect(flowModule.default || flowModule.schedulingFlow).toBeDefined();
+  });
+
+  it('scheduling flow source contains getFlowCopy calls', async () => {
+    const fs = await import('fs');
+    const source = fs.readFileSync('lib/bot/flows/scheduling.flow.ts', 'utf-8');
+    // Must contain getFlowCopy imports and calls for booking chrome
+    expect(source).toContain("getFlowCopy");
+    expect(source).toContain("ctx.copyLang");
+    // Static booking chrome should use corpus keys, not hardcoded strings
+    expect(source).toContain("'booking.locations_title'");
+    expect(source).toContain("'booking.service_title'");
+    expect(source).toContain("'booking.select_date'");
+    expect(source).toContain("'booking.select_time'");
+    expect(source).toContain("'booking.confirm_btn'");
+    expect(source).toContain("'nav.cancel'");
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// EXECUTABLE FLOW RUNTIME — capability-selection uses getFlowCopy
+// ═══════════════════════════════════════════════════════════════
+
+describe('561-B: capability-selection uses getFlowCopy for account/menu chrome', () => {
+  it('capability-selection source contains getFlowCopy calls', async () => {
+    const fs = await import('fs');
+    const source = fs.readFileSync('lib/bot/flows/capability-selection.flow.ts', 'utf-8');
+    expect(source).toContain("getFlowCopy");
+    expect(source).toContain("ctx.copyLang");
+    expect(source).toContain("'account.title'");
+    expect(source).toContain("'account.my_bookings'");
+    expect(source).toContain("'account.my_orders'");
+    expect(source).toContain("'menu.what_to_do'");
+    expect(source).toContain("'menu.title'");
+    expect(source).toContain("'nav.back'");
+    expect(source).toContain("'nav.view_options'");
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// EXECUTABLE FLOW RUNTIME — payment/ordering/ticketing use getFlowCopy
+// ═══════════════════════════════════════════════════════════════
+
+describe('561-B: payment flow uses getFlowCopy', () => {
+  it('payment.flow.ts source contains getFlowCopy calls', async () => {
+    const fs = await import('fs');
+    const source = fs.readFileSync('lib/bot/flows/payment.flow.ts', 'utf-8');
+    expect(source).toContain("getFlowCopy");
+    expect(source).toContain("ctx.copyLang");
+    expect(source).toContain("'payment.ive_paid'");
+    expect(source).toContain("'payment.cancelled'");
+    expect(source).toContain("'nav.cancel'");
+  });
+});
+
+describe('561-B: ordering flow uses getFlowCopy', () => {
+  it('ordering.flow.ts source contains getFlowCopy calls', async () => {
+    const fs = await import('fs');
+    const source = fs.readFileSync('lib/bot/flows/ordering.flow.ts', 'utf-8');
+    expect(source).toContain("getFlowCopy");
+    expect(source).toContain("ctx.copyLang");
+    expect(source).toContain("'ordering.categories_title'");
+    expect(source).toContain("'ordering.checkout'");
+    expect(source).toContain("'nav.cancel'");
+  });
+});
+
+describe('561-B: ticketing flow uses getFlowCopy', () => {
+  it('ticketing.flow.ts source contains getFlowCopy calls', async () => {
+    const fs = await import('fs');
+    const source = fs.readFileSync('lib/bot/flows/ticketing.flow.ts', 'utf-8');
+    expect(source).toContain("getFlowCopy");
+    expect(source).toContain("ctx.copyLang");
+    expect(source).toContain("'ticketing.events_title'");
+    expect(source).toContain("'ticketing.view_events'");
+    expect(source).toContain("'payment.ive_paid'");
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// CANONICAL VALUES UNCHANGED — protected authoritative data
+// ═══════════════════════════════════════════════════════════════
+
+describe('561-B: canonical authoritative values unchanged', () => {
+  it('fillFlowCopy preserves businessName exactly', () => {
+    const result = fillFlowCopy('pcm', 'chat.unavailable', { businessName: 'Bukka Hut ₦5,000' });
+    expect(result).toContain('Bukka Hut ₦5,000');
+  });
+
+  it('fillFlowCopy preserves langName exactly', () => {
+    const result = fillFlowCopy('pcm', 'lang.switched', { langName: 'Nigerian Pidgin' });
+    expect(result).toContain('Nigerian Pidgin');
+  });
+
+  it('fillFlowCopy preserves remaining count exactly', () => {
+    const result = fillFlowCopy('pcm', 'payment.wrong_pin', { remaining: 2 });
+    expect(result).toContain('2');
+  });
+
+  it('getFlowCopy never alters key values', () => {
+    // Verify no value contains unexpected interpolation
+    for (const key of ALL_FLOW_COPY_KEYS) {
+      const en = getFlowCopy('en', key);
+      const pcm = getFlowCopy('pcm', key);
+      // Neither should contain unresolved {placeholder} unless the key has registered placeholders
+      if (!en.includes('{')) {
+        expect(pcm, `pcm.${key} should not have unexpected placeholders`).not.toMatch(/\{[a-zA-Z]+\}/);
+      }
+    }
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// RAW _detected_language NOT used for copy selection in executor
+// ═══════════════════════════════════════════════════════════════
+
+describe('561-B: executor does not use raw _detected_language for copy selection', () => {
+  it('executor source uses resolveCopyLang, not raw _detected_language for getFlowCopy', async () => {
+    const fs = await import('fs');
+    const source = fs.readFileSync('lib/bot/flows/executor.ts', 'utf-8');
+    // Should NOT have the pattern: (session.session_data._detected_language as string) || 'en'
+    // followed by getFlowCopy on the next line
+    const rawPattern = /const \w+Lang = \(session\.session_data\._detected_language as string\) \|\| 'en'/g;
+    const rawMatches = source.match(rawPattern) || [];
+    expect(rawMatches.length, 'Should not have raw _detected_language || en patterns for copy selection').toBe(0);
+    // Should have resolveCopyLang calls
+    expect(source).toContain('resolveCopyLang');
+    expect(source).toContain('this.resolveCopyLang(session, entitlement)');
+  });
+});

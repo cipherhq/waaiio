@@ -170,7 +170,7 @@ export class FlowExecutor {
 
     if (!step) {
       Sentry.captureMessage('Flow step not found', { level: 'warning', extra: { stepId, flowType, sessionId: session.id } });
-      const errLang = (session.session_data._detected_language as string) || 'en';
+      const errLang = this.resolveCopyLang(session, entitlement);
       const errMsg = getFlowCopy(errLang, 'error.generic');
       if (!session.conversation_log) session.conversation_log = [];
       session.conversation_log.push({ role: 'bot', content: errMsg, timestamp: new Date().toISOString() });
@@ -245,6 +245,7 @@ export class FlowExecutor {
         const currentLang = (session.session_data._detected_language as string) || '';
         return translateBotResponse(text, currentLang, translationCtx);
       },
+      copyLang: this.resolveCopyLang(session, entitlement),
       currentCanonical, // CAS-004: ephemeral, not persisted
     };
 
@@ -342,7 +343,7 @@ export class FlowExecutor {
         }
         return;
       } else {
-        const noBackLang = (session.session_data._detected_language as string) || 'en';
+        const noBackLang = this.resolveCopyLang(session, entitlement);
         const noBackMsg = getFlowCopy(noBackLang, 'nav.at_beginning');
         session.conversation_log.push({ role: 'bot', content: noBackMsg, timestamp: new Date().toISOString() });
         if (!await this.persistConversationLog(session, session.conversation_log)) return;
@@ -366,7 +367,7 @@ export class FlowExecutor {
           .eq('reference_code', transferRef as string)
           .eq('status', 'pending');
       }
-      const cancelLang = (session.session_data._detected_language as string) || 'en';
+      const cancelLang = this.resolveCopyLang(session, entitlement);
       const cancelMsg = getFlowCopy(cancelLang, 'nav.cancelled');
       session.conversation_log.push({ role: 'bot', content: cancelMsg, timestamp: new Date().toISOString() });
       if (!await this.persistConversationLog(session, session.conversation_log)) return;
@@ -385,7 +386,7 @@ export class FlowExecutor {
           .eq('reference_code', transferRef as string)
           .eq('status', 'pending');
       }
-      const restartLang = (session.session_data._detected_language as string) || 'en';
+      const restartLang = this.resolveCopyLang(session, entitlement);
       const restartMsg = getFlowCopy(restartLang, 'nav.no_problem');
       session.conversation_log.push({ role: 'bot', content: restartMsg, timestamp: new Date().toISOString() });
       if (!await this.persistConversationLog(session, session.conversation_log)) return;
@@ -527,7 +528,7 @@ export class FlowExecutor {
         });
         if (!result.success) {
           // Escalation failed — send recoverable message, do not leave false state
-          const escLang = (session.session_data._detected_language as string) || 'en';
+          const escLang = this.resolveCopyLang(session, entitlement);
           const failMsg = getFlowCopy(escLang, 'error.escalation_failed');
           session.conversation_log.push({ role: 'bot', content: failMsg, timestamp: new Date().toISOString() });
           if (!await this.persistConversationLog(session, session.conversation_log || [])) return;
@@ -538,7 +539,7 @@ export class FlowExecutor {
         return;
       } else {
         // CAS-008: Chat capability not enabled — tell the customer clearly
-        const chatLang = (session.session_data._detected_language as string) || 'en';
+        const chatLang = this.resolveCopyLang(session, entitlement);
         const unavailableMsg = fillFlowCopy(chatLang, 'chat.unavailable', { businessName: business.name });
         session.conversation_log.push({ role: 'bot', content: unavailableMsg, timestamp: new Date().toISOString() });
         if (!await this.persistConversationLog(session, session.conversation_log || [])) return;
@@ -554,7 +555,7 @@ export class FlowExecutor {
     const isMediaMessage = mediaType && ['image', 'audio', 'video', 'sticker', 'voice', 'document'].includes(mediaType);
     const isEmptyOrMediaOnly = !input.trim() || (isMediaMessage && !input.trim());
     if (isMediaMessage && isEmptyOrMediaOnly && !step.acceptsMedia) {
-      const mediaLang = (session.session_data._detected_language as string) || 'en';
+      const mediaLang = this.resolveCopyLang(session, entitlement);
       const mediaHint = getFlowCopy(mediaLang, 'error.media_unsupported');
       const cancelHint = getFlowCopy(mediaLang, 'cancelHint');
       const errText = `${mediaHint}\n\n_${cancelHint}_`;
@@ -945,9 +946,9 @@ export class FlowExecutor {
     if (messages.length === 0) return;
 
     // Inject navigation footer on interactive messages (buttons/list) if not already set
-    // Uses deterministic static copy — no LLM call (#561)
-    const copyLang = (session?.session_data?._detected_language as string) || 'en';
-    const localizedFooter = getFlowCopy(copyLang, 'nav.footer');
+    // Uses deterministic static copy with canonical language authority — no LLM call (#561)
+    const footerLang = session ? this.resolveCopyLang(session, tCtx.entitlement) : 'en';
+    const localizedFooter = getFlowCopy(footerLang, 'nav.footer');
     for (const m of messages) {
       if ((m.type === 'buttons' || m.type === 'list') && !m.footer) {
         // Assign deterministic footer — replaces hardcoded NAV_FOOTER (#561-B)
@@ -1030,6 +1031,22 @@ export class FlowExecutor {
     const lang = session.session_data._detected_language as string | undefined;
     if (!lang || lang === 'en') return text;
     return translateBotResponse(text, lang, tCtx);
+  }
+
+  /**
+   * Resolve the deterministic copy language for a session.
+   * Uses the canonical effective/certified/entitled policy — NOT raw _detected_language.
+   * Returns 'en' unless the detected language is both certified AND entitled for this business.
+   */
+  private resolveCopyLang(
+    session: { session_data: Record<string, unknown> },
+    entitlement: { allowedLanguages: readonly string[] },
+  ): string {
+    const detected = session.session_data._detected_language as string | undefined;
+    if (!detected || detected === 'en') return 'en';
+    // Language must be entitled for this business/session AND certified (getFlowCopy checks certification)
+    if (!entitlement.allowedLanguages.includes(detected)) return 'en';
+    return detected;
   }
 
   /** Extract text from prompt messages and append to session's conversation_log */

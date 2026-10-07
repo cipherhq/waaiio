@@ -8,6 +8,7 @@ import { getCapabilityCustomLabels } from '@/lib/capabilities/service';
 import { getCapabilityLabel } from '@/lib/capabilities/labels';
 import { getCategoryLabels } from '@/lib/categoryConfig';
 import { getUserFacingCapabilities } from '@/lib/bot/handlers/flow-routing';
+import { getFlowCopy } from './flow-localization';
 
 export { getCapabilityLabel };
 
@@ -234,14 +235,14 @@ const selectCapabilityStep: FlowStepConfig = {
     // Add "My Account" for returning customers — MANAGE_EXISTING functionality
     // Must remain available even when zero CREATE_NEW capabilities exist
     if (hasHistory) {
-      capItems.push({ id: 'cap_my_account', title: 'My Account', postbackText: 'cap_my_account' });
+      capItems.push({ id: 'cap_my_account', title: getFlowCopy(ctx.copyLang, 'account.title'), postbackText: 'cap_my_account' });
     }
 
     // Use greeting as body if available (first-time display), then clear it
     const greeting = ctx.session.session_data._greeting as string | undefined;
     const bodyText = greeting
-      ? `${greeting}\n\nWhat would you like to do? 👇`
-      : 'What would you like to do? 👇';
+      ? `${greeting}\n\n${getFlowCopy(ctx.copyLang, 'menu.what_to_do')}`
+      : getFlowCopy(ctx.copyLang, 'menu.what_to_do');
     if (greeting) delete ctx.session.session_data._greeting;
 
     // Localization metadata for the outbound translation boundary:
@@ -263,7 +264,7 @@ const selectCapabilityStep: FlowStepConfig = {
       logger.warn('[CAPABILITY-MENU] Zero renderable capabilities', { businessId: ctx.business?.id });
       return [{
         type: 'text' as const,
-        text: `${bodyText}\n\nThis business is still setting up. Please try again later.`,
+        text: `${bodyText}\n\n${getFlowCopy(ctx.copyLang, 'menu.still_setting_up')}`,
       }];
     }
 
@@ -282,9 +283,9 @@ const selectCapabilityStep: FlowStepConfig = {
     const listBody = bodyText.length > 1000 ? bodyText.slice(0, 997) + '...' : bodyText;
     return [{
       type: 'list' as const,
-      title: bizName || 'Menu',
+      title: bizName || getFlowCopy(ctx.copyLang, 'menu.title'),
       body: listBody,
-      buttonLabel: 'View Options',
+      buttonLabel: getFlowCopy(ctx.copyLang, 'nav.view_options'),
       items: capItems.map(i => ({ title: i.title, postbackText: i.postbackText })),
       _localization: locMeta,
     }];
@@ -598,40 +599,40 @@ const myAccountMenuStep: FlowStepConfig = {
     // Build menu items based on enabled capabilities
     const allItems = [
       // My Bookings — always show (covers scheduling, appointment, ticketing, reservation)
-      { title: 'My Bookings', description: 'Appointments, tickets, & stays', postbackText: 'acct_bookings', show: true },
+      { title: getFlowCopy(ctx.copyLang, 'account.my_bookings'), description: getFlowCopy(ctx.copyLang, 'account.my_bookings_desc'), postbackText: 'acct_bookings', show: true },
       // My Orders — show if ordering capability enabled
-      { title: 'My Orders', description: 'Track order status', postbackText: 'acct_orders', show: hasCapability('ordering') },
+      { title: getFlowCopy(ctx.copyLang, 'account.my_orders'), description: getFlowCopy(ctx.copyLang, 'account.my_orders_desc'), postbackText: 'acct_orders', show: hasCapability('ordering') },
       // My Giving — show if giving or crowdfunding capability enabled
-      { title: 'My Giving', description: 'Donation & offering history', postbackText: 'acct_giving', show: hasCapability('giving', 'crowdfunding') },
+      { title: getFlowCopy(ctx.copyLang, 'account.my_giving'), description: getFlowCopy(ctx.copyLang, 'account.my_giving_desc'), postbackText: 'acct_giving', show: hasCapability('giving', 'crowdfunding') },
       // My Invoices — show if invoice capability enabled
-      { title: 'My Invoices', description: 'View and pay invoices', postbackText: 'acct_invoices', show: hasCapability('invoice') },
+      { title: getFlowCopy(ctx.copyLang, 'account.my_invoices'), description: getFlowCopy(ctx.copyLang, 'account.my_invoices_desc'), postbackText: 'acct_invoices', show: hasCapability('invoice') },
       // My Contracts — show if whatsapp_sign capability enabled
-      { title: 'My Contracts', description: 'Sign or view contracts', postbackText: 'acct_contracts', show: hasCapability('whatsapp_sign') },
+      { title: getFlowCopy(ctx.copyLang, 'account.my_contracts'), description: getFlowCopy(ctx.copyLang, 'account.my_contracts_desc'), postbackText: 'acct_contracts', show: hasCapability('whatsapp_sign') },
       // My Quotes — show if estimates capability enabled
-      { title: 'My Quotes', description: 'Price request status', postbackText: 'acct_quotes', show: hasCapability('estimates') },
+      { title: getFlowCopy(ctx.copyLang, 'account.my_quotes'), description: getFlowCopy(ctx.copyLang, 'account.my_quotes_desc'), postbackText: 'acct_quotes', show: hasCapability('estimates') },
       // My Points — show if loyalty capability enabled
-      { title: 'My Points', description: 'Loyalty balance', postbackText: 'acct_loyalty', show: hasCapability('loyalty') },
+      { title: getFlowCopy(ctx.copyLang, 'account.my_points'), description: getFlowCopy(ctx.copyLang, 'account.my_points_desc'), postbackText: 'acct_loyalty', show: hasCapability('loyalty') },
       // Subscriptions — show if recurring OR giving capability enabled
-      { title: 'Subscriptions', description: 'Manage recurring payments', postbackText: 'acct_subscriptions', show: hasCapability('recurring', 'giving') },
+      { title: getFlowCopy(ctx.copyLang, 'account.subscriptions'), description: getFlowCopy(ctx.copyLang, 'account.subscriptions_desc'), postbackText: 'acct_subscriptions', show: hasCapability('recurring', 'giving') },
       // ACC-184: My Instant Win History — show if actual promo history exists (not capability-gated)
-      { title: 'My Instant Win History', description: 'Promotion results', postbackText: 'acct_promo_history', show: hasPromoHistoryForMenu },
+      { title: getFlowCopy(ctx.copyLang, 'account.instant_win'), description: getFlowCopy(ctx.copyLang, 'account.instant_win_desc'), postbackText: 'acct_promo_history', show: hasPromoHistoryForMenu },
       // Get Receipt — always show
-      { title: 'Get Receipt', description: 'Download your last receipt', postbackText: 'acct_receipt', show: true },
+      { title: getFlowCopy(ctx.copyLang, 'account.get_receipt'), description: getFlowCopy(ctx.copyLang, 'account.get_receipt_desc'), postbackText: 'acct_receipt', show: true },
       // Switch Business — always show (helps users discover how to change)
-      { title: 'Switch Business', description: 'Visit a different business', postbackText: 'acct_switch', show: true },
+      { title: getFlowCopy(ctx.copyLang, 'nav.switch_business'), description: getFlowCopy(ctx.copyLang, 'nav.switch_desc'), postbackText: 'acct_switch', show: true },
     ];
 
     const items = allItems
       .filter(i => i.show)
       .map(({ title, description, postbackText }) => ({ title, description, postbackText }));
 
-    items.push({ title: '← Back', description: 'Return to main menu', postbackText: 'acct_back' });
+    items.push({ title: getFlowCopy(ctx.copyLang, 'nav.back'), description: getFlowCopy(ctx.copyLang, 'nav.back_desc'), postbackText: 'acct_back' });
 
     return [{
       type: 'list' as const,
-      title: 'My Account',
-      body: 'Manage your bookings, orders, and more.\n\nType *cancel* to exit or *Hi* to start over.',
-      buttonLabel: 'My Account',
+      title: getFlowCopy(ctx.copyLang, 'account.title'),
+      body: getFlowCopy(ctx.copyLang, 'account.body'),
+      buttonLabel: getFlowCopy(ctx.copyLang, 'account.title'),
       items,
     }];
   },
@@ -668,7 +669,7 @@ const myAccountMenuStep: FlowStepConfig = {
         // Small delay so WhatsApp renders the receipt image before showing menu
         await new Promise(resolve => setTimeout(resolve, 1500));
       } else {
-        await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('No account found for this number. Send *Hi* to start over.') });
+        await ctx.sender.sendText({ to: ctx.from, text: getFlowCopy(ctx.copyLang, 'account.no_account') });
       }
       ctx.session.session_data._my_account_route = 'my_account_menu';
       return { valid: true, data: { _my_account_route: 'my_account_menu' } };
@@ -680,7 +681,7 @@ const myAccountMenuStep: FlowStepConfig = {
       await ctx.supabase.rpc('deactivate_session_atomic', { p_session_id: ctx.session.id });
       await ctx.sender.sendText({
         to: ctx.from,
-        text: await ctx.t('To switch to a different business:\n\n• Type *switch* followed by the business name\n  _e.g. switch FacesByKoph_\n\n• Or send *Hi* to see your recent businesses'),
+        text: getFlowCopy(ctx.copyLang, 'account.switch_instructions'),
       });
       return { valid: true, data: {} };
     }
@@ -733,8 +734,8 @@ const myAccountMenuStep: FlowStepConfig = {
       if (allGiving.length === 0) {
         await ctx.sender.sendButtons({
           to: ctx.from,
-          body: await ctx.t("You don't have any giving history yet. Send *Hi* to give!"),
-          buttons: [{ id: 'back_to_account', title: '← Back' }],
+          body: getFlowCopy(ctx.copyLang, 'account.no_giving'),
+          buttons: [{ id: 'back_to_account', title: getFlowCopy(ctx.copyLang, 'nav.back') }],
         });
       } else {
         const total = allGiving.reduce((sum, g) => sum + g.amount, 0);
@@ -746,7 +747,7 @@ const myAccountMenuStep: FlowStepConfig = {
         await ctx.sender.sendButtons({
           to: ctx.from,
           body: ' ',
-          buttons: [{ id: 'back_to_account', title: '← Back' }],
+          buttons: [{ id: 'back_to_account', title: getFlowCopy(ctx.copyLang, 'nav.back') }],
         });
       }
       ctx.session.session_data._my_account_route = 'my_account_menu';
@@ -767,8 +768,8 @@ const myAccountMenuStep: FlowStepConfig = {
       if (!contracts || contracts.length === 0) {
         await ctx.sender.sendButtons({
           to: ctx.from,
-          body: await ctx.t("You don't have any contracts."),
-          buttons: [{ id: 'back_to_account', title: '← Back' }],
+          body: getFlowCopy(ctx.copyLang, 'account.no_contracts'),
+          buttons: [{ id: 'back_to_account', title: getFlowCopy(ctx.copyLang, 'nav.back') }],
         });
       } else {
         const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
@@ -791,7 +792,7 @@ const myAccountMenuStep: FlowStepConfig = {
         await ctx.sender.sendButtons({
           to: ctx.from,
           body: ' ',
-          buttons: [{ id: 'back_to_account', title: '← Back' }],
+          buttons: [{ id: 'back_to_account', title: getFlowCopy(ctx.copyLang, 'nav.back') }],
         });
       }
       ctx.session.session_data._my_account_route = 'my_account_menu';
@@ -812,8 +813,8 @@ const myAccountMenuStep: FlowStepConfig = {
       if (!quotes || quotes.length === 0) {
         await ctx.sender.sendButtons({
           to: ctx.from,
-          body: await ctx.t("You don't have any price requests."),
-          buttons: [{ id: 'back_to_account', title: '← Back' }],
+          body: getFlowCopy(ctx.copyLang, 'account.no_quotes'),
+          buttons: [{ id: 'back_to_account', title: getFlowCopy(ctx.copyLang, 'nav.back') }],
         });
       } else {
         const emoji: Record<string, string> = { pending: '⏳', quoted: '💰', accepted: '✅', rejected: '❌', expired: '⌛' };
@@ -831,7 +832,7 @@ const myAccountMenuStep: FlowStepConfig = {
         await ctx.sender.sendButtons({
           to: ctx.from,
           body: ' ',
-          buttons: [{ id: 'back_to_account', title: '← Back' }],
+          buttons: [{ id: 'back_to_account', title: getFlowCopy(ctx.copyLang, 'nav.back') }],
         });
       }
       ctx.session.session_data._my_account_route = 'my_account_menu';
@@ -852,7 +853,7 @@ const myAccountMenuStep: FlowStepConfig = {
       await ctx.sender.sendButtons({
         to: ctx.from,
         body: ' ',
-        buttons: [{ id: 'back_to_account', title: '← Back' }],
+        buttons: [{ id: 'back_to_account', title: getFlowCopy(ctx.copyLang, 'nav.back') }],
       });
       ctx.session.session_data._my_account_route = 'my_account_menu';
       return { valid: true, data: { _my_account_route: 'my_account_menu' } };
@@ -886,7 +887,7 @@ const myAccountMenuStep: FlowStepConfig = {
       return { valid: true, data: { _my_account_route: targetStep } };
     }
 
-    return { valid: false, errorMessage: 'Please pick an option from the list.' };
+    return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'error.pick_option') };
   },
 
   async next(ctx: FlowContext) {
@@ -957,13 +958,13 @@ const myBookingsStep: FlowStepConfig = {
     }
 
     if (items.length === 0) {
-      return [{ type: 'text' as const, text: "You don't have any upcoming bookings, tickets, or stays. Send *Hi* to start over." }];
+      return [{ type: 'text' as const, text: getFlowCopy(ctx.copyLang, 'account.no_bookings') }];
     }
     return [{
       type: 'list' as const,
-      title: 'Your Bookings & Tickets',
-      body: 'Select a booking, ticket, or stay to view:',
-      buttonLabel: 'View All',
+      title: getFlowCopy(ctx.copyLang, 'account.bookings_title'),
+      body: getFlowCopy(ctx.copyLang, 'account.bookings_body'),
+      buttonLabel: getFlowCopy(ctx.copyLang, 'account.view_all'),
       items,
     }];
   },
@@ -990,8 +991,8 @@ const myOrdersStep: FlowStepConfig = {
     if (!orders || orders.length === 0) {
       return [{
         type: 'buttons' as const,
-        body: "You don't have any active orders. Send *Hi* to place an order!",
-        buttons: [{ id: 'back_to_account', title: '← Back' }],
+        body: getFlowCopy(ctx.copyLang, 'account.no_orders'),
+        buttons: [{ id: 'back_to_account', title: getFlowCopy(ctx.copyLang, 'nav.back') }],
       }];
     }
 
@@ -1007,7 +1008,7 @@ const myOrdersStep: FlowStepConfig = {
       });
       return [
         { type: 'text' as const, text: `📦 *Your Orders*\n\n${lines.join('\n\n')}` },
-        { type: 'buttons' as const, body: 'Select an order or go back:', buttons: [...orders.slice(0, 2).map((o) => ({ id: `order_${o.id}`, title: truncTitle(`${o.reference_code}`) })), { id: 'back_to_account', title: '← Back' }] },
+        { type: 'buttons' as const, body: 'Select an order or go back:', buttons: [...orders.slice(0, 2).map((o) => ({ id: `order_${o.id}`, title: truncTitle(`${o.reference_code}`) })), { id: 'back_to_account', title: getFlowCopy(ctx.copyLang, 'nav.back') }] },
       ];
     }
 
@@ -1020,13 +1021,13 @@ const myOrdersStep: FlowStepConfig = {
         postbackText: `order_${o.id}`,
       };
     });
-    items.push({ title: '← Back to Menu', description: 'Return to account menu', postbackText: 'back_to_account' });
+    items.push({ title: getFlowCopy(ctx.copyLang, 'nav.back_to_menu'), description: getFlowCopy(ctx.copyLang, 'nav.return_to_account'), postbackText: 'back_to_account' });
 
     return [{
       type: 'list' as const,
-      title: 'Your Orders',
+      title: getFlowCopy(ctx.copyLang, 'orders.your_orders_title'),
       body: '📦 Select an order to view details:\n\nType *menu* to go back.',
-      buttonLabel: 'View Orders',
+      buttonLabel: getFlowCopy(ctx.copyLang, 'orders.view_orders'),
       items,
     }];
   },
@@ -1045,21 +1046,21 @@ const promoEntryStep: FlowStepConfig = {
   id: 'promo_entry',
   async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
     if (!ctx.business) {
-      return [{ type: 'text', text: 'Something went wrong. Send *Hi* to start over.' }];
+      return [{ type: 'text', text: getFlowCopy(ctx.copyLang, 'error.generic') }];
     }
     const caps = (ctx.session.session_data.capabilities as CapabilityId[]) || [];
     if (!caps.includes('promo_verification')) {
-      return [{ type: 'text', text: 'This feature is not available right now.' }];
+      return [{ type: 'text', text: getFlowCopy(ctx.copyLang, 'error.unavailable') }];
     }
     try {
       const { getActivePromoEntryCampaigns, renderPromoEntryMessage } = await import('@/lib/promotions/entry');
       const campaigns = await getActivePromoEntryCampaigns(ctx.business.id);
       if (campaigns.length === 0) {
-        return [{ type: 'text', text: 'No active promotions right now. Check back later! 🎰' }];
+        return [{ type: 'text', text: getFlowCopy(ctx.copyLang, 'menu.no_promotions') }];
       }
       return [{ type: 'text', text: renderPromoEntryMessage(campaigns) }];
     } catch {
-      return [{ type: 'text', text: 'Something went wrong. Please try again.' }];
+      return [{ type: 'text', text: getFlowCopy(ctx.copyLang, 'error.generic_retry') }];
     }
   },
   async validate(): Promise<ValidationResult> {

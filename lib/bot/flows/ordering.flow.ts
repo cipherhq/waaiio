@@ -1,4 +1,5 @@
 import type { FlowDefinition, FlowContext, PromptMessage, ValidationResult } from './types';
+import { getFlowCopy } from './flow-localization';
 import { createWhatsAppUser, findUserByPhone, isReusableCustomerEmail } from './shared/user';
 import { initializePayment } from './shared/payment';
 import { truncTitle } from '../utils/truncate';
@@ -94,7 +95,7 @@ export const orderingFlow: FlowDefinition = {
         return !!ctx.session.session_data._skip_browse && !!ctx.session.session_data._auto_added_to_cart;
       },
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
-        if (!ctx.business) return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start over.' }];
+        if (!ctx.business) return [{ type: 'text', text: getFlowCopy(ctx.copyLang, 'error.generic') }];
 
         const meta = (ctx.business.metadata || {}) as Record<string, unknown>;
         const browseByCategory = (meta.ordering_browse_by_category as boolean) || false;
@@ -134,7 +135,7 @@ export const orderingFlow: FlowDefinition = {
         );
 
         if (!products || products.length === 0) {
-          return [{ type: 'text', text: 'Nothing available right now. Check back later!' }];
+          return [{ type: 'text', text: getFlowCopy(ctx.copyLang, 'ordering.nothing_available') }];
         }
 
         // Initialize cart (with timestamp for expiry)
@@ -152,7 +153,7 @@ export const orderingFlow: FlowDefinition = {
         const labels = getOrderingLabels(ctx.business.category);
 
         const formatItem = (p: typeof products[0]) => {
-          let desc = p.has_variants ? 'Multiple options' : formatCurrency(p.price, cc);
+          let desc = p.has_variants ? getFlowCopy(ctx.copyLang, 'ordering.multiple_options') : formatCurrency(p.price, cc);
           if (!p.has_variants && p.track_inventory && p.stock_quantity !== null && p.low_stock_threshold && p.stock_quantity <= p.low_stock_threshold) {
             desc += ` (${p.stock_quantity} left)`;
           }
@@ -173,9 +174,9 @@ export const orderingFlow: FlowDefinition = {
           ctx.session.session_data._category_list = categories.map(([cat, items]) => cat);
           return [{
             type: 'list',
-            title: 'Categories',
+            title: getFlowCopy(ctx.copyLang, 'ordering.categories_title'),
             body: `Welcome to ${ctx.business.name}! ${labels.emoji}\n\nChoose a category to browse:`,
-            buttonLabel: 'View Categories',
+            buttonLabel: getFlowCopy(ctx.copyLang, 'ordering.view_categories'),
             items: categories.slice(0, 10).map(([cat, items]) => ({
               title: truncTitle(cat, 24),
               description: `${items.length} item${items.length !== 1 ? 's' : ''}`,
@@ -227,7 +228,7 @@ export const orderingFlow: FlowDefinition = {
           .is('deleted_at', null)
           .single();
 
-        if (!product) return { valid: false, errorMessage: 'That option is not available. Tap one of the choices above.' };
+        if (!product) return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'invalidSelection') };
 
         if (!product.has_variants && product.stock_quantity !== null && product.stock_quantity <= 0) {
           return { valid: false, errorMessage: `Sorry, ${product.name} is out of stock.` };
@@ -345,9 +346,9 @@ export const orderingFlow: FlowDefinition = {
         }
 
         const items = [
-          { title: '⬅ Back to Categories', description: 'Browse other categories', postbackText: 'back_to_categories' },
+          { title: getFlowCopy(ctx.copyLang, 'ordering.back_to_categories'), description: getFlowCopy(ctx.copyLang, 'ordering.browse_other'), postbackText: 'back_to_categories' },
           ...products.map(p => {
-            let desc = p.has_variants ? 'Multiple options' : formatCurrency(p.price, cc);
+            let desc = p.has_variants ? getFlowCopy(ctx.copyLang, 'ordering.multiple_options') : formatCurrency(p.price, cc);
             if (!p.has_variants && p.track_inventory && p.stock_quantity !== null && p.low_stock_threshold && p.stock_quantity <= p.low_stock_threshold) {
               desc += ` (${p.stock_quantity} left)`;
             }
@@ -364,7 +365,7 @@ export const orderingFlow: FlowDefinition = {
           type: 'list',
           title: truncTitle(selectedCat, 24),
           body: `*${selectedCat}*${cartInfo}\n\nSelect an item:`,
-          buttonLabel: 'View Items',
+          buttonLabel: getFlowCopy(ctx.copyLang, 'ordering.view_items'),
           items: items.slice(0, 10),
         }];
       },
@@ -388,7 +389,7 @@ export const orderingFlow: FlowDefinition = {
           .is('deleted_at', null)
           .single();
 
-        if (!product) return { valid: false, errorMessage: 'I didn\'t find that item. Try typing the product name or tap an option from the list.' };
+        if (!product) return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'ordering.item_not_found') };
 
         if (!product.has_variants && product.stock_quantity !== null && product.stock_quantity <= 0) {
           return { valid: false, errorMessage: `Sorry, ${product.name} is out of stock.` };
@@ -468,7 +469,7 @@ export const orderingFlow: FlowDefinition = {
         const axis = variantOptions[axisIndex];
 
         if (!axis) {
-          return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start over.' }];
+          return [{ type: 'text', text: getFlowCopy(ctx.copyLang, 'error.generic') }];
         }
 
         const productId = d.current_product_id as string;
@@ -545,7 +546,7 @@ export const orderingFlow: FlowDefinition = {
         const axisIndex = (d.current_option_axis_index as number) || 0;
         const axis = variantOptions[axisIndex];
 
-        if (!axis) return { valid: false, errorMessage: 'Invalid option. Please tap one of the options above.' };
+        if (!axis) return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'ordering.invalid_option') };
 
         // Re-compute viable values using production helper
         const productId = d.current_product_id as string;
@@ -645,13 +646,13 @@ export const orderingFlow: FlowDefinition = {
     // ── Select Variant Error ──
     {
       id: 'select_variant_error',
-      async prompt(): Promise<PromptMessage[]> {
+      async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
         return [{
           type: 'buttons',
-          body: 'Sorry, that combination is not available.',
+          body: getFlowCopy(ctx.copyLang, 'ordering.variant_unavailable'),
           buttons: [
-            { id: 'back_to_catalog', title: 'Try Another' },
-            { id: 'cancel_order', title: 'Cancel' },
+            { id: 'back_to_catalog', title: getFlowCopy(ctx.copyLang, 'ordering.try_another') },
+            { id: 'cancel_order', title: getFlowCopy(ctx.copyLang, 'nav.cancel') },
           ],
         }];
       },
@@ -742,7 +743,7 @@ export const orderingFlow: FlowDefinition = {
           type: 'list',
           title: truncTitle(d.current_product_name as string, 24),
           body: `Choose an option for *${d.current_product_name}*:`,
-          buttonLabel: 'Select Option',
+          buttonLabel: getFlowCopy(ctx.copyLang, 'ordering.select_option'),
           items: available.map(v => ({
             title: truncTitle(v.label, 24),
             description: (formatCurrency(v.price, cc) + (v.stock_quantity !== null && v.stock_quantity <= 3 ? ` (${v.stock_quantity} left)` : '')).slice(0, 72),
@@ -762,7 +763,7 @@ export const orderingFlow: FlowDefinition = {
           .eq('is_active', true)
           .single();
 
-        if (!variant) return { valid: false, errorMessage: 'That option is not available. Tap one of the choices above.' };
+        if (!variant) return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'invalidSelection') };
 
         if (variant.stock_quantity !== null && variant.stock_quantity <= 0) {
           return { valid: false, errorMessage: `Sorry, ${variant.label} is out of stock.` };
@@ -790,10 +791,10 @@ export const orderingFlow: FlowDefinition = {
         const config = (meta.custom_order_config || {}) as Record<string, unknown>;
         return config.require_style_photo === false;
       },
-      async prompt(): Promise<PromptMessage[]> {
+      async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
         return [{
           type: 'text',
-          text: '📸 *Send a photo of the style you want*\n\nAttach a reference image showing the design, style, or look you\'re going for.\n\nType *skip* if you don\'t have one.',
+          text: getFlowCopy(ctx.copyLang, 'ordering.style_photo_prompt'),
         }];
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
@@ -805,7 +806,7 @@ export const orderingFlow: FlowDefinition = {
         if (ctx.mediaUrl) {
           return { valid: true, data: { custom_style_photo_url: ctx.mediaUrl } };
         }
-        return { valid: false, errorMessage: '📷 Please send a photo or type *skip* to continue without one.' };
+        return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'ordering.style_photo_hint') };
       },
       async next(ctx: FlowContext) {
         const meta = (ctx.business?.metadata || {}) as Record<string, unknown>;
@@ -872,10 +873,10 @@ export const orderingFlow: FlowDefinition = {
     // ── Collect Design Notes (Custom Order) ──
     {
       id: 'collect_design_notes',
-      async prompt(): Promise<PromptMessage[]> {
+      async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
         return [{
           type: 'text',
-          text: '✍️ *Describe what you want*\n\nShare special details, color preferences, fabric choices, or any notes for the maker.\n\nType *skip* if nothing to add.',
+          text: getFlowCopy(ctx.copyLang, 'ordering.design_notes'),
         }];
       },
       async validate(input: string): Promise<ValidationResult> {
@@ -907,16 +908,16 @@ export const orderingFlow: FlowDefinition = {
         const config = (meta.custom_order_config || {}) as Record<string, unknown>;
         return config.require_deadline === false;
       },
-      async prompt(): Promise<PromptMessage[]> {
+      async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
         return [{
           type: 'text',
-          text: '📅 *When do you need this ready?*\n\nType a date (e.g. Dec 20, Next Friday, 2 weeks) or type *no deadline*.',
+          text: getFlowCopy(ctx.copyLang, 'ordering.deadline_prompt'),
         }];
       },
-      async validate(input: string): Promise<ValidationResult> {
+      async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
         const text = input.trim();
         if (text.length < 3) {
-          return { valid: false, errorMessage: 'Please enter a date or type *no deadline*.' };
+          return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'ordering.deadline_hint') };
         }
         const deadline = text.toLowerCase() === 'no deadline' ? null : text;
         return { valid: true, data: { custom_deadline: deadline } };
@@ -970,7 +971,7 @@ export const orderingFlow: FlowDefinition = {
         if (minQty > 1) {
           promptText += `\n\n_Minimum order: ${minQty} units_`;
         }
-        promptText += '\n\nHow many would you like? Type a number:';
+        promptText += '\n\n' + getFlowCopy(ctx.copyLang, 'ordering.how_many');
 
         messages.push({ type: 'text', text: promptText });
 
@@ -985,7 +986,7 @@ export const orderingFlow: FlowDefinition = {
           if (entities.quantity) qty = entities.quantity;
         }
         if (isNaN(qty) || qty < 1 || qty > 9999) {
-          return { valid: false, errorMessage: 'Please enter a valid number.' };
+          return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'ordering.invalid_number') };
         }
 
         const d = ctx.session.session_data;
@@ -1008,7 +1009,7 @@ export const orderingFlow: FlowDefinition = {
           const available = stockQty - inCart;
 
           if (available <= 0) {
-            return { valid: false, errorMessage: `Sorry, this item is already fully added to your cart.` };
+            return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'ordering.fully_added') };
           }
 
           if (qty > available) {
@@ -1060,7 +1061,7 @@ export const orderingFlow: FlowDefinition = {
           .limit(9);
 
         if (!addons || addons.length === 0) {
-          return [{ type: 'text', text: 'No add-ons available.' }];
+          return [{ type: 'text', text: getFlowCopy(ctx.copyLang, 'ordering.no_addons_available') }];
         }
 
         // Filter out already-selected addons
@@ -1071,8 +1072,8 @@ export const orderingFlow: FlowDefinition = {
         if (available.length === 0) {
           return [{
             type: 'buttons',
-            body: 'All available add-ons selected. Continue?',
-            buttons: [{ id: 'skip_addons', title: 'Continue' }],
+            body: getFlowCopy(ctx.copyLang, 'ordering.all_addons_selected'),
+            buttons: [{ id: 'skip_addons', title: getFlowCopy(ctx.copyLang, 'ordering.continue') }],
           }];
         }
 
@@ -1086,14 +1087,14 @@ export const orderingFlow: FlowDefinition = {
         // Add "No add-ons" option (if no required addons remain)
         const hasRequired = available.some(a => a.is_required);
         if (!hasRequired) {
-          items.push({ title: 'No add-ons', description: 'Continue without', postbackText: 'skip_addons' });
+          items.push({ title: getFlowCopy(ctx.copyLang, 'ordering.no_addons'), description: getFlowCopy(ctx.copyLang, 'ordering.continue_without'), postbackText: 'skip_addons' });
         }
 
         return [{
           type: 'list',
-          title: 'Add-ons',
+          title: getFlowCopy(ctx.copyLang, 'booking.addons_title'),
           body: `Would you like to add extras to *${d.current_product_name}*?`,
-          buttonLabel: 'View Add-ons',
+          buttonLabel: getFlowCopy(ctx.copyLang, 'booking.view_addons'),
           items: items.slice(0, 10),
         }];
       },
@@ -1108,7 +1109,7 @@ export const orderingFlow: FlowDefinition = {
           .eq('id', input)
           .single();
 
-        if (!addon) return { valid: false, errorMessage: 'Please select a valid add-on or tap *No add-ons*.' };
+        if (!addon) return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'ordering.valid_addon_hint') };
 
         return {
           valid: true,
@@ -1190,8 +1191,8 @@ export const orderingFlow: FlowDefinition = {
           type: 'buttons',
           body: `✅ Added: ${lastAddon?.name} (${addonCost})\n\nAdd another extra?`,
           buttons: [
-            { id: 'more_addons', title: 'Add more' },
-            { id: 'done_addons', title: 'Continue' },
+            { id: 'more_addons', title: getFlowCopy(ctx.copyLang, 'ordering.add_more') },
+            { id: 'done_addons', title: getFlowCopy(ctx.copyLang, 'ordering.continue') },
           ],
         }];
       },
@@ -1268,8 +1269,8 @@ export const orderingFlow: FlowDefinition = {
             type: 'buttons' as const,
             body: addedText + '\n\nWhat would you like to do?',
             buttons: [
-              { id: 'browse_more', title: 'Browse Menu' },
-              { id: 'checkout', title: 'Checkout' },
+              { id: 'browse_more', title: getFlowCopy(ctx.copyLang, 'ordering.browse_menu') },
+              { id: 'checkout', title: getFlowCopy(ctx.copyLang, 'ordering.checkout') },
             ],
           }];
         }
@@ -1311,7 +1312,7 @@ export const orderingFlow: FlowDefinition = {
 
         const formatProd = (p: typeof products[0]) => ({
           title: truncTitle(p.name, 24),
-          description: p.has_variants ? 'Multiple options' : formatCurrency(p.price, cc),
+          description: p.has_variants ? getFlowCopy(ctx.copyLang, 'ordering.multiple_options') : formatCurrency(p.price, cc),
           postbackText: p.id,
         });
 
@@ -1328,9 +1329,9 @@ export const orderingFlow: FlowDefinition = {
             { type: 'text' as const, text: addedText },
             {
               type: 'list' as const,
-              title: 'Continue',
-              body: 'Add more items or checkout:',
-              buttonLabel: 'View Options',
+              title: getFlowCopy(ctx.copyLang, 'ordering.checkout_confirm'),
+              body: getFlowCopy(ctx.copyLang, 'ordering.add_more_items'),
+              buttonLabel: getFlowCopy(ctx.copyLang, 'nav.view_options'),
               items: [checkoutItem, ...products.slice(0, 9).map(formatProd)],
               sections,
             },
@@ -1346,9 +1347,9 @@ export const orderingFlow: FlowDefinition = {
           { type: 'text' as const, text: addedText },
           {
             type: 'list' as const,
-            title: 'Continue',
-            body: 'Add more items or checkout:',
-            buttonLabel: 'View Options',
+            title: getFlowCopy(ctx.copyLang, 'ordering.checkout_confirm'),
+            body: getFlowCopy(ctx.copyLang, 'ordering.add_more_items'),
+            buttonLabel: getFlowCopy(ctx.copyLang, 'nav.view_options'),
             items: listItems.slice(0, 10),
           },
         ];
@@ -1380,10 +1381,10 @@ export const orderingFlow: FlowDefinition = {
         if (browseByCategory) {
           return [{
             type: 'buttons' as const,
-            body: `🛒 ${cart.length} item${cart.length !== 1 ? 's' : ''} in cart — *${formatCurrency(total, cc)}*\n\nAdd more items or checkout:`,
+            body: `🛒 ${cart.length} item${cart.length !== 1 ? 's' : ''} in cart — *${formatCurrency(total, cc)}*\n\n${getFlowCopy(ctx.copyLang, 'ordering.add_more_items')}`,
             buttons: [
-              { id: 'browse_more', title: 'Browse Menu' },
-              { id: 'checkout', title: 'Checkout' },
+              { id: 'browse_more', title: getFlowCopy(ctx.copyLang, 'ordering.browse_menu') },
+              { id: 'checkout', title: getFlowCopy(ctx.copyLang, 'ordering.checkout') },
             ],
           }];
         }
@@ -1428,7 +1429,7 @@ export const orderingFlow: FlowDefinition = {
               title: truncTitle(cat, 24),
               items: items.slice(0, 10).map(p => ({
                 title: truncTitle(p.name, 24),
-                description: p.has_variants ? 'Multiple options' : formatCurrency(p.price, cc),
+                description: p.has_variants ? getFlowCopy(ctx.copyLang, 'ordering.multiple_options') : formatCurrency(p.price, cc),
                 postbackText: p.id,
               })),
             })),
@@ -1436,12 +1437,12 @@ export const orderingFlow: FlowDefinition = {
 
           return [{
             type: 'list' as const,
-            title: 'Your Cart',
-            body: `🛒 ${cart.length} item${cart.length !== 1 ? 's' : ''} in cart — ${formatCurrency(total, cc)}\n\nAdd more items or checkout:`,
-            buttonLabel: 'View Options',
+            title: getFlowCopy(ctx.copyLang, 'ordering.your_cart'),
+            body: `🛒 ${cart.length} item${cart.length !== 1 ? 's' : ''} in cart — ${formatCurrency(total, cc)}\n\n${getFlowCopy(ctx.copyLang, 'ordering.add_more_items')}`,
+            buttonLabel: getFlowCopy(ctx.copyLang, 'nav.view_options'),
             items: [checkoutItem, ...products.slice(0, 9).map(p => ({
               title: truncTitle(p.name, 24),
-              description: p.has_variants ? 'Multiple options' : formatCurrency(p.price, cc),
+              description: p.has_variants ? getFlowCopy(ctx.copyLang, 'ordering.multiple_options') : formatCurrency(p.price, cc),
               postbackText: p.id,
             }))],
             sections,
@@ -1452,16 +1453,16 @@ export const orderingFlow: FlowDefinition = {
           checkoutItem,
           ...products.slice(0, 9).map(p => ({
             title: truncTitle(p.name, 24),
-            description: p.has_variants ? 'Multiple options' : formatCurrency(p.price, cc),
+            description: p.has_variants ? getFlowCopy(ctx.copyLang, 'ordering.multiple_options') : formatCurrency(p.price, cc),
             postbackText: p.id,
           })),
         ];
 
         return [{
           type: 'list',
-          title: 'Your Cart',
-          body: `🛒 ${cart.length} item${cart.length !== 1 ? 's' : ''} in cart — ${formatCurrency(total, cc)}\n\nAdd more items or checkout:`,
-          buttonLabel: 'View Options',
+          title: getFlowCopy(ctx.copyLang, 'ordering.your_cart'),
+          body: `🛒 ${cart.length} item${cart.length !== 1 ? 's' : ''} in cart — ${formatCurrency(total, cc)}\n\n${getFlowCopy(ctx.copyLang, 'ordering.add_more_items')}`,
+          buttonLabel: getFlowCopy(ctx.copyLang, 'nav.view_options'),
           items: listItems.slice(0, 10),
         }];
       },
@@ -1575,13 +1576,13 @@ export const orderingFlow: FlowDefinition = {
 
         return !hasApplicablePromo;
       },
-      async prompt(): Promise<PromptMessage[]> {
+      async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
         return [{
           type: 'buttons',
-          body: 'Do you have a promo code?',
+          body: getFlowCopy(ctx.copyLang, 'booking.promo_ask'),
           buttons: [
-            { id: 'enter_promo', title: 'Yes, enter code' },
-            { id: 'skip_promo', title: 'No, continue' },
+            { id: 'enter_promo', title: getFlowCopy(ctx.copyLang, 'booking.promo_yes') },
+            { id: 'skip_promo', title: getFlowCopy(ctx.copyLang, 'ordering.promo_no_continue') },
           ],
         }];
       },
@@ -1736,15 +1737,15 @@ export const orderingFlow: FlowDefinition = {
           .limit(10);
 
         if (!zones || zones.length === 0) {
-          return [{ type: 'text', text: 'No delivery zones available.' }];
+          return [{ type: 'text', text: getFlowCopy(ctx.copyLang, 'ordering.no_zones') }];
         }
 
         const cc = (ctx.business?.country_code || 'NG') as CountryCode;
         return [{
           type: 'list',
-          title: 'Delivery Zone',
-          body: 'Select your delivery zone:',
-          buttonLabel: 'Choose Zone',
+          title: getFlowCopy(ctx.copyLang, 'ordering.delivery_zone'),
+          body: getFlowCopy(ctx.copyLang, 'ordering.select_zone'),
+          buttonLabel: getFlowCopy(ctx.copyLang, 'ordering.choose_zone'),
           items: zones.map(z => {
             let desc = z.is_pickup ? 'Pickup' : z.price > 0 ? formatCurrency(z.price, cc) : 'FREE';
             if (z.estimated_time) desc += ` • ${z.estimated_time}`;
@@ -1760,7 +1761,7 @@ export const orderingFlow: FlowDefinition = {
           .eq('id', input)
           .single();
 
-        if (!zone) return { valid: false, errorMessage: 'Please select a valid delivery zone.' };
+        if (!zone) return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'ordering.valid_zone_hint') };
 
         return {
           valid: true,
@@ -1787,26 +1788,26 @@ export const orderingFlow: FlowDefinition = {
     // ── Delivery Details (fallback when no zones configured) ──
     {
       id: 'delivery_details',
-      async prompt(): Promise<PromptMessage[]> {
+      async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
         return [
           {
             type: 'buttons',
-            body: 'Would you like delivery or pickup?',
+            body: getFlowCopy(ctx.copyLang, 'ordering.delivery_or_pickup'),
             buttons: [
-              { id: 'delivery', title: '🚚 Delivery' },
-              { id: 'pickup', title: '🏪 Pickup' },
+              { id: 'delivery', title: getFlowCopy(ctx.copyLang, 'ordering.delivery') },
+              { id: 'pickup', title: getFlowCopy(ctx.copyLang, 'ordering.pickup') },
             ],
           },
         ];
       },
-      async validate(input: string): Promise<ValidationResult> {
+      async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
         if (input.toLowerCase() === 'pickup') {
           return { valid: true, data: { delivery_type: 'pickup' } };
         }
         if (input.toLowerCase() === 'delivery') {
           return { valid: true, data: { delivery_type: 'delivery' } };
         }
-        return { valid: false, errorMessage: 'Please tap *Delivery* or *Pickup*.' };
+        return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'ordering.delivery_hint') };
       },
       async next(ctx: FlowContext) {
         return ctx.session.session_data.delivery_type === 'delivery' ? 'collect_address' : 'collect_name';
@@ -1816,12 +1817,12 @@ export const orderingFlow: FlowDefinition = {
     // ── Logistics: Collect Pickup Address ──
     {
       id: 'collect_pickup_address',
-      async prompt(): Promise<PromptMessage[]> {
-        return [{ type: 'text', text: '📍 *Pickup Location*\n\nWhere should we pick up the package?\n\nType the full address (e.g., 12 Main St, Lagos):' }];
+      async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
+        return [{ type: 'text', text: getFlowCopy(ctx.copyLang, 'ordering.pickup_address') }];
       },
-      async validate(input: string): Promise<ValidationResult> {
+      async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
         if (input.trim().length < 5) {
-          return { valid: false, errorMessage: 'That address seems too short. Please include the street name and area.' };
+          return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'ordering.address_too_short') };
         }
         return { valid: true, data: { pickup_address: input.trim() } };
       },
@@ -1831,12 +1832,12 @@ export const orderingFlow: FlowDefinition = {
     // ── Logistics: Collect Drop-off Address ──
     {
       id: 'collect_dropoff_address',
-      async prompt(): Promise<PromptMessage[]> {
-        return [{ type: 'text', text: '📍 *Drop-off Location*\n\nWhere should we deliver it? Type the full address:' }];
+      async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
+        return [{ type: 'text', text: getFlowCopy(ctx.copyLang, 'ordering.dropoff_address') }];
       },
-      async validate(input: string): Promise<ValidationResult> {
+      async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
         if (input.trim().length < 5) {
-          return { valid: false, errorMessage: 'That address seems too short. Please include the street name and area.' };
+          return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'ordering.address_too_short') };
         }
         return { valid: true, data: { dropoff_address: input.trim(), delivery_address: input.trim() } };
       },
@@ -1846,12 +1847,12 @@ export const orderingFlow: FlowDefinition = {
     // ── Logistics: Package Description ──
     {
       id: 'collect_package_description',
-      async prompt(): Promise<PromptMessage[]> {
-        return [{ type: 'text', text: '📦 What are you sending?\n\nBriefly describe the package (e.g., "Small box of documents"):' }];
+      async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
+        return [{ type: 'text', text: getFlowCopy(ctx.copyLang, 'ordering.package_desc') }];
       },
-      async validate(input: string): Promise<ValidationResult> {
+      async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
         if (input.trim().length < 3) {
-          return { valid: false, errorMessage: 'Please add a brief description so the rider knows what to expect.' };
+          return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'ordering.package_hint') };
         }
         return { valid: true, data: { package_description: input.trim() } };
       },
@@ -1861,10 +1862,10 @@ export const orderingFlow: FlowDefinition = {
     // ── Logistics: Package Photo ──
     {
       id: 'collect_package_photo',
-      async prompt(): Promise<PromptMessage[]> {
+      async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
         return [{
           type: 'buttons',
-          body: '📸 Want to add a photo of the package?\n\nThis helps the rider identify it. You can also tap Skip.',
+          body: getFlowCopy(ctx.copyLang, 'ordering.package_photo'),
           buttons: [
             { id: 'skip', title: 'Skip' },
           ],
@@ -1886,12 +1887,12 @@ export const orderingFlow: FlowDefinition = {
     // ── Collect Address ──
     {
       id: 'collect_address',
-      async prompt(): Promise<PromptMessage[]> {
-        return [{ type: 'text', text: '📍 Please type your delivery address:' }];
+      async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
+        return [{ type: 'text', text: getFlowCopy(ctx.copyLang, 'ordering.enter_address') }];
       },
-      async validate(input: string): Promise<ValidationResult> {
+      async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
         if (input.trim().length < 5) {
-          return { valid: false, errorMessage: 'Please enter a valid address.' };
+          return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'ordering.invalid_address') };
         }
         return { valid: true, data: { delivery_address: input.trim() } };
       },
@@ -1907,12 +1908,12 @@ export const orderingFlow: FlowDefinition = {
           type: 'buttons',
           body: `📍 Your delivery address:\n\n*${address}*\n\nIs this correct?`,
           buttons: [
-            { id: 'yes', title: 'Yes, correct' },
-            { id: 'change', title: 'Change address' },
+            { id: 'yes', title: getFlowCopy(ctx.copyLang, 'ordering.address_correct') },
+            { id: 'change', title: getFlowCopy(ctx.copyLang, 'ordering.change_address') },
           ],
         }];
       },
-      async validate(input: string): Promise<ValidationResult> {
+      async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
         const text = input.toLowerCase();
         if (text === 'yes' || text === 'yes, correct') {
           return { valid: true, data: { address_confirmed: true } };
@@ -1920,7 +1921,7 @@ export const orderingFlow: FlowDefinition = {
         if (text === 'change' || text === 'change address') {
           return { valid: true, data: { address_confirmed: false } };
         }
-        return { valid: false, errorMessage: 'Please tap *Yes, correct* or *Change address*.' };
+        return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'ordering.address_hint') };
       },
       async next(ctx: FlowContext) {
         return ctx.session.session_data.address_confirmed ? 'collect_name' : 'collect_address';
@@ -1947,13 +1948,13 @@ export const orderingFlow: FlowDefinition = {
         }
         return false;
       },
-      async prompt(): Promise<PromptMessage[]> {
-        return [{ type: 'text', text: 'What name should we put on the order?\n\nType your *full name*:' }];
+      async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
+        return [{ type: 'text', text: getFlowCopy(ctx.copyLang, 'ordering.collect_name') }];
       },
-      async validate(input: string): Promise<ValidationResult> {
+      async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
         const parts = input.trim().split(/\s+/);
         if (!parts[0] || parts[0].length < 2) {
-          return { valid: false, errorMessage: 'Please enter a valid name.' };
+          return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'payment.invalid_name') };
         }
         return { valid: true, data: { first_name: parts[0], last_name: parts.slice(1).join(' ') || '' } };
       },
@@ -1963,13 +1964,13 @@ export const orderingFlow: FlowDefinition = {
     // ── Ask Referral Code (skipIf checks referral capability below) ──
     {
       id: 'ask_referral_code',
-      async prompt(): Promise<PromptMessage[]> {
+      async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
         return [{
           type: 'buttons',
-          body: 'Got a referral code from a friend?',
+          body: getFlowCopy(ctx.copyLang, 'booking.referral_ask'),
           buttons: [
-            { id: 'enter_code', title: 'Enter Code' },
-            { id: 'skip', title: 'Skip' },
+            { id: 'enter_code', title: getFlowCopy(ctx.copyLang, 'booking.enter_code') },
+            { id: 'skip', title: getFlowCopy(ctx.copyLang, 'booking.skip') },
           ],
         }];
       },
@@ -2006,8 +2007,8 @@ export const orderingFlow: FlowDefinition = {
     // ── Enter Referral Code ──
     {
       id: 'enter_referral_code',
-      async prompt(): Promise<PromptMessage[]> {
-        return [{ type: 'text', text: '🎁 Enter your referral code below.\n\nType *skip* if you changed your mind.' }];
+      async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
+        return [{ type: 'text', text: getFlowCopy(ctx.copyLang, 'booking.referral_enter') }];
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
         const code = input.trim();
@@ -2025,13 +2026,13 @@ export const orderingFlow: FlowDefinition = {
           .maybeSingle();
 
         if (!referral) {
-          return { valid: false, errorMessage: 'Hmm, that code didn\'t work. Double-check it and try again, or type *skip* to continue without one.' };
+          return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'booking.referral_invalid') };
         }
 
         // Prevent self-referral
         const normalizedFrom = ctx.from.startsWith('+') ? ctx.from : '+' + ctx.from;
         if (referral.referrer_phone === normalizedFrom || referral.referrer_phone === ctx.from) {
-          return { valid: false, errorMessage: 'You cannot use your own referral code.' };
+          return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'booking.referral_self') };
         }
 
         return {
@@ -2045,14 +2046,14 @@ export const orderingFlow: FlowDefinition = {
     // ── Collect Email ──
     {
       id: 'collect_email',
-      async prompt(): Promise<PromptMessage[]> {
-        return [{ type: 'text', text: '📧 Please type your email address:' }];
+      async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
+        return [{ type: 'text', text: getFlowCopy(ctx.copyLang, 'ordering.collect_email') }];
       },
-      async validate(input: string): Promise<ValidationResult> {
+      async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
         const email = input.trim().toLowerCase();
         const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
         if (!emailRegex.test(email)) {
-          return { valid: false, errorMessage: 'Please enter a valid email address.' };
+          return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'ordering.invalid_email') };
         }
         return { valid: true, data: { customer_email: email, email } };
       },
@@ -2175,7 +2176,7 @@ export const orderingFlow: FlowDefinition = {
               return [{ type: 'text', text: warnings.join('\n') + '\n\nYour cart is now empty. Send *Hi* to start over.' }];
             }
             // Send warnings first, then continue to show updated summary
-            await ctx.sender.sendText({ to: ctx.from, text: warnings.join('\n') + '\n\n_Your order has been updated._' });
+            await ctx.sender.sendText({ to: ctx.from, text: warnings.join('\n') + '\n\n' + getFlowCopy(ctx.copyLang, 'ordering.updated') });
           }
         }
 
@@ -2274,7 +2275,7 @@ export const orderingFlow: FlowDefinition = {
 
         // Build summary
         const summary: string[] = [
-          `🛒 *Order Summary*`,
+          getFlowCopy(ctx.copyLang, 'ordering.order_summary'),
           '',
           ...lines,
         ];
@@ -2334,19 +2335,19 @@ export const orderingFlow: FlowDefinition = {
 
         const buttons = isForceQuote
           ? [
-              { id: 'request_quote', title: 'Get Price 📋' },
-              { id: 'edit_order', title: 'Edit Order' },
+              { id: 'request_quote', title: getFlowCopy(ctx.copyLang, 'ordering.get_price_icon') },
+              { id: 'edit_order', title: getFlowCopy(ctx.copyLang, 'ordering.edit_order') },
             ]
           : hasNegotiable
           ? [
-              { id: 'confirm_order', title: 'Confirm Order' },
-              { id: 'request_quote', title: 'Get Price' },
-              { id: 'edit_order', title: 'Edit Order' },
+              { id: 'confirm_order', title: getFlowCopy(ctx.copyLang, 'ordering.confirm_order') },
+              { id: 'request_quote', title: getFlowCopy(ctx.copyLang, 'ordering.get_price') },
+              { id: 'edit_order', title: getFlowCopy(ctx.copyLang, 'ordering.edit_order') },
             ]
           : [
-              { id: 'confirm_order', title: 'Confirm Order ✅' },
-              { id: 'add_more_items', title: 'Add Items' },
-              { id: 'edit_order', title: 'Edit Order' },
+              { id: 'confirm_order', title: getFlowCopy(ctx.copyLang, 'ordering.confirm_order_check') },
+              { id: 'add_more_items', title: getFlowCopy(ctx.copyLang, 'ordering.add_items') },
+              { id: 'edit_order', title: getFlowCopy(ctx.copyLang, 'ordering.edit_order') },
             ];
 
         // #268: Consolidated summary + confirm into 1 buttons message
@@ -2367,7 +2368,7 @@ export const orderingFlow: FlowDefinition = {
         // When confirming an order with terms, the button includes acceptance
         if (requireTerms268 && !isForceQuote) {
           const confirmBtn = buttons.find((b: { id: string }) => b.id === 'confirm_order');
-          if (confirmBtn) confirmBtn.title = 'I Accept & Confirm';
+          if (confirmBtn) confirmBtn.title = getFlowCopy(ctx.copyLang, 'payment.accept_confirm');
         }
 
         return [{
@@ -2424,7 +2425,7 @@ export const orderingFlow: FlowDefinition = {
           type: 'list',
           title: 'Edit Order',
           body: `🛒 ${cart.length} item${cart.length !== 1 ? 's' : ''} — ${formatCurrency(calculateCartTotal(cart), cc)}\n\nRemove items or change your details:`,
-          buttonLabel: 'Edit Options',
+          buttonLabel: getFlowCopy(ctx.copyLang, 'ordering.edit_options'),
           items: items.slice(0, 10),
         }];
       },

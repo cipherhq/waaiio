@@ -1,4 +1,5 @@
 import type { FlowDefinition, FlowContext, PromptMessage, ValidationResult } from './types';
+import { getFlowCopy } from './flow-localization';
 import { formatCurrency, getCurrencyCode, type CountryCode } from '@/lib/constants';
 import { getCategoryLabels } from '@/lib/categoryConfig';
 import { createWhatsAppUser, findUserByPhone } from './shared/user';
@@ -26,7 +27,7 @@ export const paymentFlow: FlowDefinition = {
     {
       id: 'select_category',
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
-        if (!ctx.business) return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start over.' }];
+        if (!ctx.business) return [{ type: 'text', text: getFlowCopy(ctx.copyLang, 'error.generic') }];
 
         // Filter by service_type: giving capability → giving services, payment → all non-giving
         const isGiving = ctx.session.session_data.active_capability === 'giving';
@@ -47,13 +48,13 @@ export const paymentFlow: FlowDefinition = {
         }
 
         const cc = (ctx.business.country_code || 'NG') as CountryCode;
-        const title = isGiving ? 'Select Giving Category' : 'Select Payment Type';
-        const body = isGiving ? 'What would you like to give towards?' : 'What would you like to pay for?';
+        const title = isGiving ? getFlowCopy(ctx.copyLang, 'payment.giving_title') : getFlowCopy(ctx.copyLang, 'payment.payment_title');
+        const body = isGiving ? getFlowCopy(ctx.copyLang, 'payment.select_giving') : getFlowCopy(ctx.copyLang, 'payment.select_payment');
         return [{
           type: 'list',
           title,
           body,
-          buttonLabel: 'Choose',
+          buttonLabel: getFlowCopy(ctx.copyLang, 'nav.choose'),
           items: services.map(s => {
             if (s.billing_type === 'recurring' && s.recurring_interval && s.price > 0) {
               const suffix = s.recurring_interval === 'weekly' ? '/week' : '/month';
@@ -138,7 +139,7 @@ export const paymentFlow: FlowDefinition = {
           }
         }
 
-        return { valid: false, errorMessage: 'That option is not available. Tap one of the choices above.' };
+        return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'invalidSelection') };
       },
       async next() { return 'enter_amount'; },
     },
@@ -186,7 +187,7 @@ export const paymentFlow: FlowDefinition = {
           if (entities.amount) amount = entities.amount;
         }
         if (isNaN(amount) || amount < 1) {
-          return { valid: false, errorMessage: 'Please enter a valid amount.' };
+          return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'payment.invalid_amount') };
         }
         const meta = (ctx.business?.metadata || {}) as Record<string, unknown>;
         const maxPaymentAmount = (meta.max_payment_amount as number) || 10_000_000;
@@ -205,7 +206,7 @@ export const paymentFlow: FlowDefinition = {
         const d = ctx.session.session_data;
         const isGiving = d.active_capability === 'giving';
         const cc = (ctx.business?.country_code || 'NG') as CountryCode;
-        const summaryTitle = isGiving ? 'Giving Summary' : 'Payment Summary';
+        const summaryTitle = isGiving ? getFlowCopy(ctx.copyLang, 'payment.giving_summary') : getFlowCopy(ctx.copyLang, 'payment.payment_summary');
 
         const amount = d.amount as number;
         const meta = (ctx.business?.metadata || {}) as Record<string, unknown>;
@@ -228,8 +229,8 @@ export const paymentFlow: FlowDefinition = {
           type: 'buttons',
           body: summaryLines.join('\n'),
           buttons: [
-            { id: 'confirm', title: requireTerms ? 'I Accept & Confirm' : 'Confirm ✓' },
-            { id: 'go_back', title: 'Cancel' },
+            { id: 'confirm', title: requireTerms ? getFlowCopy(ctx.copyLang, 'payment.accept_confirm') : getFlowCopy(ctx.copyLang, 'booking.confirm_btn') },
+            { id: 'go_back', title: getFlowCopy(ctx.copyLang, 'nav.cancel') },
           ],
         }];
       },
@@ -242,11 +243,11 @@ export const paymentFlow: FlowDefinition = {
           // T&C accepted via consolidated confirm button
           return { valid: true, data: { _action: 'confirm', _terms_accepted: true } };
         }
-        return { valid: false, errorMessage: 'Please tap *Confirm* or *Cancel*.' };
+        return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'booking.confirm_hint') };
       },
       async next(ctx: FlowContext) {
         if (ctx.session.session_data._action === 'cancel') {
-          await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('Payment cancelled. No charges were made. Send *Hi* to start over.') });
+          await ctx.sender.sendText({ to: ctx.from, text: getFlowCopy(ctx.copyLang, 'payment.cancelled') });
           return null;
         }
         return 'collect_name';
@@ -256,13 +257,13 @@ export const paymentFlow: FlowDefinition = {
     // ── Collect Name ──
     {
       id: 'collect_name',
-      async prompt(): Promise<PromptMessage[]> {
-        return [{ type: 'text', text: 'Please type your *full name*:' }];
+      async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
+        return [{ type: 'text', text: getFlowCopy(ctx.copyLang, 'payment.enter_name') }];
       },
-      async validate(input: string): Promise<ValidationResult> {
+      async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
         const parts = input.trim().split(/\s+/);
         if (!parts[0] || parts[0].length < 2) {
-          return { valid: false, errorMessage: 'Please enter a valid name.' };
+          return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'payment.invalid_name') };
         }
         return { valid: true, data: { first_name: parts[0], last_name: parts.slice(1).join(' ') || '' } };
       },
@@ -326,7 +327,7 @@ export const paymentFlow: FlowDefinition = {
         }
 
         if (!userId) {
-          return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start over.' }];
+          return [{ type: 'text', text: getFlowCopy(ctx.copyLang, 'error.generic') }];
         }
 
         // CAP-001 Point C: Verify CURRENT capability before CREATE_NEW payment/giving
@@ -387,10 +388,10 @@ export const paymentFlow: FlowDefinition = {
             if (existingBooking) {
               resolvedBooking = existingBooking;
             } else {
-              return [{ type: 'text' as const, text: "Something went wrong. Send *Hi* to start over." }];
+              return [{ type: 'text' as const, text: getFlowCopy(ctx.copyLang, 'error.generic') }];
             }
           } else if (error || !booking) {
-            return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start over.' }];
+            return [{ type: 'text', text: getFlowCopy(ctx.copyLang, 'error.generic') }];
           }
 
           bookingId = resolvedBooking!.id;
@@ -460,24 +461,24 @@ export const paymentFlow: FlowDefinition = {
 
             // Dual-option payment — consolidated into 1 message
             const paymentLines = [
-              `💳 *Payment Options*`,
+              getFlowCopy(ctx.copyLang, 'payment.options_title'),
               '',
               `${getCategoryLabels(ctx.business?.category || 'church').confirmationEmoji} ${ctx.business?.name}`,
               `📌 ${d.service_name as string}`,
               `💰 ${formatCurrency(amount, cc)}`,
               `🔑 Ref: *${referenceCode!}*`,
               '',
-              `*Option 1 — Pay Online* 👇`,
+              getFlowCopy(ctx.copyLang, 'payment.pay_online'),
               paymentResult.url,
               '',
-              `*Option 2 — Bank Transfer* 🏦`,
+              getFlowCopy(ctx.copyLang, 'payment.bank_transfer_title'),
               formatBankTransferBlock(bankAccount, formatCurrency(amount, cc), transferRef),
             ];
 
             return safeButtons(paymentLines.join('\n'), [
-              { id: d.payment_reference ? `i_paid_ref:${d.payment_reference}` : 'i_paid_online', title: "I've Paid Online" },
-              { id: 'sent_transfer', title: "I've Sent Transfer" },
-              { id: 'go_back', title: 'Cancel' },
+              { id: d.payment_reference ? `i_paid_ref:${d.payment_reference}` : 'i_paid_online', title: getFlowCopy(ctx.copyLang, 'payment.ive_paid_online') },
+              { id: 'sent_transfer', title: getFlowCopy(ctx.copyLang, 'payment.ive_sent_transfer') },
+              { id: 'go_back', title: getFlowCopy(ctx.copyLang, 'nav.cancel') },
             ]);
           }
 
@@ -488,27 +489,27 @@ export const paymentFlow: FlowDefinition = {
             .eq('id', ctx.session.id);
 
           const paymentLines = [
-            `💳 *Payment Link*`,
+            getFlowCopy(ctx.copyLang, 'payment.link_title'),
             '',
             `${getCategoryLabels(ctx.business?.category || 'church').confirmationEmoji} ${ctx.business?.name}`,
             `📌 ${d.service_name as string}`,
             `💰 ${formatCurrency(amount, cc)}`,
             `🔑 Ref: *${referenceCode!}*`,
             '',
-            `Pay here 👇`,
+            getFlowCopy(ctx.copyLang, 'payment.pay_here'),
             paymentResult.url,
           ];
 
           if (cc === 'NG' || cc === 'GH') {
-            paymentLines.push('', '💡 _Card, bank transfer, or USSD accepted._');
+            paymentLines.push('', getFlowCopy(ctx.copyLang, 'payment.card_hint'));
           }
 
-          paymentLines.push('', '⚠️ Confirmation arrives automatically after payment.');
+          paymentLines.push('', getFlowCopy(ctx.copyLang, 'payment.auto_confirm'));
 
           // Blocker 6: Safe interactive body — falls back to text+buttons if >1024 chars
           return safeButtons(paymentLines.join('\n'), [
-            { id: d.payment_reference ? `i_paid_ref:${d.payment_reference}` : 'i_paid', title: "I've Paid" },
-            { id: 'go_back', title: 'Cancel' },
+            { id: d.payment_reference ? `i_paid_ref:${d.payment_reference}` : 'i_paid', title: getFlowCopy(ctx.copyLang, 'payment.ive_paid') },
+            { id: 'go_back', title: getFlowCopy(ctx.copyLang, 'nav.cancel') },
           ]);
         }
 
@@ -533,14 +534,14 @@ export const paymentFlow: FlowDefinition = {
             .eq('id', ctx.session.id);
 
           const paymentLines = [
-            `🏦 *Bank Transfer Payment*`,
+            getFlowCopy(ctx.copyLang, 'payment.bank_transfer_header'),
             '',
             `${getCategoryLabels(ctx.business?.category || 'church').confirmationEmoji} ${ctx.business?.name}`,
             `📌 ${d.service_name as string}`,
             `💰 ${formatCurrency(amount, cc)}`,
             `🔑 Ref: *${referenceCode!}*`,
             '',
-            `Transfer to:`,
+            getFlowCopy(ctx.copyLang, 'payment.transfer_to'),
             formatBankTransferBlock(bankAccount, formatCurrency(amount, cc), transferRef),
           ];
 
@@ -551,7 +552,7 @@ export const paymentFlow: FlowDefinition = {
             },
             {
               type: 'buttons',
-              body: 'Tap below after transferring:',
+              body: getFlowCopy(ctx.copyLang, 'payment.tap_after_transfer'),
               buttons: [...BANK_ONLY_BUTTONS],
             },
           ];
@@ -564,7 +565,7 @@ export const paymentFlow: FlowDefinition = {
         if (amount < minAmount) {
           return [{ type: 'text', text: `The minimum payment amount is ${formatCurrency(minAmount, cc2)}. Please send *Hi* to try again with a higher amount.` }];
         }
-        return [{ type: 'text', text: "We couldn't set up your payment right now. Please send *Hi* to try again." }];
+        return [{ type: 'text', text: getFlowCopy(ctx.copyLang, 'payment.setup_failed') }];
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
         if (input === 'accept_terms') {
@@ -633,7 +634,7 @@ export const paymentFlow: FlowDefinition = {
                   .eq('reference_code', d.bank_transfer_reference as string)
                   .eq('status', 'pending');
               }
-              await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('Payment cancelled. No charges were made. Send *Hi* to start over.') });
+              await ctx.sender.sendText({ to: ctx.from, text: getFlowCopy(ctx.copyLang, 'payment.cancelled') });
               return null;
             }
             // Zero rows affected — re-read authoritative durable state
@@ -649,7 +650,7 @@ export const paymentFlow: FlowDefinition = {
             }
             if (bk.status === 'cancelled') {
               // Already cancelled — idempotent, safe to claim
-              await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('Payment cancelled. No charges were made. Send *Hi* to start over.') });
+              await ctx.sender.sendText({ to: ctx.from, text: getFlowCopy(ctx.copyLang, 'payment.cancelled') });
               return null;
             }
             // Unexpected state — fail closed
@@ -687,24 +688,24 @@ export const paymentFlow: FlowDefinition = {
         if (d.bank_transfer_offered) {
           return [{
             type: 'buttons',
-            body: "Complete your payment using the link or bank transfer above.\n\nTap below after paying:",
+            body: getFlowCopy(ctx.copyLang, 'payment.complete_payment'),
             buttons: [
-              { id: pRef ? `i_paid_ref:${pRef}` : 'i_paid_online', title: "I've Paid Online" },
-              { id: 'sent_transfer', title: "I've Sent Transfer" },
-              { id: 'go_back', title: 'Cancel' },
+              { id: pRef ? `i_paid_ref:${pRef}` : 'i_paid_online', title: getFlowCopy(ctx.copyLang, 'payment.ive_paid_online') },
+              { id: 'sent_transfer', title: getFlowCopy(ctx.copyLang, 'payment.ive_sent_transfer') },
+              { id: 'go_back', title: getFlowCopy(ctx.copyLang, 'nav.cancel') },
             ],
           }];
         }
         const buttons: Array<{ id: string; title: string }> = [
-          { id: pRef ? `i_paid_ref:${pRef}` : 'i_paid', title: "I've Paid" },
+          { id: pRef ? `i_paid_ref:${pRef}` : 'i_paid', title: getFlowCopy(ctx.copyLang, 'payment.ive_paid') },
         ];
         if (!d._payment_retry_blocked) {
-          buttons.push({ id: 'retry_payment', title: 'Get New Link' });
+          buttons.push({ id: 'retry_payment', title: getFlowCopy(ctx.copyLang, 'payment.get_new_link') });
         }
-        buttons.push({ id: 'go_back', title: 'Cancel' });
+        buttons.push({ id: 'go_back', title: getFlowCopy(ctx.copyLang, 'nav.cancel') });
         return [{
           type: 'buttons',
-          body: "Complete your payment using the link above.\n\nYour confirmation will arrive automatically after payment. If it doesn't, tap below:",
+          body: getFlowCopy(ctx.copyLang, 'payment.confirm_payment_link'),
           buttons,
         }];
       },
@@ -722,7 +723,7 @@ export const paymentFlow: FlowDefinition = {
           const ref = ctx.session.session_data.payment_reference as string;
           if (!ref) {
             // No payment reference — cannot establish provider truth. Fail closed.
-            return { valid: false, errorMessage: "If you've already paid, tap *I've Paid*. Otherwise, type *Hi* to start a new payment." };
+            return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'payment.already_paid_hint') };
           }
           // Canonical recovery gate: only definitive not_paid authorizes a replacement checkout.
           const { verifyAndReconcilePayment } = await import('@/lib/payments/bot-recovery');
@@ -737,7 +738,7 @@ export const paymentFlow: FlowDefinition = {
           }
           // provider_error, not_verified, processing, retryable — block fresh checkout
           ctx.session.session_data._payment_retry_blocked = true;
-          return { valid: false, persistSessionDataOnFailure: true, errorMessage: "We're still verifying your previous payment. Tap *I've Paid* to check again." };
+          return { valid: false, persistSessionDataOnFailure: true, errorMessage: getFlowCopy(ctx.copyLang, 'payment.still_verifying') };
         }
         const text = input.toLowerCase();
         const d = ctx.session.session_data;
@@ -757,7 +758,7 @@ export const paymentFlow: FlowDefinition = {
             if (cancelErr) {
               // DB error — fail closed, do not claim cancellation succeeded
               logger.withContext({ op: 'payment.cancel', ...safeLogErrorContext(cancelErr) }).error('[PAYMENT] Cancel DB error');
-              return { valid: false, errorMessage: 'Something went wrong. Please try again.' };
+              return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'error.generic_retry') };
             }
 
             if (!cancelResult?.length) {
@@ -767,7 +768,7 @@ export const paymentFlow: FlowDefinition = {
               if (readErr || !bk) {
                 // Re-read failed — fail closed
                 logger.withContext({ op: 'payment.cancel-reread', ...safeLogErrorContext(readErr) }).error('[PAYMENT] Cancel re-read error');
-                return { valid: false, errorMessage: 'Something went wrong. Please try again.' };
+                return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'error.generic_retry') };
               }
               if (bk.deposit_status === 'paid' || bk.status === 'confirmed') {
                 // #389 B1: Stage-3 owns customer confirmation — suppress flow-level sendText
@@ -778,7 +779,7 @@ export const paymentFlow: FlowDefinition = {
               } else {
                 // Unknown non-pending state — fail closed, do not claim cancellation or cancel transfers
                 logger.warn('[PAYMENT] Cancel: booking in unexpected non-pending state', bk.status);
-                return { valid: false, errorMessage: 'Something went wrong. Please try again.' };
+                return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'error.generic_retry') };
               }
             }
 
@@ -865,7 +866,7 @@ export const paymentFlow: FlowDefinition = {
         // ── "I've Sent Transfer" button ──
         if (text === 'sent_transfer' || text === "i've sent transfer" || text === 'i_sent_transfer') {
           if (!d.bank_transfer_reference) {
-            return { valid: false, errorMessage: 'No bank transfer reference found. Please use the online payment link instead.' };
+            return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'payment.no_bank_ref') };
           }
           d._awaiting_transfer_proof = true;
           await ctx.supabase
@@ -955,24 +956,24 @@ export const paymentFlow: FlowDefinition = {
           if (recovery.outcome === 'not_paid') {
             // Provider definitively confirms unpaid — safe to offer new checkout link.
             d._payment_retry_blocked = undefined;
-            return { valid: false, persistSessionDataOnFailure: true, errorMessage: "Payment not yet received. The link may have expired — tap *Get New Link* for a fresh one." };
+            return { valid: false, persistSessionDataOnFailure: true, errorMessage: getFlowCopy(ctx.copyLang, 'payment.not_received') };
           }
 
           if (recovery.outcome === 'provider_error') {
             // Indeterminate — do not encourage a new checkout.
             d._payment_retry_blocked = true;
-            return { valid: false, persistSessionDataOnFailure: true, errorMessage: "We couldn't verify your payment right now. If you've already paid, tap *I've Paid* again in a moment." };
+            return { valid: false, persistSessionDataOnFailure: true, errorMessage: getFlowCopy(ctx.copyLang, 'payment.verify_failed') };
           }
 
           // not_verified (config/lookup/rejected) — neutral, do not imply unpaid
           d._payment_retry_blocked = true;
-          return { valid: false, persistSessionDataOnFailure: true, errorMessage: 'Something went wrong. Please try again.' };
+          return { valid: false, persistSessionDataOnFailure: true, errorMessage: getFlowCopy(ctx.copyLang, 'error.generic_retry') };
         }
 
         if (d.bank_transfer_offered) {
-          return { valid: false, errorMessage: "Tap *I've Paid Online*, *I've Sent Transfer*, or *Cancel*." };
+          return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'payment.select_option') };
         }
-        return { valid: false, errorMessage: "Tap *I've Paid* or *Cancel*." };
+        return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'payment.ive_paid_hint') };
       },
       async next(ctx: FlowContext) {
         if (ctx.session.session_data._action === 'cancel') return null;
@@ -1043,12 +1044,12 @@ export const paymentFlow: FlowDefinition = {
           type: 'list',
           title: 'Set up recurring?',
           body: `Would you like to set up automatic *${d.service_name as string}* payments of *${formatCurrency(d.amount as number, cc)}*?`,
-          buttonLabel: 'Choose Frequency',
+          buttonLabel: getFlowCopy(ctx.copyLang, 'recurring.choose_frequency'),
           items: [
-            { title: 'Weekly', description: 'Charge every week', postbackText: 'weekly' },
-            { title: 'Monthly', description: 'Charge every month', postbackText: 'monthly' },
-            { title: 'Yearly', description: 'Charge once a year', postbackText: 'yearly' },
-            { title: 'No thanks', description: 'Skip recurring setup', postbackText: 'no_thanks' },
+            { title: getFlowCopy(ctx.copyLang, 'recurring.weekly'), description: 'Charge every week', postbackText: 'weekly' },
+            { title: getFlowCopy(ctx.copyLang, 'recurring.monthly'), description: 'Charge every month', postbackText: 'monthly' },
+            { title: getFlowCopy(ctx.copyLang, 'recurring.yearly'), description: 'Charge once a year', postbackText: 'yearly' },
+            { title: getFlowCopy(ctx.copyLang, 'recurring.no_thanks_skip'), description: 'Skip recurring setup', postbackText: 'no_thanks' },
           ],
         }];
       },
@@ -1092,8 +1093,8 @@ export const paymentFlow: FlowDefinition = {
             `You can cancel anytime by typing *subscriptions*.`,
           ].join('\n'),
           buttons: [
-            { id: 'i_accept', title: 'I Accept' },
-            { id: 'decline', title: 'Decline' },
+            { id: 'i_accept', title: getFlowCopy(ctx.copyLang, 'recurring.i_accept') },
+            { id: 'decline', title: getFlowCopy(ctx.copyLang, 'recurring.decline') },
           ],
         }];
       },

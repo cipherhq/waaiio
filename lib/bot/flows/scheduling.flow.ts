@@ -1,4 +1,5 @@
 import type { FlowDefinition, FlowContext, PromptMessage, ValidationResult } from './types';
+import { getFlowCopy, fillFlowCopy } from './flow-localization';
 import { BOOKING_DEFAULTS, generateTimeSlots, formatCurrency, getLocale, getMaxQuantity, getCurrencyCode, getStaffDaySchedule, isStaffAvailable, type CountryCode } from '@/lib/constants';
 import { getCategoryLabels } from '@/lib/categoryConfig';
 import { logger } from '@/lib/logger';
@@ -42,47 +43,47 @@ function formatTime(time: string, use12hr: boolean): string {
 import type { BusinessCategoryKey } from '@/lib/constants';
 
 /** Category-aware date prompt */
-function getDatePrompt(category: string): string {
+function getDatePrompt(category: string, lang?: string): string {
   switch (category) {
     case 'event_services':
     case 'photographer':
     case 'catering':
-      return 'When is your event?';
+      return getFlowCopy(lang, 'booking.date_event');
     case 'restaurant':
-      return 'When would you like to dine?';
+      return getFlowCopy(lang, 'booking.date_dining');
     case 'hotel':
     case 'shortlet':
-      return 'When would you like to check in?';
+      return getFlowCopy(lang, 'booking.date_checkin');
     case 'laundry':
-      return 'When should we pick up?';
+      return getFlowCopy(lang, 'booking.date_pickup');
     case 'car_wash':
     case 'car_park':
-      return 'When would you like to come in?';
+      return getFlowCopy(lang, 'booking.date_come_in');
     case 'church':
     case 'mosque':
-      return 'When would you like your appointment?';
+      return getFlowCopy(lang, 'booking.date_appointment');
     default:
-      return 'When would you like to book?';
+      return getFlowCopy(lang, 'booking.date_default');
   }
 }
 
 /** Category-aware staff prompt */
-function getStaffPrompt(category: string): string {
+function getStaffPrompt(category: string, lang?: string): string {
   switch (category) {
     case 'barber':
     case 'salon':
     case 'spa':
     case 'tattoo':
-      return 'Who would you like to see?';
+      return getFlowCopy(lang, 'booking.staff_who');
     case 'clinic':
     case 'dental':
     case 'veterinary':
-      return 'Which doctor/specialist?';
+      return getFlowCopy(lang, 'booking.staff_doctor');
     case 'gym':
     case 'tutor':
-      return 'Which instructor?';
+      return getFlowCopy(lang, 'booking.staff_instructor');
     default:
-      return 'Which staff member do you prefer?';
+      return getFlowCopy(lang, 'booking.staff_prefer');
   }
 }
 
@@ -131,14 +132,14 @@ export const schedulingFlow: FlowDefinition = {
           .order('is_primary', { ascending: false });
 
         if (!locations || locations.length === 0) {
-          return [{ type: 'text', text: 'No locations are currently available. Please try again later or type *cancel* to exit.' }];
+          return [{ type: 'text', text: getFlowCopy(ctx.copyLang, 'booking.no_locations') }];
         }
 
         return [{
           type: 'list',
-          title: 'Locations',
-          body: 'Which location would you like to visit?',
-          buttonLabel: 'Choose Location',
+          title: getFlowCopy(ctx.copyLang, 'booking.locations_title'),
+          body: getFlowCopy(ctx.copyLang, 'booking.locations_body'),
+          buttonLabel: getFlowCopy(ctx.copyLang, 'booking.choose_location'),
           items: locations.map(l => ({
             title: truncTitle(l.name, 24),
             description: (l.address || '').slice(0, 72),
@@ -188,7 +189,7 @@ export const schedulingFlow: FlowDefinition = {
           }
         }
 
-        return { valid: false, errorMessage: 'I didn\'t find that location. Please tap one from the list, or type the location name.' };
+        return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'booking.location_not_found') };
       },
       async next() { return 'select_service'; },
     },
@@ -197,7 +198,7 @@ export const schedulingFlow: FlowDefinition = {
     {
       id: 'select_service',
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
-        if (!ctx.business) return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start over.' }];
+        if (!ctx.business) return [{ type: 'text', text: getFlowCopy(ctx.copyLang, 'error.generic') }];
 
         let query = ctx.supabase
           .from('services')
@@ -225,7 +226,7 @@ export const schedulingFlow: FlowDefinition = {
         const { data: services } = await query;
 
         if (!services || services.length === 0) {
-          return [{ type: 'text' as const, text: `This business hasn't added any services yet. Please check back later or type *cancel* to go back.` }];
+          return [{ type: 'text' as const, text: getFlowCopy(ctx.copyLang, 'booking.no_services') }];
         }
 
         if (services.length === 1) {
@@ -257,9 +258,9 @@ export const schedulingFlow: FlowDefinition = {
         const labels = getCategoryLabels(ctx.business.category);
         return [{
           type: 'list',
-          title: 'Select Service',
+          title: getFlowCopy(ctx.copyLang, 'booking.service_title'),
           body: `What would you like to ${labels.actionVerb.toLowerCase()}?`,
-          buttonLabel: 'Choose',
+          buttonLabel: getFlowCopy(ctx.copyLang, 'nav.choose'),
           items: services.map(s => {
             const cc = (ctx.business?.country_code || 'NG') as CountryCode;
             const sAny = s as Record<string, unknown>;
@@ -348,7 +349,7 @@ export const schedulingFlow: FlowDefinition = {
           }
         }
 
-        if (!matched) return { valid: false, errorMessage: 'I didn\'t find that service. Try typing the name (e.g. *haircut*) or tap an option from the list.' };
+        if (!matched) return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'booking.service_not_found') };
 
         return {
           valid: true,
@@ -513,16 +514,16 @@ export const schedulingFlow: FlowDefinition = {
 
         return [{
           type: 'list' as const,
-          title: 'Choose Session',
+          title: getFlowCopy(ctx.copyLang, 'booking.session_title'),
           body: `Pick a ${serviceName} session:`,
-          buttonLabel: 'Choose',
+          buttonLabel: getFlowCopy(ctx.copyLang, 'nav.choose'),
           items,
         }];
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
         const match = input.match(/^class_session_(.+)$/);
         if (!match) {
-          return { valid: false, errorMessage: 'Please tap one of the session options above.' };
+          return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'booking.session_not_found') };
         }
         const sessionId = match[1];
 
@@ -535,7 +536,7 @@ export const schedulingFlow: FlowDefinition = {
           .maybeSingle();
 
         if (!session) {
-          return { valid: false, errorMessage: 'This session is no longer available. Please choose another.' };
+          return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'booking.session_unavailable') };
         }
 
         // Check capacity using SUM(party_size), matching book_slot_atomic authority
@@ -547,7 +548,7 @@ export const schedulingFlow: FlowDefinition = {
 
         const occupied = (capacityRows || []).reduce((sum, r) => sum + (r.party_size || 1), 0);
         if (occupied >= session.capacity) {
-          return { valid: false, errorMessage: 'This session just filled up. Please choose another.' };
+          return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'booking.session_full') };
         }
 
         return {
@@ -676,16 +677,16 @@ export const schedulingFlow: FlowDefinition = {
         if (ctx.session.session_data._staff_unavailable) {
           return [{
             type: 'buttons' as const,
-            body: 'Sorry, no staff members are available for your selected date. Would you like to pick another date or cancel?',
+            body: getFlowCopy(ctx.copyLang, 'booking.no_staff'),
             buttons: [
-              { id: 'pick_another_date_staff', title: 'Pick Another Date' },
-              { id: 'cancel_staff', title: 'Cancel' },
+              { id: 'pick_another_date_staff', title: getFlowCopy(ctx.copyLang, 'booking.pick_another_date') },
+              { id: 'cancel_staff', title: getFlowCopy(ctx.copyLang, 'nav.cancel') },
             ],
           }];
         }
 
         const staff = ctx.session.session_data._available_staff as Array<{ id: string; name: string }>;
-        const promptBody = getStaffPrompt(ctx.business?.category || 'other');
+        const promptBody = getStaffPrompt(ctx.business?.category || 'other', ctx.copyLang);
 
         // Use a list message for 3+ staff members; buttons for 1-2
         if (staff.length >= 3) {
@@ -694,12 +695,12 @@ export const schedulingFlow: FlowDefinition = {
             description: '',
             postbackText: `staff_${s.id}`,
           }));
-          items.push({ title: 'Any available', description: '', postbackText: 'staff_any' });
+          items.push({ title: getFlowCopy(ctx.copyLang, 'booking.any_available'), description: '', postbackText: 'staff_any' });
           return [{
             type: 'list',
-            title: 'Select Staff',
+            title: getFlowCopy(ctx.copyLang, 'booking.staff_title'),
             body: promptBody,
-            buttonLabel: 'Choose',
+            buttonLabel: getFlowCopy(ctx.copyLang, 'nav.choose'),
             items,
           }];
         }
@@ -708,7 +709,7 @@ export const schedulingFlow: FlowDefinition = {
           id: `staff_${s.id}`,
           title: truncTitle(s.name),
         }));
-        buttons.push({ id: 'staff_any', title: 'Any available' });
+        buttons.push({ id: 'staff_any', title: getFlowCopy(ctx.copyLang, 'booking.any_available') });
 
         return [{
           type: 'buttons',
@@ -901,14 +902,14 @@ export const schedulingFlow: FlowDefinition = {
           if (caps.includes('waitlist')) {
             return [...messages, {
               type: 'buttons' as const,
-              body: 'Sorry, there are no available dates right now. Would you like to join the waitlist? We\'ll notify you when a spot opens up.',
+              body: getFlowCopy(ctx.copyLang, 'booking.no_dates_waitlist'),
               buttons: [
-                { id: 'wl_join', title: 'Join Waitlist' },
-                { id: 'wl_skip', title: 'No Thanks' },
+                { id: 'wl_join', title: getFlowCopy(ctx.copyLang, 'booking.join_waitlist') },
+                { id: 'wl_skip', title: getFlowCopy(ctx.copyLang, 'nav.no_thanks') },
               ],
             }];
           }
-          return [...messages, { type: 'text', text: 'Sorry, there are no available dates for this service right now. Please try again later or send *cancel* to exit.' }];
+          return [...messages, { type: 'text', text: getFlowCopy(ctx.copyLang, 'booking.no_dates') }];
         }
 
         // ── Quick date shortcuts: show "Tomorrow" / "This Saturday" / "Pick a Date" as buttons ──
@@ -934,15 +935,15 @@ export const schedulingFlow: FlowDefinition = {
             quickButtons.push({ id: `date_${tomorrowStr}`, title: `Tomorrow (${dayLabel})` });
           }
           if (satAvailable && satOpen && nextSatStr !== tomorrowStr) {
-            quickButtons.push({ id: `date_${nextSatStr}`, title: 'This Saturday' });
+            quickButtons.push({ id: `date_${nextSatStr}`, title: getFlowCopy(ctx.copyLang, 'booking.this_saturday') });
           }
 
           // Show quick buttons if we have at least 1 shortcut + "Pick a Date"
           if (quickButtons.length > 0) {
-            quickButtons.push({ id: 'pick_date', title: 'Pick a Date' });
+            quickButtons.push({ id: 'pick_date', title: getFlowCopy(ctx.copyLang, 'booking.pick_a_date') });
             messages.push({
               type: 'buttons' as const,
-              body: getDatePrompt(ctx.business?.category || 'other'),
+              body: getDatePrompt(ctx.business?.category || 'other', ctx.copyLang),
               buttons: quickButtons.slice(0, 3),
             });
             return messages;
@@ -957,9 +958,9 @@ export const schedulingFlow: FlowDefinition = {
 
         messages.push({
           type: 'list',
-          title: 'Select Date',
-          body: getDatePrompt(ctx.business?.category || 'other'),
-          buttonLabel: 'Choose Date',
+          title: getFlowCopy(ctx.copyLang, 'booking.select_date'),
+          body: getDatePrompt(ctx.business?.category || 'other', ctx.copyLang),
+          buttonLabel: getFlowCopy(ctx.copyLang, 'booking.choose_date'),
           items: dates,
         });
         return messages;
@@ -1220,8 +1221,8 @@ export const schedulingFlow: FlowDefinition = {
             type: 'buttons',
             body: `All time slots on ${dateLabel} are fully booked.`,
             buttons: [
-              { id: 'pick_another_date', title: 'Pick Another Date' },
-              { id: 'cancel_booking', title: 'Cancel' },
+              { id: 'pick_another_date', title: getFlowCopy(ctx.copyLang, 'booking.pick_another_date') },
+              { id: 'cancel_booking', title: getFlowCopy(ctx.copyLang, 'nav.cancel') },
             ],
           }];
         }
@@ -1238,13 +1239,13 @@ export const schedulingFlow: FlowDefinition = {
           postbackText: s.time, // always send 24hr format as postback value
         }));
         // Add "Change Date" navigation option at the end
-        items.push({ title: '← Change Date', description: 'Pick a different date', postbackText: 'change_date' });
+        items.push({ title: getFlowCopy(ctx.copyLang, 'booking.change_date'), description: 'Pick a different date', postbackText: 'change_date' });
 
         return [{
           type: 'list',
-          title: 'Select Time',
+          title: getFlowCopy(ctx.copyLang, 'booking.select_time'),
           body: `Pick a${prefLabel} time on ${dateLabel}:`,
-          buttonLabel: 'Choose Time',
+          buttonLabel: getFlowCopy(ctx.copyLang, 'booking.choose_time'),
           items,
         }];
       },
@@ -1316,7 +1317,7 @@ export const schedulingFlow: FlowDefinition = {
 
         const { count } = await checkQuery;
         if ((count || 0) >= maxCapacity) {
-          return { valid: false, errorMessage: 'Sorry, this time slot just got booked. Please choose another time.' };
+          return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'booking.time_taken') };
         }
 
         ctx.intelligence.resetAbuse(ctx.from);
@@ -1370,12 +1371,12 @@ export const schedulingFlow: FlowDefinition = {
           detail: formatCurrency(a.price, cc),
           postbackText: a.id,
         }));
-        items.push({ title: 'No add-ons', postbackText: 'skip_addons' });
+        items.push({ title: getFlowCopy(ctx.copyLang, 'booking.no_addons'), postbackText: 'skip_addons' });
         return [{
           type: 'list',
-          title: 'Add-ons',
-          body: 'Would you like to add any extras?',
-          buttonLabel: 'View Add-ons',
+          title: getFlowCopy(ctx.copyLang, 'booking.addons_title'),
+          body: getFlowCopy(ctx.copyLang, 'booking.addons_body'),
+          buttonLabel: getFlowCopy(ctx.copyLang, 'booking.view_addons'),
           items,
         }];
       },
@@ -1383,7 +1384,7 @@ export const schedulingFlow: FlowDefinition = {
         if (input === 'skip_addons') return { valid: true };
         const addons = ctx.session.session_data._available_addons as Array<{ id: string; name: string; price: number }>;
         const found = addons?.find(a => a.id === input);
-        if (!found) return { valid: false, errorMessage: 'Please select an add-on or tap *No add-ons*.' };
+        if (!found) return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'booking.addon_hint') };
         const existing = (ctx.session.session_data._selected_addons as Array<{ id: string; name: string; price: number }>) || [];
         if (!existing.find(a => a.id === found.id)) {
           ctx.session.session_data._selected_addons = [...existing, { id: found.id, name: found.name, price: found.price }];
@@ -1422,13 +1423,13 @@ export const schedulingFlow: FlowDefinition = {
         });
         return !hasApplicablePromo;
       },
-      async prompt(): Promise<PromptMessage[]> {
+      async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
         return [{
           type: 'buttons',
-          body: 'Do you have a promo code?',
+          body: getFlowCopy(ctx.copyLang, 'booking.promo_ask'),
           buttons: [
-            { id: 'promo_yes', title: 'Yes, enter code' },
-            { id: 'promo_no', title: 'No' },
+            { id: 'promo_yes', title: getFlowCopy(ctx.copyLang, 'booking.promo_yes') },
+            { id: 'promo_no', title: getFlowCopy(ctx.copyLang, 'booking.promo_no') },
           ],
         }];
       },
@@ -1441,7 +1442,7 @@ export const schedulingFlow: FlowDefinition = {
         }
         // User typed a code directly
         const code = input.toUpperCase().trim();
-        if (code.length < 3) return { valid: false, errorMessage: 'Please enter a valid promo code (min 3 characters).' };
+        if (code.length < 3) return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'booking.promo_short') };
 
         const { data: promo } = await ctx.supabase
           .from('promo_codes')
@@ -1451,9 +1452,9 @@ export const schedulingFlow: FlowDefinition = {
           .eq('is_active', true)
           .maybeSingle();
 
-        if (!promo) return { valid: false, errorMessage: 'Invalid promo code. Check the spelling and try again, or type *skip*.' };
-        if (promo.max_uses && promo.current_uses >= promo.max_uses) return { valid: false, errorMessage: 'This promo code has reached its usage limit.' };
-        if (promo.valid_until && new Date(promo.valid_until) < new Date()) return { valid: false, errorMessage: 'This promo code has expired.' };
+        if (!promo) return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'booking.promo_invalid') };
+        if (promo.max_uses && promo.current_uses >= promo.max_uses) return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'booking.promo_limit') };
+        if (promo.valid_until && new Date(promo.valid_until) < new Date()) return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'booking.promo_expired') };
 
         // Check if this customer already used this promo code
         const promoPhone = ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`;
@@ -1465,7 +1466,7 @@ export const schedulingFlow: FlowDefinition = {
           .not('status', 'eq', 'cancelled')
           .eq('promo_code_id', promo.id);
         if ((priorPromoUses || 0) > 0) {
-          return { valid: false, errorMessage: 'You have already used this promo code.' };
+          return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'booking.promo_used') };
         }
 
         const servicePrice = (ctx.session.session_data.service_price as number) || 0;
@@ -1494,12 +1495,12 @@ export const schedulingFlow: FlowDefinition = {
     // ── Enter Promo Code (text input) ──
     {
       id: 'enter_promo_code',
-      async prompt(): Promise<PromptMessage[]> {
-        return [{ type: 'text', text: 'Please type your promo code:' }];
+      async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
+        return [{ type: 'text', text: getFlowCopy(ctx.copyLang, 'booking.promo_enter') }];
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
         const code = input.toUpperCase().trim();
-        if (code.length < 3) return { valid: false, errorMessage: 'Please enter a valid promo code.' };
+        if (code.length < 3) return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'booking.promo_short') };
 
         const { data: promo } = await ctx.supabase
           .from('promo_codes')
@@ -1509,9 +1510,9 @@ export const schedulingFlow: FlowDefinition = {
           .eq('is_active', true)
           .maybeSingle();
 
-        if (!promo) return { valid: false, errorMessage: 'Invalid promo code. Try again or type *skip*.' };
-        if (promo.max_uses && promo.current_uses >= promo.max_uses) return { valid: false, errorMessage: 'This promo code has reached its usage limit.' };
-        if (promo.valid_until && new Date(promo.valid_until) < new Date()) return { valid: false, errorMessage: 'This promo code has expired.' };
+        if (!promo) return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'booking.promo_invalid') };
+        if (promo.max_uses && promo.current_uses >= promo.max_uses) return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'booking.promo_limit') };
+        if (promo.valid_until && new Date(promo.valid_until) < new Date()) return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'booking.promo_expired') };
 
         // Check if this customer already used this promo code
         const promoPhone2 = ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`;
@@ -1523,7 +1524,7 @@ export const schedulingFlow: FlowDefinition = {
           .not('status', 'eq', 'cancelled')
           .eq('promo_code_id', promo.id);
         if ((priorPromoUses2 || 0) > 0) {
-          return { valid: false, errorMessage: 'You have already used this promo code.' };
+          return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'booking.promo_used') };
         }
 
         const servicePrice = (ctx.session.session_data.service_price as number) || 0;
@@ -1702,7 +1703,7 @@ export const schedulingFlow: FlowDefinition = {
         return [{
           type: 'buttons',
           body: `Please enter the names of all ${partySize} ${labels.quantityLabel}, separated by commas.\n\nExample: John, Mary, Sarah`,
-          buttons: [{ id: 'skip', title: 'Skip Names' }],
+          buttons: [{ id: 'skip', title: getFlowCopy(ctx.copyLang, 'booking.skip_names') }],
         }];
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
@@ -1739,7 +1740,7 @@ export const schedulingFlow: FlowDefinition = {
         names = names.filter(n => n.length > 0);
 
         if (names.length === 0) {
-          return { valid: false, errorMessage: 'Please enter the guest names, separated by commas: "John, Mary, Sarah"' };
+          return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'booking.guest_names_hint') };
         }
 
         // Accept whatever count the user provides — don't block on mismatch
@@ -1760,7 +1761,7 @@ export const schedulingFlow: FlowDefinition = {
           // Business has configured their own options — show as buttons
           return [{
             type: 'buttons',
-            body: 'Any special requests?',
+            body: getFlowCopy(ctx.copyLang, 'booking.special_requests'),
             buttons: [
               { id: 'req_none', title: "No, I'm good" },
               ...customOptions.slice(0, 2).map(o => ({ id: `req_${o.id}`, title: truncTitle(o.title) })),
@@ -1771,7 +1772,7 @@ export const schedulingFlow: FlowDefinition = {
         // No custom options — just ask as free text
         return [{
           type: 'buttons',
-          body: 'Any special requests or notes for your booking?',
+          body: getFlowCopy(ctx.copyLang, 'booking.special_requests_long'),
           buttons: [
             { id: 'req_none', title: "No, I'm good" },
           ],
@@ -1888,9 +1889,9 @@ export const schedulingFlow: FlowDefinition = {
         const cc = (ctx.business?.country_code || 'NG') as CountryCode;
         return [{
           type: 'list',
-          title: 'Pickup or Drop-off',
-          body: 'How would you like to get your item to us?',
-          buttonLabel: 'Choose Option',
+          title: getFlowCopy(ctx.copyLang, 'booking.delivery_title'),
+          body: getFlowCopy(ctx.copyLang, 'booking.delivery_body'),
+          buttonLabel: getFlowCopy(ctx.copyLang, 'booking.delivery_choose'),
           items: zones.map(z => ({
             title: truncTitle(z.name, 24),
             description: z.price > 0 ? `${formatCurrency(z.price, cc)} pickup fee` : 'Free',
@@ -1906,7 +1907,7 @@ export const schedulingFlow: FlowDefinition = {
           .eq('business_id', ctx.business!.id)
           .maybeSingle();
 
-        if (!zone) return { valid: false, errorMessage: 'Please select an option.' };
+        if (!zone) return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'booking.delivery_select_hint') };
 
         return {
           valid: true,
@@ -1935,11 +1936,11 @@ export const schedulingFlow: FlowDefinition = {
         const meta = (svc?.metadata || {}) as Record<string, unknown>;
         return !meta.collect_venue;
       },
-      async prompt(): Promise<PromptMessage[]> {
-        return [{ type: 'text', text: '📍 What is your address?\n\nPlease type the *full address*:' }];
+      async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
+        return [{ type: 'text', text: getFlowCopy(ctx.copyLang, 'booking.address_prompt') }];
       },
-      async validate(input: string): Promise<ValidationResult> {
-        if (input.trim().length < 5) return { valid: false, errorMessage: 'Please enter a valid address (at least 5 characters).' };
+      async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
+        if (input.trim().length < 5) return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'booking.invalid_address') };
         return { valid: true, data: { venue_address: input.trim() } };
       },
       async next() { return 'select_end_date'; },
@@ -1970,21 +1971,21 @@ export const schedulingFlow: FlowDefinition = {
           const label = d.toLocaleDateString(locale, { weekday: 'short', day: 'numeric', month: 'short' });
           dates.push({ title: label, postbackText: d.toISOString().split('T')[0] });
         }
-        dates.push({ title: 'Single day only', postbackText: 'single_day' });
+        dates.push({ title: getFlowCopy(ctx.copyLang, 'booking.single_day_only'), postbackText: 'single_day' });
         return [{
           type: 'list',
-          title: 'End Date',
-          body: 'When does the booking end?',
-          buttonLabel: 'Choose End Date',
+          title: getFlowCopy(ctx.copyLang, 'booking.end_date_title'),
+          body: getFlowCopy(ctx.copyLang, 'booking.end_date_body'),
+          buttonLabel: getFlowCopy(ctx.copyLang, 'booking.choose_end_date'),
           items: dates,
         }];
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
         if (input === 'single_day') return { valid: true };
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(input)) return { valid: false, errorMessage: 'Please select an end date.' };
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(input)) return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'booking.end_date_invalid') };
         const startDate = new Date((ctx.session.session_data.date as string) + 'T00:00');
         const endDate = new Date(input + 'T00:00');
-        if (endDate <= startDate) return { valid: false, errorMessage: 'End date must be after start date.' };
+        if (endDate <= startDate) return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'booking.end_date_before_start') };
         return { valid: true, data: { end_date: input } };
       },
       async next() { return 'book_for_other'; },
@@ -1993,17 +1994,17 @@ export const schedulingFlow: FlowDefinition = {
     // ── Book For Other ──
     {
       id: 'book_for_other',
-      async prompt(): Promise<PromptMessage[]> {
+      async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
         return [{
           type: 'buttons',
-          body: 'Who is this booking for?',
+          body: getFlowCopy(ctx.copyLang, 'booking.book_for_who'),
           buttons: [
-            { id: 'for_myself', title: 'Myself' },
-            { id: 'for_other', title: 'Someone else' },
+            { id: 'for_myself', title: getFlowCopy(ctx.copyLang, 'booking.myself') },
+            { id: 'for_other', title: getFlowCopy(ctx.copyLang, 'booking.someone_else') },
           ],
         }];
       },
-      async validate(input: string): Promise<ValidationResult> {
+      async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
         const lower = input.toLowerCase().trim();
         if (lower === 'for_myself' || lower === 'myself' || lower === 'me') {
           return { valid: true, data: { book_for_other: false } };
@@ -2011,7 +2012,7 @@ export const schedulingFlow: FlowDefinition = {
         if (lower === 'for_other' || lower === 'someone else' || lower === 'other') {
           return { valid: true, data: { book_for_other: true } };
         }
-        return { valid: false, errorMessage: 'Type *myself* or *someone else*, or tap a button.' };
+        return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'booking.book_for_hint') };
       },
       async next(ctx: FlowContext) {
         return ctx.session.session_data.book_for_other ? 'collect_other_name' : 'confirmation';
@@ -2130,10 +2131,10 @@ export const schedulingFlow: FlowDefinition = {
         return [
           {
             type: 'buttons',
-            body: lines.join('\n') + '\n\nConfirm this booking?',
+            body: lines.join('\n') + '\n\n' + getFlowCopy(ctx.copyLang, 'booking.confirm_question'),
             buttons: [
-              { id: 'confirm', title: 'Confirm ✓' },
-              { id: 'go_back', title: 'Cancel' },
+              { id: 'confirm', title: getFlowCopy(ctx.copyLang, 'booking.confirm_btn') },
+              { id: 'go_back', title: getFlowCopy(ctx.copyLang, 'nav.cancel') },
             ],
           },
         ];
@@ -2146,7 +2147,7 @@ export const schedulingFlow: FlowDefinition = {
         if (response === 'confirm' || response === 'yes') {
           return { valid: true, data: { _action: 'confirm' } };
         }
-        return { valid: false, errorMessage: 'Please tap *Confirm* or *Cancel*.' };
+        return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'booking.confirm_hint') };
       },
       async next(ctx: FlowContext) {
         if (ctx.session.session_data._action === 'cancel') return 'select_capability';
@@ -2157,13 +2158,13 @@ export const schedulingFlow: FlowDefinition = {
     // ── Collect Name ──
     {
       id: 'collect_name',
-      async prompt(): Promise<PromptMessage[]> {
-        return [{ type: 'text', text: 'To complete your booking, I need your name.\n\nPlease type your *full name* (e.g. Ade Johnson):' }];
+      async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
+        return [{ type: 'text', text: getFlowCopy(ctx.copyLang, 'booking.collect_name') }];
       },
-      async validate(input: string): Promise<ValidationResult> {
+      async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
         const parts = input.trim().split(/\s+/);
         if (!parts[0] || parts[0].length < 2) {
-          return { valid: false, errorMessage: 'Please enter a valid name (first and last name):' };
+          return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'booking.invalid_name') };
         }
         return {
           valid: true,
@@ -2189,20 +2190,20 @@ export const schedulingFlow: FlowDefinition = {
     // ── Ask Referral Code (skipIf checks referral capability below) ──
     {
       id: 'ask_referral_code',
-      async prompt(): Promise<PromptMessage[]> {
+      async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
         return [{
           type: 'buttons',
-          body: '🎁 Got a referral code from a friend?',
+          body: getFlowCopy(ctx.copyLang, 'booking.referral_ask'),
           buttons: [
-            { id: 'enter_code', title: 'Enter Code' },
-            { id: 'skip', title: 'Skip' },
+            { id: 'enter_code', title: getFlowCopy(ctx.copyLang, 'booking.enter_code') },
+            { id: 'skip', title: getFlowCopy(ctx.copyLang, 'booking.skip') },
           ],
         }];
       },
-      async validate(input: string): Promise<ValidationResult> {
+      async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
         if (input === 'enter_code') return { valid: true, data: { _referral_action: 'enter' } };
         if (input === 'skip' || input.toLowerCase() === 'skip') return { valid: true, data: { _referral_action: 'skip' } };
-        return { valid: false, errorMessage: 'Tap one of the buttons above to continue.' };
+        return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'error.tap_option') };
       },
       async next(ctx: FlowContext) {
         if (ctx.session.session_data._referral_action === 'enter') return 'enter_referral_code';
@@ -2234,8 +2235,8 @@ export const schedulingFlow: FlowDefinition = {
     // ── Enter Referral Code ──
     {
       id: 'enter_referral_code',
-      async prompt(): Promise<PromptMessage[]> {
-        return [{ type: 'text', text: '🎁 Enter your referral code below.\n\nType *skip* if you changed your mind.' }];
+      async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
+        return [{ type: 'text', text: getFlowCopy(ctx.copyLang, 'booking.referral_enter') }];
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
         const code = input.trim();
@@ -2253,13 +2254,13 @@ export const schedulingFlow: FlowDefinition = {
           .maybeSingle();
 
         if (!referral) {
-          return { valid: false, errorMessage: 'Hmm, that code didn\'t work. Double-check it and try again, or type *skip* to continue without one.' };
+          return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'booking.referral_invalid') };
         }
 
         // Prevent self-referral
         const normalizedFrom = ctx.from.startsWith('+') ? ctx.from : '+' + ctx.from;
         if (referral.referrer_phone === normalizedFrom || referral.referrer_phone === ctx.from) {
-          return { valid: false, errorMessage: 'You cannot use your own referral code.' };
+          return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'booking.referral_self') };
         }
 
         return {
@@ -2273,9 +2274,9 @@ export const schedulingFlow: FlowDefinition = {
     // ── Collect Email ──
     {
       id: 'collect_email',
-      async prompt(): Promise<PromptMessage[]> {
+      async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
         return [
-          { type: 'text', text: '📧 We\'ll send your booking confirmation to your email. Type your email or *skip* to skip:' },
+          { type: 'text', text: getFlowCopy(ctx.copyLang, 'booking.collect_email') },
         ];
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
@@ -2284,7 +2285,7 @@ export const schedulingFlow: FlowDefinition = {
         }
         const email = input.trim().toLowerCase();
         if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-          return { valid: false, errorMessage: "That doesn't look like a valid email. Try again or type *skip*:" };
+          return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'booking.invalid_email') };
         }
         return { valid: true, data: { email } };
       },
@@ -2369,7 +2370,7 @@ export const schedulingFlow: FlowDefinition = {
         }
 
         if (!userId) {
-          return [{ type: 'text', text: "We couldn't create your account. Send *Hi* to start over." }];
+          return [{ type: 'text', text: getFlowCopy(ctx.copyLang, 'error.account_create_failed') }];
         }
 
         // Get payment amount
@@ -2669,16 +2670,16 @@ export const schedulingFlow: FlowDefinition = {
                 if (caps.includes('waitlist')) {
                   return [{
                     type: 'buttons',
-                    body: 'This class is full! Would you like to join the waitlist? We\'ll notify you if a spot opens up.',
+                    body: getFlowCopy(ctx.copyLang, 'booking.class_full_waitlist'),
                     buttons: [
-                      { id: 'wl_join', title: 'Join Waitlist' },
-                      { id: 'go_back', title: 'No Thanks' },
+                      { id: 'wl_join', title: getFlowCopy(ctx.copyLang, 'booking.join_waitlist') },
+                      { id: 'go_back', title: getFlowCopy(ctx.copyLang, 'nav.no_thanks') },
                     ],
                   }];
                 }
-                return [{ type: 'text', text: 'Sorry, this class is full. Send *Hi* to try a different class or time.' }];
+                return [{ type: 'text', text: getFlowCopy(ctx.copyLang, 'booking.class_full') }];
               }
-              return [{ type: 'text', text: 'Sorry, that slot was just taken by another customer. Send *Hi* to pick a different time.' }];
+              return [{ type: 'text', text: getFlowCopy(ctx.copyLang, 'booking.slot_taken') }];
             }
 
             booking = { id: slotResult.booking_id, reference_code: slotResult.reference_code };
@@ -2808,8 +2809,8 @@ export const schedulingFlow: FlowDefinition = {
                 body: `💳 Pay ${formatCurrency(totalDeposit, (ctx.business?.country_code || 'NG') as CountryCode)} with your saved card?\n\n${savedDisplay.displayLabel}`,
                 buttons: [
                   { id: 'pay_saved', title: `Pay with ${savedDisplay.last4 || 'card'}` },
-                  { id: 'pay_new', title: 'Use different card' },
-                  { id: 'go_back', title: 'Cancel' },
+                  { id: 'pay_new', title: getFlowCopy(ctx.copyLang, 'payment.use_different_card') },
+                  { id: 'go_back', title: getFlowCopy(ctx.copyLang, 'nav.cancel') },
                 ],
               },
             ];
@@ -2877,10 +2878,10 @@ export const schedulingFlow: FlowDefinition = {
                 '',
                 `💳 *${isPrepay ? 'Payment' : 'Deposit'} Required: ${formatCurrency(totalDeposit, cc2)}*`,
                 '',
-                `*Option 1 — Pay Online* 👇`,
+                getFlowCopy(ctx.copyLang, 'payment.pay_online'),
                 paymentResult.url,
                 '',
-                `*Option 2 — Bank Transfer* 🏦`,
+                getFlowCopy(ctx.copyLang, 'payment.bank_transfer_title'),
                 formatBankTransferBlock(bankAccount, formatCurrency(totalDeposit, cc2), transferRef),
               ].filter(Boolean);
 
@@ -2889,9 +2890,9 @@ export const schedulingFlow: FlowDefinition = {
                 type: 'buttons',
                 body: dualPaymentLines.join('\n'),
                 buttons: [
-                  { id: d.payment_reference ? `i_paid_ref:${d.payment_reference}` : 'i_paid_online', title: "I've Paid Online" },
-                  { id: 'sent_transfer', title: "I've Sent Transfer" },
-                  { id: 'go_back', title: 'Cancel' },
+                  { id: d.payment_reference ? `i_paid_ref:${d.payment_reference}` : 'i_paid_online', title: getFlowCopy(ctx.copyLang, 'payment.ive_paid_online') },
+                  { id: 'sent_transfer', title: getFlowCopy(ctx.copyLang, 'payment.ive_sent_transfer') },
+                  { id: 'go_back', title: getFlowCopy(ctx.copyLang, 'nav.cancel') },
                 ],
               }];
             }
@@ -2918,15 +2919,15 @@ export const schedulingFlow: FlowDefinition = {
                 '',
                 `💳 *${isPrepay ? 'Payment' : 'Deposit'}: ${formatCurrency(totalDeposit, (ctx.business?.country_code || 'NG') as CountryCode)}*`,
                 '',
-                `Pay here 👇`,
+                getFlowCopy(ctx.copyLang, 'payment.pay_here'),
                 paymentResult.url,
                 '',
-                `⚠️ Confirmation arrives automatically after payment.`,
+                getFlowCopy(ctx.copyLang, 'payment.auto_confirm'),
               ].filter(Boolean).join('\n'),
               buttons: [
-                { id: d.payment_reference ? `i_paid_ref:${d.payment_reference}` : 'i_paid', title: "I've Paid" },
-                { id: 'retry_payment', title: 'Get New Link' },
-                { id: 'go_back', title: 'Cancel' },
+                { id: d.payment_reference ? `i_paid_ref:${d.payment_reference}` : 'i_paid', title: getFlowCopy(ctx.copyLang, 'payment.ive_paid') },
+                { id: 'retry_payment', title: getFlowCopy(ctx.copyLang, 'payment.get_new_link') },
+                { id: 'go_back', title: getFlowCopy(ctx.copyLang, 'nav.cancel') },
               ],
             }];
           }
@@ -2952,7 +2953,7 @@ export const schedulingFlow: FlowDefinition = {
               .eq('id', ctx.session.id);
 
             const bankOnlyLines = [
-              `🏦 *Bank Transfer Payment*`,
+              getFlowCopy(ctx.copyLang, 'payment.bank_transfer_header'),
               '',
               `${labels.confirmationEmoji} ${ctx.business?.name}`,
               d._location_name ? `📍 ${d._location_name as string}` : '',
@@ -2963,7 +2964,7 @@ export const schedulingFlow: FlowDefinition = {
               `💰 ${formatCurrency(totalDeposit, cc2)}`,
               `🔑 Ref: *${booking.reference_code}*`,
               '',
-              `Transfer to:`,
+              getFlowCopy(ctx.copyLang, 'payment.transfer_to'),
               formatBankTransferBlock(bankAccount, formatCurrency(totalDeposit, cc2), transferRef),
             ].filter(Boolean);
 
@@ -2974,7 +2975,7 @@ export const schedulingFlow: FlowDefinition = {
               },
               {
                 type: 'buttons',
-                body: 'Tap below after transferring:',
+                body: getFlowCopy(ctx.copyLang, 'payment.tap_after_transfer'),
                 buttons: [...BANK_ONLY_BUTTONS],
               },
             ];
@@ -2984,11 +2985,11 @@ export const schedulingFlow: FlowDefinition = {
           return [
             {
               type: 'buttons',
-              body: 'Sorry, we couldn\'t set up payment right now. Your booking has been saved but is pending payment.',
+              body: getFlowCopy(ctx.copyLang, 'payment.setup_failed_saved'),
               buttons: [
-                { id: 'retry_payment', title: 'Try Again' },
-                { id: 'chat_with_biz', title: 'Chat with Business' },
-                { id: 'cancel_booking', title: 'Cancel Booking' },
+                { id: 'retry_payment', title: getFlowCopy(ctx.copyLang, 'payment.try_again') },
+                { id: 'chat_with_biz', title: getFlowCopy(ctx.copyLang, 'payment.chat_business') },
+                { id: 'cancel_booking', title: getFlowCopy(ctx.copyLang, 'payment.cancel_booking') },
               ],
             },
           ];
@@ -3371,7 +3372,7 @@ export const schedulingFlow: FlowDefinition = {
           return { valid: true, data: { _action: 'cancel' } };
         }
 
-        return { valid: false, errorMessage: 'Please select a payment option.' };
+        return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'payment.select_option') };
       },
       async next(ctx: FlowContext) {
         const d = ctx.session.session_data;
@@ -3432,24 +3433,24 @@ export const schedulingFlow: FlowDefinition = {
         if (d.bank_transfer_offered) {
           return [{
             type: 'buttons',
-            body: "Complete your payment using the link or bank transfer above.\n\nTap below after paying:",
+            body: getFlowCopy(ctx.copyLang, 'payment.complete_payment'),
             buttons: [
-              { id: pRef ? `i_paid_ref:${pRef}` : 'i_paid_online', title: "I've Paid Online" },
-              { id: 'sent_transfer', title: "I've Sent Transfer" },
-              { id: 'go_back', title: 'Cancel' },
+              { id: pRef ? `i_paid_ref:${pRef}` : 'i_paid_online', title: getFlowCopy(ctx.copyLang, 'payment.ive_paid_online') },
+              { id: 'sent_transfer', title: getFlowCopy(ctx.copyLang, 'payment.ive_sent_transfer') },
+              { id: 'go_back', title: getFlowCopy(ctx.copyLang, 'nav.cancel') },
             ],
           }];
         }
         const buttons: Array<{ id: string; title: string }> = [
-          { id: pRef ? `i_paid_ref:${pRef}` : 'i_paid', title: "I've Paid" },
+          { id: pRef ? `i_paid_ref:${pRef}` : 'i_paid', title: getFlowCopy(ctx.copyLang, 'payment.ive_paid') },
         ];
         if (!d._payment_retry_blocked) {
-          buttons.push({ id: 'retry_payment', title: 'Get New Link' });
+          buttons.push({ id: 'retry_payment', title: getFlowCopy(ctx.copyLang, 'payment.get_new_link') });
         }
-        buttons.push({ id: 'go_back', title: 'Cancel' });
+        buttons.push({ id: 'go_back', title: getFlowCopy(ctx.copyLang, 'nav.cancel') });
         return [{
           type: 'buttons',
-          body: "Your confirmation will arrive automatically after payment. If it doesn't, tap below:",
+          body: getFlowCopy(ctx.copyLang, 'payment.already_paid_hint'),
           buttons,
         }];
       },
