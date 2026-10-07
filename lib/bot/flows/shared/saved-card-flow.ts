@@ -11,6 +11,7 @@ import type { FlowContext, PromptMessage, ValidationResult } from '../types';
 import { savedPaymentAdapter } from '@/lib/payments/saved-payment-adapter';
 import type { SavedPaymentDisplay, ChargeOutcome } from '@/lib/payments/saved-payment-adapter';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
+import { getFlowCopy, fillFlowCopy } from '@/lib/bot/flows/flow-localization';
 import { logger } from '@/lib/logger';
 
 /** Validate currency_code: non-empty, 3 uppercase letters (ISO 4217 canonical form) */
@@ -82,11 +83,11 @@ export async function buildSavedCardOffer(
     display,
     prompt: {
       type: 'buttons',
-      body: `💳 Pay ${formatCurrency(amount, cc)} with your saved card?\n\n${display.displayLabel}`,
+      body: fillFlowCopy(ctx.copyLang, 'savedcard.pay_with_saved', { amount: formatCurrency(amount, cc), cardLabel: display.displayLabel }),
       buttons: [
-        { id: 'pay_saved', title: `Pay with ${display.last4 || 'card'}` },
-        { id: 'pay_new', title: 'Use different card' },
-        { id: 'go_back', title: 'Cancel' },
+        { id: 'pay_saved', title: fillFlowCopy(ctx.copyLang, 'savedcard.pay_with_last4', { last4: display.last4 || 'card' }) },
+        { id: 'pay_new', title: getFlowCopy(ctx.copyLang, 'savedcard.use_different') },
+        { id: 'go_back', title: getFlowCopy(ctx.copyLang, 'nav.cancel') },
       ],
     },
   };

@@ -1971,9 +1971,10 @@ describe('P1-CLASS-UX: class vs service separation', () => {
     expect(nonUserFacingLine![1]).not.toContain('class_booking');
   });
 
-  it('UX-3: class_booking label is "Book a Class"', () => {
-    expect(labels).toContain("case 'class_booking':");
-    expect(labels).toContain("'Book a Class'");
+  it('UX-3: class_booking label is "Book a Class"', async () => {
+    // 561-G: labels.ts refactored from switch to data-driven map — check runtime behavior
+    const { getCapabilityLabel } = await import('@/lib/capabilities/labels');
+    expect(getCapabilityLabel('class_booking', 'gym')).toBe('Book a Class');
   });
 
   it('UX-4: class_booking has backing data check for is_class=true services', () => {
