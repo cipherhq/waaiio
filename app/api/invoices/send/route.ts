@@ -6,6 +6,7 @@ import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { sendEmail } from '@/lib/email/client';
 import { invoiceEmail } from '@/lib/email/templates';
 import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
+import { formatDisplayDate } from '@/lib/bot/format-date';
 import { logger } from '@/lib/logger';
 import { generateInvoicePdf, type InvoicePdfData } from '@/lib/pdf/invoice-pdf-generator';
 import { PRICING_TIERS, type CountryCode, type SubscriptionTier } from '@/lib/constants';
@@ -145,7 +146,7 @@ export async function POST(request: NextRequest) {
     const invoiceUrl = `${appUrl}/invoice/${token}`;
     const formattedAmount = formatAmount(invoice.total_amount, invoice.currency);
     const dueDate = invoice.due_date
-      ? new Date(invoice.due_date).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
+      ? formatDisplayDate(invoice.due_date, 'brief-year', 'en', biz.country_code || 'NG')
       : 'On receipt';
 
     const sendVia = channel || 'whatsapp';
