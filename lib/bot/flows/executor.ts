@@ -1125,40 +1125,41 @@ export class FlowExecutor {
     // Contextual buttons based on what the customer just did
     let buttons: Array<{ id: string; title: string }>;
 
+    const cl = ctx.copyLang;
     if (cap === 'giving' || cap === 'crowdfunding') {
       buttons = [
-        { id: 'pc_again', title: 'Give Again' },
-        { id: 'pc_history', title: 'My Giving' },
-        { id: 'pc_options', title: 'View Options' },
+        { id: 'pc_again', title: getFlowCopy(cl, 'post.give_again') },
+        { id: 'pc_history', title: getFlowCopy(cl, 'post.my_giving') },
+        { id: 'pc_options', title: getFlowCopy(cl, 'nav.view_options') },
       ];
     } else if (cap === 'ticketing') {
       buttons = [
-        { id: 'pc_again', title: 'Buy More Tickets' },
-        { id: 'pc_history', title: 'My Tickets' },
-        { id: 'pc_options', title: 'View Options' },
+        { id: 'pc_again', title: getFlowCopy(cl, 'post.buy_more_tickets') },
+        { id: 'pc_history', title: getFlowCopy(cl, 'post.my_tickets') },
+        { id: 'pc_options', title: getFlowCopy(cl, 'nav.view_options') },
       ];
     } else if (cap === 'ordering') {
       buttons = [
-        { id: 'pc_again', title: 'Order Again' },
-        { id: 'pc_history', title: 'My Orders' },
-        { id: 'pc_options', title: 'View Options' },
+        { id: 'pc_again', title: getFlowCopy(cl, 'post.order_again') },
+        { id: 'pc_history', title: getFlowCopy(cl, 'account.my_orders') },
+        { id: 'pc_options', title: getFlowCopy(cl, 'nav.view_options') },
       ];
     } else if (cap === 'reservation') {
       buttons = [
-        { id: 'pc_again', title: 'Book Again' },
-        { id: 'pc_history', title: 'My Bookings' },
-        { id: 'pc_options', title: 'View Options' },
+        { id: 'pc_again', title: getFlowCopy(cl, 'post.book_again') },
+        { id: 'pc_history', title: getFlowCopy(cl, 'post.my_bookings') },
+        { id: 'pc_options', title: getFlowCopy(cl, 'nav.view_options') },
       ];
     } else {
       // scheduling, appointment, payment, default
       buttons = [
-        { id: 'pc_again', title: 'Book Again' },
-        { id: 'pc_history', title: 'My Bookings' },
-        { id: 'pc_options', title: 'View Options' },
+        { id: 'pc_again', title: getFlowCopy(cl, 'post.book_again') },
+        { id: 'pc_history', title: getFlowCopy(cl, 'post.my_bookings') },
+        { id: 'pc_options', title: getFlowCopy(cl, 'nav.view_options') },
       ];
     }
 
-    const bodyText = 'What would you like to do next?';
+    const bodyText = getFlowCopy(cl, 'menu.what_next');
 
     // Keep session alive on post_completion step so buttons work
     const saved = await this.casUpdateSession(session, {

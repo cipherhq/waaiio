@@ -5,6 +5,7 @@ import {
   type NavigationCommand,
 } from '../inbound-command-normalization';
 import { handleCorrectionReentry } from './correction-reentry';
+import { getFlowCopy, fillFlowCopy } from '../flows/flow-localization';
 
 type TestableCommandPattern = { test(value: string): boolean };
 
@@ -42,6 +43,7 @@ export async function handleEscapeHatch(
   sendText: (to: string, text: string) => Promise<void>,
   deactivateSession: (sessionId: string) => Promise<void>,
   handleMessage: (from: string, text: string, type: string, dest?: string, bizId?: string) => Promise<void>,
+  lang?: string,
 ): Promise<{ handled: boolean }> {
   const { supabase, messageSender, flowExecutor, intelligence } = ctx;
 
@@ -173,12 +175,15 @@ export async function handleEscapeHatch(
       if (earlySteps.includes(step) && session.business_id) {
         const { data: biz } = await supabase.from('businesses').select('name').eq('id', session.business_id).single();
         await deactivateSession(session.id);
+        const exitBody = biz?.name
+          ? fillFlowCopy(lang || 'en', 'nav.exit_what_next', { businessName: biz.name })
+          : getFlowCopy(lang || 'en', 'nav.exit_fallback');
         await messageSender.sendButtons({
           to: from,
-          body: `You've left ${biz?.name || 'the business'}. What next?`,
+          body: exitBody,
           buttons: [
-            { id: 'go_back_biz', title: 'Back to Menu' },
-            { id: 'switch_biz', title: 'Switch Business' },
+            { id: 'go_back_biz', title: getFlowCopy(lang || 'en', 'nav.back_to_menu') },
+            { id: 'switch_biz', title: getFlowCopy(lang || 'en', 'nav.switch_business') },
           ],
         });
         return { handled: true };
@@ -243,18 +248,20 @@ export async function handleEscapeHatch(
       // Always show clear options — never dead-end text
       if (escBizId) {
         const { data: escBiz } = await supabase.from('businesses').select('name').eq('id', escBizId).single();
-        const bizName = escBiz?.name || 'the business';
+        const exitBody = escBiz?.name
+          ? fillFlowCopy(lang || 'en', 'nav.exit_what_next', { businessName: escBiz.name })
+          : getFlowCopy(lang || 'en', 'nav.exit_fallback');
         await messageSender.sendButtons({
           to: from,
-          body: `You've left ${bizName}. What next?`,
+          body: exitBody,
           buttons: [
-            { id: 'go_back_biz', title: 'Back to Menu' },
-            { id: 'switch_biz', title: 'Switch Business' },
+            { id: 'go_back_biz', title: getFlowCopy(lang || 'en', 'nav.back_to_menu') },
+            { id: 'switch_biz', title: getFlowCopy(lang || 'en', 'nav.switch_business') },
           ],
         });
       } else {
         // No business found at all — guide them
-        await sendText(from, 'Send a *business code* to get started, or visit waaiio.com/directory to find a business.');
+        await sendText(from, getFlowCopy(lang || 'en', 'nav.no_business_guide'));
       }
       return { handled: true };
     }

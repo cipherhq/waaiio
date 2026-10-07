@@ -1239,7 +1239,7 @@ export const schedulingFlow: FlowDefinition = {
           postbackText: s.time, // always send 24hr format as postback value
         }));
         // Add "Change Date" navigation option at the end
-        items.push({ title: getFlowCopy(ctx.copyLang, 'booking.change_date'), description: 'Pick a different date', postbackText: 'change_date' });
+        items.push({ title: getFlowCopy(ctx.copyLang, 'booking.change_date'), description: getFlowCopy(ctx.copyLang, 'booking.change_date_desc'), postbackText: 'change_date' });
 
         return [{
           type: 'list',
@@ -1763,7 +1763,7 @@ export const schedulingFlow: FlowDefinition = {
             type: 'buttons',
             body: getFlowCopy(ctx.copyLang, 'booking.special_requests'),
             buttons: [
-              { id: 'req_none', title: "No, I'm good" },
+              { id: 'req_none', title: getFlowCopy(ctx.copyLang, 'booking.no_requests') },
               ...customOptions.slice(0, 2).map(o => ({ id: `req_${o.id}`, title: truncTitle(o.title) })),
             ],
           }];
@@ -1774,7 +1774,7 @@ export const schedulingFlow: FlowDefinition = {
           type: 'buttons',
           body: getFlowCopy(ctx.copyLang, 'booking.special_requests_long'),
           buttons: [
-            { id: 'req_none', title: "No, I'm good" },
+            { id: 'req_none', title: getFlowCopy(ctx.copyLang, 'booking.no_requests') },
           ],
         }];
       },

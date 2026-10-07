@@ -340,7 +340,7 @@ export const orderingFlow: FlowDefinition = {
             body: `Nothing available in ${selectedCat} right now.`,
             buttons: [
               { id: 'back_to_categories', title: 'Other Categories' },
-              { id: 'cancel_order', title: 'Cancel' },
+              { id: 'cancel_order', title: getFlowCopy(ctx.copyLang, 'nav.cancel') },
             ],
           }];
         }
@@ -500,7 +500,7 @@ export const orderingFlow: FlowDefinition = {
             body: `Sorry, all available options for *${d.current_product_name}* are out of stock.`,
             buttons: [
               { id: 'browse_more', title: 'Try Another' },
-              { id: 'cancel_order', title: 'Cancel' },
+              { id: 'cancel_order', title: getFlowCopy(ctx.copyLang, 'nav.cancel') },
             ],
           }];
         }
@@ -1318,7 +1318,7 @@ export const orderingFlow: FlowDefinition = {
 
         if (useSections) {
           const sections = [
-            { title: 'Your Order', items: [checkoutItem] },
+            { title: getFlowCopy(ctx.copyLang, 'ordering.your_order'), items: [checkoutItem] },
             ...cats.slice(0, 9).map(([cat, items]) => ({
               title: truncTitle(cat, 24),
               items: items.slice(0, 10).map(formatProd),
@@ -1424,7 +1424,7 @@ export const orderingFlow: FlowDefinition = {
 
         if (needsSections) {
           const sections = [
-            { title: 'Your Order', items: [checkoutItem] },
+            { title: getFlowCopy(ctx.copyLang, 'ordering.your_order'), items: [checkoutItem] },
             ...categories.slice(0, 9).map(([cat, items]) => ({
               title: truncTitle(cat, 24),
               items: items.slice(0, 10).map(p => ({
@@ -2415,16 +2415,16 @@ export const orderingFlow: FlowDefinition = {
         }
 
         // Edit options
-        items.push({ title: '✏️ Change Name', description: `Current: ${d.first_name || ''} ${d.last_name || ''}`.trim(), postbackText: 'edit_name' });
+        items.push({ title: getFlowCopy(ctx.copyLang, 'ordering.edit_change_name'), description: `Current: ${d.first_name || ''} ${d.last_name || ''}`.trim(), postbackText: 'edit_name' });
         if (d.delivery_address) {
-          items.push({ title: '📍 Change Address', description: `${(d.delivery_address as string).slice(0, 60)}`, postbackText: 'edit_address' });
+          items.push({ title: getFlowCopy(ctx.copyLang, 'ordering.edit_change_address'), description: `${(d.delivery_address as string).slice(0, 60)}`, postbackText: 'edit_address' });
         }
-        items.push({ title: '⬅ Back to Summary', description: 'Return to order review', postbackText: 'back_to_summary' });
+        items.push({ title: getFlowCopy(ctx.copyLang, 'ordering.edit_back_to_summary'), description: getFlowCopy(ctx.copyLang, 'ordering.edit_return_desc'), postbackText: 'back_to_summary' });
 
         return [{
           type: 'list',
-          title: 'Edit Order',
-          body: `🛒 ${cart.length} item${cart.length !== 1 ? 's' : ''} — ${formatCurrency(calculateCartTotal(cart), cc)}\n\nRemove items or change your details:`,
+          title: getFlowCopy(ctx.copyLang, 'ordering.edit_order'),
+          body: `🛒 ${cart.length} item${cart.length !== 1 ? 's' : ''} — ${formatCurrency(calculateCartTotal(cart), cc)}\n\n${getFlowCopy(ctx.copyLang, 'ordering.edit_body')}`,
           buttonLabel: getFlowCopy(ctx.copyLang, 'ordering.edit_options'),
           items: items.slice(0, 10),
         }];
@@ -2905,7 +2905,7 @@ export const orderingFlow: FlowDefinition = {
                 body: '😔 Sorry, that promo code was just fully redeemed by another customer. Your order total has been updated.\n\nWould you like to continue without the promo?',
                 buttons: [
                   { id: 'checkout', title: 'Continue Without Promo' },
-                  { id: 'cancel_order', title: 'Cancel' },
+                  { id: 'cancel_order', title: getFlowCopy(ctx.copyLang, 'nav.cancel') },
                 ],
               }];
             }
@@ -3093,11 +3093,11 @@ export const orderingFlow: FlowDefinition = {
                 },
                 {
                   type: 'buttons',
-                  body: 'After paying, tap below:',
+                  body: getFlowCopy(ctx.copyLang, 'ordering.after_paying'),
                   buttons: [
-                    { id: `i_paid_ref:${d.payment_reference || ''}`, title: "I've Paid Online" },
-                    { id: 'sent_transfer', title: "I've Sent Transfer" },
-                    { id: 'go_back', title: 'Cancel' },
+                    { id: `i_paid_ref:${d.payment_reference || ''}`, title: getFlowCopy(ctx.copyLang, 'payment.ive_paid_online') },
+                    { id: 'sent_transfer', title: getFlowCopy(ctx.copyLang, 'payment.ive_sent_transfer') },
+                    { id: 'go_back', title: getFlowCopy(ctx.copyLang, 'nav.cancel') },
                   ],
                 },
               ];
@@ -3125,9 +3125,9 @@ export const orderingFlow: FlowDefinition = {
               type: 'buttons',
               body: orderConfirmBody,
               buttons: [
-                { id: `i_paid_ref:${d.payment_reference || ''}`, title: "I've Paid" },
-                { id: 'retry_payment', title: 'Get New Link' },
-                { id: 'go_back', title: 'Cancel' },
+                { id: `i_paid_ref:${d.payment_reference || ''}`, title: getFlowCopy(ctx.copyLang, 'payment.ive_paid') },
+                { id: 'retry_payment', title: getFlowCopy(ctx.copyLang, 'payment.get_new_link') },
+                { id: 'go_back', title: getFlowCopy(ctx.copyLang, 'nav.cancel') },
               ],
             }];
           }
@@ -3186,7 +3186,7 @@ export const orderingFlow: FlowDefinition = {
               },
               {
                 type: 'buttons',
-                body: 'Tap below after transferring:',
+                body: getFlowCopy(ctx.copyLang, 'payment.tap_after_transfer'),
                 buttons: [...BANK_ONLY_BUTTONS],
               },
             ];
@@ -3198,9 +3198,9 @@ export const orderingFlow: FlowDefinition = {
               type: 'buttons',
               body: 'Sorry, we couldn\'t set up payment right now. Your order has been saved but is pending payment.',
               buttons: [
-                { id: 'retry_payment', title: 'Try Again' },
-                { id: 'chat_with_biz', title: 'Chat with Business' },
-                { id: 'cancel_order', title: 'Cancel Order' },
+                { id: 'retry_payment', title: getFlowCopy(ctx.copyLang, 'payment.try_again') },
+                { id: 'chat_with_biz', title: getFlowCopy(ctx.copyLang, 'payment.chat_business') },
+                { id: 'cancel_order', title: getFlowCopy(ctx.copyLang, 'ordering.cancel_order') },
               ],
             },
           ];
@@ -3252,9 +3252,9 @@ export const orderingFlow: FlowDefinition = {
           },
           {
             type: 'buttons',
-            body: 'Want to keep tabs on your order?',
+            body: getFlowCopy(ctx.copyLang, 'ordering.track_prompt'),
             buttons: [
-              { id: 'track_my_order', title: 'Track My Order' },
+              { id: 'track_my_order', title: getFlowCopy(ctx.copyLang, 'ordering.track_order') },
             ],
           },
         ];
@@ -3380,9 +3380,9 @@ export const orderingFlow: FlowDefinition = {
             type: 'buttons',
             body: "Complete your payment using the link or bank transfer above.\n\nTap below after paying:",
             buttons: [
-              { id: d.payment_reference ? `i_paid_ref:${d.payment_reference}` : 'i_paid_online', title: "I've Paid Online" },
-              { id: 'sent_transfer', title: "I've Sent Transfer" },
-              { id: 'go_back', title: 'Cancel' },
+              { id: d.payment_reference ? `i_paid_ref:${d.payment_reference}` : 'i_paid_online', title: getFlowCopy(ctx.copyLang, 'payment.ive_paid_online') },
+              { id: 'sent_transfer', title: getFlowCopy(ctx.copyLang, 'payment.ive_sent_transfer') },
+              { id: 'go_back', title: getFlowCopy(ctx.copyLang, 'nav.cancel') },
             ],
           }];
         }
@@ -3390,9 +3390,9 @@ export const orderingFlow: FlowDefinition = {
           type: 'buttons',
           body: "Your confirmation will arrive automatically after payment. If it doesn't, tap below:",
           buttons: [
-            { id: d.payment_reference ? `i_paid_ref:${d.payment_reference}` : 'i_paid', title: "I've Paid" },
-            { id: 'retry_payment', title: 'Get New Link' },
-            { id: 'go_back', title: 'Cancel' },
+            { id: d.payment_reference ? `i_paid_ref:${d.payment_reference}` : 'i_paid', title: getFlowCopy(ctx.copyLang, 'payment.ive_paid') },
+            { id: 'retry_payment', title: getFlowCopy(ctx.copyLang, 'payment.get_new_link') },
+            { id: 'go_back', title: getFlowCopy(ctx.copyLang, 'nav.cancel') },
           ],
         }];
       },

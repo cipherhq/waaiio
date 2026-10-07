@@ -2336,6 +2336,7 @@ export class BotService {
       this.sendText.bind(this),
       this.deactivateSession.bind(this),
       this.handleMessage.bind(this),
+      (session.session_data._detected_language as string) || undefined,
     );
     if (escapeResult.handled) return;
 
@@ -3182,7 +3183,8 @@ export class BotService {
   }
 
   private async handleRefundRequest(session: BotSession, from: string, input: string): Promise<void> {
-    return _handleRefundRequest(this.supabase, this.messageSender, this.sendText.bind(this), session, from, input);
+    const lang = (session.session_data._detected_language as string) || undefined;
+    return _handleRefundRequest(this.supabase, this.messageSender, this.sendText.bind(this), session, from, input, lang);
   }
 
   private async handleViewTicket(session: BotSession, from: string, ticketId: string): Promise<void> {
@@ -3200,15 +3202,18 @@ export class BotService {
   // ── My Orders (delegated to handlers/my-orders.ts) ──
 
   private async handleMyOrders(session: BotSession, from: string, input: string): Promise<void> {
-    return _handleMyOrders(this.supabase, this.messageSender, this.sendText.bind(this), this.routeToMyAccountMenu.bind(this), session, from, input);
+    const lang = (session.session_data._detected_language as string) || undefined;
+    return _handleMyOrders(this.supabase, this.messageSender, this.sendText.bind(this), this.routeToMyAccountMenu.bind(this), session, from, input, lang);
   }
 
   private async handleOrderDetail(session: BotSession, from: string, orderId: string): Promise<void> {
-    return _handleOrderDetail(this.supabase, this.messageSender, this.sendText.bind(this), session, from, orderId);
+    const lang = (session.session_data._detected_language as string) || undefined;
+    return _handleOrderDetail(this.supabase, this.messageSender, this.sendText.bind(this), session, from, orderId, lang);
   }
 
   private async handleOrderDetailAction(session: BotSession, from: string, input: string): Promise<void> {
-    return _handleOrderDetailAction(this.supabase, this.messageSender, this.sendText.bind(this), this.routeToMyAccountMenu.bind(this), session, from, input);
+    const lang = (session.session_data._detected_language as string) || undefined;
+    return _handleOrderDetailAction(this.supabase, this.messageSender, this.sendText.bind(this), this.routeToMyAccountMenu.bind(this), session, from, input, lang);
   }
 
   // ── Route to My Account Menu (delegated to handlers/my-account-menu.ts) ──
@@ -3219,8 +3224,8 @@ export class BotService {
 
   // ── Transaction Document Handler ──────────────────────────
 
-  private async handleTransactionDocument(from: string, userId: string, type: 'history' | 'receipt' | 'annual'): Promise<void> {
-    return _handleTransactionDocument(this.supabase, this.messageSender, this.sendText.bind(this), from, userId, type);
+  private async handleTransactionDocument(from: string, userId: string, type: 'history' | 'receipt' | 'annual', lang?: string): Promise<void> {
+    return _handleTransactionDocument(this.supabase, this.messageSender, this.sendText.bind(this), from, userId, type, lang);
   }
 
   // ── Quote Response Handler ──────────────────────────────
