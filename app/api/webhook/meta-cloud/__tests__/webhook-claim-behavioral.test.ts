@@ -9,6 +9,7 @@
  * Refs: #278, #271
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { createTestSupabase } from '@/lib/__tests__/helpers/mock-supabase';
 
 // ── Mocks ──
 
@@ -279,7 +280,7 @@ describe('Slice B — real MetaCloudSender.withRetry deadline enforcement', () =
       }),
     } as any;
 
-    const sender = new MetaCloudSender(mockCloud);
+    const sender = new MetaCloudSender(mockCloud, createTestSupabase());
     // Bind a test business so the send-guard doesn't fail on missing_business_id
     sender.bindBusiness('test-biz-id');
 

@@ -1,21 +1,31 @@
 /**
- * Edge Function attempt recording tests (#257)
+ * Edge Function attempt recording tests (#257 + #261)
  *
  * Tests the ACTUAL shared withEdgeAttemptRecording from
  * supabase/functions/_shared/attempt-recording.ts.
  * Runtime-neutral — the module avoids Deno-specific imports.
+ *
+ * #261 additions: financial authorization gate, settlement on failure,
+ * unmatched status drain, message category, country resolution.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { resolve } from 'path';
 
-// Import the actual shared production module
+// Import the actual shared production modules
 const sharedModule = await import(resolve(__dirname, '../../supabase/functions/_shared/attempt-recording.ts'));
 const { withEdgeAttemptRecording, setEdgeAttemptGate } = sharedModule;
+// Import the canonical phone-country resolver (Node runtime uses npm libphonenumber-js)
+const phoneCountryModule = await import(resolve(__dirname, '../channels/phone-country.ts'));
+const resolveRecipientCountry = phoneCountryModule.resolveRecipientCountry;
 
-interface MockRow { id: string; status: string; needs_reconciliation: boolean; meta_message_id: string | null }
+interface MockRow { id: string; status: string; needs_reconciliation: boolean; meta_message_id: string | null; financial_disposition: string; recipient_country_code?: string; message_category?: string }
 
-function buildEdgeMock(opts: { insertError?: boolean; sendingUpdateError?: boolean; acceptedUpdateError?: boolean } = {}) {
+function buildEdgeMock(opts: {
+  insertError?: boolean; sendingUpdateError?: boolean; acceptedUpdateError?: boolean;
+  rpcResult?: Record<string, unknown>; rpcError?: { message: string } | null;
+} = {}) {
   const rows = new Map<string, MockRow>();
+  const rpcCalls: Array<{ fn: string; params: Record<string, unknown> }> = [];
   return {
     from: vi.fn().mockImplementation(() => ({
       insert: vi.fn().mockImplementation((data: Record<string, unknown>) => ({
@@ -23,7 +33,7 @@ function buildEdgeMock(opts: { insertError?: boolean; sendingUpdateError?: boole
           single: () => {
             if (opts.insertError) return { data: null, error: { message: 'Insert failed' } };
             const id = 'edge-' + Math.random().toString(36).slice(2, 8);
-            rows.set(id, { id, status: data.status as string, needs_reconciliation: false, meta_message_id: null });
+            rows.set(id, { id, status: data.status as string, needs_reconciliation: false, meta_message_id: null, financial_disposition: data.financial_disposition as string });
             return { data: { id }, error: null };
           },
         }),
@@ -43,19 +53,35 @@ function buildEdgeMock(opts: { insertError?: boolean; sendingUpdateError?: boole
         }),
       })),
     })),
+    rpc: vi.fn().mockImplementation((fn: string, params: Record<string, unknown>) => {
+      rpcCalls.push({ fn, params });
+      if (fn === 'check_or_authorize_send') {
+        if (opts.rpcError) return Promise.resolve({ data: null, error: opts.rpcError });
+        return Promise.resolve({ data: opts.rpcResult ?? { enforcement_required: false }, error: null });
+      }
+      if (fn === 'settle_message_cost') {
+        return Promise.resolve({ data: { settled: true }, error: null });
+      }
+      if (fn === 'drain_unmatched_attempt_statuses') {
+        return Promise.resolve({ data: { drained: 0 }, error: null });
+      }
+      return Promise.resolve({ data: null, error: null });
+    }),
     _rows: rows,
+    _rpcCalls: rpcCalls,
   };
 }
 
 describe('Shared Edge withEdgeAttemptRecording (actual production module)', () => {
   beforeEach(() => setEdgeAttemptGate(false));
 
-  it('Gate OFF: INSERT failure => send proceeds', async () => {
+  it('#261: INSERT failure => zero Meta emission (independent of #257 gate)', async () => {
+    // #257 gate is OFF/default — but #261 requires attempt for financial authority
     const mock = buildEdgeMock({ insertError: true });
-    const fetchFn = vi.fn().mockResolvedValue(new Response(JSON.stringify({ messages: [{ id: 'w1' }] }), { status: 200 }));
+    const fetchFn = vi.fn();
     const r = await withEdgeAttemptRecording(mock as any, { businessId: 'b1', recipientPhone: '+1' }, fetchFn);
-    expect(r.ok).toBe(true);
-    expect(fetchFn).toHaveBeenCalledTimes(1);
+    expect(r.ok).toBe(false);
+    expect(fetchFn).not.toHaveBeenCalled();
   });
 
   it('Gate ON: INSERT failure => zero Meta fetch', async () => {
@@ -148,5 +174,206 @@ describe('Shared Edge withEdgeAttemptRecording (actual production module)', () =
       const src = readFileSync(resolve(__dirname, '../..', route), 'utf-8');
       expect(src, `${route} missing ${expected}`).toContain(expected);
     }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// #261: Financial authorization tests for edge functions
+// ─────────────────────────────────────────────────────────────────────────────
+describe('Edge #261 financial authorization', () => {
+  beforeEach(() => setEdgeAttemptGate(false));
+
+  it('Gate OFF (enforcement_required=false): send proceeds, zero financial encumbrance', async () => {
+    const mock = buildEdgeMock({ rpcResult: { enforcement_required: false } });
+    const fetchFn = vi.fn().mockResolvedValue(new Response(JSON.stringify({ messages: [{ id: 'w1' }] }), { status: 200 }));
+    const r = await withEdgeAttemptRecording(mock as any, { businessId: 'b1', recipientPhone: '+2348001234567', messageCategory: 'utility' }, fetchFn);
+    expect(r.ok).toBe(true);
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+    // check_or_authorize_send was called
+    expect(mock._rpcCalls.some((c: any) => c.fn === 'check_or_authorize_send')).toBe(true);
+    // No settle_message_cost called (no reservation)
+    expect(mock._rpcCalls.filter((c: any) => c.fn === 'settle_message_cost')).toHaveLength(0);
+  });
+
+  it('Gate ON, authorized=true: reservation exists, send proceeds', async () => {
+    const mock = buildEdgeMock({ rpcResult: { authorized: true, enforcement_required: true } });
+    const fetchFn = vi.fn().mockResolvedValue(new Response(JSON.stringify({ messages: [{ id: 'w2' }] }), { status: 200 }));
+    const r = await withEdgeAttemptRecording(mock as any, { businessId: 'b1', recipientPhone: '+2348001234567', messageCategory: 'utility' }, fetchFn);
+    expect(r.ok).toBe(true);
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+    // drain_unmatched_attempt_statuses called after WAMID linkage
+    expect(mock._rpcCalls.some((c: any) => c.fn === 'drain_unmatched_attempt_statuses')).toBe(true);
+  });
+
+  it('Gate ON, authorized=false: zero Meta calls', async () => {
+    const mock = buildEdgeMock({ rpcResult: { authorized: false, reason: 'insufficient_balance', enforcement_required: true } });
+    const fetchFn = vi.fn();
+    const r = await withEdgeAttemptRecording(mock as any, { businessId: 'b1', recipientPhone: '+2348001234567', messageCategory: 'utility' }, fetchFn);
+    expect(r.ok).toBe(false);
+    expect(fetchFn).not.toHaveBeenCalled();
+  });
+
+  it('RPC error: fail closed, zero Meta calls', async () => {
+    const mock = buildEdgeMock({ rpcError: { message: 'connection refused' } });
+    const fetchFn = vi.fn();
+    const r = await withEdgeAttemptRecording(mock as any, { businessId: 'b1', recipientPhone: '+2348001234567' }, fetchFn);
+    expect(r.ok).toBe(false);
+    expect(fetchFn).not.toHaveBeenCalled();
+  });
+
+  it('RPC returns null: fail closed, zero Meta calls', async () => {
+    const mock = buildEdgeMock();
+    // Override rpc to return null data
+    mock.rpc.mockImplementation((fn: string) => {
+      if (fn === 'check_or_authorize_send') return Promise.resolve({ data: null, error: null });
+      return Promise.resolve({ data: null, error: null });
+    });
+    const fetchFn = vi.fn();
+    const r = await withEdgeAttemptRecording(mock as any, { businessId: 'b1', recipientPhone: '+2348001234567' }, fetchFn);
+    expect(r.ok).toBe(false);
+    expect(fetchFn).not.toHaveBeenCalled();
+  });
+
+  it('Unexpected response shape: fail closed, zero Meta calls', async () => {
+    const mock = buildEdgeMock({ rpcResult: { something_unexpected: true } });
+    const fetchFn = vi.fn();
+    const r = await withEdgeAttemptRecording(mock as any, { businessId: 'b1', recipientPhone: '+2348001234567' }, fetchFn);
+    expect(r.ok).toBe(false);
+    expect(fetchFn).not.toHaveBeenCalled();
+  });
+
+  it('Reserved + deterministic provider failure => immediate release', async () => {
+    const mock = buildEdgeMock({ rpcResult: { authorized: true, enforcement_required: true } });
+    // Provider returns 400 (non-ok, deterministic failure)
+    const fetchFn = vi.fn().mockResolvedValue(new Response('{"error":"bad request"}', { status: 400 }));
+    const r = await withEdgeAttemptRecording(mock as any, { businessId: 'b1', recipientPhone: '+2348001234567', messageCategory: 'utility' }, fetchFn);
+    expect(r.ok).toBe(false);
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+    // settle_message_cost('released') was called
+    const settleCalls = mock._rpcCalls.filter((c: any) => c.fn === 'settle_message_cost');
+    expect(settleCalls).toHaveLength(1);
+    expect(settleCalls[0].params.p_outcome).toBe('released');
+  });
+
+  it('Reserved + transport exception (non-ambiguous) => release', async () => {
+    const mock = buildEdgeMock({ rpcResult: { authorized: true, enforcement_required: true } });
+    const fetchFn = vi.fn().mockRejectedValue(new Error('ECONNREFUSED'));
+    try {
+      await withEdgeAttemptRecording(mock as any, { businessId: 'b1', recipientPhone: '+2348001234567', messageCategory: 'utility' }, fetchFn);
+    } catch { /* expected */ }
+    const settleCalls = mock._rpcCalls.filter((c: any) => c.fn === 'settle_message_cost');
+    expect(settleCalls).toHaveLength(1);
+    expect(settleCalls[0].params.p_outcome).toBe('released');
+  });
+
+  it('Reserved + ambiguous transport => remains reserved (no release)', async () => {
+    const mock = buildEdgeMock({ rpcResult: { authorized: true, enforcement_required: true } });
+    const fetchFn = vi.fn().mockRejectedValue(new Error('AbortError: timeout'));
+    try {
+      await withEdgeAttemptRecording(mock as any, { businessId: 'b1', recipientPhone: '+2348001234567', messageCategory: 'utility' }, fetchFn);
+    } catch { /* expected */ }
+    // No settle_message_cost called — remains reserved for reconciliation
+    const settleCalls = mock._rpcCalls.filter((c: any) => c.fn === 'settle_message_cost');
+    expect(settleCalls).toHaveLength(0);
+    // Attempt marked ambiguous
+    const row = Array.from(mock._rows.values())[0];
+    expect(row?.status).toBe('ambiguous');
+    expect(row?.needs_reconciliation).toBe(true);
+  });
+
+  it('Not reserved + provider failure => no settle call', async () => {
+    const mock = buildEdgeMock({ rpcResult: { enforcement_required: false } });
+    const fetchFn = vi.fn().mockResolvedValue(new Response('error', { status: 500 }));
+    const r = await withEdgeAttemptRecording(mock as any, { businessId: 'b1', recipientPhone: '+2348001234567' }, fetchFn);
+    expect(r.ok).toBe(false);
+    // No settle_message_cost called (no reservation existed)
+    expect(mock._rpcCalls.filter((c: any) => c.fn === 'settle_message_cost')).toHaveLength(0);
+  });
+
+  it('WAMID linkage triggers drain_unmatched_attempt_statuses', async () => {
+    const mock = buildEdgeMock({ rpcResult: { enforcement_required: false } });
+    const fetchFn = vi.fn().mockResolvedValue(new Response(JSON.stringify({ messages: [{ id: 'wamid.drain-test' }] }), { status: 200 }));
+    const r = await withEdgeAttemptRecording(mock as any, { businessId: 'b1', recipientPhone: '+2348001234567' }, fetchFn);
+    expect(r.ok).toBe(true);
+    const drainCalls = mock._rpcCalls.filter((c: any) => c.fn === 'drain_unmatched_attempt_statuses');
+    expect(drainCalls).toHaveLength(1);
+    expect(drainCalls[0].params.p_meta_message_id).toBe('wamid.drain-test');
+  });
+
+  it('Reserved + markSending failure => zero Meta emission (cross-state protection)', async () => {
+    const mock = buildEdgeMock({ sendingUpdateError: true, rpcResult: { authorized: true, enforcement_required: true } });
+    const fetchFn = vi.fn();
+    const r = await withEdgeAttemptRecording(mock as any, { businessId: 'b1', recipientPhone: '+2348001234567' }, fetchFn);
+    expect(r.ok).toBe(false);
+    expect(fetchFn).not.toHaveBeenCalled();
+  });
+
+  it('Structural: all 12 Edge functions pass messageCategory', async () => {
+    const { readFileSync } = await import('fs');
+    const funcsDir = resolve(__dirname, '../../supabase/functions');
+    const edgeFuncs = ['abandoned-cart-reminder', 'birthday-campaign', 'booking-reminders', 'chat-timeout',
+      'contract-reminders', 'customer-reengagement', 'generate-sign-link', 'low-stock-alerts',
+      'noshow-reschedule', 'process-sequences', 'recurring-reminder', 'waitlist-expiration'];
+    for (const func of edgeFuncs) {
+      const src = readFileSync(resolve(funcsDir, func, 'index.ts'), 'utf-8');
+      expect(src, `${func} missing messageCategory`).toContain('messageCategory');
+    }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// #261: Main sender null-Supabase fail-closed test
+// ─────────────────────────────────────────────────────────────────────────────
+describe('Main sender #261 null-Supabase fail-closed', () => {
+  it('Business-scoped send without Supabase => zero Meta (independent of #257 gate)', async () => {
+    const { MetaCloudSender } = await import(resolve(__dirname, '../channels/message-sender.ts'));
+    const providerFn = vi.fn().mockResolvedValue({ messageId: 'test' });
+    // #257 gate is OFF/default — but #261 requires attempt authority regardless
+    const sender = new MetaCloudSender({ sendText: providerFn } as any, null);
+    sender.bindBusiness('business-123');
+    await expect(
+      sender.sendText('+2348001234567', 'test message'),
+    ).rejects.toThrow('Business send requires attempt authority');
+    expect(providerFn).not.toHaveBeenCalled();
+  });
+
+  it('Platform-scoped send without Supabase => existing behavior preserved', async () => {
+    const { MetaCloudSender } = await import(resolve(__dirname, '../channels/message-sender.ts'));
+    const providerFn = vi.fn().mockResolvedValue({ messageId: 'platform-ok' });
+    // Platform sender: no business bound, platformScopeAllowed
+    const sender = new MetaCloudSender({
+      sendText: providerFn,
+    } as any, null);
+    // No bindBusiness — remains in platform scope
+    const result = await sender.sendPlatformText('+2348001234567', 'platform notification');
+    expect(result.messageId).toBe('platform-ok');
+    expect(providerFn).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// #261 Blocker 3: Canonical phone-country resolver tests
+// ─────────────────────────────────────────────────────────────────────────────
+describe('#261 canonical phone-country resolver', () => {
+  it('US +1 number resolves US', () => {
+    expect(resolveRecipientCountry('+12125551234')).toBe('US');
+  });
+
+  it('Canadian +1 number resolves CA (not US)', () => {
+    expect(resolveRecipientCountry('+14165551234')).toBe('CA');
+  });
+
+  it('Nigeria resolves NG', () => {
+    expect(resolveRecipientCountry('+2348001234567')).toBe('NG');
+  });
+
+  it('UK resolves GB', () => {
+    expect(resolveRecipientCountry('+442071234567')).toBe('GB');
+  });
+
+  it('Invalid/unresolvable phone returns null', () => {
+    expect(resolveRecipientCountry('+0000000')).toBeNull();
+    expect(resolveRecipientCountry('not-a-phone')).toBeNull();
+    expect(resolveRecipientCountry('')).toBeNull();
   });
 });

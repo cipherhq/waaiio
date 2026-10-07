@@ -282,6 +282,13 @@ export class MetaCloudSender implements MessageSender {
     const isPlatform = !this._businessId && options?.platformScopeAllowed;
     const scope: 'business' | 'platform' = isPlatform ? 'platform' : 'business';
 
+    // #261: Business-scoped sends require Supabase client for attempt/financial authority.
+    // This is independent of the #257 recording gate — financial authorization cannot
+    // be bypassed simply because #257 is OFF. GateBlockError is non-retryable.
+    if (!isPlatform && !this._supabase) {
+      throw new GateBlockError('Business send requires attempt authority (Supabase client unavailable) — zero Meta emission');
+    }
+
     // 1. Create pre-WAMID attempt (before guard)
     const attemptId = this._supabase
       ? await createAttempt(this._supabase, { ...params, businessId: this._businessId || null, attemptScope: scope })
