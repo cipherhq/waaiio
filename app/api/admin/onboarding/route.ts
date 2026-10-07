@@ -4,6 +4,7 @@ import { createServiceClient } from '@/lib/supabase/service';
 import { rateLimitResponseAsync } from '@/lib/rate-limit';
 import { sendEmail } from '@/lib/email/client';
 import { provisionAdminBusiness, validateAdminOnboardingInput, type AdminOnboardingInput } from '@/lib/onboarding/admin-assisted';
+import { OnboardingProvisionError } from '@/lib/onboarding/provision-business';
 import { authUserExists } from '@/lib/onboarding/auth-user';
 
 function escapeHtml(value: string) {
@@ -115,10 +116,25 @@ export async function POST(request: NextRequest) {
     if (auditError) throw new Error(`Audit write failed: ${auditError.message}`);
     return NextResponse.json({ onboarding: { ...onboarding, target_user_id: userId, business_id: businessId, status: 'customer_action_required' } }, { status: 201 });
   } catch (error) {
-    if (businessId) await service.from('businesses').delete().eq('id', businessId).eq('status', 'pending');
-    if (userId) await service.auth.admin.deleteUser(userId);
-    await service.from('admin_onboarding_invites').update({ status: 'failed', last_error: error instanceof Error ? error.message : 'Provisioning failed' }).eq('id', onboarding.id);
-    await service.from('admin_audit_logs').insert({ actor_id: admin.userId, action: 'admin_onboarding_failed', entity_type: 'admin_onboarding', entity_id: onboarding.id, details: { target_email: input.owner_email, reason: error instanceof Error ? error.message : 'Provisioning failed' } });
-    return NextResponse.json({ error: 'Onboarding failed safely; no active business was created.', onboarding_id: onboarding.id }, { status: 500 });
+    // Extract businessId from provisioning error if the local variable was never set
+    if (!businessId && error instanceof OnboardingProvisionError && error.businessId) {
+      businessId = error.businessId;
+    }
+    const cleanupFailures: string[] = [];
+    if (businessId) {
+      const { error: bizErr } = await service.from('businesses').delete().eq('id', businessId).eq('status', 'pending');
+      if (bizErr) cleanupFailures.push(`business ${businessId}`);
+    }
+    if (userId) {
+      const { error: userErr } = await service.auth.admin.deleteUser(userId);
+      if (userErr) cleanupFailures.push(`user ${userId}`);
+    }
+    const reason = error instanceof Error ? error.message : 'Provisioning failed';
+    await service.from('admin_onboarding_invites').update({ status: 'failed', last_error: reason }).eq('id', onboarding.id);
+    await service.from('admin_audit_logs').insert({ actor_id: admin.userId, action: 'admin_onboarding_failed', entity_type: 'admin_onboarding', entity_id: onboarding.id, details: { target_email: input.owner_email, reason, cleanup_failures: cleanupFailures } });
+    const safetyNote = cleanupFailures.length > 0
+      ? `Cleanup incomplete — manual reconciliation required for: ${cleanupFailures.join(', ')}.`
+      : 'Resources cleaned up successfully.';
+    return NextResponse.json({ error: `Onboarding failed. ${safetyNote}`, onboarding_id: onboarding.id }, { status: 500 });
   }
 }

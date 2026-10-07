@@ -4,6 +4,7 @@ import { createServiceClient } from '@/lib/supabase/service';
 import { rateLimitResponseAsync } from '@/lib/rate-limit';
 import { sendEmail } from '@/lib/email/client';
 import { provisionAdminBusiness, validateAdminOnboardingInput, type AdminOnboardingInput } from '@/lib/onboarding/admin-assisted';
+import { OnboardingProvisionError } from '@/lib/onboarding/provision-business';
 import { CAPABILITY_TIER_REQUIREMENTS, tierMeetsRequirement, type CapabilityId, type SubscriptionTier } from '@/shared/capabilities';
 import { authUserExists } from '@/lib/onboarding/auth-user';
 
@@ -53,11 +54,16 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
     }
     if (onboarding.business_id) {
       const { error: businessError } = await service.from('businesses').delete().eq('id', onboarding.business_id).eq('status', 'pending');
-      if (businessError) return NextResponse.json({ error: 'Pending business could not be cancelled safely' }, { status: 409 });
+      if (businessError) return NextResponse.json({ error: 'Pending business could not be cancelled safely. No resources were modified.' }, { status: 409 });
     }
     if (onboarding.target_user_id) {
       const { error: userError } = await service.auth.admin.deleteUser(onboarding.target_user_id);
-      if (userError) return NextResponse.json({ error: 'Invited account could not be cancelled safely' }, { status: 500 });
+      if (userError) {
+        const detail = onboarding.business_id
+          ? `Business ${onboarding.business_id} was deleted but invited account ${onboarding.target_user_id} could not be removed. Manual cleanup required.`
+          : `Invited account ${onboarding.target_user_id} could not be removed.`;
+        return NextResponse.json({ error: detail, partiallyApplied: Boolean(onboarding.business_id) }, { status: 500 });
+      }
     }
     await service.from('admin_onboarding_invites').update({ status: 'cancelled', cancelled_at: new Date().toISOString(), target_user_id: null, business_id: null }).eq('id', onboarding.id);
     const { error: auditError } = await service.from('admin_audit_logs').insert({ actor_id: admin.userId, action: 'admin_onboarding_cancel', entity_type: 'admin_onboarding', entity_id: onboarding.id, details: { target_email: onboarding.target_email } });
@@ -113,10 +119,24 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
       if (auditError) throw new Error(`Audit write failed: ${auditError.message}`);
       return NextResponse.json({ success: true });
     } catch (retryError) {
-      if (businessId) await service.from('businesses').delete().eq('id', businessId).eq('status', 'pending');
-      if (userId) await service.auth.admin.deleteUser(userId);
-      await service.from('admin_onboarding_invites').update({ status: 'failed', target_user_id: null, business_id: null, last_error: retryError instanceof Error ? retryError.message : 'Retry failed' }).eq('id', onboarding.id);
-      return NextResponse.json({ error: 'Retry failed safely; no active business was created.' }, { status: 500 });
+      if (!businessId && retryError instanceof OnboardingProvisionError && retryError.businessId) {
+        businessId = retryError.businessId;
+      }
+      const cleanupFailures: string[] = [];
+      if (businessId) {
+        const { error: bizErr } = await service.from('businesses').delete().eq('id', businessId).eq('status', 'pending');
+        if (bizErr) cleanupFailures.push(`business ${businessId}`);
+      }
+      if (userId) {
+        const { error: userErr } = await service.auth.admin.deleteUser(userId);
+        if (userErr) cleanupFailures.push(`user ${userId}`);
+      }
+      const reason = retryError instanceof Error ? retryError.message : 'Retry failed';
+      await service.from('admin_onboarding_invites').update({ status: 'failed', target_user_id: null, business_id: null, last_error: reason }).eq('id', onboarding.id);
+      const safetyNote = cleanupFailures.length > 0
+        ? `Cleanup incomplete — manual reconciliation required for: ${cleanupFailures.join(', ')}.`
+        : 'Resources cleaned up successfully.';
+      return NextResponse.json({ error: `Retry failed. ${safetyNote}` }, { status: 500 });
     }
   }
 

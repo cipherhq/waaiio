@@ -43,6 +43,19 @@ describe('#551 admin-assisted onboarding authority contract', () => {
     expect(createRoute).toContain('service.auth.admin.deleteUser(userId)');
     expect(createRoute).toContain("status: 'failed'");
     expect(createRoute).not.toContain("status: 'active'");
+    // Cleanup failures must be explicit — never claim "failed safely" unconditionally
+    expect(createRoute).toContain('cleanupFailures');
+    expect(createRoute).not.toContain('failed safely');
+  });
+
+  it('provision helper carries businessId in OnboardingProvisionError for deterministic cleanup', () => {
+    // Post-insert failures (WhatsApp config, capabilities, finalization) throw OnboardingProvisionError
+    // with businessId so the calling route can deterministically clean up
+    expect(sharedProvisioning).toContain('OnboardingProvisionError');
+    expect(sharedProvisioning).toContain('business.id');
+    // Admin route catch blocks extract businessId from the error
+    expect(createRoute).toContain('error instanceof OnboardingProvisionError');
+    expect(createRoute).toContain('error.businessId');
   });
 
   it('records plan intent while forcing actual entitlement to free', () => {

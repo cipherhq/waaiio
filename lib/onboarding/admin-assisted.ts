@@ -1,7 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { CountryCode } from '@/lib/constants';
 import { validateBusinessAuthorityInputs } from '@/lib/onboarding/validation';
-import { provisionPendingBusiness } from '@/lib/onboarding/provision-business';
+import { OnboardingProvisionError, provisionPendingBusiness } from '@/lib/onboarding/provision-business';
 import { CAPABILITY_IDS, CAPABILITY_TIER_REQUIREMENTS, tierMeetsRequirement, type CapabilityId, type SubscriptionTier } from '@/shared/capabilities';
 
 export interface AdminOnboardingInput {
@@ -78,7 +78,9 @@ export async function provisionAdminBusiness(service: SupabaseClient, input: Adm
   });
   if (input.owner_phone) {
     const { error: profileError } = await service.from('profiles').update({ phone: input.owner_phone }).eq('id', userId);
-    if (profileError) throw new Error(`Owner profile failed: ${profileError.message}`);
+    if (profileError) {
+      throw new OnboardingProvisionError(`Owner profile failed: ${profileError.message}`, 500, business.id);
+    }
   }
   return business;
 }
