@@ -1,4 +1,5 @@
 import type { FlowDefinition, FlowContext, PromptMessage, ValidationResult } from './types';
+import { getFlowCopy } from './flow-localization';
 import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
@@ -13,7 +14,7 @@ export const recurringManageFlow: FlowDefinition = {
       id: 'list_subscriptions',
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
         if (!ctx.business) {
-          return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start over.' }];
+          return [{ type: 'text', text: getFlowCopy(ctx.copyLang, 'error.generic') }];
         }
 
         const phone = ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`;
@@ -30,8 +31,8 @@ export const recurringManageFlow: FlowDefinition = {
           ctx.session.session_data._recurring_empty = true;
           return [{
             type: 'buttons',
-            body: 'You have no active recurring payments.',
-            buttons: [{ id: 'back_to_account', title: '← Back' }],
+            body: getFlowCopy(ctx.copyLang, 'recurring.no_active'),
+            buttons: [{ id: 'back_to_account', title: getFlowCopy(ctx.copyLang, 'nav.back') }],
           }];
         }
 
@@ -55,13 +56,13 @@ export const recurringManageFlow: FlowDefinition = {
           description: `${formatCurrency(s.amount, cc)}/${s.frequency} - ${s.status}${s.card_last_four ? ` (*${s.card_last_four})` : ''}`,
           postbackText: s.id,
         }));
-        listItems.push({ title: '← Back to My Account', description: 'Return to account menu', postbackText: 'back_to_account' });
+        listItems.push({ title: getFlowCopy(ctx.copyLang, 'nav.back_to_account'), description: getFlowCopy(ctx.copyLang, 'nav.return_to_account'), postbackText: 'back_to_account' });
 
         return [{
           type: 'list',
-          title: 'Your Recurring Payments',
+          title: getFlowCopy(ctx.copyLang, 'recurring.title'),
           body: `You have ${subs.length} recurring payment(s):`,
-          buttonLabel: 'Select',
+          buttonLabel: getFlowCopy(ctx.copyLang, 'recurring.select'),
           items: listItems,
         }];
       },
@@ -86,7 +87,7 @@ export const recurringManageFlow: FlowDefinition = {
             selected = subs[numIdx];
           }
         }
-        if (!selected) return { valid: false, errorMessage: 'Please select a recurring payment from the list, or type a number.' };
+        if (!selected) return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'recurring.select_hint') };
         return { valid: true, data: { _selected_sub_id: selected.id, _selected_sub_label: selected.label } };
       },
       async next(ctx: FlowContext) {
@@ -115,12 +116,12 @@ export const recurringManageFlow: FlowDefinition = {
 
         const buttons: Array<{ id: string; title: string }> = [];
         if (isPaused) {
-          buttons.push({ id: 'resume_sub', title: 'Resume' });
+          buttons.push({ id: 'resume_sub', title: getFlowCopy(ctx.copyLang, 'recurring.resume') });
         } else {
-          buttons.push({ id: 'pause_sub', title: 'Pause' });
+          buttons.push({ id: 'pause_sub', title: getFlowCopy(ctx.copyLang, 'recurring.pause') });
         }
-        buttons.push({ id: 'cancel_sub', title: 'Cancel' });
-        buttons.push({ id: 'view_details', title: 'View Details' });
+        buttons.push({ id: 'cancel_sub', title: getFlowCopy(ctx.copyLang, 'nav.cancel') });
+        buttons.push({ id: 'view_details', title: getFlowCopy(ctx.copyLang, 'recurring.view_details') });
 
         return [{
           type: 'buttons',
@@ -128,7 +129,7 @@ export const recurringManageFlow: FlowDefinition = {
           buttons,
         }];
       },
-      async validate(input: string): Promise<ValidationResult> {
+      async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
         const text = input.toLowerCase().trim();
         if (text === 'cancel_sub' || text === 'cancel subscription' || text === 'cancel recurring payment') return { valid: true, data: { _sub_action: 'cancel' } };
         if (text === 'pause_sub' || text === 'pause') return { valid: true, data: { _sub_action: 'pause' } };
@@ -136,7 +137,7 @@ export const recurringManageFlow: FlowDefinition = {
         if (text === 'resume_sub') return { valid: true, data: { _sub_action: 'resume' } };
         if (text === 'view_details' || text === 'details') return { valid: true, data: { _sub_action: 'details' } };
         if (text === 'payment_history' || text === 'history') return { valid: true, data: { _sub_action: 'history' } };
-        return { valid: false, errorMessage: 'Please choose an option from the buttons.' };
+        return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'recurring.action_hint') };
       },
       async next(ctx: FlowContext) {
         if (ctx.session.session_data._sub_action === 'cancel') return 'confirm_cancel';
@@ -154,22 +155,22 @@ export const recurringManageFlow: FlowDefinition = {
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
         return [{
           type: 'buttons',
-          body: 'Are you sure you want to cancel this recurring payment? You can always set it up again later.',
+          body: getFlowCopy(ctx.copyLang, 'recurring.cancel_confirm'),
           buttons: [
-            { id: 'yes_cancel', title: 'Yes, Cancel' },
-            { id: 'keep', title: 'Keep It' },
+            { id: 'yes_cancel', title: getFlowCopy(ctx.copyLang, 'recurring.yes_cancel') },
+            { id: 'keep', title: getFlowCopy(ctx.copyLang, 'recurring.keep_it') },
           ],
         }];
       },
-      async validate(input: string): Promise<ValidationResult> {
+      async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
         const text = input.toLowerCase();
         if (text === 'yes_cancel' || text === 'yes') return { valid: true, data: { _confirm_cancel: true } };
         if (text === 'keep' || text === 'no') return { valid: true, data: { _confirm_cancel: false } };
-        return { valid: false, errorMessage: 'Please choose *Yes, Cancel* or *Keep It*.' };
+        return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'recurring.cancel_hint') };
       },
       async next(ctx: FlowContext) {
         if (!ctx.session.session_data._confirm_cancel) {
-          await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('Your recurring payment is still active.') });
+          await ctx.sender.sendText({ to: ctx.from, text: getFlowCopy(ctx.copyLang, 'recurring.still_active') });
           return null;
         }
         return 'process_cancel';
@@ -189,7 +190,7 @@ export const recurringManageFlow: FlowDefinition = {
           .single();
 
         if (!sub) {
-          return [{ type: 'text', text: 'Subscription not found. Send *Hi* to start over.' }];
+          return [{ type: 'text', text: getFlowCopy(ctx.copyLang, 'recurring.not_found') }];
         }
 
         // Cancel on gateway
@@ -229,11 +230,7 @@ export const recurringManageFlow: FlowDefinition = {
           })
           .eq('id', subId);
 
-        return [{
-          type: 'text',
-          text: '✅ Your recurring payment has been cancelled. You will no longer be charged automatically.'
-            + '\n\n💡 Type *subscriptions* to manage payments or *Hi* to start over.',
-        }];
+        return [{ type: 'text', text: getFlowCopy(ctx.copyLang, 'recurring.cancelled_ok') }];
       },
       async validate(): Promise<ValidationResult> { return { valid: true }; },
       async next() { return null; },
@@ -248,20 +245,20 @@ export const recurringManageFlow: FlowDefinition = {
           type: 'buttons',
           body: `Are you sure you want to pause *${label}*? You can resume anytime.`,
           buttons: [
-            { id: 'yes_pause', title: 'Yes, Pause' },
-            { id: 'keep_active', title: 'No, Keep Active' },
+            { id: 'yes_pause', title: getFlowCopy(ctx.copyLang, 'recurring.yes_pause') },
+            { id: 'keep_active', title: getFlowCopy(ctx.copyLang, 'recurring.no_keep_active') },
           ],
         }];
       },
-      async validate(input: string): Promise<ValidationResult> {
+      async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
         const text = input.toLowerCase();
         if (text === 'yes_pause' || text === 'yes') return { valid: true, data: { _confirm_pause: true } };
         if (text === 'keep_active' || text === 'no') return { valid: true, data: { _confirm_pause: false } };
-        return { valid: false, errorMessage: 'Please choose *Yes, Pause* or *No, Keep Active*.' };
+        return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'recurring.pause_hint') };
       },
       async next(ctx: FlowContext) {
         if (!ctx.session.session_data._confirm_pause) {
-          await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('Your recurring payment is still active.') });
+          await ctx.sender.sendText({ to: ctx.from, text: getFlowCopy(ctx.copyLang, 'recurring.still_active') });
           return null;
         }
         return 'process_pause';
@@ -281,7 +278,7 @@ export const recurringManageFlow: FlowDefinition = {
           .single();
 
         if (!sub) {
-          return [{ type: 'text', text: 'Subscription not found. Send *Hi* to start over.' }];
+          return [{ type: 'text', text: getFlowCopy(ctx.copyLang, 'recurring.not_found') }];
         }
 
         // Pause on gateway — provider-first, then DB
@@ -304,10 +301,7 @@ export const recurringManageFlow: FlowDefinition = {
         }
 
         if (!paused) {
-          return [{
-            type: 'text',
-            text: 'Something went wrong on our end. Please try again later or type *subscriptions* to retry.',
-          }];
+          return [{ type: 'text', text: getFlowCopy(ctx.copyLang, 'error.generic') }];
         }
 
         // Update DB
@@ -348,7 +342,7 @@ export const recurringManageFlow: FlowDefinition = {
           .single();
 
         if (!sub) {
-          return [{ type: 'text', text: 'Subscription not found. Send *Hi* to start over.' }];
+          return [{ type: 'text', text: getFlowCopy(ctx.copyLang, 'recurring.not_found') }];
         }
 
         // Resume on gateway
@@ -372,10 +366,7 @@ export const recurringManageFlow: FlowDefinition = {
         }
 
         if (!resumed) {
-          return [{
-            type: 'text',
-            text: 'Something went wrong on our end. Please try again later or type *subscriptions* to retry.',
-          }];
+          return [{ type: 'text', text: getFlowCopy(ctx.copyLang, 'error.generic') }];
         }
 
         // Update DB
@@ -419,7 +410,7 @@ export const recurringManageFlow: FlowDefinition = {
           .single();
 
         if (!sub) {
-          return [{ type: 'text', text: 'Subscription not found. Type *subscriptions* to try again.' }];
+          return [{ type: 'text', text: getFlowCopy(ctx.copyLang, 'recurring.sub_not_found_retry') }];
         }
 
         const cc = (ctx.business?.country_code || 'NG') as CountryCode;
@@ -438,16 +429,16 @@ export const recurringManageFlow: FlowDefinition = {
             sub.card_last_four ? `Card: *${sub.card_last_four} (${sub.card_brand || 'card'})` : '',
           ].filter(Boolean).join('\n'),
           buttons: [
-            { id: 'payment_history', title: 'Payment History' },
-            { id: 'back_subs', title: 'Back' },
+            { id: 'payment_history', title: getFlowCopy(ctx.copyLang, 'recurring.payment_history') },
+            { id: 'back_subs', title: getFlowCopy(ctx.copyLang, 'recurring.back') },
           ],
         }];
       },
-      async validate(input: string): Promise<ValidationResult> {
+      async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
         const text = input.toLowerCase().trim();
         if (text === 'payment_history' || text === 'history' || text === 'payments') return { valid: true, data: { _details_action: 'history' } };
         if (text === 'back_subs' || text === 'back') return { valid: true, data: { _details_action: 'back' } };
-        return { valid: false, errorMessage: 'Type *history* or *back*, or tap a button.' };
+        return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'recurring.details_hint') };
       },
       async next(ctx: FlowContext) {
         if (ctx.session.session_data._details_action === 'history') return 'payment_history';
@@ -473,7 +464,7 @@ export const recurringManageFlow: FlowDefinition = {
           .or(`customer_phone.eq.${phoneP},customer_phone.eq.${phoneN}`)
           .maybeSingle();
         if (!sub) {
-          return [{ type: 'text', text: 'Subscription not found. Type *subscriptions* to try again.' }];
+          return [{ type: 'text', text: getFlowCopy(ctx.copyLang, 'recurring.sub_not_found_retry') }];
         }
 
         const { data: charges } = await ctx.supabase
@@ -485,11 +476,7 @@ export const recurringManageFlow: FlowDefinition = {
           .limit(10);
 
         if (!charges || charges.length === 0) {
-          return [{
-            type: 'text',
-            text: 'No payment history available yet.'
-              + '\n\n💡 Type *subscriptions* to go back.',
-          }];
+          return [{ type: 'text', text: getFlowCopy(ctx.copyLang, 'recurring.no_history') }];
         }
 
         const lines = charges.map(c => {

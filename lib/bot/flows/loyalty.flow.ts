@@ -1,4 +1,5 @@
 import type { FlowDefinition, FlowStepConfig, FlowContext, PromptMessage, ValidationResult } from './types';
+import { getFlowCopy } from './flow-localization';
 import { getLocale, type CountryCode } from '@/lib/constants';
 import { logger } from '@/lib/logger';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
@@ -72,9 +73,9 @@ const loyaltyMenuStep: FlowStepConfig = {
         type: 'buttons',
         body: await ctx.t('What would you like to do?'),
         buttons: [
-          { id: 'view_history', title: 'View History' },
-          { id: 'redeem', title: 'Redeem Reward' },
-          { id: 'back_to_account', title: '← Back' },
+          { id: 'view_history', title: getFlowCopy(ctx.copyLang, 'loyalty.view_history') },
+          { id: 'redeem', title: getFlowCopy(ctx.copyLang, 'loyalty.redeem_reward') },
+          { id: 'back_to_account', title: getFlowCopy(ctx.copyLang, 'nav.back') },
         ],
       },
     ];
@@ -87,7 +88,7 @@ const loyaltyMenuStep: FlowStepConfig = {
     if (lower === 'redeem' || lower === 'redeem reward') return { valid: true, data: { _loyalty_action: 'redeem' } };
     // If no loyalty record, any input routes back to my account
     if (ctx.session.session_data._loyalty_empty) return { valid: true, data: { _loyalty_action: 'back_to_account' } };
-    return { valid: false, errorMessage: 'Type *history*, *redeem*, or *back*.' };
+    return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'loyalty.loyalty_hint') };
   },
 
   async next(ctx: FlowContext) {
@@ -123,8 +124,8 @@ const loyaltyHistoryStep: FlowStepConfig = {
         { type: 'text', text: await ctx.t('No points activity yet. You\'ll see your points history here as you earn and redeem!') },
         {
           type: 'buttons',
-          body: 'Anything else?',
-          buttons: [{ id: 'back_menu', title: 'Back to Menu' }, { id: 'back_to_account', title: '← Back' }],
+          body: getFlowCopy(ctx.copyLang, 'loyalty.anything_else'),
+          buttons: [{ id: 'back_menu', title: getFlowCopy(ctx.copyLang, 'nav.back_to_menu') }, { id: 'back_to_account', title: getFlowCopy(ctx.copyLang, 'nav.back') }],
         },
       ];
     }
@@ -144,8 +145,8 @@ const loyaltyHistoryStep: FlowStepConfig = {
       },
       {
         type: 'buttons',
-        body: 'Anything else?',
-        buttons: [{ id: 'back_menu', title: 'Back to Menu' }],
+        body: getFlowCopy(ctx.copyLang, 'loyalty.anything_else'),
+        buttons: [{ id: 'back_menu', title: getFlowCopy(ctx.copyLang, 'nav.back_to_menu') }],
       },
     ];
   },
@@ -182,8 +183,8 @@ const loyaltyRedeemStep: FlowStepConfig = {
         },
         {
           type: 'buttons',
-          body: 'Anything else?',
-          buttons: [{ id: 'go_back', title: 'Back to Menu' }],
+          body: getFlowCopy(ctx.copyLang, 'loyalty.anything_else'),
+          buttons: [{ id: 'go_back', title: getFlowCopy(ctx.copyLang, 'nav.back_to_menu') }],
         },
       ];
     }
@@ -192,18 +193,18 @@ const loyaltyRedeemStep: FlowStepConfig = {
       type: 'buttons',
       body: await ctx.t(`You have enough points to redeem: *${rewardDesc}*\n\nThis will use ${threshold} points from your balance of ${balance}.`),
       buttons: [
-        { id: 'confirm_redeem', title: 'Redeem Now' },
-        { id: 'skip_redeem', title: 'Not Now' },
+        { id: 'confirm_redeem', title: getFlowCopy(ctx.copyLang, 'loyalty.redeem_now') },
+        { id: 'skip_redeem', title: getFlowCopy(ctx.copyLang, 'loyalty.not_now') },
       ],
     }];
   },
 
-  async validate(input: string): Promise<ValidationResult> {
+  async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
     if (input === 'confirm_redeem') return { valid: true, data: { _redeem_action: 'confirm' } };
     if (input === 'skip_redeem') return { valid: true, data: { _redeem_action: 'skip' } };
     // Bug fix: handle go_back button from low-balance path
     if (input === 'go_back') return { valid: true, data: { _redeem_action: 'skip' } };
-    return { valid: false, errorMessage: 'Tap one of the buttons above to continue.' };
+    return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'loyalty.redeem_hint') };
   },
 
   async next(ctx: FlowContext) {
