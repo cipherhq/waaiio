@@ -10,6 +10,7 @@
  * → greeting/keyword/LLM do NOT steal the command.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { createTestSupabase } from '../../__tests__/helpers/mock-supabase';
 
 vi.mock('@/lib/countries', () => ({ loadCountries: vi.fn().mockResolvedValue([]), getCountry: vi.fn(), getCountryList: vi.fn().mockReturnValue([]), isValidCountryCode: vi.fn().mockReturnValue(true), getDialingCodeMap: vi.fn().mockReturnValue({}) }));
 vi.mock('@/lib/rate-limit', () => ({ checkRateLimitAsync: vi.fn().mockResolvedValue({ allowed: true, remaining: 10 }) }));
@@ -210,7 +211,7 @@ describe('F1: Real Citadel no-session integration', () => {
     const { supabase, sessionInserts } = createCitadelSupabase();
     const cloud = createMockCloud();
     // Production-shaped shared-channel sender: starts tenantless/unbound.
-    const sender = new MetaCloudSender(cloud as any, null);
+    const sender = new MetaCloudSender(cloud as any, createTestSupabase());
     expect(sender.boundBusinessId).toBe('');
     const bot = new BotService(supabase as any, sender, createStandaloneService(), createMockIntelligence() as any);
 

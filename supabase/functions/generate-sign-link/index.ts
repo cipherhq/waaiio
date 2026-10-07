@@ -22,6 +22,7 @@ const appUrl = Deno.env.get('APP_URL') || 'https://waaiio.com';
 const whatsappToken = Deno.env.get('WHATSAPP_TOKEN') || '';
 const whatsappPhoneId = Deno.env.get('WHATSAPP_PHONE_NUMBER_ID') || '';
 import { withEdgeAttemptRecording } from '../_shared/attempt-recording.ts';
+import { resolveRecipientCountry } from '../_shared/phone-country.ts';
 
 function generateToken(length = 24): string {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
@@ -41,7 +42,7 @@ async function sendWhatsApp(to: string, text: string, supabase: ReturnType<typeo
   // #257: attempt → #256 guard → sending → Meta fetch (all inside withEdgeAttemptRecording)
   const result = await withEdgeAttemptRecording(
     supabaseForRecording,
-    { businessId, recipientPhone: to, phoneNumberId: whatsappPhoneId, flowType: 'generate-sign-link', messageCategory: 'utility' },
+    { businessId, recipientPhone: to, phoneNumberId: whatsappPhoneId, flowType: 'generate-sign-link', messageCategory: 'utility', resolveCountry: resolveRecipientCountry },
     () => fetch(
       `https://graph.facebook.com/v22.0/${whatsappPhoneId}/messages`,
       {

@@ -6,6 +6,7 @@
  * and B selection/resolution through the actual state machine.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { createTestSupabase } from './helpers/mock-supabase';
 
 vi.mock('@/lib/countries', () => ({ loadCountries: vi.fn().mockResolvedValue([]), getCountry: vi.fn(), getCountryList: vi.fn().mockReturnValue([]), isValidCountryCode: vi.fn().mockReturnValue(true), getDialingCodeMap: vi.fn().mockReturnValue({}) }));
 vi.mock('@/lib/rate-limit', () => ({ checkRateLimitAsync: vi.fn().mockResolvedValue({ allowed: true, remaining: 10 }) }));
@@ -227,7 +228,7 @@ describe('S-1 Real BotService.handleMessage() (#256)', () => {
 
   it('1. resumed A session: BotService binds A and produces business-scoped provider calls', async () => {
     const cloud = createMockCloud();
-    const sender = new MetaCloudSender(cloud as any);
+    const sender = new MetaCloudSender(cloud as any, createTestSupabase());
     const supabase = createTableAwareSupabase({
       session: {
         id: 'sess-1', business_id: 'biz-A', current_step: 'select_capability', is_active: true,
@@ -257,7 +258,7 @@ describe('S-1 Real BotService.handleMessage() (#256)', () => {
   it('2. suspended A via preResolved: exactly zero business-scoped Meta calls', async () => {
     suspendedBizIds.add('biz-A');
     const cloud = createMockCloud();
-    const sender = new MetaCloudSender(cloud as any);
+    const sender = new MetaCloudSender(cloud as any, createTestSupabase());
     const bizA = { id: 'biz-A', name: 'Biz A', status: 'active', category: 'restaurant', subscription_tier: 'free', country_code: 'NG', metadata: {}, is_whitelabel: false };
     const newSession = { id: 'sess-new', business_id: 'biz-A', current_step: 'select_capability', is_active: true, session_data: { capabilities: ['scheduling'] }, whatsapp_number: '+234800', expires_at: new Date(Date.now() + 3600000).toISOString(), version: 0 };
     const supabase = createTableAwareSupabase({
@@ -275,7 +276,7 @@ describe('S-1 Real BotService.handleMessage() (#256)', () => {
   it('3. switch <keyword>: BotService fuzzy picker reaches Meta via platform-scoped send', async () => {
     suspendedBizIds.add('biz-A');
     const cloud = createMockCloud();
-    const sender = new MetaCloudSender(cloud as any);
+    const sender = new MetaCloudSender(cloud as any, createTestSupabase());
     sender.bindBusiness('biz-A');
     mockDetectionResult = { businessId: null, suggestions: [{ id: 'biz-B', name: 'Spa B', bot_code: 'SPAB' }, { id: 'biz-C', name: 'Spa C', bot_code: 'SPAC' }] };
     const supabase = createTableAwareSupabase({
@@ -297,7 +298,7 @@ describe('S-1 Real BotService.handleMessage() (#256)', () => {
 
   it('4. B selection: picker postback resolves B, evaluates B authorization, produces B provider calls', async () => {
     const cloud = createMockCloud();
-    const sender = new MetaCloudSender(cloud as any);
+    const sender = new MetaCloudSender(cloud as any, createTestSupabase());
 
     // Configure detection to resolve biz-B when the recursive call sends bot_code 'SPAB'
     mockDetectionResult = { businessId: 'biz-B', suggestions: [] };
@@ -341,7 +342,7 @@ describe('S-1 Real BotService.handleMessage() (#256)', () => {
   it('5. dedicated suspended A: zero business-scoped Meta calls', async () => {
     suspendedBizIds.add('biz-dedicated');
     const cloud = createMockCloud();
-    const sender = new MetaCloudSender(cloud as any);
+    const sender = new MetaCloudSender(cloud as any, createTestSupabase());
     const bizDedicated = { id: 'biz-dedicated', name: 'Ded Biz', status: 'active', category: 'restaurant', subscription_tier: 'free', country_code: 'NG', metadata: {}, is_whitelabel: false };
     const newSession = { id: 'sess-ded', business_id: 'biz-dedicated', current_step: 'select_capability', is_active: true, session_data: { capabilities: ['scheduling'] }, whatsapp_number: '+234800', expires_at: new Date(Date.now() + 3600000).toISOString(), version: 0 };
     const supabase = createTableAwareSupabase({
@@ -358,7 +359,7 @@ describe('S-1 Real BotService.handleMessage() (#256)', () => {
 
   it('6. missing tenant: guard evaluates missing identity, zero business-scoped provider calls', async () => {
     const cloud = createMockCloud();
-    const sender = new MetaCloudSender(cloud as any);
+    const sender = new MetaCloudSender(cloud as any, createTestSupabase());
     mockDetectionResult = { businessId: null, suggestions: [] };
     // Provide a realistic tenantless session so the flow proceeds past session insert
     const tenantlessSession = {

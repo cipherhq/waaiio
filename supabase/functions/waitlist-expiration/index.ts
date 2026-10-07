@@ -24,6 +24,7 @@ const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const whatsappToken = Deno.env.get('WHATSAPP_TOKEN') || '';
 const whatsappPhoneId = Deno.env.get('WHATSAPP_PHONE_NUMBER_ID') || '';
 import { withEdgeAttemptRecording } from '../_shared/attempt-recording.ts';
+import { resolveRecipientCountry } from '../_shared/phone-country.ts';
 
 async function sendWhatsApp(to: string, text: string, supabase: ReturnType<typeof createClient>, businessId: string): Promise<boolean> {
   if (!whatsappToken || !whatsappPhoneId) {
@@ -36,7 +37,7 @@ async function sendWhatsApp(to: string, text: string, supabase: ReturnType<typeo
     // #257: attempt → #256 guard → sending → Meta fetch (all inside withEdgeAttemptRecording)
     const result = await withEdgeAttemptRecording(
       supabase,
-      { businessId, recipientPhone: to, phoneNumberId: whatsappPhoneId, flowType: 'waitlist-expiration', messageCategory: 'utility' },
+      { businessId, recipientPhone: to, phoneNumberId: whatsappPhoneId, flowType: 'waitlist-expiration', messageCategory: 'utility', resolveCountry: resolveRecipientCountry },
       () => fetch(
         `https://graph.facebook.com/v22.0/${whatsappPhoneId}/messages`,
         {

@@ -8,6 +8,7 @@
  * and send-guard to verify provider call counts.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { createTestSupabase } from './helpers/mock-supabase';
 
 // Mock circuit breaker
 vi.mock('@/lib/circuit-breaker', () => ({
@@ -43,7 +44,7 @@ describe('S-1 + #279 Webhook Composition (#256)', () => {
 
   it('allowed business + valid deadline → exactly 1 provider call', async () => {
     const cloud = createMockCloud();
-    const sender = new MetaCloudSender(cloud as any);
+    const sender = new MetaCloudSender(cloud as any, createTestSupabase());
     sender.bindBusiness('biz-ok');
     // No deadline (beforeEachAttempt not set) — simulates non-deadline context
     await sender.sendText({ to: '+234800', text: 'test' });
@@ -53,7 +54,7 @@ describe('S-1 + #279 Webhook Composition (#256)', () => {
   it('suspended business + valid deadline → zero provider calls', async () => {
     suspendedBizIds.add('biz-bad');
     const cloud = createMockCloud();
-    const sender = new MetaCloudSender(cloud as any);
+    const sender = new MetaCloudSender(cloud as any, createTestSupabase());
     sender.bindBusiness('biz-bad');
     await expect(sender.sendText({ to: '+234800', text: 'test' })).rejects.toThrow('suspended');
     expect(cloud.sendText).not.toHaveBeenCalled();
@@ -61,7 +62,7 @@ describe('S-1 + #279 Webhook Composition (#256)', () => {
 
   it('allowed business + expired deadline → zero provider calls', async () => {
     const cloud = createMockCloud();
-    const sender = new MetaCloudSender(cloud as any);
+    const sender = new MetaCloudSender(cloud as any, createTestSupabase());
     sender.bindBusiness('biz-ok');
     sender.beforeEachAttempt = () => { throw new Error('Side-effect deadline exceeded'); };
     await expect(sender.sendText({ to: '+234800', text: 'test' })).rejects.toThrow('deadline');
@@ -81,7 +82,7 @@ describe('S-1 + #279 Webhook Composition (#256)', () => {
         return { messages: [{ id: 'msg-1' }] };
       }),
     };
-    const sender = new MetaCloudSender(cloud as any);
+    const sender = new MetaCloudSender(cloud as any, createTestSupabase());
     sender.bindBusiness('biz-race');
     await expect(sender.sendText({ to: '+234800', text: 'test' })).rejects.toThrow('suspended');
     expect(cloud.sendText).toHaveBeenCalledTimes(1); // Only the first attempt reached Meta
@@ -101,7 +102,7 @@ describe('S-1 + #279 Webhook Composition (#256)', () => {
         return { messages: [{ id: 'msg-1' }] };
       }),
     };
-    const sender = new MetaCloudSender(cloud as any);
+    const sender = new MetaCloudSender(cloud as any, createTestSupabase());
     sender.bindBusiness('biz-ok');
     sender.beforeEachAttempt = () => { if (deadlineExpired) throw new Error('Side-effect deadline exceeded'); };
     await expect(sender.sendText({ to: '+234800', text: 'test' })).rejects.toThrow('deadline');
@@ -110,7 +111,7 @@ describe('S-1 + #279 Webhook Composition (#256)', () => {
 
   it('noRetry + valid guards → exactly 1 provider call', async () => {
     const cloud = createMockCloud();
-    const sender = new MetaCloudSender(cloud as any);
+    const sender = new MetaCloudSender(cloud as any, createTestSupabase());
     sender.bindBusiness('biz-ok');
     sender.beforeEachAttempt = () => {}; // valid deadline
     await sender.sendText({ to: '+234800', text: 'test', noRetry: true });
@@ -120,7 +121,7 @@ describe('S-1 + #279 Webhook Composition (#256)', () => {
   it('noRetry + suspended → zero provider calls', async () => {
     suspendedBizIds.add('biz-bad');
     const cloud = createMockCloud();
-    const sender = new MetaCloudSender(cloud as any);
+    const sender = new MetaCloudSender(cloud as any, createTestSupabase());
     sender.bindBusiness('biz-bad');
     sender.beforeEachAttempt = () => {}; // valid deadline
     await expect(sender.sendText({ to: '+234800', text: 'test', noRetry: true })).rejects.toThrow('suspended');
@@ -129,7 +130,7 @@ describe('S-1 + #279 Webhook Composition (#256)', () => {
 
   it('noRetry + expired deadline → zero provider calls', async () => {
     const cloud = createMockCloud();
-    const sender = new MetaCloudSender(cloud as any);
+    const sender = new MetaCloudSender(cloud as any, createTestSupabase());
     sender.bindBusiness('biz-ok');
     sender.beforeEachAttempt = () => { throw new Error('Side-effect deadline exceeded'); };
     await expect(sender.sendText({ to: '+234800', text: 'test', noRetry: true })).rejects.toThrow('deadline');
@@ -143,7 +144,7 @@ describe('S-1 + #279 Webhook Composition (#256)', () => {
     let deadlineExpired = false;
 
     const cloud = createMockCloud();
-    const sender = new MetaCloudSender(cloud as any);
+    const sender = new MetaCloudSender(cloud as any, createTestSupabase());
     sender.bindBusiness('biz-ok');
 
     sender.beforeEachAttempt = () => {
@@ -180,7 +181,7 @@ describe('S-1 + #279 Webhook Composition (#256)', () => {
 
   it('wrapper forwarding preserves bindBusiness/enterPlatformDiscovery', async () => {
     const cloud = createMockCloud();
-    const sender = new MetaCloudSender(cloud as any);
+    const sender = new MetaCloudSender(cloud as any, createTestSupabase());
 
     // Simulate what createDeadlineGuardedSender does: wraps but forwards state APIs
     expect(sender.boundBusinessId).toBe('');
@@ -196,7 +197,7 @@ describe('S-1 + #279 Webhook Composition (#256)', () => {
 
   it('platform sends are also deadline-limited', async () => {
     const cloud = createMockCloud();
-    const sender = new MetaCloudSender(cloud as any);
+    const sender = new MetaCloudSender(cloud as any, createTestSupabase());
     // Tenantless platform send with expired deadline
     sender.beforeEachAttempt = () => { throw new Error('Side-effect deadline exceeded'); };
     await expect(sender.sendPlatformText({ to: '+234800', text: 'test' })).rejects.toThrow('deadline');
@@ -205,7 +206,7 @@ describe('S-1 + #279 Webhook Composition (#256)', () => {
 
   it('missing business identity → zero provider calls', async () => {
     const cloud = createMockCloud();
-    const sender = new MetaCloudSender(cloud as any);
+    const sender = new MetaCloudSender(cloud as any, createTestSupabase());
     // No bindBusiness → _businessId is ''
     await expect(sender.sendText({ to: '+234800', text: 'test' })).rejects.toThrow('missing_business_id');
     expect(cloud.sendText).not.toHaveBeenCalled();

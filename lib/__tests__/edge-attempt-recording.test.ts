@@ -11,9 +11,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { resolve } from 'path';
 
-// Import the actual shared production module
+// Import the actual shared production modules
 const sharedModule = await import(resolve(__dirname, '../../supabase/functions/_shared/attempt-recording.ts'));
 const { withEdgeAttemptRecording, setEdgeAttemptGate } = sharedModule;
+// Import the canonical phone-country resolver (Node runtime uses npm libphonenumber-js)
+const phoneCountryModule = await import(resolve(__dirname, '../channels/phone-country.ts'));
+const resolveRecipientCountry = phoneCountryModule.resolveRecipientCountry;
 
 interface MockRow { id: string; status: string; needs_reconciliation: boolean; meta_message_id: string | null; financial_disposition: string; recipient_country_code?: string; message_category?: string }
 
@@ -72,12 +75,13 @@ function buildEdgeMock(opts: {
 describe('Shared Edge withEdgeAttemptRecording (actual production module)', () => {
   beforeEach(() => setEdgeAttemptGate(false));
 
-  it('Gate OFF: INSERT failure => send proceeds', async () => {
+  it('#261: INSERT failure => zero Meta emission (independent of #257 gate)', async () => {
+    // #257 gate is OFF/default — but #261 requires attempt for financial authority
     const mock = buildEdgeMock({ insertError: true });
-    const fetchFn = vi.fn().mockResolvedValue(new Response(JSON.stringify({ messages: [{ id: 'w1' }] }), { status: 200 }));
+    const fetchFn = vi.fn();
     const r = await withEdgeAttemptRecording(mock as any, { businessId: 'b1', recipientPhone: '+1' }, fetchFn);
-    expect(r.ok).toBe(true);
-    expect(fetchFn).toHaveBeenCalledTimes(1);
+    expect(r.ok).toBe(false);
+    expect(fetchFn).not.toHaveBeenCalled();
   });
 
   it('Gate ON: INSERT failure => zero Meta fetch', async () => {
@@ -321,26 +325,55 @@ describe('Edge #261 financial authorization', () => {
 // #261: Main sender null-Supabase fail-closed test
 // ─────────────────────────────────────────────────────────────────────────────
 describe('Main sender #261 null-Supabase fail-closed', () => {
-  it('Gate ON + business-scoped send without Supabase client => throws before Meta emission', async () => {
-    // Import the actual modules
+  it('Business-scoped send without Supabase => zero Meta (independent of #257 gate)', async () => {
     const { MetaCloudSender } = await import(resolve(__dirname, '../channels/message-sender.ts'));
-    const { setSendAttemptGate } = await import(resolve(__dirname, '../channels/attempt-recording.ts'));
     const providerFn = vi.fn().mockResolvedValue({ messageId: 'test' });
-    const mockCloud = { sendText: providerFn } as any;
-    // Enable the attempt gate (production mode)
-    setSendAttemptGate(true);
-    try {
-      // Construct WITHOUT Supabase client — null means no attempt authority
-      const sender = new MetaCloudSender(mockCloud, null);
-      // Bind a business — this makes it a business-scoped sender
-      sender.bindBusiness('business-123');
-      await expect(
-        sender.sendText('+2348001234567', 'test message'),
-      ).rejects.toThrow('Business send requires attempt authority');
-      expect(providerFn).not.toHaveBeenCalled();
-    } finally {
-      // Restore gate to OFF for other tests
-      setSendAttemptGate(false);
-    }
+    // #257 gate is OFF/default — but #261 requires attempt authority regardless
+    const sender = new MetaCloudSender({ sendText: providerFn } as any, null);
+    sender.bindBusiness('business-123');
+    await expect(
+      sender.sendText('+2348001234567', 'test message'),
+    ).rejects.toThrow('Business send requires attempt authority');
+    expect(providerFn).not.toHaveBeenCalled();
+  });
+
+  it('Platform-scoped send without Supabase => existing behavior preserved', async () => {
+    const { MetaCloudSender } = await import(resolve(__dirname, '../channels/message-sender.ts'));
+    const providerFn = vi.fn().mockResolvedValue({ messageId: 'platform-ok' });
+    // Platform sender: no business bound, platformScopeAllowed
+    const sender = new MetaCloudSender({
+      sendText: providerFn,
+    } as any, null);
+    // No bindBusiness — remains in platform scope
+    const result = await sender.sendPlatformText('+2348001234567', 'platform notification');
+    expect(result.messageId).toBe('platform-ok');
+    expect(providerFn).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// #261 Blocker 3: Canonical phone-country resolver tests
+// ─────────────────────────────────────────────────────────────────────────────
+describe('#261 canonical phone-country resolver', () => {
+  it('US +1 number resolves US', () => {
+    expect(resolveRecipientCountry('+12125551234')).toBe('US');
+  });
+
+  it('Canadian +1 number resolves CA (not US)', () => {
+    expect(resolveRecipientCountry('+14165551234')).toBe('CA');
+  });
+
+  it('Nigeria resolves NG', () => {
+    expect(resolveRecipientCountry('+2348001234567')).toBe('NG');
+  });
+
+  it('UK resolves GB', () => {
+    expect(resolveRecipientCountry('+442071234567')).toBe('GB');
+  });
+
+  it('Invalid/unresolvable phone returns null', () => {
+    expect(resolveRecipientCountry('+0000000')).toBeNull();
+    expect(resolveRecipientCountry('not-a-phone')).toBeNull();
+    expect(resolveRecipientCountry('')).toBeNull();
   });
 });

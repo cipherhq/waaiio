@@ -12,6 +12,7 @@
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { withEdgeAttemptRecording } from '../_shared/attempt-recording.ts';
+import { resolveRecipientCountry } from '../_shared/phone-country.ts';
 
 const isDev = Deno.env.get('ENVIRONMENT') !== 'production';
 const log = {
@@ -110,7 +111,7 @@ async function sendWhatsAppForBusiness(
     // #257: attempt → #256 guard → sending → Meta fetch (all inside withEdgeAttemptRecording)
     const result = await withEdgeAttemptRecording(
       supabase,
-      { businessId, recipientPhone: to, phoneNumberId, flowType: 'chat-timeout', messageCategory: 'utility' },
+      { businessId, recipientPhone: to, phoneNumberId, flowType: 'chat-timeout', messageCategory: 'utility', resolveCountry: resolveRecipientCountry },
       () => fetch(
         `https://graph.facebook.com/v22.0/${phoneNumberId}/messages`,
         {

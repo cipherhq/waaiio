@@ -29,35 +29,6 @@ type SupabaseClient = {
 let gateEnabled = false;
 export function setEdgeAttemptGate(enabled: boolean): void { gateEnabled = enabled; }
 
-/**
- * Resolve ISO 3166-1 alpha-2 country code from E.164 phone number.
- * Lightweight implementation for Deno edge functions — matches the
- * E.164 prefix to known country dialing codes. Returns null if unresolvable.
- */
-function resolveEdgeRecipientCountry(e164Phone: string): string | null {
-  if (!e164Phone || !e164Phone.startsWith('+')) return null;
-  const digits = e164Phone.replace(/[^0-9]/g, '');
-  if (digits.length < 7) return null;
-  // Ordered by specificity (longer prefixes first for shared numbering plans)
-  const prefixMap: [string, string][] = [
-    ['234', 'NG'], ['233', 'GH'], ['254', 'KE'], ['27', 'ZA'],
-    ['44', 'GB'], ['91', 'IN'], ['61', 'AU'], ['33', 'FR'],
-    ['49', 'DE'], ['81', 'JP'], ['86', 'CN'], ['55', 'BR'],
-    ['52', 'MX'], ['34', 'ES'], ['39', 'IT'], ['31', 'NL'],
-    ['46', 'SE'], ['47', 'NO'], ['45', 'DK'], ['358', 'FI'],
-    ['353', 'IE'], ['351', 'PT'], ['48', 'PL'], ['43', 'AT'],
-    ['41', 'CH'], ['32', 'BE'], ['7', 'RU'], ['971', 'AE'],
-    ['966', 'SA'], ['20', 'EG'], ['212', 'MA'], ['216', 'TN'],
-    ['255', 'TZ'], ['256', 'UG'], ['237', 'CM'], ['225', 'CI'],
-    ['221', 'SN'], ['251', 'ET'], ['260', 'ZM'], ['263', 'ZW'],
-    ['1', 'US'], // NANP fallback — US default for +1
-  ];
-  for (const [prefix, country] of prefixMap) {
-    if (digits.startsWith(prefix)) return country;
-  }
-  return null;
-}
-
 export async function withEdgeAttemptRecording(
   supabase: SupabaseClient,
   params: {
@@ -67,12 +38,16 @@ export async function withEdgeAttemptRecording(
     templateName?: string;
     flowType?: string;
     messageCategory?: string;
+    /** Canonical country resolver — injected by caller from _shared/phone-country.ts */
+    resolveCountry?: (phone: string) => Promise<string | null> | string | null;
   },
   metaFetch: () => Promise<Response>,
   /** #256 suspension check — must run AFTER attempt creation, BEFORE Meta fetch */
   suspensionCheck?: () => Promise<boolean>,
 ): Promise<{ ok: boolean; wamid?: string; attemptId?: string }> {
   // 1. Create attempt (before guard)
+  // #261: Attempt creation MUST succeed for business-scoped sends.
+  // Without an attempt, financial authorization cannot run — fail closed.
   let attemptId: string | null = null;
   try {
     const result = await supabase
@@ -93,27 +68,32 @@ export async function withEdgeAttemptRecording(
     if (result.error) throw result.error;
     attemptId = result.data?.id || null;
   } catch (err) {
-    if (gateEnabled) {
-      console.error('[ATTEMPT] Gate ON: failed to create attempt — zero Meta emission:', err);
-      return { ok: false };
-    }
-    console.warn('[ATTEMPT] Gate OFF: failed to create attempt, send proceeds:', err);
+    // #261: Attempt creation failure is always fatal for business sends.
+    // Financial authorization requires the attempt row — zero Meta emission.
+    console.error('[EDGE-ATTEMPT] Failed to create attempt — zero Meta emission:', err);
+    return { ok: false };
+  }
+
+  if (!attemptId) {
+    console.error('[EDGE-ATTEMPT] Attempt created but no ID returned — zero Meta emission');
+    return { ok: false };
   }
 
   // 2. #261: Update attempt context (recipient country + message category)
-  if (attemptId) {
-    const recipientCountryCode = resolveEdgeRecipientCountry(params.recipientPhone);
-    const messageCategory = params.messageCategory || null;
-    try {
-      await supabase.from('message_send_attempts')
-        .update({
-          ...(recipientCountryCode ? { recipient_country_code: recipientCountryCode } : {}),
-          ...(messageCategory ? { message_category: messageCategory } : {}),
-        })
-        .eq('id', attemptId);
-    } catch {
-      // Best-effort context update — does not block the send
-    }
+  const resolveCountry = params.resolveCountry;
+  const recipientCountryCode = resolveCountry
+    ? await resolveCountry(params.recipientPhone)
+    : null;
+  const messageCategory = params.messageCategory || null;
+  try {
+    await supabase.from('message_send_attempts')
+      .update({
+        ...(recipientCountryCode ? { recipient_country_code: recipientCountryCode } : {}),
+        ...(messageCategory ? { message_category: messageCategory } : {}),
+      })
+      .eq('id', attemptId);
+  } catch {
+    // Best-effort context update — does not block the send
   }
 
   // 3. #256 suspension guard (after attempt, before emission)
@@ -166,18 +146,16 @@ export async function withEdgeAttemptRecording(
   }
 
   // 5. Mark sending (durable pre-emission)
-  // When financially reserved, markSending MUST succeed — the cross-state
-  // trigger rejects if the reservation was released by expiry.
-  if (attemptId) {
-    const sendingResult = await supabase
-      .from('message_send_attempts')
-      .update({ status: 'sending', sent_at: new Date().toISOString() })
-      .eq('id', attemptId);
+  // #261: markSending MUST succeed for business sends — the attempt row
+  // is authoritative. Cross-state trigger rejects if reservation was released.
+  const sendingResult = await supabase
+    .from('message_send_attempts')
+    .update({ status: 'sending', sent_at: new Date().toISOString() })
+    .eq('id', attemptId);
 
-    if (sendingResult.error && (gateEnabled || wasReserved)) {
-      console.error('[EDGE-ATTEMPT] Failed to mark sending — zero Meta emission:', sendingResult.error);
-      return { ok: false, attemptId };
-    }
+  if (sendingResult.error) {
+    console.error('[EDGE-ATTEMPT] Failed to mark sending — zero Meta emission:', sendingResult.error);
+    return { ok: false, attemptId };
   }
 
   // 6. Meta fetch
