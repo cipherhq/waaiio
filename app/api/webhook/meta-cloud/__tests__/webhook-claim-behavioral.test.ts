@@ -9,7 +9,7 @@
  * Refs: #278, #271
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { createTestSupabase } from '../../../../lib/__tests__/helpers/mock-supabase';
+import { createTestSupabase } from '@/lib/__tests__/helpers/mock-supabase';
 
 // ── Mocks ──
 
