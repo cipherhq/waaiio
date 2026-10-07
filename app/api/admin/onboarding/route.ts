@@ -121,16 +121,29 @@ export async function POST(request: NextRequest) {
       businessId = error.businessId;
     }
     const cleanupFailures: string[] = [];
+    let bizCleaned = false;
+    let userCleaned = false;
     if (businessId) {
       const { error: bizErr } = await service.from('businesses').delete().eq('id', businessId).eq('status', 'pending');
       if (bizErr) cleanupFailures.push(`business ${businessId}`);
+      else bizCleaned = true;
     }
     if (userId) {
       const { error: userErr } = await service.auth.admin.deleteUser(userId);
       if (userErr) cleanupFailures.push(`user ${userId}`);
+      else userCleaned = true;
     }
     const reason = error instanceof Error ? error.message : 'Provisioning failed';
-    await service.from('admin_onboarding_invites').update({ status: 'failed', last_error: reason }).eq('id', onboarding.id);
+    const durableError = cleanupFailures.length > 0
+      ? `${reason} — cleanup incomplete: ${cleanupFailures.join(', ')}`
+      : reason;
+    // Preserve IDs for resources that still exist; only null IDs for resources actually deleted
+    await service.from('admin_onboarding_invites').update({
+      status: 'failed',
+      last_error: durableError,
+      target_user_id: userCleaned ? null : userId ?? null,
+      business_id: bizCleaned ? null : businessId ?? null,
+    }).eq('id', onboarding.id);
     await service.from('admin_audit_logs').insert({ actor_id: admin.userId, action: 'admin_onboarding_failed', entity_type: 'admin_onboarding', entity_id: onboarding.id, details: { target_email: input.owner_email, reason, cleanup_failures: cleanupFailures } });
     const safetyNote = cleanupFailures.length > 0
       ? `Cleanup incomplete — manual reconciliation required for: ${cleanupFailures.join(', ')}.`

@@ -52,17 +52,31 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
       if (targetError) return NextResponse.json({ error: 'Invited account could not be checked safely' }, { status: 500 });
       if (target.user?.email_confirmed_at) return NextResponse.json({ error: 'Customer activation has started; cancellation is no longer safe.' }, { status: 409 });
     }
+    let bizCleaned = false;
     if (onboarding.business_id) {
       const { error: businessError } = await service.from('businesses').delete().eq('id', onboarding.business_id).eq('status', 'pending');
       if (businessError) return NextResponse.json({ error: 'Pending business could not be cancelled safely. No resources were modified.' }, { status: 409 });
+      bizCleaned = true;
     }
     if (onboarding.target_user_id) {
       const { error: userError } = await service.auth.admin.deleteUser(onboarding.target_user_id);
       if (userError) {
-        const detail = onboarding.business_id
-          ? `Business ${onboarding.business_id} was deleted but invited account ${onboarding.target_user_id} could not be removed. Manual cleanup required.`
-          : `Invited account ${onboarding.target_user_id} could not be removed.`;
-        return NextResponse.json({ error: detail, partiallyApplied: Boolean(onboarding.business_id) }, { status: 500 });
+        // Persist durable partial-cancellation state — business was deleted but user still exists
+        const partialError = bizCleaned
+          ? `Business ${onboarding.business_id} deleted but user ${onboarding.target_user_id} could not be removed.`
+          : `User ${onboarding.target_user_id} could not be removed.`;
+        await service.from('admin_onboarding_invites').update({
+          status: 'cancelled',
+          cancelled_at: new Date().toISOString(),
+          business_id: bizCleaned ? null : onboarding.business_id,
+          last_error: partialError,
+        }).eq('id', onboarding.id);
+        await service.from('admin_audit_logs').insert({
+          actor_id: admin.userId, action: 'admin_onboarding_cancel_partial',
+          entity_type: 'admin_onboarding', entity_id: onboarding.id,
+          details: { target_email: onboarding.target_email, business_deleted: bizCleaned, user_deleted: false, orphaned_user_id: onboarding.target_user_id },
+        });
+        return NextResponse.json({ error: partialError, partiallyApplied: true }, { status: 500 });
       }
     }
     await service.from('admin_onboarding_invites').update({ status: 'cancelled', cancelled_at: new Date().toISOString(), target_user_id: null, business_id: null }).eq('id', onboarding.id);
@@ -123,16 +137,28 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
         businessId = retryError.businessId;
       }
       const cleanupFailures: string[] = [];
+      let bizCleaned = false;
+      let userCleaned = false;
       if (businessId) {
         const { error: bizErr } = await service.from('businesses').delete().eq('id', businessId).eq('status', 'pending');
         if (bizErr) cleanupFailures.push(`business ${businessId}`);
+        else bizCleaned = true;
       }
       if (userId) {
         const { error: userErr } = await service.auth.admin.deleteUser(userId);
         if (userErr) cleanupFailures.push(`user ${userId}`);
+        else userCleaned = true;
       }
       const reason = retryError instanceof Error ? retryError.message : 'Retry failed';
-      await service.from('admin_onboarding_invites').update({ status: 'failed', target_user_id: null, business_id: null, last_error: reason }).eq('id', onboarding.id);
+      const durableError = cleanupFailures.length > 0
+        ? `${reason} — cleanup incomplete: ${cleanupFailures.join(', ')}`
+        : reason;
+      await service.from('admin_onboarding_invites').update({
+        status: 'failed',
+        target_user_id: userCleaned ? null : userId ?? null,
+        business_id: bizCleaned ? null : businessId ?? null,
+        last_error: durableError,
+      }).eq('id', onboarding.id);
       const safetyNote = cleanupFailures.length > 0
         ? `Cleanup incomplete — manual reconciliation required for: ${cleanupFailures.join(', ')}.`
         : 'Resources cleaned up successfully.';
