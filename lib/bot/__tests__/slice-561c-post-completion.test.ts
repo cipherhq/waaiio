@@ -216,17 +216,136 @@ describe('561-C: ordering edit menu uses corpus keys', () => {
 });
 
 // ═══════════════════════════════════════════════════════════════
-// 8. Escape hatches use corpus keys
+// 8. Escape hatch runtime test
 // ═══════════════════════════════════════════════════════════════
 
-describe('561-C: escape hatches use corpus keys', () => {
-  it('escape-hatches source contains nav corpus keys', async () => {
-    const fs = await import('fs');
-    const source = fs.readFileSync('lib/bot/handlers/escape-hatches.ts', 'utf-8');
-    expect(source).toContain("'nav.back_to_menu'");
-    expect(source).toContain("'nav.switch_business'");
-    expect(source).toContain("'nav.exit_what_next'");
-    expect(source).toContain("'nav.no_business_guide'");
+describe('561-C: escape hatch sends localized exit buttons', () => {
+  it('exit at early step with lang=en sends English buttons', async () => {
+    const { handleEscapeHatch } = await import('../../bot/handlers/escape-hatches');
+    const sent: any[] = [];
+    const mockCtx = {
+      supabase: {
+        from: vi.fn(() => ({
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              single: vi.fn().mockResolvedValue({ data: { name: 'Test Biz' }, error: null }),
+            }),
+          }),
+        })),
+      },
+      messageSender: {
+        sendText: vi.fn(async (opts: any) => { sent.push({ type: 'text', ...opts }); }),
+        sendButtons: vi.fn(async (opts: any) => { sent.push({ type: 'buttons', ...opts }); }),
+      },
+      flowExecutor: null,
+      intelligence: { resetAbuse: vi.fn() },
+    } as any;
+    const session = {
+      id: 's1', user_id: 'u1', business_id: 'biz-1',
+      current_step: 'select_capability', session_data: {},
+      version: 1,
+    } as any;
+    const mockDeactivate = vi.fn();
+    const mockHandleMsg = vi.fn();
+    const mockSendText = vi.fn();
+
+    const result = await handleEscapeHatch(
+      mockCtx, '+234800', session, 'exit', 'text', undefined,
+      'select_capability', mockSendText, mockDeactivate, mockHandleMsg, 'en',
+    );
+
+    expect(result.handled).toBe(true);
+    const buttonMsg = sent.find(m => m.type === 'buttons');
+    expect(buttonMsg).toBeDefined();
+    expect(buttonMsg.body).toContain('Test Biz');
+    expect(buttonMsg.body).toContain('What next?');
+    expect(buttonMsg.buttons[0].title).toBe('Back to Menu');
+    expect(buttonMsg.buttons[1].title).toBe('Switch Business');
+  });
+
+  it('exit at early step with lang=pcm sends Pidgin buttons', async () => {
+    const { handleEscapeHatch } = await import('../../bot/handlers/escape-hatches');
+    const sent: any[] = [];
+    const mockCtx = {
+      supabase: {
+        from: vi.fn(() => ({
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              single: vi.fn().mockResolvedValue({ data: { name: 'Test Biz' }, error: null }),
+            }),
+          }),
+        })),
+      },
+      messageSender: {
+        sendText: vi.fn(async (opts: any) => { sent.push({ type: 'text', ...opts }); }),
+        sendButtons: vi.fn(async (opts: any) => { sent.push({ type: 'buttons', ...opts }); }),
+      },
+      flowExecutor: null,
+      intelligence: { resetAbuse: vi.fn() },
+    } as any;
+    const session = {
+      id: 's1', user_id: 'u1', business_id: 'biz-1',
+      current_step: 'select_capability', session_data: {},
+      version: 1,
+    } as any;
+    const mockDeactivate = vi.fn();
+    const mockHandleMsg = vi.fn();
+    const mockSendText = vi.fn();
+
+    const result = await handleEscapeHatch(
+      mockCtx, '+234800', session, 'exit', 'text', undefined,
+      'select_capability', mockSendText, mockDeactivate, mockHandleMsg, 'pcm',
+    );
+
+    expect(result.handled).toBe(true);
+    const buttonMsg = sent.find(m => m.type === 'buttons');
+    expect(buttonMsg).toBeDefined();
+    expect(buttonMsg.body).toContain('Test Biz'); // merchant name preserved
+    expect(buttonMsg.body).toContain('comot'); // Pidgin exit phrasing
+    expect(buttonMsg.buttons[0].title).toBe('Back to Menu'); // pcm keeps English for recognizability
+    expect(buttonMsg.buttons[1].title).toBe('Change Business'); // pcm nav.switch_business
+  });
+
+  it('production resolver → escape hatch: free tier detected pcm => English', async () => {
+    const { resolveHandlerCopyLang } = await import('../../bot/resolve-handler-copy-lang');
+    const { handleEscapeHatch } = await import('../../bot/handlers/escape-hatches');
+
+    // Step 1: resolver says English (free tier)
+    const resolverSupabase = {
+      from: vi.fn((table: string) => {
+        if (table === 'businesses') return { select: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ single: vi.fn().mockResolvedValue({ data: { subscription_tier: 'free' }, error: null }) }) }) };
+        if (table === 'ai_conversation_config') return { select: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }) }) }) };
+        if (table === 'profiles') return { select: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }) }) }) };
+        return { select: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }) }) }) };
+      }),
+    } as any;
+
+    const lang = await resolveHandlerCopyLang({
+      supabase: resolverSupabase,
+      businessId: 'biz-1',
+      userId: 'u1',
+      sessionLanguage: 'pcm', // detected Pidgin but free tier
+    });
+    expect(lang).toBe('en');
+
+    // Step 2: escape hatch uses English
+    const sent: any[] = [];
+    const escCtx = {
+      supabase: { from: vi.fn(() => ({ select: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ single: vi.fn().mockResolvedValue({ data: { name: 'Biz' }, error: null }) }) }) })) },
+      messageSender: { sendButtons: vi.fn(async (opts: any) => { sent.push(opts); }) },
+      flowExecutor: null, intelligence: { resetAbuse: vi.fn() },
+    } as any;
+
+    await handleEscapeHatch(
+      escCtx, '+234800',
+      { id: 's1', user_id: 'u1', business_id: 'biz-1', current_step: 'select_capability', session_data: { _detected_language: 'pcm' }, version: 1 } as any,
+      'exit', 'text', undefined, 'select_capability',
+      vi.fn(), vi.fn(), vi.fn(), lang,
+    );
+
+    expect(sent.length).toBeGreaterThan(0);
+    expect(sent[0].body).toContain('What next?'); // English, not Pidgin
+    expect(sent[0].buttons[0].title).toBe('Back to Menu'); // English
   });
 });
 
@@ -241,29 +360,188 @@ describe('561-C: CERTIFIED_LANGUAGES unchanged', () => {
 });
 
 // ═══════════════════════════════════════════════════════════════
-// 10. resolveHandlerCopyLang uses full preference authority
+// 10. Production authority seam: resolveHandlerCopyLang
 // ═══════════════════════════════════════════════════════════════
 
-describe('561-C: resolveHandlerCopyLang uses full preference authority', () => {
-  it('reads remembered preference via readPreferredResponseLanguage', async () => {
-    const fs = await import('fs');
-    const source = fs.readFileSync('lib/bot/bot.service.ts', 'utf-8');
-    const methodStart = source.indexOf('private async resolveHandlerCopyLang');
-    expect(methodStart).toBeGreaterThan(0);
-    const methodEnd = source.indexOf('\n  }\n', methodStart + 200);
-    const methodBody = source.slice(methodStart, methodEnd + 4);
-    expect(methodBody).toContain('readPreferredResponseLanguage');
-    expect(methodBody).toContain('rememberedLanguage: rememberedLang');
-    expect(methodBody).toContain('resolveEffectiveResponseLanguage');
-    expect(methodBody).toContain('certifiedLanguages: CERTIFIED_LANGUAGES');
+describe('561-C: production resolveHandlerCopyLang authority seam', () => {
+  // These tests call the REAL production resolveHandlerCopyLang function
+  // with mocked Supabase — the same code path BotService uses.
+
+  function mockSupabaseForLang(opts: {
+    tier?: string;
+    configuredLangs?: string[];
+    rememberedLang?: string | null;
+  }) {
+    const { tier = 'free', configuredLangs = [], rememberedLang = null } = opts;
+    return {
+      from: vi.fn((table: string) => {
+        if (table === 'businesses') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                single: vi.fn().mockResolvedValue({ data: { subscription_tier: tier }, error: null }),
+              }),
+            }),
+          };
+        }
+        if (table === 'ai_conversation_config') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                maybeSingle: vi.fn().mockResolvedValue({
+                  data: configuredLangs.length ? { enabled_languages: configuredLangs } : null,
+                  error: null,
+                }),
+              }),
+            }),
+          };
+        }
+        if (table === 'profiles') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                maybeSingle: vi.fn().mockResolvedValue({
+                  data: rememberedLang ? { preferred_response_language: rememberedLang } : null,
+                  error: null,
+                }),
+              }),
+            }),
+          };
+        }
+        return { select: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }) }) }) };
+      }),
+    } as any;
+  }
+
+  it('English session => English (production resolver)', async () => {
+    const { resolveHandlerCopyLang } = await import('../../bot/resolve-handler-copy-lang');
+    const lang = await resolveHandlerCopyLang({
+      supabase: mockSupabaseForLang({ tier: 'growth', configuredLangs: ['en', 'pcm'] }),
+      businessId: 'biz-1',
+      userId: 'user-1',
+      sessionLanguage: null,
+    });
+    expect(lang).toBe('en');
   });
 
-  it('no raw _detected_language passthrough in handler calls', async () => {
-    const fs = await import('fs');
-    const source = fs.readFileSync('lib/bot/bot.service.ts', 'utf-8');
-    // After the handler wrapper section, no raw _detected_language || undefined should exist
-    const handlerSection = source.slice(source.indexOf('handleRefundRequest'));
-    expect(handlerSection).not.toContain("(session.session_data._detected_language as string) || undefined");
+  it('Pidgin session + entitled + certified => Pidgin (production resolver)', async () => {
+    const { resolveHandlerCopyLang } = await import('../../bot/resolve-handler-copy-lang');
+    const lang = await resolveHandlerCopyLang({
+      supabase: mockSupabaseForLang({ tier: 'growth', configuredLangs: ['en', 'pcm'] }),
+      businessId: 'biz-1',
+      userId: 'user-1',
+      sessionLanguage: 'pcm',
+    });
+    expect(lang).toBe('pcm');
+  });
+
+  it('Pidgin session + English-only entitlement => English (production resolver)', async () => {
+    const { resolveHandlerCopyLang } = await import('../../bot/resolve-handler-copy-lang');
+    const lang = await resolveHandlerCopyLang({
+      supabase: mockSupabaseForLang({ tier: 'free' }), // free = English only
+      businessId: 'biz-1',
+      userId: 'user-1',
+      sessionLanguage: 'pcm',
+    });
+    expect(lang).toBe('en');
+  });
+
+  it('uncertified yo + entitled => English (production resolver)', async () => {
+    const { resolveHandlerCopyLang } = await import('../../bot/resolve-handler-copy-lang');
+    const lang = await resolveHandlerCopyLang({
+      supabase: mockSupabaseForLang({ tier: 'business' }), // business = all certified langs
+      businessId: 'biz-1',
+      userId: 'user-1',
+      sessionLanguage: 'yo',
+    });
+    expect(lang).toBe('en');
+  });
+
+  it('no businessId => English (production resolver)', async () => {
+    const { resolveHandlerCopyLang } = await import('../../bot/resolve-handler-copy-lang');
+    const lang = await resolveHandlerCopyLang({
+      supabase: mockSupabaseForLang({}),
+      businessId: null,
+      userId: 'user-1',
+      sessionLanguage: 'pcm',
+    });
+    expect(lang).toBe('en');
+  });
+
+  // End-to-end: production resolver → actual handler → sent output
+  it('production resolver → refund handler: English-only biz sends English', async () => {
+    const { resolveHandlerCopyLang } = await import('../../bot/resolve-handler-copy-lang');
+    const { handleRefundRequest } = await import('../../bot/handlers/refund-request');
+
+    // Step 1: production resolver decides language
+    const supabaseMock = mockSupabaseForLang({ tier: 'free' });
+    const lang = await resolveHandlerCopyLang({
+      supabase: supabaseMock,
+      businessId: 'biz-1',
+      userId: 'user-1',
+      sessionLanguage: 'pcm', // detected Pidgin, but free tier = English only
+    });
+    expect(lang).toBe('en');
+
+    // Step 2: handler uses that language — same as production BotService path
+    const sent: any[] = [];
+    const terminal = { data: [], error: null };
+    const makeChain = (): any => {
+      const p: any = { ...terminal };
+      for (const m of ['eq','neq','gt','gte','lt','lte','is','in','not','or','order','limit','range','single','maybeSingle','select','contains','filter','ilike','like','match']) {
+        p[m] = vi.fn().mockReturnValue(p);
+      }
+      p.then = undefined;
+      return p;
+    };
+    const handlerSupabase = {
+      from: vi.fn(() => ({ select: vi.fn().mockReturnValue(makeChain()) })),
+      rpc: vi.fn().mockResolvedValue({ data: null, error: null }),
+    } as any;
+    const mockSendText = vi.fn(async (_to: string, text: string) => { sent.push({ text }); });
+
+    await handleRefundRequest(handlerSupabase, {} as any, mockSendText,
+      { id: 's1', user_id: 'u1', business_id: 'biz-1', current_step: 'refund_select', session_data: { _detected_language: 'pcm' }, version: 1 } as any,
+      '+234800', '', lang);
+
+    expect(sent.length).toBeGreaterThan(0);
+    expect(sent[0].text).toContain('eligible for refund'); // English, not Pidgin
+  });
+
+  it('production resolver → refund handler: entitled Pidgin sends Pidgin', async () => {
+    const { resolveHandlerCopyLang } = await import('../../bot/resolve-handler-copy-lang');
+    const { handleRefundRequest } = await import('../../bot/handlers/refund-request');
+
+    const lang = await resolveHandlerCopyLang({
+      supabase: mockSupabaseForLang({ tier: 'growth', configuredLangs: ['en', 'pcm'] }),
+      businessId: 'biz-1',
+      userId: 'user-1',
+      sessionLanguage: 'pcm',
+    });
+    expect(lang).toBe('pcm');
+
+    const sent: any[] = [];
+    const terminal = { data: [], error: null };
+    const makeChain = (): any => {
+      const p: any = { ...terminal };
+      for (const m of ['eq','neq','gt','gte','lt','lte','is','in','not','or','order','limit','range','single','maybeSingle','select','contains','filter','ilike','like','match']) {
+        p[m] = vi.fn().mockReturnValue(p);
+      }
+      p.then = undefined;
+      return p;
+    };
+    const handlerSupabase = {
+      from: vi.fn(() => ({ select: vi.fn().mockReturnValue(makeChain()) })),
+      rpc: vi.fn().mockResolvedValue({ data: null, error: null }),
+    } as any;
+    const mockSendText = vi.fn(async (_to: string, text: string) => { sent.push({ text }); });
+
+    await handleRefundRequest(handlerSupabase, {} as any, mockSendText,
+      { id: 's1', user_id: 'u1', business_id: 'biz-1', current_step: 'refund_select', session_data: { _detected_language: 'pcm' }, version: 1 } as any,
+      '+234800', '', lang);
+
+    expect(sent.length).toBeGreaterThan(0);
+    expect(sent[0].text).toContain('no get any recent payment'); // Pidgin
   });
 });
 

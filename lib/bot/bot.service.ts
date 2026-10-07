@@ -3177,65 +3177,16 @@ export class BotService {
   }
 
   // ── Canonical copy-language resolver for handlers (#561-C) ──
-  // Delegates to resolveEffectiveResponseLanguage — same authority as executor.
-  // Reads the real explicit/session/remembered preference values, not just _detected_language.
-  //
-  // Architecture note: _detected_language is the canonical activated session response
-  // language — it is only set AFTER passing certification+entitlement gates during
-  // session creation (CAS-004 auto-activation) or explicit language-switch escape hatches.
-  // It is NOT raw detection output. However, we still run it through the full canonical
-  // resolver to prove the complete authority chain including remembered preference,
-  // and to handle edge cases where entitlement may have changed since activation.
+  // Delegates to the exported resolveHandlerCopyLang — same production code
+  // path is exercised by both BotService and tests.
   private async resolveHandlerCopyLang(session: BotSession): Promise<string> {
-    if (!session.business_id) return 'en';
-    try {
-      const configuredLangs = await loadBusinessLanguages(this.supabase, session.business_id);
-      const tier = await this.getBusinessTier(session.business_id);
-      const entitlement = getEffectiveLanguages(tier, configuredLangs);
-      const {
-        resolveEffectiveResponseLanguage,
-        readPreferredResponseLanguage,
-      } = await import('./language-preference');
-      const { CERTIFIED_LANGUAGES } = await import('./languages');
-
-      // Read the real persisted preference if we have a user_id
-      let rememberedLang: string | null = null;
-      if (session.user_id) {
-        rememberedLang = await readPreferredResponseLanguage(
-          this.supabase as never,
-          session.user_id,
-        );
-      }
-
-      return resolveEffectiveResponseLanguage({
-        // No explicit language intent at handler invocation time —
-        // explicit switches are handled earlier by the executor's escape hatches
-        explicitLanguage: null,
-        // _detected_language is the canonical activated session response language
-        // (set only after passing certification+entitlement gates)
-        sessionLanguage: (session.session_data._detected_language as string) || null,
-        // Read the real persisted remembered preference
-        rememberedLanguage: rememberedLang,
-        entitlement,
-        certifiedLanguages: CERTIFIED_LANGUAGES,
-      }).language;
-    } catch {
-      return 'en'; // Fail closed to English
-    }
-  }
-
-  private async getBusinessTier(businessId: string | null): Promise<string> {
-    if (!businessId) return 'free';
-    try {
-      const { data } = await this.supabase
-        .from('businesses')
-        .select('subscription_tier')
-        .eq('id', businessId)
-        .single();
-      return (data?.subscription_tier as string) || 'free';
-    } catch {
-      return 'free';
-    }
+    const { resolveHandlerCopyLang: resolve } = await import('./resolve-handler-copy-lang');
+    return resolve({
+      supabase: this.supabase,
+      businessId: session.business_id,
+      userId: session.user_id,
+      sessionLanguage: (session.session_data._detected_language as string) || null,
+    });
   }
 
   // ── My Bookings (delegated to handlers/my-bookings.ts) ──
