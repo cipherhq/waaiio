@@ -1,4 +1,5 @@
 import type { FlowDefinition, FlowStepConfig, FlowContext, PromptMessage, ValidationResult } from './types';
+import { getFlowCopy } from './flow-localization';
 import { initializePayment } from './shared/payment';
 import { notifyOwnerNewInvoicePayment } from './shared/notify-owner';
 import { createNotification } from './shared/notifications';
@@ -164,8 +165,8 @@ const invoiceDetailStep: FlowStepConfig = {
         type: 'buttons',
         body: await ctx.t('Ready to pay, or go back?'),
         buttons: [
-          { id: 'pay', title: 'Pay Now' },
-          { id: 'back', title: 'Back to List' },
+          { id: 'pay', title: getFlowCopy(ctx.copyLang, 'invoice.pay_now') },
+          { id: 'back', title: getFlowCopy(ctx.copyLang, 'invoice.back_to_list') },
         ],
       },
     ];
@@ -212,7 +213,7 @@ const invoicePayStep: FlowStepConfig = {
       return [{
         type: 'buttons',
         body: await ctx.t(`This invoice has ${label}. No payment is needed.`),
-        buttons: [{ id: 'cap_invoice', title: 'My Invoices' }],
+        buttons: [{ id: 'cap_invoice', title: getFlowCopy(ctx.copyLang, 'invoice.my_invoices') }],
       }];
     }
 
@@ -225,7 +226,7 @@ const invoicePayStep: FlowStepConfig = {
       return [{
         type: 'buttons',
         body: await ctx.t('This invoice has already been fully paid. ✅'),
-        buttons: [{ id: 'cap_invoice', title: 'My Invoices' }],
+        buttons: [{ id: 'cap_invoice', title: getFlowCopy(ctx.copyLang, 'invoice.my_invoices') }],
       }];
     }
 
@@ -250,9 +251,9 @@ const invoicePayStep: FlowStepConfig = {
       ctx.session.session_data._invoice_no_user = true;
       return [{
         type: 'buttons',
-        body: await ctx.t("We couldn't match your number to an account. Please contact the business directly for help."),
+        body: getFlowCopy(ctx.copyLang, 'invoice.no_user'),
         buttons: [
-          { id: 'done', title: 'OK' },
+          { id: 'done', title: getFlowCopy(ctx.copyLang, 'invoice.ok') },
         ],
       }];
     }
@@ -354,7 +355,7 @@ const invoicePayStep: FlowStepConfig = {
           ];
         }
 
-        return [{ type: 'buttons', body: await ctx.t('We couldn\'t generate a payment link right now.'), buttons: [{ id: 'cap_invoice', title: 'Try Again' }, { id: 'cap_chat', title: 'Chat with Business' }] }];
+        return [{ type: 'buttons', body: await ctx.t('We couldn\'t generate a payment link right now.'), buttons: [{ id: 'cap_invoice', title: getFlowCopy(ctx.copyLang, 'payment.try_again') }, { id: 'cap_chat', title: getFlowCopy(ctx.copyLang, 'payment.chat_business') }] }];
       }
 
       // Update invoice status to viewed
@@ -430,9 +431,9 @@ const invoicePayStep: FlowStepConfig = {
             type: 'buttons',
             body: "After paying, tap below:",
             buttons: [
-              { id: sd.payment_reference ? `i_paid_ref:${sd.payment_reference}` : 'i_paid_online', title: "I've Paid Online" },
-              { id: 'sent_transfer', title: "I've Sent Transfer" },
-              { id: 'go_back', title: 'Cancel' },
+              { id: sd.payment_reference ? `i_paid_ref:${sd.payment_reference}` : 'i_paid_online', title: getFlowCopy(ctx.copyLang, 'payment.ive_paid_online') },
+              { id: 'sent_transfer', title: getFlowCopy(ctx.copyLang, 'payment.ive_sent_transfer') },
+              { id: 'go_back', title: getFlowCopy(ctx.copyLang, 'nav.cancel') },
             ],
           },
         ];
@@ -451,7 +452,7 @@ const invoicePayStep: FlowStepConfig = {
       }];
     } catch (err) {
       logger.error('[INVOICE] Payment initialization error:', err);
-      return [{ type: 'buttons', body: await ctx.t('We couldn\'t generate a payment link right now.'), buttons: [{ id: 'cap_invoice', title: 'Try Again' }, { id: 'cap_chat', title: 'Chat with Business' }] }];
+      return [{ type: 'buttons', body: await ctx.t('We couldn\'t generate a payment link right now.'), buttons: [{ id: 'cap_invoice', title: getFlowCopy(ctx.copyLang, 'payment.try_again') }, { id: 'cap_chat', title: getFlowCopy(ctx.copyLang, 'payment.chat_business') }] }];
     }
   },
 
@@ -543,20 +544,20 @@ const awaitInvoicePaymentStep: FlowStepConfig = {
     if (sd.bank_transfer_offered) {
       return [{
         type: 'buttons',
-        body: "Complete your payment using the link or bank transfer above.\n\nTap below after paying:",
+        body: getFlowCopy(ctx.copyLang, 'payment.complete_payment'),
         buttons: [
-          { id: pRef ? `i_paid_ref:${pRef}` : 'i_paid_online', title: "I've Paid Online" },
-          { id: 'sent_transfer', title: "I've Sent Transfer" },
-          { id: 'go_back', title: 'Cancel' },
+          { id: pRef ? `i_paid_ref:${pRef}` : 'i_paid_online', title: getFlowCopy(ctx.copyLang, 'payment.ive_paid_online') },
+          { id: 'sent_transfer', title: getFlowCopy(ctx.copyLang, 'payment.ive_sent_transfer') },
+          { id: 'go_back', title: getFlowCopy(ctx.copyLang, 'nav.cancel') },
         ],
       }];
     }
     return [{
       type: 'buttons',
-      body: "Complete payment using the link above.\n\nPaid already? Tap below to confirm:",
+      body: getFlowCopy(ctx.copyLang, 'payment.tap_after_transfer'),
       buttons: [
-        { id: pRef ? `i_paid_ref:${pRef}` : 'i_paid', title: "I've Paid" },
-        { id: 'go_back', title: 'Cancel' },
+        { id: pRef ? `i_paid_ref:${pRef}` : 'i_paid', title: getFlowCopy(ctx.copyLang, 'payment.ive_paid') },
+        { id: 'go_back', title: getFlowCopy(ctx.copyLang, 'nav.cancel') },
       ],
     }];
   },
@@ -630,7 +631,7 @@ const awaitInvoicePaymentStep: FlowStepConfig = {
     // ── "I've Sent Transfer" button ──
     if (text === 'sent_transfer' || text === "i've sent transfer" || text === 'i_sent_transfer') {
       if (!sd.bank_transfer_reference) {
-        return { valid: false, errorMessage: 'No bank transfer reference found. Please use the online payment link instead.' };
+        return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'payment.no_bank_ref') };
       }
       sd._awaiting_transfer_proof = true;
       await ctx.supabase.from('bot_sessions').update({ session_data: sd }).eq('id', ctx.session.id);
@@ -700,10 +701,10 @@ const awaitInvoicePaymentStep: FlowStepConfig = {
       }
 
       if (recovery.outcome === 'provider_error') {
-        return { valid: false, errorMessage: "We couldn't verify your payment right now. If you've already paid, tap *I've Paid* again in a moment." };
+        return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'payment.verify_failed') };
       }
 
-      return { valid: false, errorMessage: 'Something went wrong. Please try again.' };
+      return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'error.generic_retry') };
     }
 
     return { valid: false, errorMessage: "Tap *I've Paid Online*, *I've Sent Transfer*, or *Cancel*." };

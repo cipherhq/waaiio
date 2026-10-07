@@ -1,4 +1,5 @@
 import type { FlowDefinition, FlowContext, PromptMessage, ValidationResult } from './types';
+import { getFlowCopy } from './flow-localization';
 import { getLocale, type CountryCode } from '@/lib/constants';
 import { logger } from '@/lib/logger';
 import { getPoweredByFooter } from '@/lib/whitelabel';
@@ -40,7 +41,7 @@ export const rsvpFlow: FlowDefinition = {
         }
 
         const lines = [
-          `*You're Invited!*`,
+          getFlowCopy(ctx.copyLang, 'rsvp.invited'),
           '',
           `🎪 *${eventName}*`,
           eventDate ? `📅 ${dateLabel}${timeLabel ? ` at ${timeLabel}` : ''}` : '',
@@ -48,23 +49,23 @@ export const rsvpFlow: FlowDefinition = {
           dressCode ? `👔 Dress code: ${dressCode}` : '',
           inviteMessage ? `\n${inviteMessage}` : '',
           '',
-          'Will you be attending?',
+          getFlowCopy(ctx.copyLang, 'rsvp.attending'),
         ].filter(Boolean);
 
         return [
           { type: 'text', text: lines.join('\n') },
           {
             type: 'buttons',
-            body: 'RSVP:',
+            body: getFlowCopy(ctx.copyLang, 'rsvp.rsvp_label'),
             buttons: [
-              { id: 'rsvp_yes', title: 'Yes, I\'ll be there!' },
-              { id: 'rsvp_maybe', title: 'Maybe' },
-              { id: 'rsvp_no', title: 'Can\'t make it' },
+              { id: 'rsvp_yes', title: getFlowCopy(ctx.copyLang, 'rsvp.yes_there') },
+              { id: 'rsvp_maybe', title: getFlowCopy(ctx.copyLang, 'rsvp.maybe') },
+              { id: 'rsvp_no', title: getFlowCopy(ctx.copyLang, 'rsvp.cant_make_it') },
             ],
           },
         ];
       },
-      async validate(input: string): Promise<ValidationResult> {
+      async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
         const text = input.toLowerCase();
         if (text === 'rsvp_yes' || text === 'yes' || text === 'yeah' || text === 'yep' || /i'?ll be there/i.test(text)) {
           return { valid: true, data: { rsvp_response: 'accepted' } };
@@ -75,7 +76,7 @@ export const rsvpFlow: FlowDefinition = {
         if (text === 'rsvp_no' || text === 'no' || text === 'nope' || text === 'nah' || /can'?t make it/i.test(text)) {
           return { valid: true, data: { rsvp_response: 'declined' } };
         }
-        return { valid: false, errorMessage: 'Please tap *Yes*, *Maybe*, or *Can\'t make it*.' };
+        return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'rsvp.tap_hint') };
       },
       async next(ctx: FlowContext) {
         const response = ctx.session.session_data.rsvp_response as string;
@@ -97,14 +98,14 @@ export const rsvpFlow: FlowDefinition = {
         }
         return false;
       },
-      async prompt(): Promise<PromptMessage[]> {
+      async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
         return [{
           type: 'buttons',
-          body: 'How many guests including you?',
+          body: getFlowCopy(ctx.copyLang, 'rsvp.how_many'),
           buttons: [
-            { id: '1', title: 'Just me' },
-            { id: '2', title: '2 (me + 1)' },
-            { id: '3', title: '3 (me + 2)' },
+            { id: '1', title: getFlowCopy(ctx.copyLang, 'rsvp.just_me') },
+            { id: '2', title: getFlowCopy(ctx.copyLang, 'rsvp.two') },
+            { id: '3', title: getFlowCopy(ctx.copyLang, 'rsvp.three') },
           ],
         }];
       },
@@ -113,7 +114,7 @@ export const rsvpFlow: FlowDefinition = {
         const maxPlusOnes = (ctx.session.session_data.rsvp_max_plus_ones as number) || 3;
 
         if (isNaN(num) || num < 1) {
-          return { valid: false, errorMessage: 'Please select how many guests.' };
+          return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'rsvp.select_guests') };
         }
         if (num > maxPlusOnes + 1) {
           return { valid: false, errorMessage: `Maximum ${maxPlusOnes + 1} guests (you + ${maxPlusOnes}).` };
@@ -130,10 +131,10 @@ export const rsvpFlow: FlowDefinition = {
         const askDietary = ctx.session.session_data.rsvp_ask_dietary as boolean;
         return !askDietary;
       },
-      async prompt(): Promise<PromptMessage[]> {
+      async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
         return [{
           type: 'text',
-          text: 'Any dietary requirements? (Type your needs or send *skip*)',
+          text: getFlowCopy(ctx.copyLang, 'rsvp.dietary'),
         }];
       },
       async validate(input: string): Promise<ValidationResult> {
@@ -180,14 +181,14 @@ export const rsvpFlow: FlowDefinition = {
         if (response === 'declined') {
           return [{
             type: 'text',
-            text: `🙏 We'll miss you! Maybe next time 💛\n\nIf you change your mind, just send *rsvp* again.${getPoweredByFooter(ctx.business?.subscription_tier)}`,
+            text: getFlowCopy(ctx.copyLang, 'rsvp.declined') + getPoweredByFooter(ctx.business?.subscription_tier),
           }];
         }
 
         if (response === 'maybe') {
           return [{
             type: 'text',
-            text: `🤔 No pressure! We'll keep a spot warm for you 😊\n\nIf you decide, just send *yes* or *no* anytime.${getPoweredByFooter(ctx.business?.subscription_tier)}`,
+            text: getFlowCopy(ctx.copyLang, 'rsvp.maybe_response') + getPoweredByFooter(ctx.business?.subscription_tier),
           }];
         }
 
@@ -222,9 +223,9 @@ export const rsvpFlow: FlowDefinition = {
           `👥 ${guestLabel}`,
           dietaryNotes ? `🍽️ Dietary: ${dietaryNotes}` : '',
           '',
-          `We'll send you a reminder before the event. See you there! 💃🕺`,
+          getFlowCopy(ctx.copyLang, 'rsvp.see_you'),
           '',
-          ...(getPoweredByFooter(ctx.business?.subscription_tier) ? ['_Powered by Waaiio_'] : []),
+          ...(getPoweredByFooter(ctx.business?.subscription_tier) ? [getFlowCopy(ctx.copyLang, 'greeting.powered_by')] : []),
         ].filter(Boolean);
 
         return [{ type: 'text', text: lines.join('\n') }];

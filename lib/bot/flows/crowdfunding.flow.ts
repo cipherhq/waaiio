@@ -1,4 +1,5 @@
 import type { FlowDefinition, FlowStepConfig, FlowContext, PromptMessage, ValidationResult } from './types';
+import { getFlowCopy } from './flow-localization';
 import { formatCurrency, getCurrencyCode, type CountryCode } from '@/lib/constants';
 import { analyzeReceipt, receiptMatchesExpected } from '@/lib/bot/receipt-ocr';
 import { parseIvePaidInput, isIvePaidInput } from '@/lib/bot/flows/shared/ive-paid-input';
@@ -23,7 +24,7 @@ const selectCampaignStep: FlowStepConfig = {
   id: 'select_campaign',
 
   async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
-    if (!ctx.business) return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start over.' }];
+    if (!ctx.business) return [{ type: 'text', text: getFlowCopy(ctx.copyLang, 'error.generic') }];
 
     const today = new Date().toISOString().split('T')[0];
 
@@ -54,14 +55,14 @@ const selectCampaignStep: FlowStepConfig = {
         if (legacy.error) {
           logger.withContext({ op: 'crowdfunding.select-campaign', ...safeLogErrorContext(legacy.error) })
             .error('[CROWDFUNDING] Legacy campaign query failed');
-          return [{ type: 'text', text: 'Something went wrong loading campaigns. Please try again shortly.' }];
+          return [{ type: 'text', text: getFlowCopy(ctx.copyLang, 'crowdfunding.load_error') }];
         }
         allCampaigns = legacy.data as typeof allCampaigns;
       } else {
         // Unrelated error (auth, RLS, network, etc.) — do not show "no campaigns"
         logger.withContext({ op: 'crowdfunding.select-campaign', ...safeLogErrorContext(queryError) })
           .error('[CROWDFUNDING] Campaign query failed');
-        return [{ type: 'text', text: 'Something went wrong loading campaigns. Please try again shortly.' }];
+        return [{ type: 'text', text: getFlowCopy(ctx.copyLang, 'crowdfunding.load_error') }];
       }
     }
 
@@ -79,9 +80,9 @@ const selectCampaignStep: FlowStepConfig = {
     if (!campaigns || campaigns.length === 0) {
       return [{
         type: 'buttons',
-        body: 'No active campaigns at the moment.',
+        body: getFlowCopy(ctx.copyLang, 'crowdfunding.no_campaigns'),
         buttons: [
-          { id: 'go_back', title: 'Back to Menu' },
+          { id: 'go_back', title: getFlowCopy(ctx.copyLang, 'nav.back_to_menu') },
         ],
       }];
     }
@@ -93,9 +94,9 @@ const selectCampaignStep: FlowStepConfig = {
 
     return [{
       type: 'list',
-      title: 'Active Campaigns',
-      body: 'Select a campaign to support:',
-      buttonLabel: 'View Campaigns',
+      title: getFlowCopy(ctx.copyLang, 'crowdfunding.active_campaigns'),
+      body: getFlowCopy(ctx.copyLang, 'crowdfunding.select_campaign'),
+      buttonLabel: getFlowCopy(ctx.copyLang, 'crowdfunding.view_campaigns'),
       items: campaigns.map(c => {
         const progress = c.goal_amount > 0
           ? Math.round((c.raised_amount / c.goal_amount) * 100)
@@ -115,7 +116,7 @@ const selectCampaignStep: FlowStepConfig = {
     }
 
     if (!ctx.business) {
-      return { valid: false, errorMessage: 'Something went wrong. Send *Hi* to start over.' };
+      return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'error.generic') };
     }
 
     // Try postback ID first (campaign_<uuid>)
@@ -248,20 +249,20 @@ const campaignViewStep: FlowStepConfig = {
       { type: 'text', text: message },
       {
         type: 'buttons',
-        body: 'Would you like to donate?',
+        body: getFlowCopy(ctx.copyLang, 'crowdfunding.donate_prompt'),
         buttons: [
-          { id: 'donate_yes', title: 'Donate Now' },
-          { id: 'donate_back', title: 'Back to Campaigns' },
+          { id: 'donate_yes', title: getFlowCopy(ctx.copyLang, 'crowdfunding.donate_now') },
+          { id: 'donate_back', title: getFlowCopy(ctx.copyLang, 'crowdfunding.back_to_campaigns') },
         ],
       },
     ];
   },
 
-  async validate(input: string) {
+  async validate(input: string, ctx: FlowContext) {
     const lower = input.toLowerCase().trim();
     if (lower === 'donate_yes' || lower === 'donate' || lower === 'yes') return { valid: true, data: {} };
     if (lower === 'donate_back' || lower === 'back') return { valid: true, data: { go_back: true } };
-    return { valid: false, errorMessage: 'Please tap *Donate Now* or *Back to Campaigns*, or type *donate* or *back*.' };
+    return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'crowdfunding.donate_hint') };
   },
 
   async next(ctx: FlowContext) {
@@ -362,23 +363,23 @@ const enterDonorNameStep: FlowStepConfig = {
     return false;
   },
 
-  async prompt(): Promise<PromptMessage[]> {
+  async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
     return [{
       type: 'buttons',
-      body: 'What name should we display for your donation?',
+      body: getFlowCopy(ctx.copyLang, 'crowdfunding.name_ask'),
       buttons: [
-        { id: 'donate_anonymous', title: 'Stay Anonymous' },
+        { id: 'donate_anonymous', title: getFlowCopy(ctx.copyLang, 'crowdfunding.stay_anonymous') },
       ],
     }];
   },
 
-  async validate(input: string) {
+  async validate(input: string, ctx: FlowContext) {
     if (input === 'donate_anonymous') {
       return { valid: true, data: { donor_display_name: null } };
     }
     const name = input.trim();
     if (!name || name.length < 2) {
-      return { valid: false, errorMessage: 'Please enter your name or tap *Stay Anonymous*.' };
+      return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'crowdfunding.name_hint') };
     }
     return { valid: true, data: { donor_display_name: name } };
   },
@@ -399,21 +400,21 @@ const confirmDonationStep: FlowStepConfig = {
       type: 'buttons',
       body: `Donate ${formatCurrency(sd.donation_amount as number, country)} to *${sd.campaign_title}*?`,
       buttons: [
-        { id: 'confirm_yes', title: 'Confirm' },
-        { id: 'confirm_cancel', title: 'Cancel' },
+        { id: 'confirm_yes', title: getFlowCopy(ctx.copyLang, 'crowdfunding.confirm') },
+        { id: 'confirm_cancel', title: getFlowCopy(ctx.copyLang, 'nav.cancel') },
       ],
     }];
   },
 
-  async validate(input: string) {
+  async validate(input: string, ctx: FlowContext) {
     if (input === 'confirm_yes') return { valid: true, data: {} };
     if (input === 'confirm_cancel') return { valid: true, data: { cancelled: true } };
-    return { valid: false, errorMessage: 'Please tap Confirm or Cancel.' };
+    return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'crowdfunding.confirm_hint') };
   },
 
   async next(ctx: FlowContext) {
     if (ctx.session.session_data.cancelled) {
-      await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('Donation cancelled. Send *Hi* to start over.') });
+      await ctx.sender.sendText({ to: ctx.from, text: getFlowCopy(ctx.copyLang, 'crowdfunding.donation_cancelled') });
       return null; // End flow
     }
     return 'donation_payment';
@@ -555,7 +556,7 @@ const donationPaymentStep: FlowStepConfig = {
         ];
       }
 
-      return [{ type: 'text', text: 'Sorry, we could not create a payment link. Please try again later.' }];
+      return [{ type: 'text', text: getFlowCopy(ctx.copyLang, 'crowdfunding.link_failed') }];
     }
 
     // Gateway succeeded — store payment reference
@@ -600,11 +601,11 @@ const donationPaymentStep: FlowStepConfig = {
         },
         {
           type: 'buttons',
-          body: "After paying, tap below:",
+          body: getFlowCopy(ctx.copyLang, 'payment.complete_payment'),
           buttons: [
-            { id: sd.payment_reference ? `i_paid_ref:${sd.payment_reference}` : 'i_paid_online', title: "I've Paid Online" },
-            { id: 'sent_transfer', title: "I've Sent Transfer" },
-            { id: 'go_back', title: 'Cancel' },
+            { id: sd.payment_reference ? `i_paid_ref:${sd.payment_reference}` : 'i_paid_online', title: getFlowCopy(ctx.copyLang, 'payment.ive_paid_online') },
+            { id: 'sent_transfer', title: getFlowCopy(ctx.copyLang, 'payment.ive_sent_transfer') },
+            { id: 'go_back', title: getFlowCopy(ctx.copyLang, 'nav.cancel') },
           ],
         },
       ];
@@ -634,10 +635,10 @@ const donationPaymentStep: FlowStepConfig = {
       },
       {
         type: 'buttons',
-        body: "Paid already? Tap below to confirm:",
+        body: getFlowCopy(ctx.copyLang, 'payment.tap_after_transfer'),
         buttons: [
-          { id: sd.payment_reference ? `i_paid_ref:${sd.payment_reference}` : 'i_paid', title: "I've Paid" },
-          { id: 'go_back', title: 'Cancel' },
+          { id: sd.payment_reference ? `i_paid_ref:${sd.payment_reference}` : 'i_paid', title: getFlowCopy(ctx.copyLang, 'payment.ive_paid') },
+          { id: 'go_back', title: getFlowCopy(ctx.copyLang, 'nav.cancel') },
         ],
       },
     ];
@@ -704,7 +705,7 @@ const donationPaymentStep: FlowStepConfig = {
           .eq('reference_code', donRef)
           .in('status', ['pending']);
       }
-      await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('Donation cancelled. Send *Hi* to start over.') });
+      await ctx.sender.sendText({ to: ctx.from, text: getFlowCopy(ctx.copyLang, 'crowdfunding.donation_cancelled') });
       return null;
     }
     if (d._skip_saved_card && d._saved_method_id) {
@@ -726,20 +727,20 @@ const awaitDonationPaymentStep: FlowStepConfig = {
     if (sd.bank_transfer_offered) {
       return [{
         type: 'buttons',
-        body: "Complete your donation using the link or bank transfer above.\n\nTap below after paying:",
+        body: getFlowCopy(ctx.copyLang, 'payment.complete_payment'),
         buttons: [
-          { id: pRef ? `i_paid_ref:${pRef}` : 'i_paid_online', title: "I've Paid Online" },
-          { id: 'sent_transfer', title: "I've Sent Transfer" },
-          { id: 'go_back', title: 'Cancel' },
+          { id: pRef ? `i_paid_ref:${pRef}` : 'i_paid_online', title: getFlowCopy(ctx.copyLang, 'payment.ive_paid_online') },
+          { id: 'sent_transfer', title: getFlowCopy(ctx.copyLang, 'payment.ive_sent_transfer') },
+          { id: 'go_back', title: getFlowCopy(ctx.copyLang, 'nav.cancel') },
         ],
       }];
     }
     return [{
       type: 'buttons',
-      body: "Complete your donation using the link above.\n\nPaid already? Tap below to confirm:",
+      body: getFlowCopy(ctx.copyLang, 'payment.tap_after_transfer'),
       buttons: [
-        { id: pRef ? `i_paid_ref:${pRef}` : 'i_paid', title: "I've Paid" },
-        { id: 'go_back', title: 'Cancel' },
+        { id: pRef ? `i_paid_ref:${pRef}` : 'i_paid', title: getFlowCopy(ctx.copyLang, 'payment.ive_paid') },
+        { id: 'go_back', title: getFlowCopy(ctx.copyLang, 'nav.cancel') },
       ],
     }];
   },
@@ -760,7 +761,7 @@ const awaitDonationPaymentStep: FlowStepConfig = {
           .select('id');
 
         if (cancelErr) {
-          return { valid: false, errorMessage: 'Something went wrong. Please try again.' };
+          return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'error.generic_retry') };
         }
 
         if (!cancelResult?.length) {
@@ -773,7 +774,7 @@ const awaitDonationPaymentStep: FlowStepConfig = {
           if (don?.status === 'cancelled') {
             // Already cancelled — treat as established
           } else {
-            return { valid: false, errorMessage: 'Something went wrong. Please try again.' };
+            return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'error.generic_retry') };
           }
         }
 
@@ -842,7 +843,7 @@ const awaitDonationPaymentStep: FlowStepConfig = {
     // ── "I've Sent Transfer" button ──
     if (text === 'sent_transfer' || text === "i've sent transfer" || text === 'i_sent_transfer') {
       if (!sd.bank_transfer_reference) {
-        return { valid: false, errorMessage: 'No bank transfer reference found. Please use the online payment link instead.' };
+        return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'payment.no_bank_ref') };
       }
       sd._awaiting_transfer_proof = true;
       await ctx.supabase.from('bot_sessions').update({ session_data: sd }).eq('id', ctx.session.id);
@@ -908,14 +909,14 @@ const awaitDonationPaymentStep: FlowStepConfig = {
       }
 
       if (recovery.outcome === 'not_paid') {
-        return { valid: false, errorMessage: "Payment not yet received. The link may have expired — tap *Get New Link* for a fresh one." };
+        return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'payment.not_received') };
       }
 
       if (recovery.outcome === 'provider_error') {
         return { valid: false, errorMessage: "We couldn't verify your donation right now. If you've already paid, tap *I've Paid* again in a moment." };
       }
 
-      return { valid: false, errorMessage: 'Something went wrong. Please try again.' };
+      return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'error.generic_retry') };
     }
 
     return { valid: false, errorMessage: "Tap *I've Paid* or *Cancel*." };

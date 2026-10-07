@@ -1,4 +1,5 @@
 import type { FlowDefinition, FlowContext, PromptMessage, ValidationResult } from './types';
+import { fillFlowCopy } from './flow-localization';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 
 /**
@@ -14,7 +15,7 @@ export const chatFlow: FlowDefinition = {
         const businessName = ctx.business?.name || 'us';
         return [{
           type: 'text',
-          text: `💬 You're now chatting with *${businessName}*. Type your message and a team member will respond shortly.\n\nSend *restart* anytime to go back to the menu.`,
+          text: fillFlowCopy(ctx.copyLang, 'chat.start', { businessName }),
         }];
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
