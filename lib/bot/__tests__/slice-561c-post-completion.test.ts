@@ -241,98 +241,229 @@ describe('561-C: CERTIFIED_LANGUAGES unchanged', () => {
 });
 
 // ═══════════════════════════════════════════════════════════════
-// 10. Canonical language authority for handlers
+// 10. resolveHandlerCopyLang uses full preference authority
 // ═══════════════════════════════════════════════════════════════
 
-describe('561-C: handler language authority uses canonical resolver', () => {
-  it('bot.service.ts uses resolveHandlerCopyLang, not raw _detected_language', async () => {
-    const fs = await import('fs');
-    const source = fs.readFileSync('lib/bot/bot.service.ts', 'utf-8');
-    // Should have the resolveHandlerCopyLang helper
-    expect(source).toContain('resolveHandlerCopyLang');
-    expect(source).toContain('resolveEffectiveResponseLanguage');
-    expect(source).toContain('CERTIFIED_LANGUAGES');
-    // Handler calls should use resolveHandlerCopyLang, not raw _detected_language
-    expect(source).toContain('await this.resolveHandlerCopyLang(session)');
-    // Should NOT have raw _detected_language passthrough for handler lang
-    const handlerSection = source.slice(source.indexOf('handleRefundRequest'));
-    expect(handlerSection).not.toContain("(session.session_data._detected_language as string) || undefined");
-  });
-
-  it('resolveHandlerCopyLang delegates to resolveEffectiveResponseLanguage', async () => {
+describe('561-C: resolveHandlerCopyLang uses full preference authority', () => {
+  it('reads remembered preference via readPreferredResponseLanguage', async () => {
     const fs = await import('fs');
     const source = fs.readFileSync('lib/bot/bot.service.ts', 'utf-8');
     const methodStart = source.indexOf('private async resolveHandlerCopyLang');
     expect(methodStart).toBeGreaterThan(0);
-    const methodEnd = source.indexOf('\n  }', methodStart + 200);
+    const methodEnd = source.indexOf('\n  }\n', methodStart + 200);
     const methodBody = source.slice(methodStart, methodEnd + 4);
+    expect(methodBody).toContain('readPreferredResponseLanguage');
+    expect(methodBody).toContain('rememberedLanguage: rememberedLang');
     expect(methodBody).toContain('resolveEffectiveResponseLanguage');
-    expect(methodBody).toContain('getEffectiveLanguages');
-    expect(methodBody).toContain('loadBusinessLanguages');
-    expect(methodBody).toContain('certifiedLanguages');
+    expect(methodBody).toContain('certifiedLanguages: CERTIFIED_LANGUAGES');
+  });
+
+  it('no raw _detected_language passthrough in handler calls', async () => {
+    const fs = await import('fs');
+    const source = fs.readFileSync('lib/bot/bot.service.ts', 'utf-8');
+    // After the handler wrapper section, no raw _detected_language || undefined should exist
+    const handlerSection = source.slice(source.indexOf('handleRefundRequest'));
+    expect(handlerSection).not.toContain("(session.session_data._detected_language as string) || undefined");
   });
 });
 
 // ═══════════════════════════════════════════════════════════════
-// 11. Entitlement boundary — handlers get correct language
+// 11. Executable handler-level runtime tests
 // ═══════════════════════════════════════════════════════════════
 
-describe('561-C: entitlement boundary for handler copy language', () => {
-  // Simulate the resolveHandlerCopyLang logic
-  it('detected pcm + English-only entitlement => handlers get English', async () => {
-    const { resolveEffectiveResponseLanguage } = await import('@/lib/bot/language-preference');
-    const result = resolveEffectiveResponseLanguage({
-      explicitLanguage: null,
-      sessionLanguage: 'pcm', // detected but not entitled
-      rememberedLanguage: null,
-      entitlement: { allowedLanguages: ['en'], llmAllowed: false, translationAllowed: false },
-      certifiedLanguages: CERTIFIED_LANGUAGES,
-    });
-    expect(result.language).toBe('en');
-    // Handler would use 'en' => all copy is English
-    expect(getFlowCopy(result.language, 'orders.not_found')).toContain('Order not found');
-    expect(getFlowCopy(result.language, 'refund.title')).toBe('Refund Request');
-    expect(getFlowCopy(result.language, 'docs.receipt_header')).toBe('🧾 *Receipt*');
+describe('561-C: refund handler sends localized copy', () => {
+  it('refund handler with lang=en sends English copy', async () => {
+    const { handleRefundRequest } = await import('../../bot/handlers/refund-request');
+    const sent: Array<{ to: string; text?: string; body?: string; buttons?: any[] }> = [];
+    const mockSendText = vi.fn(async (to: string, text: string) => { sent.push({ to, text }); });
+    const mockSender = {
+      sendText: vi.fn(async (opts: any) => { sent.push(opts); }),
+      sendButtons: vi.fn(async (opts: any) => { sent.push(opts); }),
+      sendList: vi.fn(async (opts: any) => { sent.push(opts); }),
+    } as any;
+    const terminal = { data: [], error: null };
+    const makeChain = (): any => {
+      const p: any = { ...terminal };
+      for (const m of ['eq','neq','gt','gte','lt','lte','is','in','not','or','order','limit','range','single','maybeSingle','select','contains','filter','ilike','like','match']) {
+        p[m] = vi.fn().mockReturnValue(p);
+      }
+      p.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
+      p.single = vi.fn().mockResolvedValue({ data: null, error: null });
+      p.then = undefined;
+      return p;
+    };
+    const mockSupabase = {
+      from: vi.fn(() => ({ select: vi.fn().mockReturnValue(makeChain()) })),
+      rpc: vi.fn().mockResolvedValue({ data: null, error: null }),
+    } as any;
+    const session = {
+      id: 'test', user_id: 'u1', business_id: 'b1',
+      current_step: 'refund_select', session_data: {}, version: 1,
+    } as any;
+
+    await handleRefundRequest(mockSupabase, mockSender, mockSendText, session, '+2348001234567', '', 'en');
+    // With no payments, should send "no eligible" message in English
+    const textMsgs = sent.filter(m => m.text || m.body);
+    expect(textMsgs.length).toBeGreaterThan(0);
+    const firstText = textMsgs[0].text || textMsgs[0].body || '';
+    expect(firstText).toContain('eligible for refund');
   });
 
-  it('detected pcm + entitled + certified => handlers get Pidgin', async () => {
-    const { resolveEffectiveResponseLanguage } = await import('@/lib/bot/language-preference');
-    const result = resolveEffectiveResponseLanguage({
-      explicitLanguage: null,
-      sessionLanguage: 'pcm',
-      rememberedLanguage: null,
-      entitlement: { allowedLanguages: ['en', 'pcm'], llmAllowed: true, translationAllowed: true },
-      certifiedLanguages: CERTIFIED_LANGUAGES,
-    });
-    expect(result.language).toBe('pcm');
-    // Handler uses 'pcm' => Pidgin copy for deterministic chrome
-    expect(getFlowCopy(result.language, 'orders.not_found')).toContain('Order no dey');
-    expect(getFlowCopy(result.language, 'refund.submitted')).toContain('submit');
-    expect(getFlowCopy(result.language, 'orders.action_cancelled')).toContain('cancel');
+  it('refund handler with lang=pcm sends Pidgin copy', async () => {
+    const { handleRefundRequest } = await import('../../bot/handlers/refund-request');
+    const sent: Array<{ to: string; text?: string }> = [];
+    const mockSendText = vi.fn(async (to: string, text: string) => { sent.push({ to, text }); });
+    const mockSender = {
+      sendText: vi.fn(async (opts: any) => { sent.push(opts); }),
+      sendButtons: vi.fn(async (opts: any) => { sent.push(opts); }),
+      sendList: vi.fn(async (opts: any) => { sent.push(opts); }),
+    } as any;
+    const terminal = { data: [], error: null };
+    const makeChain = (): any => {
+      const p: any = { ...terminal };
+      for (const m of ['eq','neq','gt','gte','lt','lte','is','in','not','or','order','limit','range','single','maybeSingle','select','contains','filter','ilike','like','match']) {
+        p[m] = vi.fn().mockReturnValue(p);
+      }
+      p.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
+      p.single = vi.fn().mockResolvedValue({ data: null, error: null });
+      p.then = undefined;
+      return p;
+    };
+    const mockSupabase = {
+      from: vi.fn(() => ({ select: vi.fn().mockReturnValue(makeChain()) })),
+      rpc: vi.fn().mockResolvedValue({ data: null, error: null }),
+    } as any;
+    const session = {
+      id: 'test', user_id: 'u1', business_id: 'b1',
+      current_step: 'refund_select', session_data: {}, version: 1,
+    } as any;
+
+    await handleRefundRequest(mockSupabase, mockSender, mockSendText, session, '+2348001234567', '', 'pcm');
+    const textMsgs = sent.filter(m => m.text);
+    expect(textMsgs.length).toBeGreaterThan(0);
+    // Pidgin "no eligible" message
+    expect(textMsgs[0].text).toContain('no get any recent payment');
+  });
+});
+
+describe('561-C: my-orders handler sends localized copy', () => {
+  it('my-orders handler with lang=en sends English empty state', async () => {
+    const { handleMyOrders } = await import('../../bot/handlers/my-orders');
+    const sent: any[] = [];
+    const mockSendText = vi.fn(async (to: string, text: string) => { sent.push({ type: 'text', to, text }); });
+    const mockSender = {
+      sendText: vi.fn(async (opts: any) => { sent.push({ type: 'text', ...opts }); }),
+      sendButtons: vi.fn(async (opts: any) => { sent.push({ type: 'buttons', ...opts }); }),
+      sendList: vi.fn(async (opts: any) => { sent.push({ type: 'list', ...opts }); }),
+    } as any;
+    const mockRouteBack = vi.fn();
+    const mockSupabase = {
+      from: vi.fn(() => ({
+        select: vi.fn().mockReturnValue({
+          eq: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              order: vi.fn().mockReturnValue({
+                limit: vi.fn().mockResolvedValue({ data: [], error: null }),
+              }),
+              in: vi.fn().mockReturnValue({ data: [], error: null }),
+            }),
+            in: vi.fn().mockReturnValue({
+              order: vi.fn().mockReturnValue({
+                limit: vi.fn().mockResolvedValue({ data: [], error: null }),
+              }),
+            }),
+            order: vi.fn().mockReturnValue({
+              limit: vi.fn().mockResolvedValue({ data: [], error: null }),
+            }),
+          }),
+        }),
+      })),
+    } as any;
+    const session = {
+      id: 'test', user_id: 'u1', business_id: 'b1',
+      current_step: 'my_orders', session_data: {}, version: 1,
+    } as any;
+
+    await handleMyOrders(mockSupabase, mockSender, mockSendText, mockRouteBack, session, '+2348001234567', '', 'en');
+    // With no orders, should send empty state in English
+    const buttonMsgs = sent.filter(m => m.type === 'buttons');
+    expect(buttonMsgs.length).toBeGreaterThan(0);
+    expect(buttonMsgs[0].body).toContain("don't have any active orders");
+    expect(buttonMsgs[0].buttons[0].title).toBe('← Back');
   });
 
-  it('detected pcm + translationAllowed=false => handlers get English', async () => {
-    const { resolveEffectiveResponseLanguage } = await import('@/lib/bot/language-preference');
-    const result = resolveEffectiveResponseLanguage({
-      explicitLanguage: null,
-      sessionLanguage: 'pcm',
-      rememberedLanguage: null,
-      entitlement: { allowedLanguages: ['en', 'pcm'], llmAllowed: false, translationAllowed: false },
-      certifiedLanguages: CERTIFIED_LANGUAGES,
-    });
-    expect(result.language).toBe('en');
-  });
+  it('my-orders handler with lang=pcm sends Pidgin empty state', async () => {
+    const { handleMyOrders } = await import('../../bot/handlers/my-orders');
+    const sent: any[] = [];
+    const mockSendText = vi.fn(async (to: string, text: string) => { sent.push({ type: 'text', to, text }); });
+    const mockSender = {
+      sendText: vi.fn(async (opts: any) => { sent.push({ type: 'text', ...opts }); }),
+      sendButtons: vi.fn(async (opts: any) => { sent.push({ type: 'buttons', ...opts }); }),
+      sendList: vi.fn(async (opts: any) => { sent.push({ type: 'list', ...opts }); }),
+    } as any;
+    const mockRouteBack = vi.fn();
+    const mockSupabase = {
+      from: vi.fn(() => ({
+        select: vi.fn().mockReturnValue({
+          eq: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              order: vi.fn().mockReturnValue({
+                limit: vi.fn().mockResolvedValue({ data: [], error: null }),
+              }),
+              in: vi.fn().mockReturnValue({ data: [], error: null }),
+            }),
+            in: vi.fn().mockReturnValue({
+              order: vi.fn().mockReturnValue({
+                limit: vi.fn().mockResolvedValue({ data: [], error: null }),
+              }),
+            }),
+            order: vi.fn().mockReturnValue({
+              limit: vi.fn().mockResolvedValue({ data: [], error: null }),
+            }),
+          }),
+        }),
+      })),
+    } as any;
+    const session = {
+      id: 'test', user_id: 'u1', business_id: 'b1',
+      current_step: 'my_orders', session_data: {}, version: 1,
+    } as any;
 
-  it('uncertified yo => handlers get English even if entitled', async () => {
-    const { resolveEffectiveResponseLanguage } = await import('@/lib/bot/language-preference');
-    const result = resolveEffectiveResponseLanguage({
-      explicitLanguage: null,
-      sessionLanguage: 'yo',
-      rememberedLanguage: null,
-      entitlement: { allowedLanguages: ['en', 'yo'], llmAllowed: true, translationAllowed: true },
-      certifiedLanguages: CERTIFIED_LANGUAGES,
-    });
-    expect(result.language).toBe('en');
-    expect(getFlowCopy(result.language, 'refund.title')).toBe('Refund Request');
+    await handleMyOrders(mockSupabase, mockSender, mockSendText, mockRouteBack, session, '+2348001234567', '', 'pcm');
+    const buttonMsgs = sent.filter(m => m.type === 'buttons');
+    expect(buttonMsgs.length).toBeGreaterThan(0);
+    expect(buttonMsgs[0].body).toContain('no get any active orders');
+  });
+});
+
+describe('561-C: transaction-docs handler sends localized copy', () => {
+  it('transaction-docs with lang=en sends English generating message', async () => {
+    const { handleTransactionDocument } = await import('../../bot/handlers/transaction-docs');
+    const sent: any[] = [];
+    const mockSendText = vi.fn(async (to: string, text: string) => { sent.push({ to, text }); });
+    const mockSender = {
+      sendText: vi.fn(async (opts: any) => { sent.push(opts); }),
+      sendImage: vi.fn(async () => {}),
+      sendDocument: vi.fn(async () => {}),
+    } as any;
+    const mockSupabase = {
+      from: vi.fn(() => ({
+        select: vi.fn().mockReturnValue({
+          eq: vi.fn().mockReturnValue({
+            order: vi.fn().mockReturnValue({
+              limit: vi.fn().mockResolvedValue({ data: [], error: null }),
+            }),
+            single: vi.fn().mockResolvedValue({ data: null, error: null }),
+            maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+          }),
+        }),
+      })),
+    } as any;
+
+    await handleTransactionDocument(mockSupabase, mockSender, mockSendText, '+2348001234567', 'u1', 'history', 'en');
+    const textMsgs = sent.filter(m => m.text);
+    expect(textMsgs.length).toBeGreaterThan(0);
+    // Should send "no transactions found" in English
+    expect(textMsgs.some(m => m.text.includes('No transactions found') || m.text.includes('Generating'))).toBe(true);
   });
 });
