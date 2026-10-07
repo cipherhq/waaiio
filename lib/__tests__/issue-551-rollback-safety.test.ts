@@ -146,10 +146,65 @@ describe('#551 rollback safety — provisionPendingBusiness carries businessId o
 
 describe('#551 rollback safety — provisionAdminBusiness profile failure carries businessId', () => {
   it('profile update failure → throws OnboardingProvisionError with businessId', async () => {
-    const { provisionAdminBusiness: realProvision } = await import('@/lib/onboarding/admin-assisted');
-    // Can't call real provisionAdminBusiness due to module mocking, but the import above
-    // returns the mock. Instead verify via source + provision-level tests above.
-    // The real executable proof is in the route-level tests below.
+    // Use vi.importActual to bypass the module mock and call the real provisionAdminBusiness
+    const { provisionAdminBusiness: realProvision } = await vi.importActual<typeof import('@/lib/onboarding/admin-assisted')>('@/lib/onboarding/admin-assisted');
+
+    // Service where provisionPendingBusiness succeeds but profile update fails
+    const service = {
+      from: (table: string) => {
+        if (table === 'businesses') {
+          return {
+            select: () => ({
+              eq: () => ({
+                eq: () => ({ maybeSingle: async () => ({ data: null, error: null }) }),
+                maybeSingle: async () => ({ data: null, error: null }),
+              }),
+            }),
+            insert: () => ({
+              select: () => ({
+                single: async () => ({ data: { ...FAKE_BUSINESS }, error: null }),
+              }),
+            }),
+          };
+        }
+        if (table === 'profiles') {
+          return {
+            update: () => ({
+              eq: async () => ({ error: { message: 'profile write denied' } }),
+            }),
+          };
+        }
+        if (table === 'category_templates') {
+          return {
+            select: () => ({ eq: () => ({ eq: () => ({ maybeSingle: async () => ({ data: null, error: null }) }) }) }),
+          };
+        }
+        // whatsapp_config and others — handled by vi.mock'd initCapabilities/finalizeOnboarding
+        return {
+          select: () => ({ eq: () => ({ eq: () => ({ maybeSingle: async () => ({ data: null, error: null }) }) }) }),
+          insert: () => ({
+            select: () => ({ single: async () => ({ data: {}, error: null }) }),
+            then: (r: (v: unknown) => void) => r({ data: {}, error: null }),
+          }),
+        };
+      },
+    } as any;
+
+    const err = await realProvision(
+      service,
+      {
+        request_key: 'rk-1', owner_first_name: 'Jane', owner_last_name: 'Doe',
+        owner_email: 'jane@example.com', owner_phone: '+2348000000001',
+        business_name: 'Test Biz', country: 'NG', category: 'restaurant',
+        city: 'Lagos', address: '1 Test St', business_phone: '+2348000000000',
+        intended_plan: 'free' as any, capabilities: [], whatsapp_method: 'shared',
+      },
+      'user-1', 'onb-1',
+    ).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(OnboardingProvisionError);
+    expect((err as OnboardingProvisionError).message).toContain('profile');
+    expect((err as OnboardingProvisionError).businessId).toBe('biz-123');
   });
 });
 
