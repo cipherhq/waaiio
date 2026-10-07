@@ -135,7 +135,7 @@ export async function POST(request: NextRequest) {
 
       if (resolved) {
         const phone = customerPhone.startsWith('+') ? customerPhone.slice(1) : customerPhone;
-        const dateLabel = formatDisplayDate(date, 'long', business.country_code || 'NG');
+        const dateLabel = formatDisplayDate(date, 'long', 'en', business.country_code || 'NG');
 
         await resolved.sender.sendText({
           to: phone,

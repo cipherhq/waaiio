@@ -70,9 +70,8 @@ export async function POST(request: NextRequest) {
       ? reservation.guest_phone.slice(1)
       : reservation.guest_phone;
 
-    const checkInLabel = formatDisplayDate(reservation.check_in, 'short', biz.country_code || 'NG');
-
     const l10n = await resolveProactiveLocalization(serviceClient, reservation.guest_phone, businessId);
+    const checkInLabel = formatDisplayDate(reservation.check_in, 'short', l10n.language, biz.country_code || 'NG');
     await resolved.sender.sendText({
       to: toPhone,
       text: fillFlowCopy(l10n.language, 'notification.reservation_cancelled', { businessName: biz.name, referenceCode: reservation.reference_code, checkInDate: checkInLabel }),

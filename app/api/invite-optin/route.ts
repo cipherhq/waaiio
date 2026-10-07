@@ -100,8 +100,8 @@ export async function POST(request: NextRequest) {
             }
 
             const cc = biz?.country_code || 'NG';
-            const dateLabel = formatDisplayDate(target.date, 'long-year', cc);
-            const timeLabel = target.time ? formatDisplayTime(target.time, cc) : '';
+            const dateLabel = formatDisplayDate(target.date, 'long-year', 'en', cc);
+            const timeLabel = target.time ? formatDisplayTime(target.time, 'en', cc) : '';
 
             const message = [
               `🎉 *You're Invited!*`, '',
@@ -204,8 +204,8 @@ export async function POST(request: NextRequest) {
 
     // Format date
     const bizCc = biz?.country_code || 'NG';
-    const dateLabel = formatDisplayDate(target.date, 'long-year', bizCc);
-    const timeLabel = target.time ? formatDisplayTime(target.time, bizCc) : '';
+    const dateLabel = formatDisplayDate(target.date, 'long-year', 'en', bizCc);
+    const timeLabel = target.time ? formatDisplayTime(target.time, 'en', bizCc) : '';
 
     // Send WhatsApp invite (opt-in — they submitted their number)
     let whatsappSent = false;

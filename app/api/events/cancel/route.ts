@@ -74,7 +74,7 @@ export async function POST(request: NextRequest) {
     // 4. Send WhatsApp notifications to ticket holders
     const bizCc = (event.businesses as unknown as { country_code?: string })?.country_code || 'NG';
     const eventDate = event.date
-      ? formatDisplayDate(event.date, 'long-year', bizCc)
+      ? formatDisplayDate(event.date, 'long-year', 'en', bizCc)
       : 'TBD';
     const cancelMessage = `Event "${event.name}" on ${eventDate} has been cancelled. A refund will be processed if applicable. We apologize for any inconvenience.`;
 

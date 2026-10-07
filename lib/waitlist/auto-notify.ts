@@ -77,7 +77,7 @@ async function sendNotifications({
   if (!resolved) return 0;
 
   const { data: bizInfo } = await supabase.from('businesses').select('country_code').eq('id', businessId).maybeSingle();
-  const displayDate = formatDisplayDate(date, 'long', bizInfo?.country_code || 'NG');
+  const bizCc = bizInfo?.country_code || 'NG';
 
   let notifiedCount = 0;
 
@@ -88,6 +88,7 @@ async function sendNotifications({
         : entry.customer_phone;
       const name = entry.customer_name || 'there';
       const l10n = await resolveProactiveLocalization(supabase, entry.customer_phone, businessId);
+      const displayDate = formatDisplayDate(date, 'long', l10n.language, bizCc);
       const msg = fillFlowCopy(l10n.language, 'notification.waitlist_slot_open', { name, businessName, displayDate });
 
       await resolved.sender.sendText({ to: phone, text: msg });

@@ -146,7 +146,7 @@ export async function POST(request: NextRequest) {
     const invoiceUrl = `${appUrl}/invoice/${token}`;
     const formattedAmount = formatAmount(invoice.total_amount, invoice.currency);
     const dueDate = invoice.due_date
-      ? formatDisplayDate(invoice.due_date, 'brief-year', biz.country_code || 'NG')
+      ? formatDisplayDate(invoice.due_date, 'brief-year', 'en', biz.country_code || 'NG')
       : 'On receipt';
 
     const sendVia = channel || 'whatsapp';

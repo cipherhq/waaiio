@@ -121,7 +121,7 @@ export async function POST(
     }
 
     // Format date for display
-    const displayDate = formatDisplayDate(newDate, 'long-year', biz?.country_code || 'NG');
+    const displayDate = formatDisplayDate(newDate, 'long-year', 'en', biz?.country_code || 'NG');
     const displayTime = newTime.slice(0, 5);
 
     // Send reschedule notification via WhatsApp (with email fallback/dual-delivery)

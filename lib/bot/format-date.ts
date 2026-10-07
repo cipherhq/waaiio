@@ -2,16 +2,27 @@
  * Canonical date/time presentation seam (#561-F).
  *
  * Provides deterministic, locale-aware date/time formatting for
- * customer-visible text. Uses the business country locale via getLocale().
+ * customer-visible text. This is a PRESENTATION-ONLY layer that
+ * never mutates or reinterprets the authoritative stored value.
  *
- * This is a PRESENTATION-ONLY layer. It never mutates or reinterprets
- * the authoritative stored date/time/slot/timezone value.
+ * Locale authority follows Waaiio's existing language policy:
+ *   1. Primary: effective response language (already resolved through
+ *      certified + entitled + fallback authority by the caller).
+ *   2. Secondary: business country code (regional convention —
+ *      date order, 12h/24h preference, etc.).
  *
- * For EN and PCM (currently certified), calendar formatting is identical —
- * the surrounding chrome is localized by 561-A through 561-E.
- * The seam accepts copyLang for future certified-language expansion.
+ * The formatter does NOT decide entitlement or certification.
+ * It receives the already-authorized effective language.
+ *
+ * If the effective language is uncertified/unentitled, the caller
+ * will have already resolved it to English via the existing
+ * language-authority seam — so the formatter never sees uncertified
+ * languages in practice.
+ *
+ * PCM (Nigerian Pidgin) maps to English for calendar formatting
+ * since Pidgin uses the same calendar system.
  */
-import { getLocale, type CountryCode } from '@/lib/constants';
+import { CERTIFIED_LANGUAGES } from '@/lib/bot/languages';
 
 // ── Named format presets ──
 
@@ -44,18 +55,47 @@ const DATE_STYLES: Record<DateStyle, Intl.DateTimeFormatOptions> = {
 };
 
 /**
+ * Map an effective response language to its Intl-compatible calendar language.
+ * PCM → 'en' (same calendar system). Uncertified languages that somehow reach
+ * the formatter also fall back to 'en' as a safety net.
+ */
+function resolveCalendarLang(effectiveLang: string | undefined): string {
+  if (!effectiveLang) return 'en';
+  // PCM uses the same calendar formatting as English
+  if (effectiveLang === 'pcm') return 'en';
+  // If the language is certified and has a valid Intl locale, use it
+  if (CERTIFIED_LANGUAGES.includes(effectiveLang)) return effectiveLang;
+  // Uncertified languages should not reach here (caller resolves to EN),
+  // but safety-net to English
+  return 'en';
+}
+
+/**
+ * Build a BCP47 locale tag from effective language + business country.
+ * E.g., ('en', 'CA') → 'en-CA', ('en', 'NG') → 'en-NG'.
+ */
+function buildLocaleTag(effectiveLang: string | undefined, cc: string): string {
+  const lang = resolveCalendarLang(effectiveLang);
+  const country = (cc || 'NG').toUpperCase();
+  return `${lang}-${country}`;
+}
+
+/**
  * Format a date for customer-visible display.
  *
  * @param dateInput - ISO date string (YYYY-MM-DD or full ISO) or Date object.
  *   This is the authoritative value. It is never modified.
  * @param style - Named preset or custom Intl.DateTimeFormatOptions.
- * @param cc - Business country code (determines locale via getLocale).
+ * @param effectiveLang - Already-resolved effective response language ('en', 'pcm', etc.).
+ *   This is the PRIMARY locale authority. Must come from the existing language-authority seam.
+ * @param cc - Business country code. SECONDARY regional context (date order, 12h/24h, etc.).
  * @returns Formatted date string. On failure, returns the raw input safely.
  */
 export function formatDisplayDate(
   dateInput: string | Date,
   style: DateStyle | Intl.DateTimeFormatOptions,
-  cc: CountryCode | string,
+  effectiveLang: string | undefined,
+  cc: string,
 ): string {
   const options = typeof style === 'string' ? DATE_STYLES[style] : style;
   try {
@@ -63,7 +103,7 @@ export function formatDisplayDate(
       ? new Date(dateInput + (dateInput.includes('T') ? '' : 'T00:00'))
       : dateInput;
     if (isNaN(d.getTime())) return typeof dateInput === 'string' ? dateInput : '';
-    return d.toLocaleDateString(getLocale((cc || 'NG') as CountryCode), options);
+    return d.toLocaleDateString(buildLocaleTag(effectiveLang, cc), options);
   } catch {
     return typeof dateInput === 'string' ? dateInput : '';
   }
@@ -74,12 +114,14 @@ export function formatDisplayDate(
  *
  * @param timeInput - Time string in HH:MM or HH:MM:SS format.
  *   This is the authoritative value. It is never modified.
- * @param cc - Business country code (determines locale via getLocale).
+ * @param effectiveLang - Already-resolved effective response language.
+ * @param cc - Business country code (regional context).
  * @returns Formatted time string (e.g. "2:30 PM"). On failure, returns raw input.
  */
 export function formatDisplayTime(
   timeInput: string,
-  cc: CountryCode | string,
+  effectiveLang: string | undefined,
+  cc: string,
 ): string {
   try {
     const parts = timeInput.split(':');
@@ -88,7 +130,7 @@ export function formatDisplayTime(
     if (isNaN(h) || isNaN(m)) return timeInput;
     const dt = new Date();
     dt.setHours(h, m, 0, 0);
-    return dt.toLocaleTimeString(getLocale((cc || 'NG') as CountryCode), TIME_STANDARD);
+    return dt.toLocaleTimeString(buildLocaleTag(effectiveLang, cc), TIME_STANDARD);
   } catch {
     return timeInput;
   }

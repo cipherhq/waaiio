@@ -227,7 +227,7 @@ export async function GET(request: NextRequest) {
     const bizName = (event as any).businesses?.name || 'Events';
     const eventCc = (event as any).businesses?.country_code || 'NG';
     const timeLabel = event.time ? ` at ${event.time}` : '';
-    const dateLabel = formatDisplayDate(event.date, 'long', eventCc);
+    const dateLabel = formatDisplayDate(event.date, 'long', 'en', eventCc);
 
     for (const ticket of tickets || []) {
       if (!ticket.guest_phone) continue;
@@ -299,10 +299,10 @@ export async function GET(request: NextRequest) {
       if (!guest.guest_phone) continue;
 
       const partyCc = (party as any).businesses?.country_code || 'NG';
-      const dateLabel = formatDisplayDate(partyDate, 'long', partyCc);
+      const dateLabel = formatDisplayDate(partyDate, 'long', 'en', partyCc);
       let timeLabel = '';
       if (party.time) {
-        timeLabel = ` at ${formatDisplayTime(party.time, partyCc)}`;
+        timeLabel = ` at ${formatDisplayTime(party.time, 'en', partyCc)}`;
       }
 
       const message = [

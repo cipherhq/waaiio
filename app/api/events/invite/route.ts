@@ -185,8 +185,8 @@ export async function POST(request: NextRequest) {
 
       // Format the date
       const cc = business?.country_code || 'NG';
-      const dateStr = formatInviteDate(inviteTarget.date, cc);
-      const timeStr = formatInviteTime(inviteTarget.time, cc);
+      const dateStr = formatInviteDate(inviteTarget.date, 'en', cc);
+      const timeStr = formatInviteTime(inviteTarget.time, 'en', cc);
 
       const inviteLink = `${appUrl}/rsvp/${invite.invite_token}`;
 
@@ -279,8 +279,8 @@ export async function POST(request: NextRequest) {
           // Send email invite with RSVP + WhatsApp opt-in link
           try {
             const { sendEmail } = await import('@/lib/email/client');
-            const eDateStr = formatInviteDate(inviteTarget.date, business?.country_code || 'NG');
-            const eTimeStr = formatInviteTime(inviteTarget.time, business?.country_code || 'NG');
+            const eDateStr = formatInviteDate(inviteTarget.date, 'en', business?.country_code || 'NG');
+            const eTimeStr = formatInviteTime(inviteTarget.time, 'en', business?.country_code || 'NG');
 
             await sendEmail({
               to: guestEmail,
@@ -328,7 +328,7 @@ export async function POST(request: NextRequest) {
             `You're Invited!`,
             hostName ? `${hostName} invites you to:` : '',
             inviteTarget.name,
-            inviteTarget.date ? formatInviteDate(inviteTarget.date, business?.country_code || 'NG') : '',
+            inviteTarget.date ? formatInviteDate(inviteTarget.date, 'en', business?.country_code || 'NG') : '',
             inviteTarget.venue ? `At ${inviteTarget.venue}` : '',
             '',
             `RSVP: ${inviteLink}`,
@@ -367,8 +367,8 @@ export async function POST(request: NextRequest) {
   if (emails && emails.length > 0 && inviteTarget) {
     try {
       const { sendEmail } = await import('@/lib/email/client');
-      const dateStr = formatInviteDate(inviteTarget.date, business?.country_code || 'NG');
-      const timeStr = formatInviteTime(inviteTarget.time, business?.country_code || 'NG');
+      const dateStr = formatInviteDate(inviteTarget.date, 'en', business?.country_code || 'NG');
+      const timeStr = formatInviteTime(inviteTarget.time, 'en', business?.country_code || 'NG');
 
       for (const email of emails.slice(0, 50)) {
         if (!email || !email.includes('@')) continue;
@@ -414,14 +414,14 @@ export async function POST(request: NextRequest) {
   });
 }
 
-function formatInviteDate(dateStr: string | null, cc = 'NG'): string {
+function formatInviteDate(dateStr: string | null, lang = 'en', cc = 'NG'): string {
   if (!dateStr) return '';
-  return formatDisplayDate(dateStr, 'long-year', cc);
+  return formatDisplayDate(dateStr, 'long-year', lang, cc);
 }
 
-function formatInviteTime(timeStr: string | null, cc = 'NG'): string {
+function formatInviteTime(timeStr: string | null, lang = 'en', cc = 'NG'): string {
   if (!timeStr) return '';
-  return formatDisplayTime(timeStr, cc);
+  return formatDisplayTime(timeStr, lang, cc);
 }
 
 // Send reminders to pending/maybe guests
@@ -516,7 +516,7 @@ export async function PUT(request: NextRequest) {
   let sent = 0;
 
   // Format the date
-  const dateStr = targetDate ? formatDisplayDate(targetDate, 'long', reminderBiz?.country_code || 'NG') : '';
+  const dateStr = targetDate ? formatDisplayDate(targetDate, 'long', 'en', reminderBiz?.country_code || 'NG') : '';
 
   for (const invite of invites) {
     const link = `${appUrl}/rsvp/${invite.invite_token}`;

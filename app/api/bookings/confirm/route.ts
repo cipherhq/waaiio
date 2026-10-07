@@ -140,7 +140,7 @@ export async function POST(request: NextRequest) {
       ? (bookingData.service as any)?.name || (bookingData.appointment as any)?.name || 'Booking'
       : 'Booking';
     const dateLabel = bookingData
-      ? formatDisplayDate(bookingData.date, 'long', biz.country_code || 'NG')
+      ? formatDisplayDate(bookingData.date, 'long', 'en', biz.country_code || 'NG')
       : '';
 
     // ── WhatsApp confirmation via durable intent lifecycle ──

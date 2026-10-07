@@ -221,7 +221,7 @@ export async function POST(request: NextRequest) {
     let notificationOutcome: 'sent' | 'failed' | 'indeterminate' | 'preflight_failed' | 'skipped' = 'skipped';
     let whatsappSent = false;
 
-    const dateLabel = formatDisplayDate(date, 'long', biz.country_code || 'NG');
+    const dateLabel = formatDisplayDate(date, 'long', 'en', biz.country_code || 'NG');
 
     if (sendConfirmation && customerPhone) {
       try {

@@ -62,7 +62,7 @@ export async function POST(request: NextRequest) {
           '',
           `Welcome to *${biz.name}*!`,
           `🔑 Ref: *${reservation.reference_code}*`,
-          `📅 Check-out: ${formatDisplayDate(reservation.check_out, 'short', biz.country_code || 'NG')}`,
+          `📅 Check-out: ${formatDisplayDate(reservation.check_out, 'short', 'en', biz.country_code || 'NG')}`,
           '',
           `We hope you enjoy your stay! If you need anything, just send us a message here.`,
         ].join('\n'),
