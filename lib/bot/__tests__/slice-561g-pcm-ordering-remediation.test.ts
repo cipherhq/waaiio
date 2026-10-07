@@ -133,14 +133,88 @@ describe('561-G: PCM saved-card offer', () => {
     expect(en).toContain('saved card');
   });
 
+  it('savedcard PCM body is NOT the English value', () => {
+    const en = getFlowCopy('en', 'savedcard.pay_with_saved');
+    const pcm = getFlowCopy('pcm', 'savedcard.pay_with_saved');
+    expect(pcm).not.toBe(en);
+    expect(pcm).toContain('card wey you save');
+  });
+
+  it('savedcard PCM body preserves amount and card label', () => {
+    const result = fillFlowCopy('pcm', 'savedcard.pay_with_saved', {
+      amount: '₦5,000', cardLabel: 'Visa •••• 4242',
+    });
+    expect(result).toContain('₦5,000');
+    expect(result).toContain('Visa •••• 4242');
+  });
+
   it('savedcard.pay_with_last4 preserves last4', () => {
     const result = fillFlowCopy('en', 'savedcard.pay_with_last4', { last4: '4242' });
     expect(result).toContain('4242');
     expect(result).toContain('Pay with');
   });
 
-  it('savedcard.use_different returns localized text', () => {
+  it('savedcard.use_different PCM is localized', () => {
     expect(getFlowCopy('en', 'savedcard.use_different')).toBe('Use different card');
+    expect(getFlowCopy('pcm', 'savedcard.use_different')).toBe('Use another card');
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// 5b. PCM payment/ordering chrome
+// ═══════════════════════════════════════════════════════════════
+
+describe('561-G: PCM payment/ordering chrome', () => {
+  it('PCM auto_confirm is localized', () => {
+    const pcm = getFlowCopy('pcm', 'ordering.auto_confirm');
+    const en = getFlowCopy('en', 'ordering.auto_confirm');
+    expect(pcm).not.toBe(en);
+    expect(pcm).toContain('automatically after you pay');
+  });
+
+  it('PCM payment_setup_failed is localized', () => {
+    const pcm = getFlowCopy('pcm', 'ordering.payment_setup_failed');
+    expect(pcm).toContain('no fit set up payment');
+  });
+
+  it('PCM free_order_tips is localized', () => {
+    const pcm = getFlowCopy('pcm', 'ordering.free_order_tips');
+    expect(pcm).toContain('Wetin you fit do');
+  });
+
+  it('PCM card_charged is localized', () => {
+    const pcm = getFlowCopy('pcm', 'ordering.card_charged');
+    expect(pcm).toContain('Card don charge');
+    expect(pcm).toContain('dey process');
+  });
+
+  it('PCM select_payment_option is localized', () => {
+    const pcm = getFlowCopy('pcm', 'ordering.select_payment_option');
+    expect(pcm).toContain('Abeg pick');
+  });
+
+  it('PCM bank_transfer_title remains recognizable', () => {
+    expect(getFlowCopy('pcm', 'ordering.bank_transfer_title')).toContain('Bank Transfer');
+  });
+
+  it('PCM option_not_available preserves user input', () => {
+    const result = fillFlowCopy('pcm', 'ordering.option_not_available', { input: 'Blue XL' });
+    expect(result).toContain('Blue XL');
+    expect(result).toContain('no dey available');
+  });
+
+  it('PCM tap_or_promo is localized', () => {
+    expect(getFlowCopy('pcm', 'ordering.tap_or_promo')).toContain('Abeg');
+  });
+
+  it('PCM invalid_promo is localized', () => {
+    expect(getFlowCopy('pcm', 'ordering.invalid_promo')).toContain('no valid');
+  });
+
+  it('EN payment chrome remains unchanged', () => {
+    expect(getFlowCopy('en', 'ordering.auto_confirm')).toContain('Confirmation arrives');
+    expect(getFlowCopy('en', 'ordering.payment_setup_failed')).toContain("couldn't set up payment");
+    expect(getFlowCopy('en', 'ordering.card_charged')).toContain('Card charged!');
   });
 });
 
@@ -247,6 +321,14 @@ describe('561-G: English regression', () => {
     expect(getFlowCopy('en', 'ordering.browse')).toBe('Browse');
     expect(getFlowCopy('en', 'ordering.select_an_item')).toContain('Select an item');
     expect(getFlowCopy('en', 'ordering.other_categories')).toBe('Other Categories');
+  });
+
+  it('PCM catalog title/action follow product decision (Blocker 3)', () => {
+    expect(getFlowCopy('pcm', 'ordering.our_catalog')).toBe('Our Products');
+    expect(getFlowCopy('pcm', 'ordering.browse')).toBe('See Products');
+    // Explicitly NOT "Our Catalog" / "Browse" (the live staging defect)
+    expect(getFlowCopy('pcm', 'ordering.our_catalog')).not.toBe('Our Catalog');
+    expect(getFlowCopy('pcm', 'ordering.browse')).not.toBe('Browse');
   });
 
   it('EN confirm texts unchanged', () => {

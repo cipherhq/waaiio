@@ -561,7 +561,7 @@ export const orderingFlow: FlowDefinition = {
         // Match input to a viable value (case-insensitive)
         const match = viableValues.find(v => v.toLowerCase() === input.toLowerCase());
         if (!match) {
-          return { valid: false, errorMessage: `Sorry, ${input} is not available. Please select from the options shown.` };
+          return { valid: false, errorMessage: fillFlowCopy(ctx.copyLang, 'ordering.option_not_available', { input }) };
         }
 
         // Store selected option
@@ -1348,10 +1348,10 @@ export const orderingFlow: FlowDefinition = {
           },
         ];
       },
-      async validate(): Promise<ValidationResult> {
+      async validate(_input: string, ctx: FlowContext): Promise<ValidationResult> {
         // ACC-008: add_to_cart should never receive customer input — nextAfterPrompt
         // transitions to continue_or_checkout. Reject as safety net.
-        return { valid: false, errorMessage: 'Please select an option from the menu above.' };
+        return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'error.pick_option') };
       },
       async next() {
         // Safety net: route to continue_or_checkout if reached
@@ -1478,7 +1478,7 @@ export const orderingFlow: FlowDefinition = {
           .is('deleted_at', null)
           .single();
 
-        if (!product) return { valid: false, errorMessage: 'Please select an option from the list.' };
+        if (!product) return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'error.pick_option') };
 
         if (!product.has_variants && product.stock_quantity !== null && product.stock_quantity <= 0) {
           return { valid: false, errorMessage: `Sorry, ${product.name} is out of stock.` };
@@ -1628,7 +1628,7 @@ export const orderingFlow: FlowDefinition = {
 
           return { valid: true, data: { promo_code_id: promo.id, discount_amount: discount, promo_code: code, _promo_action: 'applied' } };
         }
-        return { valid: false, errorMessage: 'Please tap an option or enter a promo code.' };
+        return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'ordering.tap_or_promo') };
       },
       async next(ctx: FlowContext) {
         if (ctx.session.session_data._promo_action === 'enter') return 'enter_promo_code';
@@ -1661,7 +1661,7 @@ export const orderingFlow: FlowDefinition = {
           .eq('is_active', true)
           .maybeSingle();
 
-        if (!promo) return { valid: false, errorMessage: 'Invalid code. Check and try again:' };
+        if (!promo) return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'ordering.invalid_promo') };
         if (promo.max_uses && promo.current_uses >= promo.max_uses) return { valid: false, errorMessage: 'This code has been fully redeemed.' };
         if (promo.valid_until && new Date(promo.valid_until) < new Date()) return { valid: false, errorMessage: 'This code has expired.' };
 
@@ -3074,10 +3074,10 @@ export const orderingFlow: FlowDefinition = {
               const paymentLines = [
                 orderSummary,
                 '',
-                `*Option 1 — Pay Online* 👇`,
+                getFlowCopy(ctx.copyLang, 'ordering.pay_online_option'),
                 paymentResult.url,
                 '',
-                `*Option 2 — Bank Transfer* 🏦`,
+                getFlowCopy(ctx.copyLang, 'ordering.bank_transfer_option'),
                 formatBankTransferBlock(bankAccount, formatCurrency(total, cc), d.bank_transfer_reference as string),
               ];
 
@@ -3115,7 +3115,7 @@ export const orderingFlow: FlowDefinition = {
               countryCode: cc,
               subscriptionTier: ctx.business?.subscription_tier,
               lang: ctx.copyLang,
-            }) + `\n\n💳 Pay here 👇\n${paymentResult.url}\n\n⚠️ Confirmation arrives automatically after payment.`;
+            }) + '\n\n' + fillFlowCopy(ctx.copyLang, 'ordering.pay_here', { paymentUrl: paymentResult.url, autoConfirm: getFlowCopy(ctx.copyLang, 'ordering.auto_confirm') });
 
             return [{
               type: 'buttons',
@@ -3170,9 +3170,9 @@ export const orderingFlow: FlowDefinition = {
             const paymentLines = [
               orderSummary,
               '',
-              `🏦 *Bank Transfer Payment*`,
+              getFlowCopy(ctx.copyLang, 'ordering.bank_transfer_title'),
               '',
-              `Transfer to:`,
+              getFlowCopy(ctx.copyLang, 'ordering.transfer_to'),
               formatBankTransferBlock(bankAccount!, formatCurrency(total, cc), d.bank_transfer_reference as string),
             ];
 
@@ -3193,7 +3193,7 @@ export const orderingFlow: FlowDefinition = {
           return [
             {
               type: 'buttons',
-              body: 'Sorry, we couldn\'t set up payment right now. Your order has been saved but is pending payment.',
+              body: getFlowCopy(ctx.copyLang, 'ordering.payment_setup_failed'),
               buttons: [
                 { id: 'retry_payment', title: getFlowCopy(ctx.copyLang, 'payment.try_again') },
                 { id: 'chat_with_biz', title: getFlowCopy(ctx.copyLang, 'payment.chat_business') },
@@ -3228,7 +3228,7 @@ export const orderingFlow: FlowDefinition = {
           }).catch(err => logger.error('[ORDERING] Post-completion error:', err));
         }
 
-        const orderTips = '\n\n💡 *What you can do:*\n• Type *my orders* to track your order status\n• Type *receipt* to get your receipt\n• Type *Hi* to place another order';
+        const orderTips = getFlowCopy(ctx.copyLang, 'ordering.free_order_tips');
 
         return [
           {
@@ -3294,7 +3294,7 @@ export const orderingFlow: FlowDefinition = {
           return { valid: true, data: { _action: 'cancelled' } };
         }
         // ACC-008: Fail closed — do not accept unrecognized input
-        return { valid: false, errorMessage: 'Please select one of the options above, or type *cancel* to start over.' };
+        return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'ordering.select_payment_option') };
       },
       async next(ctx: FlowContext) {
         const d = ctx.session.session_data;
@@ -3314,7 +3314,7 @@ export const orderingFlow: FlowDefinition = {
               || result.lifecycle?.status === 'not_deliverable';
             if (!isComplete) {
               d.payment_reference = `${d.reference_code as string}-saved`;
-              await ctx.sender.sendText({ to: ctx.from, text: '✅ Card charged! Processing your order.\n\nConfirmation arriving shortly.' });
+              await ctx.sender.sendText({ to: ctx.from, text: getFlowCopy(ctx.copyLang, 'ordering.card_charged') });
               return 'await_order_payment';
             }
           }
