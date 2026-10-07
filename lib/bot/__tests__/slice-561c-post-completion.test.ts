@@ -97,8 +97,8 @@ describe('561-C: confirmation templates accept lang', () => {
       time: '10:00', quantity: 1, quantityLabel: 'person',
       referenceCode: 'REF-123', lang: 'pcm',
     });
-    // Pidgin thank_you is "Thank you! 🙏" (same, kept for recognizability)
-    expect(pcmMsg).toContain('Thank you!');
+    // Pidgin thank_you is "We appreciate am! 🙏"
+    expect(pcmMsg).toContain('appreciate');
     expect(pcmMsg).toContain('REF-123');
   });
 

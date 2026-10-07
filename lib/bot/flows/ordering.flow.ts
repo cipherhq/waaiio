@@ -1,5 +1,5 @@
 import type { FlowDefinition, FlowContext, PromptMessage, ValidationResult } from './types';
-import { getFlowCopy } from './flow-localization';
+import { getFlowCopy, fillFlowCopy } from './flow-localization';
 import { createWhatsAppUser, findUserByPhone, isReusableCustomerEmail } from './shared/user';
 import { initializePayment } from './shared/payment';
 import { truncTitle } from '../utils/truncate';
@@ -19,11 +19,6 @@ import { logger } from '@/lib/logger';
 import { buildSavedCardOffer, handleSavedCardInput } from './shared/saved-card-flow';
 import { safeButtons } from './shared/safe-interactive';
 import { isProductAvailable, computeVariantAvailability, getViableAxisValues } from './shared/product-availability';
-
-/** Generic labels for ordering flow */
-function getOrderingLabels(_category: string): { noun: string; emoji: string; browseLabel: string } {
-  return { noun: 'catalog', emoji: '🛍️', browseLabel: 'Browse' };
-}
 
 
 interface OptionGroup {
@@ -150,7 +145,6 @@ export const orderingFlow: FlowDefinition = {
         }
 
         const cc = (ctx.business.country_code || 'NG') as CountryCode;
-        const labels = getOrderingLabels(ctx.business.category);
 
         const formatItem = (p: typeof products[0]) => {
           let desc = p.has_variants ? getFlowCopy(ctx.copyLang, 'ordering.multiple_options') : formatCurrency(p.price, cc);
@@ -175,7 +169,7 @@ export const orderingFlow: FlowDefinition = {
           return [{
             type: 'list',
             title: getFlowCopy(ctx.copyLang, 'ordering.categories_title'),
-            body: `Welcome to ${ctx.business.name}! ${labels.emoji}\n\nChoose a category to browse:`,
+            body: fillFlowCopy(ctx.copyLang, 'ordering.welcome_categories', { businessName: ctx.business.name, emoji: '🛍️' }),
             buttonLabel: getFlowCopy(ctx.copyLang, 'ordering.view_categories'),
             items: categories.slice(0, 10).map(([cat, items]) => ({
               title: truncTitle(cat, 24),
@@ -196,9 +190,9 @@ export const orderingFlow: FlowDefinition = {
 
           return [{
             type: 'list' as const,
-            title: `Our ${labels.noun.charAt(0).toUpperCase() + labels.noun.slice(1)}`,
-            body: `Welcome to ${ctx.business.name}! ${labels.emoji}\n\nBrowse our ${labels.noun}:`,
-            buttonLabel: labels.browseLabel,
+            title: getFlowCopy(ctx.copyLang, 'ordering.our_catalog'),
+            body: fillFlowCopy(ctx.copyLang, 'ordering.welcome', { businessName: ctx.business.name, emoji: '🛍️', noun: getFlowCopy(ctx.copyLang, 'ordering.our_catalog').toLowerCase() }),
+            buttonLabel: getFlowCopy(ctx.copyLang, 'ordering.browse'),
             items: products.slice(0, 10).map(formatItem),
             sections,
           }];
@@ -206,9 +200,9 @@ export const orderingFlow: FlowDefinition = {
 
         return [{
           type: 'list',
-          title: `Our ${labels.noun.charAt(0).toUpperCase() + labels.noun.slice(1)}`,
-          body: `Welcome to ${ctx.business.name}! ${labels.emoji}\n\nBrowse our ${labels.noun}:`,
-          buttonLabel: labels.browseLabel,
+          title: getFlowCopy(ctx.copyLang, 'ordering.our_catalog'),
+          body: fillFlowCopy(ctx.copyLang, 'ordering.welcome', { businessName: ctx.business.name, emoji: '🛍️', noun: getFlowCopy(ctx.copyLang, 'ordering.our_catalog').toLowerCase() }),
+          buttonLabel: getFlowCopy(ctx.copyLang, 'ordering.browse'),
           items: products.slice(0, 10).map(formatItem),
         }];
       },
@@ -337,9 +331,9 @@ export const orderingFlow: FlowDefinition = {
           delete d._selected_category;
           return [{
             type: 'buttons',
-            body: `Nothing available in ${selectedCat} right now.`,
+            body: fillFlowCopy(ctx.copyLang, 'ordering.nothing_in_category', { category: selectedCat }),
             buttons: [
-              { id: 'back_to_categories', title: 'Other Categories' },
+              { id: 'back_to_categories', title: getFlowCopy(ctx.copyLang, 'ordering.other_categories') },
               { id: 'cancel_order', title: getFlowCopy(ctx.copyLang, 'nav.cancel') },
             ],
           }];
@@ -364,7 +358,7 @@ export const orderingFlow: FlowDefinition = {
         return [{
           type: 'list',
           title: truncTitle(selectedCat, 24),
-          body: `*${selectedCat}*${cartInfo}\n\nSelect an item:`,
+          body: `*${selectedCat}*${cartInfo}\n\n${getFlowCopy(ctx.copyLang, 'ordering.select_an_item')}`,
           buttonLabel: getFlowCopy(ctx.copyLang, 'ordering.view_items'),
           items: items.slice(0, 10),
         }];
@@ -742,7 +736,7 @@ export const orderingFlow: FlowDefinition = {
         messages.push({
           type: 'list',
           title: truncTitle(d.current_product_name as string, 24),
-          body: `Choose an option for *${d.current_product_name}*:`,
+          body: fillFlowCopy(ctx.copyLang, 'ordering.choose_option', { productName: d.current_product_name as string }),
           buttonLabel: getFlowCopy(ctx.copyLang, 'ordering.select_option'),
           items: available.map(v => ({
             title: truncTitle(v.label, 24),
@@ -1295,7 +1289,7 @@ export const orderingFlow: FlowDefinition = {
         }
         const products = (rawProducts || []).filter(p => isProductAvailable(p, aaoVarAvail, p.id));
 
-        const checkoutItem = { title: 'Checkout ✅', description: `Total: ${formatCurrency(total, cc)}`.slice(0, 72), postbackText: 'checkout' };
+        const checkoutItem = { title: getFlowCopy(ctx.copyLang, 'ordering.checkout_confirm'), description: fillFlowCopy(ctx.copyLang, 'ordering.total_label', { amount: formatCurrency(total, cc) }).slice(0, 72), postbackText: 'checkout' };
 
         // ACC-008: session_data mutated in-memory; executor persists via CAS
         // Step transition to 'continue_or_checkout' handled by nextAfterPrompt
@@ -1409,7 +1403,7 @@ export const orderingFlow: FlowDefinition = {
         }
         const products = (rawProducts || []).filter(p => isProductAvailable(p, cocVarAvail, p.id));
 
-        const checkoutItem = { title: 'Checkout ✅', description: `Total: ${formatCurrency(total, cc)}`.slice(0, 72), postbackText: 'checkout' };
+        const checkoutItem = { title: getFlowCopy(ctx.copyLang, 'ordering.checkout_confirm'), description: fillFlowCopy(ctx.copyLang, 'ordering.total_label', { amount: formatCurrency(total, cc) }).slice(0, 72), postbackText: 'checkout' };
 
         // Group by category into sections
         const categoryMap = new Map<string, typeof products>();
@@ -3074,6 +3068,7 @@ export const orderingFlow: FlowDefinition = {
                 volumeDiscountAmount: volumeDiscountTotal || undefined,
                 countryCode: cc,
                 subscriptionTier: ctx.business?.subscription_tier,
+                lang: ctx.copyLang,
               });
 
               const paymentLines = [
@@ -3119,6 +3114,7 @@ export const orderingFlow: FlowDefinition = {
               volumeDiscountAmount: volumeDiscountTotal || undefined,
               countryCode: cc,
               subscriptionTier: ctx.business?.subscription_tier,
+              lang: ctx.copyLang,
             }) + `\n\n💳 Pay here 👇\n${paymentResult.url}\n\n⚠️ Confirmation arrives automatically after payment.`;
 
             return [{
@@ -3168,6 +3164,7 @@ export const orderingFlow: FlowDefinition = {
               volumeDiscountAmount: volumeDiscountTotal || undefined,
               countryCode: cc,
               subscriptionTier: ctx.business?.subscription_tier,
+              lang: ctx.copyLang,
             });
 
             const paymentLines = [
@@ -3248,6 +3245,7 @@ export const orderingFlow: FlowDefinition = {
               addonsTotal: addonsTotal || undefined,
               volumeDiscountAmount: volumeDiscountTotal || undefined,
               subscriptionTier: ctx.business?.subscription_tier,
+              lang: ctx.copyLang,
             }) + orderTips,
           },
           {

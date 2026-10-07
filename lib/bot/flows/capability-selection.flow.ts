@@ -228,7 +228,7 @@ const selectCapabilityStep: FlowStepConfig = {
     // Build capability items
     const capItems = userFacing.map(cap => ({
       id: `cap_${cap}`,
-      title: getCapabilityLabel(cap, category, customLabels[cap]),
+      title: getCapabilityLabel(cap, category, customLabels[cap], ctx.copyLang),
       postbackText: `cap_${cap}`,
     }));
 
@@ -324,11 +324,11 @@ const selectCapabilityStep: FlowStepConfig = {
         const lower = input.toLowerCase();
         const valCustomLabels = (ctx.session.session_data._capability_custom_labels as Record<string, string>) || {};
         // Exact label match (check custom label first, then default)
-        capId = userFacing.find(c => getCapabilityLabel(c, category, valCustomLabels[c]).toLowerCase() === lower) || null;
+        capId = userFacing.find(c => getCapabilityLabel(c, category, valCustomLabels[c], ctx.copyLang).toLowerCase() === lower) || null;
         // Partial match: input contains label or label contains input
         if (!capId) {
           capId = userFacing.find(c => {
-            const label = getCapabilityLabel(c, category, valCustomLabels[c]).toLowerCase();
+            const label = getCapabilityLabel(c, category, valCustomLabels[c], ctx.copyLang).toLowerCase();
             return lower.includes(label) || label.includes(lower);
           }) || null;
         }
