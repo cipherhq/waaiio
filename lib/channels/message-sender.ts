@@ -19,6 +19,7 @@ import {
   AmbiguousSendError,
   WamidPersistenceError,
   GateBlockError,
+  isSendAttemptGateOn,
   type AttemptParams,
 } from '@/lib/channels/attempt-recording';
 import { resolveRecipientCountry } from '@/lib/channels/phone-country';
@@ -281,6 +282,12 @@ export class MetaCloudSender implements MessageSender {
   ): Promise<T> {
     const isPlatform = !this._businessId && options?.platformScopeAllowed;
     const scope: 'business' | 'platform' = isPlatform ? 'platform' : 'business';
+
+    // #261: Business-scoped sends require Supabase client for attempt/financial authority
+    // when the attempt gate is ON (production). Gate OFF (tests): existing behavior preserved.
+    if (!isPlatform && !this._supabase && isSendAttemptGateOn()) {
+      throw new Error('Business send requires attempt authority (Supabase client unavailable) — zero Meta emission');
+    }
 
     // 1. Create pre-WAMID attempt (before guard)
     const attemptId = this._supabase

@@ -110,7 +110,7 @@ async function sendWhatsAppForBusiness(
     // #257: attempt → #256 guard → sending → Meta fetch (all inside withEdgeAttemptRecording)
     const result = await withEdgeAttemptRecording(
       supabase,
-      { businessId, recipientPhone: to, phoneNumberId, flowType: 'chat-timeout' },
+      { businessId, recipientPhone: to, phoneNumberId, flowType: 'chat-timeout', messageCategory: 'utility' },
       () => fetch(
         `https://graph.facebook.com/v22.0/${phoneNumberId}/messages`,
         {

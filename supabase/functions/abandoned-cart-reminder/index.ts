@@ -35,7 +35,7 @@ async function sendWhatsApp(to: string, text: string, supabase: ReturnType<typeo
     // #257: attempt → #256 guard → sending → Meta fetch (all inside withEdgeAttemptRecording)
     const result = await withEdgeAttemptRecording(
       supabase,
-      { businessId, recipientPhone: to, phoneNumberId: whatsappPhoneId, flowType: 'abandoned-cart-reminder' },
+      { businessId, recipientPhone: to, phoneNumberId: whatsappPhoneId, flowType: 'abandoned-cart-reminder', messageCategory: 'marketing' },
       () => fetch(
         `https://graph.facebook.com/v22.0/${whatsappPhoneId}/messages`,
         {
