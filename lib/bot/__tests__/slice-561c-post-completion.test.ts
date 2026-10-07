@@ -239,3 +239,100 @@ describe('561-C: CERTIFIED_LANGUAGES unchanged', () => {
     expect(CERTIFIED_LANGUAGES).toEqual(['en', 'pcm']);
   });
 });
+
+// ═══════════════════════════════════════════════════════════════
+// 10. Canonical language authority for handlers
+// ═══════════════════════════════════════════════════════════════
+
+describe('561-C: handler language authority uses canonical resolver', () => {
+  it('bot.service.ts uses resolveHandlerCopyLang, not raw _detected_language', async () => {
+    const fs = await import('fs');
+    const source = fs.readFileSync('lib/bot/bot.service.ts', 'utf-8');
+    // Should have the resolveHandlerCopyLang helper
+    expect(source).toContain('resolveHandlerCopyLang');
+    expect(source).toContain('resolveEffectiveResponseLanguage');
+    expect(source).toContain('CERTIFIED_LANGUAGES');
+    // Handler calls should use resolveHandlerCopyLang, not raw _detected_language
+    expect(source).toContain('await this.resolveHandlerCopyLang(session)');
+    // Should NOT have raw _detected_language passthrough for handler lang
+    const handlerSection = source.slice(source.indexOf('handleRefundRequest'));
+    expect(handlerSection).not.toContain("(session.session_data._detected_language as string) || undefined");
+  });
+
+  it('resolveHandlerCopyLang delegates to resolveEffectiveResponseLanguage', async () => {
+    const fs = await import('fs');
+    const source = fs.readFileSync('lib/bot/bot.service.ts', 'utf-8');
+    const methodStart = source.indexOf('private async resolveHandlerCopyLang');
+    expect(methodStart).toBeGreaterThan(0);
+    const methodEnd = source.indexOf('\n  }', methodStart + 200);
+    const methodBody = source.slice(methodStart, methodEnd + 4);
+    expect(methodBody).toContain('resolveEffectiveResponseLanguage');
+    expect(methodBody).toContain('getEffectiveLanguages');
+    expect(methodBody).toContain('loadBusinessLanguages');
+    expect(methodBody).toContain('certifiedLanguages');
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// 11. Entitlement boundary — handlers get correct language
+// ═══════════════════════════════════════════════════════════════
+
+describe('561-C: entitlement boundary for handler copy language', () => {
+  // Simulate the resolveHandlerCopyLang logic
+  it('detected pcm + English-only entitlement => handlers get English', async () => {
+    const { resolveEffectiveResponseLanguage } = await import('@/lib/bot/language-preference');
+    const result = resolveEffectiveResponseLanguage({
+      explicitLanguage: null,
+      sessionLanguage: 'pcm', // detected but not entitled
+      rememberedLanguage: null,
+      entitlement: { allowedLanguages: ['en'], llmAllowed: false, translationAllowed: false },
+      certifiedLanguages: CERTIFIED_LANGUAGES,
+    });
+    expect(result.language).toBe('en');
+    // Handler would use 'en' => all copy is English
+    expect(getFlowCopy(result.language, 'orders.not_found')).toContain('Order not found');
+    expect(getFlowCopy(result.language, 'refund.title')).toBe('Refund Request');
+    expect(getFlowCopy(result.language, 'docs.receipt_header')).toBe('🧾 *Receipt*');
+  });
+
+  it('detected pcm + entitled + certified => handlers get Pidgin', async () => {
+    const { resolveEffectiveResponseLanguage } = await import('@/lib/bot/language-preference');
+    const result = resolveEffectiveResponseLanguage({
+      explicitLanguage: null,
+      sessionLanguage: 'pcm',
+      rememberedLanguage: null,
+      entitlement: { allowedLanguages: ['en', 'pcm'], llmAllowed: true, translationAllowed: true },
+      certifiedLanguages: CERTIFIED_LANGUAGES,
+    });
+    expect(result.language).toBe('pcm');
+    // Handler uses 'pcm' => Pidgin copy for deterministic chrome
+    expect(getFlowCopy(result.language, 'orders.not_found')).toContain('Order no dey');
+    expect(getFlowCopy(result.language, 'refund.submitted')).toContain('submit');
+    expect(getFlowCopy(result.language, 'orders.action_cancelled')).toContain('cancel');
+  });
+
+  it('detected pcm + translationAllowed=false => handlers get English', async () => {
+    const { resolveEffectiveResponseLanguage } = await import('@/lib/bot/language-preference');
+    const result = resolveEffectiveResponseLanguage({
+      explicitLanguage: null,
+      sessionLanguage: 'pcm',
+      rememberedLanguage: null,
+      entitlement: { allowedLanguages: ['en', 'pcm'], llmAllowed: false, translationAllowed: false },
+      certifiedLanguages: CERTIFIED_LANGUAGES,
+    });
+    expect(result.language).toBe('en');
+  });
+
+  it('uncertified yo => handlers get English even if entitled', async () => {
+    const { resolveEffectiveResponseLanguage } = await import('@/lib/bot/language-preference');
+    const result = resolveEffectiveResponseLanguage({
+      explicitLanguage: null,
+      sessionLanguage: 'yo',
+      rememberedLanguage: null,
+      entitlement: { allowedLanguages: ['en', 'yo'], llmAllowed: true, translationAllowed: true },
+      certifiedLanguages: CERTIFIED_LANGUAGES,
+    });
+    expect(result.language).toBe('en');
+    expect(getFlowCopy(result.language, 'refund.title')).toBe('Refund Request');
+  });
+});

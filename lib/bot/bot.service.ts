@@ -2336,7 +2336,7 @@ export class BotService {
       this.sendText.bind(this),
       this.deactivateSession.bind(this),
       this.handleMessage.bind(this),
-      (session.session_data._detected_language as string) || undefined,
+      await this.resolveHandlerCopyLang(session),
     );
     if (escapeResult.handled) return;
 
@@ -3176,6 +3176,44 @@ export class BotService {
     return _capabilityToFirstStep(cap);
   }
 
+  // ── Canonical copy-language resolver for handlers (#561-C) ──
+  // Delegates to resolveEffectiveResponseLanguage — same authority as executor.
+  // Handlers receive the resolved language, not raw _detected_language.
+  private async resolveHandlerCopyLang(session: BotSession): Promise<string> {
+    const detected = (session.session_data._detected_language as string) || null;
+    if (!detected || detected === 'en') return 'en';
+    try {
+      const configuredLangs = await loadBusinessLanguages(this.supabase, session.business_id);
+      const tier = await this.getBusinessTier(session.business_id);
+      const entitlement = getEffectiveLanguages(tier, configuredLangs);
+      const { resolveEffectiveResponseLanguage } = await import('./language-preference');
+      const { CERTIFIED_LANGUAGES } = await import('./languages');
+      return resolveEffectiveResponseLanguage({
+        explicitLanguage: null,
+        sessionLanguage: detected,
+        rememberedLanguage: null,
+        entitlement,
+        certifiedLanguages: CERTIFIED_LANGUAGES,
+      }).language;
+    } catch {
+      return 'en'; // Fail closed to English
+    }
+  }
+
+  private async getBusinessTier(businessId: string | null): Promise<string> {
+    if (!businessId) return 'free';
+    try {
+      const { data } = await this.supabase
+        .from('businesses')
+        .select('subscription_tier')
+        .eq('id', businessId)
+        .single();
+      return (data?.subscription_tier as string) || 'free';
+    } catch {
+      return 'free';
+    }
+  }
+
   // ── My Bookings (delegated to handlers/my-bookings.ts) ──
 
   private async handleMyBookings(session: BotSession, from: string, input: string): Promise<void> {
@@ -3183,7 +3221,7 @@ export class BotService {
   }
 
   private async handleRefundRequest(session: BotSession, from: string, input: string): Promise<void> {
-    const lang = (session.session_data._detected_language as string) || undefined;
+    const lang = await this.resolveHandlerCopyLang(session);
     return _handleRefundRequest(this.supabase, this.messageSender, this.sendText.bind(this), session, from, input, lang);
   }
 
@@ -3202,17 +3240,17 @@ export class BotService {
   // ── My Orders (delegated to handlers/my-orders.ts) ──
 
   private async handleMyOrders(session: BotSession, from: string, input: string): Promise<void> {
-    const lang = (session.session_data._detected_language as string) || undefined;
+    const lang = await this.resolveHandlerCopyLang(session);
     return _handleMyOrders(this.supabase, this.messageSender, this.sendText.bind(this), this.routeToMyAccountMenu.bind(this), session, from, input, lang);
   }
 
   private async handleOrderDetail(session: BotSession, from: string, orderId: string): Promise<void> {
-    const lang = (session.session_data._detected_language as string) || undefined;
+    const lang = await this.resolveHandlerCopyLang(session);
     return _handleOrderDetail(this.supabase, this.messageSender, this.sendText.bind(this), session, from, orderId, lang);
   }
 
   private async handleOrderDetailAction(session: BotSession, from: string, input: string): Promise<void> {
-    const lang = (session.session_data._detected_language as string) || undefined;
+    const lang = await this.resolveHandlerCopyLang(session);
     return _handleOrderDetailAction(this.supabase, this.messageSender, this.sendText.bind(this), this.routeToMyAccountMenu.bind(this), session, from, input, lang);
   }
 
