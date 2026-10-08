@@ -3979,16 +3979,15 @@ jobs:
       - name: Run ACL tests against disposable PG
         env:
           TEST_DATABASE_URL: postgresql://test_runner:test_only_ephemeral@localhost:5432/acl_test_disposable
-        run: npx vitest run lib/__tests__/m431-engage-segments-acl.test.ts --reporter=verbose 2>&1 | tee /tmp/acl-test-output.txt
+        shell: bash
+        run: |
+          set -o pipefail
+          npx vitest run lib/__tests__/m431-engage-segments-acl.test.ts --reporter=verbose 2>&1 | tee /tmp/acl-test-output.txt
 
       - name: Verify zero skipped DB tests
         run: |
-          if grep -q "skipped" /tmp/acl-test-output.txt; then
-            SKIPPED=$(grep "skipped" /tmp/acl-test-output.txt | tail -1)
-            echo "⚠️ Test output: $SKIPPED"
-            if echo "$SKIPPED" | grep -qE "[1-9][0-9]* skipped"; then
-              echo "❌ DB tests were skipped — disposable PG connection failed"
-              exit 1
-            fi
+          if grep -qE "[1-9][0-9]* skipped" /tmp/acl-test-output.txt; then
+            echo "❌ DB tests were skipped — disposable PG connection failed"
+            exit 1
           fi
           echo "✅ All tests executed (zero skipped)"
