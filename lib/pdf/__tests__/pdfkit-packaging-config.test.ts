@@ -21,6 +21,7 @@ const pdfkitReachableRoutes = [
   '/api/webhooks/flutterwave',
   '/api/cron/payment-reconciliation',
   '/api/cron/retry-failed-charges',
+  '/api/dashboard/pending-transfers/[id]',
 ] as const;
 
 describe('PDFKit serverless packaging config', () => {

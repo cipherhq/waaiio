@@ -39,6 +39,7 @@ const nextConfig = {
       '/api/webhooks/flutterwave': ['./node_modules/pdfkit/js/data/**/*'],
       '/api/cron/payment-reconciliation': ['./node_modules/pdfkit/js/data/**/*'],
       '/api/cron/retry-failed-charges': ['./node_modules/pdfkit/js/data/**/*'],
+      '/api/dashboard/pending-transfers/[id]': ['./node_modules/pdfkit/js/data/**/*'],
     },
   },
   async headers() {
