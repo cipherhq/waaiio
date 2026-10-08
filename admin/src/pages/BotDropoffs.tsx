@@ -107,10 +107,10 @@ export default function BotDropoffs() {
 
       {loadError && <div role="alert" className="rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-800">Unable to load complete analytics: {loadError}</div>}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <SummaryCard title="Total Exits" value={totalDropoffs} icon={<TrendingDown className="h-5 w-5" />} />
-        <SummaryCard title="Completed" value={completedCount} icon={<CheckCircle className="h-5 w-5 text-green-600" />} />
-        <SummaryCard title="Cancelled" value={cancelledCount} icon={<XCircle className="h-5 w-5 text-yellow-600" />} />
-        <SummaryCard title="Errors" value={errorCount} icon={<AlertCircle className="h-5 w-5 text-red-600" />} />
+        <SummaryCard label="Total Exits" value={totalDropoffs} icon={TrendingDown} color="gray" />
+        <SummaryCard label="Completed" value={completedCount} icon={CheckCircle} color="green" />
+        <SummaryCard label="Cancelled" value={cancelledCount} icon={XCircle} color="yellow" />
+        <SummaryCard label="Errors" value={errorCount} icon={AlertCircle} color="red" />
       </div>
 
       {/* Reason breakdown */}
