@@ -2697,6 +2697,7 @@ export const schedulingFlow: FlowDefinition = {
                 // booking. Verify the immutable booking selection before reusing.
                 const sameBooking = existing
                   && existing.user_id === userId
+                  && existing.guest_phone === guestPhone
                   && existing.date === d.date
                   && existing.time === d.time
                   && existing.party_size === partySize
