@@ -200,21 +200,21 @@ describe('P0: Real PostgreSQL authorization tests', () => {
         ON CONFLICT DO NOTHING;
 
         INSERT INTO public.businesses (id, owner_id, name, slug, status, address, city, neighborhood, phone,
-          google_calendar_token, payment_channels, metadata, country_code, wa_method)
+          google_calendar_token, payment_channels, metadata, country_code)
         VALUES
-          ('${BIZ_A}', '${OWNER_UUID}', 'P0 Active Biz', 'p0-active-biz', 'active', '1 Test St', 'Lagos', 'VI', '+0', 'secret-token-123', '{"stripe": true}', '{"internal": true}', 'NG', 'transfer'),
-          ('${BIZ_B}', '${OTHER_UUID}', 'P0 Pending Biz', 'p0-pending-biz', 'pending', '2 Test St', 'Lagos', 'VI', '+0', 'secret-token-456', '{}', '{}', 'NG', 'transfer'),
-          ('${BIZ_C}', '${OTHER_UUID}', 'P0 Suspended Biz', 'p0-suspended-biz', 'suspended', '3 Test St', 'Lagos', 'VI', '+0', 'secret-token-789', '{}', '{}', 'NG', 'transfer')
+          ('${BIZ_A}', '${OWNER_UUID}', 'P0 Active Biz', 'p0-active-biz', 'active', '1 Test St', 'Lagos', 'VI', '+0', 'secret-token-123', '{"stripe": true}', '{"internal": true}', 'NG'),
+          ('${BIZ_B}', '${OTHER_UUID}', 'P0 Pending Biz', 'p0-pending-biz', 'pending', '2 Test St', 'Lagos', 'VI', '+0', 'secret-token-456', '{}', '{}', 'NG'),
+          ('${BIZ_C}', '${OTHER_UUID}', 'P0 Suspended Biz', 'p0-suspended-biz', 'suspended', '3 Test St', 'Lagos', 'VI', '+0', 'secret-token-789', '{}', '{}', 'NG')
         ON CONFLICT (slug) DO NOTHING;
       `);
     } else {
       // Local minimal schema: fewer required fields
       runSQL(`
-        INSERT INTO public.businesses (id, owner_id, name, slug, status, google_calendar_token, payment_channels, metadata, wa_method)
+        INSERT INTO public.businesses (id, owner_id, name, slug, status, google_calendar_token, payment_channels, metadata)
         VALUES
-          ('${BIZ_A}', '${OWNER_UUID}', 'P0 Active Biz', 'p0-active-biz', 'active', 'secret-token-123', '{"stripe": true}', '{"internal": true}', 'transfer'),
-          ('${BIZ_B}', '${OTHER_UUID}', 'P0 Pending Biz', 'p0-pending-biz', 'pending', 'secret-token-456', null, null, 'transfer'),
-          ('${BIZ_C}', '${OTHER_UUID}', 'P0 Suspended Biz', 'p0-suspended-biz', 'suspended', 'secret-token-789', null, null, 'transfer')
+          ('${BIZ_A}', '${OWNER_UUID}', 'P0 Active Biz', 'p0-active-biz', 'active', 'secret-token-123', '{"stripe": true}', '{"internal": true}'),
+          ('${BIZ_B}', '${OTHER_UUID}', 'P0 Pending Biz', 'p0-pending-biz', 'pending', 'secret-token-456', null, null),
+          ('${BIZ_C}', '${OTHER_UUID}', 'P0 Suspended Biz', 'p0-suspended-biz', 'suspended', 'secret-token-789', null, null)
         ON CONFLICT (slug) DO NOTHING;
       `);
     }

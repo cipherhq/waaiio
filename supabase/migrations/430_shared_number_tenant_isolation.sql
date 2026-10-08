@@ -464,6 +464,12 @@ BEGIN
   END IF;
 END $$;
 
+-- ── Step 7b: Change column default from 'shared' to 'transfer' ──
+-- A business should NOT default to shared transport without explicit allocation.
+-- Production onboarding code explicitly sets wa_method='shared' and calls the allocator.
+-- This prevents test fixtures and raw INSERTs from accidentally creating shared businesses.
+ALTER TABLE businesses ALTER COLUMN wa_method SET DEFAULT 'transfer';
+
 -- ── Step 8: CHECK constraint ─────────────────────────────
 -- Only after all active shared businesses are reconciled.
 -- 'active' is the only routable status on current main.
