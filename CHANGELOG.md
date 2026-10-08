@@ -7,7 +7,8 @@ If something breaks, check this log to find what changed and when.
 
 ### What changed
 - **New migration** (`supabase/migrations/432_engage_segments_acl.sql`): Companion to M431 (which remains unchanged). Adds explicit `REVOKE ALL FROM anon, authenticated` and `GRANT SELECT, INSERT, UPDATE, DELETE TO service_role`. Includes a 13-assertion verification block checking all 4 CRUD ops for service_role (allowed), anon (denied), authenticated (denied), plus RLS enabled.
-- **Tests** (`lib/__tests__/m431-engage-segments-acl.test.ts`): 28 tests total — 12 static migration SQL analysis (always run in CI), 10 real PostgreSQL role CRUD + denial tests (require TEST_DATABASE_URL pointed at a disposable database), 6 API route authorization contract tests. DB tests include safety guardrails that refuse to run against non-disposable databases.
+- **Tests** (`lib/__tests__/m431-engage-segments-acl.test.ts`): 27 tests total — 11 static migration SQL analysis (always run), 10 real PostgreSQL role CRUD + denial tests (run in dedicated CI `acl-tests` job with ephemeral Postgres), 6 API route authorization contract tests. DB tests refuse to operate if `engage_segments` already exists (prevents accidental execution against populated databases).
+- **CI job** (`.github/workflows/ci.yml` `acl-tests`): Dedicated job provisioning a disposable `postgres:15-alpine` service container with Supabase-compatible roles. Runs all 27 tests with zero skips and verifies the result.
 
 ### Why
 On Supabase, there are NO default ACL entries for public schema tables — `service_role` gets ZERO table privileges without explicit grants. The Engage API routes use `createServiceClient()` (service_role) for `.from('engage_segments')` queries. M431 was committed without grants; M432 fixes this as a companion migration to be applied atomically with M431.

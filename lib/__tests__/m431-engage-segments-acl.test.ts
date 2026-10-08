@@ -6,21 +6,21 @@
  *   - M431 creates table with RLS, has NO grant (the gap M432 fixes)
  *   - M432 verification block checks all 4 ops × 3 roles + RLS
  *
- * Section 2: Real PostgreSQL role CRUD + denial tests (requires TEST_DATABASE_URL)
- *   - Applies M431 + M432 to a disposable test schema
- *   - service_role: full CREATE → READ → UPDATE → DELETE cycle with valid FK fixtures
- *   - anon: SELECT/INSERT produce "permission denied" (not empty result)
+ * Section 2: Real PostgreSQL role CRUD + denial tests
+ *   Requires TEST_DATABASE_URL pointing to a CI-provisioned ephemeral
+ *   Postgres (see .github/workflows/ci.yml acl-tests job).
+ *   - Applies M431 + M432 to the empty test database
+ *   - service_role: full INSERT → SELECT → UPDATE → DELETE cycle
+ *   - anon: SELECT/INSERT produce "permission denied"
  *   - authenticated: SELECT/INSERT produce "permission denied"
- *   - PUBLIC: no effective privilege via aclexplode grantee=0
+ *   - PUBLIC: no privilege via aclexplode grantee=0
  *   - RLS enabled catalog assertion
  *
- *   SAFETY: Tests refuse to run unless TEST_DATABASE_URL contains a known
- *   disposable marker. This prevents accidental execution against staging
- *   or production databases.
+ *   SAFETY: Tests fail if engage_segments already exists (refuses to
+ *   operate on a pre-populated database). Cleanup removes only objects
+ *   created by this test. No DROP CASCADE on any pre-existing table.
  *
  * Section 3: API route authorization contract (always runs in CI)
- *   - Routes use createServiceClient for direct table access
- *   - Routes enforce auth + capability + business ownership scoping
  */
 import { describe, it, expect, afterAll, beforeAll } from 'vitest';
 import { readFileSync } from 'fs';
@@ -29,7 +29,7 @@ import { join } from 'path';
 const MIGRATIONS_DIR = join(process.cwd(), 'supabase', 'migrations');
 
 // ══════════════════════════════════════════════════════════
-// Section 1: Static migration SQL analysis (always runs)
+// Section 1: Static migration SQL analysis (11 tests, always run)
 // ══════════════════════════════════════════════════════════
 
 describe('M432 migration SQL analysis', () => {
@@ -92,6 +92,7 @@ describe('M432 migration SQL analysis', () => {
 
 // ══════════════════════════════════════════════════════════
 // Section 2: Real PostgreSQL role CRUD + denial tests
+// (10 tests, require TEST_DATABASE_URL → CI acl-tests job)
 // ══════════════════════════════════════════════════════════
 
 interface PgClient {
@@ -102,21 +103,7 @@ interface PgClient {
 
 const TEST_DB_URL = process.env.TEST_DATABASE_URL;
 
-// SAFETY GUARD: Only run against explicitly disposable databases.
-// Prevents accidental execution against staging/production.
-const DISPOSABLE_MARKERS = ['localhost', '127.0.0.1', 'supabase_test', 'db.localhost', 'pooler.supabase.com:6543'];
-const isDisposableDb = TEST_DB_URL
-  ? DISPOSABLE_MARKERS.some(m => TEST_DB_URL.includes(m)) || TEST_DB_URL.includes('TEST_SAFE=true')
-  : false;
-
-const canRunDbTests = !!TEST_DB_URL && isDisposableDb;
-const skipReason = !TEST_DB_URL
-  ? 'TEST_DATABASE_URL not set'
-  : !isDisposableDb
-    ? 'TEST_DATABASE_URL does not contain a disposable marker — refusing to run destructive tests'
-    : '';
-
-describe.skipIf(!canRunDbTests)(`M431+M432 real PostgreSQL role tests${skipReason ? ` (skipped: ${skipReason})` : ''}`, () => {
+describe.skipIf(!TEST_DB_URL)('M431+M432 real PostgreSQL role tests', () => {
   let pg: { Client: new (opts: { connectionString: string }) => PgClient };
   let client: PgClient;
 
@@ -129,15 +116,20 @@ describe.skipIf(!canRunDbTests)(`M431+M432 real PostgreSQL role tests${skipReaso
     client = new pg.Client({ connectionString: TEST_DB_URL! });
     await client.connect();
 
-    // Verify connection is to a disposable database (double-check)
-    const versionResult = await client.query('SELECT current_database() as db');
-    const dbName = String(versionResult.rows[0].db);
-    if (dbName === 'postgres' && !TEST_DB_URL!.includes('localhost') && !TEST_DB_URL!.includes('127.0.0.1')) {
+    // SAFETY: Refuse to operate on a database that already has engage_segments.
+    // This prevents accidental execution against staging/production.
+    const existing = await client.query(
+      "SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = 'engage_segments'",
+    );
+    if (existing.rows.length > 0) {
       await client.end();
-      throw new Error(`Refusing to run destructive tests against database "${dbName}" — does not appear disposable`);
+      throw new Error(
+        'engage_segments already exists — refusing to run. ' +
+        'These tests require a clean disposable database (CI acl-tests job).',
+      );
     }
 
-    // Create FK fixture targets
+    // Create FK fixture rows
     await client.query(`
       INSERT INTO auth.users (id, instance_id, aud, role, email, encrypted_password, created_at, updated_at)
       VALUES ($1, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated',
@@ -151,8 +143,7 @@ describe.skipIf(!canRunDbTests)(`M431+M432 real PostgreSQL role tests${skipReaso
       ON CONFLICT (id) DO NOTHING
     `, [TEST_BIZ_ID, TEST_USER_ID]);
 
-    // Apply M431 (table) + M432 (ACL) — fresh application
-    await client.query('DROP TABLE IF EXISTS public.engage_segments CASCADE');
+    // Apply M431 (CREATE TABLE) + M432 (GRANT/REVOKE) to clean database
     const m431Sql = readFileSync(join(MIGRATIONS_DIR, '431_engage_segments.sql'), 'utf8');
     const m432Sql = readFileSync(join(MIGRATIONS_DIR, '432_engage_segments_acl.sql'), 'utf8');
     await client.query(m431Sql);
@@ -162,8 +153,10 @@ describe.skipIf(!canRunDbTests)(`M431+M432 real PostgreSQL role tests${skipReaso
   afterAll(async () => {
     if (client) {
       try {
-        await client.query('RESET ROLE'); // Ensure we're back to superuser
-        await client.query('DROP TABLE IF EXISTS public.engage_segments CASCADE');
+        await client.query('RESET ROLE');
+        // Clean up only what we created — no CASCADE
+        await client.query('DROP POLICY IF EXISTS engage_segments_owner_defense ON public.engage_segments');
+        await client.query('DROP TABLE IF EXISTS public.engage_segments');
         await client.query('DELETE FROM public.businesses WHERE id = $1', [TEST_BIZ_ID]);
         await client.query('DELETE FROM auth.users WHERE id = $1', [TEST_USER_ID]);
       } finally {
@@ -220,7 +213,7 @@ describe.skipIf(!canRunDbTests)(`M431+M432 real PostgreSQL role tests${skipReaso
 
   // ── anon denial (permission denied, NOT empty result) ──
 
-  it('anon SELECT is denied with permission error', async () => {
+  it('anon SELECT denied with permission error', async () => {
     await client.query('SET ROLE anon');
     await expect(
       client.query('SELECT * FROM public.engage_segments LIMIT 1'),
@@ -228,7 +221,7 @@ describe.skipIf(!canRunDbTests)(`M431+M432 real PostgreSQL role tests${skipReaso
     await client.query('RESET ROLE');
   });
 
-  it('anon INSERT is denied with permission error', async () => {
+  it('anon INSERT denied with permission error', async () => {
     await client.query('SET ROLE anon');
     await expect(
       client.query(`INSERT INTO public.engage_segments (business_id, name, expression, created_by)
@@ -237,9 +230,9 @@ describe.skipIf(!canRunDbTests)(`M431+M432 real PostgreSQL role tests${skipReaso
     await client.query('RESET ROLE');
   });
 
-  // ── authenticated denial (permission denied, NOT RLS-filtered empty) ──
+  // ── authenticated denial ──
 
-  it('authenticated SELECT is denied with permission error', async () => {
+  it('authenticated SELECT denied with permission error', async () => {
     await client.query('SET ROLE authenticated');
     await expect(
       client.query('SELECT * FROM public.engage_segments LIMIT 1'),
@@ -247,7 +240,7 @@ describe.skipIf(!canRunDbTests)(`M431+M432 real PostgreSQL role tests${skipReaso
     await client.query('RESET ROLE');
   });
 
-  it('authenticated INSERT is denied with permission error', async () => {
+  it('authenticated INSERT denied with permission error', async () => {
     await client.query('SET ROLE authenticated');
     await expect(
       client.query(`INSERT INTO public.engage_segments (business_id, name, expression, created_by)
@@ -265,8 +258,7 @@ describe.skipIf(!canRunDbTests)(`M431+M432 real PostgreSQL role tests${skipReaso
     expect(result.rows[0].rowsecurity).toBe(true);
   });
 
-  it('no PUBLIC (grantee=0) privilege exists on engage_segments', async () => {
-    // Use aclexplode to correctly identify PUBLIC grants (grantee OID = 0)
+  it('no PUBLIC (grantee=0) privilege on engage_segments', async () => {
     const result = await client.query(`
       SELECT count(*) as public_grants
       FROM pg_class c, aclexplode(c.relacl) a
@@ -279,7 +271,7 @@ describe.skipIf(!canRunDbTests)(`M431+M432 real PostgreSQL role tests${skipReaso
 });
 
 // ══════════════════════════════════════════════════════════
-// Section 3: API route authorization contract (always runs)
+// Section 3: API route authorization contract (6 tests, always run)
 // ══════════════════════════════════════════════════════════
 
 describe('Engage segments API authorization contract', () => {
