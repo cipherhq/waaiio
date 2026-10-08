@@ -155,6 +155,7 @@ const navSections: { label: string; items: NavItem[] }[] = [
       { icon: Zap, label: 'AI Setup Log', path: '/ai-setup-log', roles: ADMIN_PERMISSIONS['ai-setup-log'] },
       { icon: BrainCircuit, label: 'AI Usage', path: '/ai-usage', roles: ADMIN_PERMISSIONS['ai-usage'] },
       { icon: MessageCircle, label: 'Conversation Usage', path: '/conversation-usage', roles: ADMIN_PERMISSIONS['conversation-usage'] },
+      { icon: CreditCard, label: 'Messaging Credits', path: '/messaging-credits', roles: ADMIN_PERMISSIONS['messaging-credits'] },
       { icon: Sparkles, label: 'Site Announcement', path: '/site-announcement', roles: ADMIN_PERMISSIONS['platform-settings'] },
       { icon: Gift, label: 'Launch Subscribers', path: '/launch-subscribers', roles: ADMIN_PERMISSIONS['platform-settings'] },
       { icon: QrCode, label: 'Platform Campaigns', path: '/platform-campaigns', roles: ADMIN_PERMISSIONS['platform-settings'] },

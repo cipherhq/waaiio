@@ -3,6 +3,23 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-10-08 — Messaging top-up completion — dashboard UX, admin visibility, tests, ops docs (#491)
+
+### What changed
+- **Billing dashboard:** Added top-up purchase history section showing last 20 purchases with status badges (completed/pending/failed/refunded/disputed/review). Fetches from existing `/api/messaging/topup-history` endpoint.
+- **Low/zero-balance CTA:** Red "Messaging credit exhausted" banner when available balance is 0 with prior activity. Amber "Low messaging credit" banner when balance drops below 10% of total allocation. Both link to Top Up modal.
+- **Admin Messaging Credits page:** New `/messaging-credits` admin page with Balances view (per-business credit inspection with type, remaining/total, expiry, suspension status) and Purchases view (all top-up purchases with status, gateway, refund amount, consumed shortfall). Admin-role restricted.
+- **28 new tests:** Financial gate absent-setting default behavior, purchase history API contract, low/zero-balance CTA logic, FIFO purchased-credit consumption order, grant result contract, country/gateway routing, redirect state handling.
+- **Operational runbook:** `docs/ops/messaging-topup-runbook.md` — reconciliation procedures for pending purchases, review/shortfall cases, amount mismatches, monitoring checklist, financial gate documentation.
+- **Package pricing proposal:** `docs/ops/messaging-topup-packages-proposal.md` — Small/Medium/Large packages for USD/GBP/CAD/NGN/GHS in integer minor units. PENDING CTO approval.
+- **Staging E2E test plan:** `docs/ops/messaging-topup-staging-e2e-plan.md` — comprehensive scenario matrix for Stripe, Paystack, refunds, disputes, edge cases, race conditions. HOLD pending authorization.
+
+### Financial gate finding
+`messaging_financial_gate` is absent from both staging and production `platform_settings`. Per M371 `check_or_authorize_send()`, absent key means gate OFF (`enforcement_required: false, reason: 'gate_key_absent'`). Messages send without financial authorization. The billing system is display-only until the gate is explicitly enabled.
+
+### What could break
+- Nothing. All changes are additive: new UI sections, new admin page, new tests, new documentation. No existing files modified except billing page (additive sections) and admin sidebar/routes/permissions (new entries). No migrations, no RPC changes, no settlement contract changes.
+
 ## 2026-10-05 — Slice 3 CTO correction — protected values and ownership metadata (#524 / PR #541)
 
 ### What changed

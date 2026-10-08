@@ -64,6 +64,7 @@ export const ADMIN_PERMISSIONS: Record<string, AdminRole[]> = {
   'ai-setup-log': ['admin'],
   'ai-usage': ['admin'],
   'conversation-usage': ['admin'],
+  'messaging-credits': ['admin'],
   'platform-settings': ['admin'],
   'audit-log': ['admin'],
   'system-health': ['admin'],

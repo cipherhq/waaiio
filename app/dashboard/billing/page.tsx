@@ -107,6 +107,18 @@ export default function BillingPage() {
   // Top-up success/cancel banner
   const [topUpBanner, setTopUpBanner] = useState<'success' | 'cancelled' | null>(null);
 
+  // Top-up purchase history
+  const [topUpPurchases, setTopUpPurchases] = useState<Array<{
+    id: string;
+    package_amount_minor: number;
+    currency_code: string;
+    gateway: string;
+    status: string;
+    created_at: string;
+    completed_at: string | null;
+    refunded_at: string | null;
+  }>>([]);
+
   useEffect(() => {
     async function load() {
       setLoading(true);
@@ -186,6 +198,17 @@ export default function BillingPage() {
       setBroadcastCount(broadcastRes.data?.broadcast_count ?? 0);
       setAiCallCount(aiRes.count ?? 0);
       setFeeInvoices(feeInvoicesRes.data || []);
+
+      // Fetch top-up purchase history
+      try {
+        const topUpRes = await fetch(`/api/messaging/topup-history?business_id=${business.id}`);
+        if (topUpRes.ok) {
+          const topUpData = await topUpRes.json();
+          setTopUpPurchases(topUpData.purchases || []);
+        }
+      } catch {
+        // Non-critical — purchase history is informational
+      }
 
       // Build messaging summaries — handle read errors gracefully
       if (allowancesRes.error || spendPeriodsRes.error) {
@@ -565,6 +588,48 @@ export default function BillingPage() {
         )}
       </div>
 
+      {/* Top-Up Purchase History */}
+      {topUpPurchases.length > 0 && (
+        <div className="mt-6 rounded-xl border border-gray-100 bg-white">
+          <div className="border-b border-gray-100 px-6 py-4">
+            <h2 className="text-sm font-semibold text-gray-900">Top-Up History</h2>
+            <p className="mt-0.5 text-xs text-gray-400">Messaging credit purchases</p>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <thead>
+                <tr className="border-b border-gray-50 text-xs text-gray-500">
+                  <th className="px-6 py-3 font-medium">Date</th>
+                  <th className="px-6 py-3 font-medium text-right">Amount</th>
+                  <th className="px-6 py-3 font-medium">Gateway</th>
+                  <th className="px-6 py-3 font-medium">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {topUpPurchases.map((p) => (
+                  <tr key={p.id} className="border-b border-gray-50 last:border-0">
+                    <td className="whitespace-nowrap px-6 py-3 text-gray-700">
+                      {new Date(p.created_at).toLocaleDateString(undefined, {
+                        year: 'numeric',
+                        month: 'short',
+                        day: 'numeric',
+                      })}
+                    </td>
+                    <td className="whitespace-nowrap px-6 py-3 text-right font-medium text-gray-900">
+                      {formatSmallestUnit(p.package_amount_minor, p.currency_code)}
+                    </td>
+                    <td className="px-6 py-3 text-gray-500 capitalize">{p.gateway}</td>
+                    <td className="px-6 py-3">
+                      <TopUpStatusBadge status={p.status} />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       {/* Payment History */}
       <div className="mt-6 rounded-xl border border-gray-100 bg-white">
         <div className="border-b border-gray-100 px-6 py-4">
@@ -921,6 +986,46 @@ function MessagingCurrencySection({ summary, onTopUp }: { summary: CurrencyMessa
         </div>
       )}
 
+      {/* Low/zero-balance recovery CTA */}
+      {hasActivity && summary.available === 0 && onTopUp && (
+        <div className="mt-3 flex items-center gap-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3">
+          <svg className="h-5 w-5 shrink-0 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          <div className="flex-1">
+            <p className="text-sm font-medium text-red-800">Messaging credit exhausted</p>
+            <p className="mt-0.5 text-xs text-red-600">
+              Outbound WhatsApp messages will not be sent until credit is replenished.
+            </p>
+          </div>
+          <button
+            onClick={onTopUp}
+            className="shrink-0 rounded-lg bg-red-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-700 transition"
+          >
+            Top Up Now
+          </button>
+        </div>
+      )}
+      {hasActivity && summary.available > 0 && summary.available <= summary.totalAllocated * 0.1 && onTopUp && (
+        <div className="mt-3 flex items-center gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
+          <svg className="h-5 w-5 shrink-0 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          <div className="flex-1">
+            <p className="text-sm font-medium text-amber-800">Low messaging credit</p>
+            <p className="mt-0.5 text-xs text-amber-600">
+              {formatSmallestUnit(summary.available, summary.currency)} remaining. Top up to avoid interruptions.
+            </p>
+          </div>
+          <button
+            onClick={onTopUp}
+            className="shrink-0 rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-amber-700 transition"
+          >
+            Top Up
+          </button>
+        </div>
+      )}
+
       {/* Spend cap indicator (only if spend period exists) */}
       {summary.hasSpendPeriod && summary.cap > 0 && (() => {
         const capUsed = summary.charged + summary.reserved;
@@ -1014,6 +1119,24 @@ function MessagingCurrencySection({ summary, onTopUp }: { summary: CurrencyMessa
         </div>
       )}
     </div>
+  );
+}
+
+function TopUpStatusBadge({ status }: { status: string }) {
+  const config: Record<string, { label: string; className: string }> = {
+    completed: { label: 'Completed', className: 'bg-green-100 text-green-700' },
+    pending: { label: 'Pending', className: 'bg-yellow-100 text-yellow-700' },
+    failed: { label: 'Failed', className: 'bg-red-100 text-red-700' },
+    refunded: { label: 'Refunded', className: 'bg-gray-100 text-gray-700' },
+    partially_refunded: { label: 'Partial Refund', className: 'bg-amber-100 text-amber-700' },
+    disputed: { label: 'Disputed', className: 'bg-red-100 text-red-700' },
+    review: { label: 'Under Review', className: 'bg-orange-100 text-orange-700' },
+  };
+  const c = config[status] || { label: status, className: 'bg-gray-100 text-gray-600' };
+  return (
+    <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${c.className}`}>
+      {c.label}
+    </span>
   );
 }
 
