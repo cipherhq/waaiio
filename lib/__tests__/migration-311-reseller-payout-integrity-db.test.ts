@@ -265,7 +265,7 @@ describeIfDb('Migration 311: mark_reseller_payout_paid RPC', () => {
   beforeAll(() => {
     runSQL(`ALTER TABLE auth.users DISABLE TRIGGER ALL; INSERT INTO auth.users (id, raw_app_meta_data) VALUES ('${RESELLER_USER}', '{}'::jsonb), ('${ADMIN_ID}', '{"role":"admin"}'::jsonb), ('${BIZ_OWNER}', '{}'::jsonb) ON CONFLICT (id) DO UPDATE SET raw_app_meta_data = EXCLUDED.raw_app_meta_data; ALTER TABLE auth.users ENABLE TRIGGER ALL;`);
     runSQL(`INSERT INTO profiles (id, first_name, last_name, email) VALUES ('${BIZ_OWNER}', 'RPC', 'Test', 'rpc@test.local') ON CONFLICT DO NOTHING;`);
-    runSQL(`INSERT INTO businesses (id, name, slug, owner_id, address, city, neighborhood, phone, status, country_code) VALUES ('${BIZ_ID}', 'RPC Biz', 'rpc-biz', '${BIZ_OWNER}', '1 Test', 'Lagos', 'VI', '+0000', 'active', 'NG') ON CONFLICT DO NOTHING;`);
+    runSQL(`INSERT INTO businesses (id, name, slug, owner_id, address, city, neighborhood, phone, status, country_code, wa_method) VALUES ('${BIZ_ID}', 'RPC Biz', 'rpc-biz', '${BIZ_OWNER}', '1 Test', 'Lagos', 'VI', '+0000', 'active', 'NG', 'transfer') ON CONFLICT DO NOTHING;`);
     runSQL(`DELETE FROM reseller_payouts WHERE reseller_id = '${RESELLER_ID}';`);
     runSQL(`DELETE FROM platform_fees WHERE reseller_id = '${RESELLER_ID}';`);
     runSQL(`DELETE FROM resellers WHERE id = '${RESELLER_ID}';`);

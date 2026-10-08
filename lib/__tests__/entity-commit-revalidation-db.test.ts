@@ -1464,7 +1464,7 @@ describe.skipIf(!canRun)('Migration 383: Entity-commit revalidation', () => {
   describe('expanded invariant matrix', () => {
     it('43. event→business binding: wrong business rejected', () => {
       const otherBiz = '00000000-0000-0000-0383-00000000ff01';
-      psql(`INSERT INTO businesses (id, name, slug, address, city, neighborhood, phone, owner_id, status) VALUES ('${otherBiz}', 'Other', 'other-ff01', '3 Test St', 'Lagos', 'VI', '+2340000000001', '${USER_ID}', 'active') ON CONFLICT DO NOTHING;`);
+      psql(`INSERT INTO businesses (id, name, slug, address, city, neighborhood, phone, owner_id, status, wa_method) VALUES ('${otherBiz}', 'Other', 'other-ff01', '3 Test St', 'Lagos', 'VI', '+2340000000001', '${USER_ID}', 'active', 'transfer') ON CONFLICT DO NOTHING;`);
       psql(`INSERT INTO events (id, business_id, name, date, status, total_tickets, tickets_sold, price) VALUES ('${EVENT_ID}', '${BIZ_ID}', 'Test Event', CURRENT_DATE + 30, 'published', 100, 0, 1000) ON CONFLICT (id) DO UPDATE SET business_id = '${BIZ_ID}', status = 'published', tickets_sold = 0;`);
       const r = psqlMayFail(`SET ROLE service_role; SELECT purchase_tickets_atomic('${otherBiz}', '${EVENT_ID}', NULL, 1, '${USER_ID}', 'Test', '2340000000002', 'test@test.com', 1000, 'whatsapp', NULL, NULL);`);
       expect(r.ok).toBe(false);

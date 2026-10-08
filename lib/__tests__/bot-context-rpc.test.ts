@@ -247,8 +247,8 @@ describe.skipIf(!TEST_DB)('BOT-PERF: get_bot_context real PostgreSQL tests', () 
     const migration323 = require('fs').readFileSync('supabase/migrations/323_get_bot_context.sql', 'utf-8');
     psql(migration323);
     // Insert test businesses
-    psql(`INSERT INTO businesses (id, name, slug, category, status) VALUES ('${BIZ_A}', 'Business A', 'biz-a', 'salon', 'active') ON CONFLICT (id) DO NOTHING;`);
-    psql(`INSERT INTO businesses (id, name, slug, category, status) VALUES ('${BIZ_B}', 'Business B', 'biz-b', 'restaurant', 'active') ON CONFLICT (id) DO NOTHING;`);
+    psql(`INSERT INTO businesses (id, name, slug, category, status, wa_method) VALUES ('${BIZ_A}', 'Business A', 'biz-a', 'salon', 'active', 'transfer') ON CONFLICT (id) DO NOTHING;`);
+    psql(`INSERT INTO businesses (id, name, slug, category, status, wa_method) VALUES ('${BIZ_B}', 'Business B', 'biz-b', 'restaurant', 'active', 'transfer') ON CONFLICT (id) DO NOTHING;`);
     reset();
   });
 
