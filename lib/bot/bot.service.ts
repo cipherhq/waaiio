@@ -3204,6 +3204,7 @@ export class BotService {
     suggestions?: { id: string; name: string; bot_code: string }[];
     isCategory?: boolean;
     deepLinkCapability?: string;
+    authority: 'exact' | 'suggestion';
   }> {
     return _detectBotCodeWithSuggestions(this.supabase, text, callerPhone, countryFilter);
   }
