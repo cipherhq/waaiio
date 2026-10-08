@@ -266,12 +266,76 @@ describe('561-G: capability menu labels', () => {
     expect(getCapabilityLabel('reservation', 'hotel', null, 'en')).toBe('Book a Stay');
   });
 
-  it('PCM capability labels are localized', () => {
+  it('PCM capability labels are localized (Owner-approved)', () => {
     expect(getCapabilityLabel('ordering', 'shop', null, 'pcm')).toBe('Place Order');
-    expect(getCapabilityLabel('chat', 'shop', null, 'pcm')).toBe('Talk to Us');
+    expect(getCapabilityLabel('chat', 'shop', null, 'pcm')).toBe('Follow us talk');
     expect(getCapabilityLabel('reservation', 'hotel', null, 'pcm')).toBe('Book Stay');
     expect(getCapabilityLabel('crowdfunding', 'church', null, 'pcm')).toBe('Support Campaign');
     expect(getCapabilityLabel('class_booking', 'gym', null, 'pcm')).toBe('Book Class');
+    expect(getCapabilityLabel('giving', 'church', null, 'pcm')).toBe('Give money');
+    expect(getCapabilityLabel('ticketing', 'event_services', null, 'pcm')).toBe('Buy Ticket');
+    expect(getCapabilityLabel('appointment', 'car_wash', null, 'pcm')).toBe('Book Car Wash');
+  });
+
+  it('26/26 Owner matrix — all cap keys populated across 8 locales', () => {
+    const keys = [
+      'cap.scheduling', 'cap.appointment', 'cap.appointment.restaurant',
+      'cap.appointment.event_services', 'cap.appointment.photographer',
+      'cap.appointment.gym', 'cap.appointment.tutor', 'cap.appointment.coworking',
+      'cap.appointment.car_wash', 'cap.giving', 'cap.payment', 'cap.ordering',
+      'cap.ticketing', 'cap.reservation', 'cap.table_reservation', 'cap.crowdfunding',
+      'cap.reminders', 'cap.chat', 'cap.waitlist', 'cap.queue', 'cap.loyalty',
+      'cap.invoice', 'cap.waiver', 'cap.class_booking', 'cap.promo_verification',
+      'account.title',
+    ];
+    expect(keys.length).toBe(26);
+    for (const key of keys) {
+      for (const lang of ['en', 'pcm', 'yo', 'ig', 'ha', 'tw', 'fr', 'es']) {
+        expect(_FLOW_COPY_FOR_TESTS[lang][key], `${lang}.${key}`).toBeTruthy();
+      }
+    }
+  });
+
+  it('11 Owner-approved flagged cells have correct cleaned values', () => {
+    expect(_FLOW_COPY_FOR_TESTS.ig['cap.appointment']).toBe('Debe Oge');
+    expect(_FLOW_COPY_FOR_TESTS.ig['cap.ordering']).toBe('Nye Oda');
+    expect(_FLOW_COPY_FOR_TESTS.ig['cap.ticketing']).toBe('Zụta Tiketi');
+    expect(_FLOW_COPY_FOR_TESTS.ig['cap.table_reservation']).toBe('Mee Ndoputa');
+    expect(_FLOW_COPY_FOR_TESTS.ig['cap.crowdfunding']).toBe('Kwado Mgbasa');
+    expect(_FLOW_COPY_FOR_TESTS.ig['cap.waitlist']).toBe('Soro na Ndepụta Ichere');
+    expect(_FLOW_COPY_FOR_TESTS.ig['cap.queue']).toBe("Banye n'Ahịrị");
+    expect(_FLOW_COPY_FOR_TESTS.yo['cap.crowdfunding']).toBe('Àtìlẹ́yìn Ìpolongo');
+    expect(_FLOW_COPY_FOR_TESTS.yo['cap.giving']).toBe('Ṣa n owo');
+    expect(_FLOW_COPY_FOR_TESTS.tw['cap.appointment.car_wash']).toBe('Gye Bere Wɔnhoro Kaa');
+    expect(_FLOW_COPY_FOR_TESTS.fr['cap.waitlist']).toBe("Liste d'attente");
+  });
+
+  it('all cap/account labels within 24-char WhatsApp limit', () => {
+    const keys = [
+      'cap.scheduling', 'cap.appointment', 'cap.appointment.restaurant',
+      'cap.appointment.event_services', 'cap.appointment.photographer',
+      'cap.appointment.gym', 'cap.appointment.tutor', 'cap.appointment.coworking',
+      'cap.appointment.car_wash', 'cap.giving', 'cap.payment', 'cap.ordering',
+      'cap.ticketing', 'cap.reservation', 'cap.table_reservation', 'cap.crowdfunding',
+      'cap.reminders', 'cap.chat', 'cap.waitlist', 'cap.queue', 'cap.loyalty',
+      'cap.invoice', 'cap.waiver', 'cap.class_booking', 'cap.promo_verification',
+      'account.title',
+    ];
+    for (const key of keys) {
+      for (const lang of ['en', 'pcm', 'yo', 'ig', 'ha', 'tw', 'fr', 'es']) {
+        const val = _FLOW_COPY_FOR_TESTS[lang][key];
+        expect(val.length, `${lang}.${key} = "${val}" (${val.length} chars)`).toBeLessThanOrEqual(24);
+      }
+    }
+  });
+
+  it('my_account uses account.title not a CapabilityId', () => {
+    // account.title is rendered directly via getFlowCopy, not via getCapabilityLabel
+    expect(getFlowCopy('en', 'account.title')).toBe('My Account');
+    expect(getFlowCopy('pcm', 'account.title')).toBe('My Account');
+    expect(_FLOW_COPY_FOR_TESTS.yo['account.title']).toBe('Àkọọ́lẹ̀ Mi');
+    expect(_FLOW_COPY_FOR_TESTS.fr['account.title']).toBe('Mon compte');
+    expect(_FLOW_COPY_FOR_TESTS.es['account.title']).toBe('Mi cuenta');
   });
 
   it('appointment label varies by category', () => {
