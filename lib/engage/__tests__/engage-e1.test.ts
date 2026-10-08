@@ -31,7 +31,7 @@ import { computeAudienceEligibility } from '../audience-eligibility';
 // § Shared mock helper
 // ═══════════════════════════════════════════════════════════════
 
-const CHAIN_METHODS = ['select', 'eq', 'neq', 'gt', 'gte', 'lt', 'lte', 'ilike', 'in', 'not', 'is', 'order', 'range'];
+const CHAIN_METHODS = ['select', 'eq', 'neq', 'gt', 'gte', 'lt', 'lte', 'ilike', 'in', 'not', 'is', 'or', 'order', 'range'];
 
 function makeThenable(result: any): any {
   const obj: any = {};
@@ -498,19 +498,27 @@ describe('Identity Key Derivation — Binding A', () => {
 // ═══════════════════════════════════════════════════════════════
 
 describe('Audience Eligibility — Binding A', () => {
+  /**
+   * Eligibility mock: supports count-then-paginate pattern.
+   * select('*', { count, head }) returns count. select(columns) returns data via range().
+   */
   function mockService(consents: unknown[], optOuts: unknown[]) {
     const mockFrom = vi.fn().mockImplementation((table: string) => {
-      const chain = {
-        select: vi.fn().mockReturnThis(),
-        eq: vi.fn().mockReturnThis(),
-        in: vi.fn().mockReturnThis(),
-        is: vi.fn().mockReturnThis(),
-      };
-      if (table === 'customer_consents') {
-        chain.in = vi.fn().mockResolvedValue({ data: consents, error: null });
-      } else if (table === 'messaging_opt_outs') {
-        chain.is = vi.fn().mockResolvedValue({ data: optOuts, error: null });
-      }
+      const rows = table === 'customer_consents' ? consents : optOuts;
+      const chain: Record<string, any> = {};
+      const chainMethods = ['eq', 'in', 'is', 'or', 'order', 'range'];
+      for (const m of chainMethods) chain[m] = vi.fn().mockReturnValue(chain);
+
+      chain.select = vi.fn().mockImplementation((_cols: string, opts?: { count?: string; head?: boolean }) => {
+        if (opts?.head) {
+          return makeThenable({ count: rows.length, error: null, data: null });
+        }
+        return chain;
+      });
+      chain.range = vi.fn().mockImplementation((from: number, to: number) => {
+        const sliced = (rows as any[]).slice(from, to + 1);
+        return makeThenable({ data: sliced, error: null });
+      });
       return chain;
     });
     return { from: mockFrom } as unknown;
@@ -606,6 +614,58 @@ describe('Audience Eligibility — Binding A', () => {
     const result = await computeAudienceEligibility(mockService([], []) as any, 'biz-1', audience);
     expect(result.total).toBe(10);
     expect(result.sample).toHaveLength(5);
+  });
+
+  // E1-ELIG-1: consent count null → fail closed
+  it('E1-ELIG-1: null consent count → EligibilityDataIncompleteError', async () => {
+    const phone = '+2349012345678';
+    const audience = new Map([[`phone:${phone}`, { key: `phone:${phone}`, phone }]]);
+    // Mock that returns null count for consent query
+    const service = {
+      from: vi.fn().mockImplementation(() => {
+        const chain: Record<string, any> = {};
+        for (const m of ['eq', 'in', 'is', 'or', 'order', 'range']) chain[m] = vi.fn().mockReturnValue(chain);
+        chain.select = vi.fn().mockImplementation((_c: string, opts?: { head?: boolean }) => {
+          if (opts?.head) return makeThenable({ count: null, error: null, data: null });
+          return chain;
+        });
+        return chain;
+      }),
+    } as unknown;
+
+    const { EligibilityDataIncompleteError } = await import('../audience-eligibility');
+    await expect(
+      computeAudienceEligibility(service as any, 'biz-1', audience),
+    ).rejects.toThrow(EligibilityDataIncompleteError);
+  });
+
+  // E1-ELIG-1: consent count/row mismatch → fail closed
+  it('E1-ELIG-1: consent count/row mismatch → fail closed', async () => {
+    const phone = '+2349012345678';
+    const audience = new Map([[`phone:${phone}`, { key: `phone:${phone}`, phone }]]);
+    // Mock: count says 5, but paginated fetch returns only 2
+    const service = {
+      from: vi.fn().mockImplementation(() => {
+        const chain: Record<string, any> = {};
+        for (const m of ['eq', 'in', 'is', 'or', 'order', 'range']) chain[m] = vi.fn().mockReturnValue(chain);
+        chain.select = vi.fn().mockImplementation((_c: string, opts?: { head?: boolean }) => {
+          if (opts?.head) return makeThenable({ count: 5, error: null, data: null });
+          return chain;
+        });
+        chain.range = vi.fn().mockImplementation(() => {
+          return makeThenable({ data: [
+            { phone, channel: 'whatsapp', purpose: 'marketing', status: 'granted', expires_at: null },
+            { phone, channel: 'email', purpose: 'marketing', status: 'granted', expires_at: null },
+          ], error: null });
+        });
+        return chain;
+      }),
+    } as unknown;
+
+    const { EligibilityDataIncompleteError } = await import('../audience-eligibility');
+    await expect(
+      computeAudienceEligibility(service as any, 'biz-1', audience),
+    ).rejects.toThrow(EligibilityDataIncompleteError);
   });
 });
 

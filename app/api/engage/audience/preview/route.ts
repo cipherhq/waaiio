@@ -16,7 +16,7 @@ import { createServiceClient } from '@/lib/supabase/service';
 import { requireCapabilityWithRole } from '@/lib/capabilities/api-guard';
 import { validateAudienceExpression } from '@/lib/engage/audience-dsl';
 import { resolveAudienceExpression, AudienceTooLargeError, AudienceCountUnavailableError, AudienceIncompleteError } from '@/lib/engage/audience-resolver';
-import { computeAudienceEligibility } from '@/lib/engage/audience-eligibility';
+import { computeAudienceEligibility, EligibilityDataIncompleteError } from '@/lib/engage/audience-eligibility';
 
 export async function POST(request: NextRequest) {
   try {
@@ -92,7 +92,7 @@ export async function POST(request: NextRequest) {
         { status: 422 },
       );
     }
-    if (err instanceof AudienceCountUnavailableError || err instanceof AudienceIncompleteError) {
+    if (err instanceof AudienceCountUnavailableError || err instanceof AudienceIncompleteError || err instanceof EligibilityDataIncompleteError) {
       return NextResponse.json(
         { error: 'audience_non_authoritative', message: err.message, total: 0, whatsappEligible: 0, emailEligible: 0, sample: [] },
         { status: 422 },

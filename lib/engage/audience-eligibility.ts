@@ -4,17 +4,9 @@
  * Computes marketing preview eligibility only.
  * Does NOT send messages. Does NOT manufacture consent.
  *
- * WhatsApp marketing eligible requires:
- * - canonical phone identity
- * - explicit customer_consents row: channel='whatsapp', purpose='marketing', status='granted'
- * - consent not expired
- * - no applicable active global/business opt-out for 'all' or 'marketing'
- *
- * Email marketing eligible requires:
- * - email present
- * - canonical phone identity (consent is phone-keyed)
- * - explicit customer_consents row: channel='email', purpose='marketing', status='granted'
- * - consent not expired
+ * E1-ELIG-1 remediation: consent and opt-out reads are count-verified
+ * and paginated to prevent PostgREST max_rows silent truncation.
+ * Missing or incomplete consent/opt-out data fails closed (ineligible).
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -35,6 +27,16 @@ export interface AudiencePreviewResult {
 
 const SAMPLE_SIZE = 5;
 
+/** Page size for paginated consent/opt-out reads (well under PostgREST max_rows) */
+const ELIGIBILITY_PAGE_SIZE = 500;
+
+export class EligibilityDataIncompleteError extends Error {
+  constructor(table: string, expected: number, actual: number) {
+    super(`Eligibility data incomplete: ${table} expected ${expected} rows, got ${actual}. Failing closed.`);
+    this.name = 'EligibilityDataIncompleteError';
+  }
+}
+
 export async function computeAudienceEligibility(
   service: SupabaseClient,
   businessId: string,
@@ -44,16 +46,12 @@ export async function computeAudienceEligibility(
     return { total: 0, whatsappEligible: 0, emailEligible: 0, sample: [] };
   }
 
-  // Collect all phones that need consent/opt-out lookups
   const phonesToCheck: string[] = [];
   for (const identity of audience.values()) {
     if (identity.phone) phonesToCheck.push(identity.phone);
   }
 
-  // Batch-load consents for all phones in this business
   const consentMap = await loadConsents(service, businessId, phonesToCheck);
-
-  // Batch-load opt-outs for all phones
   const optOutMap = await loadOptOuts(service, businessId, phonesToCheck);
 
   let whatsappCount = 0;
@@ -70,7 +68,6 @@ export async function computeAudienceEligibility(
     results.push({ identity, whatsappEligible, emailEligible });
   }
 
-  // Take a deterministic sample (first N by key sort)
   const sorted = results.sort((a, b) => a.identity.key.localeCompare(b.identity.key));
   const sample = sorted.slice(0, SAMPLE_SIZE);
 
@@ -82,7 +79,7 @@ export async function computeAudienceEligibility(
   };
 }
 
-// ── Consent loading ──
+// ── Consent loading (E1-ELIG-1: count-verified paginated reads) ──
 
 interface ConsentRecord {
   phone: string;
@@ -92,6 +89,17 @@ interface ConsentRecord {
   expires_at: string | null;
 }
 
+/**
+ * E1-ELIG-1: Load consents with count-verified paginated reads.
+ *
+ * Strategy: chunk phones into batches of 20 (keeping result rows well under
+ * max_rows even with many consent records per phone). For each chunk:
+ * 1. Count exact matching rows
+ * 2. Paginated fetch in pages of ELIGIBILITY_PAGE_SIZE
+ * 3. Verify fetched rows === count (fail closed on mismatch)
+ *
+ * Scoped to business_id in the query — only this business's consents.
+ */
 async function loadConsents(
   service: SupabaseClient,
   businessId: string,
@@ -100,17 +108,47 @@ async function loadConsents(
   const result = new Map<string, ConsentRecord[]>();
   if (phones.length === 0) return result;
 
-  // Batch in chunks of 100 to avoid query limits
-  const chunks = chunkArray(phones, 100);
+  const chunks = chunkArray(phones, 20);
   for (const chunk of chunks) {
-    const { data, error } = await service
+    // Step 1: Count
+    const { count, error: countError } = await service
       .from('customer_consents')
-      .select('phone, channel, purpose, status, expires_at')
+      .select('*', { count: 'exact', head: true })
       .eq('business_id', businessId)
       .in('phone', chunk);
 
-    if (error) throw error;
-    for (const row of data || []) {
+    if (countError) throw countError;
+    if (count === null || count === undefined) {
+      throw new EligibilityDataIncompleteError('customer_consents', -1, 0);
+    }
+    if (count === 0) continue;
+
+    // Step 2: Paginated fetch
+    const rows: ConsentRecord[] = [];
+    let offset = 0;
+    while (true) {
+      const { data, error } = await service
+        .from('customer_consents')
+        .select('phone, channel, purpose, status, expires_at')
+        .eq('business_id', businessId)
+        .in('phone', chunk)
+        .order('phone', { ascending: true })
+        .order('id', { ascending: true })
+        .range(offset, offset + ELIGIBILITY_PAGE_SIZE - 1);
+
+      if (error) throw error;
+      if (!data || data.length === 0) break;
+      rows.push(...data);
+      if (data.length < ELIGIBILITY_PAGE_SIZE) break;
+      offset += ELIGIBILITY_PAGE_SIZE;
+    }
+
+    // Step 3: Verify completeness — fail closed
+    if (rows.length !== count) {
+      throw new EligibilityDataIncompleteError('customer_consents', count, rows.length);
+    }
+
+    for (const row of rows) {
       const existing = result.get(row.phone) || [];
       existing.push(row);
       result.set(row.phone, existing);
@@ -119,7 +157,7 @@ async function loadConsents(
   return result;
 }
 
-// ── Opt-out loading ──
+// ── Opt-out loading (E1-ELIG-1: SQL-scoped + count-verified) ──
 
 interface OptOutRecord {
   phone: string;
@@ -129,6 +167,15 @@ interface OptOutRecord {
   resubscribed_at: string | null;
 }
 
+/**
+ * E1-ELIG-1: Load opt-outs with SQL-scoped filtering and count-verified reads.
+ *
+ * CTO fix: push global/business scoping INTO the query instead of fetching
+ * all businesses' opt-outs and filtering in-app. Uses PostgREST .or() to
+ * include both global (business_id IS NULL) and business-specific opt-outs.
+ *
+ * Same count-verify-paginate strategy as loadConsents.
+ */
 async function loadOptOuts(
   service: SupabaseClient,
   businessId: string,
@@ -137,23 +184,52 @@ async function loadOptOuts(
   const result = new Map<string, OptOutRecord[]>();
   if (phones.length === 0) return result;
 
-  const chunks = chunkArray(phones, 100);
+  const chunks = chunkArray(phones, 20);
   for (const chunk of chunks) {
-    // Load both global (business_id IS NULL) and business-specific opt-outs
-    const { data, error } = await service
+    // Step 1: Count — with business scoping in SQL
+    const { count, error: countError } = await service
       .from('messaging_opt_outs')
-      .select('phone, business_id, channel, opt_out_type, resubscribed_at')
+      .select('*', { count: 'exact', head: true })
       .in('phone', chunk)
-      .is('resubscribed_at', null);
+      .is('resubscribed_at', null)
+      .or(`business_id.is.null,business_id.eq.${businessId}`);
 
-    if (error) throw error;
-    for (const row of data || []) {
-      // Only include global opt-outs or opt-outs for this specific business
-      if (row.business_id === null || row.business_id === businessId) {
-        const existing = result.get(row.phone) || [];
-        existing.push(row);
-        result.set(row.phone, existing);
-      }
+    if (countError) throw countError;
+    if (count === null || count === undefined) {
+      throw new EligibilityDataIncompleteError('messaging_opt_outs', -1, 0);
+    }
+    if (count === 0) continue;
+
+    // Step 2: Paginated fetch with SQL-scoped business filter
+    const rows: OptOutRecord[] = [];
+    let offset = 0;
+    while (true) {
+      const { data, error } = await service
+        .from('messaging_opt_outs')
+        .select('phone, business_id, channel, opt_out_type, resubscribed_at')
+        .in('phone', chunk)
+        .is('resubscribed_at', null)
+        .or(`business_id.is.null,business_id.eq.${businessId}`)
+        .order('phone', { ascending: true })
+        .order('id', { ascending: true })
+        .range(offset, offset + ELIGIBILITY_PAGE_SIZE - 1);
+
+      if (error) throw error;
+      if (!data || data.length === 0) break;
+      rows.push(...data);
+      if (data.length < ELIGIBILITY_PAGE_SIZE) break;
+      offset += ELIGIBILITY_PAGE_SIZE;
+    }
+
+    // Step 3: Verify completeness
+    if (rows.length !== count) {
+      throw new EligibilityDataIncompleteError('messaging_opt_outs', count, rows.length);
+    }
+
+    for (const row of rows) {
+      const existing = result.get(row.phone) || [];
+      existing.push(row);
+      result.set(row.phone, existing);
     }
   }
   return result;
@@ -166,7 +242,6 @@ function checkWhatsAppEligibility(
   consentMap: Map<string, ConsentRecord[]>,
   optOutMap: Map<string, OptOutRecord[]>,
 ): boolean {
-  // Must have a phone
   if (!identity.phone) return false;
 
   // Check for active opt-out (all or marketing)
@@ -190,15 +265,13 @@ function checkWhatsAppEligibility(
       consent.purpose === 'marketing' &&
       consent.status === 'granted'
     ) {
-      // Check expiration
       if (consent.expires_at && new Date(consent.expires_at) <= now) {
-        continue; // expired, check next consent
+        continue;
       }
       return true;
     }
   }
 
-  // No valid consent found
   return false;
 }
 
@@ -207,13 +280,9 @@ function checkEmailEligibility(
   consentMap: Map<string, ConsentRecord[]>,
   optOutMap: Map<string, OptOutRecord[]>,
 ): boolean {
-  // Must have email
   if (!identity.email) return false;
-
-  // Must have phone (consent is phone-keyed in E1)
   if (!identity.phone) return false;
 
-  // Check for active opt-out
   const optOuts = optOutMap.get(identity.phone) || [];
   for (const optOut of optOuts) {
     if (
@@ -224,7 +293,6 @@ function checkEmailEligibility(
     }
   }
 
-  // Check for explicit granted consent
   const consents = consentMap.get(identity.phone) || [];
   const now = new Date();
 
