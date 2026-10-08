@@ -123,14 +123,37 @@ export default function MessagingCredits() {
         // Fetch allowances only for this page's businesses (max perPage IDs)
         const pageBizIds = bizList.map(b => b.id);
         if (pageBizIds.length > 0) {
-          const { data: pageAllowances, error: allowErr } = await adminDb.from('messaging_allowances')
-            .select('id, business_id, type, amount_minor, currency_code, remaining_minor, source_ref, expires_at, created_at')
-            .in('business_id', pageBizIds)
-            .order('created_at', { ascending: true });
-          if (allowErr) { setError(`Failed to load allowances: ${allowErr.message}`); setLoading(false); return; }
+          // Paginate allowance rows independently of business pages. A single business
+          // may have many historical grants; never show a truncated balance as complete.
+          const allowancePageSize = 500;
+          const pageAllowances: AllowanceRow[] = [];
+          let allowanceOffset = 0;
+          while (true) {
+            const { data: chunk, error: allowErr } = await adminDb.from('messaging_allowances')
+              .select('id, business_id, type, amount_minor, currency_code, remaining_minor, source_ref, expires_at, created_at')
+              .in('business_id', pageBizIds)
+              .order('created_at', { ascending: true })
+              .order('id', { ascending: true })
+              .range(allowanceOffset, allowanceOffset + allowancePageSize - 1);
+            if (allowErr) {
+              setError(`Failed to load allowances: ${allowErr.message}`);
+              setAllowancesByBiz(new Map());
+              setLoading(false);
+              return;
+            }
+            if (!chunk) {
+              setError('Allowance results were unavailable; balances cannot be verified.');
+              setAllowancesByBiz(new Map());
+              setLoading(false);
+              return;
+            }
+            pageAllowances.push(...(chunk as AllowanceRow[]));
+            if (chunk.length < allowancePageSize) break;
+            allowanceOffset += chunk.length;
+          }
 
           const byBiz = new Map<string, AllowanceRow[]>();
-          for (const a of pageAllowances || []) {
+          for (const a of pageAllowances) {
             const e = byBiz.get(a.business_id) || [];
             e.push(a as AllowanceRow);
             byBiz.set(a.business_id, e);
