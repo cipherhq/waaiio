@@ -2687,12 +2687,24 @@ export const schedulingFlow: FlowDefinition = {
               if (pgError?.code === '23505' && pgError?.message?.includes('bot_session_id')) {
                 const { data: existing } = await ctx.supabase
                   .from('bookings')
-                  .select('id, reference_code, status')
+                  .select('id, reference_code, status, user_id, guest_phone, service_id, appointment_id, staff_id, date, time, party_size, class_session_id')
                   .eq('bot_session_id', ctx.session.id)
                   .eq('business_id', ctx.business!.id)
+                  .eq('user_id', userId)
                   .in('status', ['pending', 'confirmed', 'in_progress'])
                   .maybeSingle();
-                if (existing) {
+                // A reused session ID alone is insufficient proof of an identical
+                // booking. Verify the immutable booking selection before reusing.
+                const sameBooking = existing
+                  && existing.user_id === userId
+                  && existing.date === d.date
+                  && existing.time === d.time
+                  && existing.party_size === partySize
+                  && existing.service_id === (isAppointment ? null : ((d.service_id as string) || null))
+                  && existing.appointment_id === (isAppointment ? ((d.service_id as string) || null) : null)
+                  && existing.staff_id === ((d.staff_id as string) || null)
+                  && existing.class_session_id === ((d._class_session_id as string) || null);
+                if (sameBooking && existing) {
                   // Reuse existing booking — idempotent recovery
                   booking = { id: existing.id, reference_code: existing.reference_code };
                   d.booking_id = existing.id;
