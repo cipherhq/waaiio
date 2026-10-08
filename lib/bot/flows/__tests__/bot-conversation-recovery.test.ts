@@ -396,3 +396,37 @@ describe('Recovery button constraints', () => {
     }
   });
 });
+
+
+// CTO recovery regression: real reservation step navigation with invalid
+// dates removed while keeping the selected property.
+describe('Reservation recovery preserves user selection', () => {
+  const step = getStep(reservationFlow, 'create_reservation');
+
+  it('routes to date selection after invalid dates were cleared', async () => {
+    const sessionData: Record<string, unknown> = {
+      property_id: 'property-1',
+      service_name: 'Suite',
+      guests: 3,
+      _recovery_action: 'change_dates',
+    };
+    const ctx = createMockContext({
+      session: {
+        id: 'session-1',
+        user_id: 'customer-1',
+        business_id: 'business-1',
+        current_step: 'create_reservation',
+        session_data: sessionData,
+        version: 0,
+      },
+    });
+    const result = await step.next(ctx);
+    expect(result).toBe('select_checkin');
+    expect(ctx.session.session_data).toMatchObject({
+      property_id: 'property-1', service_name: 'Suite', guests: 3,
+    });
+    expect(ctx.session.session_data).not.toHaveProperty('check_in');
+    expect(ctx.session.session_data).not.toHaveProperty('check_out');
+    expect(ctx.session.session_data).not.toHaveProperty('_recovery_action');
+  });
+});
