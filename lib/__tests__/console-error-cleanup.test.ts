@@ -84,6 +84,9 @@ describe('Production console.error allowlist (exact counts)', () => {
     'app/api/cron/trial-activation/route.ts': { count: 6, client: false, reason: 'Cron error logging for trial activation + legacy reconciliation failures' },
     'app/api/promo-codes/route.ts': { count: 8, client: false, reason: 'Server-side DB error logging for promo code CRUD (#473)' },
     'app/api/public/pricing/route.ts': { count: 9, client: false, reason: 'Fail-closed error logging for public pricing projection (#270)' },
+    'app/api/engage/audience/preview/route.ts': { count: 1, client: false, reason: 'Server-side error logging for audience preview (#557)' },
+    'app/api/engage/segments/route.ts': { count: 4, client: false, reason: 'Server-side error logging for segment list/create (#557)' },
+    'app/api/engage/segments/[id]/route.ts': { count: 6, client: false, reason: 'Server-side error logging for segment get/update/delete (#557)' },
   };
 
   function collectTsFiles(dir: string, base: string): string[] {
@@ -144,7 +147,7 @@ describe('Production console.error allowlist (exact counts)', () => {
 
   it('non-client allowances are only logger, cron routes, and public pricing', () => {
     const serverEntries = Object.entries(ALLOWLIST).filter(([, e]) => !e.client);
-    const allowedServerFiles = ['lib/logger.ts', 'app/api/cron/trial-activation/route.ts', 'app/api/promo-codes/route.ts', 'app/api/public/pricing/route.ts'];
+    const allowedServerFiles = ['lib/logger.ts', 'app/api/cron/trial-activation/route.ts', 'app/api/promo-codes/route.ts', 'app/api/public/pricing/route.ts', 'app/api/engage/audience/preview/route.ts', 'app/api/engage/segments/route.ts', 'app/api/engage/segments/[id]/route.ts'];
     expect(serverEntries).toHaveLength(allowedServerFiles.length);
     for (const [file] of serverEntries) {
       expect(allowedServerFiles).toContain(file);
