@@ -2177,8 +2177,14 @@ export const schedulingFlow: FlowDefinition = {
           return { valid: true, data: { _action: 'cancel' } };
         }
         if (response === 'confirm' || response === 'yes') {
-          // Set _terms_accepted when terms are inline — matches ordering/ticketing/payment/reservation pattern
-          return { valid: true, data: { _action: 'confirm', _terms_accepted: true } };
+          // Accept terms only when this confirmation actually presented them.
+          const data = ctx.session.session_data;
+          const servicePrice = (data.service_price as number || 0) + (data._delivery_zone_price as number || 0);
+          const deposit = data.service_deposit as number || 0;
+          const payableAmount = servicePrice > 0 ? servicePrice : deposit;
+          const meta = (ctx.business?.metadata || {}) as Record<string, unknown>;
+          const requireTerms = payableAmount > 0 && meta.require_terms_before_payment !== false;
+          return { valid: true, data: { _action: 'confirm', ...(requireTerms ? { _terms_accepted: true } : {}) } };
         }
         return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'booking.confirm_hint') };
       },
