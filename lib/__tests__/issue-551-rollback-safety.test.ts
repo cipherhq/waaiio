@@ -189,6 +189,7 @@ describe('#551 rollback safety — provisionAdminBusiness profile failure carrie
           }),
         };
       },
+      rpc: () => Promise.resolve({ data: { allocated: true, channel_id: 'test-ch', idempotent: false }, error: null }),
     } as any;
 
     const err = await realProvision(

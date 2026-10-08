@@ -86,7 +86,8 @@ describe('#219 Block A: Inbound channel resolution', () => {
     // Both paths result in inboundChannelId being set.
 
     const blockAIdx = botServiceCode.indexOf('#219 Block A:');
-    const returningIdx = botServiceCode.indexOf('findReturningCustomerBusiness(from', blockAIdx);
+    // #266: singular findReturningCustomerBusiness was un-exported; bot service uses plural version
+    const returningIdx = botServiceCode.indexOf('findReturningCustomerBusinesses(from', blockAIdx);
     expect(blockAIdx).toBeGreaterThan(-1);
     expect(returningIdx).toBeGreaterThan(blockAIdx);
 
