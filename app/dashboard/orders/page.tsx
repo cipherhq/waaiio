@@ -81,6 +81,8 @@ export default function OrdersPage() {
   const [trackingCarrier, setTrackingCarrier] = useState('');
   const [trackingNumber, setTrackingNumber] = useState('');
   const [savingTracking, setSavingTracking] = useState(false);
+  const [editingTracking, setEditingTracking] = useState(false);
+  const [notifyCustomer, setNotifyCustomer] = useState(true);
 
   // Balance request state
   const [requestingBalance, setRequestingBalance] = useState(false);
@@ -516,7 +518,7 @@ export default function OrdersPage() {
             {/* Shipping & Tracking */}
             <div className="rounded-xl border border-gray-100 bg-white p-6">
               <h2 className="text-sm font-semibold text-gray-900">Shipping & Tracking</h2>
-              {selectedOrder.shipped_at ? (
+              {selectedOrder.shipped_at && !editingTracking ? (
                 <div className="mt-3 space-y-2 text-sm">
                   <div className="flex justify-between">
                     <span className="text-gray-500">Carrier</span>
@@ -534,6 +536,17 @@ export default function OrdersPage() {
                       })}
                     </span>
                   </div>
+                  <button
+                    onClick={() => {
+                      setTrackingCarrier(selectedOrder.shipping_carrier || '');
+                      setTrackingNumber(selectedOrder.tracking_number || '');
+                      setNotifyCustomer(false);
+                      setEditingTracking(true);
+                    }}
+                    className="mt-2 w-full rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50"
+                  >
+                    Edit Tracking
+                  </button>
                 </div>
               ) : (
                 <div className="mt-3 space-y-3">
@@ -544,6 +557,7 @@ export default function OrdersPage() {
                       value={trackingCarrier}
                       onChange={(e) => setTrackingCarrier(e.target.value)}
                       placeholder="e.g. DHL, FedEx, GIG"
+                      maxLength={200}
                       className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
                     />
                   </div>
@@ -554,35 +568,48 @@ export default function OrdersPage() {
                       value={trackingNumber}
                       onChange={(e) => setTrackingNumber(e.target.value)}
                       placeholder="Enter tracking number"
+                      maxLength={200}
                       className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
                     />
                   </div>
+                  <label className="flex items-center gap-2 text-sm text-gray-600">
+                    <input
+                      type="checkbox"
+                      checked={notifyCustomer}
+                      onChange={(e) => setNotifyCustomer(e.target.checked)}
+                      className="h-4 w-4 rounded border-gray-300"
+                    />
+                    Notify {labels.personLabel.toLowerCase()} via WhatsApp
+                  </label>
                   <button
                     onClick={async () => {
                       if (!trackingCarrier.trim() && !trackingNumber.trim()) return;
                       setSavingTracking(true);
                       try {
-                        const res = await fetch('/api/orders/tracking', {
-                          method: 'POST',
+                        const res = await fetch(`/api/orders/${selectedOrder.id}/tracking`, {
+                          method: 'PATCH',
                           headers: { 'Content-Type': 'application/json' },
                           body: JSON.stringify({
-                            orderId: selectedOrder.id,
                             businessId: business.id,
-                            shippingCarrier: trackingCarrier.trim(),
+                            carrier: trackingCarrier.trim(),
                             trackingNumber: trackingNumber.trim(),
+                            notifyCustomer,
                           }),
                         });
                         if (res.ok) {
+                          const result = await res.json();
                           await fetchOrders();
                           setSelectedOrder(prev => prev ? {
                             ...prev,
                             status: 'shipped',
                             shipping_carrier: trackingCarrier.trim(),
                             tracking_number: trackingNumber.trim(),
-                            shipped_at: new Date().toISOString(),
+                            shipped_at: result.shipped_at || prev.shipped_at || new Date().toISOString(),
                           } : null);
                           setTrackingCarrier('');
                           setTrackingNumber('');
+                          setEditingTracking(false);
+                          setNotifyCustomer(true);
                         }
                       } catch {
                         // ignore
@@ -592,10 +619,25 @@ export default function OrdersPage() {
                     disabled={savingTracking || (!trackingCarrier.trim() && !trackingNumber.trim())}
                     className="w-full rounded-lg bg-purple-600 px-4 py-2 text-sm font-semibold text-white hover:bg-purple-700 disabled:opacity-50"
                   >
-                    {savingTracking ? 'Saving...' : `Save & Notify ${labels.personLabel}`}
+                    {savingTracking ? 'Saving...' : editingTracking ? 'Update Tracking' : `Save & Notify ${labels.personLabel}`}
                   </button>
+                  {editingTracking && (
+                    <button
+                      onClick={() => {
+                        setEditingTracking(false);
+                        setTrackingCarrier('');
+                        setTrackingNumber('');
+                        setNotifyCustomer(true);
+                      }}
+                      className="w-full rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-500 hover:bg-gray-50"
+                    >
+                      Cancel
+                    </button>
+                  )}
                   <p className="text-xs text-gray-400">
-                    {labels.personLabel} will receive a WhatsApp message with tracking info.
+                    {notifyCustomer
+                      ? `${labels.personLabel} will receive a WhatsApp message with tracking info.`
+                      : 'Tracking will be updated without notifying the customer.'}
                   </p>
                 </div>
               )}
@@ -726,7 +768,7 @@ export default function OrdersPage() {
                 <input type="checkbox" checked={selectedIds.has(order.id)} onChange={() => toggleSelect(order.id)} className="h-4 w-4 rounded border-gray-300" />
               </div>
               <button
-                onClick={() => { setSelectedOrder(order); setRefundDisabledReason(null); }}
+                onClick={() => { setSelectedOrder(order); setRefundDisabledReason(null); setEditingTracking(false); setNotifyCustomer(true); }}
                 className="flex flex-1 items-center justify-between p-4 pl-0 text-left"
               >
               <div className="flex items-center gap-4 min-w-0">

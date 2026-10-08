@@ -3,20 +3,16 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
-## 2026-10-08 — Claim format hint in bot entry and invalid-code messages (#248-F4)
+## 2026-10-08 — Editable shipping/tracking with audit trail (#247)
 
 ### What changed
-- **Entry message:** `renderPromoEntryMessage()` in `lib/promotions/entry.ts` already included format hints using `formatHint()` helper and inline `(format: ...)` for multi-campaign listings. Verified working for single-keyword, single-bare-code, and multi-campaign modes.
-- **Invalid code response:** `formatResponseMessage()` in `lib/promotions/verify.ts` now appends "Expected format: *XXXX-XXXX-XXXX*" to the `invalid` case and the RPC error fallback path when `campaign.code_format` is set. Added `appendFormatHint()` helper.
-- **14 new tests:** `lib/__tests__/248-f4-claim-format-hint.test.ts` — entry message format hint presence/absence for single/multi campaigns, invalid response format hint with/without code_format, RPC error path, winner/try_again exclusion, looksLikePromoCode regression.
-
-### Files changed
-- `lib/promotions/verify.ts` — added `appendFormatHint()`, applied to `invalid` case and default case in `formatResponseMessage()`, and RPC error fallback
-- `lib/__tests__/248-f4-claim-format-hint.test.ts` — new test file (14 tests)
-- `CHANGELOG.md` — this entry
+- **Dashboard UI** (`app/dashboard/orders/page.tsx`): Removed write-once tracking ternary. After `shipped_at` is set, tracking info now shows an "Edit Tracking" button that opens the edit form pre-filled with current values. Added "Notify customer via WhatsApp" checkbox (default: true on first save, false on subsequent edits). Switched from legacy `/api/orders/tracking` POST to the atomic `/api/orders/[id]/tracking` PATCH endpoint. Added `maxLength={200}` on carrier and tracking number inputs. Cancel button to exit edit mode. Error handling surfaces API and network failures with retry guidance.
+- **API validation** (`app/api/orders/[id]/tracking/route.ts`): Added max-length validation (200 chars) for `carrier` and `trackingNumber` fields, returns 400 with descriptive error.
+- **Tests**: 6 API tests (tracking-edit.test.ts) + 9 UI error handling tests (tracking-ui-error-handling.test.ts) covering API error surfacing, network errors, form value preservation, retry, and stale error cleanup.
 
 ### What could break
-- Nothing. Format hint is additive — only appended to invalid code responses when `code_format` is non-null. Winner, try_again, already_claimed, campaign_inactive, and rate_limited responses are unchanged. `looksLikePromoCode()` is untouched.
+- Dashboard now calls PATCH `/api/orders/[id]/tracking` instead of POST `/api/orders/tracking`. The old POST endpoint still exists and is unchanged. If any other code calls the old endpoint, it remains functional.
+- The `notifyCustomer` checkbox defaults to `false` when editing existing tracking (previously always notified). This is intentional to prevent accidental re-notification.
 
 ## 2026-10-08 — Messaging top-up completion — dashboard UX, admin visibility, tests, ops docs (#491)
 
