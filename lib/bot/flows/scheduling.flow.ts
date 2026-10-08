@@ -2150,13 +2150,22 @@ export const schedulingFlow: FlowDefinition = {
         if (d.special_requests) lines.push(`📝 ${d.special_requests as string}`);
         if (d.book_for_other && d.other_name) lines.push(`👤 For: ${d.other_name as string}`);
 
+        // Inline T&C when terms are required for paid bookings (#554 R2)
+        const confirmMeta = (ctx.business?.metadata || {}) as Record<string, unknown>;
+        const payableAmount = servicePrice > 0 ? servicePrice : deposit;
+        const requireTerms = payableAmount > 0 && confirmMeta.require_terms_before_payment !== false;
+        if (requireTerms) {
+          const termsUrl = (confirmMeta.terms_url as string) || (ctx.business?.slug ? `https://www.waaiio.com/t/${ctx.business.slug}` : 'https://www.waaiio.com/terms');
+          lines.push('', `📎 Terms: ${termsUrl}`);
+        }
+
         // Combine summary + buttons in one message to prevent WhatsApp reordering
         return [
           {
             type: 'buttons',
             body: lines.join('\n') + '\n\n' + getFlowCopy(ctx.copyLang, 'booking.confirm_question'),
             buttons: [
-              { id: 'confirm', title: getFlowCopy(ctx.copyLang, 'booking.confirm_btn') },
+              { id: 'confirm', title: requireTerms ? getFlowCopy(ctx.copyLang, 'payment.accept_confirm') : getFlowCopy(ctx.copyLang, 'booking.confirm_btn') },
               { id: 'go_back', title: getFlowCopy(ctx.copyLang, 'nav.cancel') },
             ],
           },
@@ -2168,7 +2177,8 @@ export const schedulingFlow: FlowDefinition = {
           return { valid: true, data: { _action: 'cancel' } };
         }
         if (response === 'confirm' || response === 'yes') {
-          return { valid: true, data: { _action: 'confirm' } };
+          // Set _terms_accepted when terms are inline — matches ordering/ticketing/payment/reservation pattern
+          return { valid: true, data: { _action: 'confirm', _terms_accepted: true } };
         }
         return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'booking.confirm_hint') };
       },
@@ -3252,9 +3262,13 @@ export const schedulingFlow: FlowDefinition = {
         const d = ctx.session.session_data;
         // Cancelled booking — end flow
         if (d._action === 'cancel') return 'select_capability';
-        // After accepting/cancelling terms, re-enter this step to proceed
+        // After accepting/cancelling terms via fallback T&C gate, re-enter to proceed.
+        // _terms_loop_consumed prevents infinite loop (matches ticketing/payment/ordering/reservation).
         if (d._terms_accepted || d._terms_cancelled) {
-          return 'create_booking';
+          if (!d._terms_loop_consumed) {
+            d._terms_loop_consumed = true;
+            return 'create_booking';
+          }
         }
         // Retry payment — re-enter create_booking
         if (d._retry_payment) {
