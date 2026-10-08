@@ -223,7 +223,7 @@ describe('P0: Real PostgreSQL authorization tests', () => {
       INSERT INTO public.whatsapp_channels (id, business_id, phone_number, display_name, channel_type, is_active, meta_access_token, waba_id, phone_number_id)
       VALUES
         ('${CH_SHARED}', '${BIZ_A}', '+1234567890', 'P0 Test Channel', 'shared', true, 'META_TOKEN_SECRET', 'WABA_123', 'PHONE_456'),
-        ('${CH_DEDICATED}', '${BIZ_A}', '+0987654321', 'P0 Dedicated', 'transfer', true, 'META_TOKEN_2', 'WABA_789', 'PHONE_012')
+        ('${CH_DEDICATED}', '${BIZ_A}', '+0987654321', 'P0 Dedicated', 'dedicated', true, 'META_TOKEN_2', 'WABA_789', 'PHONE_012')
       ON CONFLICT DO NOTHING;
     `);
 

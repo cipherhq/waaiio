@@ -316,9 +316,12 @@ export async function handleOnboardingComplete(
       logger.error('[WA-ONBOARD] Confirmation message error:', err);
     }
 
-    // #266: Business is registered. If allocation failed, business stays pending (not live).
-    // The WhatsApp confirmation message above already reflects the correct status.
-    return { success: true };
+    // #266: Return truthful result. The caller (route.ts) returns 200 to Meta regardless,
+    // but logs the result. WhatsApp confirmation message already reflects the correct status.
+    if (allocationSucceeded) {
+      return { success: true };
+    }
+    return { success: false, error: 'Business registered but shared channel allocation pending. Business is not yet live.' };
   } catch (err) {
     logger.error('[WA-ONBOARD] Onboarding error:', err);
     return { success: false, error: 'Internal error' };
