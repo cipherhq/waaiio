@@ -112,6 +112,13 @@ const OPERATOR_TYPE_COMPAT: Record<FieldType, readonly Operator[]> = {
 export const MAX_STRING_VALUE_LENGTH = 500;
 export const MAX_ARRAY_CARDINALITY = 50;
 
+/**
+ * B2 Round 2: Characters that are unsafe in PostgREST `not.in.(val1,val2)` filter syntax.
+ * Commas delimit values, parentheses delimit the list, and double quotes are used
+ * for quoting. Rejecting these at validation prevents filter injection.
+ */
+const POSTGREST_FILTER_UNSAFE_RE = /[,()"\\\x00-\x1f]/;
+
 // ── Expression types ──
 
 export interface Predicate {
@@ -271,6 +278,17 @@ export function validateAudienceExpression(
         if (elemError) {
           errors.push(elemError);
           return;
+        }
+        // B2 Round 2: reject PostgREST filter-unsafe characters in string values
+        // used with in/not_in to prevent filter injection
+        if (fieldDef.type === 'string' && typeof arr[i] === 'string') {
+          if (POSTGREST_FILTER_UNSAFE_RE.test(arr[i] as string)) {
+            errors.push({
+              path: `${path}.value[${i}]`,
+              message: 'String value contains characters unsafe for filter syntax (commas, quotes, parentheses, or backslashes are not allowed in in/not_in values)',
+            });
+            return;
+          }
         }
       }
       return;

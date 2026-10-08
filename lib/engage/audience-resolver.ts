@@ -197,11 +197,28 @@ function applyPredicateFilter(
   }
 }
 
+export class AudienceCountUnavailableError extends Error {
+  constructor() {
+    super('Audience count unavailable. Cannot produce authoritative preview.');
+    this.name = 'AudienceCountUnavailableError';
+  }
+}
+
+export class AudienceIncompleteError extends Error {
+  constructor(expected: number, actual: number) {
+    super(`Audience fetch incomplete: expected ${expected} rows, got ${actual}. Results are non-authoritative.`);
+    this.name = 'AudienceIncompleteError';
+  }
+}
+
 /**
- * B1 remediation: Count-first strategy.
- * Runs an explicit count query before fetching data.
- * If count exceeds ADAPTER_ROW_LIMIT, throws AudienceTooLargeError.
- * Then fetches data in pages of PAGE_SIZE to avoid PostgREST max_rows truncation.
+ * B1 Round 2: Count-first with fail-closed completeness.
+ *
+ * 1. Explicit count query. If count is null → fail closed (AudienceCountUnavailableError).
+ * 2. If count > ADAPTER_ROW_LIMIT → AudienceTooLargeError.
+ * 3. Paginated fetch with unique ordering (created_at ASC, id ASC) for deterministic
+ *    page boundaries. Every table has an `id UUID PRIMARY KEY` and `created_at`.
+ * 4. After fetch, verify allRows.length === count. Mismatch → AudienceIncompleteError.
  */
 async function fetchWithBoundCheck(
   service: SupabaseClient,
@@ -211,7 +228,7 @@ async function fetchWithBoundCheck(
   predicate: Predicate,
   fieldMapping: Record<string, string>,
 ): Promise<any[]> {
-  // Step 1: Count query
+  // Step 1: Count query — fail closed if unavailable
   let countQuery = service
     .from(table)
     .select('*', { count: 'exact', head: true })
@@ -221,24 +238,38 @@ async function fetchWithBoundCheck(
   const { count, error: countError } = await countQuery;
   if (countError) throw countError;
 
-  if (count !== null && count > ADAPTER_ROW_LIMIT) {
+  // B1 Round 2: count === null means PostgREST/Supabase couldn't provide an exact count.
+  // Fail closed — never return a preview without authoritative count.
+  if (count === null || count === undefined) {
+    throw new AudienceCountUnavailableError();
+  }
+
+  if (count > ADAPTER_ROW_LIMIT) {
     throw new AudienceTooLargeError();
   }
 
-  // Step 2: Paginated fetch (safe under PostgREST max_rows)
+  // count === 0 → fast path
+  if (count === 0) return [];
+
+  // Step 2: Paginated fetch with stable unique ordering
+  // B1 Round 2: Order by (created_at ASC, id ASC) for deterministic page boundaries.
+  // Every source table has `id UUID PRIMARY KEY` and `created_at TIMESTAMPTZ`.
+  // Columns must be included in select for ordering to work.
+  const selectWithId = selectColumns.includes('id') ? selectColumns : `id, ${selectColumns}`;
   const allRows: any[] = [];
   let offset = 0;
 
   while (true) {
     let pageQuery = service
       .from(table)
-      .select(selectColumns)
+      .select(selectWithId)
       .eq('business_id', businessId);
     pageQuery = applyPredicateFilter(pageQuery, predicate, fieldMapping);
 
     const { data, error } = await pageQuery
-      .range(offset, offset + PAGE_SIZE - 1)
-      .order('created_at', { ascending: true });
+      .order('created_at', { ascending: true })
+      .order('id', { ascending: true })
+      .range(offset, offset + PAGE_SIZE - 1);
 
     if (error) throw error;
     if (!data || data.length === 0) break;
@@ -247,10 +278,17 @@ async function fetchWithBoundCheck(
     if (data.length < PAGE_SIZE) break;
     offset += PAGE_SIZE;
 
-    // Safety: should never happen after count check, but fail closed
+    // Safety bound — should never exceed count, but fail closed
     if (allRows.length > ADAPTER_ROW_LIMIT) {
       throw new AudienceTooLargeError();
     }
+  }
+
+  // Step 3: Completeness check — fail closed on mismatch
+  // B1 Round 2: Concurrent writes between count and fetch can cause mismatch.
+  // A mismatch means the results are non-authoritative.
+  if (allRows.length !== count) {
+    throw new AudienceIncompleteError(count, allRows.length);
   }
 
   return allRows;

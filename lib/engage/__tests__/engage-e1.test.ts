@@ -20,6 +20,8 @@ import {
   deriveIdentityKey,
   resolveAudienceExpression,
   AudienceTooLargeError,
+  AudienceCountUnavailableError,
+  AudienceIncompleteError,
   ADAPTER_ROW_LIMIT,
   type AudienceIdentity,
 } from '../audience-resolver';
@@ -29,44 +31,42 @@ import { computeAudienceEligibility } from '../audience-eligibility';
 // § Shared mock helper
 // ═══════════════════════════════════════════════════════════════
 
-function createChainMock(rows: unknown[], countOverride?: number) {
+const CHAIN_METHODS = ['select', 'eq', 'neq', 'gt', 'gte', 'lt', 'lte', 'ilike', 'in', 'not', 'is', 'order', 'range'];
+
+function makeThenable(result: any): any {
+  const obj: any = {};
+  for (const m of CHAIN_METHODS) obj[m] = vi.fn().mockReturnValue(obj);
+  obj[Symbol.toStringTag] = 'Promise';
+  obj.then = (resolve: (v: any) => void) => Promise.resolve(result).then(resolve);
+  obj.catch = (reject: (v: any) => void) => Promise.resolve(result).catch(reject);
+  return obj;
+}
+
+function createChainMock(rows: unknown[], countOverride?: number | null) {
   const chain: Record<string, unknown> = {};
-  const methods = ['select', 'eq', 'neq', 'gt', 'gte', 'lt', 'lte', 'ilike', 'in', 'not', 'is', 'order', 'range'];
-  for (const m of methods) {
+  for (const m of CHAIN_METHODS) {
     chain[m] = vi.fn().mockReturnValue(chain);
   }
-  // For count queries (head: true): return count
-  // For data queries: return rows via range
+  const effectiveCount = countOverride !== undefined ? countOverride : rows.length;
+
   chain.select = vi.fn().mockImplementation((_cols: string, opts?: { count?: string; head?: boolean }) => {
     if (opts?.head) {
-      // Count query — return a chain that resolves with count
-      const countChain: Record<string, unknown> = {};
-      for (const m of methods) {
-        countChain[m] = vi.fn().mockReturnValue(countChain);
-      }
-      // The count chain resolves when awaited (thenable)
-      const countResult = { count: countOverride ?? rows.length, error: null, data: null };
-      countChain[Symbol.toStringTag] = 'Promise';
-      (countChain as any).then = (resolve: (v: any) => void) => Promise.resolve(countResult).then(resolve);
-      (countChain as any).catch = (reject: (v: any) => void) => Promise.resolve(countResult).catch(reject);
-      return countChain;
+      return makeThenable({ count: effectiveCount, error: null, data: null });
     }
     return chain;
   });
-  // range returns a subset of rows
+  // range() → order() → thenable with sliced data
   chain.range = vi.fn().mockImplementation((from: number, to: number) => {
-    const rangeChain: Record<string, unknown> = {};
-    for (const m of ['order']) {
-      rangeChain[m] = vi.fn().mockReturnValue(rangeChain);
-    }
     const sliced = rows.slice(from, to + 1);
-    // Make thenable
+    const rangeChain: any = {};
+    rangeChain.order = vi.fn().mockReturnValue(rangeChain);
     rangeChain[Symbol.toStringTag] = 'Promise';
-    const result = { data: sliced, error: null };
-    (rangeChain as any).then = (resolve: (v: any) => void) => Promise.resolve(result).then(resolve);
-    (rangeChain as any).catch = (reject: (v: any) => void) => Promise.resolve(result).catch(reject);
+    rangeChain.then = (resolve: (v: any) => void) => Promise.resolve({ data: sliced, error: null }).then(resolve);
+    rangeChain.catch = (reject: (v: any) => void) => Promise.resolve({ data: sliced, error: null }).catch(reject);
     return rangeChain;
   });
+  // order() before range() returns chain
+  chain.order = vi.fn().mockReturnValue(chain);
   chain.limit = vi.fn().mockResolvedValue({ data: rows, error: null });
   chain.maybeSingle = vi.fn().mockResolvedValue({ data: rows[0] || null, error: null });
   return chain;
@@ -329,6 +329,62 @@ describe('B2 — DSL Safety', () => {
     expect(escapeLikeWildcards('a\\b')).toBe('a\\\\b');
     expect(escapeLikeWildcards('normal')).toBe('normal');
   });
+
+  // B2 Round 2: PostgREST filter-unsafe characters in in/not_in values
+  it('rejects comma in not_in string value (PostgREST filter injection)', () => {
+    const result = validateAudienceExpression({
+      type: 'predicate', source: 'order', field: 'status', operator: 'not_in',
+      value: ['completed', 'pending,cancelled'],
+    });
+    expect(result.valid).toBe(false);
+    expect(result.errors[0].message).toContain('unsafe');
+  });
+
+  it('rejects parenthesis in in/not_in value', () => {
+    expect(validateAudienceExpression({
+      type: 'predicate', source: 'order', field: 'status', operator: 'in',
+      value: ['val(1)'],
+    }).valid).toBe(false);
+  });
+
+  it('rejects double quote in in/not_in value', () => {
+    expect(validateAudienceExpression({
+      type: 'predicate', source: 'order', field: 'status', operator: 'not_in',
+      value: ['val"ue'],
+    }).valid).toBe(false);
+  });
+
+  it('rejects backslash in in/not_in value', () => {
+    expect(validateAudienceExpression({
+      type: 'predicate', source: 'order', field: 'status', operator: 'in',
+      value: ['val\\ue'],
+    }).valid).toBe(false);
+  });
+
+  it('rejects control characters in in/not_in value', () => {
+    expect(validateAudienceExpression({
+      type: 'predicate', source: 'order', field: 'status', operator: 'in',
+      value: ['val\x00ue'],
+    }).valid).toBe(false);
+  });
+
+  it('accepts clean string values in in/not_in', () => {
+    expect(validateAudienceExpression({
+      type: 'predicate', source: 'order', field: 'status', operator: 'in',
+      value: ['completed', 'pending', 'cancelled'],
+    }).valid).toBe(true);
+    expect(validateAudienceExpression({
+      type: 'predicate', source: 'order', field: 'status', operator: 'not_in',
+      value: ['draft', 'expired'],
+    }).valid).toBe(true);
+  });
+
+  it('number values in in/not_in are not subject to string safety check', () => {
+    expect(validateAudienceExpression({
+      type: 'predicate', source: 'order', field: 'total_amount', operator: 'in',
+      value: [100, 200, 300],
+    }).valid).toBe(true);
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════
@@ -557,14 +613,12 @@ describe('Audience Eligibility — Binding A', () => {
 // § B1 — Adapter Bounds: count-first strategy
 // ═══════════════════════════════════════════════════════════════
 
-describe('B1 — Adapter Bounds', () => {
-  it('T-D1: count > 10,000 → AudienceTooLargeError before fetching data', async () => {
-    // Mock: count returns 10,001, data should never be fetched
+describe('B1 — Adapter Bounds (Round 2: fail-closed completeness)', () => {
+  it('T-D1: count > 10,000 → AudienceTooLargeError', async () => {
     const service = createResolverMockService(
       { customer_profiles: [] },
       { customer_profiles: ADAPTER_ROW_LIMIT + 1 },
     );
-
     await expect(
       resolveAudienceExpression(service as any, 'biz-1', 'NG', {
         type: 'predicate', source: 'contact', field: 'phone', operator: 'is_not_null',
@@ -572,13 +626,48 @@ describe('B1 — Adapter Bounds', () => {
     ).rejects.toThrow(AudienceTooLargeError);
   });
 
-  it('count within limit → returns data normally', async () => {
+  it('count === null → AudienceCountUnavailableError (fail closed)', async () => {
+    const service = createResolverMockService(
+      { customer_profiles: [] },
+      { customer_profiles: null as any },
+    );
+    await expect(
+      resolveAudienceExpression(service as any, 'biz-1', 'NG', {
+        type: 'predicate', source: 'contact', field: 'phone', operator: 'is_not_null',
+      }),
+    ).rejects.toThrow(AudienceCountUnavailableError);
+  });
+
+  it('count/row mismatch → AudienceIncompleteError (fail closed)', async () => {
+    // Count says 3, but fetch returns only 1 row
+    const service = createResolverMockService(
+      { customer_profiles: [{ id: '1', phone: '+2349012345678', name: 'A', email: null }] },
+      { customer_profiles: 3 },
+    );
+    await expect(
+      resolveAudienceExpression(service as any, 'biz-1', 'NG', {
+        type: 'predicate', source: 'contact', field: 'phone', operator: 'is_not_null',
+      }),
+    ).rejects.toThrow(AudienceIncompleteError);
+  });
+
+  it('count === 0 → empty result (fast path)', async () => {
+    const service = createResolverMockService(
+      { customer_profiles: [] },
+      { customer_profiles: 0 },
+    );
+    const result = await resolveAudienceExpression(service as any, 'biz-1', 'NG', {
+      type: 'predicate', source: 'contact', field: 'phone', operator: 'is_not_null',
+    });
+    expect(result.size).toBe(0);
+  });
+
+  it('count within limit + matching rows → returns data normally', async () => {
     const service = createResolverMockService({
       customer_profiles: [
-        { phone: '+2349012345678', name: 'Alice', email: null },
+        { id: '1', phone: '+2349012345678', name: 'Alice', email: null },
       ],
     });
-
     const result = await resolveAudienceExpression(service as any, 'biz-1', 'NG', {
       type: 'predicate', source: 'contact', field: 'phone', operator: 'is_not_null',
     });
@@ -740,16 +829,35 @@ describe('Authorization Matrix — Binding B', () => {
 // ═══════════════════════════════════════════════════════════════
 
 describe('Cross-Business Isolation', () => {
-  function createTrackedService(biz: string) {
+  function createTrackedService() {
     const eqCalls: [string, string][] = [];
     const service = {
       from: vi.fn().mockImplementation(() => {
-        const chain = createChainMock([]);
-        const origEq = chain.eq as ReturnType<typeof vi.fn>;
-        chain.eq = vi.fn().mockImplementation((col: string, val: string) => {
-          eqCalls.push([col, val]);
-          return origEq(col, val);
+        // Intercept all eq calls across both count and data chains
+        function wrapEq(chain: any) {
+          const origEq = chain.eq;
+          chain.eq = vi.fn().mockImplementation((col: string, val: string) => {
+            eqCalls.push([col, val]);
+            const result = origEq(col, val);
+            // The result might be a new chain — also wrap its eq
+            if (result && typeof result === 'object' && result.eq) {
+              wrapEq(result);
+            }
+            return result;
+          });
+          return chain;
+        }
+        const chain = createChainMock([], 0);
+        // Also wrap the count thenable chain's eq
+        const origSelect = chain.select as ReturnType<typeof vi.fn>;
+        chain.select = vi.fn().mockImplementation((_cols: string, opts?: { count?: string; head?: boolean }) => {
+          const result = origSelect(_cols, opts);
+          if (result && typeof result === 'object' && result.eq) {
+            wrapEq(result);
+          }
+          return result;
         });
+        wrapEq(chain);
         return chain;
       }),
     };
@@ -767,7 +875,7 @@ describe('Cross-Business Isolation', () => {
 
   for (const { name, source, field, biz } of adapters) {
     it(`${name} adapter scopes by business_id`, async () => {
-      const { service, eqCalls } = createTrackedService(biz);
+      const { service, eqCalls } = createTrackedService();
       const needsUuid = field === 'form_id' || field === 'event_id';
       const expr: Predicate = {
         type: 'predicate',
