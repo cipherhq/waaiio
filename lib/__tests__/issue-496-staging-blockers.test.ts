@@ -117,7 +117,7 @@ function createTestOwnerAndBusiness(opts: {
     ) VALUES ('${ownerId}', 'TestBiz496_${testCounter}', '${slug}',
       ${botCode ? `'${botCode}'` : 'NULL'},
       'Lagos', '1 Test St', '+234${testCounter}', 'restaurant',
-      '${country}', 'shared', '${tier}', '${status}',
+      '${country}', 'transfer', '${tier}', '${status}',
       ${opts.discoveryEnabled === false ? 'false' : opts.discoveryEnabled === true ? 'true' : 'NULL'})
     RETURNING id;
   `);
