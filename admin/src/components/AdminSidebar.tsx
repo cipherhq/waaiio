@@ -34,6 +34,7 @@ import {
   ListOrdered,
   Ticket,
   BrainCircuit,
+  TrendingDown,
   AlertTriangle,
   Sun,
   Moon,
@@ -121,6 +122,7 @@ const navSections: { label: string; items: NavItem[] }[] = [
     label: 'Communication',
     items: [
       { icon: Bot, label: 'Bot Management', path: '/bot-management', roles: ADMIN_PERMISSIONS['bot-management'] },
+      { icon: TrendingDown, label: 'Bot Dropoffs', path: '/bot-dropoffs', roles: ADMIN_PERMISSIONS['bot-management'] },
       { icon: Hash, label: 'Bot Keywords', path: '/bot-keywords', roles: ADMIN_PERMISSIONS['bot-keywords'] },
       { icon: BrainCircuit, label: 'LLM Logs', path: '/llm-logs', roles: ADMIN_PERMISSIONS['llm-logs'] },
       { icon: MessageCircle, label: 'WhatsApp Channels', path: '/whatsapp-channels', roles: ADMIN_PERMISSIONS['whatsapp-channels'] },

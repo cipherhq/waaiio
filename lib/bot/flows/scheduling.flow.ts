@@ -478,8 +478,12 @@ export const schedulingFlow: FlowDefinition = {
 
         if (!sessions || sessions.length === 0) {
           return [{
-            type: 'text' as const,
-            text: `Sorry, there are no upcoming ${serviceName} sessions available right now. Send *Hi* to explore other options.`,
+            type: 'buttons' as const,
+            body: `Sorry, there are no upcoming ${serviceName} sessions available right now.`,
+            buttons: [
+              { id: 'recovery_other_options', title: getFlowCopy(ctx.copyLang, 'nav.view_options') },
+              { id: 'recovery_exit', title: getFlowCopy(ctx.copyLang, 'nav.cancel') },
+            ],
           }];
         }
 
@@ -507,8 +511,12 @@ export const schedulingFlow: FlowDefinition = {
 
         if (items.length === 0) {
           return [{
-            type: 'text' as const,
-            text: `All upcoming ${serviceName} sessions are fully booked. Send *Hi* to explore other options.`,
+            type: 'buttons' as const,
+            body: `All upcoming ${serviceName} sessions are fully booked.`,
+            buttons: [
+              { id: 'recovery_other_options', title: getFlowCopy(ctx.copyLang, 'nav.view_options') },
+              { id: 'recovery_exit', title: getFlowCopy(ctx.copyLang, 'nav.cancel') },
+            ],
           }];
         }
 
@@ -521,6 +529,14 @@ export const schedulingFlow: FlowDefinition = {
         }];
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
+        // Recovery buttons from no-sessions / fully-booked prompts
+        if (input === 'recovery_other_options') {
+          return { valid: true, data: { _recovery_action: 'other_options' } };
+        }
+        if (input === 'recovery_exit') {
+          return { valid: true, data: { _action: 'cancel' } };
+        }
+
         const match = input.match(/^class_session_(.+)$/);
         if (!match) {
           return { valid: false, errorMessage: getFlowCopy(ctx.copyLang, 'booking.session_not_found') };
@@ -562,7 +578,14 @@ export const schedulingFlow: FlowDefinition = {
           },
         };
       },
-      async next() {
+      async next(ctx: FlowContext) {
+        if (ctx.session.session_data._recovery_action === 'other_options') {
+          delete ctx.session.session_data._recovery_action;
+          return 'select_capability';
+        }
+        if (ctx.session.session_data._action === 'cancel') {
+          return null;
+        }
         // Skip date, staff, time selection — session determines all of these
         // Route to quantity step for class bookings (supports multi-spot booking)
         return 'select_quantity';
@@ -2552,7 +2575,7 @@ export const schedulingFlow: FlowDefinition = {
 
         // If booking already exists (e.g. retry_payment), skip the RPC and reuse existing booking
         const isNewBooking = !(d.booking_id && d.reference_code);
-        let booking: { id: string; reference_code: string };
+        let booking: { id: string; reference_code: string } = undefined!;
         if (!isNewBooking) {
           // Reuse existing booking — just proceed to payment initiation (MANAGE_EXISTING)
           booking = { id: d.booking_id as string, reference_code: d.reference_code as string };
@@ -2659,30 +2682,55 @@ export const schedulingFlow: FlowDefinition = {
               .single() as { data: { booking_id: string; reference_code: string; slot_available: boolean } | null; error: unknown };
 
             if (slotError || !slotResult) {
-              logger.withContext({ op: 'scheduling.create-booking', ...safeLogErrorContext(slotError) }).error('[SCHEDULING] Failed to create booking');
-              return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start over.' }];
-            }
-
-            if (!slotResult.slot_available) {
-              const isClassBooking = d._service_is_class === true;
-              if (isClassBooking) {
-                const caps = await getEnabledCapabilities(ctx.supabase, ctx.business!.id);
-                if (caps.includes('waitlist')) {
-                  return [{
-                    type: 'buttons',
-                    body: getFlowCopy(ctx.copyLang, 'booking.class_full_waitlist'),
-                    buttons: [
-                      { id: 'wl_join', title: getFlowCopy(ctx.copyLang, 'booking.join_waitlist') },
-                      { id: 'go_back', title: getFlowCopy(ctx.copyLang, 'nav.no_thanks') },
-                    ],
-                  }];
+              // Check if this is a duplicate from the same session (UNIQUE constraint on bot_session_id)
+              const pgError = slotError as { code?: string; message?: string } | null;
+              if (pgError?.code === '23505' && pgError?.message?.includes('bot_session_id')) {
+                const { data: existing } = await ctx.supabase
+                  .from('bookings')
+                  .select('id, reference_code, status')
+                  .eq('bot_session_id', ctx.session.id)
+                  .eq('business_id', ctx.business!.id)
+                  .in('status', ['pending', 'confirmed', 'in_progress'])
+                  .maybeSingle();
+                if (existing) {
+                  // Reuse existing booking — idempotent recovery
+                  booking = { id: existing.id, reference_code: existing.reference_code };
+                  d.booking_id = existing.id;
+                  d.reference_code = existing.reference_code;
+                } else {
+                  // 23505 but booking not found in expected state — fail closed
+                  logger.withContext({ op: 'scheduling.create-booking-23505', ...safeLogErrorContext(slotError) }).error('[SCHEDULING] Duplicate constraint but no matching booking found');
+                  return [{ type: 'text', text: getFlowCopy(ctx.copyLang, 'error.generic') }];
                 }
-                return [{ type: 'text', text: getFlowCopy(ctx.copyLang, 'booking.class_full') }];
+              } else {
+                logger.withContext({ op: 'scheduling.create-booking', ...safeLogErrorContext(slotError) }).error('[SCHEDULING] Failed to create booking');
+                return [{ type: 'text', text: getFlowCopy(ctx.copyLang, 'error.generic') }];
               }
-              return [{ type: 'text', text: getFlowCopy(ctx.copyLang, 'booking.slot_taken') }];
             }
 
-            booking = { id: slotResult.booking_id, reference_code: slotResult.reference_code };
+            // slotResult may be null when 23505 recovery set booking directly
+            if (slotResult) {
+              if (!slotResult.slot_available) {
+                const isClassBooking = d._service_is_class === true;
+                if (isClassBooking) {
+                  const caps = await getEnabledCapabilities(ctx.supabase, ctx.business!.id);
+                  if (caps.includes('waitlist')) {
+                    return [{
+                      type: 'buttons',
+                      body: getFlowCopy(ctx.copyLang, 'booking.class_full_waitlist'),
+                      buttons: [
+                        { id: 'wl_join', title: getFlowCopy(ctx.copyLang, 'booking.join_waitlist') },
+                        { id: 'go_back', title: getFlowCopy(ctx.copyLang, 'nav.no_thanks') },
+                      ],
+                    }];
+                  }
+                  return [{ type: 'text', text: getFlowCopy(ctx.copyLang, 'booking.class_full') }];
+                }
+                return [{ type: 'text', text: getFlowCopy(ctx.copyLang, 'booking.slot_taken') }];
+              }
+
+              booking = { id: slotResult.booking_id, reference_code: slotResult.reference_code };
+            }
           }
 
           // Save pre-booking question answers if any

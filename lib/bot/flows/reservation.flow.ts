@@ -53,7 +53,14 @@ export const reservationFlow: FlowDefinition = {
         }
 
         if (listings.length === 0) {
-          return [{ type: 'text', text: 'No options are currently available. Please try again later.' }];
+          return [{
+            type: 'buttons',
+            body: 'No options are currently available.',
+            buttons: [
+              { id: 'recovery_other_options', title: 'Other Options' },
+              { id: 'recovery_exit', title: 'Exit' },
+            ],
+          }];
         }
 
         const cc = (ctx.business.country_code || 'NG') as CountryCode;
@@ -70,6 +77,14 @@ export const reservationFlow: FlowDefinition = {
         }];
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
+        // Recovery buttons from empty-listings prompt
+        if (input === 'recovery_other_options') {
+          return { valid: true, data: { _recovery_action: 'other_options' } };
+        }
+        if (input === 'recovery_exit') {
+          return { valid: true, data: { _action: 'cancel' } };
+        }
+
         // Try properties first, fall back to services
         let match: { id: string; name: string; price: number; deposit_amount: number } | null = null;
 
@@ -144,7 +159,16 @@ export const reservationFlow: FlowDefinition = {
           },
         };
       },
-      async next() { return 'select_checkin'; },
+      async next(ctx: FlowContext) {
+        if (ctx.session.session_data._recovery_action === 'other_options') {
+          delete ctx.session.session_data._recovery_action;
+          return 'select_capability';
+        }
+        if (ctx.session.session_data._action === 'cancel') {
+          return null;
+        }
+        return 'select_checkin';
+      },
       async skipIf(ctx: FlowContext) {
         if (ctx.session.session_data.skip_apartment) return true;
         if (!ctx.business) return false;
@@ -767,9 +791,18 @@ export const reservationFlow: FlowDefinition = {
             .limit(1);
 
           if (overlapping && overlapping.length > 0) {
+            // Clear date selections so user can pick new ones, but preserve property choice
+            delete d.check_in;
+            delete d.check_out;
+            delete d.nights;
+            delete d._availability_checked;
             return [{
-              type: 'text',
-              text: 'Sorry, this property is not available for the selected dates. Send *Hi* to try different dates.',
+              type: 'buttons',
+              body: 'Sorry, this property is not available for the selected dates.',
+              buttons: [
+                { id: 'recovery_change_dates', title: 'Choose New Dates' },
+                { id: 'recovery_exit', title: 'Cancel' },
+              ],
             }];
           }
           d._availability_checked = true;
@@ -1154,6 +1187,13 @@ export const reservationFlow: FlowDefinition = {
         }];
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
+        // Recovery buttons from unavailable-dates prompt
+        if (input === 'recovery_change_dates') {
+          return { valid: true, data: { _recovery_action: 'change_dates' } };
+        }
+        if (input === 'recovery_exit') {
+          return { valid: true, data: { _action: 'cancel' } };
+        }
         if (input === 'accept_terms') {
           return { valid: true, data: { _terms_accepted: true } };
         }
@@ -1175,6 +1215,11 @@ export const reservationFlow: FlowDefinition = {
       },
       async next(ctx: FlowContext) {
         const d = ctx.session.session_data;
+        // Recovery: redirect to check-in date selection with preserved property
+        if (d._recovery_action === 'change_dates') {
+          delete d._recovery_action;
+          return 'select_checkin';
+        }
         // Stay on step while awaiting saved-card PIN — do not complete flow
         if (d._awaiting_card_pin) return 'create_reservation';
         // Blocker 1: Saved-card outcomes BEFORE legacy terms loop

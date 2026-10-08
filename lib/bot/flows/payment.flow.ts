@@ -19,6 +19,7 @@ import { buildSavedCardOffer, handleSavedCardInput } from './shared/saved-card-f
 import { safeButtons } from './shared/safe-interactive';
 import { buildListItem } from '../utils/truncate';
 import { canonicalPublicOrigin } from '@/lib/url';
+import { getPoweredByFooter } from '@/lib/whitelabel';
 
 export const paymentFlow: FlowDefinition = {
   type: 'payment',
@@ -1184,7 +1185,14 @@ export const paymentFlow: FlowDefinition = {
             amount,
           });
           if (!plan) {
-            return [{ type: 'text', text: 'Failed to set up recurring plan. Please try again later.' }];
+            return [{
+              type: 'buttons',
+              body: 'Failed to set up recurring plan. You can try again or cancel.',
+              buttons: [
+                { id: 'retry_recurring', title: 'Try Again' },
+                { id: 'go_back', title: 'Cancel' },
+              ],
+            }];
           }
           planCode = plan.planCode;
 
@@ -1252,7 +1260,14 @@ export const paymentFlow: FlowDefinition = {
           });
 
           if (!checkout) {
-            return [{ type: 'text', text: 'Failed to set up recurring payments. Please try again later.' }];
+            return [{
+              type: 'buttons',
+              body: 'Failed to set up recurring payments. You can try again or cancel.',
+              buttons: [
+                { id: 'retry_recurring', title: 'Try Again' },
+                { id: 'go_back', title: 'Cancel' },
+              ],
+            }];
           }
 
           subscriptionCode = checkout.sessionId;
@@ -1329,8 +1344,7 @@ export const paymentFlow: FlowDefinition = {
               `Your ${label} payment of *${formatCurrency(amount, cc)}* for *${serviceName}* will be active once you complete the setup above.`,
               '',
               `To manage your recurring payments, type *subscriptions* anytime.`,
-              '',
-              `_Powered by *Waaiio*_`,
+              ...(getPoweredByFooter(ctx.business?.subscription_tier) ? ['', '_Powered by Waaiio_'] : []),
             ].join('\n'),
           }];
         }
@@ -1350,8 +1364,22 @@ export const paymentFlow: FlowDefinition = {
           ].join('\n'),
         }];
       },
-      async validate(): Promise<ValidationResult> { return { valid: true }; },
-      async next() { return null; },
+      async validate(input: string): Promise<ValidationResult> {
+        if (input === 'retry_recurring') {
+          return { valid: true, data: { _retry_recurring: true } };
+        }
+        if (input === 'go_back') {
+          return { valid: true, data: { _action: 'cancel' } };
+        }
+        return { valid: true };
+      },
+      async next(ctx: FlowContext) {
+        if (ctx.session.session_data._retry_recurring) {
+          delete ctx.session.session_data._retry_recurring;
+          return 'setup_recurring';
+        }
+        return null;
+      },
     },
 
     // ── Payment Thank You (terminal) ──
@@ -1390,8 +1418,7 @@ export const paymentFlow: FlowDefinition = {
             `We appreciate your support. 🙏`,
             '',
             ...tips,
-            '',
-            `_Powered by *Waaiio*_`,
+            ...(getPoweredByFooter(ctx.business?.subscription_tier) ? ['', '_Powered by Waaiio_'] : []),
           ].join('\n'),
         }];
       },
