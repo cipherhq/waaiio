@@ -94,13 +94,22 @@ function createTestBusiness(opts: {
     ON CONFLICT (id) DO NOTHING;
   `);
 
+  // #266: active + shared requires assigned_channel_id (chk_shared_requires_channel)
+  let assignedChannelId: string | null = null;
+  if (waMethod === 'shared') {
+    assignedChannelId = psql(`
+      INSERT INTO public.whatsapp_channels (phone_number, phone_number_id, country_code, channel_type, is_active, provider)
+      VALUES ('test-trial-${bizCounter}', 'pnid-trial-${bizCounter}', '${countryCode}', 'shared', true, 'meta_cloud')
+      RETURNING id;
+    `);
+  }
   const bizId = psql(`
     INSERT INTO public.businesses (
       owner_id, name, slug, bot_code, city, address, phone, category,
-      country_code, wa_method, subscription_tier, trial_ends_at, status
+      country_code, wa_method, subscription_tier, trial_ends_at, status${assignedChannelId ? ', assigned_channel_id' : ''}
     ) VALUES ('${ownerId}', 'Test Business ${bizCounter}', '${slug}', '${botCode}',
       'Test City', '123 Test St', '+1234567890', 'restaurant',
-      '${countryCode}', '${waMethod}', '${tier}', ${trialVal}, 'active')
+      '${countryCode}', '${waMethod}', '${tier}', ${trialVal}, 'active'${assignedChannelId ? `, '${assignedChannelId}'` : ''})
     RETURNING id;
   `);
 

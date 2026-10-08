@@ -99,6 +99,7 @@ function mockProvisionService(overrides?: { whatsappInsertError?: string }) {
         return chainable({ data: {}, error: null });
       },
     }),
+    rpc: () => Promise.resolve({ data: { allocated: true, channel_id: 'test-channel', idempotent: false }, error: null }),
   } as any;
 }
 
@@ -188,6 +189,7 @@ describe('#551 rollback safety — provisionAdminBusiness profile failure carrie
           }),
         };
       },
+      rpc: () => Promise.resolve({ data: { allocated: true, channel_id: 'test-ch', idempotent: false }, error: null }),
     } as any;
 
     const err = await realProvision(
@@ -334,6 +336,7 @@ function buildRouteService(opts: {
         },
       },
     },
+    rpc: () => Promise.resolve({ data: { allocated: true, channel_id: 'test-channel', idempotent: false }, error: null }),
   } as any;
 
   return { service, updates, inserts };

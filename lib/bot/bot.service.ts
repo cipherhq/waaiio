@@ -37,7 +37,7 @@ import { handleTransactionDocument as _handleTransactionDocument } from './handl
 import { handleMyOrders as _handleMyOrders, handleOrderDetail as _handleOrderDetail, handleOrderDetailAction as _handleOrderDetailAction } from './handlers/my-orders';
 import { routeToMyAccountMenu as _routeToMyAccountMenu } from './handlers/my-account-menu';
 import { handleMyBookings as _handleMyBookings, handleViewTicket as _handleViewTicket, handleViewReservation as _handleViewReservation, handleModifyBooking as _handleModifyBooking } from './handlers/my-bookings';
-import { detectBotCode as _detectBotCode, detectBotCodeWithSuggestions as _detectBotCodeWithSuggestions, rankSuggestions as _rankSuggestions, findReturningCustomerBusiness as _findReturningCustomerBusiness, findReturningCustomerBusinesses as _findReturningCustomerBusinesses } from './handlers/bot-code-detection';
+import { detectBotCode as _detectBotCode, detectBotCodeWithSuggestions as _detectBotCodeWithSuggestions, rankSuggestions as _rankSuggestions, findReturningCustomerBusinesses as _findReturningCustomerBusinesses } from './handlers/bot-code-detection';
 import { executeKeywordAction as _executeKeywordAction } from './handlers/keyword-actions';
 import { handleChatHandoff as _handleChatHandoff, handleChatStart as _handleChatStart } from './handlers/chat-handoff';
 import { handleCardPinStep as _handleCardPinStep } from './handlers/saved-cards';
@@ -615,9 +615,26 @@ export class BotService {
       }
       // If no session found for this business, session remains null — normal new-session flow
     } else {
-      // Legacy / marketplace fallback: phone-only session lookup
-      session = await this.getActiveSession(from);
-      _bmark('legacy_getActiveSession');
+      // #266 R3: Use get_bot_context(phone, NULL) for ambiguity detection
+      // instead of the legacy phone-only getActiveSession which newest-wins.
+      const { data: unresolvedCtx } = await this.supabase.rpc('get_bot_context', {
+        p_phone: from, p_business_id: null,
+      });
+      if (unresolvedCtx && (unresolvedCtx as any).ambiguous) {
+        // Multiple businesses have active sessions — force disambiguation
+        // Session stays null → new-session flow → picker
+        session = null;
+      } else if (unresolvedCtx && (unresolvedCtx as any).has_session && (unresolvedCtx as any).session) {
+        // Single session or null-business session — safe to resume
+        const s = (unresolvedCtx as any).session;
+        session = { ...s, session_data: s.session_data || {} } as BotSession;
+        if (s.business_id && (unresolvedCtx as any).business) {
+          _cachedBusiness = (unresolvedCtx as any).business as BusinessRecord;
+          _rpcCapabilities = (unresolvedCtx as any).capabilities;
+          _rpcOverrides = (unresolvedCtx as any).capability_overrides;
+        }
+      }
+      _bmark('unresolved_get_bot_context');
     }
 
     // ── CAP-001 Point A: Session resume capability revalidation ──
@@ -1169,20 +1186,35 @@ export class BotService {
 
       let deepLinkCapability: string | undefined;
       if (detection) {
-        businessId = detection.businessId;
+        // #266 R1/R2: Only exact bot_code match may bind directly
+        if (detection.authority === 'exact' && detection.businessId) {
+          businessId = detection.businessId;
+          if (!bizResolution) bizResolution = 'fuzzy'; // ACC-180: still not trusted for first-message promo
+        } else {
+          // Suggestion-only: do NOT bind businessId — feed to picker instead
+          businessId = null;
+        }
         pendingSuggestions = detection.suggestions;
         isCategoryMatch = detection.isCategory || false;
         deepLinkCapability = detection.deepLinkCapability;
-        // ACC-180: Detection results are fuzzy/inferred — NOT trusted for first-message promo
-        if (businessId && !bizResolution) bizResolution = 'fuzzy';
-        logger.debug('[BOT] detectBotCode("' + text + '") →', businessId, 'suggestions:', pendingSuggestions?.length || 0, 'category:', isCategoryMatch, 'deepLink:', deepLinkCapability || 'none');
+        logger.debug('[BOT] detectBotCode("' + text + '") → authority:', detection.authority, 'biz:', businessId, 'suggestions:', pendingSuggestions?.length || 0, 'category:', isCategoryMatch);
       }
 
-      // Returning customer: check past history if no business resolved yet
-      // Scope to the shared number's country to prevent cross-country routing
+      // #266 R1: Returning customer history is suggestion/ranking evidence, NOT tenant authority.
+      // Show ALL past businesses as picker candidates; never auto-bind from history alone.
       if (!businessId) {
-        businessId = await this.findReturningCustomerBusiness(from, profile?.id || null, sharedNumberCountry);
-        if (businessId) { bizResolution = 'returning_customer'; logger.debug('[BOT] returning customer → business:', businessId); }
+        const returningBusinesses = await this.findReturningCustomerBusinesses(from, profile?.id || null, sharedNumberCountry);
+        if (returningBusinesses.length > 0) {
+          // Merge returning-customer businesses into suggestions for the picker
+          // Preserve any bot-code-detected suggestions at the front
+          const existing = new Set((pendingSuggestions || []).map(s => s.id));
+          const merged = [...(pendingSuggestions || [])];
+          for (const rb of returningBusinesses) {
+            if (!existing.has(rb.id)) merged.push(rb);
+          }
+          pendingSuggestions = merged;
+          logger.debug('[BOT] returning customer businesses added to suggestions:', returningBusinesses.length);
+        }
       }
 
       // "Did you mean?" — fuzzy suggestions / category matches / auto-correct confirmation
@@ -1582,9 +1614,32 @@ export class BotService {
         .single();
 
       if (sessionError || !newSession) {
-        logger.error('[BOT] Session insert failed:', sessionError?.message, sessionError?.code, sessionError?.details);
-        await this.sendText(from, 'Something went wrong on our end. Send *Hi* to start over.');
-        return;
+        // #266 R4: 23505 NULL-session collision — provenance-safe recovery
+        if (sessionError?.code === '23505' && !businessId) {
+          // Unique constraint on null-biz session. Try to resume the existing disambiguation session.
+          const { data: existingNullSession } = await this.supabase
+            .from('bot_sessions')
+            .select('*')
+            .eq('whatsapp_number', from)
+            .is('business_id', null)
+            .eq('is_active', true)
+            .single();
+          if (existingNullSession && !existingNullSession.business_id) {
+            // Safe: this is a platform/disambiguation session with no business authority
+            session = existingNullSession as BotSession;
+            logger.info('[BOT] #266 R4: Recovered existing null-biz disambiguation session:', existingNullSession.id);
+            // Continue with the recovered session — do NOT auto-bind any business
+          } else {
+            // Unsafe: cannot recover a business-scoped session. Fail closed.
+            logger.error('[BOT] #266 R4: 23505 recovery failed — no safe null-biz session to resume');
+            await this.sendText(from, 'Something went wrong on our end. Send *Hi* to start over.');
+            return;
+          }
+        } else {
+          logger.error('[BOT] Session insert failed:', sessionError?.message, sessionError?.code, sessionError?.details);
+          await this.sendText(from, 'Something went wrong on our end. Send *Hi* to start over.');
+          return;
+        }
       }
 
       // CAS-004: Language activation uses canonical policy only.
@@ -3149,6 +3204,7 @@ export class BotService {
     suggestions?: { id: string; name: string; bot_code: string }[];
     isCategory?: boolean;
     deepLinkCapability?: string;
+    authority: 'exact' | 'suggestion';
   }> {
     return _detectBotCodeWithSuggestions(this.supabase, text, callerPhone, countryFilter);
   }
@@ -3158,10 +3214,6 @@ export class BotService {
     callerPhone?: string,
   ): { id: string; name: string; bot_code: string }[] {
     return _rankSuggestions(businesses, callerPhone);
-  }
-
-  private async findReturningCustomerBusiness(phone: string, userId: string | null, countryFilter?: string | null): Promise<string | null> {
-    return _findReturningCustomerBusiness(this.supabase, phone, userId, countryFilter);
   }
 
   private async findReturningCustomerBusinesses(phone: string, userId: string | null, countryFilter?: string | null): Promise<{ id: string; name: string; bot_code: string }[]> {

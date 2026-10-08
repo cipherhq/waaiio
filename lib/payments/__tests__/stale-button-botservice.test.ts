@@ -117,10 +117,30 @@ function createTableMock(config: {
       if (table === 'profiles') return makeChain({ id: 'profile-1' });
       return makeChain();
     }),
-    // Mock RPC: update_session_cas returns success so capability refresh doesn't bail
-    rpc: vi.fn().mockResolvedValue({
-      data: { success: true, version: 1, current_step: 'select_capability' },
-      error: null,
+    // Mock RPC: handles get_bot_context (#266) and update_session_cas
+    rpc: vi.fn().mockImplementation((name: string, params?: Record<string, unknown>) => {
+      // #266: bot service calls get_bot_context(phone, NULL) for unresolved sessions
+      if (name === 'get_bot_context') {
+        if (config.activeSession && params?.p_business_id === null) {
+          return Promise.resolve({
+            data: {
+              has_session: true,
+              ambiguous: false,
+              session: config.activeSession,
+              business: config.business ?? null,
+              capabilities: config.capabilities ?? [],
+              capability_overrides: (config.overrides || []).map(c => ({ capability: c })),
+            },
+            error: null,
+          });
+        }
+        return Promise.resolve({ data: { has_session: false, session: null, business: null, capabilities: [], capability_overrides: [] }, error: null });
+      }
+      // update_session_cas returns success so capability refresh doesn't bail
+      return Promise.resolve({
+        data: { success: true, version: 1, current_step: 'select_capability' },
+        error: null,
+      });
     }),
     storage: { from: vi.fn(() => ({ upload: vi.fn(), createSignedUrl: vi.fn(), getPublicUrl: vi.fn() })) },
     auth: { getUser: vi.fn().mockResolvedValue({ data: { user: null }, error: null }) },

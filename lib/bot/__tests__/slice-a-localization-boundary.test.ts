@@ -675,7 +675,23 @@ describe('Slice A — BotService lang_yes stale-policy revalidation', () => {
           if (table === 'profiles') return makeChain({ id: 'profile-1' });
           return makeChain();
         }),
-        rpc: vi.fn().mockResolvedValue({ data: { success: true, version: 2, current_step: 'select_date' }, error: null }),
+        rpc: vi.fn().mockImplementation((name: string, params?: Record<string, unknown>) => {
+          // #266: bot service calls get_bot_context(phone, NULL) for unresolved sessions
+          if (name === 'get_bot_context' && params?.p_business_id === null) {
+            return Promise.resolve({
+              data: {
+                has_session: true,
+                ambiguous: false,
+                session: activeSession,
+                business,
+                capabilities: [{ capability: 'scheduling', is_enabled: true, sort_order: 0 }],
+                capability_overrides: [],
+              },
+              error: null,
+            });
+          }
+          return Promise.resolve({ data: { success: true, version: 2, current_step: 'select_date' }, error: null });
+        }),
         storage: { from: vi.fn(() => ({ upload: vi.fn(), createSignedUrl: vi.fn(), getPublicUrl: vi.fn() })) },
       } as any,
       updateTracker,

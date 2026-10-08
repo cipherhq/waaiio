@@ -4,15 +4,16 @@ import type { MessageSender } from '@/lib/channels/message-sender';
 import type { BotSession, BotContext } from './bot-types';
 
 /**
- * Find the active (non-expired) bot session for a phone number.
+ * Find the active (non-expired) bot session for a phone number scoped to a specific business.
  * Also cleans up any expired sessions.
  */
-export async function getActiveSession(supabase: SupabaseClient, phone: string): Promise<BotSession | null> {
+export async function getActiveSessionForBusiness(supabase: SupabaseClient, phone: string, businessId: string): Promise<BotSession | null> {
   const now = new Date().toISOString();
   const { data } = await supabase
     .from('bot_sessions')
     .select('*')
     .eq('whatsapp_number', phone)
+    .eq('business_id', businessId)
     .eq('is_active', true)
     .gte('expires_at', now) // Only return non-expired sessions
     .order('created_at', { ascending: false })
@@ -21,6 +22,35 @@ export async function getActiveSession(supabase: SupabaseClient, phone: string):
 
   if (!data) {
     // Clean up any expired sessions for this phone
+    await supabase
+      .from('bot_sessions')
+      .update({ is_active: false })
+      .eq('whatsapp_number', phone)
+      .eq('is_active', true)
+      .lt('expires_at', now);
+    return null;
+  }
+
+  return (data as BotSession) || null;
+}
+
+/**
+ * @deprecated Use getActiveSessionForBusiness instead — resolves by phone + businessId.
+ * Kept for backward compatibility in tests.
+ */
+export async function getActiveSession(supabase: SupabaseClient, phone: string): Promise<BotSession | null> {
+  const now = new Date().toISOString();
+  const { data } = await supabase
+    .from('bot_sessions')
+    .select('*')
+    .eq('whatsapp_number', phone)
+    .eq('is_active', true)
+    .gte('expires_at', now)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .single();
+
+  if (!data) {
     await supabase
       .from('bot_sessions')
       .update({ is_active: false })

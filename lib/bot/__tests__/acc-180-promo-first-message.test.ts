@@ -139,7 +139,9 @@ describe('ACC-180: Source code contracts', () => {
     expect(src).toContain("'restart'");
     expect(src).toContain("bizResolution = 'dedicated_number'");
     expect(src).toContain("bizResolution = 'fuzzy'");
-    expect(src).toContain("bizResolution = 'returning_customer'");
+    // #266: returning_customer is still a valid BizResolution value in the type union,
+    // but history no longer auto-binds a business — it feeds suggestions instead.
+    expect(src).toContain("'returning_customer'");
   });
 
   it('no remaining whatsapp_message_id references in promo paths', () => {

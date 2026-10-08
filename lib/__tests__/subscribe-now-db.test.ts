@@ -69,13 +69,19 @@ function createPaidTestBusiness(opts: {
   psql(`INSERT INTO auth.users (id, email, raw_app_meta_data) VALUES ('${ownerId}', 'test-m375-${bizCounter}-${Date.now()}@test.com', '{}') ON CONFLICT (id) DO NOTHING;`);
   psql(`INSERT INTO public.profiles (id, first_name, last_name, role) VALUES ('${ownerId}', 'Test', 'User', 'restaurant_owner') ON CONFLICT (id) DO NOTHING;`);
 
+  // #266: active + shared requires assigned_channel_id (chk_shared_requires_channel)
+  const sharedChId = psql(`
+    INSERT INTO public.whatsapp_channels (phone_number, phone_number_id, country_code, channel_type, is_active, provider)
+    VALUES ('test-sub-${bizCounter}', 'pnid-sub-${bizCounter}', '${countryCode}', 'shared', true, 'meta_cloud')
+    RETURNING id;
+  `);
   const bizId = psql(`
     INSERT INTO public.businesses (
       owner_id, name, slug, bot_code, city, address, phone, category,
-      country_code, wa_method, subscription_tier, status
+      country_code, wa_method, subscription_tier, status, assigned_channel_id
     ) VALUES ('${ownerId}', 'Test Sub Biz ${bizCounter}', '${slug}', '${botCode}',
       'Test City', '123 Test St', '+1234567890', 'restaurant',
-      '${countryCode}', 'shared', '${tier}', 'active')
+      '${countryCode}', 'shared', '${tier}', 'active', '${sharedChId}')
     RETURNING id;
   `);
 

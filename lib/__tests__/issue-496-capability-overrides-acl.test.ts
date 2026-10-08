@@ -92,7 +92,7 @@ describe.skipIf(!canRunDb)('M419: capability guard read path', () => {
         country_code, wa_method, subscription_tier, status
       ) VALUES ('${ownerId}', 'ACL419Biz', 'acl419-' || substr(gen_random_uuid()::text,1,8),
         'ACL419', 'Lagos', '1 Test St', '+234419' || floor(random()*1000000)::int,
-        'restaurant', 'NG', 'shared', 'free', 'active')
+        'restaurant', 'NG', 'transfer', 'free', 'active')
       RETURNING id;
     `);
     // Add poll capability
@@ -147,12 +147,12 @@ describe.skipIf(!canRunDb)('M419: capability_overrides server-path isolation', (
     ownerA = psql(`INSERT INTO auth.users (id, email) VALUES (gen_random_uuid(), 'uat419a-' || gen_random_uuid() || '@test.local') RETURNING id;`);
     psql(`INSERT INTO public.profiles (id, first_name, last_name, role) VALUES ('${ownerA}', 'OwnerA', '419', 'restaurant_owner') ON CONFLICT (id) DO NOTHING;`);
     bizA = psql(`INSERT INTO public.businesses (owner_id, name, slug, bot_code, city, address, phone, category, country_code, wa_method, subscription_tier, status)
-      VALUES ('${ownerA}', 'IsoA419', 'isoa419-' || substr(gen_random_uuid()::text,1,8), NULL, 'Lagos', '1 St', '+234419a' || floor(random()*100000)::int, 'restaurant', 'NG', 'shared', 'free', 'active') RETURNING id;`);
+      VALUES ('${ownerA}', 'IsoA419', 'isoa419-' || substr(gen_random_uuid()::text,1,8), NULL, 'Lagos', '1 St', '+234419a' || floor(random()*100000)::int, 'restaurant', 'NG', 'transfer', 'free', 'active') RETURNING id;`);
 
     const ownerB = psql(`INSERT INTO auth.users (id, email) VALUES (gen_random_uuid(), 'uat419b-' || gen_random_uuid() || '@test.local') RETURNING id;`);
     psql(`INSERT INTO public.profiles (id, first_name, last_name, role) VALUES ('${ownerB}', 'OwnerB', '419', 'restaurant_owner') ON CONFLICT (id) DO NOTHING;`);
     bizB = psql(`INSERT INTO public.businesses (owner_id, name, slug, bot_code, city, address, phone, category, country_code, wa_method, subscription_tier, status)
-      VALUES ('${ownerB}', 'IsoB419', 'isob419-' || substr(gen_random_uuid()::text,1,8), NULL, 'Lagos', '1 St', '+234419b' || floor(random()*100000)::int, 'restaurant', 'NG', 'shared', 'free', 'active') RETURNING id;`);
+      VALUES ('${ownerB}', 'IsoB419', 'isob419-' || substr(gen_random_uuid()::text,1,8), NULL, 'Lagos', '1 St', '+234419b' || floor(random()*100000)::int, 'restaurant', 'NG', 'transfer', 'free', 'active') RETURNING id;`);
 
     // Insert an override for bizA only (simulates admin RPC)
     psql(`INSERT INTO capability_overrides (business_id, capability, granted_by, reason)

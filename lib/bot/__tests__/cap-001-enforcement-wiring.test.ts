@@ -137,12 +137,31 @@ function createTableMock(config: {
       // Default catch-all
       return makeChain();
     }),
-    rpc: vi.fn().mockImplementation((name: string) => {
+    rpc: vi.fn().mockImplementation((name: string, params?: Record<string, unknown>) => {
       if (name === 'update_session_cas') {
         return Promise.resolve({ data: { success: true, version: 1 }, error: null });
       }
       if (name === 'deactivate_session_atomic') {
         return Promise.resolve({ data: { success: true }, error: null });
+      }
+      // #266: bot service now calls get_bot_context(phone, NULL) for unresolved sessions.
+      // Return capabilities: null and capability_overrides: null so Point A revalidation
+      // always falls through to the DB path — which is what these tests exercise.
+      if (name === 'get_bot_context') {
+        if (config.activeSession && params?.p_business_id === null) {
+          return Promise.resolve({
+            data: {
+              has_session: true,
+              ambiguous: false,
+              session: config.activeSession,
+              business: config.business ?? null,
+              capabilities: null,
+              capability_overrides: null,
+            },
+            error: null,
+          });
+        }
+        return Promise.resolve({ data: { has_session: false, session: null, business: null, capabilities: null, capability_overrides: null }, error: null });
       }
       return Promise.resolve({ data: null, error: null });
     }),
