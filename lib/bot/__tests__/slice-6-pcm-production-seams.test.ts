@@ -435,11 +435,11 @@ describe('C1 — shared-number bot-code routing is language-independent', () => 
 });
 
 describe('C1 — returning-customer routing is language-independent', () => {
-  it('findReturningCustomerBusiness uses session history, not language', async () => {
-    const { findReturningCustomerBusiness } = await import('@/lib/bot/handlers/bot-code-detection');
+  it('findReturningCustomerBusinesses uses session history, not language', async () => {
+    const { findReturningCustomerBusinesses } = await import('@/lib/bot/handlers/bot-code-detection');
     const phone = '+2341234567890';
 
-    // Deep mock: findReturningCustomerBusiness queries bot_sessions + bookings
+    // Deep mock: findReturningCustomerBusinesses queries bot_sessions + bookings
     // then fetches business details. Uses .or(), .order(), .limit() chains.
     const endChain = (data: any) => {
       const obj: any = {
@@ -473,8 +473,9 @@ describe('C1 — returning-customer routing is language-independent', () => {
       })),
     } as any;
 
-    const result = await findReturningCustomerBusiness(supabase, phone, null);
-    expect(result).toBe('biz-salon-1');
+    const results = await findReturningCustomerBusinesses(supabase, phone, null);
+    expect(results.length).toBeGreaterThan(0);
+    expect(results[0].id).toBe('biz-salon-1');
   });
 });
 

@@ -141,6 +141,7 @@ const mockServiceFrom = vi.fn((table: string) => {
 vi.mock('@/lib/supabase/service', () => ({
   createServiceClient: () => ({
     from: mockServiceFrom,
+    rpc: () => Promise.resolve({ data: { allocated: true, channel_id: 'test-channel', idempotent: false }, error: null }),
   }),
 }));
 

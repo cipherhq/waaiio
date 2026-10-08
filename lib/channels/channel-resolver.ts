@@ -225,7 +225,7 @@ export class ChannelResolver {
     // 1. Check admin-assigned channel first (assigned_channel_id takes priority)
     const { data: bizData } = await this.supabase
       .from('businesses')
-      .select('country_code, assigned_channel_id, whatsapp_channel_id')
+      .select('country_code, assigned_channel_id, whatsapp_channel_id, wa_method')
       .eq('id', businessId)
       .single();
 
@@ -264,7 +264,16 @@ export class ChannelResolver {
       return resolved;
     }
 
-    // 3. Shared channel for the business's country
+    // R8: fail closed — shared business without a dedicated/assigned channel cannot route
+    if (bizData?.wa_method === 'shared') {
+      // Shared businesses MUST have an assigned channel from allocate_shared_channel.
+      // If no channelId was found above, the business has no allocation yet.
+      this.cacheSet(cacheKey, null);
+      return null;
+    }
+
+    // 3. Shared channel for the business's country (non-shared wa_method fallback,
+    //    e.g. 'transfer' businesses that haven't been fully set up yet)
     if (bizData?.country_code) {
       const shared = await this.getSharedChannelForCountry(bizData.country_code as CountryCode);
       if (shared) {
@@ -274,7 +283,7 @@ export class ChannelResolver {
       }
     }
 
-    // Final fallback: any active shared channel (for countries without their own)
+    // Final fallback: any active shared channel (for non-shared wa_method only)
     const { data: anyShared } = await this.supabase
       .from('whatsapp_channels')
       .select('*')

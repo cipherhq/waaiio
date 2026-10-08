@@ -137,7 +137,7 @@ export async function handleOnboardingComplete(
         phone: customerPhone.startsWith('+') ? customerPhone : `+${customerPhone}`,
         wa_method: 'shared',
         subscription_tier: 'free',
-        status: 'active',
+        status: 'pending',
         trial_ends_at: trialEnd.toISOString(),
         verification_level: 'unverified',
       })
@@ -148,6 +148,16 @@ export async function handleOnboardingComplete(
       logger.error('[WA-ONBOARD] Business creation error:', bizErr);
       return { success: false, error: 'Failed to create business' };
     }
+
+    // #266 R7/R10: Allocate shared channel then activate
+    const { data: allocation } = await supabase.rpc('allocate_shared_channel', {
+      p_business_id: biz.id,
+      p_country_code: country,
+    });
+    if (allocation && (allocation as any).allocated) {
+      await supabase.from('businesses').update({ status: 'active' }).eq('id', biz.id);
+    }
+    // If allocation failed, business stays pending — onboarding shows setup incomplete
 
     // 6. Create WhatsApp config with default greeting
     try {

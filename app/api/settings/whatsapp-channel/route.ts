@@ -66,18 +66,14 @@ export async function DELETE(request: NextRequest) {
 
   const service = createServiceClient();
 
-  // Deactivate the dedicated channel
-  await service
-    .from('whatsapp_channels')
-    .update({ is_active: false, connection_status: 'disconnected' })
-    .eq('business_id', businessId)
-    .eq('channel_type', 'dedicated');
-
-  // Revert business to shared
-  await service
-    .from('businesses')
-    .update({ wa_method: 'shared', whatsapp_channel_id: null, assigned_channel_id: null })
-    .eq('id', businessId);
+  // #266 R11: Atomic dedicated→shared transition
+  const { data: transition, error: transError } = await service.rpc('transition_to_shared', {
+    p_business_id: businessId,
+  });
+  if (transError || !transition || !(transition as any).transitioned) {
+    const reason = (transition as any)?.reason || transError?.message || 'unknown';
+    return NextResponse.json({ error: `Cannot disconnect: ${reason}` }, { status: 409 });
+  }
 
   return NextResponse.json({ message: 'Disconnected' });
 }

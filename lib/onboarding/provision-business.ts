@@ -80,6 +80,20 @@ export async function provisionPendingBusiness(service: SupabaseClient, input: P
     throw new OnboardingProvisionError('Failed to create business. Please try again.');
   }
 
+  // #266 R7: Allocate shared channel
+  if (input.countryCode) {
+    const { data: allocation, error: allocError } = await service.rpc('allocate_shared_channel', {
+      p_business_id: business.id,
+      p_country_code: input.countryCode,
+    });
+    if (allocError || !allocation || !(allocation as any).allocated) {
+      // Allocation failed — business remains pending without channel
+      // The CHECK constraint will prevent activation until allocated
+      // Log but don't throw — the business can be retry-allocated later
+      console.warn(`[ONBOARDING] Shared channel allocation failed for ${business.id}: ${allocError?.message || (allocation as any)?.reason || 'unknown'}`);
+    }
+  }
+
   const templateGreeting = template?.default_greeting
     ? String(template.default_greeting).replace(/\{\{name\}\}/g, input.name)
     : undefined;
