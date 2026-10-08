@@ -53,8 +53,11 @@ const PHONE = '+2349099990266';
 
 describe.skipIf(!canRun)('#266 Shared-Number Tenant Isolation DB Tests (Migration 430)', () => {
   beforeAll(() => {
-    // Create test owner profile
+    // Create test owner with auth.users FK (required in full CI schema)
     psqlMayFail(`
+      ALTER TABLE auth.users DISABLE TRIGGER ALL;
+      INSERT INTO auth.users (id, email) VALUES ('${OWNER_ID}', 'test266@test.local') ON CONFLICT DO NOTHING;
+      ALTER TABLE auth.users ENABLE TRIGGER ALL;
       INSERT INTO profiles (id, first_name, last_name, role)
       VALUES ('${OWNER_ID}', 'Test266', 'Owner', 'restaurant_owner')
       ON CONFLICT (id) DO NOTHING;
@@ -71,8 +74,8 @@ describe.skipIf(!canRun)('#266 Shared-Number Tenant Isolation DB Tests (Migratio
       RETURNING id;
     `);
     const bizId = psql(`
-      INSERT INTO businesses (owner_id, name, slug, bot_code, category, country_code, wa_method, status, phone)
-      VALUES ('${OWNER_ID}', 'T266-Alloc-US', 'test266-alloc-us', 'T266ALLOCUS', 'salon', 'US', 'shared', 'pending', '${PHONE}')
+      INSERT INTO businesses (owner_id, name, slug, bot_code, category, country_code, wa_method, status, phone, address, city)
+      VALUES ('${OWNER_ID}', 'T266-Alloc-US', 'test266-alloc-us', 'T266ALLOCUS', 'salon', 'US', 'shared', 'pending', '${PHONE}', '1 Test', 'Test')
       RETURNING id;
     `);
 
@@ -95,8 +98,8 @@ describe.skipIf(!canRun)('#266 Shared-Number Tenant Isolation DB Tests (Migratio
       RETURNING id;
     `);
     const bizId = psql(`
-      INSERT INTO businesses (owner_id, name, slug, bot_code, category, country_code, wa_method, status, phone)
-      VALUES ('${OWNER_ID}', 'T266-NG', 'test266-ng', 'T266NG', 'salon', 'NG', 'shared', 'pending', '${PHONE}')
+      INSERT INTO businesses (owner_id, name, slug, bot_code, category, country_code, wa_method, status, phone, address, city)
+      VALUES ('${OWNER_ID}', 'T266-NG', 'test266-ng', 'T266NG', 'salon', 'NG', 'shared', 'pending', '${PHONE}', '1 Test', 'Test')
       RETURNING id;
     `);
 
@@ -121,13 +124,13 @@ describe.skipIf(!canRun)('#266 Shared-Number Tenant Isolation DB Tests (Migratio
       RETURNING id;
     `);
     const biz1 = psql(`
-      INSERT INTO businesses (owner_id, name, slug, bot_code, category, country_code, wa_method, status, phone, assigned_channel_id)
-      VALUES ('${OWNER_ID}', 'T266-Fill', 'test266-fill', 'T266FILL', 'salon', 'US', 'shared', 'active', '${PHONE}', '${chId}')
+      INSERT INTO businesses (owner_id, name, slug, bot_code, category, country_code, wa_method, status, phone, assigned_channel_id, address, city)
+      VALUES ('${OWNER_ID}', 'T266-Fill', 'test266-fill', 'T266FILL', 'salon', 'US', 'shared', 'active', '${PHONE}', '${chId}', '1 Test', 'Test')
       RETURNING id;
     `);
     const biz2 = psql(`
-      INSERT INTO businesses (owner_id, name, slug, bot_code, category, country_code, wa_method, status, phone)
-      VALUES ('${OWNER_ID}', 'T266-Over', 'test266-over', 'T266OVER', 'salon', 'US', 'shared', 'pending', '${PHONE}')
+      INSERT INTO businesses (owner_id, name, slug, bot_code, category, country_code, wa_method, status, phone, address, city)
+      VALUES ('${OWNER_ID}', 'T266-Over', 'test266-over', 'T266OVER', 'salon', 'US', 'shared', 'pending', '${PHONE}', '1 Test', 'Test')
       RETURNING id;
     `);
 
@@ -149,13 +152,13 @@ describe.skipIf(!canRun)('#266 Shared-Number Tenant Isolation DB Tests (Migratio
       RETURNING id;
     `);
     const biz1 = psql(`
-      INSERT INTO businesses (owner_id, name, slug, bot_code, category, country_code, wa_method, status, phone)
-      VALUES ('${OWNER_ID}', 'T266-Race1', 'test266-race1', 'T266RACE1', 'salon', 'US', 'shared', 'pending', '${PHONE}')
+      INSERT INTO businesses (owner_id, name, slug, bot_code, category, country_code, wa_method, status, phone, address, city)
+      VALUES ('${OWNER_ID}', 'T266-Race1', 'test266-race1', 'T266RACE1', 'salon', 'US', 'shared', 'pending', '${PHONE}', '1 Test', 'Test')
       RETURNING id;
     `);
     const biz2 = psql(`
-      INSERT INTO businesses (owner_id, name, slug, bot_code, category, country_code, wa_method, status, phone)
-      VALUES ('${OWNER_ID}', 'T266-Race2', 'test266-race2', 'T266RACE2', 'salon', 'US', 'shared', 'pending', '${PHONE}')
+      INSERT INTO businesses (owner_id, name, slug, bot_code, category, country_code, wa_method, status, phone, address, city)
+      VALUES ('${OWNER_ID}', 'T266-Race2', 'test266-race2', 'T266RACE2', 'salon', 'US', 'shared', 'pending', '${PHONE}', '1 Test', 'Test')
       RETURNING id;
     `);
 
@@ -185,8 +188,8 @@ describe.skipIf(!canRun)('#266 Shared-Number Tenant Isolation DB Tests (Migratio
       RETURNING id;
     `);
     const bizId = psql(`
-      INSERT INTO businesses (owner_id, name, slug, bot_code, category, country_code, wa_method, status, phone, assigned_channel_id)
-      VALUES ('${OWNER_ID}', 'T266-Idemp', 'test266-idemp', 'T266IDEMP', 'salon', 'US', 'shared', 'active', '${PHONE}', '${chId}')
+      INSERT INTO businesses (owner_id, name, slug, bot_code, category, country_code, wa_method, status, phone, assigned_channel_id, address, city)
+      VALUES ('${OWNER_ID}', 'T266-Idemp', 'test266-idemp', 'T266IDEMP', 'salon', 'US', 'shared', 'active', '${PHONE}', '${chId}', '1 Test', 'Test')
       RETURNING id;
     `);
 
@@ -201,16 +204,16 @@ describe.skipIf(!canRun)('#266 Shared-Number Tenant Isolation DB Tests (Migratio
 
   it('6. CHECK rejects active + shared + unassigned', () => {
     const err = psqlMayFail(`
-      INSERT INTO businesses (owner_id, name, slug, bot_code, category, country_code, wa_method, status, phone)
-      VALUES ('${OWNER_ID}', 'T266-CHK', 'test266-chk', 'T266CHK', 'salon', 'US', 'shared', 'active', '${PHONE}');
+      INSERT INTO businesses (owner_id, name, slug, bot_code, category, country_code, wa_method, status, phone, address, city)
+      VALUES ('${OWNER_ID}', 'T266-CHK', 'test266-chk', 'T266CHK', 'salon', 'US', 'shared', 'active', '${PHONE}', '1 Test', 'Test');
     `);
     expect(err).toContain('chk_shared_requires_channel');
   });
 
   it('7. CHECK allows pending + shared + unassigned', () => {
     const bizId = psql(`
-      INSERT INTO businesses (owner_id, name, slug, bot_code, category, country_code, wa_method, status, phone)
-      VALUES ('${OWNER_ID}', 'T266-Pend', 'test266-pend', 'T266PEND', 'salon', 'US', 'shared', 'pending', '${PHONE}')
+      INSERT INTO businesses (owner_id, name, slug, bot_code, category, country_code, wa_method, status, phone, address, city)
+      VALUES ('${OWNER_ID}', 'T266-Pend', 'test266-pend', 'T266PEND', 'salon', 'US', 'shared', 'pending', '${PHONE}', '1 Test', 'Test')
       RETURNING id;
     `);
     expect(bizId).toBeTruthy();
@@ -227,8 +230,8 @@ describe.skipIf(!canRun)('#266 Shared-Number Tenant Isolation DB Tests (Migratio
       RETURNING id;
     `);
     const bizId = psql(`
-      INSERT INTO businesses (owner_id, name, slug, bot_code, category, country_code, wa_method, status, phone, assigned_channel_id, whatsapp_channel_id)
-      VALUES ('${OWNER_ID}', 'T266-Ded', 'test266-ded', 'T266DED', 'salon', 'NG', 'transfer', 'active', '${PHONE}', '${chId}', '${chId}')
+      INSERT INTO businesses (owner_id, name, slug, bot_code, category, country_code, wa_method, status, phone, assigned_channel_id, whatsapp_channel_id, address, city)
+      VALUES ('${OWNER_ID}', 'T266-Ded', 'test266-ded', 'T266DED', 'salon', 'NG', 'transfer', 'active', '${PHONE}', '${chId}', '${chId}', '1 Test', 'Test')
       RETURNING id;
     `);
     // Update channel to reference business
@@ -285,13 +288,13 @@ describe.skipIf(!canRun)('#266 Shared-Number Tenant Isolation DB Tests (Migratio
 
   it('15. get_bot_context(NULL) with multiple sessions → ambiguous', () => {
     const biz1 = psql(`
-      INSERT INTO businesses (owner_id, name, slug, bot_code, category, country_code, wa_method, status, phone)
-      VALUES ('${OWNER_ID}', 'T266-Amb1', 'test266-amb1', 'T266AMB1', 'salon', 'US', 'shared', 'pending', '${PHONE}')
+      INSERT INTO businesses (owner_id, name, slug, bot_code, category, country_code, wa_method, status, phone, address, city)
+      VALUES ('${OWNER_ID}', 'T266-Amb1', 'test266-amb1', 'T266AMB1', 'salon', 'US', 'shared', 'pending', '${PHONE}', '1 Test', 'Test')
       RETURNING id;
     `);
     const biz2 = psql(`
-      INSERT INTO businesses (owner_id, name, slug, bot_code, category, country_code, wa_method, status, phone)
-      VALUES ('${OWNER_ID}', 'T266-Amb2', 'test266-amb2', 'T266AMB2', 'salon', 'US', 'shared', 'pending', '${PHONE}')
+      INSERT INTO businesses (owner_id, name, slug, bot_code, category, country_code, wa_method, status, phone, address, city)
+      VALUES ('${OWNER_ID}', 'T266-Amb2', 'test266-amb2', 'T266AMB2', 'salon', 'US', 'shared', 'pending', '${PHONE}', '1 Test', 'Test')
       RETURNING id;
     `);
     // Create two active sessions with different businesses
@@ -313,8 +316,8 @@ describe.skipIf(!canRun)('#266 Shared-Number Tenant Isolation DB Tests (Migratio
 
   it('16. get_bot_context(NULL) with single session → not ambiguous', () => {
     const bizId = psql(`
-      INSERT INTO businesses (owner_id, name, slug, bot_code, category, country_code, wa_method, status, phone)
-      VALUES ('${OWNER_ID}', 'T266-Single', 'test266-single', 'T266SINGLE', 'salon', 'US', 'shared', 'pending', '${PHONE}')
+      INSERT INTO businesses (owner_id, name, slug, bot_code, category, country_code, wa_method, status, phone, address, city)
+      VALUES ('${OWNER_ID}', 'T266-Single', 'test266-single', 'T266SINGLE', 'salon', 'US', 'shared', 'pending', '${PHONE}', '1 Test', 'Test')
       RETURNING id;
     `);
     psql(`
@@ -339,10 +342,10 @@ describe.skipIf(!canRun)('#266 Shared-Number Tenant Isolation DB Tests (Migratio
     const ch2 = psql(`INSERT INTO whatsapp_channels (phone_number, phone_number_id, country_code, channel_type, is_active, provider) VALUES ('test-266-r2', 'pnid-266-r2', 'US', 'shared', true, 'meta_cloud') RETURNING id;`);
 
     // Fill ch2 to capacity
-    const filler = psql(`INSERT INTO businesses (owner_id, name, slug, bot_code, category, country_code, wa_method, status, phone, assigned_channel_id) VALUES ('${OWNER_ID}', 'T266-Filler', 'test266-filler', 'T266FILLER', 'salon', 'US', 'shared', 'active', '${PHONE}', '${ch2}') RETURNING id;`);
+    const filler = psql(`INSERT INTO businesses (owner_id, name, slug, bot_code, category, country_code, wa_method, status, phone, assigned_channel_id, address, city) VALUES ('${OWNER_ID}', 'T266-Filler', 'test266-filler', 'T266FILLER', 'salon', 'US', 'shared', 'active', '${PHONE}', '${ch2}', '1 Test', 'Test') RETURNING id;`);
 
     // Business on ch1
-    const bizId = psql(`INSERT INTO businesses (owner_id, name, slug, bot_code, category, country_code, wa_method, status, phone, assigned_channel_id) VALUES ('${OWNER_ID}', 'T266-Reassign', 'test266-reassign', 'T266REASSIGN', 'salon', 'US', 'shared', 'active', '${PHONE}', '${ch1}') RETURNING id;`);
+    const bizId = psql(`INSERT INTO businesses (owner_id, name, slug, bot_code, category, country_code, wa_method, status, phone, assigned_channel_id, address, city) VALUES ('${OWNER_ID}', 'T266-Reassign', 'test266-reassign', 'T266REASSIGN', 'salon', 'US', 'shared', 'active', '${PHONE}', '${ch1}', '1 Test', 'Test') RETURNING id;`);
 
     // Try reassign to full ch2
     const result = psql(`SELECT reassign_shared_channel('${bizId}'::uuid, '${ch2}'::uuid);`);
@@ -366,7 +369,7 @@ describe.skipIf(!canRun)('#266 Shared-Number Tenant Isolation DB Tests (Migratio
     // Determine which has lower UUID (deterministic ORDER BY id)
     const firstCh = ch1 < ch2 ? ch1 : ch2;
 
-    const bizId = psql(`INSERT INTO businesses (owner_id, name, slug, bot_code, category, country_code, wa_method, status, phone) VALUES ('${OWNER_ID}', 'T266-BF-US', 'test266-bf-us', 'T266BFUS', 'salon', 'US', 'shared', 'pending', '${PHONE}') RETURNING id;`);
+    const bizId = psql(`INSERT INTO businesses (owner_id, name, slug, bot_code, category, country_code, wa_method, status, phone, address, city) VALUES ('${OWNER_ID}', 'T266-BF-US', 'test266-bf-us', 'T266BFUS', 'salon', 'US', 'shared', 'pending', '${PHONE}', '1 Test', 'Test') RETURNING id;`);
 
     // Simulate backfill (same SQL pattern as M430 step 6 but for single business)
     psql(`SELECT allocate_shared_channel('${bizId}'::uuid, 'US'::text);`);
@@ -380,7 +383,7 @@ describe.skipIf(!canRun)('#266 Shared-Number Tenant Isolation DB Tests (Migratio
   it('19. backfill: cross-country grandfathering (migration-only pattern)', () => {
     // Create US-only shared channel + NG business (no NG channel)
     const chUS = psql(`INSERT INTO whatsapp_channels (phone_number, phone_number_id, country_code, channel_type, is_active, provider) VALUES ('test-bf-gf', 'pnid-bf-gf', 'US', 'shared', true, 'meta_cloud') RETURNING id;`);
-    const bizNG = psql(`INSERT INTO businesses (owner_id, name, slug, bot_code, category, country_code, wa_method, status, phone) VALUES ('${OWNER_ID}', 'T266-BF-NG', 'test266-bf-ng', 'T266BFNG', 'salon', 'NG', 'shared', 'pending', '${PHONE}') RETURNING id;`);
+    const bizNG = psql(`INSERT INTO businesses (owner_id, name, slug, bot_code, category, country_code, wa_method, status, phone, address, city) VALUES ('${OWNER_ID}', 'T266-BF-NG', 'test266-bf-ng', 'T266BFNG', 'salon', 'NG', 'shared', 'pending', '${PHONE}', '1 Test', 'Test') RETURNING id;`);
 
     // Migration backfill uses cross-country fallback (ORDER BY country match THEN id)
     // Simulating the M430 backfill SQL pattern:
@@ -390,7 +393,7 @@ describe.skipIf(!canRun)('#266 Shared-Number Tenant Isolation DB Tests (Migratio
     expect(assigned).toBe(chUS); // Grandfathered to US channel
 
     // But allocate_shared_channel (for NEW businesses) refuses cross-country
-    const biz2 = psql(`INSERT INTO businesses (owner_id, name, slug, bot_code, category, country_code, wa_method, status, phone) VALUES ('${OWNER_ID}', 'T266-BF-NG2', 'test266-bf-ng2', 'T266BFNG2', 'salon', 'NG', 'shared', 'pending', '${PHONE}') RETURNING id;`);
+    const biz2 = psql(`INSERT INTO businesses (owner_id, name, slug, bot_code, category, country_code, wa_method, status, phone, address, city) VALUES ('${OWNER_ID}', 'T266-BF-NG2', 'test266-bf-ng2', 'T266BFNG2', 'salon', 'NG', 'shared', 'pending', '${PHONE}', '1 Test', 'Test') RETURNING id;`);
     const allocResult = psql(`SELECT allocate_shared_channel('${biz2}'::uuid, 'NG'::text);`);
     expect(allocResult).toContain('"allocated": false');
     expect(allocResult).toContain('no_shared_channel_for_country');
@@ -409,7 +412,7 @@ describe.skipIf(!canRun)('#266 Shared-Number Tenant Isolation DB Tests (Migratio
     // Create 3 businesses — first 2 fit in ch1, third spills to ch2
     const ids: string[] = [];
     for (let i = 1; i <= 3; i++) {
-      const id = psql(`INSERT INTO businesses (owner_id, name, slug, bot_code, category, country_code, wa_method, status, phone) VALUES ('${OWNER_ID}', 'T266-Spill-${i}', 'test266-spill-${i}', 'T266SPILL${i}', 'salon', 'US', 'shared', 'pending', '${PHONE}') RETURNING id;`);
+      const id = psql(`INSERT INTO businesses (owner_id, name, slug, bot_code, category, country_code, wa_method, status, phone, address, city) VALUES ('${OWNER_ID}', 'T266-Spill-${i}', 'test266-spill-${i}', 'T266SPILL${i}', 'salon', 'US', 'shared', 'pending', '${PHONE}', '1 Test', 'Test') RETURNING id;`);
       psql(`SELECT allocate_shared_channel('${id}'::uuid, 'US'::text);`);
       ids.push(id);
     }
@@ -438,15 +441,15 @@ describe.skipIf(!canRun)('#266 Shared-Number Tenant Isolation DB Tests (Migratio
     const chUS = psql(`INSERT INTO whatsapp_channels (phone_number, phone_number_id, country_code, channel_type, is_active, provider) VALUES ('test-gfcap', 'pnid-gfcap', 'US', 'shared', true, 'meta_cloud') RETURNING id;`);
 
     // Grandfather an NG business (simulating migration backfill)
-    const gfBiz = psql(`INSERT INTO businesses (owner_id, name, slug, bot_code, category, country_code, wa_method, status, phone, assigned_channel_id) VALUES ('${OWNER_ID}', 'T266-GFCap', 'test266-gfcap', 'T266GFCAP', 'salon', 'NG', 'shared', 'pending', '${PHONE}', '${chUS}') RETURNING id;`);
+    const gfBiz = psql(`INSERT INTO businesses (owner_id, name, slug, bot_code, category, country_code, wa_method, status, phone, assigned_channel_id, address, city) VALUES ('${OWNER_ID}', 'T266-GFCap', 'test266-gfcap', 'T266GFCAP', 'salon', 'NG', 'shared', 'pending', '${PHONE}', '${chUS}', '1 Test', 'Test') RETURNING id;`);
 
     // Now allocate a US business — should succeed (1 of 2)
-    const biz1 = psql(`INSERT INTO businesses (owner_id, name, slug, bot_code, category, country_code, wa_method, status, phone) VALUES ('${OWNER_ID}', 'T266-GFC1', 'test266-gfc1', 'T266GFC1', 'salon', 'US', 'shared', 'pending', '${PHONE}') RETURNING id;`);
+    const biz1 = psql(`INSERT INTO businesses (owner_id, name, slug, bot_code, category, country_code, wa_method, status, phone, address, city) VALUES ('${OWNER_ID}', 'T266-GFC1', 'test266-gfc1', 'T266GFC1', 'salon', 'US', 'shared', 'pending', '${PHONE}', '1 Test', 'Test') RETURNING id;`);
     const r1 = psql(`SELECT allocate_shared_channel('${biz1}'::uuid, 'US'::text);`);
     expect(r1).toContain('"allocated": true');
 
     // Third business should fail — capacity full (grandfathered + new = 2)
-    const biz2 = psql(`INSERT INTO businesses (owner_id, name, slug, bot_code, category, country_code, wa_method, status, phone) VALUES ('${OWNER_ID}', 'T266-GFC2', 'test266-gfc2', 'T266GFC2', 'salon', 'US', 'shared', 'pending', '${PHONE}') RETURNING id;`);
+    const biz2 = psql(`INSERT INTO businesses (owner_id, name, slug, bot_code, category, country_code, wa_method, status, phone, address, city) VALUES ('${OWNER_ID}', 'T266-GFC2', 'test266-gfc2', 'T266GFC2', 'salon', 'US', 'shared', 'pending', '${PHONE}', '1 Test', 'Test') RETURNING id;`);
     const r2 = psql(`SELECT allocate_shared_channel('${biz2}'::uuid, 'US'::text);`);
     expect(r2).toContain('"allocated": false');
 
@@ -456,7 +459,7 @@ describe.skipIf(!canRun)('#266 Shared-Number Tenant Isolation DB Tests (Migratio
 
   it('22. migration abort: active shared without channel is rejected by CHECK', () => {
     // The CHECK constraint prevents active+shared+unassigned
-    const err = psqlMayFail(`INSERT INTO businesses (owner_id, name, slug, bot_code, category, country_code, wa_method, status, phone) VALUES ('${OWNER_ID}', 'T266-Abort', 'test266-abort', 'T266ABORT', 'salon', 'US', 'shared', 'active', '${PHONE}');`);
+    const err = psqlMayFail(`INSERT INTO businesses (owner_id, name, slug, bot_code, category, country_code, wa_method, status, phone, address, city) VALUES ('${OWNER_ID}', 'T266-Abort', 'test266-abort', 'T266ABORT', 'salon', 'US', 'shared', 'active', '${PHONE}', '1 Test', 'Test');`);
     expect(err).toContain('chk_shared_requires_channel');
   });
 });
