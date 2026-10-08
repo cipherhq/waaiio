@@ -344,7 +344,7 @@ describe('E1 opt-out multi-page SQL predicate proof (real PG)', () => {
       ORDER BY phone ASC, id ASC
       LIMIT 500 OFFSET 1000;
     `);
-    const page3Count = page3.split('\\n').filter(Boolean).length;
+    const page3Count = page3.split('\n').filter(Boolean).length;
     expect(page3Count).toBe(201);
     expect(page1Count + page2Count + page3Count).toBe(1201);
   });
