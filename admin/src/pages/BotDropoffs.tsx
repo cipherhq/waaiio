@@ -34,6 +34,7 @@ export default function BotDropoffs() {
   const [dropoffs, setDropoffs] = useState<DropoffRow[]>([]);
   const [summary, setSummary] = useState<DropoffSummary[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [filterReason, setFilterReason] = useState<string>('all');
   const [filterFlow, setFilterFlow] = useState<string>('all');
   const [flowTypes, setFlowTypes] = useState<string[]>([]);
@@ -44,45 +45,45 @@ export default function BotDropoffs() {
 
   async function loadData() {
     setLoading(true);
+    setLoadError(null);
     try {
-      // Load summary counts
-      const { data: allDropoffs } = await adminDb
-        .from('flow_dropoffs')
-        .select('reason')
-        .gte('created_at', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString());
-
-      if (allDropoffs) {
-        const counts = new Map<string, number>();
-        for (const d of allDropoffs) {
-          counts.set(d.reason, (counts.get(d.reason) || 0) + 1);
+      // Fetch all seven-day summary rows in bounded pages. Never compute
+      // dashboard totals from the default PostgREST 1,000-row window.
+      const counts = new Map<string, number>();
+      const types = new Set<string>();
+      const cutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+      const batchSize = 500;
+      for (let offset = 0; ; offset += batchSize) {
+        const { data, error } = await adminDb.from('flow_dropoffs')
+          .select('reason, flow_type')
+          .gte('created_at', cutoff)
+          .order('created_at', { ascending: false })
+          .order('id', { ascending: false })
+          .range(offset, offset + batchSize - 1);
+        if (error || !data) throw new Error(error?.message || 'Dropoff summary unavailable');
+        for (const item of data) {
+          counts.set(item.reason, (counts.get(item.reason) || 0) + 1);
+          if (item.flow_type) types.add(item.flow_type);
         }
-        setSummary(Array.from(counts.entries()).map(([reason, count]) => ({ reason, count })).sort((a, b) => b.count - a.count));
+        if (data.length < batchSize) break;
       }
 
-      // Load recent dropoffs with filters
-      let query = adminDb
-        .from('flow_dropoffs')
+      let query = adminDb.from('flow_dropoffs')
         .select('id, business_id, flow_type, step_id, reason, capability, created_at')
         .order('created_at', { ascending: false })
         .limit(100);
-
       if (filterReason !== 'all') query = query.eq('reason', filterReason);
       if (filterFlow !== 'all') query = query.eq('flow_type', filterFlow);
-
-      const { data } = await query;
-      setDropoffs(data || []);
-
-      // Get distinct flow types
-      const { data: flows } = await adminDb
-        .from('flow_dropoffs')
-        .select('flow_type')
-        .not('flow_type', 'is', null)
-        .limit(100);
-      if (flows) {
-        const unique = [...new Set(flows.map(f => f.flow_type).filter(Boolean))] as string[];
-        setFlowTypes(unique.sort());
-      }
+      const { data: recent, error: recentError } = await query;
+      if (recentError || !recent) throw new Error(recentError?.message || 'Recent dropoffs unavailable');
+      setSummary(Array.from(counts, ([reason, count]) => ({ reason, count })).sort((a, b) => b.count - a.count));
+      setFlowTypes([...types].sort());
+      setDropoffs(recent);
     } catch (err) {
+      setSummary([]);
+      setDropoffs([]);
+      setFlowTypes([]);
+      setLoadError(err instanceof Error ? err.message : 'Could not load dropoff analytics');
       console.error('[BotDropoffs] Load error:', err);
     } finally {
       setLoading(false);
@@ -103,6 +104,7 @@ export default function BotDropoffs() {
         </p>
       </div>
 
+      {loadError && <div role="alert" className="rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-800">Unable to load complete analytics: {loadError}</div>}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <SummaryCard title="Total Exits" value={totalDropoffs} icon={<TrendingDown className="h-5 w-5" />} />
         <SummaryCard title="Completed" value={completedCount} icon={<CheckCircle className="h-5 w-5 text-green-600" />} />
