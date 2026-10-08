@@ -202,9 +202,9 @@ describe('P0: Real PostgreSQL authorization tests', () => {
         INSERT INTO public.businesses (id, owner_id, name, slug, status, address, city, neighborhood, phone,
           google_calendar_token, payment_channels, metadata, country_code, wa_method)
         VALUES
-          ('${BIZ_A}', '${OWNER_UUID}', 'P0 Active Biz', 'p0-active-biz', 'active', '1 Test St', 'Lagos', 'VI', '+0', 'secret-token-123', '{"stripe": true}', '{"internal": true}', 'NG', 'dedicated'),
-          ('${BIZ_B}', '${OTHER_UUID}', 'P0 Pending Biz', 'p0-pending-biz', 'pending', '2 Test St', 'Lagos', 'VI', '+0', 'secret-token-456', '{}', '{}', 'NG', 'dedicated'),
-          ('${BIZ_C}', '${OTHER_UUID}', 'P0 Suspended Biz', 'p0-suspended-biz', 'suspended', '3 Test St', 'Lagos', 'VI', '+0', 'secret-token-789', '{}', '{}', 'NG', 'dedicated')
+          ('${BIZ_A}', '${OWNER_UUID}', 'P0 Active Biz', 'p0-active-biz', 'active', '1 Test St', 'Lagos', 'VI', '+0', 'secret-token-123', '{"stripe": true}', '{"internal": true}', 'NG', 'transfer'),
+          ('${BIZ_B}', '${OTHER_UUID}', 'P0 Pending Biz', 'p0-pending-biz', 'pending', '2 Test St', 'Lagos', 'VI', '+0', 'secret-token-456', '{}', '{}', 'NG', 'transfer'),
+          ('${BIZ_C}', '${OTHER_UUID}', 'P0 Suspended Biz', 'p0-suspended-biz', 'suspended', '3 Test St', 'Lagos', 'VI', '+0', 'secret-token-789', '{}', '{}', 'NG', 'transfer')
         ON CONFLICT (slug) DO NOTHING;
       `);
     } else {
@@ -212,9 +212,9 @@ describe('P0: Real PostgreSQL authorization tests', () => {
       runSQL(`
         INSERT INTO public.businesses (id, owner_id, name, slug, status, google_calendar_token, payment_channels, metadata, wa_method)
         VALUES
-          ('${BIZ_A}', '${OWNER_UUID}', 'P0 Active Biz', 'p0-active-biz', 'active', 'secret-token-123', '{"stripe": true}', '{"internal": true}', 'dedicated'),
-          ('${BIZ_B}', '${OTHER_UUID}', 'P0 Pending Biz', 'p0-pending-biz', 'pending', 'secret-token-456', null, null, 'dedicated'),
-          ('${BIZ_C}', '${OTHER_UUID}', 'P0 Suspended Biz', 'p0-suspended-biz', 'suspended', 'secret-token-789', null, null, 'dedicated')
+          ('${BIZ_A}', '${OWNER_UUID}', 'P0 Active Biz', 'p0-active-biz', 'active', 'secret-token-123', '{"stripe": true}', '{"internal": true}', 'transfer'),
+          ('${BIZ_B}', '${OTHER_UUID}', 'P0 Pending Biz', 'p0-pending-biz', 'pending', 'secret-token-456', null, null, 'transfer'),
+          ('${BIZ_C}', '${OTHER_UUID}', 'P0 Suspended Biz', 'p0-suspended-biz', 'suspended', 'secret-token-789', null, null, 'transfer')
         ON CONFLICT (slug) DO NOTHING;
       `);
     }
@@ -223,7 +223,7 @@ describe('P0: Real PostgreSQL authorization tests', () => {
       INSERT INTO public.whatsapp_channels (id, business_id, phone_number, display_name, channel_type, is_active, meta_access_token, waba_id, phone_number_id)
       VALUES
         ('${CH_SHARED}', '${BIZ_A}', '+1234567890', 'P0 Test Channel', 'shared', true, 'META_TOKEN_SECRET', 'WABA_123', 'PHONE_456'),
-        ('${CH_DEDICATED}', '${BIZ_A}', '+0987654321', 'P0 Dedicated', 'dedicated', true, 'META_TOKEN_2', 'WABA_789', 'PHONE_012')
+        ('${CH_DEDICATED}', '${BIZ_A}', '+0987654321', 'P0 Dedicated', 'transfer', true, 'META_TOKEN_2', 'WABA_789', 'PHONE_012')
       ON CONFLICT DO NOTHING;
     `);
 

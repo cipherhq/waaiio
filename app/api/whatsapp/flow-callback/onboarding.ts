@@ -158,10 +158,16 @@ export async function handleOnboardingComplete(
     if (allocError || !allocation || !(allocation as any).allocated) {
       logger.warn('[WA-ONBOARD] Shared channel allocation failed for business:', biz.id, allocError?.message || (allocation as any)?.reason || 'unknown');
     } else {
-      // Allocation succeeded — activate the business and verify
-      const { error: activateError } = await supabase.from('businesses').update({ status: 'active' }).eq('id', biz.id);
-      if (activateError) {
-        logger.error('[WA-ONBOARD] Business activation UPDATE failed after allocation:', biz.id, activateError.message);
+      // Allocation succeeded — activate the business and verify the row
+      const { data: activated, error: activateError } = await supabase
+        .from('businesses')
+        .update({ status: 'active' })
+        .eq('id', biz.id)
+        .select('id, status, assigned_channel_id')
+        .single();
+      if (activateError || !activated || activated.status !== 'active' || !activated.assigned_channel_id) {
+        logger.error('[WA-ONBOARD] Business activation verification failed:', biz.id,
+          activateError?.message || `status=${activated?.status} assigned=${activated?.assigned_channel_id}`);
         // allocationSucceeded stays false — do not claim live
       } else {
         allocationSucceeded = true;
