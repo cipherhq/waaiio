@@ -541,8 +541,8 @@ describeDb('Real PostgreSQL: appointment booking authority', () => {
       ALTER TABLE auth.users ENABLE TRIGGER ALL;
       INSERT INTO profiles (id, first_name, last_name, email) VALUES ('${BIZ_OWNER}', 'Appt', 'Owner', 'appt-owner@test.local') ON CONFLICT DO NOTHING;
       INSERT INTO profiles (id, first_name, last_name, email) VALUES ('${CUST_ID}', 'Appt', 'Customer', 'appt-cust@test.local') ON CONFLICT DO NOTHING;
-      INSERT INTO businesses (id, name, slug, owner_id, address, city, neighborhood, phone, status, country_code)
-        VALUES ('${BIZ_ID}', 'Appt Test Biz', 'appt-test', '${BIZ_OWNER}', '1 Test', 'Lagos', 'VI', '+0000', 'active', 'NG') ON CONFLICT DO NOTHING;
+      INSERT INTO businesses (id, name, slug, owner_id, address, city, neighborhood, phone, status, country_code, wa_method)
+        VALUES ('${BIZ_ID}', 'Appt Test Biz', 'appt-test', '${BIZ_OWNER}', '1 Test', 'Lagos', 'VI', '+0000', 'active', 'NG', 'dedicated') ON CONFLICT DO NOTHING;
       INSERT INTO appointments (id, business_id, name, price, duration_minutes, buffer_minutes, max_capacity, is_active,
                                 available_days, available_from, available_to)
         VALUES ('${APPT_ID}', '${BIZ_ID}', 'Consultation', 3000, 45, 15, 1, true,

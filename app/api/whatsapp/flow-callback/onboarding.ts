@@ -151,15 +151,21 @@ export async function handleOnboardingComplete(
 
     // #266 R7/R10: Allocate shared channel then activate
     let allocationSucceeded = false;
-    const { data: allocation } = await supabase.rpc('allocate_shared_channel', {
+    const { data: allocation, error: allocError } = await supabase.rpc('allocate_shared_channel', {
       p_business_id: biz.id,
       p_country_code: country,
     });
-    if (allocation && (allocation as any).allocated) {
-      await supabase.from('businesses').update({ status: 'active' }).eq('id', biz.id);
-      allocationSucceeded = true;
+    if (allocError || !allocation || !(allocation as any).allocated) {
+      logger.warn('[WA-ONBOARD] Shared channel allocation failed for business:', biz.id, allocError?.message || (allocation as any)?.reason || 'unknown');
     } else {
-      logger.warn('[WA-ONBOARD] Shared channel allocation failed for business:', biz.id, (allocation as any)?.reason || 'unknown');
+      // Allocation succeeded — activate the business and verify
+      const { error: activateError } = await supabase.from('businesses').update({ status: 'active' }).eq('id', biz.id);
+      if (activateError) {
+        logger.error('[WA-ONBOARD] Business activation UPDATE failed after allocation:', biz.id, activateError.message);
+        // allocationSucceeded stays false — do not claim live
+      } else {
+        allocationSucceeded = true;
+      }
     }
 
     // 6. Create WhatsApp config with default greeting
@@ -201,24 +207,26 @@ export async function handleOnboardingComplete(
       // Non-critical — profile can be updated later
     }
 
-    // 9. Send welcome email (non-blocking)
-    try {
-      const { sendEmail } = await import('@/lib/email/client');
-      await sendEmail({
-        to: email,
-        subject: `Welcome to Waaiio — ${businessName} is live!`,
-        html: [
-          `<p>Hi ${firstName},</p>`,
-          `<p>Your business <strong>${businessName}</strong> is now set up on Waaiio!</p>`,
-          `<p><strong>Dashboard:</strong> <a href="https://www.waaiio.com/dashboard">waaiio.com/dashboard</a></p>`,
-          `<p><strong>Bot Code:</strong> ${biz.bot_code}</p>`,
-          `<p><strong>Login:</strong> ${email}</p>`,
-          `<p>Your 30-day free trial is active — explore all features!</p>`,
-          `<p style="color:#999;font-size:12px">Powered by Waaiio</p>`,
-        ].join(''),
-      });
-    } catch {
-      // Email failure is non-critical
+    // 9. Send welcome email (non-blocking) — only if business is actually live
+    if (allocationSucceeded) {
+      try {
+        const { sendEmail } = await import('@/lib/email/client');
+        await sendEmail({
+          to: email,
+          subject: `Welcome to Waaiio — ${businessName} is live!`,
+          html: [
+            `<p>Hi ${firstName},</p>`,
+            `<p>Your business <strong>${businessName}</strong> is now set up on Waaiio!</p>`,
+            `<p><strong>Dashboard:</strong> <a href="https://www.waaiio.com/dashboard">waaiio.com/dashboard</a></p>`,
+            `<p><strong>Bot Code:</strong> ${biz.bot_code}</p>`,
+            `<p><strong>Login:</strong> ${email}</p>`,
+            `<p>Your 30-day free trial is active — explore all features!</p>`,
+            `<p style="color:#999;font-size:12px">Powered by Waaiio</p>`,
+          ].join(''),
+        });
+      } catch {
+        // Email failure is non-critical
+      }
     }
 
     // 10. Send WhatsApp confirmation (non-blocking)
@@ -259,8 +267,8 @@ export async function handleOnboardingComplete(
           text: confirmationText,
         });
 
-        // Send upsell message after a short delay
-        setTimeout(async () => {
+        // Send upsell message after a short delay — only if business is live
+        if (allocationSucceeded) setTimeout(async () => {
           try {
             const cc = (country || 'NG') as CountryCode;
             const { getPricingTiers } = await import('@/lib/constants');
