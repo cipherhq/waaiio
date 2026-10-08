@@ -83,6 +83,7 @@ export default function OrdersPage() {
   const [savingTracking, setSavingTracking] = useState(false);
   const [editingTracking, setEditingTracking] = useState(false);
   const [notifyCustomer, setNotifyCustomer] = useState(true);
+  const [trackingError, setTrackingError] = useState<string | null>(null);
 
   // Balance request state
   const [requestingBalance, setRequestingBalance] = useState(false);
@@ -585,6 +586,7 @@ export default function OrdersPage() {
                     onClick={async () => {
                       if (!trackingCarrier.trim() && !trackingNumber.trim()) return;
                       setSavingTracking(true);
+                      setTrackingError(null);
                       try {
                         const res = await fetch(`/api/orders/${selectedOrder.id}/tracking`, {
                           method: 'PATCH',
@@ -610,9 +612,13 @@ export default function OrdersPage() {
                           setTrackingNumber('');
                           setEditingTracking(false);
                           setNotifyCustomer(true);
+                          setTrackingError(null);
+                        } else {
+                          const body = await res.json().catch(() => null);
+                          setTrackingError(body?.error || `Failed to save tracking (${res.status})`);
                         }
                       } catch {
-                        // ignore
+                        setTrackingError('Network error — check your connection and try again.');
                       }
                       setSavingTracking(false);
                     }}
@@ -621,6 +627,9 @@ export default function OrdersPage() {
                   >
                     {savingTracking ? 'Saving...' : editingTracking ? 'Update Tracking' : `Save & Notify ${labels.personLabel}`}
                   </button>
+                  {trackingError && (
+                    <p role="alert" className="text-sm text-red-600">{trackingError}</p>
+                  )}
                   {editingTracking && (
                     <button
                       onClick={() => {
@@ -628,6 +637,7 @@ export default function OrdersPage() {
                         setTrackingCarrier('');
                         setTrackingNumber('');
                         setNotifyCustomer(true);
+                        setTrackingError(null);
                       }}
                       className="w-full rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-500 hover:bg-gray-50"
                     >
@@ -768,7 +778,7 @@ export default function OrdersPage() {
                 <input type="checkbox" checked={selectedIds.has(order.id)} onChange={() => toggleSelect(order.id)} className="h-4 w-4 rounded border-gray-300" />
               </div>
               <button
-                onClick={() => { setSelectedOrder(order); setRefundDisabledReason(null); setEditingTracking(false); setNotifyCustomer(true); }}
+                onClick={() => { setSelectedOrder(order); setRefundDisabledReason(null); setEditingTracking(false); setNotifyCustomer(true); setTrackingError(null); }}
                 className="flex flex-1 items-center justify-between p-4 pl-0 text-left"
               >
               <div className="flex items-center gap-4 min-w-0">
