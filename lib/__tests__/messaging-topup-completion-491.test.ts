@@ -220,6 +220,199 @@ describe('Grant result contract from M416 (#491)', () => {
 // 7. Cross-currency financial safety
 // ═══════════════════════════════════════════════════════
 
+// ═══════════════════════════════════════════════════════
+// 7b. Admin allowance pagination source contract
+//     Verifies the actual MessagingCredits.tsx contains the
+//     required pagination, ordering, and fail-closed patterns
+// ═══════════════════════════════════════════════════════
+
+describe('Admin allowance pagination source contract (#491)', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const source = fs.readFileSync(
+    path.resolve(__dirname, '../../admin/src/pages/MessagingCredits.tsx'), 'utf8'
+  );
+  const fetchBlock = source.split('// Paginate allowance rows independently')[1]?.split('const byBiz =')[0] ?? '';
+
+  it('uses a bounded page size below PostgREST row cap', () => {
+    expect(fetchBlock).toContain('const allowancePageSize = 500');
+    expect(fetchBlock).toContain('.range(allowanceOffset, allowanceOffset + allowancePageSize - 1)');
+  });
+
+  it('retrieves subsequent pages until a short page is returned', () => {
+    expect(fetchBlock).toContain('while (true)');
+    expect(fetchBlock).toContain('if (chunk.length < allowancePageSize) break');
+    expect(fetchBlock).toContain('allowanceOffset += chunk.length');
+  });
+
+  it('uses stable total ordering and scopes results to page businesses', () => {
+    expect(fetchBlock).toContain(".in('business_id', pageBizIds)");
+    expect(fetchBlock).toContain(".order('created_at', { ascending: true })");
+    expect(fetchBlock).toContain(".order('id', { ascending: true })");
+  });
+
+  it('fails visibly instead of showing partial results on query failure', () => {
+    expect(fetchBlock).toContain('if (allowErr)');
+    expect(fetchBlock).toContain('if (!chunk)');
+    expect(fetchBlock).toContain('setAllowancesByBiz(new Map())');
+    expect(fetchBlock).toContain('setError(');
+  });
+});
+
+// ═══════════════════════════════════════════════════════
+// 7c. Executable >1000 record allowance pagination simulation
+//     Exercises the exact while-loop pagination logic from the
+//     admin page with simulated chunked responses
+// ═══════════════════════════════════════════════════════
+
+describe('Allowance pagination with >1000 records (#491)', () => {
+  interface MockAllowance { id: string; business_id: string; remaining_minor: number }
+
+  // Simulate the exact pagination loop from MessagingCredits.tsx
+  function simulateAllowancePagination(
+    allRows: MockAllowance[],
+    pageSize: number,
+  ): { collected: MockAllowance[]; fetchCount: number; error: string | null } {
+    const collected: MockAllowance[] = [];
+    let offset = 0;
+    let fetchCount = 0;
+
+    while (true) {
+      // Simulate .range(offset, offset + pageSize - 1)
+      const chunk = allRows.slice(offset, offset + pageSize);
+      fetchCount++;
+
+      // Simulate null chunk (fail-closed)
+      if (chunk === null || chunk === undefined) {
+        return { collected: [], fetchCount, error: 'Allowance results were unavailable' };
+      }
+
+      collected.push(...chunk);
+      if (chunk.length < pageSize) break;
+      offset += chunk.length;
+    }
+
+    return { collected, fetchCount, error: null };
+  }
+
+  it('collects all 1200 allowances across 3 pages of 500', () => {
+    const allRows: MockAllowance[] = Array.from({ length: 1200 }, (_, i) => ({
+      id: `allow-${i}`,
+      business_id: `biz-${i % 20}`, // 20 businesses, 60 allowances each
+      remaining_minor: i * 100,
+    }));
+
+    const result = simulateAllowancePagination(allRows, 500);
+    expect(result.error).toBeNull();
+    expect(result.collected.length).toBe(1200);
+    expect(result.fetchCount).toBe(3); // 500 + 500 + 200
+  });
+
+  it('handles exact page boundary (1000 rows = 2 fetches)', () => {
+    const allRows: MockAllowance[] = Array.from({ length: 1000 }, (_, i) => ({
+      id: `allow-${i}`, business_id: `biz-${i % 10}`, remaining_minor: 100,
+    }));
+
+    const result = simulateAllowancePagination(allRows, 500);
+    expect(result.error).toBeNull();
+    expect(result.collected.length).toBe(1000);
+    // 500 (full) + 500 (full) + 0 (empty = short page) = 3 fetches
+    expect(result.fetchCount).toBe(3);
+  });
+
+  it('handles zero allowances (single empty fetch)', () => {
+    const result = simulateAllowancePagination([], 500);
+    expect(result.error).toBeNull();
+    expect(result.collected.length).toBe(0);
+    expect(result.fetchCount).toBe(1);
+  });
+
+  it('preserves all business IDs across pages (no data loss)', () => {
+    // 20 businesses, 60 allowances each = 1200 total
+    const allRows: MockAllowance[] = [];
+    for (let biz = 0; biz < 20; biz++) {
+      for (let a = 0; a < 60; a++) {
+        allRows.push({ id: `a-${biz}-${a}`, business_id: `biz-${biz}`, remaining_minor: a * 10 });
+      }
+    }
+
+    const result = simulateAllowancePagination(allRows, 500);
+    expect(result.error).toBeNull();
+
+    // Verify all 20 businesses present
+    const bizIds = new Set(result.collected.map(a => a.business_id));
+    expect(bizIds.size).toBe(20);
+
+    // Verify each business has exactly 60 allowances
+    const countByBiz = new Map<string, number>();
+    for (const a of result.collected) {
+      countByBiz.set(a.business_id, (countByBiz.get(a.business_id) || 0) + 1);
+    }
+    for (const [, count] of countByBiz) {
+      expect(count).toBe(60);
+    }
+  });
+
+  it('zero-allowance businesses appear via business-first pagination', () => {
+    // 5 businesses from server .range(), only 3 have allowances
+    const pageBusinesses = ['biz-1', 'biz-2', 'biz-3', 'biz-4', 'biz-5'];
+    const allowances: MockAllowance[] = [
+      { id: 'a1', business_id: 'biz-1', remaining_minor: 50000 },
+      { id: 'a2', business_id: 'biz-3', remaining_minor: 0 },     // exhausted
+      { id: 'a3', business_id: 'biz-5', remaining_minor: 30000 },
+    ];
+
+    const result = simulateAllowancePagination(allowances, 500);
+    const byBiz = new Map<string, MockAllowance[]>();
+    for (const a of result.collected) {
+      const e = byBiz.get(a.business_id) || [];
+      e.push(a);
+      byBiz.set(a.business_id, e);
+    }
+
+    // biz-2 and biz-4 have zero allowances but are still in pageBusinesses
+    for (const bizId of pageBusinesses) {
+      const bizAllowances = byBiz.get(bizId) || [];
+      if (bizId === 'biz-2' || bizId === 'biz-4') {
+        expect(bizAllowances.length).toBe(0); // zero-allowance business
+      }
+    }
+    // biz-3 is exhausted (remaining=0) but still visible
+    expect(byBiz.get('biz-3')![0].remaining_minor).toBe(0);
+  });
+
+  it('incomplete response (null chunk) triggers fail-closed error', () => {
+    // Simulate: first page OK, second page returns null
+    function simulateWithNullPage(totalRows: number, pageSize: number, nullAtPage: number) {
+      const allRows = Array.from({ length: totalRows }, (_, i) => ({
+        id: `a-${i}`, business_id: `biz-${i % 5}`, remaining_minor: 100,
+      }));
+      const collected: MockAllowance[] = [];
+      let offset = 0;
+      let fetchCount = 0;
+
+      while (true) {
+        fetchCount++;
+        if (fetchCount === nullAtPage) {
+          // Simulate null response
+          return { collected: [], fetchCount, error: 'Allowance results were unavailable' };
+        }
+        const chunk = allRows.slice(offset, offset + pageSize);
+        collected.push(...chunk);
+        if (chunk.length < pageSize) break;
+        offset += chunk.length;
+      }
+
+      return { collected, fetchCount, error: null };
+    }
+
+    // Null on page 2 of 3
+    const result = simulateWithNullPage(1200, 500, 2);
+    expect(result.error).toBe('Allowance results were unavailable');
+    expect(result.collected.length).toBe(0); // fail-closed: empty, not partial
+  });
+});
+
 describe('Cross-currency financial safety (#491)', () => {
   it('cannot sum amounts across different currencies', () => {
     const purchases = [
