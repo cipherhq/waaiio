@@ -56,6 +56,7 @@ import LLMClassifications from './pages/LLMClassifications';
 import Alerts from './pages/Alerts';
 import AIUsage from './pages/AIUsage';
 import ConversationUsage from './pages/ConversationUsage';
+import MessagingCredits from './pages/MessagingCredits';
 import Surveys from './pages/Surveys';
 import AISetupLog from './pages/AISetupLog';
 import SystemHealth from './pages/SystemHealth';
@@ -137,6 +138,7 @@ export const router = createBrowserRouter([
       { path: 'ai-setup-log', element: <RoleGuard roles={ADMIN_PERMISSIONS['ai-setup-log']}><AISetupLog /></RoleGuard> },
       { path: 'ai-usage', element: <RoleGuard roles={ADMIN_PERMISSIONS['ai-usage']}><AIUsage /></RoleGuard> },
       { path: 'conversation-usage', element: <RoleGuard roles={ADMIN_PERMISSIONS['conversation-usage']}><ConversationUsage /></RoleGuard> },
+      { path: 'messaging-credits', element: <RoleGuard roles={ADMIN_PERMISSIONS['messaging-credits']}><MessagingCredits /></RoleGuard> },
       { path: 'platform-settings', element: <RoleGuard roles={ADMIN_PERMISSIONS['platform-settings']}><PlatformSettings /></RoleGuard> },
       { path: 'audit-log', element: <RoleGuard roles={ADMIN_PERMISSIONS['audit-log']}><AuditLog /></RoleGuard> },
       { path: 'system-health', element: <RoleGuard roles={ADMIN_PERMISSIONS['system-health']}><SystemHealth /></RoleGuard> },
