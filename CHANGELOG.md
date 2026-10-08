@@ -3,6 +3,24 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-10-08 — P0 SECURITY: business_members authorization containment (M432)
+
+### What changed
+- **Migration 432** (`supabase/migrations/432_p0_business_members_acl_containment.sql`): Revokes INSERT/UPDATE/DELETE on `business_members` from `authenticated` and `anon` roles. Drops overly permissive `business_members_manage` FOR ALL policy (created in M099). Replaces with `business_members_select` SELECT-only policy for authenticated users. Service role retains full access via existing `business_members_service` policy.
+- **Regression tests** (`lib/__tests__/p0-business-members-acl.test.ts`): 20 tests — static migration structure, vulnerability characterization, code-path authority audit (verifies all writes use service_role), downstream policy dependency audit, migration ordering.
+
+### Root cause
+Migration 099 created `business_members_manage` with `FOR ALL USING (... OR user_id = auth.uid())`. The USING clause doubles as WITH CHECK on INSERT, meaning any authenticated user could insert themselves as an active member of any business. Production default privileges (`authenticated=arwdDxtm`) granted full DML.
+
+### Downstream impact (if exploited)
+Cascades via `team_members_view_conversations` (chat_conversations SELECT), `team_members_view_messages` (chat_messages SELECT), `team_members_send_messages` (chat_messages INSERT outbound), plus 5 promo table SELECT policies.
+
+### Historical impact
+No exploitation detected — `business_members` has 0 rows in production.
+
+### What could break
+Nothing. All legitimate writes to `business_members` go through `createServiceClient()` in `/api/team` and `/api/team/accept`. No browser or SSR authenticated client writes to this table.
+
 ## 2026-10-08 — Editable shipping/tracking with audit trail (#247)
 
 ### What changed
