@@ -3025,6 +3025,15 @@ jobs:
           fi
           echo "✅ Migration 371 runtime financial integration tests complete — zero skips, zero failures."
 
+      - name: "M430 populated-database migration replay + atomic rollback (#266)"
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+        run: bash scripts/test-m430-populated-migration.sh
+
       - name: "Migration 430 shared-number tenant isolation tests (#266)"
         env:
           PGHOST: localhost
