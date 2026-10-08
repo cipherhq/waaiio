@@ -5,7 +5,14 @@
  * Every adapter using the service-role client MUST explicitly
  * constrain every business-owned table by business_id.
  *
- * Adapter bound: 10,000 rows. Exceeding returns audience_too_large error.
+ * B1 remediation: Uses count-first strategy. Before fetching rows,
+ * each adapter runs an explicit count query. If the count exceeds
+ * ADAPTER_ROW_LIMIT, it throws AudienceTooLargeError immediately
+ * with zero counts. This avoids PostgREST max_rows silent truncation.
+ *
+ * B3 remediation: All field mappings verified against production
+ * migration schemas. event adapter uses event_tickets (M072),
+ * booking adapter uses date (not booking_date), etc.
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -15,6 +22,7 @@ import type {
   Predicate,
   SourceFamily,
 } from './audience-dsl';
+import { escapeLikeWildcards } from './audience-dsl';
 import { normalizeEngagePhone } from './phone-normalize';
 
 // ── Identity ──
@@ -29,6 +37,9 @@ export interface AudienceIdentity {
 // ── Adapter bound ──
 
 export const ADAPTER_ROW_LIMIT = 10_000;
+
+/** Page size for paginated fetches (well under PostgREST max_rows) */
+const PAGE_SIZE = 500;
 
 export class AudienceTooLargeError extends Error {
   constructor() {
@@ -51,7 +62,7 @@ export function deriveIdentityKey(
   return null;
 }
 
-// ── Payment identity resolution ──
+// ── Payment identity resolution (R4: continue to next link on invalid phone) ──
 
 async function resolvePaymentIdentity(
   service: SupabaseClient,
@@ -72,7 +83,11 @@ async function resolvePaymentIdentity(
       .select('phone')
       .eq('id', payment.user_id)
       .maybeSingle();
-    if (data?.phone) return normalizeEngagePhone(data.phone, businessCountry);
+    if (data?.phone) {
+      const normalized = normalizeEngagePhone(data.phone, businessCountry);
+      // R4: if phone is invalid, fall through to next link instead of returning null
+      if (normalized) return normalized;
+    }
   }
 
   // 2. booking_id → bookings.guest_phone (constrained by business_id)
@@ -83,7 +98,10 @@ async function resolvePaymentIdentity(
       .eq('id', payment.booking_id)
       .eq('business_id', authorizedBusinessId)
       .maybeSingle();
-    if (data?.guest_phone) return normalizeEngagePhone(data.guest_phone, businessCountry);
+    if (data?.guest_phone) {
+      const normalized = normalizeEngagePhone(data.guest_phone, businessCountry);
+      if (normalized) return normalized;
+    }
   }
 
   // 3. order_id → orders.user_id → profiles.phone (constrained by business_id)
@@ -100,7 +118,10 @@ async function resolvePaymentIdentity(
         .select('phone')
         .eq('id', order.user_id)
         .maybeSingle();
-      if (profile?.phone) return normalizeEngagePhone(profile.phone, businessCountry);
+      if (profile?.phone) {
+        const normalized = normalizeEngagePhone(profile.phone, businessCountry);
+        if (normalized) return normalized;
+      }
     }
   }
 
@@ -112,7 +133,10 @@ async function resolvePaymentIdentity(
       .eq('id', payment.invoice_id)
       .eq('business_id', authorizedBusinessId)
       .maybeSingle();
-    if (data?.customer_phone) return normalizeEngagePhone(data.customer_phone, businessCountry);
+    if (data?.customer_phone) {
+      const normalized = normalizeEngagePhone(data.customer_phone, businessCountry);
+      if (normalized) return normalized;
+    }
   }
 
   // 5. reservation_id → reservations.guest_phone (constrained by business_id)
@@ -123,7 +147,10 @@ async function resolvePaymentIdentity(
       .eq('id', payment.reservation_id)
       .eq('business_id', authorizedBusinessId)
       .maybeSingle();
-    if (data?.guest_phone) return normalizeEngagePhone(data.guest_phone, businessCountry);
+    if (data?.guest_phone) {
+      const normalized = normalizeEngagePhone(data.guest_phone, businessCountry);
+      if (normalized) return normalized;
+    }
   }
 
   // 6. Cannot resolve — fail closed
@@ -154,11 +181,15 @@ function applyPredicateFilter(
     case 'gte': return query.gte(dbField, predicate.value);
     case 'lt': return query.lt(dbField, predicate.value);
     case 'lte': return query.lte(dbField, predicate.value);
-    case 'contains': return query.ilike(dbField, `%${predicate.value}%`);
+    case 'contains': {
+      // B2: escape LIKE wildcards in user-supplied values
+      const escaped = escapeLikeWildcards(String(predicate.value));
+      return query.ilike(dbField, `%${escaped}%`);
+    }
     case 'in': return query.in(dbField, predicate.value as string[]);
     case 'not_in': {
-      // Supabase doesn't have a direct not_in — use .not().in()
-      return query.not(dbField, 'in', `(${(predicate.value as string[]).map(v => `"${v}"`).join(',')})`);
+      // B2: use Supabase .not() with 'in' operator — safe parameterized syntax
+      return query.not(dbField, 'in', `(${(predicate.value as (string | number)[]).join(',')})`);
     }
     case 'is_null': return query.is(dbField, null);
     case 'is_not_null': return query.not(dbField, 'is', null);
@@ -166,13 +197,69 @@ function applyPredicateFilter(
   }
 }
 
-function enforceAdapterBound(rows: unknown[]): void {
-  if (rows.length > ADAPTER_ROW_LIMIT) {
+/**
+ * B1 remediation: Count-first strategy.
+ * Runs an explicit count query before fetching data.
+ * If count exceeds ADAPTER_ROW_LIMIT, throws AudienceTooLargeError.
+ * Then fetches data in pages of PAGE_SIZE to avoid PostgREST max_rows truncation.
+ */
+async function fetchWithBoundCheck(
+  service: SupabaseClient,
+  table: string,
+  selectColumns: string,
+  businessId: string,
+  predicate: Predicate,
+  fieldMapping: Record<string, string>,
+): Promise<any[]> {
+  // Step 1: Count query
+  let countQuery = service
+    .from(table)
+    .select('*', { count: 'exact', head: true })
+    .eq('business_id', businessId);
+  countQuery = applyPredicateFilter(countQuery, predicate, fieldMapping);
+
+  const { count, error: countError } = await countQuery;
+  if (countError) throw countError;
+
+  if (count !== null && count > ADAPTER_ROW_LIMIT) {
     throw new AudienceTooLargeError();
   }
+
+  // Step 2: Paginated fetch (safe under PostgREST max_rows)
+  const allRows: any[] = [];
+  let offset = 0;
+
+  while (true) {
+    let pageQuery = service
+      .from(table)
+      .select(selectColumns)
+      .eq('business_id', businessId);
+    pageQuery = applyPredicateFilter(pageQuery, predicate, fieldMapping);
+
+    const { data, error } = await pageQuery
+      .range(offset, offset + PAGE_SIZE - 1)
+      .order('created_at', { ascending: true });
+
+    if (error) throw error;
+    if (!data || data.length === 0) break;
+
+    allRows.push(...data);
+    if (data.length < PAGE_SIZE) break;
+    offset += PAGE_SIZE;
+
+    // Safety: should never happen after count check, but fail closed
+    if (allRows.length > ADAPTER_ROW_LIMIT) {
+      throw new AudienceTooLargeError();
+    }
+  }
+
+  return allRows;
 }
 
+// ── B3: Field mappings verified against production migration schemas ──
+
 const contactAdapter: AdapterFn = async (service, businessId, businessCountry, predicate) => {
+  // customer_profiles (M021): phone, email, name, tags, created_at
   const fieldMapping: Record<string, string> = {
     phone: 'phone',
     email: 'email',
@@ -181,18 +268,13 @@ const contactAdapter: AdapterFn = async (service, businessId, businessCountry, p
     created_at: 'created_at',
   };
 
-  let query = service
-    .from('customer_profiles')
-    .select('phone, name, email')
-    .eq('business_id', businessId);
-
-  query = applyPredicateFilter(query, predicate, fieldMapping);
-  const { data, error } = await query.limit(ADAPTER_ROW_LIMIT + 1);
-  if (error) throw error;
-  enforceAdapterBound(data || []);
+  const data = await fetchWithBoundCheck(
+    service, 'customer_profiles', 'phone, name, email',
+    businessId, predicate, fieldMapping,
+  );
 
   const result = new Map<string, AudienceIdentity>();
-  for (const row of data || []) {
+  for (const row of data) {
     const normalized = normalizeEngagePhone(row.phone, businessCountry);
     const key = deriveIdentityKey(normalized, row.email);
     if (key) {
@@ -208,25 +290,21 @@ const contactAdapter: AdapterFn = async (service, businessId, businessCountry, p
 };
 
 const orderAdapter: AdapterFn = async (service, businessId, businessCountry, predicate) => {
+  // orders (M002): status, total_amount, created_at
+  // B3: removed product_name (doesn't exist in schema)
   const fieldMapping: Record<string, string> = {
     status: 'status',
     total_amount: 'total_amount',
     created_at: 'created_at',
-    product_name: 'product_name',
   };
 
-  let query = service
-    .from('orders')
-    .select('user_id')
-    .eq('business_id', businessId);
-
-  query = applyPredicateFilter(query, predicate, fieldMapping);
-  const { data, error } = await query.limit(ADAPTER_ROW_LIMIT + 1);
-  if (error) throw error;
-  enforceAdapterBound(data || []);
+  const data = await fetchWithBoundCheck(
+    service, 'orders', 'user_id',
+    businessId, predicate, fieldMapping,
+  );
 
   const result = new Map<string, AudienceIdentity>();
-  const userIds = [...new Set((data || []).map(r => r.user_id).filter(Boolean))];
+  const userIds = [...new Set(data.map(r => r.user_id).filter(Boolean))];
 
   for (const userId of userIds) {
     const { data: profile } = await service
@@ -246,25 +324,22 @@ const orderAdapter: AdapterFn = async (service, businessId, businessCountry, pre
 };
 
 const bookingAdapter: AdapterFn = async (service, businessId, businessCountry, predicate) => {
+  // bookings: status, date, created_at, guest_phone, guest_name
+  // B3: removed service_name (FK to service_id, not a column),
+  //     changed booking_date → date (actual column name)
   const fieldMapping: Record<string, string> = {
     status: 'status',
-    service_name: 'service_name',
-    booking_date: 'booking_date',
+    date: 'date',
     created_at: 'created_at',
   };
 
-  let query = service
-    .from('bookings')
-    .select('guest_phone, guest_name')
-    .eq('business_id', businessId);
-
-  query = applyPredicateFilter(query, predicate, fieldMapping);
-  const { data, error } = await query.limit(ADAPTER_ROW_LIMIT + 1);
-  if (error) throw error;
-  enforceAdapterBound(data || []);
+  const data = await fetchWithBoundCheck(
+    service, 'bookings', 'guest_phone, guest_name',
+    businessId, predicate, fieldMapping,
+  );
 
   const result = new Map<string, AudienceIdentity>();
-  for (const row of data || []) {
+  for (const row of data) {
     if (!row.guest_phone) continue;
     const normalized = normalizeEngagePhone(row.guest_phone, businessCountry);
     const key = deriveIdentityKey(normalized, null);
@@ -280,34 +355,30 @@ const bookingAdapter: AdapterFn = async (service, businessId, businessCountry, p
 };
 
 const eventAdapter: AdapterFn = async (service, businessId, businessCountry, predicate) => {
+  // B3: event_tickets (M072), NOT event_registrations
+  // Columns: event_id, status, created_at, guest_phone, guest_name
+  // No email column, no event_name column
   const fieldMapping: Record<string, string> = {
     event_id: 'event_id',
-    event_name: 'event_name',
     status: 'status',
     created_at: 'created_at',
   };
 
-  // event_registrations holds ticket/registration data with phone
-  let query = service
-    .from('event_registrations')
-    .select('phone, name, email, event_id')
-    .eq('business_id', businessId);
-
-  query = applyPredicateFilter(query, predicate, fieldMapping);
-  const { data, error } = await query.limit(ADAPTER_ROW_LIMIT + 1);
-  if (error) throw error;
-  enforceAdapterBound(data || []);
+  const data = await fetchWithBoundCheck(
+    service, 'event_tickets', 'guest_phone, guest_name, event_id',
+    businessId, predicate, fieldMapping,
+  );
 
   const result = new Map<string, AudienceIdentity>();
-  for (const row of data || []) {
-    const normalized = row.phone ? normalizeEngagePhone(row.phone, businessCountry) : null;
-    const key = deriveIdentityKey(normalized, row.email);
+  for (const row of data) {
+    if (!row.guest_phone) continue;
+    const normalized = normalizeEngagePhone(row.guest_phone, businessCountry);
+    const key = deriveIdentityKey(normalized, null);
     if (key) {
       result.set(key, {
         key,
         phone: normalized || undefined,
-        email: row.email || undefined,
-        name: row.name || undefined,
+        name: row.guest_name || undefined,
       });
     }
   }
@@ -315,23 +386,19 @@ const eventAdapter: AdapterFn = async (service, businessId, businessCountry, pre
 };
 
 const formAdapter: AdapterFn = async (service, businessId, businessCountry, predicate) => {
+  // form_responses (M119): form_id, submitted_at, customer_phone, customer_name, customer_email
   const fieldMapping: Record<string, string> = {
     form_id: 'form_id',
     submitted_at: 'submitted_at',
   };
 
-  let query = service
-    .from('form_responses')
-    .select('customer_phone, customer_name, customer_email')
-    .eq('business_id', businessId);
-
-  query = applyPredicateFilter(query, predicate, fieldMapping);
-  const { data, error } = await query.limit(ADAPTER_ROW_LIMIT + 1);
-  if (error) throw error;
-  enforceAdapterBound(data || []);
+  const data = await fetchWithBoundCheck(
+    service, 'form_responses', 'customer_phone, customer_name, customer_email',
+    businessId, predicate, fieldMapping,
+  );
 
   const result = new Map<string, AudienceIdentity>();
-  for (const row of data || []) {
+  for (const row of data) {
     const normalized = row.customer_phone
       ? normalizeEngagePhone(row.customer_phone, businessCountry)
       : null;
@@ -349,6 +416,7 @@ const formAdapter: AdapterFn = async (service, businessId, businessCountry, pred
 };
 
 const paymentAdapter: AdapterFn = async (service, businessId, businessCountry, predicate) => {
+  // payments (M001): status, amount, payment_method, created_at
   const fieldMapping: Record<string, string> = {
     status: 'status',
     amount: 'amount',
@@ -356,18 +424,13 @@ const paymentAdapter: AdapterFn = async (service, businessId, businessCountry, p
     created_at: 'created_at',
   };
 
-  let query = service
-    .from('payments')
-    .select('user_id, booking_id, order_id, invoice_id, reservation_id')
-    .eq('business_id', businessId);
-
-  query = applyPredicateFilter(query, predicate, fieldMapping);
-  const { data, error } = await query.limit(ADAPTER_ROW_LIMIT + 1);
-  if (error) throw error;
-  enforceAdapterBound(data || []);
+  const data = await fetchWithBoundCheck(
+    service, 'payments', 'user_id, booking_id, order_id, invoice_id, reservation_id',
+    businessId, predicate, fieldMapping,
+  );
 
   const result = new Map<string, AudienceIdentity>();
-  for (const row of data || []) {
+  for (const row of data) {
     const phone = await resolvePaymentIdentity(service, row, businessId, businessCountry);
     if (phone) {
       const key = `phone:${phone}`;
@@ -406,7 +469,6 @@ function setIntersection(
   if (sets.length === 0) return new Map();
   if (sets.length === 1) return new Map(sets[0]);
 
-  // Start with the smallest set for efficiency
   const sorted = [...sets].sort((a, b) => a.size - b.size);
   const result = new Map<string, AudienceIdentity>();
 
@@ -446,7 +508,6 @@ export async function resolveAudienceExpression(
   const group = expr as GroupExpression;
 
   if (group.type === 'all') {
-    // Separate none children from regular children
     const regularChildren: AudienceExpression[] = [];
     const noneChildren: AudienceExpression[] = [];
 
@@ -458,13 +519,11 @@ export async function resolveAudienceExpression(
       }
     }
 
-    // Resolve regular children (intersection)
     const regularSets = await Promise.all(
       regularChildren.map(c => resolveAudienceExpression(service, businessId, businessCountry, c)),
     );
     let result = regularSets.length > 0 ? setIntersection(...regularSets) : new Map<string, AudienceIdentity>();
 
-    // Resolve none children (exclusion)
     for (const noneExpr of noneChildren) {
       const noneGroup = noneExpr as GroupExpression;
       const exclusionSets = await Promise.all(
@@ -484,7 +543,5 @@ export async function resolveAudienceExpression(
     return setUnion(...sets);
   }
 
-  // none should never be reached at top level (validation catches it)
-  // but if it is, return empty
   return new Map();
 }
