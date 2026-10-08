@@ -295,4 +295,105 @@ describe('PATCH /api/orders/[id]/tracking', () => {
     // Notification failed (claim denied), but tracking edit is unaffected
     expect(body.notification.status).toBe('failed');
   });
+
+  it('returns 400 when carrier exceeds 200 characters', async () => {
+    const longCarrier = 'A'.repeat(201);
+    const req = makeRequest({ businessId: BIZ_ID, carrier: longCarrier, trackingNumber: 'DHL123' });
+    const res = await PATCH(req, { params: Promise.resolve({ id: ORDER_ID }) });
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toMatch(/carrier.*200/i);
+  });
+
+  it('returns 400 when trackingNumber exceeds 200 characters', async () => {
+    const longTracking = 'T'.repeat(201);
+    const req = makeRequest({ businessId: BIZ_ID, carrier: 'DHL', trackingNumber: longTracking });
+    const res = await PATCH(req, { params: Promise.resolve({ id: ORDER_ID }) });
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toMatch(/trackingNumber.*200/i);
+  });
+
+  it('accepts carrier and trackingNumber at exactly 200 characters', async () => {
+    const exactCarrier = 'C'.repeat(200);
+    const exactTracking = 'T'.repeat(200);
+    mockServiceRpc.mockResolvedValueOnce({
+      data: { success: true, no_op: false, revision: 1, shipped_at: '2026-08-30T12:00:00Z' },
+      error: null,
+    });
+    const req = makeRequest({ businessId: BIZ_ID, carrier: exactCarrier, trackingNumber: exactTracking });
+    const res = await PATCH(req, { params: Promise.resolve({ id: ORDER_ID }) });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.success).toBe(true);
+  });
+
+  it('skips notification when notifyCustomer is false on update', async () => {
+    mockServiceRpc.mockResolvedValueOnce({
+      data: { success: true, no_op: false, revision: 2, shipped_at: '2026-08-30T12:00:00Z' },
+      error: null,
+    });
+    const req = makeRequest({
+      businessId: BIZ_ID,
+      carrier: 'UPS',
+      trackingNumber: 'UPS456',
+      notifyCustomer: false,
+    });
+    const res = await PATCH(req, { params: Promise.resolve({ id: ORDER_ID }) });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.success).toBe(true);
+    expect(body.notification.status).toBe('not_requested');
+    // RPC should NOT receive p_notify_customer: true
+    expect(mockServiceRpc).toHaveBeenCalledWith(
+      'update_order_tracking',
+      expect.objectContaining({ p_notify_customer: false }),
+    );
+  });
+
+  it('passes notifyCustomer=true to RPC when requested', async () => {
+    mockServiceRpc.mockResolvedValueOnce({
+      data: { success: true, no_op: false, revision: 1, shipped_at: '2026-08-30T12:00:00Z' },
+      error: null,
+    });
+    const req = makeRequest({
+      businessId: BIZ_ID,
+      carrier: 'DHL',
+      trackingNumber: 'DHL999',
+      notifyCustomer: true,
+    });
+    const res = await PATCH(req, { params: Promise.resolve({ id: ORDER_ID }) });
+    expect(res.status).toBe(200);
+    expect(mockServiceRpc).toHaveBeenCalledWith(
+      'update_order_tracking',
+      expect.objectContaining({ p_notify_customer: true }),
+    );
+  });
+
+  it('audit log is written by RPC on material tracking change (verified via RPC args)', async () => {
+    // The RPC writes the audit log internally. We verify the correct params are passed.
+    mockServiceRpc.mockResolvedValueOnce({
+      data: { success: true, no_op: false, revision: 3, shipped_at: '2026-08-30T12:00:00Z' },
+      error: null,
+    });
+    const req = makeRequest({
+      businessId: BIZ_ID,
+      carrier: 'FedEx',
+      trackingNumber: 'FDX100',
+      notifyCustomer: false,
+    });
+    const res = await PATCH(req, { params: Promise.resolve({ id: ORDER_ID }) });
+    expect(res.status).toBe(200);
+    // Verify the RPC was called with new carrier/tracking values and the user ID for audit
+    expect(mockServiceRpc).toHaveBeenCalledWith(
+      'update_order_tracking',
+      expect.objectContaining({
+        p_order_id: ORDER_ID,
+        p_business_id: BIZ_ID,
+        p_user_id: USER.id,
+        p_carrier: 'FedEx',
+        p_tracking_number: 'FDX100',
+      }),
+    );
+  });
 });
