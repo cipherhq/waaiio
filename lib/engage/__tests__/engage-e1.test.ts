@@ -667,6 +667,202 @@ describe('Audience Eligibility — Binding A', () => {
       computeAudienceEligibility(service as any, 'biz-1', audience),
     ).rejects.toThrow(EligibilityDataIncompleteError);
   });
+
+  // ── Multi-page opt-out completeness (CTO Round 4) ──
+
+  it('multi-page: opt-out on page 2 (beyond row 500) blocks eligibility', async () => {
+    const phone = '+2349012345678';
+    const audience = new Map([[`phone:${phone}`, { key: `phone:${phone}`, phone }]]);
+
+    // Generate 600 opt-out records for the same phone across various channels.
+    // The blocking marketing opt-out is record #550 (on page 2 at offset 500+).
+    const allOptOuts: any[] = [];
+    for (let i = 0; i < 600; i++) {
+      allOptOuts.push({
+        phone,
+        business_id: 'biz-1',
+        channel: 'sms',           // non-blocking channel
+        opt_out_type: 'promotional', // non-blocking type
+        resubscribed_at: null,
+      });
+    }
+    // Place the blocking whatsapp/marketing opt-out at index 550 (page 2)
+    allOptOuts[550] = {
+      phone,
+      business_id: 'biz-1',
+      channel: 'whatsapp',
+      opt_out_type: 'marketing',
+      resubscribed_at: null,
+    };
+
+    // Consent: grant marketing consent so only the opt-out determines eligibility
+    const consents = [{
+      phone,
+      channel: 'whatsapp',
+      purpose: 'marketing',
+      status: 'granted',
+      expires_at: null,
+    }];
+
+    let tableCallCounter = 0;
+    const service = {
+      from: vi.fn().mockImplementation((table: string) => {
+        tableCallCounter++;
+        const rows = table === 'customer_consents' ? consents : allOptOuts;
+        const chain: Record<string, any> = {};
+        for (const m of ['eq', 'in', 'is', 'or', 'order']) chain[m] = vi.fn().mockReturnValue(chain);
+
+        chain.select = vi.fn().mockImplementation((_c: string, opts?: { head?: boolean }) => {
+          if (opts?.head) return makeThenable({ count: rows.length, error: null, data: null });
+          return chain;
+        });
+        // Simulate paginated reads — return correct slice for each range call
+        chain.range = vi.fn().mockImplementation((from: number, to: number) => {
+          const sliced = rows.slice(from, to + 1);
+          return makeThenable({ data: sliced, error: null });
+        });
+        return chain;
+      }),
+    } as unknown;
+
+    const result = await computeAudienceEligibility(service as any, 'biz-1', audience);
+    // The opt-out on page 2 must block eligibility
+    expect(result.whatsappEligible).toBe(0);
+    expect(result.sample[0].whatsappEligible).toBe(false);
+    // But total count still includes the identity
+    expect(result.total).toBe(1);
+  });
+
+  it('multi-page: global opt-out (business_id=null) on later page blocks eligibility', async () => {
+    const phone = '+2349012345678';
+    const audience = new Map([[`phone:${phone}`, { key: `phone:${phone}`, phone }]]);
+
+    // 520 opt-out records — first 519 are non-blocking, #520 is a global opt-out
+    const allOptOuts: any[] = [];
+    for (let i = 0; i < 520; i++) {
+      allOptOuts.push({
+        phone,
+        business_id: 'biz-1',
+        channel: 'sms',
+        opt_out_type: 'promotional',
+        resubscribed_at: null,
+      });
+    }
+    // Global opt-out at position 519 (page 2 boundary)
+    allOptOuts[519] = {
+      phone,
+      business_id: null,  // global opt-out
+      channel: 'whatsapp',
+      opt_out_type: 'all',
+      resubscribed_at: null,
+    };
+
+    const consents = [{
+      phone, channel: 'whatsapp', purpose: 'marketing', status: 'granted', expires_at: null,
+    }];
+
+    const service = {
+      from: vi.fn().mockImplementation((table: string) => {
+        const rows = table === 'customer_consents' ? consents : allOptOuts;
+        const chain: Record<string, any> = {};
+        for (const m of ['eq', 'in', 'is', 'or', 'order']) chain[m] = vi.fn().mockReturnValue(chain);
+        chain.select = vi.fn().mockImplementation((_c: string, opts?: { head?: boolean }) => {
+          if (opts?.head) return makeThenable({ count: rows.length, error: null, data: null });
+          return chain;
+        });
+        chain.range = vi.fn().mockImplementation((from: number, to: number) => {
+          return makeThenable({ data: rows.slice(from, to + 1), error: null });
+        });
+        return chain;
+      }),
+    } as unknown;
+
+    const result = await computeAudienceEligibility(service as any, 'biz-1', audience);
+    expect(result.whatsappEligible).toBe(0);
+    expect(result.sample[0].whatsappEligible).toBe(false);
+  });
+
+  it('multi-page: other-business opt-outs excluded by SQL, own-business opt-out found', async () => {
+    const phone = '+2349012345678';
+    const audience = new Map([[`phone:${phone}`, { key: `phone:${phone}`, phone }]]);
+
+    // Simulate: SQL .or() filter already excluded other-business opt-outs.
+    // Only biz-1 and global opt-outs reach the application.
+    // 3 records: 2 non-blocking + 1 blocking business marketing opt-out
+    const filteredOptOuts = [
+      { phone, business_id: 'biz-1', channel: 'sms', opt_out_type: 'promotional', resubscribed_at: null },
+      { phone, business_id: null, channel: 'sms', opt_out_type: 'promotional', resubscribed_at: null },
+      { phone, business_id: 'biz-1', channel: 'whatsapp', opt_out_type: 'marketing', resubscribed_at: null },
+    ];
+
+    const consents = [{
+      phone, channel: 'whatsapp', purpose: 'marketing', status: 'granted', expires_at: null,
+    }];
+
+    const service = {
+      from: vi.fn().mockImplementation((table: string) => {
+        const rows = table === 'customer_consents' ? consents : filteredOptOuts;
+        const chain: Record<string, any> = {};
+        for (const m of ['eq', 'in', 'is', 'or', 'order']) chain[m] = vi.fn().mockReturnValue(chain);
+        chain.select = vi.fn().mockImplementation((_c: string, opts?: { head?: boolean }) => {
+          if (opts?.head) return makeThenable({ count: rows.length, error: null, data: null });
+          return chain;
+        });
+        chain.range = vi.fn().mockImplementation((from: number, to: number) => {
+          return makeThenable({ data: rows.slice(from, to + 1), error: null });
+        });
+        return chain;
+      }),
+    } as unknown;
+
+    const result = await computeAudienceEligibility(service as any, 'biz-1', audience);
+    expect(result.whatsappEligible).toBe(0);
+  });
+
+  it('multi-page consent: consent on page 2 correctly grants eligibility', async () => {
+    const phone = '+2349012345678';
+    const audience = new Map([[`phone:${phone}`, { key: `phone:${phone}`, phone }]]);
+
+    // 510 consent records, the valid marketing consent is at index 505 (page 2)
+    const allConsents: any[] = [];
+    for (let i = 0; i < 510; i++) {
+      allConsents.push({
+        phone,
+        channel: 'sms',          // non-matching channel
+        purpose: 'utility',       // non-matching purpose
+        status: 'granted',
+        expires_at: null,
+      });
+    }
+    allConsents[505] = {
+      phone,
+      channel: 'whatsapp',
+      purpose: 'marketing',
+      status: 'granted',
+      expires_at: null,
+    };
+
+    const service = {
+      from: vi.fn().mockImplementation((table: string) => {
+        const rows = table === 'customer_consents' ? allConsents : [];
+        const chain: Record<string, any> = {};
+        for (const m of ['eq', 'in', 'is', 'or', 'order']) chain[m] = vi.fn().mockReturnValue(chain);
+        chain.select = vi.fn().mockImplementation((_c: string, opts?: { head?: boolean }) => {
+          if (opts?.head) return makeThenable({ count: rows.length, error: null, data: null });
+          return chain;
+        });
+        chain.range = vi.fn().mockImplementation((from: number, to: number) => {
+          return makeThenable({ data: rows.slice(from, to + 1), error: null });
+        });
+        return chain;
+      }),
+    } as unknown;
+
+    const result = await computeAudienceEligibility(service as any, 'biz-1', audience);
+    // Consent on page 2 must be found and grant eligibility
+    expect(result.whatsappEligible).toBe(1);
+    expect(result.sample[0].whatsappEligible).toBe(true);
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════
