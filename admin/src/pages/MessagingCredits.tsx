@@ -91,56 +91,90 @@ export default function MessagingCredits() {
       setError(null);
 
       if (view === 'balances') {
-        const { data: allBizAllowances, error: allowErr } = await adminDb
-          .from('messaging_allowances')
-          .select('business_id')
-          .order('business_id', { ascending: true });
+        // Business-first: paginate businesses table server-side (authoritative count)
+        const rangeStart = (page - 1) * perPage;
+        const rangeEnd = rangeStart + perPage - 1;
 
-        if (allowErr) { setError(`Failed to load allowances: ${allowErr.message}`); setLoading(false); return; }
-
-        const distinctBizIds = [...new Set((allBizAllowances || []).map(r => r.business_id))];
-        setBalanceTotalCount(distinctBizIds.length);
-        const pageBizIds = distinctBizIds.slice((page - 1) * perPage, page * perPage);
-
-        if (pageBizIds.length === 0) { setBalanceBusinesses([]); setAllowancesByBiz(new Map()); setSuspendedCount(0); setLoading(false); return; }
+        // Server-authoritative count + page from businesses table
+        const { count: bizCount, error: countErr } = await adminDb.from('businesses')
+          .select('id', { count: 'exact', head: true })
+          .eq('status', 'active');
+        if (countErr) { setError(`Failed to count businesses: ${countErr.message}`); setLoading(false); return; }
+        setBalanceTotalCount(bizCount ?? 0);
 
         const { data: bizData, error: bizErr } = await adminDb.from('businesses')
-          .select('id, name, subscription_tier, country_code, messaging_suspended').in('id', pageBizIds).order('name', { ascending: true });
+          .select('id, name, subscription_tier, country_code, messaging_suspended')
+          .eq('status', 'active')
+          .order('name', { ascending: true })
+          .range(rangeStart, rangeEnd);
         if (bizErr) { setError(`Failed to load businesses: ${bizErr.message}`); setLoading(false); return; }
-        setBalanceBusinesses((bizData || []) as BusinessInfo[]);
 
-        const { count: suspCount } = await adminDb.from('businesses')
-          .select('id', { count: 'exact', head: true }).in('id', distinctBizIds).eq('messaging_suspended', true);
+        const bizList = (bizData || []) as BusinessInfo[];
+        setBalanceBusinesses(bizList);
+
+        // Suspended count: server-authoritative across all active businesses
+        const { count: suspCount, error: suspErr } = await adminDb.from('businesses')
+          .select('id', { count: 'exact', head: true })
+          .eq('status', 'active')
+          .eq('messaging_suspended', true);
+        if (suspErr) { setError(`Failed to count suspended: ${suspErr.message}`); setLoading(false); return; }
         setSuspendedCount(suspCount ?? 0);
 
-        const { data: pageAllowances, error: pageAllowErr } = await adminDb.from('messaging_allowances')
-          .select('id, business_id, type, amount_minor, currency_code, remaining_minor, source_ref, expires_at, created_at')
-          .in('business_id', pageBizIds).order('created_at', { ascending: true });
-        if (pageAllowErr) { setError(`Failed to load allowance details: ${pageAllowErr.message}`); setLoading(false); return; }
+        // Fetch allowances only for this page's businesses (max perPage IDs)
+        const pageBizIds = bizList.map(b => b.id);
+        if (pageBizIds.length > 0) {
+          const { data: pageAllowances, error: allowErr } = await adminDb.from('messaging_allowances')
+            .select('id, business_id, type, amount_minor, currency_code, remaining_minor, source_ref, expires_at, created_at')
+            .in('business_id', pageBizIds)
+            .order('created_at', { ascending: true });
+          if (allowErr) { setError(`Failed to load allowances: ${allowErr.message}`); setLoading(false); return; }
 
-        const byBiz = new Map<string, AllowanceRow[]>();
-        for (const a of pageAllowances || []) { const e = byBiz.get(a.business_id) || []; e.push(a as AllowanceRow); byBiz.set(a.business_id, e); }
-        setAllowancesByBiz(byBiz);
+          const byBiz = new Map<string, AllowanceRow[]>();
+          for (const a of pageAllowances || []) {
+            const e = byBiz.get(a.business_id) || [];
+            e.push(a as AllowanceRow);
+            byBiz.set(a.business_id, e);
+          }
+          setAllowancesByBiz(byBiz);
+        } else {
+          setAllowancesByBiz(new Map());
+        }
       } else {
+        // Purchases: server-paginated with authoritative count
         const rangeStart = (page - 1) * perPage;
-        const { count: totalCount, error: countErr } = await adminDb.from('messaging_topup_purchases').select('id', { count: 'exact', head: true });
+
+        const { count: totalCount, error: countErr } = await adminDb.from('messaging_topup_purchases')
+          .select('id', { count: 'exact', head: true });
         if (countErr) { setError(`Failed to count purchases: ${countErr.message}`); setLoading(false); return; }
         setPurchaseTotalCount(totalCount ?? 0);
 
         const { data: pageData, error: pageErr } = await adminDb.from('messaging_topup_purchases')
           .select('id, business_id, owner_id, package_amount_minor, currency_code, gateway, status, created_at, completed_at, refunded_at, refund_amount_minor, consumed_shortfall_minor')
-          .order('created_at', { ascending: false }).range(rangeStart, rangeStart + perPage - 1);
+          .order('created_at', { ascending: false })
+          .range(rangeStart, rangeStart + perPage - 1);
         if (pageErr) { setError(`Failed to load purchases: ${pageErr.message}`); setLoading(false); return; }
 
         const rows = (pageData || []) as PurchaseRow[];
         setPurchases(rows);
-        setPageStatusCounts({ pending: rows.filter(p => p.status === 'pending').length, review: rows.filter(p => p.status === 'review').length, completed: rows.filter(p => p.status === 'completed').length });
+        setPageStatusCounts({
+          pending: rows.filter(p => p.status === 'pending').length,
+          review: rows.filter(p => p.status === 'review').length,
+          completed: rows.filter(p => p.status === 'completed').length,
+        });
 
+        // Business info for this page's purchases (max perPage IDs)
         const bizIds = [...new Set(rows.map(r => r.business_id))];
         if (bizIds.length > 0) {
-          const { data: bizData } = await adminDb.from('businesses').select('id, name, subscription_tier, country_code, messaging_suspended').in('id', bizIds);
-          const m = new Map<string, BusinessInfo>(); for (const b of bizData || []) m.set(b.id, b as BusinessInfo); setPurchaseBusinesses(m);
-        } else { setPurchaseBusinesses(new Map()); }
+          const { data: bizData, error: bizErr } = await adminDb.from('businesses')
+            .select('id, name, subscription_tier, country_code, messaging_suspended')
+            .in('id', bizIds);
+          if (bizErr) { setError(`Failed to load business info: ${bizErr.message}`); setLoading(false); return; }
+          const m = new Map<string, BusinessInfo>();
+          for (const b of bizData || []) m.set(b.id, b as BusinessInfo);
+          setPurchaseBusinesses(m);
+        } else {
+          setPurchaseBusinesses(new Map());
+        }
       }
       setLoading(false);
     }
@@ -165,7 +199,7 @@ export default function MessagingCredits() {
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {view === 'balances' ? (<>
-          <SummaryCard title="Businesses with Allowances" value={balanceTotalCount} icon={<CreditCard className="h-5 w-5" />} />
+          <SummaryCard title="Active Businesses" value={balanceTotalCount} icon={<CreditCard className="h-5 w-5" />} />
           <SummaryCard title="Suspended" value={suspendedCount} icon={<AlertTriangle className="h-5 w-5" />} variant={suspendedCount > 0 ? 'danger' : 'default'} />
         </>) : (<>
           <SummaryCard title="Total Purchases" value={purchaseTotalCount} icon={<CreditCard className="h-5 w-5" />} />
@@ -181,7 +215,7 @@ export default function MessagingCredits() {
         <div className="flex items-center justify-center py-20"><div className="h-8 w-8 animate-spin rounded-full border-2 border-purple-600 border-t-transparent" /></div>
       ) : error ? null : view === 'balances' ? (
         balanceBusinesses.length === 0 ? (
-          <div className="rounded-xl border border-gray-200 bg-white px-6 py-12 text-center text-sm text-gray-500">No businesses with messaging allowances found.</div>
+          <div className="rounded-xl border border-gray-200 bg-white px-6 py-12 text-center text-sm text-gray-500">No active businesses found.</div>
         ) : (
           <div className="rounded-xl border border-gray-200 bg-white">
             <div className="overflow-x-auto">
