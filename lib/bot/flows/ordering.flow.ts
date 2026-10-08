@@ -136,15 +136,25 @@ export const orderingFlow: FlowDefinition = {
         // Initialize cart (with timestamp for expiry)
         const CART_EXPIRY_MS = 2 * 60 * 60 * 1000; // 2 hours
         const cartCreatedAt = ctx.session.session_data.cart_created_at as number | undefined;
-        if (!ctx.session.session_data.cart || (cartCreatedAt && Date.now() - cartCreatedAt > CART_EXPIRY_MS)) {
-          if (cartCreatedAt) {
+        const cartExpired = cartCreatedAt && Date.now() - cartCreatedAt > CART_EXPIRY_MS;
+        if (!ctx.session.session_data.cart || cartExpired) {
+          if (cartExpired) {
             logger.debug('[ORDERING] Cart expired, clearing stale cart');
+            // Flag to show expiry notice as part of this inbound-triggered reply
+            ctx.session.session_data._cart_expired_notice = true;
           }
           ctx.session.session_data.cart = [];
           ctx.session.session_data.cart_created_at = Date.now();
         }
 
         const cc = (ctx.business.country_code || 'NG') as CountryCode;
+
+        // Show cart expiry notice if cart was just cleared (part of this inbound reply, not unsolicited)
+        const cartExpiredNotice: PromptMessage[] = [];
+        if (ctx.session.session_data._cart_expired_notice) {
+          delete ctx.session.session_data._cart_expired_notice;
+          cartExpiredNotice.push({ type: 'text', text: getFlowCopy(ctx.copyLang, 'ordering.cart_expired') });
+        }
 
         const formatItem = (p: typeof products[0]) => {
           let desc = p.has_variants ? getFlowCopy(ctx.copyLang, 'ordering.multiple_options') : formatCurrency(p.price, cc);
@@ -166,7 +176,7 @@ export const orderingFlow: FlowDefinition = {
         // Browse-by-category mode: show category list first
         if (browseByCategory && categories.length > 1) {
           ctx.session.session_data._category_list = categories.map(([cat, items]) => cat);
-          return [{
+          return [...cartExpiredNotice, {
             type: 'list',
             title: getFlowCopy(ctx.copyLang, 'ordering.categories_title'),
             body: fillFlowCopy(ctx.copyLang, 'ordering.welcome_categories', { businessName: ctx.business.name, emoji: '🛍️' }),
@@ -188,7 +198,7 @@ export const orderingFlow: FlowDefinition = {
             items: items.slice(0, 10).map(formatItem),
           }));
 
-          return [{
+          return [...cartExpiredNotice, {
             type: 'list' as const,
             title: getFlowCopy(ctx.copyLang, 'ordering.our_catalog'),
             body: fillFlowCopy(ctx.copyLang, 'ordering.welcome', { businessName: ctx.business.name, emoji: '🛍️', noun: getFlowCopy(ctx.copyLang, 'ordering.our_catalog').toLowerCase() }),
@@ -198,7 +208,7 @@ export const orderingFlow: FlowDefinition = {
           }];
         }
 
-        return [{
+        return [...cartExpiredNotice, {
           type: 'list',
           title: getFlowCopy(ctx.copyLang, 'ordering.our_catalog'),
           body: fillFlowCopy(ctx.copyLang, 'ordering.welcome', { businessName: ctx.business.name, emoji: '🛍️', noun: getFlowCopy(ctx.copyLang, 'ordering.our_catalog').toLowerCase() }),

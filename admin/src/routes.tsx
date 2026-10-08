@@ -31,6 +31,7 @@ import Payments from './pages/Payments';
 import Subscriptions from './pages/Subscriptions';
 import Support from './pages/Support';
 import BotManagement from './pages/BotManagement';
+import BotDropoffs from './pages/BotDropoffs';
 import WhatsAppChannels from './pages/WhatsAppChannels';
 import WhatsAppTemplates from './pages/WhatsAppTemplates';
 import Notifications from './pages/Notifications';
@@ -117,6 +118,7 @@ export const router = createBrowserRouter([
       { path: 'giving', element: <RoleGuard roles={ADMIN_PERMISSIONS['giving']}><Giving /></RoleGuard> },
       // Communication
       { path: 'bot-management', element: <RoleGuard roles={ADMIN_PERMISSIONS['bot-management']}><BotManagement /></RoleGuard> },
+      { path: 'bot-dropoffs', element: <RoleGuard roles={ADMIN_PERMISSIONS['bot-management']}><BotDropoffs /></RoleGuard> },
       { path: 'bot-keywords', element: <RoleGuard roles={ADMIN_PERMISSIONS['bot-keywords']}><BotKeywords /></RoleGuard> },
       { path: 'llm-logs', element: <RoleGuard roles={ADMIN_PERMISSIONS['llm-logs']}><LLMClassifications /></RoleGuard> },
       { path: 'whatsapp-channels', element: <RoleGuard roles={ADMIN_PERMISSIONS['whatsapp-channels']}><WhatsAppChannels /></RoleGuard> },

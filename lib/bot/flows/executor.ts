@@ -877,6 +877,9 @@ export class FlowExecutor {
     }
 
     if (!nextStep) {
+      Sentry.captureMessage('advanceToStep: next step not found', { level: 'warning', extra: { nextStepId, primaryFlowType, sessionId: session.id } });
+      const errMsg = getFlowCopy('en', 'error.generic');
+      await this.sendText(from, errMsg, sender);
       await this.deactivateSession(session.id);
       return;
     }
