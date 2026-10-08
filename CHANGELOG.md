@@ -3,17 +3,17 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
-## 2026-10-08 — M431 engage_segments service_role GRANT + ACL tests (#431)
+## 2026-10-08 — M432 engage_segments corrective ACL migration (#431)
 
 ### What changed
-- **Migration** (`supabase/migrations/431_engage_segments.sql`): Added explicit `REVOKE ALL FROM anon, authenticated` and `GRANT SELECT, INSERT, UPDATE, DELETE TO service_role` after the existing COMMENT statement. Added a `DO $$` verification block that fails the migration if any privilege check is wrong (service_role missing CRUD, anon/authenticated not denied, RLS not enabled).
-- **Tests** (`lib/__tests__/m431-engage-segments-acl.test.ts`): 42 tests total. 8 static migration SQL scope guards (always run). 13 live PostgreSQL ACL checks (require TEST_DATABASE_URL). 21 API route authorization contract tests verifying auth, capability gating, business scoping, and cross-tenant isolation patterns in both route files.
+- **New migration** (`supabase/migrations/432_engage_segments_acl.sql`): Companion to M431 (which remains unchanged). Adds explicit `REVOKE ALL FROM anon, authenticated` and `GRANT SELECT, INSERT, UPDATE, DELETE TO service_role`. Includes a 13-assertion verification block checking all 4 CRUD ops for service_role (allowed), anon (denied), authenticated (denied), plus RLS enabled.
+- **Tests** (`lib/__tests__/m431-engage-segments-acl.test.ts`): 28 tests total — 12 static migration SQL analysis (always run in CI), 10 real PostgreSQL role CRUD + denial tests (require TEST_DATABASE_URL pointed at a disposable database), 6 API route authorization contract tests. DB tests include safety guardrails that refuse to run against non-disposable databases.
 
 ### Why
-On Supabase, there are NO default ACL entries for public schema tables -- `service_role` gets ZERO table privileges without explicit grants. The Engage API routes use `createServiceClient()` (service_role) for `.from('engage_segments')` queries. Without grants, these operations would fail with permission denied.
+On Supabase, there are NO default ACL entries for public schema tables — `service_role` gets ZERO table privileges without explicit grants. The Engage API routes use `createServiceClient()` (service_role) for `.from('engage_segments')` queries. M431 was committed without grants; M432 fixes this as a companion migration to be applied atomically with M431.
 
 ### What could break
-- Nothing. This migration has NOT been applied to any environment. The file is being amended before first application. No application code changed.
+- Nothing. Neither M431 nor M432 has been applied to any environment. M431 is unchanged. M432 is a new file. No application code changed.
 
 ## 2026-10-08 — Editable shipping/tracking with audit trail (#247)
 

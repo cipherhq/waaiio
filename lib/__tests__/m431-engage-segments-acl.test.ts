@@ -1,22 +1,26 @@
 /**
  * M431 + M432 — engage_segments privilege contract tests
  *
- * Section 1: Static migration analysis (always runs)
- *   - M432 contains correct GRANT/REVOKE statements
- *   - M431 creates table with RLS
- *   - M432 verification block checks all 4 ops for all 3 roles
+ * Section 1: Static migration SQL analysis (always runs in CI)
+ *   - M432 contains correct GRANT/REVOKE
+ *   - M431 creates table with RLS, has NO grant (the gap M432 fixes)
+ *   - M432 verification block checks all 4 ops × 3 roles + RLS
  *
- * Section 2: Real PostgreSQL CRUD + role denial tests (requires TEST_DATABASE_URL)
- *   - Creates engage_segments table (M431) + applies ACL (M432)
- *   - service_role: full CRUD cycle with valid fixture FKs
- *   - anon: SELECT denied (permission denied, not empty result)
- *   - authenticated: SELECT denied (permission denied)
- *   - Cleanup: drops table after tests
+ * Section 2: Real PostgreSQL role CRUD + denial tests (requires TEST_DATABASE_URL)
+ *   - Applies M431 + M432 to a disposable test schema
+ *   - service_role: full CREATE → READ → UPDATE → DELETE cycle with valid FK fixtures
+ *   - anon: SELECT/INSERT produce "permission denied" (not empty result)
+ *   - authenticated: SELECT/INSERT produce "permission denied"
+ *   - PUBLIC: no effective privilege via aclexplode grantee=0
+ *   - RLS enabled catalog assertion
  *
- * Section 3: API route authorization contract (always runs)
+ *   SAFETY: Tests refuse to run unless TEST_DATABASE_URL contains a known
+ *   disposable marker. This prevents accidental execution against staging
+ *   or production databases.
+ *
+ * Section 3: API route authorization contract (always runs in CI)
  *   - Routes use createServiceClient for direct table access
- *   - Routes enforce auth + capability + business ownership
- *   - Cross-tenant queries scoped by business_id
+ *   - Routes enforce auth + capability + business ownership scoping
  */
 import { describe, it, expect, afterAll, beforeAll } from 'vitest';
 import { readFileSync } from 'fs';
@@ -25,7 +29,7 @@ import { join } from 'path';
 const MIGRATIONS_DIR = join(process.cwd(), 'supabase', 'migrations');
 
 // ══════════════════════════════════════════════════════════
-// Section 1: Static migration analysis
+// Section 1: Static migration SQL analysis (always runs)
 // ══════════════════════════════════════════════════════════
 
 describe('M432 migration SQL analysis', () => {
@@ -40,34 +44,22 @@ describe('M432 migration SQL analysis', () => {
     expect(m432Sql).toContain('REVOKE ALL ON TABLE public.engage_segments FROM anon, authenticated');
   });
 
-  it('M432 verification checks service_role SELECT', () => {
-    expect(m432Sql).toContain("has_table_privilege('service_role', 'public.engage_segments', 'SELECT')");
-  });
-
-  it('M432 verification checks service_role INSERT', () => {
-    expect(m432Sql).toContain("has_table_privilege('service_role', 'public.engage_segments', 'INSERT')");
-  });
-
-  it('M432 verification checks service_role UPDATE', () => {
-    expect(m432Sql).toContain("has_table_privilege('service_role', 'public.engage_segments', 'UPDATE')");
-  });
-
-  it('M432 verification checks service_role DELETE', () => {
-    expect(m432Sql).toContain("has_table_privilege('service_role', 'public.engage_segments', 'DELETE')");
+  it('M432 verification checks service_role all 4 ops', () => {
+    for (const op of ['SELECT', 'INSERT', 'UPDATE', 'DELETE']) {
+      expect(m432Sql).toContain(`has_table_privilege('service_role', 'public.engage_segments', '${op}')`);
+    }
   });
 
   it('M432 verification denies anon all 4 ops', () => {
-    expect(m432Sql).toContain("has_table_privilege('anon', 'public.engage_segments', 'SELECT')");
-    expect(m432Sql).toContain("has_table_privilege('anon', 'public.engage_segments', 'INSERT')");
-    expect(m432Sql).toContain("has_table_privilege('anon', 'public.engage_segments', 'UPDATE')");
-    expect(m432Sql).toContain("has_table_privilege('anon', 'public.engage_segments', 'DELETE')");
+    for (const op of ['SELECT', 'INSERT', 'UPDATE', 'DELETE']) {
+      expect(m432Sql).toContain(`has_table_privilege('anon', 'public.engage_segments', '${op}')`);
+    }
   });
 
   it('M432 verification denies authenticated all 4 ops', () => {
-    expect(m432Sql).toContain("has_table_privilege('authenticated', 'public.engage_segments', 'SELECT')");
-    expect(m432Sql).toContain("has_table_privilege('authenticated', 'public.engage_segments', 'INSERT')");
-    expect(m432Sql).toContain("has_table_privilege('authenticated', 'public.engage_segments', 'UPDATE')");
-    expect(m432Sql).toContain("has_table_privilege('authenticated', 'public.engage_segments', 'DELETE')");
+    for (const op of ['SELECT', 'INSERT', 'UPDATE', 'DELETE']) {
+      expect(m432Sql).toContain(`has_table_privilege('authenticated', 'public.engage_segments', '${op}')`);
+    }
   });
 
   it('M432 verification checks RLS enabled', () => {
@@ -84,7 +76,7 @@ describe('M432 migration SQL analysis', () => {
     expect(m431Sql).toContain('owner_id = auth.uid()');
   });
 
-  it('M431 does NOT contain any GRANT statement (gap that M432 fixes)', () => {
+  it('M431 has NO GRANT statement (the gap M432 fixes)', () => {
     expect(m431Sql).not.toMatch(/GRANT\s+(SELECT|INSERT|UPDATE|DELETE|ALL)/i);
   });
 
@@ -93,21 +85,38 @@ describe('M432 migration SQL analysis', () => {
   });
 
   it('M432 does not grant TRUNCATE or REFERENCES', () => {
-    expect(m432Sql).not.toContain('TRUNCATE');
+    expect(m432Sql).not.toMatch(/GRANT.*TRUNCATE/i);
     expect(m432Sql).not.toMatch(/GRANT.*REFERENCES/i);
   });
 });
 
 // ══════════════════════════════════════════════════════════
-// Section 2: Real PostgreSQL CRUD + role denial tests
+// Section 2: Real PostgreSQL role CRUD + denial tests
 // ══════════════════════════════════════════════════════════
 
-interface PgClient { connect(): Promise<void>; query(sql: string, params?: unknown[]): Promise<{ rows: Record<string, unknown>[] }>; end(): Promise<void>; }
+interface PgClient {
+  connect(): Promise<void>;
+  query(sql: string, params?: unknown[]): Promise<{ rows: Record<string, unknown>[] }>;
+  end(): Promise<void>;
+}
 
 const TEST_DB_URL = process.env.TEST_DATABASE_URL;
-const hasTestDb = !!TEST_DB_URL;
 
-describe.skipIf(!hasTestDb)('M431+M432 real PostgreSQL role tests', () => {
+// SAFETY GUARD: Only run against explicitly disposable databases.
+// Prevents accidental execution against staging/production.
+const DISPOSABLE_MARKERS = ['localhost', '127.0.0.1', 'supabase_test', 'db.localhost', 'pooler.supabase.com:6543'];
+const isDisposableDb = TEST_DB_URL
+  ? DISPOSABLE_MARKERS.some(m => TEST_DB_URL.includes(m)) || TEST_DB_URL.includes('TEST_SAFE=true')
+  : false;
+
+const canRunDbTests = !!TEST_DB_URL && isDisposableDb;
+const skipReason = !TEST_DB_URL
+  ? 'TEST_DATABASE_URL not set'
+  : !isDisposableDb
+    ? 'TEST_DATABASE_URL does not contain a disposable marker — refusing to run destructive tests'
+    : '';
+
+describe.skipIf(!canRunDbTests)(`M431+M432 real PostgreSQL role tests${skipReason ? ` (skipped: ${skipReason})` : ''}`, () => {
   let pg: { Client: new (opts: { connectionString: string }) => PgClient };
   let client: PgClient;
 
@@ -116,13 +125,19 @@ describe.skipIf(!hasTestDb)('M431+M432 real PostgreSQL role tests', () => {
   let insertedSegmentId: string | null = null;
 
   beforeAll(async () => {
-    // Dynamic import to avoid requiring pg when not testing against real DB
     pg = await import('pg');
-    client = new pg.Client({ connectionString: TEST_DB_URL });
+    client = new pg.Client({ connectionString: TEST_DB_URL! });
     await client.connect();
 
-    // Create test fixtures (as postgres/superuser)
-    // Ensure FK targets exist for engage_segments inserts
+    // Verify connection is to a disposable database (double-check)
+    const versionResult = await client.query('SELECT current_database() as db');
+    const dbName = String(versionResult.rows[0].db);
+    if (dbName === 'postgres' && !TEST_DB_URL!.includes('localhost') && !TEST_DB_URL!.includes('127.0.0.1')) {
+      await client.end();
+      throw new Error(`Refusing to run destructive tests against database "${dbName}" — does not appear disposable`);
+    }
+
+    // Create FK fixture targets
     await client.query(`
       INSERT INTO auth.users (id, instance_id, aud, role, email, encrypted_password, created_at, updated_at)
       VALUES ($1, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated',
@@ -136,29 +151,30 @@ describe.skipIf(!hasTestDb)('M431+M432 real PostgreSQL role tests', () => {
       ON CONFLICT (id) DO NOTHING
     `, [TEST_BIZ_ID, TEST_USER_ID]);
 
-    // Apply M431 + M432 in a test schema context
+    // Apply M431 (table) + M432 (ACL) — fresh application
+    await client.query('DROP TABLE IF EXISTS public.engage_segments CASCADE');
     const m431Sql = readFileSync(join(MIGRATIONS_DIR, '431_engage_segments.sql'), 'utf8');
     const m432Sql = readFileSync(join(MIGRATIONS_DIR, '432_engage_segments_acl.sql'), 'utf8');
-
-    // Drop table if exists from prior test run
-    await client.query('DROP TABLE IF EXISTS public.engage_segments CASCADE');
     await client.query(m431Sql);
     await client.query(m432Sql);
   });
 
   afterAll(async () => {
-    // Clean up test data and table
     if (client) {
-      await client.query('DROP TABLE IF EXISTS public.engage_segments CASCADE');
-      await client.query('DELETE FROM public.businesses WHERE id = $1', [TEST_BIZ_ID]);
-      await client.query('DELETE FROM auth.users WHERE id = $1', [TEST_USER_ID]);
-      await client.end();
+      try {
+        await client.query('RESET ROLE'); // Ensure we're back to superuser
+        await client.query('DROP TABLE IF EXISTS public.engage_segments CASCADE');
+        await client.query('DELETE FROM public.businesses WHERE id = $1', [TEST_BIZ_ID]);
+        await client.query('DELETE FROM auth.users WHERE id = $1', [TEST_USER_ID]);
+      } finally {
+        await client.end();
+      }
     }
   });
 
-  // ── service_role CRUD ──
+  // ── service_role full CRUD cycle ──
 
-  it('service_role can INSERT into engage_segments', async () => {
+  it('service_role can INSERT with valid FK fixtures', async () => {
     await client.query('SET ROLE service_role');
     const result = await client.query(`
       INSERT INTO public.engage_segments (business_id, name, expression, created_by)
@@ -167,10 +183,10 @@ describe.skipIf(!hasTestDb)('M431+M432 real PostgreSQL role tests', () => {
     `, [TEST_BIZ_ID, TEST_USER_ID]);
     await client.query('RESET ROLE');
     expect(result.rows).toHaveLength(1);
-    insertedSegmentId = result.rows[0].id;
+    insertedSegmentId = result.rows[0].id as string;
   });
 
-  it('service_role can SELECT from engage_segments', async () => {
+  it('service_role can SELECT the inserted row', async () => {
     await client.query('SET ROLE service_role');
     const result = await client.query(
       'SELECT id, name, business_id FROM public.engage_segments WHERE id = $1',
@@ -181,7 +197,7 @@ describe.skipIf(!hasTestDb)('M431+M432 real PostgreSQL role tests', () => {
     expect(result.rows[0].name).toBe('Test Segment');
   });
 
-  it('service_role can UPDATE engage_segments', async () => {
+  it('service_role can UPDATE the inserted row', async () => {
     await client.query('SET ROLE service_role');
     const result = await client.query(
       'UPDATE public.engage_segments SET name = $1 WHERE id = $2 RETURNING name',
@@ -191,7 +207,7 @@ describe.skipIf(!hasTestDb)('M431+M432 real PostgreSQL role tests', () => {
     expect(result.rows[0].name).toBe('Updated Segment');
   });
 
-  it('service_role can DELETE from engage_segments', async () => {
+  it('service_role can DELETE the inserted row', async () => {
     await client.query('SET ROLE service_role');
     const result = await client.query(
       'DELETE FROM public.engage_segments WHERE id = $1 RETURNING id',
@@ -202,9 +218,9 @@ describe.skipIf(!hasTestDb)('M431+M432 real PostgreSQL role tests', () => {
     insertedSegmentId = null;
   });
 
-  // ── anon denial ──
+  // ── anon denial (permission denied, NOT empty result) ──
 
-  it('anon is denied SELECT on engage_segments (permission denied, not empty)', async () => {
+  it('anon SELECT is denied with permission error', async () => {
     await client.query('SET ROLE anon');
     await expect(
       client.query('SELECT * FROM public.engage_segments LIMIT 1'),
@@ -212,7 +228,7 @@ describe.skipIf(!hasTestDb)('M431+M432 real PostgreSQL role tests', () => {
     await client.query('RESET ROLE');
   });
 
-  it('anon is denied INSERT on engage_segments', async () => {
+  it('anon INSERT is denied with permission error', async () => {
     await client.query('SET ROLE anon');
     await expect(
       client.query(`INSERT INTO public.engage_segments (business_id, name, expression, created_by)
@@ -221,9 +237,9 @@ describe.skipIf(!hasTestDb)('M431+M432 real PostgreSQL role tests', () => {
     await client.query('RESET ROLE');
   });
 
-  // ── authenticated denial ──
+  // ── authenticated denial (permission denied, NOT RLS-filtered empty) ──
 
-  it('authenticated is denied SELECT on engage_segments (permission denied)', async () => {
+  it('authenticated SELECT is denied with permission error', async () => {
     await client.query('SET ROLE authenticated');
     await expect(
       client.query('SELECT * FROM public.engage_segments LIMIT 1'),
@@ -231,7 +247,7 @@ describe.skipIf(!hasTestDb)('M431+M432 real PostgreSQL role tests', () => {
     await client.query('RESET ROLE');
   });
 
-  it('authenticated is denied INSERT on engage_segments', async () => {
+  it('authenticated INSERT is denied with permission error', async () => {
     await client.query('SET ROLE authenticated');
     await expect(
       client.query(`INSERT INTO public.engage_segments (business_id, name, expression, created_by)
@@ -240,7 +256,7 @@ describe.skipIf(!hasTestDb)('M431+M432 real PostgreSQL role tests', () => {
     await client.query('RESET ROLE');
   });
 
-  // ── RLS + privilege catalog ──
+  // ── Catalog assertions ──
 
   it('RLS is enabled on engage_segments', async () => {
     const result = await client.query(
@@ -249,17 +265,21 @@ describe.skipIf(!hasTestDb)('M431+M432 real PostgreSQL role tests', () => {
     expect(result.rows[0].rowsecurity).toBe(true);
   });
 
-  it('no PUBLIC privilege on engage_segments', async () => {
+  it('no PUBLIC (grantee=0) privilege exists on engage_segments', async () => {
+    // Use aclexplode to correctly identify PUBLIC grants (grantee OID = 0)
     const result = await client.query(`
-      SELECT relacl FROM pg_class WHERE relname = 'engage_segments' AND relnamespace = 'public'::regnamespace
+      SELECT count(*) as public_grants
+      FROM pg_class c, aclexplode(c.relacl) a
+      WHERE c.relname = 'engage_segments'
+        AND c.relnamespace = 'public'::regnamespace
+        AND a.grantee = 0
     `);
-    const acl = result.rows[0]?.relacl?.join(',') || '';
-    expect(acl).not.toContain('='); // No entry starting with '=' means no PUBLIC grant
+    expect(Number(result.rows[0].public_grants)).toBe(0);
   });
 });
 
 // ══════════════════════════════════════════════════════════
-// Section 3: API route authorization contract
+// Section 3: API route authorization contract (always runs)
 // ══════════════════════════════════════════════════════════
 
 describe('Engage segments API authorization contract', () => {
