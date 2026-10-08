@@ -346,19 +346,15 @@ describe.skipIf(!TEST_DB_URL)('P0: Executable PG authorization — business_memb
     `, [BUSINESS_ID]);
 
     // Apply M099: creates business_members with the VULNERABLE policy
-    // Note: on production, ALTER DEFAULT PRIVILEGES grants full DML to authenticated.
-    // We replicate that here so the vulnerability test is faithful.
-    await client.query(`
-      GRANT SELECT, INSERT, UPDATE, DELETE ON public.business_members TO authenticated;
-      GRANT SELECT ON public.business_members TO anon;
-    `);
-
     const m099Sql = readFileSync(join(process.cwd(), 'supabase/migrations/099_business_members.sql'), 'utf8');
     await client.query(m099Sql);
 
-    // Grant DML to authenticated (matching production default privileges)
+    // On production, ALTER DEFAULT PRIVILEGES grants full DML to authenticated.
+    // We replicate that here AFTER M099 creates the table so the vulnerability
+    // test is faithful to the effective production privilege state.
     await client.query(`
       GRANT SELECT, INSERT, UPDATE, DELETE ON public.business_members TO authenticated;
+      GRANT SELECT ON public.business_members TO anon;
     `);
 
     // Apply M168 chat team member policies
