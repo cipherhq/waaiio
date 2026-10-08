@@ -43,7 +43,7 @@ function createTestPayment(opts: {
   const bizId = psql(`
     INSERT INTO businesses (owner_id, name, slug, bot_code, city, address, phone, category, country_code, wa_method, status)
     VALUES ('${ownerId}', 'Fee Test ${counter}', 'fee-test-${counter}-${Date.now()}', 'FT${counter}${Date.now()}',
-      'Test', '123 Test', '+1234', 'restaurant', 'NG', 'shared', 'active')
+      'Test', '123 Test', '+1234', 'restaurant', 'NG', 'transfer', 'active')
     RETURNING id
   `);
 
