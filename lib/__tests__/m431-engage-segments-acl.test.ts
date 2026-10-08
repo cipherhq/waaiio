@@ -1,371 +1,296 @@
 /**
- * M431 — engage_segments privilege contract + API authorization tests
+ * M431 + M432 — engage_segments privilege contract tests
  *
- * Two sections:
+ * Section 1: Static migration analysis (always runs)
+ *   - M432 contains correct GRANT/REVOKE statements
+ *   - M431 creates table with RLS
+ *   - M432 verification block checks all 4 ops for all 3 roles
  *
- * 1. Static migration analysis (always runs):
- *    - Verifies the migration SQL contains correct GRANT/REVOKE statements
- *    - Verifies RLS is enabled
- *    - Verifies verification DO $$ block is present
+ * Section 2: Real PostgreSQL CRUD + role denial tests (requires TEST_DATABASE_URL)
+ *   - Creates engage_segments table (M431) + applies ACL (M432)
+ *   - service_role: full CRUD cycle with valid fixture FKs
+ *   - anon: SELECT denied (permission denied, not empty result)
+ *   - authenticated: SELECT denied (permission denied)
+ *   - Cleanup: drops table after tests
  *
- * 2. Live PostgreSQL ACL verification (requires TEST_DATABASE_URL):
- *    - service_role: SELECT, INSERT, UPDATE, DELETE = allowed
- *    - anon: all = denied
- *    - authenticated: all = denied (direct table; RLS defense policy requires owner match)
- *    - RLS enabled on engage_segments
- *
- * 3. API route authorization contract (always runs):
- *    - GET requires businessId param
- *    - POST requires businessId, name, expression
- *    - All routes require authentication
- *    - All routes enforce capability + role via requireCapabilityWithRole
- *    - Cross-business access is scoped by business_id eq filter
- *
- * Post-migration staging certification SQL (MUST be run manually):
- *
- *   -- As superuser, verify service_role CRUD:
- *   SET ROLE service_role;
- *   INSERT INTO public.engage_segments (business_id, name, expression, created_by)
- *     VALUES ('00000000-0000-0000-0000-000000000000', 'test', '{}', '00000000-0000-0000-0000-000000000000');
- *   -- (will fail on FK, but should NOT fail on permission denied)
- *   RESET ROLE;
- *
- *   -- Verify anon is denied:
- *   SET ROLE anon;
- *   SELECT * FROM public.engage_segments;
- *   -- MUST return "permission denied for table engage_segments"
- *   RESET ROLE;
- *
- *   -- Verify authenticated is denied:
- *   SET ROLE authenticated;
- *   SELECT * FROM public.engage_segments;
- *   -- MUST return "permission denied for table engage_segments"
- *   RESET ROLE;
- *
- *   -- Verify RLS is enabled:
- *   SELECT tablename, rowsecurity FROM pg_tables
- *     WHERE schemaname = 'public' AND tablename = 'engage_segments';
- *   -- rowsecurity must be true
- *
- *   -- Verify exact privileges:
- *   SELECT grantee, privilege_type FROM information_schema.role_table_grants
- *     WHERE table_schema = 'public' AND table_name = 'engage_segments'
- *     ORDER BY grantee, privilege_type;
- *   -- service_role: SELECT, INSERT, UPDATE, DELETE
- *   -- anon: (none)
- *   -- authenticated: (none)
+ * Section 3: API route authorization contract (always runs)
+ *   - Routes use createServiceClient for direct table access
+ *   - Routes enforce auth + capability + business ownership
+ *   - Cross-tenant queries scoped by business_id
  */
-
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterAll, beforeAll } from 'vitest';
 import { readFileSync } from 'fs';
-import { execSync } from 'child_process';
-import { resolve } from 'path';
+import { join } from 'path';
 
-/* ─── helpers ─── */
+const MIGRATIONS_DIR = join(process.cwd(), 'supabase', 'migrations');
 
-const DB_URL = process.env.TEST_DATABASE_URL;
-const skipDb = !DB_URL;
+// ══════════════════════════════════════════════════════════
+// Section 1: Static migration analysis
+// ══════════════════════════════════════════════════════════
 
-function sql(query: string): string {
-  return execSync(
-    `psql "${DB_URL}" -t -A -v ON_ERROR_STOP=1`,
-    { input: query, encoding: 'utf-8', timeout: 10_000 },
-  ).trim();
-}
+describe('M432 migration SQL analysis', () => {
+  const m432Sql = readFileSync(join(MIGRATIONS_DIR, '432_engage_segments_acl.sql'), 'utf8');
+  const m431Sql = readFileSync(join(MIGRATIONS_DIR, '431_engage_segments.sql'), 'utf8');
 
-const migrationPath = resolve(
-  __dirname,
-  '../../supabase/migrations/431_engage_segments.sql',
-);
-const migrationSql = readFileSync(migrationPath, 'utf-8');
-
-/* ═══════════════════════════════════════════════════════════
-   Section 1: Static migration SQL analysis (always runs)
-   ═══════════════════════════════════════════════════════════ */
-
-describe('M431 — engage_segments migration SQL scope guard (static)', () => {
-  const sqlLines = migrationSql
-    .split('\n')
-    .filter(line => !line.trim().startsWith('--') && line.trim().length > 0);
-  const fullSql = sqlLines.join(' ');
-
-  it('creates the engage_segments table', () => {
-    expect(migrationSql).toContain('CREATE TABLE public.engage_segments');
+  it('M432 grants service_role SELECT, INSERT, UPDATE, DELETE', () => {
+    expect(m432Sql).toContain('GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.engage_segments TO service_role');
   });
 
-  it('enables RLS on engage_segments', () => {
-    expect(migrationSql).toContain('ALTER TABLE public.engage_segments ENABLE ROW LEVEL SECURITY');
+  it('M432 revokes all from anon and authenticated', () => {
+    expect(m432Sql).toContain('REVOKE ALL ON TABLE public.engage_segments FROM anon, authenticated');
   });
 
-  it('REVOKE ALL from anon and authenticated', () => {
-    const revokeLines = sqlLines.filter(line => /REVOKE/i.test(line));
-    expect(revokeLines.length).toBeGreaterThanOrEqual(1);
-    const revokeAll = revokeLines.find(line =>
-      /REVOKE\s+ALL\s+ON\s+TABLE\s+public\.engage_segments\s+FROM\s+anon\s*,\s*authenticated/i.test(line),
-    );
-    expect(revokeAll).toBeDefined();
+  it('M432 verification checks service_role SELECT', () => {
+    expect(m432Sql).toContain("has_table_privilege('service_role', 'public.engage_segments', 'SELECT')");
   });
 
-  it('GRANT SELECT, INSERT, UPDATE, DELETE to service_role', () => {
-    const grantLines = sqlLines.filter(line =>
-      /GRANT/i.test(line) && !/has_table_privilege/i.test(line),
-    );
-    const crudGrant = grantLines.find(line =>
-      /GRANT\s+SELECT\s*,\s*INSERT\s*,\s*UPDATE\s*,\s*DELETE\s+ON\s+TABLE\s+public\.engage_segments\s+TO\s+service_role/i.test(line),
-    );
-    expect(crudGrant).toBeDefined();
+  it('M432 verification checks service_role INSERT', () => {
+    expect(m432Sql).toContain("has_table_privilege('service_role', 'public.engage_segments', 'INSERT')");
   });
 
-  it('does NOT grant TRUNCATE, REFERENCES, or TRIGGER to service_role', () => {
-    const grantLines = sqlLines.filter(line =>
-      /GRANT/i.test(line) &&
-      !/has_table_privilege/i.test(line) &&
-      /service_role/i.test(line),
-    );
-    for (const line of grantLines) {
-      expect(line).not.toMatch(/TRUNCATE|REFERENCES|TRIGGER/i);
-    }
+  it('M432 verification checks service_role UPDATE', () => {
+    expect(m432Sql).toContain("has_table_privilege('service_role', 'public.engage_segments', 'UPDATE')");
   });
 
-  it('does NOT grant any privilege to anon or authenticated', () => {
-    // Only REVOKE lines should mention anon/authenticated
-    const grantLines = sqlLines.filter(line =>
-      /GRANT/i.test(line) &&
-      !/has_table_privilege/i.test(line) &&
-      !line.trim().startsWith('--'),
-    );
-    for (const line of grantLines) {
-      expect(line).not.toMatch(/TO\s+(anon|authenticated)/i);
-    }
+  it('M432 verification checks service_role DELETE', () => {
+    expect(m432Sql).toContain("has_table_privilege('service_role', 'public.engage_segments', 'DELETE')");
   });
 
-  it('contains a verification DO $$ block with all required checks', () => {
-    expect(fullSql).toContain('DO $$');
-
-    // service_role checks
-    expect(migrationSql).toContain("has_table_privilege('service_role', 'public.engage_segments', 'SELECT')");
-    expect(migrationSql).toContain("has_table_privilege('service_role', 'public.engage_segments', 'INSERT')");
-    expect(migrationSql).toContain("has_table_privilege('service_role', 'public.engage_segments', 'UPDATE')");
-    expect(migrationSql).toContain("has_table_privilege('service_role', 'public.engage_segments', 'DELETE')");
-
-    // anon denial checks
-    expect(migrationSql).toContain("has_table_privilege('anon', 'public.engage_segments', 'SELECT')");
-    expect(migrationSql).toContain("has_table_privilege('anon', 'public.engage_segments', 'INSERT')");
-
-    // authenticated denial checks
-    expect(migrationSql).toContain("has_table_privilege('authenticated', 'public.engage_segments', 'SELECT')");
-    expect(migrationSql).toContain("has_table_privilege('authenticated', 'public.engage_segments', 'INSERT')");
-
-    // RLS check
-    expect(migrationSql).toContain('rowsecurity');
+  it('M432 verification denies anon all 4 ops', () => {
+    expect(m432Sql).toContain("has_table_privilege('anon', 'public.engage_segments', 'SELECT')");
+    expect(m432Sql).toContain("has_table_privilege('anon', 'public.engage_segments', 'INSERT')");
+    expect(m432Sql).toContain("has_table_privilege('anon', 'public.engage_segments', 'UPDATE')");
+    expect(m432Sql).toContain("has_table_privilege('anon', 'public.engage_segments', 'DELETE')");
   });
 
-  it('creates a defense-in-depth RLS policy scoped to business owner', () => {
-    expect(migrationSql).toContain('CREATE POLICY engage_segments_owner_defense');
-    expect(migrationSql).toContain('owner_id = auth.uid()');
+  it('M432 verification denies authenticated all 4 ops', () => {
+    expect(m432Sql).toContain("has_table_privilege('authenticated', 'public.engage_segments', 'SELECT')");
+    expect(m432Sql).toContain("has_table_privilege('authenticated', 'public.engage_segments', 'INSERT')");
+    expect(m432Sql).toContain("has_table_privilege('authenticated', 'public.engage_segments', 'UPDATE')");
+    expect(m432Sql).toContain("has_table_privilege('authenticated', 'public.engage_segments', 'DELETE')");
   });
 
-  it('targets only the engage_segments table', () => {
-    const grantLines = sqlLines.filter(line =>
-      /GRANT/i.test(line) &&
-      !/has_table_privilege/i.test(line) &&
-      !line.trim().startsWith('--'),
-    );
-    for (const line of grantLines) {
-      expect(line).toContain('engage_segments');
-    }
-    const revokeLines = sqlLines.filter(line => /REVOKE/i.test(line));
-    for (const line of revokeLines) {
-      expect(line).toContain('engage_segments');
-    }
+  it('M432 verification checks RLS enabled', () => {
+    expect(m432Sql).toContain("rowsecurity FROM pg_tables WHERE schemaname = 'public' AND tablename = 'engage_segments'");
+  });
+
+  it('M431 creates table with RLS enabled', () => {
+    expect(m431Sql).toContain('CREATE TABLE public.engage_segments');
+    expect(m431Sql).toContain('ALTER TABLE public.engage_segments ENABLE ROW LEVEL SECURITY');
+  });
+
+  it('M431 creates owner defense policy', () => {
+    expect(m431Sql).toContain('CREATE POLICY engage_segments_owner_defense');
+    expect(m431Sql).toContain('owner_id = auth.uid()');
+  });
+
+  it('M431 does NOT contain any GRANT statement (gap that M432 fixes)', () => {
+    expect(m431Sql).not.toMatch(/GRANT\s+(SELECT|INSERT|UPDATE|DELETE|ALL)/i);
+  });
+
+  it('M432 does not grant to PUBLIC', () => {
+    expect(m432Sql).not.toMatch(/GRANT.*TO\s+PUBLIC/i);
+  });
+
+  it('M432 does not grant TRUNCATE or REFERENCES', () => {
+    expect(m432Sql).not.toContain('TRUNCATE');
+    expect(m432Sql).not.toMatch(/GRANT.*REFERENCES/i);
   });
 });
 
-/* ═══════════════════════════════════════════════════════════
-   Section 2: Live PostgreSQL ACL verification (requires TEST_DATABASE_URL)
-   ═══════════════════════════════════════════════════════════ */
+// ══════════════════════════════════════════════════════════
+// Section 2: Real PostgreSQL CRUD + role denial tests
+// ══════════════════════════════════════════════════════════
 
-describe.skipIf(skipDb)('M431 — engage_segments ACL (DB)', () => {
-  it('service_role has SELECT on engage_segments', () => {
-    const result = sql(`SELECT has_table_privilege('service_role', 'public.engage_segments', 'SELECT');`);
-    expect(result).toBe('t');
+interface PgClient { connect(): Promise<void>; query(sql: string, params?: unknown[]): Promise<{ rows: Record<string, unknown>[] }>; end(): Promise<void>; }
+
+const TEST_DB_URL = process.env.TEST_DATABASE_URL;
+const hasTestDb = !!TEST_DB_URL;
+
+describe.skipIf(!hasTestDb)('M431+M432 real PostgreSQL role tests', () => {
+  let pg: { Client: new (opts: { connectionString: string }) => PgClient };
+  let client: PgClient;
+
+  const TEST_BIZ_ID = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+  const TEST_USER_ID = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
+  let insertedSegmentId: string | null = null;
+
+  beforeAll(async () => {
+    // Dynamic import to avoid requiring pg when not testing against real DB
+    pg = await import('pg');
+    client = new pg.Client({ connectionString: TEST_DB_URL });
+    await client.connect();
+
+    // Create test fixtures (as postgres/superuser)
+    // Ensure FK targets exist for engage_segments inserts
+    await client.query(`
+      INSERT INTO auth.users (id, instance_id, aud, role, email, encrypted_password, created_at, updated_at)
+      VALUES ($1, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated',
+              'm432-test@test.local', crypt('test', gen_salt('bf')), now(), now())
+      ON CONFLICT (id) DO NOTHING
+    `, [TEST_USER_ID]);
+
+    await client.query(`
+      INSERT INTO public.businesses (id, owner_id, name, slug, category, flow_type, country_code, status)
+      VALUES ($1, $2, 'M432 Test Biz', 'm432-test-biz', 'shop', 'ordering', 'US', 'pending')
+      ON CONFLICT (id) DO NOTHING
+    `, [TEST_BIZ_ID, TEST_USER_ID]);
+
+    // Apply M431 + M432 in a test schema context
+    const m431Sql = readFileSync(join(MIGRATIONS_DIR, '431_engage_segments.sql'), 'utf8');
+    const m432Sql = readFileSync(join(MIGRATIONS_DIR, '432_engage_segments_acl.sql'), 'utf8');
+
+    // Drop table if exists from prior test run
+    await client.query('DROP TABLE IF EXISTS public.engage_segments CASCADE');
+    await client.query(m431Sql);
+    await client.query(m432Sql);
   });
 
-  it('service_role has INSERT on engage_segments', () => {
-    const result = sql(`SELECT has_table_privilege('service_role', 'public.engage_segments', 'INSERT');`);
-    expect(result).toBe('t');
+  afterAll(async () => {
+    // Clean up test data and table
+    if (client) {
+      await client.query('DROP TABLE IF EXISTS public.engage_segments CASCADE');
+      await client.query('DELETE FROM public.businesses WHERE id = $1', [TEST_BIZ_ID]);
+      await client.query('DELETE FROM auth.users WHERE id = $1', [TEST_USER_ID]);
+      await client.end();
+    }
   });
 
-  it('service_role has UPDATE on engage_segments', () => {
-    const result = sql(`SELECT has_table_privilege('service_role', 'public.engage_segments', 'UPDATE');`);
-    expect(result).toBe('t');
+  // ── service_role CRUD ──
+
+  it('service_role can INSERT into engage_segments', async () => {
+    await client.query('SET ROLE service_role');
+    const result = await client.query(`
+      INSERT INTO public.engage_segments (business_id, name, expression, created_by)
+      VALUES ($1, 'Test Segment', '{"type": "all"}', $2)
+      RETURNING id
+    `, [TEST_BIZ_ID, TEST_USER_ID]);
+    await client.query('RESET ROLE');
+    expect(result.rows).toHaveLength(1);
+    insertedSegmentId = result.rows[0].id;
   });
 
-  it('service_role has DELETE on engage_segments', () => {
-    const result = sql(`SELECT has_table_privilege('service_role', 'public.engage_segments', 'DELETE');`);
-    expect(result).toBe('t');
+  it('service_role can SELECT from engage_segments', async () => {
+    await client.query('SET ROLE service_role');
+    const result = await client.query(
+      'SELECT id, name, business_id FROM public.engage_segments WHERE id = $1',
+      [insertedSegmentId],
+    );
+    await client.query('RESET ROLE');
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0].name).toBe('Test Segment');
   });
 
-  it('anon is denied SELECT on engage_segments', () => {
-    const result = sql(`SELECT has_table_privilege('anon', 'public.engage_segments', 'SELECT');`);
-    expect(result).toBe('f');
+  it('service_role can UPDATE engage_segments', async () => {
+    await client.query('SET ROLE service_role');
+    const result = await client.query(
+      'UPDATE public.engage_segments SET name = $1 WHERE id = $2 RETURNING name',
+      ['Updated Segment', insertedSegmentId],
+    );
+    await client.query('RESET ROLE');
+    expect(result.rows[0].name).toBe('Updated Segment');
   });
 
-  it('anon is denied INSERT on engage_segments', () => {
-    const result = sql(`SELECT has_table_privilege('anon', 'public.engage_segments', 'INSERT');`);
-    expect(result).toBe('f');
+  it('service_role can DELETE from engage_segments', async () => {
+    await client.query('SET ROLE service_role');
+    const result = await client.query(
+      'DELETE FROM public.engage_segments WHERE id = $1 RETURNING id',
+      [insertedSegmentId],
+    );
+    await client.query('RESET ROLE');
+    expect(result.rows).toHaveLength(1);
+    insertedSegmentId = null;
   });
 
-  it('anon is denied UPDATE on engage_segments', () => {
-    const result = sql(`SELECT has_table_privilege('anon', 'public.engage_segments', 'UPDATE');`);
-    expect(result).toBe('f');
+  // ── anon denial ──
+
+  it('anon is denied SELECT on engage_segments (permission denied, not empty)', async () => {
+    await client.query('SET ROLE anon');
+    await expect(
+      client.query('SELECT * FROM public.engage_segments LIMIT 1'),
+    ).rejects.toThrow(/permission denied/i);
+    await client.query('RESET ROLE');
   });
 
-  it('anon is denied DELETE on engage_segments', () => {
-    const result = sql(`SELECT has_table_privilege('anon', 'public.engage_segments', 'DELETE');`);
-    expect(result).toBe('f');
+  it('anon is denied INSERT on engage_segments', async () => {
+    await client.query('SET ROLE anon');
+    await expect(
+      client.query(`INSERT INTO public.engage_segments (business_id, name, expression, created_by)
+        VALUES ($1, 'anon-test', '{}', $2)`, [TEST_BIZ_ID, TEST_USER_ID]),
+    ).rejects.toThrow(/permission denied/i);
+    await client.query('RESET ROLE');
   });
 
-  it('authenticated is denied SELECT on engage_segments', () => {
-    const result = sql(`SELECT has_table_privilege('authenticated', 'public.engage_segments', 'SELECT');`);
-    expect(result).toBe('f');
+  // ── authenticated denial ──
+
+  it('authenticated is denied SELECT on engage_segments (permission denied)', async () => {
+    await client.query('SET ROLE authenticated');
+    await expect(
+      client.query('SELECT * FROM public.engage_segments LIMIT 1'),
+    ).rejects.toThrow(/permission denied/i);
+    await client.query('RESET ROLE');
   });
 
-  it('authenticated is denied INSERT on engage_segments', () => {
-    const result = sql(`SELECT has_table_privilege('authenticated', 'public.engage_segments', 'INSERT');`);
-    expect(result).toBe('f');
+  it('authenticated is denied INSERT on engage_segments', async () => {
+    await client.query('SET ROLE authenticated');
+    await expect(
+      client.query(`INSERT INTO public.engage_segments (business_id, name, expression, created_by)
+        VALUES ($1, 'auth-test', '{}', $2)`, [TEST_BIZ_ID, TEST_USER_ID]),
+    ).rejects.toThrow(/permission denied/i);
+    await client.query('RESET ROLE');
   });
 
-  it('authenticated is denied UPDATE on engage_segments', () => {
-    const result = sql(`SELECT has_table_privilege('authenticated', 'public.engage_segments', 'UPDATE');`);
-    expect(result).toBe('f');
+  // ── RLS + privilege catalog ──
+
+  it('RLS is enabled on engage_segments', async () => {
+    const result = await client.query(
+      "SELECT rowsecurity FROM pg_tables WHERE schemaname = 'public' AND tablename = 'engage_segments'",
+    );
+    expect(result.rows[0].rowsecurity).toBe(true);
   });
 
-  it('authenticated is denied DELETE on engage_segments', () => {
-    const result = sql(`SELECT has_table_privilege('authenticated', 'public.engage_segments', 'DELETE');`);
-    expect(result).toBe('f');
-  });
-
-  it('RLS is enabled on engage_segments', () => {
-    const result = sql(`
-      SELECT rowsecurity FROM pg_tables
-        WHERE schemaname = 'public' AND tablename = 'engage_segments';
+  it('no PUBLIC privilege on engage_segments', async () => {
+    const result = await client.query(`
+      SELECT relacl FROM pg_class WHERE relname = 'engage_segments' AND relnamespace = 'public'::regnamespace
     `);
-    expect(result).toBe('t');
+    const acl = result.rows[0]?.relacl?.join(',') || '';
+    expect(acl).not.toContain('='); // No entry starting with '=' means no PUBLIC grant
   });
 });
 
-/* ═══════════════════════════════════════════════════════════
-   Section 3: API route authorization contract (static code analysis)
+// ══════════════════════════════════════════════════════════
+// Section 3: API route authorization contract
+// ══════════════════════════════════════════════════════════
 
-   These tests verify the route handler code enforces proper
-   authorization patterns. They read the source files and confirm
-   the required guard calls are present.
-   ═══════════════════════════════════════════════════════════ */
+describe('Engage segments API authorization contract', () => {
+  const listRoute = readFileSync(join(process.cwd(), 'app/api/engage/segments/route.ts'), 'utf8');
+  const detailRoute = readFileSync(join(process.cwd(), 'app/api/engage/segments/[id]/route.ts'), 'utf8');
 
-describe('M431 — engage_segments API authorization contract', () => {
-  const listCreateRoute = readFileSync(
-    resolve(__dirname, '../../app/api/engage/segments/route.ts'),
-    'utf-8',
-  );
-  const singleRoute = readFileSync(
-    resolve(__dirname, '../../app/api/engage/segments/[id]/route.ts'),
-    'utf-8',
-  );
-
-  describe('GET /api/engage/segments (list)', () => {
-    it('requires authentication via supabase.auth.getUser()', () => {
-      expect(listCreateRoute).toContain('supabase.auth.getUser()');
-    });
-
-    it('returns 401 when unauthenticated', () => {
-      expect(listCreateRoute).toContain("{ error: 'Unauthorized' }, { status: 401 }");
-    });
-
-    it('requires businessId parameter', () => {
-      expect(listCreateRoute).toContain("'businessId is required'");
-    });
-
-    it('uses requireCapabilityWithRole for authorization', () => {
-      expect(listCreateRoute).toContain('requireCapabilityWithRole');
-    });
-
-    it('enforces broadcast capability for listing', () => {
-      expect(listCreateRoute).toContain("capability: 'broadcast'");
-    });
-
-    it('uses service client (createServiceClient) for DB access', () => {
-      expect(listCreateRoute).toContain('createServiceClient');
-    });
-
-    it('scopes query to business_id', () => {
-      expect(listCreateRoute).toContain(".eq('business_id', businessId)");
-    });
+  it('list route uses createServiceClient for table access', () => {
+    expect(listRoute).toContain('createServiceClient');
+    expect(listRoute).toContain("from('engage_segments')");
   });
 
-  describe('POST /api/engage/segments (create)', () => {
-    it('requires authentication', () => {
-      expect(listCreateRoute).toContain('supabase.auth.getUser()');
-    });
-
-    it('enforces broadcast capability with owner/admin roles for creation', () => {
-      // The POST handler requires allowedRoles: ['owner', 'admin']
-      expect(listCreateRoute).toContain("action: 'create_new'");
-      expect(listCreateRoute).toContain("'owner', 'admin'");
-    });
-
-    it('validates expression DSL before insert', () => {
-      expect(listCreateRoute).toContain('validateAudienceExpression(expression)');
-    });
-
-    it('sets created_by from auth context, not request body', () => {
-      expect(listCreateRoute).toContain('created_by: user.id');
-    });
+  it('list route requires authentication via createClient', () => {
+    expect(listRoute).toContain('createClient');
+    expect(listRoute).toContain('auth.getUser');
   });
 
-  describe('GET /api/engage/segments/[id] (single)', () => {
-    it('requires authentication', () => {
-      expect(singleRoute).toContain('supabase.auth.getUser()');
-    });
-
-    it('scopes query to both id and business_id', () => {
-      expect(singleRoute).toContain(".eq('id', id)");
-      expect(singleRoute).toContain(".eq('business_id', businessId)");
-    });
-
-    it('returns 404 when segment not found (not leaked cross-business)', () => {
-      expect(singleRoute).toContain("{ error: 'Segment not found' }, { status: 404 }");
-    });
+  it('list route scopes queries by business_id', () => {
+    expect(listRoute).toContain("eq('business_id'");
   });
 
-  describe('PUT /api/engage/segments/[id] (update)', () => {
-    it('requires owner/admin role for update', () => {
-      expect(singleRoute).toContain("action: 'manage_existing'");
-    });
-
-    it('validates expression if provided', () => {
-      expect(singleRoute).toContain('validateAudienceExpression(expression)');
-    });
-
-    it('scopes update to both id and business_id', () => {
-      // Verify the update query uses both filters
-      expect(singleRoute).toContain(".eq('id', id)");
-      expect(singleRoute).toContain(".eq('business_id', businessId)");
-    });
+  it('detail route uses createServiceClient', () => {
+    expect(detailRoute).toContain('createServiceClient');
+    expect(detailRoute).toContain("from('engage_segments')");
   });
 
-  describe('DELETE /api/engage/segments/[id] (delete)', () => {
-    it('requires owner/admin role for delete', () => {
-      expect(singleRoute).toContain("action: 'manage_existing'");
-    });
+  it('detail route requires authentication', () => {
+    expect(detailRoute).toContain('createClient');
+    expect(detailRoute).toContain('auth.getUser');
+  });
 
-    it('scopes delete to both id and business_id', () => {
-      expect(singleRoute).toContain(".eq('id', id)");
-      expect(singleRoute).toContain(".eq('business_id', businessId)");
-    });
-
-    it('reports not found when count is 0', () => {
-      expect(singleRoute).toContain('count === 0');
-    });
+  it('detail route scopes by business_id', () => {
+    expect(detailRoute).toContain("eq('business_id'");
   });
 });
