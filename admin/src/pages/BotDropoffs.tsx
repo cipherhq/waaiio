@@ -69,7 +69,8 @@ export default function BotDropoffs() {
       }
 
       let query = adminDb.from('flow_dropoffs')
-        .select('id, business_id, flow_type, step_id, reason, capability, created_at')
+         .select('id, business_id, flow_type, step_id, reason, capability, created_at')
+        .gte('created_at', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString())
         .order('created_at', { ascending: false })
         .limit(100);
       if (filterReason !== 'all') query = query.eq('reason', filterReason);
