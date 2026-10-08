@@ -117,6 +117,28 @@ describe('#554 R2 — Scheduling terms consolidation', () => {
     expect(result.data?._action).toBe('confirm');
   });
 
+  it('R2-T3b: free booking confirmation never records terms acceptance', async () => {
+    const ctx = buildConfirmCtx({ service_price: 0, service_deposit: 0 });
+    const result = await confirmStep.validate!('confirm', ctx);
+    expect(result.valid).toBe(true);
+    expect(result.data?._action).toBe('confirm');
+    expect(result.data?._terms_accepted).toBeUndefined();
+  });
+
+  it('R2-T3c: merchant-disabled terms never record acceptance', async () => {
+    const ctx = buildConfirmCtx({}, { require_terms_before_payment: false });
+    const result = await confirmStep.validate!('confirm', ctx);
+    expect(result.valid).toBe(true);
+    expect(result.data?._action).toBe('confirm');
+    expect(result.data?._terms_accepted).toBeUndefined();
+  });
+
+  it('R2-T3d: paid booking with a delivery charge records terms acceptance', async () => {
+    const ctx = buildConfirmCtx({ service_price: 0, service_deposit: 0, _delivery_zone_price: 100 });
+    const result = await confirmStep.validate!('confirm', ctx);
+    expect(result.data?._terms_accepted).toBe(true);
+  });
+
   it('R2-T4: confirm_booking uses regular button when require_terms_before_payment=false', async () => {
     const ctx = buildConfirmCtx({}, { require_terms_before_payment: false });
     const messages = await confirmStep.prompt!(ctx);
