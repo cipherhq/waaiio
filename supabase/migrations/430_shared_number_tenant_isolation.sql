@@ -272,7 +272,8 @@ BEGIN
       'channel_id', v_biz.assigned_channel_id);
   END IF;
 
-  v_old_channel_id := v_biz.assigned_channel_id;
+  -- Capture BOTH possible dedicated channel pointers
+  v_old_channel_id := COALESCE(v_biz.whatsapp_channel_id, v_biz.assigned_channel_id);
 
   -- Read capacity
   SELECT (value::text)::integer INTO v_capacity
@@ -299,14 +300,13 @@ BEGIN
           whatsapp_channel_id = NULL
       WHERE id = p_business_id;
 
-      -- Deactivate old dedicated channel if business-specific
-      IF v_old_channel_id IS NOT NULL THEN
-        UPDATE whatsapp_channels
-        SET is_active = false
-        WHERE id = v_old_channel_id
-          AND business_id = p_business_id
-          AND channel_type = 'dedicated';
-      END IF;
+      -- Deactivate old dedicated channel(s) owned by this business
+      -- Uses both pointers to catch any dedicated channel reference
+      UPDATE whatsapp_channels
+      SET is_active = false
+      WHERE business_id = p_business_id
+        AND channel_type = 'dedicated'
+        AND is_active = true;
 
       RETURN jsonb_build_object(
         'transitioned', true,
@@ -396,24 +396,58 @@ REVOKE ALL ON FUNCTION public.reassign_shared_channel(UUID, UUID) FROM anon;
 REVOKE ALL ON FUNCTION public.reassign_shared_channel(UUID, UUID) FROM authenticated;
 GRANT EXECUTE ON FUNCTION public.reassign_shared_channel(UUID, UUID) TO service_role;
 
--- ── Step 6: Backfill existing shared businesses ──────────
--- Generic and deterministic:
+-- ── Step 6: Backfill existing shared businesses (capacity-aware) ──
+-- Procedural: assigns each business one at a time, checking capacity per channel.
 -- 1. Prefer same-country shared channel
 -- 2. For migration-only: grandfather to any active shared channel if no same-country
 -- 3. allocate_shared_channel() remains exact-country-only for NEW allocations
+-- 4. Respects shared_number_capacity — never exceeds configured limit
 
-UPDATE businesses b
-SET assigned_channel_id = (
-  SELECT wc.id FROM whatsapp_channels wc
-  WHERE wc.channel_type = 'shared'
-    AND wc.is_active = true
-  ORDER BY
-    CASE WHEN wc.country_code = b.country_code THEN 0 ELSE 1 END,
-    wc.id
-  LIMIT 1
-)
-WHERE b.wa_method = 'shared'
-  AND b.assigned_channel_id IS NULL;
+DO $$
+DECLARE
+  v_biz RECORD;
+  v_candidate RECORD;
+  v_count INTEGER;
+  v_capacity INTEGER;
+  v_assigned BOOLEAN;
+BEGIN
+  SELECT (value::text)::integer INTO v_capacity
+  FROM platform_settings WHERE key = 'shared_number_capacity';
+  v_capacity := COALESCE(v_capacity, 50);
+
+  FOR v_biz IN
+    SELECT id, country_code FROM businesses
+    WHERE wa_method = 'shared' AND assigned_channel_id IS NULL
+    ORDER BY
+      CASE WHEN status = 'active' THEN 0 ELSE 1 END, -- active first
+      created_at
+  LOOP
+    v_assigned := false;
+
+    -- Try each eligible channel in deterministic order (same-country first, then cross-country)
+    FOR v_candidate IN
+      SELECT wc.id FROM whatsapp_channels wc
+      WHERE wc.channel_type = 'shared' AND wc.is_active = true
+      ORDER BY
+        CASE WHEN wc.country_code = v_biz.country_code THEN 0 ELSE 1 END,
+        wc.id
+    LOOP
+      SELECT count(*) INTO v_count
+      FROM businesses WHERE assigned_channel_id = v_candidate.id;
+
+      IF v_count < v_capacity THEN
+        UPDATE businesses SET assigned_channel_id = v_candidate.id
+        WHERE id = v_biz.id;
+        v_assigned := true;
+        EXIT; -- assigned, move to next business
+      END IF;
+    END LOOP;
+
+    IF NOT v_assigned THEN
+      RAISE WARNING 'M430: business % (country %) could not be assigned — all channels at capacity', v_biz.id, v_biz.country_code;
+    END IF;
+  END LOOP;
+END $$;
 
 -- ── Step 7: Abort if any active shared business remains unassigned ──
 DO $$
