@@ -51,7 +51,9 @@ function psqlAsync(sql: string): Promise<string> {
 const OWNER_ID = '00000000-0000-0000-0000-000000000266';
 const PHONE = '+2349099990266';
 
-describe.skipIf(!canRun)('#266 Shared-Number Tenant Isolation DB Tests (Migration 430)', () => {
+describe('#266 Shared-Number Tenant Isolation DB Tests (Migration 430)', () => {
+  if (!canRun) throw new Error('TEST_DATABASE_URL is required for #266 real-PG tests — do not skip');
+
   beforeAll(() => {
     // Create test owner profile
     psqlMayFail(`

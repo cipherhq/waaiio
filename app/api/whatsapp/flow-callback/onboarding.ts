@@ -150,14 +150,17 @@ export async function handleOnboardingComplete(
     }
 
     // #266 R7/R10: Allocate shared channel then activate
+    let allocationSucceeded = false;
     const { data: allocation } = await supabase.rpc('allocate_shared_channel', {
       p_business_id: biz.id,
       p_country_code: country,
     });
     if (allocation && (allocation as any).allocated) {
       await supabase.from('businesses').update({ status: 'active' }).eq('id', biz.id);
+      allocationSucceeded = true;
+    } else {
+      logger.warn('[WA-ONBOARD] Shared channel allocation failed for business:', biz.id, (allocation as any)?.reason || 'unknown');
     }
-    // If allocation failed, business stays pending — onboarding shows setup incomplete
 
     // 6. Create WhatsApp config with default greeting
     try {
@@ -224,21 +227,36 @@ export async function handleOnboardingComplete(
       const resolved = await resolver.getSharedChannelForCountry(country);
       if (resolved) {
         const phone = customerPhone.startsWith('+') ? customerPhone.slice(1) : customerPhone;
+        // #266: Only say "is live" if allocation succeeded. Pending businesses are not live.
+        const confirmationText = allocationSucceeded
+          ? [
+              `✅ *${businessName} is live on Waaiio!*`,
+              '',
+              'Your business is set up and ready to go.',
+              '',
+              `📱 *Dashboard:* https://www.waaiio.com/dashboard`,
+              `🔑 *Bot Code:* ${biz.bot_code}`,
+              `📧 *Login:* ${email}`,
+              '',
+              'Your 30-day free trial includes all features.',
+              '',
+              '_Need help? Type *help* anytime._',
+            ].join('\n')
+          : [
+              `⏳ *${businessName} registration received!*`,
+              '',
+              'Your business has been registered but WhatsApp setup is still being completed.',
+              '',
+              `📱 *Dashboard:* https://www.waaiio.com/dashboard`,
+              `📧 *Login:* ${email}`,
+              '',
+              'We\'ll notify you when everything is ready.',
+              '',
+              '_Need help? Type *help* anytime._',
+            ].join('\n');
         await resolved.sender.sendText({
           to: phone,
-          text: [
-            `✅ *${businessName} is live on Waaiio!*`,
-            '',
-            'Your business is set up and ready to go.',
-            '',
-            `📱 *Dashboard:* https://www.waaiio.com/dashboard`,
-            `🔑 *Bot Code:* ${biz.bot_code}`,
-            `📧 *Login:* ${email}`,
-            '',
-            'Your 30-day free trial includes all features.',
-            '',
-            '_Need help? Type *help* anytime._',
-          ].join('\n'),
+          text: confirmationText,
         });
 
         // Send upsell message after a short delay
@@ -284,6 +302,8 @@ export async function handleOnboardingComplete(
       logger.error('[WA-ONBOARD] Confirmation message error:', err);
     }
 
+    // #266: Business is registered. If allocation failed, business stays pending (not live).
+    // The WhatsApp confirmation message above already reflects the correct status.
     return { success: true };
   } catch (err) {
     logger.error('[WA-ONBOARD] Onboarding error:', err);
