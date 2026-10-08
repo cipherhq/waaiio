@@ -197,7 +197,7 @@ describe('E1 opt-out multi-page SQL predicate proof (real PG)', () => {
         ON CONFLICT (id) DO NOTHING;
     `);
 
-    // Insert >1100 opt-out records across global, own-business, and other-business.
+    // Insert 1701 opt-out records, with 1201 matching the own-business/global scope.
     // Use distinct phone numbers to satisfy the unique index.
     //
     // Distribution:
@@ -205,11 +205,11 @@ describe('E1 opt-out multi-page SQL predicate proof (real PG)', () => {
     //   phones 0500..0999: other-business, channel=whatsapp, type=marketing (500 rows — should be EXCLUDED)
     //   phones 1000..1099: own-business, channel=whatsapp, type=marketing (100 rows)
     //   phone  1100:       global (NULL business_id), channel=whatsapp, type=all (1 row)
-    //   phones 1101..1200: own-business, channel=email, type=all (100 rows)
+    //   phones 1101..1700: own-business, channel=email, type=all (600 rows)
     //
-    // Total matching own+global = 500 + 100 + 1 + 100 = 701
+    // Total matching own+global = 500 + 100 + 1 + 600 = 1201
     // Total other-business = 500 (should NOT appear in filtered results)
-    // Grand total in table = 1201
+    // Grand total in table = 1701
 
     const inserts: string[] = [];
 
@@ -234,8 +234,8 @@ describe('E1 opt-out multi-page SQL predicate proof (real PG)', () => {
     // Batch 4: 1 global opt-out
     inserts.push(`('${TEST_PHONE_PREFIX}1100', NULL, 'whatsapp', 'all')`);
 
-    // Batch 5: 100 own-business email/all
-    for (let i = 1101; i <= 1200; i++) {
+    // Batch 5: 600 own-business email/all (ensures a third page)
+    for (let i = 1101; i <= 1700; i++) {
       const phone = `${TEST_PHONE_PREFIX}${String(i).padStart(4, '0')}`;
       inserts.push(`('${phone}', '${TEST_BIZ_OWN}', 'email', 'all')`);
     }
@@ -262,9 +262,9 @@ describe('E1 opt-out multi-page SQL predicate proof (real PG)', () => {
     `);
   });
 
-  it('total test records inserted = 1201', () => {
+  it('total test records inserted = 1701', () => {
     const count = runSQL(`SELECT count(*) FROM messaging_opt_outs WHERE phone LIKE '${TEST_PHONE_PREFIX}%';`);
-    expect(parseInt(count, 10)).toBe(1201);
+    expect(parseInt(count, 10)).toBe(1701);
   });
 
   it('SQL .or() filter includes own-business + global, excludes other-business', () => {
@@ -278,9 +278,9 @@ describe('E1 opt-out multi-page SQL predicate proof (real PG)', () => {
         AND resubscribed_at IS NULL
         AND (business_id IS NULL OR business_id = '${TEST_BIZ_OWN}');
     `);
-    // Expected: 500 (own sms) + 100 (own whatsapp) + 1 (global) + 100 (own email) = 701
+    // Expected: 500 (own sms) + 100 (own whatsapp) + 1 (global) + 600 (own email) = 1201
     // Excluded: 500 (other-business) NOT counted
-    expect(parseInt(count, 10)).toBe(701);
+    expect(parseInt(count, 10)).toBe(1201);
   });
 
   it('other-business opt-outs are excluded (500 rows not in filtered result)', () => {
@@ -334,10 +334,19 @@ describe('E1 opt-out multi-page SQL predicate proof (real PG)', () => {
       LIMIT 500 OFFSET 500;
     `);
     const page2Count = page2.split('\n').filter(Boolean).length;
-    expect(page2Count).toBe(201); // 701 total - 500 on page 1
+    expect(page2Count).toBe(500); // full second page, 201 remain for page 3
 
-    // Combined = 701
-    expect(page1Count + page2Count).toBe(701);
+    const page3 = runSQL(`
+      SELECT phone FROM messaging_opt_outs
+      WHERE phone LIKE '${TEST_PHONE_PREFIX}%'
+        AND resubscribed_at IS NULL
+        AND (business_id IS NULL OR business_id = '${TEST_BIZ_OWN}')
+      ORDER BY phone ASC, id ASC
+      LIMIT 500 OFFSET 1000;
+    `);
+    const page3Count = page3.split('\\n').filter(Boolean).length;
+    expect(page3Count).toBe(201);
+    expect(page1Count + page2Count + page3Count).toBe(1201);
   });
 
   it('whatsapp marketing opt-outs on page 2 are retrievable', () => {
@@ -387,7 +396,7 @@ describe('E1 opt-out multi-page SQL predicate proof (real PG)', () => {
     }
 
     expect(totalRows).toBe(parseInt(exactCount, 10));
-    expect(totalRows).toBe(701);
+    expect(totalRows).toBe(1201);
   });
 });
 
