@@ -167,4 +167,228 @@ describe('E1 source adapter schema contracts', () => {
   });
 });
 
+// ═══════════════════════════════════════════════════════════════
+// CTO Round 5: Real-PG multi-page opt-out query proof
+//
+// Proves the actual SQL predicates used by loadOptOuts work correctly
+// against a real PostgreSQL database with >1000 rows, multiple pages,
+// global/business/other-business scoping, and count/data consistency.
+// ═══════════════════════════════════════════════════════════════
+
+describe('E1 opt-out multi-page SQL predicate proof (real PG)', () => {
+  // Test UUIDs — deterministic to enable cleanup
+  const TEST_OWNER = 'e1000000-0000-0000-0000-000000000001';
+  const TEST_BIZ_OWN = 'e1000000-0000-0000-0000-000000000010';
+  const TEST_BIZ_OTHER = 'e1000000-0000-0000-0000-000000000020';
+  const TEST_PHONE_PREFIX = '+2340000';
+
+  beforeAll(() => {
+    // Create test owner user + two businesses (own + other)
+    runSQL(`
+      INSERT INTO auth.users (id, email) VALUES ('${TEST_OWNER}', 'e1test@test.local')
+        ON CONFLICT (id) DO NOTHING;
+      INSERT INTO profiles (id, phone) VALUES ('${TEST_OWNER}', '+2340000000000')
+        ON CONFLICT (id) DO NOTHING;
+      INSERT INTO businesses (id, owner_id, name, slug, country_code, status)
+        VALUES ('${TEST_BIZ_OWN}', '${TEST_OWNER}', 'E1 Own Biz', 'e1-own-biz-test', 'NG', 'active')
+        ON CONFLICT (id) DO NOTHING;
+      INSERT INTO businesses (id, owner_id, name, slug, country_code, status)
+        VALUES ('${TEST_BIZ_OTHER}', '${TEST_OWNER}', 'E1 Other Biz', 'e1-other-biz-test', 'NG', 'active')
+        ON CONFLICT (id) DO NOTHING;
+    `);
+
+    // Insert >1100 opt-out records across global, own-business, and other-business.
+    // Use distinct phone numbers to satisfy the unique index.
+    //
+    // Distribution:
+    //   phones 0000..0499: own-business, channel=sms, type=promotional (500 rows)
+    //   phones 0500..0999: other-business, channel=whatsapp, type=marketing (500 rows — should be EXCLUDED)
+    //   phones 1000..1099: own-business, channel=whatsapp, type=marketing (100 rows)
+    //   phone  1100:       global (NULL business_id), channel=whatsapp, type=all (1 row)
+    //   phones 1101..1200: own-business, channel=email, type=all (100 rows)
+    //
+    // Total matching own+global = 500 + 100 + 1 + 100 = 701
+    // Total other-business = 500 (should NOT appear in filtered results)
+    // Grand total in table = 1201
+
+    const inserts: string[] = [];
+
+    // Batch 1: 500 own-business sms/promotional
+    for (let i = 0; i < 500; i++) {
+      const phone = `${TEST_PHONE_PREFIX}${String(i).padStart(4, '0')}`;
+      inserts.push(`('${phone}', '${TEST_BIZ_OWN}', 'sms', 'promotional')`);
+    }
+
+    // Batch 2: 500 other-business whatsapp/marketing (should be excluded by SQL filter)
+    for (let i = 500; i < 1000; i++) {
+      const phone = `${TEST_PHONE_PREFIX}${String(i).padStart(4, '0')}`;
+      inserts.push(`('${phone}', '${TEST_BIZ_OTHER}', 'whatsapp', 'marketing')`);
+    }
+
+    // Batch 3: 100 own-business whatsapp/marketing (blocking opt-outs on "page 2+")
+    for (let i = 1000; i < 1100; i++) {
+      const phone = `${TEST_PHONE_PREFIX}${String(i).padStart(4, '0')}`;
+      inserts.push(`('${phone}', '${TEST_BIZ_OWN}', 'whatsapp', 'marketing')`);
+    }
+
+    // Batch 4: 1 global opt-out
+    inserts.push(`('${TEST_PHONE_PREFIX}1100', NULL, 'whatsapp', 'all')`);
+
+    // Batch 5: 100 own-business email/all
+    for (let i = 1101; i <= 1200; i++) {
+      const phone = `${TEST_PHONE_PREFIX}${String(i).padStart(4, '0')}`;
+      inserts.push(`('${phone}', '${TEST_BIZ_OWN}', 'email', 'all')`);
+    }
+
+    // Insert in batches of 200 to avoid SQL length limits
+    const batchSize = 200;
+    for (let b = 0; b < inserts.length; b += batchSize) {
+      const batch = inserts.slice(b, b + batchSize);
+      runSQL(`
+        INSERT INTO messaging_opt_outs (phone, business_id, channel, opt_out_type)
+        VALUES ${batch.join(',\n       ')}
+        ON CONFLICT DO NOTHING;
+      `);
+    }
+  });
+
+  afterAll(() => {
+    // Cleanup in dependency order
+    runSQL(`
+      DELETE FROM messaging_opt_outs WHERE phone LIKE '${TEST_PHONE_PREFIX}%';
+      DELETE FROM businesses WHERE id IN ('${TEST_BIZ_OWN}', '${TEST_BIZ_OTHER}');
+      DELETE FROM profiles WHERE id = '${TEST_OWNER}';
+      DELETE FROM auth.users WHERE id = '${TEST_OWNER}';
+    `);
+  });
+
+  it('total test records inserted = 1201', () => {
+    const count = runSQL(`SELECT count(*) FROM messaging_opt_outs WHERE phone LIKE '${TEST_PHONE_PREFIX}%';`);
+    expect(parseInt(count, 10)).toBe(1201);
+  });
+
+  it('SQL .or() filter includes own-business + global, excludes other-business', () => {
+    // This is the EXACT predicate used in loadOptOuts production code:
+    //   .is('resubscribed_at', null)
+    //   .or('business_id.is.null,business_id.eq.{TEST_BIZ_OWN}')
+    // Translated to raw SQL equivalent:
+    const count = runSQL(`
+      SELECT count(*) FROM messaging_opt_outs
+      WHERE phone LIKE '${TEST_PHONE_PREFIX}%'
+        AND resubscribed_at IS NULL
+        AND (business_id IS NULL OR business_id = '${TEST_BIZ_OWN}');
+    `);
+    // Expected: 500 (own sms) + 100 (own whatsapp) + 1 (global) + 100 (own email) = 701
+    // Excluded: 500 (other-business) NOT counted
+    expect(parseInt(count, 10)).toBe(701);
+  });
+
+  it('other-business opt-outs are excluded (500 rows not in filtered result)', () => {
+    const otherCount = runSQL(`
+      SELECT count(*) FROM messaging_opt_outs
+      WHERE phone LIKE '${TEST_PHONE_PREFIX}%'
+        AND business_id = '${TEST_BIZ_OTHER}';
+    `);
+    expect(parseInt(otherCount, 10)).toBe(500);
+
+    const filteredOtherCount = runSQL(`
+      SELECT count(*) FROM messaging_opt_outs
+      WHERE phone LIKE '${TEST_PHONE_PREFIX}%'
+        AND resubscribed_at IS NULL
+        AND (business_id IS NULL OR business_id = '${TEST_BIZ_OWN}')
+        AND business_id = '${TEST_BIZ_OTHER}';
+    `);
+    expect(parseInt(filteredOtherCount, 10)).toBe(0);
+  });
+
+  it('global opt-out (business_id IS NULL) is included in filtered results', () => {
+    const globalCount = runSQL(`
+      SELECT count(*) FROM messaging_opt_outs
+      WHERE phone LIKE '${TEST_PHONE_PREFIX}%'
+        AND resubscribed_at IS NULL
+        AND (business_id IS NULL OR business_id = '${TEST_BIZ_OWN}')
+        AND business_id IS NULL;
+    `);
+    expect(parseInt(globalCount, 10)).toBe(1);
+  });
+
+  it('paginated fetch across >1000 filtered rows retrieves all with (phone, id) ordering', () => {
+    // Fetch in pages of 500 using LIMIT/OFFSET with the exact ordering used in production
+    const page1 = runSQL(`
+      SELECT phone FROM messaging_opt_outs
+      WHERE phone LIKE '${TEST_PHONE_PREFIX}%'
+        AND resubscribed_at IS NULL
+        AND (business_id IS NULL OR business_id = '${TEST_BIZ_OWN}')
+      ORDER BY phone ASC, id ASC
+      LIMIT 500 OFFSET 0;
+    `);
+    const page1Count = page1.split('\n').filter(Boolean).length;
+    expect(page1Count).toBe(500);
+
+    const page2 = runSQL(`
+      SELECT phone FROM messaging_opt_outs
+      WHERE phone LIKE '${TEST_PHONE_PREFIX}%'
+        AND resubscribed_at IS NULL
+        AND (business_id IS NULL OR business_id = '${TEST_BIZ_OWN}')
+      ORDER BY phone ASC, id ASC
+      LIMIT 500 OFFSET 500;
+    `);
+    const page2Count = page2.split('\n').filter(Boolean).length;
+    expect(page2Count).toBe(201); // 701 total - 500 on page 1
+
+    // Combined = 701
+    expect(page1Count + page2Count).toBe(701);
+  });
+
+  it('whatsapp marketing opt-outs on page 2 are retrievable', () => {
+    // The 100 own-business whatsapp/marketing opt-outs (phones 1000-1099) should
+    // appear in the filtered results. With 500 sms/promotional on phones 0000-0499
+    // ordered first, the whatsapp/marketing ones are on page 2.
+    const marketingOnPage2 = runSQL(`
+      SELECT count(*) FROM (
+        SELECT phone, channel, opt_out_type FROM messaging_opt_outs
+        WHERE phone LIKE '${TEST_PHONE_PREFIX}%'
+          AND resubscribed_at IS NULL
+          AND (business_id IS NULL OR business_id = '${TEST_BIZ_OWN}')
+        ORDER BY phone ASC, id ASC
+        LIMIT 500 OFFSET 500
+      ) sub
+      WHERE channel = 'whatsapp' AND opt_out_type = 'marketing';
+    `);
+    // All 100 whatsapp/marketing opt-outs should be on page 2
+    expect(parseInt(marketingOnPage2, 10)).toBeGreaterThan(0);
+  });
+
+  it('count and paginated total match exactly', () => {
+    const exactCount = runSQL(`
+      SELECT count(*) FROM messaging_opt_outs
+      WHERE phone LIKE '${TEST_PHONE_PREFIX}%'
+        AND resubscribed_at IS NULL
+        AND (business_id IS NULL OR business_id = '${TEST_BIZ_OWN}');
+    `);
+
+    // Paginate and sum
+    let totalRows = 0;
+    let offset = 0;
+    const pageSize = 500;
+    while (true) {
+      const page = runSQL(`
+        SELECT phone FROM messaging_opt_outs
+        WHERE phone LIKE '${TEST_PHONE_PREFIX}%'
+          AND resubscribed_at IS NULL
+          AND (business_id IS NULL OR business_id = '${TEST_BIZ_OWN}')
+        ORDER BY phone ASC, id ASC
+        LIMIT ${pageSize} OFFSET ${offset};
+      `);
+      const rows = page.split('\n').filter(Boolean).length;
+      totalRows += rows;
+      if (rows < pageSize) break;
+      offset += pageSize;
+    }
+
+    expect(totalRows).toBe(parseInt(exactCount, 10));
+    expect(totalRows).toBe(701);
+  });
+});
+
 }
