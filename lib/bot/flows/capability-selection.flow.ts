@@ -167,8 +167,23 @@ const selectCapabilityStep: FlowStepConfig = {
       return true;
     }
 
-    // Zero renderable capabilities → let prompt() decide between
-    // My Account (returning customer) or safe fallback text (new customer).
+    // Zero user-facing capabilities but contextual-only (e.g. promo-only business):
+    // Auto-select the sole contextual capability so the flow reaches its entry step.
+    // CAS-004 safety: only auto-select when ALL capabilities are contextual and
+    // have a known safe entry point (promo_verification → promo_entry).
+    if (userFacing.length === 0 && capabilities.length > 0 &&
+        capabilities.every(c => c === 'promo_verification')) {
+      ctx.session.session_data.active_capability = capabilities[0];
+      const greeting = ctx.session.session_data._greeting as string | undefined;
+      if (greeting) {
+        await ctx.sender.sendText({ to: ctx.from, text: greeting });
+        delete ctx.session.session_data._greeting;
+      }
+      return true;
+    }
+
+    // Zero renderable capabilities with mixed/unknown types → let prompt() decide
+    // between My Account (returning customer) or safe fallback text (new customer).
     // Do NOT fall back to capabilities[0] — that cap may lack backing data.
     return false;
   },
