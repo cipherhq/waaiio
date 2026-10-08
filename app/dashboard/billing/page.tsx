@@ -995,7 +995,7 @@ function MessagingCurrencySection({ summary, onTopUp }: { summary: CurrencyMessa
           <div className="flex-1">
             <p className="text-sm font-medium text-red-800">Messaging credit exhausted</p>
             <p className="mt-0.5 text-xs text-red-600">
-              Outbound WhatsApp messages will not be sent until credit is replenished.
+              Your available messaging credit has reached zero. Top up to ensure continued service.
             </p>
           </div>
           <button
