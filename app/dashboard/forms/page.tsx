@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { getPhonePlaceholder, type CountryCode } from '@/lib/constants';
@@ -77,9 +77,11 @@ export default function FormsPage() {
   // Send form state
   const [sendPhone, setSendPhone] = useState('');
   const [sendingForm, setSendingForm] = useState(false);
-  const [nativePreview, setNativePreview] = useState<{ formId: string; json: string } | null>(null);
+  const [nativePreview, setNativePreview] = useState<{ businessId: string; formId: string; json: string } | null>(null);
   const [previewingNative, setPreviewingNative] = useState<string | null>(null);
   const [nativePreviewError, setNativePreviewError] = useState('');
+  // Generation counter to discard stale async preview responses after business switch
+  const previewGenerationRef = useRef(0);
 
   // Form builder state
   const [title, setTitle] = useState('');
@@ -106,6 +108,17 @@ export default function FormsPage() {
   }, [business.id]);
 
   useEffect(() => { loadForms(); }, [loadForms]);
+
+  // Clear stale preview when business context changes
+  useEffect(() => {
+    previewGenerationRef.current += 1;
+    setNativePreview(prev => {
+      if (prev && prev.businessId !== business.id) return null;
+      return prev;
+    });
+    setNativePreviewError('');
+    setPreviewingNative(null);
+  }, [business.id]);
 
   function openAdd() {
     setEditId('');
@@ -242,19 +255,27 @@ export default function FormsPage() {
     setNativePreview(null);
     setNativePreviewError('');
     setPreviewingNative(form.id);
+    // Capture generation at request start to discard stale responses after business switch
+    const generation = ++previewGenerationRef.current;
+    const requestBusinessId = business.id;
     try {
-      const params = new URLSearchParams({ businessId: business.id, formId: form.id });
+      const params = new URLSearchParams({ businessId: requestBusinessId, formId: form.id });
       const res = await fetch('/api/forms/native-flow/preview?' + params.toString(), { cache: 'no-store' });
+      // Discard late response if business context changed
+      if (previewGenerationRef.current !== generation) return;
       const data = await res.json();
       if (!res.ok) {
         setNativePreviewError(data.error || 'Could not preview native WhatsApp form.');
       } else {
-        setNativePreview({ formId: form.id, json: JSON.stringify(data.flowJson, null, 2) });
+        setNativePreview({ businessId: requestBusinessId, formId: form.id, json: JSON.stringify(data.flowJson, null, 2) });
       }
     } catch {
+      if (previewGenerationRef.current !== generation) return;
       setNativePreviewError('Preview unavailable. Please try again.');
     } finally {
-      setPreviewingNative(null);
+      if (previewGenerationRef.current === generation) {
+        setPreviewingNative(null);
+      }
     }
   }
 

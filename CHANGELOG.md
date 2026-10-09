@@ -4,6 +4,19 @@ All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
 
+## 2026-10-09 — #591 CTO review corrections: consent query, validation, auth predicates, conformance, stale state
+
+### What changed
+- **`app/api/forms/native-flow/preview/route.ts`**: Added `settings` to the SELECT query so the compiler can access `consent_label` for OptIn component generation. Previously the route omitted `settings`, making consent impossible in real preview responses.
+- **`lib/whatsapp-forms/native-flow.ts`**: (a) Strict boolean validation for `required` — rejects non-boolean truthy values like `"yes"`, `1`, `"true"` instead of silently treating them as `false`. (b) Options are trimmed before uniqueness check — `['Sales', ' Sales']` now correctly detected as duplicates.
+- **`lib/__tests__/waaiio-native-form-preview-route-591.test.ts`**: Mock `.eq()` now records column/value pairs. Tests assert exact predicates: business query filters by `owner_id = user.id`, form query filters by `business_id = businessId`. Added cross-tenant denial tests and consent presence/absence tests against the real route handler.
+- **`lib/__tests__/waaiio-native-forms-591.test.ts`**: Added regression tests for non-boolean `required` rejection, whitespace-duplicate option rejection, and canonical Meta Flow JSON conformance fixture (version pin, valid component types, input-type values, data-source structure, label length limits per component, Footer action structure, terminal/success flags).
+- **`app/dashboard/forms/page.tsx`**: Preview state now includes `businessId`. Added generation counter (`previewGenerationRef`) to discard late async responses after business context switch. `useEffect` clears stale preview on `business.id` change.
+
+### What it affects / could break
+- Forms with `required: "yes"` or `required: 1` will now be rejected by the compiler instead of silently treating them as not required. This is intentional fail-closed behavior.
+- Options with leading/trailing whitespace that match other options after trimming will now be rejected. Previously they passed uniqueness check but compiled to visually duplicate titles.
+
 ## 2026-10-09 — #590 CTO correction: mounted Contact Winner UI + synchronous send lock
 
 ### What changed

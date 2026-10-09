@@ -142,5 +142,264 @@ describe('#591 native WhatsApp Form JSON compiler', () => {
     const children2 = ((emptyConsent.screens as Array<any>)[0].layout.children) as Array<any>;
     expect(children2.map(x => x.type)).not.toContain('OptIn');
   });
-});
 
+  // ── Defect 2: strict boolean validation for required ──
+
+  it('rejects non-boolean required values like "yes" or 1', () => {
+    expect(() => compileNativeFormFlow({
+      title: 'Lead',
+      fields: [{ id: 'name', label: 'Name', type: 'text', required: 'yes' as unknown as boolean }],
+    })).toThrow(NativeFlowValidationError);
+
+    expect(() => compileNativeFormFlow({
+      title: 'Lead',
+      fields: [{ id: 'name', label: 'Name', type: 'text', required: 1 as unknown as boolean }],
+    })).toThrow(NativeFlowValidationError);
+
+    expect(() => compileNativeFormFlow({
+      title: 'Lead',
+      fields: [{ id: 'name', label: 'Name', type: 'text', required: 'true' as unknown as boolean }],
+    })).toThrow(NativeFlowValidationError);
+  });
+
+  it('accepts required: true, false, or undefined', () => {
+    // These should all compile without throwing
+    expect(() => compileNativeFormFlow({
+      title: 'Lead',
+      fields: [{ id: 'name', label: 'Name', type: 'text', required: true }],
+    })).not.toThrow();
+
+    expect(() => compileNativeFormFlow({
+      title: 'Lead',
+      fields: [{ id: 'name', label: 'Name', type: 'text', required: false }],
+    })).not.toThrow();
+
+    expect(() => compileNativeFormFlow({
+      title: 'Lead',
+      fields: [{ id: 'name', label: 'Name', type: 'text' }],
+    })).not.toThrow();
+  });
+
+  // ── Defect 2: options normalized before uniqueness check ──
+
+  it('rejects options that are duplicates after trimming', () => {
+    expect(() => compileNativeFormFlow({
+      title: 'Lead',
+      fields: [{ id: 'cat', label: 'Category', type: 'select', options: ['Sales', ' Sales'] }],
+    })).toThrow(NativeFlowValidationError);
+
+    expect(() => compileNativeFormFlow({
+      title: 'Lead',
+      fields: [{ id: 'cat', label: 'Category', type: 'radio', options: ['Foo ', ' Foo'] }],
+    })).toThrow(NativeFlowValidationError);
+  });
+
+  // ── Defect 4: canonical Meta Flow JSON fixture conformance ──
+
+  describe('Meta Flow JSON conformance fixture', () => {
+    /**
+     * Canonical fixture based on Meta WhatsApp Flows documentation:
+     * https://developers.facebook.com/docs/whatsapp/flows/
+     *
+     * The compiler output must match the documented structure exactly.
+     * This provides independent certification beyond "compiler outputs JSON, tests check JSON".
+     */
+    const EXPECTED_META_FLOW_VERSION = '7.3';
+
+    // Valid component types per Meta documentation
+    const VALID_COMPONENT_TYPES = new Set([
+      'TextBody', 'TextHeading', 'TextSubheading', 'TextCaption',
+      'TextInput', 'TextArea', 'DatePicker', 'Dropdown', 'RadioButtonsGroup',
+      'CheckboxGroup', 'OptIn', 'Footer', 'Image', 'EmbeddedLink',
+    ]);
+
+    // Valid input-type values per Meta documentation
+    const VALID_INPUT_TYPES = new Set(['text', 'number', 'email', 'phone', 'password']);
+
+    // Meta label length limits per component type
+    const META_LABEL_LIMITS: Record<string, number> = {
+      TextInput: 20,
+      TextArea: 20,
+      DatePicker: 40,
+      Dropdown: 20,
+      RadioButtonsGroup: 20,
+    };
+
+    it('uses the pinned Meta Flow version', () => {
+      const result = compileNativeFormFlow(basic());
+      expect(result.version).toBe(EXPECTED_META_FLOW_VERSION);
+    });
+
+    it('produces valid top-level structure with routing_model and screens', () => {
+      const result = compileNativeFormFlow(basic());
+      expect(result).toHaveProperty('version');
+      expect(result).toHaveProperty('routing_model');
+      expect(result).toHaveProperty('screens');
+      expect(typeof result.version).toBe('string');
+      expect(Array.isArray(result.screens)).toBe(true);
+      const screens = result.screens as Array<any>;
+      expect(screens.length).toBeGreaterThanOrEqual(1);
+      for (const screen of screens) {
+        expect(screen).toHaveProperty('id');
+        expect(screen).toHaveProperty('title');
+        expect(screen).toHaveProperty('layout');
+        expect(screen.layout).toHaveProperty('type', 'SingleColumnLayout');
+        expect(screen.layout).toHaveProperty('children');
+        expect(Array.isArray(screen.layout.children)).toBe(true);
+      }
+    });
+
+    it('only uses valid Meta component types', () => {
+      const result = compileNativeFormFlow({
+        title: 'Full Test',
+        description: 'All field types',
+        fields: [
+          { id: 'name', label: 'Name', type: 'text', required: true },
+          { id: 'bio', label: 'Bio', type: 'textarea' },
+          { id: 'dob', label: 'Birth date', type: 'date' },
+          { id: 'cat', label: 'Category', type: 'select', options: ['A', 'B'] },
+          { id: 'pref', label: 'Preference', type: 'radio', options: ['X', 'Y'] },
+          { id: 'email', label: 'Email', type: 'email' },
+          { id: 'phone', label: 'Phone', type: 'phone' },
+          { id: 'count', label: 'Count', type: 'number' },
+        ],
+        settings: { consent_label: 'I agree' },
+      });
+      const children = (result.screens as Array<any>)[0].layout.children;
+      for (const child of children) {
+        expect(VALID_COMPONENT_TYPES.has(child.type)).toBe(true);
+      }
+    });
+
+    it('TextInput uses valid input-type values', () => {
+      for (const [waaiioType, metaInputType] of [['text', 'text'], ['number', 'number'], ['email', 'email'], ['phone', 'phone']]) {
+        const result = compileNativeFormFlow({
+          title: 'Test',
+          fields: [{ id: 'f', label: 'Field', type: waaiioType }],
+        });
+        const children = (result.screens as Array<any>)[0].layout.children;
+        const textInput = children.find((c: any) => c.type === 'TextInput');
+        expect(textInput).toBeDefined();
+        expect(VALID_INPUT_TYPES.has(textInput['input-type'])).toBe(true);
+        expect(textInput['input-type']).toBe(metaInputType);
+      }
+    });
+
+    it('Dropdown data-source has correct id/title structure', () => {
+      const result = compileNativeFormFlow({
+        title: 'Test',
+        fields: [{ id: 'sel', label: 'Choice', type: 'select', options: ['Alpha', 'Beta', 'Gamma'] }],
+      });
+      const children = (result.screens as Array<any>)[0].layout.children;
+      const dropdown = children.find((c: any) => c.type === 'Dropdown');
+      expect(dropdown).toBeDefined();
+      expect(Array.isArray(dropdown['data-source'])).toBe(true);
+      for (const item of dropdown['data-source']) {
+        expect(item).toHaveProperty('id');
+        expect(item).toHaveProperty('title');
+        expect(typeof item.id).toBe('string');
+        expect(typeof item.title).toBe('string');
+        // Meta requires data-source IDs to be non-empty strings
+        expect(item.id.length).toBeGreaterThan(0);
+        expect(item.title.length).toBeGreaterThan(0);
+      }
+      expect(dropdown['data-source']).toEqual([
+        { id: 'option_1', title: 'Alpha' },
+        { id: 'option_2', title: 'Beta' },
+        { id: 'option_3', title: 'Gamma' },
+      ]);
+    });
+
+    it('Footer on-click-action uses "complete" action name with payload', () => {
+      const result = compileNativeFormFlow({
+        title: 'Test',
+        fields: [{ id: 'name', label: 'Name', type: 'text' }],
+      });
+      const children = (result.screens as Array<any>)[0].layout.children;
+      const footer = children.find((c: any) => c.type === 'Footer');
+      expect(footer).toBeDefined();
+      expect(footer).toHaveProperty('label');
+      expect(footer).toHaveProperty('on-click-action');
+      expect(footer['on-click-action']).toHaveProperty('name', 'complete');
+      expect(footer['on-click-action']).toHaveProperty('payload');
+      expect(typeof footer['on-click-action'].payload).toBe('object');
+    });
+
+    it('enforces Meta label length limits per component type', () => {
+      // TextInput label limit is 20 — this should fail
+      expect(() => compileNativeFormFlow({
+        title: 'Test',
+        fields: [{ id: 'x', label: 'A'.repeat(21), type: 'text' }],
+      })).toThrow(NativeFlowValidationError);
+
+      // DatePicker label limit is 40 — 21 chars should pass
+      expect(() => compileNativeFormFlow({
+        title: 'Test',
+        fields: [{ id: 'x', label: 'A'.repeat(21), type: 'date' }],
+      })).not.toThrow();
+
+      // DatePicker label limit is 40 — 41 chars should fail
+      expect(() => compileNativeFormFlow({
+        title: 'Test',
+        fields: [{ id: 'x', label: 'A'.repeat(41), type: 'date' }],
+      })).toThrow(NativeFlowValidationError);
+
+      // Dropdown/RadioButtonsGroup label limit is 20
+      expect(() => compileNativeFormFlow({
+        title: 'Test',
+        fields: [{ id: 'x', label: 'A'.repeat(21), type: 'select', options: ['A', 'B'] }],
+      })).toThrow(NativeFlowValidationError);
+
+      expect(() => compileNativeFormFlow({
+        title: 'Test',
+        fields: [{ id: 'x', label: 'A'.repeat(21), type: 'radio', options: ['A', 'B'] }],
+      })).toThrow(NativeFlowValidationError);
+    });
+
+    it('option title length is capped at 30 per Meta spec', () => {
+      expect(() => compileNativeFormFlow({
+        title: 'Test',
+        fields: [{ id: 'x', label: 'Pick', type: 'select', options: ['A'.repeat(31), 'B'] }],
+      })).toThrow(NativeFlowValidationError);
+
+      // 30 chars should pass
+      expect(() => compileNativeFormFlow({
+        title: 'Test',
+        fields: [{ id: 'x', label: 'Pick', type: 'select', options: ['A'.repeat(30), 'B'] }],
+      })).not.toThrow();
+    });
+
+    it('screen title length is capped at 30 per Meta spec', () => {
+      expect(() => compileNativeFormFlow({
+        title: 'A'.repeat(31),
+        fields: [{ id: 'x', label: 'Name', type: 'text' }],
+      })).toThrow(NativeFlowValidationError);
+
+      expect(() => compileNativeFormFlow({
+        title: 'A'.repeat(30),
+        fields: [{ id: 'x', label: 'Name', type: 'text' }],
+      })).not.toThrow();
+    });
+
+    it('terminal screen has success: true and terminal: true', () => {
+      const result = compileNativeFormFlow(basic());
+      const screen = (result.screens as Array<any>)[0];
+      expect(screen.terminal).toBe(true);
+      expect(screen.success).toBe(true);
+    });
+
+    it('description length is capped at 256 per Meta spec', () => {
+      expect(() => compileNativeFormFlow({
+        title: 'Test',
+        description: 'A'.repeat(257),
+        fields: [{ id: 'x', label: 'Name', type: 'text' }],
+      })).toThrow(NativeFlowValidationError);
+
+      expect(() => compileNativeFormFlow({
+        title: 'Test',
+        description: 'A'.repeat(256),
+        fields: [{ id: 'x', label: 'Name', type: 'text' }],
+      })).not.toThrow();
+    });
+  });
+});

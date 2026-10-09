@@ -27,7 +27,7 @@ export async function GET(request: NextRequest) {
   if (!business) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
   const { data: form, error: formError } = await supabase
-    .from('forms').select('id, business_id, title, description, fields')
+    .from('forms').select('id, business_id, title, description, fields, settings')
     .eq('id', formId).eq('business_id', businessId).maybeSingle();
   if (formError) return NextResponse.json({ error: 'Form unavailable' }, { status: 503 });
   if (!form) return NextResponse.json({ error: 'Form not found' }, { status: 404 });

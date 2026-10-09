@@ -116,6 +116,12 @@ export function compileNativeFormFlow(form: WaaiioFormDefinition): Record<string
         field.label.trim().length > maxLabel || hasBadControls(field.label)) {
       throw new NativeFlowValidationError('Field "' + field.id + '" label exceeds native Flow limits.');
     }
+    // Fail-closed: reject non-boolean `required` values (e.g. "yes", 1) instead of silently treating as false
+    if (field.required !== undefined && field.required !== true && field.required !== false) {
+      throw new NativeFlowValidationError(
+        'Field "' + field.id + '" has an invalid required value — must be true, false, or omitted.',
+      );
+    }
     const common = {
       name: field.id,
       label: field.label.trim(),
@@ -130,7 +136,8 @@ export function compileNativeFormFlow(form: WaaiioFormDefinition): Record<string
       if (!Array.isArray(field.options) || field.options.length < 2 || field.options.length > 20 ||
           field.options.some((o: unknown) => typeof o !== 'string' || !o.trim() ||
             o.trim().length > 30 || hasBadControls(o)) ||
-          new Set(field.options).size !== field.options.length) {
+          // Normalize (trim) options BEFORE checking uniqueness — 'Sales' and ' Sales' are duplicates
+          new Set(field.options.map((o: string) => o.trim())).size !== field.options.length) {
         throw new NativeFlowValidationError('Field "' + field.id + '" needs 2–20 unique options of up to 30 characters.');
       }
       children.push({
