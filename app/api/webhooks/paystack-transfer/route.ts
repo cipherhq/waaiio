@@ -3,7 +3,7 @@ import * as Sentry from '@sentry/nextjs';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { createServiceClient } from '@/lib/supabase/service';
 import { sendEmail } from '@/lib/email/client';
-import { payoutPaidEmail, payoutFailedEmail } from '@/lib/email/templates';
+import { payoutTransferStatusEmail, payoutTransferFailureEmail } from '@/lib/email/templates';
 import { logger } from '@/lib/logger';
 export const maxDuration = 60;
 
@@ -319,10 +319,10 @@ async function notifyBusinessOwner(
   if (!profile?.email) return;
 
   if (status === 'success') {
-    const email = payoutPaidEmail(biz.name, `Ref: ${transferCode}`, transferCode);
+    const email = payoutTransferStatusEmail(biz.name, transferCode);
     await sendEmail({ to: profile.email, ...email });
   } else {
-    const email = payoutFailedEmail(biz.name, `Ref: ${transferCode}`, reason || 'Transfer failed');
+    const email = payoutTransferFailureEmail(biz.name, transferCode, reason || 'Transfer failed');
     await sendEmail({ to: profile.email, ...email });
   }
 }

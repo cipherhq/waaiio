@@ -3,7 +3,7 @@ import * as Sentry from '@sentry/nextjs';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { createServiceClient } from '@/lib/supabase/service';
 import { sendEmail } from '@/lib/email/client';
-import { payoutPaidEmail, payoutFailedEmail } from '@/lib/email/templates';
+import { payoutTransferStatusEmail, payoutTransferFailureEmail } from '@/lib/email/templates';
 import { logger } from '@/lib/logger';
 export const maxDuration = 60;
 
@@ -53,7 +53,15 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ received: true });
     }
 
-    const handledEvents = ['payout.paid', 'payout.failed', 'transfer.reversed'];
+    // 600-F: The payout approve route creates a Stripe Transfer (POST /v1/transfers)
+    // and stores its ID (tr_xxx) as gateway_transfer_code. Transfer events use the
+    // same Transfer object ID. payout.paid/payout.failed are DIFFERENT Stripe resources
+    // (Payout objects, po_xxx) and will never match the stored gateway_transfer_code.
+    // Correct events for Transfer confirmation: transfer.created (already submitted),
+    // transfer.updated (status change), transfer.reversed (full or partial reversal).
+    // Actual bank settlement (Connected Account payout) requires account-level webhooks
+    // which are a separate PR-C/D design concern.
+    const handledEvents = ['transfer.updated', 'transfer.reversed'];
     if (!handledEvents.includes(eventType)) {
       return NextResponse.json({ received: true });
     }
@@ -127,12 +135,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Claim completion failed' }, { status: 500 });
     }
 
-    const notifStatus = eventType === 'payout.paid' ? 'success' as const : 'failed' as const;
-    const notifReason = eventType === 'payout.failed'
-      ? ((data.failure_message as string) || 'Payout failed')
-      : eventType === 'transfer.reversed'
-        ? 'Transfer reversed'
-        : undefined;
+    const isSuccess = eventType === 'transfer.updated' && (data.status as string) === 'paid';
+    const notifStatus = isSuccess ? 'success' as const : 'failed' as const;
+    const notifReason = eventType === 'transfer.reversed'
+      ? 'Transfer reversed'
+      : !isSuccess ? 'Transfer issue' : undefined;
 
     notifyBusinessOwner(supabase, payout.business_id, notifStatus, gatewayCode, notifReason).catch(
       (err) => logger.error(`${LOG_PREFIX} Email error:`, err),
@@ -159,36 +166,31 @@ async function applyStatusTransition(
   eventType: string,
   data: Record<string, unknown>,
 ): Promise<{ skipped?: boolean; error?: string }> {
-  if (eventType === 'payout.paid') {
-    if (payout.status === 'paid' || payout.status === 'failed') {
-      return { skipped: true };
+  // 600-F: transfer.updated carries the Transfer's status field.
+  // Stripe Transfer statuses: 'pending' → 'paid' (funds arrived in connected
+  // account's Stripe balance — NOT bank settlement). A failed transfer stays
+  // 'pending' or transitions via reversal. We do NOT assert bank finality here;
+  // that requires Connected Account payout webhooks (PR-C/D scope).
+  if (eventType === 'transfer.updated') {
+    const transferStatus = data.status as string;
+    if (transferStatus === 'paid') {
+      // Transfer arrived in connected account's Stripe balance
+      if (payout.status === 'paid' || payout.status === 'failed') {
+        return { skipped: true };
+      }
+      const { data: updated, error } = await supabase
+        .from('business_payouts')
+        .update({ status: 'paid', paid_at: new Date().toISOString() })
+        .eq('id', payout.id)
+        .in('status', ['approved', 'processing', 'review_required', 'pending'])
+        .select('id');
+
+      if (error) return { error: `DB error: ${error.message}` };
+      if (!updated?.length) return { error: `CAS conflict: payout ${payout.id} status changed` };
+      return {};
     }
-    const { data: updated, error } = await supabase
-      .from('business_payouts')
-      .update({ status: 'paid', paid_at: new Date().toISOString() })
-      .eq('id', payout.id)
-      .in('status', ['approved', 'processing', 'review_required', 'pending'])
-      .select('id');
-
-    if (error) return { error: `DB error: ${error.message}` };
-    if (!updated?.length) return { error: `CAS conflict: payout ${payout.id} status changed` };
-    return {};
-
-  } else if (eventType === 'payout.failed') {
-    if (payout.status === 'paid' || payout.status === 'failed') {
-      return { skipped: true };
-    }
-    const reason = (data.failure_message as string) || 'Payout failed';
-    const { data: updated, error } = await supabase
-      .from('business_payouts')
-      .update({ status: 'failed', flags: [reason] })
-      .eq('id', payout.id)
-      .in('status', ['approved', 'processing', 'review_required', 'pending'])
-      .select('id');
-
-    if (error) return { error: `DB error: ${error.message}` };
-    if (!updated?.length) return { error: `CAS conflict: payout ${payout.id} status changed` };
-    return {};
+    // Other transfer.updated statuses (e.g., 'pending') — no state change
+    return { skipped: true };
 
   } else if (eventType === 'transfer.reversed') {
     if (payout.status === 'failed') {
@@ -278,10 +280,10 @@ async function notifyBusinessOwner(
   if (!profile?.email) return;
 
   if (status === 'success') {
-    const email = payoutPaidEmail(biz.name, `Ref: ${reference}`, reference);
+    const email = payoutTransferStatusEmail(biz.name, reference);
     await sendEmail({ to: profile.email, ...email });
   } else {
-    const email = payoutFailedEmail(biz.name, `Ref: ${reference}`, reason || 'Transfer failed');
+    const email = payoutTransferFailureEmail(biz.name, reference, reason || 'Transfer failed');
     await sendEmail({ to: profile.email, ...email });
   }
 }
