@@ -15,6 +15,15 @@ If something breaks, check this log to find what changed and when.
 ### Verification
 - Await exact-head GitHub Actions CI and independent CTO review; no deploy/merge authorized.
 
+## 2026-10-09 — #591 Waaiio Forms: native Flow JSON draft preview
+
+### What changed
+- Compile existing business forms to a bounded, single-screen WhatsApp Flow v7.3 JSON draft; unsupported and ambiguous field definitions fail closed.
+- Added owner-scoped read-only `/api/forms/native-flow/preview` route and dashboard preview/copy action; executable compiler tests.
+### What it affects / could break
+- Forms dashboard list adds a draft-only preview; existing web-link submission and send paths remain unchanged.
+- This slice does **not** create/publish Meta Flow assets, send native Flows, accept native replies, or confirm bookings. No migration, provider call or live messaging is enabled.
+
 ## 2026-10-09 — #211/#248 CTO review corrections: extract logic, fix stale state, multi-winner guard
 
 ### What changed
