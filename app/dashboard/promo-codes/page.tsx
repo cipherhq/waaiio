@@ -19,6 +19,8 @@ interface PromoCode {
   valid_until: string | null;
   is_active: boolean;
   applicable_services: string[];
+  applicable_flow_types?: string[];
+  valid_from?: string;
   created_at: string;
 }
 
@@ -36,8 +38,9 @@ const EMPTY_FORM = {
   min_order_amount: 0,
   max_uses: null as number | null,
   valid_until: '',
+  valid_from: '',
   is_active: true,
-  applies_to: 'all' as 'all' | 'specific',
+  applies_to: 'all' as 'all' | 'products' | 'services',
   applicable_services: [] as string[],
 };
 
@@ -55,15 +58,17 @@ export default function PromoCodesPage() {
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [products, setProducts] = useState<ProductOption[]>([]);
+  const [services, setServices] = useState<ProductOption[]>([]);
 
   const fetchCodes = useCallback(async () => {
     try {
       setError(false);
       const { createClient } = await import('@/lib/supabase/client');
       const supabase = createClient();
-      const [res, { data: prods }] = await Promise.all([
+      const [res, { data: prods }, { data: svc }] = await Promise.all([
         fetch(`/api/promo-codes?businessId=${business.id}`),
         supabase.from('products').select('id, name').eq('business_id', business.id).is('deleted_at', null).order('name').limit(100),
+        supabase.from('services').select('id, name').eq('business_id', business.id).order('name').limit(100),
       ]);
       const data = await res.json();
       if (data.error) {
@@ -73,6 +78,7 @@ export default function PromoCodesPage() {
         setCodes((data.codes || []) as PromoCode[]);
       }
       setProducts((prods || []) as ProductOption[]);
+      setServices((svc || []) as ProductOption[]);
     } catch {
       setError(true);
       setCodes([]);
@@ -98,8 +104,10 @@ export default function PromoCodesPage() {
       min_order_amount: promo.min_order_amount,
       max_uses: promo.max_uses,
       valid_until: promo.valid_until ? promo.valid_until.split('T')[0] : '',
+      valid_from: promo.valid_from ? promo.valid_from.split('T')[0] : '',
       is_active: promo.is_active,
-      applies_to: (promo.applicable_services?.length || 0) > 0 ? 'specific' : 'all',
+      applies_to: (promo.applicable_services?.length || 0) === 0 ? 'all'
+        : promo.applicable_flow_types?.includes('scheduling') ? 'services' : 'products',
       applicable_services: promo.applicable_services || [],
     });
     setFormError(null);
@@ -109,6 +117,7 @@ export default function PromoCodesPage() {
   async function handleSave() {
     if (!form.code.trim()) { setFormError('Code is required.'); return; }
     if (form.discount_value <= 0) { setFormError('Discount value must be > 0.'); return; }
+    if (form.applies_to !== 'all' && form.applicable_services.length === 0) { setFormError('Select at least one product or service.'); return; }
     setSaving(true);
     setFormError(null);
     try {
@@ -121,8 +130,10 @@ export default function PromoCodesPage() {
         minOrderAmount: form.min_order_amount,
         maxUses: form.max_uses,
         validUntil: form.valid_until || null,
+        validFrom: form.valid_from || null,
         is_active: form.is_active,
-        applicableServices: form.applies_to === 'specific' ? form.applicable_services : [],
+        applicableServices: form.applies_to === 'all' ? [] : form.applicable_services,
+        applicableFlowTypes: form.applies_to === 'all' ? [] : [form.applies_to === 'services' ? 'scheduling' : 'ordering'],
         ...(view === 'edit' ? { id: form.id } : {}),
       };
       const res = await fetch('/api/promo-codes', {
@@ -241,25 +252,37 @@ export default function PromoCodesPage() {
               </div>
             </div>
 
-            {/* Applies to */}
+            {/* Scope is shared by bot product and service checkout. */}
             <div>
               <label className="mb-2 block text-sm font-medium text-gray-700">Applies To</label>
-              <div className="flex gap-2 mb-3">
-                <button type="button" onClick={() => setForm({ ...form, applies_to: 'all', applicable_services: [] })} className={`rounded-lg px-4 py-2 text-xs font-medium transition ${form.applies_to === 'all' ? 'bg-brand text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>All Products</button>
-                <button type="button" onClick={() => setForm({ ...form, applies_to: 'specific' })} className={`rounded-lg px-4 py-2 text-xs font-medium transition ${form.applies_to === 'specific' ? 'bg-brand text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>Specific Products</button>
+              <div className="flex flex-wrap gap-2 mb-3">
+                {(['all', 'products', 'services'] as const).map(scope => (
+                  <button key={scope} type="button"
+                    onClick={() => setForm({ ...form, applies_to: scope, applicable_services: [] })}
+                    className={`rounded-lg px-4 py-2 text-xs font-medium transition ${form.applies_to === scope ? 'bg-brand text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
+                    {scope === 'all' ? 'All Products & Services' : scope === 'products' ? 'Specific Products' : 'Specific Services'}
+                  </button>
+                ))}
               </div>
-              {form.applies_to === 'specific' && (
+              {form.applies_to !== 'all' && (
                 <div className="max-h-48 overflow-y-auto rounded-lg border border-gray-200 p-2">
-                  {products.length === 0 ? (
-                    <p className="py-4 text-center text-xs text-gray-400">No products found. Add products first.</p>
-                  ) : products.map(p => (
-                    <label key={p.id} className="flex items-center gap-2 rounded px-2 py-1.5 hover:bg-gray-50 cursor-pointer">
-                      <input type="checkbox" checked={form.applicable_services.includes(p.id)} onChange={() => { const next = form.applicable_services.includes(p.id) ? form.applicable_services.filter(id => id !== p.id) : [...form.applicable_services, p.id]; setForm({ ...form, applicable_services: next }); }} className="h-4 w-4 rounded border-gray-300 text-brand focus:ring-brand" />
-                      <span className="text-sm text-gray-700">{p.name}</span>
+                  {(form.applies_to === 'products' ? products : services).length === 0 ? (
+                    <p className="py-4 text-center text-xs text-gray-400">No {form.applies_to} found. Add them first.</p>
+                  ) : (form.applies_to === 'products' ? products : services).map(item => (
+                    <label key={item.id} className="flex items-center gap-2 rounded px-2 py-1.5 hover:bg-gray-50 cursor-pointer">
+                      <input type="checkbox" checked={form.applicable_services.includes(item.id)}
+                        onChange={() => {
+                          const next = form.applicable_services.includes(item.id)
+                            ? form.applicable_services.filter(id => id !== item.id)
+                            : [...form.applicable_services, item.id];
+                          setForm({ ...form, applicable_services: next });
+                        }} className="h-4 w-4 rounded border-gray-300 text-brand focus:ring-brand" />
+                      <span className="text-sm text-gray-700">{item.name}</span>
                     </label>
                   ))}
                 </div>
               )}
+              <p className="mt-2 text-xs text-gray-500">Restricted codes work only in the matching WhatsApp checkout flow.</p>
             </div>
           </div>
 
