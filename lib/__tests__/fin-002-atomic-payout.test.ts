@@ -57,6 +57,9 @@ interface MockConfig {
   fetchThrows?: boolean;
   payoutAccountGateway?: string;
   payoutAccountName?: string | null;
+  feeCustody?: boolean | null;
+  balanceReadError?: { message: string } | null;
+  priorPayoutsReadError?: { message: string } | null;
 }
 
 function setupMocks(config: MockConfig = {}) {
@@ -76,6 +79,9 @@ function setupMocks(config: MockConfig = {}) {
     fetchThrows = false,
     payoutAccountGateway = 'paystack',
     payoutAccountName = 'Test',
+    feeCustody = false,
+    balanceReadError = null,
+    priorPayoutsReadError = null,
   } = config;
 
   capturedFetchCalls = [];
@@ -105,14 +111,18 @@ function setupMocks(config: MockConfig = {}) {
                 stripe_account_id: 'acct_test', gateway: payoutAccountGateway },
       });
     } else if (table === 'platform_fees') {
-      chain.is = vi.fn().mockResolvedValue({ data: [{ transaction_amount: 1000, fee_total: 50 }] });
+      chain.is = vi.fn().mockResolvedValue(balanceReadError
+        ? { data: null, error: balanceReadError }
+        : { data: [{ transaction_amount: 1000, fee_total: 50, is_direct_transfer: feeCustody }], error: null });
     } else if (table === 'profiles') {
       chain.single = vi.fn().mockResolvedValue({ data: { email: 'test@test.com' } });
     } else {
       chain.single = vi.fn().mockResolvedValue({ data: null });
       chain.insert = vi.fn().mockResolvedValue({});
     }
-    chain.neq = vi.fn().mockResolvedValue({ data: [] });
+    chain.neq = vi.fn().mockResolvedValue(priorPayoutsReadError
+      ? { data: null, error: priorPayoutsReadError }
+      : { data: [], error: null });
     return chain;
   });
 
@@ -382,7 +392,7 @@ describe('FIN-002: Timeout → review_required', () => {
         chain.maybeSingle = vi.fn().mockResolvedValue({ data: { id: 'pa1', business_id: 'b1', is_active: true, verified_at: '2024-01-01', gateway: 'paystack' } });
         chain.single = vi.fn().mockResolvedValue({ data: { bank_code: '058', account_number: '0123456789', account_name: 'Test', gateway: 'paystack' } });
       } else if (table === 'platform_fees') {
-        chain.is = vi.fn().mockResolvedValue({ data: [{ transaction_amount: 1000, fee_total: 50 }] });
+        chain.is = vi.fn().mockResolvedValue({ data: [{ transaction_amount: 1000, fee_total: 50, is_direct_transfer: false }] });
       }
       chain.neq = vi.fn().mockResolvedValue({ data: [] });
       return chain;
@@ -464,7 +474,7 @@ describe('FIN-002: Provider response classification', () => {
           data: { bank_code: '058', account_number: '0123456789', account_name: 'Test', stripe_account_id: 'acct_test', gateway: gw },
         });
       } else if (table === 'platform_fees') {
-        chain.is = vi.fn().mockResolvedValue({ data: [{ transaction_amount: 1000, fee_total: 50 }] });
+        chain.is = vi.fn().mockResolvedValue({ data: [{ transaction_amount: 1000, fee_total: 50, is_direct_transfer: false }] });
       } else if (table === 'profiles') {
         chain.single = vi.fn().mockResolvedValue({ data: { email: 'test@test.com' } });
       } else {
@@ -1460,5 +1470,65 @@ describe('FIN-002: Paystack rejection requires strict string message', () => {
     const { classifyPaystackError } = await import('@/lib/payments/payout-classification');
     const res = new Response(JSON.stringify({ status: false, data: { message: 'Invalid recipient' } }), { status: 400 });
     expect(await classifyPaystackError(res)).toBe('conclusive_rejection');
+  });
+});
+
+
+describe('FIN-002 / #597: approval financial authority and custody', () => {
+  beforeEach(() => {
+    capturedFetchCalls = [];
+    vi.restoreAllMocks();
+    vi.resetModules();
+    process.env.ENABLE_PAYOUTS = 'true';
+    process.env.PAYSTACK_SECRET_KEY = 'test_paystack_key';
+  });
+
+  afterEach(() => {
+    delete process.env.ENABLE_PAYOUTS;
+    delete process.env.PAYSTACK_SECRET_KEY;
+    vi.restoreAllMocks();
+  });
+
+  async function approve() {
+    const { POST } = await import('@/app/api/admin/payouts/[id]/approve/route');
+    return POST(makePostRequest('/api/admin/payouts/p1/approve', { transfer_method: 'paystack_transfer' }),
+      { params: Promise.resolve({ id: 'p1' }) });
+  }
+
+  it('returns 503 and makes no provider request if platform fee balance read errors', async () => {
+    setupMocks({ balanceReadError: { message: 'financial query unavailable' } });
+    const res = await approve();
+    expect(res.status).toBe(503);
+    expect(capturedFetchCalls).toHaveLength(0);
+  });
+
+  it('returns 503 and makes no provider request if reserved/prior payout read errors', async () => {
+    setupMocks({ priorPayoutsReadError: { message: 'prior payouts unavailable' } });
+    const res = await approve();
+    expect(res.status).toBe(503);
+    expect(capturedFetchCalls).toHaveLength(0);
+  });
+
+  it('rejects unknown custody (NULL) without provider request', async () => {
+    setupMocks({ feeCustody: null });
+    const res = await approve();
+    expect(res.status).toBe(400);
+    expect(capturedFetchCalls).toHaveLength(0);
+    const body = await res.json();
+    expect(body.error).toContain('exceeds available balance');
+  });
+
+  it('rejects direct-settled custody without provider request', async () => {
+    setupMocks({ feeCustody: true });
+    const res = await approve();
+    expect(res.status).toBe(400);
+    expect(capturedFetchCalls).toHaveLength(0);
+  });
+
+  it('allows confirmed platform-held custody to reach existing atomic claim', async () => {
+    setupMocks({ feeCustody: false });
+    const res = await approve();
+    expect(res.status).toBe(200);
+    expect(capturedFetchCalls.length).toBeGreaterThan(0);
   });
 });
