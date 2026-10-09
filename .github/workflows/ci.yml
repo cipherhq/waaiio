@@ -1639,6 +1639,48 @@ jobs:
           PGDATABASE: waaiio_test
         run: bash scripts/ci-bootstrap-test-db.sh
 
+      # ── M435: Ordering price authority (#602) ──
+      # Disposable PG: promo/volume discount DB authority in create_order_atomic
+      - name: M435 ordering price authority DB tests
+        env:
+          PGHOST: localhost
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+        run: |
+          set -e
+          dropdb --maintenance-db=waaiio_test --if-exists waaiio_m435_test
+          createdb --maintenance-db=waaiio_test waaiio_m435_test
+          cleanup() { dropdb --maintenance-db=waaiio_test --if-exists waaiio_m435_test; }
+          trap cleanup EXIT
+          export TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/waaiio_m435_test
+
+          bash scripts/ci-bootstrap-test-db.sh "$TEST_DATABASE_URL"
+
+          echo "Running M435 ordering price authority DB tests..."
+          set +e
+          OUTPUT=$(npx vitest run lib/__tests__/ordering-price-authority-602.test.ts 2>&1)
+          TEST_EXIT=$?
+          set -e
+          echo "$OUTPUT"
+          if [ "$TEST_EXIT" -ne 0 ]; then
+            echo "❌ M435 ordering price authority tests exited with code $TEST_EXIT."
+            exit "$TEST_EXIT"
+          fi
+          if echo "$OUTPUT" | grep -qP '(\d+) skipped'; then
+            SKIP_COUNT=$(echo "$OUTPUT" | grep -oP '(\d+) skipped' | head -1 | grep -oP '\d+')
+            if [ "$SKIP_COUNT" != "0" ] && [ -n "$SKIP_COUNT" ]; then
+              echo "❌ M435 tests had $SKIP_COUNT skipped tests. All must execute."
+              exit 1
+            fi
+          fi
+          if ! echo "$OUTPUT" | grep -q "passed"; then
+            echo "❌ No M435 ordering price authority tests passed. Something is wrong."
+            exit 1
+          fi
+          echo "✅ M435 ordering price authority DB tests complete — zero skips, zero failures."
+
+
       - name: Verify key tables exist
         env:
           PGHOST: localhost
