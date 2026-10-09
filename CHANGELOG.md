@@ -15,6 +15,22 @@ If something breaks, check this log to find what changed and when.
 ### Verification
 - Await exact-head GitHub Actions CI and independent CTO review; no deploy/merge authorized.
 
+## 2026-10-09 — #591 Waaiio Forms: submission handling, booking requests, consent, webhook integration
+
+### What changed
+- **Compiler enhancements** (`lib/whatsapp-forms/native-flow.ts`): Added marketing consent OptIn component support via `settings.consent_label`; improved error messages for Waaiio-only field types (file, multi_select, checkbox) with actionable hints; fixed RadioButtonsGroup label limit from 30 to 20 per Meta spec; added `validateFlowResponse()` for schema validation of nfm_reply payloads and `resolveOptionLabels()` for option ID-to-title mapping.
+- **Submission handler** (`lib/whatsapp-forms/submission-handler.ts`): New module handling inbound nfm_reply Flow responses. Encodes/decodes flow tokens carrying form + business identity. Validates all response data against form schema. Idempotent via meta_message_id dedup. Tenant-isolated: business_id from channel, never from Flow payload. Customer phone from webhook envelope, never asserted by payload.
+- **Webhook integration** (`app/api/webhook/meta-cloud/route.ts`): Added nfm_reply handling for `interactive.type === 'nfm_reply'` with `waaiio_form:` flow token prefix. Processes submissions inline, sends thank-you confirmation, completes webhook event. Falls through to bot processing for non-Waaiio flows.
+- **Native Flow send route** (`app/api/forms/native-flow/send/route.ts`): Owner-authenticated API to send published native WhatsApp Flows with flow token encoding. Requires `meta_flow_id` in form settings. Creates pending form_response record for tracking.
+- **Booking request integration**: When `settings.form_type === 'booking_request'`, stores booking metadata as `pending_review` in form_responses metadata. NEVER creates confirmed bookings, bypasses payment, or touches the bookings table.
+- **Tests** (`lib/__tests__/waaiio-native-forms-591.test.ts`, `waaiio-native-form-submission-591.test.ts`): 45 tests covering compiler (consent, error hints, all field types), response validation (required fields, extra field rejection, type validation, consent handling), option label resolution, flow token encode/decode, submission handler (cross-tenant denial, idempotency, schema validation, inactive form rejection), and booking request invariants (no bookings table mutation).
+
+### What it affects / could break
+- Webhook handler (`route.ts`) now intercepts `nfm_reply` messages with `waaiio_form:` flow token prefix before bot processing. Non-Waaiio Flow responses fall through to bot. No existing interactive message handling is affected.
+- No new database tables or migrations. Uses existing `forms`/`form_responses` tables and `metadata` jsonb column.
+- No actual Meta API calls — Flow asset publishing requires `meta_flow_id` to be set in form settings, which is a manual/future step.
+- Does NOT modify: `bot.service.ts`, `channel-resolver.ts`, `provision-business.ts`, or any #266-owned files.
+
 ## 2026-10-09 — #591 Waaiio Forms: native Flow JSON draft preview
 
 ### What changed
