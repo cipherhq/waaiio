@@ -5,7 +5,7 @@
  * independently copied string-matching example changes.
  */
 import { describe, expect, it, vi } from 'vitest';
-import type { SupabaseClient } from '@supabase/supabase-js';
+import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { searchMarketplace } from '../search';
 
 type Row = Record<string, unknown>;
@@ -229,4 +229,53 @@ describe('searchMarketplace — executable filters and containment', () => {
     const result = await searchMarketplace(db, { locationText: 'Lagos' });
     expect(result).toMatchObject({ ok: false, results: [], error: 'db unavailable' });
   });
+  it.each(['%%%', ' \u0025 ', '\n'])(
+    'rejects invalid free-text %j before Supabase is called',
+    async (query) => {
+      const { db, from } = fakeSupabase([]);
+      const result = await searchMarketplace(db, { query });
+      expect(result.ok).toBe(false);
+      expect(result.results).toEqual([]);
+      expect(from).not.toHaveBeenCalled();
+    },
+  );
+
+  it('rejects excessive authoritative exclusion IDs', async () => {
+    const { db, from } = fakeSupabase([]);
+    const result = await searchMarketplace(db, { excludeIds: Array(501).fill(ID[0]) });
+    expect(result.ok).toBe(false);
+    expect(from).not.toHaveBeenCalled();
+  });
+
+  it('serializes parent-city AND address filter using the real Supabase PostgREST client', async () => {
+    const urls: URL[] = [];
+    const testFetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = input instanceof URL ? input : new URL(typeof input === 'string' ? input : input.url);
+      urls.push(url);
+      return new Response('[]', {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    });
+    const client = createClient('https://example.supabase.co', 'test-anon-key', {
+      auth: { autoRefreshToken: false, persistSession: false },
+      global: { fetch: testFetch as typeof fetch },
+    });
+    const result = await searchMarketplace(client, {
+      category: 'restaurant',
+      locationText: 'Lekki, Lagos',
+      excludeIds: [ID[1]],
+      limit: 15,
+    });
+    expect(result).toMatchObject({ ok: true, results: [] });
+    expect(urls).toHaveLength(1);
+    const params = urls[0].searchParams;
+    expect(params.get('category')).toBe('ilike.%restaurant%');
+    expect(params.get('city')).toBe('ilike.%Lagos%');
+    expect(params.get('address')).toBe('ilike.%Lekki%');
+    expect(params.get('id')).toBe('not.in.(' + ID[1] + ')');
+    expect(params.get('limit')).toBe('45'); // Oversampling before ranking, final top 15.
+    expect(params.getAll('or')).toContain('(discovery_enabled.is.null,discovery_enabled.eq.true)');
+  });
+
 });
