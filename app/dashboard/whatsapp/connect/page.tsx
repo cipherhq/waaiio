@@ -95,6 +95,21 @@ export default function ConnectWhatsAppPage() {
 
   // Load FB SDK (only when advanced flow is selected)
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [coexistenceReadiness, setCoexistenceReadiness] = useState<{
+    configured: boolean; canConnect: boolean; message: string; countryEligibility: string;
+  } | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    fetch('/api/whatsapp/business-app-connect/readiness?businessId=' + encodeURIComponent(business.id), { cache: 'no-store' })
+      .then(async res => {
+        if (!res.ok) throw new Error('Not available');
+        return res.json();
+      })
+      .then(data => { if (alive) setCoexistenceReadiness(data); })
+      .catch(() => { if (alive) setCoexistenceReadiness(null); });
+    return () => { alive = false; };
+  }, [business.id]);
   useEffect(() => {
     if (!showAdvanced || !appId || fbSdkLoaded.current) return;
     window.fbAsyncInit = function () {
@@ -432,6 +447,23 @@ export default function ConnectWhatsAppPage() {
               </div>
             </div>
           </button>
+
+          <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 dark:border-amber-800 dark:bg-amber-900/20">
+            <p className="text-sm font-semibold text-amber-900 dark:text-amber-200">
+              Business App Connect — Meta coexistence pilot
+            </p>
+            <p className="mt-1 text-xs text-amber-800 dark:text-amber-300">
+              Keep using your WhatsApp Business mobile app while enabling Waaiio automation.
+              This is different from transferring a number to Cloud API.
+            </p>
+            <p className="mt-2 text-xs text-amber-800 dark:text-amber-300">
+              {coexistenceReadiness?.message || 'Verifying local setup...'} Country and phone eligibility must be confirmed by Meta.
+              Your existing number will not be transferred automatically.
+            </p>
+            <button disabled className="mt-3 rounded-lg border border-amber-300 px-3 py-2 text-xs font-semibold text-amber-700 opacity-60">
+              Awaiting Meta coexistence verification
+            </button>
+          </div>
 
           {showAdvanced && (
             <div className="rounded-lg border border-blue-200 bg-blue-50/50 dark:border-blue-900 dark:bg-blue-900/20 p-4 text-center">

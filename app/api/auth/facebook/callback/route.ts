@@ -47,6 +47,20 @@ export async function POST(request: NextRequest) {
       connection_method,
     } = await request.json();
 
+    // Coexistence MUST NOT fall through to standard Cloud API registration.
+    // An untrusted browser connection_method value is not Meta provider evidence.
+    // The dedicated Meta Business App onboarding + signed FINISH attestation
+    // requires a separate audited implementation before any number mutation.
+    if (connection_method === 'coexist' || connection_method === 'coexistence') {
+      return NextResponse.json({
+        error: 'coexistence_not_ready',
+        message: 'Business App Connect requires Meta eligibility verification and dedicated onboarding. Your existing WhatsApp Business app number has not been changed.',
+      }, { status: 409 });
+    }
+    if (connection_method && connection_method !== 'transfer') {
+      return NextResponse.json({ error: 'Unsupported connection method' }, { status: 400 });
+    }
+
     if (!business_id || (!code && !providedAccessToken)) {
       return NextResponse.json(
         { message: 'Missing required fields: business_id and (access_token or code)' },
