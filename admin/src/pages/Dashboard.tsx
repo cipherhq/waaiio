@@ -838,12 +838,7 @@ export default function Dashboard() {
                       <td className="px-4 py-3 text-right text-gray-700">{cat.count}</td>
                       <td className="px-4 py-3 text-right text-gray-700">{cat.bookings}</td>
                       <td className="px-4 py-3 text-right font-medium text-gray-900">
-                        {Object.values(cat.revenueByCurrency).some(a => a > 0)
-                          ? Object.entries(cat.revenueByCurrency)
-                              .filter(([, a]) => a > 0)
-                              .map(([cur, amt]) => formatMoney(amt, cur))
-                              .join(' · ') || '—'
-                          : '—'}
+                        <CategoryPaymentValue amounts={cat.revenueByCurrency} />
                       </td>
                       <td className="px-4 py-3">
                         <div className="h-2 w-full rounded-full bg-gray-100 overflow-hidden">
@@ -896,6 +891,16 @@ export default function Dashboard() {
         </div>
       </div>
     </div>
+  );
+}
+
+/** Production renderer used by the Dashboard category table and mounted regressions. */
+export function CategoryPaymentValue({ amounts }: { amounts: Record<string, number> }) {
+  const positive = Object.entries(amounts).filter(([, value]) => value > 0);
+  return (
+    <>{positive.length > 0
+      ? positive.map(([currency, amount]) => formatMoney(amount, currency)).join(' · ')
+      : '—'}</>
   );
 }
 
