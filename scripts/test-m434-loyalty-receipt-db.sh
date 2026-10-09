@@ -51,7 +51,9 @@ BEGIN
   IF NOT has_function_privilege('service_role', fn, 'EXECUTE')
      OR has_function_privilege('anon', fn, 'EXECUTE')
      OR has_function_privilege('authenticated', fn, 'EXECUTE')
-     OR has_function_privilege('public', fn, 'EXECUTE') THEN
+     OR EXISTS (SELECT 1 FROM pg_proc p
+       CROSS JOIN LATERAL aclexplode(COALESCE(p.proacl, acldefault('f', p.proowner))) x
+       WHERE p.oid = fn AND x.grantee = 0 AND x.privilege_type = 'EXECUTE') THEN
     RAISE EXCEPTION 'M434 RPC role grants are unsafe';
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname='public' AND indexname='idx_loyalty_reward_receipt_key' AND indexdef ILIKE '%UNIQUE%')
