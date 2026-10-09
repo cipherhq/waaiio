@@ -103,13 +103,12 @@ GRANT USAGE ON SCHEMA auth TO authenticated, service_role, anon;
 GRANT USAGE ON SCHEMA storage TO authenticated, service_role, anon;
 GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA auth TO authenticated, service_role, anon;
 
--- Match Supabase Cloud: service_role gets full access on tables created by postgres.
--- Only service_role uses ALTER DEFAULT PRIVILEGES here because:
--- 1. service_role needs table-level access but BYPASSRLS alone is insufficient
--- 2. authenticated/anon use targeted GRANTs in individual migrations — broad default
---    privileges would conflict with migrations that explicitly REVOKE specific operations
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
-  GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO service_role;
+-- DO NOT add ALTER DEFAULT PRIVILEGES for any role here.
+-- Individual migrations grant specific per-table privileges (e.g., M415 for
+-- business_members, M426 for payment tables). Broad default privileges conflict
+-- with tests that verify permission boundaries (e.g., staging-payment-parity
+-- expects service_role to NOT have DELETE on bot_sequences).
+-- The main branch CI passes without any ALTER DEFAULT PRIVILEGES.
 
 -- Seed common test user (many test suites reference this UUID)
 INSERT INTO auth.users (id, email) VALUES
