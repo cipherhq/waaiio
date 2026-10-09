@@ -16,7 +16,7 @@ export async function POST(request: NextRequest) {
     const { businessId, customerPhone, points } = body;
     // A stable client-generated key is mandatory: replay must not debit twice.
     const requestId = request.headers.get('Idempotency-Key') || body.redemptionId;
-    if (typeof requestId !== 'string' || !/^[0-9a-fA-F-]{36}$/.test(requestId)) {
+    if (typeof requestId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestId)) {
       return NextResponse.json({ error: 'Stable Idempotency-Key UUID required' }, { status: 428 });
     }
     if (!businessId || !customerPhone || !points) {
@@ -62,8 +62,15 @@ export async function POST(request: NextRequest) {
       logger.error('[LOYALTY] Atomic redemption failed:', redeemError);
       return NextResponse.json({ error: 'Loyalty redemption unavailable' }, { status: 503 });
     }
-    if (receipt?.success !== true || !Number.isSafeInteger(receipt.points_balance)) {
+    if (receipt?.success !== true) {
       return NextResponse.json({ error: 'Insufficient points or invalid redemption' }, { status: 400 });
+    }
+    // Do not acknowledge a debit as fulfilled unless the transaction returned
+    // a valid, durable receipt. Retries with the SAME idempotency key are safe.
+    if (typeof receipt.code !== 'string' || !/^RW-[A-Z2-9]{6}$/.test(receipt.code)
+      || !Number.isSafeInteger(receipt.points_balance) || receipt.points_balance < 0) {
+      logger.error('[LOYALTY] Atomic redemption returned malformed receipt');
+      return NextResponse.json({ error: 'Loyalty redemption receipt unavailable; retry with the same Idempotency-Key' }, { status: 503 });
     }
     return NextResponse.json({
       success: true,
