@@ -12,6 +12,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { logger } from '@/lib/logger';
 import { formatDistance } from '@/lib/constants';
+import { resolveCompoundLocation, resolveLocation } from './location-resolver';
 
 // ── Public types ───────────────────────────────────────
 
@@ -98,6 +99,17 @@ const DIRECTORY_MAX_RESULTS = 50;
 /** UUID v4 format regex for excludeIds validation. */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/** Constrain values interpolated into raw PostgREST OR filters to safe tokens. */
+const SAFE_LOCATION_TOKEN = /^[\p{L}\p{M}\p{N}][\p{L}\p{M}\p{N} -]*$/u;
+function validateLocationToken(value: unknown): string | null {
+  if (typeof value !== 'string' || value.length > 100) return null;
+  const normalized = value.trim().replace(/ +/g, ' ');
+  return normalized.length > 0 && normalized.length <= 80 && SAFE_LOCATION_TOKEN.test(normalized)
+    ? normalized
+    : null;
+}
+
+
 /**
  * Fields safe for WhatsApp discovery output.
  * Actual filtering happens in the formatter (Phase C / bot.service.ts) —
@@ -137,7 +149,7 @@ export interface MarketplaceSearchResult {
   ok: boolean;
   /** Error message when ok=false (not exposed to users). */
   error?: string;
-  /** True when locationText was provided but sanitized to empty. */
+  /** True when an explicit location constraint is invalid or ambiguous. */
   locationFailed?: boolean;
 }
 
@@ -149,8 +161,53 @@ export async function searchMarketplace(
 ): Promise<MarketplaceSearchResult> {
   const limit = Math.min(criteria.limit || 20, DIRECTORY_MAX_RESULTS);
 
-  // Track whether locationText was provided but sanitized to empty
-  let locationFailed = false;
+  // Validate discovery constraints before constructing a database query.
+  const invalidLocation = (): MarketplaceSearchResult => ({
+    results: [], ok: false, locationFailed: true, error: 'Invalid or ambiguous location',
+  });
+
+  if (criteria.excludeIds !== undefined && (
+    !Array.isArray(criteria.excludeIds) ||
+    criteria.excludeIds.length > 500 ||
+    criteria.excludeIds.some((id) => typeof id !== 'string' || !UUID_RE.test(id))
+  )) {
+    return { results: [], ok: false, error: 'Invalid hidden-business exclusion list' };
+  }
+
+  let resolvedCity: string | null = null;
+  let addressHint: string | null = null;
+  let locationCountry: string | null = null;
+
+  if (criteria.locationText !== undefined) {
+    if (typeof criteria.locationText !== 'string' || criteria.locationText.length > 160) {
+      return invalidLocation();
+    }
+    const rawParts = criteria.locationText.split(',');
+    if (rawParts.length > 3 || rawParts.some((part) => validateLocationToken(part) === null)) {
+      return invalidLocation();
+    }
+    const resolution = rawParts.length > 1
+      ? resolveCompoundLocation(criteria.locationText)
+      : resolveLocation(rawParts[0].trim());
+    if (resolution.tier === 3) return invalidLocation();
+    resolvedCity = resolution.city;
+    addressHint = resolution.addressHint;
+    locationCountry = resolution.countryCode;
+  }
+
+  if (criteria._addressHint !== undefined) {
+    const validatedHint = validateLocationToken(criteria._addressHint);
+    if (!resolvedCity || !validatedHint ||
+        (addressHint && addressHint.toLowerCase() !== validatedHint.toLowerCase())) {
+      return invalidLocation();
+    }
+    addressHint = validatedHint;
+  }
+
+  if (locationCountry && criteria.country && criteria.country !== locationCountry) {
+    return invalidLocation();
+  }
+  const effectiveCountry = locationCountry || criteria.country;
 
   try {
     let query = applyDirectoryEligibility(
@@ -168,46 +225,25 @@ export async function searchMarketplace(
       query = query.ilike('category', `%${criteria.category}%`);
     }
 
-    // Country filter
-    if (criteria.country) {
-      query = query.eq('country_code', criteria.country);
+    if (effectiveCountry) {
+      query = query.eq('country_code', effectiveCountry);
     }
 
-    // Exclude IDs filter — applied at DB level before scoring
-    if (criteria.excludeIds && criteria.excludeIds.length > 0) {
-      const validIds = criteria.excludeIds.filter((id) => UUID_RE.test(id));
-      if (validIds.length > 0) {
-        query = query.not('id', 'in', `(${validIds.join(',')})`);
-      }
+    // Admin-hidden IDs are excluded in SQL before pagination and scoring.
+    if (criteria.excludeIds?.length) {
+      query = query.not('id', 'in', '(' + criteria.excludeIds.join(',') + ')');
     }
 
-    // Location filter — city / state ILIKE from locationText
-    if (criteria.locationText) {
-      const safeLoc = criteria.locationText.replace(/[%_'"\\]/g, '');
-      if (safeLoc.length === 0) {
-        locationFailed = true;
+    // Parent-city AND address-hint, never same-state OR for neighborhoods.
+    if (resolvedCity) {
+      if (addressHint) {
+        query = query.ilike('city', '%' + resolvedCity + '%');
       } else {
-        const tokens = safeLoc
-          .split(',')
-          .map((t) => t.trim())
-          .filter((t) => t.length > 0)
-          .slice(0, 3);
-        if (tokens.length > 0) {
-          const clauses = tokens.flatMap((t) => [
-            `city.ilike.%${t}%`,
-            `state.ilike.%${t}%`,
-          ]);
-          query = query.or(clauses.join(','));
-        }
+        query = query.or('city.ilike.%' + resolvedCity + '%,state.ilike.%' + resolvedCity + '%');
       }
     }
-
-    // Address hint — AND filter on address column (narrows within city/state)
-    if (criteria._addressHint && criteria.locationText) {
-      const safeHint = criteria._addressHint.replace(/[%_'"\\]/g, '');
-      if (safeHint.length > 0) {
-        query = query.ilike('address', `%${safeHint}%`);
-      }
+    if (addressHint) {
+      query = query.ilike('address', '%' + addressHint + '%');
     }
 
     // Delivery filter
@@ -223,7 +259,7 @@ export async function searchMarketplace(
     // Text search — name / description / category ILIKE
     if (criteria.query) {
       // Sanitize the query to prevent PostgREST injection
-      const safeQ = criteria.query.replace(/[%_'"\\]/g, '');
+      const safeQ = criteria.query.replace(/[^\p{L}\p{M}\p{N} -]/gu, ' ').trim().slice(0, 100);
       if (safeQ.length > 0) {
         query = query.or(
           `name.ilike.%${safeQ}%,description.ilike.%${safeQ}%,category.ilike.%${safeQ}%`,
@@ -243,7 +279,7 @@ export async function searchMarketplace(
     }
 
     if (!businesses || businesses.length === 0) {
-      return { results: [], ok: true, ...(locationFailed ? { locationFailed } : {}) };
+      return { results: [], ok: true };
     }
 
     // Score and rank results
@@ -350,7 +386,6 @@ export async function searchMarketplace(
     return {
       results: scored.slice(0, limit).map(({ _score: _, ...rest }) => rest),
       ok: true,
-      ...(locationFailed ? { locationFailed } : {}),
     };
   } catch (err) {
     logger.error('[MARKETPLACE] Search failed:', err);
