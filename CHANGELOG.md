@@ -3,6 +3,18 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+
+## 2026-10-09 — #590 CTO correction: mounted Contact Winner UI + synchronous send lock
+
+### What changed
+- Extracted the **actual** Contact Winner React hook and rendered button to `contact-winner-controls.tsx`; the promo detail page now consumes both.
+- The hook fail-closes readiness by business/campaign identity, cancels stale requests and late send results, and uses a synchronous in-flight ref before POST (while preserving server claim-before-send authority).
+- Added mounted React/jsdom integration tests for ready/pending/failed template, cross-business request ordering, 401/503, rapid multi-winner clicks, exact POST, spinner, error/result UI, retry and stale send outcome. All provider fetches are mocked.
+- Pure helper tests are preserved. No database migration, API backend, channel routing, provider configuration or live send behavior changed.
+
+### Verification
+- Await exact-head GitHub Actions CI and independent CTO review; no deploy/merge authorized.
+
 ## 2026-10-09 — #211/#248 CTO review corrections: extract logic, fix stale state, multi-winner guard
 
 ### What changed

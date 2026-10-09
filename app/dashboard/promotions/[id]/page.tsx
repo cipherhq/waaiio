@@ -10,11 +10,7 @@ import type {
   PromoCodeBatch,
   PromoFulfillmentStatus,
 } from '@/lib/promotions/types';
-import {
-  checkWinnerTemplateReadiness,
-  handleContactWinner as handleContactWinnerLogic,
-} from './contact-winner-logic';
-import type { ContactResult } from './contact-winner-logic';
+import { ContactWinnerButton, useContactWinnerActions } from './contact-winner-controls';
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                               */
@@ -318,10 +314,9 @@ export default function PromotionDetailPage() {
   const [revealingPhone, setRevealingPhone] = useState<string | null>(null);
   const [revealedPhones, setRevealedPhones] = useState<Record<string, string>>({});
 
-  // Contact Winner
-  const [winnerTemplateReady, setWinnerTemplateReady] = useState(false);
-  const [contactingWinner, setContactingWinner] = useState<string | null>(null); // redemptionId in-flight
-  const [contactResult, setContactResult] = useState<ContactResult | null>(null);
+  // Contact Winner: production hook has a synchronous in-flight lock and context-scoped readiness.
+  const { winnerTemplateReady, contactingWinner, contactResult, contactWinner } =
+    useContactWinnerActions({ businessId: business.id, campaignId: campaign?.id ?? null });
 
   // Analytics tab
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
@@ -414,26 +409,6 @@ export default function PromotionDetailPage() {
   useEffect(() => {
     fetchCampaign();
   }, [fetchCampaign]);
-
-  /* ---- Fetch winner template readiness ---- */
-
-  useEffect(() => {
-    let cancelled = false;
-    // Fail-closed: reset immediately on business change to prevent stale readiness
-    setWinnerTemplateReady(false);
-    async function checkWinnerTemplate() {
-      try {
-        const ready = await checkWinnerTemplateReadiness(fetch, business.id);
-        if (!cancelled) {
-          setWinnerTemplateReady(ready);
-        }
-      } catch {
-        if (!cancelled) setWinnerTemplateReady(false);
-      }
-    }
-    checkWinnerTemplate();
-    return () => { cancelled = true; };
-  }, [business.id]);
 
   /* ---- Fetch codes (paginated) ---- */
 
@@ -653,26 +628,6 @@ export default function PromotionDetailPage() {
       setImportError('Network error. Please try again.');
     }
     setImporting(false);
-  };
-
-  /* ---- Contact Winner ---- */
-
-  const handleContactWinner = async (redemptionId: string) => {
-    if (contactingWinner) return;
-    if (!campaign) return;
-
-    setContactingWinner(redemptionId);
-    setContactResult(null);
-
-    const result = await handleContactWinnerLogic(fetch, {
-      businessId: business.id,
-      campaignId: campaign.id,
-      redemptionId,
-      currentlyContacting: null, // guard already checked above
-    });
-
-    setContactResult(result.contactResult);
-    setContactingWinner(null);
   };
 
   /* ---- Fulfillment ---- */
@@ -1472,38 +1427,14 @@ export default function PromotionDetailPage() {
                             Update
                           </button>
                         )}
-                        {winnersPermissions.can_contact_winner && (
-                          winnerTemplateReady ? (
-                            <>
-                              <button
-                                onClick={() => handleContactWinner(winner.id)}
-                                disabled={!!contactingWinner}
-                                className="text-xs text-brand hover:underline disabled:opacity-50 disabled:cursor-wait"
-                                title="Send winner notification via WhatsApp"
-                              >
-                                {contactingWinner === winner.id ? (
-                                  <span className="inline-flex items-center gap-1">
-                                    <span className="h-3 w-3 animate-spin rounded-full border border-brand border-t-transparent" />
-                                    Sending…
-                                  </span>
-                                ) : 'Contact'}
-                              </button>
-                              {contactResult?.redemptionId === winner.id && (
-                                <span className={`text-xs ${contactResult.type === 'success' ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
-                                  {contactResult.message}
-                                </span>
-                              )}
-                            </>
-                          ) : (
-                            <button
-                              disabled
-                              className="text-xs text-gray-400 cursor-not-allowed"
-                              title="Template pending approval"
-                            >
-                              Contact
-                            </button>
-                          )
-                        )}
+                        <ContactWinnerButton
+                          redemptionId={winner.id}
+                          canContactWinner={winnersPermissions.can_contact_winner}
+                          winnerTemplateReady={winnerTemplateReady}
+                          contactingWinner={contactingWinner}
+                          contactResult={contactResult}
+                          onContact={contactWinner}
+                        />
                       </td>
                     </tr>
                   ))}
