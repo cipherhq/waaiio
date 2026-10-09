@@ -71,6 +71,25 @@ describe('#598 authenticated owner redemption API using M434 atomic receipt', ()
     const { POST } = await import('@/app/api/loyalty/redeem/route');
     expect((await POST(request(200, KEY))).status).toBe(503);
   });
+  it.each(['------------------------------------', '11111111-1111-1111-1111-111111111111', 'not-a-uuid'])(
+    'rejects malformed Idempotency-Key %s before calling the RPC', async badKey => {
+      const { POST } = await import('@/app/api/loyalty/redeem/route');
+      expect((await POST(request(200, badKey))).status).toBe(428);
+      expect(h.rpc).not.toHaveBeenCalled();
+    },
+  );
+  it.each([
+    { success: true, points_balance: 400 },
+    { success: true, code: 'RW-INVALID', points_balance: 400 },
+    { success: true, code: 'RW-ABC234', points_balance: -1 },
+  ])('fails closed if an atomic successful debit has no valid durable receipt (%j)', async receipt => {
+    h.rpc.mockResolvedValue({ data: receipt, error: null });
+    const { POST } = await import('@/app/api/loyalty/redeem/route');
+    const response = await POST(request(200, KEY));
+    expect(response.status).toBe(503);
+    expect((await response.json()).success).not.toBe(true);
+  });
+
   it('preserves a code on idempotent replay', async () => {
     h.rpc.mockResolvedValue({ data: { success: true, code: 'RW-ABC234', points_balance: 400, replayed: true }, error: null });
     const { POST } = await import('@/app/api/loyalty/redeem/route');
