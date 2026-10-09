@@ -10,6 +10,7 @@ import { requirePlatformAdmin } from '@/lib/admin-auth';
 import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
 import { classifyPaystackError, classifyStripeError } from '@/lib/payments/payout-classification';
+import { isPlatformHeld } from '@/lib/payments/payout-custody';
 
 const paystackSecretKey = process.env.PAYSTACK_SECRET_KEY || '';
 const stripeSecretKey = process.env.STRIPE_SECRET_KEY || '';
@@ -164,7 +165,7 @@ export async function POST(
   // (is_direct_transfer === false). NULL/unknown custody is treated as
   // ineligible (fail-closed) — Waaiio must not pay out funds it cannot
   // prove it holds.
-  const platformHeldFees = (balancePayments || []).filter(f => f.is_direct_transfer === false);
+  const platformHeldFees = (balancePayments || []).filter(isPlatformHeld);
   const totalEarned = platformHeldFees.reduce((sum, f) => sum + (f.transaction_amount - f.fee_total), 0);
   const totalPaidOut = (priorPayouts || []).reduce((sum, p) => sum + Number(p.net_amount), 0);
   const availableBalance = totalEarned - totalPaidOut;

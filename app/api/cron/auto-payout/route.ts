@@ -12,6 +12,7 @@ import { sendEmail } from '@/lib/email/client';
 import { payoutFailedEmail } from '@/lib/email/templates';
 import { loadPlatformSettings } from '@/lib/platformSettings';
 import { classifyPaystackError, isEligiblePaystackAccount, type PayoutAccountRow } from '@/lib/payments/payout-classification';
+import { isPlatformHeld } from '@/lib/payments/payout-custody';
 
 /**
  * GET /api/cron/auto-payout
@@ -165,7 +166,7 @@ export async function GET(request: NextRequest) {
       // went directly to the business's bank account — Waaiio never held them.
       // NULL/unknown custody is treated as ineligible (fail-closed).
       const allFees = feesByBiz.get(biz.id) ?? [];
-      const fees = allFees.filter(f => f.is_direct_transfer === false);
+      const fees = allFees.filter(isPlatformHeld);
       const gross = fees.reduce((s, f) => s + Number(f.transaction_amount || 0), 0);
       const totalFees = fees.filter(f => !f.waived).reduce((s, f) => s + Number(f.fee_total || 0), 0);
       const totalGatewayFees = fees.reduce((s, f) => s + Number(f.gateway_fee || 0), 0);
