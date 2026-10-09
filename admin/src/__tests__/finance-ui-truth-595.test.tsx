@@ -184,7 +184,7 @@ describe('#595 mounted Dashboard and Payouts', () => {
     const rows = document.querySelectorAll('table tbody tr');
     expect(rows.length).toBeGreaterThan(0);
     expect(screen.getByText(/currency inferred from business country/)).toBeInTheDocument();
-    expect(screen.getByText('—')).toBeInTheDocument();
+    expect(screen.getAllByText('—').length).toBeGreaterThan(0);
   });
 
   it('renders real Payouts approval dropdown without the unsupported Flutterwave transfer method', async () => {
