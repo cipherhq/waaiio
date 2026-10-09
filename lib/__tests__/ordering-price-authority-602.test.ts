@@ -97,6 +97,8 @@ const PROMO_STACK = '00000000-0000-0000-0000-000000000648'; // for stacking test
 const VOL_RULE_PCT = '00000000-0000-0000-0000-000000000650';
 const VOL_RULE_FIXED_UNIT = '00000000-0000-0000-0000-000000000651';
 const VOL_RULE_FIXED_TOTAL = '00000000-0000-0000-0000-000000000652';
+const ADDON_A = '00000000-0000-0000-0000-000000000653';
+const PROMO_STACK_CAP = '00000000-0000-0000-0000-000000000654';
 
 function sessionId(): string {
   return sql("SELECT gen_random_uuid()::text;");
@@ -109,6 +111,7 @@ function cleanup() {
   sqlMayFail(`DELETE FROM orders WHERE business_id = '${BIZ_ID}';`);
   sqlMayFail(`DELETE FROM promo_codes WHERE business_id IN ('${BIZ_ID}', '${OTHER_BIZ_ID}');`);
   sqlMayFail(`DELETE FROM volume_discount_rules WHERE business_id = '${BIZ_ID}';`);
+  sqlMayFail(`DELETE FROM product_addons WHERE business_id = '${BIZ_ID}';`);
   sqlMayFail(`DELETE FROM product_variants WHERE product_id IN ('${PRODUCT_A_ID}', '${PRODUCT_B_ID}');`);
   sqlMayFail(`DELETE FROM products WHERE id IN ('${PRODUCT_A_ID}', '${PRODUCT_B_ID}');`);
   sqlMayFail(`DELETE FROM businesses WHERE id IN ('${BIZ_ID}', '${OTHER_BIZ_ID}');`);
@@ -130,6 +133,10 @@ beforeAll(() => {
 
   sql(`INSERT INTO product_variants (id, product_id, name, price, is_active) VALUES
     ('${VARIANT_A_ID}', '${PRODUCT_A_ID}', 'Large', 1200, true)
+    ON CONFLICT (id) DO NOTHING;`);
+
+  sql(`INSERT INTO product_addons (id, business_id, product_id, name, price, is_active)
+    VALUES ('${ADDON_A}', '${BIZ_ID}', '${PRODUCT_A_ID}', 'Gift wrap', 100, true)
     ON CONFLICT (id) DO NOTHING;`);
 
   // R2-2: Volume discount rules include required `name` column
@@ -156,7 +163,8 @@ beforeAll(() => {
     ('${PROMO_REUSE_A}', '${BIZ_ID}', 'REUSE', 'fixed', 100, true, NOW()-INTERVAL'1d', NOW()+INTERVAL'1d', NULL, 0, '{}', '{}', 0),
     ('${PROMO_REPLAY}', '${BIZ_ID}', 'REPLAY', 'fixed', 150, true, NOW()-INTERVAL'1d', NOW()+INTERVAL'1d', NULL, 0, '{}', '{}', 0),
     ('${PROMO_STACK}', '${BIZ_ID}', 'STACK', 'percentage', 10, true, NOW()-INTERVAL'1d', NOW()+INTERVAL'1d', NULL, 0, '{}', '{}', 0),
-    ('${PROMO_CONCURRENT}', '${BIZ_ID}', 'CONCURRENT', 'percentage', 10, true, NOW()-INTERVAL'1d', NOW()+INTERVAL'1d', 1, 0, '{}', '{}', 0)
+    ('${PROMO_CONCURRENT}', '${BIZ_ID}', 'CONCURRENT', 'percentage', 10, true, NOW()-INTERVAL'1d', NOW()+INTERVAL'1d', 1, 0, '{}', '{}', 0),
+    ('${PROMO_STACK_CAP}', '${BIZ_ID}', 'STACK_CAP', 'fixed', 99999, true, NOW()-INTERVAL'1d', NOW()+INTERVAL'1d', NULL, 0, '{}', '{}', 0)
     ON CONFLICT (id) DO NOTHING;`);
 
   // Verify fixtures installed
@@ -180,6 +188,7 @@ interface CheckoutInput {
   expectedTotal?: number | null;
   totalAmount?: number;
   shippingCost?: number;
+  addonsTotal?: number;
   zoneId?: string;
   items?: string;
 }
@@ -194,7 +203,7 @@ function orderSql(opts: CheckoutInput): string {
       '${opts.sessionId}'::uuid, '${bid}'::uuid, '${uid}'::uuid,
       'pending', NULL, NULL, ${amount}, ${opts.discount ?? 0}, ${opts.shippingCost ?? 0},
       ${opts.promoId ? `'${opts.promoId}'::uuid` : 'NULL'},
-      'whatsapp', NULL, ${opts.zoneId ? `'${opts.zoneId}'::uuid` : 'NULL'}, NULL, 0, ${opts.volumeDiscount ?? 0},
+      'whatsapp', NULL, ${opts.zoneId ? `'${opts.zoneId}'::uuid` : 'NULL'}, NULL, ${opts.addonsTotal ?? 0}, ${opts.volumeDiscount ?? 0},
       NULL, NULL, NULL, NULL,
       '${items.replace(/'/g, "''")}'::jsonb, NULL, true, ${expected}
     );
@@ -436,6 +445,27 @@ describe('#602 M435 ordering price authority (real PG)', () => {
     expect(b.code).not.toBe(0);
     expect(b.stderr).toContain('promo_exhausted');
   }, 15000);
+
+  it('rejects negative shipping cost without order creation', () => {
+    const sid = sessionId();
+    expect(callOrder({sessionId: sid, expectedTotal: 1900, shippingCost: -100})._error).toContain('invalid_shipping_cost');
+    expect(sql(`SELECT count(*) FROM orders WHERE bot_session_id = '${sid}';`)).toBe('0');
+  });
+  it('persists DB-computed addon total and rejects a tampered quote', () => {
+    const items = `[{"product_id":"${PRODUCT_A_ID}","quantity":1,"unit_price":1000,"addons":[{"id":"${ADDON_A}","quantity":2}]}]`;
+    const sid = sessionId();
+    expect(callOrder({sessionId: sid, items, expectedTotal: 1200, addonsTotal: 0})._error).toContain('addons_total_mismatch');
+    const r = callOrder({sessionId: sid, items, expectedTotal: 1200, addonsTotal: 200});
+    expect(r.created).toBe(true);
+    expect(sql(`SELECT addons_total FROM orders WHERE id = '${r.order_id}';`)).toBe('200');
+  });
+  it('rejects overstacked promo and volume discounts without a free order', () => {
+    const sid = sessionId();
+    const items = `[{"product_id":"${PRODUCT_A_ID}","quantity":3,"unit_price":1000}]`;
+    expect(callOrder({sessionId: sid, items, promoId: PROMO_STACK_CAP, discount: 3000, volumeDiscount: 300, expectedTotal: 0})._error)
+      .toContain('combined_discount_exceeds_subtotal');
+    expect(sql(`SELECT count(*) FROM orders WHERE bot_session_id = '${sid}';`)).toBe('0');
+  });
 
   // ── Promo + volume stacking (R2-6) ──
   it('stacks promo and volume discount correctly', () => {
