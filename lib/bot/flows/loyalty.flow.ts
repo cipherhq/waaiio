@@ -221,13 +221,15 @@ const loyaltyRedeemStep: FlowStepConfig = {
       const phone = ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`;
 
       // Atomically update balance and total_redeemed via RPC FIRST
-      const { error: redeemErr } = await ctx.supabase.rpc('redeem_loyalty_points', {
+      const { data: redeemed, error: redeemErr } = await ctx.supabase.rpc('redeem_loyalty_points', {
         p_loyalty_id: loyaltyId,
         p_points: threshold,
       });
-      if (redeemErr) {
-        logger.error('[LOYALTY] redeem_loyalty_points RPC failed:', redeemErr);
-        throw new Error('Redemption failed');
+      // The RPC returns false (without an SQL error) for insufficient funds.
+      // A stale session or concurrent redemption must NEVER produce a reward code.
+      if (redeemErr || redeemed !== true) {
+        logger.error('[LOYALTY] redeem_loyalty_points denied or failed:', redeemErr || 'not_redeemed');
+        throw new Error('Redemption was not confirmed');
       }
 
       const balance = (ctx.session.session_data.loyalty_balance as number) || 0;
