@@ -77,10 +77,13 @@ DECLARE
   v_addon_ids text;
   v_zone RECORD;
   v_zone_name TEXT := NULL;
-  -- M435 603-E: idempotent replay validation vars
+  -- M435 R2-5: idempotent replay validation vars
   v_existing_total int;
   v_existing_discount int;
   v_existing_promo_id uuid;
+  v_existing_biz_id uuid;
+  v_existing_user_id uuid;
+  v_existing_vol_discount int;
   -- M435: volume discount per-item vars
   v_vol_rule RECORD;
   v_vol_item_discount int;
@@ -144,8 +147,11 @@ BEGIN
   END LOOP;
 
   -- Idempotent: check for existing order from same bot session
-  SELECT id, reference_code, items_fingerprint, total_amount, discount_amount, promo_code_id
-  INTO v_existing_id, v_existing_ref, v_existing_fingerprint, v_existing_total, v_existing_discount, v_existing_promo_id
+  SELECT id, reference_code, items_fingerprint, total_amount, discount_amount,
+         promo_code_id, business_id, user_id, volume_discount_amount
+  INTO v_existing_id, v_existing_ref, v_existing_fingerprint, v_existing_total,
+       v_existing_discount, v_existing_promo_id, v_existing_biz_id, v_existing_user_id,
+       v_existing_vol_discount
   FROM orders
   WHERE bot_session_id = p_bot_session_id
     AND status IN ('pending', 'confirmed')
@@ -154,10 +160,22 @@ BEGIN
   IF FOUND THEN
     IF p_validate_products THEN
       IF v_existing_fingerprint IS NOT NULL AND v_existing_fingerprint = v_fingerprint THEN
-        -- 603-E: Validate monetary contract on replay.
-        -- Same cart fingerprint is necessary but not sufficient — promo, discount,
-        -- and expected total must also match the committed order.
-        IF p_expected_total IS NOT NULL AND v_existing_total != p_expected_total THEN
+        -- R2-5: Validate full monetary and tenant contract on replay.
+        -- Same cart fingerprint is necessary but not sufficient.
+
+        -- Tenant/user binding (fail-closed)
+        IF v_existing_biz_id != p_business_id THEN
+          RAISE EXCEPTION 'replay_business_mismatch:Replay targets different business than committed order';
+        END IF;
+        IF v_existing_user_id != p_user_id THEN
+          RAISE EXCEPTION 'replay_user_mismatch:Replay targets different user than committed order';
+        END IF;
+
+        -- Expected total is REQUIRED on validated replay (no null bypass)
+        IF p_expected_total IS NULL THEN
+          RAISE EXCEPTION 'expected_total_required:p_expected_total must be provided on validated replay';
+        END IF;
+        IF v_existing_total != p_expected_total THEN
           RAISE EXCEPTION 'replay_total_mismatch:Existing order total % does not match expected %',
             v_existing_total, p_expected_total;
         END IF;
@@ -168,11 +186,17 @@ BEGIN
           RAISE EXCEPTION 'replay_discount_mismatch:Replay discount % does not match committed %',
             COALESCE(p_discount_amount, 0), COALESCE(v_existing_discount, 0);
         END IF;
+        IF COALESCE(p_volume_discount_amount, 0) != COALESCE(v_existing_vol_discount, 0) THEN
+          RAISE EXCEPTION 'replay_volume_discount_mismatch:Replay volume discount % does not match committed %',
+            COALESCE(p_volume_discount_amount, 0), COALESCE(v_existing_vol_discount, 0);
+        END IF;
 
+        -- Return committed order with authoritative total
         RETURN jsonb_build_object(
           'order_id', v_existing_id,
           'reference_code', v_existing_ref,
-          'created', false
+          'created', false,
+          'server_total', v_existing_total
         );
       ELSIF v_existing_fingerprint IS NOT NULL THEN
         RAISE EXCEPTION 'fingerprint_mismatch:Order % exists with different cart contents', v_existing_id;

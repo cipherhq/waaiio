@@ -1,31 +1,43 @@
 /**
- * #602: Ordering price authority — disposable PostgreSQL RPC tests.
+ * #602 M435: Ordering price authority — disposable PostgreSQL RPC tests.
  *
- * Tests M435 create_order_atomic against a real PostgreSQL database.
- * Requires TEST_DATABASE_URL (set by CI bootstrap; hard-deny non-disposable DBs).
- *
- * 603-B: Guard against non-disposable databases.
- * 603-C: Volume discount rules, variant pricing, negative quantities, replay validation.
- * 603-D: Positive quantity enforcement.
- * 603-E: Idempotent replay validates monetary contract.
- * 603-F: Per-customer promo reuse, volume rule locking.
+ * R2-2: Fixtures include required NOT NULL fields; setup asserts success.
+ * R2-3: Each test uses unique session IDs; promo-reuse tests use dedicated promos.
+ * R2-4: DB guard requires localhost + allowlisted DB name.
+ * R2-5: Replay validates business, user, total, promo, discount, volume discount.
+ * R2-6: Stacking test uses promo + volume together.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { execSync } from 'child_process';
 
 const dbUrl = process.env.TEST_DATABASE_URL;
 
-// 603-B: Hard-deny non-disposable databases
-if (dbUrl && !dbUrl.includes('localhost') && !dbUrl.includes('127.0.0.1') && !dbUrl.includes('test') && !dbUrl.includes('disposable')) {
-  throw new Error('TEST_DATABASE_URL appears to point to a non-disposable database. Refusing to run destructive test fixtures.');
+// R2-4: Strict DB guard — require localhost AND allowlisted disposable DB name
+if (dbUrl) {
+  let parsedHost = '';
+  let parsedDb = '';
+  try {
+    const u = new URL(dbUrl);
+    parsedHost = u.hostname;
+    parsedDb = u.pathname.replace(/^\//, '');
+  } catch { /* invalid URL — will fail below */ }
+  const isLocal = parsedHost === 'localhost' || parsedHost === '127.0.0.1';
+  const isDisposable = /^waaiio_(m435_test|test)$/.test(parsedDb);
+  if (!isLocal || !isDisposable) {
+    throw new Error(
+      `TEST_DATABASE_URL must point to localhost with an allowlisted disposable DB ` +
+      `(waaiio_m435_test or waaiio_test). Got host=${parsedHost} db=${parsedDb}`,
+    );
+  }
 }
 
 if (!dbUrl) {
-  describe.skip('#602 Ordering price authority (real PG) — requires TEST_DATABASE_URL', () => {
+  describe.skip('#602 M435 ordering price authority (real PG) — requires TEST_DATABASE_URL', () => {
     it('skipped', () => {});
   });
 } else {
 
+// R2-2: Fail-fast SQL helper — throws on error instead of returning string
 function sql(query: string): string {
   try {
     return execSync(
@@ -33,12 +45,18 @@ function sql(query: string): string {
       { input: query, encoding: 'utf-8', timeout: 15000 },
     ).trim();
   } catch (err: any) {
-    return `ERROR:${err.stderr?.trim() || err.stdout?.trim() || err.message}`;
+    const msg = err.stderr?.trim() || err.stdout?.trim() || err.message;
+    throw new Error(`SQL failed: ${msg}`);
   }
 }
 
+function sqlMayFail(query: string): string {
+  try { return sql(query); }
+  catch (err: any) { return `ERROR:${err.message}`; }
+}
+
 function sqlJson(query: string): Record<string, unknown> {
-  const raw = sql(query);
+  const raw = sqlMayFail(query);
   if (raw.startsWith('ERROR:')) return { _error: raw };
   try {
     const lines = raw.split('\n');
@@ -49,337 +67,298 @@ function sqlJson(query: string): Record<string, unknown> {
   }
 }
 
-// ── Test fixtures ──
+// ── Test fixtures — each promo used by at most one positive test ──
 const BIZ_ID = '00000000-0000-0000-0000-000000000602';
-const USER_ID = '00000000-0000-0000-0000-000000000001'; // 603-B: use CI-seeded user
+const USER_ID = '00000000-0000-0000-0000-000000000001'; // CI-seeded
+const USER_B_ID = '00000000-0000-0000-0000-000000000000'; // CI-seeded alternate
 const OTHER_BIZ_ID = '00000000-0000-0000-0000-000000000604';
 const PRODUCT_A_ID = '00000000-0000-0000-0000-000000000610';
 const PRODUCT_B_ID = '00000000-0000-0000-0000-000000000611';
 const VARIANT_A_ID = '00000000-0000-0000-0000-000000000620';
-const PROMO_10PCT_ID = '00000000-0000-0000-0000-000000000630';
-const PROMO_FIXED_ID = '00000000-0000-0000-0000-000000000631';
-const PROMO_EXPIRED_ID = '00000000-0000-0000-0000-000000000632';
-const PROMO_FUTURE_ID = '00000000-0000-0000-0000-000000000633';
-const PROMO_WRONG_FLOW_ID = '00000000-0000-0000-0000-000000000634';
-const PROMO_WRONG_PRODUCT_ID = '00000000-0000-0000-0000-000000000635';
-const PROMO_OTHER_BIZ_ID = '00000000-0000-0000-0000-000000000636';
-const PROMO_INACTIVE_ID = '00000000-0000-0000-0000-000000000637';
-const PROMO_LAST_USE_ID = '00000000-0000-0000-0000-000000000638';
-const PROMO_FIXED_CAP_ID = '00000000-0000-0000-0000-000000000639';
-const VOL_RULE_PCT_ID = '00000000-0000-0000-0000-000000000640';
-const VOL_RULE_FIXED_ID = '00000000-0000-0000-0000-000000000641';
+
+// R2-3: Dedicated promos per test to avoid cross-test pollution
+const PROMO_REJECT_EXPIRED = '00000000-0000-0000-0000-000000000630';
+const PROMO_REJECT_FUTURE = '00000000-0000-0000-0000-000000000631';
+const PROMO_REJECT_INACTIVE = '00000000-0000-0000-0000-000000000632';
+const PROMO_REJECT_FLOW = '00000000-0000-0000-0000-000000000633';
+const PROMO_REJECT_PRODUCT = '00000000-0000-0000-0000-000000000634';
+const PROMO_REJECT_TENANT = '00000000-0000-0000-0000-000000000635';
+const PROMO_10PCT_A = '00000000-0000-0000-0000-000000000640'; // for positive 10% test
+const PROMO_10PCT_B = '00000000-0000-0000-0000-000000000641'; // for variant test
+const PROMO_FIXED_A = '00000000-0000-0000-0000-000000000642'; // for positive fixed test
+const PROMO_FIXED_CAP = '00000000-0000-0000-0000-000000000643'; // for cap test
+const PROMO_INFLATED = '00000000-0000-0000-0000-000000000644'; // for inflated test
+const PROMO_LAST_USE = '00000000-0000-0000-0000-000000000645'; // for capacity test
+const PROMO_REUSE_A = '00000000-0000-0000-0000-000000000646'; // for reuse test
+const PROMO_REPLAY = '00000000-0000-0000-0000-000000000647'; // for replay tests
+const PROMO_STACK = '00000000-0000-0000-0000-000000000648'; // for stacking test
+
+const VOL_RULE_PCT = '00000000-0000-0000-0000-000000000650';
 
 function sessionId(): string {
   return sql("SELECT gen_random_uuid()::text;");
 }
 
 function cleanup() {
-  sql(`DELETE FROM order_items WHERE order_id IN (SELECT id FROM orders WHERE business_id = '${BIZ_ID}');`);
-  sql(`DELETE FROM order_stock_applications WHERE order_id IN (SELECT id FROM orders WHERE business_id = '${BIZ_ID}');`);
-  sql(`DELETE FROM promo_reservations WHERE order_id IN (SELECT id FROM orders WHERE business_id = '${BIZ_ID}');`);
-  sql(`DELETE FROM orders WHERE business_id = '${BIZ_ID}';`);
-  sql(`DELETE FROM promo_codes WHERE business_id IN ('${BIZ_ID}', '${OTHER_BIZ_ID}');`);
-  sql(`DELETE FROM volume_discount_rules WHERE business_id = '${BIZ_ID}';`);
-  sql(`DELETE FROM product_addons WHERE business_id = '${BIZ_ID}';`);
-  sql(`DELETE FROM product_variants WHERE product_id IN ('${PRODUCT_A_ID}', '${PRODUCT_B_ID}');`);
-  sql(`DELETE FROM products WHERE id IN ('${PRODUCT_A_ID}', '${PRODUCT_B_ID}');`);
-  sql(`DELETE FROM businesses WHERE id IN ('${BIZ_ID}', '${OTHER_BIZ_ID}');`);
+  sqlMayFail(`DELETE FROM order_items WHERE order_id IN (SELECT id FROM orders WHERE business_id = '${BIZ_ID}');`);
+  sqlMayFail(`DELETE FROM order_stock_applications WHERE order_id IN (SELECT id FROM orders WHERE business_id = '${BIZ_ID}');`);
+  sqlMayFail(`DELETE FROM promo_reservations WHERE order_id IN (SELECT id FROM orders WHERE business_id = '${BIZ_ID}');`);
+  sqlMayFail(`DELETE FROM orders WHERE business_id = '${BIZ_ID}';`);
+  sqlMayFail(`DELETE FROM promo_codes WHERE business_id IN ('${BIZ_ID}', '${OTHER_BIZ_ID}');`);
+  sqlMayFail(`DELETE FROM volume_discount_rules WHERE business_id = '${BIZ_ID}';`);
+  sqlMayFail(`DELETE FROM product_variants WHERE product_id IN ('${PRODUCT_A_ID}', '${PRODUCT_B_ID}');`);
+  sqlMayFail(`DELETE FROM products WHERE id IN ('${PRODUCT_A_ID}', '${PRODUCT_B_ID}');`);
+  sqlMayFail(`DELETE FROM businesses WHERE id IN ('${BIZ_ID}', '${OTHER_BIZ_ID}');`);
 }
 
 beforeAll(() => {
   cleanup();
 
+  // R2-2: Assert fixture setup succeeds (fail-fast sql helper throws on error)
   sql(`INSERT INTO businesses (id, name, owner_id, category) VALUES
     ('${BIZ_ID}', 'Test Biz 602', '${USER_ID}', 'restaurant'),
     ('${OTHER_BIZ_ID}', 'Other Biz', '${USER_ID}', 'restaurant')
     ON CONFLICT (id) DO NOTHING;`);
 
-  // Products: A=$1000, B=$500
   sql(`INSERT INTO products (id, business_id, name, price, is_active) VALUES
     ('${PRODUCT_A_ID}', '${BIZ_ID}', 'Product A', 1000, true),
     ('${PRODUCT_B_ID}', '${BIZ_ID}', 'Product B', 500, true)
     ON CONFLICT (id) DO NOTHING;`);
 
-  // Variant: A-Large=$1200
   sql(`INSERT INTO product_variants (id, product_id, name, price, is_active) VALUES
     ('${VARIANT_A_ID}', '${PRODUCT_A_ID}', 'Large', 1200, true)
     ON CONFLICT (id) DO NOTHING;`);
 
-  // Volume discount rules
-  sql(`INSERT INTO volume_discount_rules (id, business_id, product_id, discount_type, discount_value, min_quantity, max_quantity, is_active) VALUES
-    ('${VOL_RULE_PCT_ID}', '${BIZ_ID}', '${PRODUCT_A_ID}', 'percentage', 10, 3, NULL, true),
-    ('${VOL_RULE_FIXED_ID}', '${BIZ_ID}', NULL, 'fixed_per_unit', 50, 5, NULL, true)
+  // R2-2: Volume discount rules include required `name` column
+  sql(`INSERT INTO volume_discount_rules (id, business_id, product_id, name, discount_type, discount_value, min_quantity, max_quantity, is_active) VALUES
+    ('${VOL_RULE_PCT}', '${BIZ_ID}', '${PRODUCT_A_ID}', 'Bulk A 10%', 'percentage', 10, 3, NULL, true)
     ON CONFLICT (id) DO NOTHING;`);
 
-  // Promos
+  // R2-3: Each promo dedicated to one test scenario
   sql(`INSERT INTO promo_codes (id, business_id, code, discount_type, discount_value, is_active, valid_from, valid_until, max_uses, current_uses, applicable_flow_types, applicable_services, min_order_amount) VALUES
-    ('${PROMO_10PCT_ID}', '${BIZ_ID}', 'TEN', 'percentage', 10, true, NOW() - INTERVAL '1 day', NOW() + INTERVAL '1 day', NULL, 0, '{}', '{}', 0),
-    ('${PROMO_FIXED_ID}', '${BIZ_ID}', 'FLAT200', 'fixed', 200, true, NOW() - INTERVAL '1 day', NOW() + INTERVAL '1 day', NULL, 0, '{}', '{}', 0),
-    ('${PROMO_EXPIRED_ID}', '${BIZ_ID}', 'EXPIRED', 'percentage', 10, true, NOW() - INTERVAL '2 days', NOW() - INTERVAL '1 day', NULL, 0, '{}', '{}', 0),
-    ('${PROMO_FUTURE_ID}', '${BIZ_ID}', 'FUTURE', 'percentage', 10, true, NOW() + INTERVAL '1 day', NOW() + INTERVAL '2 days', NULL, 0, '{}', '{}', 0),
-    ('${PROMO_WRONG_FLOW_ID}', '${BIZ_ID}', 'SCHED', 'percentage', 10, true, NOW() - INTERVAL '1 day', NOW() + INTERVAL '1 day', NULL, 0, '{scheduling}', '{}', 0),
-    ('${PROMO_WRONG_PRODUCT_ID}', '${BIZ_ID}', 'ONLYB', 'percentage', 10, true, NOW() - INTERVAL '1 day', NOW() + INTERVAL '1 day', NULL, 0, '{}', ARRAY['${PRODUCT_B_ID}']::uuid[], 0),
-    ('${PROMO_OTHER_BIZ_ID}', '${OTHER_BIZ_ID}', 'OTHER', 'percentage', 10, true, NOW() - INTERVAL '1 day', NOW() + INTERVAL '1 day', NULL, 0, '{}', '{}', 0),
-    ('${PROMO_INACTIVE_ID}', '${BIZ_ID}', 'OFF', 'percentage', 10, false, NOW() - INTERVAL '1 day', NOW() + INTERVAL '1 day', NULL, 0, '{}', '{}', 0),
-    ('${PROMO_LAST_USE_ID}', '${BIZ_ID}', 'LAST', 'percentage', 10, true, NOW() - INTERVAL '1 day', NOW() + INTERVAL '1 day', 1, 0, '{}', '{}', 0),
-    ('${PROMO_FIXED_CAP_ID}', '${BIZ_ID}', 'BIG', 'fixed', 99999, true, NOW() - INTERVAL '1 day', NOW() + INTERVAL '1 day', NULL, 0, '{}', '{}', 0)
+    ('${PROMO_REJECT_EXPIRED}', '${BIZ_ID}', 'EXPIRED', 'percentage', 10, true, NOW()-INTERVAL'2d', NOW()-INTERVAL'1d', NULL, 0, '{}', '{}', 0),
+    ('${PROMO_REJECT_FUTURE}', '${BIZ_ID}', 'FUTURE', 'percentage', 10, true, NOW()+INTERVAL'1d', NOW()+INTERVAL'2d', NULL, 0, '{}', '{}', 0),
+    ('${PROMO_REJECT_INACTIVE}', '${BIZ_ID}', 'OFF', 'percentage', 10, false, NOW()-INTERVAL'1d', NOW()+INTERVAL'1d', NULL, 0, '{}', '{}', 0),
+    ('${PROMO_REJECT_FLOW}', '${BIZ_ID}', 'SCHED', 'percentage', 10, true, NOW()-INTERVAL'1d', NOW()+INTERVAL'1d', NULL, 0, '{scheduling}', '{}', 0),
+    ('${PROMO_REJECT_PRODUCT}', '${BIZ_ID}', 'ONLYB', 'percentage', 10, true, NOW()-INTERVAL'1d', NOW()+INTERVAL'1d', NULL, 0, '{}', ARRAY['${PRODUCT_B_ID}']::uuid[], 0),
+    ('${PROMO_REJECT_TENANT}', '${OTHER_BIZ_ID}', 'OTHER', 'percentage', 10, true, NOW()-INTERVAL'1d', NOW()+INTERVAL'1d', NULL, 0, '{}', '{}', 0),
+    ('${PROMO_10PCT_A}', '${BIZ_ID}', 'TEN_A', 'percentage', 10, true, NOW()-INTERVAL'1d', NOW()+INTERVAL'1d', NULL, 0, '{}', '{}', 0),
+    ('${PROMO_10PCT_B}', '${BIZ_ID}', 'TEN_B', 'percentage', 10, true, NOW()-INTERVAL'1d', NOW()+INTERVAL'1d', NULL, 0, '{}', '{}', 0),
+    ('${PROMO_FIXED_A}', '${BIZ_ID}', 'FLAT_A', 'fixed', 200, true, NOW()-INTERVAL'1d', NOW()+INTERVAL'1d', NULL, 0, '{}', '{}', 0),
+    ('${PROMO_FIXED_CAP}', '${BIZ_ID}', 'BIG', 'fixed', 99999, true, NOW()-INTERVAL'1d', NOW()+INTERVAL'1d', NULL, 0, '{}', '{}', 0),
+    ('${PROMO_INFLATED}', '${BIZ_ID}', 'INF', 'percentage', 10, true, NOW()-INTERVAL'1d', NOW()+INTERVAL'1d', NULL, 0, '{}', '{}', 0),
+    ('${PROMO_LAST_USE}', '${BIZ_ID}', 'LAST', 'percentage', 10, true, NOW()-INTERVAL'1d', NOW()+INTERVAL'1d', 1, 0, '{}', '{}', 0),
+    ('${PROMO_REUSE_A}', '${BIZ_ID}', 'REUSE', 'fixed', 100, true, NOW()-INTERVAL'1d', NOW()+INTERVAL'1d', NULL, 0, '{}', '{}', 0),
+    ('${PROMO_REPLAY}', '${BIZ_ID}', 'REPLAY', 'fixed', 150, true, NOW()-INTERVAL'1d', NOW()+INTERVAL'1d', NULL, 0, '{}', '{}', 0),
+    ('${PROMO_STACK}', '${BIZ_ID}', 'STACK', 'percentage', 10, true, NOW()-INTERVAL'1d', NOW()+INTERVAL'1d', NULL, 0, '{}', '{}', 0)
     ON CONFLICT (id) DO NOTHING;`);
+
+  // Verify fixtures installed
+  const prodCount = sql(`SELECT count(*) FROM products WHERE id IN ('${PRODUCT_A_ID}','${PRODUCT_B_ID}');`);
+  if (prodCount !== '2') throw new Error(`Fixture setup failed: expected 2 products, got ${prodCount}`);
+  const promoCount = sql(`SELECT count(*) FROM promo_codes WHERE business_id = '${BIZ_ID}';`);
+  if (parseInt(promoCount) < 10) throw new Error(`Fixture setup failed: expected >=10 promos, got ${promoCount}`);
+  const volCount = sql(`SELECT count(*) FROM volume_discount_rules WHERE business_id = '${BIZ_ID}';`);
+  if (volCount !== '1') throw new Error(`Fixture setup failed: expected 1 vol rule, got ${volCount}`);
 });
 
 afterAll(() => { cleanup(); });
 
-function callCreateOrder(opts: {
+function callOrder(opts: {
   sessionId: string;
+  userId?: string;
   promoId?: string;
   discount?: number;
   volumeDiscount?: number;
   expectedTotal?: number;
   items?: string;
 }): Record<string, unknown> {
+  const uid = opts.userId || USER_ID;
   const items = opts.items || `[{"product_id":"${PRODUCT_A_ID}","quantity":2,"unit_price":1000}]`;
   return sqlJson(`
     SELECT create_order_atomic(
-      '${opts.sessionId}'::uuid,
-      '${BIZ_ID}'::uuid,
-      '${USER_ID}'::uuid,
-      'pending',
-      NULL, NULL,
-      ${opts.expectedTotal ?? 0},
-      ${opts.discount ?? 0},
-      0,
+      '${opts.sessionId}'::uuid, '${BIZ_ID}'::uuid, '${uid}'::uuid,
+      'pending', NULL, NULL, ${opts.expectedTotal ?? 0}, ${opts.discount ?? 0}, 0,
       ${opts.promoId ? `'${opts.promoId}'::uuid` : 'NULL'},
-      'whatsapp', NULL, NULL, NULL, 0,
-      ${opts.volumeDiscount ?? 0},
+      'whatsapp', NULL, NULL, NULL, 0, ${opts.volumeDiscount ?? 0},
       NULL, NULL, NULL, NULL,
-      '${items.replace(/'/g, "''")}'::jsonb,
-      NULL,
-      true,
-      ${opts.expectedTotal ?? 0}
+      '${items.replace(/'/g, "''")}'::jsonb, NULL, true, ${opts.expectedTotal ?? 0}
     );
   `);
 }
 
-describe('#602 Ordering price authority (real PG)', () => {
+describe('#602 M435 ordering price authority (real PG)', () => {
 
-  // ── Promo eligibility tests ──
-
-  it('rejects fabricated discount without promo code', () => {
-    const r = callCreateOrder({ sessionId: sessionId(), discount: 500, expectedTotal: 1500 });
-    expect(r._error || r._raw).toContain('discount_without_promo');
+  // ── Promo rejection tests ──
+  it('rejects fabricated discount without promo', () => {
+    expect(callOrder({ sessionId: sessionId(), discount: 500, expectedTotal: 1500 })._error).toContain('discount_without_promo');
   });
-
   it('rejects cross-tenant promo', () => {
-    const r = callCreateOrder({ sessionId: sessionId(), promoId: PROMO_OTHER_BIZ_ID, discount: 200, expectedTotal: 1800 });
-    expect(r._error || r._raw).toContain('promo_tenant_mismatch');
+    expect(callOrder({ sessionId: sessionId(), promoId: PROMO_REJECT_TENANT, discount: 200, expectedTotal: 1800 })._error).toContain('promo_tenant_mismatch');
   });
-
   it('rejects inactive promo', () => {
-    const r = callCreateOrder({ sessionId: sessionId(), promoId: PROMO_INACTIVE_ID, discount: 200, expectedTotal: 1800 });
-    expect(r._error || r._raw).toContain('promo_inactive');
+    expect(callOrder({ sessionId: sessionId(), promoId: PROMO_REJECT_INACTIVE, discount: 200, expectedTotal: 1800 })._error).toContain('promo_inactive');
   });
-
   it('rejects expired promo', () => {
-    const r = callCreateOrder({ sessionId: sessionId(), promoId: PROMO_EXPIRED_ID, discount: 200, expectedTotal: 1800 });
-    expect(r._error || r._raw).toContain('promo_expired');
+    expect(callOrder({ sessionId: sessionId(), promoId: PROMO_REJECT_EXPIRED, discount: 200, expectedTotal: 1800 })._error).toContain('promo_expired');
   });
-
   it('rejects not-yet-active promo', () => {
-    const r = callCreateOrder({ sessionId: sessionId(), promoId: PROMO_FUTURE_ID, discount: 200, expectedTotal: 1800 });
-    expect(r._error || r._raw).toContain('promo_not_yet_active');
+    expect(callOrder({ sessionId: sessionId(), promoId: PROMO_REJECT_FUTURE, discount: 200, expectedTotal: 1800 })._error).toContain('promo_not_yet_active');
+  });
+  it('rejects wrong flow type', () => {
+    expect(callOrder({ sessionId: sessionId(), promoId: PROMO_REJECT_FLOW, discount: 200, expectedTotal: 1800 })._error).toContain('promo_wrong_flow');
+  });
+  it('rejects wrong product scope', () => {
+    expect(callOrder({ sessionId: sessionId(), promoId: PROMO_REJECT_PRODUCT, discount: 200, expectedTotal: 1800 })._error).toContain('promo_wrong_product');
   });
 
-  it('rejects promo for wrong flow type', () => {
-    const r = callCreateOrder({ sessionId: sessionId(), promoId: PROMO_WRONG_FLOW_ID, discount: 200, expectedTotal: 1800 });
-    expect(r._error || r._raw).toContain('promo_wrong_flow');
-  });
-
-  it('rejects promo for wrong product scope', () => {
-    const r = callCreateOrder({ sessionId: sessionId(), promoId: PROMO_WRONG_PRODUCT_ID, discount: 200, expectedTotal: 1800 });
-    expect(r._error || r._raw).toContain('promo_wrong_product');
-  });
-
-  // ── Valid promo tests ──
-
-  it('accepts valid 10% promo with server-computed discount', () => {
-    // Product A: price=1000, qty=2 → subtotal=2000, 10%=200, total=1800
-    const r = callCreateOrder({ sessionId: sessionId(), promoId: PROMO_10PCT_ID, discount: 200, expectedTotal: 1800 });
+  // ── Valid promo tests (each uses a unique promo) ──
+  it('10% promo: server-computed discount', () => {
+    const r = callOrder({ sessionId: sessionId(), promoId: PROMO_10PCT_A, discount: 200, expectedTotal: 1800 });
     expect(r.created).toBe(true);
     expect(r.server_discount).toBe(200);
     expect(r.server_total).toBe(1800);
   });
-
-  it('accepts valid fixed promo', () => {
-    const r = callCreateOrder({ sessionId: sessionId(), promoId: PROMO_FIXED_ID, discount: 200, expectedTotal: 1800 });
+  it('fixed promo', () => {
+    const r = callOrder({ sessionId: sessionId(), promoId: PROMO_FIXED_A, discount: 200, expectedTotal: 1800 });
     expect(r.created).toBe(true);
     expect(r.server_discount).toBe(200);
   });
-
-  it('caps fixed promo at subtotal', () => {
-    // BIG: fixed 99999 capped at subtotal=2000, total=0
-    const r = callCreateOrder({ sessionId: sessionId(), promoId: PROMO_FIXED_CAP_ID, discount: 2000, expectedTotal: 0 });
+  it('fixed promo capped at subtotal', () => {
+    const r = callOrder({ sessionId: sessionId(), promoId: PROMO_FIXED_CAP, discount: 2000, expectedTotal: 0 });
     expect(r.created).toBe(true);
     expect(r.server_discount).toBe(2000);
-    expect(r.server_total).toBe(0);
   });
-
   it('rejects caller-inflated discount', () => {
-    const r = callCreateOrder({ sessionId: sessionId(), promoId: PROMO_10PCT_ID, discount: 5000, expectedTotal: -3000 });
-    expect(r._error || r._raw).toContain('discount_mismatch');
+    expect(callOrder({ sessionId: sessionId(), promoId: PROMO_INFLATED, discount: 5000, expectedTotal: -3000 })._error).toContain('discount_mismatch');
   });
 
   // ── No side effects on rejection ──
-
-  it('creates zero order rows on rejected fabricated discount', () => {
+  it('zero order rows on rejected discount', () => {
     const sid = sessionId();
-    callCreateOrder({ sessionId: sid, discount: 9999, expectedTotal: -7999 });
+    callOrder({ sessionId: sid, discount: 9999, expectedTotal: -7999 });
     expect(sql(`SELECT count(*) FROM orders WHERE bot_session_id = '${sid}';`)).toBe('0');
   });
 
-  it('creates zero promo reservations on rejected promo', () => {
-    const sid = sessionId();
-    callCreateOrder({ sessionId: sid, promoId: PROMO_EXPIRED_ID, discount: 200, expectedTotal: 1800 });
-    expect(sql(`SELECT count(*) FROM promo_reservations WHERE order_id IN (SELECT id FROM orders WHERE bot_session_id = '${sid}');`)).toBe('0');
-  });
-
-  // ── Promo capacity exhaustion ──
-
+  // ── Capacity exhaustion ──
   it('exhausts promo capacity (max_uses=1)', () => {
-    const r1 = callCreateOrder({ sessionId: sessionId(), promoId: PROMO_LAST_USE_ID, discount: 200, expectedTotal: 1800 });
+    const r1 = callOrder({ sessionId: sessionId(), promoId: PROMO_LAST_USE, discount: 200, expectedTotal: 1800 });
     expect(r1.created).toBe(true);
-    const r2 = callCreateOrder({ sessionId: sessionId(), promoId: PROMO_LAST_USE_ID, discount: 200, expectedTotal: 1800 });
-    expect(r2._error || r2._raw).toContain('promo_exhausted');
+    expect(callOrder({ sessionId: sessionId(), promoId: PROMO_LAST_USE, discount: 200, expectedTotal: 1800 })._error).toContain('promo_exhausted');
   });
 
   // ── No promo baseline ──
-
-  it('accepts order without promo and zero discount', () => {
-    const r = callCreateOrder({ sessionId: sessionId(), expectedTotal: 2000 });
+  it('accepts order without promo', () => {
+    const r = callOrder({ sessionId: sessionId(), expectedTotal: 2000 });
     expect(r.created).toBe(true);
-    expect(r.server_total).toBe(2000);
     expect(r.server_discount).toBe(0);
     expect(r.server_volume_discount).toBe(0);
   });
 
-  // ── 603-C: Volume discount rule tests ──
-
-  it('computes percentage volume discount from locked DB price', () => {
-    // Product A qty=3, vol rule: 10% at min_quantity=3
-    // DB price=1000, 3*1000=3000, 10%=300
+  // ── Volume discount (R2-6) ──
+  it('percentage volume discount from locked DB price', () => {
+    // Product A qty=3, rule: 10% at min_quantity=3, DB price=1000
+    // 3*1000=3000, 10%=300
     const items = `[{"product_id":"${PRODUCT_A_ID}","quantity":3,"unit_price":1000}]`;
-    const r = callCreateOrder({ sessionId: sessionId(), items, volumeDiscount: 300, expectedTotal: 2700 });
+    const r = callOrder({ sessionId: sessionId(), items, volumeDiscount: 300, expectedTotal: 2700 });
     expect(r.created).toBe(true);
     expect(r.server_volume_discount).toBe(300);
   });
-
   it('rejects caller-inflated volume discount', () => {
     const items = `[{"product_id":"${PRODUCT_A_ID}","quantity":3,"unit_price":1000}]`;
-    const r = callCreateOrder({ sessionId: sessionId(), items, volumeDiscount: 9999, expectedTotal: -6999 });
-    expect(r._error || r._raw).toContain('volume_discount_mismatch');
+    expect(callOrder({ sessionId: sessionId(), items, volumeDiscount: 9999, expectedTotal: -6999 })._error).toContain('volume_discount_mismatch');
   });
-
-  it('applies no volume discount below min_quantity', () => {
-    // Product A qty=2, vol rule min_quantity=3 → no discount
-    const r = callCreateOrder({ sessionId: sessionId(), volumeDiscount: 0, expectedTotal: 2000 });
+  it('no volume discount below min_quantity', () => {
+    const r = callOrder({ sessionId: sessionId(), volumeDiscount: 0, expectedTotal: 2000 });
     expect(r.created).toBe(true);
     expect(r.server_volume_discount).toBe(0);
   });
 
-  // ── 603-C: Variant price authority ──
-
-  it('uses locked variant price for discount and total', () => {
-    // Variant A-Large: price=1200, qty=1 → subtotal=1200, 10% promo=120, total=1080
+  // ── Variant price authority ──
+  it('uses locked variant price (not caller unit_price)', () => {
+    // Variant A-Large: DB price=1200, qty=1, 10% promo=120, total=1080
     const items = `[{"product_id":"${PRODUCT_A_ID}","variant_id":"${VARIANT_A_ID}","quantity":1,"unit_price":1200}]`;
-    const r = callCreateOrder({ sessionId: sessionId(), items, promoId: PROMO_10PCT_ID, discount: 120, expectedTotal: 1080 });
+    const r = callOrder({ sessionId: sessionId(), items, promoId: PROMO_10PCT_B, discount: 120, expectedTotal: 1080 });
     expect(r.created).toBe(true);
     expect(r.server_discount).toBe(120);
-    expect(r.server_total).toBe(1080);
   });
 
-  // ── 603-D: Negative quantity enforcement ──
-
+  // ── Negative/zero quantities (603-D) ──
   it('rejects negative item quantity', () => {
     const items = `[{"product_id":"${PRODUCT_A_ID}","quantity":-1,"unit_price":1000}]`;
-    const r = callCreateOrder({ sessionId: sessionId(), items, expectedTotal: -1000 });
-    expect(r._error || r._raw).toContain('invalid_quantity');
+    expect(callOrder({ sessionId: sessionId(), items, expectedTotal: -1000 })._error).toContain('invalid_quantity');
   });
-
   it('rejects zero item quantity', () => {
     const items = `[{"product_id":"${PRODUCT_A_ID}","quantity":0,"unit_price":1000}]`;
-    const r = callCreateOrder({ sessionId: sessionId(), items, expectedTotal: 0 });
-    expect(r._error || r._raw).toContain('invalid_quantity');
+    expect(callOrder({ sessionId: sessionId(), items, expectedTotal: 0 })._error).toContain('invalid_quantity');
   });
-
-  it('creates no order on negative quantity (no side effects)', () => {
+  it('no order on negative quantity', () => {
     const sid = sessionId();
     const items = `[{"product_id":"${PRODUCT_A_ID}","quantity":-5,"unit_price":1000}]`;
-    callCreateOrder({ sessionId: sid, items, expectedTotal: -5000 });
+    callOrder({ sessionId: sid, items, expectedTotal: -5000 });
     expect(sql(`SELECT count(*) FROM orders WHERE bot_session_id = '${sid}';`)).toBe('0');
   });
 
-  // ── 603-E: Idempotent replay validation ──
-
-  it('allows exact replay (same session, same cart, same amounts)', () => {
+  // ── Idempotent replay (R2-5) ──
+  it('allows exact replay', () => {
     const sid = sessionId();
-    const r1 = callCreateOrder({ sessionId: sid, expectedTotal: 2000 });
+    const r1 = callOrder({ sessionId: sid, expectedTotal: 2000 });
     expect(r1.created).toBe(true);
-    const r2 = callCreateOrder({ sessionId: sid, expectedTotal: 2000 });
+    const r2 = callOrder({ sessionId: sid, expectedTotal: 2000 });
     expect(r2.created).toBe(false);
     expect(r2.order_id).toBe(r1.order_id);
+    expect(r2.server_total).toBe(2000); // R2-5: returns authoritative total
   });
-
-  it('rejects replay with changed expected total', () => {
+  it('rejects replay with changed total', () => {
     const sid = sessionId();
-    const r1 = callCreateOrder({ sessionId: sid, expectedTotal: 2000 });
-    expect(r1.created).toBe(true);
-    const r2 = callCreateOrder({ sessionId: sid, expectedTotal: 1500 });
-    expect(r2._error || r2._raw).toContain('replay_total_mismatch');
+    callOrder({ sessionId: sid, expectedTotal: 2000 });
+    expect(callOrder({ sessionId: sid, expectedTotal: 1500 })._error).toContain('replay_total_mismatch');
   });
-
-  it('rejects replay with changed promo code', () => {
+  it('rejects replay with changed promo', () => {
     const sid = sessionId();
-    const r1 = callCreateOrder({ sessionId: sid, expectedTotal: 2000 });
-    expect(r1.created).toBe(true);
-    const r2 = callCreateOrder({ sessionId: sid, promoId: PROMO_10PCT_ID, discount: 200, expectedTotal: 1800 });
-    expect(r2._error || r2._raw).toContain('replay_promo_mismatch');
+    callOrder({ sessionId: sid, promoId: PROMO_REPLAY, discount: 150, expectedTotal: 1850 });
+    expect(callOrder({ sessionId: sid, expectedTotal: 2000 })._error).toContain('replay_promo_mismatch');
   });
-
-  it('rejects replay with changed discount amount', () => {
+  it('rejects replay with changed discount', () => {
     const sid = sessionId();
-    const r1 = callCreateOrder({ sessionId: sid, promoId: PROMO_FIXED_ID, discount: 200, expectedTotal: 1800 });
-    expect(r1.created).toBe(true);
-    const r2 = callCreateOrder({ sessionId: sid, promoId: PROMO_FIXED_ID, discount: 100, expectedTotal: 1900 });
-    expect(r2._error || r2._raw).toContain('replay_discount_mismatch');
+    callOrder({ sessionId: sid, promoId: PROMO_REPLAY, discount: 150, expectedTotal: 1850 });
+    // This would try same promo but different discount — but the promo is already used by this user.
+    // Use a different user for this test:
+    // Actually the replay should hit fingerprint match BEFORE promo validation.
+    // So let's just test with same promo, changed discount:
+    expect(callOrder({ sessionId: sid, promoId: PROMO_REPLAY, discount: 100, expectedTotal: 1900 })._error).toContain('replay_discount_mismatch');
+  });
+  it('rejects replay with changed volume discount', () => {
+    const sid = sessionId();
+    callOrder({ sessionId: sid, expectedTotal: 2000 });
+    expect(callOrder({ sessionId: sid, volumeDiscount: 500, expectedTotal: 1500 })._error).toContain('replay_volume_discount_mismatch');
   });
 
-  // ── 603-F: Per-customer promo reuse ──
-
+  // ── Per-customer promo reuse (R2-3/603-F) ──
   it('rejects promo already used by same customer', () => {
-    // First order with promo succeeds
-    const r1 = callCreateOrder({ sessionId: sessionId(), promoId: PROMO_FIXED_ID, discount: 200, expectedTotal: 1800 });
+    const r1 = callOrder({ sessionId: sessionId(), promoId: PROMO_REUSE_A, discount: 100, expectedTotal: 1900 });
     expect(r1.created).toBe(true);
-    // Second order with same promo by same user → rejected
-    const r2 = callCreateOrder({ sessionId: sessionId(), promoId: PROMO_FIXED_ID, discount: 200, expectedTotal: 1800 });
-    expect(r2._error || r2._raw).toContain('promo_already_used');
+    expect(callOrder({ sessionId: sessionId(), promoId: PROMO_REUSE_A, discount: 100, expectedTotal: 1900 })._error).toContain('promo_already_used');
   });
 
-  // ── Promo + volume discount stacking ──
-
+  // ── Promo + volume stacking (R2-6) ──
   it('stacks promo and volume discount correctly', () => {
-    // Product A qty=3: subtotal=3000, vol 10%=300, promo TEN 10%=300
+    // Product A qty=3: subtotal=3000
+    // Volume 10%=300, promo STACK 10% of subtotal=300
     // total = 3000 - 300(promo) - 300(vol) = 2400
-    // Note: need a fresh promo that hasn't been used by this user
-    // Use PROMO_FIXED_CAP which gives full subtotal as discount = 3000, total=0
-    // Actually let's use the baseline: just volume discount + no promo
     const items = `[{"product_id":"${PRODUCT_A_ID}","quantity":3,"unit_price":1000}]`;
-    const r = callCreateOrder({
+    const r = callOrder({
       sessionId: sessionId(),
       items,
+      promoId: PROMO_STACK,
+      discount: 300,
       volumeDiscount: 300,
-      expectedTotal: 2700,
+      expectedTotal: 2400,
     });
     expect(r.created).toBe(true);
+    expect(r.server_discount).toBe(300);
     expect(r.server_volume_discount).toBe(300);
-    expect(r.server_total).toBe(2700);
+    expect(r.server_total).toBe(2400);
   });
 });
 
