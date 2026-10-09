@@ -16,6 +16,35 @@ On Supabase, there are NO default ACL entries for public schema tables — `serv
 ### What could break
 - Nothing. Neither M431 nor M432 has been applied to any environment. M431 is unchanged. M432 is a new file. No application code changed.
 
+## 2026-10-08 — #584 Discovery search fail-closed correction (PR #589)
+
+### What changed
+- `lib/marketplace/search.ts`: Reject invalid/ambiguous location and address constraints, malformed admin-hidden UUID exclusions and unusable free-text before querying. Constrain geographic filters to safe PostgREST tokens; neighborhood results require parent-city AND address narrowing, and city/country requests remain independently scoped.
+- `lib/marketplace/location-resolver.ts`: Compound locations now require compatibility across city, neighborhood and country; contradictory or unknown comma-separated tokens return clarification tier instead of silently choosing the first match.
+- `lib/marketplace/__tests__/discovery-search.test.ts`, `discovery-search-query.test.ts`: Cover conflicting locations and execute the real search function with simulated Supabase query application, including hidden exclusion before result limits, business opt-out, malformed input and DB failure.
+
+### What it affects / could break
+- Searches that previously ignored invalid locations, invalid admin hidden-ID lists or contradictory places now return a typed failure. Callers must explicitly handle `ok:false` / `locationFailed:true` and request clarification; do not fall back to an unfiltered directory listing. Phase B remains draft-only with no bot routing or production deployment.
+
+## 2026-10-08 — P0 SECURITY: business_members authorization containment (M433)
+
+### What changed
+- **Migration 433** (`supabase/migrations/433_p0_business_members_acl_containment.sql`): Revokes INSERT/UPDATE/DELETE on `business_members` from `authenticated` and `anon` roles. Drops overly permissive `business_members_manage` FOR ALL policy (created in M099). Replaces with `business_members_select` SELECT-only policy for authenticated users. Includes 14 fail-closed verification assertions. Service role retains full access via existing `business_members_service` policy.
+- **Regression tests** (`lib/__tests__/p0-business-members-acl.test.ts`): Static migration structure (8), vulnerability characterization (3), code-path authority audit (2), downstream policy dependency (3), migration ordering/compatibility (2), plus executable PostgreSQL authorization tests (20 — self-insertion denied, privilege escalation denied, self-delete denied, downstream chat cascade denied, legitimate service_role operations succeed, catalog verification).
+- **CI job** (`.github/workflows/ci.yml` `security-acl-tests`): Dedicated job provisioning a disposable `postgres:15-alpine` service container with Supabase-compatible roles. Runs all tests with zero skips.
+
+### Root cause
+Migration 099 created `business_members_manage` with `FOR ALL USING (... OR user_id = auth.uid())`. The USING clause doubles as WITH CHECK on INSERT, meaning any authenticated user could insert themselves as an active member of any business. Production default privileges (`authenticated=arwdDxtm`) granted full DML.
+
+### Downstream impact (if exploited)
+Cascades via `team_members_view_conversations` (chat_conversations SELECT), `team_members_view_messages` (chat_messages SELECT), `team_members_send_messages` (chat_messages INSERT outbound), plus 5 promo table SELECT policies.
+
+### Historical impact assessment — INCONCLUSIVE
+A read-only count of `business_members` returned 0 rows at inspection time. This **does not prove no prior exploitation**: the reported attack vector includes self-deletion of inserted membership rows after access, which would leave no rows. A privacy/security incident investigation using authorized metadata, Postgres audit logs, Supabase auth logs, and backup timelines is recommended before concluding no exploitation occurred. Do not post customer data to GitHub.
+
+### What could break
+Nothing. All legitimate writes to `business_members` go through `createServiceClient()` in `/api/team` and `/api/team/accept`. No browser or SSR authenticated client writes to this table.
+
 ## 2026-10-08 — Editable shipping/tracking with audit trail (#247)
 
 ### What changed

@@ -12,6 +12,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { logger } from '@/lib/logger';
 import { formatDistance } from '@/lib/constants';
+import { resolveCompoundLocation, resolveLocation } from './location-resolver';
 
 // ── Public types ───────────────────────────────────────
 
@@ -30,6 +31,10 @@ export interface MarketplaceSearchCriteria {
   query?: string; // Free text search
   country?: string;
   limit?: number;
+  /** Business UUIDs to exclude before scoring (e.g. admin-hidden). */
+  excludeIds?: string[];
+  /** Neighbourhood / street hint — AND-combined with locationText. */
+  _addressHint?: string;
 }
 
 export interface MarketplaceResult {
@@ -62,6 +67,7 @@ interface BusinessRow {
   phone: string | null;
   bot_code: string | null;
   city: string | null;
+  state: string | null;
   slug: string | null;
   country_code: string | null;
   latitude: number | null;
@@ -90,6 +96,34 @@ interface BusinessRow {
 /** Maximum results the directory will return in a single request. */
 const DIRECTORY_MAX_RESULTS = 50;
 
+/** UUID v4 format regex for excludeIds validation. */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Constrain values interpolated into raw PostgREST OR filters to safe tokens. */
+const SAFE_LOCATION_TOKEN = /^[\p{L}\p{M}\p{N}][\p{L}\p{M}\p{N} -]*$/u;
+function validateLocationToken(value: unknown): string | null {
+  if (typeof value !== 'string' || value.length > 100) return null;
+  const normalized = value.trim().replace(/ +/g, ' ');
+  return normalized.length > 0 && normalized.length <= 80 && SAFE_LOCATION_TOKEN.test(normalized)
+    ? normalized
+    : null;
+}
+
+
+/**
+ * Fields safe for WhatsApp discovery output.
+ * Actual filtering happens in the formatter (Phase C / bot.service.ts) —
+ * this constant is the contract between search and presentation layers.
+ */
+export const DISCOVERY_PUBLIC_FIELDS = [
+  'name',
+  'category',
+  'city',
+  'isOpenNow',
+  'shortDescription',
+  'botCode',
+] as const;
+
 /**
  * Apply canonical directory eligibility filters to a Supabase query on the
  * businesses table. Used by both SSR pre-rendering and API/search paths
@@ -115,6 +149,8 @@ export interface MarketplaceSearchResult {
   ok: boolean;
   /** Error message when ok=false (not exposed to users). */
   error?: string;
+  /** True when an explicit location constraint is invalid or ambiguous. */
+  locationFailed?: boolean;
 }
 
 // ── Main search function ───────────────────────────────
@@ -125,6 +161,65 @@ export async function searchMarketplace(
 ): Promise<MarketplaceSearchResult> {
   const limit = Math.min(criteria.limit || 20, DIRECTORY_MAX_RESULTS);
 
+  // Validate discovery constraints before constructing a database query.
+  const invalidLocation = (): MarketplaceSearchResult => ({
+    results: [], ok: false, locationFailed: true, error: 'Invalid or ambiguous location',
+  });
+
+  if (criteria.excludeIds !== undefined && (
+    !Array.isArray(criteria.excludeIds) ||
+    criteria.excludeIds.length > 500 ||
+    criteria.excludeIds.some((id) => typeof id !== 'string' || !UUID_RE.test(id))
+  )) {
+    return { results: [], ok: false, error: 'Invalid hidden-business exclusion list' };
+  }
+
+  let resolvedCity: string | null = null;
+  let addressHint: string | null = null;
+  let locationCountry: string | null = null;
+
+  if (criteria.locationText !== undefined) {
+    if (typeof criteria.locationText !== 'string' || criteria.locationText.length > 160) {
+      return invalidLocation();
+    }
+    const rawParts = criteria.locationText.split(',');
+    if (rawParts.length > 3 || rawParts.some((part) => validateLocationToken(part) === null)) {
+      return invalidLocation();
+    }
+    const resolution = rawParts.length > 1
+      ? resolveCompoundLocation(criteria.locationText)
+      : resolveLocation(rawParts[0].trim());
+    if (resolution.tier === 3) return invalidLocation();
+    resolvedCity = resolution.city;
+    addressHint = resolution.addressHint;
+    locationCountry = resolution.countryCode;
+  }
+
+  if (criteria._addressHint !== undefined) {
+    const validatedHint = validateLocationToken(criteria._addressHint);
+    if (!resolvedCity || !validatedHint ||
+        (addressHint && addressHint.toLowerCase() !== validatedHint.toLowerCase())) {
+      return invalidLocation();
+    }
+    addressHint = validatedHint;
+  }
+
+  if (locationCountry && criteria.country && criteria.country !== locationCountry) {
+    return invalidLocation();
+  }
+  const effectiveCountry = locationCountry || criteria.country;
+
+  // Free text also participates in raw OR filters. Never drop an unusable
+  // supplied query and accidentally return the entire public directory.
+  let safeQuery: string | null = null;
+  if (criteria.query !== undefined) {
+    if (typeof criteria.query !== 'string' || criteria.query.length > 160) {
+      return { results: [], ok: false, error: 'Invalid search query' };
+    }
+    safeQuery = criteria.query.replace(/[^\p{L}\p{M}\p{N} -]/gu, ' ').trim().slice(0, 100);
+    if (!safeQuery) return { results: [], ok: false, error: 'Invalid search query' };
+  }
+
   try {
     let query = applyDirectoryEligibility(
       supabase
@@ -132,7 +227,7 @@ export async function searchMarketplace(
         .select(
           'id, name, category, description, address, phone, bot_code, city, slug, country_code, ' +
           'latitude, longitude, discovery_enabled, discovery_description, price_band, ' +
-          'supports_delivery, max_group_size, is_verified, metadata, operating_hours',
+          'supports_delivery, max_group_size, is_verified, metadata, operating_hours, state',
         ),
     );
 
@@ -141,9 +236,25 @@ export async function searchMarketplace(
       query = query.ilike('category', `%${criteria.category}%`);
     }
 
-    // Country filter
-    if (criteria.country) {
-      query = query.eq('country_code', criteria.country);
+    if (effectiveCountry) {
+      query = query.eq('country_code', effectiveCountry);
+    }
+
+    // Admin-hidden IDs are excluded in SQL before pagination and scoring.
+    if (criteria.excludeIds?.length) {
+      query = query.not('id', 'in', '(' + criteria.excludeIds.join(',') + ')');
+    }
+
+    // Parent-city AND address-hint, never same-state OR for neighborhoods.
+    if (resolvedCity) {
+      if (addressHint) {
+        query = query.ilike('city', '%' + resolvedCity + '%');
+      } else {
+        query = query.or('city.ilike.%' + resolvedCity + '%,state.ilike.%' + resolvedCity + '%');
+      }
+    }
+    if (addressHint) {
+      query = query.ilike('address', '%' + addressHint + '%');
     }
 
     // Delivery filter
@@ -156,15 +267,11 @@ export async function searchMarketplace(
       query = query.gte('max_group_size', criteria.partySize);
     }
 
-    // Text search — name / description / category ILIKE
-    if (criteria.query) {
-      // Sanitize the query to prevent PostgREST injection
-      const safeQ = criteria.query.replace(/[%_'"\\]/g, '');
-      if (safeQ.length > 0) {
-        query = query.or(
-          `name.ilike.%${safeQ}%,description.ilike.%${safeQ}%,category.ilike.%${safeQ}%`,
-        );
-      }
+    // Text search with bounded, grammar-safe PostgREST values.
+    if (safeQuery) {
+      query = query.or(
+        'name.ilike.%' + safeQuery + '%,description.ilike.%' + safeQuery + '%,category.ilike.%' + safeQuery + '%',
+      );
     }
 
     // Fetch extra rows for scoring / filtering
@@ -178,7 +285,9 @@ export async function searchMarketplace(
       return { results: [], ok: false, error: error.message };
     }
 
-    if (!businesses || businesses.length === 0) return { results: [], ok: true };
+    if (!businesses || businesses.length === 0) {
+      return { results: [], ok: true };
+    }
 
     // Score and rank results
     const scored = businesses.map((biz) => {
@@ -281,7 +390,10 @@ export async function searchMarketplace(
     scored.sort((a, b) => b._score - a._score);
 
     // Return top results without internal score
-    return { results: scored.slice(0, limit).map(({ _score: _, ...rest }) => rest), ok: true };
+    return {
+      results: scored.slice(0, limit).map(({ _score: _, ...rest }) => rest),
+      ok: true,
+    };
   } catch (err) {
     logger.error('[MARKETPLACE] Search failed:', err);
     return { results: [], ok: false, error: err instanceof Error ? err.message : 'unknown' };
