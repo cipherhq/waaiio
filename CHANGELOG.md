@@ -3,6 +3,15 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-10-09 — #598 Promo product/service and loyalty redemption fail-closed guards (pre-staging)
+
+- Added a shared eligibility check for WhatsApp order/booking entered promo codes: enforce owner business, active status, valid-from/until dates, allowed ordering/scheduling flows, exact product/service restrictions, capacity, minimum subtotal and bounded fixed/percentage discount. A restricted code is refused for a mixed cart rather than reducing unrelated merchandise.
+- Promo-code dashboard now offers all items, specific products or specific services and persists intended flow type on create/edit; owner API supports updating flow type and start date.
+- Bot loyalty rejects null/false/error from existing atomic points-deduction RPC before issuing any reward code; route rejects noninteger points and RPC transport errors. Replaced prior source-string redemption tests with live FlowStep behavioral cases.
+- **Not yet solved by this code:** points deduction and receipt INSERT are still two DB transactions; authoritative SQL checkout promo calculation still trusts caller discount; real inventory/booking reward fulfillment not designed. Separate audited atomic SQL/fulfillment changes and executable database plus staging smoke acceptance are REQUIRED before treating #598 complete.
+- No migrations, provider calls or stage/prod deployment in this source-only change. No payment, refund or payout math altered.
+
+
 ## 2026-10-09 — #591 OptIn 120-character fix and #594 main reconciliation
 
 ### What changed
