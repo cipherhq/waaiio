@@ -133,6 +133,8 @@ export async function PUT(request: NextRequest) {
     const activeValue = updates.isActive ?? updates.is_active;
     if (activeValue !== undefined) updateData.is_active = activeValue;
     if (updates.applicableServices !== undefined) updateData.applicable_services = updates.applicableServices;
+    if (updates.applicableFlowTypes !== undefined) updateData.applicable_flow_types = updates.applicableFlowTypes;
+    if (updates.validFrom !== undefined) updateData.valid_from = updates.validFrom || new Date().toISOString();
 
     const { error } = await supabase
       .from('promo_codes')

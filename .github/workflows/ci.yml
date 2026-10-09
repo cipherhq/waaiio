@@ -3754,6 +3754,19 @@ jobs:
           echo "✅ M428 customer response-language preference DB tests complete — zero skips, zero failures."
 
 
+      # #598 M434: execute the actual installed RPC with role denial,
+      # transaction rollback, replay, and two-session row-lock contention.
+      - name: M434 atomic loyalty reward PostgreSQL acceptance
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: waaiio_test
+        run: |
+          set -euo pipefail
+          bash scripts/test-m434-loyalty-receipt-db.sh
+
   migrations:
     name: Migration validation
     runs-on: ubuntu-24.04
