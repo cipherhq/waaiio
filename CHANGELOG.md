@@ -3,6 +3,15 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-10-09 — #592 Business App Connect: coexistence safety and readiness
+
+### What changed
+- Added separate Meta coexistence config validator and tenant-bound read-only readiness API. Local config is not Meta merchant eligibility.
+- Fenced unverified `connection_method=coexist` from the standard Facebook Cloud API registration callback, warned customers in signup, and exposed an honest disabled Business App Connect pilot on dashboard.
+- Added deterministic tests for config isolation and registration safety.
+### What it affects / could break
+- Previously advertised but unverified coexistence requests now fail closed rather than proceeding as standard transfer. Dedicated number transfer remains unchanged.
+- Real coexistence onboarding remains gated on Meta partner entitlement, eligible regions/phone, signed FINISH session, and device/provider verification; no provider mutation, migration, or deployment in this slice.
 
 ## 2026-10-09 — #590 CTO correction: mounted Contact Winner UI + synchronous send lock
 
