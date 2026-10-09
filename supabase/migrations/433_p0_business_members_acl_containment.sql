@@ -33,11 +33,13 @@
 -- ROLLBACK: Re-grant and recreate the old policy (not recommended).
 -- ═══════════════════════════════════════════════════════════════════
 
--- Phase 1: Revoke client-side DML privileges
--- These were inherited from ALTER DEFAULT PRIVILEGES, not explicit GRANTs.
+-- Phase 1: Revoke client-side DML privileges and explicitly ensure SELECT remains.
+-- On Supabase Cloud, authenticated gets full DML via ALTER DEFAULT PRIVILEGES.
 -- REVOKE is idempotent — safe to run even if already revoked.
+-- GRANT SELECT is idempotent — ensures dashboard reads work regardless of platform.
 REVOKE INSERT, UPDATE, DELETE ON public.business_members FROM authenticated;
 REVOKE INSERT, UPDATE, DELETE ON public.business_members FROM anon;
+GRANT SELECT ON public.business_members TO authenticated;
 
 -- Phase 2: Replace overly permissive FOR ALL policy with SELECT-only
 DROP POLICY IF EXISTS business_members_manage ON business_members;
