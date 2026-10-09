@@ -84,6 +84,8 @@ DECLARE
   v_existing_biz_id uuid;
   v_existing_user_id uuid;
   v_existing_vol_discount int;
+  v_existing_zone_id uuid;
+  v_existing_shipping int;
   -- M435: volume discount per-item vars
   v_vol_rule RECORD;
   v_vol_item_discount int;
@@ -148,10 +150,11 @@ BEGIN
 
   -- Idempotent: check for existing order from same bot session
   SELECT id, reference_code, items_fingerprint, total_amount, discount_amount,
-         promo_code_id, business_id, user_id, volume_discount_amount
+         promo_code_id, business_id, user_id, volume_discount_amount,
+         delivery_zone_id, shipping_cost
   INTO v_existing_id, v_existing_ref, v_existing_fingerprint, v_existing_total,
        v_existing_discount, v_existing_promo_id, v_existing_biz_id, v_existing_user_id,
-       v_existing_vol_discount
+       v_existing_vol_discount, v_existing_zone_id, v_existing_shipping
   FROM orders
   WHERE bot_session_id = p_bot_session_id
     AND status IN ('pending', 'confirmed')
@@ -164,10 +167,10 @@ BEGIN
         -- Same cart fingerprint is necessary but not sufficient.
 
         -- Tenant/user binding (fail-closed)
-        IF v_existing_biz_id != p_business_id THEN
+        IF v_existing_biz_id IS DISTINCT FROM p_business_id THEN
           RAISE EXCEPTION 'replay_business_mismatch:Replay targets different business than committed order';
         END IF;
-        IF v_existing_user_id != p_user_id THEN
+        IF v_existing_user_id IS DISTINCT FROM p_user_id THEN
           RAISE EXCEPTION 'replay_user_mismatch:Replay targets different user than committed order';
         END IF;
 
@@ -189,6 +192,17 @@ BEGIN
         IF COALESCE(p_volume_discount_amount, 0) != COALESCE(v_existing_vol_discount, 0) THEN
           RAISE EXCEPTION 'replay_volume_discount_mismatch:Replay volume discount % does not match committed %',
             COALESCE(p_volume_discount_amount, 0), COALESCE(v_existing_vol_discount, 0);
+        END IF;
+
+        -- Reject inconsistent payment or delivery quotes on same-session retry.
+        IF p_total_amount IS DISTINCT FROM v_existing_total THEN
+          RAISE EXCEPTION 'replay_payment_amount_mismatch:Payable % differs from committed %', p_total_amount, v_existing_total;
+        END IF;
+        IF p_delivery_zone_id IS DISTINCT FROM v_existing_zone_id THEN
+          RAISE EXCEPTION 'replay_zone_mismatch:Delivery zone differs from committed order';
+        END IF;
+        IF p_shipping_cost IS DISTINCT FROM v_existing_shipping THEN
+          RAISE EXCEPTION 'replay_shipping_mismatch:Shipping cost differs from committed order';
         END IF;
 
         -- Return committed order with authoritative total
@@ -540,6 +554,9 @@ BEGIN
     -- Expected total comparison (UNCHANGED from M393)
     IF p_expected_total IS NULL THEN
       RAISE EXCEPTION 'expected_total_required:p_expected_total must be provided when p_validate_products=true';
+    END IF;
+    IF p_total_amount IS DISTINCT FROM p_expected_total THEN
+      RAISE EXCEPTION 'quoted_payment_amount_mismatch:Payable % differs from expected %', p_total_amount, p_expected_total;
     END IF;
     IF v_server_total != p_expected_total THEN
       RAISE EXCEPTION 'total_mismatch:Server total % does not match expected total %',
