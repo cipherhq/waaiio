@@ -4,7 +4,6 @@ import { createHmac, timingSafeEqual } from 'crypto';
 import { createServiceClient } from '@/lib/supabase/service';
 import { sendEmail } from '@/lib/email/client';
 import { payoutPaidEmail, payoutFailedEmail } from '@/lib/email/templates';
-import { COUNTRIES } from '@/lib/constants';
 import { logger } from '@/lib/logger';
 export const maxDuration = 60;
 
@@ -20,8 +19,13 @@ const LOG_PREFIX = '[PAYSTACK-TRANSFER-WH]';
  *
  * Uses atomic claim_webhook_event / complete_webhook_event / fail_webhook_event
  * RPCs (migration 362) for exactly-once processing. The event is only marked
- * complete AFTER the payout status transition succeeds. On any transient
- * failure, the handler returns non-2xx so the provider retries.
+ * complete AFTER the payout status transition succeeds.
+ *
+ * CTO 600-A: completeClaim/failClaim propagate errors; callers handle.
+ * CTO 600-B: UPDATE uses CAS guard (.eq('status', expectedStatus)) to prevent
+ *            concurrent overwrites. Reversal has precedence over success.
+ * CTO 600-C: Only already_completed returns 200. active_processing returns 503.
+ * CTO 600-D: Notification omits monetary denomination until PR-A2 currency design.
  */
 export async function POST(request: NextRequest) {
   const supabase = createServiceClient();
@@ -72,16 +76,23 @@ export async function POST(request: NextRequest) {
 
     if (claimError) {
       logger.error(`${LOG_PREFIX} Claim RPC error:`, claimError.message);
-      // Transient DB error — return 500 so provider retries
       return NextResponse.json({ error: 'Claim failed' }, { status: 500 });
     }
 
     if (!claimResult?.claimed) {
-      // Already completed or actively processing — safe to acknowledge
-      return NextResponse.json({ received: true, reason: claimResult?.reason });
+      const reason = claimResult?.reason;
+      // 600-C: Only already_completed warrants unconditional 200.
+      // active_processing, not_found, or malformed responses need retryable status.
+      if (reason === 'already_completed') {
+        return NextResponse.json({ received: true, reason });
+      }
+      // active_processing: another worker is handling — return 503 so provider
+      // retries after backoff. The M362 RPC reclaims stale processing after 90s.
+      logger.warn(`${LOG_PREFIX} Claim not granted: ${reason || 'unknown'}`);
+      return NextResponse.json({ error: `Event not claimable: ${reason}` }, { status: 503 });
     }
 
-    claimToken = claimResult.claim_token;
+    claimToken = claimResult.claim_token as string;
 
     // ── Find payout — NO currency column (does not exist on business_payouts) ──
     const { data: payout, error: payoutError } = await supabase
@@ -92,81 +103,47 @@ export async function POST(request: NextRequest) {
 
     if (payoutError) {
       logger.error(`${LOG_PREFIX} Payout lookup error:`, payoutError.message);
-      await failClaim(supabase, eventId, claimToken!, `Payout lookup failed: ${payoutError.message}`);
+      await failClaimChecked(supabase, eventId, claimToken, `Payout lookup failed: ${payoutError.message}`);
       return NextResponse.json({ error: 'Payout lookup failed' }, { status: 500 });
     }
 
     if (!payout) {
       logger.warn(`${LOG_PREFIX} No payout found for transfer_code: ${transferCode}`);
-      await failClaim(supabase, eventId, claimToken!, `No payout for transfer_code: ${transferCode}`);
-      // Return 500 — the payout may not have been created yet (race condition).
-      // Provider will retry; if payout genuinely doesn't exist, stale claim reclaim
-      // after 90s allows re-processing.
+      await failClaimChecked(supabase, eventId, claimToken, `No payout for transfer_code: ${transferCode}`);
       return NextResponse.json({ error: 'Payout not found' }, { status: 500 });
     }
 
-    // ── State transition logic ──
-    // Allow transfer.reversed to override 'paid' status (reversal after payment)
-    if (event === 'transfer.reversed') {
-      // Reversals can happen after paid — always process them
-      if (payout.status === 'failed') {
-        // Already in a failure state — complete the claim without re-updating
-        await completeClaim(supabase, eventId, claimToken!);
-        return NextResponse.json({ received: true, already_terminal: true });
+    // ── State transition with CAS guard (600-B) ──
+    const transitionResult = await applyStatusTransition(supabase, payout, event, data);
+
+    if (transitionResult.skipped) {
+      // Already in a valid terminal state — complete the claim
+      const completed = await completeClaimChecked(supabase, eventId, claimToken);
+      if (!completed) {
+        return NextResponse.json({ error: 'Claim completion failed' }, { status: 500 });
       }
-    } else if (payout.status === 'paid' || payout.status === 'failed') {
-      // For success/failed events: don't re-process terminal states
-      await completeClaim(supabase, eventId, claimToken!);
       return NextResponse.json({ received: true, already_terminal: true });
     }
 
-    // ── Apply payout status transition ──
-    let updateResult;
-    if (event === 'transfer.success') {
-      updateResult = await supabase
-        .from('business_payouts')
-        .update({
-          status: 'paid',
-          paid_at: new Date().toISOString(),
-        })
-        .eq('id', payout.id)
-        .select('id');
-
-    } else if (event === 'transfer.failed') {
-      const reason = (data.reason as string) || (data.gateway_response as string) || 'Transfer failed';
-      updateResult = await supabase
-        .from('business_payouts')
-        .update({
-          status: 'failed',
-          flags: [reason],
-        })
-        .eq('id', payout.id)
-        .select('id');
-
-    } else if (event === 'transfer.reversed') {
-      const reason = (data.reason as string) || 'Transfer reversed';
-      updateResult = await supabase
-        .from('business_payouts')
-        .update({
-          status: 'failed',
-          flags: [`Reversed: ${reason}`],
-        })
-        .eq('id', payout.id)
-        .select('id');
+    if (transitionResult.error) {
+      // CAS conflict or DB error — fail the claim for retry
+      await failClaimChecked(supabase, eventId, claimToken, transitionResult.error);
+      return NextResponse.json({ error: 'Status transition failed' }, { status: 500 });
     }
 
-    // Verify the UPDATE succeeded
-    if (!updateResult?.data?.length) {
-      const errMsg = updateResult?.error?.message || 'No rows updated';
-      logger.error(`${LOG_PREFIX} Payout status update failed:`, errMsg);
-      await failClaim(supabase, eventId, claimToken!, `Update failed: ${errMsg}`);
-      return NextResponse.json({ error: 'Status update failed' }, { status: 500 });
+    // ── Complete the claim AFTER verified status transition (600-A) ──
+    const completed = await completeClaimChecked(supabase, eventId, claimToken);
+    if (!completed) {
+      // Status was transitioned but claim completion failed.
+      // The status is durable; the claim will be reclaimed as stale after 90s
+      // and re-processed (hitting already_terminal). Log and return 500
+      // so provider doesn't assume success.
+      logger.error(`${LOG_PREFIX} Status transitioned but claim completion failed for ${eventId}`);
+      return NextResponse.json({ error: 'Claim completion failed' }, { status: 500 });
     }
-
-    // ── Complete the claim AFTER successful status transition ──
-    await completeClaim(supabase, eventId, claimToken!);
 
     // ── Send notification (non-blocking, never corrupts financial status) ──
+    // 600-D: Omit monetary denomination until PR-A2 currency design.
     const notifStatus = event === 'transfer.success' ? 'success' as const : 'failed' as const;
     const notifReason = event === 'transfer.failed'
       ? ((data.reason as string) || (data.gateway_response as string) || 'Transfer failed')
@@ -174,7 +151,7 @@ export async function POST(request: NextRequest) {
         ? ((data.reason as string) || 'Transfer reversed')
         : undefined;
 
-    notifyBusinessOwner(supabase, payout.business_id, notifStatus, payout.net_amount, transferCode, notifReason).catch(
+    notifyBusinessOwner(supabase, payout.business_id, notifStatus, transferCode, notifReason).catch(
       (err) => logger.error(`${LOG_PREFIX} Email error:`, err),
     );
 
@@ -183,64 +160,151 @@ export async function POST(request: NextRequest) {
     Sentry.captureException(error);
     logger.error(`${LOG_PREFIX} Unhandled error:`, error);
 
-    // Fail the claim so it can be reclaimed after 90s
     if (eventId && claimToken) {
-      await failClaim(supabase, eventId, claimToken!, String(error)).catch(
+      await failClaimChecked(supabase, eventId, claimToken, String(error)).catch(
         (e) => logger.error(`${LOG_PREFIX} Fail-claim error:`, e),
       );
     }
 
-    // Return 500 — provider retries
     return NextResponse.json({ error: 'Internal error' }, { status: 500 });
   }
 }
 
-async function completeClaim(
+/**
+ * 600-B: Apply status transition with CAS guard.
+ * Uses .eq('status', expectedStatus) on UPDATE to prevent concurrent overwrites.
+ * Reversal has precedence: can override 'paid' (expectedStatus includes 'paid').
+ * Returns { skipped: true } for valid terminal states, { error } for failures.
+ */
+async function applyStatusTransition(
+  supabase: ReturnType<typeof createServiceClient>,
+  payout: { id: string; status: string },
+  event: string,
+  data: Record<string, unknown>,
+): Promise<{ skipped?: boolean; error?: string }> {
+  if (event === 'transfer.success') {
+    // Can only transition from non-terminal states
+    if (payout.status === 'paid' || payout.status === 'failed') {
+      return { skipped: true };
+    }
+    // CAS: only update if still in expected pre-terminal state
+    const { data: updated, error } = await supabase
+      .from('business_payouts')
+      .update({ status: 'paid', paid_at: new Date().toISOString() })
+      .eq('id', payout.id)
+      .in('status', ['approved', 'processing', 'review_required', 'pending'])
+      .select('id');
+
+    if (error) return { error: `DB error: ${error.message}` };
+    if (!updated?.length) return { error: `CAS conflict: payout ${payout.id} status changed` };
+    return {};
+
+  } else if (event === 'transfer.failed') {
+    if (payout.status === 'paid' || payout.status === 'failed') {
+      return { skipped: true };
+    }
+    const reason = (data.reason as string) || (data.gateway_response as string) || 'Transfer failed';
+    const { data: updated, error } = await supabase
+      .from('business_payouts')
+      .update({ status: 'failed', flags: [reason] })
+      .eq('id', payout.id)
+      .in('status', ['approved', 'processing', 'review_required', 'pending'])
+      .select('id');
+
+    if (error) return { error: `DB error: ${error.message}` };
+    if (!updated?.length) return { error: `CAS conflict: payout ${payout.id} status changed` };
+    return {};
+
+  } else if (event === 'transfer.reversed') {
+    // Reversal has precedence — can override 'paid' status
+    if (payout.status === 'failed') {
+      return { skipped: true }; // Already failed, no action needed
+    }
+    const reason = (data.reason as string) || 'Transfer reversed';
+    // CAS: allow transition from 'paid' (reversal after payment) AND pre-terminal
+    const { data: updated, error } = await supabase
+      .from('business_payouts')
+      .update({ status: 'failed', flags: [`Reversed: ${reason}`] })
+      .eq('id', payout.id)
+      .in('status', ['paid', 'approved', 'processing', 'review_required', 'pending'])
+      .select('id');
+
+    if (error) return { error: `DB error: ${error.message}` };
+    if (!updated?.length) return { error: `CAS conflict: payout ${payout.id} status changed` };
+    return {};
+  }
+
+  return { skipped: true }; // Unknown event type
+}
+
+/**
+ * 600-A: Complete claim with error propagation.
+ * Returns true if completion succeeded, false if RPC returned false/error.
+ */
+async function completeClaimChecked(
   supabase: ReturnType<typeof createServiceClient>,
   eventId: string,
   claimToken: string,
-): Promise<void> {
-  const { data: ok } = await supabase.rpc('complete_webhook_event', {
+): Promise<boolean> {
+  const { data: ok, error } = await supabase.rpc('complete_webhook_event', {
     p_event_id: eventId,
     p_claim_token: claimToken,
   });
-  if (!ok) {
-    logger.warn(`${LOG_PREFIX} complete_webhook_event returned false for ${eventId}`);
+  if (error) {
+    logger.error(`${LOG_PREFIX} complete_webhook_event RPC error for ${eventId}:`, error.message);
+    Sentry.captureException(error);
+    return false;
   }
+  if (!ok) {
+    logger.error(`${LOG_PREFIX} complete_webhook_event returned false for ${eventId} (token mismatch or not processing)`);
+    return false;
+  }
+  return true;
 }
 
-async function failClaim(
+/**
+ * 600-A: Fail claim with error propagation.
+ * Returns true if failure was recorded, false if RPC returned false/error.
+ */
+async function failClaimChecked(
   supabase: ReturnType<typeof createServiceClient>,
   eventId: string,
   claimToken: string,
   errorMsg: string,
-): Promise<void> {
-  const { data: ok } = await supabase.rpc('fail_webhook_event', {
+): Promise<boolean> {
+  const { data: ok, error } = await supabase.rpc('fail_webhook_event', {
     p_event_id: eventId,
     p_claim_token: claimToken,
     p_error: errorMsg,
   });
+  if (error) {
+    logger.error(`${LOG_PREFIX} fail_webhook_event RPC error for ${eventId}:`, error.message);
+    Sentry.captureException(error);
+    return false;
+  }
   if (!ok) {
     logger.warn(`${LOG_PREFIX} fail_webhook_event returned false for ${eventId}`);
+    return false;
   }
+  return true;
 }
 
 /**
  * Send email notification to the business owner about payout status.
- * Resolves currency from the business's country — notification only,
- * not used for financial accounting.
+ * 600-D: Does NOT include monetary amount or denomination. Until PR-A2
+ * establishes verified currency provenance, notifications use reference
+ * and status only. Never fabricate currency from business country.
  */
 async function notifyBusinessOwner(
   supabase: ReturnType<typeof createServiceClient>,
   businessId: string,
   status: 'success' | 'failed',
-  amount: number,
   transferCode: string,
   reason?: string,
 ) {
   const { data: biz } = await supabase
     .from('businesses')
-    .select('name, owner_id, country_code')
+    .select('name, owner_id')
     .eq('id', businessId)
     .single();
 
@@ -254,16 +318,11 @@ async function notifyBusinessOwner(
 
   if (!profile?.email) return;
 
-  // Resolve currency from static country config for notification display only
-  const countryConfig = COUNTRIES[biz.country_code];
-  const displayCurrency = countryConfig?.currencyCode || biz.country_code || '???';
-  const formattedAmount = `${displayCurrency} ${amount.toLocaleString()}`;
-
   if (status === 'success') {
-    const email = payoutPaidEmail(biz.name, formattedAmount, transferCode);
+    const email = payoutPaidEmail(biz.name, `Ref: ${transferCode}`, transferCode);
     await sendEmail({ to: profile.email, ...email });
   } else {
-    const email = payoutFailedEmail(biz.name, formattedAmount, reason || 'Transfer failed');
+    const email = payoutFailedEmail(biz.name, `Ref: ${transferCode}`, reason || 'Transfer failed');
     await sendEmail({ to: profile.email, ...email });
   }
 }
