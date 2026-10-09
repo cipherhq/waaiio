@@ -7,8 +7,9 @@ import { getPoweredByFooter } from '@/lib/whitelabel';
 
 function generateRedemptionCode(): string {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  const bytes = crypto.getRandomValues(new Uint8Array(6));
   let code = 'RW-';
-  for (let i = 0; i < 6; i++) code += chars.charAt(Math.floor(Math.random() * chars.length));
+  for (const byte of bytes) code += chars[byte % chars.length];
   return code;
 }
 
@@ -220,36 +221,26 @@ const loyaltyRedeemStep: FlowStepConfig = {
     try {
       const phone = ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`;
 
-      // Atomically update balance and total_redeemed via RPC FIRST
-      const { data: redeemed, error: redeemErr } = await ctx.supabase.rpc('redeem_loyalty_points', {
+      // M434: deduction and durable receipt/code are ONE database transaction.
+      // Replaying the same bot session returns the original receipt without new debit.
+      const proposedCode = generateRedemptionCode();
+      const { data: redeemed, error: redeemErr } = await ctx.supabase.rpc('redeem_loyalty_reward_once', {
         p_loyalty_id: loyaltyId,
+        p_business_id: businessId,
+        p_customer_phone: phone,
         p_points: threshold,
+        p_redemption_key: `bot:${ctx.session.id}`,
+        p_redemption_code: proposedCode,
       });
-      // The RPC returns false (without an SQL error) for insufficient funds.
-      // A stale session or concurrent redemption must NEVER produce a reward code.
-      if (redeemErr || redeemed !== true) {
-        logger.error('[LOYALTY] redeem_loyalty_points denied or failed:', redeemErr || 'not_redeemed');
+      if (redeemErr || redeemed?.success !== true
+        || typeof redeemed.code !== 'string' || !/^RW-[A-Z2-9]{6}$/.test(redeemed.code)
+        || !Number.isSafeInteger(redeemed.points_balance)) {
+        logger.error('[LOYALTY] Atomic reward receipt denied or failed:', redeemErr || redeemed?.reason || 'bad_receipt');
         throw new Error('Redemption was not confirmed');
       }
-
-      const balance = (ctx.session.session_data.loyalty_balance as number) || 0;
       const rewardDesc = (meta.loyalty_reward_description as string) || 'a free reward';
-      const redemptionCode = generateRedemptionCode();
-
-      // Insert redemption transaction with code atomically (no separate UPDATE needed)
-      const { error: txnError } = await ctx.supabase.from('loyalty_transactions').insert({
-        business_id: businessId,
-        customer_phone: phone,
-        points_change: -threshold,
-        reason: 'redemption',
-        reference_id: loyaltyId,
-        reference_type: `code:${redemptionCode}`,
-      });
-
-      if (txnError) {
-        logger.error('[LOYALTY] Failed to persist redemption transaction', { op: 'loyalty.redeem-txn', error: txnError.message });
-        throw new Error('Redemption transaction failed');
-      }
+      const redemptionCode = redeemed.code as string;
+      const newBalance = redeemed.points_balance as number;
 
       await ctx.sender.sendText({
         to: ctx.from,
@@ -260,7 +251,7 @@ const loyaltyRedeemStep: FlowStepConfig = {
           '',
           `Redemption code: *${redemptionCode}*`,
           `Points used: ${threshold}`,
-          `New balance: *${balance - threshold}* points`,
+          `New balance: *${newBalance}* points`,
           '',
           `Show this code to staff to claim your reward.`,
           '',
