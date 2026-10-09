@@ -56,6 +56,9 @@ const WAAIIO_ONLY_TYPES = new Set([
 const SINGLE_SCREEN_MAX_FIELDS = 8;
 /** Reserved field ID for the marketing consent OptIn component. */
 const CONSENT_FIELD_ID = '_marketing_consent';
+// Conservative offline OptIn ceiling from public WhatsApp Flow component references.
+// Meta provider asset validation is a separate release gate and has not run.
+const OPT_IN_LABEL_MAX_CHARS = 120;
 
 const hasBadControls = (value: string): boolean => /[\u0000-\u001f\u007f]/u.test(value);
 
@@ -166,9 +169,9 @@ export function compileNativeFormFlow(form: WaaiioFormDefinition): Record<string
         'consent_label must be a string, got ' + typeof rawConsentLabel,
       );
     }
-    if (rawConsentLabel.trim().length > 256) {
+    if (rawConsentLabel.trim().length > OPT_IN_LABEL_MAX_CHARS) {
       throw new NativeFlowValidationError(
-        'consent_label exceeds 256-character limit.',
+        'consent_label exceeds 120-character OptIn limit.',
       );
     }
     if (rawConsentLabel.trim() && hasBadControls(rawConsentLabel)) {

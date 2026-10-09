@@ -158,17 +158,17 @@ describe('#591 native WhatsApp Form JSON compiler', () => {
     })).toThrow(NativeFlowValidationError);
   });
 
-  it('rejects overlong consent_label (>256 chars)', () => {
+  it('rejects overlong OptIn consent_label (>120 chars)', () => {
     expect(() => compileNativeFormFlow({
       title: 'Lead', fields: [{ id: 'name', label: 'Name', type: 'text' }],
-      settings: { consent_label: 'A'.repeat(257) },
+      settings: { consent_label: 'A'.repeat(121) },
     })).toThrow(NativeFlowValidationError);
   });
 
-  it('accepts consent_label at exactly 256 chars', () => {
+  it('accepts OptIn consent_label at exactly 120 chars', () => {
     const result = compileNativeFormFlow({
       title: 'Lead', fields: [{ id: 'name', label: 'Name', type: 'text' }],
-      settings: { consent_label: 'A'.repeat(256) },
+      settings: { consent_label: 'A'.repeat(120) },
     });
     const children = ((result.screens as Array<any>)[0].layout.children) as Array<any>;
     expect(children.map(x => x.type)).toContain('OptIn');

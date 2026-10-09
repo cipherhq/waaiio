@@ -156,16 +156,16 @@ const WA_OPTIONS: {
     title: 'Keep WhatsApp Business + add bot',
     badge: 'Advanced',
     badgeColor: 'bg-amber-100 text-amber-700',
-    description: 'If you already use WhatsApp Business app, you can add Waaiio\'s bot without losing your app. Both work at the same time.',
+    description: 'Business App Connect is a Meta-controlled pilot. Your existing WhatsApp Business app must not be transferred until Meta confirms coexistence eligibility.',
     pros: [
-      'Your WhatsApp Business app keeps working',
-      'Bot handles bookings and payments automatically',
+      'Designed to keep your eligible WhatsApp Business app connected',
+      'Waaiio automation can be added after approved onboarding',
       'You still reply to customers manually when needed',
     ],
     cons: [
       'Only works with WhatsApp Business app (not regular WhatsApp)',
       'Needs a Facebook Business Manager account',
-      'Some features are limited in this mode',
+      'Not available until Waaiio and Meta complete coexistence verification for your number and market',
     ],
   },
 ];
@@ -799,6 +799,10 @@ function OnboardingWizard() {
   // ── Facebook Embedded Signup ──
 
   function launchWhatsAppSignup() {
+    if (waMethod === 'coexist') {
+      setError('Business App Connect is pending Meta eligibility verification. We will not transfer or register your existing WhatsApp Business number through the normal setup.');
+      return;
+    }
     if (!window.FB || !fbSdkLoaded.current) {
       setError('Facebook is still loading. Please wait a moment and try again.');
       return;
@@ -864,6 +868,10 @@ function OnboardingWizard() {
   }
 
   async function handleFbConnectAndRegister() {
+    if (waMethod === 'coexist') {
+      setError('Business App Connect requires Meta coexistence onboarding. No changes were made to your WhatsApp Business app number.');
+      return;
+    }
     if (!fbConnectionData) return;
 
     // Use selected WABA/phone from the phone_select step

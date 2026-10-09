@@ -221,7 +221,7 @@ describe('#591 GET native Flow preview route — real handler with mocked databa
 
   it('overlong consent_label returns 422 validation error', async () => {
     const fq = query({
-      data: record({ settings: { consent_label: 'A'.repeat(257) } }),
+      data: record({ settings: { consent_label: 'A'.repeat(121) } }),
       error: null,
     });
     mockFrom.mockImplementation((table: string) => table === 'businesses'
@@ -230,6 +230,25 @@ describe('#591 GET native Flow preview route — real handler with mocked databa
     const { GET } = await import('@/app/api/forms/native-flow/preview/route');
     const res = await GET(makeRequest());
     expect(res.status).toBe(422);
+  });
+
+  it('consent_label at exactly 120 characters previews as draft only', async () => {
+    const fq = query({
+      data: record({ settings: { consent_label: 'A'.repeat(120) } }),
+      error: null,
+    });
+    mockFrom.mockImplementation((table: string) => table === 'businesses'
+      ? query({ data: { id: BIZ }, error: null })
+      : fq);
+    const { GET } = await import('@/app/api/forms/native-flow/preview/route');
+    const response = await GET(makeRequest());
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.mode).toBe('preview_only');
+    const consent = body.flowJson.screens[0].layout.children.find(
+      (part: { type: string }) => part.type === 'OptIn',
+    );
+    expect(consent.label).toHaveLength(120);
   });
 
   it('malformed underlying form is rejected, never silently rendered', async () => {
