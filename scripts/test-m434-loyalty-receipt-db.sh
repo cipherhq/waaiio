@@ -3,6 +3,17 @@
 # Run only against disposable CI PostgreSQL AFTER all migrations are applied.
 set -euo pipefail
 
+# Hard stop unless this is the disposable, local CI database. No production
+# account data, transfers, or Supabase Cloud project may be used in this test.
+if [[ "${PGHOST:-}" != "localhost" || "${PGDATABASE:-}" != "waaiio_test" ]]; then
+  echo "REFUSED: M434 destructive fixture tests require PGHOST=localhost, PGDATABASE=waaiio_test"
+  exit 2
+fi
+if [[ "$(psql -v ON_ERROR_STOP=1 -Atc 'SELECT current_database()')" != "waaiio_test" ]]; then
+  echo "REFUSED: actual connected database does not match disposable test database"
+  exit 2
+fi
+
 BIZ='59800000-0000-0000-0000-000000000001'
 ACCOUNT='59810000-0000-0000-0000-000000000001'
 ACCOUNT2='59810000-0000-0000-0000-000000000002'
