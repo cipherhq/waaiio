@@ -8,7 +8,7 @@
  * R2-6: Stacking test uses promo + volume together.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { execSync } from 'child_process';
+import { execSync, spawn } from 'child_process';
 
 const dbUrl = process.env.TEST_DATABASE_URL;
 
@@ -90,10 +90,13 @@ const PROMO_FIXED_CAP = '00000000-0000-0000-0000-000000000643'; // for cap test
 const PROMO_INFLATED = '00000000-0000-0000-0000-000000000644'; // for inflated test
 const PROMO_LAST_USE = '00000000-0000-0000-0000-000000000645'; // for capacity test
 const PROMO_REUSE_A = '00000000-0000-0000-0000-000000000646'; // for reuse test
-const PROMO_REPLAY = '00000000-0000-0000-0000-000000000647'; // for replay tests
+const PROMO_REPLAY = '00000000-0000-0000-0000-000000000647'; // for replay discount test
+const PROMO_CONCURRENT = '00000000-0000-0000-0000-000000000649';
 const PROMO_STACK = '00000000-0000-0000-0000-000000000648'; // for stacking test
 
 const VOL_RULE_PCT = '00000000-0000-0000-0000-000000000650';
+const VOL_RULE_FIXED_UNIT = '00000000-0000-0000-0000-000000000651';
+const VOL_RULE_FIXED_TOTAL = '00000000-0000-0000-0000-000000000652';
 
 function sessionId(): string {
   return sql("SELECT gen_random_uuid()::text;");
@@ -131,7 +134,9 @@ beforeAll(() => {
 
   // R2-2: Volume discount rules include required `name` column
   sql(`INSERT INTO volume_discount_rules (id, business_id, product_id, name, discount_type, discount_value, min_quantity, max_quantity, is_active) VALUES
-    ('${VOL_RULE_PCT}', '${BIZ_ID}', '${PRODUCT_A_ID}', 'Bulk A 10%', 'percentage', 10, 3, NULL, true)
+    ('${VOL_RULE_PCT}', '${BIZ_ID}', '${PRODUCT_A_ID}', 'Bulk A 10%', 'percentage', 10, 3, NULL, true),
+    ('${VOL_RULE_FIXED_UNIT}', '${BIZ_ID}', '${PRODUCT_B_ID}', 'Bulk B per unit', 'fixed_per_unit', 50, 3, 3, true),
+    ('${VOL_RULE_FIXED_TOTAL}', '${BIZ_ID}', '${PRODUCT_B_ID}', 'Bulk B total', 'fixed_total', 75, 4, 4, true)
     ON CONFLICT (id) DO NOTHING;`);
 
   // R2-3: Each promo dedicated to one test scenario
@@ -150,7 +155,8 @@ beforeAll(() => {
     ('${PROMO_LAST_USE}', '${BIZ_ID}', 'LAST', 'percentage', 10, true, NOW()-INTERVAL'1d', NOW()+INTERVAL'1d', 1, 0, '{}', '{}', 0),
     ('${PROMO_REUSE_A}', '${BIZ_ID}', 'REUSE', 'fixed', 100, true, NOW()-INTERVAL'1d', NOW()+INTERVAL'1d', NULL, 0, '{}', '{}', 0),
     ('${PROMO_REPLAY}', '${BIZ_ID}', 'REPLAY', 'fixed', 150, true, NOW()-INTERVAL'1d', NOW()+INTERVAL'1d', NULL, 0, '{}', '{}', 0),
-    ('${PROMO_STACK}', '${BIZ_ID}', 'STACK', 'percentage', 10, true, NOW()-INTERVAL'1d', NOW()+INTERVAL'1d', NULL, 0, '{}', '{}', 0)
+    ('${PROMO_STACK}', '${BIZ_ID}', 'STACK', 'percentage', 10, true, NOW()-INTERVAL'1d', NOW()+INTERVAL'1d', NULL, 0, '{}', '{}', 0),
+    ('${PROMO_CONCURRENT}', '${BIZ_ID}', 'CONCURRENT', 'percentage', 10, true, NOW()-INTERVAL'1d', NOW()+INTERVAL'1d', 1, 0, '{}', '{}', 0)
     ON CONFLICT (id) DO NOTHING;`);
 
   // Verify fixtures installed
@@ -159,32 +165,55 @@ beforeAll(() => {
   const promoCount = sql(`SELECT count(*) FROM promo_codes WHERE business_id = '${BIZ_ID}';`);
   if (parseInt(promoCount) < 10) throw new Error(`Fixture setup failed: expected >=10 promos, got ${promoCount}`);
   const volCount = sql(`SELECT count(*) FROM volume_discount_rules WHERE business_id = '${BIZ_ID}';`);
-  if (volCount !== '1') throw new Error(`Fixture setup failed: expected 1 vol rule, got ${volCount}`);
+  if (volCount !== '3') throw new Error(`Fixture setup failed: expected 3 vol rules, got ${volCount}`);
 });
 
 afterAll(() => { cleanup(); });
 
-function callOrder(opts: {
+interface CheckoutInput {
   sessionId: string;
   userId?: string;
+  businessId?: string;
   promoId?: string;
   discount?: number;
   volumeDiscount?: number;
-  expectedTotal?: number;
+  expectedTotal?: number | null;
+  totalAmount?: number;
+  shippingCost?: number;
+  zoneId?: string;
   items?: string;
-}): Record<string, unknown> {
+}
+function orderSql(opts: CheckoutInput): string {
   const uid = opts.userId || USER_ID;
+  const bid = opts.businessId || BIZ_ID;
   const items = opts.items || `[{"product_id":"${PRODUCT_A_ID}","quantity":2,"unit_price":1000}]`;
-  return sqlJson(`
+  const amount = opts.totalAmount ?? opts.expectedTotal ?? 0;
+  const expected = opts.expectedTotal === null ? 'NULL' : String(opts.expectedTotal ?? 0);
+  return `
     SELECT create_order_atomic(
-      '${opts.sessionId}'::uuid, '${BIZ_ID}'::uuid, '${uid}'::uuid,
-      'pending', NULL, NULL, ${opts.expectedTotal ?? 0}, ${opts.discount ?? 0}, 0,
+      '${opts.sessionId}'::uuid, '${bid}'::uuid, '${uid}'::uuid,
+      'pending', NULL, NULL, ${amount}, ${opts.discount ?? 0}, ${opts.shippingCost ?? 0},
       ${opts.promoId ? `'${opts.promoId}'::uuid` : 'NULL'},
-      'whatsapp', NULL, NULL, NULL, 0, ${opts.volumeDiscount ?? 0},
+      'whatsapp', NULL, ${opts.zoneId ? `'${opts.zoneId}'::uuid` : 'NULL'}, NULL, 0, ${opts.volumeDiscount ?? 0},
       NULL, NULL, NULL, NULL,
-      '${items.replace(/'/g, "''")}'::jsonb, NULL, true, ${opts.expectedTotal ?? 0}
+      '${items.replace(/'/g, "''")}'::jsonb, NULL, true, ${expected}
     );
-  `);
+  `;
+}
+function callOrder(opts: CheckoutInput): Record<string, unknown> {
+  return sqlJson(orderSql(opts));
+}
+function asyncPsql(query: string) {
+  const child = spawn('psql', [dbUrl!, '-X', '-q', '-t', '-A', '-v', 'ON_ERROR_STOP=1'], { stdio: ['pipe', 'pipe', 'pipe'] });
+  let stdout = '', stderr = '';
+  child.stdout.on('data', (v: Buffer) => { stdout += v.toString(); });
+  child.stderr.on('data', (v: Buffer) => { stderr += v.toString(); });
+  const done = new Promise<{code: number | null; stdout: string; stderr: string}>((resolve, reject) => {
+    child.once('error', reject);
+    child.once('close', code => resolve({code, stdout, stderr}));
+  });
+  child.stdin.end(query);
+  return { child, done, output: () => stdout };
 }
 
 describe('#602 M435 ordering price authority (real PG)', () => {
@@ -316,22 +345,18 @@ describe('#602 M435 ordering price authority (real PG)', () => {
   });
   it('rejects replay with changed promo', () => {
     const sid = sessionId();
-    callOrder({ sessionId: sid, promoId: PROMO_REPLAY, discount: 150, expectedTotal: 1850 });
-    expect(callOrder({ sessionId: sid, expectedTotal: 2000 })._error).toContain('replay_promo_mismatch');
+    expect(callOrder({sessionId: sid, expectedTotal: 2000}).created).toBe(true);
+    expect(callOrder({sessionId: sid, promoId: PROMO_REPLAY, expectedTotal: 2000})._error).toContain('replay_promo_mismatch');
   });
   it('rejects replay with changed discount', () => {
     const sid = sessionId();
-    callOrder({ sessionId: sid, promoId: PROMO_REPLAY, discount: 150, expectedTotal: 1850 });
-    // This would try same promo but different discount — but the promo is already used by this user.
-    // Use a different user for this test:
-    // Actually the replay should hit fingerprint match BEFORE promo validation.
-    // So let's just test with same promo, changed discount:
-    expect(callOrder({ sessionId: sid, promoId: PROMO_REPLAY, discount: 100, expectedTotal: 1900 })._error).toContain('replay_discount_mismatch');
+    expect(callOrder({sessionId: sid, promoId: PROMO_REPLAY, discount: 150, expectedTotal: 1850}).created).toBe(true);
+    expect(callOrder({sessionId: sid, promoId: PROMO_REPLAY, discount: 100, expectedTotal: 1850})._error).toContain('replay_discount_mismatch');
   });
   it('rejects replay with changed volume discount', () => {
     const sid = sessionId();
-    callOrder({ sessionId: sid, expectedTotal: 2000 });
-    expect(callOrder({ sessionId: sid, volumeDiscount: 500, expectedTotal: 1500 })._error).toContain('replay_volume_discount_mismatch');
+    expect(callOrder({sessionId: sid, expectedTotal: 2000}).created).toBe(true);
+    expect(callOrder({sessionId: sid, volumeDiscount: 500, expectedTotal: 2000})._error).toContain('replay_volume_discount_mismatch');
   });
 
   // ── Per-customer promo reuse (R2-3/603-F) ──
