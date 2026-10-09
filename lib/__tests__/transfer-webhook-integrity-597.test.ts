@@ -95,9 +95,11 @@ describe('#597 R3: Source-contract checks', () => {
       expect(src).toContain('payoutTransferFailureEmail');
     });
 
-    it('CAS guard constrains allowed prior statuses', () => {
-      expect(src).toContain(".in('status', ['approved', 'processing', 'review_required', 'pending'])");
-      expect(src).toContain(".in('status', ['paid', 'approved', 'processing', 'review_required', 'pending'])");
+    it('CAS guard scopes full vs partial reversal to eligible prior states', () => {
+      expect(src).toContain("const allowedStatuses = fullyReversed");
+      expect(src).toContain("['paid', 'approved', 'processing', 'review_required', 'pending']");
+      expect(src).toContain("['paid', 'approved', 'processing', 'pending']");
+      expect(src).toContain(".in('status', allowedStatuses)");
     });
   });
 });
