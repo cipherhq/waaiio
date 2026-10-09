@@ -131,7 +131,7 @@ beforeAll(() => {
     ('${PRODUCT_B_ID}', '${BIZ_ID}', 'Product B', 500, true)
     ON CONFLICT (id) DO NOTHING;`);
 
-  sql(`INSERT INTO product_variants (id, product_id, name, price, is_active) VALUES
+  sql(`INSERT INTO product_variants (id, product_id, label, price, is_active) VALUES
     ('${VARIANT_A_ID}', '${PRODUCT_A_ID}', 'Large', 1200, true)
     ON CONFLICT (id) DO NOTHING;`);
 
