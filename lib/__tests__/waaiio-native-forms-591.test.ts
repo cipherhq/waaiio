@@ -128,6 +128,52 @@ describe('#591 native WhatsApp Form JSON compiler', () => {
     expect(footer['on-click-action'].payload[CONSENT_FIELD_ID]).toBe('${form.' + CONSENT_FIELD_ID + '}');
   });
 
+  // ── Defect D: consent_label type validation ──
+
+  it('rejects non-string consent_label (number)', () => {
+    expect(() => compileNativeFormFlow({
+      title: 'Lead', fields: [{ id: 'name', label: 'Name', type: 'text' }],
+      settings: { consent_label: 42 as unknown as string },
+    })).toThrow(NativeFlowValidationError);
+  });
+
+  it('rejects non-string consent_label (object)', () => {
+    expect(() => compileNativeFormFlow({
+      title: 'Lead', fields: [{ id: 'name', label: 'Name', type: 'text' }],
+      settings: { consent_label: { nested: true } as unknown as string },
+    })).toThrow(NativeFlowValidationError);
+  });
+
+  it('rejects non-string consent_label (array)', () => {
+    expect(() => compileNativeFormFlow({
+      title: 'Lead', fields: [{ id: 'name', label: 'Name', type: 'text' }],
+      settings: { consent_label: ['agree'] as unknown as string },
+    })).toThrow(NativeFlowValidationError);
+  });
+
+  it('rejects non-string consent_label (boolean)', () => {
+    expect(() => compileNativeFormFlow({
+      title: 'Lead', fields: [{ id: 'name', label: 'Name', type: 'text' }],
+      settings: { consent_label: true as unknown as string },
+    })).toThrow(NativeFlowValidationError);
+  });
+
+  it('rejects overlong consent_label (>256 chars)', () => {
+    expect(() => compileNativeFormFlow({
+      title: 'Lead', fields: [{ id: 'name', label: 'Name', type: 'text' }],
+      settings: { consent_label: 'A'.repeat(257) },
+    })).toThrow(NativeFlowValidationError);
+  });
+
+  it('accepts consent_label at exactly 256 chars', () => {
+    const result = compileNativeFormFlow({
+      title: 'Lead', fields: [{ id: 'name', label: 'Name', type: 'text' }],
+      settings: { consent_label: 'A'.repeat(256) },
+    });
+    const children = ((result.screens as Array<any>)[0].layout.children) as Array<any>;
+    expect(children.map(x => x.type)).toContain('OptIn');
+  });
+
   it('omits OptIn when consent_label is absent or empty', () => {
     const noSettings = compileNativeFormFlow({
       title: 'Lead', fields: [{ id: 'name', label: 'Name', type: 'text' }],
@@ -196,13 +242,13 @@ describe('#591 native WhatsApp Form JSON compiler', () => {
 
   // ── Defect 4: canonical Meta Flow JSON fixture conformance ──
 
-  describe('Meta Flow JSON conformance fixture', () => {
+  describe('offline structural checks against documented Meta Flow constraints', () => {
     /**
-     * Canonical fixture based on Meta WhatsApp Flows documentation:
+     * Checks based on Meta WhatsApp Flows documentation:
      * https://developers.facebook.com/docs/whatsapp/flows/
      *
-     * The compiler output must match the documented structure exactly.
-     * This provides independent certification beyond "compiler outputs JSON, tests check JSON".
+     * These are offline structural checks only; Meta Flow asset validation
+     * is not verified here — that requires a separate provider gate.
      */
     const EXPECTED_META_FLOW_VERSION = '7.3';
 

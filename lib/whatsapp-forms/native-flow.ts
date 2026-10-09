@@ -22,8 +22,9 @@ export interface WaaiioFormDefinition {
   title: string;
   description?: string | null;
   fields: unknown;
-  /** If present in form settings, appends a marketing consent OptIn. */
-  settings?: { consent_label?: string } | null;
+  /** If present in form settings, appends a marketing consent OptIn.
+   *  consent_label comes from schema-less jsonb — runtime type validation is required. */
+  settings?: { consent_label?: unknown } | null;
 }
 
 export class NativeFlowValidationError extends Error {
@@ -157,8 +158,27 @@ export function compileNativeFormFlow(form: WaaiioFormDefinition): Record<string
 
   // Optional marketing consent checkbox — appended after fields, before footer.
   // Uses OptIn component per Meta spec. Only included when settings.consent_label is set.
-  const consentLabel = form.settings?.consent_label?.trim();
-  if (consentLabel && consentLabel.length <= 100 && !hasBadControls(consentLabel)) {
+  // Fail-closed: reject non-string, overlong, or control-character consent labels explicitly.
+  const rawConsentLabel = form.settings?.consent_label;
+  if (rawConsentLabel !== undefined && rawConsentLabel !== null) {
+    if (typeof rawConsentLabel !== 'string') {
+      throw new NativeFlowValidationError(
+        'consent_label must be a string, got ' + typeof rawConsentLabel,
+      );
+    }
+    if (rawConsentLabel.trim().length > 256) {
+      throw new NativeFlowValidationError(
+        'consent_label exceeds 256-character limit.',
+      );
+    }
+    if (rawConsentLabel.trim() && hasBadControls(rawConsentLabel)) {
+      throw new NativeFlowValidationError(
+        'consent_label contains invalid control characters.',
+      );
+    }
+  }
+  const consentLabel = typeof rawConsentLabel === 'string' ? rawConsentLabel.trim() : undefined;
+  if (consentLabel && consentLabel.length > 0) {
     children.push({
       type: 'OptIn',
       name: CONSENT_FIELD_ID,

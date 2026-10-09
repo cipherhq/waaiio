@@ -27,11 +27,13 @@ const record = (overrides?: Partial<Record<string, unknown>>) => ({
  */
 const query = (result: { data: unknown; error: unknown }) => {
   const eqCalls: Array<{ column: string; value: unknown }> = [];
+  const selectCalls: string[] = [];
   const obj = {
-    select() { return this; },
+    select(columns?: string) { if (columns !== undefined) selectCalls.push(columns); return this; },
     eq(column: string, value: unknown) { eqCalls.push({ column, value }); return this; },
     maybeSingle: vi.fn(async () => result),
     _eqCalls: eqCalls,
+    _selectCalls: selectCalls,
   };
   return obj;
 };
@@ -132,7 +134,18 @@ describe('#591 GET native Flow preview route — real handler with mocked databa
     );
   });
 
-  // ── Defect 1: consent preview test against real route ──
+  // ── Defect A: assert select() includes 'settings' column ──
+
+  it('form SELECT projection includes settings column for consent support', async () => {
+    const { GET } = await import('@/app/api/forms/native-flow/preview/route');
+    await GET(makeRequest());
+    // formQuery._selectCalls records the columns string passed to select()
+    expect(formQuery._selectCalls.length).toBeGreaterThan(0);
+    const selectString = formQuery._selectCalls[0];
+    expect(selectString).toContain('settings');
+  });
+
+  // ── Consent preview tests against real route ──
 
   it('preview includes consent OptIn when form has settings.consent_label', async () => {
     const fq = query({
@@ -176,6 +189,47 @@ describe('#591 GET native Flow preview route — real handler with mocked databa
     expect(payload.flowJson.screens[0].layout.children.at(-1)['on-click-action'].payload)
       .toEqual({ full_name: '${form.full_name}' });
     expect(mockFrom.mock.calls.map((c: unknown[]) => c[0])).toEqual(['businesses', 'forms']);
+  });
+
+  // ── Defect D: non-string consent_label returns 422, not 500 ──
+
+  it('non-string consent_label (number) returns 422 validation error', async () => {
+    const fq = query({
+      data: record({ settings: { consent_label: 42 } }),
+      error: null,
+    });
+    mockFrom.mockImplementation((table: string) => table === 'businesses'
+      ? query({ data: { id: BIZ }, error: null })
+      : fq);
+    const { GET } = await import('@/app/api/forms/native-flow/preview/route');
+    const res = await GET(makeRequest());
+    expect(res.status).toBe(422);
+  });
+
+  it('non-string consent_label (object) returns 422 validation error', async () => {
+    const fq = query({
+      data: record({ settings: { consent_label: { nested: true } } }),
+      error: null,
+    });
+    mockFrom.mockImplementation((table: string) => table === 'businesses'
+      ? query({ data: { id: BIZ }, error: null })
+      : fq);
+    const { GET } = await import('@/app/api/forms/native-flow/preview/route');
+    const res = await GET(makeRequest());
+    expect(res.status).toBe(422);
+  });
+
+  it('overlong consent_label returns 422 validation error', async () => {
+    const fq = query({
+      data: record({ settings: { consent_label: 'A'.repeat(257) } }),
+      error: null,
+    });
+    mockFrom.mockImplementation((table: string) => table === 'businesses'
+      ? query({ data: { id: BIZ }, error: null })
+      : fq);
+    const { GET } = await import('@/app/api/forms/native-flow/preview/route');
+    const res = await GET(makeRequest());
+    expect(res.status).toBe(422);
   });
 
   it('malformed underlying form is rejected, never silently rendered', async () => {

@@ -547,7 +547,7 @@ export default function FormsPage() {
       </div>
 
       {nativePreviewError && <p role="alert" className="mt-4 rounded-lg bg-red-50 p-3 text-sm text-red-700">{nativePreviewError}</p>}
-      {nativePreview && (
+      {nativePreview && nativePreview.businessId === business.id && (
         <section className="mt-5 rounded-xl border border-gray-200 p-4" aria-label="Native WhatsApp Flow JSON preview">
           <div className="flex items-center justify-between gap-2">
             <h2 className="text-sm font-semibold">WhatsApp-native Form JSON — draft preview</h2>

@@ -4,13 +4,27 @@ All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
 
+## 2026-10-09 — #591 Final CTO corrections: SELECT assertion, meta claim, sync render guard, consent validation
+
+### What changed
+- **`lib/__tests__/waaiio-native-form-preview-route-591.test.ts`**: (A) Mock `select()` now records requested columns string. New test asserts that form SELECT projection includes `settings` — if route omits `settings` from select, the test fails. (B) Added route-level tests for non-string and overlong consent_label returning 422.
+- **`lib/__tests__/waaiio-native-forms-591.test.ts`**: (B) Renamed "Meta Flow JSON conformance fixture" describe block to "offline structural checks against documented Meta Flow constraints" — the tests use local constants, not a vendor-provided fixture. (D) Added 6 new tests: non-string consent_label (number, object, array, boolean), overlong consent_label (>256 chars), and exactly-256-char acceptance.
+- **`app/dashboard/forms/page.tsx`**: (C) JSX guard now checks `nativePreview.businessId === business.id` synchronously on render, not just via useEffect cleanup. Prevents old-business preview from briefly flashing during context switch.
+- **`lib/whatsapp-forms/native-flow.ts`**: (D) consent_label now validated: non-string throws NativeFlowValidationError (422), overlong (>256 chars) throws, control characters throw. Empty-after-trim is silently skipped (no consent). Changed `WaaiioFormDefinition.settings.consent_label` type from `string` to `unknown` to reflect schema-less jsonb origin.
+- **`CHANGELOG.md`**: Updated prior entry to replace "canonical Meta Flow JSON conformance fixture" with "offline structural checks" language.
+
+### What it affects / could break
+- Forms with non-string `consent_label` in jsonb settings (number, object, array) will now return 422 instead of 500. This is intentional fail-closed behavior.
+- Forms with `consent_label` longer than 256 characters will now be rejected.
+- No behavior change for valid consent labels or forms without consent.
+
 ## 2026-10-09 — #591 CTO review corrections: consent query, validation, auth predicates, conformance, stale state
 
 ### What changed
 - **`app/api/forms/native-flow/preview/route.ts`**: Added `settings` to the SELECT query so the compiler can access `consent_label` for OptIn component generation. Previously the route omitted `settings`, making consent impossible in real preview responses.
 - **`lib/whatsapp-forms/native-flow.ts`**: (a) Strict boolean validation for `required` — rejects non-boolean truthy values like `"yes"`, `1`, `"true"` instead of silently treating them as `false`. (b) Options are trimmed before uniqueness check — `['Sales', ' Sales']` now correctly detected as duplicates.
 - **`lib/__tests__/waaiio-native-form-preview-route-591.test.ts`**: Mock `.eq()` now records column/value pairs. Tests assert exact predicates: business query filters by `owner_id = user.id`, form query filters by `business_id = businessId`. Added cross-tenant denial tests and consent presence/absence tests against the real route handler.
-- **`lib/__tests__/waaiio-native-forms-591.test.ts`**: Added regression tests for non-boolean `required` rejection, whitespace-duplicate option rejection, and canonical Meta Flow JSON conformance fixture (version pin, valid component types, input-type values, data-source structure, label length limits per component, Footer action structure, terminal/success flags).
+- **`lib/__tests__/waaiio-native-forms-591.test.ts`**: Added regression tests for non-boolean `required` rejection, whitespace-duplicate option rejection, and offline structural checks against documented Meta Flow constraints (version pin, valid component types, input-type values, data-source structure, label length limits per component, Footer action structure, terminal/success flags). Note: these are offline structural checks only; Meta Flow asset validation not verified — requires separate provider gate.
 - **`app/dashboard/forms/page.tsx`**: Preview state now includes `businessId`. Added generation counter (`previewGenerationRef`) to discard late async responses after business context switch. `useEffect` clears stale preview on `business.id` change.
 
 ### What it affects / could break
