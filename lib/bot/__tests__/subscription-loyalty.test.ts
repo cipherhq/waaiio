@@ -308,11 +308,16 @@ describe('Flutterwave webhook — platform subscription + business payment routi
 // ═══════════════════════════════════════════════════════
 
 describe('Regression safety', () => {
-  it('loyalty redemption RPC preserved', async () => {
+  it('loyalty redemption uses the new atomic receipt instead of the debit-only RPC', async () => {
+    // Supplementary wiring assertion. Actual failure/replay behavior is exercised
+    // in p1-loyal-1-redemption-behavior.test.ts.
     const fs = await import('fs');
     const path = await import('path');
     const source = fs.readFileSync(path.resolve(__dirname, '../flows/loyalty.flow.ts'), 'utf-8');
-    expect(source).toContain('redeem_loyalty_points');
+    expect(source).toContain("rpc('redeem_loyalty_reward_once'");
+    expect(source).not.toContain("rpc('redeem_loyalty_points'");
+    const migration = fs.readFileSync(path.resolve(__dirname, '../../../supabase/migrations/434_atomic_loyalty_reward_receipt.sql'), 'utf-8');
+    expect(migration).toContain('REVOKE ALL ON FUNCTION public.redeem_loyalty_reward_once');
   });
 
   it('existing weekly/monthly still work in constraints', async () => {
