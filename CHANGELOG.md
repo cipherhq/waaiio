@@ -3,6 +3,18 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-10-09 — #591 OptIn 120-character fix and #594 main reconciliation
+
+### What changed
+- `lib/whatsapp-forms/native-flow.ts`: Enforce conservative 120-character OptIn label ceiling instead of 256; overlong configured consent now returns native preview validation 422. Meta provider asset validation remains unverified.
+- `lib/__tests__/waaiio-native-forms-591.test.ts`: Cover exactly 120 accepted and 121 rejected; preserve separate 256-character *description* boundary.
+- `lib/__tests__/waaiio-native-form-preview-route-591.test.ts`: Verify real owner-scoped GET returns 200 for OptIn 120 and 422 for 121 with no asset publication.
+- Integrate #594 merged main and preserve both #592/#591 changelog histories without changing #594 code.
+
+### What it affects / could break
+- Native preview of consent labels 121–256 characters now rejects with 422 rather than emitting invalid draft OptIn. Existing web-form sending/submission and all provider paths remain unchanged.
+- No DB migration, Meta asset creation or publication, provider call, native send or native response capture. Offline structural checks are not Meta certification.
+
 ## 2026-10-09 — #592 CTO review corrections: executable tests, auth predicates, Meta eligibility
 
 ### What changed
@@ -29,6 +41,33 @@ If something breaks, check this log to find what changed and when.
 - Unknown `connection_method` values also rejected (400). Standard `transfer` and undefined/omitted values continue working.
 - Real coexistence onboarding remains gated on Meta partner entitlement, eligible regions/phone, signed FINISH session, and device/provider verification; no provider mutation, migration, or deployment in this slice.
 
+## 2026-10-09 — #591 Final CTO corrections: SELECT assertion, meta claim, sync render guard, consent validation
+
+### What changed
+- **`lib/__tests__/waaiio-native-form-preview-route-591.test.ts`**: (A) Mock `select()` now records requested columns string. New test asserts that form SELECT projection includes `settings` — if route omits `settings` from select, the test fails. (B) Added route-level tests for non-string and overlong consent_label returning 422.
+- **`lib/__tests__/waaiio-native-forms-591.test.ts`**: (B) Renamed "Meta Flow JSON conformance fixture" describe block to "offline structural checks against documented Meta Flow constraints" — the tests use local constants, not a vendor-provided fixture. (D) Added 6 new tests: non-string consent_label (number, object, array, boolean), overlong consent_label (>256 chars), and exactly-256-char acceptance.
+- **`app/dashboard/forms/page.tsx`**: (C) JSX guard now checks `nativePreview.businessId === business.id` synchronously on render, not just via useEffect cleanup. Prevents old-business preview from briefly flashing during context switch.
+- **`lib/whatsapp-forms/native-flow.ts`**: (D) consent_label now validated: non-string throws NativeFlowValidationError (422), overlong (>256 chars) throws, control characters throw. Empty-after-trim is silently skipped (no consent). Changed `WaaiioFormDefinition.settings.consent_label` type from `string` to `unknown` to reflect schema-less jsonb origin.
+- **`CHANGELOG.md`**: Updated prior entry to replace "canonical Meta Flow JSON conformance fixture" with "offline structural checks" language.
+
+### What it affects / could break
+- Forms with non-string `consent_label` in jsonb settings (number, object, array) will now return 422 instead of 500. This is intentional fail-closed behavior.
+- Forms with `consent_label` longer than 256 characters will now be rejected.
+- No behavior change for valid consent labels or forms without consent.
+
+## 2026-10-09 — #591 CTO review corrections: consent query, validation, auth predicates, conformance, stale state
+
+### What changed
+- **`app/api/forms/native-flow/preview/route.ts`**: Added `settings` to the SELECT query so the compiler can access `consent_label` for OptIn component generation. Previously the route omitted `settings`, making consent impossible in real preview responses.
+- **`lib/whatsapp-forms/native-flow.ts`**: (a) Strict boolean validation for `required` — rejects non-boolean truthy values like `"yes"`, `1`, `"true"` instead of silently treating them as `false`. (b) Options are trimmed before uniqueness check — `['Sales', ' Sales']` now correctly detected as duplicates.
+- **`lib/__tests__/waaiio-native-form-preview-route-591.test.ts`**: Mock `.eq()` now records column/value pairs. Tests assert exact predicates: business query filters by `owner_id = user.id`, form query filters by `business_id = businessId`. Added cross-tenant denial tests and consent presence/absence tests against the real route handler.
+- **`lib/__tests__/waaiio-native-forms-591.test.ts`**: Added regression tests for non-boolean `required` rejection, whitespace-duplicate option rejection, and offline structural checks against documented Meta Flow constraints (version pin, valid component types, input-type values, data-source structure, label length limits per component, Footer action structure, terminal/success flags). Note: these are offline structural checks only; Meta Flow asset validation not verified — requires separate provider gate.
+- **`app/dashboard/forms/page.tsx`**: Preview state now includes `businessId`. Added generation counter (`previewGenerationRef`) to discard late async responses after business context switch. `useEffect` clears stale preview on `business.id` change.
+
+### What it affects / could break
+- Forms with `required: "yes"` or `required: 1` will now be rejected by the compiler instead of silently treating them as not required. This is intentional fail-closed behavior.
+- Options with leading/trailing whitespace that match other options after trimming will now be rejected. Previously they passed uniqueness check but compiled to visually duplicate titles.
+
 ## 2026-10-09 — #590 CTO correction: mounted Contact Winner UI + synchronous send lock
 
 ### What changed
@@ -39,6 +78,35 @@ If something breaks, check this log to find what changed and when.
 
 ### Verification
 - Await exact-head GitHub Actions CI and independent CTO review; no deploy/merge authorized.
+
+## 2026-10-09 — #591 Waaiio Forms: scope reduction to safe compiler/preview only
+
+### What changed
+- **Removed** (`lib/whatsapp-forms/submission-handler.ts`): Entire submission handler deleted. CTO review determined sending/submission handling needs stronger security design (per-recipient tokens, signed one-time tokens, atomic duplicate protection, auditable consent recording, provider failure recovery).
+- **Removed** (`app/api/forms/native-flow/send/route.ts`): Entire send API route deleted.
+- **Removed** (`lib/__tests__/waaiio-native-form-submission-591.test.ts`): Submission handler tests deleted.
+- **Reverted** (`app/api/webhook/meta-cloud/route.ts`): Restored to main — removed nfm_reply interception block.
+- **Trimmed** (`lib/whatsapp-forms/native-flow.ts`): Removed `validateFlowResponse()`, `resolveOptionLabels()`, and `FlowResponseValidation` interface. Compiler and its types remain.
+- **Trimmed** (`lib/__tests__/waaiio-native-forms-591.test.ts`): Removed response validation and option label resolution test blocks. Compiler tests remain.
+
+### What remains (safe compiler/preview)
+- `lib/whatsapp-forms/native-flow.ts` — pure Flow JSON compiler (no side effects, no provider calls)
+- `app/api/forms/native-flow/preview/route.ts` — owner-scoped read-only preview API
+- `app/dashboard/forms/page.tsx` — dashboard preview integration
+- Tests: compiler tests + preview route tests
+
+### What it affects / could break
+- Nothing. This is a scope reduction removing code that was not yet in production. The remaining compiler/preview is read-only and has no side effects.
+- Sending and submission handling will be designed and implemented in a separate follow-up PR with proper security architecture.
+
+## 2026-10-09 — #591 Waaiio Forms: native Flow JSON draft preview
+
+### What changed
+- Compile existing business forms to a bounded, single-screen WhatsApp Flow v7.3 JSON draft; unsupported and ambiguous field definitions fail closed.
+- Added owner-scoped read-only `/api/forms/native-flow/preview` route and dashboard preview/copy action; executable compiler tests.
+### What it affects / could break
+- Forms dashboard list adds a draft-only preview; existing web-link submission and send paths remain unchanged.
+- This slice does **not** create/publish Meta Flow assets, send native Flows, accept native replies, or confirm bookings. No migration, provider call or live messaging is enabled.
 
 ## 2026-10-09 — #211/#248 CTO review corrections: extract logic, fix stale state, multi-winner guard
 
