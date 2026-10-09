@@ -1,7 +1,7 @@
 /**
  * #591 — Compile existing Waaiio Forms fields into a single-screen WhatsApp Flow.
  *
- * Supports preview, publishing, sending, and inbound nfm_reply capture.
+ * Pure compiler for preview only. Does NOT publish, send, or accept submissions.
  * Unsupported field types fail closed instead of silently losing customer data.
  *
  * Meta WhatsApp Flows spec: https://developers.facebook.com/docs/whatsapp/flows/
@@ -24,15 +24,6 @@ export interface WaaiioFormDefinition {
   fields: unknown;
   /** If present in form settings, appends a marketing consent OptIn. */
   settings?: { consent_label?: string } | null;
-}
-
-/** Result of validating Flow response data against the form schema. */
-export interface FlowResponseValidation {
-  valid: boolean;
-  /** Cleaned answers keyed by field ID — only present when valid. */
-  answers?: Record<string, unknown>;
-  /** Human-readable error — only present when invalid. */
-  error?: string;
 }
 
 export class NativeFlowValidationError extends Error {
@@ -184,153 +175,6 @@ export function compileNativeFormFlow(form: WaaiioFormDefinition): Record<string
       layout: { type: 'SingleColumnLayout', children },
     }],
   };
-}
-
-// ── Response Validation ──
-
-/**
- * Validate a Flow response payload against the form's field schema.
- *
- * Rejects:
- * - Extra fields not in the schema (prevents injection)
- * - Missing required fields
- * - Values that don't match expected types
- * - Excessively long string values
- *
- * Returns cleaned answers with only declared field IDs.
- */
-export function validateFlowResponse(
-  formFields: WaaiioFormField[],
-  responseData: Record<string, unknown>,
-  options?: { hasConsent?: boolean },
-): FlowResponseValidation {
-  if (!responseData || typeof responseData !== 'object' || Array.isArray(responseData)) {
-    return { valid: false, error: 'Response data must be an object.' };
-  }
-
-  const fieldMap = new Map<string, WaaiioFormField>();
-  for (const f of formFields) {
-    fieldMap.set(f.id, f);
-  }
-
-  // Compute the set of allowed keys
-  const allowedKeys = new Set(fieldMap.keys());
-  if (options?.hasConsent) {
-    allowedKeys.add(CONSENT_FIELD_ID);
-  }
-
-  // Reject extra/unknown fields — prevents payload injection
-  for (const key of Object.keys(responseData)) {
-    if (!allowedKeys.has(key)) {
-      return { valid: false, error: `Unexpected field "${key}" in response.` };
-    }
-  }
-
-  const answers: Record<string, unknown> = {};
-
-  // Validate each declared field
-  for (const [fieldId, field] of fieldMap) {
-    const value = responseData[fieldId];
-
-    // Required check
-    if (field.required && (value === undefined || value === null || value === '')) {
-      return { valid: false, error: `Required field "${field.label}" is missing.` };
-    }
-
-    // Skip absent optional fields
-    if (value === undefined || value === null || value === '') {
-      continue;
-    }
-
-    // Type-specific validation
-    switch (field.type) {
-      case 'text':
-      case 'textarea':
-      case 'email':
-      case 'phone':
-        if (typeof value !== 'string' || value.length > 5000) {
-          return { valid: false, error: `Field "${field.label}" must be a string (max 5000 chars).` };
-        }
-        if (field.type === 'email' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) {
-          return { valid: false, error: `Field "${field.label}" must be a valid email.` };
-        }
-        if (field.type === 'phone' && !/^[+\d\s()-]{3,20}$/.test(value)) {
-          return { valid: false, error: `Field "${field.label}" must be a valid phone number.` };
-        }
-        answers[fieldId] = value;
-        break;
-
-      case 'number':
-        // Meta Flows may send numbers as strings
-        if (typeof value === 'string') {
-          const parsed = Number(value);
-          if (Number.isNaN(parsed)) {
-            return { valid: false, error: `Field "${field.label}" must be a number.` };
-          }
-          answers[fieldId] = parsed;
-        } else if (typeof value === 'number' && Number.isFinite(value)) {
-          answers[fieldId] = value;
-        } else {
-          return { valid: false, error: `Field "${field.label}" must be a number.` };
-        }
-        break;
-
-      case 'date':
-        // Meta DatePicker sends ISO date strings
-        if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}/.test(value)) {
-          return { valid: false, error: `Field "${field.label}" must be a valid date.` };
-        }
-        answers[fieldId] = value;
-        break;
-
-      case 'select':
-      case 'radio':
-        // Meta sends the option ID (e.g. "option_1"), not the display title
-        if (typeof value !== 'string') {
-          return { valid: false, error: `Field "${field.label}" must be a string selection.` };
-        }
-        answers[fieldId] = value;
-        break;
-
-      default:
-        // Unknown field type — should not happen if form was compiled, but fail closed
-        return { valid: false, error: `Field "${field.label}" has unrecognized type "${field.type}".` };
-    }
-  }
-
-  // Preserve consent value if present
-  if (options?.hasConsent && responseData[CONSENT_FIELD_ID] !== undefined) {
-    answers[CONSENT_FIELD_ID] = !!responseData[CONSENT_FIELD_ID];
-  }
-
-  return { valid: true, answers };
-}
-
-/**
- * Map option IDs back to display titles for human-readable storage.
- *
- * Meta Flows submit option IDs like "option_1" — this resolves them
- * to the original option labels from the form definition.
- */
-export function resolveOptionLabels(
-  formFields: WaaiioFormField[],
-  answers: Record<string, unknown>,
-): Record<string, unknown> {
-  const resolved: Record<string, unknown> = { ...answers };
-
-  for (const field of formFields) {
-    if ((field.type === 'select' || field.type === 'radio') && Array.isArray(field.options)) {
-      const rawValue = answers[field.id];
-      if (typeof rawValue === 'string' && rawValue.startsWith('option_')) {
-        const index = parseInt(rawValue.replace('option_', ''), 10) - 1;
-        if (index >= 0 && index < field.options.length) {
-          resolved[field.id] = (field.options[index] as string).trim();
-        }
-      }
-    }
-  }
-
-  return resolved;
 }
 
 /** Exported for testing. */

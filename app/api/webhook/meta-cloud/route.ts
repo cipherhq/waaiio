@@ -171,7 +171,6 @@ export async function POST(request: NextRequest) {
               type: string;
               button_reply?: { id: string; title: string };
               list_reply?: { id: string; title: string; description?: string };
-              nfm_reply?: { response_json: string; body: string; name: string };
             };
             audio?: { id: string; mime_type?: string };
             image?: { id: string; caption?: string };
@@ -587,74 +586,6 @@ export async function POST(request: NextRequest) {
                   p_claim_token: claimToken,
                 });
                 continue; // Skip normal bot processing for order messages
-              }
-
-              // ── Handle WhatsApp Flow nfm_reply (native form submissions) ──
-              // When a customer completes a native WhatsApp Flow, Meta sends an
-              // interactive message with type === 'nfm_reply'. This is a parallel
-              // path to web form submissions — process independently, skip bot.
-              if (msg.type === 'interactive' && msg.interactive?.type === 'nfm_reply' && msg.interactive.nfm_reply) {
-                const nfmReply = msg.interactive.nfm_reply;
-                // Only handle Waaiio form flows (identified by flow_token prefix)
-                // flow_token is embedded in response_json by Meta for endpoint-mode flows,
-                // but for navigate-mode it's in the interactive payload
-                try {
-                  let responseJson: Record<string, unknown>;
-                  try {
-                    responseJson = typeof nfmReply.response_json === 'string'
-                      ? JSON.parse(nfmReply.response_json)
-                      : nfmReply.response_json as Record<string, unknown>;
-                  } catch {
-                    msgLog.warn('[META-WEBHOOK] Failed to parse nfm_reply response_json');
-                    await supabase.rpc('complete_webhook_event', {
-                      p_event_id: eventId,
-                      p_claim_token: claimToken,
-                    });
-                    continue;
-                  }
-
-                  // Extract flow_token from response — Meta includes it in the response_json
-                  const flowToken = responseJson.flow_token as string | undefined;
-                  if (flowToken && typeof flowToken === 'string' && flowToken.startsWith('waaiio_form:')) {
-                    const { handleFlowSubmission } = await import('@/lib/whatsapp-forms/submission-handler');
-
-                    // Remove flow_token from the data before validation
-                    const { flow_token: _, ...submissionData } = responseJson;
-
-                    const result = await handleFlowSubmission(
-                      supabase,
-                      source,
-                      preResolvedBusinessId || '',
-                      {
-                        responseJson: submissionData,
-                        flowToken: flowToken,
-                      },
-                      metaMsgId,
-                    );
-
-                    if (result.success) {
-                      // Send thank-you confirmation to customer
-                      try {
-                        await guardedSender.sendText({
-                          to: source,
-                          text: 'Thank you! Your response has been recorded.',
-                        });
-                      } catch { /* ignore send failure */ }
-                    } else if (!result.duplicate) {
-                      msgLog.warn('[META-WEBHOOK] Flow submission failed:', result.error);
-                    }
-
-                    await supabase.rpc('complete_webhook_event', {
-                      p_event_id: eventId,
-                      p_claim_token: claimToken,
-                    });
-                    continue; // Skip normal bot processing for nfm_reply
-                  }
-                  // If flow_token doesn't match waaiio_form: prefix, fall through to bot processing
-                } catch (nfmErr) {
-                  msgLog.error('[META-WEBHOOK] nfm_reply handling error:', nfmErr);
-                  // Fall through to bot processing — don't break the webhook
-                }
               }
 
               // Extract text based on message type
