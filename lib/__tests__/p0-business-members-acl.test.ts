@@ -355,6 +355,7 @@ describe.skipIf(!TEST_DB_URL)('P0: Executable PG authorization — business_memb
     await client.query(`
       GRANT SELECT, INSERT, UPDATE, DELETE ON public.business_members TO authenticated;
       GRANT SELECT ON public.business_members TO anon;
+      GRANT SELECT, INSERT, UPDATE, DELETE ON public.business_members TO service_role;
     `);
 
     // Apply M168 chat team member policies
@@ -413,7 +414,7 @@ describe.skipIf(!TEST_DB_URL)('P0: Executable PG authorization — business_memb
   // ── Pre-fix: prove the vulnerability exists (M099 only) ──
 
   it('PRE-FIX: authenticated can self-insert into any business (proves vulnerability)', async () => {
-    await client.query(`SET LOCAL request.jwt.claim.sub = '${ATTACKER_ID}'`);
+    await client.query(`SET request.jwt.claim.sub = '${ATTACKER_ID}'`);
     await client.query('SET ROLE authenticated');
 
     // This is the attack: insert self as active member of a business we don't own
@@ -445,7 +446,7 @@ describe.skipIf(!TEST_DB_URL)('P0: Executable PG authorization — business_memb
   // ── Post-fix: self-insertion denied ──
 
   it('POST-FIX: authenticated INSERT denied with permission error (self-membership blocked)', async () => {
-    await client.query(`SET LOCAL request.jwt.claim.sub = '${ATTACKER_ID}'`);
+    await client.query(`SET request.jwt.claim.sub = '${ATTACKER_ID}'`);
     await client.query('SET ROLE authenticated');
 
     await expect(
@@ -468,7 +469,7 @@ describe.skipIf(!TEST_DB_URL)('P0: Executable PG authorization — business_memb
       ON CONFLICT (business_id, email) DO NOTHING
     `, [BUSINESS_ID, ATTACKER_ID]);
 
-    await client.query(`SET LOCAL request.jwt.claim.sub = '${ATTACKER_ID}'`);
+    await client.query(`SET request.jwt.claim.sub = '${ATTACKER_ID}'`);
     await client.query('SET ROLE authenticated');
 
     await expect(
@@ -481,7 +482,7 @@ describe.skipIf(!TEST_DB_URL)('P0: Executable PG authorization — business_memb
   // ── Post-fix: self-delete denied ──
 
   it('POST-FIX: authenticated DELETE denied (cannot cover tracks)', async () => {
-    await client.query(`SET LOCAL request.jwt.claim.sub = '${ATTACKER_ID}'`);
+    await client.query(`SET request.jwt.claim.sub = '${ATTACKER_ID}'`);
     await client.query('SET ROLE authenticated');
 
     await expect(
@@ -494,7 +495,7 @@ describe.skipIf(!TEST_DB_URL)('P0: Executable PG authorization — business_memb
   // ── Post-fix: authenticated SELECT still works for own membership ──
 
   it('POST-FIX: authenticated can SELECT own membership row', async () => {
-    await client.query(`SET LOCAL request.jwt.claim.sub = '${ATTACKER_ID}'`);
+    await client.query(`SET request.jwt.claim.sub = '${ATTACKER_ID}'`);
     await client.query('SET ROLE authenticated');
 
     const result = await client.query(
@@ -511,7 +512,7 @@ describe.skipIf(!TEST_DB_URL)('P0: Executable PG authorization — business_memb
   // ── Post-fix: owner can SELECT all members of owned business ──
 
   it('POST-FIX: owner can SELECT all members of their business', async () => {
-    await client.query(`SET LOCAL request.jwt.claim.sub = '${OWNER_ID}'`);
+    await client.query(`SET request.jwt.claim.sub = '${OWNER_ID}'`);
     await client.query('SET ROLE authenticated');
 
     const result = await client.query(
@@ -537,7 +538,7 @@ describe.skipIf(!TEST_DB_URL)('P0: Executable PG authorization — business_memb
       ON CONFLICT (id) DO NOTHING
     `, [OUTSIDER_ID]);
 
-    await client.query(`SET LOCAL request.jwt.claim.sub = '${OUTSIDER_ID}'`);
+    await client.query(`SET request.jwt.claim.sub = '${OUTSIDER_ID}'`);
     await client.query('SET ROLE authenticated');
 
     const result = await client.query(
@@ -558,7 +559,7 @@ describe.skipIf(!TEST_DB_URL)('P0: Executable PG authorization — business_memb
     await client.query('RESET ROLE');
     await client.query('DELETE FROM business_members WHERE user_id = $1', [ATTACKER_ID]);
 
-    await client.query(`SET LOCAL request.jwt.claim.sub = '${ATTACKER_ID}'`);
+    await client.query(`SET request.jwt.claim.sub = '${ATTACKER_ID}'`);
     await client.query('SET ROLE authenticated');
 
     const result = await client.query(
@@ -572,7 +573,7 @@ describe.skipIf(!TEST_DB_URL)('P0: Executable PG authorization — business_memb
   });
 
   it('POST-FIX: non-member cannot read chat_messages via team membership policy', async () => {
-    await client.query(`SET LOCAL request.jwt.claim.sub = '${ATTACKER_ID}'`);
+    await client.query(`SET request.jwt.claim.sub = '${ATTACKER_ID}'`);
     await client.query('SET ROLE authenticated');
 
     const result = await client.query(
@@ -586,7 +587,7 @@ describe.skipIf(!TEST_DB_URL)('P0: Executable PG authorization — business_memb
   });
 
   it('POST-FIX: non-member cannot insert outbound chat_messages', async () => {
-    await client.query(`SET LOCAL request.jwt.claim.sub = '${ATTACKER_ID}'`);
+    await client.query(`SET request.jwt.claim.sub = '${ATTACKER_ID}'`);
     await client.query('SET ROLE authenticated');
 
     await expect(

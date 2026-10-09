@@ -103,6 +103,12 @@ GRANT USAGE ON SCHEMA auth TO authenticated, service_role, anon;
 GRANT USAGE ON SCHEMA storage TO authenticated, service_role, anon;
 GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA auth TO authenticated, service_role, anon;
 
+-- Match Supabase Cloud: auto-grant service_role full access on tables created by postgres.
+-- Without this, migration self-verification assertions (e.g., M433 has_table_privilege checks)
+-- fail because service_role has BYPASSRLS but no explicit table-level privileges.
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
+  GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO service_role;
+
 -- Seed common test user (many test suites reference this UUID)
 INSERT INTO auth.users (id, email) VALUES
   ('00000000-0000-0000-0000-000000000000', 'default-stub@test.local'),
