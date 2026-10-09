@@ -3,25 +3,38 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-10-09 — #602 M435: Ordering price authority at atomic DB boundary
+
+### What changed
+- `supabase/migrations/435_ordering_price_authority.sql`: Extends `create_order_atomic` to derive promo and volume discounts from locked DB values instead of trusting caller-supplied amounts.
+  - Promo authority: re-reads discount_type/value, business_id, is_active, dates, flow types, product scope, min amount from the locked promo_codes row. Computes server discount. Refuses discount without eligible promo.
+  - Volume discount authority: computes per-item volume discounts using locked product/variant unit prices (not caller-supplied p_unit_price). Matches calculate_volume_discount logic.
+  - Stores server-computed discount_amount and volume_discount_amount in orders table.
+  - Refuses p_discount_amount > 0 when p_promo_code_id IS NULL.
+  - Compares server-computed values against caller quote — rejects mismatches.
+  - Positive quantity enforcement: items and addons must have quantity >= 1 (prevents stock inflation via negative quantities).
+  - Idempotent replay validates monetary contract: refuses changed promo/discount/amount on same-cart retry.
+  - Per-customer promo reuse check via existing bookings/orders.
+  - Volume discount rule locking (FOR UPDATE) prevents concurrent tier edits.
+- `lib/__tests__/ordering-price-authority-602.test.ts`: Disposable PostgreSQL RPC tests covering fabricated discount, cross-tenant/inactive/expired/future/wrong-flow/wrong-product promos, valid percentage/fixed promos, fixed cap at subtotal, inflated discount rejection, no side effects on rejection, concurrent capacity exhaustion, volume discount rules, variant pricing, negative quantity rejection, idempotent replay, and no-promo baseline.
+
+### What it affects / could break
+- Ordering checkout: existing callers pass correct discount values → no behavior change. If any caller passes fabricated/stale discount amounts, they will now be rejected with descriptive exceptions.
+- Negative quantities now rejected with exception (previously accepted silently).
+- Non-validated path (p_validate_products=false) is UNCHANGED — continues to trust caller values (documented as known debt).
+- Same 24-parameter function signature preserved. ACL unchanged.
+
 ## 2026-10-09 — #597 PR-A1: Transfer webhook financial integrity repair
 
 ### What changed
-- `app/api/webhooks/paystack-transfer/route.ts`: Complete rewrite to fix P0 financial defects:
-  - Removed `currency` from SELECT (column does not exist on `business_payouts` — caused PostgREST 42703 error)
-  - Replaced non-atomic upsert dedup with `claim_webhook_event`/`complete_webhook_event`/`fail_webhook_event` RPCs (migration 362)
-  - Event is now only marked complete AFTER successful payout status transition (was: marked before)
-  - Returns HTTP 500 on transient failures (was: 200 — suppressed provider retries)
-  - Handles `transfer.reversed` even when payout status is `paid` (was: silently ignored)
-  - Verifies UPDATE result before completing claim
-  - Notification resolves currency from static `COUNTRIES` constant (display only, not accounting)
-- `app/api/webhooks/stripe-transfer/route.ts`: Identical structural fixes for Stripe transfer/payout events
-- `lib/__tests__/transfer-webhook-integrity-597.test.ts`: 21 behavioral tests proving all 7 invariants across both handlers
+- `app/api/webhooks/paystack-transfer/route.ts`: Complete rewrite to fix P0 financial defects
+- `app/api/webhooks/stripe-transfer/route.ts`: Identical structural fixes for Stripe transfer events
+- `lib/__tests__/transfer-webhook-integrity-597.test.ts`: Behavioral + executable tests
 
 ### What it affects / could break
-- Transfer webhook processing now correctly transitions payout status. Previously consumed-but-unprocessed events remain in `processed_webhook_events` with the old event_id format; separate recovery procedure needed (not in this PR).
-- Catch blocks now return 500 instead of 200 — provider will retry on transient errors.
-- `transfer.reversed` events now transition `paid` payouts to `failed` — previously silently ignored.
-- No DB migration. No schema change. No provider calls. No payout initiation.
+- Transfer webhook processing now correctly transitions payout status
+- Catch blocks return 500 instead of 200 — provider will retry on transient errors
+- `transfer.reversed` events now transition `paid` payouts to `failed`
 
 ## 2026-10-09 — #591 OptIn 120-character fix and #594 main reconciliation
 
