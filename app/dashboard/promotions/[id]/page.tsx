@@ -10,6 +10,7 @@ import type {
   PromoCodeBatch,
   PromoFulfillmentStatus,
 } from '@/lib/promotions/types';
+import { ContactWinnerButton, useContactWinnerActions } from './contact-winner-controls';
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                               */
@@ -312,6 +313,10 @@ export default function PromotionDetailPage() {
   }>({ can_reveal_phone: false, can_contact_winner: false, can_manage_fulfillment: false });
   const [revealingPhone, setRevealingPhone] = useState<string | null>(null);
   const [revealedPhones, setRevealedPhones] = useState<Record<string, string>>({});
+
+  // Contact Winner: production hook has a synchronous in-flight lock and context-scoped readiness.
+  const { winnerTemplateReady, contactingWinner, contactResult, contactWinner } =
+    useContactWinnerActions({ businessId: business.id, campaignId: campaign?.id ?? null });
 
   // Analytics tab
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
@@ -1422,15 +1427,14 @@ export default function PromotionDetailPage() {
                             Update
                           </button>
                         )}
-                        {winnersPermissions.can_contact_winner && (
-                          <button
-                            disabled
-                            className="text-xs text-gray-400 cursor-not-allowed"
-                            title="Template pending approval"
-                          >
-                            Contact
-                          </button>
-                        )}
+                        <ContactWinnerButton
+                          redemptionId={winner.id}
+                          canContactWinner={winnersPermissions.can_contact_winner}
+                          winnerTemplateReady={winnerTemplateReady}
+                          contactingWinner={contactingWinner}
+                          contactResult={contactResult}
+                          onContact={contactWinner}
+                        />
                       </td>
                     </tr>
                   ))}

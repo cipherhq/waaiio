@@ -3,6 +3,38 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+
+## 2026-10-09 — #590 CTO correction: mounted Contact Winner UI + synchronous send lock
+
+### What changed
+- Extracted the **actual** Contact Winner React hook and rendered button to `contact-winner-controls.tsx`; the promo detail page now consumes both.
+- The hook fail-closes readiness by business/campaign identity, cancels stale requests and late send results, and uses a synchronous in-flight ref before POST (while preserving server claim-before-send authority).
+- Added mounted React/jsdom integration tests for ready/pending/failed template, cross-business request ordering, 401/503, rapid multi-winner clicks, exact POST, spinner, error/result UI, retry and stale send outcome. All provider fetches are mocked.
+- Pure helper tests are preserved. No database migration, API backend, channel routing, provider configuration or live send behavior changed.
+
+### Verification
+- Await exact-head GitHub Actions CI and independent CTO review; no deploy/merge authorized.
+
+## 2026-10-09 — #211/#248 CTO review corrections: extract logic, fix stale state, multi-winner guard
+
+### What changed
+- **`app/dashboard/promotions/[id]/contact-winner-logic.ts`** (new): Extracted `checkWinnerTemplateReadiness`, `getButtonState`, and `handleContactWinner` into a shared module. Both page.tsx and tests import the same production logic — CTO review finding: tests were reimplementing copies that could drift from production code.
+- **`app/dashboard/promotions/[id]/page.tsx`**: (a) Imports shared logic from `contact-winner-logic.ts`. (b) Fixed fail-open bug: `useEffect` now resets `winnerTemplateReady` to `false` immediately on `business.id` change — previously a fast business switch could leave stale `true` from the old business. (c) Fixed multi-winner button: `disabled={!!contactingWinner}` disables ALL contact buttons during any in-flight send, not just the specific row. Spinner still shows on the active row.
+- **`app/dashboard/promotions/__tests__/contact-winner.test.ts`**: Rewritten to import from `contact-winner-logic.ts` instead of reimplemented copies. 43 tests (was 31): added business transition tests (sequential calls, 401 on switch, fetch failure), multi-winner rapid click serialization (second click rejected while first in-flight, button state reflects in-flight guard for all winners, next click proceeds after clear), unexpected response shapes (null templates, empty object), and 503 template service down.
+
+### What it affects / could break
+- `getButtonState` now accepts optional `contactingWinner` param — returns `disabled` when any send is in-flight, regardless of which winner. UI buttons will ALL disable during a send. Server claim-before-send remains final authority.
+- `winnerTemplateReady` flashes to `false` on every business.id change before the new template-status fetch completes. This is intentional fail-closed behavior per CTO review.
+
+## 2026-10-08 — #211/#248 Wire Contact Winner button to template readiness + API
+
+### What changed
+- **`app/dashboard/promotions/[id]/page.tsx`**: Replaced static `disabled` Contact button with dynamic state machine. Added `winnerTemplateReady`, `contactingWinner`, and `contactResult` state variables. Added `useEffect` to fetch winner template status from `GET /api/promotions/template-status` on page load, checking the **nested** `templates.promo_winner_status_v1.status` field (NOT top-level status, which is for pickup v1). Contact button is now: hidden when `!can_contact_winner`, disabled with "Template pending" when template not ready, enabled with click handler when ready, and shows a loading spinner during in-flight. Click handler POSTs `{businessId, campaignId, redemptionId}` to `/api/promotions/winners/contact` with full error handling (401/403, 404, 429 cooldown, 503 template unavailable, 5xx, network errors). Double-click guard prevents concurrent sends.
+- **`app/dashboard/promotions/__tests__/contact-winner.test.ts`** (new): 31 behavioral unit tests covering button states, template readiness fetch (nested vs top-level status distinction), exact POST payload, all error codes, double-click guard, click-to-result transitions, and phone number leak prevention.
+
+### What it affects / could break
+- Only the promotions detail page Contact button behavior changes. No API routes, migrations, or other files modified. Button remains disabled (fail-closed) if template-status endpoint is unreachable or returns unexpected shape. Server-side authority for rate limiting, role checks, and template verification remains unchanged.
+
 ## 2026-10-08 — #584 Discovery search fail-closed correction (PR #589)
 
 ### What changed
