@@ -3,6 +3,37 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-10-09 — #595 CTO Finance UI correction after exact-schema review
+
+- `admin/src/pages/Finance.tsx`: Independent six-query error settlement, null/rejected request denial, hard fail-closed finance UI and retry; genuine empty stays distinct. Valid `business_payouts` projection now requests only `business_id,status,created_at` (no missing `currency`). Payout money suppressed until verified denomination; only status counts displayed. Selected country/date filters now apply to category and monthly breakdown; country payment volume split by actual payment currency. CSV export disabled because browser row completeness is unproved; screen explains client-loaded estimates.
+- `admin/src/pages/Dashboard.tsx`: Gross category payment amount labeled Payment Volume, with country-inferred currency caveat.
+- `admin/src/pages/Payouts.tsx`: Unsupported Flutterwave Transfer option remains excluded.
+- `admin/src/__tests__/finance-ui-truth-595.test.tsx`: Mounted React/jest-dom Admin UI tests against production components, mocked six queries, reject/null/error/true-empty/retry, auth, country/date/currency, payout status and dropdown methods. Removed source-string-only tests.
+- Retains both #591 and #592 main changelog records; no schema/RLS/provider/billing interval/money-unit/server-aggregation changes. No deployment or live financial operations.
+
+
+
+## 2026-10-09 — #595 Phase B PR 1: Admin Finance UI truth corrections
+
+### What changed
+- **`admin/src/pages/Finance.tsx`**: (1) Added query error tracking — each of the 6 data queries is checked for `.error`, failures shown as a degraded banner with specific failed sources; CSV export disabled when data is incomplete. (2) Removed cross-currency `Object.values(amounts).reduce()` for category ranking — categories now ranked by transaction count with bars sized by count, not invalid mixed-currency totals. (3) Renamed "Revenue by Business Category" to "Payment Volume by Business Category" with subtitle explaining ranking method. (4) Added `business_id` to payout select so country filter applies consistently to all metrics. (5) Added partial-data notice acknowledging client-side data may be incomplete.
+- **`admin/src/pages/Dashboard.tsx`**: Removed invalid cross-currency `revenue` derived field from category breakdown. Replaced `cat.revenue > 0` display gate with `Object.values(cat.revenueByCurrency).some(a => a > 0)` to preserve per-currency display without the invalid total. Sort remains by business count (unchanged).
+- **`admin/src/pages/Payouts.tsx`**: Removed `flutterwave_transfer` option from the transfer method dropdown — this option always failed server-side since `ALLOWED_TRANSFER_METHODS` doesn't include it (#49 deferral).
+- **`lib/__tests__/finance-ui-truth-595.test.ts`** (new): 20 source-contract tests verifying error state tracking, no cross-currency sums, correct labels, payout country filtering, dashboard display gate, and transfer method allowlist consistency between UI and server.
+
+### What it affects / could break
+- Finance category chart now ranks by transaction count instead of mixed-currency total — categories with high-value but low-count transactions will rank lower. Per-currency amounts are still displayed.
+- Finance page now shows a red banner when any query fails instead of silently showing zeros. This is intentionally more visible.
+- CSV export is blocked when query errors exist to prevent exporting misleading data.
+- Payout metrics (Owed, Paid Out, Outstanding) now respect the country filter — previously they showed all-country data regardless of filter.
+- Dashboard category table continues to work identically but uses per-currency check instead of cross-currency sum for display decisions.
+
+### Not changed (explicitly deferred)
+- No pagination/completeness solution (requires server-side aggregation endpoints)
+- No money-unit verification (requires writer-to-ledger proof)
+- No MRR/billing_interval fix (requires schema mapping)
+- No adminQuery migration (requires ACL design)
+- No RLS/grant changes
 ## 2026-10-09 — #591 OptIn 120-character fix and #594 main reconciliation
 
 ### What changed

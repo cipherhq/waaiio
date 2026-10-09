@@ -532,7 +532,6 @@ export default function Payouts() {
                   <option value="manual_cash">Manual Cash</option>
                   <option value="paystack_transfer">Paystack Transfer (API)</option>
                   <option value="stripe_transfer">Stripe Transfer (API)</option>
-                  <option value="flutterwave_transfer">Flutterwave Transfer (API)</option>
                 </select>
               </div>
 

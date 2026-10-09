@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { supabase, adminDb } from '@/lib/supabase';
+import { adminDb } from '@/lib/supabase';
 import { useAdminSession } from '@/components/AdminLayout';
-import { downloadCSV } from '@/lib/csv';
 
 interface Payment {
   id: string;
@@ -25,7 +24,7 @@ interface PlatformFee {
 interface BusinessPayout {
   net_amount: number;
   platform_fee: number;
-  currency: string | null;
+  business_id: string;
   status: string;
   created_at: string;
 }
@@ -64,6 +63,8 @@ export default function Finance() {
   const [refunds, setRefunds] = useState<Refund[]>([]);
   const [businesses, setBusinesses] = useState<Business[]>([]);
   const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
+  const [queryErrors, setQueryErrors] = useState<string[]>([]);
+  const [reloadCount, setReloadCount] = useState(0);
 
   // Filters
   const [dateFrom, setDateFrom] = useState('');
@@ -71,26 +72,49 @@ export default function Finance() {
   const [countryFilter, setCountryFilter] = useState<string>('all');
 
   useEffect(() => {
+    let cancelled = false;
     async function load() {
-      const [paymentsRes, feesRes, payoutsRes, refundsRes, bizRes, subsRes] = await Promise.all([
-        adminDb.from('payments').select('id, amount, currency, gateway, status, business_id, created_at'),
-        adminDb.from('platform_fees').select('fee_total, waived, refunded_at, business_id, created_at, is_direct_transfer').is('refunded_at', null),
-        adminDb.from('business_payouts').select('net_amount, platform_fee, currency, status, created_at'),
-        adminDb.from('refunds').select('amount, business_id, status, created_at').eq('status', 'success'),
-        adminDb.from('businesses').select('id, category, country_code, subscription_tier'),
-        adminDb.from('subscriptions').select('id, business_id, tier, amount, currency, status, created_at').eq('status', 'active'),
-      ]);
-
-      setPayments(paymentsRes.data || []);
-      setFees(feesRes.data || []);
-      setPayouts(payoutsRes.data || []);
-      setRefunds(refundsRes.data || []);
-      setBusinesses(bizRes.data || []);
-      setSubscriptions(subsRes.data || []);
-      setLoading(false);
+      setLoading(true);
+      try {
+        const results = await Promise.allSettled([
+          adminDb.from('payments').select('id, amount, currency, gateway, status, business_id, created_at'),
+          adminDb.from('platform_fees').select('fee_total, waived, refunded_at, business_id, created_at, is_direct_transfer').is('refunded_at', null),
+          // Verified staging and production schema: business_payouts has no currency column.
+          adminDb.from('business_payouts').select('business_id, status, created_at'),
+          adminDb.from('refunds').select('amount, business_id, status, created_at').eq('status', 'success'),
+          adminDb.from('businesses').select('id, category, country_code, subscription_tier'),
+          adminDb.from('subscriptions').select('id, business_id, tier, amount, currency, status, created_at').eq('status', 'active'),
+        ]);
+        if (cancelled) return;
+        const names = ['payments', 'platform fees', 'payouts', 'refunds', 'businesses', 'subscriptions'];
+        const errors = results.flatMap((result, i) =>
+          result.status === 'rejected' ? [names[i] + ' (network)']
+          : result.value.error || !Array.isArray(result.value.data) ? [names[i]] : []
+        );
+        setQueryErrors(errors);
+        if (errors.length > 0) {
+          setPayments([]); setFees([]); setPayouts([]);
+          setRefunds([]); setBusinesses([]); setSubscriptions([]);
+          return;
+        }
+        const rows = results.map(result =>
+          result.status === 'fulfilled' && Array.isArray(result.value.data) ? result.value.data : []
+        );
+        setPayments(rows[0] as Payment[]);
+        setFees(rows[1] as PlatformFee[]);
+        setPayouts(rows[2] as BusinessPayout[]);
+        setRefunds(rows[3] as Refund[]);
+        setBusinesses(rows[4] as Business[]);
+        setSubscriptions(rows[5] as Subscription[]);
+      } catch {
+        if (!cancelled) setQueryErrors(['unexpected finance load failure']);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
     }
-    load();
-  }, []);
+    if (hasAccess) void load();
+    return () => { cancelled = true; };
+  }, [hasAccess, reloadCount]);
 
   // Country map for filtering
   const bizCountryMap = useMemo(() => {
@@ -119,7 +143,7 @@ export default function Finance() {
   }
   const filteredPayments = useMemo(() => payments.filter(p => inRange(p.created_at) && matchesCountry(p.business_id)), [payments, dateFrom, dateTo, countryFilter, bizCountryMap]);
   const filteredFees = useMemo(() => fees.filter(f => inRange(f.created_at) && matchesCountry(f.business_id)), [fees, dateFrom, dateTo, countryFilter, bizCountryMap]);
-  const filteredPayouts = useMemo(() => payouts.filter(p => inRange(p.created_at)), [payouts, dateFrom, dateTo]);
+  const filteredPayouts = useMemo(() => payouts.filter(p => inRange(p.created_at) && matchesCountry(p.business_id)), [payouts, dateFrom, dateTo, countryFilter, bizCountryMap]);
   const filteredRefunds = useMemo(() => refunds.filter(r => inRange(r.created_at) && matchesCountry(r.business_id)), [refunds, dateFrom, dateTo, countryFilter, bizCountryMap]);
 
   // Resolve business → currency
@@ -173,23 +197,12 @@ export default function Finance() {
       }
     }
 
-    const payoutsOwedByCurrency: Record<string, number> = {};
-    for (const p of filteredPayouts.filter(p => ['pending', 'approved'].includes(p.status))) {
-      const cur = p.currency || 'NGN';
-      payoutsOwedByCurrency[cur] = (payoutsOwedByCurrency[cur] || 0) + Number(p.net_amount || 0);
-    }
-
-    const paidOutByCurrency: Record<string, number> = {};
-    for (const p of filteredPayouts.filter(p => p.status === 'paid')) {
-      const cur = p.currency || 'NGN';
-      paidOutByCurrency[cur] = (paidOutByCurrency[cur] || 0) + Number(p.net_amount || 0);
-    }
-
-    const outstandingByCurrency: Record<string, number> = {};
-    for (const p of filteredPayouts.filter(p => ['pending', 'approved', 'processing'].includes(p.status))) {
-      const cur = p.currency || 'NGN';
-      outstandingByCurrency[cur] = (outstandingByCurrency[cur] || 0) + Number(p.net_amount || 0);
-    }
+    // No payout denomination is proven; display counts only, never guessed NGN.
+    const payoutCounts = {
+      pending: filteredPayouts.filter(p => ['pending', 'approved'].includes(p.status)).length,
+      paid: filteredPayouts.filter(p => p.status === 'paid').length,
+      outstanding: filteredPayouts.filter(p => ['pending', 'approved', 'processing'].includes(p.status)).length,
+    };
 
     // Payment status breakdown (per-currency)
     const paymentBuckets: Record<string, { count: number; amounts: Record<string, number> }> = {};
@@ -200,13 +213,11 @@ export default function Finance() {
       paymentBuckets[p.status].amounts[cur] = (paymentBuckets[p.status].amounts[cur] || 0) + Number(p.amount || 0);
     }
 
-    // Payout status breakdown (per-currency)
-    const payoutBuckets: Record<string, { count: number; amounts: Record<string, number> }> = {};
+    // Counts only because the payouts table lacks a currency column.
+    const payoutBuckets: Record<string, { count: number }> = {};
     for (const p of filteredPayouts) {
-      if (!payoutBuckets[p.status]) payoutBuckets[p.status] = { count: 0, amounts: {} };
+      if (!payoutBuckets[p.status]) payoutBuckets[p.status] = { count: 0 };
       payoutBuckets[p.status].count++;
-      const cur = p.currency || 'NGN';
-      payoutBuckets[p.status].amounts[cur] = (payoutBuckets[p.status].amounts[cur] || 0) + Number(p.net_amount || 0);
     }
 
     // Gateway breakdown (per-currency)
@@ -225,9 +236,7 @@ export default function Finance() {
       platformFeesByCurrency,
       directTransferFeesByCurrency,
       gatewayFeesByCurrency,
-      payoutsOwedByCurrency,
-      paidOutByCurrency,
-      outstandingByCurrency,
+      payoutCounts,
       paymentBuckets,
       payoutBuckets,
       gatewayBuckets,
@@ -243,15 +252,14 @@ export default function Finance() {
       gross: number;
       refunded: number;
       fees: number;
-      payouts: number;
       net: number;
     }>();
 
     const getMonth = (dateStr: string) => dateStr.slice(0, 7); // YYYY-MM
     const getRow = (key: string, month: string, currency: string) =>
-      byMonthCur.get(key) || { month, currency, transactions: 0, gross: 0, refunded: 0, fees: 0, payouts: 0, net: 0 };
+      byMonthCur.get(key) || { month, currency, transactions: 0, gross: 0, refunded: 0, fees: 0, net: 0 };
 
-    for (const p of payments) {
+    for (const p of filteredPayments) {
       if (p.status !== 'success') continue;
       const month = getMonth(p.created_at);
       const cur = getPaymentCurrency(p);
@@ -262,7 +270,7 @@ export default function Finance() {
       byMonthCur.set(key, row);
     }
 
-    for (const r of refunds) {
+    for (const r of filteredRefunds) {
       const month = getMonth(r.created_at);
       const cur = bizCurrencyMap.get(r.business_id) || 'NGN';
       const key = `${month}|${cur}`;
@@ -271,7 +279,7 @@ export default function Finance() {
       byMonthCur.set(key, row);
     }
 
-    for (const f of fees) {
+    for (const f of filteredFees) {
       if (f.waived) continue;
       const month = getMonth(f.created_at);
       const cur = bizCurrencyMap.get(f.business_id) || 'NGN';
@@ -281,49 +289,35 @@ export default function Finance() {
       byMonthCur.set(key, row);
     }
 
-    for (const p of payouts) {
-      if (p.status !== 'paid') continue;
-      const month = getMonth(p.created_at);
-      const cur = p.currency || 'NGN';
-      const key = `${month}|${cur}`;
-      const row = getRow(key, month, cur);
-      row.payouts += Number(p.net_amount || 0);
-      byMonthCur.set(key, row);
-    }
-
     return Array.from(byMonthCur.values())
       .sort((a, b) => b.month.localeCompare(a.month) || a.currency.localeCompare(b.currency))
       .slice(0, 24)
       .map(row => ({ ...row, net: row.gross - row.refunded - row.fees }));
-  }, [payments, fees, payouts, refunds, bizCurrencyMap]);
+  }, [filteredPayments, filteredFees, filteredRefunds, bizCurrencyMap]);
 
-  // Category revenue breakdown (per currency)
-  const categoryRevenue = useMemo(() => {
+  // Category payment volume breakdown (per currency, ranked by transaction count)
+  const categoryVolume = useMemo(() => {
     const bizMap = new Map(businesses.map(b => [b.id, b]));
-    const byCat = new Map<string, Record<string, number>>();
+    const byCat = new Map<string, { amounts: Record<string, number>; txCount: number }>();
 
-    for (const p of payments) {
+    for (const p of filteredPayments) {
       if (p.status !== 'success' || !p.business_id) continue;
       const biz = bizMap.get(p.business_id);
       const cat = biz?.category || 'other';
       const cur = getPaymentCurrency(p);
-      if (!byCat.has(cat)) byCat.set(cat, {});
-      const catAmounts = byCat.get(cat)!;
-      catAmounts[cur] = (catAmounts[cur] || 0) + Number(p.amount || 0);
+      if (!byCat.has(cat)) byCat.set(cat, { amounts: {}, txCount: 0 });
+      const entry = byCat.get(cat)!;
+      entry.amounts[cur] = (entry.amounts[cur] || 0) + Number(p.amount || 0);
+      entry.txCount++;
     }
 
-    // Sort by total amount across all currencies (approximate for ranking)
     return Array.from(byCat.entries())
-      .map(([category, amounts]) => ({
-        category,
-        amounts,
-        total: Object.values(amounts).reduce((s, a) => s + a, 0),
-      }))
-      .sort((a, b) => b.total - a.total)
+      .map(([category, { amounts, txCount }]) => ({ category, amounts, txCount }))
+      .sort((a, b) => b.txCount - a.txCount)
       .slice(0, 10);
-  }, [payments, businesses, bizCurrencyMap]);
+  }, [filteredPayments, businesses, bizCurrencyMap]);
 
-  const maxCatRevenue = Math.max(...categoryRevenue.map(c => c.total), 1);
+  const maxCatTxCount = Math.max(...categoryVolume.map(c => c.txCount), 1);
 
   if (!hasAccess) {
     return (
@@ -338,6 +332,21 @@ export default function Finance() {
     return (
       <div className="flex min-h-[50vh] items-center justify-center">
         <div className="h-8 w-8 animate-spin rounded-full border-2 border-brand border-t-transparent" />
+      </div>
+    );
+  }
+
+  if (queryErrors.length > 0) {
+    return (
+      <div>
+        <h1 className="text-2xl font-bold text-gray-900">Finance</h1>
+        <div role="alert" className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3">
+          <p className="font-semibold text-red-800">Finance data unavailable — source queries failed</p>
+          <p className="mt-1 text-sm text-red-700">Failed sources: {queryErrors.join(', ')}. Financial figures are hidden rather than shown as zeros.</p>
+        </div>
+        <button type="button" onClick={() => { setLoading(true); setReloadCount(n => n + 1); }}
+          className="mt-3 rounded-lg border px-3 py-2">Retry finance data</button>
+        <button type="button" disabled className="ml-2 rounded-lg border px-3 py-2 opacity-50">Export CSV</button>
       </div>
     );
   }
@@ -369,25 +378,14 @@ export default function Finance() {
             <button onClick={() => { setDateFrom(''); setDateTo(''); setCountryFilter('all'); }}
               className="text-xs text-brand hover:underline">Clear all</button>
           )}
-          <button
-            onClick={() => downloadCSV(
-              monthly.map(r => ({
-                month: r.month,
-                currency: r.currency,
-                transactions: r.transactions,
-                gross: r.gross,
-                refunded: r.refunded,
-                platform_fees: r.fees,
-                payouts: r.payouts,
-                net: r.net,
-              })),
-              `finance-monthly-${new Date().toISOString().slice(0, 10)}.csv`,
-            )}
-            className="rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50"
-          >
-            Export CSV
-          </button>
+          <button type="button" disabled title="Export unavailable until row coverage is complete and reconciled"
+            className="rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-400 opacity-50">Export CSV</button>
         </div>
+      </div>
+
+      {/* Partial data notice */}
+      <div className="mt-3 text-xs text-gray-400">
+        Filtered client-loaded rows only: not complete or reconciled. Payout amounts have no verified currency. CSV export is disabled pending coverage verification.
       </div>
 
       {/* Metric Cards */}
@@ -413,9 +411,9 @@ export default function Finance() {
           <MetricCard label="Platform Fees Earned" value={formatMultiCurrency(metrics.platformFeesByCurrency)} color="green" />
           <MetricCard label="Direct Transfer Revenue" value={formatMultiCurrency(metrics.directTransferFeesByCurrency)} color="indigo" />
           <MetricCard label="Gateway Revenue" value={formatMultiCurrency(metrics.gatewayFeesByCurrency)} color="blue" />
-          <MetricCard label="Payouts Owed" value={formatMultiCurrency(metrics.payoutsOwedByCurrency)} color="yellow" />
-          <MetricCard label="Paid Out" value={formatMultiCurrency(metrics.paidOutByCurrency)} color="green" />
-          <MetricCard label="Outstanding Liability" value={formatMultiCurrency(metrics.outstandingByCurrency)} color="red" />
+          <MetricCard label="Payouts Pending/Approved (records)" value={String(metrics.payoutCounts.pending)} color="yellow" />
+          <MetricCard label="Payouts Paid (records)" value={String(metrics.payoutCounts.paid)} color="green" />
+          <MetricCard label="Payouts Outstanding (records)" value={String(metrics.payoutCounts.outstanding)} color="red" />
         </div>
       </div>
 
@@ -445,7 +443,7 @@ export default function Finance() {
         </div>
 
         <div className="rounded-xl border border-gray-200 bg-white p-5">
-          <h3 className="text-sm font-semibold text-gray-900">Payout Status Breakdown</h3>
+          <h3 className="text-sm font-semibold text-gray-900">Payout Status Breakdown (counts only; denomination unverified)</h3>
           <div className="mt-4 space-y-3">
             {Object.entries(metrics.payoutBuckets).map(([status, data]) => (
               <div key={status} className="flex items-center justify-between text-sm">
@@ -461,7 +459,7 @@ export default function Finance() {
                 </div>
                 <div className="text-right">
                   <span className="font-medium text-gray-900">{data.count}</span>
-                  <span className="ml-2 text-gray-500">({formatMultiCurrency(data.amounts)})</span>
+                  
                 </div>
               </div>
             ))}
@@ -497,7 +495,7 @@ export default function Finance() {
         </div>
 
         <div className="rounded-xl border border-gray-200 bg-white p-5">
-          <h3 className="text-sm font-semibold text-gray-900">Recurring Revenue</h3>
+          <h3 className="text-sm font-semibold text-gray-900">Recurring Revenue (annual normalization not verified)</h3>
           <div className="mt-4 space-y-4">
             {(() => {
               const mrrByCurrency: Record<string, number> = {};
@@ -525,20 +523,22 @@ export default function Finance() {
         </div>
       </div>
 
-      {/* Revenue by Category */}
-      {categoryRevenue.length > 0 && (
+      {/* Payment Volume by Category */}
+      {categoryVolume.length > 0 && (
         <div className="mt-8 rounded-xl border border-gray-200 bg-white p-5">
-          <h3 className="text-sm font-semibold text-gray-900">Revenue by Business Category</h3>
+          <h3 className="text-sm font-semibold text-gray-900">Payment Volume by Business Category</h3>
+          <p className="mt-0.5 text-xs text-gray-400">Ranked by transaction count. Per-currency amounts shown separately.</p>
           <div className="mt-4 space-y-3">
-            {categoryRevenue.map(({ category, amounts, total }) => (
+            {categoryVolume.map(({ category, amounts, txCount }) => (
               <div key={category} className="flex items-center gap-3">
                 <span className="w-24 text-sm text-gray-600 capitalize truncate">{category}</span>
                 <div className="flex-1 h-6 bg-gray-100 rounded-full overflow-hidden">
                   <div
                     className="h-full bg-brand rounded-full transition-all"
-                    style={{ width: `${(total / maxCatRevenue) * 100}%` }}
+                    style={{ width: `${(txCount / maxCatTxCount) * 100}%` }}
                   />
                 </div>
+                <span className="text-xs text-gray-500 w-12 text-right">{txCount} tx</span>
                 <span className="text-sm font-medium text-gray-900 w-36 text-right">{formatMultiCurrency(amounts)}</span>
               </div>
             ))}
@@ -549,34 +549,36 @@ export default function Finance() {
       {/* Revenue by Country */}
       <div className="mt-8 grid gap-6 lg:grid-cols-2">
         <div className="rounded-xl border border-gray-200 bg-white p-5">
-          <h3 className="text-sm font-semibold text-gray-900">Businesses by Country</h3>
+          <h3 className="text-sm font-semibold text-gray-900">Businesses and Payment Volume by Country (business counts all-time)</h3>
           <div className="mt-4 space-y-3">
             {(() => {
-              const byCountry = new Map<string, { count: number; revenue: number; subs: number }>();
+              const byCountry = new Map<string, { count: number; volumeByCurrency: Record<string, number>; subs: number }>();
               const bizMap = new Map(businesses.map(b => [b.id, b]));
               for (const b of businesses) {
+                if (!matchesCountry(b.id)) continue;
                 const cc = b.country_code || 'Unknown';
-                const row = byCountry.get(cc) || { count: 0, revenue: 0, subs: 0 };
+                const row = byCountry.get(cc) || { count: 0, volumeByCurrency: {}, subs: 0 };
                 row.count++;
                 byCountry.set(cc, row);
               }
-              for (const p of payments) {
+              for (const p of filteredPayments) {
                 if (p.status !== 'success' || !p.business_id) continue;
                 const biz = bizMap.get(p.business_id);
                 const cc = biz?.country_code || 'Unknown';
-                const row = byCountry.get(cc) || { count: 0, revenue: 0, subs: 0 };
-                row.revenue += Number(p.amount || 0);
+                const row = byCountry.get(cc) || { count: 0, volumeByCurrency: {}, subs: 0 };
+                const cur = getPaymentCurrency(p);
+                row.volumeByCurrency[cur] = (row.volumeByCurrency[cur] || 0) + Number(p.amount || 0);
                 byCountry.set(cc, row);
               }
               for (const s of subscriptions) {
+                if (!matchesCountry(s.business_id)) continue;
                 const biz = bizMap.get(s.business_id);
                 const cc = biz?.country_code || 'Unknown';
-                const row = byCountry.get(cc) || { count: 0, revenue: 0, subs: 0 };
+                const row = byCountry.get(cc) || { count: 0, volumeByCurrency: {}, subs: 0 };
                 row.subs++;
                 byCountry.set(cc, row);
               }
               const FLAG: Record<string, string> = { NG: '🇳🇬', US: '🇺🇸', GB: '🇬🇧', CA: '🇨🇦', GH: '🇬🇭', KE: '🇰🇪', ZA: '🇿🇦', IN: '🇮🇳' };
-              const countryToCur: Record<string, string> = { US: 'USD', CA: 'CAD', GB: 'GBP', NG: 'NGN', GH: 'GHS', KE: 'KES', ZA: 'ZAR' };
               return Array.from(byCountry.entries())
                 .sort((a, b) => b[1].count - a[1].count)
                 .map(([cc, data]) => (
@@ -585,7 +587,7 @@ export default function Finance() {
                     <div className="text-right space-x-3">
                       <span className="text-gray-500">{data.count} biz</span>
                       <span className="text-gray-500">{data.subs} paid</span>
-                      <span className="font-medium text-gray-900">{formatMoney(data.revenue, countryToCur[cc] || 'USD')}</span>
+                      <span className="font-medium text-gray-900">{formatMultiCurrency(data.volumeByCurrency)}</span>
                     </div>
                   </div>
                 ));
@@ -676,7 +678,7 @@ export default function Finance() {
 
       {/* Monthly Rollup Table */}
       <div className="mt-8">
-        <h3 className="text-lg font-semibold text-gray-900">Monthly Rollup</h3>
+        <h3 className="text-lg font-semibold text-gray-900">Monthly Rollup (filtered client-loaded estimates; not reconciled)</h3>
         <div className="mt-4 overflow-x-auto rounded-xl border border-gray-200 bg-white">
           {monthly.length === 0 ? (
             <div className="py-12 text-center text-sm text-gray-500">No data yet</div>
@@ -690,7 +692,6 @@ export default function Finance() {
                   <th className="px-4 py-3 text-right font-medium text-gray-500">Gross Volume</th>
                   <th className="px-4 py-3 text-right font-medium text-gray-500">Refunds</th>
                   <th className="px-4 py-3 text-right font-medium text-gray-500">Platform Fees</th>
-                  <th className="px-4 py-3 text-right font-medium text-gray-500">Payouts</th>
                   <th className="px-4 py-3 text-right font-medium text-gray-500">Net</th>
                 </tr>
               </thead>
@@ -703,7 +704,6 @@ export default function Finance() {
                     <td className="px-4 py-3 text-right text-gray-900">{formatMoney(row.gross, row.currency)}</td>
                     <td className="px-4 py-3 text-right text-red-600">{row.refunded > 0 ? formatMoney(row.refunded, row.currency) : '—'}</td>
                     <td className="px-4 py-3 text-right text-green-700">{formatMoney(row.fees, row.currency)}</td>
-                    <td className="px-4 py-3 text-right text-orange-700">{formatMoney(row.payouts, row.currency)}</td>
                     <td className="px-4 py-3 text-right font-medium text-gray-900">{formatMoney(row.net, row.currency)}</td>
                   </tr>
                 ))}
