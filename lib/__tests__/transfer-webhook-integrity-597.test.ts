@@ -2,13 +2,13 @@
  * #597 PR-A1 R3: Transfer webhook integrity — three-layer proof.
  *
  * Layer 1: Source-contract — verify structural properties.
- * Layer 2: Executable state machine — test the CAS transition matrix.
+ * Layer 2: Real signed webhook route tests in transfer-webhook-routes-597.test.ts.
  * Layer 3: Email template — verify notification content is safe.
  *
  * CTO 600-F: Stripe handler uses transfer.updated/transfer.reversed (not payout.*).
- * CTO 600-G: Executable tests with actual logic verification.
+ * CTO 600-G: Handler-level executable tests live in the companion route test.
  * CTO 600-H: Notifications use safe templates without amount/bank claims.
- * CTO 600-I: Reversal semantics documented and tested.
+ * CTO 600-I: Unknown/partial Stripe reversals must hold for review.
  */
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'fs';
@@ -82,9 +82,10 @@ describe('#597 R3: Source-contract checks', () => {
       expect(handledLine![1]).not.toContain('payout.failed');
     });
 
-    it('600-F: transfer.updated checks data.status for transition', () => {
-      // Must read the Transfer object's status field
-      expect(src).toMatch(/data\.status\b.*['"]paid['"]/);
+    it('600-F: Transfer object has no paid status; no invented completion', () => {
+      expect(src).not.toContain("transferStatus === 'paid'");
+      expect(src).not.toContain("data.status as string");
+      expect(src).toContain("'transfer.created'");
     });
 
     it('uses safe notification templates', () => {
@@ -101,148 +102,9 @@ describe('#597 R3: Source-contract checks', () => {
   });
 });
 
-// ═══════════════════════════════════════════════════════════════════
-// Layer 2: Executable state machine tests
-// ═══════════════════════════════════════════════════════════════════
-
-describe('#597 R3: Executable state transition matrix', () => {
-  // Exact CAS transition logic extracted from both handlers
-  const PRE_TERMINAL = ['approved', 'processing', 'review_required', 'pending'];
-  const REVERSAL_SOURCES = ['paid', ...PRE_TERMINAL];
-
-  type TransitionResult = {
-    skipped: boolean;
-    newStatus?: 'paid' | 'failed';
-    casAllowedStates?: string[];
-  };
-
-  // Paystack events
-  function paystackTransition(currentStatus: string, event: string): TransitionResult {
-    if (event === 'transfer.success') {
-      if (currentStatus === 'paid' || currentStatus === 'failed') return { skipped: true };
-      if (!PRE_TERMINAL.includes(currentStatus)) return { skipped: true };
-      return { skipped: false, newStatus: 'paid', casAllowedStates: PRE_TERMINAL };
-    }
-    if (event === 'transfer.failed') {
-      if (currentStatus === 'paid' || currentStatus === 'failed') return { skipped: true };
-      if (!PRE_TERMINAL.includes(currentStatus)) return { skipped: true };
-      return { skipped: false, newStatus: 'failed', casAllowedStates: PRE_TERMINAL };
-    }
-    if (event === 'transfer.reversed') {
-      if (currentStatus === 'failed') return { skipped: true };
-      if (!REVERSAL_SOURCES.includes(currentStatus)) return { skipped: true };
-      return { skipped: false, newStatus: 'failed', casAllowedStates: REVERSAL_SOURCES };
-    }
-    return { skipped: true };
-  }
-
-  // Stripe events (600-F corrected)
-  function stripeTransition(currentStatus: string, eventType: string, transferStatus?: string): TransitionResult {
-    if (eventType === 'transfer.updated') {
-      if (transferStatus === 'paid') {
-        if (currentStatus === 'paid' || currentStatus === 'failed') return { skipped: true };
-        if (!PRE_TERMINAL.includes(currentStatus)) return { skipped: true };
-        return { skipped: false, newStatus: 'paid', casAllowedStates: PRE_TERMINAL };
-      }
-      return { skipped: true }; // Non-paid transfer status — no transition
-    }
-    if (eventType === 'transfer.reversed') {
-      if (currentStatus === 'failed') return { skipped: true };
-      if (!REVERSAL_SOURCES.includes(currentStatus)) return { skipped: true };
-      return { skipped: false, newStatus: 'failed', casAllowedStates: REVERSAL_SOURCES };
-    }
-    return { skipped: true };
-  }
-
-  describe('Paystack: transfer.success', () => {
-    for (const status of PRE_TERMINAL) {
-      it(`transitions from ${status} to paid`, () => {
-        const r = paystackTransition(status, 'transfer.success');
-        expect(r.skipped).toBe(false);
-        expect(r.newStatus).toBe('paid');
-      });
-    }
-    it('skips when already paid', () => expect(paystackTransition('paid', 'transfer.success').skipped).toBe(true));
-    it('skips when already failed', () => expect(paystackTransition('failed', 'transfer.success').skipped).toBe(true));
-  });
-
-  describe('Paystack: transfer.failed', () => {
-    it('transitions from approved to failed', () => {
-      const r = paystackTransition('approved', 'transfer.failed');
-      expect(r.newStatus).toBe('failed');
-    });
-    it('skips when already paid', () => expect(paystackTransition('paid', 'transfer.failed').skipped).toBe(true));
-    it('skips when already failed', () => expect(paystackTransition('failed', 'transfer.failed').skipped).toBe(true));
-  });
-
-  describe('Paystack: transfer.reversed (precedence over paid)', () => {
-    it('transitions from paid to failed', () => {
-      const r = paystackTransition('paid', 'transfer.reversed');
-      expect(r.skipped).toBe(false);
-      expect(r.newStatus).toBe('failed');
-      expect(r.casAllowedStates).toContain('paid');
-    });
-    it('skips when already failed', () => expect(paystackTransition('failed', 'transfer.reversed').skipped).toBe(true));
-  });
-
-  describe('Stripe: transfer.updated (600-F corrected events)', () => {
-    it('transitions from approved to paid when transfer status=paid', () => {
-      const r = stripeTransition('approved', 'transfer.updated', 'paid');
-      expect(r.skipped).toBe(false);
-      expect(r.newStatus).toBe('paid');
-    });
-    it('skips when transfer status=pending (no state change)', () => {
-      expect(stripeTransition('approved', 'transfer.updated', 'pending').skipped).toBe(true);
-    });
-    it('skips when already paid', () => {
-      expect(stripeTransition('paid', 'transfer.updated', 'paid').skipped).toBe(true);
-    });
-    it('does NOT handle payout.paid (wrong Stripe resource)', () => {
-      // payout.paid is for Payout objects, not Transfers
-      expect(stripeTransition('approved', 'payout.paid').skipped).toBe(true);
-    });
-    it('does NOT handle payout.failed (wrong Stripe resource)', () => {
-      expect(stripeTransition('approved', 'payout.failed').skipped).toBe(true);
-    });
-  });
-
-  describe('Stripe: transfer.reversed', () => {
-    it('transitions from paid to failed (reversal after settlement)', () => {
-      const r = stripeTransition('paid', 'transfer.reversed');
-      expect(r.skipped).toBe(false);
-      expect(r.newStatus).toBe('failed');
-      expect(r.casAllowedStates).toContain('paid');
-    });
-    it('skips when already failed', () => {
-      expect(stripeTransition('failed', 'transfer.reversed').skipped).toBe(true);
-    });
-  });
-
-  describe('Concurrent event ordering', () => {
-    it('reversal overrides prior success (Paystack)', () => {
-      const success = paystackTransition('approved', 'transfer.success');
-      expect(success.newStatus).toBe('paid');
-      const reversal = paystackTransition('paid', 'transfer.reversed');
-      expect(reversal.newStatus).toBe('failed');
-    });
-
-    it('reversal overrides prior success (Stripe)', () => {
-      const success = stripeTransition('approved', 'transfer.updated', 'paid');
-      expect(success.newStatus).toBe('paid');
-      const reversal = stripeTransition('paid', 'transfer.reversed');
-      expect(reversal.newStatus).toBe('failed');
-    });
-
-    it('late failure cannot override paid (only reversal can)', () => {
-      expect(paystackTransition('paid', 'transfer.failed').skipped).toBe(true);
-    });
-
-    it('duplicate success is idempotent', () => {
-      expect(paystackTransition('paid', 'transfer.success').skipped).toBe(true);
-      expect(stripeTransition('paid', 'transfer.updated', 'paid').skipped).toBe(true);
-    });
-  });
-});
+// Production signed POST / RPC / CAS handler tests are in
+// lib/__tests__/transfer-webhook-routes-597.test.ts.
+// Do not invent a Stripe Transfer status or duplicate production transitions.
 
 // ═══════════════════════════════════════════════════════════════════
 // Layer 3: Email template safety tests (600-H)
