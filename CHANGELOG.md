@@ -3,6 +3,17 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-10-09 — #211/#248 CTO review corrections: extract logic, fix stale state, multi-winner guard
+
+### What changed
+- **`app/dashboard/promotions/[id]/contact-winner-logic.ts`** (new): Extracted `checkWinnerTemplateReadiness`, `getButtonState`, and `handleContactWinner` into a shared module. Both page.tsx and tests import the same production logic — CTO review finding: tests were reimplementing copies that could drift from production code.
+- **`app/dashboard/promotions/[id]/page.tsx`**: (a) Imports shared logic from `contact-winner-logic.ts`. (b) Fixed fail-open bug: `useEffect` now resets `winnerTemplateReady` to `false` immediately on `business.id` change — previously a fast business switch could leave stale `true` from the old business. (c) Fixed multi-winner button: `disabled={!!contactingWinner}` disables ALL contact buttons during any in-flight send, not just the specific row. Spinner still shows on the active row.
+- **`app/dashboard/promotions/__tests__/contact-winner.test.ts`**: Rewritten to import from `contact-winner-logic.ts` instead of reimplemented copies. 43 tests (was 31): added business transition tests (sequential calls, 401 on switch, fetch failure), multi-winner rapid click serialization (second click rejected while first in-flight, button state reflects in-flight guard for all winners, next click proceeds after clear), unexpected response shapes (null templates, empty object), and 503 template service down.
+
+### What it affects / could break
+- `getButtonState` now accepts optional `contactingWinner` param — returns `disabled` when any send is in-flight, regardless of which winner. UI buttons will ALL disable during a send. Server claim-before-send remains final authority.
+- `winnerTemplateReady` flashes to `false` on every business.id change before the new template-status fetch completes. This is intentional fail-closed behavior per CTO review.
+
 ## 2026-10-08 — #211/#248 Wire Contact Winner button to template readiness + API
 
 ### What changed

@@ -10,6 +10,11 @@ import type {
   PromoCodeBatch,
   PromoFulfillmentStatus,
 } from '@/lib/promotions/types';
+import {
+  checkWinnerTemplateReadiness,
+  handleContactWinner as handleContactWinnerLogic,
+} from './contact-winner-logic';
+import type { ContactResult } from './contact-winner-logic';
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                               */
@@ -316,7 +321,7 @@ export default function PromotionDetailPage() {
   // Contact Winner
   const [winnerTemplateReady, setWinnerTemplateReady] = useState(false);
   const [contactingWinner, setContactingWinner] = useState<string | null>(null); // redemptionId in-flight
-  const [contactResult, setContactResult] = useState<{ redemptionId: string; type: 'success' | 'error'; message: string } | null>(null);
+  const [contactResult, setContactResult] = useState<ContactResult | null>(null);
 
   // Analytics tab
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
@@ -414,20 +419,15 @@ export default function PromotionDetailPage() {
 
   useEffect(() => {
     let cancelled = false;
+    // Fail-closed: reset immediately on business change to prevent stale readiness
+    setWinnerTemplateReady(false);
     async function checkWinnerTemplate() {
       try {
-        const res = await fetch(
-          `/api/promotions/template-status?businessId=${encodeURIComponent(business.id)}`,
-        );
-        if (!res.ok || cancelled) return;
-        const data = await res.json();
-        // CTO contract: check nested templates.promo_winner_status_v1.status, NOT top-level status
-        const winnerStatus = data?.templates?.promo_winner_status_v1?.status;
+        const ready = await checkWinnerTemplateReadiness(fetch, business.id);
         if (!cancelled) {
-          setWinnerTemplateReady(winnerStatus === 'ready');
+          setWinnerTemplateReady(ready);
         }
       } catch {
-        // Template status unavailable — leave disabled (fail-closed)
         if (!cancelled) setWinnerTemplateReady(false);
       }
     }
@@ -658,46 +658,20 @@ export default function PromotionDetailPage() {
   /* ---- Contact Winner ---- */
 
   const handleContactWinner = async (redemptionId: string) => {
-    // Guard against double-click or stale state
     if (contactingWinner) return;
     if (!campaign) return;
 
     setContactingWinner(redemptionId);
     setContactResult(null);
 
-    try {
-      const res = await fetch('/api/promotions/winners/contact', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          businessId: business.id,
-          campaignId: campaign.id,
-          redemptionId,
-        }),
-      });
+    const result = await handleContactWinnerLogic(fetch, {
+      businessId: business.id,
+      campaignId: campaign.id,
+      redemptionId,
+      currentlyContacting: null, // guard already checked above
+    });
 
-      if (res.ok) {
-        setContactResult({ redemptionId, type: 'success', message: 'Winner notified successfully.' });
-      } else if (res.status === 401 || res.status === 403) {
-        setContactResult({ redemptionId, type: 'error', message: 'You do not have permission to contact this winner.' });
-      } else if (res.status === 404) {
-        setContactResult({ redemptionId, type: 'error', message: 'Winner not found.' });
-      } else if (res.status === 429) {
-        const body = await res.json().catch(() => null);
-        setContactResult({
-          redemptionId,
-          type: 'error',
-          message: body?.message || 'Winner was contacted recently. Please wait before contacting again.',
-        });
-      } else if (res.status === 503) {
-        setContactResult({ redemptionId, type: 'error', message: 'WhatsApp template unavailable. Please try again later.' });
-      } else {
-        setContactResult({ redemptionId, type: 'error', message: 'Failed to contact winner. Please try again.' });
-      }
-    } catch {
-      setContactResult({ redemptionId, type: 'error', message: 'Network error. Please check your connection.' });
-    }
-
+    setContactResult(result.contactResult);
     setContactingWinner(null);
   };
 
@@ -1503,7 +1477,7 @@ export default function PromotionDetailPage() {
                             <>
                               <button
                                 onClick={() => handleContactWinner(winner.id)}
-                                disabled={contactingWinner === winner.id}
+                                disabled={!!contactingWinner}
                                 className="text-xs text-brand hover:underline disabled:opacity-50 disabled:cursor-wait"
                                 title="Send winner notification via WhatsApp"
                               >
