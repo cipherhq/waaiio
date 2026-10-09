@@ -366,6 +366,77 @@ describe('#602 M435 ordering price authority (real PG)', () => {
     expect(callOrder({ sessionId: sessionId(), promoId: PROMO_REUSE_A, discount: 100, expectedTotal: 1900 })._error).toContain('promo_already_used');
   });
 
+  // ── Complete monetary replay and quantity contracts ──
+  it('rejects missing expected total on validated replay', () => {
+    const sid = sessionId();
+    expect(callOrder({sessionId: sid, expectedTotal: 2000}).created).toBe(true);
+    expect(callOrder({sessionId: sid, expectedTotal: null, totalAmount: 2000})._error).toContain('expected_total_required');
+  });
+  it('rejects cross-business order retry', () => {
+    const sid = sessionId();
+    expect(callOrder({sessionId: sid, expectedTotal: 2000}).created).toBe(true);
+    expect(callOrder({sessionId: sid, businessId: OTHER_BIZ_ID, expectedTotal: 2000})._error).toContain('replay_business_mismatch');
+  });
+  it('rejects cross-customer order retry', () => {
+    const sid = sessionId();
+    expect(callOrder({sessionId: sid, expectedTotal: 2000}).created).toBe(true);
+    expect(callOrder({sessionId: sid, userId: USER_B_ID, expectedTotal: 2000})._error).toContain('replay_user_mismatch');
+  });
+  it('rejects replay with altered payable quote', () => {
+    const sid = sessionId();
+    expect(callOrder({sessionId: sid, expectedTotal: 2000}).created).toBe(true);
+    expect(callOrder({sessionId: sid, expectedTotal: 2000, totalAmount: 1})._error).toContain('replay_payment_amount_mismatch');
+  });
+  it('rejects new order with quoted payable not matching expected total', () => {
+    const sid = sessionId();
+    expect(callOrder({sessionId: sid, expectedTotal: 2000, totalAmount: 1})._error).toContain('quoted_payment_amount_mismatch');
+    expect(sql(`SELECT count(*) FROM orders WHERE bot_session_id = '${sid}';`)).toBe('0');
+  });
+  it('rejects replay with altered delivery zone', () => {
+    const sid = sessionId();
+    expect(callOrder({sessionId: sid, expectedTotal: 2000}).created).toBe(true);
+    expect(callOrder({sessionId: sid, expectedTotal: 2000, zoneId: '00000000-0000-0000-0000-000000000699'})._error).toContain('replay_zone_mismatch');
+  });
+  it('rejects replay with altered shipping fee', () => {
+    const sid = sessionId();
+    expect(callOrder({sessionId: sid, expectedTotal: 2000}).created).toBe(true);
+    expect(callOrder({sessionId: sid, expectedTotal: 2000, shippingCost: 99})._error).toContain('replay_shipping_mismatch');
+  });
+  it('rejects negative addon quantity without creating an order', () => {
+    const sid = sessionId();
+    const items = `[{"product_id":"${PRODUCT_A_ID}","quantity":1,"unit_price":1000,"addons":[{"id":"00000000-0000-0000-0000-000000000697","quantity":-1}]}]`;
+    expect(callOrder({sessionId: sid, items, expectedTotal: 1000})._error).toContain('invalid_addon_quantity');
+    expect(sql(`SELECT count(*) FROM orders WHERE bot_session_id = '${sid}';`)).toBe('0');
+  });
+  it('computes fixed-per-unit tier using canonical product B price', () => {
+    const items = `[{"product_id":"${PRODUCT_B_ID}","quantity":3,"unit_price":1}]`;
+    const r = callOrder({sessionId: sessionId(), items, volumeDiscount: 150, expectedTotal: 1350});
+    expect(r.created).toBe(true); expect(r.server_volume_discount).toBe(150); expect(r.server_total).toBe(1350);
+  });
+  it('computes fixed-total tier using canonical product B price', () => {
+    const items = `[{"product_id":"${PRODUCT_B_ID}","quantity":4,"unit_price":1}]`;
+    const r = callOrder({sessionId: sessionId(), items, volumeDiscount: 75, expectedTotal: 1925});
+    expect(r.created).toBe(true); expect(r.server_volume_discount).toBe(75); expect(r.server_total).toBe(1925);
+  });
+  it('serializes overlapping last-promo PostgreSQL transactions', async () => {
+    const first = asyncPsql(`BEGIN;\n${orderSql({sessionId: sessionId(), promoId: PROMO_CONCURRENT, discount: 200, expectedTotal: 1800})}\nSELECT pg_sleep(2);\nCOMMIT;\n`);
+    // Prove the first transaction has inserted its order but has not committed.
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error('First PG transaction never committed an order statement')), 8000);
+      const check = () => {
+        if (first.output().includes('"created": true')) { clearTimeout(timeout); resolve(); }
+      };
+      first.child.stdout.on('data', check);
+      first.done.then(r => { check(); if (!first.output().includes('"created": true')) { clearTimeout(timeout); reject(new Error('First transaction failed: ' + r.stderr)); } }, reject);
+      check();
+    });
+    const second = asyncPsql(orderSql({sessionId: sessionId(), userId: USER_B_ID, promoId: PROMO_CONCURRENT, discount: 200, expectedTotal: 1800}));
+    const [a,b] = await Promise.all([first.done, second.done]);
+    expect(a.code).toBe(0);
+    expect(b.code).not.toBe(0);
+    expect(b.stderr).toContain('promo_exhausted');
+  }, 15000);
+
   // ── Promo + volume stacking (R2-6) ──
   it('stacks promo and volume discount correctly', () => {
     // Product A qty=3: subtotal=3000
