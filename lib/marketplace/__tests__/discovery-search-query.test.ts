@@ -163,7 +163,7 @@ describe('searchMarketplace — executable filters and containment', () => {
     expect(from).not.toHaveBeenCalled();
   });
 
-  it.each([['garbage'], [ID[0], 'malformed'], [ID[0] + ');status.eq.true']])(
+  it.each([[['garbage']], [[ID[0], 'malformed']], [[ID[0] + ');status.eq.true']]])(
     'rejects invalid hidden exclusions before querying: %j',
     async (excludeIds) => {
       const { db, from } = fakeSupabase([]);
