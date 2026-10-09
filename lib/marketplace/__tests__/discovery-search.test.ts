@@ -186,10 +186,26 @@ describe('resolveCompoundLocation', () => {
     expect(r.tier).toBe(3);
   });
 
-  it('"Lagos, Accra" (two cities) returns first city (Lagos)', () => {
-    const r = resolveCompoundLocation('Lagos, Accra');
-    // Both are tier 1 — first one wins
-    expect(r.tier).toBe(1);
+  it('"Lagos, Accra" rejects contradictory cities instead of silently choosing one', () => {
+    expect(resolveCompoundLocation('Lagos, Accra').tier).toBe(3);
+  });
+
+  it('"Lekki, Accra" rejects conflicting neighborhood and parent city', () => {
+    expect(resolveCompoundLocation('Lekki, Accra').tier).toBe(3);
+  });
+
+  it('"Lekki, Zxywvut" rejects unknown extra tokens', () => {
+    expect(resolveCompoundLocation('Lekki, Zxywvut').tier).toBe(3);
+  });
+
+  it('"Lekki, Nigeria" resolves a compatible neighborhood + country', () => {
+    const r = resolveCompoundLocation('Lekki, Nigeria');
+    expect(r.tier).toBe(2);
+    expect(r.city).toBe('Lagos');
+  });
+
+  it('"Lekki, Ghana" rejects incompatible neighborhood + country', () => {
+    expect(resolveCompoundLocation('Lekki, Ghana').tier).toBe(3);
   });
 });
 
