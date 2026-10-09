@@ -6,11 +6,17 @@ If something breaks, check this log to find what changed and when.
 ## 2026-10-09 — #592 Business App Connect: coexistence safety and readiness
 
 ### What changed
-- Added separate Meta coexistence config validator and tenant-bound read-only readiness API. Local config is not Meta merchant eligibility.
-- Fenced unverified `connection_method=coexist` from the standard Facebook Cloud API registration callback, warned customers in signup, and exposed an honest disabled Business App Connect pilot on dashboard.
-- Added deterministic tests for config isolation and registration safety.
+- `lib/whatsapp/business-app-coexistence.ts`: Fail-closed config validator — requires explicit env-var enable, dedicated Meta-assigned config ID distinct from standard transfer config, and never infers eligibility from country alone.
+- `app/api/whatsapp/business-app-connect/readiness/route.ts`: Tenant-bound read-only readiness API (auth + UUID validation + business ownership before any response). Always returns `canConnect: false` in first slice; sets `no-store` cache.
+- `app/api/auth/facebook/callback/route.ts`: Fence blocks `connection_method=coexist|coexistence` BEFORE token exchange, candidate insert, or `registerPhoneNumber()`. Also rejects unknown connection_method values.
+- `app/get-started/OnboardingWizard.tsx`: Guards in `launchWhatsAppSignup()` and `handleFbConnectAndRegister()` prevent coexist from entering standard Embedded Signup. Updated coexist option description to disclose Meta-controlled pilot status.
+- `app/dashboard/whatsapp/connect/page.tsx`: Honest disabled Business App Connect pilot card; fetches readiness API; never promises coexistence availability.
+- `lib/__tests__/business-app-coexistence-592.test.ts`: 21 tests — config isolation, no country-based eligibility inference, callback fence ordering, unknown method rejection, standard transfer non-regression, wizard guards, readiness API source contract.
+- `lib/__tests__/business-app-connect-readiness-route-592.test.ts`: 8 tests — tenant isolation (UUID validation, auth, ownership, DB error), disabled config, reused config detection, warning content.
+
 ### What it affects / could break
-- Previously advertised but unverified coexistence requests now fail closed rather than proceeding as standard transfer. Dedicated number transfer remains unchanged.
+- Previously advertised but unverified coexistence requests now fail closed (409) rather than proceeding as standard transfer. Dedicated number transfer remains unchanged.
+- Unknown `connection_method` values also rejected (400). Standard `transfer` and undefined/omitted values continue working.
 - Real coexistence onboarding remains gated on Meta partner entitlement, eligible regions/phone, signed FINISH session, and device/provider verification; no provider mutation, migration, or deployment in this slice.
 
 ## 2026-10-09 — #590 CTO correction: mounted Contact Winner UI + synchronous send lock

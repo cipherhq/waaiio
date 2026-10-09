@@ -83,4 +83,33 @@ describe('#592 coexistence readiness handler — tenant authority / no provider 
     expect(value.canConnect).toBe(false);
     expect(mockFrom).toHaveBeenCalledTimes(1);
   });
+
+  it('returns configured: false when env is disabled', async () => {
+    process.env.META_BUSINESS_APP_COEXISTENCE_ENABLED = 'false';
+    const { GET } = await import('@/app/api/whatsapp/business-app-connect/readiness/route');
+    const res = await GET(request());
+    const value = await res.json();
+    expect(res.status).toBe(200);
+    expect(value.configured).toBe(false);
+    expect(value.canConnect).toBe(false);
+    expect(value.reason).toBe('disabled');
+  });
+
+  it('returns configured: false when coexist config ID matches transfer config ID', async () => {
+    process.env.NEXT_PUBLIC_META_BUSINESS_APP_COEXISTENCE_CONFIG_ID = '9999999999999999'; // same as transfer
+    const { GET } = await import('@/app/api/whatsapp/business-app-connect/readiness/route');
+    const res = await GET(request());
+    const value = await res.json();
+    expect(res.status).toBe(200);
+    expect(value.configured).toBe(false);
+    expect(value.reason).toBe('reused_transfer_configuration');
+    expect(value.canConnect).toBe(false);
+  });
+
+  it('includes warning about not connecting through standard transfer', async () => {
+    const { GET } = await import('@/app/api/whatsapp/business-app-connect/readiness/route');
+    const res = await GET(request());
+    const value = await res.json();
+    expect(value.warning).toContain('standard transfer');
+  });
 });
