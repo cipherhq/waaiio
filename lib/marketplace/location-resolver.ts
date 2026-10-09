@@ -132,44 +132,51 @@ export function resolveLocation(locationToken: string): LocationResolution {
 }
 
 /**
- * Resolve a compound location string (possibly comma-separated).
- *
- * For "Lekki, Lagos": resolves "Lekki" first (tier 2 → neighbourhood),
- * then "Lagos" (tier 1 → city). Returns the most specific resolution.
- *
- * Priority:
- * - Neighbourhood hit wins over city (more specific)
- * - City hit wins over country
- * - If all tokens are unknown → tier 3
+ * Resolve a compound location only when all stated places are compatible.
+ * Unknown/conflicting parts are ambiguous: the caller must clarify, never
+ * silently select one part of the customer's location request.
  */
 export function resolveCompoundLocation(locationText: string): LocationResolution {
-  const tokens = locationText
-    .split(',')
-    .map((t) => t.trim())
-    .filter((t) => t.length > 0)
-    .slice(0, 3);
-
-  if (tokens.length === 0) {
-    return { tier: 3, city: null, addressHint: null, countryCode: null, parentCityLabel: null, resolvedTerm: locationText };
-  }
-
-  // Resolve each token independently
-  const resolutions = tokens.map((t) => resolveLocation(t));
-
-  // Pick the most specific: tier 2 > tier 1 > tier 3
-  const tier2 = resolutions.find((r) => r.tier === 2);
-  if (tier2) return tier2;
-
-  const tier1 = resolutions.find((r) => r.tier === 1);
-  if (tier1) return tier1;
-
-  // All unknown — return tier 3 with the full text
-  return {
+  const unknown = (): LocationResolution => ({
     tier: 3,
     city: null,
     addressHint: null,
     countryCode: null,
     parentCityLabel: null,
     resolvedTerm: locationText,
-  };
+  });
+
+  if (locationText.length > 160) return unknown();
+  const tokens = locationText.split(',').map((t) => t.trim());
+  if (tokens.length < 1 || tokens.length > 3 || tokens.some((t) => !t)) {
+    return unknown();
+  }
+
+  const matches = tokens.map(resolveLocation);
+  if (matches.some((r) => r.tier === 3)) return unknown();
+
+  const neighborhoods = matches.filter((r) => r.tier === 2);
+  const cities = matches.filter((r) => r.tier === 1 && r.city !== null);
+  const countries = matches.filter((r) => r.tier === 1 && r.countryCode !== null);
+
+  const unique = (values: string[]) => new Set(values.map((v) => v.toLowerCase())).size <= 1;
+  if (!unique(neighborhoods.map((r) => r.addressHint!))) return unknown();
+  if (!unique(cities.map((r) => r.city!))) return unknown();
+  if (!unique(countries.map((r) => r.countryCode!))) return unknown();
+
+  const mostSpecific = neighborhoods[0] || cities[0] || countries[0];
+  const requiredCity = mostSpecific.city;
+  if (requiredCity && cities.some((r) => r.city!.toLowerCase() !== requiredCity.toLowerCase())) {
+    return unknown();
+  }
+
+  // City-country compatibility is verified using the curated location index,
+  // without implying that an isolated city query automatically sets a country filter.
+  const requiredCountry = countries[0]?.countryCode;
+  if (requiredCountry && requiredCity) {
+    const cityCountry = cityIndex.find((c) => c.name.toLowerCase() === requiredCity.toLowerCase());
+    if (!cityCountry || cityCountry.countryCode !== requiredCountry) return unknown();
+  }
+
+  return mostSpecific;
 }
