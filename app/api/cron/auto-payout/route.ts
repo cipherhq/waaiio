@@ -101,9 +101,10 @@ export async function GET(request: NextRequest) {
         .eq('period_end', periodEndStr)
         .limit(5000),
       // Platform fees for the period across all businesses
+      // #597: include is_direct_transfer to exclude funds Waaiio never held
       supabase
         .from('platform_fees')
-        .select('business_id, transaction_amount, fee_total, gateway_fee, waived')
+        .select('business_id, transaction_amount, fee_total, gateway_fee, waived, is_direct_transfer')
         .in('business_id', bizIds)
         .is('refunded_at', null)
         .gte('created_at', periodStart.toISOString())
@@ -129,7 +130,7 @@ export async function GET(request: NextRequest) {
     const alreadyHasPayout = new Set((existingPayoutsForPeriod || []).map(p => p.business_id));
 
     // Group fees by business_id
-    const feesByBiz = new Map<string, { transaction_amount: number; fee_total: number; gateway_fee: number; waived: boolean }[]>();
+    const feesByBiz = new Map<string, { transaction_amount: number; fee_total: number; gateway_fee: number; waived: boolean; is_direct_transfer: boolean }[]>();
     for (const row of (allFeeRows || [])) {
       const list = feesByBiz.get(row.business_id) ?? [];
       list.push(row);
@@ -159,7 +160,11 @@ export async function GET(request: NextRequest) {
       if (alreadyHasPayout.has(biz.id)) continue;
 
       // Calculate gross and fee totals from pre-fetched batch data
-      const fees = feesByBiz.get(biz.id) ?? [];
+      // #597: Exclude is_direct_transfer rows — those funds went directly to the
+      // business's bank account; Waaiio never held them and must not pay them out.
+      // Matches the manual generator's filter at generate/route.ts:77.
+      const allFees = feesByBiz.get(biz.id) ?? [];
+      const fees = allFees.filter(f => !f.is_direct_transfer);
       const gross = fees.reduce((s, f) => s + Number(f.transaction_amount || 0), 0);
       const totalFees = fees.filter(f => !f.waived).reduce((s, f) => s + Number(f.fee_total || 0), 0);
       const totalGatewayFees = fees.reduce((s, f) => s + Number(f.gateway_fee || 0), 0);

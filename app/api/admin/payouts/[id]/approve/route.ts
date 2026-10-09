@@ -127,9 +127,10 @@ export async function POST(
   }
 
   // ── Balance verification (includes review_required as reserved) ──
+  // #597: include is_direct_transfer to exclude funds Waaiio never held
   const { data: balancePayments } = await supabase
     .from('platform_fees')
-    .select('transaction_amount, fee_total')
+    .select('transaction_amount, fee_total, is_direct_transfer')
     .eq('business_id', payout.business_id)
     .is('refunded_at', null);
 
@@ -140,7 +141,11 @@ export async function POST(
     .in('status', ['paid', 'processing', 'approved', 'review_required'])
     .neq('id', id);
 
-  const totalEarned = (balancePayments || []).reduce((sum, f) => sum + (f.transaction_amount - f.fee_total), 0);
+  // #597: Filter out is_direct_transfer rows — those funds went directly to the
+  // business's bank account; Waaiio never held them. Treat unknown custody as
+  // ineligible (fail-closed). Matches manual generator at generate/route.ts:77.
+  const platformHeldFees = (balancePayments || []).filter(f => !f.is_direct_transfer);
+  const totalEarned = platformHeldFees.reduce((sum, f) => sum + (f.transaction_amount - f.fee_total), 0);
   const totalPaidOut = (priorPayouts || []).reduce((sum, p) => sum + Number(p.net_amount), 0);
   const availableBalance = totalEarned - totalPaidOut;
 
