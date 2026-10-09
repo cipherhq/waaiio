@@ -77,6 +77,10 @@ DECLARE
   v_addon_ids text;
   v_zone RECORD;
   v_zone_name TEXT := NULL;
+  -- M435 603-E: idempotent replay validation vars
+  v_existing_total int;
+  v_existing_discount int;
+  v_existing_promo_id uuid;
   -- M435: volume discount per-item vars
   v_vol_rule RECORD;
   v_vol_item_discount int;
@@ -116,9 +120,32 @@ BEGIN
     v_fingerprint := md5('');
   END IF;
 
+  -- ══════════════════════════════════════════════════════════════════
+  -- M435 603-D: Validate all item and addon quantities are positive integers
+  -- before any pricing/stock mutation. Negative quantities could inflate stock
+  -- and produce free orders via zero-floor.
+  -- ══════════════════════════════════════════════════════════════════
+  FOR v_item IN SELECT * FROM jsonb_array_elements(p_items)
+  LOOP
+    IF COALESCE((v_item->>'quantity')::int, 0) < 1 THEN
+      RAISE EXCEPTION 'invalid_quantity:Item % has non-positive quantity %',
+        v_item->>'product_id', COALESCE(v_item->>'quantity', 'null');
+    END IF;
+    -- Check addon quantities
+    IF v_item->'addons' IS NOT NULL AND v_item->'addons' != 'null'::jsonb THEN
+      FOR v_addon_entry IN SELECT * FROM jsonb_array_elements(v_item->'addons')
+      LOOP
+        IF COALESCE((v_addon_entry->>'quantity')::int, 0) < 1 THEN
+          RAISE EXCEPTION 'invalid_addon_quantity:Addon % has non-positive quantity %',
+            COALESCE(v_addon_entry->>'id', 'unknown'), COALESCE(v_addon_entry->>'quantity', 'null');
+        END IF;
+      END LOOP;
+    END IF;
+  END LOOP;
+
   -- Idempotent: check for existing order from same bot session
-  SELECT id, reference_code, items_fingerprint
-  INTO v_existing_id, v_existing_ref, v_existing_fingerprint
+  SELECT id, reference_code, items_fingerprint, total_amount, discount_amount, promo_code_id
+  INTO v_existing_id, v_existing_ref, v_existing_fingerprint, v_existing_total, v_existing_discount, v_existing_promo_id
   FROM orders
   WHERE bot_session_id = p_bot_session_id
     AND status IN ('pending', 'confirmed')
@@ -127,6 +154,21 @@ BEGIN
   IF FOUND THEN
     IF p_validate_products THEN
       IF v_existing_fingerprint IS NOT NULL AND v_existing_fingerprint = v_fingerprint THEN
+        -- 603-E: Validate monetary contract on replay.
+        -- Same cart fingerprint is necessary but not sufficient — promo, discount,
+        -- and expected total must also match the committed order.
+        IF p_expected_total IS NOT NULL AND v_existing_total != p_expected_total THEN
+          RAISE EXCEPTION 'replay_total_mismatch:Existing order total % does not match expected %',
+            v_existing_total, p_expected_total;
+        END IF;
+        IF COALESCE(p_promo_code_id::text, '') != COALESCE(v_existing_promo_id::text, '') THEN
+          RAISE EXCEPTION 'replay_promo_mismatch:Replay uses different promo code than committed order';
+        END IF;
+        IF COALESCE(p_discount_amount, 0) != COALESCE(v_existing_discount, 0) THEN
+          RAISE EXCEPTION 'replay_discount_mismatch:Replay discount % does not match committed %',
+            COALESCE(p_discount_amount, 0), COALESCE(v_existing_discount, 0);
+        END IF;
+
         RETURN jsonb_build_object(
           'order_id', v_existing_id,
           'reference_code', v_existing_ref,
@@ -214,6 +256,18 @@ BEGIN
         IF (v_promo.current_uses + v_active_count) >= v_promo.max_uses THEN
           RAISE EXCEPTION 'promo_exhausted:Promo code has reached maximum uses';
         END IF;
+      END IF;
+
+      -- 603-F: Per-customer promo reuse check (matches bot validation)
+      -- A user who already has an order with this promo cannot reuse it
+      IF EXISTS (
+        SELECT 1 FROM orders
+        WHERE user_id = p_user_id
+          AND promo_code_id = p_promo_code_id
+          AND status IN ('pending', 'confirmed', 'delivered')
+          AND id != COALESCE(v_existing_id, '00000000-0000-0000-0000-000000000000')
+      ) THEN
+        RAISE EXCEPTION 'promo_already_used:This promo code has already been used by this customer';
       END IF;
 
       -- Product scope and discount computation happen after item prices are locked (below)
@@ -333,6 +387,7 @@ BEGIN
       -- Uses LOCKED product/variant unit price, not caller-supplied p_unit_price
       -- ══════════════════════════════════════════════════════════════
       v_vol_item_discount := 0;
+      -- 603-F: FOR UPDATE serializes concurrent rule edits with discount calculation
       SELECT * INTO v_vol_rule
       FROM volume_discount_rules
       WHERE business_id = p_business_id
@@ -343,7 +398,8 @@ BEGIN
       ORDER BY
         product_id IS NULL ASC,
         min_quantity DESC
-      LIMIT 1;
+      LIMIT 1
+      FOR UPDATE;
 
       IF FOUND THEN
         CASE v_vol_rule.discount_type
