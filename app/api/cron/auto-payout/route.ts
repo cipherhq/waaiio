@@ -160,11 +160,12 @@ export async function GET(request: NextRequest) {
       if (alreadyHasPayout.has(biz.id)) continue;
 
       // Calculate gross and fee totals from pre-fetched batch data
-      // #597: Exclude is_direct_transfer rows — those funds went directly to the
-      // business's bank account; Waaiio never held them and must not pay them out.
-      // Matches the manual generator's filter at generate/route.ts:77.
+      // #597: Only include fees with explicitly confirmed platform custody
+      // (is_direct_transfer === false). Direct transfer rows represent funds that
+      // went directly to the business's bank account — Waaiio never held them.
+      // NULL/unknown custody is treated as ineligible (fail-closed).
       const allFees = feesByBiz.get(biz.id) ?? [];
-      const fees = allFees.filter(f => !f.is_direct_transfer);
+      const fees = allFees.filter(f => f.is_direct_transfer === false);
       const gross = fees.reduce((s, f) => s + Number(f.transaction_amount || 0), 0);
       const totalFees = fees.filter(f => !f.waived).reduce((s, f) => s + Number(f.fee_total || 0), 0);
       const totalGatewayFees = fees.reduce((s, f) => s + Number(f.gateway_fee || 0), 0);
