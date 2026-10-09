@@ -40,7 +40,7 @@ export default function Dashboard() {
   const [featureAdoption, setFeatureAdoption] = useState<Array<{ capability: string; count: number }>>([]);
   const [topBusinesses, setTopBusinesses] = useState<Array<{ name: string; bookings: number; revenue: number; country: string }>>([]);
   const [customerInsights, setCustomerInsights] = useState<{ total: number; returning: number; thisMonth: number }>({ total: 0, returning: 0, thisMonth: 0 });
-  const [categoryBreakdown, setCategoryBreakdown] = useState<Array<{ category: string; count: number; bookings: number; revenue: number; revenueByCurrency: Record<string, number> }>>([]);
+  const [categoryBreakdown, setCategoryBreakdown] = useState<Array<{ category: string; count: number; bookings: number; revenueByCurrency: Record<string, number> }>>([]);
   // Revenue summary with time periods + country filter
   const [revenuePeriod, setRevenuePeriod] = useState<'week' | 'month' | 'all'>('month');
   const [revenueCountry, setRevenueCountry] = useState<string>('all');
@@ -407,7 +407,6 @@ export default function Dashboard() {
               category,
               count: data.count,
               bookings: data.bookings,
-              revenue: Object.values(data.revenueByCurrency).reduce((s, a) => s + a, 0),
               revenueByCurrency: data.revenueByCurrency,
             }))
             .sort((a, b) => b.count - a.count)
@@ -839,7 +838,7 @@ export default function Dashboard() {
                       <td className="px-4 py-3 text-right text-gray-700">{cat.count}</td>
                       <td className="px-4 py-3 text-right text-gray-700">{cat.bookings}</td>
                       <td className="px-4 py-3 text-right font-medium text-gray-900">
-                        {cat.revenue > 0
+                        {Object.values(cat.revenueByCurrency).some(a => a > 0)
                           ? Object.entries(cat.revenueByCurrency)
                               .filter(([, a]) => a > 0)
                               .map(([cur, amt]) => formatMoney(amt, cur))

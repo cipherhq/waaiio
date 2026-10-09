@@ -25,6 +25,7 @@ interface PlatformFee {
 interface BusinessPayout {
   net_amount: number;
   platform_fee: number;
+  business_id: string;
   currency: string | null;
   status: string;
   created_at: string;
@@ -64,6 +65,7 @@ export default function Finance() {
   const [refunds, setRefunds] = useState<Refund[]>([]);
   const [businesses, setBusinesses] = useState<Business[]>([]);
   const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
+  const [queryErrors, setQueryErrors] = useState<string[]>([]);
 
   // Filters
   const [dateFrom, setDateFrom] = useState('');
@@ -75,11 +77,20 @@ export default function Finance() {
       const [paymentsRes, feesRes, payoutsRes, refundsRes, bizRes, subsRes] = await Promise.all([
         adminDb.from('payments').select('id, amount, currency, gateway, status, business_id, created_at'),
         adminDb.from('platform_fees').select('fee_total, waived, refunded_at, business_id, created_at, is_direct_transfer').is('refunded_at', null),
-        adminDb.from('business_payouts').select('net_amount, platform_fee, currency, status, created_at'),
+        adminDb.from('business_payouts').select('net_amount, platform_fee, business_id, currency, status, created_at'),
         adminDb.from('refunds').select('amount, business_id, status, created_at').eq('status', 'success'),
         adminDb.from('businesses').select('id, category, country_code, subscription_tier'),
         adminDb.from('subscriptions').select('id, business_id, tier, amount, currency, status, created_at').eq('status', 'active'),
       ]);
+
+      const errors: string[] = [];
+      if (paymentsRes.error) errors.push('payments');
+      if (feesRes.error) errors.push('platform fees');
+      if (payoutsRes.error) errors.push('payouts');
+      if (refundsRes.error) errors.push('refunds');
+      if (bizRes.error) errors.push('businesses');
+      if (subsRes.error) errors.push('subscriptions');
+      setQueryErrors(errors);
 
       setPayments(paymentsRes.data || []);
       setFees(feesRes.data || []);
@@ -119,7 +130,7 @@ export default function Finance() {
   }
   const filteredPayments = useMemo(() => payments.filter(p => inRange(p.created_at) && matchesCountry(p.business_id)), [payments, dateFrom, dateTo, countryFilter, bizCountryMap]);
   const filteredFees = useMemo(() => fees.filter(f => inRange(f.created_at) && matchesCountry(f.business_id)), [fees, dateFrom, dateTo, countryFilter, bizCountryMap]);
-  const filteredPayouts = useMemo(() => payouts.filter(p => inRange(p.created_at)), [payouts, dateFrom, dateTo]);
+  const filteredPayouts = useMemo(() => payouts.filter(p => inRange(p.created_at) && matchesCountry(p.business_id)), [payouts, dateFrom, dateTo, countryFilter, bizCountryMap]);
   const filteredRefunds = useMemo(() => refunds.filter(r => inRange(r.created_at) && matchesCountry(r.business_id)), [refunds, dateFrom, dateTo, countryFilter, bizCountryMap]);
 
   // Resolve business → currency
@@ -297,33 +308,29 @@ export default function Finance() {
       .map(row => ({ ...row, net: row.gross - row.refunded - row.fees }));
   }, [payments, fees, payouts, refunds, bizCurrencyMap]);
 
-  // Category revenue breakdown (per currency)
-  const categoryRevenue = useMemo(() => {
+  // Category payment volume breakdown (per currency, ranked by transaction count)
+  const categoryVolume = useMemo(() => {
     const bizMap = new Map(businesses.map(b => [b.id, b]));
-    const byCat = new Map<string, Record<string, number>>();
+    const byCat = new Map<string, { amounts: Record<string, number>; txCount: number }>();
 
     for (const p of payments) {
       if (p.status !== 'success' || !p.business_id) continue;
       const biz = bizMap.get(p.business_id);
       const cat = biz?.category || 'other';
       const cur = getPaymentCurrency(p);
-      if (!byCat.has(cat)) byCat.set(cat, {});
-      const catAmounts = byCat.get(cat)!;
-      catAmounts[cur] = (catAmounts[cur] || 0) + Number(p.amount || 0);
+      if (!byCat.has(cat)) byCat.set(cat, { amounts: {}, txCount: 0 });
+      const entry = byCat.get(cat)!;
+      entry.amounts[cur] = (entry.amounts[cur] || 0) + Number(p.amount || 0);
+      entry.txCount++;
     }
 
-    // Sort by total amount across all currencies (approximate for ranking)
     return Array.from(byCat.entries())
-      .map(([category, amounts]) => ({
-        category,
-        amounts,
-        total: Object.values(amounts).reduce((s, a) => s + a, 0),
-      }))
-      .sort((a, b) => b.total - a.total)
+      .map(([category, { amounts, txCount }]) => ({ category, amounts, txCount }))
+      .sort((a, b) => b.txCount - a.txCount)
       .slice(0, 10);
   }, [payments, businesses, bizCurrencyMap]);
 
-  const maxCatRevenue = Math.max(...categoryRevenue.map(c => c.total), 1);
+  const maxCatTxCount = Math.max(...categoryVolume.map(c => c.txCount), 1);
 
   if (!hasAccess) {
     return (
@@ -341,6 +348,8 @@ export default function Finance() {
       </div>
     );
   }
+
+  const hasQueryErrors = queryErrors.length > 0;
 
   return (
     <div>
@@ -370,24 +379,44 @@ export default function Finance() {
               className="text-xs text-brand hover:underline">Clear all</button>
           )}
           <button
-            onClick={() => downloadCSV(
-              monthly.map(r => ({
-                month: r.month,
-                currency: r.currency,
-                transactions: r.transactions,
-                gross: r.gross,
-                refunded: r.refunded,
-                platform_fees: r.fees,
-                payouts: r.payouts,
-                net: r.net,
-              })),
-              `finance-monthly-${new Date().toISOString().slice(0, 10)}.csv`,
-            )}
-            className="rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50"
+            onClick={() => {
+              if (hasQueryErrors) return;
+              downloadCSV(
+                monthly.map(r => ({
+                  month: r.month,
+                  currency: r.currency,
+                  transactions: r.transactions,
+                  gross: r.gross,
+                  refunded: r.refunded,
+                  platform_fees: r.fees,
+                  payouts: r.payouts,
+                  net: r.net,
+                })),
+                `finance-monthly-${new Date().toISOString().slice(0, 10)}.csv`,
+              );
+            }}
+            disabled={hasQueryErrors}
+            className={`rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium transition ${hasQueryErrors ? 'text-gray-400 cursor-not-allowed opacity-50' : 'text-gray-700 hover:bg-gray-50'}`}
+            title={hasQueryErrors ? 'Export disabled — some data failed to load' : undefined}
           >
             Export CSV
           </button>
         </div>
+      </div>
+
+      {/* Query error banner */}
+      {hasQueryErrors && (
+        <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3">
+          <p className="text-sm font-semibold text-red-800">Data incomplete — some queries failed</p>
+          <p className="mt-1 text-xs text-red-600">
+            Failed to load: {queryErrors.join(', ')}. Metrics below may be missing data. Do not use these figures for financial decisions.
+          </p>
+        </div>
+      )}
+
+      {/* Partial data notice */}
+      <div className="mt-3 text-xs text-gray-400">
+        Showing client-loaded data. Totals may be incomplete for large datasets. Full financial reconciliation requires server-side aggregation.
       </div>
 
       {/* Metric Cards */}
@@ -525,20 +554,22 @@ export default function Finance() {
         </div>
       </div>
 
-      {/* Revenue by Category */}
-      {categoryRevenue.length > 0 && (
+      {/* Payment Volume by Category */}
+      {categoryVolume.length > 0 && (
         <div className="mt-8 rounded-xl border border-gray-200 bg-white p-5">
-          <h3 className="text-sm font-semibold text-gray-900">Revenue by Business Category</h3>
+          <h3 className="text-sm font-semibold text-gray-900">Payment Volume by Business Category</h3>
+          <p className="mt-0.5 text-xs text-gray-400">Ranked by transaction count. Per-currency amounts shown separately.</p>
           <div className="mt-4 space-y-3">
-            {categoryRevenue.map(({ category, amounts, total }) => (
+            {categoryVolume.map(({ category, amounts, txCount }) => (
               <div key={category} className="flex items-center gap-3">
                 <span className="w-24 text-sm text-gray-600 capitalize truncate">{category}</span>
                 <div className="flex-1 h-6 bg-gray-100 rounded-full overflow-hidden">
                   <div
                     className="h-full bg-brand rounded-full transition-all"
-                    style={{ width: `${(total / maxCatRevenue) * 100}%` }}
+                    style={{ width: `${(txCount / maxCatTxCount) * 100}%` }}
                   />
                 </div>
+                <span className="text-xs text-gray-500 w-12 text-right">{txCount} tx</span>
                 <span className="text-sm font-medium text-gray-900 w-36 text-right">{formatMultiCurrency(amounts)}</span>
               </div>
             ))}
