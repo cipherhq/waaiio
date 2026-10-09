@@ -29,7 +29,7 @@ vi.mock('@/components/Pagination', () => ({ Pagination: () => null }));
 vi.mock('react-router', () => ({ useNavigate: () => vi.fn() }));
 
 import Finance from '../pages/Finance';
-import Dashboard from '../pages/Dashboard';
+import { CategoryPaymentValue } from '../pages/Dashboard';
 import Payouts from '../pages/Payouts';
 
 const sourceNames = ['payments', 'platform_fees', 'business_payouts', 'refunds', 'businesses', 'subscriptions'];
@@ -168,23 +168,22 @@ describe('#595 mounted Finance: error is not a valid zero', () => {
 });
 
 describe('#595 mounted Dashboard and Payouts', () => {
-  it('renders Dashboard category payment volume for positive currencies and an all-zero category', async () => {
-    h.adminQuery.mockImplementation(async (table: string, args: any) => {
-      if (table === 'businesses' && args?.select?.includes('category')) {
-        return { data: businesses, count: 2 };
-      }
-      if (table === 'payments' && args?.select === 'business_id, amount') {
-        return { data: [{ business_id: NG, amount: 0 }, { business_id: US, amount: 20 }], count: 2 };
-      }
-      return { data: [], count: 0 };
-    });
-    render(<Dashboard />);
-    expect(await screen.findByText('By Category')).toBeInTheDocument();
-    expect(screen.getByRole('columnheader', { name: 'Payment Volume' })).toBeInTheDocument();
-    const rows = document.querySelectorAll('table tbody tr');
-    expect(rows.length).toBeGreaterThan(0);
-    expect(screen.getByText(/currency inferred from business country/)).toBeInTheDocument();
-    expect(screen.getAllByText('—').length).toBeGreaterThan(0);
+  it('renders the exact Dashboard category cell for zero, single and multiple currencies', () => {
+    const { rerender } = render(<CategoryPaymentValue amounts={{ NGN: 0, USD: 0 }} />);
+    expect(screen.getByText('—')).toBeInTheDocument();
+
+    rerender(<CategoryPaymentValue amounts={{ NGN: 100, USD: 0 }} />);
+    expect(screen.getByText(/₦100/)).toBeInTheDocument();
+    expect(screen.queryByText('—')).not.toBeInTheDocument();
+
+    rerender(<CategoryPaymentValue amounts={{ NGN: 0, USD: 20 }} />);
+    expect(screen.getByText(/\$20/)).toBeInTheDocument();
+
+    rerender(<CategoryPaymentValue amounts={{ NGN: 100, USD: 20 }} />);
+    const rendered = screen.getByText(/₦100.*\$20/).textContent || '';
+    expect(rendered).toContain('₦100');
+    expect(rendered).toContain('$20');
+    expect(rendered).not.toContain('120');
   });
 
   it('renders real Payouts approval dropdown without the unsupported Flutterwave transfer method', async () => {
