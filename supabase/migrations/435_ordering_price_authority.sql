@@ -67,6 +67,7 @@ DECLARE
   v_server_subtotal int := 0;      -- M435: pre-discount item+addon total
   v_server_discount int := 0;      -- M435: server-computed promo discount
   v_server_volume_discount int := 0; -- M435: server-computed volume discount
+  v_server_addons_total int := 0;   -- DB-authoritative addon subtotal
   v_item_total int;
   v_addon_entry jsonb;
   v_addon_id uuid;
@@ -415,6 +416,7 @@ BEGIN
 
           v_addon_total := v_addon.price * COALESCE((v_addon_entry->>'quantity')::int, 1);
           v_item_total := v_item_total + v_addon_total;
+          v_server_addons_total := v_server_addons_total + v_addon_total;
         END LOOP;
       END IF;
 
@@ -511,6 +513,17 @@ BEGIN
         RAISE EXCEPTION 'discount_mismatch:Server discount % does not match caller discount %',
           v_server_discount, COALESCE(p_discount_amount, 0);
       END IF;
+    END IF;
+
+    -- Do not allow stacked discounts to exceed the sold item value.
+    IF v_server_discount + v_server_volume_discount > v_server_subtotal THEN
+      RAISE EXCEPTION 'combined_discount_exceeds_subtotal:Combined discounts exceed merchandise subtotal';
+    END IF;
+    IF COALESCE(p_shipping_cost, 0) < 0 THEN
+      RAISE EXCEPTION 'invalid_shipping_cost:Shipping fee cannot be negative';
+    END IF;
+    IF COALESCE(p_addons_total, 0) IS DISTINCT FROM v_server_addons_total THEN
+      RAISE EXCEPTION 'addons_total_mismatch:Quoted addons % differ from authoritative addons %', p_addons_total, v_server_addons_total;
     END IF;
 
     -- M435: Compare server-computed volume discount against caller's quote
@@ -648,7 +661,7 @@ BEGIN
     p_delivery_zone_id,
     CASE WHEN v_zone_name IS NOT NULL THEN v_zone_name
          ELSE p_delivery_zone_name END,
-    p_addons_total,
+    CASE WHEN p_validate_products THEN v_server_addons_total ELSE p_addons_total END,
     CASE WHEN p_validate_products THEN v_server_volume_discount ELSE p_volume_discount_amount END,
     p_pickup_address, p_dropoff_address, p_package_description, p_package_photo_url,
     p_referral_id, v_fingerprint
