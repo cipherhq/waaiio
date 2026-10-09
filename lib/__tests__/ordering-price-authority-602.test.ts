@@ -118,9 +118,9 @@ beforeAll(() => {
   cleanup();
 
   // R2-2: Assert fixture setup succeeds (fail-fast sql helper throws on error)
-  sql(`INSERT INTO businesses (id, name, owner_id, category) VALUES
-    ('${BIZ_ID}', 'Test Biz 602', '${USER_ID}', 'restaurant'),
-    ('${OTHER_BIZ_ID}', 'Other Biz', '${USER_ID}', 'restaurant')
+  sql(`INSERT INTO businesses (id, name, owner_id, category, slug) VALUES
+    ('${BIZ_ID}', 'Test Biz 602', '${USER_ID}', 'restaurant', 'test-biz-602'),
+    ('${OTHER_BIZ_ID}', 'Other Biz', '${USER_ID}', 'restaurant', 'other-biz-602')
     ON CONFLICT (id) DO NOTHING;`);
 
   sql(`INSERT INTO products (id, business_id, name, price, is_active) VALUES
