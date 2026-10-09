@@ -383,7 +383,7 @@ export default function Finance() {
         </div>
       </div>
 
-      {/* Partial data notice */}      {/* Partial data notice */}
+      {/* Partial data notice */}
       <div className="mt-3 text-xs text-gray-400">
         Filtered client-loaded rows only: not complete or reconciled. Payout amounts have no verified currency. CSV export is disabled pending coverage verification.
       </div>
