@@ -247,6 +247,10 @@ export default function PromoCodesPage() {
                 <input type="number" min={0} value={form.max_uses ?? ''} onChange={e => setForm({ ...form, max_uses: e.target.value ? parseInt(e.target.value) : null })} placeholder="Unlimited" className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand" />
               </div>
               <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">Valid From</label>
+                <input type="date" value={form.valid_from} onChange={e => setForm({ ...form, valid_from: e.target.value })} className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm uppercase outline-none focus:border-brand" />
+              </div>
+              <div>
                 <label className="mb-1 block text-sm font-medium text-gray-700">Valid Until</label>
                 <input type="date" value={form.valid_until} onChange={e => setForm({ ...form, valid_until: e.target.value })} className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand" />
               </div>
