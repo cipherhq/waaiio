@@ -3,6 +3,16 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-10-08 — #584 Discovery search fail-closed correction (PR #589)
+
+### What changed
+- `lib/marketplace/search.ts`: Reject invalid/ambiguous location and address constraints, malformed admin-hidden UUID exclusions and unusable free-text before querying. Constrain geographic filters to safe PostgREST tokens; neighborhood results require parent-city AND address narrowing, and city/country requests remain independently scoped.
+- `lib/marketplace/location-resolver.ts`: Compound locations now require compatibility across city, neighborhood and country; contradictory or unknown comma-separated tokens return clarification tier instead of silently choosing the first match.
+- `lib/marketplace/__tests__/discovery-search.test.ts`, `discovery-search-query.test.ts`: Cover conflicting locations and execute the real search function with simulated Supabase query application, including hidden exclusion before result limits, business opt-out, malformed input and DB failure.
+
+### What it affects / could break
+- Searches that previously ignored invalid locations, invalid admin hidden-ID lists or contradictory places now return a typed failure. Callers must explicitly handle `ok:false` / `locationFailed:true` and request clarification; do not fall back to an unfiltered directory listing. Phase B remains draft-only with no bot routing or production deployment.
+
 ## 2026-10-08 — P0 SECURITY: business_members authorization containment (M433)
 
 ### What changed
