@@ -3899,3 +3899,97 @@ jobs:
             exit 1
           fi
           echo "✅ No wildcard dependencies."
+
+  security-acl-tests:
+    name: P0 security ACL tests (disposable PG)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: test_runner
+          POSTGRES_PASSWORD: test_only_ephemeral
+          POSTGRES_DB: security_acl_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U test_runner -d security_acl_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.11.1
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install pg driver
+        run: npm install --save-dev pg
+
+      - name: Provision Supabase-compatible roles and schemas
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: test_runner
+          PGPASSWORD: test_only_ephemeral
+          PGDATABASE: security_acl_test
+        run: |
+          psql <<'SETUP_SQL'
+            CREATE ROLE service_role NOLOGIN BYPASSRLS;
+            CREATE ROLE anon NOLOGIN;
+            CREATE ROLE authenticated NOLOGIN;
+            CREATE EXTENSION IF NOT EXISTS pgcrypto;
+            CREATE SCHEMA IF NOT EXISTS auth;
+            CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $$
+              SELECT COALESCE(
+                current_setting('request.jwt.claim.sub', true)::uuid,
+                '00000000-0000-0000-0000-000000000000'::uuid
+              );
+            $$ LANGUAGE sql STABLE;
+            CREATE OR REPLACE FUNCTION auth.role() RETURNS TEXT AS $$
+              SELECT current_user::text;
+            $$ LANGUAGE sql STABLE;
+            CREATE TABLE auth.users (
+              id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+              instance_id UUID, aud VARCHAR(255), role VARCHAR(255),
+              email VARCHAR(255), encrypted_password VARCHAR(255),
+              created_at TIMESTAMPTZ DEFAULT now(), updated_at TIMESTAMPTZ DEFAULT now()
+            );
+            CREATE TABLE public.businesses (
+              id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+              owner_id UUID REFERENCES auth.users(id),
+              name TEXT NOT NULL, slug TEXT UNIQUE,
+              category VARCHAR(50) DEFAULT 'shop', flow_type VARCHAR(50) DEFAULT 'ordering',
+              country_code VARCHAR(10) DEFAULT 'US', status VARCHAR(20) DEFAULT 'pending'
+            );
+            GRANT USAGE ON SCHEMA public TO service_role, anon, authenticated;
+            GRANT USAGE ON SCHEMA auth TO service_role, anon, authenticated;
+            GRANT SELECT ON public.businesses TO service_role, authenticated;
+            GRANT SELECT ON auth.users TO service_role;
+            GRANT EXECUTE ON FUNCTION auth.uid() TO anon, authenticated, service_role;
+            GRANT EXECUTE ON FUNCTION auth.role() TO anon, authenticated, service_role;
+          SETUP_SQL
+          echo "✅ Disposable PG roles and schemas provisioned"
+
+      - name: Run security ACL tests against disposable PG
+        env:
+          TEST_DATABASE_URL: postgresql://test_runner:test_only_ephemeral@localhost:5432/security_acl_test
+        shell: bash
+        run: |
+          set -o pipefail
+          npx vitest run lib/__tests__/p0-business-members-acl.test.ts --reporter=verbose 2>&1 | tee /tmp/security-acl-output.txt
+
+      - name: Verify zero skipped DB tests
+        run: |
+          if grep -qE "[1-9][0-9]* skipped" /tmp/security-acl-output.txt; then
+            echo "❌ DB tests were skipped — disposable PG connection failed"
+            exit 1
+          fi
+          echo "✅ All tests executed (zero skipped)"
