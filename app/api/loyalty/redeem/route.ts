@@ -13,7 +13,12 @@ export async function POST(request: NextRequest) {
     const auth = await authenticateRequest(request, { requireBusinessOwnership: true, body });
     if (auth instanceof NextResponse) return auth;
 
-    const { businessId, customerPhone, points, reason } = body;
+    const { businessId, customerPhone, points } = body;
+    // A stable client-generated key is mandatory: replay must not debit twice.
+    const requestId = request.headers.get('Idempotency-Key') || body.redemptionId;
+    if (typeof requestId !== 'string' || !/^[0-9a-fA-F-]{36}$/.test(requestId)) {
+      return NextResponse.json({ error: 'Stable Idempotency-Key UUID required' }, { status: 428 });
+    }
     if (!businessId || !customerPhone || !points) {
       return NextResponse.json({ error: 'businessId, customerPhone, and points required' }, { status: 400 });
     }
@@ -40,30 +45,31 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Customer not found in loyalty program' }, { status: 404 });
     }
 
-    // Atomic deduction with row-level locking (prevents double-redeem)
-    const { data: success, error: redeemError } = await supabase.rpc('redeem_loyalty_points', {
+    // M434 atomically creates receipt and debits points; no separate INSERT.
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    const codeBytes = crypto.getRandomValues(new Uint8Array(6));
+    const proposedCode = 'RW-' + Array.from(codeBytes, b => chars[b % chars.length]).join('');
+    const { data: receipt, error: redeemError } = await supabase.rpc('redeem_loyalty_reward_once', {
       p_loyalty_id: loyalty.id,
+      p_business_id: businessId,
+      p_customer_phone: customerPhone,
       p_points: points,
+      p_redemption_key: `api:${requestId}`,
+      p_redemption_code: proposedCode,
     });
 
     if (redeemError) {
+      logger.error('[LOYALTY] Atomic redemption failed:', redeemError);
       return NextResponse.json({ error: 'Loyalty redemption unavailable' }, { status: 503 });
     }
-    if (success !== true) {
-      return NextResponse.json({ error: 'Insufficient points balance' }, { status: 400 });
+    if (receipt?.success !== true || !Number.isSafeInteger(receipt.points_balance)) {
+      return NextResponse.json({ error: 'Insufficient points or invalid redemption' }, { status: 400 });
     }
-
-    // Record transaction
-    await supabase.from('loyalty_transactions').insert({
-      business_id: businessId,
-      customer_phone: customerPhone,
-      points_change: -points,
-      reason: reason || 'redemption',
-    });
-
     return NextResponse.json({
       success: true,
-      new_balance: loyalty.points_balance - points,
+      new_balance: receipt.points_balance,
+      redemption_code: receipt.code,
+      replayed: receipt.replayed === true,
     });
   } catch (error) {
     logger.error('[LOYALTY] Redeem error:', error);
