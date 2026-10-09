@@ -24,6 +24,9 @@ export async function GET(request: NextRequest) {
     coexistConfigId: process.env.NEXT_PUBLIC_META_BUSINESS_APP_COEXISTENCE_CONFIG_ID,
     transferConfigId: process.env.NEXT_PUBLIC_META_EMBEDDED_SIGNUP_CONFIG_ID,
   });
+  // canConnect is ALWAYS false — config readiness is not Meta eligibility.
+  // See lib/whatsapp/business-app-coexistence.ts for the full list of
+  // provider-level gates that must be implemented before this can change.
   return NextResponse.json({
     ...gate,
     canConnect: false,

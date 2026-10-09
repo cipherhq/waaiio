@@ -3,6 +3,16 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-10-09 — #592 CTO review corrections: executable tests, auth predicates, Meta eligibility
+
+### What changed
+- `lib/__tests__/business-app-coexistence-592.test.ts`: Replaced source-text string-matching tests with 28 executable route tests. Invokes real POST/GET handlers with mocked Supabase + Meta provider. Proves: zero provider calls (mockFetch not called) on coexist denial, zero candidate INSERTs on denied paths, zero service client calls on denied paths. Transfer non-regression tests prove standard flow proceeds with candidate insert and provider calls. Gap 5: asserts canConnect never returned by config evaluator.
+- `lib/__tests__/business-app-connect-readiness-route-592.test.ts`: Mock eq() now records column/value pairs. 11 tests assert exact eq('owner_id', userId) and eq('id', businessId) predicates. Cross-tenant denial (403), DB error (503), canConnect always false (Gap 5).
+- `lib/whatsapp/business-app-coexistence.ts`: Added comprehensive comment documenting that evaluateBusinessAppCoexistenceConfig checks local config readiness ONLY. Lists all 6 provider-level gates required for future enablement (partner entitlement, phone check, country/market, signed FINISH, signup nonces).
+- `app/api/whatsapp/business-app-connect/readiness/route.ts`: Added comment explaining canConnect: false is hardcoded and references the provider-level gates.
+
+### Previous changelog entry for #592 (original implementation)
+
 ## 2026-10-09 — #592 Business App Connect: coexistence safety and readiness
 
 ### What changed
@@ -11,8 +21,8 @@ If something breaks, check this log to find what changed and when.
 - `app/api/auth/facebook/callback/route.ts`: Fence blocks `connection_method=coexist|coexistence` BEFORE token exchange, candidate insert, or `registerPhoneNumber()`. Also rejects unknown connection_method values.
 - `app/get-started/OnboardingWizard.tsx`: Guards in `launchWhatsAppSignup()` and `handleFbConnectAndRegister()` prevent coexist from entering standard Embedded Signup. Updated coexist option description to disclose Meta-controlled pilot status.
 - `app/dashboard/whatsapp/connect/page.tsx`: Honest disabled Business App Connect pilot card; fetches readiness API; never promises coexistence availability.
-- `lib/__tests__/business-app-coexistence-592.test.ts`: 21 tests — config isolation, no country-based eligibility inference, callback fence ordering, unknown method rejection, standard transfer non-regression, wizard guards, readiness API source contract.
-- `lib/__tests__/business-app-connect-readiness-route-592.test.ts`: 8 tests — tenant isolation (UUID validation, auth, ownership, DB error), disabled config, reused config detection, warning content.
+- `lib/__tests__/business-app-coexistence-592.test.ts`: 28 executable tests — config isolation, callback fence with mocked route execution, transfer non-regression, readiness API eq() predicates, canConnect always false.
+- `lib/__tests__/business-app-connect-readiness-route-592.test.ts`: 11 tests — tenant isolation with eq() predicate recording, cross-tenant denial, DB error handling, canConnect always false.
 
 ### What it affects / could break
 - Previously advertised but unverified coexistence requests now fail closed (409) rather than proceeding as standard transfer. Dedicated number transfer remains unchanged.

@@ -2,6 +2,21 @@
  * #592 Business App Connect — fail-closed readiness contract.
  * Meta determines per-number / market eligibility during its dedicated
  * coexistence onboarding. Environment variables never prove eligibility.
+ *
+ * IMPORTANT: evaluateBusinessAppCoexistenceConfig checks LOCAL config readiness
+ * ONLY — whether the Waaiio environment has a separate coexistence config ID
+ * that is distinct from the standard transfer config. This function NEVER
+ * returns canConnect or eligible status. Meta eligibility verification requires
+ * separate provider-level confirmation that is not implemented yet:
+ *   - Meta partner entitlement (Waaiio must be enrolled as a coexistence partner)
+ *   - Phone number check (the number must have an existing WhatsApp Business app)
+ *   - Country/market eligibility (Meta determines which markets support coexistence)
+ *   - Signed FINISH attestation (the Meta-hosted onboarding session must complete
+ *     with a cryptographically signed FINISH callback, not a browser-controlled value)
+ *   - Server-owned signup nonces (prevent replay and cross-session attacks)
+ *
+ * Until all of the above are implemented and audited, canConnect remains hardcoded
+ * to false in the readiness API and no real-number onboarding is possible.
  */
 export type CoexistenceGate =
   | { configured: false; reason: 'disabled' | 'missing_configuration' | 'reused_transfer_configuration'; message: string }
