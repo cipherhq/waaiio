@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { getPhonePlaceholder, type CountryCode } from '@/lib/constants';
@@ -77,6 +77,11 @@ export default function FormsPage() {
   // Send form state
   const [sendPhone, setSendPhone] = useState('');
   const [sendingForm, setSendingForm] = useState(false);
+  const [nativePreview, setNativePreview] = useState<{ businessId: string; formId: string; json: string } | null>(null);
+  const [previewingNative, setPreviewingNative] = useState<string | null>(null);
+  const [nativePreviewError, setNativePreviewError] = useState('');
+  // Generation counter to discard stale async preview responses after business switch
+  const previewGenerationRef = useRef(0);
 
   // Form builder state
   const [title, setTitle] = useState('');
@@ -103,6 +108,17 @@ export default function FormsPage() {
   }, [business.id]);
 
   useEffect(() => { loadForms(); }, [loadForms]);
+
+  // Clear stale preview when business context changes
+  useEffect(() => {
+    previewGenerationRef.current += 1;
+    setNativePreview(prev => {
+      if (prev && prev.businessId !== business.id) return null;
+      return prev;
+    });
+    setNativePreviewError('');
+    setPreviewingNative(null);
+  }, [business.id]);
 
   function openAdd() {
     setEditId('');
@@ -233,6 +249,34 @@ export default function FormsPage() {
       alert('Network error. Please try again.');
     }
     setSendingForm(false);
+  }
+
+  async function previewNativeForm(form: Form) {
+    setNativePreview(null);
+    setNativePreviewError('');
+    setPreviewingNative(form.id);
+    // Capture generation at request start to discard stale responses after business switch
+    const generation = ++previewGenerationRef.current;
+    const requestBusinessId = business.id;
+    try {
+      const params = new URLSearchParams({ businessId: requestBusinessId, formId: form.id });
+      const res = await fetch('/api/forms/native-flow/preview?' + params.toString(), { cache: 'no-store' });
+      // Discard late response if business context changed
+      if (previewGenerationRef.current !== generation) return;
+      const data = await res.json();
+      if (!res.ok) {
+        setNativePreviewError(data.error || 'Could not preview native WhatsApp form.');
+      } else {
+        setNativePreview({ businessId: requestBusinessId, formId: form.id, json: JSON.stringify(data.flowJson, null, 2) });
+      }
+    } catch {
+      if (previewGenerationRef.current !== generation) return;
+      setNativePreviewError('Preview unavailable. Please try again.');
+    } finally {
+      if (previewGenerationRef.current === generation) {
+        setPreviewingNative(null);
+      }
+    }
   }
 
   async function saveNotes(responseId: string) {
@@ -502,6 +546,25 @@ export default function FormsPage() {
         </button>
       </div>
 
+      {nativePreviewError && <p role="alert" className="mt-4 rounded-lg bg-red-50 p-3 text-sm text-red-700">{nativePreviewError}</p>}
+      {nativePreview && nativePreview.businessId === business.id && (
+        <section className="mt-5 rounded-xl border border-gray-200 p-4" aria-label="Native WhatsApp Flow JSON preview">
+          <div className="flex items-center justify-between gap-2">
+            <h2 className="text-sm font-semibold">WhatsApp-native Form JSON — draft preview</h2>
+            <button className="text-sm text-brand" onClick={() => setNativePreview(null)}>Close</button>
+          </div>
+          <p className="my-2 text-xs text-gray-500">
+            Preview only. This JSON is not published to Meta and cannot collect customer responses until
+            authorized asset provisioning, signed submission binding and webhook capture are completed.
+          </p>
+          <pre className="max-h-72 overflow-auto rounded-md bg-gray-100 p-3 text-xs text-gray-800">{nativePreview.json}</pre>
+          <button onClick={() => navigator.clipboard.writeText(nativePreview.json)}
+            className="mt-2 rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600">
+            Copy Flow JSON
+          </button>
+        </section>
+      )}
+
       {forms.length === 0 ? (
         <div className="mt-12 text-center">
           <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-brand-50">
@@ -545,6 +608,10 @@ export default function FormsPage() {
                     {copied ? '✓ Copied!' : 'Copy Link'}
                   </button>
                 )}
+                <button onClick={() => previewNativeForm(form)} disabled={previewingNative !== null}
+                  className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-50">
+                  {previewingNative === form.id ? 'Generating...' : 'Preview WhatsApp-native form'}
+                </button>
                 <button onClick={() => openResponses(form)}
                   className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50">
                   View Responses ({form.response_count})
