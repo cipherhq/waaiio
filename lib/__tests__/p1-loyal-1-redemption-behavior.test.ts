@@ -1,8 +1,6 @@
 /**
- * #598 executable loyalty redemption regression tests.
- * Runs the actual production FlowStep.next, not source-string assertions.
- * This covers the immediate false/no-code failure gate; atomic ledger receipt
- * is a separate prerequisite for full redemption certification.
+ * #598 M434 real bot step tests: a durable atomic receipt is the only proof
+ * a reward may be issued. No source-text copies of production logic.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { loyaltyFlow } from '@/lib/bot/flows/loyalty.flow';
@@ -10,62 +8,69 @@ import { createMockContext, getStep } from '@/lib/bot/flows/__tests__/helpers';
 
 vi.mock('@/lib/logger', () => ({ logger: { debug: vi.fn(), error: vi.fn(), info: vi.fn() } }));
 const step = getStep(loyaltyFlow, 'loyalty_redeem');
-
-function redemptionContext() {
+function ctxForRedemption() {
   const ctx = createMockContext();
-  ctx.session.session_data = {
-    loyalty_id: 'loyalty-1', loyalty_balance: 600,
-    _redeem_action: 'confirm',
-  };
-  ctx.business!.metadata = {
-    loyalty_reward_threshold: 500,
-    loyalty_reward_description: 'a free haircut',
-  };
+  ctx.session.id = '22222222-2222-4222-8222-222222222222';
+  ctx.session.session_data = { loyalty_id: 'loy-1', loyalty_balance: 600, _redeem_action: 'confirm' };
+  ctx.business!.metadata = { loyalty_reward_threshold: 500, loyalty_reward_description: 'a free haircut' };
   return ctx;
 }
+function textCalls(ctx: ReturnType<typeof ctxForRedemption>) {
+  return vi.mocked(ctx.sender.sendText).mock.calls.map(([args]) => args.text).join(' ');
+}
 
-describe('P1-LOYAL-1/#598: executable redemption fail-closed behavior', () => {
+describe('#598 atomic loyalty redemption bot gate', () => {
   beforeEach(() => vi.clearAllMocks());
-
   it.each([
-    { data: false, error: null },
+    { data: { success: false, reason: 'insufficient_points' }, error: null },
     { data: null, error: null },
-    { data: undefined, error: { message: 'DB offline' } },
-  ])('denies reward and transaction when redemption is not confirmed: %j', async response => {
-    const ctx = redemptionContext();
-    vi.mocked(ctx.supabase.rpc).mockResolvedValue(response as any);
+    { data: { success: true, code: null }, error: null },
+    { data: null, error: { message: 'permission denied' } },
+  ])('denies issuance without a valid durable receipt: %j', async result => {
+    const ctx = ctxForRedemption();
+    vi.mocked(ctx.supabase.rpc).mockResolvedValue(result as any);
     await step.next!(ctx);
-    const messages = vi.mocked(ctx.sender.sendText).mock.calls.map(([arg]) => arg.text);
-    expect(messages.join(' ')).not.toContain('Reward Redeemed!');
-    expect(messages.join(' ')).toContain('Something went wrong');
+    expect(textCalls(ctx)).not.toContain('Reward Redeemed!');
+    expect(textCalls(ctx)).toContain('Something went wrong');
     expect(vi.mocked(ctx.supabase.from).mock.calls.some(([table]) => table === 'loyalty_transactions')).toBe(false);
   });
 
-  it('generates a reward code only after a confirmed true RPC and persisted receipt', async () => {
-    const ctx = redemptionContext();
-    vi.mocked(ctx.supabase.rpc).mockResolvedValue({ data: true, error: null } as any);
-    const insert = vi.fn().mockResolvedValue({ error: null });
+  it('issues only the RPC-provided code and authoritative balance, not a locally proposed code', async () => {
+    const ctx = ctxForRedemption();
+    vi.mocked(ctx.supabase.rpc).mockResolvedValue({
+      data: { success: true, code: 'RW-ABC234', points_balance: 100, replayed: false }, error: null,
+    } as any);
     vi.mocked(ctx.supabase.from).mockImplementation(((table: string) => {
-      if (table === 'loyalty_transactions') return { insert };
-      return { update: () => ({ eq: async () => ({ error: null }) }), insert: () => Promise.resolve({ error: null }) };
-    }) as any);
-    await step.next!(ctx);
-    expect(insert).toHaveBeenCalledWith(expect.objectContaining({ points_change: -500, reference_type: expect.stringMatching(/^code:RW-/) }));
-    const messages = vi.mocked(ctx.sender.sendText).mock.calls.map(([arg]) => arg.text).join(' ');
-    expect(messages).toContain('Reward Redeemed!');
-    expect(messages).toContain('Redemption code:');
-  });
-
-  it('never claims the reward was issued when the transaction INSERT fails', async () => {
-    const ctx = redemptionContext();
-    vi.mocked(ctx.supabase.rpc).mockResolvedValue({ data: true, error: null } as any);
-    vi.mocked(ctx.supabase.from).mockImplementation(((table: string) => {
-      if (table === 'loyalty_transactions') return { insert: () => Promise.resolve({ error: { message: 'write failed' } }) };
+      if (table === 'alerts') return { insert: vi.fn().mockResolvedValue({ error: null }) };
       return { update: () => ({ eq: async () => ({ error: null }) }) };
     }) as any);
     await step.next!(ctx);
-    const messages = vi.mocked(ctx.sender.sendText).mock.calls.map(([arg]) => arg.text).join(' ');
-    expect(messages).toContain('Something went wrong');
-    expect(messages).not.toContain('Reward Redeemed!');
+    expect(vi.mocked(ctx.supabase.rpc)).toHaveBeenCalledWith('redeem_loyalty_reward_once', expect.objectContaining({
+      p_business_id: ctx.business!.id, p_redemption_key: `bot:${ctx.session.id}`, p_points: 500,
+    }));
+    expect(textCalls(ctx)).toContain('RW-ABC234');
+    expect(textCalls(ctx)).toContain('New balance: *100* points');
+    expect(vi.mocked(ctx.supabase.from).mock.calls.some(([table]) => table === 'loyalty_transactions')).toBe(false);
+  });
+
+  it('replays the same code, not new points, when the RPC returns a durable repeat receipt', async () => {
+    const ctx = ctxForRedemption();
+    vi.mocked(ctx.supabase.rpc).mockResolvedValue({
+      data: { success: true, code: 'RW-ABC234', points_balance: 100, replayed: true }, error: null,
+    } as any);
+    vi.mocked(ctx.supabase.from).mockImplementation(((table: string) => {
+      if (table === 'alerts') return { insert: vi.fn().mockResolvedValue({ error: null }) };
+      return { update: () => ({ eq: async () => ({ error: null }) }) };
+    }) as any);
+    await step.next!(ctx);
+    expect(textCalls(ctx)).toContain('RW-ABC234');
+    expect(textCalls(ctx)).not.toContain('Something went wrong');
+  });
+
+  it('does not debit or create a reward on Skip', async () => {
+    const ctx = ctxForRedemption();
+    ctx.session.session_data._redeem_action = 'skip';
+    expect(await step.next!(ctx)).toBe('loyalty_menu');
+    expect(ctx.supabase.rpc).not.toHaveBeenCalled();
   });
 });
