@@ -209,6 +209,17 @@ export async function searchMarketplace(
   }
   const effectiveCountry = locationCountry || criteria.country;
 
+  // Free text also participates in raw OR filters. Never drop an unusable
+  // supplied query and accidentally return the entire public directory.
+  let safeQuery: string | null = null;
+  if (criteria.query !== undefined) {
+    if (typeof criteria.query !== 'string' || criteria.query.length > 160) {
+      return { results: [], ok: false, error: 'Invalid search query' };
+    }
+    safeQuery = criteria.query.replace(/[^\p{L}\p{M}\p{N} -]/gu, ' ').trim().slice(0, 100);
+    if (!safeQuery) return { results: [], ok: false, error: 'Invalid search query' };
+  }
+
   try {
     let query = applyDirectoryEligibility(
       supabase
@@ -256,15 +267,11 @@ export async function searchMarketplace(
       query = query.gte('max_group_size', criteria.partySize);
     }
 
-    // Text search — name / description / category ILIKE
-    if (criteria.query) {
-      // Sanitize the query to prevent PostgREST injection
-      const safeQ = criteria.query.replace(/[^\p{L}\p{M}\p{N} -]/gu, ' ').trim().slice(0, 100);
-      if (safeQ.length > 0) {
-        query = query.or(
-          `name.ilike.%${safeQ}%,description.ilike.%${safeQ}%,category.ilike.%${safeQ}%`,
-        );
-      }
+    // Text search with bounded, grammar-safe PostgREST values.
+    if (safeQuery) {
+      query = query.or(
+        'name.ilike.%' + safeQuery + '%,description.ilike.%' + safeQuery + '%,category.ilike.%' + safeQuery + '%',
+      );
     }
 
     // Fetch extra rows for scoring / filtering
