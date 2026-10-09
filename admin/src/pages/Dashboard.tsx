@@ -817,7 +817,7 @@ export default function Dashboard() {
       {categoryBreakdown.length > 0 && (
         <div className="mt-8">
           <h2 className="text-lg font-semibold text-gray-900">By Category</h2>
-          <p className="mt-0.5 text-sm text-gray-500">Active accounts, bookings this month, and total revenue per category</p>
+          <p className="mt-0.5 text-sm text-gray-500">Active accounts, bookings this month, and payment volume per category (currency inferred from business country; unreconciled)</p>
           <div className="mt-4 overflow-x-auto rounded-xl border border-gray-200 bg-white">
             <table className="w-full text-sm">
               <thead className="border-b border-gray-100 bg-gray-50">
@@ -825,7 +825,7 @@ export default function Dashboard() {
                   <th className="px-4 py-3 text-left font-medium text-gray-500">Category</th>
                   <th className="px-4 py-3 text-right font-medium text-gray-500">Accounts</th>
                   <th className="px-4 py-3 text-right font-medium text-gray-500">Bookings</th>
-                  <th className="px-4 py-3 text-right font-medium text-gray-500">Revenue</th>
+                  <th className="px-4 py-3 text-right font-medium text-gray-500">Payment Volume</th>
                   <th className="px-4 py-3 text-left font-medium text-gray-500 w-40">Activity</th>
                 </tr>
               </thead>
