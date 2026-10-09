@@ -18,6 +18,10 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'businessId, customerPhone, and points required' }, { status: 400 });
     }
 
+    if (!Number.isSafeInteger(points)) {
+      return NextResponse.json({ error: 'Points must be a positive integer' }, { status: 400 });
+    }
+
     if (points <= 0) {
       return NextResponse.json({ error: 'Points must be positive' }, { status: 400 });
     }
@@ -37,12 +41,15 @@ export async function POST(request: NextRequest) {
     }
 
     // Atomic deduction with row-level locking (prevents double-redeem)
-    const { data: success } = await supabase.rpc('redeem_loyalty_points', {
+    const { data: success, error: redeemError } = await supabase.rpc('redeem_loyalty_points', {
       p_loyalty_id: loyalty.id,
       p_points: points,
     });
 
-    if (!success) {
+    if (redeemError) {
+      return NextResponse.json({ error: 'Loyalty redemption unavailable' }, { status: 503 });
+    }
+    if (success !== true) {
       return NextResponse.json({ error: 'Insufficient points balance' }, { status: 400 });
     }
 
