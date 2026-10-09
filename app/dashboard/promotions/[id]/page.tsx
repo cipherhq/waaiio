@@ -313,6 +313,11 @@ export default function PromotionDetailPage() {
   const [revealingPhone, setRevealingPhone] = useState<string | null>(null);
   const [revealedPhones, setRevealedPhones] = useState<Record<string, string>>({});
 
+  // Contact Winner
+  const [winnerTemplateReady, setWinnerTemplateReady] = useState(false);
+  const [contactingWinner, setContactingWinner] = useState<string | null>(null); // redemptionId in-flight
+  const [contactResult, setContactResult] = useState<{ redemptionId: string; type: 'success' | 'error'; message: string } | null>(null);
+
   // Analytics tab
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
   const [analyticsStats, setAnalyticsStats] = useState<AnalyticsStats | null>(null);
@@ -404,6 +409,31 @@ export default function PromotionDetailPage() {
   useEffect(() => {
     fetchCampaign();
   }, [fetchCampaign]);
+
+  /* ---- Fetch winner template readiness ---- */
+
+  useEffect(() => {
+    let cancelled = false;
+    async function checkWinnerTemplate() {
+      try {
+        const res = await fetch(
+          `/api/promotions/template-status?businessId=${encodeURIComponent(business.id)}`,
+        );
+        if (!res.ok || cancelled) return;
+        const data = await res.json();
+        // CTO contract: check nested templates.promo_winner_status_v1.status, NOT top-level status
+        const winnerStatus = data?.templates?.promo_winner_status_v1?.status;
+        if (!cancelled) {
+          setWinnerTemplateReady(winnerStatus === 'ready');
+        }
+      } catch {
+        // Template status unavailable — leave disabled (fail-closed)
+        if (!cancelled) setWinnerTemplateReady(false);
+      }
+    }
+    checkWinnerTemplate();
+    return () => { cancelled = true; };
+  }, [business.id]);
 
   /* ---- Fetch codes (paginated) ---- */
 
@@ -623,6 +653,52 @@ export default function PromotionDetailPage() {
       setImportError('Network error. Please try again.');
     }
     setImporting(false);
+  };
+
+  /* ---- Contact Winner ---- */
+
+  const handleContactWinner = async (redemptionId: string) => {
+    // Guard against double-click or stale state
+    if (contactingWinner) return;
+    if (!campaign) return;
+
+    setContactingWinner(redemptionId);
+    setContactResult(null);
+
+    try {
+      const res = await fetch('/api/promotions/winners/contact', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          businessId: business.id,
+          campaignId: campaign.id,
+          redemptionId,
+        }),
+      });
+
+      if (res.ok) {
+        setContactResult({ redemptionId, type: 'success', message: 'Winner notified successfully.' });
+      } else if (res.status === 401 || res.status === 403) {
+        setContactResult({ redemptionId, type: 'error', message: 'You do not have permission to contact this winner.' });
+      } else if (res.status === 404) {
+        setContactResult({ redemptionId, type: 'error', message: 'Winner not found.' });
+      } else if (res.status === 429) {
+        const body = await res.json().catch(() => null);
+        setContactResult({
+          redemptionId,
+          type: 'error',
+          message: body?.message || 'Winner was contacted recently. Please wait before contacting again.',
+        });
+      } else if (res.status === 503) {
+        setContactResult({ redemptionId, type: 'error', message: 'WhatsApp template unavailable. Please try again later.' });
+      } else {
+        setContactResult({ redemptionId, type: 'error', message: 'Failed to contact winner. Please try again.' });
+      }
+    } catch {
+      setContactResult({ redemptionId, type: 'error', message: 'Network error. Please check your connection.' });
+    }
+
+    setContactingWinner(null);
   };
 
   /* ---- Fulfillment ---- */
@@ -1423,13 +1499,36 @@ export default function PromotionDetailPage() {
                           </button>
                         )}
                         {winnersPermissions.can_contact_winner && (
-                          <button
-                            disabled
-                            className="text-xs text-gray-400 cursor-not-allowed"
-                            title="Template pending approval"
-                          >
-                            Contact
-                          </button>
+                          winnerTemplateReady ? (
+                            <>
+                              <button
+                                onClick={() => handleContactWinner(winner.id)}
+                                disabled={contactingWinner === winner.id}
+                                className="text-xs text-brand hover:underline disabled:opacity-50 disabled:cursor-wait"
+                                title="Send winner notification via WhatsApp"
+                              >
+                                {contactingWinner === winner.id ? (
+                                  <span className="inline-flex items-center gap-1">
+                                    <span className="h-3 w-3 animate-spin rounded-full border border-brand border-t-transparent" />
+                                    Sending…
+                                  </span>
+                                ) : 'Contact'}
+                              </button>
+                              {contactResult?.redemptionId === winner.id && (
+                                <span className={`text-xs ${contactResult.type === 'success' ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
+                                  {contactResult.message}
+                                </span>
+                              )}
+                            </>
+                          ) : (
+                            <button
+                              disabled
+                              className="text-xs text-gray-400 cursor-not-allowed"
+                              title="Template pending approval"
+                            >
+                              Contact
+                            </button>
+                          )
                         )}
                       </td>
                     </tr>

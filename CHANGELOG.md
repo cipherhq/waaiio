@@ -3,6 +3,15 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-10-08 — #211/#248 Wire Contact Winner button to template readiness + API
+
+### What changed
+- **`app/dashboard/promotions/[id]/page.tsx`**: Replaced static `disabled` Contact button with dynamic state machine. Added `winnerTemplateReady`, `contactingWinner`, and `contactResult` state variables. Added `useEffect` to fetch winner template status from `GET /api/promotions/template-status` on page load, checking the **nested** `templates.promo_winner_status_v1.status` field (NOT top-level status, which is for pickup v1). Contact button is now: hidden when `!can_contact_winner`, disabled with "Template pending" when template not ready, enabled with click handler when ready, and shows a loading spinner during in-flight. Click handler POSTs `{businessId, campaignId, redemptionId}` to `/api/promotions/winners/contact` with full error handling (401/403, 404, 429 cooldown, 503 template unavailable, 5xx, network errors). Double-click guard prevents concurrent sends.
+- **`app/dashboard/promotions/__tests__/contact-winner.test.ts`** (new): 31 behavioral unit tests covering button states, template readiness fetch (nested vs top-level status distinction), exact POST payload, all error codes, double-click guard, click-to-result transitions, and phone number leak prevention.
+
+### What it affects / could break
+- Only the promotions detail page Contact button behavior changes. No API routes, migrations, or other files modified. Button remains disabled (fail-closed) if template-status endpoint is unreachable or returns unexpected shape. Server-side authority for rate limiting, role checks, and template verification remains unchanged.
+
 ## 2026-10-08 — #584 Discovery search fail-closed correction (PR #589)
 
 ### What changed
