@@ -48,6 +48,51 @@ Every invariant has a unique ID, an owner (the PR/issue that established it), a 
 | SEC-002 | Webhook handlers verify signatures (HMAC) before processing | Standing | Handler code review |
 | SEC-003 | Business ownership verified before mutations (`owner_id = auth.uid()` or RLS) | Standing | RLS + API route audit |
 | SEC-004 | PIN hash uses bcrypt, never plaintext comparison | #353 | `saved-cards.ts` handler audit |
+| SEC-005 | Privileged admin access requires server-verified aal2 (native MFA); sensitive operations require operation-bound, single-use step-up | #609 | See §1.5 |
+
+---
+
+### 1.5 SEC-005 — Privileged Admin Second-Factor Assurance
+
+**Owner issue:** #609
+
+#### Invariant
+
+Every privileged admin access path — API routes via `requirePlatformAdmin`, direct Supabase/PostgREST queries through admin RLS policies, and admin-scoped helper functions (`is_admin()`, `is_support()`, `has_admin_role()`) — MUST require server-verified `aal2` from Supabase native TOTP MFA. Password-only (`aal1`) sessions MUST NOT access privileged admin data or operations in any environment.
+
+Sensitive operations (payout approval/generation, provider config mutations, team role grants/revocations, impersonation initiation, refunds) additionally require operation-bound, single-use step-up authorization consumed atomically at the mutation boundary.
+
+#### Enforcement layers
+
+1. **Authentication:** Supabase native TOTP MFA enrollment required for all admin-role users. Session upgrades to `aal2` after successful MFA verification.
+2. **API authorization:** `requirePlatformAdmin` (`lib/admin-auth.ts`) reads verified `aal` claim from the cryptographically validated JWT. Rejects `aal1` with 403. All admin route handlers inherit this gate. Bearer-to-cookie fallback is prohibited after an invalid explicit Bearer token.
+3. **PostgreSQL/RLS:** Admin-scoped RLS policies use `auth.jwt() ->> 'aal' = 'aal2'` via `is_admin()`, `is_support()`, and `has_admin_role()` helper functions. Blocks direct PostgREST access with `aal1`. Normal merchant/customer RLS paths are unaffected.
+4. **Step-up:** Sensitive operations require a fresh MFA challenge verified server-side and bound to the exact admin, session, action type, target, and canonical parameters. The authorization is single-use, concurrency-safe (atomic consumption), and expires after 5 minutes. A valid step-up for operation X cannot authorize operation Y.
+
+#### Staging/production parity
+
+All environments enforce identical admin MFA policy. No staging MFA skip exists. This supersedes #448/#449 staging-only OTP convenience for the Admin login flow.
+
+#### Expected DENY evidence (CI-required)
+
+- `aal1` admin bearer token rejected on all `/api/admin/**` routes (machine-generated manifest)
+- `aal1` admin JWT returns 0 rows on all admin-scoped RLS policies via PostgREST (seeded fixture tables)
+- `profiles.role` self-escalation cannot grant admin access (trigger + grant-level block verified)
+- Stale, consumed, or operation-mismatched step-up rejected on all sensitive routes
+- Client-declared `aal2` headers/cookies cannot bypass JWT verification
+- Invalid Bearer token does not fall back to cookie auth
+
+#### Expected ALLOW evidence (CI-required)
+
+- `aal2` admin bearer token accepted on role-appropriate routes
+- `aal2` admin JWT returns expected rows on admin RLS policies (seeded fixtures)
+- Fresh, unconsumed, correctly-bound step-up accepted on sensitive routes
+- Normal merchant/customer access unaffected by admin MFA policies
+- TOTP enrollment and challenge/verify flow produces valid `aal2` session
+
+#### Rollback policy
+
+Rollback to password-only admin access is PROHIBITED. Recovery uses Supabase Auth admin dashboard for factor management. Emergency access uses Supabase dashboard (service role) under explicit Owner authorization and incident logging.
 
 ---
 

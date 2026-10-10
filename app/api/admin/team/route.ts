@@ -10,6 +10,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { requirePlatformAdmin } from '@/lib/admin-auth';
+import { consumeStepUp, StepUpError } from '@/lib/admin-step-up';
 import { createServiceClient } from '@/lib/supabase/service';
 import {
   resolveAuthUser,
@@ -87,13 +88,21 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json();
-    const { identifier, role } = body as { identifier?: string; role?: string };
+    const { identifier, role, stepUpId } = body as { identifier?: string; role?: string; stepUpId?: string };
 
     if (!identifier?.trim()) {
       return NextResponse.json({ error: 'identifier is required (UUID or email)' }, { status: 400 });
     }
     if (!role || !VALID_ROLES.includes(role)) {
       return NextResponse.json({ error: `Invalid role. Must be one of: ${VALID_ROLES.join(', ')}` }, { status: 400 });
+    }
+
+    // SEC-005 Layer 4: Consume operation-bound step-up authorization
+    try {
+      await consumeStepUp(admin, stepUpId!, 'team_grant', identifier.trim(), { role });
+    } catch (err) {
+      const msg = err instanceof StepUpError ? err.message : 'Step-up authorization required';
+      return NextResponse.json({ error: msg, code: 'step_up_required' }, { status: 403 });
     }
 
     const supabase = createServiceClient();
@@ -157,10 +166,18 @@ export async function DELETE(request: NextRequest) {
 
   try {
     const body = await request.json();
-    const { identifier } = body as { identifier?: string };
+    const { identifier, stepUpId } = body as { identifier?: string; stepUpId?: string };
 
     if (!identifier?.trim()) {
       return NextResponse.json({ error: 'identifier is required (UUID or email)' }, { status: 400 });
+    }
+
+    // SEC-005 Layer 4: Consume operation-bound step-up authorization
+    try {
+      await consumeStepUp(admin, stepUpId!, 'team_revoke', identifier.trim(), { action: 'revoke' });
+    } catch (err) {
+      const msg = err instanceof StepUpError ? err.message : 'Step-up authorization required';
+      return NextResponse.json({ error: msg, code: 'step_up_required' }, { status: 403 });
     }
 
     const supabase = createServiceClient();

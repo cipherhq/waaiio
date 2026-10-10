@@ -3,6 +3,7 @@ import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 import { processRefund } from '@/lib/payments/refund-handler';
 import { createServiceClient } from '@/lib/supabase/service';
 import { requirePlatformAdmin } from '@/lib/admin-auth';
+import { consumeStepUp, StepUpError } from '@/lib/admin-step-up';
 import { logger } from '@/lib/logger';
 
 export async function POST(request: NextRequest) {
@@ -25,15 +26,24 @@ export async function POST(request: NextRequest) {
     );
 
     const body = await request.json();
-    const { paymentId, businessId, amount, reason } = body as {
+    const { paymentId, businessId, amount, reason, stepUpId } = body as {
       paymentId: string;
       businessId: string;
       amount: number;
       reason?: string;
+      stepUpId?: string;
     };
 
     if (!paymentId || !businessId || !amount) {
       return NextResponse.json({ error: 'Missing required fields: paymentId, businessId, amount' }, { status: 400 });
+    }
+
+    // SEC-005 Layer 4: Consume operation-bound step-up authorization
+    try {
+      await consumeStepUp(admin, stepUpId!, 'refund', paymentId, { businessId, amount });
+    } catch (err) {
+      const msg = err instanceof StepUpError ? err.message : 'Step-up authorization required';
+      return NextResponse.json({ error: msg, code: 'step_up_required' }, { status: 403 });
     }
 
     const result = await processRefund({

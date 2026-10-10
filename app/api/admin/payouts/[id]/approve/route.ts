@@ -6,6 +6,7 @@ import { payoutApprovedEmail, payoutPaidEmail } from '@/lib/email/templates';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
 import { getCountry } from '@/lib/countries';
 import { requirePlatformAdmin } from '@/lib/admin-auth';
+import { consumeStepUp, StepUpError } from '@/lib/admin-step-up';
 import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
 import { classifyPaystackError, classifyStripeError } from '@/lib/payments/payout-classification';
@@ -40,7 +41,15 @@ export async function POST(
 
   const supabase = await createClient();
   const body = await request.json();
-  const { transfer_method, reference, notes } = body;
+  const { transfer_method, reference, notes, stepUpId } = body;
+
+  // SEC-005 Layer 4: Consume operation-bound step-up authorization
+  try {
+    await consumeStepUp(admin, stepUpId, 'payout_approve', id, { transfer_method });
+  } catch (err) {
+    const msg = err instanceof StepUpError ? err.message : 'Step-up authorization required';
+    return NextResponse.json({ error: msg, code: 'step_up_required' }, { status: 403 });
+  }
 
   // FIN-001: Strict transfer-method allowlist
   if (!transfer_method || !ALLOWED_TRANSFER_METHODS.includes(transfer_method as TransferMethod)) {
