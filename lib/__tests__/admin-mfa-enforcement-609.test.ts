@@ -392,12 +392,12 @@ describe('SEC-005: admin UI step-up integration', () => {
 
   it('provider config binds all security-relevant parameters', () => {
     const source = readSource('app/api/admin/provider-config/route.ts');
-    // Must include plan_refs for save_refs action
-    expect(source).toContain('plan_refs');
-    // Must include new_gateway for switch_provider action
-    expect(source).toContain('new_gateway');
-    // Must include expected_version_id for CAS
-    expect(source).toContain('expected_version_id');
+    expect(source).toContain('stepUpParams.plan_refs');
+    expect(source).toContain('stepUpParams.new_gateway');
+    expect(source).toContain('stepUpParams.expected_version_id');
+    // update_country binds body.fields (the actual API parameter), not body.updates
+    expect(source).toContain('stepUpParams.fields = body.fields');
+    expect(source).not.toContain('stepUpParams.updates');
   });
 });
 

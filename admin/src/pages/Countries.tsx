@@ -728,8 +728,13 @@ function ProviderConfigPanel({ countries, canMutate, onSaved }: { countries: Cou
       await stepUp.execute({
         actionType: 'provider_config',
         targetId: 'save_refs',
-        params: { action: 'save_refs', country_code: selectedCode },
-        description: `Save provider plan refs for ${selectedCode}`,
+        params: {
+          action: 'save_refs',
+          country_code: capturedCode,
+          plan_refs: capturedRefs,
+          expected_version_id: capturedVersion,
+        },
+        description: `Save provider plan refs for ${capturedCode}`,
         onAuthorized,
       });
     } catch (err) {
@@ -778,8 +783,13 @@ function ProviderConfigPanel({ countries, canMutate, onSaved }: { countries: Cou
       await stepUp.execute({
         actionType: 'provider_config',
         targetId: 'switch_provider',
-        params: { action: 'switch_provider', country_code: selectedCode, new_gateway: newGateway },
-        description: `Switch ${selectedCode} payment gateway to ${newGateway}`,
+        params: {
+          action: 'switch_provider',
+          country_code: capturedCode,
+          new_gateway: newGateway,
+          expected_version_id: capturedVersion,
+        },
+        description: `Switch ${capturedCode} payment gateway to ${newGateway}`,
         onAuthorized,
       });
     } catch (err) {

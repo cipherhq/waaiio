@@ -52,11 +52,13 @@ function jwtClaims(userId: string, role: string): string {
 function asRole(userId: string, appMetaRole: string, sql: string): string {
   const raw = psql(`
     SELECT set_config('request.jwt.claims', '${jwtClaims(userId, appMetaRole)}', false);
+    CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$ SELECT '{"aal":"aal2"}'::jsonb; $fn$ LANGUAGE SQL STABLE;
     SET ROLE authenticated;
     ${sql}
     RESET ROLE;
   `);
   // First line is always the set_config return (the JWT claims JSON). Strip it.
+  // CREATE OR REPLACE FUNCTION is DDL — produces no output in -tAXq mode.
   const lines = raw.split('\n');
   // Drop the first line (set_config output). Remaining lines are the query result.
   const resultLines = lines.slice(1).filter(l => l.trim() !== '');
@@ -66,6 +68,7 @@ function asRole(userId: string, appMetaRole: string, sql: string): string {
 function asRoleMayFail(userId: string, appMetaRole: string, sql: string): string {
   const raw = psqlMayFail(`
     SELECT set_config('request.jwt.claims', '${jwtClaims(userId, appMetaRole)}', false);
+    CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$ SELECT '{"aal":"aal2"}'::jsonb; $fn$ LANGUAGE SQL STABLE;
     SET ROLE authenticated;
     ${sql}
     RESET ROLE;
@@ -265,6 +268,23 @@ describe.skipIf(!canRun)('Platform Role Authority DB Tests (#217)', () => {
   it('12. has_platform_role does not cause RLS recursion', () => {
     const result = asRole(USERS.admin, 'admin', "SELECT has_platform_role(ARRAY['admin']);");
     expect(result).toContain('t');
+  });
+
+  // ── 12b. aal1 denial ──
+
+  it('12b. admin with aal1 JWT sees 0 rows from admin tables (aal2 required)', () => {
+    for (const table of ['demo_requests', 'admin_impersonation_tokens']) {
+      const count = psql(`
+        SELECT set_config('request.jwt.claims', '${jwtClaims(USERS.admin, 'admin')}', false);
+        CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$ SELECT '{"aal":"aal1"}'::jsonb; $fn$ LANGUAGE SQL STABLE;
+        SET ROLE authenticated;
+        SELECT count(*)::int FROM ${table};
+        RESET ROLE;
+      `);
+      // Strip set_config output line(s) — last non-empty line is the count
+      const lines = count.split('\n').filter(l => l.trim() !== '');
+      expect(parseInt(lines[lines.length - 1] || '0')).toBe(0);
+    }
   });
 
   // ── 13. is_support per-role behavior ──

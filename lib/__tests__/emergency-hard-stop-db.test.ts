@@ -127,6 +127,7 @@ describe.skipIf(!canRun)('Emergency Hard-Stop DB Tests (#256 S-1)', () => {
   it('1. Admin can suspend messaging via RPC', () => {
     const result = psql(`
       SELECT set_config('request.jwt.claims', '${ADMIN_CLAIMS}', false);
+      CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$ SELECT '{"aal":"aal2"}'::jsonb; $fn$ LANGUAGE SQL STABLE;
       SET ROLE authenticated;
       SELECT toggle_messaging_suspension('${BIZ_ID}'::uuid, true, 'Emergency test');
       RESET ROLE;
@@ -138,9 +139,21 @@ describe.skipIf(!canRun)('Emergency Hard-Stop DB Tests (#256 S-1)', () => {
     expect(state).toBe('t');
   });
 
+  it('1b. Admin with aal1 JWT is denied by toggle_messaging_suspension (aal2 required)', () => {
+    const err = psqlMayFail(`
+      SELECT set_config('request.jwt.claims', '${ADMIN_CLAIMS}', false);
+      CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$ SELECT '{"aal":"aal1"}'::jsonb; $fn$ LANGUAGE SQL STABLE;
+      SET ROLE authenticated;
+      SELECT toggle_messaging_suspension('${BIZ_ID}'::uuid, true, 'aal1 attempt');
+      RESET ROLE;
+    `);
+    expect(err).toMatch(/requires admin role|permission denied|aal2/i);
+  });
+
   it('2. Admin can resume messaging via RPC', () => {
     const result = psql(`
       SELECT set_config('request.jwt.claims', '${ADMIN_CLAIMS}', false);
+      CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$ SELECT '{"aal":"aal2"}'::jsonb; $fn$ LANGUAGE SQL STABLE;
       SET ROLE authenticated;
       SELECT toggle_messaging_suspension('${BIZ_ID}'::uuid, false, 'Resolved');
       RESET ROLE;
@@ -156,6 +169,7 @@ describe.skipIf(!canRun)('Emergency Hard-Stop DB Tests (#256 S-1)', () => {
   it('3. Business owner direct UPDATE of messaging_suspended → rejected', () => {
     const err = psqlMayFail(`
       SELECT set_config('request.jwt.claims', '${OWNER_CLAIMS}', false);
+      CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$ SELECT '{"aal":"aal2"}'::jsonb; $fn$ LANGUAGE SQL STABLE;
       SET ROLE authenticated;
       UPDATE businesses SET messaging_suspended = true WHERE id = '${BIZ_ID}';
       RESET ROLE;
@@ -166,6 +180,7 @@ describe.skipIf(!canRun)('Emergency Hard-Stop DB Tests (#256 S-1)', () => {
   it('4. Owner can still update other columns (name)', () => {
     psql(`
       SELECT set_config('request.jwt.claims', '${OWNER_CLAIMS}', false);
+      CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$ SELECT '{"aal":"aal2"}'::jsonb; $fn$ LANGUAGE SQL STABLE;
       SET ROLE authenticated;
       UPDATE businesses SET name = 'Updated Name' WHERE id = '${BIZ_ID}';
       RESET ROLE;
@@ -181,6 +196,7 @@ describe.skipIf(!canRun)('Emergency Hard-Stop DB Tests (#256 S-1)', () => {
   it('5. Non-admin authenticated user cannot call toggle_messaging_suspension', () => {
     const err = psqlMayFail(`
       SELECT set_config('request.jwt.claims', '${OWNER_CLAIMS}', false);
+      CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$ SELECT '{"aal":"aal2"}'::jsonb; $fn$ LANGUAGE SQL STABLE;
       SET ROLE authenticated;
       SELECT toggle_messaging_suspension('${BIZ_ID}'::uuid, true);
       RESET ROLE;
@@ -203,6 +219,7 @@ describe.skipIf(!canRun)('Emergency Hard-Stop DB Tests (#256 S-1)', () => {
     // Suspend
     psql(`
       SELECT set_config('request.jwt.claims', '${ADMIN_CLAIMS}', false);
+      CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$ SELECT '{"aal":"aal2"}'::jsonb; $fn$ LANGUAGE SQL STABLE;
       SET ROLE authenticated;
       SELECT toggle_messaging_suspension('${BIZ_ID}'::uuid, true, 'Audit test');
       RESET ROLE;
@@ -224,6 +241,7 @@ describe.skipIf(!canRun)('Emergency Hard-Stop DB Tests (#256 S-1)', () => {
     // Resume for cleanup
     psql(`
       SELECT set_config('request.jwt.claims', '${ADMIN_CLAIMS}', false);
+      CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$ SELECT '{"aal":"aal2"}'::jsonb; $fn$ LANGUAGE SQL STABLE;
       SET ROLE authenticated;
       SELECT toggle_messaging_suspension('${BIZ_ID}'::uuid, false);
       RESET ROLE;
@@ -247,6 +265,7 @@ describe.skipIf(!canRun)('Emergency Hard-Stop DB Tests (#256 S-1)', () => {
     try {
       const err = psqlMayFail(`
         SELECT set_config('request.jwt.claims', '${ADMIN_CLAIMS}', false);
+        CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$ SELECT '{"aal":"aal2"}'::jsonb; $fn$ LANGUAGE SQL STABLE;
         SET ROLE authenticated;
         SELECT toggle_messaging_suspension('${BIZ_ID}'::uuid, true, 'Should fail');
         RESET ROLE;
@@ -291,6 +310,7 @@ describe.skipIf(!canRun)('Emergency Hard-Stop DB Tests (#256 S-1)', () => {
     // Suspend A
     psql(`
       SELECT set_config('request.jwt.claims', '${ADMIN_CLAIMS}', false);
+      CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$ SELECT '{"aal":"aal2"}'::jsonb; $fn$ LANGUAGE SQL STABLE;
       SET ROLE authenticated;
       SELECT toggle_messaging_suspension('${BIZ_ID}'::uuid, true);
       RESET ROLE;
@@ -303,6 +323,7 @@ describe.skipIf(!canRun)('Emergency Hard-Stop DB Tests (#256 S-1)', () => {
     // Resume A
     psql(`
       SELECT set_config('request.jwt.claims', '${ADMIN_CLAIMS}', false);
+      CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$ SELECT '{"aal":"aal2"}'::jsonb; $fn$ LANGUAGE SQL STABLE;
       SET ROLE authenticated;
       SELECT toggle_messaging_suspension('${BIZ_ID}'::uuid, false);
       RESET ROLE;
@@ -316,6 +337,7 @@ describe.skipIf(!canRun)('Emergency Hard-Stop DB Tests (#256 S-1)', () => {
 
     const result = psql(`
       SELECT set_config('request.jwt.claims', '${ADMIN_CLAIMS}', false);
+      CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$ SELECT '{"aal":"aal2"}'::jsonb; $fn$ LANGUAGE SQL STABLE;
       SET ROLE authenticated;
       SELECT toggle_messaging_suspension('${BIZ_ID}'::uuid, false);
       RESET ROLE;
@@ -338,6 +360,7 @@ describe.skipIf(!canRun)('Emergency Hard-Stop DB Tests (#256 S-1)', () => {
   it('14. Toggle on non-existent business → error', () => {
     const err = psqlMayFail(`
       SELECT set_config('request.jwt.claims', '${ADMIN_CLAIMS}', false);
+      CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$ SELECT '{"aal":"aal2"}'::jsonb; $fn$ LANGUAGE SQL STABLE;
       SET ROLE authenticated;
       SELECT toggle_messaging_suspension('00000000-0000-0000-0000-999999999999'::uuid, true);
       RESET ROLE;
@@ -380,6 +403,7 @@ describe.skipIf(!canRun)('Emergency Hard-Stop DB Tests (#256 S-1)', () => {
       // Admin toggle via the non-superuser-owned SECURITY DEFINER function should succeed
       const result = psql(`
         SELECT set_config('request.jwt.claims', '${ADMIN_CLAIMS}', false);
+        CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$ SELECT '{"aal":"aal2"}'::jsonb; $fn$ LANGUAGE SQL STABLE;
         SET ROLE authenticated;
         SELECT toggle_messaging_suspension('${BIZ_ID}'::uuid, true, 'Non-superuser owner test');
         RESET ROLE;
@@ -393,6 +417,7 @@ describe.skipIf(!canRun)('Emergency Hard-Stop DB Tests (#256 S-1)', () => {
       // Resume
       psql(`
         SELECT set_config('request.jwt.claims', '${ADMIN_CLAIMS}', false);
+        CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$ SELECT '{"aal":"aal2"}'::jsonb; $fn$ LANGUAGE SQL STABLE;
         SET ROLE authenticated;
         SELECT toggle_messaging_suspension('${BIZ_ID}'::uuid, false, 'Resume');
         RESET ROLE;
@@ -416,6 +441,7 @@ describe.skipIf(!canRun)('Emergency Hard-Stop DB Tests (#256 S-1)', () => {
     try {
       const err = psqlMayFail(`
         SELECT set_config('request.jwt.claims', '${OWNER_CLAIMS}', false);
+        CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$ SELECT '{"aal":"aal2"}'::jsonb; $fn$ LANGUAGE SQL STABLE;
         SET ROLE authenticated;
         UPDATE businesses SET messaging_suspended = true WHERE id = '${BIZ_ID}';
         RESET ROLE;

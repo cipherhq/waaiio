@@ -164,15 +164,22 @@ export async function requirePlatformAdmin(
     token = sessionData?.session?.access_token;
     if (!token) return null;
 
-    // Step 3: Build verified claims from validated user + decoded JWT payload
+    // Step 3: Verify identity consistency — the token's subject must match
+    // the user returned by getUser(). This guards against getSession and
+    // getUser referring to different credentials.
     const payload = decodeJwtPayload(token);
+    if (!payload || payload.sub !== user.id) {
+      // Token/user identity mismatch — fail closed
+      return null;
+    }
+
     claims = {
       userId: user.id,
       email: user.email || '',
       appMetadataRole: user.app_metadata?.role,
-      aal: payload?.aal as string | undefined,
-      sessionId: payload?.session_id as string | undefined,
-      amr: payload?.amr as Array<{ method: string; timestamp: number }> | undefined,
+      aal: payload.aal as string | undefined,
+      sessionId: payload.session_id as string | undefined,
+      amr: payload.amr as Array<{ method: string; timestamp: number }> | undefined,
     };
   }
 
@@ -254,18 +261,22 @@ export function isFullPlatformAdmin(admin: PlatformAdmin | null): boolean {
 /**
  * Extract the AMR (Authentication Methods Reference) from a validated JWT.
  * Used by step-up authorization to check MFA recency.
+ *
+ * NOTE: These helpers read from a token that was ALREADY validated by
+ * requirePlatformAdmin (which calls getVerifiedClaims). They are only
+ * called with admin.bearerToken which has passed server-side validation.
  */
 export function getAmrFromToken(token: string): Array<{ method: string; timestamp: number }> | null {
-  const claims = getVerifiedJwtClaims(token);
-  return claims?.amr ?? null;
+  const payload = decodeJwtPayload(token);
+  return (payload?.amr as Array<{ method: string; timestamp: number }>) ?? null;
 }
 
 /**
  * Extract the session ID from a validated JWT.
  */
 export function getSessionIdFromToken(token: string): string | null {
-  const claims = getVerifiedJwtClaims(token);
-  return claims?.session_id ?? null;
+  const payload = decodeJwtPayload(token);
+  return (payload?.session_id as string) ?? null;
 }
 
 // ---------------------------------------------------------------------------

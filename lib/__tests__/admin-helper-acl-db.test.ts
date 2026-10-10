@@ -106,6 +106,7 @@ describe.skipIf(!canRun)('authenticated RLS behavior', () => {
       CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $$
         SELECT '${ADMIN_ID}'::UUID;
       $$ LANGUAGE SQL STABLE;
+      CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$ SELECT '{"aal":"aal2"}'::jsonb; $fn$ LANGUAGE SQL STABLE;
       SET ROLE authenticated;
       SELECT count(*) FROM public.platform_config_versions;
     `);
@@ -113,11 +114,25 @@ describe.skipIf(!canRun)('authenticated RLS behavior', () => {
     expect(parseInt(count)).toBeGreaterThan(0);
   });
 
+  it('admin with aal1 JWT sees 0 rows in platform_config_versions (aal2 required)', () => {
+    const count = psql(`
+      CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $$
+        SELECT '${ADMIN_ID}'::UUID;
+      $$ LANGUAGE SQL STABLE;
+      CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$ SELECT '{"aal":"aal1"}'::jsonb; $fn$ LANGUAGE SQL STABLE;
+      SET ROLE authenticated;
+      SELECT count(*) FROM public.platform_config_versions;
+    `);
+    psql(`RESET ROLE`);
+    expect(parseInt(count)).toBe(0);
+  });
+
   it('non-admin sees 0 rows in platform_config_versions', () => {
     const count = psql(`
       CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $$
         SELECT '${USER_ID}'::UUID;
       $$ LANGUAGE SQL STABLE;
+      CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$ SELECT '{"aal":"aal2"}'::jsonb; $fn$ LANGUAGE SQL STABLE;
       SET ROLE authenticated;
       SELECT count(*) FROM public.platform_config_versions;
     `);
@@ -149,6 +164,7 @@ describe.skipIf(!canRun)('SECURITY DEFINER RPC authorization', () => {
       CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $$
         SELECT '${ADMIN_ID}'::UUID;
       $$ LANGUAGE SQL STABLE;
+      CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$ SELECT '{"aal":"aal2"}'::jsonb; $fn$ LANGUAGE SQL STABLE;
       SET ROLE authenticated;
       SELECT public.save_commercial_config('trial_days', '30'::jsonb, 'acl-test');
     `);
@@ -162,6 +178,7 @@ describe.skipIf(!canRun)('SECURITY DEFINER RPC authorization', () => {
       CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $$
         SELECT '${USER_ID}'::UUID;
       $$ LANGUAGE SQL STABLE;
+      CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$ SELECT '{"aal":"aal2"}'::jsonb; $fn$ LANGUAGE SQL STABLE;
       SET ROLE authenticated;
       SELECT public.save_commercial_config('trial_days', '30'::jsonb, 'acl-test');
     `);
@@ -173,6 +190,7 @@ describe.skipIf(!canRun)('SECURITY DEFINER RPC authorization', () => {
       CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $$
         SELECT '${ADMIN_ID}'::UUID;
       $$ LANGUAGE SQL STABLE;
+      CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$ SELECT '{"aal":"aal2"}'::jsonb; $fn$ LANGUAGE SQL STABLE;
       SET ROLE authenticated;
       SELECT public.toggle_messaging_suspension('${BIZ_ID}'::uuid, true, 'acl-test');
     `);
@@ -185,6 +203,7 @@ describe.skipIf(!canRun)('SECURITY DEFINER RPC authorization', () => {
       CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $$
         SELECT '${USER_ID}'::UUID;
       $$ LANGUAGE SQL STABLE;
+      CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$ SELECT '{"aal":"aal2"}'::jsonb; $fn$ LANGUAGE SQL STABLE;
       SET ROLE authenticated;
       SELECT public.toggle_messaging_suspension('${BIZ_ID}'::uuid, false, 'acl-test');
     `);

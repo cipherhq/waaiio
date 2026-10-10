@@ -69,7 +69,7 @@ export async function POST(request: NextRequest) {
       stepUpParams.new_gateway = body.new_gateway ?? null;
       stepUpParams.expected_version_id = body.expected_version_id ?? null;
     } else if (action === 'update_country') {
-      stepUpParams.updates = body.updates ?? null;
+      stepUpParams.fields = body.fields ?? null;
     }
     try {
       await consumeStepUp(admin, stepUpId, 'provider_config', action, stepUpParams);

@@ -60,6 +60,7 @@ const ADMIN_CLAIMS = `{"sub":"00000000-0000-0000-0000-000000000001","role":"admi
 function adminSave(key: string, value: string): string {
   return psql(`
     SELECT set_config('request.jwt.claims', '${ADMIN_CLAIMS}', false);
+    CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$ SELECT '{"aal":"aal2"}'::jsonb; $fn$ LANGUAGE SQL STABLE;
     SET ROLE authenticated;
     SELECT save_commercial_config('${key}', '${value}'::jsonb);
     RESET ROLE;
@@ -161,12 +162,26 @@ describe.skipIf(!canRun)('Config Versioning DB Tests (#255 C-1)', () => {
     return parseInt(psql('SELECT count(*)::int FROM platform_config_versions;'), 10);
   }
 
+  // ── 0. aal1 denial ──
+
+  it('0. Admin with aal1 JWT cannot call save_commercial_config (aal2 required)', () => {
+    const err = psqlMayFail(`
+      SELECT set_config('request.jwt.claims', '${ADMIN_CLAIMS}', false);
+      CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$ SELECT '{"aal":"aal1"}'::jsonb; $fn$ LANGUAGE SQL STABLE;
+      SET ROLE authenticated;
+      SELECT save_commercial_config('trial_days', '14'::jsonb);
+      RESET ROLE;
+    `);
+    expect(err).toMatch(/requires admin role|permission denied|aal2/i);
+  });
+
   // ── 1-3. Direct DML on commercial keys → rejected ──
 
   it('1. Authenticated admin direct UPDATE of commercial key → rejected', () => {
     // SET ROLE + set_config in same session so RLS sees admin, but trigger blocks
     const err = psqlMayFail(`
       SELECT set_config('request.jwt.claims', '${ADMIN_CLAIMS}', false);
+      CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$ SELECT '{"aal":"aal2"}'::jsonb; $fn$ LANGUAGE SQL STABLE;
       SET ROLE authenticated;
       UPDATE platform_settings SET value = '"999"'::jsonb WHERE key = 'trial_days';
       RESET ROLE;
@@ -252,6 +267,7 @@ describe.skipIf(!canRun)('Config Versioning DB Tests (#255 C-1)', () => {
       // Attempt a commercial save — should fail at version INSERT
       const err = psqlMayFail(`
         SELECT set_config('request.jwt.claims', '${ADMIN_CLAIMS}', false);
+        CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$ SELECT '{"aal":"aal2"}'::jsonb; $fn$ LANGUAGE SQL STABLE;
         SET ROLE authenticated;
         SELECT save_commercial_config('trial_days', '99'::jsonb);
         RESET ROLE;
@@ -279,6 +295,7 @@ describe.skipIf(!canRun)('Config Versioning DB Tests (#255 C-1)', () => {
   it('8. Admin rename commercial → non-commercial → rejected (OLD.key)', () => {
     const err = psqlMayFail(`
       SELECT set_config('request.jwt.claims', '${ADMIN_CLAIMS}', false);
+      CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$ SELECT '{"aal":"aal2"}'::jsonb; $fn$ LANGUAGE SQL STABLE;
       SET ROLE authenticated;
       UPDATE platform_settings SET key = 'pricing_tiers_old' WHERE key = 'pricing_tiers';
       RESET ROLE;
@@ -453,6 +470,7 @@ describe.skipIf(!canRun)('Config Versioning DB Tests (#255 C-1)', () => {
     // Session A: save trial_days=30, hold transaction for 1s via pg_sleep
     const sessionA = psqlAsync(`
       SELECT set_config('request.jwt.claims', '${ADMIN_CLAIMS}', false);
+      CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$ SELECT '{"aal":"aal2"}'::jsonb; $fn$ LANGUAGE SQL STABLE;
       BEGIN;
       SET ROLE authenticated;
       SELECT save_commercial_config('trial_days', '30'::jsonb);
@@ -468,6 +486,7 @@ describe.skipIf(!canRun)('Config Versioning DB Tests (#255 C-1)', () => {
     // This will block on the advisory lock until A commits
     const sessionB = psqlAsync(`
       SELECT set_config('request.jwt.claims', '${ADMIN_CLAIMS}', false);
+      CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$ SELECT '{"aal":"aal2"}'::jsonb; $fn$ LANGUAGE SQL STABLE;
       BEGIN;
       SET ROLE authenticated;
       SELECT save_commercial_config('annual_discount_percentage', '25'::jsonb);
@@ -529,6 +548,7 @@ describe.skipIf(!canRun)('Config Versioning DB Tests (#255 C-1)', () => {
   it('26. Admin direct DELETE of commercial key → rejected', () => {
     const err = psqlMayFail(`
       SELECT set_config('request.jwt.claims', '${ADMIN_CLAIMS}', false);
+      CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$ SELECT '{"aal":"aal2"}'::jsonb; $fn$ LANGUAGE SQL STABLE;
       SET ROLE authenticated;
       DELETE FROM platform_settings WHERE key = 'pricing_tiers';
       RESET ROLE;
@@ -539,6 +559,7 @@ describe.skipIf(!canRun)('Config Versioning DB Tests (#255 C-1)', () => {
   it('27. save_commercial_config rejects non-commercial key', () => {
     const err = psqlMayFail(`
       SELECT set_config('request.jwt.claims', '${ADMIN_CLAIMS}', false);
+      CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$ SELECT '{"aal":"aal2"}'::jsonb; $fn$ LANGUAGE SQL STABLE;
       SET ROLE authenticated;
       SELECT save_commercial_config('maintenance_mode', 'true'::jsonb);
       RESET ROLE;
@@ -601,6 +622,7 @@ describe.skipIf(!canRun)('Config Versioning DB Tests (#255 C-1)', () => {
     // Attempt admin delete → rejected
     const errAdmin = psqlMayFail(`
       SELECT set_config('request.jwt.claims', '${ADMIN_CLAIMS}', false);
+      CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$ SELECT '{"aal":"aal2"}'::jsonb; $fn$ LANGUAGE SQL STABLE;
       SET ROLE authenticated;
       DELETE FROM platform_settings WHERE key = 'minimum_bank_transfer';
       RESET ROLE;
@@ -666,6 +688,7 @@ describe.skipIf(!canRun)('Config Versioning DB Tests (#255 C-1)', () => {
 
     const err = psqlMayFail(`
       SELECT set_config('request.jwt.claims', '${NON_ADMIN_CLAIMS}', false);
+      CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$ SELECT '{"aal":"aal2"}'::jsonb; $fn$ LANGUAGE SQL STABLE;
       SET ROLE authenticated;
       SELECT save_commercial_config('trial_days', '99'::jsonb);
       RESET ROLE;
@@ -844,6 +867,7 @@ describe.skipIf(!canRun)('Config Versioning — non-superuser authority proof (#
   function nsuAdminSave(key: string, value: string): string {
     return nsuPsql(`
       SELECT set_config('request.jwt.claims', '${NSU_ADMIN_CLAIMS}', false);
+      CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$ SELECT '{"aal":"aal2"}'::jsonb; $fn$ LANGUAGE SQL STABLE;
       SET ROLE authenticated;
       SELECT save_commercial_config('${key}', '${value}'::jsonb);
       RESET ROLE;
@@ -895,6 +919,7 @@ describe.skipIf(!canRun)('Config Versioning — non-superuser authority proof (#
     const NON_ADMIN = '{"sub":"00000000-0000-0000-0000-000000000002","role":"user","user_metadata":{"role":"user"}}';
     const err = nsuPsqlMayFail(`
       SELECT set_config('request.jwt.claims', '${NON_ADMIN}', false);
+      CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$ SELECT '{"aal":"aal2"}'::jsonb; $fn$ LANGUAGE SQL STABLE;
       SET ROLE authenticated;
       SELECT save_commercial_config('trial_days', '99'::jsonb);
       RESET ROLE;
