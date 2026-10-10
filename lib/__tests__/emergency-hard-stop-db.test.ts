@@ -45,11 +45,24 @@ describe.skipIf(!canRun)('Emergency Hard-Stop DB Tests (#256 S-1)', () => {
       DO $$ BEGIN CREATE ROLE anon NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
       GRANT USAGE ON SCHEMA public TO authenticated, service_role, anon;
 
-      CREATE OR REPLACE FUNCTION public.is_admin() RETURNS BOOLEAN AS $fn$
+      -- Keep the MFA-enforcing M439 helper intact. Supply an isolated
+      -- legacy M363 stub only when that canonical helper does not exist.
+      DO $stub$
       BEGIN
-        RETURN COALESCE(current_setting('request.jwt.claims', true)::jsonb->>'role' = 'admin', false);
+        IF to_regprocedure('public.has_admin_role(text[])') IS NULL THEN
+          EXECUTE $sql$
+            CREATE OR REPLACE FUNCTION public.is_admin() RETURNS BOOLEAN AS $fn$
+            BEGIN
+              RETURN COALESCE(
+                current_setting('request.jwt.claims', true)::jsonb->>'role' = 'admin',
+                false
+              );
+            END;
+            $fn$ LANGUAGE plpgsql SECURITY DEFINER STABLE
+          $sql$;
+        END IF;
       END;
-      $fn$ LANGUAGE plpgsql SECURITY DEFINER STABLE;
+      $stub$;
 
       CREATE SCHEMA IF NOT EXISTS auth;
       CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $fn$
@@ -108,6 +121,20 @@ describe.skipIf(!canRun)('Emergency Hard-Stop DB Tests (#256 S-1)', () => {
         ('${BIZ_B_ID}', '00000000-0000-0000-0000-000000000001', 'Test Biz B', 'test-biz-b-256', '+2341234567891', 'Lagos', '2 Test St')
       ON CONFLICT (id) DO NOTHING;
     `);
+
+    // In a full-migration CI database the canonical admin authority comes
+    // from auth.users.raw_app_meta_data, not client-controlled JWT role text.
+    if (psql("SELECT to_regprocedure('public.has_admin_role(text[])') IS NOT NULL;") === 't') {
+      psql(`
+        UPDATE auth.users
+        SET raw_app_meta_data = jsonb_set(
+          COALESCE(raw_app_meta_data, '{}'::jsonb),
+          '{role}', '"admin"'::jsonb
+        )
+        WHERE id = '00000000-0000-0000-0000-000000000099'::uuid;
+      `);
+      expect(psql("SELECT raw_app_meta_data->>'role' FROM auth.users WHERE id='00000000-0000-0000-0000-000000000099'::uuid;")).toBe('admin');
+    }
 
     // Apply migration 360
     const alreadyApplied = psqlMayFail("SELECT 1 FROM pg_proc WHERE proname = 'toggle_messaging_suspension' LIMIT 1;");
