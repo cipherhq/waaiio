@@ -162,6 +162,60 @@ describe('SEC-005 HTTP: aal1 admin sessions are rejected', () => {
   });
 });
 
+describe('SEC-005 HTTP: cookie token must itself be verified', () => {
+  beforeEach(() => { vi.clearAllMocks(); });
+
+  function cookieRequest(): NextRequest {
+    return new NextRequest('http://localhost/api/admin/query', {
+      method: 'POST', body: JSON.stringify({}),
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  function setCookieToken(token: string) {
+    mockGetSession.mockResolvedValueOnce({
+      data: { session: { access_token: token } }, error: null,
+    });
+  }
+
+  it('accepts a cookie aal2 session only after validating THAT token server-side', async () => {
+    const token = fakeJwt({ sub: 'admin-user-id', aal: 'aal2', session_id: 'sess-cookie' });
+    setCookieToken(token);
+    mockGetUser.mockResolvedValueOnce({
+      data: { user: { id: 'admin-user-id', email: 'admin@example.test', app_metadata: { role: 'admin' } } },
+      error: null,
+    });
+    const { requirePlatformAdmin } = await import('../admin-auth');
+    const result = await requirePlatformAdmin(cookieRequest());
+    expect(result?.aal).toBe('aal2');
+    expect(result?.sessionId).toBe('sess-cookie');
+    expect(mockGetUser).toHaveBeenCalledWith(token);
+  });
+
+  it('denies a cookie access token whose subject mismatches the validated identity', async () => {
+    const token = fakeJwt({ sub: 'different-user', aal: 'aal2', session_id: 'sess-cookie' });
+    setCookieToken(token);
+    mockGetUser.mockResolvedValueOnce({
+      data: { user: { id: 'admin-user-id', email: 'admin@example.test', app_metadata: { role: 'admin' } } },
+      error: null,
+    });
+    const { requirePlatformAdmin } = await import('../admin-auth');
+    expect(await requirePlatformAdmin(cookieRequest())).toBeNull();
+    expect(mockGetUser).toHaveBeenCalledWith(token);
+  });
+
+  it('denies a cookie whose exact token is rejected by the Auth server', async () => {
+    const token = fakeJwt({ sub: 'admin-user-id', aal: 'aal2', session_id: 'sess-cookie' });
+    setCookieToken(token);
+    mockGetUser.mockResolvedValueOnce({
+      data: { user: null }, error: { message: 'invalid signature' },
+    });
+    const { requirePlatformAdmin } = await import('../admin-auth');
+    expect(await requirePlatformAdmin(cookieRequest())).toBeNull();
+    expect(mockGetUser).toHaveBeenCalledWith(token);
+  });
+});
+
 describe('SEC-005 HTTP: aal2 admin sessions are accepted', () => {
   beforeEach(() => {
     vi.clearAllMocks();
