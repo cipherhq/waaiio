@@ -3,6 +3,22 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-10-09 — #592 Phase 2: Business App Coexistence infrastructure (pre-staging)
+
+### What changed
+- **M438 migration** (`supabase/migrations/438_business_app_coexistence.sql`): Adds `connection_type` (CHECK: 'transfer'|'coexist', default 'transfer'), `coexist_meta_business_app_id`, and `coexist_verified_at` columns to `whatsapp_channels`. Creates `coexistence_signup_nonces` table with RLS (service_role-only), anti-replay constraints, and partial index on unconsumed nonces. No SECURITY DEFINER functions.
+- **Nonce service** (`lib/whatsapp/coexistence-nonces.ts`): `generateSignupNonce()` creates crypto-random nonces with 15-minute TTL. `consumeSignupNonce()` atomically validates and consumes via CAS (UPDATE WHERE consumed_at IS NULL AND expires_at > now()). `cleanExpiredNonces()` garbage-collects stale rows. All use service client.
+- **Verification service** (`lib/whatsapp/coexistence-verification.ts`): `checkPartnerEntitlement()`, `checkPhoneEligibility()`, `checkCountryEligibility()`, and `evaluateFullEligibility()` — all GATED, always return false/ineligible. Documents Meta Graph API call structure for future ungating. Never makes real API requests.
+- **FINISH handler** (`lib/whatsapp/coexistence-finish-handler.ts`): `verifyFinishSignature()` performs HMAC-SHA256 verification with timing-safe comparison. `processCoexistenceFinish()` validates signature, consumes nonce, checks entitlement (gated). Never exchanges OAuth codes, registers phone numbers, creates active channels, or makes Meta API calls.
+- **Readiness API** (`app/api/whatsapp/business-app-connect/readiness/route.ts`): Enhanced to include `eligibility` sub-results (partnerEntitled, phoneEligible, countrySupported, allGatesMet) — all currently false. `canConnect` remains ALWAYS false.
+- **Tests** (`lib/__tests__/coexistence-phase2-592.test.ts`): 54 executable tests covering nonce lifecycle, FINISH handler security chain, eligibility gating, readiness API enhancement, and migration contract.
+
+### What it affects / could break
+- `whatsapp_channels` table: new nullable columns added — existing rows unaffected (default 'transfer' for connection_type, NULL for others).
+- New `coexistence_signup_nonces` table: isolated, no impact on existing tables.
+- Readiness API response shape: adds `eligibility` object — existing consumers that don't read this field are unaffected; `canConnect` still false.
+- No financial code modified. No existing flow, callback, or channel logic changed. No provider calls. No Meta API calls.
+
 ## 2026-10-09 — #598 Promo product/service and loyalty redemption fail-closed guards (pre-staging)
 
 - Added a shared eligibility check for WhatsApp order/booking entered promo codes: enforce owner business, active status, valid-from/until dates, allowed ordering/scheduling flows, exact product/service restrictions, capacity, minimum subtotal and bounded fixed/percentage discount. A restricted code is refused for a mixed cart rather than reducing unrelated merchandise.
