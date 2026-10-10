@@ -44,8 +44,14 @@ export interface CleanupResult {
  * The nonce is a combination of a UUID and random bytes to ensure
  * uniqueness and unpredictability. Stored with a 15-minute TTL.
  *
+ * Authenticated owner-scoped issuance route is NOT implemented in this PR.
+ * Nonce generation requires userId but the calling code must verify the user
+ * is the authenticated business owner. This gate is deferred to the initiation
+ * route PR.
+ *
  * @param businessId - The business starting the coexistence signup
- * @param userId - The authenticated user who initiated the signup (binds session ownership)
+ * @param userId - The authenticated user who initiated the signup (binds session ownership).
+ *   Must be non-empty — the DB column is NOT NULL with FK to auth.users(id).
  */
 export async function generateSignupNonce(businessId: string, userId: string): Promise<GenerateNonceResult> {
   if (!businessId || typeof businessId !== 'string') {
@@ -83,10 +89,15 @@ export async function generateSignupNonce(businessId: string, userId: string): P
  *
  * Returns the business_id the nonce was issued for, allowing the FINISH handler
  * to bind the callback to the correct tenant.
+ *
+ * @param nonce - The nonce string to consume
+ * @param serverSessionRef - Optional server-known session reference (e.g., config ID).
+ *   Must NOT be untrusted browser data (e.g., browser-relayed WABA ID).
+ *   The handler should pass a server-known identifier, not browser-supplied values.
  */
 export async function consumeSignupNonce(
   nonce: string,
-  sessionIdentifier?: string,
+  serverSessionRef?: string,
 ): Promise<ConsumeNonceResult> {
   if (!nonce || typeof nonce !== 'string') {
     return { valid: false, error: 'nonce_required' };
@@ -101,7 +112,7 @@ export async function consumeSignupNonce(
     .from('coexistence_signup_nonces')
     .update({
       consumed_at: new Date().toISOString(),
-      consumed_by_session: sessionIdentifier || null,
+      consumed_by_session: serverSessionRef || null,
     })
     .eq('nonce', nonce)
     .is('consumed_at', null)

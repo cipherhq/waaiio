@@ -31,7 +31,7 @@ COMMENT ON COLUMN whatsapp_channels.coexist_verified_at IS 'When Meta confirmed 
 CREATE TABLE IF NOT EXISTS coexistence_signup_nonces (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   business_id UUID NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
-  initiated_by_user_id UUID,
+  initiated_by_user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
   nonce VARCHAR(128) NOT NULL UNIQUE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   expires_at TIMESTAMPTZ NOT NULL,
