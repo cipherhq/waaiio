@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { supabase, adminDb } from '@/lib/supabase';
 import { loadCountries, invalidateCache, type CountryRow } from '@/lib/countries';
 import { logAudit } from '@/lib/auditLog';
@@ -10,6 +10,8 @@ import {
   Globe, Plus, Pencil, Trash2, Save, X, CreditCard, CheckCircle, XCircle,
   Settings, RefreshCw, AlertTriangle,
 } from 'lucide-react';
+import { useStepUp } from '@/hooks/useStepUp';
+import { StepUpDialog } from '@/components/StepUpDialog';
 
 const GATEWAYS = ['paystack', 'stripe', 'flutterwave'] as const;
 const VERIFICATION_LEVELS = ['unverified', 'basic', 'standard', 'full'] as const;
@@ -635,6 +637,9 @@ function ProviderConfigPanel({ countries, canMutate, onSaved }: { countries: Cou
   const [success, setSuccess] = useState<string | null>(null);
   const [loadingVersion, setLoadingVersion] = useState(false);
 
+  const stepUp = useStepUp();
+  const stepUpCallbackRef = useRef<((stepUpId: string) => Promise<void>) | null>(null);
+
   // Per-gateway per-tier ref inputs
   const [flwGrowthRef, setFlwGrowthRef] = useState('');
   const [flwBusinessRef, setFlwBusinessRef] = useState('');
@@ -691,28 +696,45 @@ function ProviderConfigPanel({ countries, canMutate, onSaved }: { countries: Cou
       if (pskGrowthRef.trim()) planRefs.growth.paystack = pskGrowthRef.trim();
       if (pskBusinessRef.trim()) planRefs.business.paystack = pskBusinessRef.trim();
 
-      const res = await apiCall({
-        action: 'save_refs',
-        country_code: selectedCode,
-        plan_refs: planRefs,
-        expected_version_id: versionId,
-      });
+      const capturedCode = selectedCode;
+      const capturedVersion = versionId;
+      const capturedRefs = planRefs;
 
-      const data = await res.json();
-      if (!res.ok) {
-        if (data.error === 'config_version_conflict') {
-          setError('Configuration was modified by another admin. Please reload the page.');
-        } else {
-          setError(data.error || data.message || 'Save failed');
+      const onAuthorized = async (stepUpId: string) => {
+        const res = await apiCall({
+          action: 'save_refs',
+          country_code: capturedCode,
+          plan_refs: capturedRefs,
+          expected_version_id: capturedVersion,
+          stepUpId,
+        });
+
+        const data = await res.json();
+        if (!res.ok) {
+          if (data.error === 'config_version_conflict') {
+            setError('Configuration was modified by another admin. Please reload the page.');
+          } else {
+            setError(data.error || data.message || 'Save failed');
+          }
+          return;
         }
-        return;
-      }
 
-      if (data.version_id) setVersionId(data.version_id);
-      setSuccess('Plan refs saved successfully');
-      await onSaved();
+        if (data.version_id) setVersionId(data.version_id);
+        setSuccess('Plan refs saved successfully');
+        await onSaved();
+      };
+
+      stepUpCallbackRef.current = onAuthorized;
+      await stepUp.execute({
+        actionType: 'provider_config',
+        targetId: 'save_refs',
+        params: { action: 'save_refs', country_code: selectedCode },
+        description: `Save provider plan refs for ${selectedCode}`,
+        onAuthorized,
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Save failed');
+      stepUp.reset();
     } finally {
       setSaving(false);
     }
@@ -725,28 +747,44 @@ function ProviderConfigPanel({ countries, canMutate, onSaved }: { countries: Cou
     setError(null);
     setSuccess(null);
     try {
-      const res = await apiCall({
-        action: 'switch_provider',
-        country_code: selectedCode,
-        new_gateway: newGateway,
-        expected_version_id: versionId,
-      });
+      const capturedCode = selectedCode;
+      const capturedVersion = versionId;
 
-      const data = await res.json();
-      if (!res.ok) {
-        if (data.error === 'config_version_conflict') {
-          setError('Configuration was modified by another admin. Please reload the page.');
-        } else {
-          setError(data.error || data.message || 'Switch failed');
+      const onAuthorized = async (stepUpId: string) => {
+        const res = await apiCall({
+          action: 'switch_provider',
+          country_code: capturedCode,
+          new_gateway: newGateway,
+          expected_version_id: capturedVersion,
+          stepUpId,
+        });
+
+        const data = await res.json();
+        if (!res.ok) {
+          if (data.error === 'config_version_conflict') {
+            setError('Configuration was modified by another admin. Please reload the page.');
+          } else {
+            setError(data.error || data.message || 'Switch failed');
+          }
+          return;
         }
-        return;
-      }
 
-      if (data.version_id) setVersionId(data.version_id);
-      setSuccess(`Switched ${selectedCode} to ${newGateway}`);
-      await onSaved();
+        if (data.version_id) setVersionId(data.version_id);
+        setSuccess(`Switched ${capturedCode} to ${newGateway}`);
+        await onSaved();
+      };
+
+      stepUpCallbackRef.current = onAuthorized;
+      await stepUp.execute({
+        actionType: 'provider_config',
+        targetId: 'switch_provider',
+        params: { action: 'switch_provider', country_code: selectedCode, new_gateway: newGateway },
+        description: `Switch ${selectedCode} payment gateway to ${newGateway}`,
+        onAuthorized,
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Switch failed');
+      stepUp.reset();
     } finally {
       setSaving(false);
     }
@@ -891,6 +929,19 @@ function ProviderConfigPanel({ countries, canMutate, onSaved }: { countries: Cou
           </div>
         </>
       )}
+
+      <StepUpDialog
+        open={stepUp.state.phase === 'awaiting-code' || stepUp.state.phase === 'verifying'}
+        description={stepUp.state.description}
+        error={stepUp.state.error}
+        loading={stepUp.state.phase === 'verifying'}
+        onSubmit={(code) => {
+          if (stepUpCallbackRef.current) {
+            stepUp.submitCode(code, stepUpCallbackRef.current);
+          }
+        }}
+        onCancel={() => { stepUp.reset(); stepUpCallbackRef.current = null; }}
+      />
     </div>
   );
 }
