@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
-import { cancelSubscription as cancelPaystackSub } from '@/lib/payments/paystack-recurring';
-import { cancelSubscription as cancelStripeSub } from '@/lib/payments/stripe-recurring';
+import { cancelSubscription as cancelPaystackSub, getSubscriptionStatus as getPaystackSubStatus } from '@/lib/payments/paystack-recurring';
+import { cancelSubscription as cancelStripeSub, getSubscriptionStatus as getStripeSubStatus } from '@/lib/payments/stripe-recurring';
 import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 import { verifyRecurringCancellationProof } from '@/lib/otp-challenge';
 import { logger } from '@/lib/logger';
@@ -139,11 +139,26 @@ export async function POST(request: NextRequest) {
       try {
         const result = await cancelPaystackSub(sub.gateway_subscription_code, emailToken);
         providerCancelled = result === true;
-        if (!providerCancelled) {
-          logger.error('[RECURRING-CANCEL] Paystack refused cancellation for', subscriptionId);
-        }
       } catch (err) {
         logger.error('[RECURRING-CANCEL] Paystack cancel error:', err);
+      }
+
+      // B5: If cancel API failed/refused, verify authoritative provider state.
+      // On retry after prior success+DB-failure, the provider may refuse the
+      // second disable call. Verify actual subscription status before giving up.
+      if (!providerCancelled) {
+        try {
+          const providerStatus = await getPaystackSubStatus(sub.gateway_subscription_code);
+          // Paystack 'non-renewing' or 'cancelled' = already disabled
+          if (providerStatus === 'non-renewing' || providerStatus === 'cancelled' || providerStatus === 'complete') {
+            logger.info('[RECURRING-CANCEL] Paystack subscription verified cancelled via status check:', providerStatus);
+            providerCancelled = true;
+          } else {
+            logger.error('[RECURRING-CANCEL] Paystack status check:', providerStatus, 'for', subscriptionId);
+          }
+        } catch (verifyErr) {
+          logger.error('[RECURRING-CANCEL] Paystack status verification failed:', verifyErr);
+        }
       }
 
     } else if (gateway === 'stripe') {
@@ -158,11 +173,23 @@ export async function POST(request: NextRequest) {
       try {
         const result = await cancelStripeSub(sub.gateway_subscription_code);
         providerCancelled = result === true;
-        if (!providerCancelled) {
-          logger.error('[RECURRING-CANCEL] Stripe refused cancellation for', subscriptionId);
-        }
       } catch (err) {
         logger.error('[RECURRING-CANCEL] Stripe cancel error:', err);
+      }
+
+      // B5: If cancel API failed/refused, verify authoritative provider state.
+      if (!providerCancelled) {
+        try {
+          const providerStatus = await getStripeSubStatus(sub.gateway_subscription_code);
+          if (providerStatus === 'canceled') {
+            logger.info('[RECURRING-CANCEL] Stripe subscription verified cancelled via status check:', providerStatus);
+            providerCancelled = true;
+          } else {
+            logger.error('[RECURRING-CANCEL] Stripe status check:', providerStatus, 'for', subscriptionId);
+          }
+        } catch (verifyErr) {
+          logger.error('[RECURRING-CANCEL] Stripe status verification failed:', verifyErr);
+        }
       }
 
     } else if (gateway === 'flutterwave') {

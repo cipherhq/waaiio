@@ -175,6 +175,32 @@ export async function verifyPaystackTransaction(reference: string): Promise<Pays
 }
 
 /**
+ * Retrieve a Paystack subscription's current status.
+ * Returns the status string ('active', 'non-renewing', 'attention', 'completed', 'cancelled') or null.
+ * Paystack 'non-renewing' means disabled/cancelled — will not renew.
+ * Used for provider-state verification during ambiguous cancel recovery.
+ */
+export async function getSubscriptionStatus(subscriptionCode: string): Promise<string | null> {
+  if (!paystackSecretKey) return null;
+  try {
+    const response = await fetch(
+      `https://api.paystack.co/subscription/${encodeURIComponent(subscriptionCode)}`,
+      {
+        headers: { Authorization: `Bearer ${paystackSecretKey}` },
+        signal: AbortSignal.timeout(15000),
+      },
+    );
+    if (!response.ok) return null;
+    const data = await response.json() as Record<string, unknown>;
+    if (!data.status || !data.data) return null;
+    const subData = data.data as Record<string, unknown>;
+    return (subData.status as string) || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Cancel (disable) a Paystack subscription.
  */
 export async function cancelSubscription(

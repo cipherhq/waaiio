@@ -72,7 +72,10 @@ let mockUpdateError: unknown = null;
 let mockRereadData: Record<string, unknown> | null | undefined = undefined; // undefined = no re-read expected
 let mockPaystackResult: boolean | Error = true;
 let mockStripeResult: boolean | Error = true;
+let mockPaystackStatus: string | null = null;
+let mockStripeStatus: string | null = null;
 let providerCallCount = 0;
+let providerVerifyCount = 0;
 let dbUpdateCalls: { id: string; status: string }[] = [];
 
 function resetMocks() {
@@ -87,7 +90,10 @@ function resetMocks() {
   mockRereadData = undefined;
   mockPaystackResult = true;
   mockStripeResult = true;
+  mockPaystackStatus = null;
+  mockStripeStatus = null;
   providerCallCount = 0;
+  providerVerifyCount = 0;
   dbUpdateCalls = [];
 }
 
@@ -144,6 +150,10 @@ vi.mock('@/lib/payments/paystack-recurring', () => ({
     if (mockPaystackResult instanceof Error) throw mockPaystackResult;
     return mockPaystackResult;
   },
+  getSubscriptionStatus: async () => {
+    providerVerifyCount++;
+    return mockPaystackStatus;
+  },
 }));
 
 vi.mock('@/lib/payments/stripe-recurring', () => ({
@@ -151,6 +161,10 @@ vi.mock('@/lib/payments/stripe-recurring', () => ({
     providerCallCount++;
     if (mockStripeResult instanceof Error) throw mockStripeResult;
     return mockStripeResult;
+  },
+  getSubscriptionStatus: async () => {
+    providerVerifyCount++;
+    return mockStripeStatus;
   },
 }));
 
@@ -424,5 +438,61 @@ describe('#597 F3 R2: Executable cancel handler tests', () => {
     });
     const res = await POST(req);
     expect(res.status).toBe(400);
+  });
+
+  // ── B5: Provider/DB convergence tests ──
+
+  it('B5: Paystack cancel refused but status-check confirms non-renewing → converges to success', async () => {
+    // Scenario: Prior call cancelled at provider + DB failed. On retry,
+    // cancel API refuses (already disabled). Status check confirms non-renewing.
+    mockPaystackResult = false; // cancel refuses
+    mockPaystackStatus = 'non-renewing'; // but status check confirms cancelled
+    const proof = issueRecurringCancellationProof(PHONE, SUB_ID);
+    const r = await callCancel({ subscriptionId: SUB_ID, phone: PHONE, cancellationProof: proof });
+    expect(r.status).toBe(200);
+    expect(r.body.success).toBe(true);
+    expect(providerCallCount).toBe(1); // cancel was attempted
+    expect(providerVerifyCount).toBe(1); // status was verified
+  });
+
+  it('B5: Stripe cancel refused but status-check confirms canceled → converges', async () => {
+    mockSubData = { ...mockSubData!, gateway: 'stripe', gateway_subscription_code: 'sub_test789' };
+    mockStripeResult = false;
+    mockStripeStatus = 'canceled';
+    const proof = issueRecurringCancellationProof(PHONE, SUB_ID);
+    const r = await callCancel({ subscriptionId: SUB_ID, phone: PHONE, cancellationProof: proof });
+    expect(r.status).toBe(200);
+    expect(providerCallCount).toBe(1);
+    expect(providerVerifyCount).toBe(1);
+  });
+
+  it('B5: Paystack cancel refused AND status-check shows active → no false success', async () => {
+    mockPaystackResult = false;
+    mockPaystackStatus = 'active'; // still active at provider
+    const proof = issueRecurringCancellationProof(PHONE, SUB_ID);
+    const r = await callCancel({ subscriptionId: SUB_ID, phone: PHONE, cancellationProof: proof });
+    expect(r.status).toBe(503); // fail closed
+    expect(r.body.success).toBeUndefined();
+    expect(dbUpdateCalls).toHaveLength(0); // no DB cancel
+  });
+
+  it('B5: Paystack cancel refused AND status-check fails → no false success', async () => {
+    mockPaystackResult = false;
+    mockPaystackStatus = null; // verification failed
+    const proof = issueRecurringCancellationProof(PHONE, SUB_ID);
+    const r = await callCancel({ subscriptionId: SUB_ID, phone: PHONE, cancellationProof: proof });
+    expect(r.status).toBe(503);
+    expect(r.body.success).toBeUndefined();
+    expect(dbUpdateCalls).toHaveLength(0);
+  });
+
+  it('B5: Stripe cancel throws AND status-check confirms canceled → converges', async () => {
+    mockSubData = { ...mockSubData!, gateway: 'stripe', gateway_subscription_code: 'sub_test789' };
+    mockStripeResult = new Error('Timeout');
+    mockStripeStatus = 'canceled';
+    const proof = issueRecurringCancellationProof(PHONE, SUB_ID);
+    const r = await callCancel({ subscriptionId: SUB_ID, phone: PHONE, cancellationProof: proof });
+    expect(r.status).toBe(200);
+    expect(providerVerifyCount).toBe(1); // verified after exception
   });
 });
