@@ -100,11 +100,12 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // ── B1: Fail-closed gateway classification ──
+    // ── B1 R2: Strict fail-closed gateway classification ──
+    // Classify by gateway FIRST. Paystack/Stripe REQUIRE provider codes.
+    // Only Flutterwave (cron-managed token billing) may do DB-only cancel.
     const gateway = sub.gateway as string;
 
     if (!SUPPORTED_GATEWAYS.includes(gateway as SupportedGateway)) {
-      // Unknown gateway — cannot confirm provider state, fail closed
       logger.error('[RECURRING-CANCEL] Unknown gateway:', gateway, 'for subscription', subscriptionId);
       return NextResponse.json(
         { error: 'This subscription type cannot be cancelled online. Please contact support.' },
@@ -112,50 +113,65 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // B1: Gateway-managed subscriptions with provider codes MUST cancel at provider
-    // Subscriptions without codes (e.g., Flutterwave token-based managed by cron)
-    // can be cancelled DB-only since there's no provider subscription to disable.
-    const requiresProviderCancel = (gateway === 'paystack' || gateway === 'stripe') &&
-      !!sub.gateway_subscription_code;
-
     let providerCancelled = false;
 
-    if (requiresProviderCancel) {
-      if (gateway === 'paystack') {
-        try {
-          const result = await cancelPaystackSub(
-            sub.gateway_subscription_code!,
-            ((sub.metadata as Record<string, unknown>)?.email_token as string) || '',
-          );
-          providerCancelled = result === true;
-          if (!providerCancelled) {
-            logger.error('[RECURRING-CANCEL] Paystack refused cancellation for', subscriptionId);
-          }
-        } catch (err) {
-          logger.error('[RECURRING-CANCEL] Paystack cancel error:', err);
-        }
-      } else if (gateway === 'stripe') {
-        try {
-          const result = await cancelStripeSub(sub.gateway_subscription_code!);
-          providerCancelled = result === true;
-          if (!providerCancelled) {
-            logger.error('[RECURRING-CANCEL] Stripe refused cancellation for', subscriptionId);
-          }
-        } catch (err) {
-          logger.error('[RECURRING-CANCEL] Stripe cancel error:', err);
-        }
-      }
-
-      if (!providerCancelled) {
+    if (gateway === 'paystack') {
+      // Paystack: REQUIRE provider subscription code AND email token
+      if (!sub.gateway_subscription_code) {
+        logger.error('[RECURRING-CANCEL] Paystack subscription missing provider code:', subscriptionId);
         return NextResponse.json(
-          { error: 'Unable to cancel with payment provider. Please try again or contact support.' },
-          { status: 503 },
+          { error: 'This subscription cannot be cancelled online — missing provider reference. Please contact support.' },
+          { status: 422 },
         );
       }
-    } else {
-      // No provider subscription to cancel (Flutterwave token-based, or no code)
-      // DB-only cancellation is safe — cron checks DB status before charging
+      const emailToken = ((sub.metadata as Record<string, unknown>)?.email_token as string) || '';
+      if (!emailToken) {
+        logger.error('[RECURRING-CANCEL] Paystack subscription missing email token:', subscriptionId);
+        return NextResponse.json(
+          { error: 'This subscription cannot be cancelled online — missing provider credentials. Please contact support.' },
+          { status: 422 },
+        );
+      }
+      try {
+        const result = await cancelPaystackSub(sub.gateway_subscription_code, emailToken);
+        providerCancelled = result === true;
+        if (!providerCancelled) {
+          logger.error('[RECURRING-CANCEL] Paystack refused cancellation for', subscriptionId);
+        }
+      } catch (err) {
+        logger.error('[RECURRING-CANCEL] Paystack cancel error:', err);
+      }
+
+    } else if (gateway === 'stripe') {
+      // Stripe: REQUIRE provider subscription code
+      if (!sub.gateway_subscription_code) {
+        logger.error('[RECURRING-CANCEL] Stripe subscription missing provider code:', subscriptionId);
+        return NextResponse.json(
+          { error: 'This subscription cannot be cancelled online — missing provider reference. Please contact support.' },
+          { status: 422 },
+        );
+      }
+      try {
+        const result = await cancelStripeSub(sub.gateway_subscription_code);
+        providerCancelled = result === true;
+        if (!providerCancelled) {
+          logger.error('[RECURRING-CANCEL] Stripe refused cancellation for', subscriptionId);
+        }
+      } catch (err) {
+        logger.error('[RECURRING-CANCEL] Stripe cancel error:', err);
+      }
+
+    } else if (gateway === 'flutterwave') {
+      // Flutterwave: cron-managed token billing — DB-only cancel is safe
+      // The cron checks DB status before charging; no provider subscription to disable
       providerCancelled = true;
+    }
+
+    if (!providerCancelled) {
+      return NextResponse.json(
+        { error: 'Unable to cancel with payment provider. Please try again or contact support.' },
+        { status: 503 },
+      );
     }
 
     // ── B2: CAS-guarded DB update anchored to original read state ──

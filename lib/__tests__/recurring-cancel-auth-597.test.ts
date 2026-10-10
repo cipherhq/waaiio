@@ -217,7 +217,7 @@ describe('#597 F3 R2: Executable cancel handler tests', () => {
     expect(r.status).toBe(400);
   });
 
-  // ── B1: Gateway classification ──
+  // ── B1 R2: Gateway classification — fail closed ──
 
   it('400 for unknown gateway (fail closed)', async () => {
     mockSubData = { ...mockSubData!, gateway: 'unknown_gateway', gateway_subscription_code: 'CODE' };
@@ -226,6 +226,36 @@ describe('#597 F3 R2: Executable cancel handler tests', () => {
     expect(r.status).toBe(400);
     expect(r.body.error).toContain('cannot be cancelled online');
     expect(providerCallCount).toBe(0);
+  });
+
+  it('422 for Paystack subscription missing provider code', async () => {
+    mockSubData = { ...mockSubData!, gateway: 'paystack', gateway_subscription_code: null };
+    const proof = issueRecurringCancellationProof(PHONE, SUB_ID);
+    const r = await callCancel({ subscriptionId: SUB_ID, phone: PHONE, cancellationProof: proof });
+    expect(r.status).toBe(422);
+    expect(r.body.error).toContain('missing provider reference');
+    expect(providerCallCount).toBe(0);
+    expect(dbUpdateCalls).toHaveLength(0); // NO DB cancel
+  });
+
+  it('422 for Paystack subscription missing email token', async () => {
+    mockSubData = { ...mockSubData!, gateway: 'paystack', gateway_subscription_code: 'SUB_test', metadata: {} };
+    const proof = issueRecurringCancellationProof(PHONE, SUB_ID);
+    const r = await callCancel({ subscriptionId: SUB_ID, phone: PHONE, cancellationProof: proof });
+    expect(r.status).toBe(422);
+    expect(r.body.error).toContain('missing provider credentials');
+    expect(providerCallCount).toBe(0);
+    expect(dbUpdateCalls).toHaveLength(0);
+  });
+
+  it('422 for Stripe subscription missing provider code', async () => {
+    mockSubData = { ...mockSubData!, gateway: 'stripe', gateway_subscription_code: '' };
+    const proof = issueRecurringCancellationProof(PHONE, SUB_ID);
+    const r = await callCancel({ subscriptionId: SUB_ID, phone: PHONE, cancellationProof: proof });
+    expect(r.status).toBe(422);
+    expect(r.body.error).toContain('missing provider reference');
+    expect(providerCallCount).toBe(0);
+    expect(dbUpdateCalls).toHaveLength(0);
   });
 
   // ── Provider behavior ──
@@ -245,6 +275,42 @@ describe('#597 F3 R2: Executable cancel handler tests', () => {
     const r = await callCancel({ subscriptionId: SUB_ID, phone: PHONE, cancellationProof: proof });
     expect(r.status).toBe(503);
     expect(dbUpdateCalls).toHaveLength(0);
+  });
+
+  it('503 when Stripe refuses cancellation', async () => {
+    mockSubData = { ...mockSubData!, gateway: 'stripe', gateway_subscription_code: 'sub_test456' };
+    mockStripeResult = false;
+    const proof = issueRecurringCancellationProof(PHONE, SUB_ID);
+    const r = await callCancel({ subscriptionId: SUB_ID, phone: PHONE, cancellationProof: proof });
+    expect(r.status).toBe(503);
+    expect(providerCallCount).toBe(1);
+    expect(dbUpdateCalls).toHaveLength(0);
+  });
+
+  it('503 when Stripe throws', async () => {
+    mockSubData = { ...mockSubData!, gateway: 'stripe', gateway_subscription_code: 'sub_test456' };
+    mockStripeResult = new Error('Connection reset');
+    const proof = issueRecurringCancellationProof(PHONE, SUB_ID);
+    const r = await callCancel({ subscriptionId: SUB_ID, phone: PHONE, cancellationProof: proof });
+    expect(r.status).toBe(503);
+    expect(dbUpdateCalls).toHaveLength(0);
+  });
+
+  it('503 when DB lookup fails', async () => {
+    mockSubError = { message: 'connection timeout' };
+    const proof = issueRecurringCancellationProof(PHONE, SUB_ID);
+    const r = await callCancel({ subscriptionId: SUB_ID, phone: PHONE, cancellationProof: proof });
+    expect(r.status).toBe(503);
+    expect(providerCallCount).toBe(0);
+    expect(dbUpdateCalls).toHaveLength(0);
+  });
+
+  it('404 when subscription not found', async () => {
+    mockSubData = null;
+    const proof = issueRecurringCancellationProof(PHONE, SUB_ID);
+    const r = await callCancel({ subscriptionId: SUB_ID, phone: PHONE, cancellationProof: proof });
+    expect(r.status).toBe(404);
+    expect(providerCallCount).toBe(0);
   });
 
   // ── Successful cancellation ──
