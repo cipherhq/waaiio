@@ -93,6 +93,8 @@ export default function Countries() {
   const [form, setForm] = useState<FormState>(emptyForm());
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState<string | null>(null);
+  const countryStepUp = useStepUp();
+  const countryStepUpCallback = useRef<((stepUpId: string) => Promise<void>) | null>(null);
 
   // City editor temp state
   const [newCityKey, setNewCityKey] = useState('');
@@ -137,86 +139,83 @@ export default function Countries() {
 
   async function handleSave() {
     if (!canMutate) return;
-    setSaving(true);
-    try {
-      const { data: session } = await supabase.auth.getSession();
-      const userId = session?.session?.user?.id;
-
-      if (editMode) {
-        // Narrow server-side partial update via /api/admin/provider-config update_country action.
-        // This NEVER sends pricing, payment_gateway, currency_code, or provider-owned fields.
-        // Provider refs survive concurrent edits untouched.
-        const res = await adminApiFetch('/api/admin/provider-config', {
-            action: 'update_country',
-            country_code: form.code,
-            fields: {
-              name: form.name.trim(),
-              flag: form.flag.trim(),
-              dialing_code: form.dialing_code.trim(),
-              currency_symbol: form.currency_symbol.trim(),
-              currency_locale: form.currency_locale.trim(),
-              phone_digits: form.phone_digits,
-              phone_pattern: form.phone_pattern.trim(),
-              phone_placeholder: form.phone_placeholder.trim(),
-              is_active: form.is_active,
-              sort_order: form.sort_order,
-              cities: form.cities,
-              verification_tiers: form.verification_tiers,
-              doc_types: form.doc_types,
-            },
-        });
-        const resData = await res.json();
-        if (!res.ok) throw new Error(resData.error || 'Update failed');
-        await logAudit({ action: 'country.update', entity_type: 'country', entity_id: form.code, details: { name: form.name } });
-      } else {
-        const payload = {
-          code: form.code.toUpperCase().trim(),
-          name: form.name.trim(),
-          flag: form.flag.trim(),
-          dialing_code: form.dialing_code.trim(),
-          currency_code: form.currency_code.toUpperCase().trim(),
-          currency_symbol: form.currency_symbol.trim(),
-          currency_locale: form.currency_locale.trim(),
-          payment_gateway: form.payment_gateway,
-          phone_digits: form.phone_digits,
-          phone_pattern: form.phone_pattern.trim(),
-          phone_placeholder: form.phone_placeholder.trim(),
-          is_active: form.is_active,
-          sort_order: form.sort_order,
-          cities: form.cities,
-          pricing: form.pricing,
-          verification_tiers: form.verification_tiers,
-          doc_types: form.doc_types,
-          updated_by: userId || null,
-        };
-        const { error } = await adminDb.from('countries').insert(payload);
-        if (error) throw error;
-        await logAudit({ action: 'country.create', entity_type: 'country', entity_id: form.code, details: { name: form.name } });
+    const countryCode = form.code.toUpperCase().trim();
+    const action = editMode ? 'update_country' : 'create_country';
+    // Snapshot the exact payload BEFORE MFA: no client state may change it later.
+    const fields = editMode ? {
+      name: form.name.trim(), flag: form.flag.trim(),
+      dialing_code: form.dialing_code.trim(), currency_symbol: form.currency_symbol.trim(),
+      currency_locale: form.currency_locale.trim(), phone_digits: form.phone_digits,
+      phone_pattern: form.phone_pattern.trim(), phone_placeholder: form.phone_placeholder.trim(),
+      is_active: form.is_active, sort_order: form.sort_order, cities: form.cities,
+      verification_tiers: form.verification_tiers, doc_types: form.doc_types,
+    } : {
+      code: countryCode, name: form.name.trim(), flag: form.flag.trim(),
+      dialing_code: form.dialing_code.trim(), currency_code: form.currency_code.toUpperCase().trim(),
+      currency_symbol: form.currency_symbol.trim(), currency_locale: form.currency_locale.trim(),
+      payment_gateway: form.payment_gateway, phone_digits: form.phone_digits,
+      phone_pattern: form.phone_pattern.trim(), phone_placeholder: form.phone_placeholder.trim(),
+      is_active: form.is_active, sort_order: form.sort_order, cities: form.cities,
+      pricing: form.pricing, verification_tiers: form.verification_tiers, doc_types: form.doc_types,
+    };
+    const params = { action, country_code: countryCode, fields };
+    const onAuthorized = async (stepUpId: string) => {
+      setSaving(true);
+      try {
+        const res = await adminApiFetch('/api/admin/provider-config', { ...params, stepUpId });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Country change failed');
+        await logAudit({ action: editMode ? 'country.update' : 'country.create',
+          entity_type: 'country', entity_id: countryCode, details: { name: fields.name } });
+        invalidateCache();
+        setShowModal(false);
+        await load();
+      } catch (err) {
+        alert(`Save failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
+        throw err;
+      } finally {
+        setSaving(false);
       }
-
-      invalidateCache();
-      setShowModal(false);
-      await load();
-    } catch (err: unknown) {
-      alert(`Save failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
-    } finally {
-      setSaving(false);
+    };
+    countryStepUpCallback.current = onAuthorized;
+    try {
+      await countryStepUp.execute({
+        actionType: 'provider_config', targetId: action, params,
+        description: `${editMode ? 'Update' : 'Create'} country ${countryCode}`,
+        onAuthorized,
+      });
+    } catch (err) {
+      alert(`MFA preparation failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
     }
   }
 
   async function handleDelete(code: string) {
     if (!canMutate || !confirm(`Delete country ${code}? This cannot be undone.`)) return;
-    setDeleting(code);
+    const params = { action: 'delete_country', country_code: code };
+    const onAuthorized = async (stepUpId: string) => {
+      setDeleting(code);
+      try {
+        const res = await adminApiFetch('/api/admin/provider-config', { ...params, stepUpId });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Country deletion failed');
+        await logAudit({ action: 'country.delete', entity_type: 'country', entity_id: code });
+        invalidateCache();
+        await load();
+      } catch (err) {
+        alert(`Delete failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
+        throw err;
+      } finally {
+        setDeleting(null);
+      }
+    };
+    countryStepUpCallback.current = onAuthorized;
     try {
-      const { error } = await adminDb.from('countries').delete().eq('code', code);
-      if (error) throw error;
-      await logAudit({ action: 'country.delete', entity_type: 'country', entity_id: code });
-      invalidateCache();
-      await load();
-    } catch (err: unknown) {
-      alert(`Delete failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
-    } finally {
-      setDeleting(null);
+      await countryStepUp.execute({
+        actionType: 'provider_config', targetId: 'delete_country', params,
+        description: `Delete country ${code}`, onAuthorized,
+      });
+    } catch (err) {
+      alert(`MFA preparation failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
     }
   }
 
@@ -619,6 +618,19 @@ export default function Countries() {
           </div>
         </div>
       )}
+
+      <StepUpDialog
+        open={countryStepUp.state.phase === 'awaiting-code' || countryStepUp.state.phase === 'verifying'}
+        description={countryStepUp.state.description}
+        error={countryStepUp.state.error}
+        loading={countryStepUp.state.phase === 'verifying'}
+        onSubmit={(code) => {
+          if (countryStepUpCallback.current) {
+            void countryStepUp.submitCode(code, countryStepUpCallback.current);
+          }
+        }}
+        onCancel={() => { countryStepUp.reset(); countryStepUpCallback.current = null; }}
+      />
 
       {/* Provider Configuration Panel */}
       <ProviderConfigPanel countries={countries} canMutate={canMutate} onSaved={load} />

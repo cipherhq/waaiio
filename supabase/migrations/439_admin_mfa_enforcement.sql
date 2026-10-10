@@ -423,6 +423,11 @@ CREATE POLICY "growth_pricing_admin_select"
   FOR SELECT
   USING (public.has_admin_role(ARRAY['admin', 'support', 'finance', 'operations']));
 
+-- SEC-005: Country/provider catalog changes MUST use an action-bound server
+-- mutation, not browser-issued Supabase table DML. Read access is unchanged.
+-- service_role remains authorized for verified server mutations.
+REVOKE INSERT, UPDATE, DELETE ON TABLE public.countries FROM PUBLIC, anon, authenticated;
+
 -- ════════════════════════════════════════════════════════════════════════════
 -- §6. cleanup_expired_step_ups() — cron housekeeping
 --
