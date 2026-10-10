@@ -25,6 +25,8 @@ vi.mock('@/lib/logger', () => ({
 // Track RPC calls
 const rpcCalls: Array<{ fn: string; params: Record<string, unknown> }> = [];
 const updateCalls: Array<{ table: string; payload: Record<string, unknown>; filter: Record<string, unknown> }> = [];
+const insertCalls: Array<{ table: string; payload: Record<string, unknown> }> = [];
+const deleteCalls: Array<{ table: string; code: string }> = [];
 
 const mockServiceClient = {
   rpc: vi.fn(async (fn: string, params: Record<string, unknown>) => {
@@ -48,6 +50,16 @@ const mockServiceClient = {
       eq: vi.fn((col: string, val: string) => {
         updateCalls.push({ table, payload, filter: { [col]: val } });
         return Promise.resolve({ error: null });
+      }),
+    })),
+    insert: vi.fn(async (payload: Record<string, unknown>) => {
+      insertCalls.push({ table, payload });
+      return { error: null };
+    }),
+    delete: vi.fn(() => ({
+      eq: vi.fn(async (_column: string, code: string) => {
+        deleteCalls.push({ table, code });
+        return { error: null };
       }),
     })),
   })),
@@ -79,12 +91,16 @@ function flwPlanOk(amount: number) {
 }
 
 const { POST } = await import('@/app/api/admin/provider-config/route');
+const { consumeStepUp, StepUpError } = await import('@/lib/admin-step-up');
 
 beforeEach(() => {
   rpcCalls.length = 0;
   updateCalls.length = 0;
+  insertCalls.length = 0;
+  deleteCalls.length = 0;
   mockFetch.mockReset();
   vi.clearAllMocks();
+  vi.mocked(consumeStepUp).mockResolvedValue(true);
   mockServiceClient.rpc.mockImplementation(async (fn: string, params: Record<string, unknown>) => {
     rpcCalls.push({ fn, params });
     return { data: 'new-version-uuid', error: null };
@@ -282,5 +298,67 @@ describe('Admin API base (getAdminApiBase)', () => {
     // The actual getAdminApiBase() is in Countries.tsx (admin component, not testable here)
     // but the route CORS allows the configured admin origins
     expect(true).toBe(true); // Contract documented — proven by CORS tests above
+  });
+});
+
+
+// SEC-005: country provider configuration cannot bypass exact-operation step-up.
+describe('SEC-005 country mutation step-up boundary', () => {
+  const base = {
+    code: 'NG', name: 'Nigeria', currency_code: 'NGN', payment_gateway: 'stripe',
+    pricing: { growth: { price: 5000 } },
+  };
+
+  it('rejects country creation without a consumable step-up; no insert', async () => {
+    vi.mocked(consumeStepUp).mockRejectedValueOnce(new StepUpError('Step-up required'));
+    const res = await POST(makeReq({
+      action: 'create_country', country_code: 'NG', fields: base,
+    }) as never);
+    expect(res.status).toBe(403);
+    expect(insertCalls).toHaveLength(0);
+  });
+
+  it('creates through the service only after binding the exact country payload', async () => {
+    const res = await POST(makeReq({
+      action: 'create_country', country_code: 'NG', fields: base, stepUpId: 'one-use',
+    }) as never);
+    expect(res.status).toBe(200);
+    expect(consumeStepUp).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: 'admin-uuid-1' }),
+      'one-use', 'provider_config', 'create_country',
+      { action: 'create_country', country_code: 'NG', fields: base },
+    );
+    expect(insertCalls).toHaveLength(1);
+    expect(insertCalls[0].table).toBe('countries');
+    expect(insertCalls[0].payload.updated_by).toBe('admin-uuid-1');
+  });
+
+  it('rejects unknown create_country fields without inserting', async () => {
+    const res = await POST(makeReq({
+      action: 'create_country', country_code: 'NG',
+      fields: { ...base, provider_api_secret: 'should-not-be-stored' },
+      stepUpId: 'one-use',
+    }) as never);
+    expect(res.status).toBe(400);
+    expect(insertCalls).toHaveLength(0);
+  });
+
+  it('denies country deletion when step-up is missing', async () => {
+    vi.mocked(consumeStepUp).mockRejectedValueOnce(new StepUpError('Step-up required'));
+    const res = await POST(makeReq({ action: 'delete_country', country_code: 'NG' }) as never);
+    expect(res.status).toBe(403);
+    expect(deleteCalls).toHaveLength(0);
+  });
+
+  it('deletes only the step-up-bound country code after verification', async () => {
+    const res = await POST(makeReq({
+      action: 'delete_country', country_code: 'NG', stepUpId: 'delete-one',
+    }) as never);
+    expect(res.status).toBe(200);
+    expect(consumeStepUp).toHaveBeenCalledWith(
+      expect.anything(), 'delete-one', 'provider_config', 'delete_country',
+      { action: 'delete_country', country_code: 'NG' },
+    );
+    expect(deleteCalls).toEqual([{ table: 'countries', code: 'NG' }]);
   });
 });
