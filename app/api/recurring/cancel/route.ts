@@ -117,6 +117,27 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // ── M439: Set durable cancellation intent BEFORE provider call ──
+    // This blocks all future billing claim/dispatch RPCs even if the
+    // subsequent provider call or DB status update fails.
+    const { error: intentError } = await supabase
+      .from('customer_subscriptions')
+      .update({ cancellation_requested_at: new Date().toISOString() })
+      .eq('id', subscriptionId)
+      .eq('customer_phone', normalizedPhone)
+      .is('cancellation_requested_at', null); // Only set once (CAS)
+
+    if (intentError) {
+      logger.error('[RECURRING-CANCEL] Failed to record cancellation intent:', intentError.message);
+      return NextResponse.json(
+        { error: 'Unable to process cancellation. Please try again.' },
+        { status: 503 },
+      );
+    }
+    // Note: if intent was already set (zero rows from CAS), that's fine —
+    // it means a prior attempt already recorded the intent. We proceed with
+    // the provider call regardless.
+
     let providerCancelled = false;
 
     if (gateway === 'paystack') {

@@ -99,6 +99,7 @@ function resetMocks() {
 
 // Supabase chain mock that handles the multi-step query patterns
 let fromCallCount = 0;
+let mockIntentError: unknown = null;
 
 vi.mock('@/lib/supabase/service', () => ({
   createServiceClient: () => ({
@@ -106,7 +107,7 @@ vi.mock('@/lib/supabase/service', () => ({
       if (table !== 'customer_subscriptions') {
         const c: Record<string, unknown> = {};
         const self = () => c;
-        c.select = self; c.eq = self; c.in = self; c.update = self;
+        c.select = self; c.eq = self; c.in = self; c.update = self; c.is = self;
         c.maybeSingle = () => Promise.resolve({ data: null, error: null });
         return c;
       }
@@ -114,28 +115,46 @@ vi.mock('@/lib/supabase/service', () => ({
       fromCallCount++;
       const callNum = fromCallCount;
       let isUpdate = false;
+      let updateVals: Record<string, unknown> = {};
 
       const chain: Record<string, unknown> = {};
       const chainSelf = () => chain;
 
       chain.select = (cols?: string) => {
         if (isUpdate) {
-          // This is the .select() after .update() — return update result
+          // Distinguish intent update from cancellation update
+          if (updateVals.cancellation_requested_at && !updateVals.status) {
+            // This is the M439 intent-setting update — always succeeds
+            return Promise.resolve({ data: null, error: mockIntentError });
+          }
+          // This is the status cancellation update
           return Promise.resolve({ data: mockUpdateData, error: mockUpdateError });
         }
         return chain;
       };
       chain.eq = chainSelf;
       chain.in = chainSelf;
+      chain.is = () => {
+        // .is() is the terminal call for the intent update (.update().eq().eq().is())
+        // When this is an update chain (intent-setting), return the update result
+        if (isUpdate && updateVals.cancellation_requested_at && !updateVals.status) {
+          return Promise.resolve({ data: null, error: mockIntentError });
+        }
+        return chain;
+      };
       chain.update = (vals: Record<string, unknown>) => {
         isUpdate = true;
-        dbUpdateCalls.push({ id: SUB_ID, status: vals.status as string });
+        updateVals = vals;
+        if (vals.status) {
+          dbUpdateCalls.push({ id: SUB_ID, status: vals.status as string });
+        }
         return chain;
       };
       chain.maybeSingle = () => {
-        if (callNum > 1 && dbUpdateCalls.length > 0 && mockRereadData !== undefined) {
-          // B2/R3-1: re-read after zero-row update
-          return Promise.resolve({ data: mockRereadData, error: mockRereadData === null ? null : null });
+        // Check for re-read after cancellation CAS
+        const cancelUpdateDone = dbUpdateCalls.some(c => c.status === 'cancelled');
+        if (cancelUpdateDone && mockRereadData !== undefined) {
+          return Promise.resolve({ data: mockRereadData, error: null });
         }
         return Promise.resolve({ data: mockSubData, error: mockSubError });
       };
@@ -190,7 +209,7 @@ async function callCancel(body: Record<string, unknown>): Promise<{ status: numb
 }
 
 describe('#597 F3 R2: Executable cancel handler tests', () => {
-  beforeEach(() => { resetMocks(); fromCallCount = 0; vi.clearAllMocks(); });
+  beforeEach(() => { resetMocks(); fromCallCount = 0; mockIntentError = null; vi.clearAllMocks(); });
 
   // ── Authorization ──
 
@@ -567,6 +586,28 @@ describe('#597 F3 R2: Executable cancel handler tests', () => {
    * - Provider-state verification on retry (tested above)
    * - Honest documentation of the no-retry limitation
    *
-   * The durable intent migration is a separate, dependency-coordinated change.
+   * The durable intent migration (M439) is now implemented in this PR.
    */
+
+  // ── M439: Durable intent tests ──
+
+  it('M439: intent is set BEFORE provider call (intent error → 503, zero provider calls)', async () => {
+    mockIntentError = { message: 'connection timeout' };
+    const proof = issueRecurringCancellationProof(PHONE, SUB_ID);
+    const r = await callCancel({ subscriptionId: SUB_ID, phone: PHONE, cancellationProof: proof });
+    expect(r.status).toBe(503);
+    expect(providerCallCount).toBe(0); // NO provider call when intent fails
+    expect(dbUpdateCalls).toHaveLength(0); // NO status update
+  });
+
+  it('M439: successful cancel sets intent then cancels status', async () => {
+    const proof = issueRecurringCancellationProof(PHONE, SUB_ID);
+    const r = await callCancel({ subscriptionId: SUB_ID, phone: PHONE, cancellationProof: proof });
+    expect(r.status).toBe(200);
+    expect(r.body.success).toBe(true);
+    // Intent was set (implicit — no error), then provider called, then status updated
+    expect(providerCallCount).toBe(1);
+    expect(dbUpdateCalls).toHaveLength(1);
+    expect(dbUpdateCalls[0].status).toBe('cancelled');
+  });
 });
