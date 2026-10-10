@@ -6,40 +6,54 @@ import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 import { verifyRecurringCancellationProof } from '@/lib/otp-challenge';
 import { logger } from '@/lib/logger';
 
+// B1: Only these gateways are supported for provider-side cancellation.
+// Unknown gateways MUST fail closed — never mark cancelled without confirmed
+// provider state.
+const SUPPORTED_GATEWAYS = ['paystack', 'stripe', 'flutterwave'] as const;
+type SupportedGateway = typeof SUPPORTED_GATEWAYS[number];
+
 /**
  * POST /api/recurring/cancel
  *
  * #597 F3: Secure subscription cancellation requiring OTP-bound proof.
  *
- * Before this fix, the route accepted only phone + subscriptionId (both public
- * identifiers), used service_role client, swallowed gateway errors, and returned
- * success unconditionally. An attacker knowing a subscription UUID and phone
- * could cancel any subscription.
+ * Authorization: HMAC-signed cancellation proof issued by /api/recurring/verify
+ * after WhatsApp OTP verification, scoped to exact phone + subscription.
  *
- * Now requires a short-lived HMAC-signed cancellation proof issued by
- * /api/recurring/verify after successful OTP verification. The proof is
- * scoped to the exact subscription and phone, expires in 5 minutes.
- *
- * Gateway cancellation must succeed (or subscription must not have a gateway
- * code) before the DB is updated. Ambiguous outcomes return 503.
+ * Provider-first: gateway cancellation must succeed before DB update.
+ * Fail-closed: unknown gateways, missing provider codes on gateway-managed
+ * subscriptions, and ambiguous outcomes all return non-success.
  */
 export async function POST(request: NextRequest) {
   try {
     const rateLimit = await rateLimitResponseAsync(getRateLimitKey(request, 'recurring-cancel'), 10, 60_000);
     if (rateLimit) return rateLimit;
 
-    const body = await request.json();
+    // B6: Validate request body is valid JSON
+    let body: Record<string, unknown>;
+    try {
+      body = await request.json();
+    } catch {
+      return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
+    }
+
     const { subscriptionId, phone, cancellationProof } = body;
 
-    if (!subscriptionId || !phone) {
-      return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
+    // B6: Type validation before any processing
+    if (typeof subscriptionId !== 'string' || typeof phone !== 'string' ||
+        !subscriptionId || !phone || subscriptionId.length > 200 || phone.length > 30) {
+      return NextResponse.json({ error: 'Missing or invalid required fields' }, { status: 400 });
+    }
+
+    // B6: Validate UUID format for subscriptionId
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(subscriptionId)) {
+      return NextResponse.json({ error: 'Invalid subscription identifier' }, { status: 400 });
     }
 
     const normalizedPhone = phone.startsWith('+') ? phone : `+${phone}`;
 
-    // ── F3: Require OTP-bound cancellation proof ──
-    // Phone + subscriptionId alone are NOT authorization.
-    if (!cancellationProof) {
+    // F3: Require OTP-bound cancellation proof — phone + UUID alone are NOT authorization
+    if (!cancellationProof || typeof cancellationProof !== 'string') {
       return NextResponse.json(
         { error: 'Cancellation requires verification. Please verify your identity first.' },
         { status: 403 },
@@ -78,53 +92,73 @@ export async function POST(request: NextRequest) {
     }
 
     // Only allow cancelling active/paused/past_due subscriptions
-    if (!['active', 'paused', 'past_due'].includes(sub.status)) {
+    const originalStatus = sub.status;
+    if (!['active', 'paused', 'past_due'].includes(originalStatus)) {
       return NextResponse.json(
-        { error: `Cannot cancel subscription in ${sub.status} state` },
+        { error: `Cannot cancel subscription in ${originalStatus} state` },
         { status: 400 },
       );
     }
 
-    // ── Gateway cancellation — must succeed before DB update ──
-    let providerCancelled = true;
+    // ── B1: Fail-closed gateway classification ──
+    const gateway = sub.gateway as string;
 
-    if (sub.gateway === 'paystack' && sub.gateway_subscription_code) {
-      try {
-        const result = await cancelPaystackSub(
-          sub.gateway_subscription_code,
-          (sub.metadata as Record<string, unknown>)?.email_token as string || '',
-        );
-        if (result === false) {
-          logger.error('[RECURRING-CANCEL] Paystack refused cancellation for', subscriptionId);
-          providerCancelled = false;
-        }
-      } catch (err) {
-        logger.error('[RECURRING-CANCEL] Paystack cancel error:', err);
-        providerCancelled = false;
-      }
-    } else if (sub.gateway === 'stripe' && sub.gateway_subscription_code) {
-      try {
-        const result = await cancelStripeSub(sub.gateway_subscription_code);
-        if (result === false) {
-          logger.error('[RECURRING-CANCEL] Stripe refused cancellation for', subscriptionId);
-          providerCancelled = false;
-        }
-      } catch (err) {
-        logger.error('[RECURRING-CANCEL] Stripe cancel error:', err);
-        providerCancelled = false;
-      }
-    }
-    // Flutterwave subscriptions without gateway codes: no provider call needed
-
-    // ── Do NOT update DB if provider explicitly refused ──
-    if (!providerCancelled) {
+    if (!SUPPORTED_GATEWAYS.includes(gateway as SupportedGateway)) {
+      // Unknown gateway — cannot confirm provider state, fail closed
+      logger.error('[RECURRING-CANCEL] Unknown gateway:', gateway, 'for subscription', subscriptionId);
       return NextResponse.json(
-        { error: 'Unable to cancel with payment provider. Please try again or contact support.' },
-        { status: 503 },
+        { error: 'This subscription type cannot be cancelled online. Please contact support.' },
+        { status: 400 },
       );
     }
 
-    // ── CAS-guarded DB update ──
+    // B1: Gateway-managed subscriptions with provider codes MUST cancel at provider
+    // Subscriptions without codes (e.g., Flutterwave token-based managed by cron)
+    // can be cancelled DB-only since there's no provider subscription to disable.
+    const requiresProviderCancel = (gateway === 'paystack' || gateway === 'stripe') &&
+      !!sub.gateway_subscription_code;
+
+    let providerCancelled = false;
+
+    if (requiresProviderCancel) {
+      if (gateway === 'paystack') {
+        try {
+          const result = await cancelPaystackSub(
+            sub.gateway_subscription_code!,
+            ((sub.metadata as Record<string, unknown>)?.email_token as string) || '',
+          );
+          providerCancelled = result === true;
+          if (!providerCancelled) {
+            logger.error('[RECURRING-CANCEL] Paystack refused cancellation for', subscriptionId);
+          }
+        } catch (err) {
+          logger.error('[RECURRING-CANCEL] Paystack cancel error:', err);
+        }
+      } else if (gateway === 'stripe') {
+        try {
+          const result = await cancelStripeSub(sub.gateway_subscription_code!);
+          providerCancelled = result === true;
+          if (!providerCancelled) {
+            logger.error('[RECURRING-CANCEL] Stripe refused cancellation for', subscriptionId);
+          }
+        } catch (err) {
+          logger.error('[RECURRING-CANCEL] Stripe cancel error:', err);
+        }
+      }
+
+      if (!providerCancelled) {
+        return NextResponse.json(
+          { error: 'Unable to cancel with payment provider. Please try again or contact support.' },
+          { status: 503 },
+        );
+      }
+    } else {
+      // No provider subscription to cancel (Flutterwave token-based, or no code)
+      // DB-only cancellation is safe — cron checks DB status before charging
+      providerCancelled = true;
+    }
+
+    // ── B2: CAS-guarded DB update anchored to original read state ──
     const { data: updated, error: updateError } = await supabase
       .from('customer_subscriptions')
       .update({
@@ -132,22 +166,38 @@ export async function POST(request: NextRequest) {
         cancelled_at: new Date().toISOString(),
       })
       .eq('id', subscriptionId)
-      .in('status', ['active', 'paused', 'past_due'])
+      .eq('customer_phone', normalizedPhone)
+      .eq('status', originalStatus) // B2: Exact state anchor, not broad IN
       .select('id');
 
     if (updateError) {
       logger.error('[RECURRING-CANCEL] DB update failed:', updateError.message);
-      // Provider already cancelled — this is an ambiguous state
-      // Return 503 so client retries (provider cancel is idempotent)
       return NextResponse.json(
-        { error: 'Cancellation may have partially completed. Please check your subscription status.' },
+        { error: 'Cancellation could not be completed. Please check your subscription status and try again.' },
         { status: 503 },
       );
     }
 
+    // B2: Zero rows = state changed concurrently. Do NOT assume success.
     if (!updated || updated.length === 0) {
-      // Status changed between our read and update (CAS conflict) — likely already cancelled
-      return NextResponse.json({ success: true, already_cancelled: true });
+      // Re-read to determine actual current state
+      const { data: current } = await supabase
+        .from('customer_subscriptions')
+        .select('status')
+        .eq('id', subscriptionId)
+        .eq('customer_phone', normalizedPhone)
+        .maybeSingle();
+
+      if (current?.status === 'cancelled') {
+        return NextResponse.json({ success: true, already_cancelled: true });
+      }
+
+      // State changed to something other than cancelled — concurrent modification
+      logger.warn('[RECURRING-CANCEL] CAS conflict: status changed from', originalStatus, 'to', current?.status);
+      return NextResponse.json(
+        { error: 'Subscription status changed. Please refresh and try again.' },
+        { status: 409 },
+      );
     }
 
     return NextResponse.json({ success: true });
