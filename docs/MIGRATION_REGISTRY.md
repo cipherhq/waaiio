@@ -189,6 +189,9 @@ Before creating a migration:
 | 292 | atomic_payout_execution | fix/fin-002-atomic-payout | claude | 2026-07-26 |
 | 426 | staging_payment_setup_parity (#527) | claude/project-thread-irtaf1 | claude | 2026-10-03 |
 | 427 | paystack_saved_card_persistence (#530) | fix/530-paystack-saved-card-ingestion | Codex | 2026-10-03 |
+| 436 | scheduling_price_authority (#604) | fix/602-scheduling-price-authority | #604 | 2026-10-09 |
+| 437 | native_whatsapp_forms (#606) | feat/591-whatsapp-native-forms-phase2 | #606 | 2026-10-09 |
+| 438 | business_app_coexistence (#607) | feat/592-business-app-coexistence-phase2 | #607 | 2026-10-09 |
 
 ### Stranded Reservations (PR #21)
 

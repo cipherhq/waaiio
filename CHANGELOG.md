@@ -3,6 +3,17 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-10-10 — #591 Phase 2 CTO R2: answer/option alignment, channel boundary, registry
+
+### What changed
+- submission-handler.ts: Reject empty/null form fields before INSERT (mandatory validation). Accept compiler-generated option IDs (option_1, option_2) alongside display titles. Reject non-object/array/oversized response_json.
+- submission-handler.ts: Enforce all ResolvedChannel fields (businessId, channelId, phoneNumberId) are non-empty.
+- docs/MIGRATION_REGISTRY.md: Added reservation rows with correct branch names for M436/M437/M438.
+
+### What it affects / could break
+- Native form submissions with empty field schemas now rejected (previously silently accepted any answers).
+- Option validation now accepts both display titles (web) and compiler-generated IDs (native).
+
 ## 2026-10-10 — #591 Phase 2 CTO R1: channel authority, phone normalization, answer validation
 
 ### What changed

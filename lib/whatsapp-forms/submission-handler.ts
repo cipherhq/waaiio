@@ -37,6 +37,9 @@ export interface ResolvedChannel {
   phoneNumberId: string;
 }
 
+/** Max raw JSON size for response_json before parsing. */
+const MAX_RESPONSE_JSON_BYTES = 102400; // 100KB
+
 export interface SubmissionResult {
   success: boolean;
   responseId?: string;
@@ -121,14 +124,15 @@ function validateAnswersAgainstSchema(
     // Select/radio option validation
     if (field.type === 'select' || field.type === 'radio') {
       if (Array.isArray(field.options) && field.options.length > 0) {
-        const allowedValues = new Set(
-          field.options.map((opt: unknown) => {
-            if (typeof opt === 'string') return opt;
-            if (opt && typeof opt === 'object' && 'value' in opt) return String((opt as { value: unknown }).value);
-            if (opt && typeof opt === 'object' && 'id' in opt) return String((opt as { id: unknown }).id);
-            return String(opt);
-          }),
-        );
+        const allowedValues = new Set<string>();
+        field.options.forEach((opt: unknown, i: number) => {
+          // Accept original display values (web form submissions)
+          if (typeof opt === 'string') allowedValues.add(opt.trim());
+          else if (opt && typeof opt === 'object' && 'value' in opt) allowedValues.add(String((opt as { value: unknown }).value));
+          else if (opt && typeof opt === 'object' && 'id' in opt) allowedValues.add(String((opt as { id: unknown }).id));
+          // Accept compiler-generated option IDs (native WhatsApp submissions)
+          allowedValues.add('option_' + (i + 1));
+        });
         if (!allowedValues.has(strValue)) {
           return { valid: false, error: `Invalid option for field ${field.id}: ${strValue}` };
         }
@@ -153,9 +157,9 @@ export async function handleNativeFormSubmission(
   senderPhone: string,
   resolvedChannel: ResolvedChannel,
 ): Promise<SubmissionResult> {
-  // ── 1. Validate resolved channel has a bound business ──
-  if (!resolvedChannel.businessId) {
-    return { success: false, error: 'Dedicated channel with bound business required for native form submissions.' };
+  // ── 1. Validate resolved channel has all required fields ──
+  if (!resolvedChannel.businessId || !resolvedChannel.channelId || !resolvedChannel.phoneNumberId) {
+    return { success: false, error: 'Fully resolved dedicated channel required (businessId, channelId, phoneNumberId).' };
   }
   const businessId = resolvedChannel.businessId;
 
@@ -165,9 +169,19 @@ export async function handleNativeFormSubmission(
     return { success: false, error: 'Missing nfm_reply response_json.' };
   }
 
+  // Raw JSON size guard before parsing
+  if (nfmReply.response_json.length > MAX_RESPONSE_JSON_BYTES) {
+    return { success: false, error: 'response_json exceeds maximum size.' };
+  }
+
   let responseData: Record<string, unknown>;
   try {
-    responseData = JSON.parse(nfmReply.response_json);
+    const parsed = JSON.parse(nfmReply.response_json);
+    // JSON.parse can return null, arrays, primitives — reject all non-object results
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return { success: false, error: 'response_json must be a JSON object.' };
+    }
+    responseData = parsed;
   } catch {
     return { success: false, error: 'Invalid response_json format.' };
   }
@@ -222,12 +236,15 @@ export async function handleNativeFormSubmission(
     _marketing_consent === false ? false : null;
 
   // ── 8. Validate answers against form field schema ──
-  const formFields = Array.isArray(form.fields) ? (form.fields as WaaiioFormField[]) : [];
-  if (formFields.length > 0) {
-    const schemaCheck = validateAnswersAgainstSchema(answers, formFields);
-    if (!schemaCheck.valid) {
-      return { success: false, error: schemaCheck.error || 'Answer validation failed.' };
-    }
+  // Native submissions require a valid field schema — the form must have compiled
+  // successfully to be published. Reject if fields are empty/null/non-array/zero-length.
+  const formFields = Array.isArray(form.fields) ? (form.fields as WaaiioFormField[]) : null;
+  if (!formFields || formFields.length === 0) {
+    return { success: false, error: 'Form has no valid field schema for native submission validation.' };
+  }
+  const schemaCheck = validateAnswersAgainstSchema(answers, formFields);
+  if (!schemaCheck.valid) {
+    return { success: false, error: schemaCheck.error || 'Answer validation failed.' };
   }
 
   // ── 9. INSERT response (replay prevented by unique constraint on flow_token_hash) ──

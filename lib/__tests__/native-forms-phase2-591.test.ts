@@ -494,7 +494,7 @@ describe('Native Form Submission Handler', () => {
     const sharedChannel = { businessId: '', channelId: CHANNEL_ID, phoneNumberId: PHONE_NUMBER_ID };
     const result = await handleNativeFormSubmission(message as any, PHONE, sharedChannel);
     expect(result.success).toBe(false);
-    expect(result.error).toContain('Dedicated channel with bound business required');
+    expect(result.error).toContain('Fully resolved dedicated channel required');
   });
 
   it('fails closed when resolved channel fields are missing', async () => {
@@ -506,7 +506,7 @@ describe('Native Form Submission Handler', () => {
     const brokenChannel = { businessId: undefined as any, channelId: CHANNEL_ID, phoneNumberId: PHONE_NUMBER_ID };
     const result = await handleNativeFormSubmission(message as any, PHONE, brokenChannel);
     expect(result.success).toBe(false);
-    expect(result.error).toContain('Dedicated channel with bound business required');
+    expect(result.error).toContain('Fully resolved dedicated channel required');
   });
 
   // ── F2-3: Answer schema validation tests ──
@@ -594,6 +594,188 @@ describe('Native Form Submission Handler', () => {
     const result = await handleNativeFormSubmission(message as any, PHONE, makeChannel());
     expect(result.success).toBe(false);
     expect(result.error).toContain('email');
+  });
+
+  // ── R2-F1: Compiler→submission option ID alignment ──
+
+  it('accepts compiler-generated option IDs (option_1, option_2) for select fields', async () => {
+    const { handleNativeFormSubmission } = await import('@/lib/whatsapp-forms/submission-handler');
+    const token = await makeToken();
+    // plan field has options ['basic', 'premium', 'enterprise']
+    // Native nfm_reply sends compiler-generated IDs, not display titles
+    const message = makeMessage(token, { plan: 'option_2' }); // option_2 = 'premium'
+
+    const result = await handleNativeFormSubmission(message as any, PHONE, makeChannel());
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts display title values (web submissions) for select fields', async () => {
+    const { handleNativeFormSubmission } = await import('@/lib/whatsapp-forms/submission-handler');
+    const token = await makeToken();
+    const message = makeMessage(token, { plan: 'enterprise' });
+
+    const result = await handleNativeFormSubmission(message as any, PHONE, makeChannel());
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects fabricated option ID (option_99) for a 3-option field', async () => {
+    const { handleNativeFormSubmission } = await import('@/lib/whatsapp-forms/submission-handler');
+    const token = await makeToken();
+    const message = makeMessage(token, { plan: 'option_99' });
+
+    const result = await handleNativeFormSubmission(message as any, PHONE, makeChannel());
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('Invalid option');
+    expect(result.error).toContain('plan');
+  });
+
+  it('end-to-end: compile form, extract option IDs, verify handler accepts them', async () => {
+    const { compileNativeFormFlow } = await import('@/lib/whatsapp-forms/native-flow');
+    const { handleNativeFormSubmission } = await import('@/lib/whatsapp-forms/submission-handler');
+
+    // Compile a form with select options
+    const formDef = {
+      title: 'Registration',
+      fields: [
+        { id: 'full_name', label: 'Full Name', type: 'text', required: true },
+        { id: 'plan', label: 'Plan', type: 'select', required: false, options: ['basic', 'premium', 'enterprise'] },
+      ],
+    };
+    const compiled = compileNativeFormFlow(formDef);
+    const screen = (compiled.screens as any[])[0];
+    const dropdown = screen.layout.children.find((c: any) => c.type === 'Dropdown');
+    expect(dropdown).toBeTruthy();
+
+    // Extract the compiler-generated option IDs from data-source
+    const optionIds = dropdown['data-source'].map((ds: any) => ds.id);
+    expect(optionIds).toEqual(['option_1', 'option_2', 'option_3']);
+
+    // Now simulate a native nfm_reply using the compiler-generated ID
+    const token = await makeToken();
+    const message = makeMessage(token, { plan: optionIds[1] }); // 'option_2'
+
+    const result = await handleNativeFormSubmission(message as any, PHONE, makeChannel());
+    expect(result.success).toBe(true);
+  });
+
+  // ── R2-F1: Empty/null form fields rejected ──
+
+  it('rejects submission when form has empty fields array', async () => {
+    mockServiceForm = { id: FORM_ID, business_id: BIZ_ID, is_active: true, fields: [] };
+    const { handleNativeFormSubmission } = await import('@/lib/whatsapp-forms/submission-handler');
+    const token = await makeToken();
+    const message = makeMessage(token);
+
+    const result = await handleNativeFormSubmission(message as any, PHONE, makeChannel());
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('no valid field schema');
+  });
+
+  it('rejects submission when form has null fields', async () => {
+    mockServiceForm = { id: FORM_ID, business_id: BIZ_ID, is_active: true, fields: null };
+    const { handleNativeFormSubmission } = await import('@/lib/whatsapp-forms/submission-handler');
+    const token = await makeToken();
+    const message = makeMessage(token);
+
+    const result = await handleNativeFormSubmission(message as any, PHONE, makeChannel());
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('no valid field schema');
+  });
+
+  // ── R2-F1: Non-object response_json rejected ──
+
+  it('rejects null response_json value', async () => {
+    const { handleNativeFormSubmission } = await import('@/lib/whatsapp-forms/submission-handler');
+    const message = {
+      interactive: {
+        type: 'nfm_reply',
+        nfm_reply: { response_json: 'null' },
+      },
+    };
+
+    const result = await handleNativeFormSubmission(message as any, PHONE, makeChannel());
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('response_json must be a JSON object');
+  });
+
+  it('rejects array response_json value', async () => {
+    const { handleNativeFormSubmission } = await import('@/lib/whatsapp-forms/submission-handler');
+    const message = {
+      interactive: {
+        type: 'nfm_reply',
+        nfm_reply: { response_json: '[1, 2, 3]' },
+      },
+    };
+
+    const result = await handleNativeFormSubmission(message as any, PHONE, makeChannel());
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('response_json must be a JSON object');
+  });
+
+  it('rejects string primitive response_json value', async () => {
+    const { handleNativeFormSubmission } = await import('@/lib/whatsapp-forms/submission-handler');
+    const message = {
+      interactive: {
+        type: 'nfm_reply',
+        nfm_reply: { response_json: '"just a string"' },
+      },
+    };
+
+    const result = await handleNativeFormSubmission(message as any, PHONE, makeChannel());
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('response_json must be a JSON object');
+  });
+
+  // ── R2-F1: Oversized response_json rejected ──
+
+  it('rejects oversized response_json (>100KB)', async () => {
+    const { handleNativeFormSubmission } = await import('@/lib/whatsapp-forms/submission-handler');
+    const bigJson = '{"flow_token":"x","data":"' + 'A'.repeat(110 * 1024) + '"}';
+    const message = {
+      interactive: {
+        type: 'nfm_reply',
+        nfm_reply: { response_json: bigJson },
+      },
+    };
+
+    const result = await handleNativeFormSubmission(message as any, PHONE, makeChannel());
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('exceeds maximum size');
+  });
+
+  // ── R2-F2: Missing channelId/phoneNumberId fail closed ──
+
+  it('fails closed when channelId is missing', async () => {
+    const { handleNativeFormSubmission } = await import('@/lib/whatsapp-forms/submission-handler');
+    const token = await makeToken();
+    const message = makeMessage(token);
+
+    const channel = { businessId: BIZ_ID, channelId: '', phoneNumberId: PHONE_NUMBER_ID };
+    const result = await handleNativeFormSubmission(message as any, PHONE, channel);
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('Fully resolved dedicated channel required');
+  });
+
+  it('fails closed when phoneNumberId is missing', async () => {
+    const { handleNativeFormSubmission } = await import('@/lib/whatsapp-forms/submission-handler');
+    const token = await makeToken();
+    const message = makeMessage(token);
+
+    const channel = { businessId: BIZ_ID, channelId: CHANNEL_ID, phoneNumberId: '' };
+    const result = await handleNativeFormSubmission(message as any, PHONE, channel);
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('Fully resolved dedicated channel required');
+  });
+
+  it('fails closed when channelId is undefined', async () => {
+    const { handleNativeFormSubmission } = await import('@/lib/whatsapp-forms/submission-handler');
+    const token = await makeToken();
+    const message = makeMessage(token);
+
+    const channel = { businessId: BIZ_ID, channelId: undefined as any, phoneNumberId: PHONE_NUMBER_ID };
+    const result = await handleNativeFormSubmission(message as any, PHONE, channel);
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('Fully resolved dedicated channel required');
   });
 
   // ── F2-4: Atomic response count RPC test ──
