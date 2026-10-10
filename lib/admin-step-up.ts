@@ -83,9 +83,8 @@ export async function prepareStepUp(
 ): Promise<StepUpPrepareResult> {
   const { createServiceClient } = await import('@/lib/supabase/service');
   const supabase = createServiceClient();
-  const { getSessionIdFromToken } = await import('./admin-auth');
-
-  const sessionId = getSessionIdFromToken(admin.bearerToken);
+  // Session ID comes from the same cryptographically verified admin access token.
+  const sessionId = admin.sessionId;
   if (!sessionId) {
     throw new StepUpError('Cannot determine session identity');
   }
@@ -169,8 +168,8 @@ export async function verifyStepUp(
   const { createServiceClient } = await import('@/lib/supabase/service');
   const supabase = createServiceClient();
 
-  const { getSessionIdFromToken } = await import('./admin-auth');
-  const sessionId = getSessionIdFromToken(admin.bearerToken);
+  // Session ID comes from the same cryptographically verified admin access token.
+  const sessionId = admin.sessionId;
   if (!sessionId) throw new StepUpError('Cannot determine session identity');
 
   // Load the pending step-up
@@ -270,9 +269,8 @@ export async function consumeStepUp(
 ): Promise<boolean> {
   const { createServiceClient } = await import('@/lib/supabase/service');
   const supabase = createServiceClient();
-  const { getSessionIdFromToken } = await import('./admin-auth');
-
-  const sessionId = getSessionIdFromToken(admin.bearerToken);
+  // Session ID comes from the same cryptographically verified admin access token.
+  const sessionId = admin.sessionId;
   if (!sessionId) throw new StepUpError('Cannot determine session identity');
 
   const paramsHash = hashOperationParams(params);

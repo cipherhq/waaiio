@@ -30,6 +30,8 @@ export interface PlatformAdmin {
   aal: string;
   /** The raw bearer token for downstream MFA operations. */
   bearerToken: string;
+  /** Session ID extracted from the verified access token. */
+  sessionId?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -70,9 +72,9 @@ async function getVerifiedClaims(
   const { data, error } = await supabase.auth.getUser(token);
   if (error || !data?.user) return null;
 
-  // Step 2: Read claims from the now-validated JWT payload
+  // Parse the EXACT token validated by getUser(token), and match its subject.
   const payload = decodeJwtPayload(token);
-  if (!payload) return null;
+  if (!payload || payload.sub !== data.user.id) return null;
 
   return {
     userId: data.user.id,
@@ -151,36 +153,14 @@ export async function requirePlatformAdmin(
     const { createClient } = await import('@/lib/supabase/server');
     const cookieSupabase = await createClient();
 
-    // Step 1: Validate the cookie JWT via the Auth server (getUser verifies)
-    const { data: { user }, error: userError } = await cookieSupabase.auth.getUser();
-    if (userError || !user) {
-      return null;
-    }
-
-    // Step 2: Token is validated. Extract the raw JWT for claim decoding.
-    // getSession() is safe here ONLY because getUser() just proved the
-    // cookie token is genuine. We never trust getSession() alone.
+    // getSession supplies an UNTRUSTED token candidate. Never treat it as
+    // authorization. Verify this exact access token server-side before using
+    // its subject, role, aal, session_id or authentication method claims.
     const { data: sessionData } = await cookieSupabase.auth.getSession();
     token = sessionData?.session?.access_token;
     if (!token) return null;
-
-    // Step 3: Verify identity consistency — the token's subject must match
-    // the user returned by getUser(). This guards against getSession and
-    // getUser referring to different credentials.
-    const payload = decodeJwtPayload(token);
-    if (!payload || payload.sub !== user.id) {
-      // Token/user identity mismatch — fail closed
-      return null;
-    }
-
-    claims = {
-      userId: user.id,
-      email: user.email || '',
-      appMetadataRole: user.app_metadata?.role,
-      aal: payload.aal as string | undefined,
-      sessionId: payload.session_id as string | undefined,
-      amr: payload.amr as Array<{ method: string; timestamp: number }> | undefined,
-    };
+    claims = await getVerifiedClaims(supabase, token);
+    if (!claims) return null;
   }
 
   if (!claims || !token) {
@@ -221,7 +201,7 @@ export async function requirePlatformAdmin(
     return null;
   }
 
-  return { id: userId, userId, email: email || '', role, aal: jwtAal, bearerToken: token };
+  return { id: userId, userId, email: email || '', role, aal: jwtAal, bearerToken: token, sessionId: claims.sessionId };
 }
 
 /**
@@ -256,27 +236,6 @@ export async function verifyAdminRole(
  */
 export function isFullPlatformAdmin(admin: PlatformAdmin | null): boolean {
   return admin?.role === 'admin';
-}
-
-/**
- * Extract the AMR (Authentication Methods Reference) from a validated JWT.
- * Used by step-up authorization to check MFA recency.
- *
- * NOTE: These helpers read from a token that was ALREADY validated by
- * requirePlatformAdmin (which calls getVerifiedClaims). They are only
- * called with admin.bearerToken which has passed server-side validation.
- */
-export function getAmrFromToken(token: string): Array<{ method: string; timestamp: number }> | null {
-  const payload = decodeJwtPayload(token);
-  return (payload?.amr as Array<{ method: string; timestamp: number }>) ?? null;
-}
-
-/**
- * Extract the session ID from a validated JWT.
- */
-export function getSessionIdFromToken(token: string): string | null {
-  const payload = decodeJwtPayload(token);
-  return (payload?.session_id as string) ?? null;
 }
 
 // ---------------------------------------------------------------------------

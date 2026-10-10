@@ -444,7 +444,7 @@ describe('SEC-005: step-up session binding', () => {
     expect(source).toContain("stepUp.session_id !== sessionId");
     expect(source).toContain("Step-up belongs to a different session");
     // Session ID must be extracted from the bearer token
-    expect(source).toContain("getSessionIdFromToken(admin.bearerToken)");
+    expect(source).toContain('const sessionId = admin.sessionId;');
   });
 
   it('consumeStepUp binds session_id in the atomic query', () => {
