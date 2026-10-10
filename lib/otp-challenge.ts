@@ -203,3 +203,65 @@ async function recordFailedAttempt(supabase: ReturnType<typeof createServiceClie
     p_challenge_id: challengeId,
   });
 }
+
+
+/**
+ * #597 F3: short-lived proof of WhatsApp OTP verification for cancelling
+ * exactly one customer subscription. Issued only after verifyOtpChallenge()
+ * has atomically consumed the challenge in /api/recurring/verify.
+ *
+ * A phone number and subscription UUID are public identifiers, NOT authority.
+ * Domain separation prevents a proof being accepted as an OTP hash or another
+ * type of signed token. Bearer proofs expire in five minutes and are scoped to
+ * the exact subscription, preventing cross-subscription replay.
+ */
+const RECURRING_CANCEL_PROOF_TTL_MS = 5 * 60 * 1000;
+
+interface RecurringCancelProof {
+  v: 1;
+  phone: string;
+  subscriptionId: string;
+  issuedAt: number;
+  expiresAt: number;
+}
+
+export function issueRecurringCancellationProof(phone: string, subscriptionId: string): string {
+  const issuedAt = Date.now();
+  const payload: RecurringCancelProof = {
+    v: 1, phone, subscriptionId,
+    issuedAt,
+    expiresAt: issuedAt + RECURRING_CANCEL_PROOF_TTL_MS,
+  };
+  const encoded = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  const signature = hmacHash('waaiio:recurring-cancel:v1:' + encoded);
+  return encoded + '.' + signature;
+}
+
+export function verifyRecurringCancellationProof(
+  proof: unknown, phone: string, subscriptionId: string,
+): boolean {
+  if (typeof proof !== 'string' || proof.length > 1024) return false;
+  const parts = proof.split('.');
+  if (parts.length !== 2 || !/^[A-Za-z0-9_-]+$/.test(parts[0]) ||
+      !/^[a-f0-9]{64}$/.test(parts[1])) return false;
+
+  const expected = hmacHash('waaiio:recurring-cancel:v1:' + parts[0]);
+  if (!safeCompare(parts[1], expected)) return false;
+
+  try {
+    const decoded = Buffer.from(parts[0], 'base64url');
+    if (decoded.toString('base64url') !== parts[0]) return false;
+    const data = JSON.parse(decoded.toString('utf8')) as Partial<RecurringCancelProof>;
+    const now = Date.now();
+    return data.v === 1
+      && data.phone === phone
+      && data.subscriptionId === subscriptionId
+      && Number.isSafeInteger(data.issuedAt)
+      && Number.isSafeInteger(data.expiresAt)
+      && (data.issuedAt as number) <= now
+      && (data.expiresAt as number) > now
+      && (data.expiresAt as number) - (data.issuedAt as number) === RECURRING_CANCEL_PROOF_TTL_MS;
+  } catch {
+    return false;
+  }
+}
