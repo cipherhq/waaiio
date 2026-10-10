@@ -4,6 +4,8 @@ import { useAdminSession } from '@/components/AdminLayout';
 import { StatusBadge } from '@/components/StatusBadge';
 import { fmtDate, fmtDateTime } from '@/lib/formatters';
 import { Search, LogOut, Pencil, Check, X, Building2, ExternalLink } from 'lucide-react';
+import { useStepUp } from '@/hooks/useStepUp';
+import { StepUpDialog } from '@/components/StepUpDialog';
 
 interface Business {
   id: string;
@@ -72,6 +74,9 @@ export default function ImpersonationMode() {
   const [editValue, setEditValue] = useState('');
   const [saving, setSaving] = useState(false);
   const [launchingDashboard, setLaunchingDashboard] = useState(false);
+
+  const stepUp = useStepUp();
+  const stepUpCallbackRef = useRef<((stepUpId: string) => Promise<void>) | null>(null);
 
   // Load businesses and admin info on mount
   useEffect(() => {
@@ -177,43 +182,55 @@ export default function ImpersonationMode() {
     }
   }
 
-  // Launch "View Dashboard" — generates an impersonation token and opens business dashboard in new tab
+  // Launch "View Dashboard" — generates an impersonation token, gated by step-up MFA
   async function handleViewDashboard() {
     if (!selected || launchingDashboard) return;
     setLaunchingDashboard(true);
 
     try {
-      const { data: sessionData } = await supabase.auth.getSession();
-      const accessToken = sessionData?.session?.access_token;
-      if (!accessToken) {
-        alert('Session expired — please re-login');
-        return;
-      }
+      const onAuthorized = async (stepUpId: string) => {
+        const { data: sessionData } = await supabase.auth.getSession();
+        const accessToken = sessionData?.session?.access_token;
+        if (!accessToken) {
+          alert('Session expired — please re-login');
+          return;
+        }
 
-      const apiUrl = import.meta.env.VITE_API_URL || '';
-      const res = await fetch(`${apiUrl}/api/admin/impersonate`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${accessToken}`,
-        },
-        body: JSON.stringify({ business_id: selected.id }),
+        const apiUrl = import.meta.env.VITE_API_URL || '';
+        const res = await fetch(`${apiUrl}/api/admin/impersonate`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify({ business_id: selected.id, stepUpId }),
+        });
+
+        const data = await res.json();
+        if (!res.ok) {
+          alert(data.error || 'Failed to generate impersonation token');
+          return;
+        }
+
+        if (data.url && (data.url.startsWith('https://waaiio.com') || data.url.startsWith('https://www.waaiio.com') || data.url.startsWith(window.location.origin))) {
+          window.open(data.url, '_blank');
+        } else {
+          alert('Invalid redirect URL');
+        }
+      };
+
+      stepUpCallbackRef.current = onAuthorized;
+      await stepUp.execute({
+        actionType: 'impersonate',
+        targetId: selected.id,
+        params: { business_id: selected.id },
+        description: `Impersonate business: ${selected.name}`,
+        onAuthorized,
       });
-
-      const data = await res.json();
-      if (!res.ok) {
-        alert(data.error || 'Failed to generate impersonation token');
-        return;
-      }
-
-      if (data.url && (data.url.startsWith('https://waaiio.com') || data.url.startsWith('https://www.waaiio.com') || data.url.startsWith(window.location.origin))) {
-        window.open(data.url, '_blank');
-      } else {
-        alert('Invalid redirect URL');
-      }
     } catch (error) {
       console.error('View dashboard error:', error);
       alert('Failed to launch dashboard');
+      stepUp.reset();
     } finally {
       setLaunchingDashboard(false);
     }
@@ -382,6 +399,19 @@ export default function ImpersonationMode() {
           <div className="h-8 w-8 animate-spin rounded-full border-2 border-brand border-t-transparent" />
         </div>
       )}
+
+      <StepUpDialog
+        open={stepUp.state.phase === 'awaiting-code' || stepUp.state.phase === 'verifying'}
+        description={stepUp.state.description}
+        error={stepUp.state.error}
+        loading={stepUp.state.phase === 'verifying'}
+        onSubmit={(code) => {
+          if (stepUpCallbackRef.current) {
+            stepUp.submitCode(code, stepUpCallbackRef.current);
+          }
+        }}
+        onCancel={() => { stepUp.reset(); stepUpCallbackRef.current = null; }}
+      />
 
       {/* Business Dashboard View */}
       {selected && !loadingDetail && (
