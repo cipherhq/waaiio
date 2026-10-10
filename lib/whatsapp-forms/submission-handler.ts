@@ -2,19 +2,20 @@
  * #591 Phase 2 — Native Form Submission Handler.
  *
  * Secure handler for WhatsApp nfm_reply messages. Verifies the signed
- * flow token, resolves business_id from channel (NEVER from Flow payload),
- * resolves customer_phone from webhook envelope (NEVER from Flow payload),
- * and persists the response with replay prevention via flow_token_hash
- * unique constraint.
+ * flow token, uses pre-resolved channel identity (phone_number_id authority
+ * from webhook), resolves customer_phone from webhook envelope (NEVER from
+ * Flow payload), and persists the response with replay prevention via
+ * flow_token_hash unique constraint.
  *
  * Security invariants:
- * - business_id from channel lookup, not payload
+ * - business_id from pre-resolved channel (phone_number_id), not payload
  * - customer_phone from webhook envelope message.from, not payload
  * - Expired/forged/replayed tokens rejected before any INSERT
  * - No booking creation, no payment, no scheduling RPC
  */
 import { createServiceClient } from '@/lib/supabase/service';
 import { verifyFlowToken, hashFlowToken } from './flow-token';
+import type { WaaiioFormField } from './native-flow';
 
 // ── Types ──
 
@@ -30,6 +31,12 @@ export interface NfmReplyMessage {
   };
 }
 
+export interface ResolvedChannel {
+  businessId: string;
+  channelId: string;
+  phoneNumberId: string;
+}
+
 export interface SubmissionResult {
   success: boolean;
   responseId?: string;
@@ -37,32 +44,99 @@ export interface SubmissionResult {
   error?: string;
 }
 
-// ── Helpers ──
+// ── Answer Schema Validation ──
+
+/** Max size per individual answer value in bytes. */
+const MAX_ANSWER_SIZE_BYTES = 10 * 1024; // 10KB
+/** Max total size of all answers combined in bytes. */
+const MAX_TOTAL_ANSWERS_BYTES = 100 * 1024; // 100KB
 
 /**
- * Resolve business_id from a WhatsApp channel by WABA ID.
- * Returns the business_id of the dedicated channel, or null for shared channels.
+ * Validate submitted answers against the form's field schema.
+ *
+ * Rules:
+ * - Reject unknown field IDs not in the schema
+ * - Enforce required fields are present and non-empty
+ * - For select/radio fields: validate value matches an allowed option
+ * - Enforce max answer size (10KB per field, 100KB total)
+ * - Type checking: number fields must be numeric, email must contain @
  */
-async function resolveBusinessFromChannel(
-  wabaId: string,
-): Promise<string | null> {
-  const supabase = createServiceClient({ noStore: true });
+function validateAnswersAgainstSchema(
+  answers: Record<string, unknown>,
+  fields: WaaiioFormField[],
+): { valid: boolean; error?: string } {
+  const fieldMap = new Map<string, WaaiioFormField>();
+  for (const f of fields) {
+    fieldMap.set(f.id, f);
+  }
 
-  const { data: channel } = await supabase
-    .from('whatsapp_channels')
-    .select('business_id, channel_type')
-    .eq('waba_id', wabaId)
-    .eq('is_active', true)
-    .limit(1)
-    .maybeSingle();
+  // Check total size
+  const totalJson = JSON.stringify(answers);
+  if (Buffer.byteLength(totalJson, 'utf8') > MAX_TOTAL_ANSWERS_BYTES) {
+    return { valid: false, error: 'Total answer payload exceeds 100KB limit.' };
+  }
 
-  if (!channel) return null;
+  // Reject unknown field IDs
+  for (const key of Object.keys(answers)) {
+    if (!fieldMap.has(key)) {
+      return { valid: false, error: `Unknown field ID: ${key}` };
+    }
+  }
 
-  // Shared channels do not authoritatively bind to a business.
-  // Native forms require a dedicated channel with a known business.
-  if (channel.channel_type === 'shared') return null;
+  // Validate each field
+  for (const field of fields) {
+    const value = answers[field.id];
 
-  return channel.business_id;
+    // Check required fields
+    if (field.required) {
+      if (value === undefined || value === null || value === '') {
+        return { valid: false, error: `Required field missing: ${field.id}` };
+      }
+    }
+
+    // Skip further checks if value is absent (optional field)
+    if (value === undefined || value === null) continue;
+
+    // Per-field size check
+    const valueJson = JSON.stringify(value);
+    if (Buffer.byteLength(valueJson, 'utf8') > MAX_ANSWER_SIZE_BYTES) {
+      return { valid: false, error: `Answer for field ${field.id} exceeds 10KB limit.` };
+    }
+
+    const strValue = typeof value === 'string' ? value : String(value);
+
+    // Type-specific validation
+    if (field.type === 'number') {
+      if (isNaN(Number(strValue))) {
+        return { valid: false, error: `Field ${field.id} must be a numeric value.` };
+      }
+    }
+
+    if (field.type === 'email') {
+      if (!strValue.includes('@')) {
+        return { valid: false, error: `Field ${field.id} must be a valid email address.` };
+      }
+    }
+
+    // Select/radio option validation
+    if (field.type === 'select' || field.type === 'radio') {
+      if (Array.isArray(field.options) && field.options.length > 0) {
+        const allowedValues = new Set(
+          field.options.map((opt: unknown) => {
+            if (typeof opt === 'string') return opt;
+            if (opt && typeof opt === 'object' && 'value' in opt) return String((opt as { value: unknown }).value);
+            if (opt && typeof opt === 'object' && 'id' in opt) return String((opt as { id: unknown }).id);
+            return String(opt);
+          }),
+        );
+        if (!allowedValues.has(strValue)) {
+          return { valid: false, error: `Invalid option for field ${field.id}: ${strValue}` };
+        }
+      }
+    }
+  }
+
+  return { valid: true };
 }
 
 // ── Public API ──
@@ -72,14 +146,20 @@ async function resolveBusinessFromChannel(
  *
  * @param message - The raw nfm_reply message from the webhook payload
  * @param senderPhone - Phone number from webhook envelope (message.from), NOT from Flow payload
- * @param wabaId - WABA ID from webhook metadata for channel resolution
+ * @param resolvedChannel - Pre-resolved channel from webhook's channel resolver (phone_number_id authority)
  */
 export async function handleNativeFormSubmission(
   message: NfmReplyMessage,
   senderPhone: string,
-  wabaId: string,
+  resolvedChannel: ResolvedChannel,
 ): Promise<SubmissionResult> {
-  // ── 1. Extract flow_token and response data ──
+  // ── 1. Validate resolved channel has a bound business ──
+  if (!resolvedChannel.businessId) {
+    return { success: false, error: 'Dedicated channel with bound business required for native form submissions.' };
+  }
+  const businessId = resolvedChannel.businessId;
+
+  // ── 2. Extract flow_token and response data ──
   const nfmReply = message?.interactive?.nfm_reply;
   if (!nfmReply?.response_json) {
     return { success: false, error: 'Missing nfm_reply response_json.' };
@@ -97,15 +177,7 @@ export async function handleNativeFormSubmission(
     return { success: false, error: 'Missing flow_token in response.' };
   }
 
-  // ── 2. Resolve business_id from channel (NEVER from Flow payload) ──
-  const businessId = await resolveBusinessFromChannel(wabaId);
-  if (!businessId) {
-    return { success: false, error: 'Could not resolve business from channel.' };
-  }
-
   // ── 3. Extract formId from the token for verification ──
-  // The formId is embedded in the signed token payload; verifyFlowToken
-  // will validate it matches. We need to parse it to look up the form.
   let tokenFormId: string;
   try {
     const dotIdx = flowToken.indexOf('.');
@@ -129,7 +201,7 @@ export async function handleNativeFormSubmission(
   const supabase = createServiceClient({ noStore: true });
   const { data: form, error: formError } = await supabase
     .from('forms')
-    .select('id, business_id, is_active')
+    .select('id, business_id, is_active, fields')
     .eq('id', tokenFormId)
     .eq('business_id', businessId)
     .maybeSingle();
@@ -149,7 +221,16 @@ export async function handleNativeFormSubmission(
   const consentGiven = _marketing_consent === true ? true :
     _marketing_consent === false ? false : null;
 
-  // ── 8. INSERT response (replay prevented by unique constraint on flow_token_hash) ──
+  // ── 8. Validate answers against form field schema ──
+  const formFields = Array.isArray(form.fields) ? (form.fields as WaaiioFormField[]) : [];
+  if (formFields.length > 0) {
+    const schemaCheck = validateAnswersAgainstSchema(answers, formFields);
+    if (!schemaCheck.valid) {
+      return { success: false, error: schemaCheck.error || 'Answer validation failed.' };
+    }
+  }
+
+  // ── 9. INSERT response (replay prevented by unique constraint on flow_token_hash) ──
   const { data: response, error: insertError } = await supabase
     .from('form_responses')
     .insert({
@@ -160,7 +241,11 @@ export async function handleNativeFormSubmission(
       submission_source: 'native',
       flow_token_hash: tokenHash,
       consent_given: consentGiven,
-      metadata: { source: 'whatsapp_nfm_reply', waba_id: wabaId },
+      metadata: {
+        source: 'whatsapp_nfm_reply',
+        channel_id: resolvedChannel.channelId,
+        phone_number_id: resolvedChannel.phoneNumberId,
+      },
     })
     .select('id')
     .single();
@@ -173,22 +258,8 @@ export async function handleNativeFormSubmission(
     return { success: false, error: 'Failed to save submission.' };
   }
 
-  // ── 9. Increment response count (best-effort) ──
-  // response_count is a convenience denormalization. The authoritative count
-  // is always COUNT(*) on form_responses. Read-then-write is acceptable here
-  // because native form submissions are low-frequency and the count is advisory.
-  const { data: currentForm } = await supabase
-    .from('forms')
-    .select('response_count')
-    .eq('id', tokenFormId)
-    .single();
-
-  if (currentForm) {
-    await supabase
-      .from('forms')
-      .update({ response_count: (currentForm.response_count ?? 0) + 1 })
-      .eq('id', tokenFormId);
-  }
+  // ── 10. Increment response count atomically (best-effort) ──
+  await supabase.rpc('increment_form_response_count', { p_form_id: tokenFormId });
 
   return { success: true, responseId: response?.id };
 }

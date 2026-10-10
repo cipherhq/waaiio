@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
-import { generateFlowToken } from '@/lib/whatsapp-forms/flow-token';
+import { generateFlowToken, normalizePhone } from '@/lib/whatsapp-forms/flow-token';
 
 /**
  * POST /api/forms/native-flow/send
@@ -84,9 +84,10 @@ export async function POST(request: NextRequest) {
   }
 
   // ── Generate signed flow token ──
+  const normalizedRecipient = normalizePhone(recipientPhone);
   let flowToken: { token: string; expiresAt: number };
   try {
-    flowToken = generateFlowToken(formId, recipientPhone, businessId);
+    flowToken = generateFlowToken(formId, normalizedRecipient, businessId);
   } catch (e) {
     const message = e instanceof Error ? e.message : 'Token generation failed.';
     return NextResponse.json({ error: message }, { status: 500 });

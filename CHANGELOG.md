@@ -3,6 +3,19 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-10-10 — #591 Phase 2 CTO R1: channel authority, phone normalization, answer validation
+
+### What changed
+- submission-handler.ts: Replaced WABA-based business resolution with pre-resolved channel contract (phone_number_id authority from webhook). Shared/unbound channels fail closed.
+- flow-token.ts: Added normalizePhone() to strip leading '+' before signing/verifying, matching Meta webhook msg.from format.
+- submission-handler.ts: Added validateAnswersAgainstSchema() — rejects unknown fields, enforces required, validates options, bounds answer size.
+- submission-handler.ts: Replaced read-modify-write response_count with atomic increment_form_response_count RPC.
+- docs/MIGRATION_REGISTRY.md: Recorded M436/M437/M438 reservations.
+
+### What it affects / could break
+- Submission handler now requires a pre-resolved channel object, not WABA ID. Webhook integration (future) must pass the resolved channel.
+- Phone numbers are canonicalized (strip +) before token signing — existing tokens from Phase 2 (never issued in production) are not affected.
+
 ## 2026-10-09 — #591 Phase 2: Native WhatsApp Forms infrastructure
 
 ### What changed

@@ -64,6 +64,11 @@ function sign(payload: string, secret: string): string {
 
 // ── Public API ──
 
+/** Strip leading '+' to match Meta webhook msg.from format (digits only). */
+export function normalizePhone(phone: string): string {
+  return phone.startsWith('+') ? phone.slice(1) : phone;
+}
+
 /**
  * Generate a signed flow token binding a form to a specific recipient.
  *
@@ -85,7 +90,8 @@ export function generateFlowToken(
   const nonce = randomUUID();
   const expiresAt = Date.now() + TOKEN_TTL_MS;
 
-  const payload = [formId, recipientPhone, businessId, nonce, String(expiresAt)].join(FIELD_SEP);
+  const normalizedPhone = normalizePhone(recipientPhone);
+  const payload = [formId, normalizedPhone, businessId, nonce, String(expiresAt)].join(FIELD_SEP);
   const payloadB64 = toBase64Url(Buffer.from(payload, 'utf8'));
   const signature = sign(payload, secret);
 
@@ -177,7 +183,7 @@ export function verifyFlowToken(
   if (tokenFormId !== formId) {
     return { valid: false, error: 'Token form mismatch.' };
   }
-  if (tokenPhone !== senderPhone) {
+  if (tokenPhone !== normalizePhone(senderPhone)) {
     return { valid: false, error: 'Token phone mismatch.' };
   }
   if (tokenBusinessId !== businessId) {

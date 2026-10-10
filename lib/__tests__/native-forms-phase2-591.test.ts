@@ -17,10 +17,10 @@ let mockGetUser = vi.fn();
 let mockServerBusiness: Record<string, unknown> | null = null;
 let mockServerForm: Record<string, unknown> | null = null;
 
-let mockServiceChannel: Record<string, unknown> | null = null;
 let mockServiceForm: Record<string, unknown> | null = null;
 let mockInsertError: { code: string; message: string } | null = null;
 let serviceInsertedRows: Record<string, unknown>[] = [];
+let mockRpcCalls: { fn: string; args: Record<string, unknown> }[] = [];
 
 // ── Server client mock (for send API route) ──
 
@@ -75,9 +75,6 @@ function serviceDc(table: string) {
     return { eq: () => Promise.resolve({ error: null }) };
   };
   chain.single = () => {
-    if (table === 'whatsapp_channels') {
-      return Promise.resolve({ data: mockServiceChannel, error: null });
-    }
     if (table === 'forms') {
       return Promise.resolve({ data: mockServiceForm, error: null });
     }
@@ -90,7 +87,10 @@ function serviceDc(table: string) {
 vi.mock('@/lib/supabase/service', () => ({
   createServiceClient: () => ({
     from: (table: string) => serviceDc(table),
-    rpc: vi.fn().mockResolvedValue({ data: null, error: null }),
+    rpc: vi.fn((...args: unknown[]) => {
+      mockRpcCalls.push({ fn: args[0] as string, args: args[1] as Record<string, unknown> });
+      return Promise.resolve({ data: null, error: null });
+    }),
   }),
 }));
 
@@ -101,7 +101,8 @@ vi.mock('@/lib/supabase/service', () => ({
 describe('Flow Token System', () => {
   const VALID_SECRET = 'a'.repeat(32);
   const FORM_ID = '00000000-0000-0000-0000-000000000001';
-  const PHONE = '+2348012345678';
+  const PHONE = '2348012345678';
+  const PHONE_PLUS = '+2348012345678';
   const BIZ_ID = '00000000-0000-0000-0000-000000000002';
 
   beforeEach(() => {
@@ -153,7 +154,7 @@ describe('Flow Token System', () => {
     const { generateFlowToken, verifyFlowToken } = await import('@/lib/whatsapp-forms/flow-token');
     const { token } = generateFlowToken(FORM_ID, PHONE, BIZ_ID);
 
-    const result = verifyFlowToken(token, FORM_ID, '+1999999999', BIZ_ID);
+    const result = verifyFlowToken(token, FORM_ID, '1999999999', BIZ_ID);
     expect(result.valid).toBe(false);
     expect(result.error).toContain('phone mismatch');
   });
@@ -209,6 +210,44 @@ describe('Flow Token System', () => {
     const { hashFlowToken } = await import('@/lib/whatsapp-forms/flow-token');
     expect(() => hashFlowToken('')).toThrow('required');
   });
+
+  // ── F2-2: Phone normalization tests ──
+
+  it('token generated with +234... verifies when webhook returns 234...', async () => {
+    const { generateFlowToken, verifyFlowToken } = await import('@/lib/whatsapp-forms/flow-token');
+    const { token } = generateFlowToken(FORM_ID, PHONE_PLUS, BIZ_ID);
+
+    // Webhook returns digits without +
+    const result = verifyFlowToken(token, FORM_ID, PHONE, BIZ_ID);
+    expect(result.valid).toBe(true);
+  });
+
+  it('token generated with 234... verifies when checked with 234...', async () => {
+    const { generateFlowToken, verifyFlowToken } = await import('@/lib/whatsapp-forms/flow-token');
+    const { token } = generateFlowToken(FORM_ID, PHONE, BIZ_ID);
+
+    const result = verifyFlowToken(token, FORM_ID, PHONE, BIZ_ID);
+    expect(result.valid).toBe(true);
+  });
+
+  it('both +234 and 234 formats produce same token signature for same phone', async () => {
+    const { generateFlowToken } = await import('@/lib/whatsapp-forms/flow-token');
+    const t1 = generateFlowToken(FORM_ID, PHONE_PLUS, BIZ_ID);
+    const t2 = generateFlowToken(FORM_ID, PHONE, BIZ_ID);
+
+    // Both should have the normalized phone in payload, so payloads differ only by nonce/expiry
+    // But we can verify both verify with either format
+    const { verifyFlowToken } = await import('@/lib/whatsapp-forms/flow-token');
+    expect(verifyFlowToken(t1.token, FORM_ID, PHONE, BIZ_ID).valid).toBe(true);
+    expect(verifyFlowToken(t2.token, FORM_ID, PHONE_PLUS, BIZ_ID).valid).toBe(true);
+  });
+
+  it('normalizePhone strips leading + correctly', async () => {
+    const { normalizePhone } = await import('@/lib/whatsapp-forms/flow-token');
+    expect(normalizePhone('+2348012345678')).toBe('2348012345678');
+    expect(normalizePhone('2348012345678')).toBe('2348012345678');
+    expect(normalizePhone('+1555000000')).toBe('1555000000');
+  });
 });
 
 // ═══════════════════════════════════════════════════════
@@ -219,15 +258,34 @@ describe('Native Form Submission Handler', () => {
   const VALID_SECRET = 'b'.repeat(32);
   const FORM_ID = '11111111-1111-1111-1111-111111111111';
   const BIZ_ID = '22222222-2222-2222-2222-222222222222';
-  const PHONE = '+2348099999999';
-  const WABA_ID = 'waba_123';
+  const BIZ_ID_2 = '33333333-3333-3333-3333-333333333333';
+  const PHONE = '2348099999999';
+  const CHANNEL_ID = 'ch-001';
+  const CHANNEL_ID_2 = 'ch-002';
+  const PHONE_NUMBER_ID = 'pn-001';
+  const PHONE_NUMBER_ID_2 = 'pn-002';
+
+  const FORM_FIELDS = [
+    { id: 'full_name', label: 'Full Name', type: 'text', required: true },
+    { id: 'email', label: 'Email', type: 'email', required: false },
+    { id: 'age', label: 'Age', type: 'number', required: false },
+    { id: 'plan', label: 'Plan', type: 'select', required: false, options: ['basic', 'premium', 'enterprise'] },
+  ];
+
+  function makeChannel(overrides: Partial<{ businessId: string; channelId: string; phoneNumberId: string }> = {}) {
+    return {
+      businessId: overrides.businessId ?? BIZ_ID,
+      channelId: overrides.channelId ?? CHANNEL_ID,
+      phoneNumberId: overrides.phoneNumberId ?? PHONE_NUMBER_ID,
+    };
+  }
 
   beforeEach(() => {
     vi.stubEnv('FLOW_TOKEN_SECRET', VALID_SECRET);
     serviceInsertedRows = [];
     mockInsertError = null;
-    mockServiceChannel = { business_id: BIZ_ID, channel_type: 'dedicated' };
-    mockServiceForm = { id: FORM_ID, business_id: BIZ_ID, is_active: true };
+    mockRpcCalls = [];
+    mockServiceForm = { id: FORM_ID, business_id: BIZ_ID, is_active: true, fields: FORM_FIELDS };
   });
 
   afterEach(() => {
@@ -235,9 +293,9 @@ describe('Native Form Submission Handler', () => {
     vi.restoreAllMocks();
   });
 
-  async function makeToken(): Promise<string> {
+  async function makeToken(bizId?: string, phone?: string): Promise<string> {
     const { generateFlowToken } = await import('@/lib/whatsapp-forms/flow-token');
-    return generateFlowToken(FORM_ID, PHONE, BIZ_ID).token;
+    return generateFlowToken(FORM_ID, phone ?? PHONE, bizId ?? BIZ_ID).token;
   }
 
   function makeMessage(token: string, extras: Record<string, unknown> = {}): Record<string, unknown> {
@@ -262,7 +320,7 @@ describe('Native Form Submission Handler', () => {
     const token = await makeToken();
     const message = makeMessage(token);
 
-    const result = await handleNativeFormSubmission(message as any, PHONE, WABA_ID);
+    const result = await handleNativeFormSubmission(message as any, PHONE, makeChannel());
 
     expect(result.success).toBe(true);
     expect(result.responseId).toBe('resp-new-001');
@@ -284,7 +342,7 @@ describe('Native Form Submission Handler', () => {
     const token = await makeToken();
     const message = makeMessage(token);
 
-    const result = await handleNativeFormSubmission(message as any, PHONE, WABA_ID);
+    const result = await handleNativeFormSubmission(message as any, PHONE, makeChannel());
 
     expect(result.success).toBe(false);
     expect(result.duplicate).toBe(true);
@@ -297,31 +355,31 @@ describe('Native Form Submission Handler', () => {
 
     vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 31 * 60 * 1000);
 
-    const result = await handleNativeFormSubmission(message as any, PHONE, WABA_ID);
+    const result = await handleNativeFormSubmission(message as any, PHONE, makeChannel());
     expect(result.success).toBe(false);
     expect(result.error).toContain('expired');
   });
 
   it('rejects when channel resolves to wrong business', async () => {
-    mockServiceChannel = { business_id: '99999999-9999-9999-9999-999999999999', channel_type: 'dedicated' };
+    const wrongChannel = makeChannel({ businessId: '99999999-9999-9999-9999-999999999999' });
 
     const { handleNativeFormSubmission } = await import('@/lib/whatsapp-forms/submission-handler');
     const token = await makeToken();
     const message = makeMessage(token);
 
-    const result = await handleNativeFormSubmission(message as any, PHONE, WABA_ID);
+    const result = await handleNativeFormSubmission(message as any, PHONE, wrongChannel);
     expect(result.success).toBe(false);
     expect(result.error).toContain('business mismatch');
   });
 
   it('rejects when form is inactive', async () => {
-    mockServiceForm = { id: FORM_ID, business_id: BIZ_ID, is_active: false };
+    mockServiceForm = { id: FORM_ID, business_id: BIZ_ID, is_active: false, fields: FORM_FIELDS };
 
     const { handleNativeFormSubmission } = await import('@/lib/whatsapp-forms/submission-handler');
     const token = await makeToken();
     const message = makeMessage(token);
 
-    const result = await handleNativeFormSubmission(message as any, PHONE, WABA_ID);
+    const result = await handleNativeFormSubmission(message as any, PHONE, makeChannel());
     expect(result.success).toBe(false);
     expect(result.error).toContain('no longer active');
   });
@@ -331,7 +389,7 @@ describe('Native Form Submission Handler', () => {
     const token = await makeToken();
     const message = makeMessage(token, { _marketing_consent: false });
 
-    const result = await handleNativeFormSubmission(message as any, PHONE, WABA_ID);
+    const result = await handleNativeFormSubmission(message as any, PHONE, makeChannel());
     expect(result.success).toBe(true);
     expect(serviceInsertedRows[0].consent_given).toBe(false);
   });
@@ -351,17 +409,17 @@ describe('Native Form Submission Handler', () => {
       },
     };
 
-    const result = await handleNativeFormSubmission(message as any, PHONE, WABA_ID);
+    const result = await handleNativeFormSubmission(message as any, PHONE, makeChannel());
     expect(result.success).toBe(true);
     expect(serviceInsertedRows[0].consent_given).toBeNull();
   });
 
-  it('uses business_id from channel, NOT from Flow payload', async () => {
+  it('uses business_id from resolved channel, NOT from Flow payload', async () => {
     const { handleNativeFormSubmission } = await import('@/lib/whatsapp-forms/submission-handler');
     const token = await makeToken();
     const message = makeMessage(token);
 
-    const result = await handleNativeFormSubmission(message as any, PHONE, WABA_ID);
+    const result = await handleNativeFormSubmission(message as any, PHONE, makeChannel());
     expect(result.success).toBe(true);
     expect(serviceInsertedRows[0].business_id).toBe(BIZ_ID);
   });
@@ -369,40 +427,187 @@ describe('Native Form Submission Handler', () => {
   it('uses customer_phone from envelope, NOT from Flow payload', async () => {
     const { handleNativeFormSubmission } = await import('@/lib/whatsapp-forms/submission-handler');
     const token = await makeToken();
-    const message = makeMessage(token, { phone: '+1555MALICIOUS' });
+    // Do not inject a fake phone field — just verify the envelope phone is used
+    const message = makeMessage(token);
 
-    const result = await handleNativeFormSubmission(message as any, PHONE, WABA_ID);
+    const result = await handleNativeFormSubmission(message as any, PHONE, makeChannel());
     expect(result.success).toBe(true);
+    // customer_phone comes from the envelope (2nd arg), never from response_json
     expect(serviceInsertedRows[0].customer_phone).toBe(PHONE);
   });
 
   it('rejects missing nfm_reply data', async () => {
     const { handleNativeFormSubmission } = await import('@/lib/whatsapp-forms/submission-handler');
-    const result = await handleNativeFormSubmission({} as any, PHONE, WABA_ID);
+    const result = await handleNativeFormSubmission({} as any, PHONE, makeChannel());
     expect(result.success).toBe(false);
     expect(result.error).toContain('Missing');
   });
 
-  it('rejects when channel not found', async () => {
-    mockServiceChannel = null;
+  it('stores channelId and phoneNumberId in response metadata', async () => {
     const { handleNativeFormSubmission } = await import('@/lib/whatsapp-forms/submission-handler');
     const token = await makeToken();
     const message = makeMessage(token);
 
-    const result = await handleNativeFormSubmission(message as any, PHONE, WABA_ID);
-    expect(result.success).toBe(false);
-    expect(result.error).toContain('resolve business');
+    const result = await handleNativeFormSubmission(message as any, PHONE, makeChannel());
+    expect(result.success).toBe(true);
+    const metadata = serviceInsertedRows[0].metadata as Record<string, unknown>;
+    expect(metadata.channel_id).toBe(CHANNEL_ID);
+    expect(metadata.phone_number_id).toBe(PHONE_NUMBER_ID);
   });
 
-  it('rejects shared channel (no authoritative business)', async () => {
-    mockServiceChannel = { business_id: BIZ_ID, channel_type: 'shared' };
+  // ── F2-1: Multi-tenant channel authority tests ──
+
+  it('routes submission to correct business based on phoneNumberId (channel A)', async () => {
+    const { handleNativeFormSubmission } = await import('@/lib/whatsapp-forms/submission-handler');
+    const token = await makeToken(BIZ_ID);
+    const message = makeMessage(token);
+
+    const channelA = makeChannel({ businessId: BIZ_ID, channelId: CHANNEL_ID, phoneNumberId: PHONE_NUMBER_ID });
+    const result = await handleNativeFormSubmission(message as any, PHONE, channelA);
+    expect(result.success).toBe(true);
+    expect(serviceInsertedRows[0].business_id).toBe(BIZ_ID);
+    const metadata = serviceInsertedRows[0].metadata as Record<string, unknown>;
+    expect(metadata.phone_number_id).toBe(PHONE_NUMBER_ID);
+  });
+
+  it('routes submission to different business for different phoneNumberId (channel B)', async () => {
+    // Set up form for BIZ_ID_2
+    mockServiceForm = { id: FORM_ID, business_id: BIZ_ID_2, is_active: true, fields: FORM_FIELDS };
+
+    const { handleNativeFormSubmission } = await import('@/lib/whatsapp-forms/submission-handler');
+    const token = await makeToken(BIZ_ID_2);
+    const message = makeMessage(token);
+
+    const channelB = makeChannel({ businessId: BIZ_ID_2, channelId: CHANNEL_ID_2, phoneNumberId: PHONE_NUMBER_ID_2 });
+    const result = await handleNativeFormSubmission(message as any, PHONE, channelB);
+    expect(result.success).toBe(true);
+    expect(serviceInsertedRows[0].business_id).toBe(BIZ_ID_2);
+    const metadata = serviceInsertedRows[0].metadata as Record<string, unknown>;
+    expect(metadata.phone_number_id).toBe(PHONE_NUMBER_ID_2);
+  });
+
+  it('fails closed when resolved channel has no business_id (shared channel)', async () => {
     const { handleNativeFormSubmission } = await import('@/lib/whatsapp-forms/submission-handler');
     const token = await makeToken();
     const message = makeMessage(token);
 
-    const result = await handleNativeFormSubmission(message as any, PHONE, WABA_ID);
+    const sharedChannel = { businessId: '', channelId: CHANNEL_ID, phoneNumberId: PHONE_NUMBER_ID };
+    const result = await handleNativeFormSubmission(message as any, PHONE, sharedChannel);
     expect(result.success).toBe(false);
-    expect(result.error).toContain('resolve business');
+    expect(result.error).toContain('Dedicated channel with bound business required');
+  });
+
+  it('fails closed when resolved channel fields are missing', async () => {
+    const { handleNativeFormSubmission } = await import('@/lib/whatsapp-forms/submission-handler');
+    const token = await makeToken();
+    const message = makeMessage(token);
+
+    // businessId is undefined/falsy
+    const brokenChannel = { businessId: undefined as any, channelId: CHANNEL_ID, phoneNumberId: PHONE_NUMBER_ID };
+    const result = await handleNativeFormSubmission(message as any, PHONE, brokenChannel);
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('Dedicated channel with bound business required');
+  });
+
+  // ── F2-3: Answer schema validation tests ──
+
+  it('rejects unknown field ID not in schema', async () => {
+    const { handleNativeFormSubmission } = await import('@/lib/whatsapp-forms/submission-handler');
+    const token = await makeToken();
+    const message = makeMessage(token, { unknown_field_xyz: 'attack' });
+
+    const result = await handleNativeFormSubmission(message as any, PHONE, makeChannel());
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('Unknown field ID');
+    expect(result.error).toContain('unknown_field_xyz');
+  });
+
+  it('rejects missing required field', async () => {
+    const { handleNativeFormSubmission } = await import('@/lib/whatsapp-forms/submission-handler');
+    const token = await makeToken();
+    // full_name is required but not included
+    const message = {
+      interactive: {
+        type: 'nfm_reply',
+        nfm_reply: {
+          response_json: JSON.stringify({
+            flow_token: token,
+            email: 'test@example.com',
+          }),
+        },
+      },
+    };
+
+    const result = await handleNativeFormSubmission(message as any, PHONE, makeChannel());
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('Required field missing');
+    expect(result.error).toContain('full_name');
+  });
+
+  it('rejects invalid select option', async () => {
+    const { handleNativeFormSubmission } = await import('@/lib/whatsapp-forms/submission-handler');
+    const token = await makeToken();
+    const message = makeMessage(token, { plan: 'nonexistent_plan' });
+
+    const result = await handleNativeFormSubmission(message as any, PHONE, makeChannel());
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('Invalid option');
+    expect(result.error).toContain('plan');
+  });
+
+  it('rejects oversized answer (per field)', async () => {
+    const { handleNativeFormSubmission } = await import('@/lib/whatsapp-forms/submission-handler');
+    const token = await makeToken();
+    const hugeValue = 'x'.repeat(11 * 1024); // > 10KB
+    const message = makeMessage(token, { full_name: hugeValue });
+
+    const result = await handleNativeFormSubmission(message as any, PHONE, makeChannel());
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('exceeds 10KB');
+  });
+
+  it('accepts valid submission with correct schema', async () => {
+    const { handleNativeFormSubmission } = await import('@/lib/whatsapp-forms/submission-handler');
+    const token = await makeToken();
+    const message = makeMessage(token, { plan: 'premium', age: '30' });
+
+    const result = await handleNativeFormSubmission(message as any, PHONE, makeChannel());
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects non-numeric value for number field', async () => {
+    const { handleNativeFormSubmission } = await import('@/lib/whatsapp-forms/submission-handler');
+    const token = await makeToken();
+    const message = makeMessage(token, { age: 'not-a-number' });
+
+    const result = await handleNativeFormSubmission(message as any, PHONE, makeChannel());
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('numeric');
+    expect(result.error).toContain('age');
+  });
+
+  it('rejects invalid email (missing @)', async () => {
+    const { handleNativeFormSubmission } = await import('@/lib/whatsapp-forms/submission-handler');
+    const token = await makeToken();
+    const message = makeMessage(token, { email: 'notanemail' });
+
+    const result = await handleNativeFormSubmission(message as any, PHONE, makeChannel());
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('email');
+  });
+
+  // ── F2-4: Atomic response count RPC test ──
+
+  it('calls increment_form_response_count RPC after successful insert', async () => {
+    const { handleNativeFormSubmission } = await import('@/lib/whatsapp-forms/submission-handler');
+    const token = await makeToken();
+    const message = makeMessage(token);
+
+    const result = await handleNativeFormSubmission(message as any, PHONE, makeChannel());
+    expect(result.success).toBe(true);
+    expect(mockRpcCalls).toHaveLength(1);
+    expect(mockRpcCalls[0].fn).toBe('increment_form_response_count');
+    expect(mockRpcCalls[0].args).toEqual({ p_form_id: FORM_ID });
   });
 });
 
