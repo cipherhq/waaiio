@@ -163,7 +163,7 @@ describe('SEC-005 HTTP: aal1 admin sessions are rejected', () => {
 });
 
 describe('SEC-005 HTTP: cookie token must itself be verified', () => {
-  beforeEach(() => { vi.clearAllMocks(); });
+  beforeEach(() => { vi.clearAllMocks(); mockGetSession.mockReset(); mockGetUser.mockReset(); });
 
   function cookieRequest(): NextRequest {
     return new NextRequest('http://localhost/api/admin/query', {
