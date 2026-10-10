@@ -149,8 +149,13 @@ export async function POST(request: NextRequest) {
       if (!providerCancelled) {
         try {
           const providerStatus = await getPaystackSubStatus(sub.gateway_subscription_code);
-          // Paystack 'non-renewing' or 'cancelled' = already disabled
-          if (providerStatus === 'non-renewing' || providerStatus === 'cancelled' || providerStatus === 'complete') {
+          // Paystack terminal statuses (per docs.paystack.com/payments/subscriptions):
+          // 'non-renewing' = currently active period, no future charges
+          // 'cancelled' = fully cancelled
+          // 'completed' = finished lifecycle, no future charges
+          // Note: 'non-renewing' proves no future renewal will occur at the provider,
+          // but does not necessarily mean the current paid period has expired.
+          if (providerStatus === 'non-renewing' || providerStatus === 'cancelled' || providerStatus === 'completed') {
             logger.info('[RECURRING-CANCEL] Paystack subscription verified cancelled via status check:', providerStatus);
             providerCancelled = true;
           } else {

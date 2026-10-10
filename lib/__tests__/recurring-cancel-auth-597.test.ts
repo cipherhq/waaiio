@@ -493,6 +493,77 @@ describe('#597 F3 R2: Executable cancel handler tests', () => {
     const proof = issueRecurringCancellationProof(PHONE, SUB_ID);
     const r = await callCancel({ subscriptionId: SUB_ID, phone: PHONE, cancellationProof: proof });
     expect(r.status).toBe(200);
-    expect(providerVerifyCount).toBe(1); // verified after exception
+    expect(providerVerifyCount).toBe(1);
   });
+
+  // ── R5-1: Paystack 'completed' status (typo fix) ──
+
+  it('R5-1: Paystack cancel refused + status completed → converges', async () => {
+    mockPaystackResult = false;
+    mockPaystackStatus = 'completed'; // Paystack documented terminal status
+    const proof = issueRecurringCancellationProof(PHONE, SUB_ID);
+    const r = await callCancel({ subscriptionId: SUB_ID, phone: PHONE, cancellationProof: proof });
+    expect(r.status).toBe(200);
+    expect(r.body.success).toBe(true);
+    expect(providerVerifyCount).toBe(1);
+  });
+
+  // ── R5-2: Two-request stateful convergence ──
+
+  it('R5-2: Request 1 provider-success/DB-failure → 503; Request 2 provider-refused/status-verified → 200', async () => {
+    // REQUEST 1: Provider cancel succeeds, but DB update fails
+    const proof1 = issueRecurringCancellationProof(PHONE, SUB_ID);
+    mockPaystackResult = true;      // provider accepts cancellation
+    mockUpdateError = { message: 'connection lost' };
+    mockUpdateData = null;
+
+    const r1 = await callCancel({ subscriptionId: SUB_ID, phone: PHONE, cancellationProof: proof1 });
+    expect(r1.status).toBe(503);             // correctly reports failure
+    expect(r1.body.success).toBeUndefined(); // no false success
+    expect(providerCallCount).toBe(1);       // provider was called once
+    const r1DbCalls = dbUpdateCalls.length;
+    expect(r1DbCalls).toBe(1);               // DB update was attempted
+
+    // Reset mock state for request 2 (simulating fresh retry)
+    fromCallCount = 0;
+    providerCallCount = 0;
+    providerVerifyCount = 0;
+    dbUpdateCalls = [];
+
+    // REQUEST 2: Provider now refuses (already disabled), status check confirms
+    const proof2 = issueRecurringCancellationProof(PHONE, SUB_ID);
+    mockPaystackResult = false;          // cancel API refuses (already disabled)
+    mockPaystackStatus = 'non-renewing'; // status check confirms cancelled
+    mockUpdateError = null;              // DB is now available
+    mockUpdateData = [{ id: SUB_ID }];   // DB CAS succeeds
+
+    const r2 = await callCancel({ subscriptionId: SUB_ID, phone: PHONE, cancellationProof: proof2 });
+    expect(r2.status).toBe(200);             // converges to success
+    expect(r2.body.success).toBe(true);
+    expect(providerCallCount).toBe(1);       // cancel attempted
+    expect(providerVerifyCount).toBe(1);     // status verified
+    expect(dbUpdateCalls.length).toBe(1);    // DB CAS executed
+    expect(dbUpdateCalls[0].status).toBe('cancelled'); // correct target state
+  });
+
+  /**
+   * R5-2 RECOVERY DOCUMENTATION:
+   *
+   * If the customer does NOT retry (proof expires, gives up, DB outage persists):
+   * - The subscription remains 'active'/'past_due' in Waaiio's DB
+   * - The provider has already disabled the subscription (no future charges)
+   * - retry-failed-charges cron (daily) processes past_due subscriptions:
+   *   it calls claim_paystack_billing_cycle which reads next_charge_at;
+   *   since the provider subscription is disabled, the charge attempt will fail,
+   *   incrementing failure_count. After 3 failures, the cron cancels locally.
+   * - This provides EVENTUAL convergence (within 3 billing cycles) but is NOT
+   *   immediate. A dedicated customer_subscription reconciliation worker that
+   *   verifies provider state for locally-active subscriptions would provide
+   *   faster convergence. This is tracked as separate operational work, not
+   *   a blocker for the authorization fix in this PR.
+   *
+   * The critical safety invariant is preserved: the provider will NOT charge
+   * the customer again, regardless of local DB state. The local state will
+   * converge through the existing retry/failure/cancellation lifecycle.
+   */
 });
