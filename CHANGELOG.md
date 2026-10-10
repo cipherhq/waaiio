@@ -3,6 +3,48 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-10-09 — #598 Promo product/service and loyalty redemption fail-closed guards (pre-staging)
+
+- Added a shared eligibility check for WhatsApp order/booking entered promo codes: enforce owner business, active status, valid-from/until dates, allowed ordering/scheduling flows, exact product/service restrictions, capacity, minimum subtotal and bounded fixed/percentage discount. A restricted code is refused for a mixed cart rather than reducing unrelated merchandise.
+- Promo-code dashboard now offers all items, specific products or specific services and persists intended flow type on create/edit; owner API supports updating flow type and start date.
+- Bot loyalty rejects null/false/error from existing atomic points-deduction RPC before issuing any reward code; route rejects noninteger points and RPC transport errors. Replaced prior source-string redemption tests with live FlowStep behavioral cases.
+- **M434 proposed migration (not deployed):** restricted `redeem_loyalty_reward_once` locks the account, verifies business/customer ownership, atomically deducts points and saves the actual reward code/receipt with replay keys and uniqueness. Bot and owner API now consume the returned durable receipt; API requires a caller-stable UUID `Idempotency-Key`. Tests cover denial, replay, returned code and displayed balance. Existing legacy RPC remains for unconverted callers.
+- **Status after #603 merge:** Ordering checkout DB promo and volume amount authority is implemented in M435 on main. Scheduling and booking checkout pricing authority, reward fulfillment, and staged end-to-end certification remain open before #598 can close.
+- One new **unapplied** migration is included; no provider calls or staging/production deployment. No payment, refund or payout math altered.
+
+## 2026-10-09 — #602 M435: Ordering price authority at atomic DB boundary
+
+### What changed
+- `supabase/migrations/435_ordering_price_authority.sql`: Extends `create_order_atomic` to derive promo and volume discounts from locked DB values instead of trusting caller-supplied amounts.
+  - Promo authority: re-reads discount_type/value, business_id, is_active, dates, flow types, product scope, min amount from the locked promo_codes row. Computes server discount. Refuses discount without eligible promo.
+  - Volume discount authority: computes per-item volume discounts using locked product/variant unit prices (not caller-supplied p_unit_price). Matches calculate_volume_discount logic.
+  - Stores server-computed discount_amount and volume_discount_amount in orders table.
+  - Refuses p_discount_amount > 0 when p_promo_code_id IS NULL.
+  - Compares server-computed values against caller quote — rejects mismatches.
+  - Positive quantity enforcement: items and addons must have quantity >= 1 (prevents stock inflation via negative quantities).
+  - Idempotent replay validates monetary contract: refuses changed promo/discount/amount on same-cart retry.
+  - Per-customer promo reuse check via existing bookings/orders.
+  - Volume discount rule locking (FOR UPDATE) prevents concurrent tier edits.
+- `lib/__tests__/ordering-price-authority-602.test.ts`: Disposable PostgreSQL RPC tests covering fabricated discount, cross-tenant/inactive/expired/future/wrong-flow/wrong-product promos, valid percentage/fixed promos, fixed cap at subtotal, inflated discount rejection, no side effects on rejection, concurrent capacity exhaustion, volume discount rules, variant pricing, negative quantity rejection, idempotent replay, and no-promo baseline.
+
+### What it affects / could break
+- Ordering checkout: existing callers pass correct discount values → no behavior change. If any caller passes fabricated/stale discount amounts, they will now be rejected with descriptive exceptions.
+- Negative quantities now rejected with exception (previously accepted silently).
+- Non-validated path (p_validate_products=false) is UNCHANGED — continues to trust caller values (documented as known debt).
+- Same 24-parameter function signature preserved. ACL unchanged.
+
+## 2026-10-09 — #597 PR-A1: Transfer webhook financial integrity repair
+
+### What changed
+- `app/api/webhooks/paystack-transfer/route.ts`: Complete rewrite to fix P0 financial defects
+- `app/api/webhooks/stripe-transfer/route.ts`: Identical structural fixes for Stripe transfer events
+- `lib/__tests__/transfer-webhook-integrity-597.test.ts`: Behavioral + executable tests
+
+### What it affects / could break
+- Transfer webhook processing now correctly transitions payout status
+- Catch blocks return 500 instead of 200 — provider will retry on transient errors
+- `transfer.reversed` events now transition `paid` payouts to `failed`
+
 ## 2026-10-09 — #597 PR-B: Direct transfer payout exclusion guard
 
 ### What changed
