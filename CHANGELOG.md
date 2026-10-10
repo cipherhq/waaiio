@@ -3,6 +3,24 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-10-10 — #597 F3: OTP-bound recurring cancellation authority
+
+### What changed
+- `app/api/recurring/cancel/route.ts`: Rewritten to require HMAC-signed cancellation proof issued by `/api/recurring/verify` after successful OTP verification. Previously accepted only phone + subscription UUID (both public identifiers) with no authentication.
+  - Rejects missing/expired/forged/cross-subscription proofs (HTTP 403)
+  - Checks provider cancellation result before DB update (was: silently swallowed)
+  - Returns 503 if provider refuses cancellation (was: returned success regardless)
+  - CAS-guarded DB update with error checking (was: fire-and-forget)
+  - Handles ambiguous provider-cancel-success/DB-failure case explicitly
+- `app/recurring/manage/page.tsx`: Updated to send `cancellationProof` from the verified subscription data. Added error display for failed cancellations.
+- `lib/__tests__/recurring-cancel-auth-597.test.ts`: 20 tests covering proof issuance, verification (wrong phone/sub/tampered/expired/null), and cancel route source-contract verification.
+
+### What it affects / could break
+- Public recurring cancellation now requires OTP verification first. Customers must go through the verify flow before cancelling.
+- Existing authenticated business-owner cancellation via `/api/recurring/manage` is NOT affected (separate route with Supabase auth).
+- WhatsApp bot cancellation via `recurring-manage.flow.ts` is NOT affected (separate code path).
+- No migration. No provider calls during implementation.
+
 ## 2026-10-09 — #598 Promo product/service and loyalty redemption fail-closed guards (pre-staging)
 
 - Added a shared eligibility check for WhatsApp order/booking entered promo codes: enforce owner business, active status, valid-from/until dates, allowed ordering/scheduling flows, exact product/service restrictions, capacity, minimum subtotal and bounded fixed/percentage discount. A restricted code is refused for a mixed cart rather than reducing unrelated merchandise.

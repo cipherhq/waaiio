@@ -18,6 +18,7 @@ interface Subscription {
   last_charged_at: string | null;
   charge_count: number;
   total_charged: number;
+  cancellation_proof?: string;
 }
 
 function ManageRecurringContent() {
@@ -90,19 +91,31 @@ function ManageRecurringContent() {
   }
 
   async function cancelSub(subId: string) {
+    const sub = subs.find(s => s.id === subId);
+    if (!sub?.cancellation_proof) {
+      setError('Verification expired. Please verify your identity again.');
+      return;
+    }
     setCancelling(subId);
+    setError('');
     try {
       const res = await fetch('/api/recurring/cancel', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ subscriptionId: subId, phone }),
+        body: JSON.stringify({
+          subscriptionId: subId,
+          phone,
+          cancellationProof: sub.cancellation_proof,
+        }),
       });
       const data = await res.json();
       if (data.success) {
         setSubs((prev) => prev.map((s) => s.id === subId ? { ...s, status: 'cancelled' } : s));
+      } else {
+        setError(data.error || 'Failed to cancel. Please try again.');
       }
     } catch {
-      // silent
+      setError('Something went wrong. Please try again.');
     } finally {
       setCancelling(null);
     }
