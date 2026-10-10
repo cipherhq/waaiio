@@ -163,6 +163,27 @@ describe.skipIf(!canRun)('Config Versioning DB Tests (#255 C-1)', () => {
       CREATE POLICY service_role_bypass_versions ON public.platform_config_versions FOR ALL TO service_role USING (true) WITH CHECK (true);
     `);
 
+    // M439's real is_admin() reads the canonical Auth app_metadata role,
+    // not an untrusted JWT role. Seed that authority for this disposable-PG
+    // fixture without weakening the production MFA helper.
+    if (psql("SELECT to_regprocedure('public.has_admin_role(text[])') IS NOT NULL;") === 't') {
+      psql(`
+        BEGIN;
+        ALTER TABLE auth.users DISABLE TRIGGER ALL;
+        INSERT INTO auth.users (id, email, raw_app_meta_data)
+        VALUES (
+          '00000000-0000-0000-0000-000000000001',
+          'm359-admin@unit.invalid',
+          '{"role":"admin"}'::jsonb
+        )
+        ON CONFLICT (id) DO UPDATE
+          SET raw_app_meta_data = EXCLUDED.raw_app_meta_data;
+        ALTER TABLE auth.users ENABLE TRIGGER ALL;
+        COMMIT;
+      `);
+      expect(psql("SELECT raw_app_meta_data->>'role' FROM auth.users WHERE id='00000000-0000-0000-0000-000000000001';")).toBe('admin');
+    }
+
     // Verify bootstrap succeeded
     const count = parseInt(psql('SELECT count(*)::int FROM platform_config_versions;'), 10);
     expect(count).toBeGreaterThanOrEqual(1);
