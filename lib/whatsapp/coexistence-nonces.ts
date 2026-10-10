@@ -30,6 +30,7 @@ export interface GenerateNonceResult {
 export interface ConsumeNonceResult {
   valid: boolean;
   businessId?: string;
+  userId?: string;
   error?: string;
 }
 
@@ -42,10 +43,16 @@ export interface CleanupResult {
  *
  * The nonce is a combination of a UUID and random bytes to ensure
  * uniqueness and unpredictability. Stored with a 15-minute TTL.
+ *
+ * @param businessId - The business starting the coexistence signup
+ * @param userId - The authenticated user who initiated the signup (binds session ownership)
  */
-export async function generateSignupNonce(businessId: string): Promise<GenerateNonceResult> {
+export async function generateSignupNonce(businessId: string, userId: string): Promise<GenerateNonceResult> {
   if (!businessId || typeof businessId !== 'string') {
     throw new Error('businessId is required to generate a signup nonce');
+  }
+  if (!userId || typeof userId !== 'string') {
+    throw new Error('userId is required to generate a signup nonce');
   }
 
   const nonce = `${randomUUID()}-${randomBytes(16).toString('hex')}`;
@@ -55,6 +62,7 @@ export async function generateSignupNonce(businessId: string): Promise<GenerateN
 
   const { error } = await service.from('coexistence_signup_nonces').insert({
     business_id: businessId,
+    initiated_by_user_id: userId,
     nonce,
     expires_at: expiresAt.toISOString(),
   });
@@ -98,7 +106,7 @@ export async function consumeSignupNonce(
     .eq('nonce', nonce)
     .is('consumed_at', null)
     .gt('expires_at', new Date().toISOString())
-    .select('business_id')
+    .select('business_id, initiated_by_user_id')
     .maybeSingle();
 
   if (updateError) {
@@ -113,6 +121,7 @@ export async function consumeSignupNonce(
   return {
     valid: true,
     businessId: updated.business_id,
+    userId: updated.initiated_by_user_id,
   };
 }
 

@@ -1,15 +1,23 @@
 /**
- * #592 Phase 2 — Signed FINISH callback handler for Meta coexistence onboarding.
+ * #592 Phase 2 — Waaiio-owned session envelope handler for coexistence onboarding.
  *
- * Processes the FINISH callback that Meta sends when a business completes
- * the coexistence signup flow in Meta's hosted onboarding experience.
+ * Processes the FINISH event relayed from the browser after a business completes
+ * Meta's Embedded Signup popup. The FINISH event arrives via browser `window.postMessage`,
+ * NOT via a server-to-server Meta webhook. The OAuth code, WABA ID, and phone number ID
+ * are browser-relayed values and remain UNTRUSTED until server-side verification.
  *
- * Security chain:
- * 1. Verify HMAC-SHA256 signature (proves callback came from Meta)
+ * Session envelope security (Waaiio-owned, NOT Meta-signed):
+ * 1. Verify HMAC-SHA256 session envelope signature (proves Waaiio's backend signed
+ *    the session params before passing them to the browser popup — tamper detection
+ *    for the browser round-trip, NOT a Meta provider attestation)
  * 2. Validate and consume server-issued nonce (prevents replay attacks)
- * 3. Validate payload format (waba_id, phone_number_id)
+ * 3. Validate payload format (waba_id, phone_number_id — UNTRUSTED browser values)
  * 4. Check partner entitlement (currently gated → always fails)
- * 5. If all pass, create a channel candidate (currently unreachable)
+ * 5. Candidate creation NOT IMPLEMENTED — handler always returns accepted:false
+ *
+ * The server-side authoritative verification (OAuth code exchange, WABA/phone
+ * ownership confirmation via Meta Graph API) is a separate gated step not
+ * implemented in this phase.
  *
  * CRITICAL INVARIANTS — this handler NEVER:
  * - Exchanges the OAuth code for a token (requires separate authorization)
@@ -17,8 +25,9 @@
  * - Creates an active whatsapp_channel
  * - Modifies existing channels
  * - Makes outbound Meta API calls (except gated eligibility checks)
+ * - Claims that browser-relayed values are verified by Meta
  *
- * The handler validates and stages only; activation is a separate gate.
+ * The handler validates session integrity and stages only; activation is a separate gate.
  */
 
 import { createHmac, timingSafeEqual } from 'crypto';
@@ -29,36 +38,59 @@ import { checkPartnerEntitlement } from '@/lib/whatsapp/coexistence-verification
 // Types
 // ─────────────────────────────────────────────────────────────────────────
 
-export interface CoexistenceFinishPayload {
-  /** OAuth authorization code from Meta */
+/**
+ * Browser-relayed session payload from the Embedded Signup FINISH event.
+ *
+ * These values arrive via `window.postMessage` from Meta's popup and are
+ * NOT server-verified. The OAuth code, WABA ID, and phone number ID are
+ * browser-supplied and must NOT be trusted until confirmed through
+ * server-side OAuth code exchange and Meta Graph API verification.
+ */
+export interface CoexistenceSessionPayload {
+  /** OAuth authorization code from Meta (browser-relayed, UNTRUSTED) */
   code: string;
-  /** WhatsApp Business Account ID */
+  /** WhatsApp Business Account ID (browser-relayed, UNTRUSTED) */
   waba_id: string;
-  /** Phone number ID in Meta's system */
+  /** Phone number ID in Meta's system (browser-relayed, UNTRUSTED) */
   phone_number_id: string;
   /** Server-issued nonce that must match a stored, unconsumed, unexpired nonce */
   session_nonce: string;
 }
 
-export type CoexistenceFinishResult =
-  | { accepted: false; reason: string }
-  | { accepted: true; candidateId: string };
+/**
+ * Result of processing a coexistence FINISH event.
+ *
+ * Currently always returns accepted:false — candidate creation requires
+ * verified OAuth code exchange, confirmed WABA/phone ownership via Meta
+ * Graph API, durable CAS candidate insert, and channel activation gate.
+ * None of these are implemented in this phase.
+ */
+export type CoexistenceFinishResult = { accepted: false; reason: string };
 
 // ─────────────────────────────────────────────────────────────────────────
-// Signature verification
+// Session envelope signature verification
 // ─────────────────────────────────────────────────────────────────────────
 
 /**
- * Verify the HMAC-SHA256 signature of Meta's callback payload.
+ * Verify the HMAC-SHA256 signature of the Waaiio-owned session envelope.
  *
- * Meta signs the callback body with the app secret. We recompute the
- * signature and compare using timing-safe equality to prevent oracle attacks.
+ * This is NOT a Meta provider attestation. Waaiio's backend signs session
+ * parameters (business_id, nonce, config_id, timestamp) before passing them
+ * to the browser popup. When the browser returns the FINISH event, the backend
+ * verifies its own signature to prove the session data wasn't tampered with
+ * during the browser round-trip.
+ *
+ * The HMAC protects session integrity in transit. It does NOT prove:
+ * - That the FINISH event came from Meta
+ * - That the WABA ID or phone number ID are valid
+ * - That the OAuth code is authentic
+ * Those require server-side OAuth code exchange and Meta Graph API verification.
  *
  * @param payload - Raw payload string (JSON body)
- * @param signature - Signature from Meta (hex-encoded HMAC-SHA256)
- * @param appSecret - META_APP_SECRET (server-side only, never exposed to client)
+ * @param signature - Waaiio session envelope signature (hex-encoded HMAC-SHA256)
+ * @param appSecret - META_APP_SECRET used as HMAC key (server-side only, never exposed to client)
  */
-export function verifyFinishSignature(
+export function verifySessionEnvelopeSignature(
   payload: string,
   signature: string,
   appSecret: string,
@@ -72,7 +104,7 @@ export function verifyFinishSignature(
       .update(payload)
       .digest('hex');
 
-    // Strip optional "sha256=" prefix that Meta sometimes includes
+    // Strip optional "sha256=" prefix
     const providedSig = signature.startsWith('sha256=')
       ? signature.slice(7)
       : signature;
@@ -102,7 +134,7 @@ const WABA_ID_PATTERN = /^[0-9]{10,20}$/;
 /** Phone number IDs are numeric strings of 10-20 digits */
 const PHONE_NUMBER_ID_PATTERN = /^[0-9]{10,20}$/;
 
-function validatePayloadFormat(payload: CoexistenceFinishPayload): string | null {
+function validatePayloadFormat(payload: CoexistenceSessionPayload): string | null {
   if (!payload.code || typeof payload.code !== 'string' || payload.code.trim().length === 0) {
     return 'missing_or_empty_code';
   }
@@ -123,34 +155,41 @@ function validatePayloadFormat(payload: CoexistenceFinishPayload): string | null
 // ─────────────────────────────────────────────────────────────────────────
 
 /**
- * Process a coexistence FINISH callback from Meta.
+ * Process a coexistence FINISH event relayed from the browser.
+ *
+ * NOTE: User identity binding is stored in the nonce but cannot be verified
+ * in this handler because the FINISH event arrives via browser postMessage
+ * without an authenticated Waaiio session. Verification that FINISH belongs
+ * to the initiating user requires the server-side OAuth exchange step (gated).
  *
  * Steps:
- * 1. Verify HMAC signature → reject forged callbacks
+ * 1. Verify Waaiio session envelope signature → reject tampered payloads
  * 2. Validate payload format → reject malformed data
  * 3. Look up and consume session_nonce → reject unknown/expired/consumed nonces
  * 4. Check partner entitlement (currently gated → always fails)
- * 5. If all pass, create a channel candidate (currently unreachable)
+ * 5. Candidate creation NOT IMPLEMENTED → always returns accepted:false
  *
- * Since partner entitlement is gated, step 5 is never reached.
- * The handler is built to be ready for ungating without code changes.
+ * Since partner entitlement is gated AND candidate creation is not implemented,
+ * step 5 is never reached. Even if entitlement passes, this handler fails closed.
  */
 export async function processCoexistenceFinish(
-  payload: CoexistenceFinishPayload,
+  payload: CoexistenceSessionPayload,
   signature: string,
 ): Promise<CoexistenceFinishResult> {
-  // Step 1: Verify HMAC signature
+  // Step 1: Verify Waaiio session envelope signature
+  // This proves the session params were not tampered with in the browser round-trip.
+  // It does NOT prove the FINISH event came from Meta or that browser values are valid.
   const appSecret = process.env.META_APP_SECRET;
   if (!appSecret) {
     return { accepted: false, reason: 'server_configuration_error' };
   }
 
   const payloadString = JSON.stringify(payload);
-  if (!verifyFinishSignature(payloadString, signature, appSecret)) {
+  if (!verifySessionEnvelopeSignature(payloadString, signature, appSecret)) {
     return { accepted: false, reason: 'invalid_signature' };
   }
 
-  // Step 2: Validate payload format
+  // Step 2: Validate payload format (browser-relayed values — format check only, NOT trust)
   const formatError = validatePayloadFormat(payload);
   if (formatError) {
     return { accepted: false, reason: formatError };
@@ -173,19 +212,14 @@ export async function processCoexistenceFinish(
     };
   }
 
-  // Step 5: Create channel candidate with connection_type='coexist'
-  // UNREACHABLE while partner entitlement is gated.
-  // When this path becomes reachable, it would:
-  // 1. Use createServiceClient() to insert into whatsapp_channel_candidates
-  // 2. Set connection_type='coexist' and coexist_meta_business_app_id
-  // 3. Store the OAuth code for later exchange (separate authorization gate)
-  // 4. Return the candidate ID for tracking
-  //
-  // This code path is intentionally left as documentation of the future flow.
-  // The actual implementation will be added when partner entitlement is confirmed.
-
+  // Step 5: Candidate creation NOT IMPLEMENTED — fail closed
+  // Candidate creation requires: verified OAuth code exchange, confirmed WABA/phone
+  // ownership via Meta Graph API, durable CAS candidate insert, and channel activation
+  // gate. None of these are implemented — fail closed even if entitlement passes.
+  // When implemented, the candidate would use the canonical connection_method='coexist'
+  // column (M007/M123), NOT a separate connection_type column.
   return {
-    accepted: true,
-    candidateId: `candidate-${nonceResult.businessId}`,
+    accepted: false,
+    reason: 'candidate_creation_not_implemented',
   };
 }
