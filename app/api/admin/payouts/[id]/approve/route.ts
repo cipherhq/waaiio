@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import * as Sentry from '@sentry/nextjs';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { sendEmail } from '@/lib/email/client';
@@ -9,6 +10,7 @@ import { requirePlatformAdmin } from '@/lib/admin-auth';
 import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
 import { classifyPaystackError, classifyStripeError } from '@/lib/payments/payout-classification';
+import { isPlatformHeld } from '@/lib/payments/payout-custody';
 
 const paystackSecretKey = process.env.PAYSTACK_SECRET_KEY || '';
 const stripeSecretKey = process.env.STRIPE_SECRET_KEY || '';
@@ -127,20 +129,44 @@ export async function POST(
   }
 
   // ── Balance verification (includes review_required as reserved) ──
-  const { data: balancePayments } = await supabase
+  // #597: include is_direct_transfer to exclude funds Waaiio never held
+  const { data: balancePayments, error: balanceError } = await supabase
     .from('platform_fees')
-    .select('transaction_amount, fee_total')
+    .select('transaction_amount, fee_total, is_direct_transfer')
     .eq('business_id', payout.business_id)
     .is('refunded_at', null);
 
-  const { data: priorPayouts } = await supabase
+  // #597 601-B: Fail-closed on financial authority read errors.
+  // Never approve a payout when we can't verify the balance.
+  if (balanceError) {
+    logger.error('[PAYOUT-APPROVE] Balance query failed:', balanceError.message);
+    Sentry.captureException(balanceError);
+    return NextResponse.json({
+      error: 'Unable to verify financial balance. Cannot approve payout.',
+    }, { status: 503 });
+  }
+
+  const { data: priorPayouts, error: priorPayoutsError } = await supabase
     .from('business_payouts')
     .select('net_amount')
     .eq('business_id', payout.business_id)
     .in('status', ['paid', 'processing', 'approved', 'review_required'])
     .neq('id', id);
 
-  const totalEarned = (balancePayments || []).reduce((sum, f) => sum + (f.transaction_amount - f.fee_total), 0);
+  if (priorPayoutsError) {
+    logger.error('[PAYOUT-APPROVE] Prior payouts query failed:', priorPayoutsError.message);
+    Sentry.captureException(priorPayoutsError);
+    return NextResponse.json({
+      error: 'Unable to verify prior payouts. Cannot approve payout.',
+    }, { status: 503 });
+  }
+
+  // #597 601-A: Only include fees with explicitly confirmed platform custody
+  // (is_direct_transfer === false). NULL/unknown custody is treated as
+  // ineligible (fail-closed) — Waaiio must not pay out funds it cannot
+  // prove it holds.
+  const platformHeldFees = (balancePayments || []).filter(isPlatformHeld);
+  const totalEarned = platformHeldFees.reduce((sum, f) => sum + (f.transaction_amount - f.fee_total), 0);
   const totalPaidOut = (priorPayouts || []).reduce((sum, p) => sum + Number(p.net_amount), 0);
   const availableBalance = totalEarned - totalPaidOut;
 

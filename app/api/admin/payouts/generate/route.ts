@@ -4,6 +4,7 @@ import { requirePlatformAdmin } from '@/lib/admin-auth';
 import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
 import { loadPlatformSettings } from '@/lib/platformSettings';
+import { isPlatformHeld } from '@/lib/payments/payout-custody';
 
 interface Flag {
   type: string;
@@ -72,9 +73,10 @@ export async function POST(request: NextRequest) {
         .gte('created_at', periodStart.toISOString())
         .lte('created_at', periodEnd.toISOString());
 
-      // Gross from platform_fees.transaction_amount — only gateway payments (Waaiio holds these funds)
-      // Direct transfers are excluded: business already has the money, we only invoice the platform fee
-      const gatewayFees = (fees || []).filter(f => !f.is_direct_transfer);
+      // Gross from platform_fees.transaction_amount — only confirmed platform-held payments.
+      // #597: Uses shared isPlatformHeld() which requires is_direct_transfer === false
+      // (strict). NULL/unknown custody is excluded (fail-closed).
+      const gatewayFees = (fees || []).filter(isPlatformHeld);
       const gross = gatewayFees.reduce((s, f) => s + Number(f.transaction_amount || 0), 0);
       if (gross <= 0) continue;
 

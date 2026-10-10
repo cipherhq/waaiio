@@ -45,6 +45,20 @@ If something breaks, check this log to find what changed and when.
 - Catch blocks return 500 instead of 200 — provider will retry on transient errors
 - `transfer.reversed` events now transition `paid` payouts to `failed`
 
+## 2026-10-09 — #597 PR-B: Direct transfer payout exclusion guard
+
+### What changed
+- `app/api/cron/auto-payout/route.ts`: Added `is_direct_transfer` to platform_fees SELECT and filters it out via shared `isPlatformHeld()` before gross calculation.
+- `app/api/admin/payouts/[id]/approve/route.ts`: Added `is_direct_transfer` to balance check, filters via `isPlatformHeld()`, rejects on query errors (503).
+- `app/api/admin/payouts/generate/route.ts`: Switched to shared `isPlatformHeld()` with strict `=== false`.
+- `lib/payments/payout-custody.ts`: Shared canonical custody filter (`isPlatformHeld`, `computePlatformHeldTotals`).
+- `lib/__tests__/direct-transfer-payout-guard-597.test.ts`: Production-code tests + source-contract verification.
+
+### What it affects / could break
+- All three payout paths now use strict `is_direct_transfer === false` (null = unknown = ineligible).
+- Approval route rejects on financial query errors (503, no state transition).
+- Defense-in-depth: currently zero production exposure.
+
 ## 2026-10-09 — #591 OptIn 120-character fix and #594 main reconciliation
 
 ### What changed
