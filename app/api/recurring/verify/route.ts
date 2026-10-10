@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 import { logger } from '@/lib/logger';
-import { generateOtpChallenge, verifyOtpChallenge } from '@/lib/otp-challenge';
+import { generateOtpChallenge, verifyOtpChallenge, issueRecurringCancellationProof } from '@/lib/otp-challenge';
 
 export async function POST(request: NextRequest) {
   try {
@@ -75,7 +75,7 @@ export async function POST(request: NextRequest) {
       }
 
       // Fetch all subscriptions for this phone
-      const { data: subs } = await supabase
+      const { data: subs, error: subscriptionsError } = await supabase
         .from('customer_subscriptions')
         .select(`
           id, amount, currency, frequency, status, card_last_four, card_brand,
@@ -85,6 +85,10 @@ export async function POST(request: NextRequest) {
         .eq('customer_phone', normalizedPhone)
         .in('status', ['active', 'paused', 'past_due'])
         .order('created_at', { ascending: false });
+
+      if (subscriptionsError) {
+        return NextResponse.json({ error: 'Unable to verify subscriptions. Please try again.' }, { status: 503 });
+      }
 
       if (!subs || subs.length === 0) {
         return NextResponse.json({ subscriptions: [] });
@@ -106,6 +110,7 @@ export async function POST(request: NextRequest) {
         ...s,
         business_name: bizMap.get(s.business_id) || 'Unknown',
         service_name: svcMap.get(s.service_id) || 'Payment',
+        cancellation_proof: issueRecurringCancellationProof(normalizedPhone, s.id),
       }));
 
       return NextResponse.json({ subscriptions: enriched });

@@ -18,6 +18,7 @@ interface Subscription {
   last_charged_at: string | null;
   charge_count: number;
   total_charged: number;
+  cancellation_proof?: string;
 }
 
 function ManageRecurringContent() {
@@ -90,19 +91,31 @@ function ManageRecurringContent() {
   }
 
   async function cancelSub(subId: string) {
+    const sub = subs.find(s => s.id === subId);
+    if (!sub?.cancellation_proof) {
+      setError('Verification expired. Please verify your identity again.');
+      return;
+    }
     setCancelling(subId);
+    setError('');
     try {
       const res = await fetch('/api/recurring/cancel', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ subscriptionId: subId, phone }),
+        body: JSON.stringify({
+          subscriptionId: subId,
+          phone,
+          cancellationProof: sub.cancellation_proof,
+        }),
       });
       const data = await res.json();
       if (data.success) {
         setSubs((prev) => prev.map((s) => s.id === subId ? { ...s, status: 'cancelled' } : s));
+      } else {
+        setError(data.error || 'Failed to cancel. Please try again.');
       }
     } catch {
-      // silent
+      setError('Something went wrong. Please try again.');
     } finally {
       setCancelling(null);
     }
@@ -171,6 +184,19 @@ function ManageRecurringContent() {
 
         {step === 'list' && (
           <div className="space-y-4">
+            {error && (
+              <div className="rounded-lg bg-red-50 p-3">
+                <p className="text-sm text-red-600">{error}</p>
+                {error.includes('expired') || error.includes('Verification') ? (
+                  <button
+                    onClick={() => { setStep('phone'); setError(''); setSubs([]); }}
+                    className="mt-2 text-sm font-medium text-red-700 underline hover:text-red-800"
+                  >
+                    Re-verify identity
+                  </button>
+                ) : null}
+              </div>
+            )}
             {subs.length === 0 ? (
               <div className="rounded-2xl bg-white p-6 text-center shadow-sm">
                 <p className="text-gray-500">No recurring payments found for this number.</p>
