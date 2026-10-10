@@ -251,3 +251,19 @@ describe.skipIf(!canRun)('helper definitions canonical', () => {
     }
   });
 });
+
+
+// SEC-005: moving Country mutations behind the server MFA boundary must also
+// eliminate the direct authenticated Supabase DML path (not only hide UI links).
+describe.skipIf(!canRun)('SEC-005 direct country mutation isolation', () => {
+  for (const dbRole of ['authenticated', 'anon'] as const) {
+    for (const privilege of ['INSERT', 'UPDATE', 'DELETE'] as const) {
+      it(`${dbRole} CANNOT ${privilege} countries directly after M439`, () => {
+        const result = psql(
+          `SELECT has_table_privilege('${dbRole}', 'public.countries', '${privilege}');`,
+        );
+        expect(result).toBe('f');
+      });
+    }
+  }
+});
