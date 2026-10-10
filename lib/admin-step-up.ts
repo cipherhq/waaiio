@@ -36,10 +36,31 @@ const STEP_UP_MAX_AGE_SECONDS = 300; // 5 minutes
 /**
  * Canonical hash of operation parameters.
  * Ensures that the step-up is bound to the exact values the admin confirmed.
+ *
+ * Uses recursive stable serialization — NOT JSON.stringify with a replacer
+ * array, which silently drops nested object keys that aren't in the array.
  */
 export function hashOperationParams(params: Record<string, unknown>): string {
-  const sorted = JSON.stringify(params, Object.keys(params).sort());
-  return createHash('sha256').update(sorted).digest('hex');
+  return createHash('sha256').update(stableStringify(params)).digest('hex');
+}
+
+/**
+ * Recursively serialize a value with sorted object keys at every nesting level.
+ * Produces a deterministic string for any JSON-compatible value tree.
+ */
+function stableStringify(value: unknown): string {
+  if (value === null || value === undefined) return 'null';
+  if (typeof value === 'boolean' || typeof value === 'number') return String(value);
+  if (typeof value === 'string') return JSON.stringify(value);
+  if (Array.isArray(value)) {
+    return '[' + value.map(stableStringify).join(',') + ']';
+  }
+  if (typeof value === 'object') {
+    const obj = value as Record<string, unknown>;
+    const keys = Object.keys(obj).sort();
+    return '{' + keys.map(k => JSON.stringify(k) + ':' + stableStringify(obj[k])).join(',') + '}';
+  }
+  return JSON.stringify(value);
 }
 
 export interface StepUpPrepareResult {
@@ -250,9 +271,10 @@ export async function consumeStepUp(
 
   const paramsHash = hashOperationParams(params);
 
-  // Atomic consumption: UPDATE only if not already consumed, not expired,
-  // verified, and all operation bindings match.
-  const { data, error } = await supabase
+  // Atomic consumption: all predicates — including target_id — are checked
+  // in the same UPDATE. If any predicate fails, zero rows are updated and
+  // the step-up is NOT consumed. No post-hoc rollback needed.
+  let query = supabase
     .from('admin_step_up_authorizations')
     .update({ consumed_at: new Date().toISOString() })
     .eq('id', stepUpId)
@@ -262,32 +284,21 @@ export async function consumeStepUp(
     .eq('params_hash', paramsHash)
     .not('verified_at', 'is', null)
     .is('consumed_at', null)
-    .gt('expires_at', new Date().toISOString())
-    .select('id');
+    .gt('expires_at', new Date().toISOString());
 
-  // Also check target_id (may be null)
-  // Note: Supabase .eq with null doesn't work; handle separately
+  // Handle null target_id atomically within the same query
+  if (targetId === null) {
+    query = query.is('target_id', null);
+  } else {
+    query = query.eq('target_id', targetId);
+  }
+
+  const { data, error } = await query.select('id');
+
   if (error) throw new StepUpError('Step-up consumption query failed');
 
   if (!data || data.length === 0) {
-    // Could be: already consumed, expired, wrong params, wrong action, wrong user, wrong session
     throw new StepUpError('Step-up authorization invalid, expired, already used, or does not match this operation');
-  }
-
-  // Verify target_id matches (separate check because null handling)
-  const { data: row } = await supabase
-    .from('admin_step_up_authorizations')
-    .select('target_id')
-    .eq('id', stepUpId)
-    .single();
-
-  if (row && row.target_id !== targetId) {
-    // Rollback: un-consume (best effort — the mismatch is a programming error)
-    await supabase
-      .from('admin_step_up_authorizations')
-      .update({ consumed_at: null })
-      .eq('id', stepUpId);
-    throw new StepUpError('Step-up target_id mismatch');
   }
 
   // Log the step-up consumption

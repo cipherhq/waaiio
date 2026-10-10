@@ -1,5 +1,5 @@
 -- ═══════════════════════════════════════════════════════════════════════════
--- M436: SEC-005 — Admin MFA enforcement with aal2
+-- M437: SEC-005 — Admin MFA enforcement with aal2
 --
 -- This migration implements the following security controls:
 --   1. Creates admin_step_up_authorizations table for step-up MFA challenges.
@@ -71,22 +71,34 @@ CREATE INDEX IF NOT EXISTS idx_admin_step_up_lookup
 -- Fail-closed: any exception or NULL → false.
 -- ════════════════════════════════════════════════════════════════════════════
 
+-- LANGUAGE plpgsql defers body validation to execution time. LANGUAGE sql
+-- would fail at CREATE time in environments where auth.jwt() is not yet
+-- available (e.g. CI migration validation on disposable PostgreSQL).
 CREATE OR REPLACE FUNCTION public.has_admin_role(required_roles text[])
 RETURNS boolean
-LANGUAGE sql
+LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER
 SET search_path = ''
 AS $$
-  SELECT COALESCE(
-    (auth.jwt() ->> 'aal') = 'aal2'
-    AND (
-      SELECT raw_app_meta_data ->> 'role'
-      FROM auth.users
-      WHERE id = auth.uid()
-    ) = ANY(required_roles),
-    false
-  )
+DECLARE
+  v_role text;
+BEGIN
+  -- Check aal2 from the JWT
+  IF (auth.jwt() ->> 'aal') IS DISTINCT FROM 'aal2' THEN
+    RETURN false;
+  END IF;
+
+  -- Check the canonical role from auth.users app_metadata
+  SELECT raw_app_meta_data ->> 'role'
+  INTO v_role
+  FROM auth.users
+  WHERE id = auth.uid();
+
+  RETURN COALESCE(v_role = ANY(required_roles), false);
+EXCEPTION WHEN OTHERS THEN
+  RETURN false;
+END;
 $$;
 
 REVOKE EXECUTE ON FUNCTION public.has_admin_role(text[]) FROM PUBLIC;
@@ -179,18 +191,20 @@ GRANT EXECUTE ON FUNCTION public.is_admin_or_finance() TO authenticated;
 
 -- ── admin_audit_logs ──────────────────────────────────────────────────────
 -- Old: "Admins can view audit logs" (SELECT, profiles.role = 'admin')
+-- Preserves SELECT scope — admin reads audit logs; writes go through service client.
 DROP POLICY IF EXISTS "Admins can view audit logs" ON public.admin_audit_logs;
 CREATE POLICY "Admins can view audit logs"
   ON public.admin_audit_logs
-  FOR ALL
+  FOR SELECT
   USING (public.is_admin());
 
 -- ── ai_usage ──────────────────────────────────────────────────────────────
 -- Old: "ai_usage_admin" (SELECT, profiles.role = 'admin')
+-- Preserves SELECT scope.
 DROP POLICY IF EXISTS "ai_usage_admin" ON public.ai_usage;
 CREATE POLICY "ai_usage_admin"
   ON public.ai_usage
-  FOR ALL
+  FOR SELECT
   USING (public.is_admin());
 
 -- ── business_payouts ──────────────────────────────────────────────────────
@@ -219,10 +233,11 @@ CREATE POLICY "admin_all_campaign_donations"
 
 -- ── conversation_usage ────────────────────────────────────────────────────
 -- Old: "conversation_usage_admin" (SELECT, profiles.role = 'admin')
+-- Preserves SELECT scope.
 DROP POLICY IF EXISTS "conversation_usage_admin" ON public.conversation_usage;
 CREATE POLICY "conversation_usage_admin"
   ON public.conversation_usage
-  FOR ALL
+  FOR SELECT
   USING (public.is_admin());
 
 -- ── countries ─────────────────────────────────────────────────────────────
@@ -275,11 +290,11 @@ CREATE POLICY "Admin read access"
 
 -- ── pending_transfers (finance manage — UPDATE) ───────────────────────────
 -- Old: "Admin manages pending transfers" (UPDATE, profiles.role IN ('admin', 'finance'))
--- Source: 211_ocr_result_and_admin_rls.sql
+-- Source: 211_ocr_result_and_admin_rls.sql — preserves UPDATE scope.
 DROP POLICY IF EXISTS "Admin manages pending transfers" ON public.pending_transfers;
 CREATE POLICY "Admin manages pending transfers"
   ON public.pending_transfers
-  FOR ALL
+  FOR UPDATE
   USING (public.has_admin_role(ARRAY['admin', 'finance']));
 
 -- ── platform_fee_invoices ─────────────────────────────────────────────────
@@ -300,10 +315,11 @@ CREATE POLICY "Admin manages reseller invoices"
 
 -- ── subscription_payments ─────────────────────────────────────────────────
 -- Old: "subscription_payments_admin" (SELECT, profiles.role IN ('admin', 'finance'))
+-- Preserves SELECT scope.
 DROP POLICY IF EXISTS "subscription_payments_admin" ON public.subscription_payments;
 CREATE POLICY "subscription_payments_admin"
   ON public.subscription_payments
-  FOR ALL
+  FOR SELECT
   USING (public.has_admin_role(ARRAY['admin', 'finance']));
 
 -- ── business_broadcasts ───────────────────────────────────────────────────
@@ -416,12 +432,14 @@ CREATE POLICY "growth_pricing_admin_select"
 
 CREATE OR REPLACE FUNCTION public.cleanup_expired_step_ups()
 RETURNS void
-LANGUAGE sql
+LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = ''
 AS $$
+BEGIN
   DELETE FROM public.admin_step_up_authorizations
-  WHERE expires_at < now() - interval '1 hour'
+  WHERE expires_at < now() - interval '1 hour';
+END;
 $$;
 
 REVOKE EXECUTE ON FUNCTION public.cleanup_expired_step_ups() FROM PUBLIC;
@@ -453,7 +471,7 @@ BEGIN
         AND (p.proname || '(' || pg_catalog.pg_get_function_identity_arguments(p.oid) || ')') ILIKE
             split_part(v_fn, '(', 1) || '%'
     ) THEN
-      RAISE EXCEPTION 'M436 verification FAILED: function % not found in public schema', v_fn;
+      RAISE EXCEPTION 'M437 verification FAILED: function % not found in public schema', v_fn;
     END IF;
   END LOOP;
 
@@ -463,7 +481,7 @@ BEGIN
     JOIN pg_namespace n ON c.relnamespace = n.oid
     WHERE n.nspname = 'public' AND c.relname = 'admin_step_up_authorizations'
   ) THEN
-    RAISE EXCEPTION 'M436 verification FAILED: admin_step_up_authorizations table not found';
+    RAISE EXCEPTION 'M437 verification FAILED: admin_step_up_authorizations table not found';
   END IF;
 
   -- Verify RLS is enabled on admin_step_up_authorizations
@@ -474,8 +492,8 @@ BEGIN
       AND c.relname = 'admin_step_up_authorizations'
       AND c.relrowsecurity = true
   ) THEN
-    RAISE EXCEPTION 'M436 verification FAILED: RLS not enabled on admin_step_up_authorizations';
+    RAISE EXCEPTION 'M437 verification FAILED: RLS not enabled on admin_step_up_authorizations';
   END IF;
 
-  RAISE NOTICE 'M436 self-verification PASSED: SEC-005 admin MFA enforcement applied';
+  RAISE NOTICE 'M437 self-verification PASSED: SEC-005 admin MFA enforcement applied';
 END $$;

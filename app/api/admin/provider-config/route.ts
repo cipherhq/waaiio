@@ -57,13 +57,22 @@ export async function POST(request: NextRequest) {
   const { action, stepUpId } = body;
   const service = createServiceClient();
 
-  // SEC-005 Layer 4: Mutation actions require step-up
+  // SEC-005 Layer 4: Mutation actions require step-up with full parameter binding.
+  // Every security-relevant parameter is included in the hash so that a
+  // step-up for one provider config change cannot authorize a different one.
   if (action === 'save_refs' || action === 'switch_provider' || action === 'update_country') {
+    const stepUpParams: Record<string, unknown> = { action, country_code: body.country_code ?? null };
+    if (action === 'save_refs') {
+      stepUpParams.plan_refs = body.plan_refs ?? null;
+      stepUpParams.expected_version_id = body.expected_version_id ?? null;
+    } else if (action === 'switch_provider') {
+      stepUpParams.new_gateway = body.new_gateway ?? null;
+      stepUpParams.expected_version_id = body.expected_version_id ?? null;
+    } else if (action === 'update_country') {
+      stepUpParams.updates = body.updates ?? null;
+    }
     try {
-      await consumeStepUp(admin, stepUpId, 'provider_config', action, {
-        action,
-        country_code: body.country_code ?? null,
-      });
+      await consumeStepUp(admin, stepUpId, 'provider_config', action, stepUpParams);
     } catch (err) {
       const msg = err instanceof StepUpError ? err.message : 'Step-up authorization required';
       return respond({ error: msg, code: 'step_up_required' }, 403);

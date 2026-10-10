@@ -45,9 +45,11 @@ describe('SEC-005 Layer 2: requirePlatformAdmin aal2 enforcement', () => {
     adminAuthSource = readSource('lib/admin-auth.ts');
   });
 
-  it('checks aal2 from verified JWT claims', () => {
+  it('checks aal2 from verified JWT claims via getVerifiedClaims contract', () => {
     expect(adminAuthSource).toContain("jwtAal !== 'aal2'");
-    expect(adminAuthSource).toContain('getVerifiedJwtClaims');
+    // Uses the atomic getVerifiedClaims() which validates then reads
+    expect(adminAuthSource).toContain('getVerifiedClaims');
+    expect(adminAuthSource).toContain('Cryptographic verification via Supabase Auth server');
   });
 
   it('does NOT fall back to cookie auth after invalid Bearer token', () => {
@@ -61,6 +63,14 @@ describe('SEC-005 Layer 2: requirePlatformAdmin aal2 enforcement', () => {
     // CTO requirement: only cryptographically verified JWT claims
     expect(adminAuthSource).not.toContain('app_metadata?.aal');
     expect(adminAuthSource).not.toContain("factors?.[0]?.status");
+  });
+
+  it('uses getVerifiedClaims which combines validation and claim extraction', () => {
+    // The VerifiedClaims interface binds identity (userId) and assurance (aal)
+    expect(adminAuthSource).toContain('interface VerifiedClaims');
+    expect(adminAuthSource).toContain('userId: string');
+    expect(adminAuthSource).toContain('aal: string | undefined');
+    expect(adminAuthSource).toContain('sessionId: string | undefined');
   });
 
   it('does NOT contain staging MFA skip', () => {
@@ -123,7 +133,7 @@ describe('SEC-005 Layer 3: RLS migration', () => {
   let migration: string;
 
   beforeAll(() => {
-    migration = readSource('supabase/migrations/436_admin_mfa_enforcement.sql');
+    migration = readSource('supabase/migrations/437_admin_mfa_enforcement.sql');
   });
 
   it('creates admin_step_up_authorizations table', () => {
@@ -206,16 +216,14 @@ describe('SEC-005 Layer 4: step-up system', () => {
     expect(stepUpSource).toContain("'refund'");
   });
 
-  it('uses cryptographic hash for operation parameters with sorted-key determinism', () => {
-    // Verify the hashing function exists and uses sha256 with sorted keys
+  it('uses recursive stable serialization for nested parameter hashing', () => {
     expect(stepUpSource).toContain('createHash');
     expect(stepUpSource).toContain("sha256");
-    expect(stepUpSource).toContain('Object.keys(params).sort()');
-
-    // Inline verification of deterministic hashing
-    const sorted1 = JSON.stringify({ amount: 1000, target: 'abc' }, ['amount', 'target']);
-    const sorted2 = JSON.stringify({ target: 'abc', amount: 1000 }, ['amount', 'target']);
-    expect(sorted1).toBe(sorted2);
+    // Must use recursive stableStringify, NOT JSON.stringify with replacer array
+    expect(stepUpSource).toContain('stableStringify');
+    expect(stepUpSource).not.toContain('JSON.stringify(params');
+    // Recursion handles nested objects
+    expect(stepUpSource).toContain('stableStringify(obj[k])');
   });
 
   it('binds step-up to admin_user_id, session_id, action_type, target_id, and params_hash', () => {
@@ -234,8 +242,13 @@ describe('SEC-005 Layer 4: step-up system', () => {
     expect(stepUpSource).toContain('.gt(\'expires_at\'');
   });
 
-  it('verifies target_id match', () => {
-    expect(stepUpSource).toContain('target_id mismatch');
+  it('checks target_id atomically in the consumption query, not afterward', () => {
+    // target_id must be part of the atomic UPDATE, not a separate check
+    expect(stepUpSource).toContain("query.is('target_id', null)");
+    expect(stepUpSource).toContain("query.eq('target_id', targetId)");
+    // Must NOT contain the old non-atomic rollback pattern
+    expect(stepUpSource).not.toContain('Rollback: un-consume');
+    expect(stepUpSource).not.toContain('consumed_at: null');
   });
 
   it('logs step-up consumption to admin_audit_logs', () => {
@@ -353,5 +366,91 @@ describe('SEC-005: RELEASE_GATE_V2.md invariant', () => {
   it('SEC-005 requires operation-bound step-up', () => {
     expect(releaseGate).toContain('operation-bound, single-use step-up');
     expect(releaseGate).toContain('atomic consumption');
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Admin UI step-up integration
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe('SEC-005: admin UI step-up integration', () => {
+  it('StepUpDialog component exists for sensitive operations', () => {
+    const source = readSource('admin/src/components/StepUpDialog.tsx');
+    expect(source).toContain('Confirm operation');
+    expect(source).toContain('authenticator code');
+    expect(source).toContain('onSubmit');
+    expect(source).toContain('onCancel');
+  });
+
+  it('useStepUp hook provides prepare/verify/execute flow', () => {
+    const source = readSource('admin/src/hooks/useStepUp.ts');
+    expect(source).toContain('/api/admin/step-up/prepare');
+    expect(source).toContain('/api/admin/step-up/verify');
+    expect(source).toContain('awaiting-code');
+    expect(source).toContain('onAuthorized');
+  });
+
+  it('provider config binds all security-relevant parameters', () => {
+    const source = readSource('app/api/admin/provider-config/route.ts');
+    // Must include plan_refs for save_refs action
+    expect(source).toContain('plan_refs');
+    // Must include new_gateway for switch_provider action
+    expect(source).toContain('new_gateway');
+    // Must include expected_version_id for CAS
+    expect(source).toContain('expected_version_id');
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Admin client-side MFA check
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe('SEC-005: admin client-side MFA guard', () => {
+  it('requireAdminSession checks getAuthenticatorAssuranceLevel', () => {
+    const source = readSource('admin/src/lib/adminAuth.ts');
+    expect(source).toContain('getAuthenticatorAssuranceLevel');
+    expect(source).toContain("currentLevel !== 'aal2'");
+    expect(source).toContain('MFA verification required');
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Migration command scope preservation
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe('SEC-005: RLS migration preserves original policy commands', () => {
+  let migration: string;
+
+  beforeAll(() => {
+    migration = readSource('supabase/migrations/437_admin_mfa_enforcement.sql');
+  });
+
+  it('admin_audit_logs policy remains SELECT, not ALL', () => {
+    expect(migration).toMatch(/admin_audit_logs[\s\S]*?FOR SELECT/);
+  });
+
+  it('ai_usage policy remains SELECT, not ALL', () => {
+    expect(migration).toMatch(/ai_usage[\s\S]*?FOR SELECT/);
+  });
+
+  it('conversation_usage policy remains SELECT, not ALL', () => {
+    expect(migration).toMatch(/conversation_usage[\s\S]*?FOR SELECT/);
+  });
+
+  it('subscription_payments policy remains SELECT, not ALL', () => {
+    expect(migration).toMatch(/subscription_payments[\s\S]*?FOR SELECT/);
+  });
+
+  it('pending_transfers manage policy remains UPDATE, not ALL', () => {
+    expect(migration).toMatch(/Admin manages pending transfers[\s\S]*?FOR UPDATE/);
+  });
+
+  it('uses LANGUAGE plpgsql for has_admin_role to avoid CI auth.jwt() validation failure', () => {
+    expect(migration).toMatch(/has_admin_role[\s\S]*?LANGUAGE plpgsql/);
+  });
+
+  it('migration number is 437 (avoids conflict with PR #604)', () => {
+    // The file itself is 437_admin_mfa_enforcement.sql
+    expect(migration).toContain('M437');
   });
 });

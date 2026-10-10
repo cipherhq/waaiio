@@ -32,27 +32,65 @@ export interface PlatformAdmin {
   bearerToken: string;
 }
 
+// ---------------------------------------------------------------------------
+// Verified JWT claims contract
+//
+// Claims are read from the JWT payload ONLY after getUser(token) has
+// validated the token's signature, expiry, and issuer against the Supabase
+// Auth server (GoTrue JWKS/HMAC check). getUser() is the cryptographic
+// verification step. The payload is trustworthy BECAUSE validation succeeded.
+//
+// Callers must NEVER decode claims from an unvalidated token. The only
+// entry point is getVerifiedClaims() which performs both validation and
+// claim extraction atomically.
+// ---------------------------------------------------------------------------
+
+interface VerifiedClaims {
+  userId: string;
+  email: string;
+  appMetadataRole: string | undefined;
+  aal: string | undefined;
+  sessionId: string | undefined;
+  amr: Array<{ method: string; timestamp: number }> | undefined;
+}
+
 /**
- * Decode JWT payload claims AFTER the token has been validated by getUser().
+ * Validate a bearer token AND extract its claims in a single operation.
  *
- * This is safe because getUser() already verified the JWT signature and
- * validity against the Supabase Auth server. We read claims from the
- * validated token — not from an unverified source.
+ * Step 1: getUser(token) validates the JWT against the Supabase Auth server.
+ * Step 2: If valid, decode the payload to read aal, session_id, amr.
+ *
+ * Returns null if the token is invalid, expired, or malformed.
  */
-function getVerifiedJwtClaims(token: string): {
-  aal?: string;
-  amr?: Array<{ method: string; timestamp: number }>;
-  session_id?: string;
-  sub?: string;
-  exp?: number;
-} | null {
+async function getVerifiedClaims(
+  supabase: ReturnType<typeof import('@/lib/supabase/service').createServiceClient>,
+  token: string,
+): Promise<VerifiedClaims | null> {
+  // Step 1: Cryptographic verification via Supabase Auth server
+  const { data, error } = await supabase.auth.getUser(token);
+  if (error || !data?.user) return null;
+
+  // Step 2: Read claims from the now-validated JWT payload
+  const payload = decodeJwtPayload(token);
+  if (!payload) return null;
+
+  return {
+    userId: data.user.id,
+    email: data.user.email || '',
+    appMetadataRole: data.user.app_metadata?.role,
+    aal: payload.aal as string | undefined,
+    sessionId: payload.session_id as string | undefined,
+    amr: payload.amr as Array<{ method: string; timestamp: number }> | undefined,
+  };
+}
+
+/** Decode JWT payload — ONLY called after getUser() validation succeeds. */
+function decodeJwtPayload(token: string): Record<string, unknown> | null {
   try {
     const parts = token.split('.');
     if (parts.length !== 3) return null;
-    // base64url decode
     const base64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
-    const payload = JSON.parse(Buffer.from(base64, 'base64').toString());
-    return payload;
+    return JSON.parse(Buffer.from(base64, 'base64').toString());
   } catch {
     return null;
   }
@@ -83,11 +121,8 @@ export async function requirePlatformAdmin(
   const { createServiceClient } = await import('@/lib/supabase/service');
   const supabase = createServiceClient();
 
-  let userId: string | undefined;
-  let email: string | undefined;
-  let appMetadataRole: string | undefined;
+  let claims: VerifiedClaims | null = null;
   let token: string | undefined;
-  let jwtAal: string | undefined;
 
   const authHeader = request.headers.get('Authorization');
   const hasExplicitBearer = !!(authHeader && authHeader.startsWith('Bearer '));
@@ -95,10 +130,10 @@ export async function requirePlatformAdmin(
   if (hasExplicitBearer) {
     token = authHeader!.replace('Bearer ', '');
 
-    // Validate the JWT against the Supabase Auth server (cryptographic verification)
-    const { data, error } = await supabase.auth.getUser(token);
+    // Validate AND extract claims atomically via getVerifiedClaims
+    claims = await getVerifiedClaims(supabase, token);
 
-    if (error || !data?.user) {
+    if (!claims) {
       // Bearer token was provided but is invalid.
       // FAIL CLOSED: do NOT fall back to cookie auth.
       await logAdminAuthEvent(supabase, {
@@ -108,37 +143,24 @@ export async function requirePlatformAdmin(
       });
       return null;
     }
-
-    userId = data.user.id;
-    email = data.user.email;
-    appMetadataRole = data.user.app_metadata?.role;
-
-    // Read aal from the now-validated JWT
-    const claims = getVerifiedJwtClaims(token);
-    jwtAal = claims?.aal;
   } else {
     // No Authorization header — use cookie-based session
     const { createClient } = await import('@/lib/supabase/server');
     const cookieSupabase = await createClient();
-    const { data: { user } } = await cookieSupabase.auth.getUser();
-    if (user) {
-      userId = user.id;
-      email = user.email;
-      appMetadataRole = user.app_metadata?.role;
 
-      // For cookie auth, get the session to read aal
-      const { data: sessionData } = await cookieSupabase.auth.getSession();
-      if (sessionData?.session?.access_token) {
-        token = sessionData.session.access_token;
-        const claims = getVerifiedJwtClaims(token);
-        jwtAal = claims?.aal;
-      }
+    // Get the session to obtain the access token for verified claim extraction
+    const { data: sessionData } = await cookieSupabase.auth.getSession();
+    if (sessionData?.session?.access_token) {
+      token = sessionData.session.access_token;
+      claims = await getVerifiedClaims(supabase, token);
     }
   }
 
-  if (!userId || !token) {
+  if (!claims || !token) {
     return null;
   }
+
+  const { userId, email, appMetadataRole, aal: jwtAal } = claims;
 
   // Validate app_metadata role — the ONLY trusted authority
   if (!appMetadataRole || !PLATFORM_ADMIN_ROLES.includes(appMetadataRole as PlatformAdminRole)) {
