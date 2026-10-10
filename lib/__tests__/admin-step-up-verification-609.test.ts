@@ -18,8 +18,7 @@ const mock = vi.hoisted(() => ({
 vi.mock('@/lib/supabase/service', () => ({
   createServiceClient: () => ({
     from: () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const query: Record<string, any> = {};
+      const query: Record<string, unknown> = {};
       query.select = vi.fn(() => query);
       query.eq = vi.fn((...args: unknown[]) => { mock.eq(...args); return query; });
       query.is = vi.fn((...args: unknown[]) => { mock.is(...args); return query; });
