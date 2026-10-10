@@ -3,6 +3,31 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-10-10 — #609 SEC-005: Admin native MFA enforcement (pre-merge)
+
+### What changed
+- `lib/admin-auth.ts`: `requirePlatformAdmin` now requires `aal2` from verified JWT claims. Bearer-to-cookie fallback is prohibited after an invalid explicit Bearer token. Denied auth events logged to `admin_audit_logs`.
+- `lib/admin-step-up.ts` (new): Operation-bound, single-use, concurrency-safe step-up authorization system. Uses Supabase GoTrue API for server-side MFA challenge/verify. Atomic consumption via `UPDATE ... WHERE consumed_at IS NULL`.
+- `app/api/admin/step-up/prepare/route.ts` (new): Prepare step-up with MFA challenge.
+- `app/api/admin/step-up/verify/route.ts` (new): Verify step-up with TOTP code.
+- `app/api/admin/otp/route.ts` **DELETED**: Custom HMAC-based OTP system removed.
+- `admin/src/pages/Login.tsx`: Replaced custom email/WhatsApp OTP with Supabase native TOTP MFA. Three steps: credentials → enrollment (if needed) → TOTP verify.
+- `admin/src/lib/stagingAuth.ts`: `shouldSkipAdminOtp()` now always returns false. Staging MFA skip removed per SEC-005.
+- `supabase/migrations/436_admin_mfa_enforcement.sql`: Creates `admin_step_up_authorizations` table, updates `is_admin()`/`is_support()` to require aal2, replaces 28 inline `profiles.role` RLS policies with canonical `has_admin_role()` checks.
+- `RELEASE_GATE_V2.md`: Added SEC-005 invariant with expected-deny/expected-allow evidence requirements.
+- Step-up added to: payouts/approve, payouts/generate, provider-config mutations, team grant/revoke, impersonate, refund.
+
+### What could break
+- Admin users without enrolled TOTP factor cannot sign in (by design — enrollment screen shown).
+- Any admin frontend page that makes direct Supabase queries will now require aal2 at the RLS level.
+- Staging admin accounts now also require TOTP (staging MFA skip removed).
+- Routes expecting body without `stepUpId` for sensitive operations will get 403.
+
+### Dependencies
+- Supabase project must have TOTP MFA enabled (`enroll_enabled = true`, `verify_enabled = true`).
+- Migration 436 must be applied before enforcement takes effect at the RLS layer.
+- Admin user(s) must enroll TOTP before enforcement deployment.
+
 ## 2026-10-09 — #598 Promo product/service and loyalty redemption fail-closed guards (pre-staging)
 
 - Added a shared eligibility check for WhatsApp order/booking entered promo codes: enforce owner business, active status, valid-from/until dates, allowed ordering/scheduling flows, exact product/service restrictions, capacity, minimum subtotal and bounded fixed/percentage discount. A restricted code is refused for a mixed cart rather than reducing unrelated merchandise.

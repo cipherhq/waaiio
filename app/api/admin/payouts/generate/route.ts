@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { requirePlatformAdmin } from '@/lib/admin-auth';
+import { consumeStepUp, StepUpError } from '@/lib/admin-step-up';
 import { logger } from '@/lib/logger';
 import { safeLogErrorContext } from '@/lib/errors';
 import { loadPlatformSettings } from '@/lib/platformSettings';
@@ -15,6 +16,16 @@ export async function POST(request: NextRequest) {
   const admin = await requirePlatformAdmin(request, { requiredRole: 'admin' });
   if (!admin) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
+  }
+
+  const body = await request.json();
+
+  // SEC-005 Layer 4: Consume operation-bound step-up authorization
+  try {
+    await consumeStepUp(admin, body.stepUpId, 'payout_generate', null, { action: 'generate' });
+  } catch (err) {
+    const msg = err instanceof StepUpError ? err.message : 'Step-up authorization required';
+    return NextResponse.json({ error: msg, code: 'step_up_required' }, { status: 403 });
   }
 
   const supabase = await createClient();

@@ -17,6 +17,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { requirePlatformAdmin } from '@/lib/admin-auth';
+import { consumeStepUp, StepUpError } from '@/lib/admin-step-up';
 import { createServiceClient } from '@/lib/supabase/service';
 import { logger } from '@/lib/logger';
 import {
@@ -53,8 +54,21 @@ export async function POST(request: NextRequest) {
   }
 
   const body = await request.json();
-  const { action } = body;
+  const { action, stepUpId } = body;
   const service = createServiceClient();
+
+  // SEC-005 Layer 4: Mutation actions require step-up
+  if (action === 'save_refs' || action === 'switch_provider' || action === 'update_country') {
+    try {
+      await consumeStepUp(admin, stepUpId, 'provider_config', action, {
+        action,
+        country_code: body.country_code ?? null,
+      });
+    } catch (err) {
+      const msg = err instanceof StepUpError ? err.message : 'Step-up authorization required';
+      return respond({ error: msg, code: 'step_up_required' }, 403);
+    }
+  }
 
   // ═══ get_version: return current CAS version UUID ═══
   if (action === 'get_version') {
