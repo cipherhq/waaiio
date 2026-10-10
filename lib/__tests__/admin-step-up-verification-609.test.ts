@@ -3,7 +3,7 @@
  * No production Auth calls: the GoTrue MFA response and service DB are isolated.
  * The corresponding real-service staging proofs remain a separate release gate.
  */
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PlatformAdmin } from '../admin-auth';
 
 const mock = vi.hoisted(() => ({
@@ -18,6 +18,7 @@ const mock = vi.hoisted(() => ({
 vi.mock('@/lib/supabase/service', () => ({
   createServiceClient: () => ({
     from: () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const query: Record<string, any> = {};
       query.select = vi.fn(() => query);
       query.eq = vi.fn((...args: unknown[]) => { mock.eq(...args); return query; });
@@ -48,6 +49,16 @@ const pendingRow = () => ({
 });
 
 describe('SEC-005 step-up verification: exact pending-state enforcement', () => {
+  const oldUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const oldKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    if (oldUrl === undefined) delete process.env.NEXT_PUBLIC_SUPABASE_URL;
+    else process.env.NEXT_PUBLIC_SUPABASE_URL = oldUrl;
+    if (oldKey === undefined) delete process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+    else process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = oldKey;
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     process.env.NEXT_PUBLIC_SUPABASE_URL = 'https://unit.example.test';
