@@ -29,10 +29,14 @@ export async function POST(request: NextRequest) {
     const rateLimit = await rateLimitResponseAsync(getRateLimitKey(request, 'recurring-cancel'), 10, 60_000);
     if (rateLimit) return rateLimit;
 
-    // B6: Validate request body is valid JSON
+    // B6/R3-3: Validate request body is valid JSON object
     let body: Record<string, unknown>;
     try {
-      body = await request.json();
+      const parsed = await request.json();
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
+      }
+      body = parsed;
     } catch {
       return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
     }
@@ -194,22 +198,31 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // B2: Zero rows = state changed concurrently. Do NOT assume success.
+    // B2/R3-1: Zero rows = state changed concurrently. Do NOT assume success.
     if (!updated || updated.length === 0) {
       // Re-read to determine actual current state
-      const { data: current } = await supabase
+      const { data: current, error: rereadError } = await supabase
         .from('customer_subscriptions')
         .select('status')
         .eq('id', subscriptionId)
         .eq('customer_phone', normalizedPhone)
         .maybeSingle();
 
-      if (current?.status === 'cancelled') {
+      // R3-1: If re-read fails, fail closed — cannot determine state
+      if (rereadError || !current) {
+        logger.error('[RECURRING-CANCEL] Re-read failed after zero-row update:', rereadError?.message || 'not found');
+        return NextResponse.json(
+          { error: 'Unable to confirm cancellation status. Please check your subscription and try again.' },
+          { status: 503 },
+        );
+      }
+
+      if (current.status === 'cancelled') {
         return NextResponse.json({ success: true, already_cancelled: true });
       }
 
       // State changed to something other than cancelled — concurrent modification
-      logger.warn('[RECURRING-CANCEL] CAS conflict: status changed from', originalStatus, 'to', current?.status);
+      logger.warn('[RECURRING-CANCEL] CAS conflict: status changed from', originalStatus, 'to', current.status);
       return NextResponse.json(
         { error: 'Subscription status changed. Please refresh and try again.' },
         { status: 409 },

@@ -12,8 +12,12 @@ If something breaks, check this log to find what changed and when.
   - Returns 503 if provider refuses cancellation (was: returned success regardless)
   - CAS-guarded DB update with error checking (was: fire-and-forget)
   - Handles ambiguous provider-cancel-success/DB-failure case explicitly
-- `app/recurring/manage/page.tsx`: Updated to send `cancellationProof` from the verified subscription data. Added error display for failed cancellations.
-- `lib/__tests__/recurring-cancel-auth-597.test.ts`: 20 tests covering proof issuance, verification (wrong phone/sub/tampered/expired/null), and cancel route source-contract verification.
+  - Paystack/Stripe subscriptions missing provider code/credentials return 422 (not silent DB-only cancel)
+  - Only Flutterwave (cron-managed) may do DB-only cancellation
+  - Re-read after zero-row CAS checks actual state; fail-closed on DB errors
+  - Validates JSON body is object, UUID format, input types before processing
+- `app/recurring/manage/page.tsx`: Updated to send `cancellationProof` from the verified subscription data. Added error display in list view with re-verify link for expired proofs.
+- `lib/__tests__/recurring-cancel-auth-597.test.ts`: 33 tests — 7 proof helper tests + 26 executable handler tests covering: authorization (403 without/forged/wrong-sub proof), input validation (non-UUID, missing fields, null/array body), gateway classification (unknown→400, Paystack/Stripe missing code→422, missing email token→422), provider failures (Paystack/Stripe refuses→503, throws→503), DB failures (lookup→503, update→503), CAS behavior (zero-row with cancelled→200, changed→409, unchanged→409), provider-success/DB-failure→503, successful cancel, already-cancelled idempotent, Flutterwave DB-only.
 
 ### What it affects / could break
 - Public recurring cancellation now requires OTP verification first. Customers must go through the verify flow before cancelling.

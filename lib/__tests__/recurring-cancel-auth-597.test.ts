@@ -69,7 +69,7 @@ let mockSubData: Record<string, unknown> | null = null;
 let mockSubError: unknown = null;
 let mockUpdateData: unknown[] | null = null;
 let mockUpdateError: unknown = null;
-let mockRereadData: Record<string, unknown> | null = null;
+let mockRereadData: Record<string, unknown> | null | undefined = undefined; // undefined = no re-read expected
 let mockPaystackResult: boolean | Error = true;
 let mockStripeResult: boolean | Error = true;
 let providerCallCount = 0;
@@ -84,7 +84,7 @@ function resetMocks() {
   mockSubError = null;
   mockUpdateData = [{ id: SUB_ID }];
   mockUpdateError = null;
-  mockRereadData = null;
+  mockRereadData = undefined;
   mockPaystackResult = true;
   mockStripeResult = true;
   providerCallCount = 0;
@@ -127,9 +127,9 @@ vi.mock('@/lib/supabase/service', () => ({
         return chain;
       };
       chain.maybeSingle = () => {
-        if (callNum > 1 && dbUpdateCalls.length > 0 && mockRereadData !== null) {
-          // B2: re-read after zero-row update
-          return Promise.resolve({ data: mockRereadData, error: null });
+        if (callNum > 1 && dbUpdateCalls.length > 0 && mockRereadData !== undefined) {
+          // B2/R3-1: re-read after zero-row update
+          return Promise.resolve({ data: mockRereadData, error: mockRereadData === null ? null : null });
         }
         return Promise.resolve({ data: mockSubData, error: mockSubError });
       };
@@ -342,5 +342,87 @@ describe('#597 F3 R2: Executable cancel handler tests', () => {
     const r = await callCancel({ subscriptionId: SUB_ID, phone: PHONE, cancellationProof: proof });
     expect(r.status).toBe(200);
     expect(providerCallCount).toBe(0); // No provider call
+  });
+
+  // ── R3-1: DB update failure tests ──
+
+  it('503 when DB update returns error (provider already cancelled)', async () => {
+    mockUpdateError = { message: 'connection lost' };
+    mockUpdateData = null;
+    const proof = issueRecurringCancellationProof(PHONE, SUB_ID);
+    const r = await callCancel({ subscriptionId: SUB_ID, phone: PHONE, cancellationProof: proof });
+    expect(r.status).toBe(503);
+    expect(r.body.error).toContain('could not be completed');
+    expect(providerCallCount).toBe(1); // Provider was called
+  });
+
+  it('200 already_cancelled when zero-row CAS re-reads cancelled state', async () => {
+    mockUpdateData = []; // zero rows affected
+    mockRereadData = { status: 'cancelled' }; // re-read shows cancelled
+    const proof = issueRecurringCancellationProof(PHONE, SUB_ID);
+    const r = await callCancel({ subscriptionId: SUB_ID, phone: PHONE, cancellationProof: proof });
+    expect(r.status).toBe(200);
+    expect(r.body.already_cancelled).toBe(true);
+  });
+
+  it('409 when zero-row CAS re-reads different non-cancelled state', async () => {
+    mockUpdateData = []; // zero rows
+    mockRereadData = { status: 'paused' }; // changed to paused, not cancelled
+    const proof = issueRecurringCancellationProof(PHONE, SUB_ID);
+    const r = await callCancel({ subscriptionId: SUB_ID, phone: PHONE, cancellationProof: proof });
+    expect(r.status).toBe(409);
+    expect(r.body.error).toContain('status changed');
+  });
+
+  it('409 when zero-row CAS and re-read shows unchanged state', async () => {
+    // Update affected zero rows, re-read returns the original active state
+    // (e.g., concurrent operation changed and reverted, or row was locked)
+    mockUpdateData = []; // zero rows affected
+    // mockRereadData stays undefined → falls back to mockSubData (active)
+    const proof = issueRecurringCancellationProof(PHONE, SUB_ID);
+    const r = await callCancel({ subscriptionId: SUB_ID, phone: PHONE, cancellationProof: proof });
+    expect(r.status).toBe(409);
+    expect(r.body.error).toContain('status changed');
+    expect(r.body.success).toBeUndefined(); // NOT success
+  });
+
+  // ── R3-2: Provider success + DB failure reconciliation ──
+
+  it('provider-success/DB-failure returns 503, not false success', async () => {
+    // Provider cancellation succeeds, but DB write fails
+    // Client should retry; provider cancel is designed to be idempotent
+    // (Paystack /subscription/disable, Stripe DELETE /subscriptions/{id})
+    // but we return 503 to indicate the need for reconciliation
+    mockUpdateError = { message: 'serialization failure' };
+    mockUpdateData = null;
+    const proof = issueRecurringCancellationProof(PHONE, SUB_ID);
+    const r = await callCancel({ subscriptionId: SUB_ID, phone: PHONE, cancellationProof: proof });
+    expect(r.status).toBe(503);
+    expect(r.body.success).toBeUndefined(); // NOT success
+    expect(providerCallCount).toBe(1); // Provider was called and succeeded
+  });
+
+  // ── R3-3: Input validation edge cases ──
+
+  it('400 for null JSON body', async () => {
+    const { POST } = await import('@/app/api/recurring/cancel/route');
+    const req = new NextRequest(new URL('http://localhost/api/recurring/cancel'), {
+      method: 'POST',
+      body: 'null',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    const res = await POST(req);
+    expect(res.status).toBe(400);
+  });
+
+  it('400 for array JSON body', async () => {
+    const { POST } = await import('@/app/api/recurring/cancel/route');
+    const req = new NextRequest(new URL('http://localhost/api/recurring/cancel'), {
+      method: 'POST',
+      body: '[]',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    const res = await POST(req);
+    expect(res.status).toBe(400);
   });
 });
