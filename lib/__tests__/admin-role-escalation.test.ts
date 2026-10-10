@@ -157,7 +157,7 @@ describe('requirePlatformAdmin helper', () => {
   }
   // Test-only fake JWT with aal:aal2 payload (base64url of {"alg":"none"}.{"aal":"aal2"})
   // NOT a real token — no valid signature. Only used to test decodeJwtPayload parsing.
-  const AAL2_TOKEN = `${btoa('{"alg":"none"}').replace(/=/g, '')}.${btoa('{"aal":"aal2"}').replace(/=/g, '')}.test-only-not-a-secret`;
+  const AAL2_TOKEN = `${btoa('{"alg":"none"}').replace(/=/g, '')}.${btoa('{"aal":"aal2","sub":"u1"}').replace(/=/g, '')}.test-only-not-a-secret`;
   const req = () => new NextRequest('https://t.waaiio.com/api/admin/test', { headers: { Authorization: `Bearer ${AAL2_TOKEN}` } });
 
   it('denies absent/profiles-only/raw_user_meta_data, allows app_metadata, respects requiredRole', async () => {

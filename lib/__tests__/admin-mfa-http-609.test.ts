@@ -376,13 +376,12 @@ describe('SEC-005 HTTP: step-up parameter binding correctness', () => {
 // ---------------------------------------------------------------------------
 
 describe('SEC-005: step-up parameter authority matrix', () => {
-  it('payout_approve binds transfer_method (the routing-critical field)', () => {
+  it('payout_approve binds provider method AND submitted reference and notes', () => {
     const source = require('fs').readFileSync(
       require('path').resolve(process.cwd(), 'app/api/admin/payouts/[id]/approve/route.ts'),
       'utf-8',
     );
-    // transfer_method determines which provider handles the payout
-    expect(source).toContain("{ transfer_method }");
+    expect(source).toContain('transfer_method, reference: reference ?? null, notes: notes ?? null');
   });
 
   it('payout_generate binds action identifier', () => {
