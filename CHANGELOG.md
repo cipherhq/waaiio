@@ -13,7 +13,7 @@ If something breaks, check this log to find what changed and when.
 - `app/api/admin/otp/route.ts` **DELETED**: Custom HMAC-based OTP system removed.
 - `admin/src/pages/Login.tsx`: Replaced custom email/WhatsApp OTP with Supabase native TOTP MFA. Three steps: credentials → enrollment (if needed) → TOTP verify.
 - `admin/src/lib/stagingAuth.ts`: `shouldSkipAdminOtp()` now always returns false. Staging MFA skip removed per SEC-005.
-- `supabase/migrations/438_admin_mfa_enforcement.sql`: Creates `admin_step_up_authorizations` table, updates `is_admin()`/`is_support()` to require aal2, replaces 28 inline `profiles.role` RLS policies with canonical `has_admin_role()` checks.
+- `supabase/migrations/439_admin_mfa_enforcement.sql`: Creates `admin_step_up_authorizations` table, updates `is_admin()`/`is_support()` to require aal2, replaces 28 inline `profiles.role` RLS policies with canonical `has_admin_role()` checks.
 - `RELEASE_GATE_V2.md`: Added SEC-005 invariant with expected-deny/expected-allow evidence requirements.
 - Step-up added to: payouts/approve, payouts/generate, provider-config mutations, team grant/revoke, impersonate, refund.
 

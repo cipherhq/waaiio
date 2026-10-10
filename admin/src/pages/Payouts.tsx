@@ -273,49 +273,62 @@ export default function Payouts() {
     }
   }
 
-  // Generate weekly payouts via API route
+  // Generate weekly payouts via API route (SEC-005: requires step-up)
   async function handleGenerate() {
     if (!confirm('Generate pending payouts for all platform-managed businesses?')) return;
     setGenerating(true);
 
     try {
-      const { data: sessionData } = await supabase.auth.getSession();
-      const accessToken = sessionData?.session?.access_token;
-      if (!accessToken) {
-        alert('Session expired — please re-login');
-        setGenerating(false);
-        return;
-      }
+      stepUpCallbackRef.current = async (stepUpId: string) => {
+        const { data: sessionData } = await supabase.auth.getSession();
+        const accessToken = sessionData?.session?.access_token;
+        if (!accessToken) {
+          alert('Session expired — please re-login');
+          return;
+        }
 
-      const apiUrl = import.meta.env.VITE_API_URL || '';
-      const res = await fetch(`${apiUrl}/api/admin/payouts/generate`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${accessToken}`,
-        },
+        const apiUrl = import.meta.env.VITE_API_URL || '';
+        const res = await fetch(`${apiUrl}/api/admin/payouts/generate`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify({ stepUpId }),
+        });
+
+        const data = await res.json();
+        if (!res.ok) {
+          alert(data.error || 'Failed to generate payouts');
+          return;
+        }
+
+        const msg = [
+          `Created: ${data.created} payout(s)`,
+          data.held ? `Held: ${data.held} (flagged for review)` : null,
+          data.period ? `Period: ${data.period.start} to ${data.period.end}` : null,
+        ].filter(Boolean).join('\n');
+        alert(msg);
+
+        await loadData();
+      };
+
+      await stepUp.execute({
+        actionType: 'payout_generate',
+        targetId: null,
+        params: { action: 'generate' },
+        description: 'Generate pending payouts for all businesses',
+        onAuthorized: stepUpCallbackRef.current,
       });
-
-      const data = await res.json();
-      if (!res.ok) {
-        alert(data.error || 'Failed to generate payouts');
-        setGenerating(false);
-        return;
-      }
-
-      const msg = [
-        `Created: ${data.created} payout(s)`,
-        data.held ? `Held: ${data.held} (flagged for review)` : null,
-        data.period ? `Period: ${data.period.start} to ${data.period.end}` : null,
-      ].filter(Boolean).join('\n');
-      alert(msg);
-
-      await loadData();
     } catch (error) {
       console.error('Generate error:', error);
-      alert('Failed to generate payouts');
+      if (stepUp.state.phase !== 'awaiting-code') {
+        alert('Failed to generate payouts');
+      }
     } finally {
-      setGenerating(false);
+      if (stepUp.state.phase !== 'awaiting-code' && stepUp.state.phase !== 'verifying') {
+        setGenerating(false);
+      }
     }
   }
 

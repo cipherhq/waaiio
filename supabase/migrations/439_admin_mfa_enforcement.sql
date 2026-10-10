@@ -1,5 +1,5 @@
 -- ═══════════════════════════════════════════════════════════════════════════
--- M438: SEC-005 — Admin MFA enforcement with aal2
+-- M439: SEC-005 — Admin MFA enforcement with aal2
 --
 -- This migration implements the following security controls:
 --   1. Creates admin_step_up_authorizations table for step-up MFA challenges.
@@ -471,7 +471,7 @@ BEGIN
         AND (p.proname || '(' || pg_catalog.pg_get_function_identity_arguments(p.oid) || ')') ILIKE
             split_part(v_fn, '(', 1) || '%'
     ) THEN
-      RAISE EXCEPTION 'M438 verification FAILED: function % not found in public schema', v_fn;
+      RAISE EXCEPTION 'M439 verification FAILED: function % not found in public schema', v_fn;
     END IF;
   END LOOP;
 
@@ -481,7 +481,7 @@ BEGIN
     JOIN pg_namespace n ON c.relnamespace = n.oid
     WHERE n.nspname = 'public' AND c.relname = 'admin_step_up_authorizations'
   ) THEN
-    RAISE EXCEPTION 'M438 verification FAILED: admin_step_up_authorizations table not found';
+    RAISE EXCEPTION 'M439 verification FAILED: admin_step_up_authorizations table not found';
   END IF;
 
   -- Verify RLS is enabled on admin_step_up_authorizations
@@ -492,8 +492,8 @@ BEGIN
       AND c.relname = 'admin_step_up_authorizations'
       AND c.relrowsecurity = true
   ) THEN
-    RAISE EXCEPTION 'M438 verification FAILED: RLS not enabled on admin_step_up_authorizations';
+    RAISE EXCEPTION 'M439 verification FAILED: RLS not enabled on admin_step_up_authorizations';
   END IF;
 
-  RAISE NOTICE 'M438 self-verification PASSED: SEC-005 admin MFA enforcement applied';
+  RAISE NOTICE 'M439 self-verification PASSED: SEC-005 admin MFA enforcement applied';
 END $$;

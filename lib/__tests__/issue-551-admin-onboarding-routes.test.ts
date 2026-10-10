@@ -60,7 +60,7 @@ describe('#551 admin onboarding orchestration', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.authorize.mockResolvedValue({ userId: 'admin-1', role: 'admin' });
+    mocks.authorize.mockResolvedValue({ userId: 'admin-1', role: 'admin', aal: 'aal2', bearerToken: 'test-bearer' });
     mocks.rateLimit.mockResolvedValue(null);
     mocks.validate.mockResolvedValue(input);
     mocks.provision.mockResolvedValue({ id: 'business-1' });

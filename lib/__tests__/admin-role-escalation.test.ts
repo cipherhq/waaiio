@@ -155,11 +155,14 @@ describe('requirePlatformAdmin helper', () => {
       createServiceClient: vi.fn().mockReturnValue({ auth: { getUser: vi.fn().mockResolvedValue({ data: { user } }) } }),
     }));
   }
-  const req = () => new NextRequest('https://t.waaiio.com/api/admin/test', { headers: { Authorization: 'Bearer t' } });
+  // Test-only fake JWT with aal:aal2 payload (base64url of {"alg":"none"}.{"aal":"aal2"})
+  // NOT a real token — no valid signature. Only used to test decodeJwtPayload parsing.
+  const AAL2_TOKEN = `${btoa('{"alg":"none"}').replace(/=/g, '')}.${btoa('{"aal":"aal2"}').replace(/=/g, '')}.test-only-not-a-secret`;
+  const req = () => new NextRequest('https://t.waaiio.com/api/admin/test', { headers: { Authorization: `Bearer ${AAL2_TOKEN}` } });
 
   it('denies absent/profiles-only/raw_user_meta_data, allows app_metadata, respects requiredRole', async () => {
     // Denied cases
-    for (const meta of [{}, { user_metadata: { role: 'admin' } }, { raw_user_meta_data: { role: 'admin' } }]) {
+    for (const meta of [{}, { user_metadata: { role: 'admin', aal: 'aal2', bearerToken: 'test-bearer' } }, { raw_user_meta_data: { role: 'admin', aal: 'aal2', bearerToken: 'test-bearer' } }]) {
       vi.resetModules();
       mockAuth({ id: 'u1', email: 'a@b.com', app_metadata: {}, ...meta });
       const { requirePlatformAdmin } = await import('@/lib/admin-auth');
@@ -167,7 +170,7 @@ describe('requirePlatformAdmin helper', () => {
     }
     // Allowed
     vi.resetModules();
-    mockAuth({ id: 'u1', email: 'a@t.com', app_metadata: { role: 'support' } });
+    mockAuth({ id: 'u1', email: 'a@t.com', app_metadata: { role: 'support', aal: 'aal2', bearerToken: 'test-bearer' } });
     const { requirePlatformAdmin } = await import('@/lib/admin-auth');
     expect(await requirePlatformAdmin(req(), { requiredRole: 'admin' })).toBeNull();
     expect(await requirePlatformAdmin(req(), { requiredRole: ['admin', 'support'] })).not.toBeNull();
@@ -176,7 +179,12 @@ describe('requirePlatformAdmin helper', () => {
   it('denies unauthenticated', async () => {
     mockAuth(null);
     vi.doMock('@/lib/supabase/server', () => ({
-      createClient: vi.fn().mockResolvedValue({ auth: { getUser: vi.fn().mockResolvedValue({ data: { user: null } }) } }),
+      createClient: vi.fn().mockResolvedValue({
+        auth: {
+          getUser: vi.fn().mockResolvedValue({ data: { user: null } }),
+          getSession: vi.fn().mockResolvedValue({ data: { session: null } }),
+        },
+      }),
     }));
     const { requirePlatformAdmin } = await import('@/lib/admin-auth');
     expect(await requirePlatformAdmin(new NextRequest('https://t.waaiio.com/api/admin/test'))).toBeNull();
@@ -242,7 +250,7 @@ describe('Template-check GET handler', () => {
           const req = Array.isArray(opts.requiredRole) ? opts.requiredRole : [opts.requiredRole];
           if (!req.includes(role)) return null;
         }
-        requirePlatformAdminResult = { id: adminUser.id, userId: adminUser.id, email: adminUser.email, role };
+        requirePlatformAdminResult = { id: adminUser.id, userId: adminUser.id, email: adminUser.email, role, aal: 'aal2', bearerToken: 'test-bearer' };
         return requirePlatformAdminResult;
       }),
     }));
@@ -276,7 +284,7 @@ describe('Template-check GET handler', () => {
   });
 
   it('3. invalid cron + valid admin → 200, requirePlatformAdmin called once, Meta called', async () => {
-    setup({ id: 'u1', email: 'a@t.com', app_metadata: { role: 'admin' } });
+    setup({ id: 'u1', email: 'a@t.com', app_metadata: { role: 'admin', aal: 'aal2', bearerToken: 'test-bearer' } });
     const { GET } = await import('@/app/api/whatsapp/templates/check/route');
     const res = await GET(makeReq({}, { Authorization: 'Bearer wrong-secret' }));
     expect(res.status).toBe(200);
@@ -312,7 +320,7 @@ describe('Template-check GET handler', () => {
   });
 
   it('7. raw_user_meta_data-only admin → 401, no Meta', async () => {
-    setup({ id: 'u4', email: 'r@t.com', app_metadata: {}, raw_user_meta_data: { role: 'admin' } });
+    setup({ id: 'u4', email: 'r@t.com', app_metadata: {}, raw_user_meta_data: { role: 'admin', aal: 'aal2', bearerToken: 'test-bearer' } });
     const { GET } = await import('@/app/api/whatsapp/templates/check/route');
     const res = await GET(makeReq({}, { Authorization: 'Bearer wrong' }));
     expect(res.status).toBe(401);
@@ -366,7 +374,7 @@ describe('Template-check GET handler', () => {
   });
 
   it('15. invalid cron + valid admin → requirePlatformAdmin called exactly once', async () => {
-    setup({ id: 'u6', email: 'a@t.com', app_metadata: { role: 'admin' } });
+    setup({ id: 'u6', email: 'a@t.com', app_metadata: { role: 'admin', aal: 'aal2', bearerToken: 'test-bearer' } });
     const { GET } = await import('@/app/api/whatsapp/templates/check/route');
     await GET(makeReq({}, { Authorization: 'Bearer wrong' }));
     expect(requirePlatformAdminCalls).toBe(1);

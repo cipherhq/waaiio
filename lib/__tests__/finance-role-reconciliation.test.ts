@@ -28,8 +28,13 @@ vi.mock('@/lib/admin-auth', () => ({
       const required = Array.isArray(opts.requiredRole) ? opts.requiredRole : [opts.requiredRole];
       if (!required.includes(role)) return null;
     }
-    return { id: mockAuthId, userId: mockAuthId, email: 'test@example.com', role };
+    return { id: mockAuthId, userId: mockAuthId, email: 'test@example.com', role, aal: 'aal2', bearerToken: 'test-bearer' };
   }),
+}));
+
+vi.mock('@/lib/admin-step-up', () => ({
+  consumeStepUp: vi.fn().mockResolvedValue(true),
+  StepUpError: class StepUpError extends Error { constructor(msg: string) { super(msg); this.name = 'StepUpError'; } },
 }));
 
 const mockSelectResult = vi.fn();
@@ -150,7 +155,7 @@ describe('Business payouts list authorization', () => {
 describe('Business payout generate authorization', () => {
   it('admin generate allowed', async () => {
     mockAuthRole = 'admin';
-    const res = await payoutsGenerateModule.POST(makeRequest('/api/admin/payouts/generate', 'POST'));
+    const res = await payoutsGenerateModule.POST(makeRequest('/api/admin/payouts/generate', 'POST', {}));
     expect(res.status).not.toBe(403);
   });
 

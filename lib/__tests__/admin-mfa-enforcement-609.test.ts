@@ -133,7 +133,7 @@ describe('SEC-005 Layer 3: RLS migration', () => {
   let migration: string;
 
   beforeAll(() => {
-    migration = readSource('supabase/migrations/438_admin_mfa_enforcement.sql');
+    migration = readSource('supabase/migrations/439_admin_mfa_enforcement.sql');
   });
 
   it('creates admin_step_up_authorizations table', () => {
@@ -422,7 +422,7 @@ describe('SEC-005: RLS migration preserves original policy commands', () => {
   let migration: string;
 
   beforeAll(() => {
-    migration = readSource('supabase/migrations/438_admin_mfa_enforcement.sql');
+    migration = readSource('supabase/migrations/439_admin_mfa_enforcement.sql');
   });
 
   it('admin_audit_logs policy remains SELECT, not ALL', () => {
@@ -449,8 +449,7 @@ describe('SEC-005: RLS migration preserves original policy commands', () => {
     expect(migration).toMatch(/has_admin_role[\s\S]*?LANGUAGE plpgsql/);
   });
 
-  it('migration number is 438 (avoids conflict with PR #604 M436 and PR #606 M437)', () => {
-    // The file itself is 437_admin_mfa_enforcement.sql
-    expect(migration).toContain('M438');
+  it('migration number is 439 (avoids conflict with PR #604 M436, PR #606 M437, and PR #607 M438)', () => {
+    expect(migration).toContain('M439');
   });
 });

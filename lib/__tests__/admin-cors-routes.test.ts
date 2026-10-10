@@ -19,7 +19,9 @@ function readFile(relativePath: string): string {
 
 describe('Admin API CORS — route-level consistency (#435)', () => {
   const routesWithCors = [
-    'app/api/admin/otp/route.ts',
+    // OTP route removed by SEC-005 (#609); replaced by step-up routes
+    'app/api/admin/step-up/prepare/route.ts',
+    'app/api/admin/step-up/verify/route.ts',
     'app/api/admin/query/route.ts',
     'app/api/admin/customers/route.ts',
     'app/api/admin/class-sessions/route.ts',
@@ -48,13 +50,23 @@ describe('Admin API CORS — route-level consistency (#435)', () => {
     });
   }
 
-  it('OTP and query routes use the same canonical CORS policy module', () => {
-    const otpSrc = readFile('app/api/admin/otp/route.ts');
+  it('step-up and query routes use the same canonical CORS policy module', () => {
+    const stepUpSrc = readFile('app/api/admin/step-up/prepare/route.ts');
     const querySrc = readFile('app/api/admin/query/route.ts');
-    // Both import from the same module
     const importPattern = /@\/lib\/admin-cors/;
-    expect(otpSrc).toMatch(importPattern);
+    expect(stepUpSrc).toMatch(importPattern);
     expect(querySrc).toMatch(importPattern);
+  });
+
+  it('SEC-005: old custom OTP route no longer exists', () => {
+    expect(fs.existsSync(path.join(ROOT, 'app/api/admin/otp/route.ts'))).toBe(false);
+  });
+
+  it('SEC-005: new step-up routes use the shared CORS helper', () => {
+    const prepareSrc = readFile('app/api/admin/step-up/prepare/route.ts');
+    const verifySrc = readFile('app/api/admin/step-up/verify/route.ts');
+    expect(prepareSrc).toContain("from '@/lib/admin-cors'");
+    expect(verifySrc).toContain("from '@/lib/admin-cors'");
   });
 });
 

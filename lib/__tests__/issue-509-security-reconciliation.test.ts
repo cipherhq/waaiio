@@ -523,7 +523,7 @@ describe('Admin platform-settings route: commercial key rejection', () => {
       id: 'admin-uuid',
       userId: 'admin-uuid',
       email: 'admin@test.com',
-      role: 'admin',
+      role: 'admin', aal: 'aal2', bearerToken: 'test-bearer',
     });
   }
 

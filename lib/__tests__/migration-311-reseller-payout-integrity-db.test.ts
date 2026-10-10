@@ -51,8 +51,9 @@ describeIfDb('Migration 311: RLS policies exist correctly', () => {
 
   it('is_admin_or_finance() includes admin+finance only', () => {
     const r = runSQL("SELECT prosrc FROM pg_proc WHERE proname = 'is_admin_or_finance';");
-    expect(r).toContain("'admin'");
-    expect(r).toContain("'finance'");
+    // After SEC-005 (M439), delegates to has_admin_role(['admin','finance'])
+    expect(r).toContain("admin");
+    expect(r).toContain("finance");
     expect(r).not.toContain("'support'");
     expect(r).not.toContain("'operations'");
   });
@@ -98,13 +99,15 @@ describeIfDb('Migration 311: RLS behavioral authorization', () => {
     runSQL(`ALTER TABLE auth.users DISABLE TRIGGER ALL; DELETE FROM auth.users WHERE id IN ('${ADMIN_USER}','${FINANCE_USER}','${SUPPORT_USER}','${OPS_USER}','${RESELLER_USER}'); ALTER TABLE auth.users ENABLE TRIGGER ALL;`);
   });
 
-  // Helper: run SQL as a specific role identity
-  // Redefines auth.uid() as postgres (has schema auth permission), then SET ROLE
-  function asRole(userId: string, sql: string): string {
+  // Helper: run SQL as a specific role identity with aal2 JWT claims
+  // Redefines auth.uid() and auth.jwt() as postgres (has schema auth permission), then SET ROLE
+  function asRole(userId: string, sql: string, aal = 'aal2'): string {
     return runSQL(`
       BEGIN;
       -- Override auth.uid() as postgres (before role switch)
       CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $fn$ SELECT '${userId}'::UUID; $fn$ LANGUAGE SQL STABLE;
+      -- Override auth.jwt() to include aal claim (SEC-005)
+      CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$ SELECT '{"aal":"${aal}"}'::jsonb; $fn$ LANGUAGE SQL STABLE;
       -- Now switch to authenticated role for RLS evaluation
       SET LOCAL ROLE authenticated;
       ${sql}
@@ -178,6 +181,25 @@ describeIfDb('Migration 311: RLS behavioral authorization', () => {
     const r = runSQL(`BEGIN; SET LOCAL ROLE anon; SELECT COUNT(*) FROM reseller_payouts; COMMIT;`);
     // anon may get permission denied, 0 rows, or ROLLBACK
     expect(r === '0' || r.includes('ERROR') || r.includes('permission denied') || r.includes('ROLLBACK')).toBe(true);
+  });
+
+  // ── SEC-005: aal1 denial tests ──
+  it('admin with aal1 SELECT denied (zero rows visible)', () => {
+    const r = asRole(ADMIN_USER, `SELECT COUNT(*) FROM reseller_payouts WHERE id = '${PAYOUT_ID}';`, 'aal1');
+    // With aal1, is_admin() returns false → admin policy doesn't match → 0 rows
+    expect(r).toContain('\n0\n');
+  });
+
+  it('admin with aal1 INSERT denied', () => {
+    const testId = '00000000-0000-0000-0000-000000311022';
+    const r = asRole(ADMIN_USER, `INSERT INTO reseller_payouts (id, reseller_id, period_start, period_end, net_amount, status) VALUES ('${testId}', '${RESELLER_ID}', '2026-08-01', '2026-08-15', 25, 'pending');`, 'aal1');
+    expect(r.includes('ERROR') || r.includes('ROLLBACK') || r.includes('policy') || r === '').toBe(true);
+    runSQL(`DELETE FROM reseller_payouts WHERE id = '${testId}';`);
+  });
+
+  it('finance with aal1 SELECT denied (zero rows visible)', () => {
+    const r = asRole(FINANCE_USER, `SELECT COUNT(*) FROM reseller_payouts WHERE id = '${PAYOUT_ID}';`, 'aal1');
+    expect(r).toContain('\n0\n');
   });
 });
 

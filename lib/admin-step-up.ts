@@ -169,15 +169,21 @@ export async function verifyStepUp(
   const { createServiceClient } = await import('@/lib/supabase/service');
   const supabase = createServiceClient();
 
+  const { getSessionIdFromToken } = await import('./admin-auth');
+  const sessionId = getSessionIdFromToken(admin.bearerToken);
+  if (!sessionId) throw new StepUpError('Cannot determine session identity');
+
   // Load the pending step-up
   const { data: stepUp, error } = await supabase
     .from('admin_step_up_authorizations')
-    .select('id, admin_user_id, challenge_id, verified_at, consumed_at, expires_at')
+    .select('id, admin_user_id, session_id, challenge_id, verified_at, consumed_at, expires_at')
     .eq('id', stepUpId)
     .single();
 
   if (error || !stepUp) throw new StepUpError('Step-up authorization not found');
   if (stepUp.admin_user_id !== admin.userId) throw new StepUpError('Step-up belongs to a different admin');
+  // SEC-005: Verify the same session that prepared the step-up is verifying it
+  if (stepUp.session_id !== sessionId) throw new StepUpError('Step-up belongs to a different session');
   if (stepUp.verified_at) throw new StepUpError('Step-up already verified');
   if (stepUp.consumed_at) throw new StepUpError('Step-up already consumed');
   if (new Date(stepUp.expires_at) < new Date()) throw new StepUpError('Step-up expired');

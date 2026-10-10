@@ -55,7 +55,11 @@ const mockServiceClient = {
 
 vi.mock('@/lib/supabase/service', () => ({ createServiceClient: () => mockServiceClient }));
 vi.mock('@/lib/admin-auth', () => ({
-  requirePlatformAdmin: vi.fn(async () => ({ id: 'admin-uuid-1', userId: 'admin-uuid-1', email: 'admin@test.com', role: 'admin' })),
+  requirePlatformAdmin: vi.fn(async () => ({ id: 'admin-uuid-1', userId: 'admin-uuid-1', email: 'admin@test.com', role: 'admin', aal: 'aal2', bearerToken: 'test-bearer' })),
+}));
+vi.mock('@/lib/admin-step-up', () => ({
+  consumeStepUp: vi.fn().mockResolvedValue(true),
+  StepUpError: class extends Error { constructor(m: string) { super(m); this.name = 'StepUpError'; } },
 }));
 
 const mockFetch = vi.fn();

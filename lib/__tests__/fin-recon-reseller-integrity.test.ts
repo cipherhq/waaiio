@@ -211,7 +211,7 @@ vi.mock('@/lib/admin-auth', () => ({
       const required = Array.isArray(opts.requiredRole) ? opts.requiredRole : [opts.requiredRole];
       if (!required.includes(role)) return null;
     }
-    return { id: mockAuthId.current, userId: mockAuthId.current, email: 'test@example.com', role };
+    return { id: mockAuthId.current, userId: mockAuthId.current, email: 'test@example.com', role, aal: 'aal2', bearerToken: 'test-bearer' };
   }),
 }));
 

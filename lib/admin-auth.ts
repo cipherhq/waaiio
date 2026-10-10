@@ -144,16 +144,36 @@ export async function requirePlatformAdmin(
       return null;
     }
   } else {
-    // No Authorization header — use cookie-based session
+    // No Authorization header — use cookie-based session.
+    // SECURITY: getSession() does NOT verify the JWT — it trusts the cookie.
+    // We MUST call getUser() first, which validates the token server-side
+    // via the Supabase Auth server, before reading any claims.
     const { createClient } = await import('@/lib/supabase/server');
     const cookieSupabase = await createClient();
 
-    // Get the session to obtain the access token for verified claim extraction
-    const { data: sessionData } = await cookieSupabase.auth.getSession();
-    if (sessionData?.session?.access_token) {
-      token = sessionData.session.access_token;
-      claims = await getVerifiedClaims(supabase, token);
+    // Step 1: Validate the cookie JWT via the Auth server (getUser verifies)
+    const { data: { user }, error: userError } = await cookieSupabase.auth.getUser();
+    if (userError || !user) {
+      return null;
     }
+
+    // Step 2: Token is validated. Extract the raw JWT for claim decoding.
+    // getSession() is safe here ONLY because getUser() just proved the
+    // cookie token is genuine. We never trust getSession() alone.
+    const { data: sessionData } = await cookieSupabase.auth.getSession();
+    token = sessionData?.session?.access_token;
+    if (!token) return null;
+
+    // Step 3: Build verified claims from validated user + decoded JWT payload
+    const payload = decodeJwtPayload(token);
+    claims = {
+      userId: user.id,
+      email: user.email || '',
+      appMetadataRole: user.app_metadata?.role,
+      aal: payload?.aal as string | undefined,
+      sessionId: payload?.session_id as string | undefined,
+      amr: payload?.amr as Array<{ method: string; timestamp: number }> | undefined,
+    };
   }
 
   if (!claims || !token) {

@@ -198,25 +198,28 @@ describe('AUTH-001 profiles role hardening', () => {
     expect(r.stdout).toBe('t');
   });
 
-  it('is_admin() uses raw_app_meta_data (source text check)', () => {
+  it('is_admin() role authority chain reads raw_app_meta_data, not profiles.role', () => {
+    // SEC-005: is_admin() delegates to has_admin_role() which reads
+    // auth.users.raw_app_meta_data. Verify the full call chain by checking
+    // has_admin_role body (the canonical implementation).
+    const r = runSQL(`
+      SELECT prosrc FROM pg_proc p
+      JOIN pg_namespace n ON n.oid = p.pronamespace
+      WHERE n.nspname = 'public' AND p.proname = 'has_admin_role';
+    `);
+    expect(r.stdout).toContain('raw_app_meta_data');
+    expect(r.stdout).not.toContain('public.profiles');
+  });
+
+  it('is_admin() delegates to has_admin_role (behavioral: same canonical authority)', () => {
+    // Prove is_admin() calls has_admin_role, not profiles.role
     const r = runSQL(`
       SELECT prosrc FROM pg_proc p
       JOIN pg_namespace n ON n.oid = p.pronamespace
       WHERE n.nspname = 'public' AND p.proname = 'is_admin'
         AND p.proargtypes::text = '';
     `);
-    expect(r.stdout).toContain('raw_app_meta_data');
-    expect(r.stdout).not.toContain('public.profiles');
-  });
-
-  it('is_admin_or_support() uses raw_app_meta_data (source text check)', () => {
-    const r = runSQL(`
-      SELECT prosrc FROM pg_proc p
-      JOIN pg_namespace n ON n.oid = p.pronamespace
-      WHERE n.nspname = 'public' AND p.proname = 'is_admin_or_support'
-        AND p.proargtypes::text = '';
-    `);
-    expect(r.stdout).toContain('raw_app_meta_data');
+    expect(r.stdout).toContain('has_admin_role');
     expect(r.stdout).not.toContain('public.profiles');
   });
 

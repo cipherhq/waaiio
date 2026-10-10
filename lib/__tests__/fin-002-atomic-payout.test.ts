@@ -143,7 +143,12 @@ function setupMocks(config: MockConfig = {}) {
   }));
 
   vi.doMock('@/lib/admin-auth', () => ({
-    requirePlatformAdmin: vi.fn().mockResolvedValue({ id: 'admin-1', role: 'admin' }),
+    requirePlatformAdmin: vi.fn().mockResolvedValue({ id: 'admin-1', role: 'admin', aal: 'aal2', bearerToken: 'test-bearer' }),
+    getSessionIdFromToken: vi.fn().mockReturnValue('test-session-id'),
+  }));
+  vi.doMock('@/lib/admin-step-up', () => ({
+    consumeStepUp: vi.fn().mockResolvedValue(true),
+    StepUpError: class extends Error { constructor(m: string) { super(m); this.name = 'StepUpError'; } },
   }));
   vi.doMock('@/lib/email/client', () => ({ sendEmail: vi.fn().mockResolvedValue(undefined) }));
   vi.doMock('@/lib/email/templates', () => ({
@@ -402,7 +407,7 @@ describe('FIN-002: Timeout → review_required', () => {
         }),
       }),
     }));
-    vi.doMock('@/lib/admin-auth', () => ({ requirePlatformAdmin: vi.fn().mockResolvedValue({ id: 'admin-1', role: 'admin' }) }));
+    vi.doMock('@/lib/admin-auth', () => ({ requirePlatformAdmin: vi.fn().mockResolvedValue({ id: 'admin-1', role: 'admin', aal: 'aal2', bearerToken: 'test-bearer' }) }));
     vi.doMock('@/lib/email/client', () => ({ sendEmail: vi.fn().mockResolvedValue(undefined) }));
     vi.doMock('@/lib/email/templates', () => ({ payoutApprovedEmail: vi.fn(), payoutPaidEmail: vi.fn() }));
     vi.doMock('@/lib/logger', () => ({ logger: mockLogger() }));
@@ -494,7 +499,7 @@ describe('FIN-002: Provider response classification', () => {
       }),
     }));
     vi.doMock('@/lib/admin-auth', () => ({
-      requirePlatformAdmin: vi.fn().mockResolvedValue({ id: 'admin-1', role: 'admin' }),
+      requirePlatformAdmin: vi.fn().mockResolvedValue({ id: 'admin-1', role: 'admin', aal: 'aal2', bearerToken: 'test-bearer' }),
     }));
     vi.doMock('@/lib/email/client', () => ({ sendEmail: vi.fn().mockResolvedValue(undefined) }));
     vi.doMock('@/lib/email/templates', () => ({

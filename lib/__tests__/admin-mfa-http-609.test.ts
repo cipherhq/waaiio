@@ -429,3 +429,30 @@ describe('SEC-005: step-up parameter authority matrix', () => {
     expect(source).toContain("'impersonate', business_id, { business_id }");
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Step-up session binding
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe('SEC-005: step-up session binding', () => {
+  it('verifyStepUp checks session_id from the admin bearer token', () => {
+    const source = require('fs').readFileSync(
+      require('path').resolve(process.cwd(), 'lib/admin-step-up.ts'),
+      'utf-8',
+    );
+    // verifyStepUp must check session_id, not just admin_user_id
+    expect(source).toContain("stepUp.session_id !== sessionId");
+    expect(source).toContain("Step-up belongs to a different session");
+    // Session ID must be extracted from the bearer token
+    expect(source).toContain("getSessionIdFromToken(admin.bearerToken)");
+  });
+
+  it('consumeStepUp binds session_id in the atomic query', () => {
+    const source = require('fs').readFileSync(
+      require('path').resolve(process.cwd(), 'lib/admin-step-up.ts'),
+      'utf-8',
+    );
+    // Session must be part of the atomic consumption
+    expect(source).toContain(".eq('session_id', sessionId)");
+  });
+});
