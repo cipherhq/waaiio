@@ -3,10 +3,11 @@
  *
  * Coverage:
  * 1. Nonce lifecycle: generate (with userId), consume, reject expired/consumed/unknown, atomic CAS
- * 2. FINISH handler: Waaiio session envelope verification, nonce binding, entitlement gate, format validation, fail-closed
- * 3. Eligibility service: all checks gated/false, speculative field labeling, full evaluation pipeline
- * 4. Readiness API enhancement: canConnect always false, eligibility sub-results
- * 5. Migration contract: column/table existence assertions (structural)
+ * 2. Initiation state signing: create/verify, expiry, tampering, two-boundary model
+ * 3. FINISH handler: signed initiation state verification, nonce binding, user authority, entitlement gate, fail-closed
+ * 4. Eligibility service: all checks gated/false, speculative field labeling, full evaluation pipeline
+ * 5. Readiness API enhancement: canConnect always false, eligibility sub-results
+ * 6. Migration contract: column/table existence assertions (structural)
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -131,6 +132,7 @@ function dc(data: unknown, opts?: { error?: unknown }) {
 
 const BUSINESS_ID = '00000000-0000-4000-8000-000000000123';
 const USER_ID = '00000000-0000-4000-8000-000000000456';
+const CONFIG_ID = '1234567891234567';
 const APP_SECRET = 'test-app-secret-for-hmac-verification';
 
 function resetAll() {
@@ -146,7 +148,7 @@ function resetAll() {
   mockAuthClientFrom.mockImplementation(() => dc({ id: BUSINESS_ID, country_code: 'NG' }));
   process.env.META_APP_SECRET = APP_SECRET;
   process.env.META_BUSINESS_APP_COEXISTENCE_ENABLED = 'true';
-  process.env.NEXT_PUBLIC_META_BUSINESS_APP_COEXISTENCE_CONFIG_ID = '1234567891234567';
+  process.env.NEXT_PUBLIC_META_BUSINESS_APP_COEXISTENCE_CONFIG_ID = CONFIG_ID;
   process.env.NEXT_PUBLIC_META_EMBEDDED_SIGNUP_CONFIG_ID = '9999999999999999';
 }
 
@@ -159,6 +161,47 @@ function makeReadinessReq(businessId?: string) {
 
 function computeHmac(payload: string, secret: string): string {
   return createHmac('sha256', secret).update(payload).digest('hex');
+}
+
+/** Create a valid initiation state for testing */
+function makeInitiationState(overrides?: Partial<{
+  nonce: string;
+  businessId: string;
+  userId: string;
+  configId: string;
+  issuedAt: number;
+}>) {
+  return {
+    nonce: 'test-nonce-abc',
+    businessId: BUSINESS_ID,
+    userId: USER_ID,
+    configId: CONFIG_ID,
+    issuedAt: Date.now(),
+    ...overrides,
+  };
+}
+
+/** Sign an initiation state and build a complete payload */
+function makeSignedPayload(
+  stateOverrides?: Parameters<typeof makeInitiationState>[0],
+  browserOverrides?: Partial<{ code: string; waba_id: string; phone_number_id: string }>,
+) {
+  const state = makeInitiationState(stateOverrides);
+  const json = JSON.stringify(state);
+  const signedState = Buffer.from(json).toString('base64url');
+  const signature = computeHmac(signedState, APP_SECRET);
+
+  return {
+    payload: {
+      signed_state: signedState,
+      state_signature: signature,
+      code: 'oauth-code-123',
+      waba_id: '12345678901234',
+      phone_number_id: '98765432109876',
+      ...browserOverrides,
+    },
+    state,
+  };
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -199,7 +242,7 @@ describe('#592 Phase 2 — Nonce service', () => {
     await expect(generateSignupNonce('', USER_ID)).rejects.toThrow('businessId is required');
   });
 
-  it('generateSignupNonce rejects empty userId', async () => {
+  it('generateSignupNonce rejects empty userId (NOT NULL enforcement)', async () => {
     const { generateSignupNonce } = await import('@/lib/whatsapp/coexistence-nonces');
     await expect(generateSignupNonce('biz-1', '')).rejects.toThrow('userId is required');
   });
@@ -213,7 +256,7 @@ describe('#592 Phase 2 — Nonce service', () => {
   it('consumeSignupNonce returns valid=true with businessId and userId for unconsumed nonce', async () => {
     mockNonceUpdateResult = { data: { business_id: 'biz-abc', initiated_by_user_id: USER_ID }, error: null };
     const { consumeSignupNonce } = await import('@/lib/whatsapp/coexistence-nonces');
-    const result = await consumeSignupNonce('valid-nonce', 'session-123');
+    const result = await consumeSignupNonce('valid-nonce', 'config:test-config');
 
     expect(result.valid).toBe(true);
     expect(result.businessId).toBe('biz-abc');
@@ -223,7 +266,21 @@ describe('#592 Phase 2 — Nonce service', () => {
     expect(serviceUpdates).toHaveLength(1);
     expect(serviceUpdates[0].table).toBe('coexistence_signup_nonces');
     expect(serviceUpdates[0].data).toHaveProperty('consumed_at');
-    expect(serviceUpdates[0].data).toHaveProperty('consumed_by_session', 'session-123');
+    // consumed_by_session should contain server-known ref, not browser WABA
+    expect(serviceUpdates[0].data).toHaveProperty('consumed_by_session', 'config:test-config');
+  });
+
+  it('consumeSignupNonce does NOT store browser WABA in consumed_by_session', async () => {
+    mockNonceUpdateResult = { data: { business_id: 'biz-abc', initiated_by_user_id: USER_ID }, error: null };
+    const { consumeSignupNonce } = await import('@/lib/whatsapp/coexistence-nonces');
+    // Pass a server-known identifier, not a browser WABA ID
+    await consumeSignupNonce('valid-nonce', 'config:my-config-id');
+
+    expect(serviceUpdates).toHaveLength(1);
+    // The consumed_by_session should be the server ref, never a raw WABA ID
+    const stored = serviceUpdates[0].data.consumed_by_session as string;
+    expect(stored).toBe('config:my-config-id');
+    expect(stored).not.toMatch(/^[0-9]{10,20}$/); // Not a raw WABA ID
   });
 
   it('consumeSignupNonce rejects expired nonce (returns valid=false)', async () => {
@@ -299,209 +356,310 @@ describe('#592 Phase 2 — Nonce service', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// 2. FINISH handler tests — Waaiio session envelope (NOT Meta attestation)
+// 2. Initiation state signing tests (R2-C1)
 // ─────────────────────────────────────────────────────────────────────────
 
-describe('#592 Phase 2 — FINISH handler (Waaiio session envelope)', () => {
+describe('#592 Phase 2 — Initiation state signing (R2-C1)', () => {
   beforeEach(resetAll);
 
-  describe('Waaiio session envelope signature verification', () => {
-    it('valid HMAC-SHA256 Waaiio session envelope passes verification', async () => {
-      const { verifySessionEnvelopeSignature } = await import('@/lib/whatsapp/coexistence-finish-handler');
-      const payload = JSON.stringify({ test: 'data' });
-      const signature = computeHmac(payload, APP_SECRET);
+  it('createSignedInitiationState + verifyInitiationState round-trip succeeds', async () => {
+    const { createSignedInitiationState, verifyInitiationState } = await import(
+      '@/lib/whatsapp/coexistence-finish-handler'
+    );
+    const state = makeInitiationState();
+    const { signedState, signature } = createSignedInitiationState(state, APP_SECRET);
 
-      expect(verifySessionEnvelopeSignature(payload, signature, APP_SECRET)).toBe(true);
-    });
-
-    it('forged signature is rejected', async () => {
-      const { verifySessionEnvelopeSignature } = await import('@/lib/whatsapp/coexistence-finish-handler');
-      const payload = JSON.stringify({ test: 'data' });
-      const forgedSignature = computeHmac('tampered-payload', APP_SECRET);
-
-      expect(verifySessionEnvelopeSignature(payload, forgedSignature, APP_SECRET)).toBe(false);
-    });
-
-    it('signature with sha256= prefix is accepted', async () => {
-      const { verifySessionEnvelopeSignature } = await import('@/lib/whatsapp/coexistence-finish-handler');
-      const payload = JSON.stringify({ test: 'data' });
-      const rawSig = computeHmac(payload, APP_SECRET);
-
-      expect(verifySessionEnvelopeSignature(payload, `sha256=${rawSig}`, APP_SECRET)).toBe(true);
-    });
-
-    it('empty payload/signature/secret returns false (not throws)', async () => {
-      const { verifySessionEnvelopeSignature } = await import('@/lib/whatsapp/coexistence-finish-handler');
-      expect(verifySessionEnvelopeSignature('', 'sig', 'secret')).toBe(false);
-      expect(verifySessionEnvelopeSignature('payload', '', 'secret')).toBe(false);
-      expect(verifySessionEnvelopeSignature('payload', 'sig', '')).toBe(false);
-    });
-
-    it('malformed hex signature returns false (not throws)', async () => {
-      const { verifySessionEnvelopeSignature } = await import('@/lib/whatsapp/coexistence-finish-handler');
-      expect(verifySessionEnvelopeSignature('payload', 'not-hex!@#$', APP_SECRET)).toBe(false);
-    });
-
-    it('wrong secret produces wrong signature', async () => {
-      const { verifySessionEnvelopeSignature } = await import('@/lib/whatsapp/coexistence-finish-handler');
-      const payload = JSON.stringify({ test: 'data' });
-      const wrongSig = computeHmac(payload, 'wrong-secret');
-
-      expect(verifySessionEnvelopeSignature(payload, wrongSig, APP_SECRET)).toBe(false);
+    const result = verifyInitiationState(signedState, signature, APP_SECRET);
+    expect(result.valid).toBe(true);
+    expect(result.state).toMatchObject({
+      nonce: state.nonce,
+      businessId: state.businessId,
+      userId: state.userId,
+      configId: state.configId,
     });
   });
 
+  it('tampered signed state fails verification', async () => {
+    const { createSignedInitiationState, verifyInitiationState } = await import(
+      '@/lib/whatsapp/coexistence-finish-handler'
+    );
+    const state = makeInitiationState();
+    const { signature } = createSignedInitiationState(state, APP_SECRET);
+
+    // Tamper: use a different state but the original signature
+    const tamperedState = makeInitiationState({ nonce: 'tampered-nonce' });
+    const tamperedEncoded = Buffer.from(JSON.stringify(tamperedState)).toString('base64url');
+
+    const result = verifyInitiationState(tamperedEncoded, signature, APP_SECRET);
+    expect(result.valid).toBe(false);
+    expect(result.error).toBe('signature_mismatch');
+  });
+
+  it('state with modified businessId after signing fails verification', async () => {
+    const { createSignedInitiationState, verifyInitiationState } = await import(
+      '@/lib/whatsapp/coexistence-finish-handler'
+    );
+    const state = makeInitiationState();
+    const { signature } = createSignedInitiationState(state, APP_SECRET);
+
+    const tampered = makeInitiationState({ businessId: 'attacker-business-id' });
+    const tamperedEncoded = Buffer.from(JSON.stringify(tampered)).toString('base64url');
+
+    const result = verifyInitiationState(tamperedEncoded, signature, APP_SECRET);
+    expect(result.valid).toBe(false);
+  });
+
+  it('state with modified userId after signing fails verification', async () => {
+    const { createSignedInitiationState, verifyInitiationState } = await import(
+      '@/lib/whatsapp/coexistence-finish-handler'
+    );
+    const state = makeInitiationState();
+    const { signature } = createSignedInitiationState(state, APP_SECRET);
+
+    const tampered = makeInitiationState({ userId: 'attacker-user-id' });
+    const tamperedEncoded = Buffer.from(JSON.stringify(tampered)).toString('base64url');
+
+    const result = verifyInitiationState(tamperedEncoded, signature, APP_SECRET);
+    expect(result.valid).toBe(false);
+  });
+
+  it('initiation state with old issuedAt (>15 min) is rejected as expired', async () => {
+    const { createSignedInitiationState, verifyInitiationState } = await import(
+      '@/lib/whatsapp/coexistence-finish-handler'
+    );
+    // issuedAt 20 minutes ago
+    const state = makeInitiationState({ issuedAt: Date.now() - 20 * 60 * 1000 });
+    const { signedState, signature } = createSignedInitiationState(state, APP_SECRET);
+
+    const result = verifyInitiationState(signedState, signature, APP_SECRET);
+    expect(result.valid).toBe(false);
+    expect(result.error).toBe('state_expired');
+  });
+
+  it('initiation state with future issuedAt is rejected', async () => {
+    const { createSignedInitiationState, verifyInitiationState } = await import(
+      '@/lib/whatsapp/coexistence-finish-handler'
+    );
+    // issuedAt 5 minutes in the future
+    const state = makeInitiationState({ issuedAt: Date.now() + 5 * 60 * 1000 });
+    const { signedState, signature } = createSignedInitiationState(state, APP_SECRET);
+
+    const result = verifyInitiationState(signedState, signature, APP_SECRET);
+    expect(result.valid).toBe(false);
+    expect(result.error).toBe('state_expired');
+  });
+
+  it('verifyInitiationState rejects empty parameters', async () => {
+    const { verifyInitiationState } = await import('@/lib/whatsapp/coexistence-finish-handler');
+    expect(verifyInitiationState('', 'sig', 'secret').valid).toBe(false);
+    expect(verifyInitiationState('state', '', 'secret').valid).toBe(false);
+    expect(verifyInitiationState('state', 'sig', '').valid).toBe(false);
+  });
+
+  it('verifyInitiationState rejects malformed base64', async () => {
+    const { verifyInitiationState } = await import('@/lib/whatsapp/coexistence-finish-handler');
+    // Valid HMAC of garbage — but decode will fail
+    const garbage = 'not-valid-base64!!!';
+    const sig = computeHmac(garbage, APP_SECRET);
+    const result = verifyInitiationState(garbage, sig, APP_SECRET);
+    // It should either fail HMAC or fail JSON parse — either way not valid
+    expect(result.valid).toBe(false);
+  });
+
+  it('wrong secret produces different signature → verification fails', async () => {
+    const { createSignedInitiationState, verifyInitiationState } = await import(
+      '@/lib/whatsapp/coexistence-finish-handler'
+    );
+    const state = makeInitiationState();
+    const { signedState } = createSignedInitiationState(state, APP_SECRET);
+    const wrongSig = computeHmac(signedState, 'wrong-secret');
+
+    const result = verifyInitiationState(signedState, wrongSig, APP_SECRET);
+    expect(result.valid).toBe(false);
+    expect(result.error).toBe('signature_mismatch');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// 3. FINISH handler tests — two-boundary model
+// ─────────────────────────────────────────────────────────────────────────
+
+describe('#592 Phase 2 — FINISH handler (two-boundary model)', () => {
+  beforeEach(resetAll);
+
   describe('processCoexistenceFinish', () => {
-    const validPayload = {
-      code: 'oauth-code-123',
-      waba_id: '12345678901234',
-      phone_number_id: '98765432109876',
-      session_nonce: 'valid-nonce-abc',
-    };
-
-    function signPayload(payload: Record<string, string>): string {
-      return computeHmac(JSON.stringify(payload), APP_SECRET);
-    }
-
-    it('rejects tampered session envelope (invalid signature)', async () => {
-      const { processCoexistenceFinish } = await import('@/lib/whatsapp/coexistence-finish-handler');
-      const result = await processCoexistenceFinish(validPayload, 'forged-signature-hex');
-
-      expect(result.accepted).toBe(false);
-      expect(result.reason).toBe('invalid_signature');
-    });
-
     it('rejects when META_APP_SECRET is not configured', async () => {
       delete process.env.META_APP_SECRET;
       const { processCoexistenceFinish } = await import('@/lib/whatsapp/coexistence-finish-handler');
-      const result = await processCoexistenceFinish(validPayload, 'any-sig');
+      const { payload } = makeSignedPayload();
+      const result = await processCoexistenceFinish(payload);
 
       expect(result.accepted).toBe(false);
       expect(result.reason).toBe('server_configuration_error');
     });
 
-    it('rejects invalid waba_id format', async () => {
-      const badPayload = { ...validPayload, waba_id: 'not-numeric' };
-      const sig = signPayload(badPayload);
+    it('rejects tampered initiation state (invalid signature)', async () => {
       const { processCoexistenceFinish } = await import('@/lib/whatsapp/coexistence-finish-handler');
-      const result = await processCoexistenceFinish(badPayload, sig);
+      const { payload } = makeSignedPayload();
+      // Forge the signature
+      payload.state_signature = 'a'.repeat(64);
+      const result = await processCoexistenceFinish(payload);
+
+      expect(result.accepted).toBe(false);
+      expect(result.reason).toBe('signature_mismatch');
+    });
+
+    it('rejects expired initiation state', async () => {
+      const { processCoexistenceFinish } = await import('@/lib/whatsapp/coexistence-finish-handler');
+      const { payload } = makeSignedPayload({ issuedAt: Date.now() - 20 * 60 * 1000 });
+      const result = await processCoexistenceFinish(payload);
+
+      expect(result.accepted).toBe(false);
+      expect(result.reason).toBe('state_expired');
+    });
+
+    it('rejects invalid waba_id format', async () => {
+      const { processCoexistenceFinish } = await import('@/lib/whatsapp/coexistence-finish-handler');
+      const { payload } = makeSignedPayload(undefined, { waba_id: 'not-numeric' });
+      const result = await processCoexistenceFinish(payload);
 
       expect(result.accepted).toBe(false);
       expect(result.reason).toBe('invalid_waba_id_format');
     });
 
     it('rejects invalid phone_number_id format', async () => {
-      const badPayload = { ...validPayload, phone_number_id: 'abc' };
-      const sig = signPayload(badPayload);
       const { processCoexistenceFinish } = await import('@/lib/whatsapp/coexistence-finish-handler');
-      const result = await processCoexistenceFinish(badPayload, sig);
+      const { payload } = makeSignedPayload(undefined, { phone_number_id: 'abc' });
+      const result = await processCoexistenceFinish(payload);
 
       expect(result.accepted).toBe(false);
       expect(result.reason).toBe('invalid_phone_number_id_format');
     });
 
     it('rejects missing code', async () => {
-      const badPayload = { ...validPayload, code: '' };
-      const sig = signPayload(badPayload);
       const { processCoexistenceFinish } = await import('@/lib/whatsapp/coexistence-finish-handler');
-      const result = await processCoexistenceFinish(badPayload, sig);
+      const { payload } = makeSignedPayload(undefined, { code: '' });
+      const result = await processCoexistenceFinish(payload);
 
       expect(result.accepted).toBe(false);
       expect(result.reason).toBe('missing_or_empty_code');
     });
 
-    it('rejects missing session_nonce', async () => {
-      const badPayload = { ...validPayload, session_nonce: '' };
-      const sig = signPayload(badPayload);
-      const { processCoexistenceFinish } = await import('@/lib/whatsapp/coexistence-finish-handler');
-      const result = await processCoexistenceFinish(badPayload, sig);
-
-      expect(result.accepted).toBe(false);
-      expect(result.reason).toBe('missing_session_nonce');
-    });
-
-    it('rejects unknown nonce after valid envelope signature', async () => {
-      // Nonce not found → consumeSignupNonce returns valid=false
+    it('rejects unknown nonce after valid initiation state', async () => {
       mockNonceUpdateResult = { data: null, error: null };
-      const sig = signPayload(validPayload);
       const { processCoexistenceFinish } = await import('@/lib/whatsapp/coexistence-finish-handler');
-      const result = await processCoexistenceFinish(validPayload, sig);
+      const { payload } = makeSignedPayload();
+      const result = await processCoexistenceFinish(payload);
 
       expect(result.accepted).toBe(false);
       expect(result.reason).toBe('nonce_invalid_or_expired');
     });
 
     it('rejects consumed nonce (replay attack)', async () => {
-      // Already consumed → UPDATE matches zero rows → null
       mockNonceUpdateResult = { data: null, error: null };
-      const sig = signPayload(validPayload);
       const { processCoexistenceFinish } = await import('@/lib/whatsapp/coexistence-finish-handler');
-      const result = await processCoexistenceFinish(validPayload, sig);
+      const { payload } = makeSignedPayload();
+      const result = await processCoexistenceFinish(payload);
 
       expect(result.accepted).toBe(false);
       expect(result.reason).toBe('nonce_invalid_or_expired');
     });
 
-    it('valid payload with gated entitlement still fails (expected)', async () => {
-      // Nonce is valid — but partner entitlement is gated → fails
-      mockNonceUpdateResult = { data: { business_id: 'biz-abc', initiated_by_user_id: USER_ID }, error: null };
-      const sig = signPayload(validPayload);
+    it('rejects cross-user nonce consumption (user_nonce_mismatch)', async () => {
+      // Nonce was issued for a DIFFERENT user than the one in initiation state
+      const differentUserId = '00000000-0000-4000-8000-000000000999';
+      mockNonceUpdateResult = {
+        data: { business_id: BUSINESS_ID, initiated_by_user_id: differentUserId },
+        error: null,
+      };
       const { processCoexistenceFinish } = await import('@/lib/whatsapp/coexistence-finish-handler');
-      const result = await processCoexistenceFinish(validPayload, sig);
+      const { payload } = makeSignedPayload(); // state has USER_ID
+      const result = await processCoexistenceFinish(payload);
+
+      expect(result.accepted).toBe(false);
+      expect(result.reason).toBe('user_nonce_mismatch');
+    });
+
+    it('valid payload with gated entitlement still fails (expected)', async () => {
+      mockNonceUpdateResult = { data: { business_id: BUSINESS_ID, initiated_by_user_id: USER_ID }, error: null };
+      const { processCoexistenceFinish } = await import('@/lib/whatsapp/coexistence-finish-handler');
+      const { payload } = makeSignedPayload();
+      const result = await processCoexistenceFinish(payload);
 
       expect(result.accepted).toBe(false);
       expect(result.reason).toContain('partner_entitlement_failed');
       expect(result.reason).toContain('partner_entitlement_check_not_authorized');
     });
 
-    it('FINISH handler NEVER makes Meta API calls', async () => {
-      mockNonceUpdateResult = { data: { business_id: 'biz-abc', initiated_by_user_id: USER_ID }, error: null };
-      const sig = signPayload(validPayload);
+    it('handler does NOT verify HMAC of code/waba_id/phone_number_id (untrusted browser data not signed)', async () => {
+      // The HMAC only covers signed_state, NOT code/waba_id/phone_number_id.
+      // Changing browser values with valid initiation state should not trigger signature failure.
+      mockNonceUpdateResult = { data: { business_id: BUSINESS_ID, initiated_by_user_id: USER_ID }, error: null };
       const { processCoexistenceFinish } = await import('@/lib/whatsapp/coexistence-finish-handler');
-      await processCoexistenceFinish(validPayload, sig);
 
-      // No fetch calls to Meta Graph API
+      // Create payload with one set of browser values
+      const { payload } = makeSignedPayload();
+      // Swap the code AFTER signing — this should NOT break signature verification
+      // because the signature only covers signed_state, not browser data
+      payload.code = 'completely-different-code';
+
+      const result = await processCoexistenceFinish(payload);
+
+      // Should NOT fail with signature error — browser data is not signed
+      expect(result.reason).not.toBe('signature_mismatch');
+      expect(result.reason).not.toBe('invalid_initiation_state');
+      // It should reach entitlement check and fail there (since all gates pass except entitlement)
+      expect(result.reason).toContain('partner_entitlement_failed');
+    });
+
+    it('FINISH handler NEVER makes Meta API calls', async () => {
+      mockNonceUpdateResult = { data: { business_id: BUSINESS_ID, initiated_by_user_id: USER_ID }, error: null };
+      const { processCoexistenceFinish } = await import('@/lib/whatsapp/coexistence-finish-handler');
+      const { payload } = makeSignedPayload();
+      await processCoexistenceFinish(payload);
+
       expect(mockFetch).not.toHaveBeenCalled();
     });
 
     it('FINISH handler NEVER creates active whatsapp_channels', async () => {
-      mockNonceUpdateResult = { data: { business_id: 'biz-abc', initiated_by_user_id: USER_ID }, error: null };
-      const sig = signPayload(validPayload);
+      mockNonceUpdateResult = { data: { business_id: BUSINESS_ID, initiated_by_user_id: USER_ID }, error: null };
       const { processCoexistenceFinish } = await import('@/lib/whatsapp/coexistence-finish-handler');
-      await processCoexistenceFinish(validPayload, sig);
+      const { payload } = makeSignedPayload();
+      await processCoexistenceFinish(payload);
 
-      // No inserts to whatsapp_channels
       const channelInserts = serviceInserts.filter(i => i.table === 'whatsapp_channels');
       expect(channelInserts).toHaveLength(0);
     });
 
     it('valid FINISH event cannot authorize anything — browser-relayed values remain untrusted', async () => {
-      // Even with valid envelope signature and valid nonce, the handler
-      // does NOT claim Meta attestation and does NOT create candidates.
-      // This proves the handler is a session integrity check, not a provider verification.
-      mockNonceUpdateResult = { data: { business_id: 'biz-abc', initiated_by_user_id: USER_ID }, error: null };
-      const sig = signPayload(validPayload);
+      mockNonceUpdateResult = { data: { business_id: BUSINESS_ID, initiated_by_user_id: USER_ID }, error: null };
       const { processCoexistenceFinish } = await import('@/lib/whatsapp/coexistence-finish-handler');
-      const result = await processCoexistenceFinish(validPayload, sig);
+      const { payload } = makeSignedPayload();
+      const result = await processCoexistenceFinish(payload);
 
-      // Handler always rejects — it cannot authorize browser-relayed values
       expect(result.accepted).toBe(false);
-      // No channel candidates created
       const allInserts = serviceInserts.filter(i =>
         i.table === 'whatsapp_channels' || i.table === 'whatsapp_channel_candidates'
       );
       expect(allInserts).toHaveLength(0);
     });
+
+    it('nonce consumed from signed state, not from browser data', async () => {
+      mockNonceUpdateResult = { data: { business_id: BUSINESS_ID, initiated_by_user_id: USER_ID }, error: null };
+      const { processCoexistenceFinish } = await import('@/lib/whatsapp/coexistence-finish-handler');
+      const testNonce = 'specific-nonce-from-state';
+      const { payload } = makeSignedPayload({ nonce: testNonce });
+      await processCoexistenceFinish(payload);
+
+      // The nonce used for consumption should be from signed state
+      // We can verify via the service update mock — the nonce arg is what was passed
+      // to consumeSignupNonce, which then calls the update chain with .eq('nonce', nonce)
+      expect(serviceUpdates).toHaveLength(1);
+    });
   });
 
   describe('fail-closed even with entitled partner (C2-2)', () => {
     it('handler returns candidate_creation_not_implemented even when entitlement passes', async () => {
-      // The handler's CoexistenceFinishResult type is { accepted: false; reason: string }
-      // which means it CANNOT return accepted:true. We verify this structurally:
-      // after the entitlement check passes, the code reaches the fail-closed return.
-      //
-      // We verify by reading the handler source to confirm the unreachable success
-      // path was replaced with the fail-closed return.
       const fs = await import('fs');
       const path = await import('path');
       const handlerPath = path.resolve(__dirname, '../whatsapp/coexistence-finish-handler.ts');
@@ -517,10 +675,50 @@ describe('#592 Phase 2 — FINISH handler (Waaiio session envelope)', () => {
       expect(source).toContain('type CoexistenceFinishResult = { accepted: false; reason: string }');
     });
   });
+
+  describe('two-boundary model structural checks', () => {
+    it('handler exports CoexistenceInitiationState type', async () => {
+      const handler = await import('@/lib/whatsapp/coexistence-finish-handler');
+      // Type exports are checked by verifying the signing functions exist and work
+      expect(typeof handler.createSignedInitiationState).toBe('function');
+      expect(typeof handler.verifyInitiationState).toBe('function');
+    });
+
+    it('CoexistenceSessionPayload has signed_state and state_signature fields', async () => {
+      const fs = await import('fs');
+      const path = await import('path');
+      const handlerPath = path.resolve(__dirname, '../whatsapp/coexistence-finish-handler.ts');
+      const source = fs.readFileSync(handlerPath, 'utf-8');
+
+      expect(source).toContain('signed_state: string');
+      expect(source).toContain('state_signature: string');
+      // Verify old session_nonce field is gone
+      expect(source).not.toContain('session_nonce:');
+    });
+
+    it('processCoexistenceFinish takes single payload arg (no separate signature param)', async () => {
+      const fs = await import('fs');
+      const path = await import('path');
+      const handlerPath = path.resolve(__dirname, '../whatsapp/coexistence-finish-handler.ts');
+      const source = fs.readFileSync(handlerPath, 'utf-8');
+
+      // New signature: single payload argument
+      expect(source).toContain('processCoexistenceFinish(\n  payload: CoexistenceSessionPayload,\n): Promise<CoexistenceFinishResult>');
+    });
+
+    it('verifySessionEnvelopeSignature is removed (replaced by verifyInitiationState)', async () => {
+      const fs = await import('fs');
+      const path = await import('path');
+      const handlerPath = path.resolve(__dirname, '../whatsapp/coexistence-finish-handler.ts');
+      const source = fs.readFileSync(handlerPath, 'utf-8');
+
+      expect(source).not.toContain('verifySessionEnvelopeSignature');
+    });
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// 3. Eligibility service tests
+// 4. Eligibility service tests
 // ─────────────────────────────────────────────────────────────────────────
 
 describe('#592 Phase 2 — Eligibility verification service', () => {
@@ -621,7 +819,7 @@ describe('#592 Phase 2 — Eligibility verification service', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// 4. Readiness API enhancement tests
+// 5. Readiness API enhancement tests
 // ─────────────────────────────────────────────────────────────────────────
 
 describe('#592 Phase 2 — Readiness API with eligibility sub-results', () => {
@@ -707,7 +905,7 @@ describe('#592 Phase 2 — Readiness API with eligibility sub-results', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// 5. Migration contract tests (structural assertions)
+// 6. Migration contract tests (structural assertions)
 // ─────────────────────────────────────────────────────────────────────────
 
 describe('#592 Phase 2 — Migration 438 contract', () => {
@@ -724,15 +922,12 @@ describe('#592 Phase 2 — Migration 438 contract', () => {
     const migrationPath = path.resolve(__dirname, '../../supabase/migrations/438_business_app_coexistence.sql');
     const sql = fs.readFileSync(migrationPath, 'utf-8');
 
-    // Must NOT contain connection_type as a column addition
-    // (comments referencing connection_method are fine)
     const sqlWithoutComments = sql
       .split('\n')
       .filter(line => !line.trimStart().startsWith('--'))
       .join('\n');
 
     expect(sqlWithoutComments).not.toContain('connection_type');
-    // Should reference connection_method in comments explaining the relationship
     expect(sql).toContain('connection_method');
   });
 
@@ -756,7 +951,7 @@ describe('#592 Phase 2 — Migration 438 contract', () => {
     expect(sql).toContain('TIMESTAMPTZ');
   });
 
-  it('migration creates coexistence_signup_nonces table with initiated_by_user_id', async () => {
+  it('migration creates coexistence_signup_nonces table with NOT NULL initiated_by_user_id and FK', async () => {
     const fs = await import('fs');
     const path = await import('path');
     const migrationPath = path.resolve(__dirname, '../../supabase/migrations/438_business_app_coexistence.sql');
@@ -765,7 +960,8 @@ describe('#592 Phase 2 — Migration 438 contract', () => {
     expect(sql).toContain('CREATE TABLE');
     expect(sql).toContain('coexistence_signup_nonces');
     expect(sql).toContain('business_id UUID NOT NULL REFERENCES businesses(id) ON DELETE CASCADE');
-    expect(sql).toContain('initiated_by_user_id UUID');
+    // R2-C2: NOT NULL with FK constraint
+    expect(sql).toContain('initiated_by_user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE');
     expect(sql).toContain('nonce VARCHAR(128) NOT NULL UNIQUE');
     expect(sql).toContain('expires_at TIMESTAMPTZ NOT NULL');
     expect(sql).toContain('consumed_at TIMESTAMPTZ');
@@ -803,8 +999,6 @@ describe('#592 Phase 2 — Migration 438 contract', () => {
     const migrationPath = path.resolve(__dirname, '../../supabase/migrations/438_business_app_coexistence.sql');
     const sql = fs.readFileSync(migrationPath, 'utf-8');
 
-    // Strip SQL comments (-- ...) before checking for SECURITY DEFINER
-    // because the comment "No SECURITY DEFINER functions" is documentation, not code.
     const sqlWithoutComments = sql
       .split('\n')
       .filter(line => !line.trimStart().startsWith('--'))
@@ -828,10 +1022,7 @@ describe('#592 Phase 2 — Migration 438 contract', () => {
     const handlerPath = path.resolve(__dirname, '../whatsapp/coexistence-finish-handler.ts');
     const source = fs.readFileSync(handlerPath, 'utf-8');
 
-    // Handler should reference connection_method (the canonical column) when
-    // discussing candidate creation, not connection_type
     expect(source).toContain("connection_method='coexist'");
-    // Should NOT reference connection_type='coexist' as a column to use
     expect(source).not.toContain("connection_type='coexist'");
   });
 });

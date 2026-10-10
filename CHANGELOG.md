@@ -3,6 +3,18 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-10-10 — #592 Phase 2 CTO R2: signed initiation state, user authority, registry
+
+### What changed
+- coexistence-finish-handler.ts: Replaced infeasible full-payload HMAC with two-boundary model. Waaiio signs only initiation state (nonce, businessId, userId, configId, issuedAt) known at signup start. Untrusted browser FINISH data (code, WABA, phone) stored as-is, explicitly unverified.
+- coexistence-nonces.ts: initiated_by_user_id now NOT NULL. consumeSignupNonce no longer stores browser WABA in consumed_by_session.
+- 438_business_app_coexistence.sql: initiated_by_user_id UUID NOT NULL with FK to auth.users(id).
+- docs/MIGRATION_REGISTRY.md: Fixed M437 branch name, reconciled version-table + reservation rows.
+
+### What it affects / could break
+- Handler now requires CoexistenceSessionPayload with separate signed_state + untrusted browser fields.
+- Nonce generation requires non-null userId (already enforced by runtime check, now also by DB constraint).
+
 ## 2026-10-10 — #592 Phase 2 CTO R1: session envelope, fail-closed, ownership, schema dedup
 
 ### What changed
