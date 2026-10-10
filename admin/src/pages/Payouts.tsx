@@ -220,7 +220,7 @@ export default function Payouts() {
       await stepUp.execute({
         actionType: 'payout_approve',
         targetId: approveTarget.id,
-        params: { transfer_method: transferMethod },
+        params: { transfer_method: transferMethod, reference: transferRef || null, notes: approveNotes || null },
         description: `Approve payout for ${approveTarget.business_name} — ${formatMoney(approveTarget.net_amount, approveTarget.country_code)}`,
         onAuthorized,
       });

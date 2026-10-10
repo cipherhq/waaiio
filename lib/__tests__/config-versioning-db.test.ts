@@ -77,14 +77,24 @@ describe.skipIf(!canRun)('Config Versioning DB Tests (#255 C-1)', () => {
       DO $$ BEGIN CREATE ROLE anon NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
       GRANT USAGE ON SCHEMA public TO authenticated, service_role, anon;
 
-      CREATE OR REPLACE FUNCTION public.is_admin() RETURNS BOOLEAN AS $fn$
+      -- SEC-005: preserve MFA-aware admin authorization after M439.
+      -- Legacy stub only for isolated M359 fixtures without has_admin_role().
+      DO $stub$
       BEGIN
-        RETURN COALESCE(
-          current_setting('request.jwt.claims', true)::jsonb->>'role' = 'admin',
-          false
-        );
+        IF to_regprocedure('public.has_admin_role(text[])') IS NULL THEN
+          EXECUTE $sql$
+            CREATE OR REPLACE FUNCTION public.is_admin() RETURNS BOOLEAN AS $fn$
+            BEGIN
+              RETURN COALESCE(
+                current_setting('request.jwt.claims', true)::jsonb->>'role' = 'admin',
+                false
+              );
+            END;
+            $fn$ LANGUAGE plpgsql STABLE
+          $sql$;
+        END IF;
       END;
-      $fn$ LANGUAGE plpgsql STABLE;
+      $stub$;
 
       CREATE SCHEMA IF NOT EXISTS auth;
       CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $fn$
@@ -787,14 +797,24 @@ describe.skipIf(!canRun)('Config Versioning — non-superuser authority proof (#
       GRANT USAGE, CREATE ON SCHEMA public TO ${NSU_ROLE};
       GRANT USAGE ON SCHEMA public TO authenticated, service_role, anon;
 
-      CREATE OR REPLACE FUNCTION public.is_admin() RETURNS BOOLEAN AS $fn$
+      -- SEC-005: preserve MFA-aware admin authorization after M439.
+      -- Legacy stub only for isolated M359 fixtures without has_admin_role().
+      DO $stub$
       BEGIN
-        RETURN COALESCE(
-          current_setting('request.jwt.claims', true)::jsonb->>'role' = 'admin',
-          false
-        );
+        IF to_regprocedure('public.has_admin_role(text[])') IS NULL THEN
+          EXECUTE $sql$
+            CREATE OR REPLACE FUNCTION public.is_admin() RETURNS BOOLEAN AS $fn$
+            BEGIN
+              RETURN COALESCE(
+                current_setting('request.jwt.claims', true)::jsonb->>'role' = 'admin',
+                false
+              );
+            END;
+            $fn$ LANGUAGE plpgsql STABLE
+          $sql$;
+        END IF;
       END;
-      $fn$ LANGUAGE plpgsql STABLE;
+      $stub$;
 
       CREATE SCHEMA IF NOT EXISTS auth;
       GRANT USAGE ON SCHEMA auth TO ${NSU_ROLE};

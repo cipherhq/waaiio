@@ -243,7 +243,7 @@ export default function Payments() {
       await stepUp.execute({
         actionType: 'refund',
         targetId: paymentId,
-        params: { businessId, amount: amt, reason: refundReason || null },
+        params: { businessId, amount: amt, reason: reason || null },
         description: `Refund ${fmtCurrency(amt, selected.currency || undefined)} for payment ${paymentId.slice(0, 8)}...`,
         onAuthorized,
       });
@@ -337,7 +337,7 @@ export default function Payments() {
                         await stepUp.execute({
                           actionType: 'refund',
                           targetId: paymentId,
-                          params: { businessId, amount, reason: req.reason || null },
+                          params: { businessId, amount, reason },
                           description: `Approve refund request of ${fmtCurrency(amount, req.currency || undefined)} for ${req.customer_name || req.customer_phone}`,
                           onAuthorized,
                         });

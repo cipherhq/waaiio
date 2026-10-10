@@ -45,7 +45,7 @@ export async function POST(
 
   // SEC-005 Layer 4: Consume operation-bound step-up authorization
   try {
-    await consumeStepUp(admin, stepUpId, 'payout_approve', id, { transfer_method });
+    await consumeStepUp(admin, stepUpId, 'payout_approve', id, { transfer_method, reference: reference ?? null, notes: notes ?? null });
   } catch (err) {
     const msg = err instanceof StepUpError ? err.message : 'Step-up authorization required';
     return NextResponse.json({ error: msg, code: 'step_up_required' }, { status: 403 });
