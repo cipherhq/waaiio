@@ -76,6 +76,12 @@ const PLACEHOLDER_COEXISTENCE_MARKETS = new Set([
  *
  * GATED: Always returns { entitled: false, reason: 'partner_entitlement_check_not_authorized' }.
  *
+ * SPECULATIVE Meta Graph API fields — NOT confirmed against official Meta API documentation.
+ * These field names are placeholders based on expected patterns. Do NOT ungate
+ * until confirmed against real Meta Graph API responses or official documentation.
+ * Official confirmation requires: Meta Tech Provider documentation access or
+ * live Meta Graph API response inspection with partner credentials.
+ *
  * When ungated, this would call:
  *   GET https://graph.facebook.com/{api_version}/{waba_id}
  *     ?fields=coexistence_status,partner_coexistence_eligible
@@ -105,6 +111,12 @@ export async function checkPartnerEntitlement(
  * Check if a phone number has an existing WhatsApp Business app.
  *
  * GATED: Always returns { hasBusinessApp: false, reason: 'phone_eligibility_check_not_authorized' }.
+ *
+ * SPECULATIVE Meta Graph API fields — NOT confirmed against official Meta API documentation.
+ * These field names are placeholders based on expected patterns. Do NOT ungate
+ * until confirmed against real Meta Graph API responses or official documentation.
+ * Official confirmation requires: Meta Tech Provider documentation access or
+ * live Meta Graph API response inspection with partner credentials.
  *
  * When ungated, this would call:
  *   GET https://graph.facebook.com/{api_version}/{phone_number_id}

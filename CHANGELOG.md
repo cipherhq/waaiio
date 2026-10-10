@@ -3,6 +3,20 @@
 All notable bot flow, security, and infrastructure changes are tracked here.
 If something breaks, check this log to find what changed and when.
 
+## 2026-10-10 — #592 Phase 2 CTO R1: session envelope, fail-closed, ownership, schema dedup
+
+### What changed
+- coexistence-finish-handler.ts: Relabeled from false "Meta FINISH attestation" to "Waaiio-owned internal signed envelope". HMAC protects session integrity in browser transit, does NOT prove Meta identity. Browser WABA/phone values remain untrusted.
+- coexistence-finish-handler.ts: Replaced unreachable accepted:true branch with fail-closed candidate_creation_not_implemented. Handler cannot accept even if entitlement passes.
+- coexistence-nonces.ts: Added initiated_by_user_id to nonce generation/consumption for session ownership binding.
+- 438_business_app_coexistence.sql: Removed duplicate connection_type column — canonical connection_method already exists (M007/M123). Kept only new metadata columns.
+- coexistence-verification.ts: Labeled all Meta Graph API fields as SPECULATIVE — not confirmed against official documentation.
+- docs/MIGRATION_REGISTRY.md: Recorded M436/M437/M438 reservations.
+
+### What it affects / could break
+- FINISH handler type changed to always return accepted:false — unreachable success path removed.
+- Nonce generation now requires userId parameter — callers must pass authenticated user ID.
+
 ## 2026-10-09 — #592 Phase 2: Business App Coexistence infrastructure (pre-staging)
 
 ### What changed

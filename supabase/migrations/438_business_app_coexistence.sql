@@ -1,33 +1,37 @@
 -- Migration 438: Business App Coexistence schema extensions (#592 Phase 2)
 --
--- Adds coexistence metadata columns to whatsapp_channels and creates
+-- Adds coexistence-specific metadata columns to whatsapp_channels and creates
 -- the coexistence_signup_nonces table for anti-replay nonce management.
+--
+-- NOTE: The canonical connection method discriminator is the existing
+-- connection_method VARCHAR(20) column (added in M007, extended in M123)
+-- which already supports 'coexist' in its CHECK constraint. This migration
+-- does NOT add a duplicate connection_type column — it only adds supplementary
+-- metadata columns for coexistence-specific data.
 --
 -- No SECURITY DEFINER functions. Service-role-only access on nonces table.
 
 -- ─────────────────────────────────────────────────────────────────────────
--- 1. Extend whatsapp_channels with coexistence metadata
+-- 1. Extend whatsapp_channels with coexistence-specific metadata
 -- ─────────────────────────────────────────────────────────────────────────
 
+-- These columns are supplementary to the existing connection_method column.
+-- They are only meaningful when connection_method = 'coexist'.
 ALTER TABLE whatsapp_channels
-  ADD COLUMN IF NOT EXISTS connection_type VARCHAR(20) DEFAULT 'transfer'
-    CHECK (connection_type IN ('transfer', 'coexist')),
   ADD COLUMN IF NOT EXISTS coexist_meta_business_app_id VARCHAR(64),
   ADD COLUMN IF NOT EXISTS coexist_verified_at TIMESTAMPTZ;
 
--- Coexistence metadata columns are only meaningful when connection_type = 'coexist'.
--- When connection_type = 'transfer' (default), these columns should remain NULL.
-COMMENT ON COLUMN whatsapp_channels.connection_type IS 'How this channel was connected: transfer (standard) or coexist (business app coexistence)';
-COMMENT ON COLUMN whatsapp_channels.coexist_meta_business_app_id IS 'The existing WhatsApp Business app ID that coexists with this channel (only for coexist connections)';
-COMMENT ON COLUMN whatsapp_channels.coexist_verified_at IS 'When Meta confirmed coexistence eligibility for this channel';
+COMMENT ON COLUMN whatsapp_channels.coexist_meta_business_app_id IS 'The existing WhatsApp Business app ID that coexists with this channel (only meaningful when connection_method = ''coexist'')';
+COMMENT ON COLUMN whatsapp_channels.coexist_verified_at IS 'When Meta confirmed coexistence eligibility for this channel (only meaningful when connection_method = ''coexist'')';
 
 -- ─────────────────────────────────────────────────────────────────────────
--- 2. Coexistence signup nonces — anti-replay for Meta onboarding callbacks
+-- 2. Coexistence signup nonces — anti-replay for onboarding callbacks
 -- ─────────────────────────────────────────────────────────────────────────
 
 CREATE TABLE IF NOT EXISTS coexistence_signup_nonces (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   business_id UUID NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
+  initiated_by_user_id UUID,
   nonce VARCHAR(128) NOT NULL UNIQUE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   expires_at TIMESTAMPTZ NOT NULL,
@@ -35,6 +39,8 @@ CREATE TABLE IF NOT EXISTS coexistence_signup_nonces (
   consumed_by_session VARCHAR(256),
   CONSTRAINT nonce_not_empty CHECK (length(trim(nonce)) > 0)
 );
+
+COMMENT ON COLUMN coexistence_signup_nonces.initiated_by_user_id IS 'The authenticated user who started the coexistence signup flow. Binds the nonce to a specific user for session ownership verification.';
 
 CREATE INDEX IF NOT EXISTS idx_coexist_nonces_business
   ON coexistence_signup_nonces(business_id);
