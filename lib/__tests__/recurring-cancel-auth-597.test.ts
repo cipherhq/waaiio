@@ -547,23 +547,26 @@ describe('#597 F3 R2: Executable cancel handler tests', () => {
   });
 
   /**
-   * R5-2 RECOVERY DOCUMENTATION:
+   * R6-1 RECOVERY LIMITATION (CTO-verified):
    *
-   * If the customer does NOT retry (proof expires, gives up, DB outage persists):
-   * - The subscription remains 'active'/'past_due' in Waaiio's DB
-   * - The provider has already disabled the subscription (no future charges)
-   * - retry-failed-charges cron (daily) processes past_due subscriptions:
-   *   it calls claim_paystack_billing_cycle which reads next_charge_at;
-   *   since the provider subscription is disabled, the charge attempt will fail,
-   *   incrementing failure_count. After 3 failures, the cron cancels locally.
-   * - This provides EVENTUAL convergence (within 3 billing cycles) but is NOT
-   *   immediate. A dedicated customer_subscription reconciliation worker that
-   *   verifies provider state for locally-active subscriptions would provide
-   *   faster convergence. This is tracked as separate operational work, not
-   *   a blocker for the authorization fix in this PR.
+   * If the customer does NOT retry after provider-cancel-success/DB-failure:
+   * - The subscription remains 'active'/'past_due' locally
+   * - The Paystack subscription is disabled (non-renewing)
+   * - BUT: the billing cron uses chargeAuthorization (Transaction API),
+   *   which is INDEPENDENT of subscription status. The stored authorization_code
+   *   remains valid. Charges may SUCCEED despite the provider subscription
+   *   being disabled.
    *
-   * The critical safety invariant is preserved: the provider will NOT charge
-   * the customer again, regardless of local DB state. The local state will
-   * converge through the existing retry/failure/cancellation lifecycle.
+   * Therefore, the current handler does NOT guarantee convergence without
+   * customer retry. The CTO-approved solution is a durable
+   * cancellation_requested_at intent column checked by billing claim RPCs,
+   * implemented as a separate forward-only migration coordinated with #597.
+   *
+   * This PR provides:
+   * - Correct two-request retry convergence (tested above)
+   * - Provider-state verification on retry (tested above)
+   * - Honest documentation of the no-retry limitation
+   *
+   * The durable intent migration is a separate, dependency-coordinated change.
    */
 });
