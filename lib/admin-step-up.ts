@@ -89,9 +89,7 @@ export async function prepareStepUp(
     throw new StepUpError('Cannot determine session identity');
   }
 
-  // Get the admin's enrolled TOTP factor
-  const { data: factors } = await supabase.from('auth.mfa_factors' as never).select('id, factor_type, status').eq('user_id', admin.userId);
-
+  // Factor access is mediated by the authenticated GoTrue API below.
   // Use GoTrue API directly to list factors for the user
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
@@ -192,16 +190,8 @@ export async function verifyStepUp(
   const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   if (!supabaseUrl || !anonKey) throw new StepUpError('Missing Supabase configuration');
 
-  // Verify via GoTrue — this is the cryptographic TOTP verification
-  // We need to find the factor ID from the challenge. Query auth.mfa_challenges.
-  const { data: challengeRow } = await supabase
-    .from('auth.mfa_challenges' as never)
-    .select('factor_id')
-    .eq('id', stepUp.challenge_id)
-    .single();
-
-  // If we can't read the challenge directly, use the GoTrue API with the admin's token
-  // The challenge was created for the admin's factor, so verify through the factor
+  // Verify via the authenticated GoTrue API, not a direct public-schema
+  // query against Supabase Auth's protected internal tables.
   const factorsRes = await fetch(`${supabaseUrl}/auth/v1/factors`, {
     headers: {
       'Authorization': `Bearer ${admin.bearerToken}`,
@@ -234,14 +224,23 @@ export async function verifyStepUp(
     throw new StepUpError(errBody?.msg || errBody?.error || 'TOTP verification failed');
   }
 
-  // Mark step-up as verified
-  const { error: updateError } = await supabase
+  // The verification transition is conditional on *all* pending-state
+  // predicates. Checking only the error is insufficient: UPDATE of zero rows
+  // is not an authorization success (and races must not re-verify an old grant).
+  const { data: marked, error: updateError } = await supabase
     .from('admin_step_up_authorizations')
     .update({ verified_at: new Date().toISOString() })
     .eq('id', stepUpId)
-    .is('verified_at', null);
+    .eq('admin_user_id', admin.userId)
+    .eq('session_id', sessionId)
+    .eq('challenge_id', stepUp.challenge_id)
+    .is('verified_at', null)
+    .is('consumed_at', null)
+    .gt('expires_at', new Date().toISOString())
+    .select('id')
+    .maybeSingle();
 
-  if (updateError) throw new StepUpError('Failed to mark step-up as verified');
+  if (updateError || !marked) throw new StepUpError('Step-up verification is no longer pending');
 
   return true;
 }
