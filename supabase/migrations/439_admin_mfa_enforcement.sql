@@ -5,9 +5,9 @@
 --   1. Creates admin_step_up_authorizations table for step-up MFA challenges.
 --   2. Introduces has_admin_role(required_roles text[]) as the single canonical
 --      helper for all admin-role checks; requires aal2 (MFA) in the JWT.
---   3. Rewrites is_admin() and is_support() to delegate to has_admin_role(),
---      enforcing aal2 on every RLS call that previously only checked
---      raw_app_meta_data.role.
+--   3. Rewrites is_admin(), is_support() and has_platform_role() to
+--      delegate to has_admin_role(), enforcing aal2 on legacy RLS paths
+--      that previously only checked raw_app_meta_data.role.
 --   4. Replaces all 28 inline profiles.role / raw_app_meta_data.role admin RLS
 --      policies across 20 tables with the canonical helper functions.
 --   5. Adds cleanup_expired_step_ups() for cron-driven housekeeping.
@@ -105,6 +105,32 @@ REVOKE EXECUTE ON FUNCTION public.has_admin_role(text[]) FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION public.has_admin_role(text[]) FROM anon;
 GRANT EXECUTE ON FUNCTION public.has_admin_role(text[]) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.has_admin_role(text[]) TO service_role;
+
+-- ════════════════════════════════════════════════════════════════════════════
+-- §2b. Close the legacy has_platform_role() RLS path (M365).
+--
+-- M365 policies on demo_requests, attendance_log and ai_classification_log
+-- still invoke has_platform_role(), not is_admin()/is_support(). Leaving it
+-- role-only would allow password-only Admin sessions to access those tables.
+-- Keep the existing role-array permissions/ACL and enforce the SAME aal2 gate
+-- from the canonical admin helper. No policy commands or tenant permissions
+-- are broadened.
+-- ════════════════════════════════════════════════════════════════════════════
+
+CREATE OR REPLACE FUNCTION public.has_platform_role(p_roles text[])
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = ''
+AS $ SELECT public.has_admin_role(p_roles) $;
+
+REVOKE ALL ON FUNCTION public.has_platform_role(text[]) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.has_platform_role(text[]) FROM anon;
+REVOKE ALL ON FUNCTION public.has_platform_role(text[]) FROM authenticated;
+REVOKE ALL ON FUNCTION public.has_platform_role(text[]) FROM service_role;
+GRANT EXECUTE ON FUNCTION public.has_platform_role(text[]) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.has_platform_role(text[]) TO service_role;
 
 -- ════════════════════════════════════════════════════════════════════════════
 -- §3. Rewrite is_admin() — now requires aal2
@@ -460,6 +486,7 @@ DECLARE
   v_fn   text;
   v_fns  text[] := ARRAY[
     'has_admin_role(text[])',
+    'has_platform_role(text[])',
     'is_admin()',
     'is_support()',
     'cleanup_expired_step_ups()'
