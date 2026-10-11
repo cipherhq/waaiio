@@ -81,6 +81,17 @@ function asRoleMayFail(userId: string, appMetaRole: string, sql: string): string
 
 describe.skipIf(!canRun)('Platform Role Authority DB Tests (#217)', () => {
   beforeAll(() => {
+    // Grant DML on tables this test writes to via SET LOCAL ROLE.
+    // SEC-005: never grant ALL TABLES — M439 deliberately revokes DML on
+    // admin_audit_logs, business_payouts, and countries.
+    psql(`
+      GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
+      GRANT SELECT ON ALL TABLES IN SCHEMA public TO authenticated, service_role;
+      GRANT INSERT, UPDATE, DELETE ON demo_requests, profiles, businesses,
+        attendance_log, ai_classification_log, admin_impersonation_tokens
+        TO authenticated, service_role;
+    `);
+
     // Seed test users in auth.users with correct app_metadata — MUST succeed
     for (const [role, id] of Object.entries(USERS)) {
       const metaRole = (role === 'ordinary' || role === 'stale') ? null : role;
