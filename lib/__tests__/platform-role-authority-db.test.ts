@@ -272,8 +272,8 @@ describe.skipIf(!canRun)('Platform Role Authority DB Tests (#217)', () => {
 
   // ── 12b. aal1 denial ──
 
-  it('12b. admin with aal1 JWT sees 0 rows from admin tables (aal2 required)', () => {
-    for (const table of ['demo_requests', 'admin_impersonation_tokens']) {
+  it('12b. admin with aal1 JWT sees 0 rows from every seeded platform-admin table (aal2 required)', () => {
+    for (const table of ['demo_requests', 'attendance_log', 'ai_classification_log', 'admin_impersonation_tokens']) {
       const count = psql(`
         SELECT set_config('request.jwt.claims', '${jwtClaims(USERS.admin, 'admin')}', false);
         CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$ SELECT '{"aal":"aal1"}'::jsonb; $fn$ LANGUAGE SQL STABLE;
@@ -283,8 +283,24 @@ describe.skipIf(!canRun)('Platform Role Authority DB Tests (#217)', () => {
       `);
       // Strip set_config output line(s) — last non-empty line is the count
       const lines = count.split('\n').filter(l => l.trim() !== '');
-      expect(parseInt(lines[lines.length - 1] || '0')).toBe(0);
+      expect(parseInt(lines[lines.length - 1] || '0'), `aal1 must not read ${table}`).toBe(0);
     }
+  });
+
+  it('12c. aal1 cannot use either legacy helper even with canonical Admin role', () => {
+    const output = psql(`
+      SELECT set_config('request.jwt.claims', '${jwtClaims(USERS.admin, 'admin')}', false);
+      CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$
+        SELECT '{"aal":"aal1"}'::jsonb;
+      $fn$ LANGUAGE SQL STABLE;
+      SET ROLE authenticated;
+      SELECT public.has_platform_role(ARRAY['admin']);
+      SELECT public.is_support();
+      RESET ROLE;
+    `);
+    const lines = output.split('\n').filter(Boolean);
+    // The first line is the set_config return value; both helpers MUST deny.
+    expect(lines.slice(-2)).toEqual(['f', 'f']);
   });
 
   // ── 13. is_support per-role behavior ──
@@ -298,16 +314,21 @@ describe.skipIf(!canRun)('Platform Role Authority DB Tests (#217)', () => {
 
   // ── 14-15. Structural checks ──
 
-  it('14. has_platform_role source reads raw_app_meta_data, not profiles', () => {
-    const src = psql("SELECT prosrc FROM pg_proc WHERE proname = 'has_platform_role';");
-    expect(src).toContain('raw_app_meta_data');
-    expect(src).not.toContain('profiles');
+  it('14. has_platform_role delegates to aal2-gated canonical role authority', () => {
+    const source = psql("SELECT prosrc FROM pg_proc WHERE oid='public.has_platform_role(text[])'::regprocedure;");
+    expect(source).toContain('public.has_admin_role');
+    expect(source).not.toContain('profiles');
+    const canonical = psql("SELECT prosrc FROM pg_proc WHERE oid='public.has_admin_role(text[])'::regprocedure;");
+    expect(canonical).toContain('raw_app_meta_data');
+    expect(canonical).toContain('auth.jwt()');
+    expect(canonical).toContain('aal2');
+    expect(canonical).not.toContain('profiles');
   });
 
-  it('15. is_support source reads canonical, not profiles', () => {
-    const src = psql("SELECT prosrc FROM pg_proc WHERE proname = 'is_support';");
-    expect(src).toContain('raw_app_meta_data');
-    expect(src).not.toContain('profiles');
+  it('15. is_support delegates to aal2-gated canonical authority, not profiles', () => {
+    const source = psql("SELECT prosrc FROM pg_proc WHERE proname = 'is_support';");
+    expect(source).toContain('public.has_admin_role');
+    expect(source).not.toContain('profiles');
   });
 
   // ── 16. Self-escalation blocked ──
