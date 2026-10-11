@@ -188,13 +188,18 @@ describe.skipIf(!canRun)('Message Send Attempts DB Tests (#257 / Migration 367)'
     const NON_OWNER = `{"sub":"${NON_OWNER_ID}","role":"authenticated"}`;
     const count = psqlMayFail(`
       SELECT set_config('request.jwt.claims', '${NON_OWNER}', false);
+      -- Verify the tenant boundary even with a fully MFA-completed token.
+      -- Otherwise an accidental aal1 fixture could mask an admin-role leak.
+      CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$
+        SELECT '{"aal":"aal2"}'::jsonb;
+      $fn$ LANGUAGE SQL STABLE;
       SET ROLE authenticated;
+      SELECT public.is_admin();
       SELECT count(*)::int FROM message_send_attempts WHERE id = 'f0000000-0000-0000-0000-000000000257';
       RESET ROLE;
     `);
-    // Should see 0 rows (RLS denies)
     const lines = count.split('\n').filter(l => l.trim() !== '');
-    expect(lines[lines.length - 1]).toBe('0');
+    expect(lines.slice(-2)).toEqual(['f', '0']);
   });
 
   // ── Grants ──
