@@ -123,7 +123,7 @@ LANGUAGE sql
 STABLE
 SECURITY DEFINER
 SET search_path = ''
-AS $ SELECT public.has_admin_role(p_roles) $;
+AS $$ SELECT public.has_admin_role(p_roles) $$;
 
 REVOKE ALL ON FUNCTION public.has_platform_role(text[]) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.has_platform_role(text[]) FROM anon;
