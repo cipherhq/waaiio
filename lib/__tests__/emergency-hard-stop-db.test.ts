@@ -31,7 +31,7 @@ function psqlMayFail(sql: string): string {
 }
 
 const ADMIN_CLAIMS = '{"sub":"00000000-0000-0000-0000-000000000099","role":"admin","user_metadata":{"role":"admin"}}';
-const OWNER_CLAIMS = '{"sub":"00000000-0000-0000-0000-000000000001","role":"authenticated","user_metadata":{}}';
+const OWNER_CLAIMS = '{"sub":"00000000-0000-0000-0256-000000000010","role":"authenticated","user_metadata":{}}';
 const BIZ_ID = '00000000-0000-0000-0256-000000000001';
 const BIZ_B_ID = '00000000-0000-0000-0256-000000000002';
 
@@ -76,11 +76,11 @@ describe.skipIf(!canRun)('Emergency Hard-Stop DB Tests (#256 S-1)', () => {
       -- In CI, profiles.id may FK to auth.users — create stubs if auth.users exists
       DO $$ BEGIN
         INSERT INTO auth.users (id) VALUES ('00000000-0000-0000-0000-000000000099') ON CONFLICT DO NOTHING;
-        INSERT INTO auth.users (id) VALUES ('00000000-0000-0000-0000-000000000001') ON CONFLICT DO NOTHING;
+        INSERT INTO auth.users (id) VALUES ('00000000-0000-0000-0256-000000000010') ON CONFLICT DO NOTHING;
       EXCEPTION WHEN undefined_table THEN NULL; -- auth.users may not exist in local test
       END $$;
       INSERT INTO profiles (id) VALUES ('00000000-0000-0000-0000-000000000099') ON CONFLICT DO NOTHING;
-      INSERT INTO profiles (id) VALUES ('00000000-0000-0000-0000-000000000001') ON CONFLICT DO NOTHING;
+      INSERT INTO profiles (id) VALUES ('00000000-0000-0000-0256-000000000010') ON CONFLICT DO NOTHING;
       -- Ensure profiles has role column (may not exist in clean test DB)
       DO $$ BEGIN ALTER TABLE public.profiles ADD COLUMN role TEXT DEFAULT 'user'; EXCEPTION WHEN duplicate_column THEN NULL; END $$;
       UPDATE public.profiles SET role = 'admin' WHERE id = '00000000-0000-0000-0000-000000000099'::uuid;
@@ -117,8 +117,8 @@ describe.skipIf(!canRun)('Emergency Hard-Stop DB Tests (#256 S-1)', () => {
     // Insert test businesses (include required columns for CI where full schema exists)
     psql(`
       INSERT INTO businesses (id, owner_id, name, slug, phone, city, address) VALUES
-        ('${BIZ_ID}', '00000000-0000-0000-0000-000000000001', 'Test Biz A', 'test-biz-a-256', '+2341234567890', 'Lagos', '1 Test St'),
-        ('${BIZ_B_ID}', '00000000-0000-0000-0000-000000000001', 'Test Biz B', 'test-biz-b-256', '+2341234567891', 'Lagos', '2 Test St')
+        ('${BIZ_ID}', '00000000-0000-0000-0256-000000000010', 'Test Biz A', 'test-biz-a-256', '+2341234567890', 'Lagos', '1 Test St'),
+        ('${BIZ_B_ID}', '00000000-0000-0000-0256-000000000010', 'Test Biz B', 'test-biz-b-256', '+2341234567891', 'Lagos', '2 Test St')
       ON CONFLICT (id) DO NOTHING;
     `);
 
@@ -126,14 +126,23 @@ describe.skipIf(!canRun)('Emergency Hard-Stop DB Tests (#256 S-1)', () => {
     // from auth.users.raw_app_meta_data, not client-controlled JWT role text.
     if (psql("SELECT to_regprocedure('public.has_admin_role(text[])') IS NOT NULL;") === 't') {
       psql(`
+        -- This fixture uses a dedicated owner identity; other suites may
+        -- create independent admin fixtures in the same CI database.
         UPDATE auth.users
         SET raw_app_meta_data = jsonb_set(
           COALESCE(raw_app_meta_data, '{}'::jsonb),
           '{role}', '"admin"'::jsonb
         )
         WHERE id = '00000000-0000-0000-0000-000000000099'::uuid;
+
+        -- The role is authoritative in auth.users, not the JWT role text.
+        -- Ensure the owner is not an admin even after other suites have run.
+        UPDATE auth.users
+        SET raw_app_meta_data = COALESCE(raw_app_meta_data, '{}'::jsonb) - 'role'
+        WHERE id = '00000000-0000-0000-0256-000000000010'::uuid;
       `);
       expect(psql("SELECT raw_app_meta_data->>'role' FROM auth.users WHERE id='00000000-0000-0000-0000-000000000099'::uuid;")).toBe('admin');
+      expect(psql("SELECT COALESCE(raw_app_meta_data->>'role', 'none') FROM auth.users WHERE id='00000000-0000-0000-0256-000000000010'::uuid;")).toBe('none');
     }
 
     // Apply migration 360
@@ -228,7 +237,10 @@ describe.skipIf(!canRun)('Emergency Hard-Stop DB Tests (#256 S-1)', () => {
       SELECT toggle_messaging_suspension('${BIZ_ID}'::uuid, true);
       RESET ROLE;
     `);
+    // This authenticated non-admin must be denied, without modifying state.
     expect(err).toContain('admin role');
+    expect(err).not.toContain('"success": true');
+    expect(psql(`SELECT messaging_suspended FROM businesses WHERE id = '${BIZ_ID}';`)).toBe('f');
   });
 
   it('6. Anon cannot call toggle_messaging_suspension', () => {
@@ -257,6 +269,7 @@ describe.skipIf(!canRun)('Emergency Hard-Stop DB Tests (#256 S-1)', () => {
       SELECT business_id, actor_id, prior_state, new_state, reason
       FROM messaging_suspension_audit
       WHERE business_id = '${BIZ_ID}'
+        AND reason = 'Audit test'
       ORDER BY created_at DESC LIMIT 1;
     `);
     expect(audit).toContain(BIZ_ID);
@@ -277,6 +290,8 @@ describe.skipIf(!canRun)('Emergency Hard-Stop DB Tests (#256 S-1)', () => {
 
   it('8. Injected audit failure → suspension does NOT commit', () => {
     const beforeState = psql(`SELECT messaging_suspended FROM businesses WHERE id = '${BIZ_ID}';`);
+    // A no-op would never attempt an audit insert; require a real transition.
+    expect(beforeState).toBe('f');
 
     // Create trigger that blocks audit INSERT
     psql(`
