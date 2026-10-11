@@ -361,9 +361,11 @@ describe.skipIf(!canRun)('Message Cost Events Schema DB Tests (#259 / Migration 
     psql(`INSERT INTO message_cost_events (attempt_id, event_type, amount_minor, charge_type, balance_after_minor) VALUES ('${a}', 'reserve', -100, 'included', 900);`);
     try {
       psql(`CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $f$ SELECT '${OWNER_A}'::UUID; $f$ LANGUAGE SQL STABLE;`);
-      psql(`CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$ SELECT '{"aal":"aal2"}'::jsonb; $fn$ LANGUAGE SQL STABLE;`);
-      const count = psql(`SET ROLE authenticated; SELECT count(*)::int FROM message_cost_events WHERE attempt_id = '${a}'; RESET ROLE;`);
-      expect(parseInt(count.split('\n').pop()!)).toBeGreaterThan(0);
+      psql(`CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$ SELECT '{"aal":"aal1"}'::jsonb; $fn$ LANGUAGE SQL STABLE;`);
+      const count = psql(`SET ROLE authenticated; SELECT public.is_admin(); SELECT count(*)::int FROM message_cost_events WHERE attempt_id = '${a}'; RESET ROLE;`);
+      const lines = count.split('\n').filter(Boolean);
+      expect(lines[lines.length - 2]).toBe('f');
+      expect(parseInt(lines[lines.length - 1])).toBeGreaterThan(0);
     } finally {
       psqlMayFail(originalAuthUidDef + ';');
     }
@@ -375,8 +377,8 @@ describe.skipIf(!canRun)('Message Cost Events Schema DB Tests (#259 / Migration 
     try {
       psql(`CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $f$ SELECT '${OWNER_B}'::UUID; $f$ LANGUAGE SQL STABLE;`);
       psql(`CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$ SELECT '{"aal":"aal2"}'::jsonb; $fn$ LANGUAGE SQL STABLE;`);
-      const count = psql(`SET ROLE authenticated; SELECT count(*)::int FROM message_cost_events WHERE attempt_id = '${a}'; RESET ROLE;`);
-      expect(count.split('\n').pop()).toBe('0');
+      const count = psql(`SET ROLE authenticated; SELECT public.is_admin(); SELECT count(*)::int FROM message_cost_events WHERE attempt_id = '${a}'; RESET ROLE;`);
+      expect(count.split('\n').filter(Boolean).slice(-2)).toEqual(['f', '0']);
     } finally {
       psqlMayFail(originalAuthUidDef + ';');
     }
