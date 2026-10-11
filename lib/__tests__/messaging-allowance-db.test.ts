@@ -32,14 +32,34 @@ function psqlMayFail(sql: string): string {
 
 const BIZ_ID   = 'b0000000-0000-0000-0000-000000000258';
 const BIZ_ID_B = 'b0000000-0000-0000-0000-000000000259'; // second tenant
-const OWNER_A  = '00000000-0000-0000-0000-000000000001';
-const OWNER_B  = '00000000-0000-0000-0000-000000000099';
+const OWNER_A  = '00000000-0000-0000-0258-000000000001';
+const OWNER_B  = '00000000-0000-0000-0258-000000000002';
 
 describe.skipIf(!canRun)('Messaging Allowance Schema DB Tests (#258 / Migration 368)', () => {
   let allowanceId: string;
   let attemptId: string;
 
   beforeAll(() => {
+    // The shared DB has unrelated fixture IDs 000...001 and 000...099
+    // promoted to Admin by other suites. These MUST be independent tenant
+    // owners with no platform role, otherwise cross-tenant RLS can be bypassed
+    // through the legitimate Admin SELECT policy.
+    psql(`
+      INSERT INTO auth.users (id, email, raw_app_meta_data)
+      VALUES
+        ('${OWNER_A}', 'owner-a-0258@unit.invalid', '{}'::jsonb),
+        ('${OWNER_B}', 'owner-b-0258@unit.invalid', '{}'::jsonb)
+      ON CONFLICT (id) DO UPDATE SET raw_app_meta_data = '{}'::jsonb;
+      INSERT INTO profiles (id, email, role)
+      VALUES
+        ('${OWNER_A}', 'owner-a-0258@unit.invalid', 'restaurant_owner'),
+        ('${OWNER_B}', 'owner-b-0258@unit.invalid', 'restaurant_owner')
+      ON CONFLICT (id) DO NOTHING;
+    `);
+    expect(psql(`
+      SELECT COALESCE(raw_app_meta_data->>'role', 'none')
+      FROM auth.users WHERE id IN ('${OWNER_A}', '${OWNER_B}') ORDER BY id;
+    `)).toBe('none\nnone');
     // Seed test businesses (two tenants)
     for (const [bizId, name, slug, owner] of [
       [BIZ_ID, 'Test258A', 'test258-ma-a', OWNER_A],
