@@ -151,14 +151,24 @@ describe('requirePlatformAdmin helper', () => {
   beforeEach(() => { vi.restoreAllMocks(); vi.resetModules(); });
 
   function mockAuth(user: Record<string, unknown> | null) {
+    const defaultClaims = user
+      ? { sub: (user as { id?: string }).id, aal: 'aal2', session_id: 'sess-test' }
+      : null;
     vi.doMock('@/lib/supabase/service', () => ({
-      createServiceClient: vi.fn().mockReturnValue({ auth: { getUser: vi.fn().mockResolvedValue({ data: { user } }) } }),
+      createServiceClient: vi.fn().mockReturnValue({
+        auth: {
+          getClaims: vi.fn().mockResolvedValue(
+            defaultClaims
+              ? { data: { claims: defaultClaims }, error: null }
+              : { data: null, error: { message: 'invalid' } },
+          ),
+          getUser: vi.fn().mockResolvedValue({ data: { user } }),
+        },
+        from: vi.fn().mockReturnValue({ insert: vi.fn().mockResolvedValue({}) }),
+      }),
     }));
   }
-  // Test-only fake JWT with aal:aal2 payload (base64url of {"alg":"none"}.{"aal":"aal2"})
-  // NOT a real token — no valid signature. Only used to test decodeJwtPayload parsing.
-  const AAL2_TOKEN = `${btoa('{"alg":"none"}').replace(/=/g, '')}.${btoa('{"aal":"aal2","sub":"u1"}').replace(/=/g, '')}.test-only-not-a-secret`;
-  const req = () => new NextRequest('https://t.waaiio.com/api/admin/test', { headers: { Authorization: `Bearer ${AAL2_TOKEN}` } });
+  const req = () => new NextRequest('https://t.waaiio.com/api/admin/test', { headers: { Authorization: 'Bearer test-token' } });
 
   it('denies absent/profiles-only/raw_user_meta_data, allows app_metadata, respects requiredRole', async () => {
     // Denied cases

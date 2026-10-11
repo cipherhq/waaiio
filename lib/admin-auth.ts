@@ -35,16 +35,20 @@ export interface PlatformAdmin {
 }
 
 // ---------------------------------------------------------------------------
-// Verified JWT claims contract
+// Verified JWT claims via supabase.auth.getClaims()
 //
-// Claims are read from the JWT payload ONLY after getUser(token) has
-// validated the token's signature, expiry, and issuer against the Supabase
-// Auth server (GoTrue JWKS/HMAC check). getUser() is the cryptographic
-// verification step. The payload is trustworthy BECAUSE validation succeeded.
+// getClaims(token) performs cryptographic verification:
+//   - If JWKS is available (RS256): verifies the signature locally using
+//     the project's public key.
+//   - If HMAC (HS256) or WebCrypto unavailable: falls back to getUser(token)
+//     which validates server-side.
 //
-// Callers must NEVER decode claims from an unvalidated token. The only
-// entry point is getVerifiedClaims() which performs both validation and
-// claim extraction atomically.
+// We ALSO call getUser(token) independently to reject revoked sessions.
+// getClaims alone proves the token was once valid; getUser proves the
+// session is STILL active. Both must agree on the same subject (sub).
+//
+// app_metadata.role comes from getUser (server-authoritative, never
+// user-writable). Claims (aal, session_id, amr) come from getClaims.
 // ---------------------------------------------------------------------------
 
 interface VerifiedClaims {
@@ -56,46 +60,44 @@ interface VerifiedClaims {
   amr: Array<{ method: string; timestamp: number }> | undefined;
 }
 
+type SupabaseClient = ReturnType<typeof import('@/lib/supabase/service').createServiceClient>;
+
 /**
- * Validate a bearer token AND extract its claims in a single operation.
+ * Validate a bearer token via getClaims + getUser, extract claims.
  *
- * Step 1: getUser(token) validates the JWT against the Supabase Auth server.
- * Step 2: If valid, decode the payload to read aal, session_id, amr.
+ * 1. getClaims(token) — cryptographic signature verification + claim extraction.
+ * 2. getUser(token) — session-validity check (rejects revoked sessions).
+ * 3. Require getClaims.sub === getUser.id (identity consistency).
  *
- * Returns null if the token is invalid, expired, or malformed.
+ * Returns null if the token is forged, expired, revoked, or malformed.
  */
 async function getVerifiedClaims(
-  supabase: ReturnType<typeof import('@/lib/supabase/service').createServiceClient>,
+  supabase: SupabaseClient,
   token: string,
 ): Promise<VerifiedClaims | null> {
-  // Step 1: Cryptographic verification via Supabase Auth server
-  const { data, error } = await supabase.auth.getUser(token);
-  if (error || !data?.user) return null;
+  // Step 1: Cryptographic verification via getClaims
+  const { data: claimsData, error: claimsError } = await supabase.auth.getClaims(token);
+  if (claimsError || !claimsData?.claims) return null;
 
-  // Parse the EXACT token validated by getUser(token), and match its subject.
-  const payload = decodeJwtPayload(token);
-  if (!payload || payload.sub !== data.user.id) return null;
+  const claims = claimsData.claims as Record<string, unknown>;
+  const sub = claims.sub as string | undefined;
+  if (!sub) return null;
+
+  // Step 2: Session-validity check — rejects revoked/expired sessions
+  const { data: userData, error: userError } = await supabase.auth.getUser(token);
+  if (userError || !userData?.user) return null;
+
+  // Step 3: Identity consistency — getClaims sub must equal getUser id
+  if (userData.user.id !== sub) return null;
 
   return {
-    userId: data.user.id,
-    email: data.user.email || '',
-    appMetadataRole: data.user.app_metadata?.role,
-    aal: payload.aal as string | undefined,
-    sessionId: payload.session_id as string | undefined,
-    amr: payload.amr as Array<{ method: string; timestamp: number }> | undefined,
+    userId: sub,
+    email: userData.user.email || '',
+    appMetadataRole: userData.user.app_metadata?.role,
+    aal: claims.aal as string | undefined,
+    sessionId: claims.session_id as string | undefined,
+    amr: claims.amr as Array<{ method: string; timestamp: number }> | undefined,
   };
-}
-
-/** Decode JWT payload — ONLY called after getUser() validation succeeds. */
-function decodeJwtPayload(token: string): Record<string, unknown> | null {
-  try {
-    const parts = token.split('.');
-    if (parts.length !== 3) return null;
-    const base64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
-    return JSON.parse(Buffer.from(base64, 'base64').toString());
-  } catch {
-    return null;
-  }
 }
 
 /**
@@ -132,11 +134,11 @@ export async function requirePlatformAdmin(
   if (hasExplicitBearer) {
     token = authHeader!.replace('Bearer ', '');
 
-    // Validate AND extract claims atomically via getVerifiedClaims
+    // Validate AND extract claims via getClaims + getUser
     claims = await getVerifiedClaims(supabase, token);
 
     if (!claims) {
-      // Bearer token was provided but is invalid.
+      // Bearer token was provided but is invalid/forged/revoked.
       // FAIL CLOSED: do NOT fall back to cookie auth.
       await logAdminAuthEvent(supabase, {
         action: 'admin_auth_denied',
@@ -147,18 +149,17 @@ export async function requirePlatformAdmin(
     }
   } else {
     // No Authorization header — use cookie-based session.
-    // SECURITY: getSession() does NOT verify the JWT — it trusts the cookie.
-    // We MUST call getUser() first, which validates the token server-side
-    // via the Supabase Auth server, before reading any claims.
+    // getSession supplies an UNTRUSTED token candidate. We extract it,
+    // then verify it through getClaims + getUser on the service client
+    // (same verification path as Bearer tokens — no separate trust boundary).
     const { createClient } = await import('@/lib/supabase/server');
     const cookieSupabase = await createClient();
 
-    // getSession supplies an UNTRUSTED token candidate. Never treat it as
-    // authorization. Verify this exact access token server-side before using
-    // its subject, role, aal, session_id or authentication method claims.
     const { data: sessionData } = await cookieSupabase.auth.getSession();
     token = sessionData?.session?.access_token;
     if (!token) return null;
+
+    // Verify the cookie token through the same getClaims + getUser path
     claims = await getVerifiedClaims(supabase, token);
     if (!claims) return null;
   }
@@ -254,7 +255,7 @@ interface AdminAuthLogEntry {
 }
 
 async function logAdminAuthEvent(
-  supabase: ReturnType<typeof import('@/lib/supabase/service').createServiceClient>,
+  supabase: SupabaseClient,
   entry: AdminAuthLogEntry,
 ): Promise<void> {
   try {

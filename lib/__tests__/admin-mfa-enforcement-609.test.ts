@@ -45,32 +45,46 @@ describe('SEC-005 Layer 2: requirePlatformAdmin aal2 enforcement', () => {
     adminAuthSource = readSource('lib/admin-auth.ts');
   });
 
-  it('checks aal2 from verified JWT claims via getVerifiedClaims contract', () => {
-    expect(adminAuthSource).toContain("jwtAal !== 'aal2'");
-    // Uses the atomic getVerifiedClaims() which validates then reads
-    expect(adminAuthSource).toContain('getVerifiedClaims');
-    expect(adminAuthSource).toContain('Cryptographic verification via Supabase Auth server');
+  it('uses supabase.auth.getClaims for cryptographic JWT verification', () => {
+    expect(adminAuthSource).toContain('supabase.auth.getClaims(token)');
+    expect(adminAuthSource).toContain('Cryptographic verification via getClaims');
+  });
+
+  it('calls getUser alongside getClaims to reject revoked sessions', () => {
+    expect(adminAuthSource).toContain('supabase.auth.getUser(token)');
+    expect(adminAuthSource).toContain('rejects revoked');
+  });
+
+  it('verifies getClaims sub equals getUser id', () => {
+    expect(adminAuthSource).toContain('userData.user.id !== sub');
+  });
+
+  it('does NOT use decodeJwtPayload (removed)', () => {
+    expect(adminAuthSource).not.toContain('decodeJwtPayload');
   });
 
   it('does NOT fall back to cookie auth after invalid Bearer token', () => {
-    // The code must return null (deny) when Bearer is present but invalid,
-    // rather than trying cookie auth with a different identity.
     expect(adminAuthSource).toContain('hasExplicitBearer');
     expect(adminAuthSource).toContain('FAIL CLOSED: do NOT fall back to cookie auth');
   });
 
   it('does NOT trust user.app_metadata.aal or factor enrollment status', () => {
-    // CTO requirement: only cryptographically verified JWT claims
     expect(adminAuthSource).not.toContain('app_metadata?.aal');
     expect(adminAuthSource).not.toContain("factors?.[0]?.status");
   });
 
-  it('uses getVerifiedClaims which combines validation and claim extraction', () => {
-    // The VerifiedClaims interface binds identity (userId) and assurance (aal)
+  it('getVerifiedClaims interface binds identity and assurance', () => {
     expect(adminAuthSource).toContain('interface VerifiedClaims');
     expect(adminAuthSource).toContain('userId: string');
     expect(adminAuthSource).toContain('aal: string | undefined');
     expect(adminAuthSource).toContain('sessionId: string | undefined');
+  });
+
+  it('cookie path uses getClaims on the service client, not getSession alone', () => {
+    // Cookie token is extracted via getSession, then verified via getClaims
+    expect(adminAuthSource).toContain('getVerifiedClaims(supabase, token)');
+    // Same verification path for both Bearer and cookie
+    expect(adminAuthSource).toContain('same verification path');
   });
 
   it('does NOT contain staging MFA skip', () => {

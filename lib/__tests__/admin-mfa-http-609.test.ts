@@ -15,6 +15,7 @@ import { NextRequest } from 'next/server';
 // Mock Supabase to control auth responses
 // ---------------------------------------------------------------------------
 
+const mockGetClaims = vi.fn();
 const mockGetUser = vi.fn();
 const mockGetSession = vi.fn();
 const mockInsert = vi.fn().mockReturnValue({ then: (cb: Function) => cb?.() });
@@ -30,6 +31,7 @@ const mockFrom = vi.fn().mockReturnValue({
 vi.mock('@/lib/supabase/service', () => ({
   createServiceClient: () => ({
     auth: {
+      getClaims: mockGetClaims,
       getUser: mockGetUser,
       admin: { getUserById: vi.fn().mockResolvedValue({ data: null }) },
     },
@@ -74,69 +76,67 @@ function adminRequest(token: string, path = 'http://localhost/api/admin/query'):
 // Tests
 // ---------------------------------------------------------------------------
 
-describe('SEC-005 HTTP: aal1 admin sessions are rejected', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
+/** Mock both getClaims + getUser for a valid admin with specified claims */
+function mockValidAuth(opts: { sub: string; email?: string; role?: string; aal?: string; sessionId?: string }) {
+  mockGetClaims.mockResolvedValueOnce({
+    data: { claims: { sub: opts.sub, aal: opts.aal ?? 'aal2', session_id: opts.sessionId ?? 'sess-123' } },
+    error: null,
   });
+  mockGetUser.mockResolvedValueOnce({
+    data: { user: { id: opts.sub, email: opts.email ?? 'admin@waaiio.com', app_metadata: { role: opts.role ?? 'admin' } } },
+    error: null,
+  });
+}
 
-  it('rejects an aal1 admin bearer token with 403', async () => {
-    const token = fakeJwt({
-      sub: 'admin-user-id',
-      aal: 'aal1',
-      session_id: 'sess-123',
-      role: 'authenticated',
-    });
+describe('SEC-005 HTTP: aal1 admin sessions are rejected', () => {
+  beforeEach(() => { vi.clearAllMocks(); });
 
-    // getUser validates the JWT and returns the user
-    mockGetUser.mockResolvedValueOnce({
-      data: {
-        user: {
-          id: 'admin-user-id',
-          email: 'admin@waaiio.com',
-          app_metadata: { role: 'admin' },
-        },
-      },
-      error: null,
-    });
-
+  it('rejects an aal1 admin bearer token', async () => {
+    mockValidAuth({ sub: 'admin-user-id', aal: 'aal1' });
     const { requirePlatformAdmin } = await import('../admin-auth');
-    const result = await requirePlatformAdmin(adminRequest(token));
-
-    // Must return null (deny) — aal1 is not sufficient
-    expect(result).toBeNull();
+    expect(await requirePlatformAdmin(adminRequest('any-token'))).toBeNull();
   });
 
   it('rejects a token with missing aal claim', async () => {
-    const token = fakeJwt({
-      sub: 'admin-user-id',
-      session_id: 'sess-123',
-      // No aal claim
+    mockGetClaims.mockResolvedValueOnce({
+      data: { claims: { sub: 'admin-user-id', session_id: 'sess-123' } }, error: null,
     });
-
     mockGetUser.mockResolvedValueOnce({
-      data: {
-        user: {
-          id: 'admin-user-id',
-          email: 'admin@waaiio.com',
-          app_metadata: { role: 'admin' },
-        },
-      },
-      error: null,
+      data: { user: { id: 'admin-user-id', email: 'a@b.com', app_metadata: { role: 'admin' } } }, error: null,
     });
-
     const { requirePlatformAdmin } = await import('../admin-auth');
-    const result = await requirePlatformAdmin(adminRequest(token));
-
-    expect(result).toBeNull();
+    expect(await requirePlatformAdmin(adminRequest('token'))).toBeNull();
   });
 
-  it('rejects an invalid bearer token without falling back to cookies', async () => {
-    const token = 'invalid-token';
+  it('rejects a forged/unsigned token (getClaims returns error)', async () => {
+    mockGetClaims.mockResolvedValueOnce({ data: null, error: { message: 'Invalid JWT signature' } });
+    const { requirePlatformAdmin } = await import('../admin-auth');
+    expect(await requirePlatformAdmin(adminRequest('forged'))).toBeNull();
+    expect(mockGetUser).not.toHaveBeenCalled();
+  });
 
-    mockGetUser.mockResolvedValueOnce({
-      data: { user: null },
-      error: { message: 'invalid token' },
+  it('rejects a revoked session (getClaims ok, getUser fails)', async () => {
+    mockGetClaims.mockResolvedValueOnce({
+      data: { claims: { sub: 'admin-1', aal: 'aal2', session_id: 's1' } }, error: null,
     });
+    mockGetUser.mockResolvedValueOnce({ data: { user: null }, error: { message: 'session revoked' } });
+    const { requirePlatformAdmin } = await import('../admin-auth');
+    expect(await requirePlatformAdmin(adminRequest('revoked'))).toBeNull();
+  });
+
+  it('rejects when getClaims sub does not match getUser id', async () => {
+    mockGetClaims.mockResolvedValueOnce({
+      data: { claims: { sub: 'user-A', aal: 'aal2', session_id: 's1' } }, error: null,
+    });
+    mockGetUser.mockResolvedValueOnce({
+      data: { user: { id: 'user-B', email: 'b@b.com', app_metadata: { role: 'admin' } } }, error: null,
+    });
+    const { requirePlatformAdmin } = await import('../admin-auth');
+    expect(await requirePlatformAdmin(adminRequest('mismatched'))).toBeNull();
+  });
+
+  it('does NOT fall back to cookie auth after invalid Bearer', async () => {
+    mockGetClaims.mockResolvedValueOnce({ data: null, error: { message: 'invalid' } });
 
     // Cookie session exists with valid admin — should NOT be used
     mockGetSession.mockResolvedValueOnce({
@@ -153,7 +153,7 @@ describe('SEC-005 HTTP: aal1 admin sessions are rejected', () => {
     });
 
     const { requirePlatformAdmin } = await import('../admin-auth');
-    const result = await requirePlatformAdmin(adminRequest(token));
+    const result = await requirePlatformAdmin(adminRequest('bad-bearer'));
 
     // Must return null — do NOT fall back to cookie
     expect(result).toBeNull();
@@ -181,6 +181,10 @@ describe('SEC-005 HTTP: cookie token must itself be verified', () => {
   it('accepts a cookie aal2 session only after validating THAT token server-side', async () => {
     const token = fakeJwt({ sub: 'admin-user-id', aal: 'aal2', session_id: 'sess-cookie' });
     setCookieToken(token);
+    // getClaims + getUser both called on the cookie token
+    mockGetClaims.mockResolvedValueOnce({
+      data: { claims: { sub: 'admin-user-id', aal: 'aal2', session_id: 'sess-cookie' } }, error: null,
+    });
     mockGetUser.mockResolvedValueOnce({
       data: { user: { id: 'admin-user-id', email: 'admin@example.test', app_metadata: { role: 'admin' } } },
       error: null,
@@ -189,116 +193,59 @@ describe('SEC-005 HTTP: cookie token must itself be verified', () => {
     const result = await requirePlatformAdmin(cookieRequest());
     expect(result?.aal).toBe('aal2');
     expect(result?.sessionId).toBe('sess-cookie');
+    expect(mockGetClaims).toHaveBeenCalledWith(token);
     expect(mockGetUser).toHaveBeenCalledWith(token);
   });
 
   it('denies a cookie access token whose subject mismatches the validated identity', async () => {
     const token = fakeJwt({ sub: 'different-user', aal: 'aal2', session_id: 'sess-cookie' });
     setCookieToken(token);
+    mockGetClaims.mockResolvedValueOnce({
+      data: { claims: { sub: 'different-user', aal: 'aal2', session_id: 'sess-cookie' } }, error: null,
+    });
     mockGetUser.mockResolvedValueOnce({
       data: { user: { id: 'admin-user-id', email: 'admin@example.test', app_metadata: { role: 'admin' } } },
       error: null,
     });
     const { requirePlatformAdmin } = await import('../admin-auth');
     expect(await requirePlatformAdmin(cookieRequest())).toBeNull();
-    expect(mockGetUser).toHaveBeenCalledWith(token);
   });
 
-  it('denies a cookie whose exact token is rejected by the Auth server', async () => {
+  it('denies a cookie whose exact token is rejected by getClaims', async () => {
     const token = fakeJwt({ sub: 'admin-user-id', aal: 'aal2', session_id: 'sess-cookie' });
     setCookieToken(token);
-    mockGetUser.mockResolvedValueOnce({
-      data: { user: null }, error: { message: 'invalid signature' },
-    });
+    mockGetClaims.mockResolvedValueOnce({ data: null, error: { message: 'invalid signature' } });
     const { requirePlatformAdmin } = await import('../admin-auth');
     expect(await requirePlatformAdmin(cookieRequest())).toBeNull();
-    expect(mockGetUser).toHaveBeenCalledWith(token);
   });
 });
 
 describe('SEC-005 HTTP: aal2 admin sessions are accepted', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
+  beforeEach(() => { vi.clearAllMocks(); });
 
   it('accepts an aal2 admin bearer token', async () => {
-    const token = fakeJwt({
-      sub: 'admin-user-id',
-      aal: 'aal2',
-      session_id: 'sess-123',
-      amr: [{ method: 'totp', timestamp: Date.now() / 1000 }],
-    });
-
-    mockGetUser.mockResolvedValueOnce({
-      data: {
-        user: {
-          id: 'admin-user-id',
-          email: 'admin@waaiio.com',
-          app_metadata: { role: 'admin' },
-        },
-      },
-      error: null,
-    });
-
+    mockValidAuth({ sub: 'admin-user-id' });
     const { requirePlatformAdmin } = await import('../admin-auth');
-    const result = await requirePlatformAdmin(adminRequest(token));
-
+    const result = await requirePlatformAdmin(adminRequest('valid-token'));
     expect(result).not.toBeNull();
     expect(result!.userId).toBe('admin-user-id');
     expect(result!.role).toBe('admin');
     expect(result!.aal).toBe('aal2');
-    expect(result!.bearerToken).toBe(token);
+    expect(result!.bearerToken).toBe('valid-token');
   });
 
   it('accepts aal2 support role for routes allowing support', async () => {
-    const token = fakeJwt({
-      sub: 'support-user-id',
-      aal: 'aal2',
-      session_id: 'sess-456',
-    });
-
-    mockGetUser.mockResolvedValueOnce({
-      data: {
-        user: {
-          id: 'support-user-id',
-          email: 'support@waaiio.com',
-          app_metadata: { role: 'support' },
-        },
-      },
-      error: null,
-    });
-
+    mockValidAuth({ sub: 'support-user-id', role: 'support' });
     const { requirePlatformAdmin } = await import('../admin-auth');
-    const result = await requirePlatformAdmin(adminRequest(token), {
-      requiredRole: ['admin', 'support'],
-    });
-
+    const result = await requirePlatformAdmin(adminRequest('token'), { requiredRole: ['admin', 'support'] });
     expect(result).not.toBeNull();
     expect(result!.role).toBe('support');
   });
 
   it('rejects aal2 support role for admin-only routes', async () => {
-    const token = fakeJwt({
-      sub: 'support-user-id',
-      aal: 'aal2',
-      session_id: 'sess-456',
-    });
-
-    mockGetUser.mockResolvedValueOnce({
-      data: {
-        user: {
-          id: 'support-user-id',
-          email: 'support@waaiio.com',
-          app_metadata: { role: 'support' },
-        },
-      },
-      error: null,
-    });
-
+    mockValidAuth({ sub: 'support-user-id', role: 'support' });
     const { requirePlatformAdmin } = await import('../admin-auth');
-    const result = await requirePlatformAdmin(adminRequest(token), {
-      requiredRole: 'admin',
-    });
+    const result = await requirePlatformAdmin(adminRequest('token'), { requiredRole: 'admin' });
 
     expect(result).toBeNull();
   });
@@ -310,52 +257,26 @@ describe('SEC-005 HTTP: non-admin users are rejected regardless of aal', () => {
   });
 
   it('rejects aal2 token with no admin role', async () => {
-    const token = fakeJwt({
-      sub: 'regular-user',
-      aal: 'aal2',
-      session_id: 'sess-789',
+    mockGetClaims.mockResolvedValueOnce({
+      data: { claims: { sub: 'regular-user', aal: 'aal2', session_id: 'sess-789' } }, error: null,
     });
-
     mockGetUser.mockResolvedValueOnce({
-      data: {
-        user: {
-          id: 'regular-user',
-          email: 'user@example.com',
-          app_metadata: {},
-        },
-      },
-      error: null,
+      data: { user: { id: 'regular-user', email: 'user@example.com', app_metadata: {} } }, error: null,
     });
-
     const { requirePlatformAdmin } = await import('../admin-auth');
-    const result = await requirePlatformAdmin(adminRequest(token));
-
-    expect(result).toBeNull();
+    expect(await requirePlatformAdmin(adminRequest('token'))).toBeNull();
   });
 
   it('rejects aal2 token with client-declared admin role in user_metadata', async () => {
-    const token = fakeJwt({
-      sub: 'regular-user',
-      aal: 'aal2',
-      session_id: 'sess-789',
+    mockGetClaims.mockResolvedValueOnce({
+      data: { claims: { sub: 'regular-user', aal: 'aal2', session_id: 'sess-789' } }, error: null,
     });
-
     mockGetUser.mockResolvedValueOnce({
-      data: {
-        user: {
-          id: 'regular-user',
-          email: 'user@example.com',
-          app_metadata: {},
-          user_metadata: { role: 'admin' }, // spoofed
-        },
-      },
+      data: { user: { id: 'regular-user', email: 'user@example.com', app_metadata: {}, user_metadata: { role: 'admin' } } },
       error: null,
     });
-
     const { requirePlatformAdmin } = await import('../admin-auth');
-    const result = await requirePlatformAdmin(adminRequest(token));
-
-    expect(result).toBeNull();
+    expect(await requirePlatformAdmin(adminRequest('token'))).toBeNull();
   });
 });
 
