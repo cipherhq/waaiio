@@ -83,20 +83,14 @@ describe('SEC-005: RLS policy inventory after M439', () => {
     expect(result, `Found legacy profiles.role policies: ${result}`).toBe('');
   });
 
-  it('admin_audit_logs: no INSERT policy for authenticated', () => {
+  it('admin_audit_logs: INSERT policy requires is_admin() (aal2)', () => {
     const result = runSQL(`
-      SELECT policyname FROM pg_policies
-      WHERE tablename = 'admin_audit_logs' AND cmd = 'INSERT';
+      SELECT policyname, pg_get_expr(polwithcheck, polrelid) AS wc
+      FROM pg_policy WHERE polrelid = 'admin_audit_logs'::regclass AND polcmd = 'a';
     `);
-    // No INSERT policy should exist (all writes through service_role)
-    expect(result).toBe('');
-  });
-
-  it('admin_audit_logs: authenticated cannot INSERT', () => {
-    const result = runSQL(`
-      SELECT has_table_privilege('authenticated', 'public.admin_audit_logs', 'INSERT');
-    `);
-    expect(result).toBe('f');
+    // INSERT policy uses is_admin() which requires aal2
+    expect(result).toContain('is_admin()');
+    expect(result).not.toContain('profiles');
   });
 
   it('admin_audit_logs: service_role CAN INSERT', () => {

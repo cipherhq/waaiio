@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { createServiceClient } from '@/lib/supabase/service';
 import { sendEmail } from '@/lib/email/client';
 import { payoutRejectedEmail } from '@/lib/email/templates';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
@@ -41,7 +42,9 @@ export async function POST(
   }
 
   // Atomic reject: include status guard in UPDATE to prevent TOCTOU race
-  const { data: updated, error: updateError } = await supabase
+  // SEC-005: uses service client — authenticated DML revoked on business_payouts.
+  const serviceClient = createServiceClient();
+  const { data: updated, error: updateError } = await serviceClient
     .from('business_payouts')
     .update({
       status: 'rejected',

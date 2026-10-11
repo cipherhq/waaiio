@@ -120,6 +120,15 @@ function setupMocks(config: MockConfig = {}) {
     createClient: vi.fn().mockResolvedValue({ from: mockFrom }),
   }));
 
+  // Service client mock — used for RPCs and SEC-005 DML on business_payouts
+  const serviceUpdateChain: Record<string, ReturnType<typeof vi.fn>> = {};
+  ['eq', 'in', 'select'].forEach(m => { serviceUpdateChain[m] = vi.fn().mockReturnValue(serviceUpdateChain); });
+  serviceUpdateChain.select = vi.fn().mockResolvedValue({ data: manualUpdateResult });
+
+  const serviceInsertChain: Record<string, ReturnType<typeof vi.fn>> = {};
+  ['select'].forEach(m => { serviceInsertChain[m] = vi.fn().mockReturnValue(serviceInsertChain); });
+  serviceInsertChain.select = vi.fn().mockReturnValue({ single: vi.fn().mockResolvedValue({ data: { id: 'new-payout-id' } }) });
+
   vi.doMock('@/lib/supabase/service', () => ({
     createServiceClient: vi.fn().mockReturnValue({
       rpc: vi.fn().mockImplementation((name: string) => {
@@ -137,7 +146,22 @@ function setupMocks(config: MockConfig = {}) {
         if (name === 'mark_payout_review_required') {
           return Promise.resolve({ data: reviewResult, error: null });
         }
+        if (name === 'check_session_exists') {
+          return { maybeSingle: vi.fn().mockResolvedValue({ data: { exists: true }, error: null }) };
+        }
         return Promise.resolve({ data: null, error: null });
+      }),
+      from: vi.fn().mockImplementation((table: string) => {
+        if (table === 'business_payouts') {
+          return {
+            update: vi.fn().mockReturnValue(serviceUpdateChain),
+            insert: vi.fn().mockReturnValue(serviceInsertChain),
+          };
+        }
+        if (table === 'admin_audit_logs') {
+          return { insert: vi.fn().mockResolvedValue({}) };
+        }
+        return { insert: vi.fn().mockResolvedValue({}), select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis() };
       }),
     }),
   }));

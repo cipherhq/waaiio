@@ -165,7 +165,9 @@ export async function POST(
 
   if (!AUTOMATED_TRANSFER_METHODS.has(transfer_method)) {
     // Atomic conditional update — verifies exactly one row transitions
-    const { data: manualResult } = await supabase
+    // SEC-005: uses service client — authenticated DML revoked on business_payouts.
+    const serviceClient = createServiceClient();
+    const { data: manualResult } = await serviceClient
       .from('business_payouts')
       .update({
         status: 'paid',

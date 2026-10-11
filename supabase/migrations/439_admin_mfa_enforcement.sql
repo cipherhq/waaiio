@@ -224,11 +224,13 @@ CREATE POLICY "Admins can view audit logs"
   FOR SELECT
   USING (public.is_admin());
 
--- Drop legacy INSERT policy from M010 — all audit writes go through service_role.
--- The old policy used profiles.role = 'admin' (no aal2, wrong authority source).
+-- Drop legacy INSERT policy from M010 (used profiles.role, no aal2).
+-- Replace with is_admin() which requires aal2.
 DROP POLICY IF EXISTS "Admins can insert audit logs" ON public.admin_audit_logs;
--- Revoke INSERT from authenticated — service_role only (granted in M421).
-REVOKE INSERT ON public.admin_audit_logs FROM authenticated;
+CREATE POLICY "Admins can insert audit logs"
+  ON public.admin_audit_logs
+  FOR INSERT
+  WITH CHECK (public.is_admin());
 
 -- ── ai_usage ──────────────────────────────────────────────────────────────
 -- Old: "ai_usage_admin" (SELECT, profiles.role = 'admin')

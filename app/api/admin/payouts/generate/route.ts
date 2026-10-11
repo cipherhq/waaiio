@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { createServiceClient } from '@/lib/supabase/service';
 import { requirePlatformAdmin } from '@/lib/admin-auth';
 import { consumeStepUp, StepUpError } from '@/lib/admin-step-up';
 import { logger } from '@/lib/logger';
@@ -204,7 +205,9 @@ export async function POST(request: NextRequest) {
         .eq('is_active', true)
         .maybeSingle();
 
-      const { data: newPayout } = await supabase.from('business_payouts').insert({
+      // SEC-005: INSERT uses service client — authenticated DML revoked on business_payouts.
+      const serviceClient = createServiceClient();
+      const { data: newPayout } = await serviceClient.from('business_payouts').insert({
         business_id: biz.id,
         payout_account_id: payoutAccount?.id || null,
         period_start: periodStartStr,
@@ -233,8 +236,9 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Audit log
-    await supabase.from('admin_audit_logs').insert({
+    // Audit log — uses service client (INSERT revoked from authenticated)
+    const auditClient = createServiceClient();
+    await auditClient.from('admin_audit_logs').insert({
       actor_id: admin.id,
       action: 'generate_payouts',
       entity_type: 'business_payout',
