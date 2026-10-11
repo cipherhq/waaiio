@@ -43,6 +43,9 @@ const USERS = {
 // Fixed fixture IDs for deterministic assertions
 const DEMO_ID = 'd0000000-0000-0000-0000-000000000001';
 const TOKEN_ID = 'e0000000-0000-0000-0000-000000000001';
+// Dedicated tenant owner: the platform Admin must NOT own this business.
+// Otherwise a legitimate owner_read policy would mask aal1 Admin-policy denial.
+const BUSINESS_OWNER_ID = '10000000-0000-0000-0000-000000000007';
 
 function jwtClaims(userId: string, role: string): string {
   return `{"sub":"${userId}","role":"${role}","user_metadata":{"role":"${role}"}}`;
@@ -101,6 +104,18 @@ describe.skipIf(!canRun)('Platform Role Authority DB Tests (#217)', () => {
       if (profResult.includes('ERROR')) throw new Error(`Failed to seed profile ${role}: ${profResult}`);
     }
 
+    // Seed a separate, non-platform-role business owner. Existing tenant RLS
+    // must remain usable at aal1, independently of Admin-only MFA gates.
+    const ownerSeed = psqlMayFail(`
+      INSERT INTO auth.users (id, email, raw_app_meta_data)
+      VALUES ('${BUSINESS_OWNER_ID}', 'business-owner-217@test.local', '{}'::jsonb)
+      ON CONFLICT (id) DO UPDATE SET raw_app_meta_data = '{}'::jsonb;
+      INSERT INTO profiles (id, email, role)
+      VALUES ('${BUSINESS_OWNER_ID}', 'business-owner-217@test.local', 'restaurant_owner')
+      ON CONFLICT (id) DO NOTHING;
+    `);
+    if (ownerSeed.includes('ERROR')) throw new Error(`Failed to seed tenant owner: ${ownerSeed}`);
+
     // Seed demo_requests with known ID — MUST succeed
     const demoResult = psqlMayFail(`
       INSERT INTO demo_requests (id, business_name, contact_name, work_email, phone, industry, notes)
@@ -113,8 +128,8 @@ describe.skipIf(!canRun)('Platform Role Authority DB Tests (#217)', () => {
     const BIZ_ID = 'b0000000-0000-0000-0000-000000000217';
     const bizResult = psqlMayFail(`
       INSERT INTO businesses (id, name, slug, owner_id, address, city, neighborhood, phone)
-      VALUES ('${BIZ_ID}', 'Test217', 'test217-' || substr(md5(random()::text), 1, 8), '${USERS.admin}', '1 Test St', 'TestCity', 'TestArea', '+1234567890')
-      ON CONFLICT (id) DO NOTHING;
+      VALUES ('${BIZ_ID}', 'Test217', 'test217-' || substr(md5(random()::text), 1, 8), '${BUSINESS_OWNER_ID}', '1 Test St', 'TestCity', 'TestArea', '+1234567890')
+      ON CONFLICT (id) DO UPDATE SET owner_id = EXCLUDED.owner_id;
     `);
     if (bizResult.includes('ERROR')) throw new Error(`Failed to seed business: ${bizResult}`);
 
@@ -284,6 +299,22 @@ describe.skipIf(!canRun)('Platform Role Authority DB Tests (#217)', () => {
       // Strip set_config output line(s) — last non-empty line is the count
       const lines = count.split('\n').filter(l => l.trim() !== '');
       expect(parseInt(lines[lines.length - 1] || '0'), `aal1 must not read ${table}`).toBe(0);
+    }
+  });
+
+  it('12bb. business-owner access remains available at aal1 without granting Admin privileges', () => {
+    for (const table of ['attendance_log', 'ai_classification_log']) {
+      const count = psql(`
+        SELECT set_config('request.jwt.claims', '${jwtClaims(BUSINESS_OWNER_ID, 'authenticated')}', false);
+        CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$
+          SELECT '{"aal":"aal1"}'::jsonb;
+        $fn$ LANGUAGE SQL STABLE;
+        SET ROLE authenticated;
+        SELECT count(*)::int FROM ${table} WHERE business_id = 'b0000000-0000-0000-0000-000000000217';
+        RESET ROLE;
+      `);
+      const lines = count.split('\n').filter(Boolean);
+      expect(parseInt(lines[lines.length - 1] || '0'), `owner aal1 access to ${table}`).toBe(1);
     }
   });
 
