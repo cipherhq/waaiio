@@ -420,8 +420,18 @@ describe.skipIf(!canRun)('Message Cost Events Schema DB Tests (#259 / Migration 
     try {
       psql(`CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $f$ SELECT '${ADMIN_UID}'::UUID; $f$ LANGUAGE SQL STABLE;`);
       psql(`CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb AS $fn$ SELECT '{"aal":"aal1"}'::jsonb; $fn$ LANGUAGE SQL STABLE;`);
-      const count = psql(`SET ROLE authenticated; SELECT count(*)::int FROM message_cost_events WHERE attempt_id = '${pa}'; RESET ROLE;`);
-      expect(count.split('\n').pop()).toBe('0');
+      // Check the effective security decision instead of assuming prior
+      // database-test fixtures preserved the Admin helper implementation.
+      const decision = psql(`
+        SET ROLE authenticated;
+        SELECT auth.jwt()->>'aal', public.is_admin(),
+               public.mce_check_owner('${pa}'::uuid);
+        SELECT count(*)::int FROM message_cost_events WHERE attempt_id = '${pa}';
+        RESET ROLE;
+      `);
+      const lines = decision.split('\n').filter(Boolean);
+      expect(lines[lines.length - 2], 'aal1 canonical and owner authorization').toBe('aal1|f|f');
+      expect(lines[lines.length - 1], 'aal1 financial ledger access denial').toBe('0');
     } finally {
       psqlMayFail(originalAuthUidDef + ';');
     }
