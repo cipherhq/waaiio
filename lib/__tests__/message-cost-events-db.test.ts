@@ -32,8 +32,8 @@ function psqlMayFail(sql: string): string {
 
 const BIZ_ID   = 'b0000000-0000-0000-0000-000000000269';
 const BIZ_ID_B = 'b0000000-0000-0000-0000-000000000270';
-const OWNER_A  = '00000000-0000-0000-0000-000000000001';
-const OWNER_B  = '00000000-0000-0000-0000-000000000099';
+const OWNER_A  = '00000000-0000-0000-0259-000000000001';
+const OWNER_B  = '00000000-0000-0000-0259-000000000002';
 const ADMIN_UID = '00000000-0000-0000-0000-0000000000a1';
 const NON_ADMIN_UID = '00000000-0000-0000-0000-000000000077';
 
@@ -43,6 +43,26 @@ describe.skipIf(!canRun)('Message Cost Events Schema DB Tests (#259 / Migration 
   let originalAuthUidDef: string;
 
   beforeAll(() => {
+    // The shared DB has unrelated fixture IDs 000...001 and 000...099
+    // promoted to Admin by other suites. These MUST be independent tenant
+    // owners with no platform role, otherwise cross-tenant RLS can be bypassed
+    // through the legitimate Admin SELECT policy.
+    psql(`
+      INSERT INTO auth.users (id, email, raw_app_meta_data)
+      VALUES
+        ('${OWNER_A}', 'owner-a-0259@unit.invalid', '{}'::jsonb),
+        ('${OWNER_B}', 'owner-b-0259@unit.invalid', '{}'::jsonb)
+      ON CONFLICT (id) DO UPDATE SET raw_app_meta_data = '{}'::jsonb;
+      INSERT INTO profiles (id, email, role)
+      VALUES
+        ('${OWNER_A}', 'owner-a-0259@unit.invalid', 'restaurant_owner'),
+        ('${OWNER_B}', 'owner-b-0259@unit.invalid', 'restaurant_owner')
+      ON CONFLICT (id) DO NOTHING;
+    `);
+    expect(psql(`
+      SELECT COALESCE(raw_app_meta_data->>'role', 'none')
+      FROM auth.users WHERE id IN ('${OWNER_A}', '${OWNER_B}') ORDER BY id;
+    `)).toBe('none\nnone');
     // Snapshot the exact original auth.uid() definition for hermetic restoration
     originalAuthUidDef = psql(`SELECT pg_get_functiondef(oid) FROM pg_proc WHERE proname = 'uid' AND pronamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'auth');`);
     // Seed test businesses
