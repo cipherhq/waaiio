@@ -5,8 +5,9 @@ import type { StepUpAction } from '@/lib/admin-step-up';
 import { adminCorsHeaders } from '@/lib/admin-cors';
 
 const VALID_ACTIONS: StepUpAction[] = [
-  'payout_approve', 'payout_generate', 'provider_config',
+  'payout_approve', 'payout_reject', 'payout_generate', 'provider_config',
   'team_grant', 'team_revoke', 'impersonate', 'refund',
+  'reseller_payout_approve', 'reseller_payout_reject', 'reseller_payout_mark_paid',
 ];
 
 export async function OPTIONS(request: NextRequest) {

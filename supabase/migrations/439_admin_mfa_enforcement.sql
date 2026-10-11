@@ -31,12 +31,16 @@ CREATE TABLE IF NOT EXISTS public.admin_step_up_authorizations (
   session_id     text        NOT NULL,
   action_type    text        NOT NULL CHECK (action_type IN (
                                'payout_approve',
+                               'payout_reject',
                                'payout_generate',
                                'provider_config',
                                'team_grant',
                                'team_revoke',
                                'impersonate',
-                               'refund'
+                               'refund',
+                               'reseller_payout_approve',
+                               'reseller_payout_reject',
+                               'reseller_payout_mark_paid'
                              )),
   target_id      text,
   params_hash    text        NOT NULL,
